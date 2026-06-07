@@ -1,20 +1,28 @@
-import type { SessionDigest } from "../types/digest.js";
+import type { EvidenceRef, SessionDigest } from "../types/digest.js";
+
+const nullableStringSchema = { type: ["string", "null"] } as const;
+const nullableNumberSchema = { type: ["number", "null"] } as const;
+const stringArraySchema = { type: "array", items: { type: "string" } } as const;
+const nullableStringArraySchema = { type: ["array", "null"], items: { type: "string" } } as const;
 
 const evidenceArraySchema = {
   type: "array",
   items: {
     type: "object",
     additionalProperties: false,
+    required: ["eventId", "messageId", "toolCallId", "file", "quote"],
     properties: {
-      eventId: { type: "string" },
-      messageId: { type: "string" },
-      toolCallId: { type: "string" },
-      file: { type: "string" },
-      quote: { type: "string" }
+      eventId: nullableStringSchema,
+      messageId: nullableStringSchema,
+      toolCallId: nullableStringSchema,
+      file: nullableStringSchema,
+      quote: nullableStringSchema
     }
   }
 } as const;
 
+// Codex structured output validates against a stricter subset than generic JSON Schema:
+// every object property must be listed in `required`, so optional fields are nullable.
 export const sessionDigestJsonSchema = {
   type: "object",
   additionalProperties: false,
@@ -31,32 +39,33 @@ export const sessionDigestJsonSchema = {
     "standup",
     "followUps",
     "risks",
+    "metrics",
     "quality"
   ],
   properties: {
-    schema: { const: "daily.session-digest.v1" },
+    schema: { type: "string", const: "daily.session-digest.v1" },
     conversation: {
       type: "object",
       additionalProperties: false,
-      required: ["id", "provider", "title", "dateBucket"],
+      required: ["id", "provider", "title", "startedAt", "endedAt", "dateBucket", "branch"],
       properties: {
         id: { type: "string" },
-        provider: { enum: ["claude", "codex"] },
+        provider: { type: "string", enum: ["claude", "codex"] },
         title: { type: "string" },
-        startedAt: { type: "string" },
-        endedAt: { type: "string" },
+        startedAt: nullableStringSchema,
+        endedAt: nullableStringSchema,
         dateBucket: { type: "string" },
-        branch: { type: "string" }
+        branch: nullableStringSchema
       }
     },
     headline: { type: "string" },
     summary: {
       type: "object",
       additionalProperties: false,
-      required: ["short"],
+      required: ["short", "detailed"],
       properties: {
         short: { type: "string" },
-        detailed: { type: "string" }
+        detailed: nullableStringSchema
       }
     },
     workDone: {
@@ -64,10 +73,10 @@ export const sessionDigestJsonSchema = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["text", "evidence"],
+        required: ["text", "files", "evidence"],
         properties: {
           text: { type: "string" },
-          files: { type: "array", items: { type: "string" } },
+          files: nullableStringArraySchema,
           evidence: evidenceArraySchema
         }
       }
@@ -77,11 +86,11 @@ export const sessionDigestJsonSchema = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["decision", "evidence"],
+        required: ["decision", "rationale", "alternativesConsidered", "evidence"],
         properties: {
           decision: { type: "string" },
-          rationale: { type: "string" },
-          alternativesConsidered: { type: "array", items: { type: "string" } },
+          rationale: nullableStringSchema,
+          alternativesConsidered: nullableStringArraySchema,
           evidence: evidenceArraySchema
         }
       }
@@ -91,12 +100,12 @@ export const sessionDigestJsonSchema = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["questionOrHypothesis", "whatWasTried", "outcome", "evidence"],
+        required: ["questionOrHypothesis", "whatWasTried", "outcome", "details", "evidence"],
         properties: {
           questionOrHypothesis: { type: "string" },
           whatWasTried: { type: "string" },
-          outcome: { enum: ["worked", "failed", "inconclusive", "unknown"] },
-          details: { type: "string" },
+          outcome: { type: "string", enum: ["worked", "failed", "inconclusive", "unknown"] },
+          details: nullableStringSchema,
           evidence: evidenceArraySchema
         }
       }
@@ -106,10 +115,10 @@ export const sessionDigestJsonSchema = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["idea", "evidence"],
+        required: ["idea", "whyItMatters", "evidence"],
         properties: {
           idea: { type: "string" },
-          whyItMatters: { type: "string" },
+          whyItMatters: nullableStringSchema,
           evidence: evidenceArraySchema
         }
       }
@@ -119,13 +128,13 @@ export const sessionDigestJsonSchema = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["title", "context", "evidence"],
+        required: ["title", "context", "proposal", "tradeoffs", "openQuestions", "evidence"],
         properties: {
           title: { type: "string" },
           context: { type: "string" },
-          proposal: { type: "string" },
-          tradeoffs: { type: "array", items: { type: "string" } },
-          openQuestions: { type: "array", items: { type: "string" } },
+          proposal: nullableStringSchema,
+          tradeoffs: nullableStringArraySchema,
+          openQuestions: nullableStringArraySchema,
           evidence: evidenceArraySchema
         }
       }
@@ -135,9 +144,9 @@ export const sessionDigestJsonSchema = {
       additionalProperties: false,
       required: ["done", "next", "blockers"],
       properties: {
-        done: { type: "array", items: { type: "string" } },
-        next: { type: "array", items: { type: "string" } },
-        blockers: { type: "array", items: { type: "string" } }
+        done: stringArraySchema,
+        next: stringArraySchema,
+        blockers: stringArraySchema
       }
     },
     followUps: {
@@ -145,11 +154,11 @@ export const sessionDigestJsonSchema = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["task", "evidence"],
+        required: ["task", "priority", "owner", "evidence"],
         properties: {
           task: { type: "string" },
-          priority: { enum: ["low", "medium", "high"] },
-          owner: { type: "string" },
+          priority: { type: ["string", "null"], enum: ["low", "medium", "high", null] },
+          owner: nullableStringSchema,
           evidence: evidenceArraySchema
         }
       }
@@ -159,33 +168,34 @@ export const sessionDigestJsonSchema = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["risk", "evidence"],
+        required: ["risk", "mitigation", "evidence"],
         properties: {
           risk: { type: "string" },
-          mitigation: { type: "string" },
+          mitigation: nullableStringSchema,
           evidence: evidenceArraySchema
         }
       }
     },
     metrics: {
-      type: "object",
+      type: ["object", "null"],
       additionalProperties: false,
+      required: ["tokensTotal", "toolCalls", "filesRead", "filesWritten", "testsRun", "testFailures"],
       properties: {
-        tokensTotal: { type: "number" },
-        toolCalls: { type: "number" },
-        filesRead: { type: "number" },
-        filesWritten: { type: "number" },
-        testsRun: { type: "number" },
-        testFailures: { type: "number" }
+        tokensTotal: nullableNumberSchema,
+        toolCalls: nullableNumberSchema,
+        filesRead: nullableNumberSchema,
+        filesWritten: nullableNumberSchema,
+        testsRun: nullableNumberSchema,
+        testFailures: nullableNumberSchema
       }
     },
     quality: {
       type: "object",
       additionalProperties: false,
-      required: ["confidence"],
+      required: ["confidence", "missingContext"],
       properties: {
-        confidence: { enum: ["high", "medium", "low"] },
-        missingContext: { type: "array", items: { type: "string" } }
+        confidence: { type: "string", enum: ["high", "medium", "low"] },
+        missingContext: stringArraySchema
       }
     }
   }
@@ -214,24 +224,121 @@ export function normalizeSessionDigest(value: unknown): SessionDigest {
       short: stringValue(summary.short),
       detailed: optionalString(summary.detailed)
     },
-    workDone: arrayValue(record.workDone),
-    decisions: arrayValue(record.decisions),
-    experiments: arrayValue(record.experiments),
-    ideas: arrayValue(record.ideas),
-    designNotes: arrayValue(record.designNotes),
+    workDone: normalizeWorkDone(record.workDone),
+    decisions: normalizeDecisions(record.decisions),
+    experiments: normalizeExperiments(record.experiments),
+    ideas: normalizeIdeas(record.ideas),
+    designNotes: normalizeDesignNotes(record.designNotes),
     standup: {
       done: stringArray(standup.done),
       next: stringArray(standup.next),
       blockers: stringArray(standup.blockers)
     },
-    followUps: arrayValue(record.followUps),
-    risks: arrayValue(record.risks),
+    followUps: normalizeFollowUps(record.followUps),
+    risks: normalizeRisks(record.risks),
     metrics: coerceMetrics(record.metrics),
     quality: {
       confidence: quality.confidence === "high" || quality.confidence === "medium" ? quality.confidence : "low",
       missingContext: stringArray(quality.missingContext)
     }
   };
+}
+
+function normalizeWorkDone(value: unknown): SessionDigest["workDone"] {
+  return arrayValue(value).map((item) => {
+    const record = coerceObject(item);
+    return {
+      text: stringValue(record.text),
+      files: optionalStringArray(record.files),
+      evidence: normalizeEvidence(record.evidence)
+    };
+  }).filter((item) => item.text || item.files?.length || item.evidence.length);
+}
+
+function normalizeDecisions(value: unknown): SessionDigest["decisions"] {
+  return arrayValue(value).map((item) => {
+    const record = coerceObject(item);
+    return {
+      decision: stringValue(record.decision),
+      rationale: optionalString(record.rationale),
+      alternativesConsidered: optionalStringArray(record.alternativesConsidered),
+      evidence: normalizeEvidence(record.evidence)
+    };
+  }).filter((item) => item.decision || item.evidence.length);
+}
+
+function normalizeExperiments(value: unknown): SessionDigest["experiments"] {
+  return arrayValue(value).map((item) => {
+    const record = coerceObject(item);
+    return {
+      questionOrHypothesis: stringValue(record.questionOrHypothesis),
+      whatWasTried: stringValue(record.whatWasTried),
+      outcome: experimentOutcome(record.outcome),
+      details: optionalString(record.details),
+      evidence: normalizeEvidence(record.evidence)
+    };
+  }).filter((item) => item.questionOrHypothesis || item.whatWasTried || item.evidence.length);
+}
+
+function normalizeIdeas(value: unknown): SessionDigest["ideas"] {
+  return arrayValue(value).map((item) => {
+    const record = coerceObject(item);
+    return {
+      idea: stringValue(record.idea),
+      whyItMatters: optionalString(record.whyItMatters),
+      evidence: normalizeEvidence(record.evidence)
+    };
+  }).filter((item) => item.idea || item.evidence.length);
+}
+
+function normalizeDesignNotes(value: unknown): SessionDigest["designNotes"] {
+  return arrayValue(value).map((item) => {
+    const record = coerceObject(item);
+    return {
+      title: stringValue(record.title),
+      context: stringValue(record.context),
+      proposal: optionalString(record.proposal),
+      tradeoffs: optionalStringArray(record.tradeoffs),
+      openQuestions: optionalStringArray(record.openQuestions),
+      evidence: normalizeEvidence(record.evidence)
+    };
+  }).filter((item) => item.title || item.context || item.evidence.length);
+}
+
+function normalizeFollowUps(value: unknown): SessionDigest["followUps"] {
+  return arrayValue(value).map((item) => {
+    const record = coerceObject(item);
+    return {
+      task: stringValue(record.task),
+      priority: priority(record.priority),
+      owner: optionalString(record.owner),
+      evidence: normalizeEvidence(record.evidence)
+    };
+  }).filter((item) => item.task || item.evidence.length);
+}
+
+function normalizeRisks(value: unknown): SessionDigest["risks"] {
+  return arrayValue(value).map((item) => {
+    const record = coerceObject(item);
+    return {
+      risk: stringValue(record.risk),
+      mitigation: optionalString(record.mitigation),
+      evidence: normalizeEvidence(record.evidence)
+    };
+  }).filter((item) => item.risk || item.evidence.length);
+}
+
+function normalizeEvidence(value: unknown): EvidenceRef[] {
+  return arrayValue(value).map((item) => {
+    const record = coerceObject(item);
+    return {
+      eventId: optionalString(record.eventId),
+      messageId: optionalString(record.messageId),
+      toolCallId: optionalString(record.toolCallId),
+      file: optionalString(record.file),
+      quote: optionalString(record.quote)
+    };
+  }).filter((item) => item.eventId || item.messageId || item.toolCallId || item.file || item.quote);
 }
 
 function coerceMetrics(value: unknown): SessionDigest["metrics"] {
@@ -259,6 +366,11 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+function optionalStringArray(value: unknown): string[] | undefined {
+  const values = stringArray(value);
+  return values.length ? values : undefined;
+}
+
 function stringValue(value: unknown): string {
   return typeof value === "string" ? value : "";
 }
@@ -269,4 +381,12 @@ function optionalString(value: unknown): string | undefined {
 
 function numberValue(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
+}
+
+function experimentOutcome(value: unknown): SessionDigest["experiments"][number]["outcome"] {
+  return value === "worked" || value === "failed" || value === "inconclusive" ? value : "unknown";
+}
+
+function priority(value: unknown): NonNullable<SessionDigest["followUps"][number]["priority"]> | undefined {
+  return value === "low" || value === "medium" || value === "high" ? value : undefined;
 }

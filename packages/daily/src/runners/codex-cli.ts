@@ -57,7 +57,7 @@ export class CodexCliSummaryRunner implements SummaryRunner {
         command,
         args,
         stdin: sessionDigestPrompt(input),
-        timeoutMs: this.config.timeoutMs || 120000
+        timeoutMs: this.config.timeoutMs || 300000
       });
       if (result.code !== 0) throw runnerFailure(command, result.code, result.stderr, result.stdout);
       const output = await readFile(outputPath, "utf8").catch(() => result.stdout);

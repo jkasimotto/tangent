@@ -1,0 +1,32 @@
+{
+  "name": "tangent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Workspace for local coding-agent conversation tools.",
+  "type": "module",
+  "bin": {
+    "tangent": "./dist/cli/index.js"
+  },
+  "workspaces": [
+    "packages/core",
+    "packages/convos",
+    "packages/daily"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces && tsc -p tsconfig.json && chmod +x dist/cli/index.js",
+    "check": "npm run check --workspaces && tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist packages/*/dist"
+  },
+  "dependencies": {
+    "@tangent/core": "file:packages/core",
+    "@convos/convos": "file:packages/convos",
+    "@tangent/daily": "file:packages/daily"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "typescript": "^5.5.4"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

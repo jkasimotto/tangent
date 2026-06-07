@@ -1,0 +1,34 @@
+{
+  "name": "@tangent/daily",
+  "version": "0.1.0",
+  "description": "Private daily engineering notes from convos conversation telemetry.",
+  "type": "module",
+  "bin": {
+    "daily": "./dist/cli/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/sdk/index.d.ts",
+      "import": "./dist/sdk/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli/index.d.ts",
+      "import": "./dist/cli/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && chmod +x dist/cli/index.js",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@tangent/core": "file:../core",
+    "@convos/convos": "file:../convos"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

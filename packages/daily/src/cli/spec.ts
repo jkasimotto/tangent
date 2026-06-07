@@ -1,0 +1,94 @@
+import type { CliCommandSpec } from "@tangent/core";
+
+const dateValues = ["today", "yesterday", "tomorrow", "-1d", "+1d"];
+
+export const dailyCommandSpec: CliCommandSpec = {
+  name: "daily",
+  description: "Print, generate, and read private daily notes from convos",
+  values: dateValues,
+  subcommands: [
+    {
+      name: "init",
+      description: "Initialize private daily config for a repo",
+      args: "[repo]",
+      options: [
+        { name: "output", takesValue: true, values: ["user-global", "repo-local-private"], description: "Output location mode" },
+        { name: "repo-local", description: "Use repo-local private output" },
+        { name: "summary-provider", takesValue: true, values: ["claude-cli", "claude-sdk", "codex-cli"], description: "Summarizer provider" },
+        { name: "model", takesValue: true, values: ["gpt-5.4-mini", "gpt-5.4", "sonnet", "haiku", "opus"], description: "Summarizer model" },
+        { name: "sandbox", takesValue: true, values: ["read-only", "workspace-write", "danger-full-access"], description: "Codex sandbox" },
+        { name: "base-dir", takesValue: true, description: "Override daily output directory" },
+        { name: "notes-dir", takesValue: true, description: "Override notes directory" },
+        { name: "artifacts-dir", takesValue: true, description: "Override artifacts directory" }
+      ]
+    },
+    { name: "status", description: "Show daily status", args: "[repo]", options: jsonDateOptions() },
+    { name: "process", description: "Summarize unprocessed conversations and write a note", args: "[repo]", options: processOptions() },
+    { name: "unprocessed", description: "List unprocessed conversations", args: "[repo]", options: processOptions(["json"]) },
+    {
+      name: "note",
+      description: "Print, open, or locate a daily note",
+      args: "[repo]",
+      options: [
+        { name: "date", takesValue: true, values: dateValues, description: "Date bucket" },
+        { name: "path", description: "Print only the note path" },
+        { name: "open", description: "Open the note with the OS opener" },
+        { name: "json", description: "Print JSON" },
+        { name: "repo", takesValue: true, description: "Repository path for aliases" }
+      ],
+      subcommands: [
+        { name: "path", description: "Print only the note path", args: "[today|yesterday|YYYY-MM-DD|-1d]", values: dateValues, options: [{ name: "repo", takesValue: true, description: "Repository path" }, { name: "date", takesValue: true, values: dateValues, description: "Date bucket" }] }
+      ]
+    },
+    { name: "reprocess", description: "Force reprocessing", args: "[repo]", options: processOptions(["conversation", "all", "json"]) },
+    {
+      name: "provider",
+      description: "Test or inspect summary providers",
+      subcommands: [
+        { name: "test", description: "Check provider availability", options: providerOptions() },
+        { name: "models", description: "List provider models when available", options: providerOptions() }
+      ]
+    },
+    { name: "digests", description: "List cached digests", args: "[repo]", options: jsonDateOptions() },
+    {
+      name: "config",
+      description: "Show or edit daily config",
+      subcommands: [
+        { name: "show", description: "Print merged config", options: [{ name: "repo", takesValue: true, description: "Repository path" }] },
+        { name: "set", description: "Set private config value", args: "<path> <value>", options: [{ name: "repo", takesValue: true, description: "Repository path" }] }
+      ]
+    }
+  ]
+};
+
+function jsonDateOptions() {
+  return [
+    { name: "json", description: "Print JSON" },
+    { name: "date", takesValue: true, values: dateValues, description: "Date bucket" }
+  ];
+}
+
+function processOptions(extra: string[] = []) {
+  const options = [
+    { name: "date", takesValue: true, values: dateValues, description: "Date bucket" },
+    { name: "from", takesValue: true, description: "Start date/time" },
+    { name: "to", takesValue: true, description: "End date/time" },
+    { name: "provider", takesValue: true, values: ["claude", "codex"], description: "Provider filter" },
+    { name: "include-active", description: "Include quiet active conversations" }
+  ];
+  for (const name of extra) {
+    if (name === "conversation") options.push({ name, takesValue: true, description: "Conversation id" });
+    else options.push({ name, description: `${name} flag` });
+  }
+  return options;
+}
+
+function providerOptions() {
+  return [
+    { name: "provider", takesValue: true, values: ["claude-cli", "claude-sdk", "codex-cli"], description: "Summary provider" },
+    { name: "model", takesValue: true, values: ["gpt-5.4-mini", "gpt-5.4", "sonnet", "haiku", "opus"], description: "Model" },
+    { name: "command", takesValue: true, description: "Provider command" },
+    { name: "sandbox", takesValue: true, values: ["read-only", "workspace-write", "danger-full-access"], description: "Codex sandbox" },
+    { name: "json", description: "Print JSON" }
+  ];
+}

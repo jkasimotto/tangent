@@ -1,5 +1,5 @@
 import type { ConvosProvider } from "../core/schema/convos-jsonl-v1.js";
-import { repoInfo } from "../core/repo.js";
+import { repoInfo } from "@tangent/repo";
 import { setRepoTracked } from "../hook-runner/tracking-policy.js";
 
 export type TrackRepoOptions = {

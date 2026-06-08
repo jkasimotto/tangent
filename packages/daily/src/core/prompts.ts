@@ -1,24 +1,45 @@
-import type { SessionDigestInput } from "../types/digest.js";
-import { sessionDigestJsonSchema } from "./schemas.js";
+import type { TurnDigest, TurnDigestInput } from "../types/digest.js";
+import { topicRollupJsonSchema, turnDigestJsonSchema } from "./schemas.js";
 
-export function sessionDigestPrompt(input: SessionDigestInput): string {
-  return `You are generating a private engineering daily-log digest from one coding-agent conversation.
+export function turnDigestPrompt(input: TurnDigestInput): string {
+  return `You are generating a private engineering daily-log digest from one coding-agent turn.
 
 Rules:
-- Use only the provided conversation input.
+- Use only the provided turn input.
 - Do not claim work was completed unless the input supports it.
-- Prefer concrete decisions, experiments, implementation details, and follow-ups.
+- Prefer concrete decisions, experiments, implementation details, debugging findings, and follow-ups.
+- Group the turn under one or more stable topic hints.
 - Ignore low-signal back-and-forth.
 - Do not include secrets, credentials, tokens, or long code blocks.
 - Keep quotes short.
-- Keep evidence references attached to each important claim.
 - Prefer omission over speculation.
 - Output valid JSON matching the schema.
 
 JSON schema:
-${JSON.stringify(sessionDigestJsonSchema)}
+${JSON.stringify(turnDigestJsonSchema)}
 
-Conversation input:
+Turn input:
 ${JSON.stringify(input)}
+`;
+}
+
+export function topicRollupPrompt(args: { date: string; key: string; title: string; digests: TurnDigest[] }): string {
+  return `You are rolling up several turn digests from one day into a topic-centric engineering note section.
+
+Rules:
+- Use only the provided turn digests.
+- Write narrativeMarkdown as useful engineering notes, not a chat transcript.
+- Preserve design options, debugging paths, decisions, experiments, open questions, and follow-ups.
+- Keep repeated details merged.
+- Output valid JSON matching the schema.
+
+JSON schema:
+${JSON.stringify(topicRollupJsonSchema)}
+
+Topic:
+${JSON.stringify({ date: args.date, key: args.key, title: args.title })}
+
+Turn digests:
+${JSON.stringify(args.digests)}
 `;
 }

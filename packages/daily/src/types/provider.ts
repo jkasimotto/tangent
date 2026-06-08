@@ -1,5 +1,5 @@
-import type { DailyNote, WorkSession, WorkSessionRollup } from "./daily-note.js";
-import type { SessionDigest, SessionDigestInput } from "./digest.js";
+import type { DailyNote } from "./daily-note.js";
+import type { TopicRollup, TurnDigest, TurnDigestInput } from "./digest.js";
 
 export type SummaryProviderKind = "claude-cli" | "claude-sdk" | "codex-cli";
 
@@ -39,7 +39,7 @@ export interface SummaryRunner {
   id: string;
   kind: SummaryProviderKind;
   checkAvailable(): Promise<RunnerStatus>;
-  summarizeSession(input: SessionDigestInput): Promise<SessionDigest>;
-  rollupWorkSession?(session: WorkSession): Promise<WorkSessionRollup>;
+  summarizeTurn(input: TurnDigestInput): Promise<TurnDigest>;
+  rollupTopic?(args: { date: string; key: string; title: string; digests: TurnDigest[] }): Promise<TopicRollup>;
   rollupDay?(note: DailyNote): Promise<Partial<DailyNote>>;
 }

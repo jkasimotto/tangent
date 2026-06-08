@@ -6,8 +6,8 @@ export async function reprocessCommand(args: Args): Promise<void> {
     repo: args._[1] || ".",
     date: dateArg(args.date),
     provider: providerArg(args.provider),
-    conversationId: stringArg(args.conversation),
-    force: Boolean(args.all || args.conversation || args.date)
+    sourceKey: stringArg(args.source),
+    force: Boolean(args.all || args.source || args.date)
   });
   if (args.json) console.log(JSON.stringify(result, null, 2));
   else {

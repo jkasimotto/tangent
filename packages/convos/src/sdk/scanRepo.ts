@@ -1,7 +1,7 @@
 import { readJsonl, listJsonlFiles } from "../core/append-jsonl.js";
 import { ConvosDataset } from "../core/dataset.js";
 import { convosHome, repoEventDir } from "../core/paths.js";
-import { repoInfo } from "../core/repo.js";
+import { repoInfo } from "@tangent/repo";
 import type { ConvosJsonlLineV1, ConvosProvider, ConvosWarning } from "../core/schema/convos-jsonl-v1.js";
 import { discoverClaudeNative } from "../providers/claude/native/discover.js";
 import { normalizeClaudeNativeRecord } from "../providers/claude/native/normalize.js";
@@ -17,17 +17,19 @@ export type ScanRepoOptions = {
 
 export async function scanRepo(options: ScanRepoOptions): Promise<ConvosDataset> {
   const providers = options.providers || ["claude", "codex"];
-  const sources = options.sources || ["native", "convos-jsonl"];
+  const sources = options.sources || ["convos-jsonl"];
   const repo = await repoInfo(options.repo);
   const root = repo.root || repo.cwd;
   const events: ConvosJsonlLineV1[] = [];
   const warnings: ConvosWarning[] = [];
+  const sourceFiles: string[] = [];
 
   if (sources.includes("convos-jsonl")) {
     for (const provider of providers) {
       const files = await listJsonlFiles(repoEventDir(root, provider));
       for (const file of files) {
         try {
+          sourceFiles.push(file);
           events.push(...await readJsonl<ConvosJsonlLineV1>(file));
         } catch (error) {
           warnings.push({ code: "invalid-jsonl", message: (error as Error).message, path: file });
@@ -41,6 +43,7 @@ export async function scanRepo(options: ScanRepoOptions): Promise<ConvosDataset>
     for (const file of files) {
       try {
         const records = await readJsonl<unknown>(file);
+        sourceFiles.push(file);
         records.forEach((record, index) => {
           const normalized = normalizeClaudeNativeRecord(record, file, index + 1);
           if (normalized) events.push(normalized);
@@ -59,5 +62,15 @@ export async function scanRepo(options: ScanRepoOptions): Promise<ConvosDataset>
   });
 
   void convosHome;
-  return new ConvosDataset(filtered, warnings);
+  const dataset = new ConvosDataset(filtered, warnings, { sourceFiles });
+  try {
+    dataset.writeIndex(root);
+  } catch (error) {
+    warnings.push({ code: "index-write-failed", message: (error as Error).message });
+  }
+  return dataset;
+}
+
+export async function openConvos(options: Omit<ScanRepoOptions, "sources">): Promise<ConvosDataset> {
+  return scanRepo({ ...options, sources: ["convos-jsonl"] });
 }

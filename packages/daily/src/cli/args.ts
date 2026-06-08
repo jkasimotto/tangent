@@ -1,39 +1,6 @@
-export type Args = {
-  _: string[];
-  [key: string]: string | boolean | string[];
-};
+import { booleanArg, dateArg, parseArgs, parseDate, stringArg, type Args } from "@tangent/core/cli";
 
-export function parseArgs(argv: string[]): Args {
-  const args: Args = { _: [] };
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i]!;
-    if (!arg.startsWith("--")) {
-      args._.push(arg);
-      continue;
-    }
-    const [rawKey, inlineValue] = arg.slice(2).split("=", 2);
-    const key = rawKey!;
-    if (inlineValue !== undefined) {
-      args[key] = inlineValue;
-      continue;
-    }
-    const next = argv[i + 1];
-    if (!next || next.startsWith("--")) args[key] = true;
-    else {
-      args[key] = next;
-      i += 1;
-    }
-  }
-  return args;
-}
-
-export function stringArg(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
-export function booleanArg(value: unknown): boolean {
-  return value === true || value === "true";
-}
+export { booleanArg, dateArg, parseArgs, parseDate, stringArg, type Args };
 
 export function providerArg(value: unknown): "claude" | "codex" | undefined {
   if (value === undefined) return undefined;
@@ -57,15 +24,4 @@ export function sandboxArg(value: unknown): "read-only" | "workspace-write" | "d
   if (value === undefined) return undefined;
   if (value === "read-only" || value === "workspace-write" || value === "danger-full-access") return value;
   throw new Error("--sandbox must be read-only, workspace-write, or danger-full-access.");
-}
-
-export function dateArg(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
-export function parseDate(value: unknown): Date | undefined {
-  if (typeof value !== "string") return undefined;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) throw new Error(`Invalid date: ${value}`);
-  return parsed;
 }

@@ -15,5 +15,5 @@ export async function digestsCommand(args: Args): Promise<void> {
     console.log(`No cached digests for ${date}.`);
     return;
   }
-  for (const row of rows) console.log(`${row.digest.conversation.provider}  ${row.digest.conversation.id}  ${row.path}`);
+  for (const row of rows) console.log(`${row.digest.source.provider}  ${row.digest.source.sourceKey}  ${row.path}`);
 }

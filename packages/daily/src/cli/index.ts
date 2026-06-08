@@ -3,6 +3,7 @@ import { pathToFileURL } from "node:url";
 import { renderCommandHelp } from "@tangent/core";
 
 import { parseArgs } from "./args.js";
+import { digestCommand, inputCommand, renderCommand, topicsCommand } from "./commands/artifacts.js";
 import { configCommand } from "./commands/config.js";
 import { digestsCommand } from "./commands/digests.js";
 import { initCommand } from "./commands/init.js";
@@ -25,12 +26,16 @@ export async function runDailyCli(argv = process.argv.slice(2)): Promise<void> {
   if (command === "init") return initCommand(args);
   if (command === "status") return statusCommand(args);
   if (command === "process") return processCommand(args);
-  if (command === "unprocessed") return unprocessedCommand(args);
+  if (command === "unprocessed" || command === "candidates") return unprocessedCommand(args);
   if (command === "note") return noteCommand(args);
   if (command === "path") return noteCommand({ ...args, _: ["note", "path", ...args._.slice(1)] });
   if (command === "reprocess") return reprocessCommand(args);
   if (command === "provider") return providerCommand(args);
   if (command === "digests") return digestsCommand(args);
+  if (command === "input") return inputCommand(args);
+  if (command === "digest") return digestCommand(args);
+  if (command === "topics") return topicsCommand(args);
+  if (command === "render") return renderCommand(args);
   if (command === "config") return configCommand(args);
   throw new Error(`Unknown command: ${command}`);
 }

@@ -1,68 +1,30 @@
-import type { SessionDigest } from "./digest.js";
-
-export type WorkSessionRollup = {
-  title: string;
-  summary: string;
-  themes: string[];
-};
-
-export type WorkSession = {
-  id: string;
-  repoId: string;
-  date: string;
-  startedAt?: string;
-  endedAt?: string;
-  conversationIds: string[];
-  providers: Array<"claude" | "codex">;
-  title: string;
-  digests: SessionDigest[];
-  rollup?: WorkSessionRollup;
-};
+import type { TopicRollup } from "./digest.js";
 
 export type DailyNote = {
-  schema: "daily.note.v1";
+  schema: "daily.note.v2";
   repo: {
     id: string;
     name: string;
     rootHash: string;
     branch?: string;
   };
-  user: {
-    idHash: string;
-    displayName?: string;
-  };
   date: string;
   timezone: string;
   generatedAt: string;
   source: {
-    conversationIds: string[];
-    digestHashes: string[];
-    convosVersion?: string;
+    turnKeys: string[];
+    providers: Array<"claude" | "codex">;
+    topicKeys: string[];
     dailyVersion: string;
   };
-  standup: {
-    done: string[];
-    next: string[];
-    blockers: string[];
-  };
-  daySummary: {
-    short: string;
-    themes: string[];
-  };
-  workSessions: WorkSession[];
-  decisions: SessionDigest["decisions"];
-  experiments: SessionDigest["experiments"];
-  designSeeds: SessionDigest["designNotes"];
-  followUps: SessionDigest["followUps"];
-  risks: SessionDigest["risks"];
+  topics: TopicRollup[];
   metrics?: {
-    conversations: number;
+    turns: number;
+    topics: number;
     toolCalls: number;
-    filesRead: number;
-    filesWritten: number;
-    testsRun: number;
-    testFailures: number;
-    tokensTotal?: number;
+    commandCalls: number;
+    filesTouched: number;
+    activeAgentWallTimeMs?: number;
   };
   sourceCaveats: string[];
 };

@@ -12,7 +12,7 @@ export async function statusCommand(args: Args): Promise<void> {
   console.log("Convos");
   for (const [provider, row] of Object.entries(value.convos.providers)) {
     const label = provider === "claude" ? "Claude" : "Codex";
-    console.log(`  ${label}: ${row.tracked ? "tracked" : "not tracked"}, ${row.conversations} conversations${row.lastConversationAt ? `, last ${row.lastConversationAt}` : ""}`);
+    console.log(`  ${label}: ${row.tracked ? "tracked" : "not tracked"}, ${row.turns} turns${row.lastTurnAt ? `, last ${row.lastTurnAt}` : ""}`);
   }
   console.log("");
   console.log("Daily");

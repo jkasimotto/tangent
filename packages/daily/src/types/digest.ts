@@ -1,166 +1,186 @@
 export type EvidenceRef = {
+  id?: string;
   eventId?: string;
-  messageId?: string;
   toolCallId?: string;
   file?: string;
   quote?: string;
+  kind?: string;
 };
 
-export type SessionDigestInput = {
-  schema: "daily.session-digest-input.v1";
+export type DailyCandidate = {
+  schema: "daily.candidate.v1";
+  sourceKey: string;
+  provider: "claude" | "codex";
+  conversationId: string;
+  turnId: string;
+  dateBucket: string;
+  startedAt?: string;
+  endedAt?: string;
+  lastActivityAt: string;
+  titlePreview?: string;
+  sourceFingerprint: string;
+  priorStatus?: "processed" | "failed" | "skipped-empty" | "skipped-active";
+  reason: "new" | "changed" | "previously-failed" | "forced";
+  stats: {
+    userMessages: number;
+    assistantMessages: number;
+    toolCalls: number;
+    commandCalls: number;
+    filesTouched: number;
+  };
+};
+
+export type TurnDigestInput = {
+  schema: "daily.turn-digest-input.v1";
   repo: {
     name: string;
-    root?: string;
+    rootHash: string;
     branch?: string;
   };
-  conversation: {
-    id: string;
+  source: {
     provider: "claude" | "codex";
-    title?: string;
+    conversationId: string;
+    turnId: string;
+    sourceKey: string;
+    dateBucket: string;
     startedAt?: string;
     endedAt?: string;
-    lastActivityAt?: string;
-    durationMs?: number;
-    dateBucket: string;
+    wallTimeMs?: number;
+    sourceFingerprint: string;
+    captureConfidence: "exact" | "partial" | "best-effort";
   };
-  messages: Array<{
+  transcript: Array<{
     role: "user" | "assistant";
-    visible: boolean;
     text: string;
-    at?: string;
-    eventId?: string;
+    eventId: string;
+    confidence: "exact" | "partial";
   }>;
-  internal?: Array<{
-    kind:
-      | "plan"
-      | "thinking"
-      | "reasoning_summary"
-      | "compaction_summary"
-      | "subagent_summary"
-      | "system";
-    text?: string;
-    structured?: unknown;
-    eventId?: string;
-  }>;
-  tools: Array<{
-    id: string;
-    name: string;
-    category: string;
-    inputPreview?: string;
-    resultPreview?: string;
-    status?: "success" | "error" | "unknown";
-    durationMs?: number;
-    targetPaths?: string[];
-    at?: string;
-  }>;
-  files: {
-    read: string[];
-    written: string[];
-    searched: string[];
-  };
-  commands: Array<{
-    command: string;
-    classification: {
+  activity: {
+    commands: Array<{
+      command: string;
+      purpose?: string;
+      status: "success" | "error" | "unknown";
+      durationMs?: number;
       isTest: boolean;
       isBuild: boolean;
       isLint: boolean;
-      isTypecheck: boolean;
-      isDestructive: boolean;
-    };
-    status?: "success" | "error" | "unknown";
-    outputPreview?: string;
-  }>;
-  metrics?: {
-    tokens?: {
-      input?: number;
-      output?: number;
-      cacheRead?: number;
-      total?: number;
-      confidence: string;
-    };
-    toolCalls?: number;
-    filesTouched?: number;
+      outputPreview?: string;
+      evidenceEventId: string;
+    }>;
+    fileChanges: Array<{
+      path: string;
+      action: "read" | "searched" | "wrote" | "edited" | "unknown";
+      toolCallId?: string;
+    }>;
+    toolHighlights: Array<{
+      toolName: string;
+      category: string;
+      inputSummary?: string;
+      resultSummary?: string;
+      status?: "success" | "error" | "unknown";
+      evidenceEventId: string;
+    }>;
+    compactions: Array<{
+      trigger: "manual" | "auto" | "unknown";
+      summary?: string;
+      eventId: string;
+    }>;
+    subagents: Array<{
+      agentType?: string;
+      finalMessage?: string;
+      eventId: string;
+    }>;
   };
-  evidenceIndex: Array<{
-    eventId: string;
-    type: string;
-    shortRef: string;
-  }>;
+  evidence: EvidenceRef[];
+  omissions: {
+    rawToolResultsOmitted: number;
+    longMessagesTruncated: number;
+    filesContentOmitted: number;
+    reason: string[];
+  };
 };
 
-export type SessionDigest = {
-  schema: "daily.session-digest.v1";
-  conversation: {
-    id: string;
+export type TurnDigest = {
+  schema: "daily.turn-digest.v1";
+  source: {
+    sourceKey: string;
     provider: "claude" | "codex";
-    title: string;
+    conversationId: string;
+    turnId: string;
+    dateBucket: string;
     startedAt?: string;
     endedAt?: string;
-    dateBucket: string;
-    branch?: string;
+    wallTimeMs?: number;
+    inputHash: string;
   };
+  topicHints: Array<{
+    key: string;
+    title: string;
+    confidence: "high" | "medium" | "low";
+  }>;
   headline: string;
-  summary: {
-    short: string;
-    detailed?: string;
-  };
-  workDone: Array<{
-    text: string;
-    files?: string[];
-    evidence: EvidenceRef[];
+  summary: string;
+  workDone: string[];
+  designNotes: Array<{
+    title: string;
+    context: string;
+    options?: Array<{
+      name: string;
+      details: string;
+      pros?: string[];
+      cons?: string[];
+    }>;
+    openQuestions?: string[];
   }>;
   decisions: Array<{
     decision: string;
     rationale?: string;
-    alternativesConsidered?: string[];
-    evidence: EvidenceRef[];
+    alternatives?: string[];
   }>;
   experiments: Array<{
-    questionOrHypothesis: string;
-    whatWasTried: string;
+    question: string;
+    method: string;
     outcome: "worked" | "failed" | "inconclusive" | "unknown";
     details?: string;
-    evidence: EvidenceRef[];
   }>;
-  ideas: Array<{
-    idea: string;
-    whyItMatters?: string;
-    evidence: EvidenceRef[];
+  debuggingFindings: Array<{
+    symptom: string;
+    investigation: string;
+    finding: string;
+    fixOrNextStep?: string;
   }>;
-  designNotes: Array<{
-    title: string;
-    context: string;
-    proposal?: string;
-    tradeoffs?: string[];
-    openQuestions?: string[];
-    evidence: EvidenceRef[];
-  }>;
-  standup: {
-    done: string[];
-    next: string[];
-    blockers: string[];
+  followUps: string[];
+  entities: {
+    files: string[];
+    functions: string[];
+    tickets: string[];
+    commands: string[];
   };
-  followUps: Array<{
-    task: string;
-    priority?: "low" | "medium" | "high";
-    owner?: string;
-    evidence: EvidenceRef[];
-  }>;
-  risks: Array<{
-    risk: string;
-    mitigation?: string;
-    evidence: EvidenceRef[];
-  }>;
-  metrics?: {
-    tokensTotal?: number;
-    toolCalls?: number;
-    filesRead?: number;
-    filesWritten?: number;
-    testsRun?: number;
-    testFailures?: number;
-  };
+  evidence: EvidenceRef[];
   quality: {
     confidence: "high" | "medium" | "low";
-    missingContext?: string[];
+    caveats: string[];
   };
+};
+
+export type TopicRollup = {
+  schema: "daily.topic-rollup.v1";
+  date: string;
+  key: string;
+  title: string;
+  sourceTurnKeys: string[];
+  providers: Array<"claude" | "codex">;
+  timeSpentMs?: number;
+  summary: string;
+  narrativeMarkdown: string;
+  sections: Array<{
+    heading: string;
+    markdown: string;
+  }>;
+  decisions: string[];
+  experiments: string[];
+  openQuestions: string[];
+  followUps: string[];
+  evidence: Array<EvidenceRef & { sourceKey?: string }>;
+  caveats: string[];
 };

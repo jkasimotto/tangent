@@ -1,5 +1,5 @@
-export { getUnprocessed } from "./getUnprocessed.js";
-export type { GetUnprocessedOptions, UnprocessedConversation } from "./getUnprocessed.js";
+export { getCandidates, getUnprocessed } from "./getUnprocessed.js";
+export type { GetCandidatesOptions, GetUnprocessedOptions, UnprocessedConversation } from "./getUnprocessed.js";
 export { processUnprocessed } from "./processUnprocessed.js";
 export type { ProcessResult, ProcessUnprocessedOptions } from "./processUnprocessed.js";
 export { getDailyNote } from "./getDailyNote.js";
@@ -10,7 +10,7 @@ export { configure } from "./config.js";
 export type { ConfigureOptions } from "./config.js";
 
 export type { DailyConfig } from "../types/config.js";
-export type { SessionDigest, SessionDigestInput, EvidenceRef } from "../types/digest.js";
-export type { DailyNote, WorkSession, WorkSessionRollup } from "../types/daily-note.js";
-export type { ProcessedConversationLedgerLine } from "../types/ledger.js";
+export type { DailyCandidate, EvidenceRef, TopicRollup, TurnDigest, TurnDigestInput } from "../types/digest.js";
+export type { DailyNote } from "../types/daily-note.js";
+export type { DailyLedgerLineV2, ProcessedConversationLedgerLine } from "../types/ledger.js";
 export type { SummaryProviderConfig, SummaryRunner, RunnerStatus } from "../types/provider.js";

@@ -1,99 +1,102 @@
-import { scanRepo, type ConvosProvider } from "@convos/convos";
+import { openConvos, type ConvosProvider, type TurnListItem } from "@convos/convos";
 
-import { buildSessionDigestInput, conversationEnvelopes, isProcessable, type ConversationEnvelope } from "./adapter.js";
-import { hashObject } from "../core/hash.js";
-import { readLedger, latestLedgerByConversation } from "../core/ledger.js";
+import { isProcessableTurn } from "./adapter.js";
+import { readLedger, latestLedgerBySource } from "../core/ledger.js";
 import type { LoadedDailyConfig } from "../core/config.js";
-import type { SessionDigestInput } from "../types/digest.js";
+import { dateBucket as formatDateBucket } from "../core/time.js";
+import type { DailyCandidate } from "../types/digest.js";
 
-export type UnprocessedConversationQuery = {
+export type CandidateQuery = {
   repo: string;
   providers?: ConvosProvider[];
   date?: string;
   from?: Date;
   to?: Date;
-  bucketBy?: "startedAt" | "endedAt" | "lastActivityAt";
+  bucketBy?: "turnStartedAt" | "turnEndedAt" | "lastActivityAt";
   includeActive?: boolean;
   force?: boolean;
-  conversationId?: string;
+  sourceKey?: string;
 };
 
-export type UnprocessedConversation = {
-  conversationId: string;
-  provider: ConvosProvider;
-  startedAt?: string;
-  endedAt?: string;
-  lastActivityAt?: string;
-  dateBucket: string;
-  title?: string;
-  reason: "new" | "changed" | "previously-failed" | "forced";
-  inputHash: string;
+export type UnprocessedConversationQuery = CandidateQuery;
+export type UnprocessedConversation = DailyCandidate;
+export type InternalUnprocessedConversation = DailyCandidate & {
+  turn: TurnListItem;
 };
 
-export type InternalUnprocessedConversation = UnprocessedConversation & {
-  envelope: ConversationEnvelope;
-  input: SessionDigestInput;
-  eventHighWatermark?: string;
-};
-
-export async function collectUnprocessed(loaded: LoadedDailyConfig, query: Omit<UnprocessedConversationQuery, "repo"> = {}): Promise<InternalUnprocessedConversation[]> {
+export async function collectCandidates(loaded: LoadedDailyConfig, query: Omit<CandidateQuery, "repo"> = {}): Promise<InternalUnprocessedConversation[]> {
   const providers = query.providers || loaded.config.input.providers;
-  const scan = await scanRepo({
+  const startedAt = Date.now();
+  const dataset = await openConvos({
     repo: loaded.repo.root,
-    providers,
-    sources: ["native", "convos-jsonl"]
+    providers
   });
   const ledger = await readLedger(loaded.paths.ledgerPath);
-  const latest = latestLedgerByConversation(ledger);
+  const latest = latestLedgerBySource(ledger);
+  const bucketBy = query.bucketBy || loaded.config.processing.dateBucket;
 
-  return conversationEnvelopes(scan, {
-    ...loaded.config,
-    processing: {
-      ...loaded.config.processing,
-      dateBucket: query.bucketBy || loaded.config.processing.dateBucket
-    }
-  }).filter((envelope) => providers.includes(envelope.provider))
-    .filter((envelope) => !query.conversationId || envelope.conversation.id === query.conversationId)
-    .filter((envelope) => !query.date || envelope.dateBucket === query.date)
-    .filter((envelope) => inDateRange(envelope, query.from, query.to))
-    .filter((envelope) => isProcessable(envelope, loaded.config, query.includeActive))
-    .map((envelope) => {
-      const input = buildSessionDigestInput({ dataset: scan, repo: loaded.repo, config: loaded.config, envelope });
-      const inputHash = hashObject(input);
-      const prior = latest.get(envelope.conversation.id);
-      const reason: UnprocessedConversation["reason"] = query.force
-        ? "forced"
-        : prior?.status === "failed" && prior.inputHash === inputHash
-          ? "previously-failed"
-          : prior && prior.inputHash !== inputHash
-            ? "changed"
-            : "new";
-      return {
-        conversationId: envelope.conversation.id,
-        provider: envelope.provider,
-        startedAt: envelope.conversation.startedAt?.toISOString(),
-        endedAt: envelope.conversation.endedAt?.toISOString(),
-        lastActivityAt: envelope.lastActivityAt?.toISOString(),
-        dateBucket: envelope.dateBucket,
-        title: envelope.conversation.title,
-        reason,
-        inputHash,
-        envelope,
-        input,
-        eventHighWatermark: envelope.eventHighWatermark
-      };
-    })
+  const rows = dataset.turns.list({
+    provider: providers.length === 1 ? providers[0] : undefined,
+    from: query.from,
+    to: query.to,
+    includeActive: query.includeActive || loaded.config.processing.includeActiveConversations,
+    bucketBy
+  }).data
+    .filter((turn) => providers.includes(turn.provider))
+    .filter((turn) => !query.sourceKey || turn.sourceKey === query.sourceKey)
+    .map((turn) => ({ turn, dateBucket: bucketForTurn(turn, bucketBy, loaded.config.processing.timezone) }))
+    .filter((row) => !query.date || row.dateBucket === query.date)
+    .filter((row) => isProcessableTurn(row.turn, loaded.config, query.includeActive))
+    .map(({ turn, dateBucket }) => candidateForTurn(turn, dateBucket, latest.get(turn.sourceKey), Boolean(query.force)))
     .filter((row) => {
       if (query.force) return true;
-      const prior = latest.get(row.conversationId);
-      return !(prior?.inputHash === row.inputHash && prior.status === "processed");
+      const prior = latest.get(row.sourceKey);
+      return !(prior?.sourceFingerprint === row.sourceFingerprint && prior.status === "processed");
     });
+
+  void startedAt;
+  return rows;
 }
 
-function inDateRange(envelope: ConversationEnvelope, from?: Date, to?: Date): boolean {
-  const date = envelope.conversation.endedAt || envelope.lastActivityAt || envelope.conversation.startedAt;
-  if (!date) return true;
-  if (from && date < from) return false;
-  if (to && date > to) return false;
-  return true;
+export const collectUnprocessed = collectCandidates;
+
+function candidateForTurn(
+  turn: TurnListItem,
+  dateBucket: string,
+  prior: ReturnType<typeof latestLedgerBySource> extends Map<string, infer T> ? T | undefined : never,
+  force: boolean
+): InternalUnprocessedConversation {
+  const reason: DailyCandidate["reason"] = force
+    ? "forced"
+    : prior?.status === "failed" && prior.sourceFingerprint === turn.sourceFingerprint
+      ? "previously-failed"
+      : prior && prior.sourceFingerprint !== turn.sourceFingerprint
+        ? "changed"
+        : "new";
+  return {
+    schema: "daily.candidate.v1",
+    sourceKey: turn.sourceKey,
+    provider: turn.provider,
+    conversationId: turn.conversationId,
+    turnId: turn.turnId,
+    dateBucket,
+    startedAt: turn.startedAt?.toISOString(),
+    endedAt: turn.endedAt?.toISOString(),
+    lastActivityAt: turn.lastActivityAt.toISOString(),
+    titlePreview: turn.titlePreview,
+    sourceFingerprint: turn.sourceFingerprint,
+    priorStatus: prior?.status,
+    reason,
+    stats: turn.stats,
+    turn
+  };
+}
+
+function bucketForTurn(turn: TurnListItem, bucketBy: NonNullable<CandidateQuery["bucketBy"]>, timezone: string): string {
+  const date = bucketBy === "turnStartedAt"
+    ? turn.startedAt || turn.lastActivityAt
+    : bucketBy === "lastActivityAt"
+      ? turn.lastActivityAt
+      : turn.endedAt || turn.lastActivityAt;
+  return formatDateBucket(date, timezone);
 }

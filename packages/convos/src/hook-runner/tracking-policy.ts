@@ -1,8 +1,8 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { pathExists } from "@tangent/repo";
 
 import { globalConfigPath } from "../core/paths.js";
-import { pathExists } from "../core/repo.js";
 import type { ConvosProvider, ContentMode, TrackingSource } from "../core/schema/convos-jsonl-v1.js";
 
 export type ConvosGlobalConfig = {
@@ -29,7 +29,7 @@ export function defaultGlobalConfig(): ConvosGlobalConfig {
     schema: "convos.config.v1",
     tracking: { default: "off", repos: {} },
     capture: {
-      contentMode: "metadata-with-preview",
+      contentMode: "metadata-with-excerpts",
       redactSecrets: true,
       maxToolResponseBytes: 20000
     }

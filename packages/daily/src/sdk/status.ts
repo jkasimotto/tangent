@@ -1,12 +1,12 @@
-import { scanRepo, status as convosStatus, type ConversationListItem } from "@convos/convos";
+import { openConvos, status as convosStatus, type ConversationListItem, type TurnListItem } from "@convos/convos";
+import { pathExists } from "@tangent/repo";
 
 import { loadConfig } from "../core/config.js";
-import { dateArgToBucket, dateBucket, todayBucket } from "../core/time.js";
+import { dateArgToBucket, todayBucket } from "../core/time.js";
 import { notePath } from "../core/paths.js";
-import { pathExists } from "../core/repo.js";
-import { latestLedgerByConversation, readLedger } from "../core/ledger.js";
 import { createSummaryRunner } from "../runners/summary-runner.js";
 import type { SummaryProviderConfig, RunnerStatus } from "../types/provider.js";
+import { collectCandidates } from "../convos/selectors.js";
 
 export type DailyStatus = {
   repo: {
@@ -21,8 +21,8 @@ export type DailyStatus = {
       {
         tracked: boolean;
         sources: string[];
-        conversations: number;
-        lastConversationAt?: string;
+        turns: number;
+        lastTurnAt?: string;
       }
     >;
   };
@@ -47,7 +47,7 @@ export type DailyStatus = {
     path: string;
     exists: boolean;
     stale: boolean;
-    conversationCount: number;
+    turnCount: number;
   }>;
 };
 
@@ -59,12 +59,13 @@ export type StatusOptions = {
 export async function status(options: StatusOptions): Promise<DailyStatus> {
   const loaded = await loadConfig({ repo: options.repo });
   const convos = await convosStatus({ repo: loaded.repo.root });
-  const dataset = await scanRepo({ repo: loaded.repo.root, providers: ["claude", "codex"], sources: ["convos-jsonl"] });
+  const dataset = await openConvos({ repo: loaded.repo.root, providers: ["claude", "codex"] });
   const conversations = dataset.conversations.all().data;
+  const turns = dataset.turns.list({ includeActive: true }).data;
   const runner = createSummaryRunner(loaded.config.summary.provider);
   const providerStatus = await runner.checkAvailable();
   const date = dateArgToBucket(options.date, loaded.config.processing.timezone) || todayBucket(loaded.config.processing.timezone);
-  const unprocessed = await lightweightUnprocessed(loaded, conversations);
+  const unprocessed = await collectCandidates(loaded, { date });
   const note = notePath(loaded.paths, date);
 
   return {
@@ -76,8 +77,8 @@ export async function status(options: StatusOptions): Promise<DailyStatus> {
     convos: {
       available: true,
       providers: {
-        claude: providerRow("claude", convos, conversations),
-        codex: providerRow("codex", convos, conversations)
+        claude: providerRow("claude", convos, conversations, turns),
+        codex: providerRow("codex", convos, conversations, turns)
       }
     },
     daily: {
@@ -103,40 +104,22 @@ export async function status(options: StatusOptions): Promise<DailyStatus> {
         path: note,
         exists: await pathExists(note),
         stale: false,
-        conversationCount: 0
+        turnCount: turns.filter((turn) => turn.endedAt?.toISOString().slice(0, 10) === date || turn.lastActivityAt.toISOString().slice(0, 10) === date).length
       }
     ]
   };
 }
 
-async function lightweightUnprocessed(loaded: Awaited<ReturnType<typeof loadConfig>>, conversations: ConversationListItem[]): Promise<Array<{ provider: "claude" | "codex"; dateBucket: string }>> {
-  const ledger = latestLedgerByConversation(await readLedger(loaded.paths.ledgerPath));
-  return conversations
-    .filter((conversation) => loaded.config.input.providers.includes(conversation.provider))
-    .filter((conversation) => conversation.endedAt || loaded.config.processing.includeActiveConversations)
-    .filter((conversation) => ledger.get(conversation.id)?.status !== "processed")
-    .map((conversation) => ({
-      provider: conversation.provider,
-      dateBucket: bucketConversation(conversation, loaded.config.processing.dateBucket, loaded.config.processing.timezone)
-    }));
-}
-
-function bucketConversation(conversation: ConversationListItem, bucketBy: "endedAt" | "startedAt" | "lastActivityAt", timezone: string): string {
-  const date = bucketBy === "startedAt" ? conversation.startedAt : conversation.endedAt || conversation.startedAt;
-  return dateBucket(date || new Date(), timezone);
-}
-
-function providerRow(provider: "claude" | "codex", convos: Awaited<ReturnType<typeof convosStatus>>, conversations: ConversationListItem[]): DailyStatus["convos"]["providers"]["claude"] {
+function providerRow(provider: "claude" | "codex", convos: Awaited<ReturnType<typeof convosStatus>>, conversations: ConversationListItem[], turns: TurnListItem[]): DailyStatus["convos"]["providers"]["claude"] {
   const row = convos.providers.find((entry) => entry.provider === provider);
-  const providerConversations = conversations.filter((conversation) => conversation.provider === provider);
+  const providerTurns = turns.filter((turn) => turn.provider === provider);
   return {
     tracked: Boolean(row?.capture.enabled || row?.capture.lastEvent || row?.nativePaths.length),
     sources: [
       row?.capture.lastEvent ? "convos-jsonl" : undefined,
-      row?.nativePaths.length ? "native" : undefined
     ].filter((value): value is string => Boolean(value)),
-    conversations: providerConversations.length,
-    lastConversationAt: latestConversationAt(providerConversations) || row?.capture.lastEvent
+    turns: providerTurns.length,
+    lastTurnAt: latestTurnAt(providerTurns) || latestConversationAt(conversations.filter((conversation) => conversation.provider === provider)) || row?.capture.lastEvent
   };
 }
 
@@ -145,6 +128,12 @@ function latestConversationAt(conversations: ConversationListItem[]): string | u
     .flatMap((conversation) => [conversation.endedAt, conversation.startedAt])
     .filter((date): date is Date => Boolean(date))
     .map((date) => date.getTime());
+  const latest = Math.max(...times);
+  return Number.isFinite(latest) ? new Date(latest).toISOString() : undefined;
+}
+
+function latestTurnAt(turns: TurnListItem[]): string | undefined {
+  const times = turns.map((turn) => turn.lastActivityAt.getTime());
   const latest = Math.max(...times);
   return Number.isFinite(latest) ? new Date(latest).toISOString() : undefined;
 }

@@ -1,10 +1,10 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { pathExists, resolveRepo, type ResolvedRepoInfo as SearchRepoInfo } from "@tangent/repo";
 
 import type { LanguageId } from "../languages/base.js";
 import type { SearchConfig, SearchMode, SearchStorageMode } from "../types/config.js";
 import { ensureOutputDirs, resolveOutputPaths, resolveUserPath, type SearchOutputPaths } from "./paths.js";
-import { pathExists, resolveRepo, type SearchRepoInfo } from "./repo.js";
 
 export type LoadedSearchConfig = {
   config: SearchConfig;

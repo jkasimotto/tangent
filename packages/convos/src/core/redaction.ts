@@ -10,7 +10,7 @@ export type RedactionOptions = {
 };
 
 export const defaultRedaction: RedactionOptions = {
-  contentMode: "metadata-with-preview",
+  contentMode: "metadata-with-excerpts",
   redactSecrets: true,
   maxStringBytes: 4000,
   maxToolResponseBytes: 20000

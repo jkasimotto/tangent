@@ -7,6 +7,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli/index.d.ts",
+      "import": "./dist/cli/index.js"
+    },
+    "./cli/args": {
+      "types": "./dist/cli/args.d.ts",
+      "import": "./dist/cli/args.js"
     }
   },
   "files": [

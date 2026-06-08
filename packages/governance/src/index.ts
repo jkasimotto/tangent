@@ -1,0 +1,343 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { pathExists, type CliCommandSpec } from "@tangent/core";
+import {
+  findFiles,
+  hasGroup,
+  importSpecifiers,
+  isTangentPackage,
+  ownerPackage,
+  packageInfos,
+  relative,
+  requireFile,
+  sourceFiles,
+  tangentPackageName,
+  walkDirs,
+  type PackageInfo
+} from "./walk.js";
+
+export type GovernanceLintGroup = "all" | "docs" | "deps" | "agents" | "shared" | "hooks" | "files";
+
+export type GovernanceLintOptions = {
+  root?: string;
+  groups?: GovernanceLintGroup[];
+};
+
+export type GovernanceFinding = {
+  rule: string;
+  severity: "error" | "warning";
+  file?: string;
+  message: string;
+  fix: string[];
+};
+
+export type GovernanceLintResult = {
+  findings: GovernanceFinding[];
+  errors: number;
+  warnings: number;
+};
+
+export const governanceCommandSpec: CliCommandSpec = {
+  name: "governance",
+  description: "Run Tangent architecture, dependency, docs, and agent-legibility lints",
+  subcommands: [
+    {
+      name: "lint",
+      description: "Run governance lints",
+      args: "[docs|deps|agents|shared|hooks|files]"
+    }
+  ]
+};
+
+const allowedPackageDeps: Record<string, string[]> = {
+  "@tangent/core": [],
+  "@tangent/repo": ["@tangent/core"],
+  "@tangent/hooks": ["@tangent/core", "@tangent/repo"],
+  "@tangent/agent-runtime": ["@tangent/core"],
+  "@tangent/governance": ["@tangent/core", "@tangent/repo"],
+  "@convos/convos": ["@tangent/core", "@tangent/repo", "@tangent/hooks"],
+  "@tangent/daily": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@convos/convos"],
+  "@tangent/eval": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@convos/convos"],
+  "@tangent/search": ["@tangent/core", "@tangent/repo"]
+};
+
+export async function lintGovernance(options: GovernanceLintOptions = {}): Promise<GovernanceLintResult> {
+  const root = path.resolve(options.root || process.cwd());
+  const groups: Set<GovernanceLintGroup> = new Set(options.groups?.length ? options.groups : ["all"]);
+  const findings: GovernanceFinding[] = [];
+  const ctx = { root, packages: await packageInfos(root) };
+
+  if (hasGroup(groups, "agents") || hasGroup(groups, "docs")) findings.push(...await lintAgentDocs(ctx));
+  if (hasGroup(groups, "deps")) findings.push(...await lintPackageDeps(ctx), ...await lintImports(ctx));
+  if (hasGroup(groups, "shared")) findings.push(...await lintSharedHelpers(ctx));
+  if (hasGroup(groups, "hooks")) findings.push(...await lintHookBoundaries(ctx));
+  if (hasGroup(groups, "files")) findings.push(...await lintFileSizes(ctx));
+
+  const errors = findings.filter((finding) => finding.severity === "error").length;
+  const warnings = findings.filter((finding) => finding.severity === "warning").length;
+  return { findings, errors, warnings };
+}
+
+export function renderGovernanceFindings(result: GovernanceLintResult): string {
+  if (!result.findings.length) return "governance lint passed";
+  return result.findings.map((finding) => {
+    const header = `${finding.rule}: ${finding.file ? `${finding.file}: ` : ""}${finding.message}`;
+    const fix = finding.fix.length ? `\nFix:\n${finding.fix.map((step, index) => `  ${index + 1}. ${step}`).join("\n")}` : "";
+    return `${header}${fix}`;
+  }).join("\n\n");
+}
+
+type LintContext = {
+  root: string;
+  packages: PackageInfo[];
+};
+
+async function lintAgentDocs(ctx: LintContext): Promise<GovernanceFinding[]> {
+  const findings: GovernanceFinding[] = [];
+  await requireFile(findings, ctx.root, "AGENTS.md", "agent-docs/required", [
+    "Create a short root AGENTS.md table of contents.",
+    "Link to ARCHITECTURE.md, docs/index.md, and validation commands."
+  ]);
+  await requireFile(findings, ctx.root, "ARCHITECTURE.md", "agent-docs/required", [
+    "Create ARCHITECTURE.md as the stable architecture entrypoint.",
+    "Keep details in docs/architecture/*.md."
+  ]);
+  await requireFile(findings, ctx.root, "docs/index.md", "agent-docs/required", [
+    "Create docs/index.md and point to architecture, agent, and quality docs.",
+    "Use it as the system-of-record map for future agents."
+  ]);
+
+  for (const pkg of ctx.packages) {
+    await requireFile(findings, pkg.dir, "AGENTS.md", "agent-docs/required", [
+      "Create packages/<pkg>/AGENTS.md with package purpose, local rules, and docs links.",
+      "Keep detailed architecture notes in packages/<pkg>/docs/."
+    ]);
+    await requireFile(findings, pkg.dir, "docs/index.md", "agent-docs/required", [
+      "Create packages/<pkg>/docs/index.md.",
+      "Link package architecture and public API notes from that index."
+    ]);
+    await requireFile(findings, pkg.dir, "docs/architecture.md", "agent-docs/required", [
+      "Create packages/<pkg>/docs/architecture.md.",
+      "Describe package responsibilities and forbidden dependencies."
+    ]);
+    await requireFile(findings, pkg.dir, "docs/public-api.md", "agent-docs/required", [
+      "Create packages/<pkg>/docs/public-api.md.",
+      "Document public entrypoints agents may import."
+    ]);
+
+    const srcDir = path.join(pkg.dir, "src");
+    if (await pathExists(srcDir)) {
+      for (const dir of await walkDirs(srcDir)) {
+        await requireFile(findings, dir, "AGENTS.md", "agent-docs/required", [
+          "Add a short AGENTS.md to this source directory.",
+          "State the directory purpose and point back to package docs."
+        ]);
+      }
+    }
+  }
+
+  for (const agentFile of await findFiles(ctx.root, "AGENTS.md")) {
+    const rel = relative(ctx.root, agentFile);
+    const lines = (await readFile(agentFile, "utf8")).split(/\r?\n/);
+    const limit = rel === "AGENTS.md" ? 100 : 60;
+    if (lines.length > limit) {
+      findings.push({
+        rule: "agent-docs/short",
+        severity: "error",
+        file: rel,
+        message: `AGENTS.md is ${lines.length} lines; limit is ${limit}.`,
+        fix: [
+          "Move detailed guidance into docs/.",
+          "Leave only purpose, local rules, read-next links, and validation commands."
+        ]
+      });
+    }
+    const text = lines.join("\n");
+    if (!/docs\/index\.md|No package docs/.test(text)) {
+      findings.push({
+        rule: "agent-docs/links",
+        severity: "error",
+        file: rel,
+        message: "AGENTS.md does not link to a docs/index.md or explain why none exists.",
+        fix: [
+          "Add a Read next section that links to the nearest docs/index.md.",
+          "If no docs are appropriate, state the reason explicitly."
+        ]
+      });
+    }
+  }
+
+  return findings;
+}
+
+async function lintPackageDeps(ctx: LintContext): Promise<GovernanceFinding[]> {
+  const findings: GovernanceFinding[] = [];
+  for (const pkg of ctx.packages) {
+    const allowed = new Set(allowedPackageDeps[pkg.name] || []);
+    const deps = Object.keys(pkg.manifest.dependencies || {}).filter((dep) => isTangentPackage(dep));
+    for (const dep of deps) {
+      if (!allowed.has(dep)) {
+        findings.push({
+          rule: "deps/package-boundaries",
+          severity: "error",
+          file: relative(ctx.root, pkg.packageJsonPath),
+          message: `${pkg.name} depends on ${dep}, which is not in the allowed dependency graph.`,
+          fix: [
+            "Open docs/architecture/package-boundaries.md.",
+            "Move shared code to an allowed platform package or update the documented graph and this lint together.",
+            "Do not add a vertical app dependency unless it is explicitly allowed."
+          ]
+        });
+      }
+    }
+  }
+  return findings;
+}
+
+async function lintImports(ctx: LintContext): Promise<GovernanceFinding[]> {
+  const findings: GovernanceFinding[] = [];
+  const packageByDir = new Map(ctx.packages.map((pkg) => [pkg.dir, pkg]));
+  for (const file of await sourceFiles(ctx.root)) {
+    const owner = ownerPackage(file, ctx.packages);
+    if (!owner) continue;
+    const text = await readFile(file, "utf8");
+    for (const specifier of importSpecifiers(text)) {
+      const importedPackage = tangentPackageName(specifier);
+      if (!importedPackage) continue;
+      if (/\/(src|dist)\//.test(specifier)) {
+        findings.push({
+          rule: "deps/no-internal-cross-package-imports",
+          severity: "error",
+          file: relative(ctx.root, file),
+          message: `${specifier} imports another package's internal files.`,
+          fix: [
+            "Import from the package public entrypoint or an exported subpath.",
+            "If the symbol is not public, add it to that package's exports and docs/public-api.md."
+          ]
+        });
+      }
+      const allowed = new Set(allowedPackageDeps[owner.name] || []);
+      if (importedPackage !== owner.name && packageByDir.size && !allowed.has(importedPackage)) {
+        findings.push({
+          rule: "deps/no-vertical-backedges",
+          severity: "error",
+          file: relative(ctx.root, file),
+          message: `${owner.name} imports ${importedPackage}, which violates package boundaries.`,
+          fix: [
+            "Move shared behavior to core, repo, hooks, or agent-runtime.",
+            "Keep vertical apps independent except daily/eval -> convos.",
+            "Update docs/architecture/dependency-graph.md only with an intentional graph change."
+          ]
+        });
+      }
+    }
+  }
+  return findings;
+}
+
+async function lintSharedHelpers(ctx: LintContext): Promise<GovernanceFinding[]> {
+  const findings: GovernanceFinding[] = [];
+  for (const file of await sourceFiles(ctx.root)) {
+    const rel = relative(ctx.root, file);
+    if (rel.startsWith("packages/governance/")) continue;
+    const text = await readFile(file, "utf8");
+    if (!rel.startsWith("packages/core/") && /export function parseArgs\b/.test(text)) {
+      findings.push({
+        rule: "shared/no-local-parse-args",
+        severity: "error",
+        file: rel,
+        message: "defines parseArgs outside @tangent/core.",
+        fix: [
+          "Use parseArgs from @tangent/core/cli.",
+          "Move missing repeatable or inline-value behavior into packages/core/src/cli/args.ts.",
+          "Delete the local parser."
+        ]
+      });
+    }
+    if (!rel.startsWith("packages/agent-runtime/") && /export async function runProcess\b/.test(text)) {
+      findings.push({
+        rule: "shared/no-local-process-runner",
+        severity: "error",
+        file: rel,
+        message: "defines runProcess outside @tangent/agent-runtime.",
+        fix: [
+          "Use runProcess from @tangent/agent-runtime/process.",
+          "Move missing cwd/env/timeout behavior into packages/agent-runtime/src/process.ts.",
+          "Delete the local process wrapper."
+        ]
+      });
+    }
+    if (!rel.startsWith("packages/repo/") && /export async function (findGitRoot|findRepoRoot|resolveRepo|repoInfo)\b/.test(text)) {
+      findings.push({
+        rule: "shared/no-local-repo-discovery",
+        severity: "error",
+        file: rel,
+        message: "defines repo discovery outside @tangent/repo.",
+        fix: [
+          "Use @tangent/repo discover helpers.",
+          "Keep app-specific output path construction in the app package.",
+          "Delete the local repo discovery wrapper."
+        ]
+      });
+    }
+  }
+  return findings;
+}
+
+async function lintHookBoundaries(ctx: LintContext): Promise<GovernanceFinding[]> {
+  const findings: GovernanceFinding[] = [];
+  const providerHookPattern = /(claude|codex)HookEvents\b|(claude|codex)HookPath\b|(claude|codex)HooksConfig\b|settings\.local\.json|\.codex["']?,\s*["']hooks\.json/;
+  for (const file of await sourceFiles(ctx.root)) {
+    const rel = relative(ctx.root, file);
+    if (rel.startsWith("packages/hooks/") || rel.startsWith("packages/governance/")) continue;
+    const text = await readFile(file, "utf8");
+    if (providerHookPattern.test(text)) {
+      findings.push({
+        rule: "hooks/no-provider-hook-code-outside-hooks",
+        severity: "error",
+        file: rel,
+        message: "contains provider hook config/path/event mechanics outside @tangent/hooks.",
+        fix: [
+          "Move provider hook event catalogs, config paths, shell quoting, and config merge/remove into packages/hooks.",
+          "Keep Convos-specific normalization in @convos/convos.",
+          "Import hook infrastructure through @tangent/hooks public exports."
+        ]
+      });
+    }
+  }
+  return findings;
+}
+
+async function lintFileSizes(ctx: LintContext): Promise<GovernanceFinding[]> {
+  const findings: GovernanceFinding[] = [];
+  for (const file of await sourceFiles(ctx.root)) {
+    const rel = relative(ctx.root, file);
+    if (/\.generated\.|\/dist\//.test(rel)) continue;
+    const lineCount = (await readFile(file, "utf8")).split(/\r?\n/).length;
+    if (lineCount > 700) {
+      findings.push({
+        rule: "files/max-size",
+        severity: "error",
+        file: rel,
+        message: `${lineCount} lines exceeds the 700-line hard limit.`,
+        fix: [
+          "Split cohesive logic into smaller files.",
+          "If generated, add a generated filename marker or allowlist entry.",
+          "Update docs/quality/tech-debt.md only for intentional temporary exceptions."
+        ]
+      });
+    } else if (lineCount > 400) {
+      findings.push({
+        rule: "files/max-size",
+        severity: "warning",
+        file: rel,
+        message: `${lineCount} lines exceeds the 400-line warning threshold.`,
+        fix: [
+          "Consider splitting this file by responsibility.",
+          "Leave it as-is only when the local structure is still easy to scan."
+        ]
+      });
+    }
+  }
+  return findings;
+}

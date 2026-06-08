@@ -45,11 +45,12 @@ export type TrackingSource =
   | "none";
 
 export type CaptureScope = "global" | "repo-local" | "repo-shared" | "native";
-export type ContentMode = "metadata-only" | "metadata-with-preview" | "full";
+export type ContentMode = "metadata-only" | "metadata-with-excerpts" | "full";
 
-export type ConvosJsonlLineV1 = {
-  schema: "convos.event.v1";
+export type ConvosJsonlLineV2 = {
+  schema: "convos.event.v2";
   event_id: string;
+  source_event_id?: string;
   kind: ConvosEventKind;
   recorded_at: string;
   observed_at?: string;
@@ -57,8 +58,7 @@ export type ConvosJsonlLineV1 = {
   provider: ConvosProvider;
   capture: {
     source:
-      | "provider-native-jsonl"
-      | "provider-native-transcript-best-effort"
+      | "native-import"
       | "hook"
       | "sdk"
       | "merged";
@@ -67,9 +67,11 @@ export type ConvosJsonlLineV1 = {
     provider_hook_event_name?: string;
     provider_version?: string;
     content_mode: ContentMode;
+    confidence: ConvosConfidence;
   };
   repo: {
     root?: string;
+    root_hash?: string;
     cwd?: string;
     git?: {
       branch?: string;
@@ -95,6 +97,7 @@ export type ConvosJsonlLineV1 = {
   turn?: {
     id?: string;
     index?: number;
+    synthetic?: boolean;
   };
   actor?: {
     role: "user" | "assistant" | "system" | "tool" | "subagent" | "hook";
@@ -129,6 +132,25 @@ export type ConvosJsonlLineV1 = {
   };
 };
 
+export type ConvosJsonlLineV1 = ConvosJsonlLineV2;
+
+export type RawHookLineV1 = {
+  schema: "convos.raw-hook.v1";
+  provider: ConvosProvider;
+  session_id: string;
+  recorded_at: string;
+  capture: {
+    scope: CaptureScope;
+    content_mode: ContentMode;
+  };
+  repo: {
+    root?: string;
+    root_hash?: string;
+    cwd?: string;
+  };
+  raw: unknown;
+};
+
 export type ProviderSupport = {
   status: "supported" | "partial" | "unsupported";
   source: "native" | "hook" | "best-effort" | "none";
@@ -150,4 +172,9 @@ export type QueryResult<T> = {
   data: T;
   support: QuerySupport;
   warnings: ConvosWarning[];
+  provenance: {
+    sourceFiles: string[];
+    indexVersion: string;
+    generatedAt: string;
+  };
 };

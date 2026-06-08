@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import { pathToFileURL } from "node:url";
 import { renderCommandHelp } from "@tangent/core";
+import { parseArgs, stringArg, type Args } from "@tangent/core/cli";
 
 import { installHooks, uninstallHooks } from "../sdk/installHooks.js";
+import { importNative } from "../sdk/importNative.js";
 import { scanRepo } from "../sdk/scanRepo.js";
 import { status } from "../sdk/status.js";
 import { recordHook } from "../hook-runner/record.js";
@@ -10,11 +12,6 @@ import type { ConvosProvider } from "../core/schema/convos-jsonl-v1.js";
 import { convosCommandSpec } from "./spec.js";
 
 export { convosCommandSpec } from "./spec.js";
-
-type Args = {
-  _: string[];
-  [key: string]: string | boolean | string[];
-};
 
 export async function runConvosCli(argv = process.argv.slice(2)): Promise<void> {
   const args = parseArgs(argv);
@@ -25,7 +22,8 @@ export async function runConvosCli(argv = process.argv.slice(2)): Promise<void> 
   if (command === "hook" && subcommand === "record") {
     await recordHook({
       provider: providerArg(args.provider),
-      scope: scopeArg(args.scope || "global")
+      scope: scopeArg(args.scope || "global"),
+      repoRoot: stringArg(args["repo-root"])
     });
     return;
   }
@@ -84,6 +82,52 @@ export async function runConvosCli(argv = process.argv.slice(2)): Promise<void> 
     return;
   }
 
+  if (command === "events") {
+    const dataset = await scanRepo({
+      repo: args._[1] || ".",
+      providers: providerList(args.provider).filter((p): p is ConvosProvider => p !== "all"),
+      since: dateArg(args.since),
+      until: dateArg(args.until)
+    });
+    const rows = dataset.events
+      .filter((event) => !args.date || (event.observed_at || event.recorded_at).slice(0, 10) === stringArg(args.date))
+      .filter((event) => !args.provider || event.provider === args.provider);
+    printJsonOrTable(args, rows);
+    return;
+  }
+
+  if (command === "turns") {
+    const dataset = await scanRepo({
+      repo: args._[1] || ".",
+      providers: providerList(args.provider).filter((p): p is ConvosProvider => p !== "all")
+    });
+    printJsonOrTable(args, dataset.turns.list({
+      provider: providerArgOrUndefined(args.provider),
+      date: stringArg(args.date),
+      includeActive: Boolean(args["include-active"])
+    }));
+    return;
+  }
+
+  if (command === "turn") {
+    const key = args._[1];
+    if (!key) throw new Error("turn requires a source key.");
+    const dataset = await scanRepo({ repo: stringArg(args.repo) || "." });
+    printJsonOrTable(args, dataset.turns.get(key));
+    return;
+  }
+
+  if (command === "activity") {
+    const key = args._[1];
+    if (!key) throw new Error("activity requires a source key.");
+    const parsed = parseSourceKey(key);
+    const dataset = await scanRepo({ repo: stringArg(args.repo) || ".", providers: [parsed.provider] });
+    const turn = dataset.turns.get(key).data;
+    if (!turn) throw new Error(`No turn found for ${key}.`);
+    printJsonOrTable(args, dataset.activity.timeline({ conversationId: turn.conversationId, turnId: turn.turnId }));
+    return;
+  }
+
   if (command === "messages") {
     const conversationId = args._[1];
     if (!conversationId) throw new Error("messages requires a conversation id.");
@@ -122,32 +166,42 @@ export async function runConvosCli(argv = process.argv.slice(2)): Promise<void> 
     return;
   }
 
+  if (command === "import-native") {
+    const provider = providerArg(args.provider || "claude");
+    if (provider !== "claude") throw new Error("import-native currently supports --provider claude only.");
+    const result = await importNative({ repo: args._[1] || ".", provider });
+    if (args.json) console.log(JSON.stringify(result, null, 2));
+    else {
+      console.log(`provider: ${result.provider}`);
+      console.log(`files:    ${result.files}`);
+      console.log(`imported: ${result.imported}`);
+      console.log(`skipped:  ${result.skipped}`);
+      for (const warning of result.warnings) console.warn(`warning: ${warning.path}: ${warning.message}`);
+    }
+    return;
+  }
+
   if (command === "doctor") {
+    const started = Date.now();
     const value = await status({ repo: args._[1] || "." });
+    const statusMs = Date.now() - started;
     printStatusVerbose(value);
+    if (args.trace) {
+      const scanStarted = Date.now();
+      const dataset = await scanRepo({ repo: args._[1] || "." });
+      console.log("");
+      console.log("Trace");
+      console.log(JSON.stringify({
+        statusMs,
+        scanMs: Date.now() - scanStarted,
+        rows: dataset.events.length,
+        sourceFiles: dataset.provenance.sourceFiles.length
+      }, null, 2));
+    }
     return;
   }
 
   throw new Error(`Unknown command: ${[command, subcommand].filter(Boolean).join(" ")}`);
-}
-
-function parseArgs(argv: string[]): Args {
-  const args: Args = { _: [] };
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i]!;
-    if (!arg.startsWith("--")) {
-      args._.push(arg);
-      continue;
-    }
-    const key = arg.slice(2);
-    const next = argv[i + 1];
-    if (!next || next.startsWith("--")) args[key] = true;
-    else {
-      args[key] = next;
-      i += 1;
-    }
-  }
-  return args;
 }
 
 function printStatusCompact(value: Awaited<ReturnType<typeof status>>): void {
@@ -221,10 +275,6 @@ function printJsonOrTable(args: Args, value: unknown): void {
   console.log(JSON.stringify(value, null, args.json ? 2 : 2));
 }
 
-function stringArg(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
 function dateArg(value: unknown): Date | undefined {
   if (typeof value !== "string") return undefined;
   const date = new Date(value);
@@ -235,6 +285,11 @@ function dateArg(value: unknown): Date | undefined {
 function providerArg(value: unknown): ConvosProvider {
   if (value === "claude" || value === "codex") return value;
   throw new Error("--provider must be claude or codex.");
+}
+
+function providerArgOrUndefined(value: unknown): ConvosProvider | undefined {
+  if (value === undefined) return undefined;
+  return providerArg(value);
 }
 
 function providerOrAll(value: unknown): ConvosProvider | "all" {
@@ -261,6 +316,13 @@ function trackingArg(value: unknown): "all" | "allowlist" | "off" | undefined {
   if (value === undefined) return undefined;
   if (value === "all" || value === "allowlist" || value === "off") return value;
   throw new Error("--tracking must be all, allowlist, or off.");
+}
+
+function parseSourceKey(value: string): { provider: ConvosProvider; sessionId: string; turnId: string } {
+  const [provider, sessionId, ...rest] = value.split(":");
+  if (provider !== "claude" && provider !== "codex") throw new Error(`Invalid source key provider: ${value}`);
+  if (!sessionId || !rest.length) throw new Error(`Invalid source key: ${value}`);
+  return { provider, sessionId, turnId: rest.join(":") };
 }
 
 function help(): void {

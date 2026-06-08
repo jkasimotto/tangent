@@ -1,8 +1,8 @@
-import type { SessionDigest, SessionDigestInput } from "../types/digest.js";
+import type { TurnDigest, TurnDigestInput } from "../types/digest.js";
 import type { RunnerStatus, SummaryProviderConfig, SummaryRunner } from "../types/provider.js";
-import { sessionDigestPrompt } from "../core/prompts.js";
-import { normalizeSessionDigest } from "../core/schemas.js";
-import { stripMarkdownFence } from "./process.js";
+import { turnDigestPrompt } from "../core/prompts.js";
+import { normalizeTurnDigest } from "../core/schemas.js";
+import { stripMarkdownFence } from "@tangent/agent-runtime/process";
 
 type ClaudeSdkConfig = Extract<SummaryProviderConfig, { kind: "claude-sdk" }>;
 
@@ -22,11 +22,11 @@ export class ClaudeSdkSummaryRunner implements SummaryRunner {
     }
   }
 
-  async summarizeSession(input: SessionDigestInput): Promise<SessionDigest> {
+  async summarizeTurn(input: TurnDigestInput): Promise<TurnDigest> {
     const sdk = await importClaudeSdk();
     const chunks: string[] = [];
     const query = sdk.query({
-      prompt: sessionDigestPrompt(input),
+      prompt: turnDigestPrompt(input),
       options: {
         model: this.config.model,
         maxTurns: 1,
@@ -38,7 +38,17 @@ export class ClaudeSdkSummaryRunner implements SummaryRunner {
     for await (const message of query) collectText(message, chunks);
     const text = chunks.join("\n").trim();
     if (!text) throw new Error("Claude SDK returned empty output.");
-    return normalizeSessionDigest(JSON.parse(stripMarkdownFence(text)) as unknown);
+    return normalizeTurnDigest(JSON.parse(stripMarkdownFence(text)) as unknown, { source: {
+      sourceKey: input.source.sourceKey,
+      provider: input.source.provider,
+      conversationId: input.source.conversationId,
+      turnId: input.source.turnId,
+      dateBucket: input.source.dateBucket,
+      startedAt: input.source.startedAt,
+      endedAt: input.source.endedAt,
+      wallTimeMs: input.source.wallTimeMs,
+      inputHash: ""
+    } });
   }
 }
 

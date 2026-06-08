@@ -1,17 +1,9 @@
 import type { SummaryProviderConfig } from "./provider.js";
 
 export type DailyOutputMode = "user-global" | "repo-local-private";
-export type DateBucketMode = "endedAt" | "startedAt" | "lastActivityAt";
-export type WorkSessionGrouping = "conversation" | "idle-gap" | "branch-and-paths";
+export type DateBucketMode = "turnEndedAt" | "turnStartedAt" | "lastActivityAt";
 export type DailyNoteSection =
-  | "standup"
-  | "daySummary"
-  | "workSessions"
-  | "decisions"
-  | "experiments"
-  | "designSeeds"
-  | "followUps"
-  | "risks"
+  | "topics"
   | "metrics"
   | "sourceCaveats";
 
@@ -32,9 +24,8 @@ export type DailyConfig = {
     dateBucket: DateBucketMode;
     includeActiveConversations: boolean;
     activeQuietMinutes: number;
-    workSessionIdleGapMinutes: number;
     reprocessWhenConversationChanges: boolean;
-    grouping: WorkSessionGrouping;
+    maxTurnDurationMinutesForDaily: number;
   };
   input: {
     providers: Array<"claude" | "codex">;
@@ -44,7 +35,7 @@ export type DailyConfig = {
     includeToolResults: boolean;
     includeFilePaths: boolean;
     includeTokenUsage: boolean;
-    maxConversationChars: number;
+    maxTurnInputChars: number;
     maxToolResultChars: number;
   };
   privacy: {
@@ -55,15 +46,14 @@ export type DailyConfig = {
   };
   summary: {
     provider: SummaryProviderConfig;
-    sessionDigestSchemaVersion: "session-digest.v1";
-    dailyNoteSchemaVersion: "daily-note.v1";
+    turnDigestSchemaVersion: "turn-digest.v1";
+    topicRollupSchemaVersion: "topic-rollup.v1";
+    dailyNoteSchemaVersion: "daily-note.v2";
     writeDigestCache: boolean;
   };
   note: {
     titleTemplate: string;
     sections: DailyNoteSection[];
-    includeStandupSnippet: boolean;
-    includeDesignSeeds: boolean;
     includeFollowUps: boolean;
     includeMetrics: boolean;
   };

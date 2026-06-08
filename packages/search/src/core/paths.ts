@@ -1,9 +1,9 @@
 import { homedir } from "node:os";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
+import type { ResolvedRepoInfo as SearchRepoInfo } from "@tangent/repo";
 
 import type { SearchConfig } from "../types/config.js";
-import type { SearchRepoInfo } from "./repo.js";
 
 export type SearchOutputPaths = {
   globalConfigPath: string;

@@ -1,11 +1,13 @@
-export { scanRepo } from "./scanRepo.js";
+export { scanRepo, openConvos } from "./scanRepo.js";
 export type { ScanRepoOptions } from "./scanRepo.js";
 export { status } from "./status.js";
 export type { RepoStatus, StatusOptions } from "./status.js";
 export { installHooks, uninstallHooks } from "./installHooks.js";
 export type { InstallHooksOptions, HookInstallResult } from "./installHooks.js";
+export { importNative } from "./importNative.js";
+export type { ImportNativeOptions, ImportNativeResult } from "./importNative.js";
 export { trackRepo, untrackRepo } from "./trackRepo.js";
 export type { TrackRepoOptions } from "./trackRepo.js";
 export { ConvosDataset } from "../core/dataset.js";
-export type { ConversationListItem, ToolCallWithResult, VisibleMessage } from "../core/dataset.js";
-export type { ConvosJsonlLineV1, ConvosProvider, QueryResult, QuerySupport } from "../core/schema/convos-jsonl-v1.js";
+export type { ActivityTimelineItem, ConversationListItem, ToolCallWithResult, TurnListItem, VisibleMessage } from "../core/dataset.js";
+export type { ConvosJsonlLineV1, ConvosJsonlLineV2, ConvosProvider, QueryResult, QuerySupport } from "../core/schema/convos-jsonl-v1.js";

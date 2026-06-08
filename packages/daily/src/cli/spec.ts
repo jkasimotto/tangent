@@ -23,8 +23,9 @@ export const dailyCommandSpec: CliCommandSpec = {
       ]
     },
     { name: "status", description: "Show daily status", args: "[repo]", options: jsonDateOptions() },
-    { name: "process", description: "Summarize unprocessed conversations and write a note", args: "[repo]", options: processOptions() },
-    { name: "unprocessed", description: "List unprocessed conversations", args: "[repo]", options: processOptions(["json"]) },
+    { name: "process", description: "Summarize candidate turns and write a note", args: "[repo]", options: processOptions() },
+    { name: "candidates", description: "List candidate turns", args: "[repo]", options: processOptions(["json", "trace"]) },
+    { name: "unprocessed", description: "Alias for candidates", args: "[repo]", options: processOptions(["json", "trace"]) },
     {
       name: "note",
       description: "Print, open, or locate a daily note",
@@ -40,7 +41,7 @@ export const dailyCommandSpec: CliCommandSpec = {
         { name: "path", description: "Print only the note path", args: "[today|yesterday|YYYY-MM-DD|-1d]", values: dateValues, options: [{ name: "repo", takesValue: true, description: "Repository path" }, { name: "date", takesValue: true, values: dateValues, description: "Date bucket" }] }
       ]
     },
-    { name: "reprocess", description: "Force reprocessing", args: "[repo]", options: processOptions(["conversation", "all", "json"]) },
+    { name: "reprocess", description: "Force reprocessing", args: "[repo]", options: processOptions(["source", "all", "json"]) },
     {
       name: "provider",
       description: "Test or inspect summary providers",
@@ -50,6 +51,10 @@ export const dailyCommandSpec: CliCommandSpec = {
       ]
     },
     { name: "digests", description: "List cached digests", args: "[repo]", options: jsonDateOptions() },
+    { name: "input", description: "Build or locate a turn input", args: "[repo]", options: processOptions(["source", "path", "json"]) },
+    { name: "digest", description: "Print latest digest for a source", args: "[repo]", options: processOptions(["source", "json"]) },
+    { name: "topics", description: "List topic rollups for a date", args: "[repo]", options: jsonDateOptions() },
+    { name: "render", description: "Render a daily note", args: "[repo]", options: processOptions(["dry-run", "explain", "json"]) },
     {
       name: "config",
       description: "Show or edit daily config",
@@ -78,6 +83,11 @@ function processOptions(extra: string[] = []) {
   ];
   for (const name of extra) {
     if (name === "conversation") options.push({ name, takesValue: true, description: "Conversation id" });
+    else if (name === "source") options.push({ name, takesValue: true, description: "Source key" });
+    else if (name === "path") options.push({ name, description: "Print artifact path" });
+    else if (name === "trace") options.push({ name, description: "Print timing trace" });
+    else if (name === "dry-run") options.push({ name, description: "Do not write output" });
+    else if (name === "explain") options.push({ name, description: "Explain render inputs" });
     else options.push({ name, description: `${name} flag` });
   }
   return options;

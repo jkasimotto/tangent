@@ -1,11 +1,11 @@
 import { statSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
+import { isFile } from "@tangent/repo";
 
 import type { SearchConfig } from "../types/config.js";
 import { deleteFileIndexRows, dbFileSnapshot, insertEntities, resetIndexContent, resetLanguageContent, rowStatTuple, searchIndexVersion, SearchDB, type FileRow, type SymbolRow } from "./db.js";
 import { fileStatTuple, gitLsFiles, lineToPos, pathMatchesAny, relpath, shouldSkipDir, tokenizeText } from "./helpers.js";
-import { isFile } from "./repo.js";
 import { getAdapters, type LanguageAdapter, type LanguageContext, type ParsedFile } from "../languages/index.js";
 
 export type IndexOptions = {

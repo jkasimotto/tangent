@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import { homedir, userInfo } from "node:os";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
+import type { ResolvedRepoInfo as DailyRepoInfo } from "@tangent/repo";
 
 import type { DailyConfig } from "../types/config.js";
-import type { DailyRepoInfo } from "./repo.js";
 
 export type DailyOutputPaths = {
   globalConfigPath: string;
@@ -13,8 +13,11 @@ export type DailyOutputPaths = {
   privateConfigPath: string;
   ledgerPath: string;
   notesDir: string;
-  digestsDir: string;
   artifactsDir: string;
+  inputsDir: string;
+  turnDigestsDir: string;
+  topicRollupsDir: string;
+  renderDir: string;
 };
 
 export function dailyHome(): string {
@@ -49,25 +52,45 @@ export function resolveOutputPaths(repo: DailyRepoInfo, config: DailyConfig): Da
     privateConfigPath: path.join(baseDir, "config.json"),
     ledgerPath: path.join(baseDir, "ledger.jsonl"),
     notesDir,
-    digestsDir: path.join(baseDir, "digests"),
-    artifactsDir
+    artifactsDir,
+    inputsDir: path.join(artifactsDir, "inputs"),
+    turnDigestsDir: path.join(artifactsDir, "turn-digests"),
+    topicRollupsDir: path.join(artifactsDir, "topic-rollups"),
+    renderDir: path.join(artifactsDir, "render")
   };
 }
 
 export async function ensureOutputDirs(paths: DailyOutputPaths): Promise<void> {
   await mkdir(paths.outputDir, { recursive: true });
   await mkdir(paths.notesDir, { recursive: true });
-  await mkdir(paths.digestsDir, { recursive: true });
-  await mkdir(path.join(paths.artifactsDir, "design"), { recursive: true });
+  await mkdir(paths.inputsDir, { recursive: true });
+  await mkdir(paths.turnDigestsDir, { recursive: true });
+  await mkdir(paths.topicRollupsDir, { recursive: true });
+  await mkdir(paths.renderDir, { recursive: true });
 }
 
 export function notePath(paths: DailyOutputPaths, date: string): string {
   return path.join(paths.notesDir, `${date}.md`);
 }
 
-export function digestPath(paths: DailyOutputPaths, conversationId: string, inputHash: string): string {
-  const safeId = conversationId.replace(/[^a-zA-Z0-9_.:-]/g, "_");
-  return path.join(paths.digestsDir, `${safeId}.${inputHash}.json`);
+export function turnInputPath(paths: DailyOutputPaths, date: string, sourceKey: string, inputHash: string): string {
+  return path.join(paths.inputsDir, date, `${safeFileId(sourceKey)}.${inputHash}.json`);
+}
+
+export function turnDigestPath(paths: DailyOutputPaths, date: string, sourceKey: string, inputHash: string): string {
+  return path.join(paths.turnDigestsDir, date, `${safeFileId(sourceKey)}.${inputHash}.json`);
+}
+
+export function topicRollupPath(paths: DailyOutputPaths, date: string, topicKey: string, hash: string): string {
+  return path.join(paths.topicRollupsDir, date, `${safeFileId(topicKey)}.${hash}.json`);
+}
+
+export function renderModelPath(paths: DailyOutputPaths, date: string): string {
+  return path.join(paths.renderDir, `${date}.model.json`);
+}
+
+function safeFileId(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_.:-]/g, "_");
 }
 
 export function userIdHash(): string {

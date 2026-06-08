@@ -1,48 +1,8 @@
+import { booleanArg, numberArg, parseArgs, stringArg, type Args } from "@tangent/core/cli";
 import type { LanguageId } from "../languages/base.js";
 import type { SearchMode, SearchStorageMode } from "../types/config.js";
 
-export type Args = {
-  _: string[];
-  [key: string]: string | boolean | string[];
-};
-
-export function parseArgs(argv: string[]): Args {
-  const args: Args = { _: [] };
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i]!;
-    if (!arg.startsWith("--")) {
-      args._.push(arg);
-      continue;
-    }
-    const [rawKey, inlineValue] = arg.slice(2).split("=", 2);
-    const key = rawKey!;
-    if (inlineValue !== undefined) {
-      args[key] = inlineValue;
-      continue;
-    }
-    const next = argv[i + 1];
-    if (!next || next.startsWith("--")) args[key] = true;
-    else {
-      args[key] = next;
-      i += 1;
-    }
-  }
-  return args;
-}
-
-export function stringArg(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
-export function numberArg(value: unknown): number | undefined {
-  if (value === undefined) return undefined;
-  if (typeof value !== "string" || !/^\d+(\.\d+)?$/.test(value)) throw new Error(`Expected number, got ${String(value)}.`);
-  return Number(value);
-}
-
-export function booleanArg(value: unknown): boolean {
-  return value === true || value === "true";
-}
+export { booleanArg, numberArg, parseArgs, stringArg, type Args };
 
 export function languageArgs(value: unknown): LanguageId[] | undefined {
   if (value === undefined) return undefined;

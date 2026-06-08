@@ -134,3 +134,9 @@ function commandName(command: CliCommandSpec): string {
 function filterPrefix(values: string[], prefix: string): string[] {
   return [...new Set(values)].filter((value) => value.startsWith(prefix)).sort();
 }
+
+export * from "./cli/args.js";
+export * from "./config.js";
+export * from "./fs.js";
+export * from "./hash.js";
+export * from "./time.js";

@@ -22,10 +22,13 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && chmod +x dist/cli/index.js",
-    "check": "tsc -p tsconfig.json --noEmit"
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs"
   },
   "dependencies": {
     "@tangent/core": "file:../core",
+    "@tangent/repo": "file:../repo",
+    "@tangent/agent-runtime": "file:../agent-runtime",
     "@convos/convos": "file:../convos"
   },
   "engines": {

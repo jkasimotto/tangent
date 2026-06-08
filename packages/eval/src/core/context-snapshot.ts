@@ -1,0 +1,224 @@
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { git, gitText, listFilesAtRef, resolveCommit, resolveGitRoot, showFile } from "@tangent/repo/git";
+import { createSyntheticCommit } from "@tangent/repo/worktree";
+
+import { contextPatterns, type EvalContextFile, type EvalContextManifest, type EvalContextMode } from "../types/context.js";
+import { discoverContextFiles, pathMatchesContextDiscovery } from "./context-discovery.js";
+import { sha256, shortHash } from "./hash.js";
+import { contextRef } from "./paths.js";
+
+export type CaptureContextOptions = {
+  name: string;
+  repo: string;
+  cwd?: string;
+  includeAncestors?: boolean;
+  includeDirtyContext?: boolean;
+  fromRef?: string;
+  empty?: boolean;
+};
+
+export type CaptureContextResult = {
+  ref: string;
+  commit: string;
+  manifest: EvalContextManifest;
+};
+
+type SnapshotFile = {
+  manifestFile: EvalContextFile;
+  content: string;
+};
+
+export async function captureContextSnapshot(options: CaptureContextOptions): Promise<CaptureContextResult> {
+  const repoRoot = await resolveGitRoot(path.resolve(options.repo));
+  const cwd = normalizeCwd(options.cwd || ".");
+  const ref = contextRef(options.name);
+  const repoHead = await resolveCommit(repoRoot, options.fromRef || "HEAD").catch(() => undefined);
+  const files = options.empty
+    ? []
+    : options.fromRef
+      ? await snapshotFilesFromRef({ repoRoot, ref: options.fromRef, cwd, includeAncestors: Boolean(options.includeAncestors) })
+      : await snapshotFilesFromWorktree({ repoRoot, cwd, includeAncestors: Boolean(options.includeAncestors), includeDirtyContext: Boolean(options.includeDirtyContext) });
+
+  const createdAt = new Date().toISOString();
+  const manifest: EvalContextManifest = {
+    schema: "eval.context.v1",
+    id: `ctx_${shortHash(`${repoRoot}:${cwd}:${createdAt}:${ref}`)}`,
+    createdAt,
+    source: {
+      repoRoot,
+      repoHead,
+      cwd,
+      ref: options.fromRef,
+      empty: Boolean(options.empty),
+      dirtyContextIncluded: Boolean(options.includeDirtyContext)
+    },
+    discovery: {
+      cwd,
+      includeAncestors: Boolean(options.includeAncestors),
+      patterns: [...contextPatterns]
+    },
+    files: files.map((file) => file.manifestFile)
+  };
+
+  const commit = await createSyntheticCommit({
+    repo: repoRoot,
+    ref,
+    message: `eval: context snapshot ${ref.replace(/^refs\/tangent\/eval\/contexts\//, "")}`,
+    files: [
+      { path: "manifest.json", content: `${JSON.stringify(manifest, null, 2)}\n` },
+      ...files.map((file) => ({ path: file.manifestFile.snapshotPath, content: file.content }))
+    ]
+  });
+  return { ref, commit, manifest };
+}
+
+export async function readContextManifest(repo: string, ref: string): Promise<EvalContextManifest> {
+  const repoRoot = await resolveGitRoot(path.resolve(repo));
+  const raw = await showFile(repoRoot, ref, "manifest.json");
+  const manifest = JSON.parse(raw) as EvalContextManifest;
+  if (manifest.schema !== "eval.context.v1") throw new Error(`Not an eval context snapshot: ${ref}`);
+  return manifest;
+}
+
+export async function applyContextMode(args: {
+  sourceRepo: string;
+  worktree: string;
+  workParent: string;
+  cwd: string;
+  context: EvalContextMode;
+  runContextName?: string;
+}): Promise<{ appliedContext?: string; warnings: string[] }> {
+  const warnings: string[] = [];
+  if (args.context.mode === "repo") {
+    warnings.push("repo context mode leaves repository context files as checked out at the base commit.");
+    return { warnings };
+  }
+
+  await deleteRepoContextFiles(args.worktree, args.cwd);
+
+  if (args.context.mode === "empty") {
+    warnings.push("empty context mode cannot suppress provider-level global configuration.");
+    return { warnings };
+  }
+
+  let snapshotRef: string;
+  if (args.context.mode === "git-ref") {
+    if (!args.runContextName) throw new Error("git-ref context application requires runContextName.");
+    const captured = await captureContextSnapshot({
+      name: args.runContextName,
+      repo: args.sourceRepo,
+      cwd: args.cwd,
+      includeAncestors: true,
+      fromRef: args.context.ref
+    });
+    snapshotRef = captured.ref;
+  } else {
+    snapshotRef = args.context.ref;
+  }
+
+  const sourceRoot = await resolveGitRoot(args.sourceRepo);
+  const manifest = await readContextManifest(sourceRoot, snapshotRef);
+  for (const file of manifest.files) {
+    const content = await showFile(sourceRoot, snapshotRef, file.snapshotPath);
+    const destination = file.scope === "repo"
+      ? path.join(args.worktree, file.path)
+      : path.join(ancestorBase(args.workParent, file.depth || 1), file.path);
+    await mkdir(path.dirname(destination), { recursive: true });
+    await writeFile(destination, content, "utf8");
+  }
+  return { appliedContext: snapshotRef, warnings };
+}
+
+async function snapshotFilesFromWorktree(args: {
+  repoRoot: string;
+  cwd: string;
+  includeAncestors: boolean;
+  includeDirtyContext: boolean;
+}): Promise<SnapshotFile[]> {
+  const discovered = await discoverContextFiles({
+    repoRoot: args.repoRoot,
+    cwd: args.cwd,
+    includeAncestors: args.includeAncestors,
+    includeExternalAncestors: args.includeAncestors
+  });
+  const repoPaths = discovered.filter((file) => file.scope === "repo").map((file) => file.path);
+  if (!args.includeDirtyContext && repoPaths.length > 0) {
+    const dirty = await dirtyContextPaths(args.repoRoot, repoPaths);
+    if (dirty.length > 0) {
+      throw new Error(`Context files have uncommitted changes; pass --include-dirty-context to capture them: ${dirty.join(", ")}`);
+    }
+  }
+  const rows: SnapshotFile[] = [];
+  for (const file of discovered) {
+    const content = await readFile(file.sourcePath, "utf8");
+    rows.push({
+      manifestFile: {
+        scope: file.scope,
+        depth: file.depth,
+        path: file.path,
+        snapshotPath: file.snapshotPath,
+        sha256: sha256(content)
+      },
+      content
+    });
+  }
+  return rows;
+}
+
+async function snapshotFilesFromRef(args: {
+  repoRoot: string;
+  ref: string;
+  cwd: string;
+  includeAncestors: boolean;
+}): Promise<SnapshotFile[]> {
+  const paths = (await listFilesAtRef(args.repoRoot, args.ref))
+    .filter((filePath) => pathMatchesContextDiscovery(filePath, args.cwd, args.includeAncestors))
+    .sort();
+  const rows: SnapshotFile[] = [];
+  for (const filePath of paths) {
+    const content = await showFile(args.repoRoot, args.ref, filePath);
+    rows.push({
+      manifestFile: {
+        scope: "repo",
+        path: filePath,
+        snapshotPath: `repo/${filePath}`,
+        sha256: sha256(content)
+      },
+      content
+    });
+  }
+  return rows;
+}
+
+async function deleteRepoContextFiles(worktree: string, cwd: string): Promise<void> {
+  const discovered = await discoverContextFiles({
+    repoRoot: worktree,
+    cwd,
+    includeAncestors: true,
+    includeExternalAncestors: false
+  });
+  for (const file of discovered) {
+    if (file.scope === "repo") await rm(path.join(worktree, file.path), { force: true });
+  }
+}
+
+async function dirtyContextPaths(repoRoot: string, repoPaths: string[]): Promise<string[]> {
+  if (repoPaths.length === 0) return [];
+  const status = await gitText(repoRoot, ["status", "--porcelain", "--", ...repoPaths]).catch(() => "");
+  return status.split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.slice(3).trim().replace(/^"|"$/g, ""));
+}
+
+function ancestorBase(workParent: string, depth: number): string {
+  let current = workParent;
+  for (let index = 1; index < depth; index += 1) current = path.dirname(current);
+  return current;
+}
+
+function normalizeCwd(cwd: string): string {
+  const normalized = cwd.split(/[\\/]+/).filter((part) => part && part !== ".").join("/");
+  return normalized || ".";
+}

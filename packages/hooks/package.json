@@ -1,0 +1,44 @@
+{
+  "name": "@tangent/hooks",
+  "version": "0.1.0",
+  "description": "Claude and Codex hook installation and raw hook transport mechanics for Tangent apps.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "import": "./dist/config.js"
+    },
+    "./install": {
+      "types": "./dist/install.d.ts",
+      "import": "./dist/install.js"
+    },
+    "./providers/claude": {
+      "types": "./dist/providers/claude.d.ts",
+      "import": "./dist/providers/claude.js"
+    },
+    "./providers/codex": {
+      "types": "./dist/providers/codex.d.ts",
+      "import": "./dist/providers/codex.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@tangent/core": "file:../core",
+    "@tangent/repo": "file:../repo"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}

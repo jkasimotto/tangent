@@ -1,6 +1,7 @@
-import type { RepoInfo } from "../core/repo.js";
+import type { RepoInfo } from "@tangent/repo";
 import { conversationId, eventId } from "../core/ids.js";
 import { previewText, redactUnknown, type RedactionOptions } from "../core/redaction.js";
+import { repoHash } from "../core/paths.js";
 import type {
   CaptureScope,
   ConvosEventKind,
@@ -26,7 +27,7 @@ export function normalizeHookInput(input: Record<string, unknown>, context: Norm
   const hookName = String(input.hook_event_name || "unknown");
   const now = new Date().toISOString();
   const base = {
-    schema: "convos.event.v1" as const,
+    schema: "convos.event.v2" as const,
     recorded_at: now,
     provider: context.provider,
     capture: {
@@ -34,10 +35,12 @@ export function normalizeHookInput(input: Record<string, unknown>, context: Norm
       scope: context.scope,
       convos_version: context.convosVersion,
       provider_hook_event_name: hookName,
-      content_mode: context.redaction.contentMode
+      content_mode: context.redaction.contentMode,
+      confidence: "exact" as const
     },
     repo: {
       root: context.repo.root,
+      root_hash: repoHash(context.repo.root || context.repo.cwd),
       cwd: typeof input.cwd === "string" ? input.cwd : context.repo.cwd,
       git: {
         branch: context.repo.branch,
@@ -74,6 +77,11 @@ export function normalizeHookInput(input: Record<string, unknown>, context: Norm
     case "UserPromptSubmit": {
       const text = typeof input.prompt === "string" ? input.prompt : undefined;
       return [
+        line(
+          "turn.start",
+          { status: "started", permission_mode: input.permission_mode },
+          { turn: turn(input), actor: actor(input).actor }
+        ),
         line(
           "message.user",
           text
@@ -114,7 +122,7 @@ export function normalizeHookInput(input: Record<string, unknown>, context: Norm
     case "PreCompact":
       return [line("compact.pre", { trigger: input.trigger }, { turn: turn(input), actor: actor(input).actor })];
     case "PostCompact":
-      return [line("compact.post", { trigger: input.trigger }, { turn: turn(input), actor: actor(input).actor })];
+      return [line("compact.post", { trigger: input.trigger, compact_summary: input.compact_summary }, { turn: turn(input), actor: actor(input).actor })];
     case "SubagentStart":
       return [
         line("subagent.start", { agent_id: input.agent_id, agent_type: input.agent_type }, {
@@ -148,7 +156,7 @@ export function normalizeHookInput(input: Record<string, unknown>, context: Norm
     }
     case "Stop": {
       const last = typeof input.last_assistant_message === "string" ? input.last_assistant_message : undefined;
-      const events = [line("conversation.end", { stop_hook_active: input.stop_hook_active }, { turn: turn(input), actor: actor(input).actor, availability: { confidence: "partial" } })];
+      const events = [];
       if (last) {
         events.push(line("message.assistant.visible", { text: last, text_preview: previewText(last) }, {
           turn: turn(input),
@@ -156,7 +164,24 @@ export function normalizeHookInput(input: Record<string, unknown>, context: Norm
           availability: { confidence: "partial", notes: ["Captured from Stop.last_assistant_message."] }
         }));
       }
+      events.push(line("turn.end", { status: "completed", stop_hook_active: input.stop_hook_active }, { turn: turn(input), actor: actor(input).actor, availability: { confidence: "partial" } }));
       return events;
+    }
+    case "StopFailure": {
+      const last = typeof input.last_assistant_message === "string" ? input.last_assistant_message : undefined;
+      return [
+        line("turn.end", {
+          status: "failed",
+          error: input.error,
+          error_details: input.error_details,
+          last_assistant_message: last
+        }, { turn: turn(input), actor: actor(input).actor, availability: { confidence: "exact" } }),
+        line("error", {
+          error: input.error || "unknown",
+          error_details: input.error_details,
+          message: last
+        }, { turn: turn(input), actor: actor(input).actor })
+      ];
     }
     case "MessageDisplay": {
       const delta = typeof input.delta === "string" ? input.delta : undefined;
@@ -205,12 +230,13 @@ function toolData(input: Record<string, unknown>, redaction: RedactionOptions, m
   const data: Record<string, unknown> = {
     tool_name: toolName,
     category: categorizeTool(toolName),
-    target_paths: [],
+    target_paths: extractPaths(input.tool_input),
     input: redactUnknown(input.tool_input, redaction)
   };
   if (mode === "result") {
     data.output = redactUnknown(input.tool_response, redaction);
     data.status = inferToolStatus(input.tool_response);
+    if (typeof input.duration_ms === "number") data.duration_ms = input.duration_ms;
   }
   const command = commandText(toolName, input.tool_input);
   if (command) {
@@ -225,6 +251,27 @@ function toolData(input: Record<string, unknown>, redaction: RedactionOptions, m
     };
   }
   return data;
+}
+
+function extractPaths(value: unknown): string[] {
+  const paths = new Set<string>();
+  visit(value);
+  return [...paths].sort();
+
+  function visit(item: unknown, key?: string): void {
+    if (typeof item === "string") {
+      if (key && /^(path|file|file_path|target_path|targetPaths|target_paths|filepath)$/i.test(key)) paths.add(item);
+      return;
+    }
+    if (Array.isArray(item)) {
+      for (const entry of item) visit(entry, key);
+      return;
+    }
+    if (!item || typeof item !== "object") return;
+    for (const [entryKey, entryValue] of Object.entries(item as Record<string, unknown>)) {
+      visit(entryValue, entryKey);
+    }
+  }
 }
 
 function categorizeTool(toolName: string): string {

@@ -2,13 +2,18 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import type { SessionDigest, SessionDigestInput } from "../types/digest.js";
+import type { TurnDigest, TurnDigestInput } from "../types/digest.js";
 import type { RunnerStatus, SummaryProviderConfig, SummaryRunner } from "../types/provider.js";
-import { sessionDigestPrompt } from "../core/prompts.js";
-import { normalizeSessionDigest, sessionDigestJsonSchema } from "../core/schemas.js";
-import { parseRunnerJson, runnerFailure, runProcess } from "./process.js";
+import { turnDigestPrompt } from "../core/prompts.js";
+import { normalizeTurnDigest, turnDigestJsonSchema } from "../core/schemas.js";
+import { parseRunnerJson, runnerFailure, runProcess } from "@tangent/agent-runtime/process";
 
 type CodexCliConfig = Extract<SummaryProviderConfig, { kind: "codex-cli" }>;
+
+const dailyRunnerEnv = {
+  CONVOS_DISABLE_CAPTURE: "1",
+  DAILY_SUMMARY_RUN: "1"
+};
 
 export class CodexCliSummaryRunner implements SummaryRunner {
   id = "codex-cli";
@@ -19,7 +24,7 @@ export class CodexCliSummaryRunner implements SummaryRunner {
   async checkAvailable(): Promise<RunnerStatus> {
     const command = this.config.command || "codex";
     try {
-      const result = await runProcess({ command, args: ["--version"], timeoutMs: 5000 });
+      const result = await runProcess({ command, args: ["--version"], timeoutMs: 5000, defaultEnv: dailyRunnerEnv });
       return {
         available: result.code === 0,
         command,
@@ -32,12 +37,12 @@ export class CodexCliSummaryRunner implements SummaryRunner {
     }
   }
 
-  async summarizeSession(input: SessionDigestInput): Promise<SessionDigest> {
+  async summarizeTurn(input: TurnDigestInput): Promise<TurnDigest> {
     const command = this.config.command || "codex";
     const tempDir = await mkdtemp(path.join(tmpdir(), "tangent-daily-codex-"));
-    const schemaPath = path.join(tempDir, "session-digest.schema.json");
+    const schemaPath = path.join(tempDir, "turn-digest.schema.json");
     const outputPath = path.join(tempDir, "last-message.json");
-    await writeFile(schemaPath, JSON.stringify(sessionDigestJsonSchema), "utf8");
+    await writeFile(schemaPath, JSON.stringify(turnDigestJsonSchema), "utf8");
     try {
       const args = [
         "exec",
@@ -56,12 +61,23 @@ export class CodexCliSummaryRunner implements SummaryRunner {
       const result = await runProcess({
         command,
         args,
-        stdin: sessionDigestPrompt(input),
-        timeoutMs: this.config.timeoutMs || 300000
+        stdin: turnDigestPrompt(input),
+        timeoutMs: this.config.timeoutMs || 300000,
+        defaultEnv: dailyRunnerEnv
       });
       if (result.code !== 0) throw runnerFailure(command, result.code, result.stderr, result.stdout);
       const output = await readFile(outputPath, "utf8").catch(() => result.stdout);
-      return normalizeSessionDigest(parseRunnerJson(output));
+      return normalizeTurnDigest(parseRunnerJson(output), { source: {
+        sourceKey: input.source.sourceKey,
+        provider: input.source.provider,
+        conversationId: input.source.conversationId,
+        turnId: input.source.turnId,
+        dateBucket: input.source.dateBucket,
+        startedAt: input.source.startedAt,
+        endedAt: input.source.endedAt,
+        wallTimeMs: input.source.wallTimeMs,
+        inputHash: ""
+      } });
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

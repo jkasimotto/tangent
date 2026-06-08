@@ -8,20 +8,32 @@
     "tangent": "./dist/cli/index.js"
   },
   "workspaces": [
+    "packages/agent-runtime",
     "packages/core",
+    "packages/repo",
+    "packages/hooks",
+    "packages/governance",
     "packages/convos",
     "packages/daily",
+    "packages/eval",
     "packages/search"
   ],
   "scripts": {
     "build": "npm run build --workspaces && tsc -p tsconfig.json && chmod +x dist/cli/index.js",
     "check": "npm run check --workspaces && tsc -p tsconfig.json --noEmit",
+    "governance": "npm run build -w @tangent/governance && node packages/governance/dist/cli/index.js lint",
+    "test": "npm run test --workspaces --if-present",
     "clean": "rm -rf dist packages/*/dist"
   },
   "dependencies": {
+    "@tangent/agent-runtime": "file:packages/agent-runtime",
     "@tangent/core": "file:packages/core",
+    "@tangent/repo": "file:packages/repo",
+    "@tangent/hooks": "file:packages/hooks",
+    "@tangent/governance": "file:packages/governance",
     "@convos/convos": "file:packages/convos",
     "@tangent/daily": "file:packages/daily",
+    "@tangent/eval": "file:packages/eval",
     "@tangent/search": "file:packages/search"
   },
   "devDependencies": {

@@ -1,4 +1,5 @@
 import path from "node:path";
+import { pathExists } from "@tangent/repo";
 
 import {
   computeLineDepths,
@@ -12,7 +13,6 @@ import {
   singleLineSignature,
   stripCommentsAndStrings
 } from "../core/helpers.js";
-import { pathExists } from "../core/repo.js";
 import { BaseLanguageAdapter, type LanguageContext, type ParsedFile, type ParsedImport, type ParsedSymbol } from "./base.js";
 
 type IndexedMatch = RegExpExecArray & { index: number };

@@ -1,26 +1,26 @@
-export type ProcessedConversationLedgerLine = {
-  schema: "daily.ledger.v1";
+export type DailyLedgerLineV2 = {
+  schema: "daily.ledger.v2";
   repoId: string;
-  repoRootHash: string;
-  conversationId: string;
-  provider: "claude" | "codex";
-  inputHash: string;
-  eventHighWatermark?: string;
-  startedAt?: string;
-  endedAt?: string;
-  lastActivityAt?: string;
   dateBucket: string;
+  sourceKey: string;
+  provider: "claude" | "codex";
+  conversationId: string;
+  turnId: string;
+  sourceFingerprint: string;
+  inputVersion: string;
+  inputHash?: string;
+  digestPath?: string;
+  topicKeys?: string[];
   processedAt: string;
   status:
     | "processed"
-    | "skipped-active"
-    | "skipped-empty"
     | "failed"
-    | "stale";
-  digestPath?: string;
-  notePath?: string;
+    | "skipped-empty"
+    | "skipped-active";
   error?: {
     code: string;
     message: string;
   };
 };
+
+export type ProcessedConversationLedgerLine = DailyLedgerLineV2;

@@ -1,10 +1,8 @@
-import { mkdir, readFile, rm, writeFile, appendFile } from "node:fs/promises";
-import path from "node:path";
+import { installProviderHooks, uninstallProviderHooks } from "@tangent/hooks";
+import { repoInfo } from "@tangent/repo";
 
-import { pathExists, repoInfo } from "../core/repo.js";
-import type { CaptureScope, ConvosProvider } from "../core/schema/convos-jsonl-v1.js";
-import { claudeHooksConfig, claudeHookPath } from "../providers/claude/hooks/config.js";
-import { codexHooksConfig, codexHookPath } from "../providers/codex/hooks/config.js";
+import type { ConvosProvider } from "../core/schema/convos-jsonl-v1.js";
+import { setGlobalTrackingDefault, setRepoTracked } from "../hook-runner/tracking-policy.js";
 
 export type InstallHooksOptions = {
   provider: ConvosProvider | "all";
@@ -22,56 +20,34 @@ export type HookInstallResult = {
 };
 
 export async function installHooks(options: InstallHooksOptions): Promise<HookInstallResult[]> {
-  const providers = expandProviders(options.provider);
   const repo = options.scope === "global" ? undefined : await repoInfo(options.repo || process.cwd());
   const repoRoot = repo?.root || repo?.cwd;
-  const results: HookInstallResult[] = [];
-
-  for (const provider of providers) {
-    const configPath = provider === "codex" ? codexHookPath(options.scope, repoRoot) : claudeHookPath(options.scope, repoRoot);
-    const config = provider === "codex" ? codexHooksConfig(options.scope) : claudeHooksConfig(options.scope);
-    const warnings: string[] = [];
-    await writeJsonConfig(configPath, config);
-    if (options.scope === "repo-local") {
-      await excludeLocalHook(repoRoot!, provider, warnings);
-    }
-    results.push({ provider, scope: options.scope, path: configPath, installed: true, warnings });
-  }
-
-  return results;
+  await applyInstallTracking(options, repoRoot);
+  return installProviderHooks({
+    provider: options.provider,
+    scope: options.scope,
+    repoRoot,
+    recordCommand: "tangent convos hook record"
+  }) as Promise<HookInstallResult[]>;
 }
 
 export async function uninstallHooks(options: Omit<InstallHooksOptions, "tracking">): Promise<HookInstallResult[]> {
-  const providers = expandProviders(options.provider);
   const repo = options.scope === "global" ? undefined : await repoInfo(options.repo || process.cwd());
   const repoRoot = repo?.root || repo?.cwd;
-  const results: HookInstallResult[] = [];
-  for (const provider of providers) {
-    const configPath = provider === "codex" ? codexHookPath(options.scope, repoRoot) : claudeHookPath(options.scope, repoRoot);
-    if (await pathExists(configPath)) await rm(configPath);
-    results.push({ provider, scope: options.scope, path: configPath, installed: false, warnings: [] });
-  }
-  return results;
+  return uninstallProviderHooks({
+    provider: options.provider,
+    scope: options.scope,
+    repoRoot,
+    recordCommand: "tangent convos hook record"
+  }) as Promise<HookInstallResult[]>;
 }
 
-function expandProviders(provider: ConvosProvider | "all"): ConvosProvider[] {
-  return provider === "all" ? ["claude", "codex"] : [provider];
-}
-
-async function writeJsonConfig(filePath: string, config: unknown): Promise<void> {
-  await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(filePath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
-}
-
-async function excludeLocalHook(repoRoot: string, provider: ConvosProvider, warnings: string[]): Promise<void> {
-  const excludePath = path.join(repoRoot, ".git", "info", "exclude");
-  if (!(await pathExists(path.join(repoRoot, ".git")))) return;
-  const entry = provider === "codex" ? ".codex/hooks.json" : ".claude/settings.local.json";
-  const existing = (await pathExists(excludePath)) ? await readFile(excludePath, "utf8") : "";
-  if (!existing.split(/\r?\n/).includes(entry)) {
-    await appendFile(excludePath, `${existing.endsWith("\n") || !existing ? "" : "\n"}${entry}\n`, "utf8");
+async function applyInstallTracking(options: InstallHooksOptions, repoRoot: string | undefined): Promise<void> {
+  const providers = [options.provider];
+  if (options.scope === "global") {
+    await setGlobalTrackingDefault(options.tracking === "off" ? "off" : "on");
+    return;
   }
-  if (provider === "codex") {
-    warnings.push("Codex has no documented .local config file; repo-local mode writes .codex/hooks.json and excludes it locally.");
-  }
+  if (!repoRoot) return;
+  await setRepoTracked(repoRoot, options.tracking !== "off", providers);
 }

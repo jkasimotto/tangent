@@ -1,10 +1,10 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { pathExists, resolveRepo as resolveTangentRepo, type ResolvedRepoInfo as DailyRepoInfo } from "@tangent/repo";
 
 import type { DailyConfig, DailyOutputMode } from "../types/config.js";
 import type { SummaryProviderConfig } from "../types/provider.js";
 import { ensureOutputDirs, resolveOutputPaths, resolveUserPath, type DailyOutputPaths } from "./paths.js";
-import { pathExists, resolveRepo, type DailyRepoInfo } from "./repo.js";
 
 export type LoadedDailyConfig = {
   config: DailyConfig;
@@ -36,12 +36,11 @@ export function defaultConfig(repo?: DailyRepoInfo): DailyConfig {
     },
     processing: {
       timezone: localTimezone(),
-      dateBucket: "endedAt",
+      dateBucket: "turnEndedAt",
       includeActiveConversations: false,
       activeQuietMinutes: 30,
-      workSessionIdleGapMinutes: 45,
       reprocessWhenConversationChanges: true,
-      grouping: "branch-and-paths"
+      maxTurnDurationMinutesForDaily: 180
     },
     input: {
       providers: ["claude", "codex"],
@@ -51,7 +50,7 @@ export function defaultConfig(repo?: DailyRepoInfo): DailyConfig {
       includeToolResults: true,
       includeFilePaths: true,
       includeTokenUsage: true,
-      maxConversationChars: 120000,
+      maxTurnInputChars: 48000,
       maxToolResultChars: 4000
     },
     privacy: {
@@ -68,26 +67,18 @@ export function defaultConfig(repo?: DailyRepoInfo): DailyConfig {
         timeoutMs: 120000,
         maxTurns: 1
       },
-      sessionDigestSchemaVersion: "session-digest.v1",
-      dailyNoteSchemaVersion: "daily-note.v1",
+      turnDigestSchemaVersion: "turn-digest.v1",
+      topicRollupSchemaVersion: "topic-rollup.v1",
+      dailyNoteSchemaVersion: "daily-note.v2",
       writeDigestCache: true
     },
     note: {
       titleTemplate: "Daily note - {{repo}} - {{date}}",
       sections: [
-        "standup",
-        "daySummary",
-        "workSessions",
-        "decisions",
-        "experiments",
-        "designSeeds",
-        "followUps",
-        "risks",
+        "topics",
         "metrics",
         "sourceCaveats"
       ],
-      includeStandupSnippet: true,
-      includeDesignSeeds: true,
       includeFollowUps: true,
       includeMetrics: true
     }
@@ -95,7 +86,7 @@ export function defaultConfig(repo?: DailyRepoInfo): DailyConfig {
 }
 
 export async function loadConfig(options: { repo: string }): Promise<LoadedDailyConfig> {
-  const repo = await resolveRepo(options.repo);
+  const repo = await resolveTangentRepo(options.repo, { markers: false });
   const sources: string[] = [];
   let config: DailyConfig = defaultConfig(repo);
 
@@ -124,7 +115,7 @@ export async function loadConfig(options: { repo: string }): Promise<LoadedDaily
 }
 
 export async function initConfig(options: InitDailyOptions): Promise<LoadedDailyConfig> {
-  const repo = await resolveRepo(options.repo);
+  const repo = await resolveTangentRepo(options.repo, { markers: false });
   let config = defaultConfig(repo);
   if (options.output) config.output.mode = options.output;
   if (options.baseDir) config.output.baseDir = resolveUserPath(options.baseDir);

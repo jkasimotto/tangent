@@ -4,13 +4,13 @@ import { renderCommandHelp } from "@tangent/core";
 
 import { loadConfig } from "../core/config.js";
 import { runGrep } from "../core/grep.js";
-import { configure, indexRepo, searchRepo, status as statusSdk, symbol, callers, callees, testsFor, skeleton, openPlan } from "../sdk/index.js";
-import { booleanArg, languageArgs, modeArg, numberArg, parseArgs, scopeArg, storageArg, stringArg, type Args } from "./args.js";
+import { benchSearch, configure, indexRepo, searchRepo, status as statusSdk, symbol, callers, callees, testsFor, skeleton, openPlan } from "../sdk/index.js";
+import { booleanArg, engineArg, languageArgs, modeArg, numberArg, parseArgs, scopeArg, storageArg, stringArg, type Args } from "./args.js";
 import { searchCommandSpec } from "./spec.js";
 
 export { searchCommandSpec } from "./spec.js";
 
-const namedCommands = new Set(["index", "init", "status", "doctor", "symbol", "callers", "callees", "tests", "skeleton", "open-plan", "grep", "rg", "find", "config"]);
+const namedCommands = new Set(["index", "init", "status", "doctor", "bench", "symbol", "callers", "callees", "tests", "skeleton", "open-plan", "grep", "rg", "find", "config"]);
 
 export async function runSearchCli(argv = process.argv.slice(2)): Promise<void> {
   if (argv[0] === "grep" || argv[0] === "rg" || argv[0] === "find") {
@@ -28,7 +28,8 @@ export async function runSearchCli(argv = process.argv.slice(2)): Promise<void> 
       mode: modeArg(args.mode),
       maxResults: numberArg(args["max-results"]),
       languages: languageArgs(args.language),
-      includeTests: booleanArg(args["include-tests"])
+      includeTests: booleanArg(args["include-tests"]),
+      engine: engineArg(args.engine)
     });
     return printJsonOr(args, result, () => printSearch(result));
   }
@@ -42,6 +43,7 @@ export async function runSearchCli(argv = process.argv.slice(2)): Promise<void> 
       reedgeAll: booleanArg(args["reedge-all"]),
       watch: booleanArg(args.watch),
       intervalSeconds: numberArg(args.interval),
+      engine: engineArg(args.engine),
       onResult: printIndexResult
     });
     if (result) printIndexResult(result);
@@ -65,37 +67,50 @@ export async function runSearchCli(argv = process.argv.slice(2)): Promise<void> 
   }
 
   if (command === "status" || command === "doctor") {
-    const value = await statusSdk({ repo: args._[1] || "." });
+    const value = await statusSdk({ repo: args._[1] || ".", engine: engineArg(args.engine) });
     return printJsonOr(args, value, () => printStatus(value, command === "doctor"));
+  }
+
+  if (command === "bench") {
+    const query = stringArg(args.query);
+    if (!query) throw new Error("search bench requires --query <query>.");
+    const result = await benchSearch({
+      repo: args._[1] || ".",
+      query,
+      languages: languageArgs(args.language),
+      iterations: numberArg(args.iterations) || 5,
+      includeGenerated: args["include-generated"] === undefined ? undefined : booleanArg(args["include-generated"])
+    });
+    return printJsonOr(args, result, () => printBench(result));
   }
 
   if (command === "symbol") {
     const name = required(args._[1], "symbol requires <name>.");
-    const result = await symbol(name, { repo: stringArg(args.repo), languages: languageArgs(args.language) });
+    const result = await symbol(name, { repo: stringArg(args.repo), languages: languageArgs(args.language), engine: engineArg(args.engine) });
     return printJsonOr(args, result, () => printSymbols(name, result));
   }
 
   if (command === "callers" || command === "callees") {
     const name = required(args._[1], `${command} requires <name>.`);
-    const result = command === "callers" ? await callers(name, { repo: stringArg(args.repo), languages: languageArgs(args.language) }) : await callees(name, { repo: stringArg(args.repo), languages: languageArgs(args.language) });
+    const result = command === "callers" ? await callers(name, { repo: stringArg(args.repo), languages: languageArgs(args.language), engine: engineArg(args.engine) }) : await callees(name, { repo: stringArg(args.repo), languages: languageArgs(args.language), engine: engineArg(args.engine) });
     return printJsonOr(args, result, () => printCallGraph(result));
   }
 
   if (command === "tests") {
     const target = required(args._[1], "tests requires <path|symbol>.");
-    const result = await testsFor(target, { repo: stringArg(args.repo), languages: languageArgs(args.language) });
+    const result = await testsFor(target, { repo: stringArg(args.repo), languages: languageArgs(args.language), engine: engineArg(args.engine) });
     return printJsonOr(args, result, () => printTests(result));
   }
 
   if (command === "skeleton") {
     const target = required(args._[1], "skeleton requires <path|symbol>.");
-    const result = await skeleton(target, { repo: stringArg(args.repo), languages: languageArgs(args.language) });
+    const result = await skeleton(target, { repo: stringArg(args.repo), languages: languageArgs(args.language), engine: engineArg(args.engine) });
     return printJsonOr(args, result, () => printSkeleton(result));
   }
 
   if (command === "open-plan") {
     const query = required(args._[1], "open-plan requires <query>.");
-    const result = await openPlan(query, { repo: stringArg(args.repo), languages: languageArgs(args.language) });
+    const result = await openPlan(query, { repo: stringArg(args.repo), languages: languageArgs(args.language), engine: engineArg(args.engine) });
     return printJsonOr(args, result, () => printOpenPlan(result));
   }
 
@@ -158,6 +173,23 @@ function printStatus(value: Awaited<ReturnType<typeof statusSdk>>, verbose: bool
     console.log(`Configured languages: ${value.configuredLanguages.join(", ")}`);
     console.log(`FTS: ${value.ftsEnabled ? "enabled" : "disabled"}`);
   }
+}
+
+function printBench(value: Awaited<ReturnType<typeof benchSearch>>): void {
+  console.log(`Repo:  ${value.repo}`);
+  console.log(`Query: ${JSON.stringify(value.query)}`);
+  console.log(`Temp:  ${value.tempHome}`);
+  for (const result of value.results) {
+    console.log("");
+    console.log(result.engine === "ts" ? "TypeScript" : "Rust");
+    console.log(`  cold index: ${result.coldIndexMs.toFixed(1)}ms`);
+    console.log(`  warm index: ${result.warmIndexMs.toFixed(1)}ms`);
+    console.log(`  query avg:  ${result.queryAverageMs.toFixed(1)}ms (${result.queryMs.map((item) => item.toFixed(1)).join(", ")})`);
+    if (result.index) console.log(`  indexed:    ${result.index.files} files, ${result.index.symbols} symbols, ${result.index.edges} edges`);
+  }
+  console.log("");
+  console.log(`Parity: files=${value.parity.fileCountsMatch ? "ok" : "diff"} symbols=${value.parity.symbolCountsMatch ? "ok" : "diff"} top-hit=${value.parity.topHitMatches ? "ok" : "diff"}`);
+  for (const warning of value.parity.warnings) console.warn(`warning: ${warning}`);
 }
 
 function printSymbols(name: string, values: Awaited<ReturnType<typeof symbol>>): void {

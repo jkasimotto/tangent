@@ -73,3 +73,9 @@ export function scopeArg(value: unknown): "private" | "global" | "repo-shared" |
   if (value === "private" || value === "global" || value === "repo-shared") return value;
   throw new Error("--scope must be private, global, or repo-shared.");
 }
+
+export function engineArg(value: unknown): "ts" | "rust" | undefined {
+  if (value === undefined) return undefined;
+  if (value === "ts" || value === "rust") return value;
+  throw new Error("--engine must be ts or rust.");
+}

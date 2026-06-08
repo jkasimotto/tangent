@@ -20,7 +20,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test test/*.test.mjs"
+    "build:rust": "cargo build -p tangent-search-engine",
+    "test": "npm run build && npm run build:rust && node --test test/*.test.mjs"
   },
   "dependencies": {
     "@tangent/core": "file:../core",

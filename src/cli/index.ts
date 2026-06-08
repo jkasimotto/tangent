@@ -1,20 +1,27 @@
 #!/usr/bin/env node
 import { completeCommand, completionScript, renderCommandHelp, type CliCommandSpec, type CliCompletionShell } from "@tangent/core";
-import { convosCommandSpec, runConvosCli } from "@convos/convos/cli";
+import { runUsageCli, usageCommandSpec } from "@tangent/usage/cli";
 import { dailyCommandSpec, runDailyCli } from "@tangent/daily/cli";
 import { evalCommandSpec, runEvalCli } from "@tangent/eval/cli";
 import { governanceCommandSpec, runGovernanceCli } from "@tangent/governance/cli";
 import { runSearchCli, searchCommandSpec } from "@tangent/search/cli";
+import { dataCommandSpec, devCommandSpec, doctorCommandSpec, hooksCommandSpec, runProductStatusCommand, runSetupCommand, setupCommandSpec, statusCommandSpec } from "./product.js";
 
 const tangentCommandSpec: CliCommandSpec = {
   name: "tangent",
-  description: "Local coding-agent conversation tools",
+  description: "Local operating layer for coding-agent work",
   subcommands: [
-    convosCommandSpec,
+    setupCommandSpec,
+    statusCommandSpec,
+    usageCommandSpec,
     dailyCommandSpec,
-    evalCommandSpec,
     searchCommandSpec,
-    governanceCommandSpec,
+    evalCommandSpec,
+    doctorCommandSpec,
+    { ...governanceCommandSpec, hidden: true },
+    devCommandSpec,
+    hooksCommandSpec,
+    dataCommandSpec,
     {
       name: "completion",
       description: "Print shell completion script",
@@ -37,8 +44,18 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
     return;
   }
 
-  if (app === "convos") {
-    await runConvosCli(rest);
+  if (app === "setup") {
+    await runSetupCommand(rest);
+    return;
+  }
+
+  if (app === "status") {
+    await runProductStatusCommand(rest);
+    return;
+  }
+
+  if (app === "usage") {
+    await runUsageCli(rest);
     return;
   }
 
@@ -63,6 +80,38 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
     return;
   }
 
+  if (app === "dev") {
+    const [command, ...devRest] = rest;
+    if (!command || command === "lint") {
+      await runGovernanceCli(["lint", ...devRest]);
+      return;
+    }
+    throw new Error(`Unknown dev command: ${command}`);
+  }
+
+  if (app === "hooks") {
+    await runUsageCli(["hooks", ...rest]);
+    return;
+  }
+
+  if (app === "data") {
+    const [command, ...dataRest] = rest;
+    if (command === "export") {
+      await runUsageCli(["export", ...dataRest]);
+      return;
+    }
+    if (command === "archive") {
+      await runUsageCli(["archive", ...dataRest]);
+      return;
+    }
+    throw new Error(`Unknown data command: ${command || ""}`.trim());
+  }
+
+  if (app === "doctor") {
+    await runProductStatusCommand(rest, true);
+    return;
+  }
+
   if (app === "completion") {
     const shell = shellArg(rest[0]);
     console.log(completionScript(shell, "tangent"));
@@ -81,14 +130,15 @@ function help(): void {
   console.log(renderCommandHelp(tangentCommandSpec));
   console.log(`
 Examples:
-  tangent convos status .
+  tangent setup
+  tangent status
+  tangent usage today
+  tangent usage transcript codex:019ea3ad
   tangent daily today
-  tangent daily yesterday
-  tangent daily 2026-06-07
-  tangent eval run eval.json
+  tangent daily process --date today
   tangent search index
   tangent search "horizontal tension"
-  tangent governance lint
+  tangent eval run eval.json
   tangent completion zsh
 `);
 }

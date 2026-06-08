@@ -3,7 +3,7 @@
 Purpose: Prepare, run, collect, compare, and report coding-agent eval variants.
 
 Local rules:
-- Eval may consume Convos metrics.
+- Eval may consume Usage metrics.
 - Keep eval specs, contexts, and manifests in Eval.
 
 Read next:

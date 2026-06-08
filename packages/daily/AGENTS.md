@@ -1,9 +1,9 @@
 # Agent Notes
 
-Purpose: Private daily notes generated from Convos turns.
+Purpose: Private daily notes generated from Usage turns.
 
 Local rules:
-- Daily may consume Convos data.
+- Daily may consume Usage data.
 - Keep Daily note schemas and prompts in Daily.
 
 Read next:

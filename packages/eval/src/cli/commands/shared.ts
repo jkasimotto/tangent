@@ -1,6 +1,7 @@
 import type { Args } from "../args.js";
 import { numberArg, stringArg, stringsArg } from "../args.js";
 import { normalizeAgent, normalizePhases, parseContextValue } from "../../core/config.js";
+import { listRuns } from "../../core/run-store.js";
 import type { EvalAgentConfig } from "../../types/provider.js";
 import type { EvalContextMode } from "../../types/context.js";
 import type { EvalPhaseSpec, EvalVariantSpec } from "../../types/spec.js";
@@ -65,6 +66,13 @@ export function variantIdFromContext(value: string): string {
   if (value === "empty" || value === "no-context") return "no-context";
   if (value === "repo") return "repo-context";
   return value.split("/").at(-1)?.replace(/^contexts-/, "") || "context";
+}
+
+export async function resolveRunId(value: string): Promise<string> {
+  if (value !== "latest") return value;
+  const latest = (await listRuns())[0];
+  if (!latest) throw new Error("No eval runs found.");
+  return latest.id;
 }
 
 function parseVariant(value: string): EvalVariantSpec {

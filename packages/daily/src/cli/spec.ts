@@ -4,7 +4,7 @@ const dateValues = ["today", "yesterday", "tomorrow", "-1d", "+1d"];
 
 export const dailyCommandSpec: CliCommandSpec = {
   name: "daily",
-  description: "Print, generate, and read private daily notes from convos",
+  description: "Print, generate, and read private daily notes from usage",
   values: dateValues,
   subcommands: [
     {
@@ -23,7 +23,7 @@ export const dailyCommandSpec: CliCommandSpec = {
       ]
     },
     { name: "status", description: "Show daily status", args: "[repo]", options: jsonDateOptions() },
-    { name: "process", description: "Summarize candidate turns and write a note", args: "[repo]", options: processOptions() },
+    { name: "process", description: "Summarize candidate turns and write a note", args: "[repo]", options: processOptions(["dry-run", "json", "verbose"]) },
     { name: "candidates", description: "List candidate turns", args: "[repo]", options: processOptions(["json", "trace"]) },
     { name: "unprocessed", description: "Alias for candidates", args: "[repo]", options: processOptions(["json", "trace"]) },
     {
@@ -42,6 +42,7 @@ export const dailyCommandSpec: CliCommandSpec = {
       ]
     },
     { name: "reprocess", description: "Force reprocessing", args: "[repo]", options: processOptions(["source", "all", "json"]) },
+    { name: "retry", description: "Retry failed turns", args: "[repo]", options: processOptions(["source", "all", "json"]) },
     {
       name: "provider",
       description: "Test or inspect summary providers",
@@ -86,6 +87,7 @@ function processOptions(extra: string[] = []) {
     else if (name === "source") options.push({ name, takesValue: true, description: "Source key" });
     else if (name === "path") options.push({ name, description: "Print artifact path" });
     else if (name === "trace") options.push({ name, description: "Print timing trace" });
+    else if (name === "verbose") options.push({ name, description: "Print verbose details" });
     else if (name === "dry-run") options.push({ name, description: "Do not write output" });
     else if (name === "explain") options.push({ name, description: "Explain render inputs" });
     else options.push({ name, description: `${name} flag` });

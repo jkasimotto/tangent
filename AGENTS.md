@@ -8,8 +8,8 @@ Packages:
 - @tangent/hooks: Claude/Codex hook installation, status, provider config, and raw hook mechanics.
 - @tangent/agent-runtime: shared process execution and agent runner primitives.
 - @tangent/governance: architecture, docs, dependency, and duplication lints.
-- @convos/convos: conversation telemetry domain, schemas, datasets, hook normalization, SDK, CLI.
-- @tangent/daily: private daily notes from Convos turns.
+- @tangent/usage: conversation telemetry domain, schemas, datasets, hook normalization, SDK, CLI.
+- @tangent/daily: private daily notes from Usage turns.
 - @tangent/eval: coding-agent eval preparation, execution, collection, and reports.
 - @tangent/search: structural repository indexing and search.
 
@@ -28,7 +28,7 @@ Validate work:
 - npm run build
 
 Never:
-- Do not add vertical app dependencies except daily/eval -> convos.
+- Do not add vertical app dependencies except daily/eval -> usage.
 - Do not put provider hook config mechanics outside @tangent/hooks.
 - Do not duplicate parseArgs, runProcess, repo discovery, or git/worktree helpers in vertical apps.
 - Do not import another package's src internals; use public exports.

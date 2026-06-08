@@ -7,5 +7,5 @@ Read next:
 - public-api.md
 
 Package rules:
-- Do not import Convos schemas.
+- Do not import Usage schemas.
 - Keep hook record commands injectable.

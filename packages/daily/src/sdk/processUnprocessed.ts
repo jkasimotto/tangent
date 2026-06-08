@@ -1,26 +1,33 @@
-import { openConvos } from "@convos/convos";
+import { openUsage } from "@tangent/usage";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 
-import { ensureOutputDirs } from "../core/paths.js";
+import { ensureOutputDirs, failureArtifactPath, notePath } from "../core/paths.js";
 import { appendLedgerLine } from "../core/ledger.js";
 import { loadConfig } from "../core/config.js";
 import { dateArgToBucket, todayBucket } from "../core/time.js";
-import { writeDailyNote, writeTopicRollupCache, writeTurnDigestCache, writeTurnInputCache } from "../core/note-writer.js";
+import { readDigestsForDate, writeDailyNote, writeTopicRollupCache, writeTurnDigestCache, writeTurnInputCache } from "../core/note-writer.js";
 import { normalizeTopicRollup } from "../core/schemas.js";
 import { createSummaryRunner } from "../runners/summary-runner.js";
-import { collectCandidates, type CandidateQuery } from "../convos/selectors.js";
-import { buildTurnDigestInput } from "../convos/adapter.js";
+import { collectCandidates, type CandidateQuery } from "../usage/selectors.js";
+import { buildTurnDigestInput } from "../usage/adapter.js";
 import { hashObject } from "../core/hash.js";
 import { fallbackTopicRollup, groupTurnDigests } from "../core/grouping.js";
 import type { DailyLedgerLineV2 } from "../types/ledger.js";
 import type { TopicRollup, TurnDigest, TurnDigestInput } from "../types/digest.js";
+import type { RunnerStatus, SummaryRunner } from "../types/provider.js";
 
 export type ProcessUnprocessedOptions = CandidateQuery & {
   provider?: "claude" | "codex";
+  dryRun?: boolean;
+  summaryRunner?: SummaryRunner;
 };
 
 export type ProcessResult = {
   repoId: string;
   date: string;
+  dryRun?: boolean;
+  candidates: number;
   processed: number;
   skipped: number;
   failed: number;
@@ -28,12 +35,21 @@ export type ProcessResult = {
     sourceKey: string;
     path: string;
     status: "processed" | "failed" | "skipped";
+    failurePath?: string;
+    reason?: string;
   }>;
   note: {
     path: string;
     created: boolean;
     updated: boolean;
   };
+  providerStatus?: RunnerStatus;
+  failures: Array<{
+    sourceKey: string;
+    code: string;
+    reason: string;
+    detailsPath: string;
+  }>;
   warnings: string[];
 };
 
@@ -42,11 +58,45 @@ export async function processUnprocessed(options: ProcessUnprocessedOptions): Pr
   await ensureOutputDirs(loaded.paths);
   const date = dateArgToBucket(options.date, loaded.config.processing.timezone);
   const providers = options.provider ? [options.provider] : options.providers;
+  const fallbackDate = date || todayBucket(loaded.config.processing.timezone);
+  const fallbackNotePath = notePath(loaded.paths, fallbackDate);
   const rows = await collectCandidates(loaded, { ...options, providers, date });
-  const dataset = await openConvos({ repo: loaded.repo.root, providers: providers || loaded.config.input.providers });
-  const runner = createSummaryRunner(loaded.config.summary.provider);
+  if (options.dryRun) {
+    return {
+      repoId: loaded.repo.id,
+      date: fallbackDate,
+      dryRun: true,
+      candidates: rows.length,
+      processed: 0,
+      skipped: 0,
+      failed: 0,
+      digests: rows.map((row) => ({ sourceKey: row.sourceKey, path: "", status: "skipped" as const, reason: `would process: ${row.reason}` })),
+      note: { path: fallbackNotePath, created: false, updated: false },
+      failures: [],
+      warnings: []
+    };
+  }
+  const runner = options.summaryRunner || createSummaryRunner(loaded.config.summary.provider);
+  const providerStatus = await runner.checkAvailable();
+  if (!providerStatus.available) {
+    const reason = providerStatus.warnings[0] || `${loaded.config.summary.provider.kind} is unavailable.`;
+    return {
+      repoId: loaded.repo.id,
+      date: fallbackDate,
+      candidates: 0,
+      processed: 0,
+      skipped: 0,
+      failed: 0,
+      digests: [],
+      note: { path: fallbackNotePath, created: false, updated: false },
+      providerStatus,
+      failures: [],
+      warnings: [`Summary provider unavailable: ${reason}`]
+    };
+  }
+  const dataset = await openUsage({ repo: loaded.repo.root, providers: providers || loaded.config.input.providers });
   const digests: ProcessResult["digests"] = [];
-  const processedDigests: TurnDigest[] = [];
+  const failures: ProcessResult["failures"] = [];
   const warnings: string[] = [];
   let processed = 0;
   let skipped = 0;
@@ -72,27 +122,42 @@ export async function processUnprocessed(options: ProcessUnprocessedOptions): Pr
         : "";
       processed += 1;
       touchedDates.add(row.dateBucket);
-      processedDigests.push(digest);
       await appendLedgerLine(loaded.paths.ledgerPath, ledgerLine(loaded, row, "processed", inputHash, digestPath, digest.topicHints.map((hint) => hint.key)));
       digests.push({ sourceKey: row.sourceKey, path: digestPath, status: "processed" });
     } catch (error) {
       failed += 1;
       const message = (error as Error).message;
-      warnings.push(`${row.sourceKey}: ${message}`);
-      await appendLedgerLine(loaded.paths.ledgerPath, ledgerLine(loaded, row, "failed", inputHash, undefined, undefined, message));
-      digests.push({ sourceKey: row.sourceKey, path: "", status: "failed" });
+      const reason = summarizeRunnerFailure(message);
+      const failurePath = await writeFailureArtifact({
+        loaded,
+        date: row.dateBucket,
+        sourceKey: row.sourceKey,
+        inputHash,
+        reason,
+        message,
+        stack: (error as Error).stack
+      });
+      warnings.push(`${row.sourceKey}: ${reason}`);
+      failures.push({ sourceKey: row.sourceKey, code: "summary-runner-failed", reason, detailsPath: failurePath });
+      await appendLedgerLine(loaded.paths.ledgerPath, ledgerLine(loaded, row, "failed", inputHash, undefined, undefined, reason, failurePath));
+      digests.push({ sourceKey: row.sourceKey, path: "", status: "failed", failurePath, reason });
     }
   }
 
   const resultDate = date || [...touchedDates][0] || todayBucket(loaded.config.processing.timezone);
   const noteDate = touchedDates.has(resultDate) || date ? resultDate : [...touchedDates][0] || resultDate;
-  const topics = await rollupTopics(noteDate, processedDigests, runner);
+  const latestDigests = await readDigestsForDate(loaded, noteDate);
+  const noteDigests = latestDigests.map((row) => row.digest);
+  const topics = noteDigests.length ? await rollupTopics(noteDate, noteDigests, runner) : [];
   for (const topic of topics) await writeTopicRollupCache({ loaded, rollup: topic });
-  const note = await writeDailyNote(loaded, noteDate, topics.length ? topics : undefined);
+  const note = topics.length
+    ? await writeDailyNote(loaded, noteDate, topics)
+    : { path: notePath(loaded.paths, noteDate), created: false, updated: false };
 
   return {
     repoId: loaded.repo.id,
     date: noteDate,
+    candidates: rows.length,
     processed,
     skipped,
     failed,
@@ -102,8 +167,43 @@ export async function processUnprocessed(options: ProcessUnprocessedOptions): Pr
       created: note.created,
       updated: note.updated
     },
+    providerStatus,
+    failures,
     warnings
   };
+}
+
+async function writeFailureArtifact(args: {
+  loaded: Awaited<ReturnType<typeof loadConfig>>;
+  date: string;
+  sourceKey: string;
+  inputHash: string;
+  reason: string;
+  message: string;
+  stack?: string;
+}): Promise<string> {
+  const filePath = failureArtifactPath(args.loaded.paths, args.date, args.sourceKey, args.inputHash);
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, [
+    `source: ${args.sourceKey}`,
+    `reason: ${args.reason}`,
+    "",
+    "message:",
+    args.message,
+    "",
+    "stack:",
+    args.stack || "(none)",
+    ""
+  ].join("\n"), "utf8");
+  return filePath;
+}
+
+function summarizeRunnerFailure(message: string): string {
+  const lower = message.toLowerCase();
+  if (lower.includes("json") || lower.includes("schema")) return "Summary runner returned non-JSON output";
+  if (lower.includes("timed out")) return "Summary runner timed out";
+  if (lower.includes("command not found") || lower.includes("enoent")) return "Summary provider command was not found";
+  return "Summary runner failed";
 }
 
 async function rollupTopics(date: string, digests: TurnDigest[], runner: ReturnType<typeof createSummaryRunner>): Promise<TopicRollup[]> {
@@ -131,7 +231,8 @@ function ledgerLine(
   inputHash: string,
   digestPath?: string,
   topicKeys?: string[],
-  errorMessage?: string
+  errorMessage?: string,
+  failurePath?: string
 ): DailyLedgerLineV2 {
   return {
     schema: "daily.ledger.v2",
@@ -145,6 +246,7 @@ function ledgerLine(
     inputVersion: "daily.turn-digest-input.v1",
     inputHash,
     digestPath,
+    failurePath,
     topicKeys,
     processedAt: new Date().toISOString(),
     status,

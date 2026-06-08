@@ -1,4 +1,4 @@
-import { openConvos, status as convosStatus, type ConversationListItem, type TurnListItem } from "@convos/convos";
+import { openUsage, status as usageStatus, type ConversationListItem, type TurnListItem } from "@tangent/usage";
 import { pathExists } from "@tangent/repo";
 
 import { loadConfig } from "../core/config.js";
@@ -6,7 +6,7 @@ import { dateArgToBucket, todayBucket } from "../core/time.js";
 import { notePath } from "../core/paths.js";
 import { createSummaryRunner } from "../runners/summary-runner.js";
 import type { SummaryProviderConfig, RunnerStatus } from "../types/provider.js";
-import { collectCandidates } from "../convos/selectors.js";
+import { collectCandidates } from "../usage/selectors.js";
 
 export type DailyStatus = {
   repo: {
@@ -14,7 +14,7 @@ export type DailyStatus = {
     id: string;
     displayName: string;
   };
-  convos: {
+  usage: {
     available: boolean;
     providers: Record<
       "claude" | "codex",
@@ -58,8 +58,8 @@ export type StatusOptions = {
 
 export async function status(options: StatusOptions): Promise<DailyStatus> {
   const loaded = await loadConfig({ repo: options.repo });
-  const convos = await convosStatus({ repo: loaded.repo.root });
-  const dataset = await openConvos({ repo: loaded.repo.root, providers: ["claude", "codex"] });
+  const usage = await usageStatus({ repo: loaded.repo.root });
+  const dataset = await openUsage({ repo: loaded.repo.root, providers: ["claude", "codex"] });
   const conversations = dataset.conversations.all().data;
   const turns = dataset.turns.list({ includeActive: true }).data;
   const runner = createSummaryRunner(loaded.config.summary.provider);
@@ -74,11 +74,11 @@ export async function status(options: StatusOptions): Promise<DailyStatus> {
       id: loaded.repo.id,
       displayName: loaded.config.repo?.displayName || loaded.repo.displayName
     },
-    convos: {
+    usage: {
       available: true,
       providers: {
-        claude: providerRow("claude", convos, conversations, turns),
-        codex: providerRow("codex", convos, conversations, turns)
+        claude: providerRow("claude", usage, conversations, turns),
+        codex: providerRow("codex", usage, conversations, turns)
       }
     },
     daily: {
@@ -110,13 +110,13 @@ export async function status(options: StatusOptions): Promise<DailyStatus> {
   };
 }
 
-function providerRow(provider: "claude" | "codex", convos: Awaited<ReturnType<typeof convosStatus>>, conversations: ConversationListItem[], turns: TurnListItem[]): DailyStatus["convos"]["providers"]["claude"] {
-  const row = convos.providers.find((entry) => entry.provider === provider);
+function providerRow(provider: "claude" | "codex", usage: Awaited<ReturnType<typeof usageStatus>>, conversations: ConversationListItem[], turns: TurnListItem[]): DailyStatus["usage"]["providers"]["claude"] {
+  const row = usage.providers.find((entry) => entry.provider === provider);
   const providerTurns = turns.filter((turn) => turn.provider === provider);
   return {
     tracked: Boolean(row?.capture.enabled || row?.capture.lastEvent || row?.nativePaths.length),
     sources: [
-      row?.capture.lastEvent ? "convos-jsonl" : undefined,
+      row?.capture.lastEvent ? "usage-jsonl" : undefined,
     ].filter((value): value is string => Boolean(value)),
     turns: providerTurns.length,
     lastTurnAt: latestTurnAt(providerTurns) || latestConversationAt(conversations.filter((conversation) => conversation.provider === provider)) || row?.capture.lastEvent

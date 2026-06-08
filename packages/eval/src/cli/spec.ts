@@ -71,7 +71,20 @@ export const evalCommandSpec: CliCommandSpec = {
         ...agentOptions
       ]
     },
-    { name: "collect", description: "Collect git and convos metrics for a run", args: "<run-id>", options: [{ name: "json", description: "Print JSON" }] },
+    {
+      name: "quick",
+      description: "Run shortcut eval variants from prompt and context flags",
+      options: [
+        { name: "repo", takesValue: true, description: "Repo ref for shortcut mode" },
+        { name: "repo-path", takesValue: true, description: "Repo path for shortcut mode" },
+        { name: "prompt", takesValue: true, description: "Prompt path; repeatable" },
+        { name: "context", takesValue: true, description: "Context mode/ref; repeatable" },
+        { name: "phases", takesValue: true, description: "Comma-separated phases" },
+        { name: "json", description: "Print JSON" },
+        ...agentOptions
+      ]
+    },
+    { name: "collect", description: "Collect git and usage metrics for a run", args: "<run-id>", options: [{ name: "json", description: "Print JSON" }] },
     { name: "report", description: "Print a compact eval report", args: "<run-id>", options: [{ name: "json", description: "Print JSON" }] },
     {
       name: "diff",

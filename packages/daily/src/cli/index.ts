@@ -29,7 +29,7 @@ export async function runDailyCli(argv = process.argv.slice(2)): Promise<void> {
   if (command === "unprocessed" || command === "candidates") return unprocessedCommand(args);
   if (command === "note") return noteCommand(args);
   if (command === "path") return noteCommand({ ...args, _: ["note", "path", ...args._.slice(1)] });
-  if (command === "reprocess") return reprocessCommand(args);
+  if (command === "reprocess" || command === "retry") return reprocessCommand(args);
   if (command === "provider") return providerCommand(args);
   if (command === "digests") return digestsCommand(args);
   if (command === "input") return inputCommand(args);

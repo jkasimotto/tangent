@@ -9,8 +9,8 @@ export async function statusCommand(args: Args): Promise<void> {
   }
   console.log(`daily status - ${value.repo.root}`);
   console.log("");
-  console.log("Convos");
-  for (const [provider, row] of Object.entries(value.convos.providers)) {
+  console.log("Usage");
+  for (const [provider, row] of Object.entries(value.usage.providers)) {
     const label = provider === "claude" ? "Claude" : "Codex";
     console.log(`  ${label}: ${row.tracked ? "tracked" : "not tracked"}, ${row.turns} turns${row.lastTurnAt ? `, last ${row.lastTurnAt}` : ""}`);
   }

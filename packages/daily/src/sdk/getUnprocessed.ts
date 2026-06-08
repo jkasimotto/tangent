@@ -1,10 +1,10 @@
 import { loadConfig } from "../core/config.js";
 import { dateArgToBucket } from "../core/time.js";
-import { collectCandidates, type CandidateQuery, type UnprocessedConversation } from "../convos/selectors.js";
+import { collectCandidates, type CandidateQuery, type UnprocessedConversation } from "../usage/selectors.js";
 
 export type GetUnprocessedOptions = CandidateQuery;
 export type GetCandidatesOptions = CandidateQuery;
-export type { UnprocessedConversation } from "../convos/selectors.js";
+export type { UnprocessedConversation } from "../usage/selectors.js";
 
 export async function getCandidates(options: GetCandidatesOptions): Promise<UnprocessedConversation[]> {
   const loaded = await loadConfig({ repo: options.repo });

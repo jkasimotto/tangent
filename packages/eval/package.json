@@ -29,7 +29,7 @@
     "@tangent/core": "file:../core",
     "@tangent/repo": "file:../repo",
     "@tangent/agent-runtime": "file:../agent-runtime",
-    "@convos/convos": "file:../convos"
+    "@tangent/usage": "file:../usage"
   },
   "engines": {
     "node": ">=20"

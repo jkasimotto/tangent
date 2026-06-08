@@ -55,9 +55,9 @@ const allowedPackageDeps: Record<string, string[]> = {
   "@tangent/hooks": ["@tangent/core", "@tangent/repo"],
   "@tangent/agent-runtime": ["@tangent/core"],
   "@tangent/governance": ["@tangent/core", "@tangent/repo"],
-  "@convos/convos": ["@tangent/core", "@tangent/repo", "@tangent/hooks"],
-  "@tangent/daily": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@convos/convos"],
-  "@tangent/eval": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@convos/convos"],
+  "@tangent/usage": ["@tangent/core", "@tangent/repo", "@tangent/hooks"],
+  "@tangent/daily": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage"],
+  "@tangent/eval": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage"],
   "@tangent/search": ["@tangent/core", "@tangent/repo"]
 };
 
@@ -225,7 +225,7 @@ async function lintImports(ctx: LintContext): Promise<GovernanceFinding[]> {
           message: `${owner.name} imports ${importedPackage}, which violates package boundaries.`,
           fix: [
             "Move shared behavior to core, repo, hooks, or agent-runtime.",
-            "Keep vertical apps independent except daily/eval -> convos.",
+            "Keep vertical apps independent except daily/eval -> usage.",
             "Update docs/architecture/dependency-graph.md only with an intentional graph change."
           ]
         });
@@ -299,7 +299,7 @@ async function lintHookBoundaries(ctx: LintContext): Promise<GovernanceFinding[]
         message: "contains provider hook config/path/event mechanics outside @tangent/hooks.",
         fix: [
           "Move provider hook event catalogs, config paths, shell quoting, and config merge/remove into packages/hooks.",
-          "Keep Convos-specific normalization in @convos/convos.",
+          "Keep Usage-specific normalization in @tangent/usage.",
           "Import hook infrastructure through @tangent/hooks public exports."
         ]
       });

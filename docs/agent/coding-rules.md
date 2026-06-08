@@ -9,5 +9,5 @@ Rules:
 - Put git/repo/worktree/path discovery in @tangent/repo.
 - Put provider hook mechanics in @tangent/hooks.
 - Put process runner behavior in @tangent/agent-runtime.
-- Keep Convos event schemas in @convos/convos.
+- Keep Usage event schemas in @tangent/usage.
 - Add governance lints for enforceable architecture rules.

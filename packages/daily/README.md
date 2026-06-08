@@ -1,6 +1,6 @@
 # @tangent/daily
 
-Private daily engineering notes from `convos` conversation telemetry.
+Private daily engineering notes from `usage` conversation telemetry.
 
 ```bash
 tangent daily init . --summary-provider codex-cli --model gpt-5.4-mini

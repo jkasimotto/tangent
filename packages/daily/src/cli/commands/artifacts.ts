@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
-import { openConvos } from "@convos/convos";
+import { openUsage } from "@tangent/usage";
 
-import { buildTurnDigestInput } from "../../convos/adapter.js";
+import { buildTurnDigestInput } from "../../usage/adapter.js";
 import { loadConfig } from "../../core/config.js";
 import { fallbackTopicRollup, groupTurnDigests } from "../../core/grouping.js";
 import { hashObject } from "../../core/hash.js";
@@ -15,7 +15,7 @@ import { dateArg, providerArg, stringArg, type Args } from "../args.js";
 export async function inputCommand(args: Args): Promise<void> {
   const loaded = await loadConfig({ repo: args._[1] || "." });
   const sourceKey = requiredSource(args);
-  const dataset = await openConvos({ repo: loaded.repo.root, providers: providerArg(args.provider) ? [providerArg(args.provider)!] : loaded.config.input.providers });
+  const dataset = await openUsage({ repo: loaded.repo.root, providers: providerArg(args.provider) ? [providerArg(args.provider)!] : loaded.config.input.providers });
   const turn = dataset.turns.get(sourceKey).data;
   if (!turn) throw new Error(`No turn found for ${sourceKey}.`);
   const date = dateArgToBucket(dateArg(args.date), loaded.config.processing.timezone) ||

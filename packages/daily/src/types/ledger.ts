@@ -10,6 +10,7 @@ export type DailyLedgerLineV2 = {
   inputVersion: string;
   inputHash?: string;
   digestPath?: string;
+  failurePath?: string;
   topicKeys?: string[];
   processedAt: string;
   status:

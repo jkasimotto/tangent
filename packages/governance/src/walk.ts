@@ -87,14 +87,14 @@ export function ownerPackage(file: string, packages: PackageInfo[]): PackageInfo
 }
 
 export function tangentPackageName(specifier: string): string | undefined {
-  if (specifier.startsWith("@convos/convos")) return "@convos/convos";
+  if (specifier.startsWith("@tangent/usage")) return "@tangent/usage";
   if (!specifier.startsWith("@tangent/")) return undefined;
   const [, scope, name] = specifier.match(/^(@tangent)\/([^/]+)/) || [];
   return scope && name ? `${scope}/${name}` : undefined;
 }
 
 export function isTangentPackage(name: string): boolean {
-  return name.startsWith("@tangent/") || name === "@convos/convos";
+  return name.startsWith("@tangent/") || name === "@tangent/usage";
 }
 
 export function hasGroup(groups: Set<GovernanceLintGroup>, group: GovernanceLintGroup): boolean {

@@ -3,7 +3,7 @@
 Purpose: Claude/Codex hook config, install, uninstall, status, and repo-local exclude mechanics.
 
 Local rules:
-- Do not import Convos schemas.
+- Do not import Usage schemas.
 - Keep hook record commands injectable.
 
 Read next:

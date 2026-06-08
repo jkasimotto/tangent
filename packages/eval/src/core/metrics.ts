@@ -3,7 +3,7 @@ import path from "node:path";
 import { changedFiles, currentCommit, diffStat, statusPorcelain } from "@tangent/repo/git";
 import { commitAll } from "@tangent/repo/worktree";
 
-import { scanRepo, type ConvosJsonlLineV1 } from "@convos/convos";
+import { scanRepo, type UsageJsonlLineV1 } from "@tangent/usage";
 
 import type { EvalMetrics } from "../types/metrics.js";
 import type { EvalRunManifest, EvalRunVariantState } from "../types/run.js";
@@ -44,11 +44,11 @@ async function collectVariantMetrics(manifest: EvalRunManifest, variant: EvalRun
   const scan = await scanRepo({
     repo: variant.worktree,
     providers: ["claude", "codex"],
-    sources: ["native", "convos-jsonl"],
+    sources: ["native", "usage-jsonl"],
     since: new Date(since),
     until: new Date(until)
   }).catch((error) => {
-    variant.warnings.push(`convos scan failed: ${(error as Error).message}`);
+    variant.warnings.push(`usage scan failed: ${(error as Error).message}`);
     return undefined;
   });
 
@@ -100,7 +100,7 @@ async function collectVariantMetrics(manifest: EvalRunManifest, variant: EvalRun
   return metrics;
 }
 
-function eventInVariant(event: ConvosJsonlLineV1, variant: EvalRunVariantState, since: string, until: string): boolean {
+function eventInVariant(event: UsageJsonlLineV1, variant: EvalRunVariantState, since: string, until: string): boolean {
   const observed = event.observed_at || event.recorded_at;
   if (observed < since || observed > until) return false;
   const cwd = event.repo.cwd || "";
@@ -108,7 +108,7 @@ function eventInVariant(event: ConvosJsonlLineV1, variant: EvalRunVariantState, 
   return isInside(variant.worktree, cwd) || isInside(variant.worktree, root);
 }
 
-function uniqueConversations(events: ConvosJsonlLineV1[]): EvalMetrics["conversations"] {
+function uniqueConversations(events: UsageJsonlLineV1[]): EvalMetrics["conversations"] {
   const seen = new Set<string>();
   const rows: EvalMetrics["conversations"] = [];
   for (const event of events) {
@@ -120,7 +120,7 @@ function uniqueConversations(events: ConvosJsonlLineV1[]): EvalMetrics["conversa
   return rows;
 }
 
-function toolMetrics(events: ConvosJsonlLineV1[]): EvalMetrics["tools"] {
+function toolMetrics(events: UsageJsonlLineV1[]): EvalMetrics["tools"] {
   const calls = events.filter((event) => event.kind === "tool.call");
   const byModel: Record<string, number> = {};
   const byName: Record<string, number> = {};
@@ -133,7 +133,7 @@ function toolMetrics(events: ConvosJsonlLineV1[]): EvalMetrics["tools"] {
   return { total: calls.length, byModel, byName, byCategory };
 }
 
-function tokenMetrics(events: ConvosJsonlLineV1[]): EvalMetrics["tokens"] {
+function tokenMetrics(events: UsageJsonlLineV1[]): EvalMetrics["tokens"] {
   const byModel = new Map<string, { model: string; input: number; output: number; cacheRead: number; total: number; found: boolean }>();
   for (const event of events) {
     for (const usage of collectUsageObjects(event.data)) {
@@ -164,7 +164,7 @@ function tokenMetrics(events: ConvosJsonlLineV1[]): EvalMetrics["tokens"] {
   };
 }
 
-function fileMetrics(events: ConvosJsonlLineV1[]): Pick<EvalMetrics["files"], "read" | "searched" | "written" | "confidence"> {
+function fileMetrics(events: UsageJsonlLineV1[]): Pick<EvalMetrics["files"], "read" | "searched" | "written" | "confidence"> {
   const read = new Set<string>();
   const searched = new Set<string>();
   const written = new Set<string>();
@@ -200,7 +200,7 @@ function fileMetrics(events: ConvosJsonlLineV1[]): Pick<EvalMetrics["files"], "r
   };
 }
 
-function commandMetrics(events: ConvosJsonlLineV1[]): EvalMetrics["commands"] {
+function commandMetrics(events: UsageJsonlLineV1[]): EvalMetrics["commands"] {
   const commands = events.flatMap((event) => event.kind === "command.exec" || event.kind === "tool.call" || event.kind === "tool.result" ? commandTexts(event.data) : []);
   let tests = 0;
   let builds = 0;

@@ -13,7 +13,7 @@
     "packages/repo",
     "packages/hooks",
     "packages/governance",
-    "packages/convos",
+    "packages/usage",
     "packages/daily",
     "packages/eval",
     "packages/search"
@@ -31,7 +31,7 @@
     "@tangent/repo": "file:packages/repo",
     "@tangent/hooks": "file:packages/hooks",
     "@tangent/governance": "file:packages/governance",
-    "@convos/convos": "file:packages/convos",
+    "@tangent/usage": "file:packages/usage",
     "@tangent/daily": "file:packages/daily",
     "@tangent/eval": "file:packages/eval",
     "@tangent/search": "file:packages/search"

@@ -2,15 +2,18 @@
 
 ```text
 root CLI
-  -> @convos/convos/cli
+  -> @tangent/usage
+  -> @tangent/usage/cli
+  -> @tangent/daily
   -> @tangent/daily/cli
+  -> @tangent/search
   -> @tangent/eval/cli
   -> @tangent/search/cli
   -> @tangent/governance/cli
 
-@tangent/daily -> @convos/convos, @tangent/core, @tangent/repo, @tangent/agent-runtime
-@tangent/eval -> @convos/convos, @tangent/core, @tangent/repo, @tangent/agent-runtime
-@convos/convos -> @tangent/core, @tangent/repo, @tangent/hooks
+@tangent/daily -> @tangent/usage, @tangent/core, @tangent/repo, @tangent/agent-runtime
+@tangent/eval -> @tangent/usage, @tangent/core, @tangent/repo, @tangent/agent-runtime
+@tangent/usage -> @tangent/core, @tangent/repo, @tangent/hooks
 @tangent/search -> @tangent/core, @tangent/repo
 @tangent/hooks -> @tangent/core, @tangent/repo
 @tangent/repo -> @tangent/core

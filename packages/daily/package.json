@@ -1,7 +1,7 @@
 {
   "name": "@tangent/daily",
   "version": "0.1.0",
-  "description": "Private daily engineering notes from convos conversation telemetry.",
+  "description": "Private daily engineering notes from usage conversation telemetry.",
   "type": "module",
   "bin": {
     "daily": "./dist/cli/index.js"
@@ -29,7 +29,7 @@
     "@tangent/core": "file:../core",
     "@tangent/repo": "file:../repo",
     "@tangent/agent-runtime": "file:../agent-runtime",
-    "@convos/convos": "file:../convos"
+    "@tangent/usage": "file:../usage"
   },
   "engines": {
     "node": ">=20"

@@ -11,7 +11,7 @@ import { parseRunnerJson, runnerFailure, runProcess } from "@tangent/agent-runti
 type CodexCliConfig = Extract<SummaryProviderConfig, { kind: "codex-cli" }>;
 
 const dailyRunnerEnv = {
-  CONVOS_DISABLE_CAPTURE: "1",
+  USAGE_DISABLE_CAPTURE: "1",
   DAILY_SUMMARY_RUN: "1"
 };
 

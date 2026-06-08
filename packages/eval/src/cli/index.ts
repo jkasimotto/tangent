@@ -25,7 +25,7 @@ export async function runEvalCli(argv = process.argv.slice(2)): Promise<void> {
   if (command === "context") return contextCommand(args);
   if (command === "capture") return captureCommand(args);
   if (command === "prepare") return prepareCommand(args);
-  if (command === "run") return runCommand(args);
+  if (command === "run" || command === "quick") return runCommand(args);
   if (command === "collect") return collectCommand(args);
   if (command === "report") return reportCommand(args);
   if (command === "diff") return diffCommand(args);

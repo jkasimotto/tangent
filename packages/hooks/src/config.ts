@@ -71,9 +71,9 @@ export function collectHookCommands(value: unknown): string[] {
 export function managedHookCommandFragments(recordCommand = defaultRecordCommand): string[] {
   return [
     recordCommand,
-    "tangent convos hook record",
-    "convos hook record",
-    "pagent convos hook record"
+    "tangent usage hook record",
+    "usage hook record",
+    "pagent usage hook record"
   ];
 }
 

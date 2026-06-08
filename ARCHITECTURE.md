@@ -1,6 +1,6 @@
 # Tangent Architecture
 
-Tangent is a monorepo for local coding-agent applications. The root CLI composes vertical apps and shared platform packages.
+Tangent is a monorepo for local coding-agent applications. The root CLI owns the human command taxonomy and composes vertical apps plus public SDKs for product-level setup/status.
 
 Read next:
 - docs/index.md
@@ -10,17 +10,17 @@ Read next:
 - docs/architecture/hooks.md
 - docs/architecture/agent-runtime.md
 
-Core rule: vertical apps stay independent. Shared infrastructure lives in platform packages, not in Convos and not copied app-to-app.
+Core rule: vertical apps stay independent. Shared infrastructure lives in platform packages, not in Usage and not copied app-to-app.
 
 Allowed dependency shape:
 
 ```text
 root CLI
-  -> convos | daily | eval | search | governance
+  -> usage SDK/CLI | daily SDK/CLI | eval CLI | search SDK/CLI | governance CLI
 
-daily -> convos, core, repo, agent-runtime
-eval  -> convos, core, repo, agent-runtime
-convos -> core, repo, hooks
+daily -> usage, core, repo, agent-runtime
+eval  -> usage, core, repo, agent-runtime
+usage -> core, repo, hooks
 search -> core, repo
 hooks -> core, repo
 repo -> core
@@ -29,4 +29,6 @@ governance -> core, repo
 core -> no Tangent package dependencies
 ```
 
-Convos owns conversation telemetry: event schemas, datasets, SDKs, CLI, and hook input normalization into Convos events. Hooks owns provider config mechanics only. Daily and Eval may consume Convos data, but Convos must not learn about Daily, Eval, or Search.
+Human-facing root commands are `setup`, `status`, `usage`, `daily`, `search`, `eval`, `doctor`, and `completion`. Raw/debug/CI commands such as `governance`, `hooks`, `data export`, and `data archive` remain callable but hidden from default help.
+
+Usage owns conversation telemetry: event schemas, datasets, SDKs, CLI, usage CLI, hook input normalization into Usage events, and native-log schema compatibility checks. Hooks owns provider config mechanics only. Native provider transcripts are treated as high-signal but unstable telemetry inputs; Usage may inspect and version-gate them, but product flows should consume them only through normalized Usage APIs. Daily and Eval may consume Usage data, but Usage must not learn about Daily, Eval, or Search.

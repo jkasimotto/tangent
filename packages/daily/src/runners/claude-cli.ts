@@ -7,7 +7,7 @@ import { parseRunnerJson, runnerFailure, runProcess } from "@tangent/agent-runti
 type ClaudeCliConfig = Extract<SummaryProviderConfig, { kind: "claude-cli" }>;
 
 const dailyRunnerEnv = {
-  CONVOS_DISABLE_CAPTURE: "1",
+  USAGE_DISABLE_CAPTURE: "1",
   DAILY_SUMMARY_RUN: "1"
 };
 

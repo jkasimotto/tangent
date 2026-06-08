@@ -1,9 +1,10 @@
 import { requiredString, stringArg, type Args } from "../args.js";
 import { gitRaw } from "@tangent/repo/git";
 import { findVariant, loadRunManifest } from "../../core/run-store.js";
+import { resolveRunId } from "./shared.js";
 
 export async function diffCommand(args: Args): Promise<void> {
-  const runId = requiredString(args._[1], "eval diff requires <run-id>.");
+  const runId = await resolveRunId(requiredString(args._[1], "eval diff requires <run-id>."));
   const variantA = requiredString(args._[2], "eval diff requires <variant-a>.");
   const variantB = requiredString(args._[3], "eval diff requires <variant-b>.");
   const phase = stringArg(args.phase) || "impl";

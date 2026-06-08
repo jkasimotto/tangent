@@ -4,12 +4,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { ConvosDataset } from "../../convos/dist/core/dataset.js";
-import { normalizeHookInput } from "../../convos/dist/hook-runner/normalize-hook-input.js";
-import { buildTurnDigestInput } from "../dist/convos/adapter.js";
+import { UsageDataset } from "../../usage/dist/core/dataset.js";
+import { eventFileForConversation } from "../../usage/dist/core/paths.js";
+import { normalizeHookInput } from "../../usage/dist/hook-runner/normalize-hook-input.js";
+import { buildTurnDigestInput } from "../dist/usage/adapter.js";
 import { appendLedgerLine } from "../dist/core/ledger.js";
 import { loadConfig } from "../dist/core/config.js";
 import { readDigestsForDate, writeDailyNote } from "../dist/core/note-writer.js";
+import { processUnprocessed } from "../dist/sdk/processUnprocessed.js";
 
 function context() {
   return {
@@ -29,7 +31,7 @@ function context() {
       maxStringBytes: 100000,
       maxToolResponseBytes: 100000
     },
-    convosVersion: "test"
+    usageVersion: "test"
   };
 }
 
@@ -71,7 +73,7 @@ test("turn digest input is bounded even with huge tool output", async () => {
     }), context()),
     ...normalizeHookInput(hook("Stop", { last_assistant_message: huge }), context())
   ];
-  const dataset = new ConvosDataset(events);
+  const dataset = new UsageDataset(events);
   const turn = dataset.turns.list({ includeActive: true }).data[0];
   const input = buildTurnDigestInput({ dataset, repo: loaded.repo, config: loaded.config, turn, dateBucket: "2026-06-08" });
   assert.ok(JSON.stringify(input).length <= loaded.config.input.maxTurnInputChars);
@@ -120,6 +122,56 @@ test("writeDailyNote preserves manual notes and replaces generated block", async
   assert.doesNotMatch(text, /old generated/);
 });
 
+test("processUnprocessed renders note from prior and newly processed digests", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "daily-process-"));
+  process.env.TANGENT_DAILY_HOME = path.join(dir, "daily-home");
+  process.env.USAGE_HOME = path.join(dir, "usage-home");
+  const loaded = await loadConfig({ repo: dir });
+
+  const oldPath = path.join(loaded.paths.outputDir, "old-digest.json");
+  await mkdir(loaded.paths.outputDir, { recursive: true });
+  await writeFile(oldPath, JSON.stringify(digest("Old prior work", "old-hash")), "utf8");
+  await appendLedgerLine(loaded.paths.ledgerPath, ledger("old-source", "old-fingerprint", "old-hash", oldPath));
+
+  const repoContext = {
+    ...context(),
+    repo: {
+      inputPath: dir,
+      root: dir,
+      cwd: dir,
+      branch: "main",
+      headSha: "abc"
+    }
+  };
+  const events = [
+    ...normalizeHookInput(hook("UserPromptSubmit", { prompt: "new work" }), repoContext),
+    ...normalizeHookInput(hook("Stop", { last_assistant_message: "done" }), repoContext)
+  ].map((event) => ({
+    ...event,
+    recorded_at: "2026-06-08T10:00:00.000Z",
+    observed_at: "2026-06-08T10:00:00.000Z"
+  }));
+  const eventPath = eventFileForConversation(dir, "codex", "codex:s1");
+  await mkdir(path.dirname(eventPath), { recursive: true });
+  await writeFile(eventPath, `${events.map((event) => JSON.stringify(event)).join("\n")}\n`, "utf8");
+
+  const result = await processUnprocessed({
+    repo: dir,
+    date: "2026-06-08",
+    summaryRunner: {
+      id: "fake",
+      kind: "claude-cli",
+      checkAvailable: async () => ({ available: true, authStatus: "unknown", warnings: [] }),
+      summarizeTurn: async (input) => digestForInput("New processed work", input)
+    }
+  });
+
+  assert.equal(result.processed, 1);
+  const note = await readFile(result.note.path, "utf8");
+  assert.match(note, /Old prior work/);
+  assert.match(note, /New processed work/);
+});
+
 function digest(headline, inputHash) {
   return {
     schema: "daily.turn-digest.v1",
@@ -143,6 +195,20 @@ function digest(headline, inputHash) {
     entities: { files: [], functions: [], tickets: [], commands: [] },
     evidence: [],
     quality: { confidence: "high", caveats: [] }
+  };
+}
+
+function digestForInput(headline, input) {
+  return {
+    ...digest(headline, ""),
+    source: {
+      sourceKey: input.source.sourceKey,
+      provider: input.source.provider,
+      conversationId: input.source.conversationId,
+      turnId: input.source.turnId,
+      dateBucket: input.source.dateBucket,
+      inputHash: ""
+    }
   };
 }
 

@@ -18,6 +18,7 @@ export type DailyOutputPaths = {
   turnDigestsDir: string;
   topicRollupsDir: string;
   renderDir: string;
+  failuresDir: string;
 };
 
 export function dailyHome(): string {
@@ -56,7 +57,8 @@ export function resolveOutputPaths(repo: DailyRepoInfo, config: DailyConfig): Da
     inputsDir: path.join(artifactsDir, "inputs"),
     turnDigestsDir: path.join(artifactsDir, "turn-digests"),
     topicRollupsDir: path.join(artifactsDir, "topic-rollups"),
-    renderDir: path.join(artifactsDir, "render")
+    renderDir: path.join(artifactsDir, "render"),
+    failuresDir: path.join(artifactsDir, "failures")
   };
 }
 
@@ -67,6 +69,7 @@ export async function ensureOutputDirs(paths: DailyOutputPaths): Promise<void> {
   await mkdir(paths.turnDigestsDir, { recursive: true });
   await mkdir(paths.topicRollupsDir, { recursive: true });
   await mkdir(paths.renderDir, { recursive: true });
+  await mkdir(paths.failuresDir, { recursive: true });
 }
 
 export function notePath(paths: DailyOutputPaths, date: string): string {
@@ -87,6 +90,10 @@ export function topicRollupPath(paths: DailyOutputPaths, date: string, topicKey:
 
 export function renderModelPath(paths: DailyOutputPaths, date: string): string {
   return path.join(paths.renderDir, `${date}.model.json`);
+}
+
+export function failureArtifactPath(paths: DailyOutputPaths, date: string, sourceKey: string, inputHash: string): string {
+  return path.join(paths.failuresDir, date, `${safeFileId(sourceKey)}.${inputHash}.log`);
 }
 
 function safeFileId(value: string): string {

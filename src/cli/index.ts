@@ -2,6 +2,7 @@
 import { completeCommand, completionScript, renderCommandHelp, type CliCommandSpec, type CliCompletionShell } from "@tangent/core";
 import { convosCommandSpec, runConvosCli } from "@convos/convos/cli";
 import { dailyCommandSpec, runDailyCli } from "@tangent/daily/cli";
+import { runSearchCli, searchCommandSpec } from "@tangent/search/cli";
 
 const tangentCommandSpec: CliCommandSpec = {
   name: "tangent",
@@ -9,6 +10,7 @@ const tangentCommandSpec: CliCommandSpec = {
   subcommands: [
     convosCommandSpec,
     dailyCommandSpec,
+    searchCommandSpec,
     {
       name: "completion",
       description: "Print shell completion script",
@@ -42,6 +44,11 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
     return;
   }
 
+  if (app === "search") {
+    await runSearchCli(rest);
+    return;
+  }
+
   if (app === "completion") {
     const shell = shellArg(rest[0]);
     console.log(completionScript(shell, "tangent"));
@@ -64,6 +71,8 @@ Examples:
   tangent daily today
   tangent daily yesterday
   tangent daily 2026-06-07
+  tangent search index
+  tangent search "horizontal tension"
   tangent completion zsh
 `);
 }

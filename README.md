@@ -7,6 +7,7 @@ Packages:
 - `@tangent/core`: shared command metadata, help, and shell completion primitives.
 - `@convos/convos` / `convos`: local conversation telemetry and queryability for Claude Code and Codex sessions.
 - `@tangent/daily` / `daily`: private daily engineering notes generated from `convos` conversations.
+- `@tangent/search`: structural repository search for Dart and TypeScript/JavaScript.
 
 ## Quick start
 
@@ -23,11 +24,28 @@ tangent daily process . --date today
 tangent daily today
 tangent daily yesterday
 tangent daily 2026-06-07
+
+tangent search index
+tangent search "horizontal tension"
+tangent search symbol calculateHorizontalTension
 ```
 
 `convos` stores conversation telemetry under `~/.convos`.
 
 `daily` stores private generated notes, cached digests, and processing state under `~/.tangent/daily/repos/<repo-name>` by default. Repo-local output is opt-in:
+
+`search` stores its derived SQLite index under `~/.tangent/search/repos/<repo-name>-<hash>` by default. It is zero-config: run `tangent search index` in a repo, then query with `tangent search "query"`. Private overrides are created with:
+
+```bash
+tangent search init .
+tangent search config set search.maxResults 20
+```
+
+Repo-shared defaults are explicit and should contain only team-safe indexing/search settings:
+
+```bash
+tangent search init . --scope repo-shared --language typescript
+```
 
 ```bash
 tangent daily init . --output repo-local-private

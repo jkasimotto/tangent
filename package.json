@@ -10,7 +10,8 @@
   "workspaces": [
     "packages/core",
     "packages/convos",
-    "packages/daily"
+    "packages/daily",
+    "packages/search"
   ],
   "scripts": {
     "build": "npm run build --workspaces && tsc -p tsconfig.json && chmod +x dist/cli/index.js",
@@ -20,13 +21,14 @@
   "dependencies": {
     "@tangent/core": "file:packages/core",
     "@convos/convos": "file:packages/convos",
-    "@tangent/daily": "file:packages/daily"
+    "@tangent/daily": "file:packages/daily",
+    "@tangent/search": "file:packages/search"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",
     "typescript": "^5.5.4"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   }
 }

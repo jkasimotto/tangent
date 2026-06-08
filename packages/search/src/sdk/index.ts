@@ -1,0 +1,89 @@
+import { ensureOutputDirs } from "../core/paths.js";
+import { buildIndex, watchIndex, type IndexResult } from "../core/indexer.js";
+import { callGraphDb, openPlanDb, searchDb, skeletonDb, statusDb, symbolDb, testsDb, type CallGraphResult, type OpenPlanResult, type SearchResults, type SearchStatus, type SkeletonResult, type SymbolDetails, type TestResult } from "../core/search.js";
+import { loadConfig } from "../core/config.js";
+import type { SearchQueryMode } from "../core/search.js";
+
+export type IndexRepoOptions = {
+  repo?: string;
+  languages?: string[];
+  includeGenerated?: boolean;
+  force?: boolean;
+  reedgeAll?: boolean;
+  watch?: boolean;
+  intervalSeconds?: number;
+  onResult?: (result: IndexResult) => void;
+};
+
+export async function indexRepo(options: IndexRepoOptions = {}): Promise<IndexResult | undefined> {
+  const loaded = await loadConfig({ repo: options.repo || "." });
+  await ensureOutputDirs(loaded.paths);
+  const args = {
+    root: loaded.repo.root,
+    dbPath: loaded.paths.dbPath,
+    config: loaded.config,
+    languages: options.languages,
+    includeGenerated: options.includeGenerated,
+    force: options.force,
+    reedgeAll: options.reedgeAll
+  };
+  if (options.watch) {
+    await watchIndex({ ...args, intervalSeconds: options.intervalSeconds || 1, onResult: options.onResult });
+    return undefined;
+  }
+  return buildIndex(args);
+}
+
+export async function searchRepo(query: string, options: { repo?: string; mode?: SearchQueryMode; maxResults?: number; languages?: string[]; includeTests?: boolean } = {}): Promise<SearchResults> {
+  const loaded = await loadConfig({ repo: options.repo || "." });
+  return searchDb(loaded.paths.dbPath, query, {
+    mode: options.mode || loaded.config.search.defaultMode,
+    maxResults: options.maxResults || loaded.config.search.maxResults,
+    languages: options.languages,
+    includeTests: options.includeTests ?? loaded.config.search.includeTests
+  });
+}
+
+export async function symbol(name: string, options: { repo?: string; languages?: string[] } = {}): Promise<SymbolDetails[]> {
+  const loaded = await loadConfig({ repo: options.repo || "." });
+  return symbolDb(loaded.paths.dbPath, name, options.languages);
+}
+
+export async function callers(name: string, options: { repo?: string; languages?: string[] } = {}): Promise<CallGraphResult> {
+  const loaded = await loadConfig({ repo: options.repo || "." });
+  return callGraphDb(loaded.paths.dbPath, name, true, options.languages);
+}
+
+export async function callees(name: string, options: { repo?: string; languages?: string[] } = {}): Promise<CallGraphResult> {
+  const loaded = await loadConfig({ repo: options.repo || "." });
+  return callGraphDb(loaded.paths.dbPath, name, false, options.languages);
+}
+
+export async function testsFor(target: string, options: { repo?: string; languages?: string[] } = {}): Promise<TestResult> {
+  const loaded = await loadConfig({ repo: options.repo || "." });
+  return testsDb(loaded.paths.dbPath, target, options.languages);
+}
+
+export async function skeleton(target: string, options: { repo?: string; languages?: string[] } = {}): Promise<SkeletonResult> {
+  const loaded = await loadConfig({ repo: options.repo || "." });
+  return skeletonDb(loaded.paths.dbPath, target, options.languages);
+}
+
+export async function openPlan(query: string, options: { repo?: string; languages?: string[] } = {}): Promise<OpenPlanResult> {
+  const loaded = await loadConfig({ repo: options.repo || "." });
+  return openPlanDb(loaded.paths.dbPath, query, options.languages);
+}
+
+export async function status(options: { repo?: string } = {}): Promise<SearchStatus & { repoRoot: string; configuredLanguages: string[] }> {
+  const loaded = await loadConfig({ repo: options.repo || "." });
+  return {
+    ...statusDb(loaded.paths.dbPath),
+    repoRoot: loaded.repo.root,
+    configuredLanguages: loaded.config.indexing.languages
+  };
+}
+
+export { configure } from "./config.js";
+export type { ConfigureOptions } from "./config.js";
+export type { SearchConfig } from "../types/config.js";
+export type { SearchResults, SearchHit, SymbolDetails, CallGraphResult, TestResult, SkeletonResult, OpenPlanResult, SearchStatus } from "../core/search.js";

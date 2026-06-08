@@ -28,7 +28,6 @@ tangent daily 2026-06-07
 tangent search index
 tangent search "horizontal tension"
 tangent search symbol calculateHorizontalTension
-tangent search bench . --query "horizontal tension"
 ```
 
 `convos` stores conversation telemetry under `~/.convos`.
@@ -46,12 +45,6 @@ Repo-shared defaults are explicit and should contain only team-safe indexing/sea
 
 ```bash
 tangent search init . --scope repo-shared --language typescript
-```
-
-Temporary Rust comparison support is available with `--engine rust`, `TANGENT_SEARCH_ENGINE=rust`, and `tangent search bench`. Build the Rust engine with:
-
-```bash
-cargo build -p tangent-search-engine
 ```
 
 ```bash

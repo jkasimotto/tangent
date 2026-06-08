@@ -11,9 +11,8 @@ export const searchCommandSpec: CliCommandSpec = {
   subcommands: [
     { name: "index", description: "Build or update the structural index", args: "[repo]", options: indexOptions() },
     { name: "init", description: "Initialize private search config for a repo", args: "[repo]", options: initOptions() },
-    { name: "status", description: "Show search index status", args: "[repo]", options: statusOptions() },
-    { name: "doctor", description: "Show verbose search diagnostics", args: "[repo]", options: statusOptions() },
-    { name: "bench", description: "Compare TypeScript and Rust search engines", args: "[repo]", options: benchOptions() },
+    { name: "status", description: "Show search index status", args: "[repo]", options: [{ name: "json", description: "Print JSON" }] },
+    { name: "doctor", description: "Show verbose search diagnostics", args: "[repo]" },
     { name: "symbol", description: "Show symbol details", args: "<name>", options: commonOptions() },
     { name: "callers", description: "Show callers of a symbol", args: "<name>", options: commonOptions() },
     { name: "callees", description: "Show callees of a symbol", args: "<name>", options: commonOptions() },
@@ -41,7 +40,6 @@ function searchOptions() {
     { name: "language", takesValue: true, values: languageValues, description: "Language filter" },
     { name: "max-results", takesValue: true, description: "Max result count" },
     { name: "include-tests", description: "Include test hits" },
-    { name: "engine", takesValue: true, values: ["ts", "rust"], description: "Search engine" },
     { name: "json", description: "Print JSON" }
   ];
 }
@@ -50,7 +48,6 @@ function commonOptions() {
   return [
     { name: "repo", takesValue: true, description: "Repository path" },
     { name: "language", takesValue: true, values: languageValues, description: "Language filter" },
-    { name: "engine", takesValue: true, values: ["ts", "rust"], description: "Search engine" },
     { name: "json", description: "Print JSON" }
   ];
 }
@@ -62,8 +59,7 @@ function indexOptions() {
     { name: "force", description: "Rebuild index from scratch" },
     { name: "watch", description: "Watch and re-index changes" },
     { name: "interval", takesValue: true, description: "Watch interval seconds" },
-    { name: "reedge-all", description: "Rebuild graph edges without reparsing all files" },
-    { name: "engine", takesValue: true, values: ["ts", "rust"], description: "Search engine" }
+    { name: "reedge-all", description: "Rebuild graph edges without reparsing all files" }
   ];
 }
 
@@ -78,22 +74,5 @@ function initOptions() {
     { name: "include-generated", description: "Include generated files by default" },
     { name: "mode", takesValue: true, values: modeValues, description: "Default search mode" },
     { name: "max-results", takesValue: true, description: "Default max result count" }
-  ];
-}
-
-function statusOptions() {
-  return [
-    { name: "engine", takesValue: true, values: ["ts", "rust"], description: "Search engine" },
-    { name: "json", description: "Print JSON" }
-  ];
-}
-
-function benchOptions() {
-  return [
-    { name: "query", takesValue: true, description: "Benchmark query" },
-    { name: "language", takesValue: true, values: languageValues, description: "Language filter" },
-    { name: "iterations", takesValue: true, description: "Query iterations" },
-    { name: "include-generated", description: "Include generated files" },
-    { name: "json", description: "Print JSON" }
   ];
 }

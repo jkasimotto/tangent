@@ -5,9 +5,10 @@ import { installHooks, uninstallHooks } from "../sdk/installHooks.js";
 import { archiveUsageTelemetry, ensureUsageIndex, loadUsageDatasetFromIndex, resolveConversationRef } from "../sdk/indexStore.js";
 import { importNative } from "../sdk/importNative.js";
 import { status } from "../sdk/status.js";
+import { inspectNativeLogFile } from "../providers/native/inspect.js";
 import { listNativeSchemas } from "../providers/native/schema-registry.js";
 import { nativeSchemaStatus } from "../providers/native/status.js";
-import type { NativeProviderSchemaStatus } from "../providers/native/types.js";
+import type { NativeLogInspection, NativeProviderSchemaStatus } from "../providers/native/types.js";
 import { recordHook } from "../hook-runner/record.js";
 import type { UsageDataset, VisibleMessage } from "../core/dataset.js";
 import type { UsageProvider } from "../core/schema/usage-jsonl-v1.js";
@@ -262,6 +263,13 @@ export async function runUsageCli(argv = process.argv.slice(2)): Promise<void> {
     return;
   }
 
+  if (command === "native" && subcommand === "inspect") {
+    const inspection = await inspectNativeLogFile(requiredPath(args._[2], "usage native inspect requires a path."));
+    if (args.json) console.log(JSON.stringify(inspection, null, 2));
+    else printNativeInspection(inspection);
+    return;
+  }
+
   if (command === "native" && subcommand === "status") {
     const rows = await nativeSchemaStatus({
       repo: args._[2] || ".",
@@ -381,6 +389,21 @@ function printNativeSchemaStatuses(rows: NativeProviderSchemaStatus[]): void {
     console.log(`  ${row.provider}: ${nativeSchemaSummary(row)}`);
     for (const message of row.messages) console.log(`    ${message}`);
   }
+}
+
+function printNativeInspection(row: NativeLogInspection): void {
+  console.log(`Native log: ${row.path}`);
+  console.log(`  Provider: ${row.provider || "unknown"}`);
+  console.log(`  Kind:     ${row.logKind || "unknown"}`);
+  console.log(`  Records:  ${row.recordCount}`);
+  console.log(`  Errors:   ${row.parseErrors.length}`);
+  if (row.producerHints.versions.length) console.log(`  Versions: ${row.producerHints.versions.join(", ")}`);
+  if (row.producerHints.models.length) console.log(`  Models:   ${row.producerHints.models.join(", ")}`);
+  if (row.producerHints.origins.length) console.log(`  Origins:  ${row.producerHints.origins.join(", ")}`);
+  if (row.producerHints.sources.length) console.log(`  Sources:  ${row.producerHints.sources.join(", ")}`);
+  console.log("  Variants:");
+  for (const variant of row.variants.slice(0, 20)) console.log(`    ${variant.key}: ${variant.count}`);
+  if (row.variants.length > 20) console.log(`    ... ${row.variants.length - 20} more`);
 }
 
 function nativeSchemaSummary(row: NativeProviderSchemaStatus): string {
@@ -539,6 +562,10 @@ function installedHookScopes(provider: Awaited<ReturnType<typeof status>>["provi
 
 function requiredSession(value: string | undefined): string {
   if (!value) throw new Error("A session id is required.");
+  return value;
+}
+function requiredPath(value: string | undefined, message: string): string {
+  if (!value) throw new Error(message);
   return value;
 }
 function latestDate(values: Array<Date | undefined>): Date | undefined {

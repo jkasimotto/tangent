@@ -19,5 +19,6 @@ Hidden native-log schema scaffolding:
 
 ```bash
 tangent usage native schemas --provider codex
+tangent usage native inspect /path/to/transcript.jsonl --json
 tangent usage native status . --provider claude
 ```

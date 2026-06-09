@@ -8,11 +8,12 @@ Product split:
 - Human output hides provenance unless `--json` or a debug/export command is used.
 
 Capture notes:
-- Claude native transcript import emits separate `token.usage` events when provider usage fields are present.
-- Token usage is confidence-labelled; Codex hooks remain unsupported for token usage.
-- Native Codex and Claude Code transcripts are higher-signal than hooks but less stable. Usage keeps version-tagged schema descriptors and permissive inspection/status helpers so Tangent can warn when provider versions drift beyond known ranges.
-- Native-log schema inference is separate tooling. Runtime code only carries descriptors, discovery, inspection, and compatibility messages; it does not infer new schemas or automatically wire native logs into sessions, tokens, Daily, or Eval.
-- SQLite is the default query path. JSONL files remain the audit log and are ingested incrementally by source-file metadata.
+- Native Codex and Claude Code transcripts are the default source for sessions, visible messages, tools, and token usage.
+- Hook capture remains available for legacy/debug use but is not included in normal queries unless callers explicitly request the `usage-jsonl`/`hooks` source.
+- Codex native token usage comes from final cumulative `token_count` records; Claude native token usage comes from assistant message `usage` fields.
+- Native transcript indexing skips active files by default. A file is eligible when the provider marks it complete, or when it has been quiet for at least 15 minutes and does not end on a user message.
+- Native schemas remain version-tagged and permissive so Tangent can warn when provider versions drift beyond known ranges.
+- SQLite is the default query path. Provider native transcript files and legacy hook JSONL files are ingested incrementally by source-file metadata.
 
 Rules:
 - Do not depend on Daily, Eval, or Search.

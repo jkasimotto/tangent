@@ -4,7 +4,8 @@ import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import type { CliCommandSpec } from "@tangent/core";
 import { booleanArg, parseArgs, stringArg } from "@tangent/core/cli";
-import { installHooks, status as usageStatus } from "@tangent/usage";
+import { status as usageStatus } from "@tangent/usage";
+import type { UsageProvider } from "@tangent/usage";
 import { configure as configureDaily, status as dailyStatus } from "@tangent/daily";
 import { configure as configureSearch, indexRepo, status as searchStatus } from "@tangent/search";
 
@@ -17,7 +18,6 @@ export const setupCommandSpec: CliCommandSpec = {
   options: [
     { name: "repo", takesValue: true, description: "Repository path" },
     { name: "provider", takesValue: true, values: ["claude", "codex", "all"], description: "Provider to enable" },
-    { name: "scope", takesValue: true, values: ["global", "repo-local", "repo-shared"], description: "Hook installation scope" },
     { name: "usage", description: "Enable activity capture" },
     { name: "daily", description: "Initialize daily notes" },
     { name: "search", description: "Initialize structural search" },
@@ -87,13 +87,7 @@ export async function runSetupCommand(argv: string[]): Promise<void> {
   const actions = results.actions as unknown[];
 
   if (selected.usage) {
-    const hookResults = await installHooks({
-      provider: selected.provider,
-      scope: selected.scope,
-      repo,
-      tracking: "all"
-    });
-    actions.push({ usage: hookResults });
+    actions.push({ usage: await usageStatus({ repo, providers: usageProviders(selected.provider) }) });
   }
 
   if (selected.daily) {
@@ -123,7 +117,7 @@ export async function runSetupCommand(argv: string[]): Promise<void> {
 
   console.log(`Repo: ${repo}`);
   for (const provider of detected) console.log(`${provider.available ? "✓" : "-"} ${provider.label}${provider.version ? ` ${provider.version}` : ""}`);
-  if (selected.usage) console.log(`Activity capture: ${selected.provider} (${selected.scope})`);
+  if (selected.usage) console.log(`Activity capture: native transcripts (${selected.provider})`);
   if (selected.daily) console.log(`Daily notes: initialized (${selected.output})`);
   if (selected.search) console.log(selected.indexSearch ? "Search: initialized and indexed" : "Search: initialized");
   if (!selected.usage && !selected.daily && !selected.search) console.log("No setup actions selected.");
@@ -156,7 +150,6 @@ export async function runProductStatusCommand(argv: string[], verboseDefault = f
 
 type SetupSelection = {
   provider: "claude" | "codex" | "all";
-  scope: "global" | "repo-local" | "repo-shared";
   usage: boolean;
   daily: boolean;
   search: boolean;
@@ -179,7 +172,6 @@ function setupSelection(args: ReturnType<typeof parseArgs>): SetupSelection {
   const anyExplicit = Boolean(args.usage || args.daily || args.search);
   return {
     provider,
-    scope: scopeArg(args.scope || "repo-local"),
     usage: anyExplicit ? booleanArg(args.usage) : true,
     daily: anyExplicit ? booleanArg(args.daily) : true,
     search: anyExplicit ? booleanArg(args.search) : true,
@@ -200,7 +192,6 @@ async function promptSetup(args: ReturnType<typeof parseArgs>, detected: Detecte
     for (const provider of detected) console.log(`  ${provider.available ? "✓" : "-"} ${provider.label}${provider.version ? ` ${provider.version}` : ""}`);
     return {
       provider: providerArg(await ask(rl, "Provider to enable [codex/claude/all]", stringArg(args.provider) || defaultProvider)),
-      scope: scopeArg(await ask(rl, "Hook scope [repo-local/global/repo-shared]", stringArg(args.scope) || "repo-local")),
       usage: await askYes(rl, "Capture coding-agent activity", args.usage, true),
       daily: await askYes(rl, "Initialize daily notes", args.daily, true),
       search: await askYes(rl, "Initialize search", args.search, true),
@@ -247,9 +238,9 @@ function printUsageHealth(value: unknown): void {
     return;
   }
   const status = value as Awaited<ReturnType<typeof usageStatus>>;
-  const installed = status.providers.filter((provider) => provider.capture.enabled).map((provider) => provider.provider).join(", ") || "none";
+  const native = status.providers.filter((provider) => provider.nativePaths.length).map((provider) => `${provider.provider}:${provider.nativePaths.length}`).join(", ") || "none";
   const seen = status.providers.filter((provider) => provider.capture.lastEvent).map((provider) => `${provider.provider} last seen ${provider.capture.lastEvent}`).join("; ") || "no sessions seen yet";
-  console.log(`Usage: hooks=${installed}; index=${status.index.exists ? `${status.index.sourceFiles} files` : "missing"}; ${seen}`);
+  console.log(`Usage: native=${native}; index=${status.index.exists ? `${status.index.sourceFiles} files` : "missing"}; ${seen}`);
 }
 
 function printDailyHealth(value: unknown, verbose: boolean): void {
@@ -286,14 +277,13 @@ function providerArg(value: unknown): SetupSelection["provider"] {
   throw new Error("--provider must be claude, codex, or all.");
 }
 
-function scopeArg(value: unknown): SetupSelection["scope"] {
-  if (value === "global" || value === "repo-local" || value === "repo-shared") return value;
-  throw new Error("--scope must be global, repo-local, or repo-shared.");
-}
-
 function outputArg(value: unknown): SetupSelection["output"] {
   if (value === "user-global" || value === "repo-local-private") return value;
   throw new Error("--output must be user-global or repo-local-private.");
+}
+
+function usageProviders(provider: SetupSelection["provider"]): UsageProvider[] {
+  return provider === "all" ? ["claude", "codex"] : [provider];
 }
 
 function summaryProviderArg(value: unknown): SetupSelection["summaryProvider"] {

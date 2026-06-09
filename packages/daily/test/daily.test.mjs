@@ -5,7 +5,6 @@ import path from "node:path";
 import test from "node:test";
 
 import { UsageDataset } from "../../usage/dist/core/dataset.js";
-import { eventFileForConversation } from "../../usage/dist/core/paths.js";
 import { normalizeHookInput } from "../../usage/dist/hook-runner/normalize-hook-input.js";
 import { buildTurnDigestInput } from "../dist/usage/adapter.js";
 import { appendLedgerLine } from "../dist/core/ledger.js";
@@ -126,6 +125,8 @@ test("processUnprocessed renders note from prior and newly processed digests", a
   const dir = await mkdtemp(path.join(tmpdir(), "daily-process-"));
   process.env.TANGENT_DAILY_HOME = path.join(dir, "daily-home");
   process.env.USAGE_HOME = path.join(dir, "usage-home");
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = path.join(dir, "codex-home");
   const loaded = await loadConfig({ repo: dir });
 
   const oldPath = path.join(loaded.paths.outputDir, "old-digest.json");
@@ -133,43 +134,29 @@ test("processUnprocessed renders note from prior and newly processed digests", a
   await writeFile(oldPath, JSON.stringify(digest("Old prior work", "old-hash")), "utf8");
   await appendLedgerLine(loaded.paths.ledgerPath, ledger("old-source", "old-fingerprint", "old-hash", oldPath));
 
-  const repoContext = {
-    ...context(),
-    repo: {
-      inputPath: dir,
-      root: dir,
-      cwd: dir,
-      branch: "main",
-      headSha: "abc"
-    }
-  };
-  const events = [
-    ...normalizeHookInput(hook("UserPromptSubmit", { prompt: "new work" }), repoContext),
-    ...normalizeHookInput(hook("Stop", { last_assistant_message: "done" }), repoContext)
-  ].map((event) => ({
-    ...event,
-    recorded_at: "2026-06-08T10:00:00.000Z",
-    observed_at: "2026-06-08T10:00:00.000Z"
-  }));
-  const eventPath = eventFileForConversation(dir, "codex", "codex:s1");
-  await mkdir(path.dirname(eventPath), { recursive: true });
-  await writeFile(eventPath, `${events.map((event) => JSON.stringify(event)).join("\n")}\n`, "utf8");
+  const nativePath = path.join(process.env.CODEX_HOME, "sessions", "2026", "06", "08", "rollout-2026-06-08T10-00-00-s1.jsonl");
+  await writeJsonl(nativePath, codexNativeSession({ repo: dir, sessionId: "s1", turnId: "t1", prompt: "new work", response: "done" }));
 
-  const result = await processUnprocessed({
-    repo: dir,
-    date: "2026-06-08",
-    summaryRunner: {
-      id: "fake",
-      kind: "claude-cli",
-      checkAvailable: async () => ({ available: true, authStatus: "unknown", warnings: [] }),
-      summarizeTurn: async (input) => digestForInput("New processed work", input)
-    }
-  });
+  try {
+    const result = await processUnprocessed({
+      repo: dir,
+      date: "2026-06-08",
+      summaryRunner: {
+        id: "fake",
+        kind: "claude-cli",
+        checkAvailable: async () => ({ available: true, authStatus: "unknown", warnings: [] }),
+        summarizeTurn: async (input) => digestForInput("New processed work", input)
+      }
+    });
 
-  assert.equal(result.processed, 1);
-  const note = await readFile(result.note.path, "utf8");
-  assert.match(note, /Old prior work/);
-  assert.match(note, /New processed work/);
+    assert.equal(result.processed, 1);
+    const note = await readFile(result.note.path, "utf8");
+    assert.match(note, /Old prior work/);
+    assert.match(note, /New processed work/);
+  } finally {
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+  }
 });
 
 function digest(headline, inputHash) {
@@ -229,6 +216,34 @@ function ledger(sourceKey, sourceFingerprint, inputHash, digestPath) {
     processedAt: new Date().toISOString(),
     status: "processed"
   };
+}
+
+async function writeJsonl(filePath, records) {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`, "utf8");
+}
+
+function codexNativeSession({ repo, sessionId, turnId, prompt, response }) {
+  return [
+    {
+      timestamp: "2026-06-08T10:00:00.000Z",
+      type: "session_meta",
+      payload: {
+        id: sessionId,
+        timestamp: "2026-06-08T10:00:00.000Z",
+        cwd: repo,
+        originator: "codex-tui",
+        cli_version: "0.137.0",
+        source: "cli",
+        git: { branch: "main", commit_hash: "abc" }
+      }
+    },
+    { timestamp: "2026-06-08T10:00:01.000Z", type: "event_msg", payload: { type: "task_started", turn_id: turnId } },
+    { timestamp: "2026-06-08T10:00:02.000Z", type: "turn_context", payload: { turn_id: turnId, cwd: repo, model: "gpt-5.5" } },
+    { timestamp: "2026-06-08T10:00:03.000Z", type: "event_msg", payload: { type: "user_message", message: prompt } },
+    { timestamp: "2026-06-08T10:00:04.000Z", type: "event_msg", payload: { type: "agent_message", message: response, phase: "final_answer" } },
+    { timestamp: "2026-06-08T10:00:05.000Z", type: "event_msg", payload: { type: "task_complete", turn_id: turnId, duration_ms: 5000 } }
+  ];
 }
 
 function topic(key, title, markdown) {

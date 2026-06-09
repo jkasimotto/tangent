@@ -540,7 +540,7 @@ function stringArray(value: unknown): string[] {
 
 function sourceOf(event: UsageJsonlLineV1): "native" | "hook" | "best-effort" {
   if (event.capture.source === "hook") return "hook";
-  if (event.capture.source === "native-import") return "best-effort";
+  if (event.capture.source === "native-import") return "native";
   return "native";
 }
 
@@ -558,8 +558,8 @@ function titlePreview(events: AnnotatedEvent[]): string | undefined {
 }
 
 function captureConfidence(events: AnnotatedEvent[]): TurnListItem["captureConfidence"] {
-  if (events.some((event) => event.capture.source === "native-import")) return "best-effort";
   if (events.some((event) => event.availability?.confidence === "partial" || event.capture.confidence === "partial")) return "partial";
+  if (events.some((event) => event.availability?.confidence === "inferred" || event.capture.confidence === "inferred")) return "best-effort";
   return "exact";
 }
 

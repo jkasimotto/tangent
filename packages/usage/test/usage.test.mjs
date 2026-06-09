@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -187,6 +187,99 @@ test("native schema status tags Codex versions to known ranges", async () => {
   }
 });
 
+test("usage index defaults to completed Codex native transcripts instead of hook JSONL", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "usage-native-codex-index-"));
+  process.env.USAGE_HOME = path.join(dir, "home");
+  const previousCodexHome = process.env.CODEX_HOME;
+  const codexHome = path.join(dir, "codex-home");
+  const repo = path.join(dir, "repo");
+  await mkdir(repo, { recursive: true });
+  await writeJsonl(eventFileForConversation(repo, "codex", "codex:hook"), sessionEvents({ sessionId: "hook", prompt: "hook prompt", at: "2026-06-09T08:00:00.000Z" }));
+  const nativePath = path.join(codexHome, "sessions", "2026", "06", "09", "rollout-2026-06-09T08-00-00-native.jsonl");
+  await writeJsonl(nativePath, codexNativeSession({ repo, sessionId: "native", prompt: "native prompt", complete: true }));
+
+  try {
+    process.env.CODEX_HOME = codexHome;
+    const index = await ensureUsageIndex({ repo, providers: ["codex"], now: new Date("2026-06-09T08:30:00.000Z") });
+    assert.deepEqual(index.sourceFiles, [nativePath]);
+    const conversationId = "codex:native";
+    const dataset = await loadUsageDatasetFromIndex({ repo, providers: ["codex"], conversationId, now: new Date("2026-06-09T08:30:00.000Z") });
+    assert.deepEqual(dataset.messages.visible({ conversationId }).data.map((row) => row.text), ["native prompt", "native done"]);
+    assert.equal(dataset.tools.calls({ conversationId }).data.length, 1);
+    assert.equal(dataset.tokens.byConversation({ conversationId }).data.length, 1);
+    assert.equal(dataset.tokens.byConversation({ conversationId }).data[0].usage.total_tokens, 30);
+  } finally {
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+  }
+});
+
+test("usage index skips active Codex native transcripts until the quiet window", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "usage-native-codex-quiet-"));
+  process.env.USAGE_HOME = path.join(dir, "home");
+  const previousCodexHome = process.env.CODEX_HOME;
+  const codexHome = path.join(dir, "codex-home");
+  const repo = path.join(dir, "repo");
+  await mkdir(repo, { recursive: true });
+  const nativePath = path.join(codexHome, "sessions", "2026", "06", "09", "rollout-2026-06-09T08-00-00-quiet.jsonl");
+  await writeJsonl(nativePath, codexNativeSession({ repo, sessionId: "quiet", prompt: "quiet prompt", complete: false }));
+  const mtime = new Date("2026-06-09T08:00:10.000Z");
+  await utimes(nativePath, mtime, mtime);
+
+  try {
+    process.env.CODEX_HOME = codexHome;
+    let index = await ensureUsageIndex({ repo, providers: ["codex"], now: new Date("2026-06-09T08:10:00.000Z"), force: true });
+    assert.equal(index.sourceFiles.length, 0);
+
+    index = await ensureUsageIndex({ repo, providers: ["codex"], now: new Date("2026-06-09T08:30:00.000Z"), force: true });
+    assert.deepEqual(index.sourceFiles, [nativePath]);
+    const conversationId = "codex:quiet";
+    const dataset = await loadUsageDatasetFromIndex({ repo, providers: ["codex"], conversationId, now: new Date("2026-06-09T08:30:00.000Z") });
+    assert.equal(dataset.turns.list({ includeActive: true }).data[0].status, "completed");
+
+    await writeJsonl(nativePath, [
+      ...codexNativeSession({ repo, sessionId: "quiet", prompt: "quiet prompt", complete: false }),
+      { timestamp: "2026-06-09T08:31:00.000Z", type: "event_msg", payload: { type: "user_message", message: "new active prompt" } }
+    ]);
+    const activeMtime = new Date("2026-06-09T08:31:00.000Z");
+    await utimes(nativePath, activeMtime, activeMtime);
+    await ensureUsageIndex({ repo, providers: ["codex"], now: new Date("2026-06-09T08:35:00.000Z") });
+    const preserved = await loadUsageDatasetFromIndex({ repo, providers: ["codex"], conversationId, now: new Date("2026-06-09T08:35:00.000Z") });
+    assert.deepEqual(preserved.messages.visible({ conversationId }).data.map((row) => row.text), ["quiet prompt", "native done"]);
+  } finally {
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+  }
+});
+
+test("usage index reads Claude native visible messages, tools, and usage", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "usage-native-claude-index-"));
+  process.env.USAGE_HOME = path.join(dir, "home");
+  const previousClaudeHome = process.env.CLAUDE_HOME;
+  const claudeHome = path.join(dir, "claude-home");
+  const repo = path.join(dir, "repo");
+  await mkdir(repo, { recursive: true });
+  const nativePath = path.join(claudeHome, "projects", claudeProjectKey(repo), "claude-session.jsonl");
+  await writeJsonl(nativePath, claudeNativeSession({ repo, sessionId: "claude-session" }));
+  const mtime = new Date("2026-06-09T08:00:20.000Z");
+  await utimes(nativePath, mtime, mtime);
+
+  try {
+    process.env.CLAUDE_HOME = claudeHome;
+    const index = await ensureUsageIndex({ repo, providers: ["claude"], now: new Date("2026-06-09T08:30:00.000Z") });
+    assert.deepEqual(index.sourceFiles, [nativePath]);
+    const conversationId = "claude:claude-session";
+    const dataset = await loadUsageDatasetFromIndex({ repo, providers: ["claude"], conversationId, now: new Date("2026-06-09T08:30:00.000Z") });
+    assert.deepEqual(dataset.messages.visible({ conversationId }).data.map((row) => row.text), ["run test", "running", "done"]);
+    assert.equal(dataset.tools.calls({ conversationId }).data[0].toolName, "Bash");
+    assert.equal(dataset.tools.calls({ conversationId }).data[0].result.status, "success");
+    assert.deepEqual(dataset.tokens.byConversation({ conversationId }).data.map((row) => row.usage.output_tokens), [2, 4]);
+  } finally {
+    if (previousClaudeHome === undefined) delete process.env.CLAUDE_HOME;
+    else process.env.CLAUDE_HOME = previousClaudeHome;
+  }
+});
+
 test("dataset derives stable synthetic turns from hook events without turn_id", () => {
   const events = [
     ...normalizeHookInput(hook("UserPromptSubmit", { prompt: "first" }), context()),
@@ -254,25 +347,25 @@ test("usage index incrementally ingests changed files and loads a single convers
   const file = eventFileForConversation(dir, "codex", conversationId);
   await writeJsonl(file, sessionEvents({ sessionId: "s1", prompt: "older task", at: "2026-06-07T10:00:00.000Z" }));
 
-  const first = await ensureUsageIndex({ repo: dir, providers: ["codex"] });
+  const first = await ensureUsageIndex({ repo: dir, providers: ["codex"], sources: ["usage-jsonl"] });
   assert.equal(first.indexed, 1);
   assert.equal(first.skipped, 0);
 
-  const second = await ensureUsageIndex({ repo: dir, providers: ["codex"] });
+  const second = await ensureUsageIndex({ repo: dir, providers: ["codex"], sources: ["usage-jsonl"] });
   assert.equal(second.indexed, 0);
   assert.equal(second.skipped, 1);
 
-  let dataset = await loadUsageDatasetFromIndex({ repo: dir, conversationId });
+  let dataset = await loadUsageDatasetFromIndex({ repo: dir, conversationId, sources: ["usage-jsonl"] });
   assert.deepEqual(dataset.messages.visible({ conversationId }).data.map((row) => row.text), ["older task", "done"]);
 
   await writeJsonl(file, [
     ...sessionEvents({ sessionId: "s1", prompt: "older task", at: "2026-06-07T10:00:00.000Z" }),
     usageEvent({ sessionId: "s1", id: "s1-extra", kind: "message.assistant.visible", at: "2026-06-07T10:02:00.000Z", data: { text: "extra", text_preview: "extra" }, actor: { role: "assistant", model: "model" } })
   ]);
-  const third = await ensureUsageIndex({ repo: dir, providers: ["codex"] });
+  const third = await ensureUsageIndex({ repo: dir, providers: ["codex"], sources: ["usage-jsonl"] });
   assert.equal(third.indexed, 1);
 
-  dataset = await loadUsageDatasetFromIndex({ repo: dir, conversationId });
+  dataset = await loadUsageDatasetFromIndex({ repo: dir, conversationId, sources: ["usage-jsonl"] });
   assert.deepEqual(dataset.messages.visible({ conversationId }).data.map((row) => row.text), ["older task", "done", "extra"]);
 });
 
@@ -282,8 +375,8 @@ test("usage index resolves latest sessions from indexed conversations", async ()
   await writeJsonl(eventFileForConversation(dir, "codex", "codex:s1"), sessionEvents({ sessionId: "s1", prompt: "older", at: "2026-06-07T10:00:00.000Z" }));
   await writeJsonl(eventFileForConversation(dir, "codex", "codex:s2"), sessionEvents({ sessionId: "s2", prompt: "newer", at: "2026-06-08T10:00:00.000Z" }));
 
-  await ensureUsageIndex({ repo: dir, providers: ["codex"] });
-  const latest = await resolveConversationRef({ repo: dir, ref: "latest" });
+  await ensureUsageIndex({ repo: dir, providers: ["codex"], sources: ["usage-jsonl"] });
+  const latest = await resolveConversationRef({ repo: dir, ref: "latest", sources: ["usage-jsonl"] });
   assert.equal(latest.conversationId, "codex:s2");
   assert.equal(latest.shortId, "codex:s2");
 });
@@ -294,7 +387,7 @@ test("usage archive only moves indexed unchanged files before the cutoff", async
   const conversationId = "codex:s1";
   const file = eventFileForConversation(dir, "codex", conversationId);
   await writeJsonl(file, sessionEvents({ sessionId: "s1", prompt: "archive me", at: "2026-06-07T10:00:00.000Z" }));
-  await ensureUsageIndex({ repo: dir, providers: ["codex"] });
+  await ensureUsageIndex({ repo: dir, providers: ["codex"], sources: ["usage-jsonl"] });
 
   const dryRun = await archiveUsageTelemetry({ repo: dir, providers: ["codex"], before: new Date("2026-06-08T00:00:00.000Z"), dryRun: true });
   assert.equal(dryRun.archived.length, 1);
@@ -312,18 +405,126 @@ test("usage index removes deleted source files from indexed reads", async () => 
   const conversationId = "codex:s1";
   const file = eventFileForConversation(dir, "codex", conversationId);
   await writeJsonl(file, sessionEvents({ sessionId: "s1", prompt: "delete me", at: "2026-06-07T10:00:00.000Z" }));
-  await ensureUsageIndex({ repo: dir, providers: ["codex"] });
+  await ensureUsageIndex({ repo: dir, providers: ["codex"], sources: ["usage-jsonl"] });
   await rm(file);
 
-  const result = await ensureUsageIndex({ repo: dir, providers: ["codex"] });
+  const result = await ensureUsageIndex({ repo: dir, providers: ["codex"], sources: ["usage-jsonl"] });
   assert.equal(result.removed, 1);
-  const dataset = await loadUsageDatasetFromIndex({ repo: dir, conversationId });
+  const dataset = await loadUsageDatasetFromIndex({ repo: dir, conversationId, sources: ["usage-jsonl"] });
   assert.equal(dataset.events.length, 0);
 });
 
 async function writeJsonl(filePath, events) {
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, `${events.map((event) => JSON.stringify(event)).join("\n")}\n`, "utf8");
+}
+
+function codexNativeSession({ repo, sessionId, prompt, complete }) {
+  const turnId = `${sessionId}-turn`;
+  return [
+    {
+      timestamp: "2026-06-09T08:00:00.000Z",
+      type: "session_meta",
+      payload: {
+        id: sessionId,
+        timestamp: "2026-06-09T08:00:00.000Z",
+        cwd: repo,
+        originator: "codex-tui",
+        cli_version: "0.137.0",
+        source: "cli",
+        git: { branch: "main", commit_hash: "abc" }
+      }
+    },
+    { timestamp: "2026-06-09T08:00:01.000Z", type: "event_msg", payload: { type: "task_started", turn_id: turnId } },
+    { timestamp: "2026-06-09T08:00:02.000Z", type: "turn_context", payload: { turn_id: turnId, cwd: repo, model: "gpt-5.5" } },
+    { timestamp: "2026-06-09T08:00:03.000Z", type: "event_msg", payload: { type: "user_message", message: prompt } },
+    { timestamp: "2026-06-09T08:00:04.000Z", type: "response_item", payload: { type: "function_call", name: "exec_command", call_id: "call1", arguments: JSON.stringify({ cmd: "npm test", workdir: repo }) } },
+    { timestamp: "2026-06-09T08:00:05.000Z", type: "response_item", payload: { type: "function_call_output", call_id: "call1", output: "Process exited with code 0\nok" } },
+    { timestamp: "2026-06-09T08:00:06.000Z", type: "response_item", payload: { type: "reasoning", summary: [], encrypted_content: "secret" } },
+    { timestamp: "2026-06-09T08:00:07.000Z", type: "event_msg", payload: { type: "agent_message", message: "native done", phase: "final_answer" } },
+    {
+      timestamp: "2026-06-09T08:00:08.000Z",
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: {
+          total_token_usage: { input_tokens: 10, cached_input_tokens: 4, output_tokens: 20, reasoning_output_tokens: 5, total_tokens: 30 },
+          last_token_usage: { input_tokens: 10, cached_input_tokens: 4, output_tokens: 20, reasoning_output_tokens: 5, total_tokens: 30 }
+        }
+      }
+    },
+    ...(complete ? [{ timestamp: "2026-06-09T08:00:09.000Z", type: "event_msg", payload: { type: "task_complete", turn_id: turnId, duration_ms: 9000 } }] : [])
+  ];
+}
+
+function claudeNativeSession({ repo, sessionId }) {
+  return [
+    {
+      type: "user",
+      uuid: "user1",
+      promptId: "turn1",
+      sessionId,
+      timestamp: "2026-06-09T08:00:00.000Z",
+      cwd: repo,
+      gitBranch: "main",
+      version: "2.1.168",
+      message: { role: "user", content: "run test" }
+    },
+    {
+      type: "assistant",
+      uuid: "assistant1",
+      sessionId,
+      timestamp: "2026-06-09T08:00:05.000Z",
+      cwd: repo,
+      gitBranch: "main",
+      version: "2.1.168",
+      message: {
+        id: "msg1",
+        type: "message",
+        role: "assistant",
+        model: "claude-sonnet",
+        stop_reason: "tool_use",
+        content: [
+          { type: "text", text: "running" },
+          { type: "tool_use", id: "tool1", name: "Bash", input: { command: "npm test" } }
+        ],
+        usage: { input_tokens: 10, cache_read_input_tokens: 5, output_tokens: 2 }
+      }
+    },
+    {
+      type: "user",
+      uuid: "tool-result1",
+      promptId: "turn1",
+      sessionId,
+      timestamp: "2026-06-09T08:00:10.000Z",
+      cwd: repo,
+      gitBranch: "main",
+      version: "2.1.168",
+      message: { role: "user", content: [{ type: "tool_result", tool_use_id: "tool1", content: "ok" }] }
+    },
+    {
+      type: "assistant",
+      uuid: "assistant2",
+      sessionId,
+      timestamp: "2026-06-09T08:00:15.000Z",
+      cwd: repo,
+      gitBranch: "main",
+      version: "2.1.168",
+      message: {
+        id: "msg2",
+        type: "message",
+        role: "assistant",
+        model: "claude-sonnet",
+        stop_reason: "end_turn",
+        content: [{ type: "text", text: "done" }],
+        usage: { input_tokens: 12, cache_read_input_tokens: 6, output_tokens: 4 }
+      }
+    }
+  ];
+}
+
+function claudeProjectKey(repoRoot) {
+  return repoRoot.replace(/\//g, "-").replace(/^-/, "-");
 }
 
 function codexRollout({ repo, sessionId, version }) {

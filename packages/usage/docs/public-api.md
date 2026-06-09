@@ -6,12 +6,13 @@ Public import paths:
 
 Important exports:
 - SDK: `scanRepo`, `openUsage`, `ensureUsageIndex`, `loadUsageDatasetFromIndex`, `resolveConversationRef`, `archiveUsageTelemetry`, `status`, `installHooks`, `uninstallHooks`, `importNative`, `inspectNativeLogFile`, `listNativeSchemas`, `nativeSchemaStatus`, `UsageDataset`.
+- `ensureUsageIndex` and dataset query helpers default to native transcripts. Pass `sources: ["usage-jsonl"]` for legacy hook JSONL, or `sources: ["native", "usage-jsonl"]` for explicit combined debug reads.
 - CLI specs/runners: `usageCommandSpec`, `runUsageCli`.
 - Types include `QueryResult`, `QuerySupport`, `UsageProvider`, and `UsageConfidence`.
 
 Human CLI:
 - `tangent usage ...` is the default activity surface.
 - Raw telemetry views live under explicit `usage events --json`, `usage messages --json`, `usage export`, and hidden `data archive`.
-- Native-log schema scaffolding lives under hidden `usage native schemas`, `usage native inspect <path>`, and `usage native status`. These commands read transcript-path JSONL files, report compatibility and user-facing version drift messages, and do not import native logs into normal usage queries.
+- Native transcripts are the default human query source. Native-log schema scaffolding lives under hidden `usage native schemas`, `usage native inspect <path>`, and `usage native status`; hook capture remains under hidden `usage hooks ...`.
 
 Agents must import through these public exports, not package src internals.

@@ -116,7 +116,7 @@ function providerRow(provider: "claude" | "codex", usage: Awaited<ReturnType<typ
   return {
     tracked: Boolean(row?.capture.enabled || row?.capture.lastEvent || row?.nativePaths.length),
     sources: [
-      row?.capture.lastEvent ? "usage-jsonl" : undefined,
+      row?.nativePaths.length ? "native" : row?.capture.lastEvent ? "usage-jsonl" : undefined,
     ].filter((value): value is string => Boolean(value)),
     turns: providerTurns.length,
     lastTurnAt: latestTurnAt(providerTurns) || latestConversationAt(conversations.filter((conversation) => conversation.provider === provider)) || row?.capture.lastEvent

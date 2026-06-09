@@ -3,6 +3,7 @@ import { parseArgs, stringArg } from "@tangent/core/cli";
 
 import { installHooks, uninstallHooks } from "../sdk/installHooks.js";
 import { archiveUsageTelemetry, ensureUsageIndex, loadUsageDatasetFromIndex, resolveConversationRef } from "../sdk/indexStore.js";
+import type { UsageIndexSource } from "../sdk/indexStore.js";
 import { importNative } from "../sdk/importNative.js";
 import { status } from "../sdk/status.js";
 import { inspectNativeLogFile } from "../providers/native/inspect.js";
@@ -104,21 +105,9 @@ export async function runUsageCli(argv = process.argv.slice(2)): Promise<void> {
   }
 
   if (command === "init") {
-    const results = await installHooks({
-      provider: providerOrAll(args.provider || "codex"),
-      scope: installScopeArg(args.scope || "repo-local"),
-      repo: stringArg(args.repo) || ".",
-      tracking: trackingArg(args.tracking)
-    });
-    if (args.json) {
-      console.log(JSON.stringify(results, null, 2));
-      return;
-    }
-    for (const result of results) {
-      console.log(`${result.provider}: capture enabled (${result.scope})`);
-      console.log(`  hook: ${result.path}`);
-      for (const warning of result.warnings) console.warn(`  warning: ${warning}`);
-    }
+    const value = await status({ repo: stringArg(args.repo) || args._[1] || ".", providers: providerList(args.provider || "all").filter((p): p is UsageProvider => p !== "all") });
+    if (args.json) console.log(JSON.stringify(value, null, 2));
+    else printNativeInit(value);
     return;
   }
 
@@ -132,9 +121,11 @@ export async function runUsageCli(argv = process.argv.slice(2)): Promise<void> {
   if (command === "today" || command === "sessions") {
     const repoArg = command === "today" ? args._[1] : args._[1] || ".";
     const date = command === "today" ? todayDate() : stringArg(args.date);
+    const sources = sourceList(args.source);
     const dataset = await loadUsageDatasetFromIndex({
       repo: repoArg || ".",
       providers: providerList(args.provider).filter((p): p is UsageProvider => p !== "all"),
+      sources,
       since: dateArg(args.since),
       until: dateArg(args.until),
       date
@@ -148,8 +139,9 @@ export async function runUsageCli(argv = process.argv.slice(2)): Promise<void> {
   if (command === "session") {
     const session = requiredSession(args._[1]);
     const repo = stringArg(args.repo) || ".";
-    const resolved = await resolveConversationRef({ repo, ref: session });
-    const dataset = await loadUsageDatasetFromIndex({ repo, conversationId: resolved.conversationId });
+    const sources = sourceList(args.source);
+    const resolved = await resolveConversationRef({ repo, ref: session, sources });
+    const dataset = await loadUsageDatasetFromIndex({ repo, conversationId: resolved.conversationId, sources });
     const rows = sessionRows(dataset).filter((row) => row.id === resolved.conversationId);
     if (!rows.length) throw new Error(`No session found for ${session}.`);
     if (args.json) console.log(JSON.stringify(rows[0], null, 2));
@@ -160,8 +152,9 @@ export async function runUsageCli(argv = process.argv.slice(2)): Promise<void> {
   if (command === "transcript") {
     const session = requiredSession(args._[1]);
     const repo = stringArg(args.repo) || ".";
-    const resolved = await resolveConversationRef({ repo, ref: session });
-    const dataset = await loadUsageDatasetFromIndex({ repo, conversationId: resolved.conversationId });
+    const sources = sourceList(args.source);
+    const resolved = await resolveConversationRef({ repo, ref: session, sources });
+    const dataset = await loadUsageDatasetFromIndex({ repo, conversationId: resolved.conversationId, sources });
     if (args.internal && !args.json) throw new Error("usage transcript --internal is a machine/debug view; rerun with --json.");
     const result = args.internal
       ? dataset.messages.internal({ conversationId: resolved.conversationId })
@@ -174,8 +167,9 @@ export async function runUsageCli(argv = process.argv.slice(2)): Promise<void> {
   if (command === "tools") {
     const session = requiredSession(args._[1]);
     const repo = stringArg(args.repo) || ".";
-    const resolved = await resolveConversationRef({ repo, ref: session });
-    const dataset = await loadUsageDatasetFromIndex({ repo, conversationId: resolved.conversationId });
+    const sources = sourceList(args.source);
+    const resolved = await resolveConversationRef({ repo, ref: session, sources });
+    const dataset = await loadUsageDatasetFromIndex({ repo, conversationId: resolved.conversationId, sources });
     const result = dataset.tools.calls({
       conversationId: resolved.conversationId,
       includeResults: args["include-results"] ? "preview" : false
@@ -189,10 +183,12 @@ export async function runUsageCli(argv = process.argv.slice(2)): Promise<void> {
     const repo = stringArg(args.repo) || ".";
     const session = args._[1];
     const providers = providerList(args.provider).filter((p): p is UsageProvider => p !== "all");
-    const resolved = session ? await resolveConversationRef({ repo, ref: session, providers }) : undefined;
+    const sources = sourceList(args.source);
+    const resolved = session ? await resolveConversationRef({ repo, ref: session, providers, sources }) : undefined;
     const dataset = await loadUsageDatasetFromIndex({
       repo,
       providers,
+      sources,
       conversationId: resolved?.conversationId
     });
     const rows = aggregateUsageEvents(dataset.events, stringArg(args.by), Boolean(args.estimate));
@@ -205,6 +201,7 @@ export async function runUsageCli(argv = process.argv.slice(2)): Promise<void> {
     const result = await ensureUsageIndex({
       repo: args._[1] || ".",
       providers: providerList(args.provider).filter((p): p is UsageProvider => p !== "all"),
+      sources: sourceList(args.source),
       force: Boolean(args.force)
     });
     if (args.json) console.log(JSON.stringify(result, null, 2));
@@ -222,6 +219,7 @@ export async function runUsageCli(argv = process.argv.slice(2)): Promise<void> {
     const dataset = await loadUsageDatasetFromIndex({
       repo: args._[1] || ".",
       providers: providerList(args.provider).filter((p): p is UsageProvider => p !== "all"),
+      sources: sourceList(args.source),
       since: dateArg(args.since),
       until: dateArg(args.until)
     });
@@ -234,6 +232,7 @@ export async function runUsageCli(argv = process.argv.slice(2)): Promise<void> {
     const dataset = await loadUsageDatasetFromIndex({
       repo: args._[1] || ".",
       providers: providerList(args.provider).filter((p): p is UsageProvider => p !== "all"),
+      sources: sourceList(args.source),
       since: dateArg(args.since),
       until: dateArg(args.until),
       date: stringArg(args.date)
@@ -249,8 +248,9 @@ export async function runUsageCli(argv = process.argv.slice(2)): Promise<void> {
     if (!args.json) throw new Error("usage messages is a machine/debug command; rerun with --json or use usage transcript.");
     const session = requiredSession(args._[1]);
     const repo = stringArg(args.repo) || ".";
-    const resolved = await resolveConversationRef({ repo, ref: session });
-    const dataset = await loadUsageDatasetFromIndex({ repo, conversationId: resolved.conversationId });
+    const sources = sourceList(args.source);
+    const resolved = await resolveConversationRef({ repo, ref: session, sources });
+    const dataset = await loadUsageDatasetFromIndex({ repo, conversationId: resolved.conversationId, sources });
     const result = args.internal ? dataset.messages.internal({ conversationId: resolved.conversationId }) : dataset.messages.visible({ conversationId: resolved.conversationId });
     console.log(JSON.stringify(result, null, 2));
     return;
@@ -302,7 +302,7 @@ export async function runUsageCli(argv = process.argv.slice(2)): Promise<void> {
     const provider = providerArg(args.provider || "claude");
     if (provider !== "claude") throw new Error("import-native currently supports --provider claude only.");
     const result = await importNative({ repo: args._[1] || ".", provider });
-    await ensureUsageIndex({ repo: args._[1] || ".", providers: [provider] });
+    await ensureUsageIndex({ repo: args._[1] || ".", providers: [provider], sources: ["usage-jsonl"] });
     if (args.json) console.log(JSON.stringify(result, null, 2));
     else {
       console.log(`provider: ${result.provider}`);
@@ -351,14 +351,13 @@ function printUsageStatus(value: Awaited<ReturnType<typeof status>>, verbose: bo
   for (const provider of value.providers) {
     const label = provider.provider === "claude" ? "Claude Code" : "Codex";
     console.log(`  ${label}`);
+    console.log(`    Native logs: ${provider.nativePaths.length ? `${provider.nativePaths.length} files` : "none"}`);
     console.log(`    Hooks:       ${installedHookScopes(provider)}`);
     console.log(`    Data:        ${provider.capture.lastEvent ? `last seen ${provider.capture.lastEvent}` : "no sessions seen yet"}`);
     console.log(`    Messages:    ${provider.capabilities["messages.visible"].status}`);
     console.log(`    Tool calls:  ${provider.capabilities["tools.calls"].status}`);
     console.log(`    Tool results:${provider.capabilities["tools.results"].status}`);
     console.log(`    Token usage: ${provider.capabilities["tokens.byConversation"].status}`);
-    if (provider.provider === "claude") console.log("    Tip: run `tangent usage tokens` after `tangent usage import-native --provider claude` for provider-reported token data.");
-    if (provider.provider === "codex") console.log("    Note: Codex hooks do not expose token usage; transcript paths are not a stable usage API.");
     if (verbose) {
       console.log(`    Native logs: ${nativeSchemaSummary(provider.nativeSchema)}`);
       for (const message of provider.nativeSchema.messages) console.log(`      ${message}`);
@@ -367,6 +366,19 @@ function printUsageStatus(value: Awaited<ReturnType<typeof status>>, verbose: bo
       }
     }
   }
+}
+
+function printNativeInit(value: Awaited<ReturnType<typeof status>>): void {
+  console.log(`Repo: ${value.repo.gitRoot || value.repo.path}`);
+  for (const provider of value.providers) {
+    const label = provider.provider === "claude" ? "Claude Code" : "Codex";
+    const availability = provider.nativePaths.length ? `${provider.nativePaths.length} native transcript files found` : "no native transcript files found";
+    console.log(`${label}: ${availability}`);
+    if (provider.nativeSchema.messages.length) {
+      for (const message of provider.nativeSchema.messages) console.log(`  ${message}`);
+    }
+  }
+  console.log("Hooks are still available with `tangent usage hooks install`, but native transcripts are the default usage source.");
 }
 
 function printNativeSchemas(rows: ReturnType<typeof listNativeSchemas>): void {
@@ -478,7 +490,7 @@ function aggregateUsageEvents(events: UsageDataset["events"], by?: string, inclu
       model: event.actor?.model || stringField(event.data, "model") || "unknown",
       conversationId: event.conversation.id,
       usage,
-      source: event.capture.source,
+      source: event.capture.source === "native-import" ? "native" : event.capture.source,
       confidence: stringField(event.data, "usageConfidence") || stringField(event.data, "confidence") || (event.capture.source === "native-import" ? "provider-reported" : "derived")
     }];
   });
@@ -527,8 +539,7 @@ function printUsageTokens(rows: Array<Record<string, unknown>>, providers: Usage
   console.log("Known token usage");
   if (!rows.length) {
     for (const provider of providers.length ? providers : ["claude", "codex"] as const) {
-      if (provider === "claude") console.log("  Claude native import: unavailable in current query. Run `tangent usage import-native --provider claude` to backfill provider-reported usage when native transcripts include it.");
-      else console.log("  Codex hooks: unavailable  reason=hooks do not expose token usage");
+      console.log(`  ${provider}: unavailable  reason=no native token usage found in indexed transcripts`);
     }
     return;
   }
@@ -547,7 +558,7 @@ function usageTotals(value: unknown): { input: number; output: number; total: nu
     input: numberField(value, "input") || numberField(value, "input_tokens") || 0,
     output: numberField(value, "output") || numberField(value, "output_tokens") || 0,
     total: numberField(value, "total") || numberField(value, "total_tokens") || 0,
-    cacheRead: numberField(value, "cacheRead") || numberField(value, "cache_read_input_tokens") || 0
+    cacheRead: numberField(value, "cacheRead") || numberField(value, "cache_read_input_tokens") || numberField(value, "cached_input_tokens") || 0
   };
 }
 
@@ -602,6 +613,14 @@ function providerList(value: unknown): Array<UsageProvider | "all"> {
   const provider = providerOrAll(value);
   return provider === "all" ? ["claude", "codex"] : [provider];
 }
+
+function sourceList(value: unknown): UsageIndexSource[] {
+  if (value === undefined || value === "native") return ["native"];
+  if (value === "hooks") return ["usage-jsonl"];
+  if (value === "all") return ["native", "usage-jsonl"];
+  throw new Error("--source must be native, hooks, or all.");
+}
+
 function installScopeArg(value: unknown): "global" | "repo-local" | "repo-shared" {
   if (value === "global" || value === "repo-local" || value === "repo-shared") return value;
   throw new Error("--scope must be global, repo-local, or repo-shared.");

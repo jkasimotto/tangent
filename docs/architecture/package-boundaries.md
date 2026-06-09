@@ -8,7 +8,7 @@ Platform packages:
 - @tangent/governance contains custom architecture/docs/lint checks.
 
 Vertical apps:
-- @tangent/usage owns conversation telemetry schemas, hook normalization, native-log schema compatibility checks, datasets, SDK, and CLI.
+- @tangent/usage owns conversation telemetry schemas, native transcript normalization, hook normalization, native-log schema compatibility checks, datasets, SDK, and CLI.
 - @tangent/daily owns daily note schemas, rendering, ledgers, and summarization workflows.
 - @tangent/eval owns eval specs, contexts, run manifests, metrics, and reports.
 - @tangent/search owns structural indexing and search.

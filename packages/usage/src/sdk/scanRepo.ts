@@ -3,13 +3,15 @@ import { UsageDataset } from "../core/dataset.js";
 import { usageHome, repoEventDir } from "../core/paths.js";
 import { repoInfo } from "@tangent/repo";
 import type { UsageJsonlLineV1, UsageProvider, UsageWarning } from "../core/schema/usage-jsonl-v1.js";
-import { discoverClaudeNative } from "../providers/claude/native/discover.js";
-import { normalizeClaudeNativeRecord } from "../providers/claude/native/normalize.js";
+import { loadNativeSourceFiles } from "../providers/native/load.js";
+import { loadUsageDatasetFromIndex, type UsageIndexSource } from "./indexStore.js";
 
 export type ScanRepoOptions = {
   repo: string;
   providers?: UsageProvider[];
-  sources?: Array<"native" | "usage-jsonl" | "hooks-status">;
+  sources?: UsageIndexSource[];
+  includeActive?: boolean;
+  now?: Date;
   since?: Date;
   until?: Date;
   includeRaw?: boolean;
@@ -17,7 +19,7 @@ export type ScanRepoOptions = {
 
 export async function scanRepo(options: ScanRepoOptions): Promise<UsageDataset> {
   const providers = options.providers || ["claude", "codex"];
-  const sources = options.sources || ["usage-jsonl"];
+  const sources = options.sources || ["native"];
   const repo = await repoInfo(options.repo);
   const root = repo.root || repo.cwd;
   const events: UsageJsonlLineV1[] = [];
@@ -38,19 +40,12 @@ export async function scanRepo(options: ScanRepoOptions): Promise<UsageDataset> 
     }
   }
 
-  if (sources.includes("native") && providers.includes("claude")) {
-    const files = await discoverClaudeNative(root);
-    for (const file of files) {
-      try {
-        const records = await readJsonl<unknown>(file);
-        sourceFiles.push(file);
-        records.forEach((record, index) => {
-          const normalized = normalizeClaudeNativeRecord(record, file, index + 1);
-          events.push(...normalized);
-        });
-      } catch (error) {
-        warnings.push({ code: "claude-native-parse-failed", message: (error as Error).message, path: file });
-      }
+  if (sources.includes("native")) {
+    const native = await loadNativeSourceFiles({ repoRoot: root, providers, includeActive: options.includeActive, now: options.now });
+    warnings.push(...native.warnings);
+    for (const file of native.files) {
+      sourceFiles.push(file.path);
+      events.push(...file.events);
     }
   }
 
@@ -72,5 +67,5 @@ export async function scanRepo(options: ScanRepoOptions): Promise<UsageDataset> 
 }
 
 export async function openUsage(options: Omit<ScanRepoOptions, "sources">): Promise<UsageDataset> {
-  return scanRepo({ ...options, sources: ["usage-jsonl"] });
+  return loadUsageDatasetFromIndex(options);
 }

@@ -35,7 +35,7 @@ tangent eval quick --prompt prompts/task.md --context empty --context repo
 
 `usage` is the human-facing telemetry surface. Raw telemetry API/debug views require explicit JSON/export commands.
 
-`usage` stores conversation telemetry under `~/.tangent/usage`. Human commands default to readable text; raw provenance and event streams live under `usage export` and `usage events --json`.
+`usage` reads Claude Code and Codex native transcripts by default and indexes normalized activity under `~/.tangent/usage`. Human commands default to readable text; raw provenance and event streams live under `usage export` and `usage events --json`. Legacy hook capture is still available through hidden `usage hooks` commands.
 
 `daily` stores private generated notes, cached digests, and processing state under `~/.tangent/daily/repos/<repo-name>` by default. Repo-local output is opt-in:
 

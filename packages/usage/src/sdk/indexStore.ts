@@ -8,12 +8,17 @@ import { listJsonlFiles, readJsonl } from "../core/append-jsonl.js";
 import { UsageDataset } from "../core/dataset.js";
 import { repoArchiveDir, repoEventDir, repoIndexPath } from "../core/paths.js";
 import type { UsageJsonlLineV1, UsageProvider, UsageWarning } from "../core/schema/usage-jsonl-v1.js";
+import { loadNativeSourceFiles } from "../providers/native/load.js";
 
 type DatabaseHandle = InstanceType<typeof Database>;
+export type UsageIndexSource = "native" | "usage-jsonl";
 
 export type UsageIndexOptions = {
   repo: string;
   providers?: UsageProvider[];
+  sources?: UsageIndexSource[];
+  includeActive?: boolean;
+  now?: Date;
   force?: boolean;
 };
 
@@ -31,6 +36,9 @@ export type UsageIndexResult = {
 export type UsageDatasetQuery = {
   repo: string;
   providers?: UsageProvider[];
+  sources?: UsageIndexSource[];
+  includeActive?: boolean;
+  now?: Date;
   conversationId?: string;
   since?: Date;
   until?: Date;
@@ -82,6 +90,7 @@ export async function ensureUsageIndex(options: UsageIndexOptions): Promise<Usag
   const repo = await repoInfo(options.repo);
   const root = repo.root || repo.cwd;
   const providers = options.providers?.length ? options.providers : ["claude", "codex"] as UsageProvider[];
+  const sources = options.sources?.length ? options.sources : ["native"] as UsageIndexSource[];
   const db = openDb(root);
   const warnings: UsageWarning[] = [];
   let indexed = 0;
@@ -89,35 +98,64 @@ export async function ensureUsageIndex(options: UsageIndexOptions): Promise<Usag
   let removed = 0;
   let eventCount = 0;
   const sourceFiles: string[] = [];
+  const seenNative = new Set<string>();
 
   try {
     ensureSchema(db);
     const found = new Set<string>();
-    for (const provider of providers) {
-      const files = await listJsonlFiles(repoEventDir(root, provider));
-      for (const file of files) {
-        found.add(file);
-        sourceFiles.push(file);
-        const fileStat = await stat(file);
-        const existing = db.prepare("select mtime_ms, size from source_files where path = ?").get(file) as { mtime_ms: number; size: number } | undefined;
-        if (!options.force && existing && existing.mtime_ms === fileStat.mtimeMs && existing.size === fileStat.size) {
+
+    if (sources.includes("native")) {
+      const native = await loadNativeSourceFiles({ repoRoot: root, providers, includeActive: options.includeActive, now: options.now });
+      warnings.push(...native.warnings);
+      for (const file of native.seenPaths) seenNative.add(file);
+      for (const file of native.files) {
+        found.add(file.path);
+        sourceFiles.push(file.path);
+        const existing = db.prepare("select mtime_ms, size from source_files where path = ?").get(file.path) as { mtime_ms: number; size: number } | undefined;
+        if (!options.force && existing && existing.mtime_ms === file.mtimeMs && existing.size === file.size) {
           skipped += 1;
           continue;
         }
 
-        try {
-          const events = await readJsonl<UsageJsonlLineV1>(file);
-          upsertSourceFile(db, file, provider, fileStat.mtimeMs, fileStat.size, events);
-          indexed += 1;
-          eventCount += events.length;
-        } catch (error) {
-          warnings.push({ code: "invalid-jsonl", message: (error as Error).message, path: file });
+        upsertSourceFile(db, file.path, file.provider, "native", file.mtimeMs, file.size, file.events);
+        indexed += 1;
+        eventCount += file.events.length;
+      }
+    }
+
+    if (sources.includes("usage-jsonl")) {
+      for (const provider of providers) {
+        const files = await listJsonlFiles(repoEventDir(root, provider));
+        for (const file of files) {
+          found.add(file);
+          sourceFiles.push(file);
+          const fileStat = await stat(file);
+          const existing = db.prepare("select mtime_ms, size from source_files where path = ?").get(file) as { mtime_ms: number; size: number } | undefined;
+          if (!options.force && existing && existing.mtime_ms === fileStat.mtimeMs && existing.size === fileStat.size) {
+            skipped += 1;
+            continue;
+          }
+
+          try {
+            const events = await readJsonl<UsageJsonlLineV1>(file);
+            upsertSourceFile(db, file, provider, "usage-jsonl", fileStat.mtimeMs, fileStat.size, events);
+            indexed += 1;
+            eventCount += events.length;
+          } catch (error) {
+            warnings.push({ code: "invalid-jsonl", message: (error as Error).message, path: file });
+          }
         }
       }
+    }
 
-      const indexedRows = db.prepare("select path from source_files where provider = ? and source_kind = 'usage-jsonl' and archived_at is null").all(provider) as Array<{ path: string }>;
+    for (const provider of providers) {
+      const indexedRows = db.prepare("select path, source_kind from source_files where provider = ? and archived_at is null").all(provider) as Array<{ path: string; source_kind: UsageIndexSource }>;
       for (const row of indexedRows) {
-        if (found.has(row.path)) continue;
+        if (found.has(row.path) && sources.includes(row.source_kind)) continue;
+        if (row.source_kind === "native" && sources.includes("native") && seenNative.has(row.path)) {
+          if (!sourceFiles.includes(row.path)) sourceFiles.push(row.path);
+          continue;
+        }
         removeSourceFile(db, row.path);
         removed += 1;
       }
@@ -177,8 +215,8 @@ export async function loadUsageDatasetFromIndex(query: UsageDatasetQuery): Promi
   }
 }
 
-export async function resolveConversationRef(options: { repo: string; ref: string; providers?: UsageProvider[] }): Promise<ResolvedConversationRef> {
-  const index = await ensureUsageIndex({ repo: options.repo, providers: options.providers });
+export async function resolveConversationRef(options: { repo: string; ref: string; providers?: UsageProvider[]; sources?: UsageIndexSource[] }): Promise<ResolvedConversationRef> {
+  const index = await ensureUsageIndex({ repo: options.repo, providers: options.providers, sources: options.sources });
   const db = openDb(index.repoRoot);
   try {
     ensureSchema(db);
@@ -206,7 +244,7 @@ export async function resolveConversationRef(options: { repo: string; ref: strin
 }
 
 export async function archiveUsageTelemetry(options: UsageArchiveOptions): Promise<UsageArchiveResult> {
-  const index = await ensureUsageIndex({ repo: options.repo, providers: options.providers });
+  const index = await ensureUsageIndex({ repo: options.repo, providers: options.providers, sources: ["usage-jsonl"] });
   const db = openDb(index.repoRoot);
   const result: UsageArchiveResult = {
     repoRoot: index.repoRoot,
@@ -309,11 +347,11 @@ function ensureSchema(db: DatabaseHandle): void {
   if (!tableHasColumn(db, "events", "source_path")) db.exec("alter table events add column source_path text");
 }
 
-function upsertSourceFile(db: DatabaseHandle, file: string, provider: UsageProvider, mtimeMs: number, size: number, events: UsageJsonlLineV1[]): void {
+function upsertSourceFile(db: DatabaseHandle, file: string, provider: UsageProvider, sourceKind: UsageIndexSource, mtimeMs: number, size: number, events: UsageJsonlLineV1[]): void {
   const dataset = new UsageDataset(events);
   const insertSource = db.prepare(`
     insert or replace into source_files (path, provider, source_kind, mtime_ms, size, event_count, indexed_at, archived_at, archive_path)
-    values (?, ?, 'usage-jsonl', ?, ?, ?, ?, null, null)
+    values (?, ?, ?, ?, ?, ?, ?, null, null)
   `);
   const deleteEvents = db.prepare("delete from events where source_path = ?");
   const insertEvent = db.prepare(`
@@ -323,7 +361,7 @@ function upsertSourceFile(db: DatabaseHandle, file: string, provider: UsageProvi
   `);
   const transaction = db.transaction(() => {
     deleteEvents.run(file);
-    insertSource.run(file, provider, mtimeMs, size, events.length, new Date().toISOString());
+    insertSource.run(file, provider, sourceKind, mtimeMs, size, events.length, new Date().toISOString());
     for (const event of dataset.annotatedEvents) {
       insertEvent.run(
         event.event_id,

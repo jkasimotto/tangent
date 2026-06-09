@@ -4,18 +4,18 @@ export const usageCommandSpec: CliCommandSpec = {
   name: "usage",
   description: "Inspect coding-agent activity, tools, sessions, and tokens",
   subcommands: [
-    { name: "init", description: "Enable activity capture for a provider", options: hookOptions(["claude", "codex"]) },
+    { name: "init", description: "Check native activity capture for a provider", args: "[repo]", options: commonJsonOptions(["provider", "json"]) },
     { name: "status", description: "Show capture health and capability coverage", args: "[repo]", options: commonJsonOptions(["verbose"]) },
-    { name: "today", description: "Show today's coding-agent sessions", args: "[repo]", options: commonJsonOptions(["provider"]) },
-    { name: "sessions", description: "List coding-agent sessions", args: "[repo]", options: commonJsonOptions(["provider", "date", "since", "until"]) },
-    { name: "session", description: "Show one session summary", args: "<session|latest>", options: commonJsonOptions(["repo"]) },
-    { name: "transcript", description: "Print a readable session transcript", args: "<session|latest>", options: commonJsonOptions(["repo", "internal"]) },
-    { name: "tools", description: "Print tool calls for a session", args: "<session|latest>", options: commonJsonOptions(["repo", "include-results"]) },
-    { name: "tokens", description: "Print known token usage", args: "[session|latest]", options: commonJsonOptions(["repo", "provider", "by", "estimate"]) },
-    { name: "reindex", description: "Rebuild the usage telemetry index", args: "[repo]", options: commonJsonOptions(["provider", "force"]) },
-    { name: "export", description: "Export normalized events as JSONL", args: "[repo]", options: commonJsonOptions(["provider", "since", "until"]) },
-    { name: "events", description: "Print normalized events as JSON", args: "[repo]", options: commonJsonOptions(["provider", "date", "since", "until"]) },
-    { name: "messages", description: "Print raw message query JSON", args: "<session|latest>", options: commonJsonOptions(["repo", "internal"]) },
+    { name: "today", description: "Show today's coding-agent sessions", args: "[repo]", options: commonJsonOptions(["provider", "source"]) },
+    { name: "sessions", description: "List coding-agent sessions", args: "[repo]", options: commonJsonOptions(["provider", "date", "since", "until", "source"]) },
+    { name: "session", description: "Show one session summary", args: "<session|latest>", options: commonJsonOptions(["repo", "source"]) },
+    { name: "transcript", description: "Print a readable session transcript", args: "<session|latest>", options: commonJsonOptions(["repo", "internal", "source"]) },
+    { name: "tools", description: "Print tool calls for a session", args: "<session|latest>", options: commonJsonOptions(["repo", "include-results", "source"]) },
+    { name: "tokens", description: "Print known token usage", args: "[session|latest]", options: commonJsonOptions(["repo", "provider", "by", "estimate", "source"]) },
+    { name: "reindex", description: "Rebuild the usage telemetry index", args: "[repo]", options: commonJsonOptions(["provider", "force", "source"]) },
+    { name: "export", description: "Export normalized events as JSONL", args: "[repo]", options: commonJsonOptions(["provider", "since", "until", "source"]) },
+    { name: "events", description: "Print normalized events as JSON", args: "[repo]", options: commonJsonOptions(["provider", "date", "since", "until", "source"]) },
+    { name: "messages", description: "Print raw message query JSON", args: "<session|latest>", options: commonJsonOptions(["repo", "internal", "source"]) },
     {
       name: "native",
       description: "Inspect provider native log schemas",
@@ -65,6 +65,7 @@ function commonJsonOptions(names: string[]) {
     if (name === "verbose") return { name, description: "Print verbose details" };
     if (name === "trace") return { name, description: "Print timing trace" };
     if (name === "provider") return { name, takesValue: true, values: ["claude", "codex"], description: "Provider filter" };
+    if (name === "source") return { name, takesValue: true, values: ["native", "hooks", "all"], description: "Data source" };
     if (name === "by") return { name, takesValue: true, values: ["model", "tool"], description: "Grouping mode" };
     if (name === "before" || name === "date" || name === "since" || name === "until") return { name, takesValue: true, description: `${name} date` };
     if (name === "internal" || name === "include-results" || name === "force" || name === "dry-run" || name === "estimate") return { name, description: "Enable this option" };

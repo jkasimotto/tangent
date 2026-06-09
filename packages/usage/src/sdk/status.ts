@@ -85,13 +85,13 @@ export async function status(options: StatusOptions): Promise<RepoStatus> {
     providerStatuses.push({
       provider,
       supported: true,
-      native: nativePaths.length ? "available" : provider === "claude" ? "unavailable" : "best-effort",
+      native: nativePaths.length ? "available" : "unavailable",
       nativePaths,
       hooks,
       capture: {
-        enabled: hasAnyInstalledHook(hooks),
+        enabled: nativePaths.length > 0,
         logDir,
-        lastEvent: await newestMtime(files)
+        lastEvent: await newestMtime(nativePaths.length ? nativePaths : files)
       },
       nativeSchema,
       capabilities: capabilitiesForProvider(provider)
@@ -105,15 +105,11 @@ export async function status(options: StatusOptions): Promise<RepoStatus> {
       branch: info.branch,
       headSha: info.headSha,
       tracking: providerStatuses.some((provider) => provider.capture.enabled),
-      trackingSource: "installed-hooks"
+      trackingSource: "native-transcripts"
     },
     index: await indexStatus(root),
     providers: providerStatuses
   };
-}
-
-function hasAnyInstalledHook(hooks: ProviderStatus["hooks"]): boolean {
-  return hooks.global.installed || hooks.repoLocal.installed || hooks.repoShared.installed;
 }
 
 async function hookStatus(provider: UsageProvider, scope: "global" | "repo-local" | "repo-shared", root: string): Promise<{ installed: boolean; path: string }> {

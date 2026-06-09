@@ -18,31 +18,31 @@ export type ProviderCapabilities = Record<CapabilityKey, ProviderSupport>;
 export function capabilitiesForProvider(provider: UsageProvider): ProviderCapabilities {
   if (provider === "claude") {
     return {
-      conversations: { status: "supported", source: "hook", notes: ["Hooks provide session start/end lifecycle records."] },
-      "messages.visible": { status: "partial", source: "hook", notes: ["User prompts are exact; assistant text is final visible output from Stop/SubagentStop when provided."] },
-      "messages.internal": { status: "unsupported", source: "hook", notes: ["Hidden reasoning is not captured from hooks."] },
-      "tools.calls": { status: "supported", source: "hook", notes: ["PreToolUse captures documented tool calls."] },
-      "tools.results": { status: "supported", source: "hook", notes: ["PostToolUse captures documented tool results and duration when provided."] },
-      "tokens.byConversation": { status: "partial", source: "best-effort", notes: ["Hooks do not expose token usage by default; Claude native import can backfill provider-reported message usage when present."] },
-      "tokens.byModel": { status: "partial", source: "best-effort", notes: ["Hooks do not expose token usage by default; Claude native import can backfill provider-reported message usage when present."] },
-      "tokens.perToolCall": { status: "partial", source: "best-effort", notes: ["Some provider tool responses may include usage fields, but coverage is not complete."] },
-      permissions: { status: "supported", source: "hook", notes: ["PermissionRequest hooks provide structured request data."] },
-      subagents: { status: "partial", source: "hook", notes: ["Hooks expose lifecycle and optional final visible message."] },
-      compactions: { status: "partial", source: "hook", notes: ["PreCompact/PostCompact expose compaction lifecycle and summaries when provided."] }
+      conversations: { status: "supported", source: "native", notes: ["Native Claude Code transcripts provide session records and quiet-window completion inference."] },
+      "messages.visible": { status: "supported", source: "native", notes: ["Native Claude Code transcripts include user and assistant visible message content."] },
+      "messages.internal": { status: "unsupported", source: "native", notes: ["Hidden reasoning is not exposed from native transcripts."] },
+      "tools.calls": { status: "partial", source: "native", notes: ["Native Claude Code assistant messages expose tool_use content when present."] },
+      "tools.results": { status: "partial", source: "native", notes: ["Native Claude Code user messages expose tool_result content when present."] },
+      "tokens.byConversation": { status: "supported", source: "native", notes: ["Native Claude Code assistant messages include provider-reported usage fields when present."] },
+      "tokens.byModel": { status: "supported", source: "native", notes: ["Native Claude Code assistant messages include provider-reported usage fields when present."] },
+      "tokens.perToolCall": { status: "partial", source: "native", notes: ["Token usage is reported on assistant messages, not reliably per tool call."] },
+      permissions: { status: "partial", source: "native", notes: ["Permission mode records may appear in native transcripts, but request decisions are not normalized yet."] },
+      subagents: { status: "partial", source: "native", notes: ["Sidechain and agent records are present in native transcripts and parsed permissively."] },
+      compactions: { status: "partial", source: "native", notes: ["Native transcript summary records may expose compaction-like state."] }
     };
   }
 
   return {
-    conversations: { status: "supported", source: "hook", notes: ["Exact start and partial end are captured from hooks."] },
-    "messages.visible": { status: "partial", source: "hook", notes: ["User prompts are exact; assistant text is partial from Stop.last_assistant_message unless transcript import is used."] },
-    "messages.internal": { status: "unsupported", source: "hook", notes: ["Codex hooks do not expose internal reasoning or planning messages."] },
-    "tools.calls": { status: "partial", source: "hook", notes: ["Hooks cover Bash, apply_patch, and MCP tool calls."] },
-    "tools.results": { status: "partial", source: "hook", notes: ["Hooks cover Bash, apply_patch, and MCP tool results."] },
-    "tokens.byConversation": { status: "unsupported", source: "hook", notes: ["Codex hooks do not expose token usage."] },
-    "tokens.byModel": { status: "unsupported", source: "hook", notes: ["Codex hooks do not expose token usage."] },
-    "tokens.perToolCall": { status: "unsupported", source: "hook", notes: ["Codex hooks do not expose token usage."] },
-    permissions: { status: "supported", source: "hook", notes: ["PermissionRequest hooks provide structured request data."] },
-    subagents: { status: "partial", source: "hook", notes: ["Hooks expose lifecycle only."] },
-    compactions: { status: "partial", source: "hook", notes: ["Hooks expose pre/post compaction lifecycle only."] }
+    conversations: { status: "supported", source: "native", notes: ["Native Codex rollout transcripts include session and task lifecycle records."] },
+    "messages.visible": { status: "supported", source: "native", notes: ["Native Codex rollout transcripts include user_message and agent_message events."] },
+    "messages.internal": { status: "partial", source: "native", notes: ["Only safe reasoning summaries are exposed; encrypted reasoning content is not exposed."] },
+    "tools.calls": { status: "supported", source: "native", notes: ["Native Codex response_item records include function_call tool calls."] },
+    "tools.results": { status: "supported", source: "native", notes: ["Native Codex response_item records include function_call_output tool results."] },
+    "tokens.byConversation": { status: "supported", source: "native", notes: ["Native Codex token_count records include provider-reported cumulative token usage."] },
+    "tokens.byModel": { status: "supported", source: "native", notes: ["Native Codex token_count records include provider-reported cumulative token usage."] },
+    "tokens.perToolCall": { status: "partial", source: "native", notes: ["Codex token usage is reported by response snapshot, not reliably per tool call."] },
+    permissions: { status: "partial", source: "native", notes: ["Permission context may appear in native records, but request decisions are not normalized yet."] },
+    subagents: { status: "partial", source: "native", notes: ["Subagent activity may appear as native tool calls or transcript records."] },
+    compactions: { status: "partial", source: "native", notes: ["Native compacted records expose compaction summaries when present."] }
   };
 }

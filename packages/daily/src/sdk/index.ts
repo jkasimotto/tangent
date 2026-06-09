@@ -10,7 +10,7 @@ export { configure } from "./config.js";
 export type { ConfigureOptions } from "./config.js";
 
 export type { DailyConfig } from "../types/config.js";
-export type { DailyCandidate, EvidenceRef, TopicRollup, TurnDigest, TurnDigestInput } from "../types/digest.js";
+export type { DailyCandidate, DailyRollupInput, DailyRollupOutput, DayRollupInput, DayRollupOutput, EvidenceRef, TopicRollup, TurnDigest, TurnDigestInput } from "../types/digest.js";
 export type { DailyNote } from "../types/daily-note.js";
 export type { DailyLedgerLineV2, ProcessedConversationLedgerLine } from "../types/ledger.js";
 export type { SummaryProviderConfig, SummaryRunner, RunnerStatus } from "../types/provider.js";

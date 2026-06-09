@@ -24,4 +24,12 @@ export { trackRepo, untrackRepo } from "./trackRepo.js";
 export type { TrackRepoOptions } from "./trackRepo.js";
 export { UsageDataset } from "../core/dataset.js";
 export type { ActivityTimelineItem, ConversationListItem, ToolCallWithResult, TurnListItem, VisibleMessage } from "../core/dataset.js";
+export { allocateToolOutputTokens, conversationReport } from "../core/conversation-report.js";
+export type {
+  NormalizedConversation,
+  NormalizedConversationMessage,
+  NormalizedToolCall,
+  TokenUsage,
+  ToolTokenAttribution
+} from "../core/conversation-report.js";
 export type { UsageCaptureConfidence, UsageJsonlLineV1, UsageJsonlLineV2, UsageProvider, QueryResult, QuerySupport, UsageConfidence } from "../core/schema/usage-jsonl-v1.js";

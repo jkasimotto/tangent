@@ -4,10 +4,20 @@ import { pathExists } from "@tangent/repo";
 
 import type { LoadedDailyConfig } from "./config.js";
 import type { DailyNote } from "../types/daily-note.js";
-import type { TopicRollup, TurnDigest, TurnDigestInput } from "../types/digest.js";
+import type { DailyRollupInput, DailyRollupOutput, TopicRollup, TurnDigest, TurnDigestInput } from "../types/digest.js";
 import { hashObject } from "./hash.js";
-import { notePath, renderModelPath, topicRollupPath, turnDigestPath, turnInputPath } from "./paths.js";
-import { readLedger, latestSuccessfulDigestsForDate } from "./ledger.js";
+import {
+  dailyRollupMessagesPath,
+  dailyRollupPromptPath,
+  dayInputPath,
+  dayRollupOutputPath,
+  notePath,
+  renderModelPath,
+  topicRollupPath,
+  turnDigestPath,
+  turnInputPath
+} from "./paths.js";
+import { readLedger, latestSuccessfulDayRollupForDate, latestSuccessfulDigestsForDate } from "./ledger.js";
 import { fallbackTopicRollup, groupTurnDigests } from "./grouping.js";
 import { renderDailyNote } from "./renderer.js";
 
@@ -18,6 +28,49 @@ export async function writeTurnInputCache(args: {
 }): Promise<string> {
   const filePath = turnInputPath(args.loaded.paths, args.input.source.dateBucket, args.input.source.sourceKey, args.inputHash);
   await writeJsonFile(filePath, args.input);
+  return filePath;
+}
+
+export async function writeDayInputCache(args: {
+  loaded: LoadedDailyConfig;
+  input: DailyRollupInput;
+  inputHash: string;
+}): Promise<string> {
+  const filePath = dayInputPath(args.loaded.paths, args.input.date, args.inputHash);
+  await writeJsonFile(filePath, args.input);
+  return filePath;
+}
+
+export async function writeDayRollupOutputCache(args: {
+  loaded: LoadedDailyConfig;
+  date: string;
+  output: DailyRollupOutput;
+  inputHash: string;
+}): Promise<string> {
+  const filePath = dayRollupOutputPath(args.loaded.paths, args.date, args.inputHash);
+  await writeJsonFile(filePath, args.output);
+  return filePath;
+}
+
+export async function writeDayRollupMessagesCache(args: {
+  loaded: LoadedDailyConfig;
+  date: string;
+  inputHash: string;
+  markdown: string;
+}): Promise<string> {
+  const filePath = dailyRollupMessagesPath(args.loaded.paths, args.date, args.inputHash);
+  await writeTextFile(filePath, args.markdown);
+  return filePath;
+}
+
+export async function writeDayRollupPromptCache(args: {
+  loaded: LoadedDailyConfig;
+  date: string;
+  inputHash: string;
+  prompt: string;
+}): Promise<string> {
+  const filePath = dailyRollupPromptPath(args.loaded.paths, args.date, args.inputHash);
+  await writeTextFile(filePath, args.prompt);
   return filePath;
 }
 
@@ -53,6 +106,14 @@ export async function readDigestsForDate(loaded: LoadedDailyConfig, date: string
   return result;
 }
 
+export async function readDayRollupForDate(loaded: LoadedDailyConfig, date: string): Promise<{ output: DailyRollupOutput; path: string } | undefined> {
+  const ledger = await readLedger(loaded.paths.ledgerPath);
+  const row = latestSuccessfulDayRollupForDate(ledger, date);
+  if (!row?.rollupPath || !(await pathExists(row.rollupPath))) return undefined;
+  const output = normalizeDailyRollupOutput(JSON.parse(await readFile(row.rollupPath, "utf8")) as unknown);
+  return { output, path: row.rollupPath };
+}
+
 export async function writeDailyNote(
   loaded: LoadedDailyConfig,
   date: string,
@@ -69,6 +130,20 @@ export async function writeDailyNote(
   await mkdir(path.dirname(target), { recursive: true });
   await writeFile(target, markdown, "utf8");
   return { path: target, markdown, model, created: !existed, updated: current !== markdown };
+}
+
+export async function writeGeneratedDailyMarkdown(
+  loaded: LoadedDailyConfig,
+  date: string,
+  generatedMarkdown: string
+): Promise<{ path: string; markdown: string; created: boolean; updated: boolean }> {
+  const target = notePath(loaded.paths, date);
+  const existed = await pathExists(target);
+  const current = existed ? await readFile(target, "utf8") : defaultNoteShell(loaded, date);
+  const markdown = replaceGeneratedBlock(current, date, generatedMarkdown);
+  await mkdir(path.dirname(target), { recursive: true });
+  await writeFile(target, markdown, "utf8");
+  return { path: target, markdown, created: !existed, updated: current !== markdown };
 }
 
 export async function readDailyNote(loaded: LoadedDailyConfig, date: string): Promise<{ path: string; markdown: string; model?: DailyNote; exists: boolean; stale: boolean }> {
@@ -136,6 +211,11 @@ async function writeJsonFile(filePath: string, value: unknown): Promise<void> {
   await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+async function writeTextFile(filePath: string, value: string): Promise<void> {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, value.endsWith("\n") ? value : `${value}\n`, "utf8");
+}
+
 function unique<T>(values: T[]): T[] {
   return [...new Set(values.filter(Boolean))];
 }
@@ -143,4 +223,13 @@ function unique<T>(values: T[]): T[] {
 function sum(values: Array<number | undefined>): number | undefined {
   const total = values.reduce<number>((acc, value) => acc + (value || 0), 0);
   return total || undefined;
+}
+
+function normalizeDailyRollupOutput(value: unknown): DailyRollupOutput {
+  const record = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  return {
+    schema: "daily.rollup.v1",
+    markdown: typeof record.markdown === "string" ? record.markdown : typeof record.generatedMarkdown === "string" ? record.generatedMarkdown : "",
+    sourceCaveats: Array.isArray(record.sourceCaveats) ? record.sourceCaveats.filter((item): item is string => typeof item === "string") : []
+  };
 }

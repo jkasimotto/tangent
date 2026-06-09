@@ -6,7 +6,13 @@ import { loadConfig } from "../../core/config.js";
 import { fallbackTopicRollup, groupTurnDigests } from "../../core/grouping.js";
 import { hashObject } from "../../core/hash.js";
 import { latestLedgerBySource, readLedger } from "../../core/ledger.js";
-import { readDigestsForDate, writeDailyNote, writeTurnInputCache } from "../../core/note-writer.js";
+import {
+  readDayRollupForDate,
+  readDigestsForDate,
+  writeDailyNote,
+  writeGeneratedDailyMarkdown,
+  writeTurnInputCache
+} from "../../core/note-writer.js";
 import { renderDailyNote } from "../../core/renderer.js";
 import { dateArgToBucket, todayBucket } from "../../core/time.js";
 import type { DailyNote } from "../../types/daily-note.js";
@@ -47,10 +53,22 @@ export async function topicsCommand(args: Args): Promise<void> {
 export async function renderCommand(args: Args): Promise<void> {
   const loaded = await loadConfig({ repo: args._[1] || "." });
   const date = dateArgToBucket(dateArg(args.date), loaded.config.processing.timezone) || todayBucket(loaded.config.processing.timezone);
+  const dayRollup = await readDayRollupForDate(loaded, date);
   if (!args["dry-run"]) {
+    if (dayRollup) {
+      const note = await writeGeneratedDailyMarkdown(loaded, date, dayRollup.output.markdown);
+      if (args.json) console.log(JSON.stringify(dayRollup.output, null, 2));
+      else console.log(note.path);
+      return;
+    }
     const note = await writeDailyNote(loaded, date);
     if (args.json) console.log(JSON.stringify(note.model, null, 2));
     else console.log(note.path);
+    return;
+  }
+  if (dayRollup) {
+    if (args.explain) console.error(JSON.stringify({ date, dayRollup: dayRollup.path }, null, 2));
+    console.log(args.json ? JSON.stringify(dayRollup.output, null, 2) : dayRollup.output.markdown.trim());
     return;
   }
   const digests = (await readDigestsForDate(loaded, date)).map((row) => row.digest);

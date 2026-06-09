@@ -4,10 +4,15 @@ Private daily engineering notes from `usage` conversation telemetry.
 
 ```bash
 tangent daily init . --summary-provider codex-cli --model gpt-5.4-mini
-tangent daily process . --date today
+tangent daily rollup . --date today
 tangent daily today
 tangent daily yesterday
 ```
+
+`daily rollup . --date <day>` reads normalized Usage conversation reports for the
+selected day, writes one rollup input artifact plus readable messages and prompt
+artifacts, and uses one summary provider call to write the note's generated
+block. `daily process` remains an alias.
 
 SDK:
 
@@ -22,8 +27,9 @@ By default, generated notes and state live outside the repo:
   config.json
   ledger.jsonl
   notes/
-  digests/
+  examples/
   artifacts/
+    rollups/
 ```
 
 For example, this repo uses:

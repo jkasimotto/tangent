@@ -5,6 +5,7 @@ Local-first conversation telemetry and queryability for coding-agent sessions.
 ```bash
 tangent usage status .
 tangent usage sessions .
+tangent usage report latest --provider claude --json
 tangent usage tokens latest
 tangent usage events . --json
 ```

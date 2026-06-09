@@ -2,7 +2,8 @@ import type { UsageDataset, ToolCallWithResult, TurnListItem } from "@tangent/us
 import type { ResolvedRepoInfo as DailyRepoInfo } from "@tangent/repo";
 
 import type { DailyConfig } from "../types/config.js";
-import type { TurnDigestInput } from "../types/digest.js";
+import type { DailyRollupInput, TurnDigestInput } from "../types/digest.js";
+import type { DailyStyleExample } from "../core/examples.js";
 import { excerptText, previewUnknown, truncateCompact } from "../core/redaction.js";
 
 export function buildTurnDigestInput(args: {
@@ -84,6 +85,73 @@ export function buildTurnDigestInput(args: {
   };
 
   return clampTurnInput(input, config.input.maxTurnInputChars, config);
+}
+
+export function buildDayRollupInput(args: {
+  dataset: UsageDataset;
+  repo: DailyRepoInfo;
+  config: DailyConfig;
+  turns: TurnListItem[];
+  date: string;
+  examples?: DailyStyleExample[];
+}): DailyRollupInput {
+  const { dataset, repo, config, turns, date } = args;
+  const conversations = turns.map((turn) => dataset.conversations.report({
+    conversationId: turn.conversationId,
+    turnId: turn.turnId
+  }).data);
+  return {
+    schema: "daily.rollup-input.v1",
+    date,
+    timezone: config.processing.timezone,
+    repo: {
+      name: config.repo?.displayName || repo.displayName,
+      rootHash: repo.rootHash,
+      branch: repo.branch
+    },
+    source: {
+      generatedAt: new Date().toISOString(),
+      providers: unique(turns.map((turn) => turn.provider)),
+      conversationIds: unique(turns.map((turn) => turn.conversationId)),
+      sourceFiles: dataset.provenance.sourceFiles,
+      caveats: unique([
+        ...conversations.flatMap((conversation) => conversation.caveats),
+        ...dataset.warnings.map((warning) => warning.message)
+      ])
+    },
+    examples: args.examples || [],
+    conversations
+  };
+}
+
+export function renderDailyRollupMessages(input: DailyRollupInput): string {
+  const lines: string[] = [
+    `# Daily rollup messages - ${input.date}`,
+    "",
+    `Repo: ${input.repo.name}`,
+    `Providers: ${input.source.providers.join(", ") || "none"}`,
+    ""
+  ];
+
+  for (const conversation of input.conversations) {
+    lines.push(`## ${conversation.conversationId}`, "");
+    for (const message of conversation.messages) {
+      lines.push(`### ${message.at || "--"} ${message.role}${message.role === "assistant" && message.model ? ` ${message.model}` : ""}`);
+      if (message.text) lines.push("", message.text.trim(), "");
+      if (message.role === "assistant" && message.tokens) {
+        lines.push(`tokens: input=${message.tokens.input ?? "-"} output=${message.tokens.output ?? "-"} cacheRead=${message.tokens.cacheRead ?? "-"} cacheCreation=${message.tokens.cacheCreation ?? "-"} confidence=${message.tokens.confidence}`);
+      }
+      if (message.role === "assistant" && message.toolCalls.length) {
+        lines.push("tools:");
+        for (const [index, tool] of message.toolCalls.entries()) {
+          lines.push(`${index + 1}. ${tool.name} ${tool.result?.status || "unknown"} allocatedOutput=${tool.tokens.allocatedOutput ?? "-"} targets=${tool.targetPaths.join(", ") || "-"}`);
+        }
+      }
+      lines.push("");
+    }
+  }
+
+  return `${lines.join("\n").trim()}\n`;
 }
 
 export function isProcessableTurn(turn: TurnListItem, config: DailyConfig, includeActiveOverride = false): boolean {
@@ -241,4 +309,8 @@ function field(data: unknown, key: string): unknown {
 function stringField(data: unknown, key: string): string | undefined {
   const value = field(data, key);
   return typeof value === "string" ? value : undefined;
+}
+
+function unique<T>(values: T[]): T[] {
+  return [...new Set(values.filter(Boolean))];
 }

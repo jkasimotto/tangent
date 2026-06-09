@@ -9,7 +9,8 @@ export async function unprocessedCommand(args: Args): Promise<void> {
     from: parseDate(args.from),
     to: parseDate(args.to),
     providers: providerArg(args.provider) ? [providerArg(args.provider)!] : undefined,
-    includeActive: booleanArg(args["include-active"])
+    includeActive: booleanArg(args["include-active"]),
+    force: booleanArg(args.force)
   });
   if (args.json) {
     console.log(JSON.stringify(args.trace ? { rows, trace: { candidateQueryMs: Date.now() - started, rows: rows.length } } : rows, null, 2));

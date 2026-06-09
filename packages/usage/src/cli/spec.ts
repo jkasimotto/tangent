@@ -9,6 +9,7 @@ export const usageCommandSpec: CliCommandSpec = {
     { name: "today", description: "Show today's coding-agent sessions", args: "[repo]", options: commonJsonOptions(["provider", "source"]) },
     { name: "sessions", description: "List coding-agent sessions", args: "[repo]", options: commonJsonOptions(["provider", "date", "since", "until", "source"]) },
     { name: "session", description: "Show one session summary", args: "<session|latest>", options: commonJsonOptions(["repo", "source"]) },
+    { name: "report", description: "Print assistant-centered session report", args: "<session|latest>", options: commonJsonOptions(["repo", "provider", "source", "json"]) },
     { name: "transcript", description: "Print a readable session transcript", args: "<session|latest>", options: commonJsonOptions(["repo", "internal", "source"]) },
     { name: "tools", description: "Print tool calls for a session", args: "<session|latest>", options: commonJsonOptions(["repo", "include-results", "source"]) },
     { name: "tokens", description: "Print known token usage", args: "[session|latest]", options: commonJsonOptions(["repo", "provider", "by", "estimate", "source"]) },

@@ -1,4 +1,5 @@
 import type { ConversationListItem, ToolCallWithResult, TurnListItem, VisibleMessage } from "../core/dataset.js";
+import type { NormalizedConversation, TokenUsage } from "../core/conversation-report.js";
 
 export function printTranscript(rows: VisibleMessage[], resolved?: { shortId: string }): void {
   if (resolved) console.log(`Transcript: ${resolved.shortId}\n`);
@@ -27,6 +28,37 @@ export function printToolRows(rows: ToolCallWithResult[]): void {
     console.log(`${index + 1}. ${row.toolName}  ${status}${target}`);
     const command = objectField(objectField(row.input, "command") ? row.input : undefined, "command") || objectField(row.input, "cmd");
     if (typeof command === "string") console.log(`   ${preview(command, 120)}`);
+  }
+}
+
+export function printConversationReport(report: NormalizedConversation): void {
+  console.log(`Session ${report.conversationId}`);
+  if (!report.messages.length) {
+    console.log("No visible transcript messages captured.");
+    return;
+  }
+
+  for (const message of report.messages) {
+    if (message.role === "user") {
+      console.log("");
+      console.log(`${formatIsoTime(message.at)} user`);
+      console.log(indent(message.text || "(no text captured)"));
+      continue;
+    }
+
+    const tokenText = message.tokens ? `  ${formatTokens(message.tokens)}` : "";
+    console.log("");
+    console.log(`${formatIsoTime(message.at)} assistant${message.model ? `  ${shortModel(message.model)}` : ""}${tokenText}`);
+    console.log(indent(message.text || "(no text captured)"));
+    if (message.toolCalls.length) {
+      console.log("");
+      console.log("  tools:");
+      for (const [index, tool] of message.toolCalls.entries()) {
+        const allocated = tool.tokens.allocatedOutput === undefined ? "" : `  allocated_output=${tool.tokens.allocatedOutput}`;
+        const target = tool.targetPaths.length ? `  ${tool.targetPaths.slice(0, 3).join(", ")}` : "";
+        console.log(`    ${index + 1}. ${tool.name}  ${tool.result?.status || "unknown"}${allocated}${target}`);
+      }
+    }
   }
 }
 
@@ -70,6 +102,13 @@ export function shortConversationId(row: ConversationListItem): string {
 export function formatTime(date: Date | undefined): string {
   if (!date) return "--:--";
   return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function formatIsoTime(value: string | undefined): string {
+  if (!value) return "--:--";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "--:--";
+  return formatTime(date);
 }
 
 export function formatDateTime(date: Date | undefined): string {
@@ -121,6 +160,31 @@ function coalesceMessages(rows: VisibleMessage[]): VisibleMessage[] {
     result.push({ ...row });
   }
   return result;
+}
+
+function formatTokens(tokens: TokenUsage): string {
+  return [
+    tokenPart("input", tokens.input),
+    tokenPart("output", tokens.output),
+    tokenPart("cache_read", tokens.cacheRead),
+    tokenPart("cache_creation", tokens.cacheCreation)
+  ].filter(Boolean).join(" ");
+}
+
+function tokenPart(label: string, value: number | undefined): string | undefined {
+  return value === undefined ? undefined : `${label}=${formatTokenNumber(value)}`;
+}
+
+function formatTokenNumber(value: number): string {
+  if (Math.abs(value) >= 1000) return `${(value / 1000).toFixed(1)}k`;
+  return String(value);
+}
+
+function shortModel(model: string): string {
+  return model
+    .replace(/^claude-/, "")
+    .replace(/^gpt-/, "")
+    .replace(/-\d{8}$/, "");
 }
 
 function indent(value: string): string {

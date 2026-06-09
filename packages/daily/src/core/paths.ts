@@ -13,7 +13,9 @@ export type DailyOutputPaths = {
   privateConfigPath: string;
   ledgerPath: string;
   notesDir: string;
+  examplesDir: string;
   artifactsDir: string;
+  rollupsDir: string;
   inputsDir: string;
   turnDigestsDir: string;
   topicRollupsDir: string;
@@ -53,7 +55,9 @@ export function resolveOutputPaths(repo: DailyRepoInfo, config: DailyConfig): Da
     privateConfigPath: path.join(baseDir, "config.json"),
     ledgerPath: path.join(baseDir, "ledger.jsonl"),
     notesDir,
+    examplesDir: path.join(baseDir, "examples"),
     artifactsDir,
+    rollupsDir: path.join(artifactsDir, "rollups"),
     inputsDir: path.join(artifactsDir, "inputs"),
     turnDigestsDir: path.join(artifactsDir, "turn-digests"),
     topicRollupsDir: path.join(artifactsDir, "topic-rollups"),
@@ -65,6 +69,8 @@ export function resolveOutputPaths(repo: DailyRepoInfo, config: DailyConfig): Da
 export async function ensureOutputDirs(paths: DailyOutputPaths): Promise<void> {
   await mkdir(paths.outputDir, { recursive: true });
   await mkdir(paths.notesDir, { recursive: true });
+  await mkdir(paths.examplesDir, { recursive: true });
+  await mkdir(paths.rollupsDir, { recursive: true });
   await mkdir(paths.inputsDir, { recursive: true });
   await mkdir(paths.turnDigestsDir, { recursive: true });
   await mkdir(paths.topicRollupsDir, { recursive: true });
@@ -78,6 +84,30 @@ export function notePath(paths: DailyOutputPaths, date: string): string {
 
 export function turnInputPath(paths: DailyOutputPaths, date: string, sourceKey: string, inputHash: string): string {
   return path.join(paths.inputsDir, date, `${safeFileId(sourceKey)}.${inputHash}.json`);
+}
+
+export function dayInputPath(paths: DailyOutputPaths, date: string, inputHash: string): string {
+  return dailyRollupInputPath(paths, date, inputHash);
+}
+
+export function dayRollupOutputPath(paths: DailyOutputPaths, date: string, inputHash: string): string {
+  return dailyRollupOutputPath(paths, date, inputHash);
+}
+
+export function dailyRollupInputPath(paths: DailyOutputPaths, date: string, inputHash: string): string {
+  return path.join(paths.rollupsDir, date, `input.${inputHash}.json`);
+}
+
+export function dailyRollupMessagesPath(paths: DailyOutputPaths, date: string, inputHash: string): string {
+  return path.join(paths.rollupsDir, date, `messages.${inputHash}.md`);
+}
+
+export function dailyRollupOutputPath(paths: DailyOutputPaths, date: string, inputHash: string): string {
+  return path.join(paths.rollupsDir, date, `output.${inputHash}.json`);
+}
+
+export function dailyRollupPromptPath(paths: DailyOutputPaths, date: string, inputHash: string): string {
+  return path.join(paths.rollupsDir, date, `prompt.${inputHash}.md`);
 }
 
 export function turnDigestPath(paths: DailyOutputPaths, date: string, sourceKey: string, inputHash: string): string {

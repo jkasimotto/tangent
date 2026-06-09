@@ -1,5 +1,5 @@
 import type { TurnDigest, TurnDigestInput } from "../types/digest.js";
-import { topicRollupJsonSchema, turnDigestJsonSchema } from "./schemas.js";
+import { dayRollupJsonSchema, topicRollupJsonSchema, turnDigestJsonSchema } from "./schemas.js";
 
 export function turnDigestPrompt(input: TurnDigestInput): string {
   return `You are generating a private engineering daily-log digest from one coding-agent turn.
@@ -41,5 +41,30 @@ ${JSON.stringify({ date: args.date, key: args.key, title: args.title })}
 
 Turn digests:
 ${JSON.stringify(args.digests)}
+`;
+}
+
+export function dayRollupPrompt(args: { inputPath?: string; date: string; inputJson?: string }): string {
+  const inputInstruction = args.inputJson
+    ? `Use this JSON input:\n${args.inputJson}`
+    : `Read the JSON input file at:\n${args.inputPath}`;
+  return `You are generating the private engineering daily note for ${args.date}.
+
+${inputInstruction}
+
+Rules:
+- Use only the provided JSON input.
+- Do not inspect the repository or read any other files.
+- Write useful engineering notes, not a chat transcript.
+- Preserve concrete decisions, debugging findings, implementation details, validation commands, and follow-ups.
+- Follow the style of input.examples when provided.
+- Do not include secrets, credentials, tokens, or long code blocks.
+- Keep direct quotes short.
+- Prefer omission over speculation.
+- markdown must be the full generated note body for the daily generated block.
+- Output valid JSON matching the schema.
+
+JSON schema:
+${JSON.stringify(dayRollupJsonSchema)}
 `;
 }

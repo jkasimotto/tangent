@@ -1,14 +1,44 @@
 import type { TopicRollup, TurnDigest } from "../types/digest.js";
 
+const evidenceRefJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "eventId", "toolCallId", "file", "quote", "kind"],
+  properties: {
+    id: { type: "string" },
+    eventId: { type: "string" },
+    toolCallId: { type: "string" },
+    file: { type: "string" },
+    quote: { type: "string" },
+    kind: { type: "string" }
+  }
+};
+
 export const turnDigestJsonSchema = {
   type: "object",
-  required: ["schema", "topicHints", "headline", "summary", "workDone", "quality"],
+  additionalProperties: false,
+  required: [
+    "schema",
+    "topicHints",
+    "headline",
+    "summary",
+    "workDone",
+    "designNotes",
+    "decisions",
+    "experiments",
+    "debuggingFindings",
+    "followUps",
+    "entities",
+    "evidence",
+    "quality"
+  ],
   properties: {
     schema: { const: "daily.turn-digest.v1" },
     topicHints: {
       type: "array",
       items: {
         type: "object",
+        additionalProperties: false,
         required: ["key", "title", "confidence"],
         properties: {
           key: { type: "string" },
@@ -20,20 +50,120 @@ export const turnDigestJsonSchema = {
     headline: { type: "string" },
     summary: { type: "string" },
     workDone: { type: "array", items: { type: "string" } },
-    designNotes: { type: "array" },
-    decisions: { type: "array" },
-    experiments: { type: "array" },
-    debuggingFindings: { type: "array" },
+    designNotes: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["title", "context", "options", "openQuestions"],
+        properties: {
+          title: { type: "string" },
+          context: { type: "string" },
+          options: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["name", "details", "pros", "cons"],
+              properties: {
+                name: { type: "string" },
+                details: { type: "string" },
+                pros: { type: "array", items: { type: "string" } },
+                cons: { type: "array", items: { type: "string" } }
+              }
+            }
+          },
+          openQuestions: { type: "array", items: { type: "string" } }
+        }
+      }
+    },
+    decisions: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["decision", "rationale", "alternatives"],
+        properties: {
+          decision: { type: "string" },
+          rationale: { type: "string" },
+          alternatives: { type: "array", items: { type: "string" } }
+        }
+      }
+    },
+    experiments: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["question", "method", "outcome", "details"],
+        properties: {
+          question: { type: "string" },
+          method: { type: "string" },
+          outcome: { enum: ["worked", "failed", "inconclusive", "unknown"] },
+          details: { type: "string" }
+        }
+      }
+    },
+    debuggingFindings: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["symptom", "investigation", "finding", "fixOrNextStep"],
+        properties: {
+          symptom: { type: "string" },
+          investigation: { type: "string" },
+          finding: { type: "string" },
+          fixOrNextStep: { type: "string" }
+        }
+      }
+    },
     followUps: { type: "array", items: { type: "string" } },
-    entities: { type: "object" },
-    evidence: { type: "array" },
-    quality: { type: "object" }
+    entities: {
+      type: "object",
+      additionalProperties: false,
+      required: ["files", "functions", "tickets", "commands"],
+      properties: {
+        files: { type: "array", items: { type: "string" } },
+        functions: { type: "array", items: { type: "string" } },
+        tickets: { type: "array", items: { type: "string" } },
+        commands: { type: "array", items: { type: "string" } }
+      }
+    },
+    evidence: { type: "array", items: evidenceRefJsonSchema },
+    quality: {
+      type: "object",
+      additionalProperties: false,
+      required: ["confidence", "caveats"],
+      properties: {
+        confidence: { enum: ["high", "medium", "low"] },
+        caveats: { type: "array", items: { type: "string" } }
+      }
+    }
   }
 };
 
 export const topicRollupJsonSchema = {
   type: "object",
-  required: ["schema", "date", "key", "title", "sourceTurnKeys", "summary", "narrativeMarkdown"],
+  additionalProperties: false,
+  required: [
+    "schema",
+    "date",
+    "key",
+    "title",
+    "sourceTurnKeys",
+    "providers",
+    "timeSpentMs",
+    "summary",
+    "narrativeMarkdown",
+    "sections",
+    "decisions",
+    "experiments",
+    "openQuestions",
+    "followUps",
+    "evidence",
+    "caveats"
+  ],
   properties: {
     schema: { const: "daily.topic-rollup.v1" },
     date: { type: "string" },
@@ -44,13 +174,42 @@ export const topicRollupJsonSchema = {
     timeSpentMs: { type: "number" },
     summary: { type: "string" },
     narrativeMarkdown: { type: "string" },
-    sections: { type: "array" },
+    sections: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["heading", "markdown"],
+        properties: {
+          heading: { type: "string" },
+          markdown: { type: "string" }
+        }
+      }
+    },
     decisions: { type: "array", items: { type: "string" } },
     experiments: { type: "array", items: { type: "string" } },
     openQuestions: { type: "array", items: { type: "string" } },
     followUps: { type: "array", items: { type: "string" } },
-    evidence: { type: "array" },
+    evidence: {
+      type: "array",
+      items: {
+        ...evidenceRefJsonSchema,
+        required: [...evidenceRefJsonSchema.required, "sourceKey"],
+        properties: { ...evidenceRefJsonSchema.properties, sourceKey: { type: "string" } }
+      }
+    },
     caveats: { type: "array", items: { type: "string" } }
+  }
+};
+
+export const dayRollupJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["schema", "markdown", "sourceCaveats"],
+  properties: {
+    schema: { const: "daily.rollup.v1" },
+    markdown: { type: "string" },
+    sourceCaveats: { type: "array", items: { type: "string" } }
   }
 };
 

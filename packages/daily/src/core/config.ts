@@ -59,6 +59,11 @@ export function defaultConfig(repo?: DailyRepoInfo): DailyConfig {
       maxQuoteChars: 240,
       excludePathGlobs: []
     },
+    examples: {
+      enabled: true,
+      maxExamples: 5,
+      includePreviousNotes: true
+    },
     summary: {
       provider: {
         kind: "claude-cli",
@@ -201,8 +206,8 @@ function parseConfigValue(value: string): unknown {
   }
 }
 
-function providerConfig(kind: SummaryProviderConfig["kind"], model = kind === "codex-cli" ? "gpt-5.4" : "sonnet", sandbox: "read-only" | "workspace-write" | "danger-full-access" = "read-only"): SummaryProviderConfig {
-  if (kind === "codex-cli") return { kind, command: "codex", model, sandbox, timeoutMs: 300000 };
+function providerConfig(kind: SummaryProviderConfig["kind"], model = kind === "codex-cli" ? "gpt-5.4-mini" : "sonnet", sandbox: "read-only" | "workspace-write" | "danger-full-access" = "read-only"): SummaryProviderConfig {
+  if (kind === "codex-cli") return { kind, command: "codex", model, sandbox, reasoningEffort: "low", timeoutMs: 300000 };
   if (kind === "claude-sdk") return { kind, model, timeoutMs: 120000 };
   return { kind, command: "claude", model, timeoutMs: 120000, maxTurns: 1 };
 }

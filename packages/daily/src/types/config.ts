@@ -44,6 +44,11 @@ export type DailyConfig = {
     maxQuoteChars: number;
     excludePathGlobs: string[];
   };
+  examples: {
+    enabled: boolean;
+    maxExamples: number;
+    includePreviousNotes: boolean;
+  };
   summary: {
     provider: SummaryProviderConfig;
     turnDigestSchemaVersion: "turn-digest.v1";

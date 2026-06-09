@@ -1,3 +1,5 @@
+import type { NormalizedConversation } from "@tangent/usage";
+
 export type EvidenceRef = {
   id?: string;
   eventId?: string;
@@ -99,6 +101,38 @@ export type TurnDigestInput = {
     reason: string[];
   };
 };
+
+export type DailyRollupInput = {
+  schema: "daily.rollup-input.v1";
+  date: string;
+  timezone: string;
+  repo: {
+    name: string;
+    rootHash: string;
+    branch?: string;
+  };
+  source: {
+    generatedAt: string;
+    providers: Array<"claude" | "codex">;
+    conversationIds: string[];
+    sourceFiles: string[];
+    caveats: string[];
+  };
+  examples: Array<{
+    path: string;
+    markdown: string;
+  }>;
+  conversations: NormalizedConversation[];
+};
+
+export type DailyRollupOutput = {
+  schema: "daily.rollup.v1";
+  markdown: string;
+  sourceCaveats: string[];
+};
+
+export type DayRollupInput = DailyRollupInput;
+export type DayRollupOutput = DailyRollupOutput;
 
 export type TurnDigest = {
   schema: "daily.turn-digest.v1";

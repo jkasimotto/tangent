@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -7,10 +7,11 @@ import test from "node:test";
 import { UsageDataset } from "../../usage/dist/core/dataset.js";
 import { normalizeHookInput } from "../../usage/dist/hook-runner/normalize-hook-input.js";
 import { buildTurnDigestInput } from "../dist/usage/adapter.js";
-import { appendLedgerLine } from "../dist/core/ledger.js";
+import { appendLedgerLine, readLedger } from "../dist/core/ledger.js";
 import { loadConfig } from "../dist/core/config.js";
 import { readDigestsForDate, writeDailyNote } from "../dist/core/note-writer.js";
 import { processUnprocessed } from "../dist/sdk/processUnprocessed.js";
+import { renderCommand } from "../dist/cli/commands/artifacts.js";
 
 function context() {
   return {
@@ -121,22 +122,17 @@ test("writeDailyNote preserves manual notes and replaces generated block", async
   assert.doesNotMatch(text, /old generated/);
 });
 
-test("processUnprocessed renders note from prior and newly processed digests", async () => {
+test("processUnprocessed renders note from day rollup output", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "daily-process-"));
   process.env.TANGENT_DAILY_HOME = path.join(dir, "daily-home");
   process.env.USAGE_HOME = path.join(dir, "usage-home");
   const previousCodexHome = process.env.CODEX_HOME;
   process.env.CODEX_HOME = path.join(dir, "codex-home");
-  const loaded = await loadConfig({ repo: dir });
-
-  const oldPath = path.join(loaded.paths.outputDir, "old-digest.json");
-  await mkdir(loaded.paths.outputDir, { recursive: true });
-  await writeFile(oldPath, JSON.stringify(digest("Old prior work", "old-hash")), "utf8");
-  await appendLedgerLine(loaded.paths.ledgerPath, ledger("old-source", "old-fingerprint", "old-hash", oldPath));
 
   const nativePath = path.join(process.env.CODEX_HOME, "sessions", "2026", "06", "08", "rollout-2026-06-08T10-00-00-s1.jsonl");
   await writeJsonl(nativePath, codexNativeSession({ repo: dir, sessionId: "s1", turnId: "t1", prompt: "new work", response: "done" }));
 
+  let receivedInput;
   try {
     const result = await processUnprocessed({
       repo: dir,
@@ -145,15 +141,131 @@ test("processUnprocessed renders note from prior and newly processed digests", a
         id: "fake",
         kind: "claude-cli",
         checkAvailable: async () => ({ available: true, authStatus: "unknown", warnings: [] }),
-        summarizeTurn: async (input) => digestForInput("New processed work", input)
+        summarizeTurn: async () => {
+          throw new Error("summarizeTurn should not be called");
+        },
+        summarizeDay: async (input) => {
+          receivedInput = input;
+          return {
+            schema: "daily.rollup.v1",
+            markdown: "## New processed work\n\n- Wrote one daily rollup.",
+            sourceCaveats: []
+          };
+        }
       }
     });
 
     assert.equal(result.processed, 1);
+    assert.equal(receivedInput.schema, "daily.rollup-input.v1");
+    assert.equal(receivedInput.conversations.length, 1);
     const note = await readFile(result.note.path, "utf8");
-    assert.match(note, /Old prior work/);
     assert.match(note, /New processed work/);
   } finally {
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+  }
+});
+
+test("processUnprocessed uses one day rollup call when the runner supports it", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "daily-day-process-"));
+  const previousDailyHome = process.env.TANGENT_DAILY_HOME;
+  const previousUsageHome = process.env.USAGE_HOME;
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.TANGENT_DAILY_HOME = path.join(dir, "daily-home");
+  process.env.USAGE_HOME = path.join(dir, "usage-home");
+  process.env.CODEX_HOME = path.join(dir, "codex-home");
+
+  const loadedBefore = await loadConfig({ repo: dir });
+  await mkdir(loadedBefore.paths.notesDir, { recursive: true });
+  await mkdir(loadedBefore.paths.examplesDir, { recursive: true });
+  await writeFile(path.join(loadedBefore.paths.notesDir, "2026-06-07.md"), [
+    "# Yesterday",
+    "",
+    "<!-- tangent:generated:start date=2026-06-07 schema=daily.note.v2 -->",
+    "Use concise edited-note style.",
+    "<!-- tangent:generated:end -->",
+    ""
+  ].join("\n"), "utf8");
+  await writeFile(path.join(loadedBefore.paths.examplesDir, "explicit.md"), "Explicit example style.\n", "utf8");
+
+  const nativePath = path.join(process.env.CODEX_HOME, "sessions", "2026", "06", "08", "rollout-2026-06-08T10-00-00-s1.jsonl");
+  await writeJsonl(nativePath, codexNativeSession({ repo: dir, sessionId: "s1", turnId: "t1", prompt: "summarize native transcripts", response: "implemented day rollup" }));
+
+  let dayCalls = 0;
+  let turnCalls = 0;
+  let receivedInput;
+  try {
+    const result = await processUnprocessed({
+      repo: dir,
+      date: "2026-06-08",
+      summaryRunner: {
+        id: "fake",
+        kind: "codex-cli",
+        checkAvailable: async () => ({ available: true, authStatus: "unknown", warnings: [] }),
+        summarizeTurn: async () => {
+          turnCalls += 1;
+          throw new Error("summarizeTurn should not be called");
+        },
+        summarizeDay: async (input) => {
+          dayCalls += 1;
+          receivedInput = input;
+          return {
+            schema: "daily.rollup.v1",
+            markdown: "## Native transcript rollup\n\n- Added a single day-level rollup path.",
+            sourceCaveats: ["test caveat"]
+          };
+        }
+      }
+    });
+
+    assert.equal(result.processed, 1);
+    assert.equal(dayCalls, 1);
+    assert.equal(turnCalls, 0);
+    assert.equal(receivedInput.schema, "daily.rollup-input.v1");
+    assert.equal(receivedInput.conversations.length, 1);
+    assert.equal(receivedInput.conversations[0].messages.length, 2);
+    assert.deepEqual(receivedInput.conversations[0].messages.map((message) => message.at), [
+      "2026-06-08T10:00:03.000Z",
+      "2026-06-08T10:00:04.000Z"
+    ]);
+    assert.deepEqual(receivedInput.conversations[0].messages.map((message) => message.role), ["user", "assistant"]);
+    assert.deepEqual(receivedInput.examples.map((example) => path.basename(example.path)), ["explicit.md", "2026-06-07.md"]);
+    assert.equal(receivedInput.examples[1].markdown.includes("<!-- tangent:"), false);
+    assert.match(receivedInput.examples[1].markdown, /Use concise edited-note style/);
+
+    const note = await readFile(result.note.path, "utf8");
+    assert.match(note, /Native transcript rollup/);
+    assert.match(note, /single day-level rollup path/);
+
+    const loaded = await loadConfig({ repo: dir });
+    const ledgerRows = await readLedger(loaded.paths.ledgerPath);
+    assert.equal(ledgerRows.length, 1);
+    assert.equal(ledgerRows[0].status, "processed");
+    assert.equal(ledgerRows[0].inputVersion, "daily.rollup-input.v1");
+    assert.equal(ledgerRows[0].digestPath, undefined);
+    assert.equal(ledgerRows[0].rollupPath, result.digests[0].path);
+    assert.match(result.digests[0].path, /artifacts\/rollups\/2026-06-08\/output\.[a-f0-9]+\.json$/);
+    const rollupArtifacts = await readdir(path.join(loaded.paths.rollupsDir, "2026-06-08"));
+    assert.equal(rollupArtifacts.some((file) => file.startsWith("input.") && file.endsWith(".json")), true);
+    assert.equal(rollupArtifacts.some((file) => file.startsWith("messages.") && file.endsWith(".md")), true);
+    assert.equal(rollupArtifacts.some((file) => file.startsWith("prompt.") && file.endsWith(".md")), true);
+    assert.equal(rollupArtifacts.some((file) => file.startsWith("output.") && file.endsWith(".json")), true);
+
+    const originalLog = console.log;
+    try {
+      console.log = () => {};
+      await renderCommand({ _: ["render", dir], date: "2026-06-08" });
+    } finally {
+      console.log = originalLog;
+    }
+    const renderedNote = await readFile(result.note.path, "utf8");
+    assert.match(renderedNote, /Native transcript rollup/);
+    assert.match(renderedNote, /single day-level rollup path/);
+  } finally {
+    if (previousDailyHome === undefined) delete process.env.TANGENT_DAILY_HOME;
+    else process.env.TANGENT_DAILY_HOME = previousDailyHome;
+    if (previousUsageHome === undefined) delete process.env.USAGE_HOME;
+    else process.env.USAGE_HOME = previousUsageHome;
     if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
     else process.env.CODEX_HOME = previousCodexHome;
   }

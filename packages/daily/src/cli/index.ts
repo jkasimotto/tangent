@@ -25,7 +25,7 @@ export async function runDailyCli(argv = process.argv.slice(2)): Promise<void> {
 
   if (command === "init") return initCommand(args);
   if (command === "status") return statusCommand(args);
-  if (command === "process") return processCommand(args);
+  if (command === "rollup" || command === "process") return processCommand(args);
   if (command === "unprocessed" || command === "candidates") return unprocessedCommand(args);
   if (command === "note") return noteCommand(args);
   if (command === "path") return noteCommand({ ...args, _: ["note", "path", ...args._.slice(1)] });

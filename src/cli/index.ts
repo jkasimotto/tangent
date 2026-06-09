@@ -135,7 +135,7 @@ Examples:
   tangent usage today
   tangent usage transcript codex:019ea3ad
   tangent daily today
-  tangent daily process --date today
+  tangent daily rollup --date today
   tangent search index
   tangent search "horizontal tension"
   tangent eval run eval.json

@@ -9,6 +9,7 @@ export async function processCommand(args: Args): Promise<void> {
     to: parseDate(args.to),
     provider: providerArg(args.provider),
     includeActive: booleanArg(args["include-active"]),
+    force: booleanArg(args.force),
     dryRun: booleanArg(args["dry-run"])
   });
   if (args.json) {

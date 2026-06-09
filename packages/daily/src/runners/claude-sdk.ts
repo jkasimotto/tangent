@@ -1,6 +1,6 @@
-import type { TurnDigest, TurnDigestInput } from "../types/digest.js";
+import type { DailyRollupInput, DailyRollupOutput, TurnDigest, TurnDigestInput } from "../types/digest.js";
 import type { RunnerStatus, SummaryProviderConfig, SummaryRunner } from "../types/provider.js";
-import { turnDigestPrompt } from "../core/prompts.js";
+import { dayRollupPrompt, turnDigestPrompt } from "../core/prompts.js";
 import { normalizeTurnDigest } from "../core/schemas.js";
 import { stripMarkdownFence } from "@tangent/agent-runtime/process";
 
@@ -50,6 +50,25 @@ export class ClaudeSdkSummaryRunner implements SummaryRunner {
       inputHash: ""
     } });
   }
+
+  async summarizeDay(input: DailyRollupInput): Promise<DailyRollupOutput> {
+    const sdk = await importClaudeSdk();
+    const chunks: string[] = [];
+    const query = sdk.query({
+      prompt: dayRollupPrompt({ date: input.date, inputJson: JSON.stringify(input) }),
+      options: {
+        model: this.config.model,
+        maxTurns: 1,
+        settingSources: [],
+        allowedTools: [],
+        disallowedTools: ["Bash", "Read", "Write", "Edit"]
+      }
+    });
+    for await (const message of query) collectText(message, chunks);
+    const text = chunks.join("\n").trim();
+    if (!text) throw new Error("Claude SDK returned empty output.");
+    return normalizeDayRollup(JSON.parse(stripMarkdownFence(text)) as unknown);
+  }
 }
 
 type ClaudeSdkModule = {
@@ -82,4 +101,17 @@ function collectText(message: unknown, chunks: string[]): void {
       }
     }
   }
+}
+
+function normalizeDayRollup(value: unknown): DailyRollupOutput {
+  const record = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  return {
+    schema: "daily.rollup.v1",
+    markdown: typeof record.markdown === "string" ? record.markdown : typeof record.generatedMarkdown === "string" ? record.generatedMarkdown : "",
+    sourceCaveats: stringArray(record.sourceCaveats)
+  };
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }

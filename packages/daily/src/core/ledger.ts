@@ -37,3 +37,9 @@ export function latestSuccessfulDigestsForDate(lines: DailyLedgerLineV2[], date:
     .filter((line) => line.dateBucket === date && line.status === "processed" && Boolean(line.digestPath))
     .sort((a, b) => a.sourceKey.localeCompare(b.sourceKey));
 }
+
+export function latestSuccessfulDayRollupForDate(lines: DailyLedgerLineV2[], date: string): DailyLedgerLineV2 | undefined {
+  return [...lines]
+    .filter((line) => line.dateBucket === date && line.status === "processed" && (line.inputVersion === "daily.rollup-input.v1" || line.inputVersion === "daily.day-rollup-input.v1") && Boolean(line.rollupPath))
+    .sort((a, b) => b.processedAt.localeCompare(a.processedAt))[0];
+}

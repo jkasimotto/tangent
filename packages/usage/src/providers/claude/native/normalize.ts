@@ -113,26 +113,31 @@ export function normalizeClaudeNativeRecords(records: ClaudeNativeRecord[], opti
     if (role === "assistant") {
       const model = stringValue(message.model) || stringValue(item.model);
       const text = extractText(message, "assistant");
-      if (text) {
+      const toolCalls = toolCallsFromMessage(message);
+      const usage = objectValue(message.usage) || objectValue(item.usage);
+      const assistantMessageId =
+        stringValue(message.id) ||
+        stringValue(item.uuid) ||
+        deterministicMessageId(options.sourcePath, source.line);
+      if (text || toolCalls.length || usage) {
         events.push(base(source, "message.assistant.visible", {
-          text,
-          text_preview: previewText(text)
+          text: text || "",
+          text_preview: previewText(text || "")
         }, {
           turn: turn(currentTurnId),
           actor: { role: "assistant", model },
-          links: { message_id: stringValue(message.id) || stringValue(item.uuid) },
+          links: { message_id: assistantMessageId },
           availability: { confidence: "partial", notes: ["Imported from Claude Code native assistant record."] }
         }));
       }
-      for (const call of toolCallsFromMessage(message)) {
+      for (const call of toolCalls) {
         events.push(base(source, "tool.call", call.data, {
           turn: turn(currentTurnId),
           actor: { role: "assistant", model },
-          links: { tool_call_id: call.toolCallId },
+          links: { message_id: assistantMessageId, tool_call_id: call.toolCallId },
           availability: { confidence: "partial", notes: ["Imported from Claude Code native tool_use content."] }
         }));
       }
-      const usage = objectValue(message.usage) || objectValue(item.usage);
       if (usage) {
         events.push(base(source, "token.usage", {
           usage,
@@ -142,7 +147,7 @@ export function normalizeClaudeNativeRecords(records: ClaudeNativeRecord[], opti
         }, {
           turn: turn(currentTurnId),
           actor: { role: "assistant", model },
-          links: { message_id: stringValue(message.id) || stringValue(item.uuid) },
+          links: { message_id: assistantMessageId },
           availability: { confidence: "partial", notes: ["Imported from Claude Code native assistant usage fields."] }
         }));
       }
@@ -239,6 +244,8 @@ export function normalizeClaudeNativeRecord(record: unknown, sourcePath: string,
 
   if (role === "assistant") {
     const usage = objectValue(message)?.usage || item.usage;
+    const assistantMessageId = stringValue(objectValue(message)?.id) || stringValue(item.uuid) || deterministicMessageId(sourcePath, line);
+    const toolCalls = toolCallsFromMessage(objectValue(message) || item);
     const messageEvent: UsageJsonlLineV1 = {
       ...base,
       kind: "message.assistant.visible",
@@ -247,10 +254,21 @@ export function normalizeClaudeNativeRecord(record: unknown, sourcePath: string,
         ...(contentText ? { text: contentText, text_preview: previewText(contentText) } : {}),
         ...(usage ? { usage } : {})
       },
-      links: { message_id: stringValue(objectValue(message)?.id) },
+      links: { message_id: assistantMessageId },
       availability: { confidence: "partial", notes: ["Imported from Claude native transcript."] }
     };
     const events = [messageEvent];
+    for (const call of toolCalls) {
+      events.push({
+        ...base,
+        event_id: deterministicEventId(sourcePath, line, "tool.call", call.data),
+        kind: "tool.call",
+        actor: messageEvent.actor,
+        data: call.data,
+        links: { message_id: assistantMessageId, tool_call_id: call.toolCallId },
+        availability: { confidence: "partial", notes: ["Imported from Claude native transcript tool_use content."] }
+      });
+    }
     if (usage) {
       events.push({
         ...base,
@@ -288,6 +306,10 @@ function deterministicEventId(sourcePath: string, line: number, kind: UsageEvent
 function deterministicEventId(sourcePath: string, line: number, third: unknown, fourth?: unknown): string {
   const value = fourth === undefined ? third : `${String(third)}:${JSON.stringify(fourth)}`;
   return `evt_native_${hash(`${sourcePath}:${line}:${JSON.stringify(value)}`)}`;
+}
+
+function deterministicMessageId(sourcePath: string, line: number): string {
+  return `msg_native_${hash(`${sourcePath}:${line}:assistant-message`)}`;
 }
 
 function hash(value: string): string {

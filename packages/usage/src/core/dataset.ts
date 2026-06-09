@@ -10,6 +10,7 @@ import type {
   QuerySupport
 } from "./schema/usage-jsonl-v1.js";
 import { capabilitiesForProvider } from "./schema/capabilities.js";
+import { conversationReport, type NormalizedConversation } from "./conversation-report.js";
 import { repoIndexPath } from "./paths.js";
 
 export type ConversationListItem = {
@@ -141,6 +142,10 @@ export class UsageDataset {
     endedBetween: (range: { from?: Date; to?: Date }): QueryResult<ConversationListItem[]> => {
       const rows = this.conversationRows().filter((row) => inRange(row.endedAt, range.from, range.to));
       return this.result(rows, this.providers(), "conversations");
+    },
+    report: (query: { conversationId: string; turnId?: string }): QueryResult<NormalizedConversation> => {
+      const report = conversationReport(this, query);
+      return this.result(report, [report.provider], "conversations");
     },
     all: (): QueryResult<ConversationListItem[]> => this.result(this.conversationRows(), this.providers(), "conversations")
   };

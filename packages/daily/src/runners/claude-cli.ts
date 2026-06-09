@@ -1,7 +1,7 @@
-import type { TurnDigest, TurnDigestInput } from "../types/digest.js";
+import type { DailyRollupInput, DailyRollupOutput, TurnDigest, TurnDigestInput } from "../types/digest.js";
 import type { RunnerStatus, SummaryProviderConfig, SummaryRunner } from "../types/provider.js";
-import { turnDigestPrompt } from "../core/prompts.js";
-import { normalizeTurnDigest, turnDigestJsonSchema } from "../core/schemas.js";
+import { dayRollupPrompt, turnDigestPrompt } from "../core/prompts.js";
+import { dayRollupJsonSchema, normalizeTurnDigest, turnDigestJsonSchema } from "../core/schemas.js";
 import { parseRunnerJson, runnerFailure, runProcess } from "@tangent/agent-runtime/process";
 
 type ClaudeCliConfig = Extract<SummaryProviderConfig, { kind: "claude-cli" }>;
@@ -69,4 +69,44 @@ export class ClaudeCliSummaryRunner implements SummaryRunner {
       inputHash: ""
     } });
   }
+
+  async summarizeDay(input: DailyRollupInput): Promise<DailyRollupOutput> {
+    const command = this.config.command || "claude";
+    const prompt = dayRollupPrompt({ date: input.date, inputJson: JSON.stringify(input) });
+    const result = await runProcess({
+      command,
+      args: [
+        "-p",
+        prompt,
+        "--model",
+        this.config.model,
+        "--output-format",
+        "json",
+        "--json-schema",
+        JSON.stringify(dayRollupJsonSchema),
+        "--no-session-persistence",
+        "--tools",
+        "",
+        "--max-turns",
+        String(this.config.maxTurns || 1)
+      ],
+      timeoutMs: this.config.timeoutMs || 120000,
+      defaultEnv: dailyRunnerEnv
+    });
+    if (result.code !== 0) throw runnerFailure(command, result.code, result.stderr, result.stdout);
+    return normalizeDayRollup(parseRunnerJson(result.stdout));
+  }
+}
+
+function normalizeDayRollup(value: unknown): DailyRollupOutput {
+  const record = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  return {
+    schema: "daily.rollup.v1",
+    markdown: typeof record.markdown === "string" ? record.markdown : typeof record.generatedMarkdown === "string" ? record.generatedMarkdown : "",
+    sourceCaveats: stringArray(record.sourceCaveats)
+  };
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }

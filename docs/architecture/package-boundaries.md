@@ -8,8 +8,8 @@ Platform packages:
 - @tangent/governance contains custom architecture/docs/lint checks.
 
 Vertical apps:
-- @tangent/usage owns conversation telemetry schemas, native transcript normalization, hook normalization, native-log schema compatibility checks, datasets, SDK, and CLI.
-- @tangent/daily owns daily note schemas, rendering, ledgers, and summarization workflows.
+- @tangent/usage owns conversation telemetry schemas, native transcript normalization, hook normalization, native-log schema compatibility checks, assistant-centered conversation reports, datasets, SDK, and CLI.
+- @tangent/daily owns daily note schemas, date-level rollup inputs, examples, rendering, ledgers, and summarization workflows.
 - @tangent/eval owns eval specs, contexts, run manifests, metrics, and reports.
 - @tangent/search owns structural indexing and search.
 
@@ -23,5 +23,6 @@ Hard rules:
 - search must not depend on usage, daily, or eval.
 - hooks must not import Usage schemas.
 - Native provider transcript formats are interpreted in usage, not hooks. Schema inference tools may live outside runtime packages, but runtime compatibility checks and user-facing version messages belong in usage.
+- Daily must consume Usage reports rather than parsing Claude or Codex provider schemas directly.
 - agent-runtime must not import Daily or Eval schemas.
 - Cross-package imports must use public package exports.

@@ -7,7 +7,7 @@ import test from "node:test";
 import { UsageDataset } from "../dist/core/dataset.js";
 import { eventFileForConversation } from "../dist/core/paths.js";
 import { normalizeHookInput } from "../dist/hook-runner/normalize-hook-input.js";
-import { normalizeClaudeNativeRecord } from "../dist/providers/claude/native/normalize.js";
+import { normalizeClaudeNativeRecord, normalizeClaudeNativeRecords } from "../dist/providers/claude/native/normalize.js";
 import { archiveUsageTelemetry, ensureUsageIndex, loadUsageDatasetFromIndex, resolveConversationRef } from "../dist/sdk/indexStore.js";
 import { inspectNativeLogFile, listNativeSchemas, nativeSchemaStatus } from "../dist/sdk/index.js";
 import { installHooks, uninstallHooks } from "../dist/sdk/installHooks.js";
@@ -280,6 +280,34 @@ test("usage index reads Claude native visible messages, tools, and usage", async
   }
 });
 
+test("conversation report nests Claude assistant tokens, tool calls, and allocated tool token attribution", () => {
+  const sourcePath = "/tmp/claude-two-tools.jsonl";
+  const records = claudeNativeTwoToolSession().map((record, index) => ({ line: index + 1, record }));
+  const events = normalizeClaudeNativeRecords(records, { sourcePath, inferredComplete: true });
+  const dataset = new UsageDataset(events);
+  const conversationId = "claude:claude-two-tools";
+  const report = dataset.conversations.report({ conversationId }).data;
+
+  assert.equal(report.schema, "usage.conversation.v1");
+  assert.deepEqual(report.messages.map((message) => message.role), ["user", "assistant", "assistant"]);
+  const assistantMessages = report.messages.filter((message) => message.role === "assistant");
+  assert.equal(assistantMessages[0].id, "msg_tools");
+  assert.equal(assistantMessages[0].tokens.confidence, "provider-reported");
+  assert.equal(assistantMessages[0].tokens.output, 90);
+  assert.equal(assistantMessages[0].tokens.cacheRead, 200);
+  assert.equal(assistantMessages[0].toolCalls.length, 2);
+  assert.deepEqual(assistantMessages[0].toolCalls.map((tool) => tool.id), ["tool_read", "tool_grep"]);
+  assert.deepEqual(assistantMessages[0].toolCalls.map((tool) => tool.result.status), ["success", "success"]);
+  assert.equal(assistantMessages[0].toolCalls.every((tool) => tool.tokens.exact === false), true);
+  assert.equal(assistantMessages[0].toolCalls.every((tool) => tool.tokens.confidence === "allocated"), true);
+  assert.equal(assistantMessages[0].toolCalls.every((tool) => tool.tokens.allocationMethod === "proportional_serialized_tool_use_bytes"), true);
+  assert.equal(assistantMessages[0].toolCalls.every((tool) => tool.tokens.sourceAssistantMessageId === "msg_tools"), true);
+  assert.equal(sum(assistantMessages[0].toolCalls.map((tool) => tool.tokens.allocatedOutput)), 90);
+  assert.equal(assistantMessages[1].tokens.output, 12);
+  assert.equal(report.totals.toolCalls, 2);
+  assert.equal(report.totals.tokens.output, 102);
+});
+
 test("dataset derives stable synthetic turns from hook events without turn_id", () => {
   const events = [
     ...normalizeHookInput(hook("UserPromptSubmit", { prompt: "first" }), context()),
@@ -523,6 +551,85 @@ function claudeNativeSession({ repo, sessionId }) {
   ];
 }
 
+function claudeNativeTwoToolSession() {
+  const sessionId = "claude-two-tools";
+  return [
+    {
+      type: "user",
+      uuid: "user-two-tools",
+      promptId: "turn-tools",
+      sessionId,
+      timestamp: "2026-06-09T09:14:00.000Z",
+      cwd: "/repo",
+      gitBranch: "main",
+      version: "2.1.168",
+      message: { role: "user", content: "Can you inspect the parser?" }
+    },
+    {
+      type: "assistant",
+      uuid: "assistant-tools",
+      sessionId,
+      timestamp: "2026-06-09T09:15:00.000Z",
+      cwd: "/repo",
+      gitBranch: "main",
+      version: "2.1.168",
+      message: {
+        id: "msg_tools",
+        type: "message",
+        role: "assistant",
+        model: "claude-sonnet-4-5",
+        stop_reason: "tool_use",
+        content: [
+          { type: "text", text: "I'll inspect the parser." },
+          { type: "tool_use", id: "tool_read", name: "Read", input: { file_path: "packages/usage/src/core/dataset.ts" } },
+          { type: "tool_use", id: "tool_grep", name: "Grep", input: { pattern: "TopicRollup", path: "packages/daily/src" } }
+        ],
+        usage: {
+          input_tokens: 1000,
+          output_tokens: 90,
+          cache_read_input_tokens: 200,
+          cache_creation_input_tokens: 30
+        }
+      }
+    },
+    {
+      type: "user",
+      uuid: "tool-results",
+      promptId: "turn-tools",
+      sessionId,
+      timestamp: "2026-06-09T09:16:00.000Z",
+      cwd: "/repo",
+      gitBranch: "main",
+      version: "2.1.168",
+      message: {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "tool_read", content: "dataset source" },
+          { type: "tool_result", tool_use_id: "tool_grep", content: "rollup source" }
+        ]
+      }
+    },
+    {
+      type: "assistant",
+      uuid: "assistant-final",
+      sessionId,
+      timestamp: "2026-06-09T09:18:00.000Z",
+      cwd: "/repo",
+      gitBranch: "main",
+      version: "2.1.168",
+      message: {
+        id: "msg_final",
+        type: "message",
+        role: "assistant",
+        model: "claude-sonnet-4-5",
+        stop_reason: "end_turn",
+        content: [{ type: "text", text: "I found the parser path." }],
+        usage: { input_tokens: 1100, output_tokens: 12, cache_read_input_tokens: 210 }
+      }
+    }
+  ];
+}
+
 function claudeProjectKey(repoRoot) {
   return repoRoot.replace(/\//g, "-").replace(/^-/, "-");
 }
@@ -602,4 +709,8 @@ function usageEvent({ sessionId, id, kind, at, data, turn, actor }) {
     actor,
     data
   };
+}
+
+function sum(values) {
+  return values.reduce((total, value) => total + value, 0);
 }

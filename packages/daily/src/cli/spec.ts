@@ -23,9 +23,10 @@ export const dailyCommandSpec: CliCommandSpec = {
       ]
     },
     { name: "status", description: "Show daily status", args: "[repo]", options: jsonDateOptions() },
-    { name: "process", description: "Summarize candidate turns and write a note", args: "[repo]", options: processOptions(["dry-run", "json", "verbose"]) },
-    { name: "candidates", description: "List candidate turns", args: "[repo]", options: processOptions(["json", "trace"]) },
-    { name: "unprocessed", description: "Alias for candidates", args: "[repo]", options: processOptions(["json", "trace"]) },
+    { name: "rollup", description: "Write one daily note from usage conversations", args: "[repo]", options: processOptions(["force", "dry-run", "json", "verbose"]) },
+    { name: "process", description: "Alias for rollup", args: "[repo]", options: processOptions(["force", "dry-run", "json", "verbose"]) },
+    { name: "candidates", description: "List candidate turns", args: "[repo]", options: processOptions(["force", "json", "trace"]) },
+    { name: "unprocessed", description: "Alias for candidates", args: "[repo]", options: processOptions(["force", "json", "trace"]) },
     {
       name: "note",
       description: "Print, open, or locate a daily note",
@@ -54,7 +55,7 @@ export const dailyCommandSpec: CliCommandSpec = {
     { name: "digests", description: "List cached digests", args: "[repo]", options: jsonDateOptions() },
     { name: "input", description: "Build or locate a turn input", args: "[repo]", options: processOptions(["source", "path", "json"]) },
     { name: "digest", description: "Print latest digest for a source", args: "[repo]", options: processOptions(["source", "json"]) },
-    { name: "topics", description: "List topic rollups for a date", args: "[repo]", options: jsonDateOptions() },
+    { name: "topics", description: "List legacy topic rollups for a date", hidden: true, args: "[repo]", options: jsonDateOptions() },
     { name: "render", description: "Render a daily note", args: "[repo]", options: processOptions(["dry-run", "explain", "json"]) },
     {
       name: "config",

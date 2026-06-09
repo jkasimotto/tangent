@@ -1,6 +1,6 @@
 # @tangent/daily Docs
 
-Purpose: Private daily notes generated from Usage turns, with structured runner failure artifacts.
+Purpose: Private daily notes generated from Usage conversation reports, with date-level rollup inputs, style examples, and structured runner failure artifacts.
 
 Read next:
 - architecture.md

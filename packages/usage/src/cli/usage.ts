@@ -21,6 +21,7 @@ import {
   formatTime,
   numberField,
   objectField,
+  printConversationReport,
   preview,
   printToolRows,
   printTranscript,
@@ -146,6 +147,19 @@ export async function runUsageCli(argv = process.argv.slice(2)): Promise<void> {
     if (!rows.length) throw new Error(`No session found for ${session}.`);
     if (args.json) console.log(JSON.stringify(rows[0], null, 2));
     else printUsageSession(rows[0]!);
+    return;
+  }
+
+  if (command === "report") {
+    const session = requiredSession(args._[1]);
+    const repo = stringArg(args.repo) || ".";
+    const providers = providerList(args.provider).filter((p): p is UsageProvider => p !== "all");
+    const sources = sourceList(args.source);
+    const resolved = await resolveConversationRef({ repo, ref: session, providers, sources });
+    const dataset = await loadUsageDatasetFromIndex({ repo, conversationId: resolved.conversationId, providers, sources });
+    const result = dataset.conversations.report({ conversationId: resolved.conversationId });
+    if (args.json) console.log(JSON.stringify(result.data, null, 2));
+    else printConversationReport(result.data);
     return;
   }
 

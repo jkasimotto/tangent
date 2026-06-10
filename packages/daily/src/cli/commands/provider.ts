@@ -36,5 +36,5 @@ async function providerConfig(args: Args): Promise<SummaryProviderConfig> {
   }
   if (kind === "codex-cli") return { kind, command: stringArg(args.command) || "codex", model: model || "gpt-5.4", sandbox: sandboxArg(args.sandbox) || "read-only", timeoutMs: 120000 };
   if (kind === "claude-sdk") return { kind, model: model || "sonnet", timeoutMs: 120000 };
-  return { kind, command: stringArg(args.command) || "claude", model: model || "sonnet", timeoutMs: 120000, maxTurns: 1 };
+  return { kind, command: stringArg(args.command) || "claude", model: model || "sonnet", timeoutMs: 120000, maxTurns: 2 };
 }

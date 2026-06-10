@@ -1,17 +1,19 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { UsageDataset } from "../../usage/dist/core/dataset.js";
 import { normalizeHookInput } from "../../usage/dist/hook-runner/normalize-hook-input.js";
-import { buildTurnDigestInput } from "../dist/usage/adapter.js";
+import { buildDayRollupInput, buildTurnDigestInput } from "../dist/usage/adapter.js";
 import { appendLedgerLine, readLedger } from "../dist/core/ledger.js";
 import { loadConfig } from "../dist/core/config.js";
 import { readDigestsForDate, writeDailyNote } from "../dist/core/note-writer.js";
+import { dayRollupPrompt } from "../dist/core/prompts.js";
 import { processUnprocessed } from "../dist/sdk/processUnprocessed.js";
 import { renderCommand } from "../dist/cli/commands/artifacts.js";
+import { ClaudeCliSummaryRunner } from "../dist/runners/claude-cli.js";
 
 function context() {
   return {
@@ -80,6 +82,43 @@ test("turn digest input is bounded even with huge tool output", async () => {
   assert.equal(input.source.sourceKey, "codex:s1:t1");
 });
 
+test("day rollup input bounds normalized conversation reports", async () => {
+  const loaded = await loadedConfig();
+  loaded.config.input.maxTurnInputChars = 2500;
+  loaded.config.input.maxToolResultChars = 100000;
+  const huge = "x".repeat(100000);
+  const extraMessages = Array.from({ length: 80 }, (_, index) =>
+    normalizeHookInput(hook("UserPromptSubmit", {
+      prompt: `keep durable surface-routing note ${index}: ${huge}`
+    }), context())
+  ).flat();
+  const events = [
+    ...normalizeHookInput(hook("UserPromptSubmit", { prompt: "debug the surface routing model" }), context()),
+    ...normalizeHookInput(hook("PreToolUse", {
+      tool_name: "Bash",
+      tool_use_id: "tool1",
+      tool_input: { command: "npm test", details: huge }
+    }), context()),
+    ...normalizeHookInput(hook("PostToolUse", {
+      tool_name: "Bash",
+      tool_use_id: "tool1",
+      tool_input: { command: "npm test", details: huge },
+      tool_response: { exit_code: 1, stderr: huge }
+    }), context()),
+    ...extraMessages,
+    ...normalizeHookInput(hook("Stop", { last_assistant_message: huge }), context())
+  ];
+  const dataset = new UsageDataset(events);
+  const turn = dataset.turns.list({ includeActive: true }).data[0];
+  const input = buildDayRollupInput({ dataset, repo: loaded.repo, config: loaded.config, turns: [turn], date: "2026-06-08" });
+  const conversationJson = JSON.stringify(input.conversations[0]);
+
+  assert.ok(conversationJson.length <= loaded.config.input.maxTurnInputChars);
+  assert.match(conversationJson, /keep durable surface-routing note/);
+  assert.doesNotMatch(conversationJson, new RegExp(huge.slice(0, 1000)));
+  assert.match(conversationJson, /Conversation report was .*truncated for daily rollup input/);
+});
+
 test("readDigestsForDate selects latest successful digest paths from ledger", async () => {
   const loaded = await loadedConfig();
   const oldPath = path.join(loaded.paths.outputDir, "old.json");
@@ -120,6 +159,69 @@ test("writeDailyNote preserves manual notes and replaces generated block", async
   assert.match(text, /keep this/);
   assert.match(text, /new generated/);
   assert.doesNotMatch(text, /old generated/);
+});
+
+test("day rollup prompt asks for user-knowledge prose instead of assistant work bullets", () => {
+  const prompt = dayRollupPrompt({ date: "2026-06-08", inputPath: "/tmp/day-input.json" });
+  assert.match(prompt, /Distill what the user discussed, understood, decided, questioned, or learned/);
+  assert.match(prompt, /Assistant messages are context and evidence only/);
+  assert.match(prompt, /Write in full sentences and connected paragraphs/);
+  assert.match(prompt, /Avoid dot-point summaries/);
+  assert.match(prompt, /Bullets are acceptable only for compact lists of future-useful commands/);
+  assert.match(prompt, /If the user mostly delegated implementation without adding their own reasoning, keep the note short/);
+  assert.match(prompt, /long-term signal only: decisions, ideas, experiments, hypotheses, constraints, mental models, tradeoffs, and unresolved questions/);
+  assert.match(prompt, /would help the user recover useful technical or product context in the future/);
+  assert.match(prompt, /Omit ephemeral coordination, short-term chores, status updates, requests to commit, requests to rerun tools/);
+  assert.match(prompt, /Do not infer motivation from routine instructions/);
+  assert.match(prompt, /A request to commit soon is short-term coordination, not reusable knowledge/);
+  assert.match(prompt, /Good:\n### Pathfinding and routing\nThe useful thread/);
+});
+
+test("claude cli runner skips user settings and parses structured output events", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "daily-claude-runner-"));
+  const commandPath = path.join(dir, "fake-claude.mjs");
+  const argsPath = path.join(dir, "args.json");
+  await writeFile(commandPath, [
+    "#!/usr/bin/env node",
+    "import { writeFileSync } from 'node:fs';",
+    "writeFileSync(process.env.CAPTURE_ARGS_PATH, JSON.stringify(process.argv.slice(2)));",
+    "process.stdout.write(JSON.stringify([{",
+    "  type: 'result',",
+    "  subtype: 'success',",
+    "  structured_output: { schema: 'daily.rollup.v1', markdown: '## Durable idea\\n\\nThe note is prose.', sourceCaveats: [] }",
+    "}]));"
+  ].join("\n"), "utf8");
+  await chmod(commandPath, 0o755);
+
+  const runner = new ClaudeCliSummaryRunner({
+    kind: "claude-cli",
+    command: commandPath,
+    model: "sonnet",
+    timeoutMs: 5000,
+    maxTurns: 1
+  });
+  const previousCapturePath = process.env.CAPTURE_ARGS_PATH;
+  process.env.CAPTURE_ARGS_PATH = argsPath;
+  try {
+    const output = await runner.summarizeDay({
+      schema: "daily.rollup-input.v1",
+      date: "2026-06-08",
+      timezone: "UTC",
+      repo: { name: "repo", rootHash: "hash", branch: "main" },
+      source: { generatedAt: "2026-06-08T00:00:00.000Z", providers: ["codex"], conversationIds: ["codex:s1"], sourceFiles: [], caveats: [] },
+      examples: [],
+      conversations: []
+    });
+    const args = JSON.parse(await readFile(argsPath, "utf8"));
+    assert.equal(output.markdown, "## Durable idea\n\nThe note is prose.");
+    assert.deepEqual(args.slice(args.indexOf("--setting-sources"), args.indexOf("--setting-sources") + 2), ["--setting-sources", "project,local"]);
+    assert.equal(args.includes("--bare"), false);
+    assert.deepEqual(args.slice(args.indexOf("--tools"), args.indexOf("--tools") + 2), ["--tools", ""]);
+    assert.deepEqual(args.slice(args.indexOf("--max-turns"), args.indexOf("--max-turns") + 2), ["--max-turns", "2"]);
+  } finally {
+    if (previousCapturePath === undefined) delete process.env.CAPTURE_ARGS_PATH;
+    else process.env.CAPTURE_ARGS_PATH = previousCapturePath;
+  }
 });
 
 test("processUnprocessed renders note from day rollup output", async () => {

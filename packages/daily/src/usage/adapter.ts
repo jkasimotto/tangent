@@ -5,6 +5,7 @@ import type { DailyConfig } from "../types/config.js";
 import type { DailyRollupInput, TurnDigestInput } from "../types/digest.js";
 import type { DailyStyleExample } from "../core/examples.js";
 import { excerptText, previewUnknown, truncateCompact } from "../core/redaction.js";
+import { clampRollupConversation, compactRollupCaveats } from "./rollup-clamp.js";
 
 export function buildTurnDigestInput(args: {
   dataset: UsageDataset;
@@ -99,7 +100,7 @@ export function buildDayRollupInput(args: {
   const conversations = turns.map((turn) => dataset.conversations.report({
     conversationId: turn.conversationId,
     turnId: turn.turnId
-  }).data);
+  }).data).map((conversation) => clampRollupConversation(conversation, config));
   return {
     schema: "daily.rollup-input.v1",
     date,
@@ -114,10 +115,10 @@ export function buildDayRollupInput(args: {
       providers: unique(turns.map((turn) => turn.provider)),
       conversationIds: unique(turns.map((turn) => turn.conversationId)),
       sourceFiles: dataset.provenance.sourceFiles,
-      caveats: unique([
+      caveats: compactRollupCaveats([
         ...conversations.flatMap((conversation) => conversation.caveats),
         ...dataset.warnings.map((warning) => warning.message)
-      ])
+      ], 16)
     },
     examples: args.examples || [],
     conversations

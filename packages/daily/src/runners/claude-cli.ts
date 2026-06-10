@@ -11,6 +11,8 @@ const dailyRunnerEnv = {
   DAILY_SUMMARY_RUN: "1"
 };
 
+const minStructuredOutputTurns = 2;
+
 export class ClaudeCliSummaryRunner implements SummaryRunner {
   id = "claude-cli";
   kind = "claude-cli" as const;
@@ -47,11 +49,13 @@ export class ClaudeCliSummaryRunner implements SummaryRunner {
         "json",
         "--json-schema",
         JSON.stringify(turnDigestJsonSchema),
+        "--setting-sources",
+        "project,local",
         "--no-session-persistence",
         "--tools",
         "",
         "--max-turns",
-        String(this.config.maxTurns || 1)
+        String(maxStructuredOutputTurns(this.config))
       ],
       timeoutMs: this.config.timeoutMs || 120000,
       defaultEnv: dailyRunnerEnv
@@ -84,11 +88,13 @@ export class ClaudeCliSummaryRunner implements SummaryRunner {
         "json",
         "--json-schema",
         JSON.stringify(dayRollupJsonSchema),
+        "--setting-sources",
+        "project,local",
         "--no-session-persistence",
         "--tools",
         "",
         "--max-turns",
-        String(this.config.maxTurns || 1)
+        String(maxStructuredOutputTurns(this.config))
       ],
       timeoutMs: this.config.timeoutMs || 120000,
       defaultEnv: dailyRunnerEnv
@@ -96,6 +102,10 @@ export class ClaudeCliSummaryRunner implements SummaryRunner {
     if (result.code !== 0) throw runnerFailure(command, result.code, result.stderr, result.stdout);
     return normalizeDayRollup(parseRunnerJson(result.stdout));
   }
+}
+
+function maxStructuredOutputTurns(config: ClaudeCliConfig): number {
+  return Math.max(config.maxTurns || minStructuredOutputTurns, minStructuredOutputTurns);
 }
 
 function normalizeDayRollup(value: unknown): DailyRollupOutput {

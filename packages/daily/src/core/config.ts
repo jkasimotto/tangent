@@ -70,7 +70,7 @@ export function defaultConfig(repo?: DailyRepoInfo): DailyConfig {
         command: "claude",
         model: "sonnet",
         timeoutMs: 120000,
-        maxTurns: 1
+        maxTurns: 2
       },
       turnDigestSchemaVersion: "turn-digest.v1",
       topicRollupSchemaVersion: "topic-rollup.v1",
@@ -209,7 +209,7 @@ function parseConfigValue(value: string): unknown {
 function providerConfig(kind: SummaryProviderConfig["kind"], model = kind === "codex-cli" ? "gpt-5.4-mini" : "sonnet", sandbox: "read-only" | "workspace-write" | "danger-full-access" = "read-only"): SummaryProviderConfig {
   if (kind === "codex-cli") return { kind, command: "codex", model, sandbox, reasoningEffort: "low", timeoutMs: 300000 };
   if (kind === "claude-sdk") return { kind, model, timeoutMs: 120000 };
-  return { kind, command: "claude", model, timeoutMs: 120000, maxTurns: 1 };
+  return { kind, command: "claude", model, timeoutMs: 120000, maxTurns: 2 };
 }
 
 async function excludeRepoLocalDaily(repoRoot: string): Promise<void> {

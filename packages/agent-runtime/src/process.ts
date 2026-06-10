@@ -71,6 +71,10 @@ export function parseRunnerJson(stdout: string): unknown {
   const trimmed = stdout.trim();
   if (!trimmed) throw new Error("Summary runner returned empty output.");
   const parsed = JSON.parse(trimmed) as unknown;
+  if (Array.isArray(parsed)) {
+    const structured = structuredOutputFromEvents(parsed);
+    if (structured !== undefined) return structured;
+  }
   if (parsed && typeof parsed === "object") {
     const record = parsed as Record<string, unknown>;
     const result = record.result || record.message || record.output || record.content;
@@ -83,6 +87,38 @@ export function parseRunnerJson(stdout: string): unknown {
     }
   }
   return parsed;
+}
+
+function structuredOutputFromEvents(events: unknown[]): unknown {
+  for (const event of [...events].reverse()) {
+    if (!event || typeof event !== "object") continue;
+    const record = event as Record<string, unknown>;
+    if (record.structured_output !== undefined) return record.structured_output;
+    const messageOutput = structuredOutputFromMessage(record.message);
+    if (messageOutput !== undefined) return messageOutput;
+    if (typeof record.result === "string" && record.result.trim()) {
+      try {
+        return JSON.parse(stripMarkdownFence(record.result)) as unknown;
+      } catch {
+        continue;
+      }
+    }
+  }
+  return undefined;
+}
+
+function structuredOutputFromMessage(message: unknown): unknown {
+  if (!message || typeof message !== "object") return undefined;
+  const content = (message as Record<string, unknown>).content;
+  if (!Array.isArray(content)) return undefined;
+  for (const item of [...content].reverse()) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    if (record.type === "tool_use" && record.name === "StructuredOutput" && record.input !== undefined) {
+      return record.input;
+    }
+  }
+  return undefined;
 }
 
 export function stripMarkdownFence(text: string): string {

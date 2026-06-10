@@ -668,7 +668,7 @@ function claudeNativeTwoToolSession() {
         content: [
           { type: "text", text: "I'll inspect the parser." },
           { type: "tool_use", id: "tool_read", name: "Read", input: { file_path: "packages/usage/src/core/dataset.ts" } },
-          { type: "tool_use", id: "tool_grep", name: "Grep", input: { pattern: "TopicRollup", path: "packages/daily/src" } }
+          { type: "tool_use", id: "tool_grep", name: "Grep", input: { pattern: "TopicRollup", path: "packages/rollup/src" } }
         ],
         usage: {
           input_tokens: 1000,

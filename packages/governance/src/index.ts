@@ -56,7 +56,7 @@ const allowedPackageDeps: Record<string, string[]> = {
   "@tangent/agent-runtime": ["@tangent/core"],
   "@tangent/governance": ["@tangent/core", "@tangent/repo"],
   "@tangent/usage": ["@tangent/core", "@tangent/repo", "@tangent/hooks"],
-  "@tangent/daily": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage"],
+  "@tangent/rollup": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage"],
   "@tangent/eval": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage"],
   "@tangent/search": ["@tangent/core", "@tangent/repo"]
 };
@@ -225,7 +225,7 @@ async function lintImports(ctx: LintContext): Promise<GovernanceFinding[]> {
           message: `${owner.name} imports ${importedPackage}, which violates package boundaries.`,
           fix: [
             "Move shared behavior to core, repo, hooks, or agent-runtime.",
-            "Keep vertical apps independent except daily/eval -> usage.",
+            "Keep vertical apps independent except rollup/eval -> usage.",
             "Update docs/architecture/dependency-graph.md only with an intentional graph change."
           ]
         });

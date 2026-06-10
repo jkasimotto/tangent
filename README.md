@@ -6,7 +6,7 @@ Packages:
 
 - `@tangent/core`: shared command metadata, help, and shell completion primitives.
 - `@tangent/usage` / `usage`: local conversation telemetry and human-readable activity views for Claude Code and Codex sessions.
-- `@tangent/daily` / `daily`: private daily engineering notes generated from `usage` conversations.
+- `@tangent/rollup` / `rollup`: private rollup engineering notes generated from `usage` conversations.
 - `@tangent/eval` / `eval`: local coding-agent eval preparation, execution, and reports.
 - `@tangent/search`: structural repository search for Dart and TypeScript/JavaScript.
 
@@ -16,16 +16,16 @@ Packages:
 npm install
 npm run build
 
-tangent setup --provider codex --usage --daily --search --summary-provider codex-cli --model gpt-5.4-mini --yes
+tangent setup --provider codex --usage --rollup --search --summary-provider codex-cli --model gpt-5.4-mini --yes
 tangent status
 tangent usage today
 tangent usage transcript codex:019ea3ad
 
-tangent daily status .
-tangent daily process --date today
-tangent daily today
-tangent daily yesterday
-tangent daily 2026-06-07
+tangent rollup status .
+tangent rollup today
+tangent rollup yesterday
+tangent rollup 2026-06-07
+tangent rollup 20260601-20260610
 
 tangent search index
 tangent search "horizontal tension"
@@ -37,7 +37,7 @@ tangent eval quick --prompt prompts/task.md --context empty --context repo
 
 `usage` reads Claude Code and Codex native transcripts by default and indexes normalized activity under `~/.tangent/usage`. Human commands default to readable text; raw provenance and event streams live under `usage export` and `usage events --json`. Legacy hook capture is still available through hidden `usage hooks` commands.
 
-`daily` stores private generated notes, cached digests, and processing state under `~/.tangent/daily/repos/<repo-name>` by default. Repo-local output is opt-in:
+`rollup` stores private generated notes, cached digests, and processing state under `~/.tangent/rollup/repos/<repo-name>` by default. `tangent rollup today` writes `notes/YYYY-MM-DD.md`; compact ranges such as `tangent rollup 20260601-20260610` write one combined note at `notes/YYYY-MM-DD--YYYY-MM-DD.md`. Repo-local output is opt-in:
 
 `search` stores its derived SQLite index under `~/.tangent/search/repos/<repo-name>-<hash>` by default. It is zero-config: run `tangent search index` in a repo, then query with `tangent search "query"`. Private overrides are created with:
 
@@ -53,19 +53,19 @@ tangent search init . --scope repo-shared --language typescript
 ```
 
 ```bash
-tangent daily init . --output repo-local-private
+tangent rollup init . --output repo-local-private
 ```
 
-Repo-local `daily` output is written to `.tangent/daily/` and excluded through `.git/info/exclude`.
+Repo-local `rollup` output is written to `.tangent/rollup/` and excluded through `.git/info/exclude`.
 
 Custom locations are supported:
 
 ```bash
-tangent daily init . --base-dir ~/daily-agent-notes/otto-tangent
-tangent daily config set output.baseDir ~/daily-agent-notes/otto-tangent
+tangent rollup init . --base-dir ~/rollup-agent-notes/otto-tangent
+tangent rollup config set output.baseDir ~/rollup-agent-notes/otto-tangent
 ```
 
-Daily runner failures are summarized in the terminal and written to `artifacts/failures/<date>/*.log`; use `--verbose` or `--json` when debugging.
+Rollup runner failures are summarized in the terminal and written to `artifacts/failures/<date>/*.log`; use `--verbose` or `--json` when debugging.
 
 Shell completion is generated from the shared command registry:
 

@@ -4,14 +4,14 @@
 root CLI
   -> @tangent/usage
   -> @tangent/usage/cli
-  -> @tangent/daily
-  -> @tangent/daily/cli
+  -> @tangent/rollup
+  -> @tangent/rollup/cli
   -> @tangent/search
   -> @tangent/eval/cli
   -> @tangent/search/cli
   -> @tangent/governance/cli
 
-@tangent/daily -> @tangent/usage, @tangent/core, @tangent/repo, @tangent/agent-runtime
+@tangent/rollup -> @tangent/usage, @tangent/core, @tangent/repo, @tangent/agent-runtime
 @tangent/eval -> @tangent/usage, @tangent/core, @tangent/repo, @tangent/agent-runtime
 @tangent/usage -> @tangent/core, @tangent/repo, @tangent/hooks
 @tangent/search -> @tangent/core, @tangent/repo

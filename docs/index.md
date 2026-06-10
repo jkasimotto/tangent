@@ -2,7 +2,7 @@
 
 Start here when changing architecture, package boundaries, or agent workflow.
 
-Human CLI defaults are `setup`, `status`, `usage`, `daily`, `search`, `eval`, `doctor`, and `completion`.
+Human CLI defaults are `setup`, `status`, `usage`, `rollup`, `search`, `eval`, `doctor`, and `completion`.
 Raw/debug/CI surfaces such as `usage`, `governance`, `hooks`, and `data export` stay callable but hidden from default help.
 
 Architecture:

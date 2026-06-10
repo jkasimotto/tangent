@@ -1,0 +1,37 @@
+{
+  "name": "@tangent/rollup",
+  "version": "0.1.0",
+  "description": "Private rollup engineering notes from usage conversation telemetry.",
+  "type": "module",
+  "bin": {
+    "rollup": "./dist/cli/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/sdk/index.d.ts",
+      "import": "./dist/sdk/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli/index.d.ts",
+      "import": "./dist/cli/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && chmod +x dist/cli/index.js",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@tangent/core": "file:../core",
+    "@tangent/repo": "file:../repo",
+    "@tangent/agent-runtime": "file:../agent-runtime",
+    "@tangent/usage": "file:../usage"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

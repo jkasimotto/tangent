@@ -6,7 +6,7 @@ import type { CliCommandSpec } from "@tangent/core";
 import { booleanArg, parseArgs, stringArg } from "@tangent/core/cli";
 import { status as usageStatus } from "@tangent/usage";
 import type { UsageProvider } from "@tangent/usage";
-import { configure as configureDaily, status as dailyStatus } from "@tangent/daily";
+import { configure as configureRollup, status as rollupStatus } from "@tangent/rollup";
 import { configure as configureSearch, indexRepo, status as searchStatus } from "@tangent/search";
 
 const execFileAsync = promisify(execFile);
@@ -19,11 +19,11 @@ export const setupCommandSpec: CliCommandSpec = {
     { name: "repo", takesValue: true, description: "Repository path" },
     { name: "provider", takesValue: true, values: ["claude", "codex", "all"], description: "Provider to enable" },
     { name: "usage", description: "Enable activity capture" },
-    { name: "daily", description: "Initialize daily notes" },
+    { name: "rollup", description: "Initialize rollup notes" },
     { name: "search", description: "Initialize structural search" },
     { name: "index-search", description: "Build the search index during setup" },
-    { name: "summary-provider", takesValue: true, values: ["claude-cli", "claude-sdk", "codex-cli"], description: "Daily summary provider" },
-    { name: "model", takesValue: true, description: "Daily summary model" },
+    { name: "summary-provider", takesValue: true, values: ["claude-cli", "claude-sdk", "codex-cli"], description: "Rollup summary provider" },
+    { name: "model", takesValue: true, description: "Rollup summary model" },
     { name: "output", takesValue: true, values: ["user-global", "repo-local-private"], description: "Private data location" },
     { name: "yes", aliases: ["-y"], description: "Accept non-interactive defaults" },
     { name: "json", description: "Print JSON" }
@@ -32,7 +32,7 @@ export const setupCommandSpec: CliCommandSpec = {
 
 export const statusCommandSpec: CliCommandSpec = {
   name: "status",
-  description: "Show capture, daily, search, and provider health",
+  description: "Show capture, rollup, search, and provider health",
   args: "[repo]",
   options: [
     { name: "repo", takesValue: true, description: "Repository path" },
@@ -90,14 +90,14 @@ export async function runSetupCommand(argv: string[]): Promise<void> {
     actions.push({ usage: await usageStatus({ repo, providers: usageProviders(selected.provider) }) });
   }
 
-  if (selected.daily) {
-    const daily = await configureDaily({
+  if (selected.rollup) {
+    const rollup = await configureRollup({
       repo,
       output: selected.output,
       summaryProvider: selected.summaryProvider,
       model: selected.model
     });
-    actions.push({ daily });
+    actions.push({ rollup });
   }
 
   if (selected.search) {
@@ -118,24 +118,24 @@ export async function runSetupCommand(argv: string[]): Promise<void> {
   console.log(`Repo: ${repo}`);
   for (const provider of detected) console.log(`${provider.available ? "✓" : "-"} ${provider.label}${provider.version ? ` ${provider.version}` : ""}`);
   if (selected.usage) console.log(`Activity capture: native transcripts (${selected.provider})`);
-  if (selected.daily) console.log(`Daily notes: initialized (${selected.output})`);
+  if (selected.rollup) console.log(`Rollup notes: initialized (${selected.output})`);
   if (selected.search) console.log(selected.indexSearch ? "Search: initialized and indexed" : "Search: initialized");
-  if (!selected.usage && !selected.daily && !selected.search) console.log("No setup actions selected.");
+  if (!selected.usage && !selected.rollup && !selected.search) console.log("No setup actions selected.");
 }
 
 export async function runProductStatusCommand(argv: string[], verboseDefault = false): Promise<void> {
   const args = parseArgs(argv);
   const repo = stringArg(args.repo) || args._[0] || ".";
   const verbose = verboseDefault || booleanArg(args.verbose);
-  const [usage, daily, search] = await Promise.allSettled([
+  const [usage, rollup, search] = await Promise.allSettled([
     usageStatus({ repo }),
-    dailyStatus({ repo }),
+    rollupStatus({ repo }),
     searchStatus({ repo })
   ]);
   const value = {
     repo,
     usage: settledValue(usage),
-    daily: settledValue(daily),
+    rollup: settledValue(rollup),
     search: settledValue(search)
   };
   if (args.json) {
@@ -144,14 +144,14 @@ export async function runProductStatusCommand(argv: string[], verboseDefault = f
   }
   console.log(`Repo: ${repo}`);
   printUsageHealth(value.usage);
-  printDailyHealth(value.daily, verbose);
+  printRollupHealth(value.rollup, verbose);
   printSearchHealth(value.search, verbose);
 }
 
 type SetupSelection = {
   provider: "claude" | "codex" | "all";
   usage: boolean;
-  daily: boolean;
+  rollup: boolean;
   search: boolean;
   indexSearch: boolean;
   output: "user-global" | "repo-local-private";
@@ -169,11 +169,11 @@ type DetectedProvider = {
 
 function setupSelection(args: ReturnType<typeof parseArgs>): SetupSelection {
   const provider = providerArg(args.provider || "codex");
-  const anyExplicit = Boolean(args.usage || args.daily || args.search);
+  const anyExplicit = Boolean(args.usage || args.rollup || args.search);
   return {
     provider,
     usage: anyExplicit ? booleanArg(args.usage) : true,
-    daily: anyExplicit ? booleanArg(args.daily) : true,
+    rollup: anyExplicit ? booleanArg(args.rollup) : true,
     search: anyExplicit ? booleanArg(args.search) : true,
     indexSearch: booleanArg(args["index-search"]),
     output: outputArg(args.output || "user-global"),
@@ -193,12 +193,12 @@ async function promptSetup(args: ReturnType<typeof parseArgs>, detected: Detecte
     return {
       provider: providerArg(await ask(rl, "Provider to enable [codex/claude/all]", stringArg(args.provider) || defaultProvider)),
       usage: await askYes(rl, "Capture coding-agent activity", args.usage, true),
-      daily: await askYes(rl, "Initialize daily notes", args.daily, true),
+      rollup: await askYes(rl, "Initialize rollup notes", args.rollup, true),
       search: await askYes(rl, "Initialize search", args.search, true),
       indexSearch: await askYes(rl, "Build search index now", args["index-search"], false),
       output: outputArg(await ask(rl, "Private data location [user-global/repo-local-private]", stringArg(args.output) || "user-global")),
-      summaryProvider: summaryProviderArg(await ask(rl, "Daily summary provider [codex-cli/claude-cli/claude-sdk]", stringArg(args["summary-provider"]) || "codex-cli")),
-      model: await ask(rl, "Daily summary model", stringArg(args.model) || "gpt-5.4-mini")
+      summaryProvider: summaryProviderArg(await ask(rl, "Rollup summary provider [codex-cli/claude-cli/claude-sdk]", stringArg(args["summary-provider"]) || "codex-cli")),
+      model: await ask(rl, "Rollup summary model", stringArg(args.model) || "gpt-5.4-mini")
     };
   } finally {
     rl.close();
@@ -243,14 +243,14 @@ function printUsageHealth(value: unknown): void {
   console.log(`Usage: native=${native}; index=${status.index.exists ? `${status.index.sourceFiles} files` : "missing"}; ${seen}`);
 }
 
-function printDailyHealth(value: unknown, verbose: boolean): void {
+function printRollupHealth(value: unknown, verbose: boolean): void {
   if (isErrorValue(value)) {
-    console.log(`Daily: error - ${value.error}`);
+    console.log(`Rollup: error - ${value.error}`);
     return;
   }
-  const status = value as Awaited<ReturnType<typeof dailyStatus>>;
-  console.log(`Daily: initialized=${status.daily.initialized ? "yes" : "no"} output=${status.daily.outputDir}`);
-  if (verbose) console.log(`       ledger=${status.daily.ledgerPath}`);
+  const status = value as Awaited<ReturnType<typeof rollupStatus>>;
+  console.log(`Rollup: initialized=${status.rollup.initialized ? "yes" : "no"} output=${status.rollup.outputDir}`);
+  if (verbose) console.log(`       ledger=${status.rollup.ledgerPath}`);
 }
 
 function printSearchHealth(value: unknown, verbose: boolean): void {

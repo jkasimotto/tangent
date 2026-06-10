@@ -1,0 +1,48 @@
+# @tangent/rollup
+
+Private rollup engineering notes from `usage` conversation telemetry.
+
+```bash
+tangent rollup init . --summary-provider codex-cli --model gpt-5.4-mini
+tangent rollup today
+tangent rollup yesterday
+tangent rollup 20260601-20260610
+```
+
+`tangent rollup <selector>` reads normalized Usage conversation reports for the
+selected day or inclusive compact range, writes one `rollup.input.v1` artifact
+plus readable messages and prompt artifacts, and uses one summary provider call
+to write the note's generated block.
+
+SDK:
+
+```ts
+import { getCandidates, processRollup, getRollupNote, status } from "@tangent/rollup";
+```
+
+By default, generated notes and state live outside the repo:
+
+```txt
+~/.tangent/rollup/repos/<repo-name>/
+  config.json
+  ledger.jsonl
+  notes/
+  examples/
+  artifacts/
+    rollups/
+```
+
+For example, this repo uses:
+
+```txt
+~/.tangent/rollup/repos/otto-tangent/
+```
+
+Override the location when initializing, or later through config:
+
+```bash
+tangent rollup init . --base-dir ~/rollup-agent-notes/otto-tangent
+tangent rollup config set output.baseDir ~/rollup-agent-notes/otto-tangent
+```
+
+Use `tangent rollup path yesterday` to print a path suitable for `nvim`.

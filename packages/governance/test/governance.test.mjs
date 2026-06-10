@@ -16,14 +16,14 @@ test("dependency lint flags disallowed vertical package dependencies", async () 
       version: "0.0.0",
       type: "module",
       dependencies: {
-        "@tangent/daily": "file:../daily"
+        "@tangent/rollup": "file:../rollup"
       }
     }), "utf8");
 
     const result = await lintGovernance({ root, groups: ["deps"] });
     assert.equal(result.errors, 1);
     assert.equal(result.findings[0].rule, "deps/package-boundaries");
-    assert.equal(result.findings[0].message.includes("@tangent/usage depends on @tangent/daily"), true);
+    assert.equal(result.findings[0].message.includes("@tangent/usage depends on @tangent/rollup"), true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

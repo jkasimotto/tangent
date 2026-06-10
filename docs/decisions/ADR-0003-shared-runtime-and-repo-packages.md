@@ -4,7 +4,7 @@ Status: accepted
 
 Decision: Repo discovery/git/worktree helpers live in @tangent/repo. Process execution lives in @tangent/agent-runtime. CLI arg parsing lives in @tangent/core/cli.
 
-Why: Daily, Eval, Search, and Usage had similar helpers that agents would otherwise copy and drift.
+Why: Rollup, Eval, Search, and Usage had similar helpers that agents would otherwise copy and drift.
 
 Consequences:
 - Vertical apps may keep app-specific output path modules.

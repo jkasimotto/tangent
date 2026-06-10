@@ -7,5 +7,5 @@ Read next:
 - public-api.md
 
 Package rules:
-- Do not depend on Usage, Daily, or Eval.
+- Do not depend on Usage, Rollup, or Eval.
 - Use @tangent/repo for root discovery and file checks.

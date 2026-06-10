@@ -1,0 +1,140 @@
+import { openUsage } from "@tangent/usage";
+
+import { ensureOutputDirs, notePath } from "../core/paths.js";
+import { loadConfig } from "../core/config.js";
+import { rollupPeriodArg } from "../core/time.js";
+import { createSummaryRunner } from "../runners/summary-runner.js";
+import { collectCandidates, type CandidateQuery } from "../usage/selectors.js";
+import type { RollupPeriod } from "../types/period.js";
+import type { RunnerStatus, SummaryRunner } from "../types/provider.js";
+import { processPeriodRollup } from "./processPeriodRollup.js";
+
+export type ProcessRollupOptions = CandidateQuery & {
+  selector?: string;
+  provider?: "claude" | "codex";
+  dryRun?: boolean;
+  summaryRunner?: SummaryRunner;
+};
+
+export type ProcessResult = {
+  repoId: string;
+  period: RollupPeriod;
+  rollupKey: string;
+  dryRun?: boolean;
+  candidates: number;
+  processed: number;
+  skipped: number;
+  failed: number;
+  digests: Array<{
+    sourceKey: string;
+    path: string;
+    status: "processed" | "failed" | "skipped";
+    failurePath?: string;
+    reason?: string;
+  }>;
+  note: {
+    path: string;
+    created: boolean;
+    updated: boolean;
+  };
+  providerStatus?: RunnerStatus;
+  failures: Array<{
+    sourceKey: string;
+    code: string;
+    reason: string;
+    detailsPath: string;
+  }>;
+  warnings: string[];
+};
+
+export async function processRollup(options: ProcessRollupOptions): Promise<ProcessResult> {
+  const loaded = await loadConfig({ repo: options.repo });
+  await ensureOutputDirs(loaded.paths);
+  const period = rollupPeriodArg(options.selector || options.date, loaded.config.processing.timezone);
+  const providers = options.provider ? [options.provider] : options.providers;
+  const fallbackNotePath = notePath(loaded.paths, period.key);
+  const rows = await collectCandidates(loaded, {
+    ...options,
+    providers,
+    date: period.kind === "day" ? period.date : undefined,
+    fromDate: period.kind === "range" ? period.startDate : undefined,
+    toDate: period.kind === "range" ? period.endDate : undefined,
+    rollupKey: period.key
+  });
+  if (options.dryRun) {
+    return {
+      repoId: loaded.repo.id,
+      period,
+      rollupKey: period.key,
+      dryRun: true,
+      candidates: rows.length,
+      processed: 0,
+      skipped: 0,
+      failed: 0,
+      digests: rows.map((row) => ({ sourceKey: row.sourceKey, path: "", status: "skipped" as const, reason: `would process: ${row.reason}` })),
+      note: { path: fallbackNotePath, created: false, updated: false },
+      failures: [],
+      warnings: []
+    };
+  }
+  const runner = options.summaryRunner || createSummaryRunner(loaded.config.summary.provider);
+  const providerStatus = await runner.checkAvailable();
+  if (!providerStatus.available) {
+    const reason = providerStatus.warnings[0] || `${loaded.config.summary.provider.kind} is unavailable.`;
+    return {
+      repoId: loaded.repo.id,
+      period,
+      rollupKey: period.key,
+      candidates: 0,
+      processed: 0,
+      skipped: 0,
+      failed: 0,
+      digests: [],
+      note: { path: fallbackNotePath, created: false, updated: false },
+      providerStatus,
+      failures: [],
+      warnings: [`Summary provider unavailable: ${reason}`]
+    };
+  }
+  const dataset = await openUsage({ repo: loaded.repo.root, providers: providers || loaded.config.input.providers });
+  if (!rows.length) {
+    return {
+      repoId: loaded.repo.id,
+      period,
+      rollupKey: period.key,
+      candidates: 0,
+      processed: 0,
+      skipped: 0,
+      failed: 0,
+      digests: [],
+      note: { path: fallbackNotePath, created: false, updated: false },
+      providerStatus,
+      failures: [],
+      warnings: []
+    };
+  }
+  if (!runner.summarizeRollup) {
+    return {
+      repoId: loaded.repo.id,
+      period,
+      rollupKey: period.key,
+      candidates: rows.length,
+      processed: 0,
+      skipped: 0,
+      failed: rows.length,
+      digests: rows.map((row) => ({ sourceKey: row.sourceKey, path: "", status: "failed" as const, reason: "Summary provider does not support roll-up" })),
+      note: { path: fallbackNotePath, created: false, updated: false },
+      providerStatus,
+      failures: rows.map((row) => ({ sourceKey: row.sourceKey, code: "summary-runner-failed", reason: "Summary provider does not support roll-up", detailsPath: "" })),
+      warnings: ["Summary provider does not support roll-up."]
+    };
+  }
+  return processPeriodRollup({
+    loaded,
+    rows,
+    dataset,
+    runner: runner as SummaryRunner & { summarizeRollup: NonNullable<SummaryRunner["summarizeRollup"]> },
+    period,
+    providerStatus
+  });
+}

@@ -7,4 +7,4 @@
 - process failure formatting
 - runner JSON parsing helpers
 
-Daily and Eval keep their domain prompts, schemas, manifests, and output normalization. Shared timeout/env behavior belongs in agent-runtime so agents do not copy runner wrappers into vertical apps.
+Rollup and Eval keep their domain prompts, schemas, manifests, and output normalization. Shared timeout/env behavior belongs in agent-runtime so agents do not copy runner wrappers into vertical apps.

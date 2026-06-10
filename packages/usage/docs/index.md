@@ -7,5 +7,5 @@ Read next:
 - public-api.md
 
 Package rules:
-- Do not depend on Daily, Eval, or Search.
+- Do not depend on Rollup, Eval, or Search.
 - Do not own provider hook config mechanics.

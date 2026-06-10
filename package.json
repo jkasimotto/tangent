@@ -14,7 +14,7 @@
     "packages/hooks",
     "packages/governance",
     "packages/usage",
-    "packages/daily",
+    "packages/rollup",
     "packages/eval",
     "packages/search"
   ],
@@ -32,7 +32,7 @@
     "@tangent/hooks": "file:packages/hooks",
     "@tangent/governance": "file:packages/governance",
     "@tangent/usage": "file:packages/usage",
-    "@tangent/daily": "file:packages/daily",
+    "@tangent/rollup": "file:packages/rollup",
     "@tangent/eval": "file:packages/eval",
     "@tangent/search": "file:packages/search"
   },

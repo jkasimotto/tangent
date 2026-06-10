@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { completeCommand, completionScript, renderCommandHelp, type CliCommandSpec, type CliCompletionShell } from "@tangent/core";
 import { runUsageCli, usageCommandSpec } from "@tangent/usage/cli";
-import { dailyCommandSpec, runDailyCli } from "@tangent/daily/cli";
+import { rollupCommandSpec, runRollupCli } from "@tangent/rollup/cli";
 import { evalCommandSpec, runEvalCli } from "@tangent/eval/cli";
 import { governanceCommandSpec, runGovernanceCli } from "@tangent/governance/cli";
 import { runSearchCli, searchCommandSpec } from "@tangent/search/cli";
@@ -14,7 +14,7 @@ const tangentCommandSpec: CliCommandSpec = {
     setupCommandSpec,
     statusCommandSpec,
     usageCommandSpec,
-    dailyCommandSpec,
+    rollupCommandSpec,
     searchCommandSpec,
     evalCommandSpec,
     doctorCommandSpec,
@@ -59,9 +59,8 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
     return;
   }
 
-  if (app === "daily") {
-    const dailyArgs = isDateShortcut(rest) ? ["note", "path", ...rest] : rest;
-    await runDailyCli(dailyArgs);
+  if (app === "rollup") {
+    await runRollupCli(rest);
     return;
   }
 
@@ -134,18 +133,13 @@ Examples:
   tangent status
   tangent usage today
   tangent usage transcript codex:019ea3ad
-  tangent daily today
-  tangent daily rollup --date today
+  tangent rollup today
+  tangent rollup 20260601-20260610
   tangent search index
   tangent search "horizontal tension"
   tangent eval run eval.json
   tangent completion zsh
 `);
-}
-
-function isDateShortcut(rest: string[]): boolean {
-  const first = rest[0];
-  return Boolean(first && !first.startsWith("-") && (first === "today" || first === "yesterday" || first === "tomorrow" || /^\d{4}-\d{2}-\d{2}$/.test(first) || /^[+-]\d+d$/.test(first)));
 }
 
 function shellArg(value: string | undefined): CliCompletionShell {

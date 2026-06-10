@@ -18,7 +18,7 @@ Capture notes:
 - SQLite is the default query path. Provider native transcript files and legacy hook JSONL files are ingested incrementally by source-file metadata.
 
 Rules:
-- Do not depend on Daily, Eval, or Search.
+- Do not depend on Rollup, Eval, or Search.
 - Do not own provider hook config mechanics.
 
 Refer to ../../../docs/architecture/package-boundaries.md and ../../../docs/architecture/dependency-graph.md for monorepo boundaries.

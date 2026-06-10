@@ -1,17 +1,36 @@
 import { processRollup } from "../../sdk/index.js";
-import { booleanArg, dateArg, parseDate, providerArg, stringArg, type Args } from "../args.js";
+import { booleanArg, dateArg, providerArg, stringArg, stringsArg, type Args } from "../args.js";
+
+const rollupKinds = ["daily-memory", "design-brief", "investigation-brief", "decision-log", "implementation-brief"] as const;
+const rollupAudiences = ["self", "engineering-team", "future-agent"] as const;
+
+type RollupKind = (typeof rollupKinds)[number];
+type RollupAudience = (typeof rollupAudiences)[number];
 
 export async function processCommand(args: Args): Promise<void> {
+  const purpose = stringArg(args.purpose);
+  const focus = stringsArg(args.focus);
+  const title = stringArg(args.title);
+  const kind = parseRollupKind(args.kind);
+  const audience = parseRollupAudience(args.audience);
   const result = await processRollup({
     repo: args._[1] || ".",
     selector: stringArg(args.selector),
     date: dateArg(args.date),
-    from: parseDate(args.from),
-    to: parseDate(args.to),
+    from: stringArg(args.from),
+    to: stringArg(args.to),
     provider: providerArg(args.provider),
     includeActive: booleanArg(args["include-active"]),
     force: booleanArg(args.force),
-    dryRun: booleanArg(args["dry-run"])
+    dryRun: booleanArg(args["dry-run"]),
+    purpose,
+    focus,
+    title,
+    kind,
+    audience,
+    output: stringArg(args.output),
+    filename: stringArg(args.filename),
+    overwrite: booleanArg(args.overwrite)
   });
   if (args.json) {
     console.log(JSON.stringify(result, null, 2));
@@ -47,4 +66,16 @@ export async function processCommand(args: Args): Promise<void> {
   if (args.verbose) {
     for (const warning of result.warnings) console.warn(`warning: ${warning}`);
   }
+}
+
+function parseRollupKind(value: unknown): RollupKind | undefined {
+  if (value === undefined) return undefined;
+  if (rollupKinds.includes(value as RollupKind)) return value as RollupKind;
+  throw new Error(`--kind must be one of: ${rollupKinds.join(", ")}`);
+}
+
+function parseRollupAudience(value: unknown): RollupAudience | undefined {
+  if (value === undefined) return undefined;
+  if (rollupAudiences.includes(value as RollupAudience)) return value as RollupAudience;
+  throw new Error(`--audience must be one of: ${rollupAudiences.join(", ")}`);
 }

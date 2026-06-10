@@ -51,20 +51,72 @@ test("writeGeneratedRollupMarkdown preserves manual notes and replaces generated
   assert.doesNotMatch(text, /old generated/);
 });
 
-test("rollup prompt asks for user-knowledge prose instead of assistant work bullets", () => {
+test("writeGeneratedRollupMarkdown uses explicit output path with generated block replacement", async () => {
+  const loaded = await loadedConfig();
+  const explicitPath = path.join(loaded.paths.notesDir, "explicit.md");
+  await mkdir(loaded.paths.notesDir, { recursive: true });
+  await writeFile(explicitPath, [
+    "# Explicit note",
+    "",
+    "<!-- tangent:generated:start period=2026-06-08 schema=rollup.note.v1 -->",
+    "old",
+    "<!-- tangent:generated:end -->",
+    ""
+  ].join("\n"), "utf8");
+
+  const note = await writeGeneratedRollupMarkdown(loaded, dayPeriod("2026-06-08"), "new generated", { outputPath: explicitPath });
+  const written = await readFile(explicitPath, "utf8");
+
+  assert.equal(note.path, explicitPath);
+  assert.match(written, /new generated/);
+  assert.doesNotMatch(written, /old/);
+});
+
+test("writeGeneratedRollupMarkdown falls back to .generated.md without overwrite when generated block is missing", async () => {
+  const loaded = await loadedConfig();
+  const explicitPath = path.join(loaded.paths.notesDir, "explicit.md");
+  await mkdir(loaded.paths.notesDir, { recursive: true });
+  await writeFile(explicitPath, "# Existing content\n", "utf8");
+
+  const note = await writeGeneratedRollupMarkdown(loaded, dayPeriod("2026-06-08"), "new generated", { outputPath: explicitPath });
+  const generatedPath = path.join(loaded.paths.notesDir, "explicit.generated.md");
+  const written = await readFile(generatedPath, "utf8");
+
+  assert.equal(note.path, generatedPath);
+  assert.match(written, /new generated/);
+  assert.equal(await readFile(explicitPath, "utf8"), "# Existing content\n");
+});
+
+test("rollup prompt uses engineering-memory examples and output schema", () => {
   const prompt = rollupPrompt({ period: dayPeriod("2026-06-08"), inputPath: "/tmp/rollup-input.json" });
-  assert.match(prompt, /Distill what the user discussed, understood, decided, questioned, or learned/);
-  assert.match(prompt, /Assistant messages are context and evidence only/);
-  assert.match(prompt, /Write in full sentences and connected paragraphs/);
-  assert.match(prompt, /Avoid dot-point summaries/);
-  assert.match(prompt, /Bullets are acceptable only for compact lists of future-useful commands/);
-  assert.match(prompt, /If the user mostly delegated implementation without adding their own reasoning, keep the note short/);
-  assert.match(prompt, /long-term signal only: decisions, ideas, experiments, hypotheses, constraints, mental models, tradeoffs, and unresolved questions/);
-  assert.match(prompt, /would help the user recover useful technical or product context in the future/);
-  assert.match(prompt, /Omit ephemeral coordination, short-term chores, status updates, requests to commit, requests to rerun tools/);
-  assert.match(prompt, /Do not infer motivation from routine instructions/);
-  assert.match(prompt, /A request to commit soon is short-term coordination, not reusable knowledge/);
-  assert.match(prompt, /Good:\n### Pathfinding and routing\nThe useful thread/);
+  assert.match(prompt, /Conversation snippet:/);
+  assert.match(prompt, /Desired output:/);
+  assert.match(prompt, /### Surface-aware routing/);
+  assert.match(prompt, /### Simulation pause boundary/);
+  assert.match(prompt, /### Eval and rollup direction/);
+  assert.match(prompt, /## Data-driven simulation design model/);
+  assert.match(prompt, /### Parser refactor/);
+  assert.match(prompt, /JSON schema:/);
+  assert.match(prompt, /Output valid JSON matching the schema/);
+  assert.doesNotMatch(prompt, /Bad:/);
+  assert.doesNotMatch(prompt, /Good:/);
+});
+
+test("rollup prompt includes purpose and focus terms when provided", () => {
+  const prompt = rollupPrompt({
+    period: dayPeriod("2026-06-08"),
+    inputPath: "/tmp/rollup-input.json",
+    purpose: {
+      kind: "design-brief",
+      request: "Create a design brief on data-driven simulations",
+      title: "Data-driven simulations",
+      focusTerms: ["data-driven simulation", "timeline", "event queue"],
+      audience: "future-agent"
+    }
+  });
+  assert.match(prompt, /\"request\": \"Create a design brief on data-driven simulations\"/);
+  assert.match(prompt, /\"focusTerms\": /);
+  assert.match(prompt, /data-driven simulation/);
 });
 
 test("claude cli runner skips user settings and parses structured output events", async () => {
@@ -150,6 +202,50 @@ test("processRollup renders note from rollup output", async () => {
     assert.equal(receivedInput.conversations.length, 1);
     const note = await readFile(result.note.path, "utf8");
     assert.match(note, /New processed work/);
+  } finally {
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+  }
+});
+
+test("processRollup passes purpose and focus terms into rollup input", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "rollup-purpose-input-"));
+  process.env.TANGENT_ROLLUP_HOME = path.join(dir, "rollup-home");
+  process.env.USAGE_HOME = path.join(dir, "usage-home");
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = path.join(dir, "codex-home");
+
+  const nativePath = path.join(process.env.CODEX_HOME, "sessions", "2026", "06", "08", "rollout-2026-06-08T10-00-00-s1.jsonl");
+  await writeJsonl(nativePath, codexNativeSession({ repo: dir, sessionId: "s1", turnId: "t1", prompt: "data-driven simulation", response: "done" }));
+
+  let receivedInput;
+  try {
+    await processRollup({
+      repo: dir,
+      date: "2026-06-08",
+      purpose: "Create a design brief on data-driven simulations",
+      focus: ["data-driven simulation", "timeline", "event queue"],
+      kind: "design-brief",
+      title: "Data-driven simulation brief",
+      audience: "future-agent",
+      summaryRunner: {
+        id: "fake",
+        kind: "codex-cli",
+        checkAvailable: async () => ({ available: true, authStatus: "unknown", warnings: [] }),
+        summarizeRollup: async (input) => {
+          receivedInput = input;
+          return {
+            schema: "rollup.output.v1",
+            markdown: "## Design brief",
+            sourceCaveats: []
+          };
+        }
+      }
+    });
+
+    assert.equal(receivedInput?.purpose?.request, "Create a design brief on data-driven simulations");
+    assert.deepEqual(receivedInput?.purpose?.focusTerms, ["data-driven simulation", "timeline", "event queue"]);
+    assert.equal(receivedInput?.purpose?.kind, "design-brief");
   } finally {
     if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
     else process.env.CODEX_HOME = previousCodexHome;
@@ -321,6 +417,54 @@ test("processRollup writes one combined note for compact range selector", async 
   }
 });
 
+test("processRollup writes one combined note for --from and --to range", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "rollup-range-fromto-process-"));
+  const previousRollupHome = process.env.TANGENT_ROLLUP_HOME;
+  const previousUsageHome = process.env.USAGE_HOME;
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.TANGENT_ROLLUP_HOME = path.join(dir, "rollup-home");
+  process.env.USAGE_HOME = path.join(dir, "usage-home");
+  process.env.CODEX_HOME = path.join(dir, "codex-home");
+
+  await writeJsonl(
+    path.join(process.env.CODEX_HOME, "sessions", "2026", "06", "08", "rollout-2026-06-08T10-00-00-s1.jsonl"),
+    codexNativeSession({ repo: dir, sessionId: "s1", turnId: "t1", prompt: "from day one", response: "captured first", date: "2026-06-08" })
+  );
+  await writeJsonl(
+    path.join(process.env.CODEX_HOME, "sessions", "2026", "06", "09", "rollout-2026-06-09T10-00-00-s2.jsonl"),
+    codexNativeSession({ repo: dir, sessionId: "s2", turnId: "t2", prompt: "to day two", response: "captured second", date: "2026-06-09" })
+  );
+
+  try {
+    const result = await processRollup({
+      repo: dir,
+      from: new Date("2026-06-08T00:00:00.000Z"),
+      to: new Date("2026-06-09T00:00:00.000Z"),
+      summaryRunner: {
+        id: "fake",
+        kind: "codex-cli",
+        checkAvailable: async () => ({ available: true, authStatus: "unknown", warnings: [] }),
+        summarizeRollup: async () => ({
+          schema: "rollup.output.v1",
+          markdown: "## From-to combined",
+          sourceCaveats: []
+        })
+      }
+    });
+
+    assert.equal(result.processed, 2);
+    assert.equal(result.period.key, "2026-06-08--2026-06-09");
+    assert.equal(path.basename(result.note.path), "2026-06-08--2026-06-09.md");
+  } finally {
+    if (previousRollupHome === undefined) delete process.env.TANGENT_ROLLUP_HOME;
+    else process.env.TANGENT_ROLLUP_HOME = previousRollupHome;
+    if (previousUsageHome === undefined) delete process.env.USAGE_HOME;
+    else process.env.USAGE_HOME = previousUsageHome;
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+  }
+});
+
 test("rollup path accepts compact range selectors", async () => {
   const loaded = await loadedConfig();
   const originalLog = console.log;
@@ -332,6 +476,93 @@ test("rollup path accepts compact range selectors", async () => {
     console.log = originalLog;
   }
   assert.equal(lines.at(-1), path.join(loaded.paths.notesDir, "2026-06-08--2026-06-09.md"));
+});
+
+test("processRollup supports --filename as notesDir target", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "rollup-filename-option-"));
+  process.env.TANGENT_ROLLUP_HOME = path.join(dir, "rollup-home");
+  process.env.USAGE_HOME = path.join(dir, "usage-home");
+  process.env.CODEX_HOME = path.join(dir, "codex-home");
+  const previousRollupHome = process.env.TANGENT_ROLLUP_HOME;
+  const previousUsageHome = process.env.USAGE_HOME;
+  const previousCodexHome = process.env.CODEX_HOME;
+  const nativePath = path.join(process.env.CODEX_HOME, "sessions", "2026", "06", "08", "rollout-2026-06-08T10-00-00-s1.jsonl");
+  await writeJsonl(nativePath, codexNativeSession({ repo: dir, sessionId: "s1", turnId: "t1", prompt: "filename option", response: "done" }));
+
+  try {
+    const result = await processRollup({
+      repo: dir,
+      date: "2026-06-08",
+      filename: "design.md",
+      summaryRunner: {
+        id: "fake",
+        kind: "codex-cli",
+        checkAvailable: async () => ({ available: true, authStatus: "unknown", warnings: [] }),
+        summarizeRollup: async () => ({
+          schema: "rollup.output.v1",
+          markdown: "## Filename rollup",
+          sourceCaveats: []
+        })
+      }
+    });
+
+    const loaded = await loadConfig({ repo: dir });
+    assert.equal(result.note.path, path.join(loaded.paths.notesDir, "design.md"));
+  } finally {
+    if (previousRollupHome === undefined) delete process.env.TANGENT_ROLLUP_HOME;
+    else process.env.TANGENT_ROLLUP_HOME = previousRollupHome;
+    if (previousUsageHome === undefined) delete process.env.USAGE_HOME;
+    else process.env.USAGE_HOME = previousUsageHome;
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+  }
+});
+
+test("processRollup writes explicit output path and falls back when no generated block exists", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "rollup-output-option-"));
+  process.env.TANGENT_ROLLUP_HOME = path.join(dir, "rollup-home");
+  process.env.USAGE_HOME = path.join(dir, "usage-home");
+  process.env.CODEX_HOME = path.join(dir, "codex-home");
+  const previousRollupHome = process.env.TANGENT_ROLLUP_HOME;
+  const previousUsageHome = process.env.USAGE_HOME;
+  const previousCodexHome = process.env.CODEX_HOME;
+
+  const outputPath = path.join(dir, "notes", "design.md");
+  await mkdir(path.dirname(outputPath), { recursive: true });
+  await writeFile(outputPath, "# existing manual note\n", "utf8");
+  const nativePath = path.join(process.env.CODEX_HOME, "sessions", "2026", "06", "08", "rollout-2026-06-08T10-00-00-s1.jsonl");
+  await writeJsonl(nativePath, codexNativeSession({ repo: dir, sessionId: "s1", turnId: "t1", prompt: "explicit output", response: "done" }));
+
+  try {
+    const result = await processRollup({
+      repo: dir,
+      date: "2026-06-08",
+      output: "notes/design.md",
+      summaryRunner: {
+        id: "fake",
+        kind: "codex-cli",
+        checkAvailable: async () => ({ available: true, authStatus: "unknown", warnings: [] }),
+        summarizeRollup: async () => ({
+          schema: "rollup.output.v1",
+          markdown: "## Explicit output rollup",
+          sourceCaveats: []
+        })
+      }
+    });
+
+    assert.equal(result.note.path, path.join(dir, "notes", "design.generated.md"));
+    const written = await readFile(path.join(dir, "notes", "design.generated.md"), "utf8");
+    assert.match(written, /Explicit output rollup/);
+    const original = await readFile(outputPath, "utf8");
+    assert.equal(original, "# existing manual note\n");
+  } finally {
+    if (previousRollupHome === undefined) delete process.env.TANGENT_ROLLUP_HOME;
+    else process.env.TANGENT_ROLLUP_HOME = previousRollupHome;
+    if (previousUsageHome === undefined) delete process.env.USAGE_HOME;
+    else process.env.USAGE_HOME = previousUsageHome;
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+  }
 });
 
 async function writeJsonl(filePath, records) {

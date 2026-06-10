@@ -36,6 +36,7 @@ export type RollupCandidate = {
 export type RollupInput = {
   schema: "rollup.input.v1";
   period: RollupPeriod;
+  purpose?: RollupPurpose;
   timezone: string;
   repo: {
     name: string;
@@ -54,6 +55,15 @@ export type RollupInput = {
     markdown: string;
   }>;
   conversations: NormalizedConversation[];
+};
+
+export type RollupPurpose = {
+  kind?: "daily-memory" | "design-brief" | "investigation-brief" | "decision-log" | "implementation-brief";
+  request: string;
+  title?: string;
+  focusTerms: string[];
+  audience?: "self" | "engineering-team" | "future-agent";
+  outputPath?: string;
 };
 
 export type RollupOutput = {

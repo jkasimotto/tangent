@@ -83,6 +83,47 @@ export function rollupPeriodArg(value: string | undefined, timezone: string): Ro
   };
 }
 
+export function resolveRollupPeriod(params: {
+  selector?: string;
+  date?: string;
+  from?: string | Date;
+  to?: string | Date;
+  timezone: string;
+}): RollupPeriod {
+  if (params.selector || params.date) {
+    return rollupPeriodArg(params.selector || params.date, params.timezone);
+  }
+
+  if (!params.from && !params.to) {
+    return rollupPeriodArg(undefined, params.timezone);
+  }
+
+  if (!params.from || !params.to) {
+    throw new Error("Range rollups require both --from and --to.");
+  }
+
+  const startDate = resolveBoundaryDate(params.from, params.timezone);
+  const endDate = resolveBoundaryDate(params.to, params.timezone);
+  if (startDate > endDate) throw new Error(`Invalid rollup range: ${startDate} to ${endDate}`);
+
+  return {
+    kind: "range",
+    startDate,
+    endDate,
+    key: `${startDate}--${endDate}`,
+    label: `${startDate} to ${endDate}`
+  };
+}
+
+function resolveBoundaryDate(value: string | Date, timezone: string): string {
+  if (typeof value === "string") {
+    const bucket = dateArgToBucket(value, timezone);
+    if (!bucket) throw new Error(`Invalid rollup range boundary: ${value}`);
+    return bucket;
+  }
+  return dateBucket(value, timezone);
+}
+
 export function isRollupSelector(value: string | undefined): boolean {
   return Boolean(value && (
     value === "today" ||

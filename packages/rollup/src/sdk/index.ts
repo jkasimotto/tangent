@@ -10,7 +10,7 @@ export { configure } from "./config.js";
 export type { ConfigureOptions } from "./config.js";
 
 export type { RollupConfig } from "../types/config.js";
-export type { RollupCandidate, RollupInput, RollupOutput, EvidenceRef } from "../types/digest.js";
+export type { RollupCandidate, RollupInput, RollupOutput, EvidenceRef, RollupPurpose } from "../types/digest.js";
 export type { RollupLedgerLineV1, ProcessedConversationLedgerLine } from "../types/ledger.js";
 export type { RollupPeriod } from "../types/period.js";
 export type { SummaryProviderConfig, SummaryRunner, RunnerStatus } from "../types/provider.js";

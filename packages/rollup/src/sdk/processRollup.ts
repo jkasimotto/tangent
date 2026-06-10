@@ -1,19 +1,31 @@
 import { openUsage } from "@tangent/usage";
 
-import { ensureOutputDirs, notePath } from "../core/paths.js";
+import { ensureOutputDirs } from "../core/paths.js";
 import { loadConfig } from "../core/config.js";
-import { rollupPeriodArg } from "../core/time.js";
+import { resolveRollupPeriod } from "../core/time.js";
 import { createSummaryRunner } from "../runners/summary-runner.js";
 import { collectCandidates, type CandidateQuery } from "../usage/selectors.js";
 import type { RollupPeriod } from "../types/period.js";
+import type { RollupPurpose } from "../types/digest.js";
 import type { RunnerStatus, SummaryRunner } from "../types/provider.js";
+import { resolveRollupNotePath } from "../core/note-writer.js";
 import { processPeriodRollup } from "./processPeriodRollup.js";
 
-export type ProcessRollupOptions = CandidateQuery & {
+export type ProcessRollupOptions = Omit<CandidateQuery, "from" | "to"> & {
+  from?: string | Date;
+  to?: string | Date;
   selector?: string;
   provider?: "claude" | "codex";
   dryRun?: boolean;
   summaryRunner?: SummaryRunner;
+  purpose?: string;
+  focus?: string[];
+  title?: string;
+  kind?: RollupPurpose["kind"];
+  audience?: RollupPurpose["audience"];
+  output?: string;
+  filename?: string;
+  overwrite?: boolean;
 };
 
 export type ProcessResult = {
@@ -50,12 +62,41 @@ export type ProcessResult = {
 export async function processRollup(options: ProcessRollupOptions): Promise<ProcessResult> {
   const loaded = await loadConfig({ repo: options.repo });
   await ensureOutputDirs(loaded.paths);
-  const period = rollupPeriodArg(options.selector || options.date, loaded.config.processing.timezone);
+  const period = resolveRollupPeriod({
+    selector: options.selector,
+    date: options.date,
+    from: options.from,
+    to: options.to,
+    timezone: loaded.config.processing.timezone
+  });
   const providers = options.provider ? [options.provider] : options.providers;
-  const fallbackNotePath = notePath(loaded.paths, period.key);
+  const purpose: RollupPurpose | undefined = options.purpose ? {
+    request: options.purpose,
+    kind: options.kind,
+    title: options.title,
+    focusTerms: options.focus || [],
+    audience: options.audience,
+    outputPath: options.output
+  } : undefined;
+
+  const output = {
+    filename: options.filename,
+    outputPath: options.output,
+    overwrite: options.overwrite
+  };
+
+  const fallbackNotePath = await resolveRollupNotePath({
+    loaded,
+    period,
+    filename: output.filename,
+    outputPath: output.outputPath,
+    overwrite: output.overwrite
+  });
   const rows = await collectCandidates(loaded, {
     ...options,
     providers,
+    from: undefined,
+    to: undefined,
     date: period.kind === "day" ? period.date : undefined,
     fromDate: period.kind === "range" ? period.startDate : undefined,
     toDate: period.kind === "range" ? period.endDate : undefined,
@@ -119,6 +160,8 @@ export async function processRollup(options: ProcessRollupOptions): Promise<Proc
     dataset,
     runner,
     period,
-    providerStatus
+    providerStatus,
+    purpose,
+    output
   });
 }

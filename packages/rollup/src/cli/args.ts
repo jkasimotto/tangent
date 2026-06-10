@@ -1,6 +1,6 @@
-import { booleanArg, dateArg, parseArgs, parseDate, stringArg, type Args } from "@tangent/core/cli";
+import { booleanArg, dateArg, parseArgs, parseDate, stringsArg, stringArg, type Args } from "@tangent/core/cli";
 
-export { booleanArg, dateArg, parseArgs, parseDate, stringArg, type Args };
+export { booleanArg, dateArg, parseArgs, parseDate, stringsArg, stringArg, type Args };
 
 export function providerArg(value: unknown): "claude" | "codex" | undefined {
   if (value === undefined) return undefined;

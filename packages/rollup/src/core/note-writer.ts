@@ -68,15 +68,36 @@ export async function readRollupForKey(loaded: LoadedRollupConfig, key: string):
 export async function writeGeneratedRollupMarkdown(
   loaded: LoadedRollupConfig,
   period: RollupPeriod,
-  generatedMarkdown: string
+  generatedMarkdown: string,
+  output?: {
+    filename?: string;
+    outputPath?: string;
+    overwrite?: boolean;
+  }
 ): Promise<{ path: string; markdown: string; created: boolean; updated: boolean }> {
-  const target = notePath(loaded.paths, period.key);
-  const existed = await pathExists(target);
-  const current = existed ? await readFile(target, "utf8") : defaultNoteShell(loaded, period);
-  const markdown = replaceGeneratedBlock(current, period, generatedMarkdown);
-  await mkdir(path.dirname(target), { recursive: true });
-  await writeFile(target, markdown, "utf8");
-  return { path: target, markdown, created: !existed, updated: current !== markdown };
+  const destination = await resolveRollupNoteDestination({
+    loaded,
+    period,
+    filename: output?.filename,
+    outputPath: output?.outputPath,
+    overwrite: output?.overwrite
+  });
+
+  const existed = await pathExists(destination.path);
+  const current = existed ? await readFile(destination.path, "utf8") : "";
+  const sourceMarkdown = destination.useGeneratedBlock ? current || defaultNoteShell(loaded, period) : current;
+  const markdown = destination.useGeneratedBlock
+    ? replaceGeneratedBlock(sourceMarkdown, period, generatedMarkdown)
+    : generatedMarkdown;
+
+  await mkdir(path.dirname(destination.path), { recursive: true });
+  await writeFile(destination.path, markdown, "utf8");
+  return {
+    path: destination.path,
+    markdown,
+    created: !existed,
+    updated: current !== markdown
+  };
 }
 
 export async function readRollupNote(loaded: LoadedRollupConfig, period: RollupPeriod): Promise<{ path: string; markdown: string; exists: boolean; stale: boolean }> {
@@ -84,6 +105,64 @@ export async function readRollupNote(loaded: LoadedRollupConfig, period: RollupP
   if (!(await pathExists(target))) return { path: target, markdown: "", exists: false, stale: true };
   const markdown = await readFile(target, "utf8");
   return { path: target, markdown, exists: true, stale: false };
+}
+
+export async function resolveRollupNotePath(args: {
+  loaded: LoadedRollupConfig;
+  period: RollupPeriod;
+  filename?: string;
+  outputPath?: string;
+  overwrite?: boolean;
+}): Promise<string> {
+  const destination = await resolveRollupNoteDestination(args);
+  return destination.path;
+}
+
+async function resolveRollupNoteDestination(args: {
+  loaded: LoadedRollupConfig;
+  period: RollupPeriod;
+  filename?: string;
+  outputPath?: string;
+  overwrite?: boolean;
+}): Promise<{ path: string; useGeneratedBlock: boolean }> {
+  const explicitOutputPath = await explicitRollupOutputPath(args);
+  const filename = args.filename;
+
+  if (!explicitOutputPath && !filename) {
+    return { path: notePath(args.loaded.paths, args.period.key), useGeneratedBlock: true };
+  }
+
+  const target = explicitOutputPath || path.join(args.loaded.paths.notesDir, filename!);
+
+  const alreadyExists = await pathExists(target);
+  if (!alreadyExists) return { path: target, useGeneratedBlock: false };
+
+  const existing = await readFile(target, "utf8");
+  if (hasGeneratedBlock(existing)) return { path: target, useGeneratedBlock: true };
+  if (args.overwrite) return { path: target, useGeneratedBlock: false };
+
+  const parsed = path.parse(target);
+  const fallback = path.join(parsed.dir, parsed.ext === ".md" ? `${parsed.name}.generated.md` : `${parsed.base}.generated.md`);
+  return { path: fallback, useGeneratedBlock: false };
+}
+
+async function explicitRollupOutputPath(args: {
+  loaded: LoadedRollupConfig;
+  period?: RollupPeriod;
+  outputPath?: string;
+}): Promise<string | undefined> {
+  if (!args.outputPath) return undefined;
+  if (path.isAbsolute(args.outputPath)) return args.outputPath;
+
+  const resolvedFromRepo = path.resolve(args.loaded.repo.root, args.outputPath);
+  const resolvedFromCwd = path.resolve(process.cwd(), args.outputPath);
+
+  if (resolvedFromRepo !== resolvedFromCwd) {
+    if (await pathExists(resolvedFromCwd)) return resolvedFromCwd;
+    if (await pathExists(resolvedFromRepo)) return resolvedFromRepo;
+  }
+
+  return resolvedFromRepo;
 }
 
 function defaultNoteShell(loaded: LoadedRollupConfig, period: RollupPeriod): string {
@@ -101,6 +180,12 @@ function replaceGeneratedBlock(markdown: string, period: RollupPeriod, generated
   if (pattern.test(markdown)) return `${markdown.replace(pattern, block).trim()}\n`;
   return `${markdown.trim()}\n\n${block}\n`;
 }
+
+function hasGeneratedBlock(markdown: string): boolean {
+  const pattern = /<!-- tangent:generated:start[^>]* -->[\s\S]*?<!-- tangent:generated:end -->/;
+  return pattern.test(markdown);
+}
+
 
 async function writeJsonFile(filePath: string, value: unknown): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true });

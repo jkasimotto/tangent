@@ -18,7 +18,7 @@ import { isRollupSelector } from "../core/time.js";
 export { rollupCommandSpec } from "./spec.js";
 
 export async function runRollupCli(argv = process.argv.slice(2)): Promise<void> {
-  const args = parseArgs(argv);
+  const args = parseArgs(argv, { repeatable: ["focus"] });
   const command = args._[0];
   if (args.help) return help();
   if (!command || isRollupSelector(command)) return processCommand({ ...args, _: ["rollup", ...args._.slice(command ? 1 : 0)], selector: command });

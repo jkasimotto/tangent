@@ -7,6 +7,7 @@ export const rollupCommandSpec: CliCommandSpec = {
   description: "Print, generate, and read private rollup notes from usage",
   args: "[today|yesterday|YYYY-MM-DD|YYYYMMDD|YYYYMMDD-YYYYMMDD|repo]",
   values: dateValues,
+  options: processOptions(["purpose", "focus", "title", "kind", "audience", "output", "filename", "overwrite"]),
   subcommands: [
     {
       name: "init",
@@ -85,6 +86,14 @@ function processOptions(extra: string[] = []) {
     else if (name === "verbose") options.push({ name, description: "Print verbose details" });
     else if (name === "dry-run") options.push({ name, description: "Do not write output" });
     else if (name === "explain") options.push({ name, description: "Explain render inputs" });
+    else if (name === "purpose") options.push({ name, takesValue: true, description: "Purposeful roll-up request" });
+    else if (name === "focus") options.push({ name, takesValue: true, description: "Focus term; repeatable" });
+    else if (name === "title") options.push({ name, takesValue: true, description: "Output title" });
+    else if (name === "kind") options.push({ name, takesValue: true, values: ["daily-memory", "design-brief", "investigation-brief", "decision-log", "implementation-brief"], description: "Roll-up output kind" });
+    else if (name === "audience") options.push({ name, takesValue: true, values: ["self", "engineering-team", "future-agent"], description: "Intended reader" });
+    else if (name === "output") options.push({ name, takesValue: true, description: "Markdown output path" });
+    else if (name === "filename") options.push({ name, takesValue: true, description: "Markdown filename under notesDir" });
+    else if (name === "overwrite") options.push({ name, description: "Overwrite explicit output file without generated block" });
     else options.push({ name, description: `${name} flag` });
   }
   return options;

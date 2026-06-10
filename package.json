@@ -20,6 +20,8 @@
   "scripts": {
     "build": "npm run build --workspaces && tsc -p tsconfig.json && chmod +x dist/cli/index.js",
     "check": "npm run check --workspaces && tsc -p tsconfig.json --noEmit",
+    "hooks:install": "node scripts/install-githooks.mjs",
+    "lint:function-docstrings": "node scripts/lint-function-docstrings.mjs",
     "governance": "npm run build -w @tangent/governance && node packages/governance/dist/cli/index.js lint",
     "test": "npm run test --workspaces --if-present",
     "clean": "rm -rf dist packages/*/dist"

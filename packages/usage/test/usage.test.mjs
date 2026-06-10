@@ -8,6 +8,7 @@ import { UsageDataset } from "../dist/core/dataset.js";
 import { eventFileForConversation } from "../dist/core/paths.js";
 import { normalizeHookInput } from "../dist/hook-runner/normalize-hook-input.js";
 import { normalizeClaudeNativeRecord, normalizeClaudeNativeRecords } from "../dist/providers/claude/native/normalize.js";
+import { normalizeCodexNativeRecords } from "../dist/providers/codex/native/normalize.js";
 import { archiveUsageTelemetry, ensureUsageIndex, loadUsageDatasetFromIndex, resolveConversationRef } from "../dist/sdk/indexStore.js";
 import { inspectNativeLogFile, listNativeSchemas, nativeSchemaStatus } from "../dist/sdk/index.js";
 import { installHooks, uninstallHooks } from "../dist/sdk/installHooks.js";
@@ -214,6 +215,72 @@ test("usage index defaults to completed Codex native transcripts instead of hook
   }
 });
 
+test("Codex native import emits per-model-call usage and tool result token metadata", () => {
+  const sourcePath = "/tmp/codex-two-snapshots.jsonl";
+  const records = codexNativeTwoSnapshotSession({ repo: "/repo", sessionId: "codex-two-snapshots" }).map((record, index) => ({ line: index + 1, record }));
+  const events = normalizeCodexNativeRecords(records, { sourcePath, completed: true, inferredComplete: false });
+  const tokenEvents = events.filter((event) => event.kind === "token.usage");
+  const toolResult = events.find((event) => event.kind === "tool.result");
+
+  assert.equal(tokenEvents.length, 2);
+  assert.deepEqual(tokenEvents.map((event) => event.data.usageKind), ["model-call", "model-call"]);
+  assert.deepEqual(tokenEvents.map((event) => event.data.usage.input_tokens), [100, 130]);
+  assert.deepEqual(tokenEvents.map((event) => event.data.snapshotIndex), [1, 2]);
+  assert.equal(tokenEvents[1].data.cumulativeUsage.input_tokens, 230);
+  assert.equal(toolResult.data.tool_name, "exec_command");
+  assert.equal(toolResult.data.category, "command");
+  assert.equal(toolResult.data.original_token_count, 12);
+  assert.equal(toolResult.data.output_chars > 0, true);
+  assert.equal(toolResult.data.estimated_output_tokens > 0, true);
+});
+
+test("Codex per-tool attribution uses the following model-call input delta", () => {
+  const sourcePath = "/tmp/codex-tool-attribution.jsonl";
+  const records = codexNativeTwoSnapshotSession({ repo: "/repo", sessionId: "codex-tool-attribution" }).map((record, index) => ({ line: index + 1, record }));
+  const events = normalizeCodexNativeRecords(records, { sourcePath, completed: true, inferredComplete: false });
+  const dataset = new UsageDataset(events);
+  const conversationId = "codex:codex-tool-attribution";
+
+  const [row] = dataset.tokens.perToolCall({ conversationId }).data;
+  assert.equal(row.toolName, "exec_command");
+  assert.equal(row.result.originalTokenCount, 12);
+  assert.equal(row.nextModelCall.inputTokens, 130);
+  assert.equal(row.previousModelInputTokens, 100);
+  assert.equal(row.nextInputDelta, 30);
+  assert.equal(row.allocatedInputTokens, 30);
+  assert.equal(row.allocationMethod, "single_tool_result");
+
+  const report = dataset.conversations.report({ conversationId }).data;
+  const assistantWithTool = report.messages.find((message) => message.role === "assistant" && message.toolCalls.length);
+  assert.equal(assistantWithTool.toolCalls[0].tokens.allocatedInput, 30);
+  assert.equal(assistantWithTool.toolCalls[0].tokens.nextInputTotal, 130);
+  assert.equal(assistantWithTool.toolCalls[0].tokens.resultEstimatedTokens, row.result.estimatedOutputTokens);
+  assert.equal(assistantWithTool.toolCalls[0].tokens.allocatedOutput, 9);
+});
+
+test("per-tool attribution splits one following input delta across multiple results by result size", () => {
+  const at = "2026-06-09T08:00:00.000Z";
+  const conversationId = "codex:split";
+  const events = [
+    usageEvent({ sessionId: "split", id: "start", kind: "conversation.start", at, data: { source: "test" }, actor: { role: "system" } }),
+    usageEvent({ sessionId: "split", id: "turn", kind: "turn.start", at, data: { status: "started" }, turn: { id: "t1" }, actor: { role: "user" } }),
+    usageEvent({ sessionId: "split", id: "assistant", kind: "message.assistant.visible", at, data: { text: "reading", text_preview: "reading" }, turn: { id: "t1" }, actor: { role: "assistant", model: "model" } }),
+    usageEvent({ sessionId: "split", id: "tool-small", kind: "tool.call", at, data: { tool_name: "Read", category: "read", target_paths: ["small.txt"] }, turn: { id: "t1" }, actor: { role: "assistant", model: "model" }, links: { tool_call_id: "small" } }),
+    usageEvent({ sessionId: "split", id: "tool-large", kind: "tool.call", at, data: { tool_name: "Read", category: "read", target_paths: ["large.txt"] }, turn: { id: "t1" }, actor: { role: "assistant", model: "model" }, links: { tool_call_id: "large" } }),
+    usageEvent({ sessionId: "split", id: "result-small", kind: "tool.result", at, data: { tool_name: "Read", category: "read", output: "small", status: "success", estimated_output_tokens: 10, output_chars: 5 }, turn: { id: "t1" }, actor: { role: "tool" }, links: { tool_call_id: "small" } }),
+    usageEvent({ sessionId: "split", id: "result-large", kind: "tool.result", at, data: { tool_name: "Read", category: "read", output: "large", status: "success", estimated_output_tokens: 30, output_chars: 15 }, turn: { id: "t1" }, actor: { role: "tool" }, links: { tool_call_id: "large" } }),
+    usageEvent({ sessionId: "split", id: "before", kind: "token.usage", at, data: { usage: { input_tokens: 100, output_tokens: 20, total_tokens: 120 }, usageConfidence: "provider-reported" }, turn: { id: "t1" }, actor: { role: "assistant", model: "model" } }),
+    usageEvent({ sessionId: "split", id: "answer", kind: "message.assistant.visible", at, data: { text: "done", text_preview: "done" }, turn: { id: "t1" }, actor: { role: "assistant", model: "model" } }),
+    usageEvent({ sessionId: "split", id: "after", kind: "token.usage", at, data: { usage: { input_tokens: 180, output_tokens: 5, total_tokens: 185 }, usageConfidence: "provider-reported" }, turn: { id: "t1" }, actor: { role: "assistant", model: "model" } })
+  ];
+
+  const rows = new UsageDataset(events).tokens.perToolCall({ conversationId }).data;
+  assert.deepEqual(rows.map((row) => row.toolCallId), ["large", "small"]);
+  assert.deepEqual(rows.map((row) => row.allocatedInputTokens), [60, 20]);
+  assert.equal(rows.every((row) => row.nextInputDelta === 80), true);
+  assert.equal(rows.every((row) => row.allocationMethod === "proportional_tool_result_tokens"), true);
+});
+
 test("usage index skips active Codex native transcripts until the quiet window", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "usage-native-codex-quiet-"));
   process.env.USAGE_HOME = path.join(dir, "home");
@@ -300,9 +367,11 @@ test("conversation report nests Claude assistant tokens, tool calls, and allocat
   assert.deepEqual(assistantMessages[0].toolCalls.map((tool) => tool.result.status), ["success", "success"]);
   assert.equal(assistantMessages[0].toolCalls.every((tool) => tool.tokens.exact === false), true);
   assert.equal(assistantMessages[0].toolCalls.every((tool) => tool.tokens.confidence === "allocated"), true);
-  assert.equal(assistantMessages[0].toolCalls.every((tool) => tool.tokens.allocationMethod === "proportional_serialized_tool_use_bytes"), true);
+  assert.equal(assistantMessages[0].toolCalls.every((tool) => tool.tokens.allocationMethod === "proportional_tool_result_tokens"), true);
   assert.equal(assistantMessages[0].toolCalls.every((tool) => tool.tokens.sourceAssistantMessageId === "msg_tools"), true);
   assert.equal(sum(assistantMessages[0].toolCalls.map((tool) => tool.tokens.allocatedOutput)), 90);
+  assert.equal(sum(assistantMessages[0].toolCalls.map((tool) => tool.tokens.allocatedInput)), 100);
+  assert.equal(assistantMessages[0].toolCalls.every((tool) => tool.tokens.nextInputDelta === 100), true);
   assert.equal(assistantMessages[1].tokens.output, 12);
   assert.equal(report.totals.toolCalls, 2);
   assert.equal(report.totals.tokens.output, 102);
@@ -482,6 +551,74 @@ function codexNativeSession({ repo, sessionId, prompt, complete }) {
       }
     },
     ...(complete ? [{ timestamp: "2026-06-09T08:00:09.000Z", type: "event_msg", payload: { type: "task_complete", turn_id: turnId, duration_ms: 9000 } }] : [])
+  ];
+}
+
+function codexNativeTwoSnapshotSession({ repo, sessionId }) {
+  const turnId = `${sessionId}-turn`;
+  return [
+    {
+      timestamp: "2026-06-09T08:00:00.000Z",
+      type: "session_meta",
+      payload: {
+        id: sessionId,
+        timestamp: "2026-06-09T08:00:00.000Z",
+        cwd: repo,
+        originator: "codex-tui",
+        cli_version: "0.138.0",
+        source: "cli",
+        git: { branch: "main", commit_hash: "abc" }
+      }
+    },
+    { timestamp: "2026-06-09T08:00:01.000Z", type: "event_msg", payload: { type: "task_started", turn_id: turnId } },
+    { timestamp: "2026-06-09T08:00:02.000Z", type: "turn_context", payload: { turn_id: turnId, cwd: repo, model: "gpt-5.4-mini" } },
+    { timestamp: "2026-06-09T08:00:03.000Z", type: "event_msg", payload: { type: "user_message", message: "cat small.txt" } },
+    { timestamp: "2026-06-09T08:00:04.000Z", type: "event_msg", payload: { type: "agent_message", message: "I will read it.", phase: "commentary" } },
+    { timestamp: "2026-06-09T08:00:05.000Z", type: "response_item", payload: { type: "function_call", name: "exec_command", call_id: "call1", arguments: JSON.stringify({ cmd: "cat small.txt", workdir: repo }) } },
+    {
+      timestamp: "2026-06-09T08:00:06.000Z",
+      type: "response_item",
+      payload: {
+        type: "function_call_output",
+        call_id: "call1",
+        output: "Chunk ID: abc\nProcess exited with code 0\nOriginal token count: 12\nOutput:\nalpha beta gamma\n"
+      }
+    },
+    {
+      timestamp: "2026-06-09T08:00:07.000Z",
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: {
+          total_token_usage: { input_tokens: 100, cached_input_tokens: 40, output_tokens: 9, reasoning_output_tokens: 1, total_tokens: 109 },
+          last_token_usage: { input_tokens: 100, cached_input_tokens: 40, output_tokens: 9, reasoning_output_tokens: 1, total_tokens: 109 }
+        }
+      }
+    },
+    {
+      timestamp: "2026-06-09T08:00:08.000Z",
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: {
+          total_token_usage: { input_tokens: 100, cached_input_tokens: 40, output_tokens: 9, reasoning_output_tokens: 1, total_tokens: 109 },
+          last_token_usage: { input_tokens: 100, cached_input_tokens: 40, output_tokens: 9, reasoning_output_tokens: 1, total_tokens: 109 }
+        }
+      }
+    },
+    { timestamp: "2026-06-09T08:00:09.000Z", type: "event_msg", payload: { type: "agent_message", message: "ok", phase: "final_answer" } },
+    {
+      timestamp: "2026-06-09T08:00:10.000Z",
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: {
+          total_token_usage: { input_tokens: 230, cached_input_tokens: 120, output_tokens: 14, reasoning_output_tokens: 1, total_tokens: 244 },
+          last_token_usage: { input_tokens: 130, cached_input_tokens: 80, output_tokens: 5, reasoning_output_tokens: 0, total_tokens: 135 }
+        }
+      }
+    },
+    { timestamp: "2026-06-09T08:00:11.000Z", type: "event_msg", payload: { type: "task_complete", turn_id: turnId, duration_ms: 11000 } }
   ];
 }
 
@@ -681,7 +818,7 @@ function sessionEvents({ sessionId, prompt, at }) {
   ];
 }
 
-function usageEvent({ sessionId, id, kind, at, data, turn, actor }) {
+function usageEvent({ sessionId, id, kind, at, data, turn, actor, links }) {
   return {
     schema: "usage.event.v2",
     event_id: `evt_${id}`,
@@ -707,6 +844,7 @@ function usageEvent({ sessionId, id, kind, at, data, turn, actor }) {
     },
     turn,
     actor,
+    links,
     data
   };
 }

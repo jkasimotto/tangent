@@ -24,6 +24,7 @@ export { trackRepo, untrackRepo } from "./trackRepo.js";
 export type { TrackRepoOptions } from "./trackRepo.js";
 export { UsageDataset } from "../core/dataset.js";
 export type { ActivityTimelineItem, ConversationListItem, ToolCallWithResult, TurnListItem, VisibleMessage } from "../core/dataset.js";
+export type { ToolTokenAttributionRow } from "../core/tool-token-attribution.js";
 export { allocateToolOutputTokens, conversationReport } from "../core/conversation-report.js";
 export type {
   NormalizedConversation,

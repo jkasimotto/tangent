@@ -1,5 +1,6 @@
 import type { UsageJsonlLineV1 } from "./schema/usage-jsonl-v1.js";
 import type { NormalizedConversation, NormalizedConversationMessage, NormalizedToolCall, TokenUsage } from "./conversation-report-types.js";
+import { toolTokenAttributions } from "./tool-token-attribution.js";
 
 export type {
   NormalizedConversation,
@@ -46,6 +47,7 @@ export function conversationReport(
   const toolCallsByAssistant = new Map<string, AnnotatedEvent[]>();
   const tokenEventsByAssistant = new Map<string, AnnotatedEvent[]>();
   const resultsByToolCall = collectToolResults(events);
+  const tokenAttributionByToolCall = new Map(toolTokenAttributions(events).map((row) => [row.toolCallId, row]));
 
   for (const event of events) {
     if (event.kind === "message.user") {
@@ -106,6 +108,28 @@ export function conversationReport(
     if (!message) continue;
     message.toolCalls = callEvents.map((call) => normalizedToolCall(call, resultsByToolCall.get(toolCallId(call)), messageId));
     allocateToolOutputTokens(message.tokens?.output, message.toolCalls);
+    for (const toolCall of message.toolCalls) {
+      const attribution = tokenAttributionByToolCall.get(toolCall.id);
+      if (!attribution) continue;
+      toolCall.tokens = {
+        ...toolCall.tokens,
+        allocatedInput: attribution.allocatedInputTokens,
+        nextInputDelta: attribution.nextInputDelta,
+        nextInputTotal: attribution.nextModelCall?.inputTokens,
+        nextInputCached: attribution.nextModelCall?.cachedInputTokens,
+        nextModelCallEventId: attribution.nextModelCall?.eventId,
+        resultEstimatedTokens: attribution.result?.estimatedOutputTokens,
+        resultOutputChars: attribution.result?.outputChars,
+        resultOutputBytes: attribution.result?.outputBytes,
+        originalTokenCount: attribution.result?.originalTokenCount,
+        truncated: attribution.result?.truncated,
+        allocationMethod: attribution.allocationMethod === "none" ? toolCall.tokens.allocationMethod : attribution.allocationMethod,
+        source: attribution.nextModelCall ? "tool_result.next_model_call.input" : toolCall.tokens.source,
+        confidence: attribution.confidence === "unknown" ? toolCall.tokens.confidence : attribution.confidence,
+        notes: unique([...toolCall.tokens.notes, ...attribution.notes])
+      };
+      toolCall.evidenceEventIds = unique([...toolCall.evidenceEventIds, ...attribution.evidenceEventIds]);
+    }
   }
 
   const tokenTotals = mergeTokenUsage(messages

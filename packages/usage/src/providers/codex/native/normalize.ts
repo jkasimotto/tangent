@@ -40,7 +40,10 @@ export function normalizeCodexNativeRecords(records: CodexNativeRecord[], option
   let currentModel = session.model;
   let lastActivityAt = session.startedAt;
   let lastTurnEnded = false;
-  const tokenCounts: Array<{ line: number; timestamp?: string; payload: Record<string, unknown> }> = [];
+  let tokenSnapshotIndex = 0;
+  let lastTokenUsageRaw: string | undefined;
+  let cumulativeFallbackToken: { source: CodexNativeRecord; payload: Record<string, unknown> } | undefined;
+  const toolCallsById = new Map<string, { toolName: string; category: string; input: unknown; targetPaths: string[] }>();
 
   const base = (source: CodexNativeRecord, kind: UsageEventKind, data: unknown, extra: Partial<UsageJsonlLineV1> = {}): UsageJsonlLineV1 => {
     const timestamp = stringValue(source.record.timestamp) || lastActivityAt || new Date().toISOString();
@@ -144,7 +147,20 @@ export function normalizeCodexNativeRecords(records: CodexNativeRecord[], option
         continue;
       }
       if (payloadType === "token_count") {
-        tokenCounts.push({ line: source.line, timestamp, payload: payload || {} });
+        const emitted = codexTokenUsageEvent(source, payload || {}, {
+          snapshotIndex: tokenSnapshotIndex + 1,
+          currentModel,
+          currentTurnId,
+          lastTokenUsageRaw,
+          base
+        });
+        if (emitted.event) {
+          tokenSnapshotIndex += 1;
+          lastTokenUsageRaw = emitted.lastTokenUsageRaw;
+          events.push(emitted.event);
+        } else if (emitted.cumulativeOnly) {
+          cumulativeFallbackToken = { source, payload: payload || {} };
+        }
         continue;
       }
       if (payloadType === "task_complete") {
@@ -169,11 +185,14 @@ export function normalizeCodexNativeRecords(records: CodexNativeRecord[], option
         const callId = stringValue(payload?.call_id);
         const toolName = stringValue(payload?.name) || "unknown";
         const input = parseArguments(payload?.arguments);
+        const category = categorizeTool(toolName);
+        const targetPaths = extractPaths(input);
+        if (callId) toolCallsById.set(callId, { toolName, category, input, targetPaths });
         events.push(base(source, "tool.call", {
           tool_name: toolName,
-          category: categorizeTool(toolName),
+          category,
           input: redactUnknown(input, defaultRedaction),
-          target_paths: extractPaths(input)
+          target_paths: targetPaths
         }, {
           turn: turn(currentTurnId),
           actor: { role: "assistant", model: currentModel },
@@ -183,12 +202,16 @@ export function normalizeCodexNativeRecords(records: CodexNativeRecord[], option
         continue;
       }
       if (payloadType === "function_call_output") {
+        const callId = stringValue(payload?.call_id);
+        const call = callId ? toolCallsById.get(callId) : undefined;
         const output = payload?.output;
+        const metadata = toolResultMetadata(output, "codex-native.function_call_output.output");
         events.push(base(source, "tool.result", {
-          tool_name: "unknown",
-          category: "other",
+          tool_name: call?.toolName || "unknown",
+          category: call?.category || "other",
           output: redactUnknown(output, defaultRedaction),
-          status: inferToolStatus(output)
+          status: inferToolStatus(output),
+          ...metadata
         }, {
           turn: turn(currentTurnId),
           actor: { role: "tool", model: currentModel },
@@ -224,25 +247,22 @@ export function normalizeCodexNativeRecords(records: CodexNativeRecord[], option
     }
   }
 
-  const finalToken = tokenCounts.at(-1);
-  if (finalToken) {
-    const payload = finalToken.payload;
-    const info = objectValue(payload.info);
-    const usage = objectValue(info?.total_token_usage) || objectValue(info?.last_token_usage);
-    const finalRecord = records.find((row) => row.line === finalToken.line);
-    if (usage && finalRecord) {
-      events.push(base(finalRecord, "token.usage", {
+  if (!tokenSnapshotIndex && cumulativeFallbackToken) {
+    const info = objectValue(cumulativeFallbackToken.payload.info);
+    const usage = objectValue(info?.total_token_usage);
+    if (usage) {
+      events.push(base(cumulativeFallbackToken.source, "token.usage", {
         usage,
         usageConfidence: "provider-reported",
-        usageKind: objectValue(info?.total_token_usage) ? "final-cumulative" : "last-usage",
-        lastUsage: objectValue(info?.last_token_usage),
-        snapshotCount: tokenCounts.length,
+        usageKind: "final-cumulative",
+        cumulativeUsage: usage,
+        snapshotIndex: 1,
         model: currentModel,
         model_context_window: numberValue(info?.model_context_window)
       }, {
         turn: turn(currentTurnId),
         actor: { role: "assistant", model: currentModel },
-        availability: { confidence: "partial", notes: ["Imported from final Codex native token_count event."] }
+        availability: { confidence: "partial", notes: ["Imported from Codex native cumulative token_count event; per-call usage was not exposed."] }
       }));
     }
   }
@@ -276,6 +296,43 @@ export function normalizeCodexNativeRecords(records: CodexNativeRecord[], option
   }
 
   return events;
+}
+
+function codexTokenUsageEvent(
+  source: CodexNativeRecord,
+  payload: Record<string, unknown>,
+  options: {
+    snapshotIndex: number;
+    currentModel?: string;
+    currentTurnId?: string;
+    lastTokenUsageRaw?: string;
+    base: (source: CodexNativeRecord, kind: UsageEventKind, data: unknown, extra?: Partial<UsageJsonlLineV1>) => UsageJsonlLineV1;
+  }
+): { event?: UsageJsonlLineV1; lastTokenUsageRaw?: string; cumulativeOnly?: boolean } {
+  const info = objectValue(payload.info);
+  const lastUsage = objectValue(info?.last_token_usage);
+  const cumulativeUsage = objectValue(info?.total_token_usage);
+  if (!lastUsage) return { cumulativeOnly: Boolean(cumulativeUsage), lastTokenUsageRaw: options.lastTokenUsageRaw };
+
+  const raw = JSON.stringify(lastUsage);
+  if (raw === options.lastTokenUsageRaw) return { lastTokenUsageRaw: options.lastTokenUsageRaw };
+
+  return {
+    lastTokenUsageRaw: raw,
+    event: options.base(source, "token.usage", {
+      usage: lastUsage,
+      usageConfidence: "provider-reported",
+      usageKind: "model-call",
+      cumulativeUsage,
+      snapshotIndex: options.snapshotIndex,
+      model: options.currentModel,
+      model_context_window: numberValue(info?.model_context_window)
+    }, {
+      turn: turn(options.currentTurnId),
+      actor: { role: "assistant", model: options.currentModel },
+      availability: { confidence: "partial", notes: ["Imported from Codex native token_count last_token_usage snapshot."] }
+    })
+  };
 }
 
 function sessionInfo(records: CodexNativeRecord[]): {
@@ -367,6 +424,31 @@ function inferToolStatus(output: unknown): "success" | "error" | "unknown" {
   const match = /Process exited with code (\d+)/.exec(output);
   if (!match) return "unknown";
   return match[1] === "0" ? "success" : "error";
+}
+
+function toolResultMetadata(output: unknown, source: string): Record<string, unknown> {
+  const text = typeof output === "string" ? output : output === undefined || output === null ? "" : JSON.stringify(output);
+  const bytes = Buffer.byteLength(text, "utf8");
+  const originalTokenCount = originalTokenCountFromToolOutput(text);
+  const truncation = /(?:tokens|characters|bytes) truncated|truncated[^\n]*output|omitted/i.test(text);
+  return {
+    output_chars: text.length,
+    output_bytes: bytes,
+    estimated_output_tokens: estimateTokens(text),
+    original_token_count: originalTokenCount,
+    truncated: truncation,
+    output_token_source: source
+  };
+}
+
+function originalTokenCountFromToolOutput(text: string): number | undefined {
+  const match = /Original token count: (\d+)/.exec(text);
+  return match ? Number(match[1]) : undefined;
+}
+
+function estimateTokens(text: string): number {
+  const compact = text.replace(/\s+/g, " ").trim();
+  return compact ? Math.max(1, Math.ceil(compact.length / 4)) : 0;
 }
 
 function summaryText(value: unknown): string | undefined {

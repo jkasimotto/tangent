@@ -13,10 +13,20 @@ export type TokenUsage = {
 export type ToolTokenAttribution = {
   exact: false;
   allocatedOutput?: number;
-  allocationMethod?: "proportional_serialized_tool_use_bytes" | "equal_split" | "none";
+  allocatedInput?: number;
+  nextInputDelta?: number;
+  nextInputTotal?: number;
+  nextInputCached?: number;
+  nextModelCallEventId?: string;
+  resultEstimatedTokens?: number;
+  resultOutputChars?: number;
+  resultOutputBytes?: number;
+  originalTokenCount?: number;
+  truncated?: boolean;
+  allocationMethod?: "proportional_serialized_tool_use_bytes" | "proportional_tool_result_tokens" | "single_tool_result" | "equal_split" | "none";
   sourceAssistantMessageId: string;
   source: string;
-  confidence: "allocated" | "unknown";
+  confidence: "allocated" | "estimated" | "unknown";
   notes: string[];
 };
 

@@ -37,8 +37,6 @@ export function defaultConfig(repo?: RollupRepoInfo): RollupConfig {
     processing: {
       timezone: localTimezone(),
       dateBucket: "turnEndedAt",
-      includeActiveConversations: false,
-      activeQuietMinutes: 30,
       reprocessWhenConversationChanges: true,
       maxTurnDurationMinutesForRollup: 180
     },

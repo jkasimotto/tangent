@@ -9,7 +9,6 @@ export async function candidatesCommand(args: Args): Promise<void> {
     from: parseDate(args.from),
     to: parseDate(args.to),
     providers: providerArg(args.provider) ? [providerArg(args.provider)!] : undefined,
-    includeActive: booleanArg(args["include-active"]),
     force: booleanArg(args.force)
   });
   if (args.json) {

@@ -75,17 +75,16 @@ function processOptions(extra: string[] = []) {
     { name: "date", takesValue: true, values: dateValues, description: "Rollup selector" },
     { name: "from", takesValue: true, description: "Start date/time" },
     { name: "to", takesValue: true, description: "End date/time" },
-    { name: "provider", takesValue: true, values: ["claude", "codex"], description: "Provider filter" },
-    { name: "include-active", description: "Include quiet active conversations" }
+    { name: "provider", takesValue: true, values: ["claude", "codex"], description: "Provider filter" }
   ];
   for (const name of extra) {
     if (name === "conversation") options.push({ name, takesValue: true, description: "Conversation id" });
     else if (name === "source") options.push({ name, takesValue: true, description: "Source key" });
-    else if (name === "path") options.push({ name, description: "Print artifact path" });
-    else if (name === "trace") options.push({ name, description: "Print timing trace" });
-    else if (name === "verbose") options.push({ name, description: "Print verbose details" });
-    else if (name === "dry-run") options.push({ name, description: "Do not write output" });
-    else if (name === "explain") options.push({ name, description: "Explain render inputs" });
+    else if (name === "path") options.push({ name, takesValue: false, description: "Print artifact path" });
+    else if (name === "trace") options.push({ name, takesValue: false, description: "Print timing trace" });
+    else if (name === "verbose") options.push({ name, takesValue: false, description: "Print verbose details" });
+    else if (name === "dry-run") options.push({ name, takesValue: false, description: "Do not write output" });
+    else if (name === "explain") options.push({ name, takesValue: false, description: "Explain render inputs" });
     else if (name === "purpose") options.push({ name, takesValue: true, description: "Purposeful roll-up request" });
     else if (name === "focus") options.push({ name, takesValue: true, description: "Focus term; repeatable" });
     else if (name === "title") options.push({ name, takesValue: true, description: "Output title" });
@@ -93,8 +92,8 @@ function processOptions(extra: string[] = []) {
     else if (name === "audience") options.push({ name, takesValue: true, values: ["self", "engineering-team", "future-agent"], description: "Intended reader" });
     else if (name === "output") options.push({ name, takesValue: true, description: "Markdown output path" });
     else if (name === "filename") options.push({ name, takesValue: true, description: "Markdown filename under notesDir" });
-    else if (name === "overwrite") options.push({ name, description: "Overwrite explicit output file without generated block" });
-    else options.push({ name, description: `${name} flag` });
+    else if (name === "overwrite") options.push({ name, takesValue: false, description: "Overwrite explicit output file without generated block" });
+    else options.push({ name, takesValue: false, description: `${name} flag` });
   }
   return options;
 }
@@ -105,6 +104,6 @@ function providerOptions() {
     { name: "model", takesValue: true, values: ["gpt-5.4-mini", "gpt-5.4", "sonnet", "haiku", "opus"], description: "Model" },
     { name: "command", takesValue: true, description: "Provider command" },
     { name: "sandbox", takesValue: true, values: ["read-only", "workspace-write", "danger-full-access"], description: "Codex sandbox" },
-    { name: "json", description: "Print JSON" }
+    { name: "json", takesValue: false, description: "Print JSON" }
   ];
 }

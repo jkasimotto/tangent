@@ -104,13 +104,6 @@ export function renderRollupMessages(input: RollupInput): string {
   return `${lines.join("\n").trim()}\n`;
 }
 
-export function isProcessableTurn(turn: TurnListItem, config: RollupConfig, includeActiveOverride = false): boolean {
-  if (turn.status !== "active") return true;
-  if (!config.processing.includeActiveConversations && !includeActiveOverride) return false;
-  const quietMs = config.processing.activeQuietMinutes * 60 * 1000;
-  return Date.now() - turn.lastActivityAt.getTime() >= quietMs;
-}
-
 function sanitizePurpose(purpose?: RollupPurpose): RollupPurpose | undefined {
   if (!purpose?.request) return undefined;
   return {

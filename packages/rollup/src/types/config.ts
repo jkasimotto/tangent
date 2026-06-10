@@ -18,8 +18,6 @@ export type RollupConfig = {
   processing: {
     timezone: string;
     dateBucket: DateBucketMode;
-    includeActiveConversations: boolean;
-    activeQuietMinutes: number;
     reprocessWhenConversationChanges: boolean;
     maxTurnDurationMinutesForRollup: number;
   };

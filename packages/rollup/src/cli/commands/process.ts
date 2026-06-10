@@ -20,7 +20,6 @@ export async function processCommand(args: Args): Promise<void> {
     from: stringArg(args.from),
     to: stringArg(args.to),
     provider: providerArg(args.provider),
-    includeActive: booleanArg(args["include-active"]),
     force: booleanArg(args.force),
     dryRun: booleanArg(args["dry-run"]),
     purpose,

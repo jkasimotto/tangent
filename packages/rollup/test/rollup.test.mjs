@@ -252,6 +252,41 @@ test("processRollup passes purpose and focus terms into rollup input", async () 
   }
 });
 
+test("processRollup dry-run includes active turns when no task completion marker exists", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "rollup-active-dryrun-"));
+  process.env.TANGENT_ROLLUP_HOME = path.join(dir, "rollup-home");
+  process.env.USAGE_HOME = path.join(dir, "usage-home");
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.CODEX_HOME = path.join(dir, "codex-home");
+
+  const sessionPath = path.join(process.env.CODEX_HOME, "sessions", "2026", "06", "08", "rollout-2026-06-08T10-00-00-active.jsonl");
+  await writeJsonl(sessionPath, codexNativeSession({
+    repo: dir,
+    sessionId: "active-1",
+    turnId: "active-turn-1",
+    prompt: "work in progress",
+    response: "partial answer",
+    date: "2026-06-08",
+    includeTaskComplete: false
+  }));
+
+  try {
+    const result = await processRollup({
+      repo: dir,
+      date: "2026-06-08",
+      dryRun: true
+    });
+
+    assert.equal(result.candidates, 1);
+    assert.equal(result.processed, 0);
+    assert.equal(result.skipped, 0);
+    assert.equal(result.failed, 0);
+  } finally {
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+  }
+});
+
 test("processRollup uses one rollup call when the runner supports it", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "rollup-day-process-"));
   const previousRollupHome = process.env.TANGENT_ROLLUP_HOME;
@@ -570,9 +605,9 @@ async function writeJsonl(filePath, records) {
   await writeFile(filePath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`, "utf8");
 }
 
-function codexNativeSession({ repo, sessionId, turnId, prompt, response, date = "2026-06-08" }) {
+function codexNativeSession({ repo, sessionId, turnId, prompt, response, date = "2026-06-08", includeTaskComplete = true }) {
   const isoPrefix = `${date}T10:00:`;
-  return [
+  const records = [
     {
       timestamp: `${isoPrefix}00.000Z`,
       type: "session_meta",
@@ -589,7 +624,10 @@ function codexNativeSession({ repo, sessionId, turnId, prompt, response, date = 
     { timestamp: `${isoPrefix}01.000Z`, type: "event_msg", payload: { type: "task_started", turn_id: turnId } },
     { timestamp: `${isoPrefix}02.000Z`, type: "turn_context", payload: { turn_id: turnId, cwd: repo, model: "gpt-5.5" } },
     { timestamp: `${isoPrefix}03.000Z`, type: "event_msg", payload: { type: "user_message", message: prompt } },
-    { timestamp: `${isoPrefix}04.000Z`, type: "event_msg", payload: { type: "agent_message", message: response, phase: "final_answer" } },
-    { timestamp: `${isoPrefix}05.000Z`, type: "event_msg", payload: { type: "task_complete", turn_id: turnId, duration_ms: 5000 } }
+    { timestamp: `${isoPrefix}04.000Z`, type: "event_msg", payload: { type: "agent_message", message: response, phase: "final_answer" } }
   ];
+  if (includeTaskComplete) {
+    records.push({ timestamp: `${isoPrefix}05.000Z`, type: "event_msg", payload: { type: "task_complete", turn_id: turnId, duration_ms: 5000 } });
+  }
+  return records;
 }

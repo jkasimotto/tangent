@@ -1,6 +1,5 @@
 import { openUsage, type UsageProvider, type TurnListItem } from "@tangent/usage";
 
-import { isProcessableTurn } from "./adapter.js";
 import { readLedger, latestLedgerBySource } from "../core/ledger.js";
 import type { LoadedRollupConfig } from "../core/config.js";
 import { dateBucket as formatDateBucket } from "../core/time.js";
@@ -32,7 +31,8 @@ export async function collectCandidates(loaded: LoadedRollupConfig, query: Omit<
   const startedAt = Date.now();
   const dataset = await openUsage({
     repo: loaded.repo.root,
-    providers
+    providers,
+    includeActive: true
   });
   const ledger = await readLedger(loaded.paths.ledgerPath);
   const scopedLedger = query.rollupKey ? ledger.filter((line) => (line.rollupKey || line.dateBucket) === query.rollupKey) : ledger;
@@ -43,7 +43,7 @@ export async function collectCandidates(loaded: LoadedRollupConfig, query: Omit<
     provider: providers.length === 1 ? providers[0] : undefined,
     from: query.from,
     to: query.to,
-    includeActive: query.includeActive || loaded.config.processing.includeActiveConversations,
+    includeActive: true,
     bucketBy
   }).data
     .filter((turn) => providers.includes(turn.provider))
@@ -52,7 +52,6 @@ export async function collectCandidates(loaded: LoadedRollupConfig, query: Omit<
     .filter((row) => !query.date || row.dateBucket === query.date)
     .filter((row) => !query.fromDate || row.dateBucket >= query.fromDate)
     .filter((row) => !query.toDate || row.dateBucket <= query.toDate)
-    .filter((row) => isProcessableTurn(row.turn, loaded.config, query.includeActive))
     .map(({ turn, dateBucket }) => candidateForTurn(turn, dateBucket, latest.get(turn.sourceKey), Boolean(query.force)));
 
   void startedAt;

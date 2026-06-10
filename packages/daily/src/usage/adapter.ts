@@ -145,7 +145,7 @@ export function renderDailyRollupMessages(input: DailyRollupInput): string {
       if (message.role === "assistant" && message.toolCalls.length) {
         lines.push("tools:");
         for (const [index, tool] of message.toolCalls.entries()) {
-          lines.push(`${index + 1}. ${tool.name} ${tool.result?.status || "unknown"} allocatedOutput=${tool.tokens.allocatedOutput ?? "-"} targets=${tool.targetPaths.join(", ") || "-"}`);
+          lines.push(`${index + 1}. ${tool.name} ${tool.result?.status || "unknown"} targets=${tool.targetPaths.join(", ") || "-"}`);
         }
       }
       lines.push("");

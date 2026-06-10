@@ -6,7 +6,7 @@ Public import paths:
 
 Important exports:
 - SDK: `scanRepo`, `openUsage`, `ensureUsageIndex`, `loadUsageDatasetFromIndex`, `resolveConversationRef`, `archiveUsageTelemetry`, `status`, `installHooks`, `uninstallHooks`, `importNative`, `inspectNativeLogFile`, `listNativeSchemas`, `nativeSchemaStatus`, `UsageDataset`, `conversationReport`.
-- Conversation report types: `NormalizedConversation`, `NormalizedConversationMessage`, `NormalizedToolCall`, `TokenUsage`, `ToolTokenAttribution`, `ToolTokenAttributionRow`.
+- Conversation report types: `NormalizedConversation`, `NormalizedConversationMessage`, `NormalizedToolCall`, `TokenUsage`.
 - `ensureUsageIndex` and dataset query helpers default to native transcripts. Pass `sources: ["usage-jsonl"]` for legacy hook JSONL, or `sources: ["native", "usage-jsonl"]` for explicit combined debug reads.
 - CLI specs/runners: `usageCommandSpec`, `runUsageCli`.
 - Types include `QueryResult`, `QuerySupport`, `UsageProvider`, and `UsageConfidence`.
@@ -14,7 +14,6 @@ Important exports:
 Human CLI:
 - `tangent usage ...` is the default activity surface.
 - `tangent usage report <session|latest> --json` prints exactly `usage.conversation.v1`.
-- `tangent usage tokens <session|latest> --by tool --json` prints `usage.tool-tokens.v1` rows with model-visible result size, following model-call input delta, and estimated/allocated per-tool attribution.
 - Raw telemetry views live under explicit `usage events --json`, `usage messages --json`, `usage export`, and hidden `data archive`.
 - Native transcripts are the default human query source. Native-log schema scaffolding lives under hidden `usage native schemas`, `usage native inspect <path>`, and `usage native status`; hook capture remains under hidden `usage hooks ...`.
 

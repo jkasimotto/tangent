@@ -54,17 +54,8 @@ export function printConversationReport(report: NormalizedConversation): void {
       console.log("");
       console.log("  tools:");
       for (const [index, tool] of message.toolCalls.entries()) {
-        const tokenParts = [
-          tool.tokens.allocatedOutput === undefined ? undefined : `allocated_output=${tool.tokens.allocatedOutput}`,
-          tool.tokens.allocatedInput === undefined ? undefined : `allocated_input=${tool.tokens.allocatedInput}`,
-          tool.tokens.nextInputDelta === undefined ? undefined : `next_delta=${tool.tokens.nextInputDelta}`,
-          tool.tokens.resultEstimatedTokens === undefined ? undefined : `result_est=${tool.tokens.resultEstimatedTokens}`,
-          tool.tokens.resultOutputChars === undefined ? undefined : `chars=${tool.tokens.resultOutputChars}`,
-          tool.tokens.confidence === "unknown" ? undefined : `confidence=${tool.tokens.confidence}`
-        ].filter(Boolean).join("  ");
-        const allocated = tokenParts ? `  ${tokenParts}` : "";
         const target = tool.targetPaths.length ? `  ${tool.targetPaths.slice(0, 3).join(", ")}` : "";
-        console.log(`    ${index + 1}. ${tool.name}  ${tool.result?.status || "unknown"}${allocated}${target}`);
+        console.log(`    ${index + 1}. ${tool.name}  ${tool.result?.status || "unknown"}${target}`);
       }
     }
   }

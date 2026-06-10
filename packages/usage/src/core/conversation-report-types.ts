@@ -7,27 +7,7 @@ export type TokenUsage = {
   cacheCreation?: number;
   total?: number;
   source: string;
-  confidence: "provider-reported" | "derived" | "allocated" | "estimated" | "unknown";
-};
-
-export type ToolTokenAttribution = {
-  exact: false;
-  allocatedOutput?: number;
-  allocatedInput?: number;
-  nextInputDelta?: number;
-  nextInputTotal?: number;
-  nextInputCached?: number;
-  nextModelCallEventId?: string;
-  resultEstimatedTokens?: number;
-  resultOutputChars?: number;
-  resultOutputBytes?: number;
-  originalTokenCount?: number;
-  truncated?: boolean;
-  allocationMethod?: "proportional_serialized_tool_use_bytes" | "proportional_tool_result_tokens" | "single_tool_result" | "equal_split" | "none";
-  sourceAssistantMessageId: string;
-  source: string;
-  confidence: "allocated" | "estimated" | "unknown";
-  notes: string[];
+  confidence: "provider-reported" | "derived" | "estimated" | "unknown";
 };
 
 export type NormalizedToolCall = {
@@ -41,7 +21,6 @@ export type NormalizedToolCall = {
     durationMs?: number;
   };
   targetPaths: string[];
-  tokens: ToolTokenAttribution;
   evidenceEventIds: string[];
 };
 

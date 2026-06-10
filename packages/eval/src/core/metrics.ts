@@ -125,42 +125,78 @@ function toolMetrics(events: UsageJsonlLineV1[]): EvalMetrics["tools"] {
   const byModel: Record<string, number> = {};
   const byName: Record<string, number> = {};
   const byCategory: Record<string, number> = {};
+  const callRows: EvalMetrics["tools"]["calls"] = [];
   for (const call of calls) {
+    const name = stringField(call.data, "tool_name") || "unknown";
+    const category = stringField(call.data, "category") || categorizeTool(name);
     increment(byModel, call.actor?.model || "unknown");
-    increment(byName, stringField(call.data, "tool_name") || "unknown");
-    increment(byCategory, stringField(call.data, "category") || categorizeTool(stringField(call.data, "tool_name") || "unknown"));
+    increment(byName, name);
+    increment(byCategory, category);
+    callRows.push({
+      provider: call.provider,
+      conversationId: call.conversation.id,
+      turnId: call.turn?.id,
+      eventId: call.event_id,
+      at: call.observed_at || call.recorded_at,
+      model: call.actor?.model,
+      toolCallId: call.links?.tool_call_id,
+      name,
+      category,
+      targetPaths: pathsFromUnknown(call.data),
+      command: commandTexts(call.data)[0]
+    });
   }
-  return { total: calls.length, byModel, byName, byCategory };
+  return { total: calls.length, byModel, byName, byCategory, calls: callRows };
 }
 
 function tokenMetrics(events: UsageJsonlLineV1[]): EvalMetrics["tokens"] {
-  const byModel = new Map<string, { model: string; input: number; output: number; cacheRead: number; total: number; found: boolean }>();
+  const byModel = new Map<string, { model: string; input: number; output: number; cacheRead: number; cacheCreation: number; total: number; found: boolean }>();
+  const messages: EvalMetrics["tokens"]["messages"] = [];
   for (const event of events) {
-    for (const usage of collectUsageObjects(event.data)) {
-      const model = event.actor?.model || stringField(usage, "model") || "unknown";
-      const row = byModel.get(model) || { model, input: 0, output: 0, cacheRead: 0, total: 0, found: false };
-      row.input += numberField(usage, "input") || numberField(usage, "input_tokens") || 0;
-      row.output += numberField(usage, "output") || numberField(usage, "output_tokens") || 0;
-      row.cacheRead += numberField(usage, "cacheRead") || numberField(usage, "cache_read_input_tokens") || 0;
-      row.total += numberField(usage, "total") || numberField(usage, "total_tokens") || 0;
-      row.found = true;
-      byModel.set(model, row);
-    }
+    const usage = usageObject(event);
+    if (!usage) continue;
+    const model = event.actor?.model || stringField(event.data, "model") || stringField(usage, "model") || "unknown";
+    const totals = usageTotals(usage);
+    const row = byModel.get(model) || { model, input: 0, output: 0, cacheRead: 0, cacheCreation: 0, total: 0, found: false };
+    row.input += totals.input;
+    row.output += totals.output;
+    row.cacheRead += totals.cacheRead;
+    row.cacheCreation += totals.cacheCreation;
+    row.total += totals.total;
+    row.found = true;
+    byModel.set(model, row);
+    messages.push({
+      provider: event.provider,
+      conversationId: event.conversation.id,
+      turnId: event.turn?.id,
+      eventId: event.event_id,
+      at: event.observed_at || event.recorded_at,
+      model,
+      input: totals.input || undefined,
+      output: totals.output || undefined,
+      cacheRead: totals.cacheRead || undefined,
+      cacheCreation: totals.cacheCreation || undefined,
+      total: totals.total || undefined,
+      confidence: usageConfidence(event),
+      source: event.capture.source === "native-import" ? "native" : event.capture.source
+    });
   }
   const rows = [...byModel.values()].filter((row) => row.found).map((row) => {
-    const total = row.total || row.input + row.output + row.cacheRead;
+    const total = row.total || row.input + row.output + row.cacheRead + row.cacheCreation;
     return {
       model: row.model,
       input: row.input || undefined,
       output: row.output || undefined,
       cacheRead: row.cacheRead || undefined,
+      cacheCreation: row.cacheCreation || undefined,
       total: total || undefined,
       confidence: "derived" as const
     };
   });
   return {
     total: rows.reduce((sum, row) => sum + (row.total || 0), 0) || undefined,
-    byModel: rows
+    byModel: rows,
+    messages
   };
 }
 
@@ -264,15 +300,6 @@ function pathsFromCommand(command: string): string[] {
     .filter((part) => Boolean(part) && !part.startsWith("-") && /[./]/.test(part) && !/[;&|]/.test(part));
 }
 
-function collectUsageObjects(value: unknown): Record<string, unknown>[] {
-  if (!value || typeof value !== "object") return [];
-  if (Array.isArray(value)) return value.flatMap(collectUsageObjects);
-  const record = value as Record<string, unknown>;
-  const direct = "usage" in record ? collectUsageObjects(record.usage) : [];
-  const isUsage = Object.keys(record).some((key) => key.includes("token") || key === "input" || key === "output" || key === "total");
-  return isUsage ? [record, ...direct] : [...direct, ...Object.values(record).flatMap(collectUsageObjects)];
-}
-
 function field(value: unknown, key: string): unknown {
   return value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
 }
@@ -285,6 +312,32 @@ function stringField(value: unknown, key: string): string | undefined {
 function numberField(value: unknown, key: string): number | undefined {
   const item = field(value, key);
   return typeof item === "number" && Number.isFinite(item) ? item : undefined;
+}
+
+function usageObject(event: UsageJsonlLineV1): Record<string, unknown> | undefined {
+  const usage = field(event.data, "usage");
+  if (usage && typeof usage === "object" && !Array.isArray(usage)) return usage as Record<string, unknown>;
+  if (event.kind !== "token.usage") return undefined;
+  return event.data && typeof event.data === "object" && !Array.isArray(event.data) ? event.data as Record<string, unknown> : undefined;
+}
+
+function usageTotals(usage: Record<string, unknown>): { input: number; output: number; cacheRead: number; cacheCreation: number; total: number } {
+  const input = numberField(usage, "input") || numberField(usage, "input_tokens") || 0;
+  const output = numberField(usage, "output") || numberField(usage, "output_tokens") || 0;
+  const cacheRead =
+    numberField(usage, "cacheRead") ||
+    numberField(usage, "cache_read_input_tokens") ||
+    numberField(usage, "cached_input_tokens") ||
+    0;
+  const cacheCreation = numberField(usage, "cacheCreation") || numberField(usage, "cache_creation_input_tokens") || 0;
+  const total = numberField(usage, "total") || numberField(usage, "total_tokens") || input + output + cacheRead + cacheCreation;
+  return { input, output, cacheRead, cacheCreation, total };
+}
+
+function usageConfidence(event: UsageJsonlLineV1): EvalMetrics["tokens"]["messages"][number]["confidence"] {
+  const value = stringField(event.data, "usageConfidence") || stringField(event.data, "confidence");
+  if (value === "provider-reported" || value === "derived" || value === "estimated") return value;
+  return event.capture.source === "native-import" ? "provider-reported" : "unknown";
 }
 
 function increment(record: Record<string, number>, key: string): void {

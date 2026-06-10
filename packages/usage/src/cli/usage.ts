@@ -205,9 +205,10 @@ export async function runUsageCli(argv = process.argv.slice(2)): Promise<void> {
       sources,
       conversationId: resolved?.conversationId
     });
-    const rows = stringArg(args.by) === "tool"
-      ? tokenRowsByTool(dataset, resolved?.conversationId)
-      : aggregateUsageEvents(dataset.events, stringArg(args.by), Boolean(args.estimate));
+    if (stringArg(args.by) === "tool") {
+      throw new Error("usage tokens --by tool was removed because providers do not report exact per-tool-call token usage.");
+    }
+    const rows = aggregateUsageEvents(dataset.events, stringArg(args.by), Boolean(args.estimate));
     if (args.json) console.log(JSON.stringify(rows, null, 2));
     else printUsageTokens(rows, providers);
     return;
@@ -528,17 +529,6 @@ function aggregateUsageEvents(events: UsageDataset["events"], by?: string, inclu
   return [...grouped.values()];
 }
 
-function tokenRowsByTool(dataset: UsageDataset, conversationId?: string): Array<Record<string, unknown>> {
-  const conversationIds = conversationId ? [conversationId] : [...new Set(dataset.events.map((event) => event.conversation.id))];
-  return conversationIds
-    .flatMap((id) => dataset.tokens.perToolCall({ conversationId: id }).data)
-    .sort((a, b) =>
-      (b.allocatedInputTokens || 0) - (a.allocatedInputTokens || 0) ||
-      (b.result?.estimatedOutputTokens || 0) - (a.result?.estimatedOutputTokens || 0) ||
-      a.toolCallId.localeCompare(b.toolCallId)
-    ) as Array<Record<string, unknown>>;
-}
-
 function estimatedUsageRows(events: UsageDataset["events"]): UsageRow[] {
   return events.flatMap((event) => {
     if (event.kind !== "message.user" && event.kind !== "message.assistant.visible") return [];
@@ -574,19 +564,6 @@ function printUsageTokens(rows: Array<Record<string, unknown>>, providers: Usage
     if ("usage" in row) {
       console.log(`  ${row.provider} ${row.model || "unknown"}  confidence=${row.confidence}  source=${row.source}`);
       console.log(`    ${JSON.stringify(row.usage)}`);
-    } else if (row.schema === "usage.tool-tokens.v1") {
-      const result = objectField(row.result, "status") ? row.result : undefined;
-      const targetPaths = Array.isArray(row.targetPaths) ? row.targetPaths.filter((item): item is string => typeof item === "string") : [];
-      const target = targetPaths.length ? `  ${targetPaths.slice(0, 3).join(", ")}` : "";
-      const parts = [
-        `allocated_input=${numberField(row, "allocatedInputTokens") ?? "unknown"}`,
-        `next_delta=${numberField(row, "nextInputDelta") ?? "unknown"}`,
-        `next_input=${numberField(objectField(row, "nextModelCall"), "inputTokens") ?? "unknown"}`,
-        `result_est=${numberField(result, "estimatedOutputTokens") ?? "unknown"}`,
-        `chars=${numberField(result, "outputChars") ?? "unknown"}`,
-        `confidence=${stringField(row, "confidence") || "unknown"}`
-      ];
-      console.log(`  ${row.provider} ${row.model || "unknown"}  ${row.toolName || "unknown"}  ${parts.join("  ")}${target}`);
     } else {
       console.log(`  ${row.model}: input=${row.input} output=${row.output} total=${row.total} cacheRead=${row.cacheRead} count=${row.count} confidence=${row.confidence} source=${row.source}`);
     }

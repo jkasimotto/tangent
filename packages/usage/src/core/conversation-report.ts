@@ -1,13 +1,11 @@
 import type { UsageJsonlLineV1 } from "./schema/usage-jsonl-v1.js";
 import type { NormalizedConversation, NormalizedConversationMessage, NormalizedToolCall, TokenUsage } from "./conversation-report-types.js";
-import { toolTokenAttributions } from "./tool-token-attribution.js";
 
 export type {
   NormalizedConversation,
   NormalizedConversationMessage,
   NormalizedToolCall,
-  TokenUsage,
-  ToolTokenAttribution
+  TokenUsage
 } from "./conversation-report-types.js";
 
 type AnnotatedEvent = UsageJsonlLineV1 & {
@@ -47,7 +45,6 @@ export function conversationReport(
   const toolCallsByAssistant = new Map<string, AnnotatedEvent[]>();
   const tokenEventsByAssistant = new Map<string, AnnotatedEvent[]>();
   const resultsByToolCall = collectToolResults(events);
-  const tokenAttributionByToolCall = new Map(toolTokenAttributions(events).map((row) => [row.toolCallId, row]));
 
   for (const event of events) {
     if (event.kind === "message.user") {
@@ -106,30 +103,7 @@ export function conversationReport(
   for (const [messageId, callEvents] of toolCallsByAssistant) {
     const message = assistantById.get(messageId);
     if (!message) continue;
-    message.toolCalls = callEvents.map((call) => normalizedToolCall(call, resultsByToolCall.get(toolCallId(call)), messageId));
-    allocateToolOutputTokens(message.tokens?.output, message.toolCalls);
-    for (const toolCall of message.toolCalls) {
-      const attribution = tokenAttributionByToolCall.get(toolCall.id);
-      if (!attribution) continue;
-      toolCall.tokens = {
-        ...toolCall.tokens,
-        allocatedInput: attribution.allocatedInputTokens,
-        nextInputDelta: attribution.nextInputDelta,
-        nextInputTotal: attribution.nextModelCall?.inputTokens,
-        nextInputCached: attribution.nextModelCall?.cachedInputTokens,
-        nextModelCallEventId: attribution.nextModelCall?.eventId,
-        resultEstimatedTokens: attribution.result?.estimatedOutputTokens,
-        resultOutputChars: attribution.result?.outputChars,
-        resultOutputBytes: attribution.result?.outputBytes,
-        originalTokenCount: attribution.result?.originalTokenCount,
-        truncated: attribution.result?.truncated,
-        allocationMethod: attribution.allocationMethod === "none" ? toolCall.tokens.allocationMethod : attribution.allocationMethod,
-        source: attribution.nextModelCall ? "tool_result.next_model_call.input" : toolCall.tokens.source,
-        confidence: attribution.confidence === "unknown" ? toolCall.tokens.confidence : attribution.confidence,
-        notes: unique([...toolCall.tokens.notes, ...attribution.notes])
-      };
-      toolCall.evidenceEventIds = unique([...toolCall.evidenceEventIds, ...attribution.evidenceEventIds]);
-    }
+    message.toolCalls = callEvents.map((call) => normalizedToolCall(call, resultsByToolCall.get(toolCallId(call))));
   }
 
   const tokenTotals = mergeTokenUsage(messages
@@ -163,37 +137,6 @@ export function conversationReport(
   };
 }
 
-export function allocateToolOutputTokens(
-  assistantOutputTokens: number | undefined,
-  toolCalls: NormalizedToolCall[]
-): Map<string, number | undefined> {
-  const allocations = new Map<string, number | undefined>();
-  if (!assistantOutputTokens || toolCalls.length === 0) return allocations;
-
-  const weights = toolCalls.map((tool) =>
-    Math.max(1, Buffer.byteLength(JSON.stringify({ name: tool.name, input: tool.input })))
-  );
-  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
-
-  for (const [index, tool] of toolCalls.entries()) {
-    const allocated = Math.round(assistantOutputTokens * weights[index]! / totalWeight);
-    tool.tokens = {
-      exact: false,
-      allocatedOutput: allocated,
-      allocationMethod: "proportional_serialized_tool_use_bytes",
-      sourceAssistantMessageId: tool.tokens.sourceAssistantMessageId,
-      source: "assistant_message.tokens.output",
-      confidence: "allocated",
-      notes: [
-        "Provider token usage is reported at assistant-message level; this per-tool-call value is allocated, not exact."
-      ]
-    };
-    allocations.set(tool.id, allocated);
-  }
-
-  return allocations;
-}
-
 function collectToolResults(events: AnnotatedEvent[]): Map<string, ToolResultEvent> {
   const results = new Map<string, ToolResultEvent>();
   for (const event of events) {
@@ -217,7 +160,7 @@ function collectToolResults(events: AnnotatedEvent[]): Map<string, ToolResultEve
   return results;
 }
 
-function normalizedToolCall(call: AnnotatedEvent, result: ToolResultEvent | undefined, sourceAssistantMessageId: string): NormalizedToolCall {
+function normalizedToolCall(call: AnnotatedEvent, result: ToolResultEvent | undefined): NormalizedToolCall {
   const id = toolCallId(call);
   return {
     id,
@@ -236,16 +179,6 @@ function normalizedToolCall(call: AnnotatedEvent, result: ToolResultEvent | unde
         field(call.data, "path") ??
         field(call.data, "file")
     ),
-    tokens: {
-      exact: false,
-      allocationMethod: "none",
-      sourceAssistantMessageId,
-      source: "assistant_message.tokens.output",
-      confidence: "unknown",
-      notes: [
-        "No provider-reported per-tool-call token usage was available."
-      ]
-    },
     evidenceEventIds: unique([call.event_id, result?.event.event_id].filter((id): id is string => Boolean(id)))
   };
 }
@@ -318,7 +251,7 @@ function tokenSource(event: AnnotatedEvent): string {
 }
 
 function tokenConfidence(value: string | undefined): TokenUsage["confidence"] {
-  if (value === "provider-reported" || value === "derived" || value === "allocated" || value === "estimated") return value;
+  if (value === "provider-reported" || value === "derived" || value === "estimated") return value;
   return "unknown";
 }
 

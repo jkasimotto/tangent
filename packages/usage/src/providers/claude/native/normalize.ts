@@ -370,26 +370,19 @@ function toolResultsFromMessage(message: Record<string, unknown>): Array<{ toolC
         category: "other",
         output: redactUnknown(record.content, defaultRedaction),
         status: record.is_error === true ? "error" : "success",
-        ...toolResultMetadata(record.content, "claude-native.tool_result.content")
+        ...toolResultMetadata(record.content)
       }
     }];
   });
 }
 
-function toolResultMetadata(output: unknown, source: string): Record<string, unknown> {
+function toolResultMetadata(output: unknown): Record<string, unknown> {
   const text = typeof output === "string" ? output : output === undefined || output === null ? "" : JSON.stringify(output);
   return {
     output_chars: text.length,
     output_bytes: Buffer.byteLength(text, "utf8"),
-    estimated_output_tokens: estimateTokens(text),
-    truncated: /(?:tokens|characters|bytes) truncated|truncated[^\n]*output|omitted/i.test(text),
-    output_token_source: source
+    truncated: /(?:tokens|characters|bytes) truncated|truncated[^\n]*output|omitted/i.test(text)
   };
-}
-
-function estimateTokens(text: string): number {
-  const compact = text.replace(/\s+/g, " ").trim();
-  return compact ? Math.max(1, Math.ceil(compact.length / 4)) : 0;
 }
 
 function objectValue(value: unknown): Record<string, unknown> | undefined {

@@ -12,7 +12,6 @@ import type {
 import { capabilitiesForProvider } from "./schema/capabilities.js";
 import { conversationReport, type NormalizedConversation } from "./conversation-report.js";
 import { repoIndexPath } from "./paths.js";
-import { toolTokenAttributions, type ToolTokenAttributionRow } from "./tool-token-attribution.js";
 
 export type ConversationListItem = {
   id: string;
@@ -265,10 +264,6 @@ export class UsageDataset {
     byModel: ({ conversationId }: { conversationId: string }): QueryResult<unknown[]> => {
       const rows = aggregateUsage(this.scopedEvents({ conversationId }), "model");
       return this.result(rows, [providerForConversation(this.events, conversationId)], "tokens.byModel");
-    },
-    perToolCall: ({ conversationId }: { conversationId: string }): QueryResult<ToolTokenAttributionRow[]> => {
-      const rows = toolTokenAttributions(this.scopedEvents({ conversationId }));
-      return this.result(rows, [providerForConversation(this.events, conversationId)], "tokens.perToolCall");
     }
   };
 

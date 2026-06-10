@@ -8,7 +8,6 @@ export type CapabilityKey =
   | "tools.results"
   | "tokens.byConversation"
   | "tokens.byModel"
-  | "tokens.perToolCall"
   | "permissions"
   | "subagents"
   | "compactions";
@@ -25,7 +24,6 @@ export function capabilitiesForProvider(provider: UsageProvider): ProviderCapabi
       "tools.results": { status: "partial", source: "native", notes: ["Native Claude Code user messages expose tool_result content when present."] },
       "tokens.byConversation": { status: "supported", source: "native", notes: ["Native Claude Code assistant messages include provider-reported usage fields when present."] },
       "tokens.byModel": { status: "supported", source: "native", notes: ["Native Claude Code assistant messages include provider-reported usage fields when present."] },
-      "tokens.perToolCall": { status: "partial", source: "native", notes: ["Tool attribution is estimated from native tool_result size and following assistant message usage."] },
       permissions: { status: "partial", source: "native", notes: ["Permission mode records may appear in native transcripts, but request decisions are not normalized yet."] },
       subagents: { status: "partial", source: "native", notes: ["Sidechain and agent records are present in native transcripts and parsed permissively."] },
       compactions: { status: "partial", source: "native", notes: ["Native transcript summary records may expose compaction-like state."] }
@@ -40,7 +38,6 @@ export function capabilitiesForProvider(provider: UsageProvider): ProviderCapabi
     "tools.results": { status: "supported", source: "native", notes: ["Native Codex response_item records include function_call_output tool results."] },
     "tokens.byConversation": { status: "supported", source: "native", notes: ["Native Codex token_count records include provider-reported per-model-call usage snapshots."] },
     "tokens.byModel": { status: "supported", source: "native", notes: ["Native Codex token_count records include provider-reported per-model-call usage snapshots."] },
-    "tokens.perToolCall": { status: "partial", source: "native", notes: ["Tool attribution is estimated from native function_call_output size and following model-call input usage."] },
     permissions: { status: "partial", source: "native", notes: ["Permission context may appear in native records, but request decisions are not normalized yet."] },
     subagents: { status: "partial", source: "native", notes: ["Subagent activity may appear as native tool calls or transcript records."] },
     compactions: { status: "partial", source: "native", notes: ["Native compacted records expose compaction summaries when present."] }

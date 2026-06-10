@@ -67,7 +67,7 @@ function commonJsonOptions(names: string[]) {
     if (name === "trace") return { name, description: "Print timing trace" };
     if (name === "provider") return { name, takesValue: true, values: ["claude", "codex"], description: "Provider filter" };
     if (name === "source") return { name, takesValue: true, values: ["native", "hooks", "all"], description: "Data source" };
-    if (name === "by") return { name, takesValue: true, values: ["model", "tool"], description: "Grouping mode" };
+    if (name === "by") return { name, takesValue: true, values: ["model"], description: "Grouping mode" };
     if (name === "before" || name === "date" || name === "since" || name === "until") return { name, takesValue: true, description: `${name} date` };
     if (name === "internal" || name === "include-results" || name === "force" || name === "dry-run" || name === "estimate") return { name, description: "Enable this option" };
     return { name, takesValue: true, description: `${name} value` };

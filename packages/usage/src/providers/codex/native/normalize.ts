@@ -205,7 +205,7 @@ export function normalizeCodexNativeRecords(records: CodexNativeRecord[], option
         const callId = stringValue(payload?.call_id);
         const call = callId ? toolCallsById.get(callId) : undefined;
         const output = payload?.output;
-        const metadata = toolResultMetadata(output, "codex-native.function_call_output.output");
+        const metadata = toolResultMetadata(output);
         events.push(base(source, "tool.result", {
           tool_name: call?.toolName || "unknown",
           category: call?.category || "other",
@@ -426,29 +426,15 @@ function inferToolStatus(output: unknown): "success" | "error" | "unknown" {
   return match[1] === "0" ? "success" : "error";
 }
 
-function toolResultMetadata(output: unknown, source: string): Record<string, unknown> {
+function toolResultMetadata(output: unknown): Record<string, unknown> {
   const text = typeof output === "string" ? output : output === undefined || output === null ? "" : JSON.stringify(output);
   const bytes = Buffer.byteLength(text, "utf8");
-  const originalTokenCount = originalTokenCountFromToolOutput(text);
   const truncation = /(?:tokens|characters|bytes) truncated|truncated[^\n]*output|omitted/i.test(text);
   return {
     output_chars: text.length,
     output_bytes: bytes,
-    estimated_output_tokens: estimateTokens(text),
-    original_token_count: originalTokenCount,
-    truncated: truncation,
-    output_token_source: source
+    truncated: truncation
   };
-}
-
-function originalTokenCountFromToolOutput(text: string): number | undefined {
-  const match = /Original token count: (\d+)/.exec(text);
-  return match ? Number(match[1]) : undefined;
-}
-
-function estimateTokens(text: string): number {
-  const compact = text.replace(/\s+/g, " ").trim();
-  return compact ? Math.max(1, Math.ceil(compact.length / 4)) : 0;
 }
 
 function summaryText(value: unknown): string | undefined {

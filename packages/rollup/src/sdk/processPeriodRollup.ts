@@ -25,6 +25,9 @@ import {
   type ProcessRows
 } from "./processShared.js";
 
+/**
+ * Builds rollup input from selected turns, writes artifacts, and invokes summarization.
+ */
 export async function processPeriodRollup(args: {
   loaded: ProcessLoadedConfig;
   rows: ProcessRows;
@@ -60,17 +63,31 @@ export async function processPeriodRollup(args: {
   });
   const inputHash = hashObject(input);
   const inputPath = await writeRollupInputCache({ loaded, input, inputHash });
-  await writeRollupMessagesCache({ loaded, key: period.key, inputHash, markdown: renderRollupMessages(input) });
-  await writeRollupPromptCache({
+  const messagesPath = await writeRollupMessagesCache({
     loaded,
     key: period.key,
     inputHash,
-    prompt: rollupPrompt({ inputPath, period, purpose })
+    markdown: renderRollupMessages(input)
   });
+  const prompt = rollupPrompt({ inputPath, period, purpose });
+  const promptPath = await writeRollupPromptCache({
+    loaded,
+    key: period.key,
+    inputHash,
+    prompt
+  });
+
+  const artifacts = {
+    inputPath,
+    messagesPath,
+    promptPath,
+    outputPath: undefined as string | undefined
+  };
 
   try {
     const rollupOutput = await runner.summarizeRollup(input);
     const rollupOutputPath = await writeRollupOutputCache({ loaded, key: period.key, output: rollupOutput, inputHash });
+    artifacts.outputPath = rollupOutputPath;
     const note = await writeGeneratedRollupMarkdown(loaded, period, rollupOutput.markdown, {
       filename: noteOutput?.filename,
       outputPath: noteOutput?.outputPath,
@@ -107,6 +124,7 @@ export async function processPeriodRollup(args: {
       },
       providerStatus,
       failures: [],
+      artifacts,
       warnings: rollupOutput.sourceCaveats
     };
   } catch (error) {
@@ -151,6 +169,7 @@ export async function processPeriodRollup(args: {
       digests: rows.map((row) => ({ sourceKey: row.sourceKey, path: "", status: "failed" as const, reason })),
       note: { path: notePath, created: false, updated: false },
       providerStatus,
+      artifacts,
       failures,
       warnings
     };

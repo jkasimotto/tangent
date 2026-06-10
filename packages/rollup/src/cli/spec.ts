@@ -7,7 +7,7 @@ export const rollupCommandSpec: CliCommandSpec = {
   description: "Print, generate, and read private rollup notes from usage",
   args: "[today|yesterday|YYYY-MM-DD|YYYYMMDD|YYYYMMDD-YYYYMMDD|repo]",
   values: dateValues,
-  options: processOptions(["purpose", "focus", "title", "kind", "audience", "output", "filename", "overwrite"]),
+  options: processOptions(["purpose", "focus", "title", "kind", "audience", "output", "filename", "overwrite", "dry-run", "explain"]),
   subcommands: [
     {
       name: "init",
@@ -63,6 +63,9 @@ export const rollupCommandSpec: CliCommandSpec = {
   ]
 };
 
+/**
+ * Returns JSON/date options used by rollup `status` command.
+ */
 function jsonDateOptions() {
   return [
     { name: "json", description: "Print JSON" },
@@ -70,6 +73,9 @@ function jsonDateOptions() {
   ];
 }
 
+/**
+ * Builds rollup command-line options used by multiple subcommands.
+ */
 function processOptions(extra: string[] = []) {
   const options = [
     { name: "date", takesValue: true, values: dateValues, description: "Rollup selector" },
@@ -98,6 +104,9 @@ function processOptions(extra: string[] = []) {
   return options;
 }
 
+/**
+ * Returns provider-related options for provider diagnostics subcommands.
+ */
 function providerOptions() {
   return [
     { name: "provider", takesValue: true, values: ["claude-cli", "claude-sdk", "codex-cli"], description: "Summary provider" },

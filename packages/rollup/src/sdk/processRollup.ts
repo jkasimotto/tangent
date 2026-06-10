@@ -56,9 +56,18 @@ export type ProcessResult = {
     reason: string;
     detailsPath: string;
   }>;
+  artifacts?: {
+    inputPath: string;
+    messagesPath: string;
+    promptPath: string;
+    outputPath?: string;
+  };
   warnings: string[];
 };
 
+/**
+ * Orchestrates candidate selection and rollup execution for a selected period.
+ */
 export async function processRollup(options: ProcessRollupOptions): Promise<ProcessResult> {
   const loaded = await loadConfig({ repo: options.repo });
   await ensureOutputDirs(loaded.paths);

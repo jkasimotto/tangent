@@ -141,23 +141,6 @@ export type UsageJsonlLineV2 = {
 
 export type UsageJsonlLineV1 = UsageJsonlLineV2;
 
-export type RawHookLineV1 = {
-  schema: "usage.raw-hook.v1";
-  provider: UsageProvider;
-  session_id: string;
-  recorded_at: string;
-  capture: {
-    scope: CaptureScope;
-    content_mode: ContentMode;
-  };
-  repo: {
-    root?: string;
-    root_hash?: string;
-    cwd?: string;
-  };
-  raw: unknown;
-};
-
 export type ProviderSupport = {
   status: "supported" | "partial" | "unsupported";
   source: "native" | "hook" | "best-effort" | "none";

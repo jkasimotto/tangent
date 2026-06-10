@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { changedFiles, currentCommit, diffStat, statusPorcelain } from "@tangent/repo/git";
 import { commitAll } from "@tangent/repo/worktree";
@@ -41,6 +41,7 @@ async function captureManualTail(variant: EvalRunVariantState): Promise<void> {
 async function collectVariantMetrics(manifest: EvalRunManifest, variant: EvalRunVariantState): Promise<EvalMetrics> {
   const since = variant.startedAt || manifest.createdAt;
   const until = variant.endedAt || new Date().toISOString();
+  const worktreeAliases = await pathAliases(variant.worktree);
   const scan = await scanRepo({
     repo: variant.worktree,
     providers: ["claude", "codex"],
@@ -52,7 +53,7 @@ async function collectVariantMetrics(manifest: EvalRunManifest, variant: EvalRun
     return undefined;
   });
 
-  const events = (scan?.events || []).filter((event) => eventInVariant(event, variant, since, until));
+  const events = (scan?.events || []).filter((event) => eventInVariant(event, worktreeAliases, since, until));
   const conversations = uniqueConversations(events);
   const toolStats = toolMetrics(events);
   const tokenStats = tokenMetrics(events);
@@ -75,7 +76,10 @@ async function collectVariantMetrics(manifest: EvalRunManifest, variant: EvalRun
       endedAt: variant.endedAt,
       durationMs: durationMs(variant.startedAt, variant.endedAt),
       planDurationMs: durationMs(planPhase?.startedAt, planPhase?.endedAt),
-      implementationDurationMs: durationMs(implPhase?.startedAt, implPhase?.endedAt)
+      implementationDurationMs: durationMs(implPhase?.startedAt, implPhase?.endedAt),
+      activeAgentDurationMs: sumDurations(variant.phases.map((phase) => phase.agentDurationMs)),
+      planActiveAgentDurationMs: planPhase?.agentDurationMs,
+      implementationActiveAgentDurationMs: implPhase?.agentDurationMs
     },
     tokens: tokenStats,
     tools: toolStats,
@@ -100,12 +104,12 @@ async function collectVariantMetrics(manifest: EvalRunManifest, variant: EvalRun
   return metrics;
 }
 
-function eventInVariant(event: UsageJsonlLineV1, variant: EvalRunVariantState, since: string, until: string): boolean {
+function eventInVariant(event: UsageJsonlLineV1, worktreeAliases: string[], since: string, until: string): boolean {
   const observed = event.observed_at || event.recorded_at;
   if (observed < since || observed > until) return false;
   const cwd = event.repo.cwd || "";
   const root = event.repo.root || "";
-  return isInside(variant.worktree, cwd) || isInside(variant.worktree, root);
+  return isInsideAny(worktreeAliases, cwd) || isInsideAny(worktreeAliases, root);
 }
 
 function uniqueConversations(events: UsageJsonlLineV1[]): EvalMetrics["conversations"] {
@@ -358,6 +362,22 @@ function durationMs(startedAt?: string, endedAt?: string): number | undefined {
   const ended = new Date(endedAt).getTime();
   if (Number.isNaN(started) || Number.isNaN(ended)) return undefined;
   return Math.max(0, ended - started);
+}
+
+function sumDurations(values: Array<number | undefined>): number | undefined {
+  const present = values.filter((value): value is number => typeof value === "number");
+  if (!present.length) return undefined;
+  return present.reduce((sum, value) => sum + value, 0);
+}
+
+async function pathAliases(filePath: string): Promise<string[]> {
+  const resolved = path.resolve(filePath);
+  const canonical = await realpath(filePath).catch(() => resolved);
+  return [...new Set([resolved, canonical])];
+}
+
+function isInsideAny(bases: string[], target: string): boolean {
+  return bases.some((base) => isInside(base, target));
 }
 
 function isInside(base: string, target: string): boolean {

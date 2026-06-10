@@ -1,9 +1,10 @@
 # @tangent/eval Architecture
 
-Prepare, run, collect, compare, and report coding-agent eval variants.
+Prepare, run, collect, compare, report, and inspect coding-agent eval variants in a local UI.
 
 Rules:
 - Eval may consume Usage metrics.
 - Keep eval specs, contexts, and manifests in Eval.
+- The eval UI is local-only, served by `@tangent/eval`, and reads existing run artifacts without uploading data.
 
 Refer to ../../../docs/architecture/package-boundaries.md and ../../../docs/architecture/dependency-graph.md for monorepo boundaries.

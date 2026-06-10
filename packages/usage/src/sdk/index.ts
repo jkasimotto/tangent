@@ -4,8 +4,6 @@ export { archiveUsageTelemetry, ensureUsageIndex, loadUsageDatasetFromIndex, res
 export type { ResolvedConversationRef, UsageArchiveOptions, UsageArchiveResult, UsageDatasetQuery, UsageIndexOptions, UsageIndexResult, UsageIndexSource } from "./indexStore.js";
 export { status } from "./status.js";
 export type { RepoStatus, StatusOptions } from "./status.js";
-export { installHooks, uninstallHooks } from "./installHooks.js";
-export type { InstallHooksOptions, HookInstallResult } from "./installHooks.js";
 export { importNative } from "./importNative.js";
 export type { ImportNativeOptions, ImportNativeResult } from "./importNative.js";
 export { inspectNativeLogFile } from "../providers/native/inspect.js";
@@ -20,8 +18,6 @@ export type {
   NativeVersionCompatibility,
   NativeVersionRange
 } from "../providers/native/types.js";
-export { trackRepo, untrackRepo } from "./trackRepo.js";
-export type { TrackRepoOptions } from "./trackRepo.js";
 export { UsageDataset } from "../core/dataset.js";
 export type { ActivityTimelineItem, ConversationListItem, ToolCallWithResult, TurnListItem, VisibleMessage } from "../core/dataset.js";
 export { conversationReport } from "../core/conversation-report.js";

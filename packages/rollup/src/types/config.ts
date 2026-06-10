@@ -2,10 +2,6 @@ import type { SummaryProviderConfig } from "./provider.js";
 
 export type RollupOutputMode = "user-global" | "repo-local-private";
 export type DateBucketMode = "turnEndedAt" | "turnStartedAt" | "lastActivityAt";
-export type RollupNoteSection =
-  | "topics"
-  | "metrics"
-  | "sourceCaveats";
 
 export type RollupConfig = {
   schema: "rollup.config.v1";
@@ -51,15 +47,8 @@ export type RollupConfig = {
   };
   summary: {
     provider: SummaryProviderConfig;
-    turnDigestSchemaVersion: "turn-digest.v1";
-    topicRollupSchemaVersion: "topic-rollup.v1";
-    rollupNoteSchemaVersion: "rollup-note.v1";
-    writeDigestCache: boolean;
   };
   note: {
     titleTemplate: string;
-    sections: RollupNoteSection[];
-    includeFollowUps: boolean;
-    includeMetrics: boolean;
   };
 };

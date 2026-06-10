@@ -19,7 +19,6 @@
   "dependencies": {
     "@tangent/core": "file:../core",
     "@tangent/repo": "file:../repo",
-    "@tangent/hooks": "file:../hooks",
     "better-sqlite3": "^11.10.0"
   },
   "devDependencies": {

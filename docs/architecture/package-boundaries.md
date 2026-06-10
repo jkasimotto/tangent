@@ -3,14 +3,13 @@
 Platform packages:
 - @tangent/core contains pure shared primitives. It must not shell out, write provider config, or know product domains.
 - @tangent/repo contains repo discovery, git, worktree, filesystem path, and safe path helpers.
-- @tangent/hooks contains Claude/Codex hook event catalogs, config paths, config merge/remove, install/uninstall/status, shell quoting, and repo-local excludes.
 - @tangent/agent-runtime contains process execution and reusable agent runner primitives.
 - @tangent/governance contains custom architecture/docs/lint checks.
 
 Vertical apps:
-- @tangent/usage owns conversation telemetry schemas, native transcript normalization, hook normalization, native-log schema compatibility checks, assistant-centered conversation reports, datasets, SDK, and CLI.
+- @tangent/usage owns conversation telemetry schemas, native transcript normalization, legacy usage-jsonl reading, native-log schema compatibility checks, assistant-centered conversation reports, datasets, SDK, and CLI.
 - @tangent/rollup owns rollup note schemas, period-level rollup inputs, examples, rendering, ledgers, and summarization workflows.
-- @tangent/eval owns eval specs, contexts, run manifests, metrics, and reports.
+- @tangent/eval owns eval specs, contexts, run manifests, metrics, reports, diffs, and the local eval comparison UI.
 - @tangent/search owns structural indexing and search.
 
 Root CLI:
@@ -21,7 +20,7 @@ Hard rules:
 - rollup and eval may depend on usage.
 - usage must not depend on rollup, eval, or search.
 - search must not depend on usage, rollup, or eval.
-- hooks must not import Usage schemas.
+- Hook install and hook record product surfaces are retired; do not add new provider hook config mechanics.
 - Native provider transcript formats are interpreted in usage, not hooks. Schema inference tools may live outside runtime packages, but runtime compatibility checks and user-facing version messages belong in usage.
 - Rollup must consume Usage reports rather than parsing Claude or Codex provider schemas directly.
 - agent-runtime must not import Rollup or Eval schemas.

@@ -1,7 +1,6 @@
 import { loadConfig } from "../core/config.js";
 import { rollupPeriodArg } from "../core/time.js";
 import { readRollupNote } from "../core/note-writer.js";
-import type { RollupNote } from "../types/rollup-note.js";
 
 export type GetRollupNoteOptions = {
   repo: string;
@@ -12,7 +11,6 @@ export type GetRollupNoteOptions = {
 export type RollupNoteReadResult = {
   path: string;
   markdown: string;
-  model?: RollupNote;
   exists: boolean;
   stale: boolean;
 };

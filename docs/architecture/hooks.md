@@ -1,18 +1,9 @@
-# Hooks Architecture
+# Retired Hook Capture
 
-@tangent/hooks owns provider mechanics:
-- provider hook event catalogs
-- hook config paths
-- matcher rules
-- hook command construction
-- config merge/remove
-- install/uninstall/status
-- repo-local git exclude behavior
+Provider hook installation and hook recording are retired Tangent product surfaces.
 
-@tangent/usage owns telemetry interpretation:
-- provider raw hook input to Usage events
-- Usage raw-hook persistence
-- Usage event schema and dataset model
-- tracking policy and redaction choices
-
-The hook record command is injectable so @tangent/hooks does not depend on Usage. Today Usage installs hooks with tangent usage hook record; future shared raw hook dispatch can move to tangent hooks record without changing provider config code.
+Current rules:
+- New usage data comes from native Claude/Codex transcript indexing.
+- Usage keeps `usage-jsonl` readers and `capture.source: "hook"` schema compatibility so old event files still load.
+- Tangent must not add new hook install, hook record, provider hook config merge, or hook allowlist tracking code.
+- Stale managed hook commands should be reported by diagnostics or documented for manual cleanup, not regenerated.

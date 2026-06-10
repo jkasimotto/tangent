@@ -29,36 +29,9 @@ export const usageCommandSpec: CliCommandSpec = {
     },
     { name: "archive", description: "Archive indexed raw telemetry", hidden: true, args: "[repo]", options: commonJsonOptions(["before", "dry-run", "provider"]) },
     { name: "import-native", description: "Import provider native transcripts as best-effort backfill", hidden: true, args: "[repo]", options: commonJsonOptions(["provider"]) },
-    {
-      name: "hooks",
-      description: "Install or uninstall provider hooks",
-      hidden: true,
-      subcommands: [
-        { name: "install", description: "Install usage hooks", options: hookOptions() },
-        { name: "uninstall", description: "Remove usage hooks", options: hookOptions() }
-      ]
-    },
-    {
-      name: "hook",
-      description: "Hook runner entrypoints",
-      hidden: true,
-      subcommands: [
-        { name: "record", description: "Record provider hook input", options: hookOptions(["claude", "codex"]) }
-      ]
-    },
     { name: "doctor", description: "Show verbose diagnostics", hidden: true, args: "[repo]", options: commonJsonOptions(["trace"]) }
   ]
 };
-
-function hookOptions(providerValues = ["all", "claude", "codex"]) {
-  return [
-    { name: "provider", takesValue: true, values: providerValues, description: "Provider to configure" },
-    { name: "scope", takesValue: true, values: ["global", "repo-local", "repo-shared"], description: "Hook installation scope" },
-    { name: "repo", takesValue: true, description: "Repository path" },
-    { name: "repo-root", takesValue: true, description: "Repository root for hook recording" },
-    { name: "tracking", takesValue: true, values: ["all", "allowlist", "off"], description: "Tracking policy" }
-  ];
-}
 
 function commonJsonOptions(names: string[]) {
   return names.map((name) => {
@@ -66,7 +39,7 @@ function commonJsonOptions(names: string[]) {
     if (name === "verbose") return { name, description: "Print verbose details" };
     if (name === "trace") return { name, description: "Print timing trace" };
     if (name === "provider") return { name, takesValue: true, values: ["claude", "codex"], description: "Provider filter" };
-    if (name === "source") return { name, takesValue: true, values: ["native", "hooks", "all"], description: "Data source" };
+    if (name === "source") return { name, takesValue: true, values: ["native", "all"], description: "Data source" };
     if (name === "by") return { name, takesValue: true, values: ["model"], description: "Grouping mode" };
     if (name === "before" || name === "date" || name === "since" || name === "until") return { name, takesValue: true, description: `${name} date` };
     if (name === "internal" || name === "include-results" || name === "force" || name === "dry-run" || name === "estimate") return { name, description: "Enable this option" };

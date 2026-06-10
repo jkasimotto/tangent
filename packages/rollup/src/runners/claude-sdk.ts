@@ -1,7 +1,6 @@
-import type { RollupInput, RollupOutput, TurnDigest, TurnDigestInput } from "../types/digest.js";
+import type { RollupInput, RollupOutput } from "../types/digest.js";
 import type { RunnerStatus, SummaryProviderConfig, SummaryRunner } from "../types/provider.js";
-import { rollupPrompt, turnDigestPrompt } from "../core/prompts.js";
-import { normalizeTurnDigest } from "../core/schemas.js";
+import { rollupPrompt } from "../core/prompts.js";
 import { stripMarkdownFence } from "@tangent/agent-runtime/process";
 
 type ClaudeSdkConfig = Extract<SummaryProviderConfig, { kind: "claude-sdk" }>;
@@ -20,35 +19,6 @@ export class ClaudeSdkSummaryRunner implements SummaryRunner {
     } catch (error) {
       return { available: false, authStatus: "unknown", warnings: [(error as Error).message] };
     }
-  }
-
-  async summarizeTurn(input: TurnDigestInput): Promise<TurnDigest> {
-    const sdk = await importClaudeSdk();
-    const chunks: string[] = [];
-    const query = sdk.query({
-      prompt: turnDigestPrompt(input),
-      options: {
-        model: this.config.model,
-        maxTurns: 1,
-        settingSources: [],
-        allowedTools: [],
-        disallowedTools: ["Bash", "Read", "Write", "Edit"]
-      }
-    });
-    for await (const message of query) collectText(message, chunks);
-    const text = chunks.join("\n").trim();
-    if (!text) throw new Error("Claude SDK returned empty output.");
-    return normalizeTurnDigest(JSON.parse(stripMarkdownFence(text)) as unknown, { source: {
-      sourceKey: input.source.sourceKey,
-      provider: input.source.provider,
-      conversationId: input.source.conversationId,
-      turnId: input.source.turnId,
-      dateBucket: input.source.dateBucket,
-      startedAt: input.source.startedAt,
-      endedAt: input.source.endedAt,
-      wallTimeMs: input.source.wallTimeMs,
-      inputHash: ""
-    } });
   }
 
   async summarizeRollup(input: RollupInput): Promise<RollupOutput> {

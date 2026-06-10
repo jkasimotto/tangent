@@ -9,6 +9,9 @@ export type EvalPhaseRunState = {
   mode?: "read-only" | "workspace-write" | "danger-full-access";
   startedAt?: string;
   endedAt?: string;
+  agentStartedAt?: string;
+  agentEndedAt?: string;
+  agentDurationMs?: number;
   status?: EvalRunStatus;
   outputPath?: string;
   promptPath?: string;

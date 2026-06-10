@@ -22,7 +22,7 @@ export async function processPeriodRollup(args: {
   loaded: ProcessLoadedConfig;
   rows: ProcessRows;
   dataset: Awaited<ReturnType<typeof openUsage>>;
-  runner: SummaryRunner & { summarizeRollup: NonNullable<SummaryRunner["summarizeRollup"]> };
+  runner: SummaryRunner;
   period: RollupPeriod;
   providerStatus: RunnerStatus;
 }): Promise<ProcessResult> {
@@ -45,8 +45,6 @@ export async function processPeriodRollup(args: {
         row,
         "processed",
         inputHash,
-        undefined,
-        undefined,
         undefined,
         undefined,
         "rollup.input.v1",
@@ -96,8 +94,6 @@ export async function processPeriodRollup(args: {
         row,
         "failed",
         inputHash,
-        undefined,
-        undefined,
         reason,
         failurePath,
         "rollup.input.v1",

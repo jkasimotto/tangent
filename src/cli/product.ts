@@ -61,12 +61,6 @@ export const devCommandSpec: CliCommandSpec = {
   ]
 };
 
-export const hooksCommandSpec: CliCommandSpec = {
-  name: "hooks",
-  description: "Low-level provider hook management",
-  hidden: true
-};
-
 export const dataCommandSpec: CliCommandSpec = {
   name: "data",
   description: "Raw data import/export commands",

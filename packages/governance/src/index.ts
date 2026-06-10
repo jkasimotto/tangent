@@ -52,10 +52,9 @@ export const governanceCommandSpec: CliCommandSpec = {
 const allowedPackageDeps: Record<string, string[]> = {
   "@tangent/core": [],
   "@tangent/repo": ["@tangent/core"],
-  "@tangent/hooks": ["@tangent/core", "@tangent/repo"],
   "@tangent/agent-runtime": ["@tangent/core"],
   "@tangent/governance": ["@tangent/core", "@tangent/repo"],
-  "@tangent/usage": ["@tangent/core", "@tangent/repo", "@tangent/hooks"],
+  "@tangent/usage": ["@tangent/core", "@tangent/repo"],
   "@tangent/rollup": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage"],
   "@tangent/eval": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage"],
   "@tangent/search": ["@tangent/core", "@tangent/repo"]
@@ -224,7 +223,7 @@ async function lintImports(ctx: LintContext): Promise<GovernanceFinding[]> {
           file: relative(ctx.root, file),
           message: `${owner.name} imports ${importedPackage}, which violates package boundaries.`,
           fix: [
-            "Move shared behavior to core, repo, hooks, or agent-runtime.",
+            "Move shared behavior to core, repo, or agent-runtime.",
             "Keep vertical apps independent except rollup/eval -> usage.",
             "Update docs/architecture/dependency-graph.md only with an intentional graph change."
           ]
@@ -286,21 +285,21 @@ async function lintSharedHelpers(ctx: LintContext): Promise<GovernanceFinding[]>
 
 async function lintHookBoundaries(ctx: LintContext): Promise<GovernanceFinding[]> {
   const findings: GovernanceFinding[] = [];
-  const providerHookPattern = /(claude|codex)HookEvents\b|(claude|codex)HookPath\b|(claude|codex)HooksConfig\b|settings\.local\.json|\.codex["']?,\s*["']hooks\.json/;
+  const providerHookPattern = /@tangent\/hooks|hook-runner|usage hook record|usage hooks install|installHooks\b|uninstallHooks\b|recordHook\b/;
   for (const file of await sourceFiles(ctx.root)) {
     const rel = relative(ctx.root, file);
-    if (rel.startsWith("packages/hooks/") || rel.startsWith("packages/governance/")) continue;
+    if (rel.startsWith("packages/governance/")) continue;
     const text = await readFile(file, "utf8");
     if (providerHookPattern.test(text)) {
       findings.push({
-        rule: "hooks/no-provider-hook-code-outside-hooks",
+        rule: "hooks/no-hook-capture-product-surface",
         severity: "error",
         file: rel,
-        message: "contains provider hook config/path/event mechanics outside @tangent/hooks.",
+        message: "contains deprecated hook install or record product surface.",
         fix: [
-          "Move provider hook event catalogs, config paths, shell quoting, and config merge/remove into packages/hooks.",
-          "Keep Usage-specific normalization in @tangent/usage.",
-          "Import hook infrastructure through @tangent/hooks public exports."
+          "Keep native transcript indexing as the usage source of truth.",
+          "Preserve old usage-jsonl parsing only for historical data.",
+          "Do not reintroduce hook install, hook record, or @tangent/hooks dependencies."
         ]
       });
     }

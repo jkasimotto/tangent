@@ -3,9 +3,8 @@ import { pathToFileURL } from "node:url";
 import { renderCommandHelp } from "@tangent/core";
 
 import { parseArgs } from "./args.js";
-import { digestCommand, inputCommand, renderCommand, topicsCommand } from "./commands/artifacts.js";
+import { renderCommand } from "./commands/artifacts.js";
 import { configCommand } from "./commands/config.js";
-import { digestsCommand } from "./commands/digests.js";
 import { initCommand } from "./commands/init.js";
 import { noteCommand } from "./commands/note.js";
 import { processCommand } from "./commands/process.js";
@@ -31,10 +30,6 @@ export async function runRollupCli(argv = process.argv.slice(2)): Promise<void> 
   if (command === "path") return noteCommand({ ...args, _: ["note", "path", ...args._.slice(1)] });
   if (command === "reprocess" || command === "retry") return reprocessCommand(args);
   if (command === "provider") return providerCommand(args);
-  if (command === "digests") return digestsCommand(args);
-  if (command === "input") return inputCommand(args);
-  if (command === "digest") return digestCommand(args);
-  if (command === "topics") return topicsCommand(args);
   if (command === "render") return renderCommand(args);
   if (command === "config") return configCommand(args);
   return processCommand({ ...args, _: ["rollup", ...args._] });

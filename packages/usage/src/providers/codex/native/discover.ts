@@ -1,6 +1,6 @@
 import path from "node:path";
 import { homedir } from "node:os";
-import { readFile, readdir, stat } from "node:fs/promises";
+import { readFile, readdir, realpath, stat } from "node:fs/promises";
 
 export function codexHome(): string {
   return process.env.CODEX_HOME || path.join(homedir(), ".codex");
@@ -10,14 +10,15 @@ export async function discoverCodexNative(repoRoot?: string): Promise<string[]> 
   const sessionsDir = path.join(codexHome(), "sessions");
   const files = await listJsonlFiles(sessionsDir);
   if (!repoRoot) return files;
+  const canonicalRepoRoot = await canonicalPath(repoRoot);
   const matching: string[] = [];
   for (const file of files) {
-    if (await codexTranscriptBelongsToRepo(file, repoRoot)) matching.push(file);
+    if (await codexTranscriptBelongsToRepo(file, canonicalRepoRoot)) matching.push(file);
   }
   return matching;
 }
 
-async function codexTranscriptBelongsToRepo(filePath: string, repoRoot: string): Promise<boolean> {
+async function codexTranscriptBelongsToRepo(filePath: string, canonicalRepoRoot: string): Promise<boolean> {
   try {
     const text = await readFile(filePath, "utf8");
     for (const line of text.split(/\r?\n/).slice(0, 200)) {
@@ -32,12 +33,16 @@ async function codexTranscriptBelongsToRepo(filePath: string, repoRoot: string):
       const payload = (record as { payload?: unknown }).payload;
       if (!payload || typeof payload !== "object" || Array.isArray(payload)) continue;
       const cwd = (payload as { cwd?: unknown }).cwd;
-      if (typeof cwd === "string" && path.resolve(cwd) === path.resolve(repoRoot)) return true;
+      if (typeof cwd === "string" && await canonicalPath(cwd) === canonicalRepoRoot) return true;
     }
   } catch {
     return false;
   }
   return false;
+}
+
+async function canonicalPath(filePath: string): Promise<string> {
+  return realpath(filePath).catch(() => path.resolve(filePath));
 }
 
 async function listJsonlFiles(root: string): Promise<string[]> {

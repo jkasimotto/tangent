@@ -113,27 +113,11 @@ export async function processRollup(options: ProcessRollupOptions): Promise<Proc
       warnings: []
     };
   }
-  if (!runner.summarizeRollup) {
-    return {
-      repoId: loaded.repo.id,
-      period,
-      rollupKey: period.key,
-      candidates: rows.length,
-      processed: 0,
-      skipped: 0,
-      failed: rows.length,
-      digests: rows.map((row) => ({ sourceKey: row.sourceKey, path: "", status: "failed" as const, reason: "Summary provider does not support roll-up" })),
-      note: { path: fallbackNotePath, created: false, updated: false },
-      providerStatus,
-      failures: rows.map((row) => ({ sourceKey: row.sourceKey, code: "summary-runner-failed", reason: "Summary provider does not support roll-up", detailsPath: "" })),
-      warnings: ["Summary provider does not support roll-up."]
-    };
-  }
   return processPeriodRollup({
     loaded,
     rows,
     dataset,
-    runner: runner as SummaryRunner & { summarizeRollup: NonNullable<SummaryRunner["summarizeRollup"]> },
+    runner,
     period,
     providerStatus
   });

@@ -16,10 +16,6 @@ export type RollupOutputPaths = {
   examplesDir: string;
   artifactsDir: string;
   rollupsDir: string;
-  inputsDir: string;
-  turnDigestsDir: string;
-  topicRollupsDir: string;
-  renderDir: string;
   failuresDir: string;
 };
 
@@ -58,10 +54,6 @@ export function resolveOutputPaths(repo: RollupRepoInfo, config: RollupConfig): 
     examplesDir: path.join(baseDir, "examples"),
     artifactsDir,
     rollupsDir: path.join(artifactsDir, "rollups"),
-    inputsDir: path.join(artifactsDir, "inputs"),
-    turnDigestsDir: path.join(artifactsDir, "turn-digests"),
-    topicRollupsDir: path.join(artifactsDir, "topic-rollups"),
-    renderDir: path.join(artifactsDir, "render"),
     failuresDir: path.join(artifactsDir, "failures")
   };
 }
@@ -71,19 +63,11 @@ export async function ensureOutputDirs(paths: RollupOutputPaths): Promise<void> 
   await mkdir(paths.notesDir, { recursive: true });
   await mkdir(paths.examplesDir, { recursive: true });
   await mkdir(paths.rollupsDir, { recursive: true });
-  await mkdir(paths.inputsDir, { recursive: true });
-  await mkdir(paths.turnDigestsDir, { recursive: true });
-  await mkdir(paths.topicRollupsDir, { recursive: true });
-  await mkdir(paths.renderDir, { recursive: true });
   await mkdir(paths.failuresDir, { recursive: true });
 }
 
 export function notePath(paths: RollupOutputPaths, key: string): string {
   return path.join(paths.notesDir, `${key}.md`);
-}
-
-export function turnInputPath(paths: RollupOutputPaths, date: string, sourceKey: string, inputHash: string): string {
-  return path.join(paths.inputsDir, date, `${safeFileId(sourceKey)}.${inputHash}.json`);
 }
 
 export function rollupInputArtifactPath(paths: RollupOutputPaths, key: string, inputHash: string): string {
@@ -108,18 +92,6 @@ export function rollupOutputPath(paths: RollupOutputPaths, key: string, inputHas
 
 export function rollupPromptPath(paths: RollupOutputPaths, key: string, inputHash: string): string {
   return path.join(paths.rollupsDir, key, `prompt.${inputHash}.md`);
-}
-
-export function turnDigestPath(paths: RollupOutputPaths, date: string, sourceKey: string, inputHash: string): string {
-  return path.join(paths.turnDigestsDir, date, `${safeFileId(sourceKey)}.${inputHash}.json`);
-}
-
-export function topicRollupPath(paths: RollupOutputPaths, date: string, topicKey: string, hash: string): string {
-  return path.join(paths.topicRollupsDir, date, `${safeFileId(topicKey)}.${hash}.json`);
-}
-
-export function renderModelPath(paths: RollupOutputPaths, key: string): string {
-  return path.join(paths.renderDir, `${key}.model.json`);
 }
 
 export function failureArtifactPath(paths: RollupOutputPaths, date: string, sourceKey: string, inputHash: string): string {

@@ -87,6 +87,17 @@ export const evalCommandSpec: CliCommandSpec = {
     { name: "collect", description: "Collect git and usage metrics for a run", args: "<run-id>", options: [{ name: "json", description: "Print JSON" }] },
     { name: "report", description: "Print a compact eval report", args: "<run-id>", options: [{ name: "json", description: "Print JSON" }] },
     {
+      name: "ui",
+      description: "Start a local eval comparison UI",
+      args: "[run-id|latest]",
+      options: [
+        { name: "host", takesValue: true, description: "Bind host" },
+        { name: "port", takesValue: true, description: "Bind port" },
+        { name: "no-browser", description: "Do not open a browser" },
+        { name: "json", description: "Print startup JSON" }
+      ]
+    },
+    {
       name: "diff",
       description: "Compare two variants in a run",
       args: "<run-id> <variant-a> <variant-b>",

@@ -1,7 +1,7 @@
-import type { RollupInput, RollupOutput, TurnDigest, TurnDigestInput } from "../types/digest.js";
+import type { RollupInput, RollupOutput } from "../types/digest.js";
 import type { RunnerStatus, SummaryProviderConfig, SummaryRunner } from "../types/provider.js";
-import { rollupPrompt, turnDigestPrompt } from "../core/prompts.js";
-import { rollupJsonSchema, normalizeTurnDigest, turnDigestJsonSchema } from "../core/schemas.js";
+import { rollupPrompt } from "../core/prompts.js";
+import { rollupJsonSchema } from "../core/schemas.js";
 import { parseRunnerJson, runnerFailure, runProcess } from "@tangent/agent-runtime/process";
 
 type ClaudeCliConfig = Extract<SummaryProviderConfig, { kind: "claude-cli" }>;
@@ -33,45 +33,6 @@ export class ClaudeCliSummaryRunner implements SummaryRunner {
     } catch (error) {
       return { available: false, command, authStatus: "unknown", warnings: [(error as Error).message] };
     }
-  }
-
-  async summarizeTurn(input: TurnDigestInput): Promise<TurnDigest> {
-    const command = this.config.command || "claude";
-    const prompt = turnDigestPrompt(input);
-    const result = await runProcess({
-      command,
-      args: [
-        "-p",
-        prompt,
-        "--model",
-        this.config.model,
-        "--output-format",
-        "json",
-        "--json-schema",
-        JSON.stringify(turnDigestJsonSchema),
-        "--setting-sources",
-        "project,local",
-        "--no-session-persistence",
-        "--tools",
-        "",
-        "--max-turns",
-        String(maxStructuredOutputTurns(this.config))
-      ],
-      timeoutMs: this.config.timeoutMs || 120000,
-      defaultEnv: rollupRunnerEnv
-    });
-    if (result.code !== 0) throw runnerFailure(command, result.code, result.stderr, result.stdout);
-    return normalizeTurnDigest(parseRunnerJson(result.stdout), { source: {
-      sourceKey: input.source.sourceKey,
-      provider: input.source.provider,
-      conversationId: input.source.conversationId,
-      turnId: input.source.turnId,
-      dateBucket: input.source.dateBucket,
-      startedAt: input.source.startedAt,
-      endedAt: input.source.endedAt,
-      wallTimeMs: input.source.wallTimeMs,
-      inputHash: ""
-    } });
   }
 
   async summarizeRollup(input: RollupInput): Promise<RollupOutput> {

@@ -1,6 +1,6 @@
 # @tangent/usage Docs
 
-Purpose: Conversation telemetry domain: schemas, native transcript normalization, hook normalization, native-log compatibility checks, assistant-centered conversation reports, datasets, SDK, human `usage` CLI, and explicit raw/debug subcommands.
+Purpose: Conversation telemetry domain: schemas, native transcript normalization, legacy usage-jsonl reading, native-log compatibility checks, assistant-centered conversation reports, datasets, SDK, human `usage` CLI, and explicit raw/debug subcommands.
 
 Read next:
 - architecture.md
@@ -8,4 +8,4 @@ Read next:
 
 Package rules:
 - Do not depend on Rollup, Eval, or Search.
-- Do not own provider hook config mechanics.
+- Do not add provider hook install or record mechanics.

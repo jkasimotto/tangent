@@ -1,6 +1,5 @@
 import { stat } from "node:fs/promises";
 import Database from "better-sqlite3";
-import { hookInstallStatus, isGitTracked } from "@tangent/hooks";
 import { pathExists, repoInfo } from "@tangent/repo";
 
 import { listJsonlFiles } from "../core/append-jsonl.js";
@@ -22,11 +21,6 @@ export type ProviderStatus = {
   supported: true;
   native: "available" | "best-effort" | "unavailable";
   nativePaths: string[];
-  hooks: {
-    global: { installed: boolean; path: string };
-    repoLocal: { installed: boolean; path: string };
-    repoShared: { installed: boolean; path: string };
-  };
   capture: {
     enabled: boolean;
     logDir: string;
@@ -65,11 +59,6 @@ export async function status(options: StatusOptions): Promise<RepoStatus> {
     const logDir = repoEventDir(root, provider);
     const files = await listJsonlFiles(logDir);
     const nativePaths = provider === "claude" ? await discoverClaudeNative(root) : await discoverCodexNative(root);
-    const hooks = {
-      global: await hookStatus(provider, "global", root),
-      repoLocal: await hookStatus(provider, "repo-local", root),
-      repoShared: await hookStatus(provider, "repo-shared", root)
-    };
     const nativeSchema = nativeStatuses.find((status) => status.provider === provider) || {
       provider,
       logKind: provider === "claude" ? "claude.conversation" as const : "codex.rollout" as const,
@@ -87,7 +76,6 @@ export async function status(options: StatusOptions): Promise<RepoStatus> {
       supported: true,
       native: nativePaths.length ? "available" : "unavailable",
       nativePaths,
-      hooks,
       capture: {
         enabled: nativePaths.length > 0,
         logDir,
@@ -110,21 +98,6 @@ export async function status(options: StatusOptions): Promise<RepoStatus> {
     index: await indexStatus(root),
     providers: providerStatuses
   };
-}
-
-async function hookStatus(provider: UsageProvider, scope: "global" | "repo-local" | "repo-shared", root: string): Promise<{ installed: boolean; path: string }> {
-  const status = await hookInstallStatus({
-    provider,
-    scope,
-    repoRoot: root,
-    recordCommand: "tangent usage hook record"
-  });
-  let installed = status.installed;
-  if (installed && provider === "codex" && scope !== "global") {
-    const tracked = await isGitTracked(root, status.path);
-    installed = scope === "repo-shared" ? tracked : !tracked;
-  }
-  return { installed, path: status.path };
 }
 
 async function newestMtime(files: string[]): Promise<string | undefined> {

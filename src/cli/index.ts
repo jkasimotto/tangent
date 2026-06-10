@@ -5,7 +5,7 @@ import { rollupCommandSpec, runRollupCli } from "@tangent/rollup/cli";
 import { evalCommandSpec, runEvalCli } from "@tangent/eval/cli";
 import { governanceCommandSpec, runGovernanceCli } from "@tangent/governance/cli";
 import { runSearchCli, searchCommandSpec } from "@tangent/search/cli";
-import { dataCommandSpec, devCommandSpec, doctorCommandSpec, hooksCommandSpec, runProductStatusCommand, runSetupCommand, setupCommandSpec, statusCommandSpec } from "./product.js";
+import { dataCommandSpec, devCommandSpec, doctorCommandSpec, runProductStatusCommand, runSetupCommand, setupCommandSpec, statusCommandSpec } from "./product.js";
 
 const tangentCommandSpec: CliCommandSpec = {
   name: "tangent",
@@ -20,7 +20,6 @@ const tangentCommandSpec: CliCommandSpec = {
     doctorCommandSpec,
     { ...governanceCommandSpec, hidden: true },
     devCommandSpec,
-    hooksCommandSpec,
     dataCommandSpec,
     {
       name: "completion",
@@ -86,11 +85,6 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       return;
     }
     throw new Error(`Unknown dev command: ${command}`);
-  }
-
-  if (app === "hooks") {
-    await runUsageCli(["hooks", ...rest]);
-    return;
   }
 
   if (app === "data") {

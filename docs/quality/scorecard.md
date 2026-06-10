@@ -7,6 +7,6 @@ Current architecture posture:
 - Parser duplication: extracted to @tangent/core/cli
 - Process runner duplication: extracted to @tangent/agent-runtime
 - Repo discovery duplication: extracted to @tangent/repo
-- Hook provider mechanics: extracted to @tangent/hooks
+- Hook capture: retired; native transcript indexing is the usage source of truth
 
 Review this scorecard after major package-boundary changes.

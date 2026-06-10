@@ -42,18 +42,33 @@ async function runVariant(manifest: EvalRunManifest, variant: EvalRunVariantStat
     const phaseBaseCommit = await currentCommit(variant.worktree);
     const prompt = phase.id === "plan" ? planPrompt(task) : implementationPrompt(task, plan);
     if (phase.promptPath) await writeFile(phase.promptPath, prompt, "utf8");
-    const output = await runAgent({
-      agent: variant.agent,
-      prompt,
-      cwd: variant.executionCwd,
-      sandbox: phase.mode || (phase.id === "plan" ? "read-only" : "workspace-write"),
-      env: {
-        TANGENT_EVAL_RUN_ID: manifest.id,
-        TANGENT_EVAL_CASE_ID: variant.caseId,
-        TANGENT_EVAL_VARIANT_ID: variant.variantId,
-        TANGENT_EVAL_PHASE: phase.id
-      }
-    });
+    let output: string;
+    phase.agentStartedAt = new Date().toISOString();
+    await saveRunManifest(manifest);
+    try {
+      output = await runAgent({
+        agent: variant.agent,
+        prompt,
+        cwd: variant.executionCwd,
+        sandbox: phase.mode || (phase.id === "plan" ? "read-only" : "workspace-write"),
+        env: {
+          TANGENT_EVAL_RUN_ID: manifest.id,
+          TANGENT_EVAL_CASE_ID: variant.caseId,
+          TANGENT_EVAL_VARIANT_ID: variant.variantId,
+          TANGENT_EVAL_PHASE: phase.id
+        }
+      });
+    } catch (error) {
+      phase.agentEndedAt = new Date().toISOString();
+      phase.agentDurationMs = durationMs(phase.agentStartedAt, phase.agentEndedAt);
+      phase.endedAt = phase.agentEndedAt;
+      phase.status = "failed";
+      phase.error = (error as Error).message;
+      await saveRunManifest(manifest);
+      throw error;
+    }
+    phase.agentEndedAt = new Date().toISOString();
+    phase.agentDurationMs = durationMs(phase.agentStartedAt, phase.agentEndedAt);
 
     if (phase.id === "plan") {
       plan = output.trim();
@@ -88,4 +103,12 @@ async function runVariant(manifest: EvalRunManifest, variant: EvalRunVariantStat
   variant.endedAt = new Date().toISOString();
   variant.status = "done";
   await saveRunManifest(manifest);
+}
+
+function durationMs(startedAt?: string, endedAt?: string): number | undefined {
+  if (!startedAt || !endedAt) return undefined;
+  const started = new Date(startedAt).getTime();
+  const ended = new Date(endedAt).getTime();
+  if (Number.isNaN(started) || Number.isNaN(ended)) return undefined;
+  return Math.max(0, ended - started);
 }

@@ -7,7 +7,7 @@ Rules:
 - Keep vertical apps independent.
 - Put pure shared helpers in @tangent/core.
 - Put git/repo/worktree/path discovery in @tangent/repo.
-- Put provider hook mechanics in @tangent/hooks.
+- Do not add provider hook install or hook record product surfaces.
 - Put process runner behavior in @tangent/agent-runtime.
 - Keep Usage event schemas in @tangent/usage.
 - Add governance lints for enforceable architecture rules.

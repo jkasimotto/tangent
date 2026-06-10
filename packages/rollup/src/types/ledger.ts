@@ -10,10 +10,8 @@ export type RollupLedgerLineV1 = {
   sourceFingerprint: string;
   inputVersion: string;
   inputHash?: string;
-  digestPath?: string;
   rollupPath?: string;
   failurePath?: string;
-  topicKeys?: string[];
   processedAt: string;
   status:
     | "processed"

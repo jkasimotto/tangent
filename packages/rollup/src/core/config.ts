@@ -71,21 +71,10 @@ export function defaultConfig(repo?: RollupRepoInfo): RollupConfig {
         model: "sonnet",
         timeoutMs: 120000,
         maxTurns: 2
-      },
-      turnDigestSchemaVersion: "turn-digest.v1",
-      topicRollupSchemaVersion: "topic-rollup.v1",
-      rollupNoteSchemaVersion: "rollup-note.v1",
-      writeDigestCache: true
+      }
     },
     note: {
-      titleTemplate: "Rollup note - {{repo}} - {{date}}",
-      sections: [
-        "topics",
-        "metrics",
-        "sourceCaveats"
-      ],
-      includeFollowUps: true,
-      includeMetrics: true
+      titleTemplate: "Rollup note - {{repo}} - {{date}}"
     }
   };
 }

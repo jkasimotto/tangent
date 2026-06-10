@@ -31,13 +31,6 @@ export function latestLedgerBySource(lines: RollupLedgerLineV1[]): Map<string, R
   return latest;
 }
 
-export function latestSuccessfulDigestsForDate(lines: RollupLedgerLineV1[], date: string): RollupLedgerLineV1[] {
-  const latest = latestLedgerBySource(lines);
-  return [...latest.values()]
-    .filter((line) => line.dateBucket === date && line.status === "processed" && Boolean(line.digestPath))
-    .sort((a, b) => a.sourceKey.localeCompare(b.sourceKey));
-}
-
 export function latestSuccessfulRollupForKey(lines: RollupLedgerLineV1[], key: string): RollupLedgerLineV1 | undefined {
   return [...lines]
     .filter((line) => (line.rollupKey || line.dateBucket) === key && line.status === "processed" && line.inputVersion === "rollup.input.v1" && Boolean(line.rollupPath))

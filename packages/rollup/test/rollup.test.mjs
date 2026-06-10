@@ -4,51 +4,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { UsageDataset } from "../../usage/dist/core/dataset.js";
-import { normalizeHookInput } from "../../usage/dist/hook-runner/normalize-hook-input.js";
-import { buildRollupInput, buildTurnDigestInput } from "../dist/usage/adapter.js";
-import { appendLedgerLine, readLedger } from "../dist/core/ledger.js";
+import { readLedger } from "../dist/core/ledger.js";
 import { loadConfig } from "../dist/core/config.js";
-import { readDigestsForDate, writeRollupNote } from "../dist/core/note-writer.js";
+import { writeGeneratedRollupMarkdown } from "../dist/core/note-writer.js";
 import { rollupPrompt } from "../dist/core/prompts.js";
 import { processRollup } from "../dist/sdk/processRollup.js";
 import { runRollupCli } from "../dist/cli/index.js";
 import { renderCommand } from "../dist/cli/commands/artifacts.js";
 import { ClaudeCliSummaryRunner } from "../dist/runners/claude-cli.js";
-
-function context() {
-  return {
-    provider: "codex",
-    scope: "repo-local",
-    repo: {
-      inputPath: "/repo",
-      root: "/repo",
-      cwd: "/repo",
-      branch: "main",
-      headSha: "abc"
-    },
-    tracking: { enabled: true, source: "global-allowlist" },
-    redaction: {
-      contentMode: "metadata-with-excerpts",
-      redactSecrets: true,
-      maxStringBytes: 100000,
-      maxToolResponseBytes: 100000
-    },
-    usageVersion: "test"
-  };
-}
-
-function hook(event, extra = {}) {
-  return {
-    session_id: "s1",
-    transcript_path: null,
-    cwd: "/repo",
-    hook_event_name: event,
-    model: "model",
-    turn_id: "t1",
-    ...extra
-  };
-}
 
 async function loadedConfig() {
   const dir = await mkdtemp(path.join(tmpdir(), "rollup-test-"));
@@ -64,89 +27,7 @@ function rangePeriod(startDate, endDate) {
   return { kind: "range", startDate, endDate, key: `${startDate}--${endDate}`, label: `${startDate} to ${endDate}` };
 }
 
-test("turn digest input is bounded even with huge tool output", async () => {
-  const loaded = await loadedConfig();
-  loaded.config.input.maxTurnInputChars = 2500;
-  loaded.config.input.maxToolResultChars = 100000;
-  const huge = "x".repeat(100000);
-  const events = [
-    ...normalizeHookInput(hook("UserPromptSubmit", { prompt: "debug failing tests" }), context()),
-    ...normalizeHookInput(hook("PreToolUse", {
-      tool_name: "Bash",
-      tool_use_id: "tool1",
-      tool_input: { command: "npm test" }
-    }), context()),
-    ...normalizeHookInput(hook("PostToolUse", {
-      tool_name: "Bash",
-      tool_use_id: "tool1",
-      tool_input: { command: "npm test" },
-      tool_response: { exit_code: 1, stderr: huge }
-    }), context()),
-    ...normalizeHookInput(hook("Stop", { last_assistant_message: huge }), context())
-  ];
-  const dataset = new UsageDataset(events);
-  const turn = dataset.turns.list({ includeActive: true }).data[0];
-  const input = buildTurnDigestInput({ dataset, repo: loaded.repo, config: loaded.config, turn, dateBucket: "2026-06-08" });
-  assert.ok(JSON.stringify(input).length <= loaded.config.input.maxTurnInputChars);
-  assert.equal(input.source.sourceKey, "codex:s1:t1");
-});
-
-test("rollup input bounds normalized conversation reports", async () => {
-  const loaded = await loadedConfig();
-  loaded.config.input.maxTurnInputChars = 2500;
-  loaded.config.input.maxToolResultChars = 100000;
-  const huge = "x".repeat(100000);
-  const extraMessages = Array.from({ length: 80 }, (_, index) =>
-    normalizeHookInput(hook("UserPromptSubmit", {
-      prompt: `keep durable surface-routing note ${index}: ${huge}`
-    }), context())
-  ).flat();
-  const events = [
-    ...normalizeHookInput(hook("UserPromptSubmit", { prompt: "debug the surface routing model" }), context()),
-    ...normalizeHookInput(hook("PreToolUse", {
-      tool_name: "Bash",
-      tool_use_id: "tool1",
-      tool_input: { command: "npm test", details: huge }
-    }), context()),
-    ...normalizeHookInput(hook("PostToolUse", {
-      tool_name: "Bash",
-      tool_use_id: "tool1",
-      tool_input: { command: "npm test", details: huge },
-      tool_response: { exit_code: 1, stderr: huge }
-    }), context()),
-    ...extraMessages,
-    ...normalizeHookInput(hook("Stop", { last_assistant_message: huge }), context())
-  ];
-  const dataset = new UsageDataset(events);
-  const turn = dataset.turns.list({ includeActive: true }).data[0];
-  const input = buildRollupInput({ dataset, repo: loaded.repo, config: loaded.config, turns: [turn], period: dayPeriod("2026-06-08") });
-  const conversationJson = JSON.stringify(input.conversations[0]);
-
-  assert.ok(conversationJson.length <= loaded.config.input.maxTurnInputChars);
-  assert.match(conversationJson, /keep durable surface-routing note/);
-  assert.doesNotMatch(conversationJson, new RegExp(huge.slice(0, 1000)));
-  assert.match(conversationJson, /Conversation report was .*truncated for roll-up input/);
-});
-
-test("readDigestsForDate selects latest successful digest paths from ledger", async () => {
-  const loaded = await loadedConfig();
-  const oldPath = path.join(loaded.paths.outputDir, "old.json");
-  const newPath = path.join(loaded.paths.outputDir, "new.json");
-  const oldDigest = digest("Old", "old-hash");
-  const newDigest = digest("New", "new-hash");
-  await mkdir(loaded.paths.outputDir, { recursive: true });
-  await writeFile(oldPath, JSON.stringify(oldDigest), "utf8");
-  await writeFile(newPath, JSON.stringify(newDigest), "utf8");
-
-  await appendLedgerLine(loaded.paths.ledgerPath, ledger("source", "old-fingerprint", "old-hash", oldPath));
-  await appendLedgerLine(loaded.paths.ledgerPath, ledger("source", "new-fingerprint", "new-hash", newPath));
-
-  const rows = await readDigestsForDate(loaded, "2026-06-08");
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].digest.headline, "New");
-});
-
-test("writeRollupNote preserves manual notes and replaces generated block", async () => {
+test("writeGeneratedRollupMarkdown preserves manual notes and replaces generated block", async () => {
   const loaded = await loadedConfig();
   const notePath = path.join(loaded.paths.notesDir, "2026-06-08.md");
   await mkdir(loaded.paths.notesDir, { recursive: true });
@@ -163,7 +44,7 @@ test("writeRollupNote preserves manual notes and replaces generated block", asyn
     ""
   ].join("\n"), "utf8");
 
-  await writeRollupNote(loaded, dayPeriod("2026-06-08"), [topic("topic-a", "Topic A", "new generated")]);
+  await writeGeneratedRollupMarkdown(loaded, dayPeriod("2026-06-08"), "new generated");
   const text = await readFile(notePath, "utf8");
   assert.match(text, /keep this/);
   assert.match(text, /new generated/);
@@ -252,9 +133,6 @@ test("processRollup renders note from rollup output", async () => {
         id: "fake",
         kind: "claude-cli",
         checkAvailable: async () => ({ available: true, authStatus: "unknown", warnings: [] }),
-        summarizeTurn: async () => {
-          throw new Error("summarizeTurn should not be called");
-        },
         summarizeRollup: async (input) => {
           receivedInput = input;
           return {
@@ -304,7 +182,6 @@ test("processRollup uses one rollup call when the runner supports it", async () 
   await writeJsonl(nativePath, codexNativeSession({ repo: dir, sessionId: "s1", turnId: "t1", prompt: "summarize native transcripts", response: "implemented day rollup" }));
 
   let dayCalls = 0;
-  let turnCalls = 0;
   let receivedInput;
   try {
     const result = await processRollup({
@@ -314,10 +191,6 @@ test("processRollup uses one rollup call when the runner supports it", async () 
         id: "fake",
         kind: "codex-cli",
         checkAvailable: async () => ({ available: true, authStatus: "unknown", warnings: [] }),
-        summarizeTurn: async () => {
-          turnCalls += 1;
-          throw new Error("summarizeTurn should not be called");
-        },
         summarizeRollup: async (input) => {
           dayCalls += 1;
           receivedInput = input;
@@ -332,7 +205,6 @@ test("processRollup uses one rollup call when the runner supports it", async () 
 
     assert.equal(result.processed, 1);
     assert.equal(dayCalls, 1);
-    assert.equal(turnCalls, 0);
     assert.equal(receivedInput.schema, "rollup.input.v1");
     assert.deepEqual(receivedInput.period, dayPeriod("2026-06-08"));
     assert.equal(receivedInput.conversations.length, 1);
@@ -356,7 +228,6 @@ test("processRollup uses one rollup call when the runner supports it", async () 
     assert.equal(ledgerRows[0].status, "processed");
     assert.equal(ledgerRows[0].rollupKey, "2026-06-08");
     assert.equal(ledgerRows[0].inputVersion, "rollup.input.v1");
-    assert.equal(ledgerRows[0].digestPath, undefined);
     assert.equal(ledgerRows[0].rollupPath, result.digests[0].path);
     assert.match(result.digests[0].path, /artifacts\/rollups\/2026-06-08\/output\.[a-f0-9]+\.json$/);
     const rollupArtifacts = await readdir(path.join(loaded.paths.rollupsDir, "2026-06-08"));
@@ -412,9 +283,6 @@ test("processRollup writes one combined note for compact range selector", async 
         id: "fake",
         kind: "codex-cli",
         checkAvailable: async () => ({ available: true, authStatus: "unknown", warnings: [] }),
-        summarizeTurn: async () => {
-          throw new Error("summarizeTurn should not be called");
-        },
         summarizeRollup: async (input) => {
           receivedInput = input;
           return {
@@ -466,65 +334,6 @@ test("rollup path accepts compact range selectors", async () => {
   assert.equal(lines.at(-1), path.join(loaded.paths.notesDir, "2026-06-08--2026-06-09.md"));
 });
 
-function digest(headline, inputHash) {
-  return {
-    schema: "rollup.turn-digest.v1",
-    source: {
-      sourceKey: "source",
-      provider: "codex",
-      conversationId: "codex:s1",
-      turnId: "t1",
-      dateBucket: "2026-06-08",
-      inputHash
-    },
-    topicHints: [{ key: "topic", title: "Topic", confidence: "high" }],
-    headline,
-    summary: headline,
-    workDone: [],
-    designNotes: [],
-    decisions: [],
-    experiments: [],
-    debuggingFindings: [],
-    followUps: [],
-    entities: { files: [], functions: [], tickets: [], commands: [] },
-    evidence: [],
-    quality: { confidence: "high", caveats: [] }
-  };
-}
-
-function digestForInput(headline, input) {
-  return {
-    ...digest(headline, ""),
-    source: {
-      sourceKey: input.source.sourceKey,
-      provider: input.source.provider,
-      conversationId: input.source.conversationId,
-      turnId: input.source.turnId,
-      dateBucket: input.source.dateBucket,
-      inputHash: ""
-    }
-  };
-}
-
-function ledger(sourceKey, sourceFingerprint, inputHash, digestPath) {
-  return {
-    schema: "rollup.ledger.v1",
-    repoId: "repo",
-    dateBucket: "2026-06-08",
-    sourceKey,
-    provider: "codex",
-    conversationId: "codex:s1",
-    turnId: "t1",
-    sourceFingerprint,
-    inputVersion: "rollup.turn-digest-input.v1",
-    inputHash,
-    digestPath,
-    topicKeys: ["topic"],
-    processedAt: new Date().toISOString(),
-    status: "processed"
-  };
-}
-
 async function writeJsonl(filePath, records) {
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, `${records.map((record) => JSON.stringify(record)).join("\n")}\n`, "utf8");
@@ -552,24 +361,4 @@ function codexNativeSession({ repo, sessionId, turnId, prompt, response, date = 
     { timestamp: `${isoPrefix}04.000Z`, type: "event_msg", payload: { type: "agent_message", message: response, phase: "final_answer" } },
     { timestamp: `${isoPrefix}05.000Z`, type: "event_msg", payload: { type: "task_complete", turn_id: turnId, duration_ms: 5000 } }
   ];
-}
-
-function topic(key, title, markdown) {
-  return {
-    schema: "rollup.topic-rollup.v1",
-    date: "2026-06-08",
-    key,
-    title,
-    sourceTurnKeys: ["source"],
-    providers: ["codex"],
-    summary: markdown,
-    narrativeMarkdown: markdown,
-    sections: [],
-    decisions: [],
-    experiments: [],
-    openQuestions: [],
-    followUps: [],
-    evidence: [],
-    caveats: []
-  };
 }

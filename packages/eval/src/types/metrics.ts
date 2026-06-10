@@ -10,6 +10,9 @@ export type EvalMetrics = {
     durationMs?: number;
     planDurationMs?: number;
     implementationDurationMs?: number;
+    activeAgentDurationMs?: number;
+    planActiveAgentDurationMs?: number;
+    implementationActiveAgentDurationMs?: number;
   };
   tokens: {
     total?: number;

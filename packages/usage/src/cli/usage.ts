@@ -1,7 +1,6 @@
 import { renderCommandHelp } from "@tangent/core";
 import { parseArgs, stringArg } from "@tangent/core/cli";
 
-import { installHooks, uninstallHooks } from "../sdk/installHooks.js";
 import { archiveUsageTelemetry, ensureUsageIndex, loadUsageDatasetFromIndex, resolveConversationRef } from "../sdk/indexStore.js";
 import type { UsageIndexSource } from "../sdk/indexStore.js";
 import { importNative } from "../sdk/importNative.js";
@@ -10,7 +9,6 @@ import { inspectNativeLogFile } from "../providers/native/inspect.js";
 import { listNativeSchemas } from "../providers/native/schema-registry.js";
 import { nativeSchemaStatus } from "../providers/native/status.js";
 import type { NativeLogInspection, NativeProviderSchemaStatus } from "../providers/native/types.js";
-import { recordHook } from "../hook-runner/record.js";
 import type { UsageDataset, VisibleMessage } from "../core/dataset.js";
 import type { UsageProvider } from "../core/schema/usage-jsonl-v1.js";
 import { usageCommandSpec } from "./spec.js";
@@ -61,47 +59,6 @@ export async function runUsageCli(argv = process.argv.slice(2)): Promise<void> {
 
   if (!command || args.help) {
     console.log(renderCommandHelp(usageCommandSpec));
-    return;
-  }
-
-  if (command === "hook" && subcommand === "record") {
-    await recordHook({
-      provider: providerArg(args.provider),
-      scope: installScopeArg(args.scope || "global"),
-      repoRoot: stringArg(args["repo-root"])
-    });
-    return;
-  }
-
-  if (command === "hooks" && subcommand === "install") {
-    const results = await installHooks({
-      provider: providerOrAll(args.provider),
-      scope: installScopeArg(args.scope || "global"),
-      repo: stringArg(args.repo) || ".",
-      tracking: trackingArg(args.tracking)
-    });
-    if (args.json) {
-      console.log(JSON.stringify(results, null, 2));
-      return;
-    }
-    for (const result of results) {
-      console.log(`${result.provider}: installed ${result.scope} hook at ${result.path}`);
-      for (const warning of result.warnings) console.warn(`warning: ${warning}`);
-    }
-    return;
-  }
-
-  if (command === "hooks" && subcommand === "uninstall") {
-    const results = await uninstallHooks({
-      provider: providerOrAll(args.provider),
-      scope: installScopeArg(args.scope || "global"),
-      repo: stringArg(args.repo) || "."
-    });
-    if (args.json) {
-      console.log(JSON.stringify(results, null, 2));
-      return;
-    }
-    for (const result of results) console.log(`${result.provider}: removed ${result.scope} hook at ${result.path}`);
     return;
   }
 
@@ -369,7 +326,6 @@ function printUsageStatus(value: Awaited<ReturnType<typeof status>>, verbose: bo
     const label = provider.provider === "claude" ? "Claude Code" : "Codex";
     console.log(`  ${label}`);
     console.log(`    Native logs: ${provider.nativePaths.length ? `${provider.nativePaths.length} files` : "none"}`);
-    console.log(`    Hooks:       ${installedHookScopes(provider)}`);
     console.log(`    Data:        ${provider.capture.lastEvent ? `last seen ${provider.capture.lastEvent}` : "no sessions seen yet"}`);
     console.log(`    Messages:    ${provider.capabilities["messages.visible"].status}`);
     console.log(`    Tool calls:  ${provider.capabilities["tools.calls"].status}`);
@@ -395,7 +351,7 @@ function printNativeInit(value: Awaited<ReturnType<typeof status>>): void {
       for (const message of provider.nativeSchema.messages) console.log(`  ${message}`);
     }
   }
-  console.log("Hooks are still available with `tangent usage hooks install`, but native transcripts are the default usage source.");
+  console.log("Native transcripts are the usage source of truth. Legacy usage-jsonl files remain readable with --source all.");
 }
 
 function printNativeSchemas(rows: ReturnType<typeof listNativeSchemas>): void {
@@ -579,15 +535,6 @@ function usageTotals(value: unknown): { input: number; output: number; total: nu
   };
 }
 
-function installedHookScopes(provider: Awaited<ReturnType<typeof status>>["providers"][number]): string {
-  const scopes = [
-    provider.hooks.global.installed ? "global" : undefined,
-    provider.hooks.repoLocal.installed ? "repo-local" : undefined,
-    provider.hooks.repoShared.installed ? "repo-shared" : undefined
-  ].filter(Boolean);
-  return scopes.length ? scopes.join(", ") : "none";
-}
-
 function requiredSession(value: string | undefined): string {
   if (!value) throw new Error("A session id is required.");
   return value;
@@ -633,18 +580,6 @@ function providerList(value: unknown): Array<UsageProvider | "all"> {
 
 function sourceList(value: unknown): UsageIndexSource[] {
   if (value === undefined || value === "native") return ["native"];
-  if (value === "hooks") return ["usage-jsonl"];
   if (value === "all") return ["native", "usage-jsonl"];
-  throw new Error("--source must be native, hooks, or all.");
-}
-
-function installScopeArg(value: unknown): "global" | "repo-local" | "repo-shared" {
-  if (value === "global" || value === "repo-local" || value === "repo-shared") return value;
-  throw new Error("--scope must be global, repo-local, or repo-shared.");
-}
-
-function trackingArg(value: unknown): "all" | "allowlist" | "off" | undefined {
-  if (value === undefined) return undefined;
-  if (value === "all" || value === "allowlist" || value === "off") return value;
-  throw new Error("--tracking must be all, allowlist, or off.");
+  throw new Error("--source must be native or all.");
 }

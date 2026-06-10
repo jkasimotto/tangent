@@ -7,5 +7,6 @@ Public import paths:
 CLI notes:
 - `eval quick` is a shortcut alias for `eval run` with `--prompt`/`--context` flags.
 - `eval collect|report|diff|open latest ...` resolves `latest` to the newest run manifest.
+- `eval ui [run-id|latest]` starts a local-only comparison UI over existing manifests, metrics, outputs, and git diffs.
 
 Agents must import through these public exports, not package src internals.

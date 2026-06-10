@@ -13,9 +13,8 @@ root CLI
 
 @tangent/rollup -> @tangent/usage, @tangent/core, @tangent/repo, @tangent/agent-runtime
 @tangent/eval -> @tangent/usage, @tangent/core, @tangent/repo, @tangent/agent-runtime
-@tangent/usage -> @tangent/core, @tangent/repo, @tangent/hooks
+@tangent/usage -> @tangent/core, @tangent/repo
 @tangent/search -> @tangent/core, @tangent/repo
-@tangent/hooks -> @tangent/core, @tangent/repo
 @tangent/repo -> @tangent/core
 @tangent/agent-runtime -> @tangent/core
 @tangent/governance -> @tangent/core

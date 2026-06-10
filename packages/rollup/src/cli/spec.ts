@@ -50,10 +50,6 @@ export const rollupCommandSpec: CliCommandSpec = {
         { name: "models", description: "List provider models when available", options: providerOptions() }
       ]
     },
-    { name: "digests", description: "List cached digests", args: "[repo]", options: jsonDateOptions() },
-    { name: "input", description: "Build or locate a turn input", args: "[repo]", options: processOptions(["source", "path", "json"]) },
-    { name: "digest", description: "Print latest digest for a source", args: "[repo]", options: processOptions(["source", "json"]) },
-    { name: "topics", description: "List legacy topic rollups for a date", hidden: true, args: "[repo]", options: jsonDateOptions() },
     { name: "render", description: "Render a rollup note", args: "[repo]", options: processOptions(["dry-run", "explain", "json"]) },
     {
       name: "config",

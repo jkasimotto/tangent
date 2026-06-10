@@ -24,4 +24,4 @@ tangent usage native inspect /path/to/transcript.jsonl --json
 tangent usage native status . --provider claude
 ```
 
-Native transcripts are the default query source for Claude Code and Codex. Hook capture is still available for legacy/debug use through `tangent usage hooks install`, and hook JSONL can be queried explicitly with `--source hooks`.
+Native transcripts are the default query source for Claude Code and Codex. Hook capture is retired; legacy usage JSONL, including old hook-sourced events, remains readable with explicit combined reads such as `--source all`.

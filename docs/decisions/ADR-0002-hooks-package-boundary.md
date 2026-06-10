@@ -2,11 +2,10 @@
 
 Status: accepted
 
-Decision: Provider hook mechanics live in @tangent/hooks. Usage keeps Usage event schemas and normalization.
+Decision: Superseded by ADR-0004. Provider hook mechanics previously lived in a separate package while Usage kept Usage event schemas and normalization.
 
 Why: Hook config and provider event catalogs are infrastructure. Conversation telemetry is a domain model. Keeping them separate prevents Usage from becoming the platform substrate for future apps.
 
 Consequences:
-- @tangent/hooks must not import @tangent/usage.
-- Usage installs provider hooks through @tangent/hooks with an injectable record command.
+- This boundary no longer applies to active code because hook capture is retired.
 - Future hook consumers should share one provider hook installation path.

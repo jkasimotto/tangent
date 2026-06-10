@@ -5,6 +5,8 @@ export type { PrepareEvalResult } from "./prepareEval.js";
 export { runEval } from "./runEval.js";
 export { collectEval } from "./collectEval.js";
 export { reportEval } from "./reportEval.js";
+export { startEvalUiServer } from "../server/index.js";
+export type { EvalUiServer, StartEvalUiServerOptions } from "../server/index.js";
 
 export type { EvalContextFile, EvalContextManifest, EvalContextMode } from "../types/context.js";
 export type { EvalMetrics } from "../types/metrics.js";

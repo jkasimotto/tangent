@@ -2,11 +2,11 @@
 
 Review for:
 - package boundary violations
-- copied parser, process, repo, git, or hook helpers
+- copied parser, process, repo, or git helpers
 - imports of another package's src internals
 - Usage depending on Rollup, Eval, or Search
 - Search depending on vertical apps
-- hooks importing Usage schemas
+- reintroduced hook install or hook record product surfaces
 - missing docs updates when exports or package responsibilities change
 - validation not run or not reported
 

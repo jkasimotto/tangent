@@ -1,5 +1,4 @@
-import type { RollupNote } from "./rollup-note.js";
-import type { RollupInput, RollupOutput, TopicRollup, TurnDigest, TurnDigestInput } from "./digest.js";
+import type { RollupInput, RollupOutput } from "./digest.js";
 
 export type SummaryProviderKind = "claude-cli" | "claude-sdk" | "codex-cli";
 
@@ -40,8 +39,5 @@ export interface SummaryRunner {
   id: string;
   kind: SummaryProviderKind;
   checkAvailable(): Promise<RunnerStatus>;
-  summarizeTurn(input: TurnDigestInput): Promise<TurnDigest>;
-  summarizeRollup?(input: RollupInput): Promise<RollupOutput>;
-  rollupTopic?(args: { date: string; key: string; title: string; digests: TurnDigest[] }): Promise<TopicRollup>;
-  rollupNote?(note: RollupNote): Promise<Partial<RollupNote>>;
+  summarizeRollup(input: RollupInput): Promise<RollupOutput>;
 }

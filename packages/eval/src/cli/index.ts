@@ -12,6 +12,7 @@ import { openCommand } from "./commands/open.js";
 import { prepareCommand } from "./commands/prepare.js";
 import { reportCommand } from "./commands/report.js";
 import { runCommand } from "./commands/run.js";
+import { uiCommand } from "./commands/ui.js";
 import { evalCommandSpec } from "./spec.js";
 
 export { evalCommandSpec } from "./spec.js";
@@ -30,6 +31,7 @@ export async function runEvalCli(argv = process.argv.slice(2)): Promise<void> {
   if (command === "report") return reportCommand(args);
   if (command === "diff") return diffCommand(args);
   if (command === "open") return openCommand(args);
+  if (command === "ui") return uiCommand(args);
   throw new Error(`Unknown eval command: ${command}`);
 }
 

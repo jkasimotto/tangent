@@ -53,12 +53,7 @@ export async function collectCandidates(loaded: LoadedRollupConfig, query: Omit<
     .filter((row) => !query.fromDate || row.dateBucket >= query.fromDate)
     .filter((row) => !query.toDate || row.dateBucket <= query.toDate)
     .filter((row) => isProcessableTurn(row.turn, loaded.config, query.includeActive))
-    .map(({ turn, dateBucket }) => candidateForTurn(turn, dateBucket, latest.get(turn.sourceKey), Boolean(query.force)))
-    .filter((row) => {
-      if (query.force) return true;
-      const prior = latest.get(row.sourceKey);
-      return !(prior?.sourceFingerprint === row.sourceFingerprint && prior.status === "processed");
-    });
+    .map(({ turn, dateBucket }) => candidateForTurn(turn, dateBucket, latest.get(turn.sourceKey), Boolean(query.force)));
 
   void startedAt;
   return rows;

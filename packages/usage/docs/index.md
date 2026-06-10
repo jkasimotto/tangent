@@ -4,6 +4,7 @@ Purpose: Conversation telemetry domain: schemas, native transcript normalization
 
 Read next:
 - architecture.md
+- codex-token-attribution-experiments.md
 - public-api.md
 
 Package rules:

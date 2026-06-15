@@ -138,7 +138,7 @@ test("Codex native import emits per-model-call usage and tool result size metada
   assert.equal("output_token_source" in toolResult.data, false);
 });
 
-test("usage index skips active Codex native transcripts until the quiet window", async () => {
+test("usage index skips incomplete Codex native transcripts until the quiet window", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "usage-native-codex-quiet-"));
   process.env.USAGE_HOME = path.join(dir, "home");
   const previousCodexHome = process.env.CODEX_HOME;
@@ -159,14 +159,14 @@ test("usage index skips active Codex native transcripts until the quiet window",
     assert.deepEqual(index.sourceFiles, [nativePath]);
     const conversationId = "codex:quiet";
     const dataset = await loadUsageDatasetFromIndex({ repo, providers: ["codex"], conversationId, now: new Date("2026-06-09T08:30:00.000Z") });
-    assert.equal(dataset.turns.list({ includeActive: true }).data[0].status, "completed");
+    assert.equal(dataset.turns.list().data[0].status, "completed");
 
     await writeJsonl(nativePath, [
       ...codexNativeSession({ repo, sessionId: "quiet", prompt: "quiet prompt", complete: false }),
-      { timestamp: "2026-06-09T08:31:00.000Z", type: "event_msg", payload: { type: "user_message", message: "new active prompt" } }
+      { timestamp: "2026-06-09T08:31:00.000Z", type: "event_msg", payload: { type: "user_message", message: "new incomplete prompt" } }
     ]);
-    const activeMtime = new Date("2026-06-09T08:31:00.000Z");
-    await utimes(nativePath, activeMtime, activeMtime);
+    const incompleteMtime = new Date("2026-06-09T08:31:00.000Z");
+    await utimes(nativePath, incompleteMtime, incompleteMtime);
     await ensureUsageIndex({ repo, providers: ["codex"], now: new Date("2026-06-09T08:35:00.000Z") });
     const preserved = await loadUsageDatasetFromIndex({ repo, providers: ["codex"], conversationId, now: new Date("2026-06-09T08:35:00.000Z") });
     assert.deepEqual(preserved.messages.visible({ conversationId }).data.map((row) => row.text), ["quiet prompt", "native done"]);
@@ -226,6 +226,32 @@ test("conversation report nests Claude assistant tokens and tool calls without p
   assert.equal(assistantMessages[1].tokens.output, 12);
   assert.equal(report.totals.toolCalls, 2);
   assert.equal(report.totals.tokens.output, 102);
+});
+
+test("messages.list queries visible messages across the loaded dataset", () => {
+  const dataset = new UsageDataset([
+    ...sessionEvents({ sessionId: "s1", prompt: "older task", at: "2026-06-07T10:00:00.000Z" }),
+    ...sessionEvents({ sessionId: "s2", prompt: "newer task", at: "2026-06-08T10:00:00.000Z" }),
+    ...sessionEvents({ provider: "claude", sessionId: "c1", prompt: "claude task", at: "2026-06-09T10:00:00.000Z" })
+  ]);
+
+  assert.deepEqual(dataset.messages.list({ role: "user" }).data.map((row) => row.text), ["older task", "newer task", "claude task"]);
+  assert.deepEqual(dataset.messages.list({ provider: "claude", role: "user" }).data.map((row) => row.conversationId), ["claude:c1"]);
+  assert.deepEqual(dataset.messages.list({ conversationId: "codex:s2" }).data.map((row) => row.text), ["newer task", "done"]);
+  assert.deepEqual(dataset.messages.list({ conversationId: "codex:s2", turnId: "t1" }).data.map((row) => row.sourceKey), ["codex:s2:t1", "codex:s2:t1"]);
+  assert.deepEqual(dataset.messages.list({ role: "user", date: "2026-06-08" }).data.map((row) => row.text), ["newer task"]);
+  assert.deepEqual(dataset.messages.list({
+    role: "user",
+    from: new Date("2026-06-08T00:00:00.000Z"),
+    to: new Date("2026-06-08T23:59:59.999Z")
+  }).data.map((row) => row.text), ["newer task"]);
+});
+
+test("turns without an end event are listed with unknown status", () => {
+  const dataset = new UsageDataset(sessionEvents({ sessionId: "s1", prompt: "unfinished", at: "2026-06-07T10:00:00.000Z" })
+    .filter((event) => event.kind !== "turn.end"));
+
+  assert.deepEqual(dataset.turns.list().data.map((row) => row.status), ["unknown"]);
 });
 
 test("usage package does not expose the old command binary", async () => {
@@ -604,25 +630,25 @@ function codexRollout({ repo, sessionId, version }) {
   ].map((record) => JSON.stringify(record)).join("\n");
 }
 
-function sessionEvents({ sessionId, prompt, at }) {
+function sessionEvents({ provider = "codex", sessionId, prompt, at }) {
   const end = new Date(new Date(at).getTime() + 60000).toISOString();
   return [
-    usageEvent({ sessionId, id: `${sessionId}-start`, kind: "conversation.start", at, data: { source: "test" }, actor: { role: "hook" } }),
-    usageEvent({ sessionId, id: `${sessionId}-turn`, kind: "turn.start", at, data: { status: "started" }, turn: { id: "t1" }, actor: { role: "user" } }),
-    usageEvent({ sessionId, id: `${sessionId}-user`, kind: "message.user", at, data: { text: prompt, text_preview: prompt }, turn: { id: "t1" }, actor: { role: "user" } }),
-    usageEvent({ sessionId, id: `${sessionId}-assistant`, kind: "message.assistant.visible", at: end, data: { text: "done", text_preview: "done" }, turn: { id: "t1" }, actor: { role: "assistant", model: "model" } }),
-    usageEvent({ sessionId, id: `${sessionId}-end`, kind: "turn.end", at: end, data: { status: "completed" }, turn: { id: "t1" }, actor: { role: "assistant" } })
+    usageEvent({ provider, sessionId, id: `${sessionId}-start`, kind: "conversation.start", at, data: { source: "test" }, actor: { role: "hook" } }),
+    usageEvent({ provider, sessionId, id: `${sessionId}-turn`, kind: "turn.start", at, data: { status: "started" }, turn: { id: "t1" }, actor: { role: "user" } }),
+    usageEvent({ provider, sessionId, id: `${sessionId}-user`, kind: "message.user", at, data: { text: prompt, text_preview: prompt }, turn: { id: "t1" }, actor: { role: "user" } }),
+    usageEvent({ provider, sessionId, id: `${sessionId}-assistant`, kind: "message.assistant.visible", at: end, data: { text: "done", text_preview: "done" }, turn: { id: "t1" }, actor: { role: "assistant", model: "model" } }),
+    usageEvent({ provider, sessionId, id: `${sessionId}-end`, kind: "turn.end", at: end, data: { status: "completed" }, turn: { id: "t1" }, actor: { role: "assistant" } })
   ];
 }
 
-function usageEvent({ sessionId, id, kind, at, data, turn, actor, links }) {
+function usageEvent({ provider = "codex", sessionId, id, kind, at, data, turn, actor, links }) {
   return {
     schema: "usage.event.v2",
     event_id: `evt_${id}`,
     kind,
     recorded_at: at,
     observed_at: at,
-    provider: "codex",
+    provider,
     capture: {
       source: "hook",
       scope: "repo-local",
@@ -636,7 +662,7 @@ function usageEvent({ sessionId, id, kind, at, data, turn, actor, links }) {
       tracking: { enabled: true, source: "global-allowlist" }
     },
     conversation: {
-      id: `codex:${sessionId}`,
+      id: `${provider}:${sessionId}`,
       provider_session_id: sessionId
     },
     turn,

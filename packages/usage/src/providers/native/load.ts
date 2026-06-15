@@ -19,7 +19,6 @@ export type NativeSourceFile = {
 export type LoadNativeOptions = {
   repoRoot: string;
   providers: UsageProvider[];
-  includeActive?: boolean;
   now?: Date;
 };
 
@@ -43,7 +42,7 @@ export async function loadNativeSourceFiles(options: LoadNativeOptions): Promise
         const eligibility = provider === "codex"
           ? codexEligibility(parsed.records, fileStat.mtimeMs, now)
           : claudeEligibility(parsed.records, fileStat.mtimeMs, now);
-        if (!options.includeActive && !eligibility.eligible) continue;
+        if (!eligibility.eligible) continue;
         const events = provider === "codex"
           ? normalizeCodexNativeRecords(parsed.records as CodexNativeRecord[], {
             sourcePath: filePath,

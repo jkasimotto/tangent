@@ -15,7 +15,6 @@ export type CandidateQuery = {
   from?: Date;
   to?: Date;
   bucketBy?: "turnStartedAt" | "turnEndedAt" | "lastActivityAt";
-  includeActive?: boolean;
   force?: boolean;
   sourceKey?: string;
 };
@@ -31,8 +30,7 @@ export async function collectCandidates(loaded: LoadedRollupConfig, query: Omit<
   const startedAt = Date.now();
   const dataset = await openUsage({
     repo: loaded.repo.root,
-    providers,
-    includeActive: true
+    providers
   });
   const ledger = await readLedger(loaded.paths.ledgerPath);
   const scopedLedger = query.rollupKey ? ledger.filter((line) => (line.rollupKey || line.dateBucket) === query.rollupKey) : ledger;
@@ -43,7 +41,6 @@ export async function collectCandidates(loaded: LoadedRollupConfig, query: Omit<
     provider: providers.length === 1 ? providers[0] : undefined,
     from: query.from,
     to: query.to,
-    includeActive: true,
     bucketBy
   }).data
     .filter((turn) => providers.includes(turn.provider))

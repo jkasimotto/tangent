@@ -39,7 +39,7 @@ export type TurnListItem = {
   startedAt?: Date;
   endedAt?: Date;
   lastActivityAt: Date;
-  status: "completed" | "failed" | "active" | "unknown";
+  status: "completed" | "failed" | "unknown";
   titlePreview?: string;
   sourceFingerprint: string;
   captureConfidence: "exact" | "partial" | "best-effort";
@@ -64,6 +64,20 @@ export type VisibleMessage = {
   model?: string;
   confidence: string;
   source: "native" | "hook" | "best-effort";
+};
+
+export type MessageListQuery = {
+  provider?: UsageProvider;
+  conversationId?: string;
+  turnId?: string;
+  role?: VisibleMessage["role"];
+  from?: Date;
+  to?: Date;
+  date?: string;
+};
+
+export type MessageListItem = VisibleMessage & {
+  sourceKey?: string;
 };
 
 export type ToolCallWithResult = {
@@ -155,14 +169,12 @@ export class UsageDataset {
       provider?: UsageProvider;
       from?: Date;
       to?: Date;
-      includeActive?: boolean;
       date?: string;
       bucketBy?: "turnEndedAt" | "turnStartedAt" | "lastActivityAt";
     } = {}): QueryResult<TurnListItem[]> => {
       const bucketBy = query.bucketBy || "turnEndedAt";
       const rows = this.turnRows()
         .filter((row) => !query.provider || row.provider === query.provider)
-        .filter((row) => query.includeActive || row.status !== "active")
         .filter((row) => {
           const date = turnBucketDate(row, bucketBy);
           return inRange(date, query.from, query.to);
@@ -177,23 +189,19 @@ export class UsageDataset {
   };
 
   messages = {
-    visible: ({ conversationId, turnId }: { conversationId: string; turnId?: string }): QueryResult<VisibleMessage[]> => {
-      const data = this.scopedEvents({ conversationId, turnId })
+    list: (query: MessageListQuery = {}): QueryResult<MessageListItem[]> => {
+      const events = this.scopedEvents(query);
+      const data = events
         .filter((event) => event.kind === "message.user" || event.kind === "message.assistant.visible")
-        .map((event) => ({
-          id: event.links?.message_id || event.event_id,
-          provider: event.provider,
-          conversationId: event.conversation.id,
-          turnId: event.effectiveTurnId,
-          role: event.kind === "message.user" ? "user" as const : "assistant" as const,
-          text: dataString(event.data, "text") || dataString(event.data, "delta"),
-          textPreview: dataString(event.data, "text_preview"),
-          createdAt: eventDate(event),
-          model: event.actor?.model,
-          confidence: event.availability?.confidence || event.capture.confidence || "unknown",
-          source: sourceOf(event)
-        }));
-      return this.result(data, [providerForConversation(this.events, conversationId)], "messages.visible");
+        .filter((event) => !query.provider || event.provider === query.provider)
+        .map((event) => this.visibleMessage(event))
+        .filter((message) => !query.role || message.role === query.role)
+        .filter((message) => inRange(message.createdAt, query.from, query.to))
+        .filter((message) => !query.date || datePart(message.createdAt) === query.date);
+      return this.result(data, this.providersForMessageQuery(query, events), "messages.visible");
+    },
+    visible: ({ conversationId, turnId }: { conversationId: string; turnId?: string }): QueryResult<VisibleMessage[]> => {
+      return this.messages.list({ conversationId, turnId });
     },
     internal: ({ conversationId, turnId }: { conversationId: string; turnId?: string }): QueryResult<unknown[]> => {
       const data = this.scopedEvents({ conversationId, turnId }).filter((event) => event.kind === "message.assistant.internal");
@@ -380,6 +388,29 @@ export class UsageDataset {
     return query.turnId ? events.filter((event) => event.effectiveTurnId === query.turnId) : events;
   }
 
+  private visibleMessage(event: AnnotatedEvent): MessageListItem {
+    return {
+      id: event.links?.message_id || event.event_id,
+      provider: event.provider,
+      conversationId: event.conversation.id,
+      turnId: event.effectiveTurnId,
+      sourceKey: event.effectiveTurnId ? sourceKey(event.provider, event.conversation.provider_session_id, event.conversation.id, event.effectiveTurnId) : undefined,
+      role: event.kind === "message.user" ? "user" as const : "assistant" as const,
+      text: dataString(event.data, "text") || dataString(event.data, "delta"),
+      textPreview: dataString(event.data, "text_preview"),
+      createdAt: eventDate(event),
+      model: event.actor?.model,
+      confidence: event.availability?.confidence || event.capture.confidence || "unknown",
+      source: sourceOf(event)
+    };
+  }
+
+  private providersForMessageQuery(query: MessageListQuery, scopedEvents: AnnotatedEvent[]): Array<UsageProvider | undefined> {
+    if (query.provider) return [query.provider];
+    if (query.conversationId) return [providerForConversation(this.events, query.conversationId)];
+    return providersForEvents(scopedEvents);
+  }
+
   private conversationRows(): ConversationListItem[] {
     return [...this.eventsByConversation.entries()].map(([id, events]) => {
       const start = events.find((event) => event.kind === "conversation.start") || events[0];
@@ -547,7 +578,7 @@ function sourceOf(event: UsageJsonlLineV1): "native" | "hook" | "best-effort" {
 }
 
 function turnStatus(end: AnnotatedEvent | undefined): TurnListItem["status"] {
-  if (!end) return "active";
+  if (!end) return "unknown";
   const status = dataString(end.data, "status");
   if (status === "completed" || status === "failed") return status;
   return "unknown";

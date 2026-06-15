@@ -61,7 +61,7 @@ export async function status(options: StatusOptions): Promise<RollupStatus> {
   const usage = await usageStatus({ repo: loaded.repo.root });
   const dataset = await openUsage({ repo: loaded.repo.root, providers: ["claude", "codex"] });
   const conversations = dataset.conversations.all().data;
-  const turns = dataset.turns.list({ includeActive: true }).data;
+  const turns = dataset.turns.list().data;
   const runner = createSummaryRunner(loaded.config.summary.provider);
   const providerStatus = await runner.checkAvailable();
   const date = dateArgToBucket(options.date, loaded.config.processing.timezone) || todayBucket(loaded.config.processing.timezone);

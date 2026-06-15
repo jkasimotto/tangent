@@ -19,7 +19,7 @@ export type {
   NativeVersionRange
 } from "../providers/native/types.js";
 export { UsageDataset } from "../core/dataset.js";
-export type { ActivityTimelineItem, ConversationListItem, ToolCallWithResult, TurnListItem, VisibleMessage } from "../core/dataset.js";
+export type { ActivityTimelineItem, ConversationListItem, MessageListItem, MessageListQuery, ToolCallWithResult, TurnListItem, VisibleMessage } from "../core/dataset.js";
 export { conversationReport } from "../core/conversation-report.js";
 export type {
   NormalizedConversation,

@@ -400,7 +400,7 @@ function nativeSchemaSummary(row: NativeProviderSchemaStatus): string {
 }
 
 function sessionRows(dataset: UsageDataset, query: { date?: string; provider?: UsageProvider } = {}): SessionRow[] {
-  const turns = dataset.turns.list({ includeActive: true, provider: query.provider }).data;
+  const turns = dataset.turns.list({ provider: query.provider }).data;
   const conversations = dataset.conversations.all().data
     .filter((row) => !query.provider || row.provider === query.provider);
   return conversations.map((conversation) => {

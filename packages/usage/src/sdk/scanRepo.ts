@@ -10,7 +10,6 @@ export type ScanRepoOptions = {
   repo: string;
   providers?: UsageProvider[];
   sources?: UsageIndexSource[];
-  includeActive?: boolean;
   now?: Date;
   since?: Date;
   until?: Date;
@@ -41,7 +40,7 @@ export async function scanRepo(options: ScanRepoOptions): Promise<UsageDataset> 
   }
 
   if (sources.includes("native")) {
-    const native = await loadNativeSourceFiles({ repoRoot: root, providers, includeActive: options.includeActive, now: options.now });
+    const native = await loadNativeSourceFiles({ repoRoot: root, providers, now: options.now });
     warnings.push(...native.warnings);
     for (const file of native.files) {
       sourceFiles.push(file.path);

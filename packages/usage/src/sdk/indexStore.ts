@@ -17,7 +17,6 @@ export type UsageIndexOptions = {
   repo: string;
   providers?: UsageProvider[];
   sources?: UsageIndexSource[];
-  includeActive?: boolean;
   now?: Date;
   force?: boolean;
 };
@@ -37,7 +36,6 @@ export type UsageDatasetQuery = {
   repo: string;
   providers?: UsageProvider[];
   sources?: UsageIndexSource[];
-  includeActive?: boolean;
   now?: Date;
   conversationId?: string;
   since?: Date;
@@ -105,7 +103,7 @@ export async function ensureUsageIndex(options: UsageIndexOptions): Promise<Usag
     const found = new Set<string>();
 
     if (sources.includes("native")) {
-      const native = await loadNativeSourceFiles({ repoRoot: root, providers, includeActive: options.includeActive, now: options.now });
+      const native = await loadNativeSourceFiles({ repoRoot: root, providers, now: options.now });
       warnings.push(...native.warnings);
       for (const file of native.seenPaths) seenNative.add(file);
       for (const file of native.files) {
@@ -400,7 +398,7 @@ function refreshDerivedTables(db: DatabaseHandle): void {
     for (const row of dataset.conversations.all().data) {
       insertConversation.run(row.id, row.provider, row.providerSessionId, iso(row.startedAt), iso(row.endedAt), row.firstPrompt, row.cwd, row.gitBranch);
     }
-    for (const row of dataset.turns.list({ includeActive: true }).data) {
+    for (const row of dataset.turns.list().data) {
       insertTurn.run(
         row.sourceKey,
         row.provider,

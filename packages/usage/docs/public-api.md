@@ -7,9 +7,14 @@ Public import paths:
 Important exports:
 - SDK: `scanRepo`, `openUsage`, `ensureUsageIndex`, `loadUsageDatasetFromIndex`, `resolveConversationRef`, `archiveUsageTelemetry`, `status`, `importNative`, `inspectNativeLogFile`, `listNativeSchemas`, `nativeSchemaStatus`, `UsageDataset`, `conversationReport`.
 - Conversation report types: `NormalizedConversation`, `NormalizedConversationMessage`, `NormalizedToolCall`, `TokenUsage`.
+- Dataset message query types: `MessageListItem`, `MessageListQuery`, `VisibleMessage`.
 - `ensureUsageIndex` and dataset query helpers default to native transcripts. Pass `sources: ["usage-jsonl"]` for legacy hook JSONL, or `sources: ["native", "usage-jsonl"]` for explicit combined debug reads.
 - CLI specs/runners: `usageCommandSpec`, `runUsageCli`.
 - Types include `QueryResult`, `QuerySupport`, `UsageProvider`, and `UsageConfidence`.
+
+Dataset queries:
+- Use `dataset.messages.list(...)` to query visible user and assistant messages across the loaded dataset by provider, conversation, turn, role, date, or date range.
+- `dataset.messages.visible({ conversationId, turnId })` remains available for one-conversation transcript reads.
 
 Human CLI:
 - `tangent usage ...` is the default activity surface.

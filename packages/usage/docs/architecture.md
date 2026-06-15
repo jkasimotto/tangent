@@ -13,7 +13,7 @@ Capture notes:
 - Hook capture is retired. Legacy usage-jsonl files remain readable for old data and are included only when callers explicitly request the combined source.
 - Codex native token usage comes from unique `token_count.info.last_token_usage` snapshots, with `total_token_usage` retained as cumulative audit metadata. Claude native token usage comes from assistant message `usage` fields.
 - Tool results retain non-token metadata such as output size and truncation status. Usage does not estimate or allocate per-tool-call token usage because providers do not report it at that granularity.
-- Native transcript indexing skips active files by default. A file is eligible when the provider marks it complete, or when it has been quiet for at least 15 minutes and does not end on a user message.
+- Native transcript indexing skips incomplete in-progress files. A file is eligible when the provider marks it complete, or when it has been quiet for at least 15 minutes and does not end on a user message.
 - Native schemas remain version-tagged and permissive so Tangent can warn when provider versions drift beyond known ranges.
 - SQLite is the default query path. Provider native transcript files and legacy hook JSONL files are ingested incrementally by source-file metadata.
 

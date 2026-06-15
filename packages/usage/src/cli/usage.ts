@@ -11,6 +11,7 @@ import { nativeSchemaStatus } from "../providers/native/status.js";
 import type { NativeLogInspection, NativeProviderSchemaStatus } from "../providers/native/types.js";
 import type { UsageDataset, VisibleMessage } from "../core/dataset.js";
 import type { UsageProvider } from "../core/schema/usage-jsonl-v1.js";
+import { runUsageResourceCommand } from "./resource-commands.js";
 import { usageCommandSpec } from "./spec.js";
 import {
   formatDatePart,
@@ -54,7 +55,7 @@ type UsageRow = {
 };
 
 export async function runUsageCli(argv = process.argv.slice(2)): Promise<void> {
-  const args = parseArgs(argv);
+  const args = parseArgs(argv, { repeatable: ["metric", "group"] });
   const [command, subcommand] = args._;
 
   if (!command || args.help) {
@@ -75,6 +76,8 @@ export async function runUsageCli(argv = process.argv.slice(2)): Promise<void> {
     else printUsageStatus(value, Boolean(args.verbose));
     return;
   }
+
+  if (await runUsageResourceCommand(args)) return;
 
   if (command === "today" || command === "sessions") {
     const repoArg = command === "today" ? args._[1] : args._[1] || ".";

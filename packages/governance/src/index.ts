@@ -78,7 +78,7 @@ export async function lintGovernance(options: GovernanceLintOptions = {}): Promi
   const ctx = { root, packages: await packageInfos(root) };
 
   if (hasGroup(groups, "agents") || hasGroup(groups, "docs")) findings.push(...await lintAgentDocs(ctx));
-  if (hasGroup(groups, "deps")) findings.push(...await lintPackageDeps(ctx), ...await lintPackageInstallability(ctx), ...await lintImports(ctx));
+  if (hasGroup(groups, "deps")) findings.push(...await lintPackageDeps(ctx), ...await lintPackageInstallability(ctx), ...await lintImports(ctx), ...await lintUsageDependencyLightEntrypoints(ctx));
   if (hasGroup(groups, "shared")) findings.push(...await lintSharedHelpers(ctx));
   if (hasGroup(groups, "hooks")) findings.push(...await lintHookBoundaries(ctx));
   if (hasGroup(groups, "files")) findings.push(...await lintFileSizes(ctx));
@@ -240,6 +240,43 @@ async function lintImports(ctx: LintContext): Promise<GovernanceFinding[]> {
           ]
         });
       }
+    }
+  }
+  return findings;
+}
+
+async function lintUsageDependencyLightEntrypoints(ctx: LintContext): Promise<GovernanceFinding[]> {
+  const findings: GovernanceFinding[] = [];
+  for (const file of await sourceFiles(ctx.root)) {
+    const rel = relative(ctx.root, file);
+    if (!rel.startsWith("packages/usage/src/")) continue;
+    const text = await readFile(file, "utf8");
+    const isDependencyLight = rel.startsWith("packages/usage/src/schema/") ||
+      rel.startsWith("packages/usage/src/core/") ||
+      rel.startsWith("packages/usage/src/query/");
+    if (isDependencyLight && /from\s+["']better-sqlite3["']|import\s+["']better-sqlite3["']/.test(text)) {
+      findings.push({
+        rule: "deps/usage-core-no-static-sqlite",
+        severity: "error",
+        file: rel,
+        message: "dependency-light usage entrypoints must not statically import better-sqlite3.",
+        fix: [
+          "Move SQLite behavior behind @tangent/usage/sqlite or a lazy compatibility boundary.",
+          "Keep @tangent/usage/schema, /core, and /query importable without optional native dependencies."
+        ]
+      });
+    }
+    if (isDependencyLight && /from\s+["']\.\.\/pricing|from\s+["'].*\/pricing/.test(text)) {
+      findings.push({
+        rule: "deps/usage-core-no-pricing",
+        severity: "error",
+        file: rel,
+        message: "dependency-light usage entrypoints must not import pricing code.",
+        fix: [
+          "Keep pricing behind @tangent/usage/pricing.",
+          "Pass priced cost data into core as ordinary UsageCost metrics."
+        ]
+      });
     }
   }
   return findings;

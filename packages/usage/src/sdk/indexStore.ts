@@ -1,16 +1,29 @@
 import { mkdirSync } from "node:fs";
 import { mkdir, rename, stat } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
-import Database from "better-sqlite3";
 import { pathExists, repoInfo } from "@tangent/repo";
 
 import { listJsonlFiles, readJsonl } from "../core/append-jsonl.js";
 import { UsageDataset } from "../core/dataset.js";
+import { eventsToProjections } from "../core/projections.js";
 import { repoArchiveDir, repoEventDir, repoIndexPath } from "../core/paths.js";
 import type { UsageJsonlLineV1, UsageProvider, UsageWarning } from "../core/schema/usage-jsonl-v1.js";
 import { loadNativeSourceFiles } from "../providers/native/load.js";
+import { usageProjectionSchemaSql } from "../sqlite/schema.js";
 
-type DatabaseHandle = InstanceType<typeof Database>;
+const require = createRequire(import.meta.url);
+type StatementHandle = {
+  run(...params: unknown[]): unknown;
+  all(...params: unknown[]): unknown[];
+  get(...params: unknown[]): unknown;
+};
+type DatabaseHandle = {
+  exec(sql: string): void;
+  prepare(sql: string): StatementHandle;
+  transaction<T extends (...args: never[]) => unknown>(fn: T): T;
+  close(): void;
+};
 export type UsageIndexSource = "native" | "usage-jsonl";
 
 export type UsageIndexOptions = {
@@ -89,7 +102,7 @@ export async function ensureUsageIndex(options: UsageIndexOptions): Promise<Usag
   const root = repo.root || repo.cwd;
   const providers = options.providers?.length ? options.providers : ["claude", "codex"] as UsageProvider[];
   const sources = options.sources?.length ? options.sources : ["native"] as UsageIndexSource[];
-  const db = openDb(root);
+  const db = await openDb(root);
   const warnings: UsageWarning[] = [];
   let indexed = 0;
   let skipped = 0;
@@ -176,7 +189,7 @@ export async function ensureUsageIndex(options: UsageIndexOptions): Promise<Usag
 
 export async function loadUsageDatasetFromIndex(query: UsageDatasetQuery): Promise<UsageDataset> {
   const index = await ensureUsageIndex(query);
-  const db = openDb(index.repoRoot);
+  const db = await openDb(index.repoRoot);
   try {
     ensureSchema(db);
     const clauses: string[] = [];
@@ -215,7 +228,7 @@ export async function loadUsageDatasetFromIndex(query: UsageDatasetQuery): Promi
 
 export async function resolveConversationRef(options: { repo: string; ref: string; providers?: UsageProvider[]; sources?: UsageIndexSource[] }): Promise<ResolvedConversationRef> {
   const index = await ensureUsageIndex({ repo: options.repo, providers: options.providers, sources: options.sources });
-  const db = openDb(index.repoRoot);
+  const db = await openDb(index.repoRoot);
   try {
     ensureSchema(db);
     const rows = conversationRows(db, options.providers);
@@ -243,7 +256,7 @@ export async function resolveConversationRef(options: { repo: string; ref: strin
 
 export async function archiveUsageTelemetry(options: UsageArchiveOptions): Promise<UsageArchiveResult> {
   const index = await ensureUsageIndex({ repo: options.repo, providers: options.providers, sources: ["usage-jsonl"] });
-  const db = openDb(index.repoRoot);
+  const db = await openDb(index.repoRoot);
   const result: UsageArchiveResult = {
     repoRoot: index.repoRoot,
     before: options.before.toISOString(),
@@ -283,10 +296,19 @@ export async function archiveUsageTelemetry(options: UsageArchiveOptions): Promi
   }
 }
 
-function openDb(repoRoot: string): DatabaseHandle {
+async function openDb(repoRoot: string): Promise<DatabaseHandle> {
   const dbPath = repoIndexPath(repoRoot);
   mkdirSyncForDb(dbPath);
-  return new Database(dbPath);
+  const Database = optionalSqlite();
+  return new Database(dbPath) as DatabaseHandle;
+}
+
+function optionalSqlite(): new (path: string, options?: unknown) => unknown {
+  try {
+    return require("better-sqlite3") as new (path: string, options?: unknown) => unknown;
+  } catch (error) {
+    throw new Error(`SQLite index support requires optional dependency better-sqlite3: ${(error as Error).message}`);
+  }
 }
 
 function ensureSchema(db: DatabaseHandle): void {
@@ -342,6 +364,7 @@ function ensureSchema(db: DatabaseHandle): void {
     create index if not exists events_provider_recorded_idx on events (provider, recorded_at);
     create index if not exists turns_conversation_idx on turns (conversation_id, last_activity_at);
   `);
+  db.exec(usageProjectionSchemaSql);
   if (!tableHasColumn(db, "events", "source_path")) db.exec("alter table events add column source_path text");
 }
 
@@ -390,11 +413,62 @@ function refreshDerivedTables(db: DatabaseHandle): void {
   const events = (db.prepare("select json from events order by coalesce(observed_at, recorded_at), recorded_at").all() as EventRow[])
     .map((row) => JSON.parse(row.json) as UsageJsonlLineV1);
   const dataset = new UsageDataset(events);
+  const projections = eventsToProjections(events);
   const insertConversation = db.prepare("insert or replace into conversations values (?, ?, ?, ?, ?, ?, ?, ?)");
   const insertTurn = db.prepare("insert or replace into turns values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+  const insertRawEvent = db.prepare(`
+    insert or replace into raw_events
+    (id, source_file_id, provider, kind, recorded_at, observed_at, session_id, turn_id, step_id, json)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertSession = db.prepare(`
+    insert or replace into sessions
+    (id, provider, provider_session_id, title, first_prompt, started_at, ended_at, last_activity_at, status, counts_json, metrics_json, availability_json, evidence_json, provider_fields_json)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertStep = db.prepare(`
+    insert or replace into steps
+    (id, session_id, turn_id, parent_step_id, step_order, kind, label, category, status, provider, model, tool_name, started_at, ended_at, duration_ms, self_duration_ms, duration_confidence, metrics_json, target_paths_json, evidence_json, native_refs_json, provider_fields_json)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertMessage = db.prepare(`
+    insert or replace into messages
+    (id, session_id, turn_id, step_id, role, ordinal, created_at, text_preview, text_chars, text_bytes, content_mode, model, has_tool_use, has_thinking, token_usage_json, confidence, evidence_json, provider_fields_json)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertToolCall = db.prepare(`
+    insert or replace into tool_calls
+    (id, session_id, turn_id, step_id, message_id, provider, tool_name, category, target_paths_json, model, status, result_step_id, evidence_json, provider_fields_json)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertToolResult = db.prepare(`
+    insert or replace into tool_results
+    (id, session_id, turn_id, step_id, tool_call_id, provider, tool_name, status, output_preview, duration_ms, evidence_json, provider_fields_json)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertUsageSample = db.prepare(`
+    insert or replace into usage_samples
+    (id, session_id, turn_id, step_id, provider, model, tokens_json, evidence_json)
+    values (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertFileEvent = db.prepare(`
+    insert or replace into file_events
+    (id, session_id, step_id, provider, operation, target_paths_json, evidence_json)
+    values (?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertEdge = db.prepare("insert or replace into edges (id, from_id, to_id, kind) values (?, ?, ?, ?)");
   const transaction = db.transaction(() => {
     db.prepare("delete from conversations").run();
     db.prepare("delete from turns").run();
+    db.prepare("delete from raw_events").run();
+    db.prepare("delete from sessions").run();
+    db.prepare("delete from steps").run();
+    db.prepare("delete from messages").run();
+    db.prepare("delete from tool_calls").run();
+    db.prepare("delete from tool_results").run();
+    db.prepare("delete from usage_samples").run();
+    db.prepare("delete from file_events").run();
+    db.prepare("delete from edges").run();
     for (const row of dataset.conversations.all().data) {
       insertConversation.run(row.id, row.provider, row.providerSessionId, iso(row.startedAt), iso(row.endedAt), row.firstPrompt, row.cwd, row.gitBranch);
     }
@@ -412,6 +486,45 @@ function refreshDerivedTables(db: DatabaseHandle): void {
         row.sourceFingerprint,
         JSON.stringify(row.stats)
       );
+    }
+    for (const event of projections.rawEvents) {
+      insertRawEvent.run(
+        event.id,
+        event.source.path || event.source.id,
+        event.provider,
+        event.kind,
+        event.recordedAt,
+        event.observedAt,
+        event.scope.sessionId,
+        event.scope.turnId,
+        event.scope.stepId,
+        JSON.stringify(event)
+      );
+    }
+    for (const row of projections.sessions) {
+      insertSession.run(row.id, row.provider, row.providerSessionId, row.title, row.firstPrompt, row.startedAt, row.endedAt, row.lastActivityAt, row.status, JSON.stringify(row.counts), JSON.stringify(row.metrics), JSON.stringify(row.availability), JSON.stringify(row.evidence), jsonOrNull(row.providerFields));
+    }
+    for (const row of projections.steps) {
+      insertStep.run(row.id, row.sessionId, row.turnId, row.parentStepId, row.order, row.kind, row.label, row.category, row.status, row.provider, row.model, row.toolName, row.startedAt, row.endedAt, row.durationMs, row.selfDurationMs, row.durationConfidence, JSON.stringify(row.metrics), JSON.stringify(row.targetPaths), JSON.stringify(row.evidence), JSON.stringify(row.nativeRefs), jsonOrNull(row.providerFields));
+      if (row.parentStepId) insertEdge.run(`edge:${row.parentStepId}:${row.id}`, row.parentStepId, row.id, "parent");
+    }
+    for (const row of projections.messages) {
+      insertMessage.run(row.id, row.sessionId, row.turnId, row.stepId, row.role, row.ordinal, row.createdAt, row.textPreview, row.textChars, row.textBytes, row.contentMode, row.model, row.hasToolUse ? 1 : 0, row.hasThinking ? 1 : 0, jsonOrNull(row.tokenUsage), row.confidence, JSON.stringify(row.evidence), jsonOrNull(row.providerFields));
+      if (row.stepId) insertEdge.run(`edge:${row.stepId}:${row.id}`, row.stepId, row.id, "message");
+    }
+    for (const row of projections.toolCalls) {
+      insertToolCall.run(row.id, row.sessionId, row.turnId, row.stepId, row.messageId, row.provider, row.toolName, row.category, JSON.stringify(row.targetPaths), row.model, row.status, row.resultStepId, JSON.stringify(row.evidence), jsonOrNull(row.providerFields));
+      if (row.stepId) insertEdge.run(`edge:${row.stepId}:${row.id}`, row.stepId, row.id, "tool_call");
+    }
+    for (const row of projections.toolResults) {
+      insertToolResult.run(row.id, row.sessionId, row.turnId, row.stepId, row.toolCallId, row.provider, row.toolName, row.status, row.outputPreview, row.durationMs, JSON.stringify(row.evidence), jsonOrNull(row.providerFields));
+      if (row.stepId) insertEdge.run(`edge:${row.stepId}:${row.id}`, row.stepId, row.id, "tool_result");
+    }
+    for (const row of projections.usageSamples) {
+      insertUsageSample.run(row.id, row.sessionId, row.turnId, row.id, row.provider, row.model, JSON.stringify(row.metrics.tokens), JSON.stringify(row.evidence));
+    }
+    for (const row of projections.steps.filter((step) => step.kind === "file_read" || step.kind === "file_search" || step.kind === "file_write")) {
+      insertFileEvent.run(row.id, row.sessionId, row.id, row.provider, row.kind.replace("file_", ""), JSON.stringify(row.targetPaths), JSON.stringify(row.evidence));
     }
   });
   transaction();
@@ -464,6 +577,10 @@ function shortConversationId(row: Pick<ConversationRow, "provider" | "id" | "ses
 
 function iso(date: Date | undefined): string | undefined {
   return date?.toISOString();
+}
+
+function jsonOrNull(value: unknown): string | null {
+  return value === undefined ? null : JSON.stringify(value);
 }
 
 function mkdirSyncForDb(dbPath: string): void {

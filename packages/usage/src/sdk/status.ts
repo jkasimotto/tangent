@@ -1,5 +1,5 @@
 import { stat } from "node:fs/promises";
-import Database from "better-sqlite3";
+import { createRequire } from "node:module";
 import { pathExists, repoInfo } from "@tangent/repo";
 
 import { listJsonlFiles } from "../core/append-jsonl.js";
@@ -10,6 +10,12 @@ import { discoverClaudeNative } from "../providers/claude/native/discover.js";
 import { discoverCodexNative } from "../providers/codex/native/discover.js";
 import { nativeSchemaStatus } from "../providers/native/status.js";
 import type { NativeProviderSchemaStatus } from "../providers/native/types.js";
+
+const require = createRequire(import.meta.url);
+type DatabaseHandle = {
+  prepare(sql: string): { get(...params: unknown[]): unknown };
+  close(): void;
+};
 
 export type StatusOptions = {
   repo: string;
@@ -115,7 +121,8 @@ async function indexStatus(root: string): Promise<RepoStatus["index"]> {
   const fileStat = await stat(indexPath);
   let sourceFiles = 0;
   try {
-    const db = new Database(indexPath, { readonly: true });
+    const Database = optionalSqlite();
+    const db = new Database(indexPath, { readonly: true }) as DatabaseHandle;
     try {
       const row = db.prepare("select count(*) as count from source_files").get() as { count: number };
       sourceFiles = row.count;
@@ -131,4 +138,12 @@ async function indexStatus(root: string): Promise<RepoStatus["index"]> {
     sourceFiles,
     updatedAt: fileStat.mtime.toISOString()
   };
+}
+
+function optionalSqlite(): new (path: string, options?: unknown) => unknown {
+  try {
+    return require("better-sqlite3") as new (path: string, options?: unknown) => unknown;
+  } catch {
+    throw new Error("SQLite unavailable");
+  }
 }

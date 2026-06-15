@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
-import Database from "better-sqlite3";
 
 import type {
   UsageJsonlLineV1,
@@ -12,6 +12,17 @@ import type {
 import { capabilitiesForProvider } from "./schema/capabilities.js";
 import { conversationReport, type NormalizedConversation } from "./conversation-report.js";
 import { repoIndexPath } from "./paths.js";
+
+const require = createRequire(import.meta.url);
+type DatabaseHandle = {
+  exec(sql: string): void;
+  prepare(sql: string): {
+    run(...params: unknown[]): unknown;
+    all(...params: unknown[]): unknown[];
+  };
+  transaction<T extends (...args: never[]) => unknown>(fn: T): T;
+  close(): void;
+};
 
 export type ConversationListItem = {
   id: string;
@@ -283,7 +294,8 @@ export class UsageDataset {
   writeIndex(repoRoot: string): void {
     const dbPath = repoIndexPath(repoRoot);
     mkdirSync(path.dirname(dbPath), { recursive: true });
-    const db = new Database(dbPath);
+    const Database = optionalSqlite();
+    const db = new Database(dbPath) as DatabaseHandle;
     db.exec(`
       create table if not exists events (
         event_id text primary key,
@@ -470,6 +482,14 @@ export class UsageDataset {
   }
 }
 
+function optionalSqlite(): new (path: string, options?: unknown) => unknown {
+  try {
+    return require("better-sqlite3") as new (path: string, options?: unknown) => unknown;
+  } catch (error) {
+    throw new Error(`SQLite index support requires optional dependency better-sqlite3: ${(error as Error).message}`);
+  }
+}
+
 function annotateTurns(events: UsageJsonlLineV1[]): AnnotatedEvent[] {
   const state = new Map<string, { current?: string; counter: number; indexes: Map<string, number> }>();
   return events.map((event) => {
@@ -647,6 +667,6 @@ function iso(date: Date | undefined): string | undefined {
   return date?.toISOString();
 }
 
-function tableHasColumn(db: Database.Database, table: string, column: string): boolean {
+function tableHasColumn(db: DatabaseHandle, table: string, column: string): boolean {
   return (db.prepare(`pragma table_info(${table})`).all() as Array<{ name: string }>).some((row) => row.name === column);
 }

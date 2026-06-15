@@ -11,14 +11,40 @@
       "types": "./dist/sdk/index.d.ts",
       "import": "./dist/sdk/index.js"
     },
+    "./schema": {
+      "types": "./dist/schema/index.d.ts",
+      "import": "./dist/schema/index.js"
+    },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js"
+    },
+    "./query": {
+      "types": "./dist/query/index.d.ts",
+      "import": "./dist/query/index.js"
+    },
+    "./providers": {
+      "types": "./dist/providers/index.d.ts",
+      "import": "./dist/providers/index.js"
+    },
+    "./sqlite": {
+      "types": "./dist/sqlite/index.d.ts",
+      "import": "./dist/sqlite/index.js"
+    },
     "./cli": {
       "types": "./dist/cli/index.d.ts",
       "import": "./dist/cli/index.js"
+    },
+    "./pricing": {
+      "types": "./dist/pricing/index.d.ts",
+      "import": "./dist/pricing/index.js"
     }
   },
   "dependencies": {
     "@tangent/core": "^0.1.0",
-    "@tangent/repo": "^0.1.0",
+    "@tangent/repo": "^0.1.0"
+  },
+  "optionalDependencies": {
     "better-sqlite3": "^11.10.0"
   },
   "devDependencies": {

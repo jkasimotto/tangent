@@ -17,6 +17,7 @@ Decisions:
 - decisions/ADR-0002-hooks-package-boundary.md
 - decisions/ADR-0003-shared-runtime-and-repo-packages.md
 - decisions/ADR-0004-retire-hook-capture.md
+- decisions/ADR-0005-usage-v2-telemetry-kernel.md
 
 Agent workflow:
 - agent/coding-rules.md

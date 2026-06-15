@@ -5,9 +5,11 @@ import path from "node:path";
 import test from "node:test";
 
 import { UsageDataset } from "../dist/core/dataset.js";
+import { createUsageClient, eventsToProjections } from "../dist/core/index.js";
 import { eventFileForConversation } from "../dist/core/paths.js";
 import { normalizeClaudeNativeRecord, normalizeClaudeNativeRecords } from "../dist/providers/claude/native/normalize.js";
 import { normalizeCodexNativeRecords } from "../dist/providers/codex/native/normalize.js";
+import { providerCapabilities } from "../dist/providers/index.js";
 import { archiveUsageTelemetry, ensureUsageIndex, loadUsageDatasetFromIndex, resolveConversationRef } from "../dist/sdk/indexStore.js";
 import { inspectNativeLogFile, listNativeSchemas, nativeSchemaStatus } from "../dist/sdk/index.js";
 
@@ -332,6 +334,146 @@ test("usage index removes deleted source files from indexed reads", async () => 
   assert.equal(result.removed, 1);
   const dataset = await loadUsageDatasetFromIndex({ repo: dir, conversationId, sources: ["usage-jsonl"] });
   assert.equal(dataset.events.length, 0);
+});
+
+test("usage core client satisfies query, timeline, analytics, capabilities, raw, and dependency-light stories", async () => {
+  const longPrompt = "please analyze ".repeat(45);
+  const base = sessionEvents({ sessionId: "s1", prompt: longPrompt, at: "2026-06-10T10:00:00.000Z" }).map((event) => {
+    if (event.kind === "message.assistant.visible") return { ...event, links: { message_id: "assistant-s1" } };
+    return event;
+  });
+  const events = [
+    ...base,
+    usageEvent({
+      sessionId: "s1",
+      id: "s1-tool-call",
+      kind: "tool.call",
+      at: "2026-06-10T10:00:10.000Z",
+      data: { tool_name: "exec_command", category: "command", input: { cmd: "npm test" }, target_paths: ["package.json"] },
+      turn: { id: "t1" },
+      actor: { role: "assistant", model: "model" },
+      links: { tool_call_id: "call1", message_id: "assistant-s1" }
+    }),
+    usageEvent({
+      sessionId: "s1",
+      id: "s1-tool-result",
+      kind: "tool.result",
+      at: "2026-06-10T10:00:20.000Z",
+      data: { tool_name: "exec_command", category: "command", status: "success", duration_ms: 10000, output: "ok" },
+      turn: { id: "t1" },
+      actor: { role: "tool" },
+      links: { tool_call_id: "call1" }
+    }),
+    usageEvent({
+      sessionId: "s1",
+      id: "s1-usage",
+      kind: "token.usage",
+      at: "2026-06-10T10:00:21.000Z",
+      data: { usage: { input_tokens: 100, output_tokens: 25, total_tokens: 125 }, usageConfidence: "provider-reported", model: "model" },
+      turn: { id: "t1" },
+      actor: { role: "assistant", model: "model" },
+      links: { message_id: "assistant-s1" }
+    }),
+    usageEvent({
+      sessionId: "s1",
+      id: "s1-compact",
+      kind: "compact.post",
+      at: "2026-06-10T10:00:22.000Z",
+      data: { summary: "compressed", trigger: "manual" },
+      turn: { id: "t1" },
+      actor: { role: "assistant" }
+    }),
+    usageEvent({
+      sessionId: "s1",
+      id: "s1-subagent",
+      kind: "subagent.start",
+      at: "2026-06-10T10:00:23.000Z",
+      data: { name: "review" },
+      turn: { id: "t1" },
+      actor: { role: "subagent", agent_id: "sub1" },
+      links: { subagent_id: "sub1" }
+    }),
+    ...sessionEvents({ provider: "claude", sessionId: "c1", prompt: "short claude task", at: "2026-06-10T11:00:00.000Z" }),
+    usageEvent({
+      provider: "claude",
+      sessionId: "c1",
+      id: "c1-usage",
+      kind: "token.usage",
+      at: "2026-06-10T11:00:20.000Z",
+      data: { usage: { input_tokens: 40, output_tokens: 10, total_tokens: 50 }, usageConfidence: "provider-reported", model: "claude-model" },
+      turn: { id: "t1" },
+      actor: { role: "assistant", model: "claude-model" }
+    })
+  ];
+  const projections = eventsToProjections({
+    events,
+    capabilities: [providerCapabilities("codex"), providerCapabilities("claude")]
+  });
+  const usage = createUsageClient(projections);
+
+  const longMessages = await usage.messages.query({
+    where: { role: "user", textChars: { gte: 500 } },
+    orderBy: [{ field: "createdAt", direction: "desc" }]
+  });
+  assert.deepEqual(longMessages.data.map((message) => message.sessionId), ["codex:s1"]);
+
+  const report = await usage.sessions.report("codex:s1");
+  assert.equal(report.data.messages.some((message) => message.role === "user"), true);
+  assert.equal(report.data.messages.some((message) => message.role === "assistant"), true);
+  assert.equal(report.data.messages.flatMap((message) => message.toolCalls || []).length, 1);
+  assert.ok(report.data.caveats.length > 0);
+
+  const durationTimeline = await usage.sessions.timeline("codex:s1", { metric: "durationMs", bucketBy: "kind", nesting: "tree" });
+  assert.equal(durationTimeline.data.items.some((item) => item.kind === "command" && item.durationMs === 10000), true);
+  assert.equal(durationTimeline.data.totals.rows.some((row) => row.dimensions["step.kind"] === "command"), true);
+
+  const tokenTimeline = await usage.sessions.timeline("codex:s1", { metric: "tokens.total", bucketBy: "kind" });
+  assert.equal(tokenTimeline.data.items.some((item) => item.kind === "model_call" && item.metricValue === 125), true);
+
+  const buckets = await usage.analytics.aggregate({
+    scope: { sessionId: "codex:s1" },
+    groupBy: ["step.kind"],
+    metrics: ["durationMs.sum", "tokens.total.sum", "count"]
+  });
+  assert.equal(buckets.data.rows.some((row) => row.dimensions["step.kind"] === "model_call" && row.metrics["tokens.total.sum"] === 125), true);
+
+  const slowest = await usage.steps.query({
+    where: { sessionId: "codex:s1" },
+    orderBy: [{ field: "durationMs", direction: "desc" }],
+    limit: 20
+  });
+  assert.equal(slowest.data[0].durationMs >= 10000, true);
+
+  const tokenHeavy = await usage.steps.query({
+    where: { sessionId: "codex:s1", stepKind: "model_call" },
+    orderBy: [{ field: "metrics.tokens.total", direction: "desc" }],
+    limit: 20
+  });
+  assert.equal(tokenHeavy.data[0].metrics.tokens.total, 125);
+
+  const providerComparison = await usage.analytics.aggregate({
+    scope: { from: "2026-06-10T00:00:00.000Z", to: "2026-06-10T23:59:59.999Z" },
+    groupBy: ["provider", "model"],
+    metrics: ["tokens.total.sum", "durationMs.sum"]
+  });
+  assert.equal(providerComparison.data.rows.some((row) => row.dimensions.provider === "codex"), true);
+  assert.equal(providerComparison.data.rows.some((row) => row.dimensions.provider === "claude"), true);
+
+  const subagents = await usage.analytics.aggregate({
+    scope: { sessionId: "codex:s1" },
+    groupBy: ["step.kind"],
+    metrics: ["count", "tokens.total.sum"]
+  });
+  assert.equal(subagents.data.rows.some((row) => row.dimensions["step.kind"] === "subagent"), true);
+
+  const capabilities = await usage.providers.list();
+  assert.equal(capabilities.data.some((provider) => provider.provider === "codex" && provider.fields["tools.calls"].status === "supported"), true);
+
+  const raw = await usage.raw.evidence(projections.rawEvents[0].id);
+  assert.equal(raw.data.id, projections.rawEvents[0].id);
+  assert.ok(raw.meta.provenance.events >= events.length);
+
+  assert.equal(typeof createUsageClient, "function");
 });
 
 async function writeJsonl(filePath, events) {

@@ -56,15 +56,14 @@ export async function scanRepo(options: ScanRepoOptions): Promise<UsageDataset> 
   });
 
   void usageHome;
-  const dataset = new UsageDataset(filtered, warnings, { sourceFiles });
-  try {
-    dataset.writeIndex(root);
-  } catch (error) {
-    warnings.push({ code: "index-write-failed", message: (error as Error).message });
-  }
-  return dataset;
+  return new UsageDataset(filtered, warnings, { sourceFiles });
 }
 
 export async function openUsage(options: Omit<ScanRepoOptions, "sources">): Promise<UsageDataset> {
-  return loadUsageDatasetFromIndex(options);
+  try {
+    return await loadUsageDatasetFromIndex(options);
+  } catch (error) {
+    if (!/better-sqlite3|SQLite/.test((error as Error).message)) throw error;
+    return scanRepo({ ...options, sources: ["native"] });
+  }
 }

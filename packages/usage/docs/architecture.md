@@ -1,12 +1,15 @@
 # @tangent/usage Architecture
 
-Conversation telemetry domain: schemas, native-log schema compatibility, legacy usage-jsonl readers, datasets, SDK, and CLI.
+Conversation telemetry domain: schemas, native-log schema compatibility, legacy usage-jsonl readers, dependency-light conversation APIs, projection/query engines, optional SQLite indexing, SDK, and CLI.
 
 Product split:
-- `usage` is the human-readable activity CLI: sessions, transcripts, tools, tokens, status, and export.
+- `usage` is the human-readable activity CLI: sessions, messages, steps, tools, tokens, analytics, raw events, status, and export.
 - `tangent-usage` is the standalone install binary; `tangent usage` is the full-suite root command.
-- `usage report <session|latest>` projects raw `usage.event.v2` rows into assistant-centered `usage.conversation.v1` reports with user/assistant messages, assistant/model-call token usage, and nested tool calls.
-- Raw/debug views are explicit subcommands: `usage events --json`, `usage messages --json`, `usage export`, and hidden data archive.
+- `@tangent/usage/schema`, `/core`, and `/query` are dependency-light and must not import SQLite, pricing tables, server/UI code, or provider-specific native parser dependencies at module load time.
+- `@tangent/usage/core` projects normalized events into `tangent.usage.session.v1`, `turn.v1`, `step.v1`, `message.v1`, timeline, and aggregate resources.
+- `@tangent/usage/sqlite` owns optional SQLite indexing. The index is a rebuildable projection store over normalized raw events, not the canonical data model.
+- Legacy `usage report <session|latest>` and `usage transcript` remain aliases; canonical commands are `usage sessions report`, `usage messages query`, `usage steps query`, `usage analytics aggregate`, and `usage raw events`.
+- Raw/debug views are explicit subcommands: `usage raw events --json`, `usage export`, and hidden data archive.
 - Human output hides provenance unless `--json` or a debug/export command is used.
 
 Capture notes:
@@ -16,7 +19,9 @@ Capture notes:
 - Tool results retain non-token metadata such as output size and truncation status. Usage does not estimate or allocate per-tool-call token usage because providers do not report it at that granularity.
 - Native transcript indexing skips incomplete in-progress files. A file is eligible when the provider marks it complete, or when it has been quiet for at least 15 minutes and does not end on a user message.
 - Native schemas remain version-tagged and permissive so Tangent can warn when provider versions drift beyond known ranges.
-- SQLite is the default query path. Provider native transcript files and legacy hook JSONL files are ingested incrementally by source-file metadata.
+- `openUsage({ index: "auto" })` uses SQLite when the optional dependency is available and falls back to in-memory projections when it is not.
+- Provider native transcript files and legacy hook JSONL files are ingested incrementally by source-file metadata when SQLite is available.
+- Provider ids are open strings in public APIs. Built-in Claude/Codex adapters are registered through the provider adapter contract; unknown providers require caller-supplied adapters.
 
 Rules:
 - Do not depend on Rollup, Eval, or Search.

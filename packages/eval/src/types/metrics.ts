@@ -3,7 +3,7 @@ export type EvalMetrics = {
   runId: string;
   caseId: string;
   variantId: string;
-  status: "prepared" | "running" | "done" | "failed" | "manual";
+  status: "prepared" | "running" | "done" | "failed" | "manual" | "cancelled";
   time: {
     startedAt?: string;
     endedAt?: string;

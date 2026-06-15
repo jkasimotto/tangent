@@ -6,6 +6,7 @@ import { relativeFrom } from "./paths.js";
 
 const contextFileNames = new Set(["CLAUDE.md", "AGENT.md", "AGENTS.md"]);
 const contextDirNames = new Set([".claude", ".agents", ".agnets"]);
+const ignoredRecursiveEntryNames = new Set([".git"]);
 
 export type DiscoveredContextFile = {
   scope: EvalContextFileScope;
@@ -121,6 +122,7 @@ async function listFilesRecursive(dir: string): Promise<string[]> {
   const rows: string[] = [];
   const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
   for (const entry of entries) {
+    if (ignoredRecursiveEntryNames.has(entry.name.toLowerCase())) continue;
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) rows.push(...await listFilesRecursive(fullPath));
     else if (entry.isFile()) rows.push(fullPath);

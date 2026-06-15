@@ -23,7 +23,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && chmod +x dist/cli/index.js",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test test/*.test.mjs"
+    "test": "npm run build -w @tangent/agent-runtime && npm run build && node --test test/*.test.mjs"
   },
   "dependencies": {
     "@tangent/core": "file:../core",

@@ -8,43 +8,151 @@ import { runAgent } from "../runners/index.js";
 import { implementationPrompt, planPrompt } from "./phase-prompts.js";
 import { saveRunManifest } from "./run-store.js";
 
-export async function runPreparedEval(manifest: EvalRunManifest): Promise<EvalRunManifest> {
-  const failures: string[] = [];
-  for (const variant of manifest.variants) {
-    if (variant.agent.kind === "manual") continue;
-    try {
-      await runVariant(manifest, variant);
-    } catch (error) {
-      variant.status = "failed";
-      variant.error = (error as Error).message;
-      failures.push(`${variant.caseId}/${variant.variantId}: ${(error as Error).message}`);
-      await saveRunManifest(manifest);
-    }
+export type EvalRunProgressEvent = {
+  type:
+    | "run.started"
+    | "run.completed"
+    | "run.cancelled"
+    | "variant.started"
+    | "variant.completed"
+    | "variant.failed"
+    | "variant.cancelled"
+    | "phase.started"
+    | "phase.agent-started"
+    | "phase.output"
+    | "phase.completed"
+    | "phase.failed"
+    | "phase.cancelled";
+  runId: string;
+  at: string;
+  caseId?: string;
+  variantId?: string;
+  phase?: "plan" | "implement";
+  stream?: "stdout" | "stderr";
+  chunk?: string;
+  message?: string;
+};
+
+export type RunPreparedEvalOptions = {
+  signal?: AbortSignal;
+  onProgress?: (event: EvalRunProgressEvent) => void;
+};
+
+type SaveManifest = () => Promise<void>;
+
+type VariantRunOutcome =
+  | { status: "done"; variant: EvalRunVariantState }
+  | { status: "failed"; variant: EvalRunVariantState; error: Error }
+  | { status: "cancelled"; variant: EvalRunVariantState; error: Error };
+
+export class EvalRunCancelledError extends Error {
+  constructor(message = "Eval run cancelled.") {
+    super(message);
+    this.name = "EvalRunCancelledError";
   }
+}
+
+export async function runPreparedEval(manifest: EvalRunManifest, options: RunPreparedEvalOptions = {}): Promise<EvalRunManifest> {
+  const saveManifest = createQueuedManifestSaver(manifest);
+  emit(manifest, options, { type: "run.started" });
+
+  const automaticVariants = manifest.variants.filter((variant) => variant.agent.kind !== "manual");
+  const outcomes = await Promise.all(automaticVariants.map((variant) => runVariantAndCapture(manifest, variant, options, saveManifest)));
+  const cancellation = outcomes.find((outcome): outcome is Extract<VariantRunOutcome, { status: "cancelled" }> => outcome.status === "cancelled");
+  if (cancellation) {
+    emit(manifest, options, { type: "run.cancelled", message: cancellation.error.message });
+    throw new EvalRunCancelledError(cancellation.error.message);
+  }
+
+  const failures = outcomes
+    .filter((outcome): outcome is Extract<VariantRunOutcome, { status: "failed" }> => outcome.status === "failed")
+    .map((outcome) => `${outcome.variant.caseId}/${outcome.variant.variantId}: ${outcome.error.message}`);
   if (failures.length > 0) throw new Error(`Eval run failed:\n${failures.join("\n")}`);
+  emit(manifest, options, { type: "run.completed" });
   return manifest;
 }
 
-async function runVariant(manifest: EvalRunManifest, variant: EvalRunVariantState): Promise<void> {
+async function runVariantAndCapture(
+  manifest: EvalRunManifest,
+  variant: EvalRunVariantState,
+  options: RunPreparedEvalOptions,
+  saveManifest: SaveManifest
+): Promise<VariantRunOutcome> {
+  try {
+    throwIfCancelled(options.signal);
+    await runVariant(manifest, variant, options, saveManifest);
+    return { status: "done", variant };
+  } catch (error) {
+    const normalized = error instanceof Error ? error : new Error(String(error));
+    if (isCancellation(normalized, options.signal)) {
+      if (variant.status !== "cancelled") {
+        variant.status = "cancelled";
+        variant.error = normalized.message;
+        variant.endedAt = new Date().toISOString();
+        await saveManifest();
+      }
+      emit(manifest, options, {
+        type: "variant.cancelled",
+        caseId: variant.caseId,
+        variantId: variant.variantId,
+        message: normalized.message
+      });
+      return { status: "cancelled", variant, error: normalized };
+    }
+
+    variant.status = "failed";
+    variant.error = normalized.message;
+    variant.endedAt ||= new Date().toISOString();
+    await saveManifest();
+    emit(manifest, options, {
+      type: "variant.failed",
+      caseId: variant.caseId,
+      variantId: variant.variantId,
+      message: normalized.message
+    });
+    return { status: "failed", variant, error: normalized };
+  }
+}
+
+async function runVariant(manifest: EvalRunManifest, variant: EvalRunVariantState, options: RunPreparedEvalOptions, saveManifest: SaveManifest): Promise<void> {
+  throwIfCancelled(options.signal);
   variant.status = "running";
   variant.startedAt ||= new Date().toISOString();
-  await saveRunManifest(manifest);
+  await saveManifest();
+  emit(manifest, options, {
+    type: "variant.started",
+    caseId: variant.caseId,
+    variantId: variant.variantId
+  });
 
   const task = await readFile(variant.promptPath, "utf8");
   let plan = variant.planPath ? await readFile(variant.planPath, "utf8").catch(() => "") : "";
 
   for (const phase of variant.phases) {
+    throwIfCancelled(options.signal);
     if (phase.status === "done") continue;
     phase.status = "running";
     phase.startedAt = new Date().toISOString();
-    await saveRunManifest(manifest);
+    await saveManifest();
+    emit(manifest, options, {
+      type: "phase.started",
+      caseId: variant.caseId,
+      variantId: variant.variantId,
+      phase: phase.id
+    });
 
     const phaseBaseCommit = await currentCommit(variant.worktree);
     const prompt = phase.id === "plan" ? planPrompt(task) : implementationPrompt(task, plan);
     if (phase.promptPath) await writeFile(phase.promptPath, prompt, "utf8");
     let output: string;
     phase.agentStartedAt = new Date().toISOString();
-    await saveRunManifest(manifest);
+    await saveManifest();
+    emit(manifest, options, {
+      type: "phase.agent-started",
+      caseId: variant.caseId,
+      variantId: variant.variantId,
+      phase: phase.id
+    });
     try {
       output = await runAgent({
         agent: variant.agent,
@@ -56,15 +164,35 @@ async function runVariant(manifest: EvalRunManifest, variant: EvalRunVariantStat
           TANGENT_EVAL_CASE_ID: variant.caseId,
           TANGENT_EVAL_VARIANT_ID: variant.variantId,
           TANGENT_EVAL_PHASE: phase.id
-        }
+        },
+        signal: options.signal,
+        onOutput: (chunk) => emit(manifest, options, {
+          type: "phase.output",
+          caseId: variant.caseId,
+          variantId: variant.variantId,
+          phase: phase.id,
+          stream: chunk.stream,
+          chunk: chunk.chunk
+        })
       });
     } catch (error) {
       phase.agentEndedAt = new Date().toISOString();
       phase.agentDurationMs = durationMs(phase.agentStartedAt, phase.agentEndedAt);
       phase.endedAt = phase.agentEndedAt;
-      phase.status = "failed";
+      const cancelled = isCancellation(error, options.signal);
+      phase.status = cancelled ? "cancelled" : "failed";
       phase.error = (error as Error).message;
-      await saveRunManifest(manifest);
+      variant.status = cancelled ? "cancelled" : "failed";
+      variant.error = (error as Error).message;
+      variant.endedAt = phase.endedAt;
+      await saveManifest();
+      emit(manifest, options, {
+        type: cancelled ? "phase.cancelled" : "phase.failed",
+        caseId: variant.caseId,
+        variantId: variant.variantId,
+        phase: phase.id,
+        message: (error as Error).message
+      });
       throw error;
     }
     phase.agentEndedAt = new Date().toISOString();
@@ -97,12 +225,23 @@ async function runVariant(manifest: EvalRunManifest, variant: EvalRunVariantStat
 
     phase.endedAt = new Date().toISOString();
     phase.status = "done";
-    await saveRunManifest(manifest);
+    await saveManifest();
+    emit(manifest, options, {
+      type: "phase.completed",
+      caseId: variant.caseId,
+      variantId: variant.variantId,
+      phase: phase.id
+    });
   }
 
   variant.endedAt = new Date().toISOString();
   variant.status = "done";
-  await saveRunManifest(manifest);
+  await saveManifest();
+  emit(manifest, options, {
+    type: "variant.completed",
+    caseId: variant.caseId,
+    variantId: variant.variantId
+  });
 }
 
 function durationMs(startedAt?: string, endedAt?: string): number | undefined {
@@ -111,4 +250,37 @@ function durationMs(startedAt?: string, endedAt?: string): number | undefined {
   const ended = new Date(endedAt).getTime();
   if (Number.isNaN(started) || Number.isNaN(ended)) return undefined;
   return Math.max(0, ended - started);
+}
+
+function createQueuedManifestSaver(manifest: EvalRunManifest): SaveManifest {
+  let queue = Promise.resolve();
+  return () => {
+    const save = queue.catch(() => undefined).then(() => saveRunManifest(manifest));
+    queue = save;
+    return save;
+  };
+}
+
+export function isEvalRunCancelled(error: unknown): boolean {
+  return error instanceof EvalRunCancelledError || isProcessAborted(error);
+}
+
+function emit(manifest: EvalRunManifest, options: RunPreparedEvalOptions, event: Omit<EvalRunProgressEvent, "runId" | "at">): void {
+  options.onProgress?.({
+    runId: manifest.id,
+    at: new Date().toISOString(),
+    ...event
+  });
+}
+
+function throwIfCancelled(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new EvalRunCancelledError();
+}
+
+function isCancellation(error: unknown, signal: AbortSignal | undefined): boolean {
+  return isEvalRunCancelled(error) || Boolean(signal?.aborted);
+}
+
+function isProcessAborted(error: unknown): boolean {
+  return error instanceof Error && error.name === "ProcessAbortedError";
 }

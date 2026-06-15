@@ -2,9 +2,12 @@ import { booleanArg, numberArg, stringArg, type Args } from "../args.js";
 import { startEvalUiServer } from "../../server/index.js";
 
 export async function uiCommand(args: Args): Promise<void> {
-  const runId = stringArg(args._[1]) || "latest";
+  const target = stringArg(args._[1]);
+  const specPath = target?.endsWith(".json") ? target : undefined;
+  const runId = specPath ? undefined : target;
   const server = await startEvalUiServer({
     runId,
+    specPath,
     host: stringArg(args.host) || "127.0.0.1",
     port: numberArg(args.port) ?? 0,
     open: !booleanArg(args["no-browser"])

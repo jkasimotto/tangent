@@ -140,7 +140,7 @@ async function snapshotFilesFromWorktree(args: {
     repoRoot: args.repoRoot,
     cwd: args.cwd,
     includeAncestors: args.includeAncestors,
-    includeExternalAncestors: args.includeAncestors
+    includeExternalAncestors: false
   });
   const repoPaths = discovered.filter((file) => file.scope === "repo").map((file) => file.path);
   if (!args.includeDirtyContext && repoPaths.length > 0) {

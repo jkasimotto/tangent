@@ -6,6 +6,11 @@ export type ProcessRunResult = {
   code: number | null;
 };
 
+export type ProcessOutputChunk = {
+  stream: "stdout" | "stderr";
+  chunk: string;
+};
+
 export type RunProcessArgs = {
   command: string;
   args: string[];
@@ -14,10 +19,23 @@ export type RunProcessArgs = {
   timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
   defaultEnv?: NodeJS.ProcessEnv;
+  signal?: AbortSignal;
+  onOutput?: (chunk: ProcessOutputChunk) => void;
 };
+
+export class ProcessAbortedError extends Error {
+  constructor(command: string) {
+    super(`Command aborted: ${command}`);
+    this.name = "ProcessAbortedError";
+  }
+}
 
 export async function runProcess(args: RunProcessArgs): Promise<ProcessRunResult> {
   return new Promise((resolve, reject) => {
+    if (args.signal?.aborted) {
+      reject(new ProcessAbortedError(args.command));
+      return;
+    }
     const child = spawn(args.command, args.args, {
       cwd: args.cwd,
       stdio: ["pipe", "pipe", "pipe"],
@@ -30,19 +48,37 @@ export async function runProcess(args: RunProcessArgs): Promise<ProcessRunResult
     let stdout = "";
     let stderr = "";
     let settled = false;
+    let aborted = false;
+    let forceKillTimer: NodeJS.Timeout | undefined;
     const timer = args.timeoutMs ? setTimeout(() => {
       if (settled) return;
       child.kill("SIGTERM");
       settled = true;
       reject(new Error(`Command timed out after ${args.timeoutMs}ms: ${args.command}`));
     }, args.timeoutMs) : undefined;
+    const abort = () => {
+      if (settled || aborted) return;
+      aborted = true;
+      child.kill("SIGTERM");
+      forceKillTimer = setTimeout(() => child.kill("SIGKILL"), 5000);
+      forceKillTimer.unref();
+    };
+    args.signal?.addEventListener("abort", abort, { once: true });
 
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => stdout += chunk);
-    child.stderr.on("data", (chunk) => stderr += chunk);
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+      args.onOutput?.({ stream: "stdout", chunk });
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+      args.onOutput?.({ stream: "stderr", chunk });
+    });
     child.on("error", (error) => {
       if (timer) clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
+      args.signal?.removeEventListener("abort", abort);
       if (!settled) {
         settled = true;
         reject(error);
@@ -50,13 +86,23 @@ export async function runProcess(args: RunProcessArgs): Promise<ProcessRunResult
     });
     child.on("close", (code) => {
       if (timer) clearTimeout(timer);
+      if (forceKillTimer) clearTimeout(forceKillTimer);
+      args.signal?.removeEventListener("abort", abort);
       if (settled) return;
       settled = true;
+      if (aborted) {
+        reject(new ProcessAbortedError(args.command));
+        return;
+      }
       resolve({ stdout, stderr, code });
     });
     if (args.stdin !== undefined) child.stdin.end(args.stdin);
     else child.stdin.end();
   });
+}
+
+export function isProcessAborted(error: unknown): boolean {
+  return error instanceof ProcessAbortedError || (error instanceof Error && error.name === "ProcessAbortedError");
 }
 
 export function processFailure(command: string, code: number | null, stderr: string, stdout: string): Error {

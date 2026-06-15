@@ -1,5 +1,8 @@
 import type { EvalMetrics } from "../types/metrics.js";
 import type { EvalRunManifest, EvalRunVariantState } from "../types/run.js";
+import type { EvalAgentConfig } from "../types/provider.js";
+import type { EvalContextFile, EvalContextMode } from "../types/context.js";
+import type { EvalPhaseSpec, EvalRepoSpec, EvalSpec, ResolvedEvalVariant } from "../types/spec.js";
 
 export type EvalVariantSummary = {
   caseId: string;
@@ -41,6 +44,86 @@ export type EvalRunView = {
     caseId: string;
     variants: EvalVariantSummary[];
   }>;
+};
+
+export type EvalSpecListItem = {
+  id: string;
+  name?: string;
+  path: string;
+  relativePath: string;
+  caseCount?: number;
+  variantCount?: number;
+  error?: string;
+};
+
+export type EvalSpecView = {
+  id: string;
+  name?: string;
+  path: string;
+  relativePath: string;
+  error?: string;
+  spec?: EvalSpec;
+  defaults?: EvalSpec["defaults"];
+  cases: EvalSpecCaseView[];
+};
+
+export type EvalSpecCaseView = {
+  caseId: string;
+  promptPath: string;
+  prompt: string;
+  variants: EvalSpecVariantView[];
+};
+
+export type EvalSpecVariantView = {
+  caseId: string;
+  variantId: string;
+  promptPath: string;
+  repo: EvalRepoSpec;
+  cwd: string;
+  context: EvalContextView;
+  agent: EvalAgentConfig;
+  phases: ResolvedEvalVariant["phases"];
+  rawPhases?: EvalPhaseSpec[];
+};
+
+export type EvalContextView = EvalContextMode & {
+  files?: EvalContextFile[];
+  error?: string;
+};
+
+export type EvalContextSnapshotView = {
+  specId: string;
+  caseId: string;
+  variantId: string;
+  ref: string;
+  files: Array<EvalContextFile & { content: string }>;
+  error?: string;
+};
+
+export type EvalUiJobStatus = "running" | "done" | "failed" | "cancelled";
+
+export type EvalUiJobEvent = {
+  seq: number;
+  at: string;
+  type: string;
+  message?: string;
+  runId?: string;
+  caseId?: string;
+  variantId?: string;
+  phase?: "plan" | "implement";
+  stream?: "stdout" | "stderr";
+  chunk?: string;
+};
+
+export type EvalUiJobView = {
+  id: string;
+  specId: string;
+  status: EvalUiJobStatus;
+  startedAt: string;
+  endedAt?: string;
+  runId?: string;
+  error?: string;
+  eventCount: number;
 };
 
 export type EvalComparisonView = {

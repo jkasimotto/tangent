@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 
-import { captureContext, collectEval, prepareEval, startEvalUiServer } from "../dist/sdk/index.js";
+import { captureContext, collectEval, prepareEval, runEval, startEvalUiServer } from "../dist/sdk/index.js";
+import { isEvalRunCancelled, runPreparedEval } from "../dist/core/run.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -33,6 +34,56 @@ test("captures repo context into a synthetic git ref", async () => {
 
   const manifest = JSON.parse(await gitShow(repo, `${result.ref}:manifest.json`));
   assert.equal(manifest.schema, "eval.context.v1");
+});
+
+test("context capture stays inside the repo when including ancestors", async () => {
+  const grandparent = await mkdtemp(path.join(tmpdir(), "tangent-eval-parent-"));
+  const parent = path.join(grandparent, "projects");
+  const repo = await createRepo(path.join(parent, "repo"));
+  await mkdir(path.join(grandparent, ".claude", ".git"), { recursive: true });
+  await writeFile(path.join(grandparent, ".claude", "settings.json"), "{}\n", "utf8");
+  await writeFile(path.join(grandparent, ".claude", ".git", "COMMIT_EDITMSG"), "internal git state\n", "utf8");
+  await writeFile(path.join(repo, "CLAUDE.md"), "repo context\n", "utf8");
+  await mkdir(path.join(repo, "packages", "search"), { recursive: true });
+  await writeFile(path.join(repo, "packages", "AGENTS.md"), "package context\n", "utf8");
+  await writeFile(path.join(repo, "packages", "search", "AGENT.md"), "search context\n", "utf8");
+  await git(repo, "add", ".");
+  await git(repo, "commit", "-m", "add context");
+
+  const result = await captureContext({
+    name: "current",
+    repo,
+    cwd: "packages/search",
+    includeAncestors: true
+  });
+
+  assert.deepEqual(result.manifest.files.map((file) => file.snapshotPath), [
+    "repo/CLAUDE.md",
+    "repo/packages/AGENTS.md",
+    "repo/packages/search/AGENT.md"
+  ]);
+});
+
+test("context capture ignores nested git metadata in repo context directories", async () => {
+  const repo = await createRepo();
+  await mkdir(path.join(repo, ".claude", ".git"), { recursive: true });
+  await writeFile(path.join(repo, ".claude", "settings.json"), "{}\n", "utf8");
+  await writeFile(path.join(repo, ".claude", ".git", "COMMIT_EDITMSG"), "internal git state\n", "utf8");
+  await writeFile(path.join(repo, "CLAUDE.md"), "repo context\n", "utf8");
+  await git(repo, "add", ".");
+  await git(repo, "commit", "-m", "add context");
+
+  const result = await captureContext({
+    name: "current",
+    repo,
+    cwd: ".",
+    includeAncestors: true
+  });
+
+  assert.deepEqual(result.manifest.files.map((file) => file.snapshotPath), [
+    "repo/.claude/settings.json",
+    "repo/CLAUDE.md"
+  ]);
 });
 
 test("prepare creates external worktrees with isolated context commits", async () => {
@@ -87,6 +138,70 @@ test("prepare creates external worktrees with isolated context commits", async (
   const emptyMetrics = collected.metrics.find((metrics) => metrics.variantId === "empty");
   assert.ok(emptyMetrics.git.implementationCommit);
   assert.ok(emptyMetrics.files.changed.includes("index.ts"));
+});
+
+test("run eval starts automatic variants in parallel", async () => {
+  const repo = await createRepo();
+  const evalHome = await mkdtemp(path.join(tmpdir(), "tangent-eval-parallel-home-"));
+  process.env.TANGENT_EVAL_HOME = evalHome;
+
+  await writeFile(path.join(repo, "index.ts"), "export const value = 1;\n", "utf8");
+  await git(repo, "add", ".");
+  await git(repo, "commit", "-m", "base");
+
+  const command = await fakeCodexCommand(true);
+  const specPath = await writeEvalSpec(repo, "parallel-run", command, [
+    { id: "left", context: { mode: "repo" } },
+    { id: "right", context: { mode: "repo" } }
+  ]);
+
+  const prepared = await prepareEval(specPath);
+  const controller = new AbortController();
+  const started = new Set();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+  try {
+    await assert.rejects(
+      runPreparedEval(prepared.manifest, {
+        signal: controller.signal,
+        onProgress: (event) => {
+          if (event.type !== "phase.agent-started" || !event.variantId) return;
+          started.add(event.variantId);
+          if (started.size === 2) controller.abort();
+        }
+      }),
+      (error) => isEvalRunCancelled(error)
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  assert.deepEqual([...started].sort(), ["left", "right"]);
+  const manifest = JSON.parse(await readFile(path.join(prepared.manifest.runDir, "run.json"), "utf8"));
+  assert.deepEqual(manifest.variants.map((variant) => variant.status), ["cancelled", "cancelled"]);
+});
+
+test("run eval records failures after sibling variants finish", async () => {
+  const repo = await createRepo();
+  const evalHome = await mkdtemp(path.join(tmpdir(), "tangent-eval-failure-home-"));
+  const coordinationDir = await mkdtemp(path.join(tmpdir(), "tangent-eval-failure-"));
+  process.env.TANGENT_EVAL_HOME = evalHome;
+
+  await writeFile(path.join(repo, "index.ts"), "export const value = 1;\n", "utf8");
+  await git(repo, "add", ".");
+  await git(repo, "commit", "-m", "base");
+
+  const command = await fakeVariantOutcomeCodexCommand(coordinationDir, "fail");
+  const specPath = await writeEvalSpec(repo, "parallel-failure", command, [
+    { id: "fail", context: { mode: "repo" } },
+    { id: "pass", context: { mode: "repo" } }
+  ]);
+
+  await assert.rejects(runEval(specPath), /case-a\/fail: intentional failure/);
+
+  const manifest = await readLatestRunManifest(evalHome);
+  const statuses = Object.fromEntries(manifest.variants.map((variant) => [variant.variantId, variant.status]));
+  assert.deepEqual(statuses, { fail: "failed", pass: "done" });
+  assert.equal(await readFile(path.join(coordinationDir, "pass.done"), "utf8"), "done\n");
 });
 
 test("eval ui server lists runs and compares variants", async () => {
@@ -164,9 +279,104 @@ test("eval ui server lists runs and compares variants", async () => {
   }
 });
 
+test("eval ui server loads snapshot context contents", async () => {
+  const repo = await createRepo();
+  const evalHome = await mkdtemp(path.join(tmpdir(), "tangent-eval-ui-context-home-"));
+  process.env.TANGENT_EVAL_HOME = evalHome;
+
+  await writeFile(path.join(repo, "AGENTS.md"), "no search context\n", "utf8");
+  await writeFile(path.join(repo, "index.ts"), "export const value = 1;\n", "utf8");
+  await git(repo, "add", ".");
+  await git(repo, "commit", "-m", "base");
+  const noSearch = await captureContext({ name: "no-search", repo, cwd: "." });
+
+  await writeFile(path.join(repo, "AGENTS.md"), "with search context\n", "utf8");
+  await git(repo, "commit", "-am", "with search context");
+  const withSearch = await captureContext({ name: "with-search", repo, cwd: "." });
+
+  const specPath = await writeSnapshotEvalSpec(repo, noSearch.ref, withSearch.ref);
+  const server = await startEvalUiServer({ specPath, cwd: repo, open: false });
+  try {
+    const specs = await (await fetch(`${server.url}api/eval/specs`)).json();
+    const spec = await (await fetch(`${server.url}api/eval/specs/${encodeURIComponent(specs[0].id)}`)).json();
+    assert.equal(spec.cases[0].variants[0].context.ref, "refs/tangent/eval/contexts/no-search");
+    assert.equal(spec.cases[0].variants[1].context.ref, "refs/tangent/eval/contexts/with-search");
+    const left = await (await fetch(`${server.url}api/eval/specs/${encodeURIComponent(specs[0].id)}/context?caseId=case-a&variantId=no-search`)).json();
+    const right = await (await fetch(`${server.url}api/eval/specs/${encodeURIComponent(specs[0].id)}/context?caseId=case-a&variantId=with-search`)).json();
+    assert.equal(left.files.find((file) => file.snapshotPath === "repo/AGENTS.md").content, "no search context\n");
+    assert.equal(right.files.find((file) => file.snapshotPath === "repo/AGENTS.md").content, "with search context\n");
+    const appJs = await (await fetch(`${server.url}app.js`)).text();
+    assert.match(appJs, /Snapshot contexts/);
+    assert.match(appJs, /context-left/);
+  } finally {
+    await server.close();
+  }
+});
+
+test("eval ui server discovers specs and runs a spec job", async () => {
+  const repo = await createRepo();
+  const evalHome = await mkdtemp(path.join(tmpdir(), "tangent-eval-ui-job-home-"));
+  process.env.TANGENT_EVAL_HOME = evalHome;
+
+  await writeFile(path.join(repo, "index.ts"), "export const value = 1;\n", "utf8");
+  await git(repo, "add", ".");
+  await git(repo, "commit", "-m", "base");
+
+  const specPath = await writeEvalSpec(repo, "ui-job");
+  const server = await startEvalUiServer({ specPath, cwd: repo, open: false });
+  try {
+    const specs = await (await fetch(`${server.url}api/eval/specs`)).json();
+    assert.equal(specs.length, 1);
+    assert.equal(specs[0].name, "ui-job");
+    const spec = await (await fetch(`${server.url}api/eval/specs/${encodeURIComponent(specs[0].id)}`)).json();
+    assert.match(spec.cases[0].prompt, /Change the value/);
+    assert.equal(spec.cases[0].variants[0].agent.kind, "manual");
+
+    const started = await (await fetch(`${server.url}api/eval/specs/${encodeURIComponent(specs[0].id)}/runs`, { method: "POST" })).json();
+    assert.equal(started.status, "running");
+    const done = await waitForJob(server.url, started.id, "done");
+    assert.ok(done.runId);
+    const status = await (await fetch(`${server.url}api/eval/runs/${done.runId}/status`)).json();
+    assert.equal(status.variants[0].status, "manual");
+  } finally {
+    await server.close();
+  }
+});
+
+test("eval ui server cancels a running spec job", async () => {
+  const repo = await createRepo();
+  const evalHome = await mkdtemp(path.join(tmpdir(), "tangent-eval-ui-cancel-home-"));
+  process.env.TANGENT_EVAL_HOME = evalHome;
+
+  await writeFile(path.join(repo, "index.ts"), "export const value = 1;\n", "utf8");
+  await git(repo, "add", ".");
+  await git(repo, "commit", "-m", "base");
+
+  const command = await fakeCodexCommand(true);
+  const specPath = await writeEvalSpec(repo, "ui-cancel", command, [
+    { id: "left", context: { mode: "repo" } },
+    { id: "right", context: { mode: "repo" } }
+  ]);
+  const server = await startEvalUiServer({ specPath, cwd: repo, open: false });
+  try {
+    const specs = await (await fetch(`${server.url}api/eval/specs`)).json();
+    const started = await (await fetch(`${server.url}api/eval/specs/${encodeURIComponent(specs[0].id)}/runs`, { method: "POST" })).json();
+    await waitForEvents(server.url, started.id, (event) => event.type === "phase.agent-started", 2);
+    await fetch(`${server.url}api/eval/jobs/${started.id}/cancel`, { method: "POST" });
+    const cancelled = await waitForJob(server.url, started.id, "cancelled");
+    assert.ok(cancelled.runId);
+    const status = await (await fetch(`${server.url}api/eval/runs/${cancelled.runId}/status`)).json();
+    assert.deepEqual(status.variants.map((variant) => variant.status), ["cancelled", "cancelled"]);
+    assert.deepEqual(status.variants.map((variant) => variant.phases[0].status), ["cancelled", "cancelled"]);
+  } finally {
+    await server.close();
+  }
+});
+
 /** Creates a temporary git repository for eval tests. */
-async function createRepo() {
-  const repo = await mkdtemp(path.join(tmpdir(), "tangent-eval-repo-"));
+async function createRepo(repoPath) {
+  const repo = repoPath || await mkdtemp(path.join(tmpdir(), "tangent-eval-repo-"));
+  await mkdir(repo, { recursive: true });
   await git(repo, "init");
   await git(repo, "config", "user.name", "Test User");
   await git(repo, "config", "user.email", "test@example.invalid");
@@ -249,4 +459,150 @@ function metricRow(runId, caseId, variantId, baseCommit, implementationCommit, r
     conversations: [],
     warnings: []
   };
+}
+
+async function writeEvalSpec(repo, name, command, variants = [{ id: "repo", context: { mode: "repo" } }], timeoutMs = 10000) {
+  const evalDir = path.join(repo, "evals", name);
+  await mkdir(path.join(evalDir, "prompts"), { recursive: true });
+  await writeFile(path.join(evalDir, "prompts", "task.md"), "Change the value.\n", "utf8");
+  const specPath = path.join(evalDir, "eval.json");
+  await writeFile(specPath, JSON.stringify({
+    schema: "eval.spec.v1",
+    name,
+    defaults: {
+      repo: { path: repo, ref: "HEAD" },
+      cwd: ".",
+      agent: command ? { kind: "codex-cli", command, model: "fake", sandbox: "workspace-write", timeoutMs } : { kind: "manual" },
+      phases: ["implement"]
+    },
+    cases: [
+      {
+        id: "case-a",
+        prompt: "prompts/task.md",
+        variants
+      }
+    ]
+  }, null, 2), "utf8");
+  return specPath;
+}
+
+async function writeSnapshotEvalSpec(repo, noSearchRef, withSearchRef) {
+  const evalDir = path.join(repo, "evals", "context-compare");
+  await mkdir(path.join(evalDir, "prompts"), { recursive: true });
+  await writeFile(path.join(evalDir, "prompts", "task.md"), "Compare contexts.\n", "utf8");
+  const specPath = path.join(evalDir, "eval.json");
+  await writeFile(specPath, JSON.stringify({
+    schema: "eval.spec.v1",
+    name: "context-compare",
+    defaults: {
+      repo: { path: repo, ref: "HEAD" },
+      cwd: ".",
+      agent: { kind: "manual" },
+      phases: ["implement"]
+    },
+    cases: [
+      {
+        id: "case-a",
+        prompt: "prompts/task.md",
+        variants: [
+          { id: "no-search", context: { mode: "snapshot", ref: noSearchRef } },
+          { id: "with-search", context: { mode: "snapshot", ref: withSearchRef } }
+        ]
+      }
+    ]
+  }, null, 2), "utf8");
+  return specPath;
+}
+
+async function fakeCodexCommand(blocking) {
+  const dir = await mkdtemp(path.join(tmpdir(), "tangent-fake-codex-"));
+  const file = path.join(dir, "fake-codex.sh");
+  await writeFile(file, `#!/bin/sh
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--output-last-message" ]; then
+    shift
+    out="$1"
+  fi
+  shift || true
+done
+cat >/dev/null
+printf '${blocking ? "fake agent waiting" : "fake agent complete"}\\n'
+${blocking ? "trap 'exit 143' TERM INT\nwhile :; do sleep 1; done" : "[ -n \"$out\" ] && printf 'fake final\\n' > \"$out\"\nexit 0"}
+`, "utf8");
+  await chmod(file, 0o755);
+  return file;
+}
+
+async function fakeVariantOutcomeCodexCommand(coordinationDir, failingVariant) {
+  const dir = await mkdtemp(path.join(tmpdir(), "tangent-fake-codex-"));
+  const file = path.join(dir, "fake-codex.sh");
+  await writeFile(file, `#!/bin/sh
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--output-last-message" ]; then
+    shift
+    out="$1"
+  fi
+  shift || true
+done
+if [ "$TANGENT_EVAL_VARIANT_ID" = ${shellQuote(failingVariant)} ]; then
+  printf 'intentional failure\\n' >&2
+  exit 7
+fi
+coord=${shellQuote(coordinationDir)}
+printf 'done\\n' > "$coord/$TANGENT_EVAL_VARIANT_ID.done"
+[ -n "$out" ] && printf 'fake final %s\\n' "$TANGENT_EVAL_VARIANT_ID" > "$out"
+exit 0
+`, "utf8");
+  await chmod(file, 0o755);
+  return file;
+}
+
+async function readLatestRunManifest(evalHome) {
+  const runsPath = path.join(evalHome, "runs");
+  const manifests = [];
+  for (const entry of await readdir(runsPath, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const manifest = JSON.parse(await readFile(path.join(runsPath, entry.name, "run.json"), "utf8"));
+    manifests.push(manifest);
+  }
+  manifests.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return manifests[0];
+}
+
+function shellQuote(value) {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+async function waitForJob(baseUrl, jobId, status) {
+  const deadline = Date.now() + 30000;
+  let lastJob;
+  while (Date.now() < deadline) {
+    const job = await (await fetch(`${baseUrl}api/eval/jobs/${jobId}`)).json();
+    lastJob = job;
+    if (job.status === status) return job;
+    await sleep(100);
+  }
+  throw new Error(`Timed out waiting for job ${jobId} to become ${status}; last=${JSON.stringify(lastJob)}`);
+}
+
+async function waitForEvents(baseUrl, jobId, predicate, count) {
+  const deadline = Date.now() + 15000;
+  let after = 0;
+  const matches = [];
+  while (Date.now() < deadline) {
+    const events = await (await fetch(`${baseUrl}api/eval/jobs/${jobId}/events?after=${after}`)).json();
+    for (const event of events) {
+      after = Math.max(after, event.seq);
+      if (predicate(event)) matches.push(event);
+      if (matches.length >= count) return matches;
+    }
+    await sleep(100);
+  }
+  throw new Error(`Timed out waiting for ${count} events from job ${jobId}; matched=${matches.length}`);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

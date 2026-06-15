@@ -14,14 +14,36 @@ export type PrepareEvalResult = {
   manifest: EvalRunManifest;
 };
 
-export async function prepareEval(loaded: LoadedEvalSpec): Promise<PrepareEvalResult> {
+export type PrepareEvalProgressEvent = {
+  type: "prepare.started" | "prepare.variant.started" | "prepare.variant.completed" | "prepare.completed";
+  at: string;
+  runId?: string;
+  caseId?: string;
+  variantId?: string;
+  message?: string;
+};
+
+export type PrepareEvalOptions = {
+  signal?: AbortSignal;
+  onProgress?: (event: PrepareEvalProgressEvent) => void;
+};
+
+export async function prepareEval(loaded: LoadedEvalSpec, options: PrepareEvalOptions = {}): Promise<PrepareEvalResult> {
   const manifest = await createRunManifest({
     name: loaded.spec.name,
     specPath: loaded.specPath,
     spec: loaded.spec
   });
+  emit(options, { type: "prepare.started", runId: manifest.id });
 
   for (const variant of loaded.variants) {
+    throwIfCancelled(options.signal);
+    emit(options, {
+      type: "prepare.variant.started",
+      runId: manifest.id,
+      caseId: variant.caseId,
+      variantId: variant.variantId
+    });
     const sourceRepoInput = resolveMaybeRelative(loaded.invocationCwd, variant.repo.path);
     const repoRoot = await resolveGitRoot(sourceRepoInput);
     const baseCommit = await resolveCommit(repoRoot, variant.repo.ref);
@@ -75,7 +97,25 @@ export async function prepareEval(loaded: LoadedEvalSpec): Promise<PrepareEvalRe
     };
     manifest.variants.push(state);
     await saveRunManifest(manifest);
+    emit(options, {
+      type: "prepare.variant.completed",
+      runId: manifest.id,
+      caseId: variant.caseId,
+      variantId: variant.variantId
+    });
   }
 
+  emit(options, { type: "prepare.completed", runId: manifest.id });
   return { manifest };
+}
+
+function emit(options: PrepareEvalOptions, event: Omit<PrepareEvalProgressEvent, "at">): void {
+  options.onProgress?.({
+    at: new Date().toISOString(),
+    ...event
+  });
+}
+
+function throwIfCancelled(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new Error("Eval prepare cancelled.");
 }

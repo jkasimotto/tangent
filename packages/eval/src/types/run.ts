@@ -2,7 +2,7 @@ import type { EvalAgentConfig } from "./provider.js";
 import type { EvalContextMode } from "./context.js";
 import type { EvalSpec } from "./spec.js";
 
-export type EvalRunStatus = "prepared" | "running" | "done" | "failed" | "manual";
+export type EvalRunStatus = "prepared" | "running" | "done" | "failed" | "manual" | "cancelled";
 
 export type EvalPhaseRunState = {
   id: "plan" | "implement";

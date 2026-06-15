@@ -10,9 +10,13 @@ import type { EvalRunManifest } from "../types/run.js";
 import { buildComparisonView } from "./compare.js";
 import { staticResponse } from "./static.js";
 import { variantSummary, type EvalRunListItem, type EvalRunView } from "./dto.js";
+import { createEvalJobManager } from "./jobs.js";
+import { createEvalSpecRegistry } from "./specs.js";
 
 export type StartEvalUiServerOptions = {
   runId?: string;
+  specPath?: string;
+  cwd?: string;
   host?: string;
   port?: number;
   open?: boolean;
@@ -26,9 +30,12 @@ export type EvalUiServer = {
 
 export async function startEvalUiServer(options: StartEvalUiServerOptions = {}): Promise<EvalUiServer> {
   const host = options.host || "127.0.0.1";
+  const cwd = options.cwd || process.cwd();
   const preferredRunId = options.runId ? await resolveRunId(options.runId) : (await listRuns())[0]?.id;
+  const specs = createEvalSpecRegistry({ cwd, explicitSpecPath: options.specPath });
+  const jobs = createEvalJobManager({ cwd });
   const server = http.createServer((request, response) => {
-    void handleRequest(request, response, preferredRunId);
+    void handleRequest(request, response, { preferredRunId, specs, jobs });
   });
   await listen(server, options.port ?? 0, host);
   const address = server.address();
@@ -42,21 +49,46 @@ export async function startEvalUiServer(options: StartEvalUiServerOptions = {}):
   };
 }
 
-async function handleRequest(request: http.IncomingMessage, response: http.ServerResponse, preferredRunId?: string): Promise<void> {
+type EvalUiRequestContext = {
+  preferredRunId?: string;
+  specs: ReturnType<typeof createEvalSpecRegistry>;
+  jobs: ReturnType<typeof createEvalJobManager>;
+};
+
+async function handleRequest(request: http.IncomingMessage, response: http.ServerResponse, context: EvalUiRequestContext): Promise<void> {
   try {
     const url = new URL(request.url || "/", "http://localhost");
     const staticAsset = staticResponse(url.pathname);
     if (staticAsset) return send(response, 200, staticAsset.body, staticAsset.contentType);
 
+    const parts = url.pathname.split("/").filter(Boolean).map((part) => decodeURIComponent(part));
+    if (parts[0] === "api" && parts[1] === "eval" && parts[2] === "specs") {
+      if (request.method === "GET" && parts.length === 3) return sendJson(response, 200, await context.specs.listSpecs());
+      if (request.method === "GET" && parts.length === 4) return sendJson(response, 200, await context.specs.getSpec(parts[3]!));
+      if (request.method === "GET" && parts.length === 5 && parts[4] === "context") {
+        return sendJson(response, 200, await context.specs.getContext(parts[3]!, requiredParam(url, "caseId"), requiredParam(url, "variantId")));
+      }
+      if (request.method === "POST" && parts.length === 5 && parts[4] === "runs") {
+        const specPath = await context.specs.resolveSpecPath(parts[3]!);
+        return sendJson(response, 202, context.jobs.start(parts[3]!, specPath));
+      }
+    }
+    if (parts[0] === "api" && parts[1] === "eval" && parts[2] === "jobs" && parts[3]) {
+      if (request.method === "GET" && parts.length === 4) return sendJson(response, 200, context.jobs.get(parts[3]));
+      if (request.method === "GET" && parts.length === 5 && parts[4] === "events") {
+        return sendJson(response, 200, context.jobs.events(parts[3], numberParam(url.searchParams.get("after"))));
+      }
+      if (request.method === "POST" && parts.length === 5 && parts[4] === "cancel") return sendJson(response, 200, context.jobs.cancel(parts[3]));
+    }
     if (request.method !== "GET") return sendJson(response, 405, { error: "Method not allowed." });
-    const parts = url.pathname.split("/").filter(Boolean);
     if (url.pathname === "/api/eval/runs") {
       const runs = await listRuns();
       return sendJson(response, 200, runs.map(runListItem));
     }
     if (parts[0] === "api" && parts[1] === "eval" && parts[2] === "runs" && parts[3]) {
-      const runId = await resolveRunId(parts[3] === "selected" && preferredRunId ? preferredRunId : parts[3]);
+      const runId = await resolveRunId(parts[3] === "selected" && context.preferredRunId ? context.preferredRunId : parts[3]);
       if (parts.length === 4) return sendJson(response, 200, await runView(runId));
+      if (parts.length === 5 && parts[4] === "status") return sendJson(response, 200, await loadRunManifest(runId));
       if (parts.length === 5 && parts[4] === "metrics") return sendJson(response, 200, await loadMetrics(await loadRunManifest(runId)));
       if (parts.length === 5 && parts[4] === "compare") {
         const manifest = await loadRunManifest(runId);
@@ -70,7 +102,7 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
     }
     return sendJson(response, 404, { error: "Not found." });
   } catch (error) {
-    return sendJson(response, 500, { error: (error as Error).message });
+    return sendJson(response, errorStatus(error), { error: (error as Error).message });
   }
 }
 
@@ -127,6 +159,12 @@ function requiredParam(url: URL, key: string): string {
   return value;
 }
 
+function numberParam(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 function phaseParam(value: string): "context" | "plan" | "impl" | "all" {
   if (value === "context" || value === "plan" || value === "impl" || value === "all") return value;
   throw new Error("phase must be context, plan, impl, or all.");
@@ -142,6 +180,11 @@ function send(response: http.ServerResponse, status: number, body: string, conte
     "cache-control": "no-store"
   });
   response.end(body);
+}
+
+function errorStatus(error: unknown): number {
+  const status = error && typeof error === "object" ? (error as { status?: unknown }).status : undefined;
+  return typeof status === "number" && status >= 400 && status < 600 ? status : 500;
 }
 
 function listen(server: Server, port: number, host: string): Promise<void> {

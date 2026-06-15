@@ -19,6 +19,7 @@ export class ClaudeCliSummaryRunner implements SummaryRunner {
 
   constructor(private readonly config: ClaudeCliConfig) {}
 
+  /** Checks whether the configured Claude CLI command is available. */
   async checkAvailable(): Promise<RunnerStatus> {
     const command = this.config.command || "claude";
     try {
@@ -35,9 +36,10 @@ export class ClaudeCliSummaryRunner implements SummaryRunner {
     }
   }
 
+  /** Runs one Claude CLI rollup request and normalizes the structured output. */
   async summarizeRollup(input: RollupInput): Promise<RollupOutput> {
     const command = this.config.command || "claude";
-    const prompt = rollupPrompt({ period: input.period, inputJson: JSON.stringify(input) });
+    const prompt = rollupPrompt({ period: input.period, inputJson: JSON.stringify(input), purpose: input.purpose });
     const result = await runProcess({
       command,
       args: [
@@ -65,10 +67,12 @@ export class ClaudeCliSummaryRunner implements SummaryRunner {
   }
 }
 
+/** Ensures Claude gets enough turns to emit structured output reliably. */
 function maxStructuredOutputTurns(config: ClaudeCliConfig): number {
   return Math.max(config.maxTurns || minStructuredOutputTurns, minStructuredOutputTurns);
 }
 
+/** Converts a runner JSON payload into the rollup output contract. */
 function normalizeRollup(value: unknown): RollupOutput {
   const record = value && typeof value === "object" ? value as Record<string, unknown> : {};
   return {
@@ -78,6 +82,7 @@ function normalizeRollup(value: unknown): RollupOutput {
   };
 }
 
+/** Keeps only string entries from an unknown array-like field. */
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }

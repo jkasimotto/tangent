@@ -21,6 +21,7 @@ export class CodexCliSummaryRunner implements SummaryRunner {
 
   constructor(private readonly config: CodexCliConfig) {}
 
+  /** Checks whether the configured Codex CLI command is available. */
   async checkAvailable(): Promise<RunnerStatus> {
     const command = this.config.command || "codex";
     try {
@@ -37,6 +38,7 @@ export class CodexCliSummaryRunner implements SummaryRunner {
     }
   }
 
+  /** Runs one Codex CLI rollup request and reads the structured last-message output. */
   async summarizeRollup(input: RollupInput): Promise<RollupOutput> {
     const command = this.config.command || "codex";
     const tempDir = await mkdtemp(path.join(tmpdir(), "tangent-rollup-codex-"));
@@ -50,7 +52,7 @@ export class CodexCliSummaryRunner implements SummaryRunner {
         command,
         args: this.codexExecArgs(schemaPath, outputPath, ["--skip-git-repo-check"]),
         cwd: tempDir,
-        stdin: rollupPrompt({ inputPath, period: input.period }),
+        stdin: rollupPrompt({ inputPath, period: input.period, purpose: input.purpose }),
         timeoutMs: this.config.timeoutMs || 300000,
         defaultEnv: rollupRunnerEnv
       });
@@ -62,6 +64,7 @@ export class CodexCliSummaryRunner implements SummaryRunner {
     }
   }
 
+  /** Builds Codex exec arguments for a schema-constrained rollup run. */
   private codexExecArgs(schemaPath: string, outputPath: string, extra: string[] = []): string[] {
     const args = [
       "exec",
@@ -86,6 +89,7 @@ export class CodexCliSummaryRunner implements SummaryRunner {
   }
 }
 
+/** Converts a runner JSON payload into the rollup output contract. */
 function normalizeRollup(value: unknown): RollupOutput {
   const record = value && typeof value === "object" ? value as Record<string, unknown> : {};
   return {
@@ -95,6 +99,7 @@ function normalizeRollup(value: unknown): RollupOutput {
   };
 }
 
+/** Keeps only string entries from an unknown array-like field. */
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }

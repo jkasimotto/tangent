@@ -8,7 +8,7 @@ Platform packages:
 
 Vertical apps:
 - @tangent/usage owns conversation telemetry schemas, native transcript normalization, legacy usage-jsonl reading, native-log schema compatibility checks, assistant-centered conversation reports, datasets, SDK, and CLI.
-- @tangent/rollup owns rollup note schemas, period-level rollup inputs, examples, rendering, ledgers, and summarization workflows.
+- @tangent/rollup owns rollup note schemas, period-level user-message rollup inputs, examples, rendering, ledgers, and summarization workflows.
 - @tangent/eval owns eval specs, contexts, run manifests, metrics, reports, diffs, and the local eval comparison UI.
 - @tangent/search owns structural indexing and search.
 

@@ -9,10 +9,11 @@ tangent rollup yesterday
 tangent rollup 20260601-20260610
 ```
 
-`tangent rollup <selector>` reads normalized Usage conversation reports for the
-selected day or inclusive compact range, writes one `rollup.input.v1` artifact
-plus readable messages and prompt artifacts, and uses one summary provider call
-to write the note's generated block.
+`tangent rollup <selector>` reads selected Usage turns for the selected day or
+inclusive compact range, fetches visible user messages only, excludes user
+messages longer than `input.maxUserMessageChars` (default `8000`), writes one
+`rollup.input.v1` artifact plus readable user-message and prompt artifacts, and
+uses one summary provider call to write the note's generated block.
 
 SDK:
 

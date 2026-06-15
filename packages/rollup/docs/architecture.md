@@ -1,11 +1,12 @@
 # @tangent/rollup Architecture
 
-Private rollup notes generated from Usage conversation reports.
+Private rollup notes generated from selected Usage turns and visible user messages.
 
 Workflow notes:
 - `tangent rollup <selector>` preflights the summary provider before model summarization.
 - Selectors include `today`, `yesterday`, `YYYY-MM-DD`, `YYYYMMDD`, and inclusive compact ranges such as `YYYYMMDD-YYYYMMDD`.
-- Processing builds one cached `rollup.input.v1` containing Usage `usage.conversation.v1` reports plus style examples from `.tangent/rollup/examples/*.md` and previous edited notes.
+- Processing builds one cached `rollup.input.v1` containing `messageMode: "user-only"`, selected turn metadata, visible user messages up to `input.maxUserMessageChars`, source caveats, and style examples from `.tangent/rollup/examples/*.md` and previous edited notes.
+- Rollup input intentionally excludes assistant messages, tool calls, tool results, assistant-produced context, token metadata, and oversized pasted user messages. Selection is by date/range/purpose; selected turns are not relevance-scored, clamped, or dropped during input construction.
 - Rollup artifacts are written under `artifacts/rollups/<key>/` as input JSON, readable messages markdown, prompt markdown, and output JSON. The generated markdown is written directly into the note's generated block.
 - Rollup does not expose or preserve a topic architecture; the period-level output is the only generated path.
 - Runner failures are summarized in terminal output and written under `artifacts/failures/<date>/*.log`.

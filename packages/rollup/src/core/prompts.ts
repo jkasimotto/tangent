@@ -2,6 +2,7 @@ import type { RollupPeriod } from "../types/period.js";
 import type { RollupPurpose } from "../types/digest.js";
 import { rollupJsonSchema } from "./schemas.js";
 
+/** Builds the rollup instruction prompt for a selected period and optional purpose. */
 export function rollupPrompt(args: {
   inputPath?: string;
   period: RollupPeriod;
@@ -39,6 +40,24 @@ The reader is a software engineer returning to this work days, weeks, or months 
 Primary job:
 Turn the conversations into durable engineering memory. Preserve the user's mental model, terminology, constraints, assumptions, decisions, tradeoffs, experiments, findings, unresolved questions, and reusable prose for later design docs, PRs, issues, prompts, or implementation plans.
 
+User-only input:
+The input intentionally contains only user messages. Assistant messages, tool calls, tool results, token metadata, and assistant-produced implementation details are not included in this experiment.
+
+Very long user messages may also be excluded before summarization. When that happens, source caveats report the configured length limit and exclusion count. Treat excluded long-paste context as absent; do not infer its contents.
+
+Treat the user's messages as the source of truth. Do not infer assistant findings, completed work, implementation details, test results, or tool behavior unless the user message itself says them.
+
+When a user message refers to missing context, preserve only what can be known from the user text:
+- user intent
+- decision
+- constraint
+- preference
+- open question
+- named system or design area
+- follow-up
+
+If missing assistant context is necessary to know the actual finding, say so briefly or record the item as open context. Do not invent the missing finding.
+
 Relevance:
 Include material when it would still matter later:
 - a design decision and the rationale behind it
@@ -68,9 +87,7 @@ Examples:
 
 Conversation snippet:
 User: The key point is that surface attachment should be a normal routing target, not just a fallback after same-Z movement fails. Otherwise click routing and climb behavior drift apart.
-Assistant: I can update the pathfinder to consider climb attachment earlier and add route-contact tests.
 User: Yes, and the tests should assert public routing behavior, not mock internals.
-Assistant: Done. I also committed it.
 User: Please rerun the targeted tests.
 
 Desired output:
@@ -80,32 +97,26 @@ The durable design point was that surface attachment belongs in the normal set o
 
 Validation mattered most through public route-contact and climb/ramp behavior tests, because those assertions protect behavior visible to users and authored surfaces.
 
+Open context:
+The user asked to rerun targeted tests, but assistant context was not included, so the test result is unknown from this rollup input.
+
 Conversation snippet:
 User: The simulation sometimes advances one extra tick after pause. I suspect the event queue is being drained after the pause flag is set.
-Assistant: I found that processFrame calls flushScheduledEvents before checking sim.paused.
 User: That explains the symptom. The pause boundary should be before event draining, but we still need deterministic replay to flush events that were already admitted.
-Assistant: We can split admitted events from pending events.
 User: Capture that. The invariant is "pause stops admission, not completion."
 
 Desired output:
 ### Simulation pause boundary
 
-The useful invariant from that investigation was: pause stops event admission, not event completion. The issue came from admitted work continuing to drain after pause changed, which can produce extra-frame completion.
+The useful invariant from that investigation was: pause stops event admission, not event completion. The pause boundary should be before event draining while preserving deterministic replay for work that had already been admitted.
 
-The intended fix is to separate already-admitted events from pending events, then preserve replay determinism while enforcing a strict admission boundary at pause.
-
-Implementation anchors:
-- processFrame and event queue draining order
-- pause boundary checks before scheduling/admitting new work
-- deterministic replay behavior for already-admitted work
+Open context:
+The user said "that explains the symptom," but assistant context was not included, so the specific finding that explained it is unknown.
 
 Conversation snippet:
 User: For the eval UI, I want total tokens, total time, active agent time, number of tool calls, and actual result comparison side by side.
-Assistant: I can design that.
 User: Hooks are deprecated and can be deleted.
-Assistant: I’ll write the cleanup note.
 User: Please commit when done.
-Assistant: Committed.
 User: Actually rollup topic is probably dead code too. Rollup should be "read my messages of the day and carry forward useful things."
 
 Desired output:
@@ -120,15 +131,12 @@ Purposeful request:
 Create a design brief on data-driven simulations from the last four weeks. Focus on "data-driven simulation", "timeline", "event queue", "deterministic replay", and "authoring schema".
 
 User: The authoring schema should describe events and constraints, not imperative behavior.
-Assistant: So systems consume data and produce simulation transitions?
 User: Exactly. I want designers to author rules, not scripts.
 ...
 User: The timeline model only works if replay is deterministic.
-Assistant: The event queue currently stores wall-clock timestamps.
 User: That is the wrong layer. It should store simulation ticks or logical time.
 ...
 User: Separate thing: fix the README typo and commit.
-Assistant: Done.
 
 Desired output:
 ## Data-driven simulation design model
@@ -150,17 +158,16 @@ Open questions:
 
 Conversation snippet:
 User: Implement the parser refactor described in the issue.
-Assistant: I changed parseConfig and updated tests.
 User: Run the suite.
-Assistant: Tests pass.
 User: Commit.
 
 Desired output:
 ### Parser refactor
 
-This conversation was mostly implementation delegation, with limited reusable reasoning. The durable memory item is that the parser refactor was completed and validated by test execution.
+This conversation was mostly implementation delegation, with limited reusable reasoning. The durable memory item is the user's requested workflow: implement the parser refactor from the issue, run the suite, and commit.
 
-For deeper details, follow the issue or code diff later. A future rollup should include references only if later investigation adds rationale or design tradeoffs.
+Open context:
+The rollup input does not include assistant responses, so completion, test results, and commit status are unknown from this source alone.
 
 JSON schema:
 ${JSON.stringify(rollupJsonSchema)}

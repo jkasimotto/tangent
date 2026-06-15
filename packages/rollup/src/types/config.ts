@@ -29,6 +29,7 @@ export type RollupConfig = {
     includeToolResults: boolean;
     includeFilePaths: boolean;
     includeTokenUsage: boolean;
+    maxUserMessageChars: number;
     maxTurnInputChars: number;
     maxToolResultChars: number;
   };

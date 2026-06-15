@@ -11,6 +11,7 @@ export class ClaudeSdkSummaryRunner implements SummaryRunner {
 
   constructor(private readonly config: ClaudeSdkConfig) {}
 
+  /** Checks whether the Claude SDK can be imported and queried. */
   async checkAvailable(): Promise<RunnerStatus> {
     try {
       const sdk = await importClaudeSdk();
@@ -21,11 +22,12 @@ export class ClaudeSdkSummaryRunner implements SummaryRunner {
     }
   }
 
+  /** Runs one Claude SDK rollup request and parses the generated JSON output. */
   async summarizeRollup(input: RollupInput): Promise<RollupOutput> {
     const sdk = await importClaudeSdk();
     const chunks: string[] = [];
     const query = sdk.query({
-      prompt: rollupPrompt({ period: input.period, inputJson: JSON.stringify(input) }),
+      prompt: rollupPrompt({ period: input.period, inputJson: JSON.stringify(input), purpose: input.purpose }),
       options: {
         model: this.config.model,
         maxTurns: 1,
@@ -45,11 +47,13 @@ type ClaudeSdkModule = {
   query: (args: unknown) => AsyncIterable<unknown> & { supportedModels?: () => Promise<string[]> | string[] };
 };
 
+/** Imports the optional Claude SDK dependency without making it a hard startup requirement. */
 async function importClaudeSdk(): Promise<ClaudeSdkModule> {
   const dynamicImport = new Function("specifier", "return import(specifier)") as (specifier: string) => Promise<unknown>;
   return await dynamicImport("@anthropic-ai/claude-agent-sdk") as ClaudeSdkModule;
 }
 
+/** Reads supported model names from the SDK when the installed version exposes them. */
 async function getSupportedModels(sdk: ClaudeSdkModule): Promise<string[] | undefined> {
   const maybeQuery = sdk.query({ prompt: "", options: { maxTurns: 0, settingSources: [] } });
   if (typeof maybeQuery.supportedModels !== "function") return undefined;
@@ -57,6 +61,7 @@ async function getSupportedModels(sdk: ClaudeSdkModule): Promise<string[] | unde
   return Array.isArray(result) ? result : undefined;
 }
 
+/** Collects text-like fields from SDK streaming messages. */
 function collectText(message: unknown, chunks: string[]): void {
   if (!message || typeof message !== "object") return;
   const record = message as Record<string, unknown>;
@@ -73,6 +78,7 @@ function collectText(message: unknown, chunks: string[]): void {
   }
 }
 
+/** Converts a runner JSON payload into the rollup output contract. */
 function normalizeRollup(value: unknown): RollupOutput {
   const record = value && typeof value === "object" ? value as Record<string, unknown> : {};
   return {
@@ -82,6 +88,7 @@ function normalizeRollup(value: unknown): RollupOutput {
   };
 }
 
+/** Keeps only string entries from an unknown array-like field. */
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }

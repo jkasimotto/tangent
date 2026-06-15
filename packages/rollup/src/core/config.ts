@@ -24,6 +24,7 @@ export type InitRollupOptions = {
   artifactsDir?: string;
 };
 
+/** Creates the default rollup configuration for a repository. */
 export function defaultConfig(repo?: RollupRepoInfo): RollupConfig {
   return {
     schema: "rollup.config.v1",
@@ -48,6 +49,7 @@ export function defaultConfig(repo?: RollupRepoInfo): RollupConfig {
       includeToolResults: true,
       includeFilePaths: true,
       includeTokenUsage: true,
+      maxUserMessageChars: 8000,
       maxTurnInputChars: 48000,
       maxToolResultChars: 4000
     },
@@ -77,6 +79,7 @@ export function defaultConfig(repo?: RollupRepoInfo): RollupConfig {
   };
 }
 
+/** Loads and merges global, shared, and private rollup config for a repo. */
 export async function loadConfig(options: { repo: string }): Promise<LoadedRollupConfig> {
   const repo = await resolveTangentRepo(options.repo, { markers: false });
   const sources: string[] = [];
@@ -106,6 +109,7 @@ export async function loadConfig(options: { repo: string }): Promise<LoadedRollu
   return { config, repo, paths, sources };
 }
 
+/** Initializes a private rollup config and output directory set for a repo. */
 export async function initConfig(options: InitRollupOptions): Promise<LoadedRollupConfig> {
   const repo = await resolveTangentRepo(options.repo, { markers: false });
   let config = defaultConfig(repo);
@@ -126,11 +130,13 @@ export async function initConfig(options: InitRollupOptions): Promise<LoadedRoll
   return { config, repo, paths, sources: [paths.privateConfigPath] };
 }
 
+/** Writes a rollup config object to disk as formatted JSON. */
 export async function writeConfigFile(filePath: string, config: RollupConfig): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 }
 
+/** Applies a dotted-path config assignment parsed from the CLI. */
 export function setConfigValue(config: RollupConfig, dottedPath: string, rawValue: string): RollupConfig {
   const next = structuredClone(config) as RollupConfig;
   const segments = dottedPath.split(".").filter(Boolean);
@@ -146,12 +152,14 @@ export function setConfigValue(config: RollupConfig, dottedPath: string, rawValu
   return next;
 }
 
+/** Reads a rollup config file if it exists. */
 async function readConfigFile(filePath: string): Promise<Partial<RollupConfig> | undefined> {
   if (!(await pathExists(filePath))) return undefined;
   const text = await readFile(filePath, "utf8");
   return normalizeConfigSchema(JSON.parse(text) as Record<string, unknown>);
 }
 
+/** Deep-merges a config override while preserving provider defaults. */
 function mergeConfig(base: RollupConfig, override: Partial<RollupConfig>): RollupConfig {
   const merged = deepMerge(base, override) as RollupConfig;
   const overrideProvider = override.summary?.provider;
@@ -161,11 +169,13 @@ function mergeConfig(base: RollupConfig, override: Partial<RollupConfig>): Rollu
   return merged;
 }
 
+/** Normalizes legacy config schema names into the current rollup schema. */
 function normalizeConfigSchema(config: Record<string, unknown>): Partial<RollupConfig> {
   const normalized = config.schema === "logs.config.v1" ? { ...config, schema: "rollup.config.v1" } : config;
   return normalized as Partial<RollupConfig>;
 }
 
+/** Recursively merges object values without merging arrays. */
 function deepMerge(base: unknown, override: unknown): unknown {
   if (override === undefined) return base;
   if (Array.isArray(base) || Array.isArray(override)) return override;
@@ -177,10 +187,12 @@ function deepMerge(base: unknown, override: unknown): unknown {
   return override;
 }
 
+/** Checks whether a value is a plain object suitable for config merging. */
 function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+/** Parses a CLI config value as boolean, null, number, JSON, or string. */
 function parseConfigValue(value: string): unknown {
   if (value === "true") return true;
   if (value === "false") return false;
@@ -193,12 +205,14 @@ function parseConfigValue(value: string): unknown {
   }
 }
 
+/** Builds provider-specific defaults for the requested summary runner kind. */
 function providerConfig(kind: SummaryProviderConfig["kind"], model = kind === "codex-cli" ? "gpt-5.4-mini" : "sonnet", sandbox: "read-only" | "workspace-write" | "danger-full-access" = "read-only"): SummaryProviderConfig {
   if (kind === "codex-cli") return { kind, command: "codex", model, sandbox, reasoningEffort: "low", timeoutMs: 300000 };
   if (kind === "claude-sdk") return { kind, model, timeoutMs: 120000 };
   return { kind, command: "claude", model, timeoutMs: 120000, maxTurns: 2 };
 }
 
+/** Adds the repo-local rollup directory to git exclude when present. */
 async function excludeRepoLocalRollup(repoRoot: string): Promise<void> {
   const gitDir = path.join(repoRoot, ".git");
   if (!(await pathExists(gitDir))) return;
@@ -209,6 +223,7 @@ async function excludeRepoLocalRollup(repoRoot: string): Promise<void> {
   await writeFile(excludePath, `${existing}${prefix}.tangent/rollup/\n`, "utf8");
 }
 
+/** Returns the local IANA timezone, falling back to UTC. */
 function localTimezone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }

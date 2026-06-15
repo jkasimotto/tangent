@@ -5,15 +5,9 @@ import type { RollupConfig } from "../types/config.js";
 import type { RollupInput, RollupPurpose } from "../types/digest.js";
 import type { RollupPeriod } from "../types/period.js";
 import type { RollupStyleExample } from "../core/examples.js";
-import { clampRollupConversation, compactRollupCaveats } from "./rollup-clamp.js";
+import { redactMessageText } from "../core/redaction.js";
 
-type ScoredConversation = {
-  turn: TurnListItem;
-  index: number;
-  score: number;
-  conversation: ReturnType<typeof clampRollupConversation>;
-};
-
+/** Builds the period-level rollup input from selected Usage turns and user messages. */
 export function buildRollupInput(args: {
   dataset: UsageDataset;
   repo: RollupRepoInfo;
@@ -25,35 +19,60 @@ export function buildRollupInput(args: {
 }): RollupInput {
   const { dataset, repo, config, turns, period } = args;
   const purpose = sanitizePurpose(args.purpose);
+  const maxUserMessageChars = config.input.maxUserMessageChars;
+  const excludedLongMessages: Array<{ sourceKey: string; chars: number }> = [];
 
-  const scoredConversations = turns.map((turn, index) => {
-    const conversation = dataset.conversations.report({
+  const conversations = turns.map((turn) => {
+    const messages = dataset.messages.visible({
       conversationId: turn.conversationId,
       turnId: turn.turnId
-    }).data;
-    const clamped = clampRollupConversation(conversation, config);
+    }).data
+      .filter((message) => message.role === "user")
+      .flatMap((message) => {
+        const rawText = message.text || message.textPreview || "";
+        const chars = messageLength(rawText);
+        if (Number.isFinite(maxUserMessageChars) && maxUserMessageChars >= 0 && chars > maxUserMessageChars) {
+          excludedLongMessages.push({ sourceKey: turn.sourceKey, chars });
+          return [];
+        }
+        const text = redactMessageText(rawText, config.privacy.redactSecrets);
+        if (!text.trim()) return [];
+        return [{
+          id: message.id,
+          role: "user" as const,
+          at: message.createdAt?.toISOString(),
+          text,
+          confidence: message.confidence,
+          source: message.source
+        }];
+      });
+
     return {
-      turn,
-      index,
-      score: conversationScore(clamped, turn, purpose),
-      conversation: clamped
+      schema: "rollup.user-conversation.v1" as const,
+      provider: turn.provider,
+      conversationId: turn.conversationId,
+      providerSessionId: turn.providerSessionId,
+      turnId: turn.turnId,
+      sourceKey: turn.sourceKey,
+      titlePreview: turn.titlePreview,
+      startedAt: turn.startedAt?.toISOString(),
+      endedAt: turn.endedAt?.toISOString(),
+      lastActivityAt: turn.lastActivityAt.toISOString(),
+      messages
     };
   });
 
-  const purposeAware = clampRollupConversationsForInput(scoredConversations, purpose, config.input.maxTurnInputChars);
-  const conversations = purposeAware.conversations;
-  const droppedCount = purposeAware.dropped;
-
   const sourceCaveats = [
-    ...conversations.flatMap((conversation) => conversation.caveats),
-    ...dataset.warnings.map((warning) => warning.message)
+    ...dataset.warnings.map((warning) => warning.message),
+    "Rollup input intentionally contains user messages only. Assistant messages, tool calls, tool results, token metadata, and assistant-produced context were excluded."
   ];
-  if (droppedCount > 0) {
-    sourceCaveats.push(`Purpose-focused clamping dropped ${droppedCount} conversation(s) with low relevance signal.`);
+  if (excludedLongMessages.length > 0) {
+    sourceCaveats.push(longMessageCaveat(excludedLongMessages, maxUserMessageChars));
   }
 
   return {
     schema: "rollup.input.v1",
+    messageMode: "user-only",
     period,
     purpose,
     timezone: config.processing.timezone,
@@ -67,36 +86,41 @@ export function buildRollupInput(args: {
       providers: unique(turns.map((turn) => turn.provider)),
       conversationIds: unique(turns.map((turn) => turn.conversationId)),
       sourceFiles: dataset.provenance.sourceFiles,
-      caveats: compactRollupCaveats(sourceCaveats, 16)
+      caveats: unique(sourceCaveats)
     },
     examples: args.examples || [],
     conversations
   };
 }
 
+/** Counts user-visible characters in a message. */
+function messageLength(text: string): number {
+  return Array.from(text).length;
+}
+
+/** Summarizes user messages omitted by the max length filter. */
+function longMessageCaveat(messages: Array<{ sourceKey: string; chars: number }>, maxChars: number): string {
+  const longest = Math.max(...messages.map((message) => message.chars));
+  const affectedTurns = unique(messages.map((message) => message.sourceKey)).length;
+  return `Excluded ${messages.length} user message(s) longer than ${maxChars} characters from rollup input across ${affectedTurns} turn(s); longest was ${longest} characters.`;
+}
+
+/** Renders rollup input messages into a readable artifact for inspection. */
 export function renderRollupMessages(input: RollupInput): string {
   const lines: string[] = [
-    `# Rollup messages - ${input.period.label}`,
+    `# Rollup user messages - ${input.period.label}`,
     "",
     `Repo: ${input.repo.name}`,
+    `Mode: ${input.messageMode}`,
     `Providers: ${input.source.providers.join(", ") || "none"}`,
     ""
   ];
 
   for (const conversation of input.conversations) {
-    lines.push(`## ${conversation.conversationId}`, "");
+    lines.push(`## ${conversation.sourceKey}`, "");
     for (const message of conversation.messages) {
-      lines.push(`### ${message.at || "--"} ${message.role}${message.role === "assistant" && message.model ? ` ${message.model}` : ""}`);
+      lines.push(`### ${message.at || "--"} ${message.role}`);
       if (message.text) lines.push("", message.text.trim(), "");
-      if (message.role === "assistant" && message.tokens) {
-        lines.push(`tokens: input=${message.tokens.input ?? "-"} output=${message.tokens.output ?? "-"} cacheRead=${message.tokens.cacheRead ?? "-"} cacheCreation=${message.tokens.cacheCreation ?? "-"} confidence=${message.tokens.confidence}`);
-      }
-      if (message.role === "assistant" && message.toolCalls.length) {
-        lines.push("tools:");
-        for (const [index, tool] of message.toolCalls.entries()) {
-          lines.push(`${index + 1}. ${tool.name} ${tool.result?.status || "unknown"} targets=${tool.targetPaths.join(", ") || "-"}`);
-        }
-      }
       lines.push("");
     }
   }
@@ -104,6 +128,7 @@ export function renderRollupMessages(input: RollupInput): string {
   return `${lines.join("\n").trim()}\n`;
 }
 
+/** Normalizes optional purpose fields before including them in rollup input. */
 function sanitizePurpose(purpose?: RollupPurpose): RollupPurpose | undefined {
   if (!purpose?.request) return undefined;
   return {
@@ -114,87 +139,7 @@ function sanitizePurpose(purpose?: RollupPurpose): RollupPurpose | undefined {
   };
 }
 
-function conversationScore(
-  conversation: ReturnType<typeof clampRollupConversation>,
-  turn: TurnListItem,
-  purpose?: RollupPurpose
-): number {
-  if (!purpose?.request && (!purpose?.focusTerms || !purpose.focusTerms.length)) return 0;
-
-  const terms = [...new Set([
-    ...(purpose.request ? [purpose.request] : []),
-    ...(purpose.focusTerms || [])
-  ])]
-    .filter((term) => typeof term === "string")
-    .map((term) => term.toLocaleLowerCase());
-  if (!terms.length) return 0;
-
-  const haystacks = [
-    turn.titlePreview || "",
-    ...conversation.messages.flatMap((message) => {
-      const entries: string[] = [message.text || ""];
-      if (message.role === "assistant" && message.model) entries.push(message.model);
-      if (message.role === "assistant") {
-        for (const tool of message.toolCalls) entries.push(...tool.targetPaths);
-      }
-      return entries;
-    })
-  ];
-
-  const haystack = haystacks.join(" ").toLocaleLowerCase();
-  return terms.reduce((score, term) => {
-    if (!term) return score;
-    const escaped = term.toLocaleLowerCase();
-    let index = 0;
-    let matches = 0;
-    while (index >= 0) {
-      index = haystack.indexOf(escaped, index);
-      if (index === -1) break;
-      matches += 1;
-      index += escaped.length || 1;
-    }
-    return score + matches;
-  }, 0);
-}
-
-function clampRollupConversationsForInput(
-  scored: ScoredConversation[],
-  purpose: RollupPurpose | undefined,
-  maxInput: number
-): { conversations: ReturnType<typeof clampRollupConversation>[]; dropped: number } {
-  const sorted = [...scored].sort((a, b) => {
-    if (b.score !== a.score) return b.score - a.score;
-    return a.index - b.index;
-  });
-
-  const allConversations = sorted.map((entry) => entry.conversation);
-  if (maxInput <= 0 || JSON.stringify({ conversations: allConversations }).length <= maxInput) {
-    return { conversations: allConversations, dropped: 0 };
-  }
-
-  if (!purpose?.request && (!purpose?.focusTerms || purpose.focusTerms.length === 0)) {
-    const fallback = sorted.slice(0, 1).map((entry) => entry.conversation);
-    return { conversations: fallback, dropped: Math.max(0, sorted.length - 1) };
-  }
-
-  const kept: ScoredConversation[] = [];
-  for (const entry of sorted) {
-    const nextPayload = { conversations: [...kept.map((item) => item.conversation), entry.conversation] };
-    const nextLength = JSON.stringify(nextPayload).length;
-    if (nextLength > maxInput) break;
-    kept.push(entry);
-  }
-
-  if (!kept.length && sorted.length > 0) {
-    return { conversations: [sorted[0].conversation], dropped: sorted.length - 1 };
-  }
-
-  return {
-    conversations: kept.sort((a, b) => a.index - b.index).map((entry) => entry.conversation),
-    dropped: sorted.length - kept.length
-  };
-}
-
+/** Returns truthy values in first-seen order without duplicates. */
 function unique<T>(values: T[]): T[] {
   return [...new Set(values.filter(Boolean))];
 }

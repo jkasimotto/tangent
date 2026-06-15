@@ -34,7 +34,7 @@
     "check": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@tangent/core": "file:../core"
+    "@tangent/core": "^0.1.0"
   },
   "license": "MIT",
   "engines": {

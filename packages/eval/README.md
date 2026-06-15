@@ -13,6 +13,13 @@ tangent eval report <run-id>
 tangent eval ui
 ```
 
+When installed standalone as `@tangent/eval`, use the `tangent-eval` binary with the same arguments:
+
+```bash
+tangent-eval prepare evals/add-language-filter/eval.json
+tangent-eval ui
+```
+
 Automatic eval variants run in parallel by default, while phases stay ordered inside each variant.
 Context capture stays within the target repository; `--include-ancestors` only includes context files between `--cwd` and the repo root.
 

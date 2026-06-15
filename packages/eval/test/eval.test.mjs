@@ -194,7 +194,7 @@ test("run eval records failures after sibling variants finish", async () => {
   const specPath = await writeEvalSpec(repo, "parallel-failure", command, [
     { id: "fail", context: { mode: "repo" } },
     { id: "pass", context: { mode: "repo" } }
-  ]);
+  ], 30000);
 
   await assert.rejects(runEval(specPath), /case-a\/fail: intentional failure/);
 
@@ -546,6 +546,7 @@ while [ "$#" -gt 0 ]; do
   fi
   shift || true
 done
+cat >/dev/null
 if [ "$TANGENT_EVAL_VARIANT_ID" = ${shellQuote(failingVariant)} ]; then
   printf 'intentional failure\\n' >&2
   exit 7

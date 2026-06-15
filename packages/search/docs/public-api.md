@@ -6,6 +6,10 @@ Public import paths:
 
 Agents must import through these public exports, not package src internals.
 
+Human CLI:
+- `tangent search ...` is the root full-suite command.
+- `tangent-search ...` is the standalone package binary and accepts the same arguments without the root `search` subcommand.
+
 SDK:
 - `indexRepo(options)` accepts `onProgress?: (event: IndexProgressEvent) => void` for index progress.
 - `indexRepo(options)` accepts `slowOperationMs?: number` to tune warning events for long parse/write/edge operations.

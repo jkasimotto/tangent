@@ -1,7 +1,6 @@
 {
   "name": "tangent",
   "version": "0.1.0",
-  "private": true,
   "description": "Workspace for local coding-agent conversation tools.",
   "type": "module",
   "bin": {
@@ -24,22 +23,29 @@
     "lint:function-docstrings": "node scripts/lint-function-docstrings.mjs",
     "governance": "npm run build -w @tangent/governance && node packages/governance/dist/cli/index.js lint",
     "test": "npm run test --workspaces --if-present",
+    "test:install": "node scripts/smoke-install-packages.mjs",
+    "test:install:all-managers": "node scripts/smoke-install-packages.mjs --all-package-managers",
     "clean": "rm -rf dist packages/*/dist"
   },
   "dependencies": {
-    "@tangent/agent-runtime": "file:packages/agent-runtime",
-    "@tangent/core": "file:packages/core",
-    "@tangent/repo": "file:packages/repo",
-    "@tangent/governance": "file:packages/governance",
-    "@tangent/usage": "file:packages/usage",
-    "@tangent/rollup": "file:packages/rollup",
-    "@tangent/eval": "file:packages/eval",
-    "@tangent/search": "file:packages/search"
+    "@tangent/agent-runtime": "^0.1.0",
+    "@tangent/core": "^0.1.0",
+    "@tangent/repo": "^0.1.0",
+    "@tangent/governance": "^0.1.0",
+    "@tangent/usage": "^0.1.0",
+    "@tangent/rollup": "^0.1.0",
+    "@tangent/eval": "^0.1.0",
+    "@tangent/search": "^0.1.0"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",
     "typescript": "^5.5.4"
   },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "license": "MIT",
   "engines": {
     "node": ">=24"
   }

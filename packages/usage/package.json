@@ -4,7 +4,7 @@
   "description": "Local conversation telemetry and queryability for coding-agent sessions.",
   "type": "module",
   "bin": {
-    "usage": "./dist/cli/index.js"
+    "tangent-usage": "./dist/cli/index.js"
   },
   "exports": {
     ".": {
@@ -17,8 +17,8 @@
     }
   },
   "dependencies": {
-    "@tangent/core": "file:../core",
-    "@tangent/repo": "file:../repo",
+    "@tangent/core": "^0.1.0",
+    "@tangent/repo": "^0.1.0",
     "better-sqlite3": "^11.10.0"
   },
   "devDependencies": {

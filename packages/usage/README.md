@@ -10,6 +10,13 @@ tangent usage tokens latest
 tangent usage events . --json
 ```
 
+When installed standalone as `@tangent/usage`, use the `tangent-usage` binary with the same arguments:
+
+```bash
+tangent-usage status .
+tangent-usage report latest --provider claude --json
+```
+
 SDK:
 
 ```ts

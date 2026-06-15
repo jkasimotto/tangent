@@ -9,6 +9,13 @@ tangent rollup yesterday
 tangent rollup 20260601-20260610
 ```
 
+When installed standalone as `@tangent/rollup`, use the `tangent-rollup` binary with the same arguments:
+
+```bash
+tangent-rollup init . --summary-provider codex-cli --model gpt-5.4-mini
+tangent-rollup today
+```
+
 `tangent rollup <selector>` reads selected Usage turns for the selected day or
 inclusive compact range, fetches visible user messages only, excludes user
 messages longer than `input.maxUserMessageChars` (default `8000`), writes one

@@ -18,6 +18,7 @@ Dataset queries:
 
 Human CLI:
 - `tangent usage ...` is the default activity surface.
+- `tangent-usage ...` is the standalone package binary and accepts the same arguments without the root `usage` subcommand.
 - `tangent usage report <session|latest> --json` prints exactly `usage.conversation.v1`.
 - Raw telemetry views live under explicit `usage events --json`, `usage messages --json`, `usage export`, and hidden `data archive`.
 - Native transcripts are the default human query source. Native-log schema scaffolding lives under hidden `usage native schemas`, `usage native inspect <path>`, and `usage native status`. Hook install and hook record commands are retired.

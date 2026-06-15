@@ -15,6 +15,7 @@ import {
   walkDirs,
   type PackageInfo
 } from "./walk.js";
+import { lintPackageInstallability, packageDependencyInfos } from "./package-installability.js";
 
 export type GovernanceLintGroup = "all" | "docs" | "deps" | "agents" | "shared" | "hooks" | "files";
 
@@ -50,6 +51,16 @@ export const governanceCommandSpec: CliCommandSpec = {
 };
 
 const allowedPackageDeps: Record<string, string[]> = {
+  "tangent": [
+    "@tangent/core",
+    "@tangent/repo",
+    "@tangent/agent-runtime",
+    "@tangent/governance",
+    "@tangent/usage",
+    "@tangent/rollup",
+    "@tangent/eval",
+    "@tangent/search"
+  ],
   "@tangent/core": [],
   "@tangent/repo": ["@tangent/core"],
   "@tangent/agent-runtime": ["@tangent/core"],
@@ -67,7 +78,7 @@ export async function lintGovernance(options: GovernanceLintOptions = {}): Promi
   const ctx = { root, packages: await packageInfos(root) };
 
   if (hasGroup(groups, "agents") || hasGroup(groups, "docs")) findings.push(...await lintAgentDocs(ctx));
-  if (hasGroup(groups, "deps")) findings.push(...await lintPackageDeps(ctx), ...await lintImports(ctx));
+  if (hasGroup(groups, "deps")) findings.push(...await lintPackageDeps(ctx), ...await lintPackageInstallability(ctx), ...await lintImports(ctx));
   if (hasGroup(groups, "shared")) findings.push(...await lintSharedHelpers(ctx));
   if (hasGroup(groups, "hooks")) findings.push(...await lintHookBoundaries(ctx));
   if (hasGroup(groups, "files")) findings.push(...await lintFileSizes(ctx));
@@ -171,7 +182,7 @@ async function lintAgentDocs(ctx: LintContext): Promise<GovernanceFinding[]> {
 
 async function lintPackageDeps(ctx: LintContext): Promise<GovernanceFinding[]> {
   const findings: GovernanceFinding[] = [];
-  for (const pkg of ctx.packages) {
+  for (const pkg of await packageDependencyInfos(ctx)) {
     const allowed = new Set(allowedPackageDeps[pkg.name] || []);
     const deps = Object.keys(pkg.manifest.dependencies || {}).filter((dep) => isTangentPackage(dep));
     for (const dep of deps) {

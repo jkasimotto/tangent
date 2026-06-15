@@ -5,10 +5,10 @@
 Packages:
 
 - `@tangent/core`: shared command metadata, help, and shell completion primitives.
-- `@tangent/usage` / `usage`: local conversation telemetry and human-readable activity views for Claude Code and Codex sessions.
-- `@tangent/rollup` / `rollup`: private rollup engineering notes generated from `usage` conversations.
-- `@tangent/eval` / `eval`: local coding-agent eval preparation, execution, and reports.
-- `@tangent/search`: structural repository search for Dart and TypeScript/JavaScript.
+- `@tangent/usage` / `tangent-usage`: local conversation telemetry and human-readable activity views for Claude Code and Codex sessions.
+- `@tangent/search` / `tangent-search`: structural repository search for Dart and TypeScript/JavaScript.
+- `@tangent/rollup` / `tangent-rollup`: private rollup engineering notes generated from Usage conversations.
+- `@tangent/eval` / `tangent-eval`: local coding-agent eval preparation, execution, and reports.
 
 ## Quick start
 
@@ -35,7 +35,7 @@ tangent eval quick --prompt prompts/task.md --context empty --context repo
 
 `usage` is the human-facing telemetry surface. Raw telemetry API/debug views require explicit JSON/export commands.
 
-`usage` reads Claude Code and Codex native transcripts by default and indexes normalized activity under `~/.tangent/usage`. Human commands default to readable text; raw provenance and event streams live under `usage export` and `usage events --json`. Legacy hook capture is still available through hidden `usage hooks` commands.
+`usage` reads Claude Code and Codex native transcripts by default and indexes normalized activity under `~/.tangent/usage`. Human commands default to readable text; raw provenance and event streams live under `usage export` and `usage events --json`. Hook capture is retired, but old hook-sourced JSONL remains readable through explicit legacy source options.
 
 `rollup` stores private generated notes, cached digests, and processing state under `~/.tangent/rollup/repos/<repo-name>` by default. `tangent rollup today` writes `notes/YYYY-MM-DD.md`; compact ranges such as `tangent rollup 20260601-20260610` write one combined note at `notes/YYYY-MM-DD--YYYY-MM-DD.md`. Repo-local output is opt-in:
 
@@ -74,3 +74,25 @@ tangent completion zsh > ~/.zsh/completions/_tangent
 tangent completion bash > ~/.tangent-completion.bash
 tangent completion fish > ~/.config/fish/completions/tangent.fish
 ```
+
+## Standalone installs
+
+The monorepo is the single development home, but each app package is installable on its own:
+
+```bash
+npm install @tangent/usage
+npm install @tangent/search
+npm install @tangent/rollup
+npm install @tangent/eval
+```
+
+Standalone binaries use collision-resistant names:
+
+```bash
+tangent-usage today
+tangent-search index
+tangent-rollup today
+tangent-eval ui
+```
+
+The full-suite package keeps the shorter root subcommands through `tangent usage`, `tangent search`, `tangent rollup`, and `tangent eval`.

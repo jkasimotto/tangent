@@ -4,6 +4,10 @@ Public import paths:
 - @tangent/rollup
 - @tangent/rollup/cli
 
+Human CLI:
+- `tangent rollup ...` is the root full-suite command.
+- `tangent-rollup ...` is the standalone package binary and accepts the same arguments without the root `rollup` subcommand.
+
 Important exports:
 - SDK: `configure`, `status`, `getRollupNote`, `getCandidates`, `processRollup`.
 - Public Rollup types include `RollupPeriod`, `RollupInput`, `RollupUserConversation`, `RollupUserMessage`, `RollupOutput`, `RollupCandidate`, `SummaryRunner`, and `SummaryProviderConfig`.

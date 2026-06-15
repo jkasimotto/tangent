@@ -12,6 +12,8 @@ Read next:
 
 Core rule: vertical apps stay independent. Shared infrastructure lives in platform packages, not in Usage and not copied app-to-app.
 
+Install rule: Tangent stays in one git monorepo, but each vertical app package must be publishable and usable on its own. Standalone installs may depend on platform packages and, for Rollup/Eval, Usage, but must not pull unrelated vertical apps. Package manifests use normal semver `@tangent/*` dependency ranges; workspace-local `file:`, `link:`, and `workspace:` dependency specs are not allowed in publishable manifests.
+
 Allowed dependency shape:
 
 ```text
@@ -29,6 +31,8 @@ core -> no Tangent package dependencies
 ```
 
 Human-facing root commands are `setup`, `status`, `usage`, `rollup`, `search`, `eval`, `doctor`, and `completion`. Raw/debug/CI commands such as `governance`, `data export`, and `data archive` remain callable but hidden from default help.
+
+Standalone package CLIs use collision-resistant binary names: `tangent-usage`, `tangent-search`, `tangent-rollup`, and `tangent-eval`. The root `tangent` CLI keeps the short subcommands for full-suite installs.
 
 Usage owns conversation telemetry: event schemas, datasets, SDKs, CLI, usage CLI, native transcript normalization, native-log schema compatibility checks, legacy usage-jsonl reading, and assistant-centered `usage.conversation.v1` reports. Native provider transcripts are the source of truth for new data. Hook installation and hook recording are retired product surfaces; legacy `capture.source: "hook"` events remain readable through usage-jsonl compatibility. Rollup and Eval may consume Usage data, but Usage must not learn about Rollup, Eval, or Search.
 

@@ -4,7 +4,7 @@
   "description": "Private rollup engineering notes from usage conversation telemetry.",
   "type": "module",
   "bin": {
-    "rollup": "./dist/cli/index.js"
+    "tangent-rollup": "./dist/cli/index.js"
   },
   "exports": {
     ".": {
@@ -26,10 +26,10 @@
     "test": "npm run build && node --test test/*.test.mjs"
   },
   "dependencies": {
-    "@tangent/core": "file:../core",
-    "@tangent/repo": "file:../repo",
-    "@tangent/agent-runtime": "file:../agent-runtime",
-    "@tangent/usage": "file:../usage"
+    "@tangent/core": "^0.1.0",
+    "@tangent/repo": "^0.1.0",
+    "@tangent/agent-runtime": "^0.1.0",
+    "@tangent/usage": "^0.1.0"
   },
   "engines": {
     "node": ">=20"

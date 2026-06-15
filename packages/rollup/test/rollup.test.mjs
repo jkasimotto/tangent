@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -260,7 +260,7 @@ test("processRollup passes purpose and focus terms into rollup input", async () 
   }
 });
 
-test("processRollup dry-run includes active turns when no task completion marker exists", async () => {
+test("processRollup dry-run includes quiet turns when no task completion marker exists", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "rollup-active-dryrun-"));
   process.env.TANGENT_ROLLUP_HOME = path.join(dir, "rollup-home");
   process.env.USAGE_HOME = path.join(dir, "usage-home");
@@ -277,6 +277,7 @@ test("processRollup dry-run includes active turns when no task completion marker
     date: "2026-06-08",
     includeTaskComplete: false
   }));
+  await utimes(sessionPath, new Date("2026-06-08T10:00:05.000Z"), new Date("2026-06-08T10:00:05.000Z"));
 
   try {
     const result = await processRollup({

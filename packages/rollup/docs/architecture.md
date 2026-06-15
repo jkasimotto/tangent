@@ -15,6 +15,7 @@ Workflow notes:
 
 Rules:
 - Rollup may consume Usage data.
+- Keep Rollup installable with Usage and platform packages, but without Search or Eval.
 - Keep Rollup note schemas and prompts in Rollup.
 
 Refer to ../../../docs/architecture/package-boundaries.md and ../../../docs/architecture/dependency-graph.md for monorepo boundaries.

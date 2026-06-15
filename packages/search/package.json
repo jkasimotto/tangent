@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Structural repository search for Tangent.",
   "type": "module",
+  "bin": {
+    "tangent-search": "./dist/cli/index.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/sdk/index.d.ts",
@@ -18,13 +21,13 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && chmod +x dist/cli/index.js",
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
-    "@tangent/core": "file:../core",
-    "@tangent/repo": "file:../repo",
+    "@tangent/core": "^0.1.0",
+    "@tangent/repo": "^0.1.0",
     "better-sqlite3": "^12.10.0"
   },
   "devDependencies": {

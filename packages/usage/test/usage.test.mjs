@@ -254,10 +254,10 @@ test("turns without an end event are listed with unknown status", () => {
   assert.deepEqual(dataset.turns.list().data.map((row) => row.status), ["unknown"]);
 });
 
-test("usage package does not expose the old command binary", async () => {
+test("usage package exposes a standalone command binary", async () => {
   const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
   assert.equal(manifest.name, "@tangent/usage");
-  assert.deepEqual(Object.keys(manifest.bin), ["usage"]);
+  assert.deepEqual(manifest.bin, { "tangent-usage": "./dist/cli/index.js" });
 });
 
 test("usage index incrementally ingests changed files and loads a single conversation", async () => {

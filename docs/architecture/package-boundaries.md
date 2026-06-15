@@ -16,6 +16,13 @@ Root CLI:
 - Owns human command taxonomy (`setup`, `status`, `usage`, `rollup`, `search`, `eval`, `doctor`) and may compose public SDKs.
 - Must keep raw/debug/CI surfaces hidden from default help when they are not human product commands.
 
+Install contract:
+- This remains one git monorepo and one workspace for development.
+- `@tangent/usage`, `@tangent/search`, `@tangent/rollup`, and `@tangent/eval` must be publishable and installable independently.
+- Standalone app packages may depend on platform packages. Rollup and Eval may also depend on Usage. No standalone app may pull an unrelated vertical app.
+- Publishable manifests must use semver `@tangent/*` dependencies, not `file:`, `link:`, or `workspace:` protocols.
+- Standalone CLIs use `tangent-usage`, `tangent-search`, `tangent-rollup`, and `tangent-eval`; the root `tangent` package keeps short subcommands.
+
 Hard rules:
 - rollup and eval may depend on usage.
 - usage must not depend on rollup, eval, or search.

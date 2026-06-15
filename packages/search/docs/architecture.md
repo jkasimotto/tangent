@@ -4,6 +4,7 @@ Structural repository indexing and search.
 
 Rules:
 - Do not depend on Usage, Rollup, or Eval.
+- Keep Search installable without unrelated vertical apps.
 - Use @tangent/repo for root discovery and file checks.
 
 Indexing:

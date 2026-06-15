@@ -4,6 +4,7 @@ Conversation telemetry domain: schemas, native-log schema compatibility, legacy 
 
 Product split:
 - `usage` is the human-readable activity CLI: sessions, transcripts, tools, tokens, status, and export.
+- `tangent-usage` is the standalone install binary; `tangent usage` is the full-suite root command.
 - `usage report <session|latest>` projects raw `usage.event.v2` rows into assistant-centered `usage.conversation.v1` reports with user/assistant messages, assistant/model-call token usage, and nested tool calls.
 - Raw/debug views are explicit subcommands: `usage events --json`, `usage messages --json`, `usage export`, and hidden data archive.
 - Human output hides provenance unless `--json` or a debug/export command is used.
@@ -19,6 +20,7 @@ Capture notes:
 
 Rules:
 - Do not depend on Rollup, Eval, or Search.
+- Keep Usage installable without unrelated vertical apps.
 - Do not own provider hook config mechanics.
 
 Refer to ../../../docs/architecture/package-boundaries.md and ../../../docs/architecture/dependency-graph.md for monorepo boundaries.

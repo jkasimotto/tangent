@@ -59,7 +59,8 @@ function indexOptions() {
     { name: "force", description: "Rebuild index from scratch" },
     { name: "watch", description: "Watch and re-index changes" },
     { name: "interval", takesValue: true, description: "Watch interval seconds" },
-    { name: "reedge-all", description: "Rebuild graph edges without reparsing all files" }
+    { name: "reedge-all", description: "Rebuild graph edges without reparsing all files" },
+    { name: "verbose", description: "Print detailed index diagnostics" }
   ];
 }
 

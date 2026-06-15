@@ -1,5 +1,5 @@
 import { ensureOutputDirs } from "../core/paths.js";
-import { buildIndex, watchIndex, type IndexResult } from "../core/indexer.js";
+import { buildIndex, watchIndex, type IndexProgressEvent, type IndexResult } from "../core/indexer.js";
 import { callGraphDb, openPlanDb, searchDb, skeletonDb, statusDb, symbolDb, testsDb, type CallGraphResult, type OpenPlanResult, type SearchResults, type SearchStatus, type SkeletonResult, type SymbolDetails, type TestResult } from "../core/search.js";
 import { loadConfig } from "../core/config.js";
 import type { SearchQueryMode } from "../core/search.js";
@@ -10,9 +10,11 @@ export type IndexRepoOptions = {
   includeGenerated?: boolean;
   force?: boolean;
   reedgeAll?: boolean;
+  slowOperationMs?: number;
   watch?: boolean;
   intervalSeconds?: number;
   onResult?: (result: IndexResult) => void;
+  onProgress?: (event: IndexProgressEvent) => void;
 };
 
 export async function indexRepo(options: IndexRepoOptions = {}): Promise<IndexResult | undefined> {
@@ -25,7 +27,9 @@ export async function indexRepo(options: IndexRepoOptions = {}): Promise<IndexRe
     languages: options.languages,
     includeGenerated: options.includeGenerated,
     force: options.force,
-    reedgeAll: options.reedgeAll
+    reedgeAll: options.reedgeAll,
+    slowOperationMs: options.slowOperationMs,
+    onProgress: options.onProgress
   };
   if (options.watch) {
     await watchIndex({ ...args, intervalSeconds: options.intervalSeconds || 1, onResult: options.onResult });
@@ -86,4 +90,5 @@ export async function status(options: { repo?: string } = {}): Promise<SearchSta
 export { configure } from "./config.js";
 export type { ConfigureOptions } from "./config.js";
 export type { SearchConfig } from "../types/config.js";
+export type { IndexProgressEvent, IndexResult } from "../core/indexer.js";
 export type { SearchResults, SearchHit, SymbolDetails, CallGraphResult, TestResult, SkeletonResult, OpenPlanResult, SearchStatus } from "../core/search.js";

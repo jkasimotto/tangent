@@ -5,3 +5,9 @@ Public import paths:
 - @tangent/search/cli
 
 Agents must import through these public exports, not package src internals.
+
+SDK:
+- `indexRepo(options)` accepts `onProgress?: (event: IndexProgressEvent) => void` for index progress.
+- `indexRepo(options)` accepts `slowOperationMs?: number` to tune warning events for long parse/write/edge operations.
+- `IndexProgressEvent` includes `phase`, optional `stage`, `step`, `path`, count fields, row diagnostics, `ftsMode`, durations, and `level: "warning"` slow-operation events.
+- `IndexProgressEvent` and `IndexResult` are exported from `@tangent/search`.

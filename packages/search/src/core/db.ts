@@ -48,6 +48,34 @@ export type EntityRow = {
   rank?: number;
 };
 
+export type DeleteFileIndexRowsResult = {
+  edges: number;
+  symbols: number;
+  entities: number;
+  fts: number;
+  files: number;
+  ftsMode: "bulk" | "fallback" | "disabled";
+};
+
+export type DeleteFileIndexRowsProgress = {
+  step: "edges" | "entities" | "fts" | "symbols" | "file-row";
+  current?: number;
+  total?: number;
+  edges?: number;
+  symbols?: number;
+  entities?: number;
+  fts?: number;
+  files?: number;
+  ftsMode?: "bulk" | "fallback" | "disabled";
+};
+
+export type InsertEntitiesResult = {
+  entities: number;
+  fts: number;
+};
+
+const sqliteChunkSize = 500;
+
 export class SearchDB {
   readonly conn: Database.Database;
   ftsEnabled = false;
@@ -120,19 +148,36 @@ export function dbFileSnapshot(db: SearchDB, languages?: readonly string[]): Map
   return new Map(rows.map((row) => [row.path, row]));
 }
 
-export function deleteFileIndexRows(db: SearchDB, fileId: number, deleteFileRow: boolean): void {
-  db.conn.prepare("DELETE FROM edges WHERE from_file_id=? OR to_file_id=?").run(fileId, fileId);
+export function deleteFileIndexRows(db: SearchDB, fileId: number, deleteFileRow: boolean, onProgress?: (event: DeleteFileIndexRowsProgress) => void): DeleteFileIndexRowsResult {
+  onProgress?.({ step: "edges" });
+  const fromEdges = db.conn.prepare("DELETE FROM edges WHERE from_file_id=?").run(fileId).changes;
+  const toEdges = db.conn.prepare("DELETE FROM edges WHERE to_file_id=?").run(fileId).changes;
+  const edges = fromEdges + toEdges;
+  onProgress?.({ step: "edges", edges });
   const symbolRows = db.conn.prepare("SELECT id FROM symbols WHERE file_id=?").all(fileId) as Array<{ id: number }>;
-  for (const row of symbolRows) deleteEntity(db, "symbol", row.id);
-  deleteEntity(db, "file", fileId);
-  db.conn.prepare("DELETE FROM symbols WHERE file_id=?").run(fileId);
-  if (deleteFileRow) db.conn.prepare("DELETE FROM files WHERE id=?").run(fileId);
+  const symbolIds = symbolRows.map((row) => row.id);
+  const symbolEntities = deleteEntitiesByIds(db, "symbol", symbolIds);
+  const fileEntity = db.conn.prepare("DELETE FROM entities WHERE entity_type='file' AND entity_id=?").run(fileId).changes;
+  const entities = symbolEntities + fileEntity;
+  onProgress?.({ step: "entities", entities });
+  const ftsResult = deleteFtsEntities(db, [{ type: "symbol", ids: symbolIds }, { type: "file", ids: [fileId] }]);
+  onProgress?.({ step: "fts", fts: ftsResult.fts, ftsMode: ftsResult.mode });
+  onProgress?.({ step: "symbols" });
+  const symbols = db.conn.prepare("DELETE FROM symbols WHERE file_id=?").run(fileId).changes;
+  onProgress?.({ step: "symbols", symbols });
+  onProgress?.({ step: "file-row" });
+  const files = deleteFileRow ? db.conn.prepare("DELETE FROM files WHERE id=?").run(fileId).changes : 0;
+  onProgress?.({ step: "file-row", files });
+  return { edges, symbols, entities, fts: ftsResult.fts, files, ftsMode: ftsResult.mode };
 }
 
-export function resetLanguageContent(db: SearchDB, languages: readonly string[]): void {
+export function resetLanguageContent(db: SearchDB, languages: readonly string[], onProgress?: (current: number, total: number) => void): void {
   if (!languages.length) return;
   const rows = db.conn.prepare(`SELECT id FROM files WHERE language IN (${languages.map(() => "?").join(",")})`).all(...languages) as Array<{ id: number }>;
-  for (const row of rows) deleteFileIndexRows(db, row.id, true);
+  for (const [index, row] of rows.entries()) {
+    deleteFileIndexRows(db, row.id, true);
+    onProgress?.(index + 1, rows.length);
+  }
 }
 
 export function resetIndexContent(db: SearchDB): void {
@@ -146,23 +191,62 @@ export function resetIndexContent(db: SearchDB): void {
   }
 }
 
-export function insertEntities(db: SearchDB, rows: Array<[string, number, string, string, string, string, string, string, string]>): void {
-  if (!rows.length) return;
+export function insertEntities(db: SearchDB, rows: Array<[string, number, string, string, string, string, string, string, string]>, onProgress?: (current: number, total: number) => void): InsertEntitiesResult {
+  if (!rows.length) return { entities: 0, fts: 0 };
   const insert = db.conn.prepare("INSERT OR REPLACE INTO entities(entity_type,entity_id,language,name,qualified_name,path,signature,doc,tokens) VALUES (?,?,?,?,?,?,?,?,?)");
   const insertFts = db.ftsEnabled ? db.conn.prepare("INSERT INTO entities_fts(entity_type,entity_id,language,name,qualified_name,path,signature,doc,tokens) VALUES (?,?,?,?,?,?,?,?,?)") : undefined;
-  for (const row of rows) {
-    insert.run(...row);
-    if (insertFts) insertFts.run(...row);
+  let entities = 0;
+  let fts = 0;
+  for (const [index, row] of rows.entries()) {
+    entities += insert.run(...row).changes;
+    if (insertFts) fts += insertFts.run(...row).changes;
+    onProgress?.(index + 1, rows.length);
+  }
+  return { entities, fts };
+}
+
+function deleteEntitiesByIds(db: SearchDB, type: "file" | "symbol", ids: readonly number[]): number {
+  let changes = 0;
+  for (const chunk of chunks(ids, sqliteChunkSize)) {
+    if (!chunk.length) continue;
+    changes += db.conn.prepare(`DELETE FROM entities WHERE entity_type=? AND entity_id IN (${chunk.map(() => "?").join(",")})`).run(type, ...chunk).changes;
+  }
+  return changes;
+}
+
+function deleteFtsEntities(db: SearchDB, groups: Array<{ type: "file" | "symbol"; ids: readonly number[] }>): { fts: number; mode: "bulk" | "fallback" | "disabled" } {
+  if (!db.ftsEnabled) return { fts: 0, mode: "disabled" };
+  try {
+    let fts = 0;
+    for (const group of groups) {
+      for (const chunk of chunks(group.ids, sqliteChunkSize)) {
+        if (!chunk.length) continue;
+        fts += db.conn.prepare(`DELETE FROM entities_fts WHERE entity_type=? AND entity_id IN (${chunk.map(() => "?").join(",")})`).run(group.type, ...chunk).changes;
+      }
+    }
+    return { fts, mode: "bulk" };
+  } catch {
+    let fts = 0;
+    for (const group of groups) {
+      for (const id of group.ids) fts += deleteFtsEntity(db, group.type, id);
+    }
+    return { fts, mode: "fallback" };
   }
 }
 
-function deleteEntity(db: SearchDB, type: "file" | "symbol", id: number): void {
-  db.conn.prepare("DELETE FROM entities WHERE entity_type=? AND entity_id=?").run(type, id);
+function deleteFtsEntity(db: SearchDB, type: "file" | "symbol", id: number): number {
   if (db.ftsEnabled) {
     try {
-      db.conn.prepare("DELETE FROM entities_fts WHERE entity_type=? AND entity_id=?").run(type, id);
+      return db.conn.prepare("DELETE FROM entities_fts WHERE entity_type=? AND entity_id=?").run(type, id).changes;
     } catch {
       // FTS delete support can vary with SQLite builds.
     }
   }
+  return 0;
+}
+
+function chunks<T>(items: readonly T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let index = 0; index < items.length; index += size) out.push(items.slice(index, index + size));
+  return out;
 }

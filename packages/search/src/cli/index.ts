@@ -4,7 +4,7 @@ import { renderCommandHelp } from "@tangent/core";
 
 import { loadConfig } from "../core/config.js";
 import { runGrep } from "../core/grep.js";
-import { configure, indexRepo, searchRepo, status as statusSdk, symbol, callers, callees, testsFor, skeleton, openPlan } from "../sdk/index.js";
+import { configure, indexRepo, searchRepo, status as statusSdk, symbol, callers, callees, testsFor, skeleton, openPlan, type IndexProgressEvent } from "../sdk/index.js";
 import { booleanArg, languageArgs, modeArg, numberArg, parseArgs, scopeArg, storageArg, stringArg, type Args } from "./args.js";
 import { searchCommandSpec } from "./spec.js";
 
@@ -34,15 +34,19 @@ export async function runSearchCli(argv = process.argv.slice(2)): Promise<void> 
   }
 
   if (command === "index") {
+    const verbose = booleanArg(args.verbose);
+    const printProgress = createIndexProgressPrinter({ verbose });
     const result = await indexRepo({
       repo: args._[1] || ".",
       languages: languageArgs(args.language),
       includeGenerated: booleanArg(args["include-generated"]) || undefined,
       force: booleanArg(args.force),
       reedgeAll: booleanArg(args["reedge-all"]),
+      slowOperationMs: verbose ? 2000 : 5000,
       watch: booleanArg(args.watch),
       intervalSeconds: numberArg(args.interval),
-      onResult: printIndexResult
+      onResult: printIndexResult,
+      onProgress: printProgress
     });
     if (result) printIndexResult(result);
     return;
@@ -143,6 +147,152 @@ function emitHits(title: string, hits: Awaited<ReturnType<typeof searchRepo>>["i
 function printIndexResult(result: NonNullable<Awaited<ReturnType<typeof indexRepo>>>): void {
   console.log(`search ${result.action}: ${result.files} files, ${result.symbols} symbols, ${result.edges} edges (${result.parsed} parsed, ${result.deleted} deleted) in ${(result.elapsedMs / 1000).toFixed(2)}s`);
   console.log(`db: ${result.dbPath}`);
+}
+
+function createIndexProgressPrinter(options: { verbose: boolean }): (event: IndexProgressEvent) => void {
+  if (options.verbose) return createVerboseIndexProgressPrinter();
+  return createConciseIndexProgressPrinter();
+}
+
+function createConciseIndexProgressPrinter(): (event: IndexProgressEvent) => void {
+  const lastPrinted = new Map<string, number>();
+  return (event) => {
+    if (event.level === "warning") {
+      console.error(`search index: warning slow ${event.stage || event.phase}${event.step && event.step !== "warning" ? ` ${event.step}` : ""}${event.path ? ` ${event.path}` : ""} in ${formatMs(event.durationMs)}`);
+      return;
+    }
+    if (event.phase === "start") {
+      console.error(`search index: starting ${event.root} (${event.languages.join(", ") || "no languages"})`);
+      return;
+    }
+    if (event.phase === "context" && event.stage === "languages" && event.step === "start") {
+      console.error("search index: loading language context...");
+      return;
+    }
+    if (event.phase === "scan") {
+      if (event.total === undefined) {
+        console.error("search index: scanning files...");
+        return;
+      }
+      if (shouldPrintCounter(event, lastPrinted)) console.error(`search index: scanned ${event.current ?? event.total}/${event.total} files`);
+      return;
+    }
+    if (event.phase === "plan") {
+      if (event.action === "up-to-date") {
+        console.error(`search index: no file changes detected across ${event.files ?? 0} files`);
+        return;
+      }
+      if (event.action === "full") {
+        console.error(`search index: full rebuild; parsing ${event.total ?? 0} files`);
+        return;
+      }
+      console.error(`search index: incremental update; parsing ${event.changed ?? 0} changed files, deleting ${event.deleted ?? 0}`);
+      return;
+    }
+    if (event.phase === "parse") {
+      if ((event.step === undefined || event.step === "done") && shouldPrintCounter(event, lastPrinted)) console.error(`search index: parsed ${event.current ?? 0}/${event.total ?? 0} files`);
+      return;
+    }
+    if (event.phase === "write") {
+      if (!event.stage) {
+        console.error("search index: writing index rows...");
+        return;
+      }
+      if (event.stage === "reset") {
+        if (event.total === undefined) console.error("search index: clearing old index rows...");
+        else if (shouldPrintCounter(event, lastPrinted)) console.error(`search index: cleared ${event.current ?? event.total}/${event.total} old index rows`);
+        return;
+      }
+      if (event.stage === "affected") {
+        console.error("search index: finding affected importers...");
+        return;
+      }
+      if (event.stage === "delete") {
+        if (event.total === undefined) console.error("search index: deleting stale index rows...");
+        else if (event.total === 0) console.error("search index: no stale index rows to delete");
+        else if (shouldPrintCounter(event, lastPrinted)) console.error(`search index: deleted ${event.current ?? event.total}/${event.total} stale index rows`);
+        return;
+      }
+      if (event.stage === "delete-old") {
+        return;
+      }
+      if (event.stage === "upsert") {
+        if (event.step === "start" && event.current === undefined) console.error(`search index: upserting ${event.total ?? event.parsed ?? 0} parsed files...`);
+        else if (event.step === "done" && shouldPrintCounter(event, lastPrinted)) console.error(`search index: upserted ${event.current}/${event.total} parsed files`);
+        return;
+      }
+      if (event.stage === "metadata") {
+        console.error("search index: writing index metadata...");
+        return;
+      }
+      console.error(`search index: writing ${event.stage}...`);
+      return;
+    }
+    if (event.phase === "edges") {
+      const label = event.stage === "import" ? "import edges" : event.stage === "symbol" ? "symbol graph" : event.stage === "test" ? "test links" : "graph edges";
+      if (event.step === "start" && event.current === undefined) {
+        console.error(event.total === undefined ? `search index: rebuilding ${label}...` : `search index: rebuilding ${label} for ${event.total} files...`);
+        return;
+      }
+      if (event.total === 0) {
+        console.error(`search index: no ${label} to rebuild`);
+        return;
+      }
+      if ((event.step === undefined || event.step === "done") && shouldPrintCounter(event, lastPrinted)) console.error(`search index: rebuilt ${label} for ${event.current ?? 0}/${event.total ?? 0} files`);
+    }
+  };
+}
+
+function createVerboseIndexProgressPrinter(): (event: IndexProgressEvent) => void {
+  return (event) => {
+    const parts = ["search index:"];
+    if (event.level === "warning") parts.push("warning");
+    parts.push(event.phase);
+    if (event.stage) parts.push(event.stage);
+    if (event.step) parts.push(event.step);
+    if (event.action) parts.push(`action=${event.action}`);
+    if (event.current !== undefined && event.total !== undefined) parts.push(`${event.current}/${event.total}`);
+    if (event.path) parts.push(event.path);
+    if (event.language) parts.push(`language=${event.language}`);
+    if (event.size !== undefined) parts.push(`size=${event.size}`);
+    if (event.files !== undefined) parts.push(`files=${event.files}`);
+    if (event.changed !== undefined) parts.push(`changed=${event.changed}`);
+    if (event.deleted !== undefined) parts.push(`deleted=${event.deleted}`);
+    if (event.parsed !== undefined) parts.push(`parsed=${event.parsed}`);
+    if (event.symbols !== undefined) parts.push(`symbols=${event.symbols}`);
+    if (event.imports !== undefined) parts.push(`imports=${event.imports}`);
+    if (event.edges !== undefined) parts.push(`edges=${event.edges}`);
+    if (event.entities !== undefined) parts.push(`entities=${event.entities}`);
+    if (event.fts !== undefined) parts.push(`fts=${event.fts}`);
+    if (event.ftsMode !== undefined) parts.push(`ftsMode=${event.ftsMode}`);
+    if (event.indexVersion) parts.push(`version=${event.indexVersion}`);
+    if (event.ftsEnabled !== undefined) parts.push(`fts=${event.ftsEnabled ? "enabled" : "disabled"}`);
+    if (event.includeGenerated !== undefined) parts.push(`includeGenerated=${event.includeGenerated ? "true" : "false"}`);
+    if (event.force !== undefined) parts.push(`force=${event.force ? "true" : "false"}`);
+    if (event.reedgeAll !== undefined) parts.push(`reedgeAll=${event.reedgeAll ? "true" : "false"}`);
+    if (event.reason) parts.push(`reason=${event.reason}`);
+    if (event.durationMs !== undefined) parts.push(`duration=${formatMs(event.durationMs)}`);
+    if (event.elapsedMs !== undefined) parts.push(`elapsed=${formatMs(event.elapsedMs)}`);
+    if (event.message) parts.push(`message=${JSON.stringify(event.message)}`);
+    console.error(parts.join(" "));
+  };
+}
+
+function shouldPrintCounter(event: IndexProgressEvent, lastPrinted: Map<string, number>): boolean {
+  const total = event.total ?? 0;
+  const current = event.current ?? total;
+  if (!total) return false;
+  const key = `${event.phase}:${event.stage || ""}`;
+  const previous = lastPrinted.get(key) || 0;
+  if (current === previous) return false;
+  const shouldPrint = current === 1 || current === total || current - previous >= 250;
+  if (shouldPrint) lastPrinted.set(key, current);
+  return shouldPrint;
+}
+
+function formatMs(value: number | undefined): string {
+  if (value === undefined) return "unknown";
+  return value >= 1000 ? `${(value / 1000).toFixed(2)}s` : `${value}ms`;
 }
 
 function printStatus(value: Awaited<ReturnType<typeof statusSdk>>, verbose: boolean): void {

@@ -6,6 +6,7 @@ import { isFile } from "@tangent/repo";
 import type { SearchConfig } from "../types/config.js";
 import { deleteFileIndexRows, dbFileSnapshot, insertEntities, resetIndexContent, resetLanguageContent, rowStatTuple, searchIndexVersion, SearchDB, type FileRow, type SymbolRow } from "./db.js";
 import { fileStatTuple, gitLsFiles, lineToPos, pathMatchesAny, relpath, shouldSkipDir, tokenizeText } from "./helpers.js";
+import { emitCounterProgress, emitSlowOperation, fullIndexReason } from "./index-progress.js";
 import { getAdapters, type LanguageAdapter, type LanguageContext, type ParsedFile } from "../languages/index.js";
 
 export type IndexOptions = {
@@ -16,6 +17,8 @@ export type IndexOptions = {
   includeGenerated?: boolean;
   force?: boolean;
   reedgeAll?: boolean;
+  slowOperationMs?: number;
+  onProgress?: (event: IndexProgressEvent) => void;
 };
 
 export type IndexResult = {
@@ -29,6 +32,42 @@ export type IndexResult = {
   dbPath: string;
 };
 
+export type IndexProgressEvent = {
+  phase: "start" | "context" | "scan" | "plan" | "parse" | "write" | "edges" | "done";
+  root: string;
+  dbPath: string;
+  languages: string[];
+  step?: string;
+  stage?: string;
+  level?: "info" | "warning";
+  message?: string;
+  action?: IndexResult["action"];
+  current?: number;
+  total?: number;
+  files?: number;
+  changed?: number;
+  deleted?: number;
+  parsed?: number;
+  path?: string;
+  language?: string;
+  size?: number;
+  symbols?: number;
+  imports?: number;
+  entities?: number;
+  fts?: number;
+  ftsMode?: "bulk" | "fallback" | "disabled";
+  edges?: number;
+  durationMs?: number;
+  stepElapsedMs?: number;
+  indexVersion?: string;
+  ftsEnabled?: boolean;
+  includeGenerated?: boolean;
+  force?: boolean;
+  reedgeAll?: boolean;
+  reason?: string;
+  elapsedMs?: number;
+};
+
 type SnapshotRow = {
   language: string;
   size: number;
@@ -37,21 +76,48 @@ type SnapshotRow = {
 
 type Contexts = Record<string, LanguageContext>;
 
+type ProgressPayload = Omit<IndexProgressEvent, "root" | "dbPath" | "languages">;
+type ProgressEmitter = (event: ProgressPayload) => void;
+type ProgressContext = {
+  emit: ProgressEmitter;
+  slowOperationMs: number;
+};
+
 export async function buildIndex(options: IndexOptions): Promise<IndexResult> {
   const started = Date.now();
   const adapters = getAdapters(options.languages || options.config.indexing.languages);
+  const languages = adapters.map((adapter) => adapter.id);
   const includeGenerated = options.includeGenerated ?? options.config.indexing.includeGenerated;
+  const progress: ProgressEmitter = (event) => {
+    options.onProgress?.({ root: options.root, dbPath: options.dbPath, languages, ...event });
+  };
+  const progressContext = { emit: progress, slowOperationMs: options.slowOperationMs ?? 5000 };
+  progress({ phase: "start", indexVersion: searchIndexVersion, includeGenerated, force: Boolean(options.force), reedgeAll: Boolean(options.reedgeAll) });
   const db = new SearchDB(options.dbPath);
   db.initSchema(Boolean(options.force));
+  progress({ phase: "context", stage: "db", step: "done", indexVersion: searchIndexVersion, ftsEnabled: db.ftsEnabled });
+  progress({ phase: "context", stage: "languages", step: "start" });
   const contexts = await createContexts(options.root, adapters);
+  progress({ phase: "context", stage: "languages", step: "done", durationMs: Date.now() - started });
   const contextSignature = JSON.stringify(Object.fromEntries(Object.entries(contexts).map(([key, value]) => [key, { packages: value.packages, tsconfig: value.tsconfig }])));
-  const current = await snapshot(options.root, adapters, options.config, includeGenerated);
-  const languages = adapters.map((adapter) => adapter.id);
+  progress({ phase: "scan" });
+  const current = await snapshot(options.root, adapters, options.config, includeGenerated, (currentItem, total) => progress({ phase: "scan", current: currentItem, total }));
+  progress({ phase: "scan", total: current.size, files: current.size });
   const existing = dbFileSnapshot(db, languages);
   const oldInclude = db.getMeta("include_generated");
   const oldLanguages = db.getMeta("languages");
   const oldContext = db.getMeta("context_signature");
-  const full = Boolean(options.force) || existing.size === 0 || (oldInclude !== undefined && oldInclude !== (includeGenerated ? "1" : "0")) || (oldLanguages !== undefined && oldLanguages !== [...languages].sort().join(",")) || (oldContext !== undefined && oldContext !== contextSignature);
+  const fullReason = fullIndexReason({
+    force: Boolean(options.force),
+    existingSize: existing.size,
+    oldInclude,
+    includeGenerated,
+    oldLanguages,
+    languages,
+    oldContext,
+    contextSignature
+  });
+  const full = fullReason !== undefined;
 
   let action: IndexResult["action"] = "full";
   let parsedCount = 0;
@@ -60,17 +126,30 @@ export async function buildIndex(options: IndexOptions): Promise<IndexResult> {
   const adaptersById = new Map(adapters.map((adapter) => [adapter.id, adapter]));
   try {
     if (full) {
-      const parsed = await parsePaths([...current.keys()], options.root, adaptersById, contexts, current);
+      progress({ phase: "plan", action: "full", total: current.size, files: current.size, changed: current.size, deleted: 0, reason: fullReason });
+      const parsed = await parsePaths([...current.keys()], options.root, adaptersById, contexts, current, progressContext);
       parsedCount = parsed.length;
+      progress({ phase: "write", action: "full", parsed: parsedCount, total: parsed.length });
       const transaction = db.conn.transaction(() => {
+        const txStart = Date.now();
+        progress({ phase: "write", stage: "transaction", step: "start", action: "full" });
+        progress({ phase: "write", stage: "reset", step: "start", action: "full" });
         if (options.force && !languages.length) resetIndexContent(db);
-        else resetLanguageContent(db, languages);
-        const pathToId = upsertParsedFiles(db, parsed);
+        else resetLanguageContent(db, languages, (currentItem, total) => progress({ phase: "write", stage: "reset", action: "full", current: currentItem, total }));
+        progress({ phase: "write", stage: "reset", step: "done", action: "full" });
+        progress({ phase: "write", stage: "upsert", step: "start", action: "full", total: parsed.length });
+        const pathToId = upsertParsedFiles(db, parsed, progressContext, "full");
         const cache = parsedCache(parsed, pathToId);
-        buildImportEdges(db, parsed);
-        rebuildSymbolEdgesForFileIds(db, options.root, allFileIds(db, languages), adaptersById, contexts, cache);
-        rebuildTestEdges(db);
+        progress({ phase: "edges", stage: "import", step: "start", action: "full", total: parsed.length });
+        buildImportEdges(db, parsed, progressContext, "full");
+        progress({ phase: "edges", stage: "symbol", step: "start", action: "full" });
+        rebuildSymbolEdgesForFileIds(db, options.root, allFileIds(db, languages), adaptersById, contexts, cache, progressContext, "full");
+        progress({ phase: "edges", stage: "test", step: "start", action: "full" });
+        rebuildTestEdges(db, progressContext, "full");
+        progress({ phase: "write", stage: "metadata", step: "start", action: "full" });
         writeMeta(db, options.root, includeGenerated, languages, contextSignature);
+        progress({ phase: "write", stage: "metadata", step: "done", action: "full" });
+        progress({ phase: "write", stage: "transaction", step: "done", action: "full", durationMs: Date.now() - txStart });
       });
       transaction();
       action = "full";
@@ -81,40 +160,62 @@ export async function buildIndex(options: IndexOptions): Promise<IndexResult> {
         return !row || tupleKey(rowStatTuple(row)) !== tupleKey([snapshotRow.language, snapshotRow.size, snapshotRow.mtimeNs]);
       }).map(([item]) => item).sort();
 
+      const plannedAction: IndexResult["action"] = !deleted.length && !changed.length && !options.reedgeAll ? "up-to-date" : "incremental";
+      progress({ phase: "plan", action: plannedAction, total: changed.length, files: current.size, changed: changed.length, deleted: deleted.length });
       if (!deleted.length && !changed.length && !options.reedgeAll) {
         writeMeta(db, options.root, includeGenerated, languages, contextSignature);
         const counts = countsFor(db);
+        progress({ phase: "done", action: "up-to-date", ...counts, parsed: 0, deleted: 0, elapsedMs: Date.now() - started });
         db.close();
         return { action: "up-to-date", ...counts, parsed: 0, deleted: 0, elapsedMs: Date.now() - started, dbPath: options.dbPath };
       }
 
-      const parsed = await parsePaths(changed, options.root, adaptersById, contexts, current);
+      const parsed = await parsePaths(changed, options.root, adaptersById, contexts, current, progressContext);
       parsedCount = parsed.length;
       deletedCount = deleted.length;
+      progress({ phase: "write", action: "incremental", parsed: parsedCount, total: parsed.length, deleted: deletedCount });
       const transaction = db.conn.transaction(() => {
+        const txStart = Date.now();
+        progress({ phase: "write", stage: "transaction", step: "start", action: "incremental" });
         const oldIds = new Set(deleted.concat(changed).map((item) => existing.get(item)?.id).filter((id): id is number => id !== undefined));
+        progress({ phase: "write", stage: "affected", step: "start", action: "incremental", total: oldIds.size });
         let affected = new Set([...oldIds, ...importerFileIdsFor(db, oldIds)]);
-        for (const item of deleted) {
+        progress({ phase: "write", stage: "affected", step: "done", action: "incremental", total: oldIds.size, files: affected.size });
+        progress({ phase: "write", stage: "delete", step: "start", action: "incremental", total: deleted.length });
+        for (const [index, item] of deleted.entries()) {
           const row = existing.get(item);
-          if (row) deleteFileIndexRows(db, row.id, true);
+          if (row) deleteIndexedFile(db, row.id, item, progressContext, "incremental", true);
+          emitCounterProgress(index + 1, deleted.length, (currentItem, total) => progress({ phase: "write", stage: "delete", action: "incremental", current: currentItem, total }));
         }
-        const pathToNew = upsertParsedFiles(db, parsed);
+        progress({ phase: "write", stage: "delete", step: "done", action: "incremental", total: deleted.length });
+        progress({ phase: "write", stage: "upsert", step: "start", action: "incremental", total: parsed.length });
+        const pathToNew = upsertParsedFiles(db, parsed, progressContext, "incremental");
         const cache = parsedCache(parsed, pathToNew);
         const newIds = new Set(pathToNew.values());
+        progress({ phase: "write", stage: "affected", step: "start", action: "incremental", total: newIds.size });
         affected = new Set([...affected, ...newIds, ...importerFileIdsFor(db, newIds)]);
+        progress({ phase: "write", stage: "affected", step: "done", action: "incremental", total: newIds.size, files: affected.size });
         const currentIds = new Set(allFileIds(db, languages));
         affected = options.reedgeAll ? currentIds : intersection(affected, currentIds);
-        rebuildImportEdgesForFileIds(db, options.root, [...affected], adaptersById, contexts, cache);
-        rebuildSymbolEdgesForFileIds(db, options.root, [...affected], adaptersById, contexts, cache);
-        rebuildTestEdges(db);
+        progress({ phase: "edges", stage: "import", step: "start", action: "incremental", total: affected.size });
+        rebuildImportEdgesForFileIds(db, options.root, [...affected], adaptersById, contexts, cache, progressContext, "incremental");
+        progress({ phase: "edges", stage: "symbol", step: "start", action: "incremental" });
+        rebuildSymbolEdgesForFileIds(db, options.root, [...affected], adaptersById, contexts, cache, progressContext, "incremental");
+        progress({ phase: "edges", stage: "test", step: "start", action: "incremental" });
+        rebuildTestEdges(db, progressContext, "incremental");
+        progress({ phase: "write", stage: "metadata", step: "start", action: "incremental" });
         writeMeta(db, options.root, includeGenerated, languages, contextSignature);
+        progress({ phase: "write", stage: "metadata", step: "done", action: "incremental" });
+        progress({ phase: "write", stage: "transaction", step: "done", action: "incremental", durationMs: Date.now() - txStart });
       });
       transaction();
       action = "incremental";
     }
     const counts = countsFor(db);
     db.close();
-    return { action, ...counts, parsed: parsedCount, deleted: deletedCount, elapsedMs: Date.now() - started, dbPath: options.dbPath };
+    const result = { action, ...counts, parsed: parsedCount, deleted: deletedCount, elapsedMs: Date.now() - started, dbPath: options.dbPath };
+    progress({ phase: "done", action, ...counts, parsed: parsedCount, deleted: deletedCount, elapsedMs: result.elapsedMs });
+    return result;
   } catch (error) {
     db.close();
     throw error;
@@ -187,153 +288,222 @@ async function iterRepoFiles(root: string, adapters: readonly LanguageAdapter[],
   return out;
 }
 
-async function snapshot(root: string, adapters: readonly LanguageAdapter[], config: SearchConfig, includeGenerated: boolean): Promise<Map<string, SnapshotRow>> {
+async function snapshot(root: string, adapters: readonly LanguageAdapter[], config: SearchConfig, includeGenerated: boolean, onProgress?: (current: number, total: number) => void): Promise<Map<string, SnapshotRow>> {
   const out = new Map<string, SnapshotRow>();
-  for (const [rel, language] of await iterRepoFiles(root, adapters, config, includeGenerated)) {
+  const files = await iterRepoFiles(root, adapters, config, includeGenerated);
+  for (const [index, [rel, language]] of files.entries()) {
     try {
       const tuple = fileStatTuple(await stat(path.join(root, rel)));
       out.set(rel, { language, ...tuple });
     } catch {
       // File disappeared during scan.
     }
+    emitCounterProgress(index + 1, files.length, onProgress);
   }
   return out;
 }
 
-async function parsePaths(paths: readonly string[], root: string, adaptersById: Map<string, LanguageAdapter>, contexts: Contexts, snap: Map<string, SnapshotRow>): Promise<ParsedFile[]> {
+async function parsePaths(paths: readonly string[], root: string, adaptersById: Map<string, LanguageAdapter>, contexts: Contexts, snap: Map<string, SnapshotRow>, progress?: ProgressContext): Promise<ParsedFile[]> {
   const parsed: ParsedFile[] = [];
-  for (const rel of [...paths].sort()) {
+  const sorted = [...paths].sort();
+  for (const [index, rel] of sorted.entries()) {
     const language = snap.get(rel)?.language;
     const adapter = language ? adaptersById.get(language) : undefined;
-    if (!adapter) continue;
-    try {
-      parsed.push(await adapter.parseFile(path.join(root, rel), root, contexts[adapter.id]!));
-    } catch (error) {
-      console.warn(`tangent search: warning: failed to parse ${rel}: ${error instanceof Error ? error.message : String(error)}`);
+    const itemStarted = Date.now();
+    const size = snap.get(rel)?.size;
+    if (adapter) {
+      progress?.emit({ phase: "parse", stage: "file", step: "start", current: index + 1, total: sorted.length, path: rel, language: adapter.id, size });
+      try {
+        const item = await adapter.parseFile(path.join(root, rel), root, contexts[adapter.id]!);
+        parsed.push(item);
+        const durationMs = Date.now() - itemStarted;
+        progress?.emit({ phase: "parse", stage: "file", step: "done", current: index + 1, total: sorted.length, path: rel, language: item.language, size, symbols: item.symbols.length, imports: item.imports.length, durationMs });
+        emitSlowOperation(progress, { phase: "parse", stage: "file", path: rel, language: item.language, size, symbols: item.symbols.length, imports: item.imports.length }, durationMs);
+      } catch (error) {
+        console.warn(`tangent search: warning: failed to parse ${rel}: ${error instanceof Error ? error.message : String(error)}`);
+        progress?.emit({ phase: "parse", stage: "file", step: "error", level: "warning", current: index + 1, total: sorted.length, path: rel, language: adapter.id, size, message: error instanceof Error ? error.message : String(error), durationMs: Date.now() - itemStarted });
+      }
+    } else {
+      emitCounterProgress(index + 1, sorted.length, (current, total) => progress?.emit({ phase: "parse", current, total }));
     }
   }
   return parsed;
 }
 
-function upsertParsedFiles(db: SearchDB, parsedFiles: readonly ParsedFile[]): Map<string, number> {
+function upsertParsedFiles(db: SearchDB, parsedFiles: readonly ParsedFile[], progress: ProgressContext, action: IndexResult["action"]): Map<string, number> {
   const now = Date.now() / 1000;
   const pathToFileId = new Map<string, number>();
   const insertFile = db.conn.prepare("INSERT INTO files(path,language,package,library_uri,is_test,is_generated,hash,size,mtime,mtime_ns,indexed_at,parse_error) VALUES (?,?,?,?,?,?,?,?,?,?,?,NULL)");
   const updateFile = db.conn.prepare("UPDATE files SET language=?,package=?,library_uri=?,is_test=?,is_generated=?,hash=?,size=?,mtime=?,mtime_ns=?,indexed_at=?,parse_error=NULL WHERE id=?");
   const insertSymbol = db.conn.prepare("INSERT INTO symbols(file_id,language,name,qualified_name,kind,visibility,start_line,end_line,signature,doc,parent_symbol_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)");
 
-  for (const parsed of parsedFiles) {
+  for (const [index, parsed] of parsedFiles.entries()) {
+    const itemStarted = Date.now();
+    const baseEvent = { action, current: index + 1, total: parsedFiles.length, path: parsed.path, language: parsed.language, symbols: parsed.symbols.length, imports: parsed.imports.length } as const;
+    progress.emit({ phase: "write", stage: "upsert", step: "start", ...baseEvent });
     const existing = db.conn.prepare("SELECT id FROM files WHERE path=?").get(parsed.path) as { id: number } | undefined;
     const fileId = existing?.id;
-    if (fileId !== undefined) deleteFileIndexRows(db, fileId, false);
+    if (fileId !== undefined) deleteIndexedFile(db, fileId, parsed.path, progress, action, false, baseEvent);
     const statInfo = statSyncSafe(parsed.absolutePath);
     const row = [parsed.language, parsed.packageName || null, parsed.libraryUri || null, parsed.isTest ? 1 : 0, parsed.isGenerated ? 1 : 0, "", statInfo.size, statInfo.mtimeNs / 1_000_000_000, statInfo.mtimeNs, now] as const;
+    const fileStarted = Date.now();
+    progress.emit({ phase: "write", stage: "upsert", step: "file-row-start", size: statInfo.size, ...baseEvent });
     const id = fileId === undefined ? Number(insertFile.run(parsed.path, ...row).lastInsertRowid) : (updateFile.run(...row, fileId), fileId);
+    const fileDurationMs = Date.now() - fileStarted;
+    progress.emit({ phase: "write", stage: "upsert", step: "file-row-done", size: statInfo.size, durationMs: fileDurationMs, ...baseEvent });
+    emitSlowOperation(progress, { phase: "write", stage: "upsert", step: "file-row", size: statInfo.size, ...baseEvent }, fileDurationMs);
     pathToFileId.set(parsed.path, id);
-    insertEntities(db, [["file", id, parsed.language, path.posix.basename(parsed.path), parsed.path, parsed.path, "", parsed.libraryUri || "", tokenizeText([parsed.path, path.posix.basename(parsed.path), parsed.libraryUri || "", parsed.language].join(" ")).join(" ")]]);
+    const fileEntity = insertEntities(db, [["file", id, parsed.language, path.posix.basename(parsed.path), parsed.path, parsed.path, "", parsed.libraryUri || "", tokenizeText([parsed.path, path.posix.basename(parsed.path), parsed.libraryUri || "", parsed.language].join(" ")).join(" ")]]);
 
     const tempToReal = new Map<number, number>();
     const entityRows: Array<[string, number, string, string, string, string, string, string, string]> = [];
-    for (const symbol of parsed.symbols) {
+    const symbolsStarted = Date.now();
+    progress.emit({ phase: "write", stage: "upsert", step: "symbols-start", ...baseEvent });
+    for (const [symbolIndex, symbol] of parsed.symbols.entries()) {
       const parentId = symbol.parentTempId ? tempToReal.get(symbol.parentTempId) : undefined;
       const symbolId = Number(insertSymbol.run(id, parsed.language, symbol.name, symbol.qualifiedName, symbol.kind, symbol.visibility, symbol.startLine, symbol.endLine, symbol.signature, symbol.doc, parentId ?? null).lastInsertRowid);
       tempToReal.set(symbol.tempId, symbolId);
       entityRows.push(["symbol", symbolId, parsed.language, symbol.name, symbol.qualifiedName, parsed.path, symbol.signature, symbol.doc, tokenizeText([symbol.name, symbol.qualifiedName, parsed.path, symbol.signature, symbol.doc, parsed.language].join(" ")).join(" ")]);
+      emitCounterProgress(symbolIndex + 1, parsed.symbols.length, (current, total) => progress.emit({ phase: "write", stage: "upsert", step: "symbols", current, total, path: parsed.path, language: parsed.language }));
     }
-    insertEntities(db, entityRows);
+    const symbolsDurationMs = Date.now() - symbolsStarted;
+    progress.emit({ phase: "write", stage: "upsert", step: "symbols-done", durationMs: symbolsDurationMs, ...baseEvent });
+    emitSlowOperation(progress, { phase: "write", stage: "upsert", step: "symbols", ...baseEvent }, symbolsDurationMs);
+    const entitiesStarted = Date.now();
+    progress.emit({ phase: "write", stage: "upsert", step: "entities-start", entities: entityRows.length + fileEntity.entities, fts: fileEntity.fts, ...baseEvent });
+    const entityResult = insertEntities(db, entityRows, (current, total) => progress.emit({ phase: "write", stage: "upsert", step: "entities", current, total, path: parsed.path, language: parsed.language }));
+    const entities = entityResult.entities + fileEntity.entities;
+    const fts = entityResult.fts + fileEntity.fts;
+    const entitiesDurationMs = Date.now() - entitiesStarted;
+    progress.emit({ phase: "write", stage: "upsert", step: "entities-done", entities, fts, durationMs: entitiesDurationMs, ...baseEvent });
+    emitSlowOperation(progress, { phase: "write", stage: "upsert", step: "entities", entities, fts, ...baseEvent }, entitiesDurationMs);
+    const durationMs = Date.now() - itemStarted;
+    progress.emit({ phase: "write", stage: "upsert", step: "done", entities, fts, durationMs, size: statInfo.size, ...baseEvent });
+    emitSlowOperation(progress, { phase: "write", stage: "upsert", entities, fts, size: statInfo.size, ...baseEvent }, durationMs);
   }
   return pathToFileId;
 }
 
-function buildImportEdges(db: SearchDB, parsedFiles: readonly ParsedFile[]): number {
+function buildImportEdges(db: SearchDB, parsedFiles: readonly ParsedFile[], progress?: ProgressContext, action?: IndexResult["action"]): number {
   const pathToId = currentPathToFileId(db);
   const insert = db.conn.prepare("INSERT INTO edges(from_symbol_id,to_symbol_id,from_file_id,to_file_id,kind,confidence,evidence) VALUES (?,?,?,?,?,?,?)");
   let count = 0;
-  for (const parsed of parsedFiles) {
+  for (const [index, parsed] of parsedFiles.entries()) {
+    const itemStarted = Date.now();
+    progress?.emit({ phase: "edges", stage: "import", step: "start", action, current: index + 1, total: parsedFiles.length, path: parsed.path, language: parsed.language, imports: parsed.imports.length });
+    let fileEdges = 0;
     const fromId = pathToId.get(parsed.path);
-    if (!fromId) continue;
-    for (const imported of parsed.imports) {
-      insert.run(null, null, fromId, imported.resolvedPath ? pathToId.get(imported.resolvedPath) ?? null : null, imported.kind, 1.0, `${imported.uri} at line ${imported.line}`);
-      count += 1;
+    if (fromId) {
+      for (const imported of parsed.imports) {
+        insert.run(null, null, fromId, imported.resolvedPath ? pathToId.get(imported.resolvedPath) ?? null : null, imported.kind, 1.0, `${imported.uri} at line ${imported.line}`);
+        count += 1;
+        fileEdges += 1;
+      }
     }
+    const durationMs = Date.now() - itemStarted;
+    progress?.emit({ phase: "edges", stage: "import", step: "done", action, current: index + 1, total: parsedFiles.length, path: parsed.path, language: parsed.language, imports: parsed.imports.length, edges: fileEdges, durationMs });
+    emitSlowOperation(progress, { phase: "edges", stage: "import", action, path: parsed.path, language: parsed.language, imports: parsed.imports.length, edges: fileEdges }, durationMs);
   }
   return count;
 }
 
-function rebuildImportEdgesForFileIds(db: SearchDB, root: string, fileIds: readonly number[], adaptersById: Map<string, LanguageAdapter>, contexts: Contexts, cache: Map<number, ParsedFile>): number {
+function rebuildImportEdgesForFileIds(db: SearchDB, root: string, fileIds: readonly number[], adaptersById: Map<string, LanguageAdapter>, contexts: Contexts, cache: Map<number, ParsedFile>, progress: ProgressContext, action: IndexResult["action"]): number {
   const ids = uniqueNumbers(fileIds);
   if (!ids.length) return 0;
   db.conn.prepare(`DELETE FROM edges WHERE from_file_id IN (${ids.map(() => "?").join(",")}) AND kind IN ('import','export','part','require','dynamic_import')`).run(...ids);
   const parsed: ParsedFile[] = [];
-  for (const row of fileRowsForIds(db, ids)) {
+  const rows = fileRowsForIds(db, ids);
+  for (const [index, row] of rows.entries()) {
     const item = parsedForFile(db, root, row, adaptersById, contexts, cache);
     if (item) parsed.push(item);
+    emitCounterProgress(index + 1, rows.length, (current, total) => progress.emit({ phase: "edges", stage: "import", action, current, total }));
   }
-  return buildImportEdges(db, parsed);
+  return buildImportEdges(db, parsed, progress, action);
 }
 
-function rebuildSymbolEdgesForFileIds(db: SearchDB, root: string, fileIds: readonly number[], adaptersById: Map<string, LanguageAdapter>, contexts: Contexts, cache: Map<number, ParsedFile>): number {
+function rebuildSymbolEdgesForFileIds(db: SearchDB, root: string, fileIds: readonly number[], adaptersById: Map<string, LanguageAdapter>, contexts: Contexts, cache: Map<number, ParsedFile>, progress: ProgressContext, action: IndexResult["action"]): number {
   const ids = uniqueNumbers(fileIds);
   if (!ids.length) return 0;
   db.conn.prepare(`DELETE FROM edges WHERE from_file_id IN (${ids.map(() => "?").join(",")}) AND kind IN ('calls','references_type')`).run(...ids);
   const { lookup, symbolsByFile, imports } = buildSymbolLookup(db);
   const insert = db.conn.prepare("INSERT INTO edges(from_symbol_id,to_symbol_id,from_file_id,to_file_id,kind,confidence,evidence) VALUES (?,?,?,?,?,?,?)");
   let count = 0;
-  for (const row of fileRowsForIds(db, ids)) {
+  const rows = fileRowsForIds(db, ids);
+  for (const [index, row] of rows.entries()) {
+    const itemStarted = Date.now();
     const parsed = parsedForFile(db, root, row, adaptersById, contexts, cache);
     const adapter = parsed ? adaptersById.get(parsed.language) : undefined;
-    if (!parsed || !adapter) continue;
-    const imported = imports.get(row.id) || new Set<number>();
-    for (const symbol of symbolsByFile.get(row.id) || []) {
-      if (!adapter.functionLikeKinds.has(symbol.kind)) continue;
-      const start = lineToPos(parsed.lineStarts, symbol.start_line);
-      const end = lineToPos(parsed.lineStarts, symbol.end_line + 1);
-      const body = parsed.cleanSource.slice(start, end);
-      const seenCalls = new Set<string>();
-      for (const name of adapter.callNames(body)) {
-        if (seenCalls.has(name)) continue;
-        seenCalls.add(name);
-        for (const target of chooseTargets(lookup.get(name) || [], row.id, imported)) {
-          if (target.id === symbol.id) continue;
-          insert.run(symbol.id, target.id, row.id, target.file_id, "calls", imported.has(target.file_id) || target.file_id === row.id ? 0.85 : 0.65, name);
-          count += 1;
+    const baseEvent = { phase: "edges" as const, stage: "symbol", action, current: index + 1, total: rows.length, path: row.path, language: row.language };
+    progress.emit({ ...baseEvent, step: "start" });
+    let fileEdges = 0;
+    if (parsed && adapter) {
+      const imported = imports.get(row.id) || new Set<number>();
+      for (const symbol of symbolsByFile.get(row.id) || []) {
+        if (!adapter.functionLikeKinds.has(symbol.kind)) continue;
+        const start = lineToPos(parsed.lineStarts, symbol.start_line);
+        const end = lineToPos(parsed.lineStarts, symbol.end_line + 1);
+        const body = parsed.cleanSource.slice(start, end);
+        const seenCalls = new Set<string>();
+        for (const name of adapter.callNames(body)) {
+          if (seenCalls.has(name)) continue;
+          seenCalls.add(name);
+          for (const target of chooseTargets(lookup.get(name) || [], row.id, imported)) {
+            if (target.id === symbol.id) continue;
+            insert.run(symbol.id, target.id, row.id, target.file_id, "calls", imported.has(target.file_id) || target.file_id === row.id ? 0.85 : 0.65, name);
+            count += 1;
+            fileEdges += 1;
+          }
         }
-      }
-      const seenTypes = new Set<string>();
-      for (const name of adapter.typeNames(body)) {
-        if (seenTypes.has(name)) continue;
-        seenTypes.add(name);
-        for (const target of chooseTargets(lookup.get(name) || [], row.id, imported)) {
-          insert.run(symbol.id, target.id, row.id, target.file_id, "references_type", imported.has(target.file_id) || target.file_id === row.id ? 0.8 : 0.55, name);
-          count += 1;
+        const seenTypes = new Set<string>();
+        for (const name of adapter.typeNames(body)) {
+          if (seenTypes.has(name)) continue;
+          seenTypes.add(name);
+          for (const target of chooseTargets(lookup.get(name) || [], row.id, imported)) {
+            insert.run(symbol.id, target.id, row.id, target.file_id, "references_type", imported.has(target.file_id) || target.file_id === row.id ? 0.8 : 0.55, name);
+            count += 1;
+            fileEdges += 1;
+          }
         }
       }
     }
+    const durationMs = Date.now() - itemStarted;
+    progress.emit({ ...baseEvent, step: "done", edges: fileEdges, symbols: symbolsByFile.get(row.id)?.length || 0, durationMs });
+    emitSlowOperation(progress, { ...baseEvent, edges: fileEdges, symbols: symbolsByFile.get(row.id)?.length || 0 }, durationMs);
   }
   return count;
 }
 
-function rebuildTestEdges(db: SearchDB): number {
+function rebuildTestEdges(db: SearchDB, progress: ProgressContext, action: IndexResult["action"]): number {
   db.conn.prepare("DELETE FROM edges WHERE kind='tests'").run();
   const insert = db.conn.prepare("INSERT INTO edges(from_symbol_id,to_symbol_id,from_file_id,to_file_id,kind,confidence,evidence) VALUES (?,?,?,?,?,?,?)");
   let count = 0;
   const pairs = new Set<string>();
   const importRows = db.conn.prepare("SELECT e.from_file_id AS test_id,e.to_file_id AS prod_id,e.evidence AS evidence FROM edges e JOIN files tf ON tf.id=e.from_file_id JOIN files pf ON pf.id=e.to_file_id WHERE e.kind IN ('import','export','part','require','dynamic_import') AND tf.is_test=1 AND pf.is_test=0").all() as Array<{ test_id: number; prod_id: number; evidence: string }>;
-  for (const row of importRows) {
-    const key = `${row.test_id}:${row.prod_id}`;
-    if (pairs.has(key)) continue;
-    pairs.add(key);
-    insert.run(null, null, row.test_id, row.prod_id, "tests", 0.95, `test imports ${row.evidence}`);
-    count += 1;
-  }
   const prodRows = db.conn.prepare("SELECT id,path,language,package FROM files WHERE is_test=0").all() as Array<{ id: number; path: string; language: string; package: string | null }>;
+  const testRows = db.conn.prepare("SELECT id,path,language,package FROM files WHERE is_test=1").all() as Array<{ id: number; path: string; language: string; package: string | null }>;
+  const total = importRows.length + testRows.length;
+  for (const [index, row] of importRows.entries()) {
+    const itemStarted = Date.now();
+    const key = `${row.test_id}:${row.prod_id}`;
+    let fileEdges = 0;
+    if (!pairs.has(key)) {
+      pairs.add(key);
+      insert.run(null, null, row.test_id, row.prod_id, "tests", 0.95, `test imports ${row.evidence}`);
+      count += 1;
+      fileEdges += 1;
+    }
+    const durationMs = Date.now() - itemStarted;
+    progress.emit({ phase: "edges", stage: "test", step: "done", action, current: index + 1, total, edges: fileEdges, durationMs });
+    emitSlowOperation(progress, { phase: "edges", stage: "test", action, edges: fileEdges }, durationMs);
+  }
   const prodByBase = new Map<string, typeof prodRows>();
   for (const row of prodRows) {
     const stem = stemName(row.path);
     prodByBase.set(stem, [...(prodByBase.get(stem) || []), row]);
   }
-  const testRows = db.conn.prepare("SELECT id,path,language,package FROM files WHERE is_test=1").all() as Array<{ id: number; path: string; language: string; package: string | null }>;
-  for (const testRow of testRows) {
+  for (const [index, testRow] of testRows.entries()) {
+    const itemStarted = Date.now();
+    let fileEdges = 0;
     const base = testTargetStem(stemName(testRow.path));
     for (const prodRow of prodByBase.get(base) || []) {
       const key = `${testRow.id}:${prodRow.id}`;
@@ -347,7 +517,11 @@ function rebuildTestEdges(db: SearchDB): number {
       pairs.add(key);
       insert.run(null, null, testRow.id, prodRow.id, "tests", Math.min(score, 0.85), evidence);
       count += 1;
+      fileEdges += 1;
     }
+    const durationMs = Date.now() - itemStarted;
+    progress.emit({ phase: "edges", stage: "test", step: "done", action, current: importRows.length + index + 1, total, path: testRow.path, language: testRow.language, edges: fileEdges, durationMs });
+    emitSlowOperation(progress, { phase: "edges", stage: "test", action, path: testRow.path, language: testRow.language, edges: fileEdges }, durationMs);
   }
   return count;
 }
@@ -399,6 +573,32 @@ function parsedCache(parsed: readonly ParsedFile[], pathToId: Map<string, number
 function currentPathToFileId(db: SearchDB): Map<string, number> {
   const rows = db.conn.prepare("SELECT id,path FROM files").all() as Array<{ id: number; path: string }>;
   return new Map(rows.map((row) => [row.path, row.id]));
+}
+
+function deleteIndexedFile(db: SearchDB, fileId: number, filePath: string, progress: ProgressContext, action: IndexResult["action"], deleteFileRow: boolean, extra: Partial<IndexProgressEvent> = {}): void {
+  const started = Date.now();
+  progress.emit({ phase: "write", stage: "delete-old", step: "start", action, path: filePath, ...extra });
+  const result = deleteFileIndexRows(db, fileId, deleteFileRow, (event) => {
+    progress.emit({
+      phase: "write",
+      stage: "delete-old",
+      step: event.step,
+      action,
+      path: filePath,
+      current: event.current,
+      total: event.total,
+      edges: event.edges,
+      symbols: event.symbols,
+      entities: event.entities,
+      fts: event.fts,
+      files: event.files,
+      ftsMode: event.ftsMode,
+      ...extra
+    });
+  });
+  const durationMs = Date.now() - started;
+  progress.emit({ phase: "write", stage: "delete-old", step: "done", action, path: filePath, edges: result.edges, symbols: result.symbols, entities: result.entities, fts: result.fts, ftsMode: result.ftsMode, files: result.files, durationMs, ...extra });
+  emitSlowOperation(progress, { phase: "write", stage: "delete-old", action, path: filePath, edges: result.edges, symbols: result.symbols, entities: result.entities, fts: result.fts, ftsMode: result.ftsMode, files: result.files, ...extra }, durationMs);
 }
 
 function importerFileIdsFor(db: SearchDB, fileIds: Set<number>): Set<number> {

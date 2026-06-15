@@ -1,0 +1,4 @@
+interface:
+  display_name: "Tangent Search"
+  short_description: "Use Tangent structural repo search"
+  default_prompt: "Use $tangent-search to orient in a repo before making code changes."

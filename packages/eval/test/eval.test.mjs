@@ -144,14 +144,27 @@ test("eval ui server lists runs and compares variants", async () => {
     assert.equal(compare.left.variantId, "left");
     assert.equal(compare.right.variantId, "right");
     assert.equal(compare.outputs.leftImplementation.trim(), "left output");
+    assert.match(compare.git.comparisonDiff, /diff --git a\/result.txt b\/result.txt/);
+    assert.match(compare.git.comparisonDiff, /-left/);
+    assert.match(compare.git.comparisonDiff, /\+right/);
+    assert.equal(compare.metricsDelta.tokensTotal, -20);
+    assert.equal(compare.metricsDelta.toolCalls, -1);
     assert.deepEqual(compare.git.changedFiles.shared, ["result.txt"]);
     const html = await (await fetch(server.url)).text();
     assert.match(html, /Tangent Eval/);
+    const appJs = await (await fetch(`${server.url}app.js`)).text();
+    assert.match(appJs, /phase: "all"/);
+    assert.match(appJs, /tab: "diff"/);
+    assert.match(appJs, /Candidate diff/);
+    const css = await (await fetch(`${server.url}styles.css`)).text();
+    assert.match(css, /\.summary-table/);
+    assert.match(css, /\.diff-line/);
   } finally {
     await server.close();
   }
 });
 
+/** Creates a temporary git repository for eval tests. */
 async function createRepo() {
   const repo = await mkdtemp(path.join(tmpdir(), "tangent-eval-repo-"));
   await git(repo, "init");
@@ -160,24 +173,29 @@ async function createRepo() {
   return repo;
 }
 
+/** Runs a git command in the given repository. */
 async function git(repo, ...args) {
   await execFileAsync("git", ["-C", repo, ...args]);
 }
 
+/** Reads a git object as text. */
 async function gitShow(repo, ref) {
   const { stdout } = await execFileAsync("git", ["-C", repo, "show", ref]);
   return stdout;
 }
 
+/** Resolves a git ref to a commit id. */
 async function gitRev(repo, ref) {
   const { stdout } = await execFileAsync("git", ["-C", repo, "rev-parse", ref]);
   return stdout.trim();
 }
 
+/** Returns whether a path can be read. */
 async function fileExists(filePath) {
   return readFile(filePath).then(() => true).catch(() => false);
 }
 
+/** Builds a run manifest variant fixture. */
 function variantState(caseId, variantId, repo, baseCommit, implementationCommit, dir) {
   return {
     caseId,
@@ -214,6 +232,7 @@ function variantState(caseId, variantId, repo, baseCommit, implementationCommit,
   };
 }
 
+/** Builds an eval metrics fixture. */
 function metricRow(runId, caseId, variantId, baseCommit, implementationCommit, repo, tokens, tools, failures) {
   return {
     schema: "eval.metrics.v1",

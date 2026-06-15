@@ -1,5 +1,4 @@
-import { spawn } from "node:child_process";
-import http, { type Server } from "node:http";
+import http from "node:http";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -8,10 +7,10 @@ import { listRuns, loadRunManifest } from "../core/run-store.js";
 import type { EvalMetrics } from "../types/metrics.js";
 import type { EvalRunManifest } from "../types/run.js";
 import { buildComparisonView } from "./compare.js";
-import { staticResponse } from "./static.js";
 import { variantSummary, type EvalRunListItem, type EvalRunView } from "./dto.js";
 import { createEvalJobManager } from "./jobs.js";
 import { createEvalSpecRegistry } from "./specs.js";
+import type { UiRoute, UiRouteResponse } from "@tangent/ui-server";
 
 export type StartEvalUiServerOptions = {
   runId?: string;
@@ -28,24 +27,29 @@ export type EvalUiServer = {
   close(): Promise<void>;
 };
 
+/** Supports the start eval ui server helper. */
 export async function startEvalUiServer(options: StartEvalUiServerOptions = {}): Promise<EvalUiServer> {
   const host = options.host || "127.0.0.1";
   const cwd = options.cwd || process.cwd();
   const preferredRunId = options.runId ? await resolveRunId(options.runId) : (await listRuns())[0]?.id;
   const specs = createEvalSpecRegistry({ cwd, explicitSpecPath: options.specPath });
   const jobs = createEvalJobManager({ cwd });
-  const server = http.createServer((request, response) => {
-    void handleRequest(request, response, { preferredRunId, specs, jobs });
+  const [{ createLocalUiServer }, { evalUiAssets }] = await Promise.all([
+    import("@tangent/ui-server"),
+    import("@tangent/eval-ui/assets")
+  ]);
+  const server = await createLocalUiServer({
+    product: "eval",
+    host,
+    port: options.port ?? 0,
+    open: Boolean(options.open),
+    assets: evalUiAssets,
+    routes: evalApiRoutes({ preferredRunId, specs, jobs })
   });
-  await listen(server, options.port ?? 0, host);
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("Eval UI server did not bind to a TCP address.");
-  const url = `http://${host}:${address.port}/`;
-  if (options.open) openBrowser(url);
   return {
-    url,
+    url: server.url,
     runId: preferredRunId,
-    close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+    close: server.close
   };
 }
 
@@ -55,41 +59,47 @@ type EvalUiRequestContext = {
   jobs: ReturnType<typeof createEvalJobManager>;
 };
 
-async function handleRequest(request: http.IncomingMessage, response: http.ServerResponse, context: EvalUiRequestContext): Promise<void> {
-  try {
-    const url = new URL(request.url || "/", "http://localhost");
-    const staticAsset = staticResponse(url.pathname);
-    if (staticAsset) return send(response, 200, staticAsset.body, staticAsset.contentType);
+/** Supports the eval api routes helper. */
+function evalApiRoutes(context: EvalUiRequestContext): UiRoute[] {
+  return [{
+    pattern: /^\/api\/eval(?:\/.*)?$/,
+    /** Handles the local UI request. */
+    handle: (request, url) => handleApiRequest(request, url, context)
+  }];
+}
 
+/** Handles the local UI request. */
+async function handleApiRequest(request: http.IncomingMessage, url: URL, context: EvalUiRequestContext): Promise<UiRouteResponse> {
+  try {
     const parts = url.pathname.split("/").filter(Boolean).map((part) => decodeURIComponent(part));
     if (parts[0] === "api" && parts[1] === "eval" && parts[2] === "specs") {
-      if (request.method === "GET" && parts.length === 3) return sendJson(response, 200, await context.specs.listSpecs());
-      if (request.method === "GET" && parts.length === 4) return sendJson(response, 200, await context.specs.getSpec(parts[3]!));
+      if (request.method === "GET" && parts.length === 3) return json(200, await context.specs.listSpecs());
+      if (request.method === "GET" && parts.length === 4) return json(200, await context.specs.getSpec(parts[3]!));
       if (request.method === "GET" && parts.length === 5 && parts[4] === "context") {
-        return sendJson(response, 200, await context.specs.getContext(parts[3]!, requiredParam(url, "caseId"), requiredParam(url, "variantId")));
+        return json(200, await context.specs.getContext(parts[3]!, requiredParam(url, "caseId"), requiredParam(url, "variantId")));
       }
       if (request.method === "POST" && parts.length === 5 && parts[4] === "runs") {
         const specPath = await context.specs.resolveSpecPath(parts[3]!);
-        return sendJson(response, 202, context.jobs.start(parts[3]!, specPath));
+        return json(202, context.jobs.start(parts[3]!, specPath));
       }
     }
     if (parts[0] === "api" && parts[1] === "eval" && parts[2] === "jobs" && parts[3]) {
-      if (request.method === "GET" && parts.length === 4) return sendJson(response, 200, context.jobs.get(parts[3]));
+      if (request.method === "GET" && parts.length === 4) return json(200, context.jobs.get(parts[3]));
       if (request.method === "GET" && parts.length === 5 && parts[4] === "events") {
-        return sendJson(response, 200, context.jobs.events(parts[3], numberParam(url.searchParams.get("after"))));
+        return json(200, context.jobs.events(parts[3], numberParam(url.searchParams.get("after"))));
       }
-      if (request.method === "POST" && parts.length === 5 && parts[4] === "cancel") return sendJson(response, 200, context.jobs.cancel(parts[3]));
+      if (request.method === "POST" && parts.length === 5 && parts[4] === "cancel") return json(200, context.jobs.cancel(parts[3]));
     }
-    if (request.method !== "GET") return sendJson(response, 405, { error: "Method not allowed." });
+    if (request.method !== "GET") return json(405, { error: "Method not allowed." });
     if (url.pathname === "/api/eval/runs") {
       const runs = await listRuns();
-      return sendJson(response, 200, runs.map(runListItem));
+      return json(200, runs.map(runListItem));
     }
     if (parts[0] === "api" && parts[1] === "eval" && parts[2] === "runs" && parts[3]) {
       const runId = await resolveRunId(parts[3] === "selected" && context.preferredRunId ? context.preferredRunId : parts[3]);
-      if (parts.length === 4) return sendJson(response, 200, await runView(runId));
-      if (parts.length === 5 && parts[4] === "status") return sendJson(response, 200, await loadRunManifest(runId));
-      if (parts.length === 5 && parts[4] === "metrics") return sendJson(response, 200, await loadMetrics(await loadRunManifest(runId)));
+      if (parts.length === 4) return json(200, await runView(runId));
+      if (parts.length === 5 && parts[4] === "status") return json(200, await loadRunManifest(runId));
+      if (parts.length === 5 && parts[4] === "metrics") return json(200, await loadMetrics(await loadRunManifest(runId)));
       if (parts.length === 5 && parts[4] === "compare") {
         const manifest = await loadRunManifest(runId);
         const metrics = await loadMetrics(manifest);
@@ -97,15 +107,16 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
         const left = requiredParam(url, "a");
         const right = requiredParam(url, "b");
         const phase = phaseParam(url.searchParams.get("phase") || "impl");
-        return sendJson(response, 200, await buildComparisonView({ manifest, metrics, caseId, left, right, phase }));
+        return json(200, await buildComparisonView({ manifest, metrics, caseId, left, right, phase }));
       }
     }
-    return sendJson(response, 404, { error: "Not found." });
+    return json(404, { error: "Not found." });
   } catch (error) {
-    return sendJson(response, errorStatus(error), { error: (error as Error).message });
+    return json(errorStatus(error), { error: (error as Error).message });
   }
 }
 
+/** Supports the run view helper. */
 async function runView(runId: string): Promise<EvalRunView> {
   const manifest = await loadRunManifest(runId);
   const metrics = await loadMetrics(manifest);
@@ -123,6 +134,7 @@ async function runView(runId: string): Promise<EvalRunView> {
   };
 }
 
+/** Loads metrics. */
 async function loadMetrics(manifest: EvalRunManifest): Promise<EvalMetrics[]> {
   const report = await readFile(path.join(manifest.runDir, "report.json"), "utf8")
     .then((text) => JSON.parse(text) as EvalMetrics[])
@@ -140,12 +152,14 @@ async function loadMetrics(manifest: EvalRunManifest): Promise<EvalMetrics[]> {
   return (await collectEval(manifest)).metrics;
 }
 
+/** Supports the run list item helper. */
 function runListItem(run: EvalRunManifest): EvalRunListItem {
   const statuses: Record<string, number> = {};
   for (const variant of run.variants) statuses[variant.status] = (statuses[variant.status] || 0) + 1;
   return { id: run.id, name: run.name, createdAt: run.createdAt, runDir: run.runDir, variants: run.variants.length, statuses };
 }
 
+/** Resolves run id. */
 async function resolveRunId(value: string): Promise<string> {
   if (value !== "latest") return value;
   const latest = (await listRuns())[0];
@@ -153,53 +167,33 @@ async function resolveRunId(value: string): Promise<string> {
   return latest.id;
 }
 
+/** Reads the required param. */
 function requiredParam(url: URL, key: string): string {
   const value = url.searchParams.get(key);
   if (!value) throw new Error(`Missing query parameter: ${key}`);
   return value;
 }
 
+/** Reads the numeric param. */
 function numberParam(value: string | null): number | undefined {
   if (!value) return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+/** Reads the requested eval phase. */
 function phaseParam(value: string): "context" | "plan" | "impl" | "all" {
   if (value === "context" || value === "plan" || value === "impl" || value === "all") return value;
   throw new Error("phase must be context, plan, impl, or all.");
 }
 
-function sendJson(response: http.ServerResponse, status: number, value: unknown): void {
-  send(response, status, `${JSON.stringify(value, null, 2)}\n`, "application/json; charset=utf-8");
+/** Sends a JSON response. */
+function json(status: number, value: unknown): UiRouteResponse {
+  return { status, json: value };
 }
 
-function send(response: http.ServerResponse, status: number, body: string, contentType: string): void {
-  response.writeHead(status, {
-    "content-type": contentType,
-    "cache-control": "no-store"
-  });
-  response.end(body);
-}
-
+/** Supports the error status helper. */
 function errorStatus(error: unknown): number {
   const status = error && typeof error === "object" ? (error as { status?: unknown }).status : undefined;
   return typeof status === "number" && status >= 400 && status < 600 ? status : 500;
-}
-
-function listen(server: Server, port: number, host: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(port, host, () => {
-      server.off("error", reject);
-      resolve();
-    });
-  });
-}
-
-function openBrowser(url: string): void {
-  const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
-  const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
-  const child = spawn(command, args, { stdio: "ignore", detached: true });
-  child.unref();
 }

@@ -1,0 +1,34 @@
+{
+  "name": "@tangent/ui-primitives",
+  "version": "0.1.0",
+  "description": "Accessible low-level React primitives for Tangent UI.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.tsx",
+      "import": "./dist/index.js"
+    },
+    "./styles.css": "./src/styles.css"
+  },
+  "files": [
+    "dist",
+    "src/styles.css",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && vitest run --environment jsdom"
+  },
+  "dependencies": {
+    "@tangent/ui-tokens": "^0.1.0",
+    "react": "^19.1.0",
+    "react-aria-components": "^1.9.0",
+    "react-dom": "^19.1.0"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}

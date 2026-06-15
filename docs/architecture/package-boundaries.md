@@ -5,12 +5,30 @@ Platform packages:
 - @tangent/repo contains repo discovery, git, worktree, filesystem path, and safe path helpers.
 - @tangent/agent-runtime contains process execution and reusable agent runner primitives.
 - @tangent/governance contains custom architecture/docs/lint checks.
+- @tangent/ui-server contains reusable local HTTP static serving and API route dispatch for product UIs.
+
+UI platform packages:
+- @tangent/ui-tokens contains framework-free semantic tokens and theme CSS.
+- @tangent/ui-primitives contains accessible low-level React controls.
+- @tangent/ui-components contains generic Tangent product components, not product domain mappers.
+- @tangent/ui-patterns contains reusable page/workflow layouts.
+- @tangent/ui-charts contains visualizations with table fallbacks and copy/export actions.
+- @tangent/ui-code contains shared code, diff, markdown, JSON, and transcript renderers.
+- @tangent/ui-app-shell contains the global shell, navigation, search, command palette, and server status UI.
 
 Vertical apps:
 - @tangent/usage owns conversation telemetry schemas, native transcript normalization, legacy usage-jsonl reading, native-log schema compatibility checks, canonical session/turn/step/message projections, dependency-light core/query APIs, optional SQLite indexing, assistant/session reports, datasets, SDK, and CLI.
 - @tangent/rollup owns rollup note schemas, period-level user-message rollup inputs, examples, rendering, ledgers, and summarization workflows.
 - @tangent/eval owns eval specs, contexts, run manifests, metrics, reports, diffs, and the local eval comparison UI.
 - @tangent/search owns structural indexing and search.
+
+Split Usage packages:
+- @tangent/usage-schema has no UI, SQLite, or provider parser dependencies.
+- @tangent/usage-core has in-memory projections/query contracts and no UI or SQLite.
+- @tangent/usage-index-sqlite owns optional SQLite projection/index behavior.
+- @tangent/usage-providers owns provider adapters/native transcript loading.
+- @tangent/usage-cli owns CLI-only composition.
+- @tangent/usage remains the compatibility meta-package during migration.
 
 Root CLI:
 - Owns human command taxonomy (`setup`, `status`, `usage`, `rollup`, `search`, `eval`, `doctor`) and may compose public SDKs.
@@ -31,5 +49,7 @@ Hard rules:
 - Native provider transcript formats are interpreted in usage, not hooks. Schema inference tools may live outside runtime packages, but runtime compatibility checks and user-facing version messages belong in usage.
 - Rollup must consume Usage reports rather than parsing Claude or Codex provider schemas directly.
 - `@tangent/usage/schema`, `@tangent/usage/core`, and `@tangent/usage/query` must not load SQLite, pricing, server, or UI code. SQLite belongs behind `@tangent/usage/sqlite` and CLI/index compatibility paths.
+- `@tangent/usage-schema` and `@tangent/usage-core` must not import UI, SQLite, or provider parser packages.
+- `ui-*` packages must not import Usage, Eval, Rollup, or Search product packages, except `ui-docs` may import product UI packages for examples.
 - agent-runtime must not import Rollup or Eval schemas.
 - Cross-package imports must use public package exports.

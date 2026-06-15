@@ -1,0 +1,52 @@
+:root {
+  color-scheme: light dark;
+  --tangent-font-sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --tangent-font-mono: "SFMono-Regular", Consolas, "Liberation Mono", ui-monospace, monospace;
+  --tangent-text-xs: 0.75rem;
+  --tangent-text-sm: 0.875rem;
+  --tangent-text-md: 0.9375rem;
+  --tangent-text-lg: 1.0625rem;
+  --tangent-title-sm: 1rem;
+  --tangent-title-md: 1.25rem;
+  --tangent-title-lg: 1.5rem;
+  --tangent-radius-none: 0;
+  --tangent-radius-sm: 4px;
+  --tangent-radius-md: 6px;
+  --tangent-radius-lg: 8px;
+  --tangent-radius-xl: 12px;
+  --tangent-radius-pill: 999px;
+  --tangent-shadow-raised: 0 1px 2px rgb(15 23 42 / 0.08), 0 8px 24px rgb(15 23 42 / 0.08);
+  --tangent-motion-fast: 120ms;
+  --tangent-motion-normal: 180ms;
+  --tangent-motion-ease: cubic-bezier(0.2, 0, 0, 1);
+  --tangent-z-dropdown: 1000;
+  --tangent-z-dialog: 1300;
+  --tangent-control-height: 34px;
+  --tangent-row-height: 40px;
+  --tangent-density-gap: 0.5rem;
+}
+
+[data-density="compact"] {
+  --tangent-control-height: 28px;
+  --tangent-row-height: 32px;
+  --tangent-density-gap: 0.375rem;
+}
+
+[data-density="comfortable"] {
+  --tangent-control-height: 34px;
+  --tangent-row-height: 40px;
+  --tangent-density-gap: 0.5rem;
+}
+
+[data-density="spacious"] {
+  --tangent-control-height: 40px;
+  --tangent-row-height: 48px;
+  --tangent-density-gap: 0.75rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --tangent-motion-fast: 1ms;
+    --tangent-motion-normal: 1ms;
+  }
+}

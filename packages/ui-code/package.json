@@ -1,0 +1,34 @@
+{
+  "name": "@tangent/ui-code",
+  "version": "0.1.0",
+  "description": "Shared code, diff, markdown, JSON, and transcript renderers for Tangent UI.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.tsx",
+      "import": "./dist/index.js"
+    },
+    "./styles.css": "./src/styles.css"
+  },
+  "files": [
+    "dist",
+    "src/styles.css",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && vitest run --environment jsdom"
+  },
+  "dependencies": {
+    "@tangent/ui-components": "^0.1.0",
+    "@tangent/ui-primitives": "^0.1.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}

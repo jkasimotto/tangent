@@ -163,6 +163,7 @@ test("run eval starts automatic variants in parallel", async () => {
     await assert.rejects(
       runPreparedEval(prepared.manifest, {
         signal: controller.signal,
+        /** Supports the on progress helper. */
         onProgress: (event) => {
           if (event.type !== "phase.agent-started" || !event.variantId) return;
           started.add(event.variantId);
@@ -267,13 +268,14 @@ test("eval ui server lists runs and compares variants", async () => {
     assert.deepEqual(compare.git.changedFiles.shared, ["result.txt"]);
     const html = await (await fetch(server.url)).text();
     assert.match(html, /Tangent Eval/);
-    const appJs = await (await fetch(`${server.url}app.js`)).text();
-    assert.match(appJs, /phase: "all"/);
-    assert.match(appJs, /tab: "diff"/);
-    assert.match(appJs, /Candidate diff/);
-    const css = await (await fetch(`${server.url}styles.css`)).text();
-    assert.match(css, /\.summary-table/);
-    assert.match(css, /\.diff-line/);
+    const appScript = html.match(/src="([^"]+\.js)"/)?.[1];
+    const stylesheet = html.match(/href="([^"]+\.css)"/)?.[1];
+    assert.ok(appScript);
+    assert.ok(stylesheet);
+    const appJs = await (await fetch(new URL(appScript, server.url))).text();
+    assert.match(appJs, /api\/eval\/runs/);
+    const css = await (await fetch(new URL(stylesheet, server.url))).text();
+    assert.match(css, /\.tg-compare-layout/);
   } finally {
     await server.close();
   }
@@ -305,9 +307,9 @@ test("eval ui server loads snapshot context contents", async () => {
     const right = await (await fetch(`${server.url}api/eval/specs/${encodeURIComponent(specs[0].id)}/context?caseId=case-a&variantId=with-search`)).json();
     assert.equal(left.files.find((file) => file.snapshotPath === "repo/AGENTS.md").content, "no search context\n");
     assert.equal(right.files.find((file) => file.snapshotPath === "repo/AGENTS.md").content, "with search context\n");
-    const appJs = await (await fetch(`${server.url}app.js`)).text();
-    assert.match(appJs, /Snapshot contexts/);
-    assert.match(appJs, /context-left/);
+    const html = await (await fetch(server.url)).text();
+    assert.match(html, /Tangent Eval/);
+    assert.match(html, /\/assets\/.*\.js/);
   } finally {
     await server.close();
   }
@@ -461,6 +463,7 @@ function metricRow(runId, caseId, variantId, baseCommit, implementationCommit, r
   };
 }
 
+/** Writes eval spec. */
 async function writeEvalSpec(repo, name, command, variants = [{ id: "repo", context: { mode: "repo" } }], timeoutMs = 10000) {
   const evalDir = path.join(repo, "evals", name);
   await mkdir(path.join(evalDir, "prompts"), { recursive: true });
@@ -486,6 +489,7 @@ async function writeEvalSpec(repo, name, command, variants = [{ id: "repo", cont
   return specPath;
 }
 
+/** Writes snapshot eval spec. */
 async function writeSnapshotEvalSpec(repo, noSearchRef, withSearchRef) {
   const evalDir = path.join(repo, "evals", "context-compare");
   await mkdir(path.join(evalDir, "prompts"), { recursive: true });
@@ -514,6 +518,7 @@ async function writeSnapshotEvalSpec(repo, noSearchRef, withSearchRef) {
   return specPath;
 }
 
+/** Supports the fake codex command helper. */
 async function fakeCodexCommand(blocking) {
   const dir = await mkdtemp(path.join(tmpdir(), "tangent-fake-codex-"));
   const file = path.join(dir, "fake-codex.sh");
@@ -534,6 +539,7 @@ ${blocking ? "trap 'exit 143' TERM INT\nwhile :; do sleep 1; done" : "[ -n \"$ou
   return file;
 }
 
+/** Supports the fake variant outcome codex command helper. */
 async function fakeVariantOutcomeCodexCommand(coordinationDir, failingVariant) {
   const dir = await mkdtemp(path.join(tmpdir(), "tangent-fake-codex-"));
   const file = path.join(dir, "fake-codex.sh");
@@ -560,6 +566,7 @@ exit 0
   return file;
 }
 
+/** Reads latest run manifest. */
 async function readLatestRunManifest(evalHome) {
   const runsPath = path.join(evalHome, "runs");
   const manifests = [];
@@ -572,10 +579,12 @@ async function readLatestRunManifest(evalHome) {
   return manifests[0];
 }
 
+/** Supports the shell quote helper. */
 function shellQuote(value) {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
+/** Supports the wait for job helper. */
 async function waitForJob(baseUrl, jobId, status) {
   const deadline = Date.now() + 30000;
   let lastJob;
@@ -588,6 +597,7 @@ async function waitForJob(baseUrl, jobId, status) {
   throw new Error(`Timed out waiting for job ${jobId} to become ${status}; last=${JSON.stringify(lastJob)}`);
 }
 
+/** Supports the wait for events helper. */
 async function waitForEvents(baseUrl, jobId, predicate, count) {
   const deadline = Date.now() + 15000;
   let after = 0;
@@ -604,6 +614,7 @@ async function waitForEvents(baseUrl, jobId, predicate, count) {
   throw new Error(`Timed out waiting for ${count} events from job ${jobId}; matched=${matches.length}`);
 }
 
+/** Supports the sleep helper. */
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }

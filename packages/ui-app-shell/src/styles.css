@@ -1,0 +1,46 @@
+.tg-shell-topbar {
+  align-items: center;
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: auto auto minmax(12rem, 1fr) auto auto;
+  height: 100%;
+}
+
+.tg-repo-selector {
+  color: var(--tangent-color-text-muted);
+  font: 500 var(--tangent-text-sm) / 1 var(--tangent-font-sans);
+}
+
+.tg-command-palette {
+  align-items: center;
+  display: flex;
+  gap: 0.35rem;
+}
+
+.tg-shell-nav {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.tg-shell-nav h2 {
+  color: var(--tangent-color-text-muted);
+  font: 650 var(--tangent-text-xs) / 1 var(--tangent-font-sans);
+  margin: 0 0 0.5rem;
+  text-transform: uppercase;
+}
+
+.tg-shell-nav a {
+  align-items: center;
+  border-radius: var(--tangent-radius-md);
+  color: var(--tangent-color-text);
+  display: flex;
+  font: 500 var(--tangent-text-sm) / 1.2 var(--tangent-font-sans);
+  gap: 0.5rem;
+  justify-content: space-between;
+  padding: 0.45rem 0.55rem;
+  text-decoration: none;
+}
+
+.tg-shell-nav a:hover {
+  background: var(--tangent-color-surface-inset);
+}

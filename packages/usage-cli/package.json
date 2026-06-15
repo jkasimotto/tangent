@@ -1,0 +1,35 @@
+{
+  "name": "@tangent/usage-cli",
+  "version": "0.1.0",
+  "description": "Usage CLI composition package.",
+  "type": "module",
+  "bin": {
+    "tangent-usage": "./dist/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && chmod +x dist/index.js",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@tangent/core": "^0.1.0",
+    "@tangent/usage-core": "^0.1.0",
+    "@tangent/usage-index-sqlite": "^0.1.0",
+    "@tangent/usage-providers": "^0.1.0"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}

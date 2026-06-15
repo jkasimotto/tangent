@@ -65,12 +65,33 @@ const allowedPackageDeps: Record<string, string[]> = {
   "@tangent/repo": ["@tangent/core"],
   "@tangent/agent-runtime": ["@tangent/core"],
   "@tangent/governance": ["@tangent/core", "@tangent/repo"],
+  "@tangent/usage-schema": [],
+  "@tangent/usage-core": ["@tangent/core", "@tangent/repo", "@tangent/usage-schema"],
+  "@tangent/usage-index-sqlite": ["@tangent/usage-core", "@tangent/usage-schema"],
+  "@tangent/usage-providers": ["@tangent/usage-schema"],
+  "@tangent/usage-cli": ["@tangent/core", "@tangent/usage-core", "@tangent/usage-index-sqlite", "@tangent/usage-providers"],
   "@tangent/usage": ["@tangent/core", "@tangent/repo"],
+  "@tangent/ui-tokens": [],
+  "@tangent/ui-primitives": ["@tangent/ui-tokens"],
+  "@tangent/ui-components": ["@tangent/ui-primitives"],
+  "@tangent/ui-patterns": ["@tangent/ui-primitives", "@tangent/ui-components"],
+  "@tangent/ui-charts": ["@tangent/ui-primitives", "@tangent/ui-components"],
+  "@tangent/ui-code": ["@tangent/ui-primitives", "@tangent/ui-components"],
+  "@tangent/ui-app-shell": ["@tangent/ui-primitives", "@tangent/ui-components", "@tangent/ui-patterns"],
+  "@tangent/ui-server": ["@tangent/core"],
+  "@tangent/usage-ui-data": [],
+  "@tangent/eval-ui-data": [],
+  "@tangent/rollup-ui-data": [],
+  "@tangent/usage-ui": ["@tangent/usage-ui-data", "@tangent/ui-tokens", "@tangent/ui-primitives", "@tangent/ui-components", "@tangent/ui-patterns", "@tangent/ui-charts", "@tangent/ui-code", "@tangent/ui-app-shell"],
+  "@tangent/eval-ui": ["@tangent/eval-ui-data", "@tangent/ui-tokens", "@tangent/ui-primitives", "@tangent/ui-components", "@tangent/ui-patterns", "@tangent/ui-charts", "@tangent/ui-code", "@tangent/ui-app-shell"],
+  "@tangent/rollup-ui": ["@tangent/rollup-ui-data", "@tangent/usage-ui", "@tangent/ui-tokens", "@tangent/ui-primitives", "@tangent/ui-components", "@tangent/ui-patterns", "@tangent/ui-app-shell"],
+  "@tangent/ui-docs": ["@tangent/ui-tokens", "@tangent/ui-primitives", "@tangent/ui-components", "@tangent/ui-patterns", "@tangent/ui-charts", "@tangent/ui-code", "@tangent/ui-app-shell", "@tangent/usage-ui", "@tangent/eval-ui", "@tangent/rollup-ui"],
   "@tangent/rollup": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage"],
-  "@tangent/eval": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage"],
+  "@tangent/eval": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage", "@tangent/eval-ui", "@tangent/ui-server"],
   "@tangent/search": ["@tangent/core", "@tangent/repo"]
 };
 
+/** Supports the lint governance helper. */
 export async function lintGovernance(options: GovernanceLintOptions = {}): Promise<GovernanceLintResult> {
   const root = path.resolve(options.root || process.cwd());
   const groups: Set<GovernanceLintGroup> = new Set(options.groups?.length ? options.groups : ["all"]);
@@ -78,7 +99,7 @@ export async function lintGovernance(options: GovernanceLintOptions = {}): Promi
   const ctx = { root, packages: await packageInfos(root) };
 
   if (hasGroup(groups, "agents") || hasGroup(groups, "docs")) findings.push(...await lintAgentDocs(ctx));
-  if (hasGroup(groups, "deps")) findings.push(...await lintPackageDeps(ctx), ...await lintPackageInstallability(ctx), ...await lintImports(ctx), ...await lintUsageDependencyLightEntrypoints(ctx));
+  if (hasGroup(groups, "deps")) findings.push(...await lintPackageDeps(ctx), ...await lintPackageInstallability(ctx), ...await lintImports(ctx), ...await lintUsageDependencyLightEntrypoints(ctx), ...await lintUiPackageBoundaries(ctx));
   if (hasGroup(groups, "shared")) findings.push(...await lintSharedHelpers(ctx));
   if (hasGroup(groups, "hooks")) findings.push(...await lintHookBoundaries(ctx));
   if (hasGroup(groups, "files")) findings.push(...await lintFileSizes(ctx));
@@ -88,6 +109,7 @@ export async function lintGovernance(options: GovernanceLintOptions = {}): Promi
   return { findings, errors, warnings };
 }
 
+/** Supports the render governance findings helper. */
 export function renderGovernanceFindings(result: GovernanceLintResult): string {
   if (!result.findings.length) return "governance lint passed";
   return result.findings.map((finding) => {
@@ -102,6 +124,7 @@ type LintContext = {
   packages: PackageInfo[];
 };
 
+/** Supports the lint agent docs helper. */
 async function lintAgentDocs(ctx: LintContext): Promise<GovernanceFinding[]> {
   const findings: GovernanceFinding[] = [];
   await requireFile(findings, ctx.root, "AGENTS.md", "agent-docs/required", [
@@ -180,6 +203,7 @@ async function lintAgentDocs(ctx: LintContext): Promise<GovernanceFinding[]> {
   return findings;
 }
 
+/** Supports the lint package deps helper. */
 async function lintPackageDeps(ctx: LintContext): Promise<GovernanceFinding[]> {
   const findings: GovernanceFinding[] = [];
   for (const pkg of await packageDependencyInfos(ctx)) {
@@ -204,6 +228,7 @@ async function lintPackageDeps(ctx: LintContext): Promise<GovernanceFinding[]> {
   return findings;
 }
 
+/** Supports the lint imports helper. */
 async function lintImports(ctx: LintContext): Promise<GovernanceFinding[]> {
   const findings: GovernanceFinding[] = [];
   const packageByDir = new Map(ctx.packages.map((pkg) => [pkg.dir, pkg]));
@@ -245,6 +270,7 @@ async function lintImports(ctx: LintContext): Promise<GovernanceFinding[]> {
   return findings;
 }
 
+/** Supports the lint usage dependency light entrypoints helper. */
 async function lintUsageDependencyLightEntrypoints(ctx: LintContext): Promise<GovernanceFinding[]> {
   const findings: GovernanceFinding[] = [];
   for (const file of await sourceFiles(ctx.root)) {
@@ -282,6 +308,55 @@ async function lintUsageDependencyLightEntrypoints(ctx: LintContext): Promise<Go
   return findings;
 }
 
+/** Supports the lint ui package boundaries helper. */
+async function lintUiPackageBoundaries(ctx: LintContext): Promise<GovernanceFinding[]> {
+  const findings: GovernanceFinding[] = [];
+  const productPackages = new Set(["@tangent/usage", "@tangent/eval", "@tangent/rollup", "@tangent/search"]);
+  const apiOnlyPackages = new Set(["@tangent/usage-schema", "@tangent/usage-core"]);
+  for (const file of await sourceFiles(ctx.root)) {
+    const owner = ownerPackage(file, ctx.packages);
+    if (!owner) continue;
+    const rel = relative(ctx.root, file);
+    const text = await readFile(file, "utf8");
+    const imports = importSpecifiers(text).map(tangentPackageName).filter((value): value is string => Boolean(value));
+
+    if (apiOnlyPackages.has(owner.name)) {
+      const forbidden = imports.find((specifier) => specifier.startsWith("@tangent/ui-") || specifier === "@tangent/usage-index-sqlite" || specifier === "@tangent/usage-providers");
+      if (forbidden) {
+        findings.push({
+          rule: "deps/api-only-no-ui-sqlite-provider",
+          severity: "error",
+          file: rel,
+          message: `${owner.name} imports ${forbidden}, but API-only usage packages must stay UI/SQLite/provider free.`,
+          fix: [
+            "Move UI mapping to usage-ui-data or usage-ui.",
+            "Move SQLite behavior to usage-index-sqlite.",
+            "Move provider-native parsing to usage-providers."
+          ]
+        });
+      }
+    }
+
+    if (owner.name.startsWith("@tangent/ui-") && owner.name !== "@tangent/ui-docs") {
+      const forbidden = imports.find((specifier) => productPackages.has(specifier));
+      if (forbidden) {
+        findings.push({
+          rule: "deps/ui-no-product-imports",
+          severity: "error",
+          file: rel,
+          message: `${owner.name} imports product package ${forbidden}.`,
+          fix: [
+            "Move domain mapping into a product ui-data package.",
+            "Pass generic serializable view models into UI packages."
+          ]
+        });
+      }
+    }
+  }
+  return findings;
+}
+
+/** Supports the lint shared helpers helper. */
 async function lintSharedHelpers(ctx: LintContext): Promise<GovernanceFinding[]> {
   const findings: GovernanceFinding[] = [];
   for (const file of await sourceFiles(ctx.root)) {
@@ -331,6 +406,7 @@ async function lintSharedHelpers(ctx: LintContext): Promise<GovernanceFinding[]>
   return findings;
 }
 
+/** Supports the lint hook boundaries helper. */
 async function lintHookBoundaries(ctx: LintContext): Promise<GovernanceFinding[]> {
   const findings: GovernanceFinding[] = [];
   const providerHookPattern = /@tangent\/hooks|hook-runner|usage hook record|usage hooks install|installHooks\b|uninstallHooks\b|recordHook\b/;
@@ -355,6 +431,7 @@ async function lintHookBoundaries(ctx: LintContext): Promise<GovernanceFinding[]
   return findings;
 }
 
+/** Supports the lint file sizes helper. */
 async function lintFileSizes(ctx: LintContext): Promise<GovernanceFinding[]> {
   const findings: GovernanceFinding[] = [];
   for (const file of await sourceFiles(ctx.root)) {

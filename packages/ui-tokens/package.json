@@ -1,0 +1,31 @@
+{
+  "name": "@tangent/ui-tokens",
+  "version": "0.1.0",
+  "description": "Design tokens and theme CSS for Tangent UI.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./dist/index.js"
+    },
+    "./css/tokens.css": "./src/css/tokens.css",
+    "./css/theme-light.css": "./src/css/theme-light.css",
+    "./css/theme-dark.css": "./src/css/theme-dark.css",
+    "./css/theme-system.css": "./src/css/theme-system.css"
+  },
+  "files": [
+    "dist",
+    "src/css",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -16,6 +16,7 @@ const TARGET_KINDS = new Set([
   ts.SyntaxKind.FunctionExpression
 ]);
 
+/** Parses command-line flags for the docstring lint. */
 function parseArgs(argv) {
   const parsed = {
     staged: false,
@@ -42,6 +43,7 @@ function parseArgs(argv) {
   return parsed;
 }
 
+/** Prints CLI usage for the docstring lint. */
 function printUsage() {
   console.log(`Usage:
   node scripts/lint-function-docstrings.mjs [--staged] [--all] [paths...]
@@ -52,6 +54,7 @@ Options:
   paths...    Optional explicit paths to check.`);
 }
 
+/** Runs git and returns non-empty output lines. */
 function runGit(args) {
   return execFileSync("git", args, { encoding: "utf8" })
     .split("\n")
@@ -59,14 +62,17 @@ function runGit(args) {
     .filter(Boolean);
 }
 
+/** Lists staged source paths that should be checked. */
 function getDiffFiles() {
   return runGit(["diff", "--cached", "--name-only", "--diff-filter=ACMR"]);
 }
 
+/** Lists all tracked source paths that can be checked. */
 function getTrackedSourceFiles() {
   return runGit(["ls-files"]).filter(isTargetFile);
 }
 
+/** Returns whether a path is a lintable source file. */
 function isTargetFile(filePath) {
   const normalized = filePath.replace(/\\/g, "/");
   if (normalized.includes("/dist/") || normalized.includes("/node_modules/") || normalized === "dist") {
@@ -76,6 +82,7 @@ function isTargetFile(filePath) {
   return EXTENSIONS.has(ext);
 }
 
+/** Maps a source path to the TypeScript parser script kind. */
 function getScriptKind(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === ".tsx" || ext === ".jsx") return ts.ScriptKind.TSX;
@@ -83,10 +90,12 @@ function getScriptKind(filePath) {
   return ts.ScriptKind.TS;
 }
 
+/** Returns whether TypeScript attached JSDoc to a node. */
 function hasJsDoc(node) {
   return Boolean(node.jsDoc && node.jsDoc.length > 0);
 }
 
+/** Finds the declaration node that can carry docs for an expression function. */
 function owningDocCarrier(node) {
   if (!ts.isArrowFunction(node) && !ts.isFunctionExpression(node)) {
     return undefined;
@@ -104,14 +113,24 @@ function owningDocCarrier(node) {
   return undefined;
 }
 
+/** Returns whether a function or its owning declaration has docs. */
 function hasDocstringForFunction(node) {
   if (hasJsDoc(node)) return true;
 
   const carrier = owningDocCarrier(node);
   if (!carrier) return false;
-  return hasJsDoc(carrier);
+  if (hasJsDoc(carrier)) return true;
+  if (
+    ts.isVariableDeclaration(carrier) &&
+    ts.isVariableDeclarationList(carrier.parent) &&
+    ts.isVariableStatement(carrier.parent.parent)
+  ) {
+    return hasJsDoc(carrier.parent.parent);
+  }
+  return false;
 }
 
+/** Returns a readable name for a linted function node. */
 function functionNameForNode(node) {
   if (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) || ts.isConstructorDeclaration(node) || ts.isGetAccessor(node) || ts.isSetAccessor(node)) {
     if (!node.name) return "anonymous";
@@ -127,6 +146,7 @@ function functionNameForNode(node) {
   return "anonymous";
 }
 
+/** Returns whether a node is a function shape covered by this lint. */
 function isFunctionCandidate(node) {
   if (!TARGET_KINDS.has(node.kind)) return false;
 
@@ -147,6 +167,7 @@ function isFunctionCandidate(node) {
   return false;
 }
 
+/** Analyzes a single source file for undocumented functions. */
 async function analyzeFile(filePath) {
   const sourceText = await readFile(filePath, "utf8");
   const sourceFile = ts.createSourceFile(
@@ -159,6 +180,7 @@ async function analyzeFile(filePath) {
 
   const issues = [];
 
+  /** Visits AST nodes and records missing-doc findings. */
   const visit = (node) => {
     if (isFunctionCandidate(node) && !hasDocstringForFunction(node)) {
       const name = functionNameForNode(node);
@@ -172,6 +194,7 @@ async function analyzeFile(filePath) {
   return issues;
 }
 
+/** Runs the docstring lint command. */
 async function main() {
   const parsed = parseArgs(process.argv.slice(2));
   let filesToCheck;

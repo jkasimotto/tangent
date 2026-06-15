@@ -11,6 +11,7 @@ Architecture:
 - architecture/layering.md
 - architecture/hooks.md
 - architecture/agent-runtime.md
+- ui/README.md
 
 Decisions:
 - decisions/ADR-0001-agent-legibility.md
@@ -18,6 +19,11 @@ Decisions:
 - decisions/ADR-0003-shared-runtime-and-repo-packages.md
 - decisions/ADR-0004-retire-hook-capture.md
 - decisions/ADR-0005-usage-v2-telemetry-kernel.md
+- ui/adr/0001-ui-package-split.md
+- ui/adr/0002-react-vite-ui-stack.md
+- ui/adr/0003-token-system.md
+- ui/adr/0004-local-ui-server.md
+- ui/adr/0005-progressive-disclosure-for-telemetry.md
 
 Agent workflow:
 - agent/coding-rules.md

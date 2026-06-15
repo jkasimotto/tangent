@@ -1,0 +1,137 @@
+.tg-metric-card {
+  border-bottom: 1px solid var(--tangent-color-border);
+  display: grid;
+  gap: 0.45rem;
+  min-width: 0;
+  padding: 1rem 0;
+}
+
+.tg-metric-card__header,
+.tg-metric-card__footer,
+.tg-metric-delta__values,
+.tg-legend,
+.tg-status-strip,
+.tg-compare-selector {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.tg-metric-card__header,
+.tg-metric-card__description,
+.tg-metric-delta__label,
+.tg-resource-list-item__meta,
+.tg-resource-list-item__subtitle {
+  color: var(--tangent-color-text-muted);
+  font: 500 var(--tangent-text-xs) / 1.3 var(--tangent-font-sans);
+}
+
+.tg-metric-card__value {
+  color: var(--tangent-color-text);
+  font: 650 var(--tangent-title-lg) / 1.1 var(--tangent-font-sans);
+  letter-spacing: 0;
+}
+
+.tg-metric-delta {
+  border-left: 3px solid var(--tangent-color-border);
+  display: grid;
+  gap: 0.35rem;
+  padding-left: 0.75rem;
+}
+
+.tg-metric-delta--good { border-left-color: var(--tangent-color-success); }
+.tg-metric-delta--bad { border-left-color: var(--tangent-color-danger); }
+
+.tg-metric-delta__delta {
+  color: var(--tangent-color-text);
+  font: 650 var(--tangent-text-md) / 1.2 var(--tangent-font-sans);
+}
+
+.tg-resource-list {
+  display: grid;
+}
+
+.tg-resource-list-item {
+  align-items: start;
+  border-bottom: 1px solid var(--tangent-color-border);
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: var(--tangent-row-height);
+  padding: 0.65rem 0;
+}
+
+.tg-resource-list-item__main {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  display: grid;
+  gap: 0.2rem;
+  padding: 0;
+  text-align: left;
+}
+
+.tg-resource-list-item__title {
+  color: var(--tangent-color-text);
+  font: 600 var(--tangent-text-sm) / 1.3 var(--tangent-font-sans);
+}
+
+.tg-resource-list-item__badges,
+.tg-job-progress-list {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  justify-content: end;
+}
+
+.tg-caveat-list {
+  background: var(--tangent-color-surface-inset);
+  border: 1px solid var(--tangent-color-border);
+  border-radius: var(--tangent-radius-md);
+  color: var(--tangent-color-text);
+  font: 400 var(--tangent-text-sm) / 1.45 var(--tangent-font-sans);
+  padding: 0.75rem;
+}
+
+.tg-caveat-list ul,
+.tg-file-list {
+  margin: 0.5rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.tg-selection-summary,
+.tg-detail-panel {
+  border-left: 1px solid var(--tangent-color-border);
+  color: var(--tangent-color-text);
+  min-width: 0;
+  padding: 1rem;
+}
+
+.tg-app-header,
+.tg-page-header,
+.tg-page-toolbar,
+.tg-command-bar,
+.tg-filter-bar,
+.tg-saved-view-bar {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+}
+
+.tg-page-header {
+  justify-content: space-between;
+}
+
+.tg-page-header h1 {
+  font: 650 var(--tangent-title-lg) / 1.1 var(--tangent-font-sans);
+  letter-spacing: 0;
+  margin: 0;
+}
+
+.tg-split-pane {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr) minmax(18rem, 0.45fr);
+}

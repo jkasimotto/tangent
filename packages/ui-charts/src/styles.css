@@ -1,0 +1,67 @@
+.tg-chart {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.tg-chart__actions {
+  align-items: center;
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+.tg-timeline-bars {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.tg-timeline-bar {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--tangent-color-text);
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: minmax(8rem, 0.35fr) minmax(8rem, 1fr) 5rem;
+  min-height: var(--tangent-row-height);
+  padding: 0;
+  text-align: left;
+}
+
+.tg-timeline-bar:focus-visible {
+  outline: 2px solid var(--tangent-color-accent);
+  outline-offset: 2px;
+}
+
+.tg-timeline-bar[data-selected] .tg-timeline-bar__track span {
+  background: var(--tangent-color-accent);
+}
+
+.tg-timeline-bar__label,
+.tg-timeline-bar__value {
+  font: 500 var(--tangent-text-sm) / 1.2 var(--tangent-font-sans);
+}
+
+.tg-timeline-bar__track {
+  background: var(--tangent-color-surface-inset);
+  border-radius: var(--tangent-radius-pill);
+  height: 0.55rem;
+  overflow: hidden;
+}
+
+.tg-timeline-bar__track span {
+  background: var(--tangent-color-chart);
+  display: block;
+  height: 100%;
+}
+
+.tg-sparkline {
+  height: 2rem;
+  width: 8rem;
+}
+
+.tg-sparkline polyline {
+  fill: none;
+  stroke: var(--tangent-color-chart);
+  stroke-width: 2;
+}

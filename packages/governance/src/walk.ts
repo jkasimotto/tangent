@@ -16,6 +16,7 @@ export type PackageInfo = {
   };
 };
 
+/** Supports the package infos helper. */
 export async function packageInfos(root: string): Promise<PackageInfo[]> {
   const packagesDir = path.join(root, "packages");
   const entries = await readdir(packagesDir, { withFileTypes: true }).catch(() => []);
@@ -32,6 +33,7 @@ export async function packageInfos(root: string): Promise<PackageInfo[]> {
   return packages.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** Supports the require file helper. */
 export async function requireFile(findings: GovernanceFinding[], root: string, filePath: string, rule: string, fix: string[]): Promise<void> {
   const fullPath = path.join(root, filePath);
   if (await pathExists(fullPath)) return;
@@ -44,6 +46,7 @@ export async function requireFile(findings: GovernanceFinding[], root: string, f
   });
 }
 
+/** Supports the walk dirs helper. */
 export async function walkDirs(root: string): Promise<string[]> {
   const dirs: string[] = [root];
   for (const entry of await readdir(root, { withFileTypes: true }).catch(() => [])) {
@@ -53,6 +56,7 @@ export async function walkDirs(root: string): Promise<string[]> {
   return dirs;
 }
 
+/** Supports the source files helper. */
 export async function sourceFiles(root: string): Promise<string[]> {
   const files: string[] = [];
   for (const pkgDir of await walkPackageDirs(root)) {
@@ -62,6 +66,7 @@ export async function sourceFiles(root: string): Promise<string[]> {
   return files;
 }
 
+/** Supports the find files helper. */
 export async function findFiles(root: string, basename: string): Promise<string[]> {
   const files: string[] = [];
   for (const entry of await readdir(root, { withFileTypes: true }).catch(() => [])) {
@@ -73,6 +78,7 @@ export async function findFiles(root: string, basename: string): Promise<string[
   return files;
 }
 
+/** Supports the import specifiers helper. */
 export function importSpecifiers(text: string): string[] {
   const specs: string[] = [];
   const patterns = [
@@ -85,29 +91,35 @@ export function importSpecifiers(text: string): string[] {
   return specs;
 }
 
+/** Supports the owner package helper. */
 export function ownerPackage(file: string, packages: PackageInfo[]): PackageInfo | undefined {
   return packages.find((pkg) => file.startsWith(`${pkg.dir}${path.sep}`));
 }
 
+/** Supports the tangent package name helper. */
 export function tangentPackageName(specifier: string): string | undefined {
-  if (specifier.startsWith("@tangent/usage")) return "@tangent/usage";
+  if (specifier === "@tangent/usage" || specifier.startsWith("@tangent/usage/")) return "@tangent/usage";
   if (!specifier.startsWith("@tangent/")) return undefined;
   const [, scope, name] = specifier.match(/^(@tangent)\/([^/]+)/) || [];
   return scope && name ? `${scope}/${name}` : undefined;
 }
 
+/** Supports the is tangent package helper. */
 export function isTangentPackage(name: string): boolean {
   return name.startsWith("@tangent/") || name === "@tangent/usage";
 }
 
+/** Supports the has group helper. */
 export function hasGroup(groups: Set<GovernanceLintGroup>, group: GovernanceLintGroup): boolean {
   return groups.has("all") || groups.has(group);
 }
 
+/** Supports the relative helper. */
 export function relative(root: string, filePath: string): string {
   return path.relative(root, filePath).split(path.sep).join("/");
 }
 
+/** Supports the find ts files helper. */
 async function findTsFiles(root: string): Promise<string[]> {
   const files: string[] = [];
   for (const entry of await readdir(root, { withFileTypes: true }).catch(() => [])) {
@@ -119,12 +131,14 @@ async function findTsFiles(root: string): Promise<string[]> {
   return files;
 }
 
+/** Supports the walk package dirs helper. */
 async function walkPackageDirs(root: string): Promise<string[]> {
   const packagesDir = path.join(root, "packages");
   const entries = await readdir(packagesDir, { withFileTypes: true }).catch(() => []);
   return entries.filter((entry) => entry.isDirectory()).map((entry) => path.join(packagesDir, entry.name));
 }
 
+/** Supports the ignored dir helper. */
 function ignoredDir(name: string): boolean {
   return name === "node_modules" || name === "dist" || name === ".git";
 }

@@ -1,4 +1,4 @@
-import type { UsageConfidence, UsageSession, UsageSessionStatus, UsageStep, UsageStepStatus, UsageUiConfidence } from "./types.js";
+import type { UsageConfidence, UsageSession, UsageSessionStatus, UsageStep, UsageStepStatus, UsageTokenUsage, UsageUiConfidence } from "./types.js";
 
 /** Normalizes the confidence. */
 export function normalizeConfidence(value: UsageConfidence | undefined): UsageUiConfidence | undefined {
@@ -47,6 +47,16 @@ export function formatTokens(value: number | undefined): string | undefined {
   if (Math.abs(value) >= 1_000_000) return `${trimFixed(value / 1_000_000, value >= 10_000_000 ? 0 : 1)}M`;
   if (Math.abs(value) >= 1_000) return `${trimFixed(value / 1_000, value >= 10_000 ? 0 : 1)}K`;
   return Intl.NumberFormat("en").format(Math.round(value));
+}
+
+/** Formats message-level token usage. */
+export function formatMessageTokenUsage(usage: UsageTokenUsage | undefined, fallbackTotal?: number): string | undefined {
+  const context = tokenContext(usage);
+  const output = finiteNumber(usage?.output);
+  if (context !== undefined || output !== undefined) {
+    return `${context === undefined ? "- ctx" : `${formatMessageTokenCount(context)} ctx`} / ${output === undefined ? "- out" : `${formatMessageTokenCount(output)} out`}`;
+  }
+  return formatTokens(finiteNumber(usage?.total) ?? fallbackTotal);
 }
 
 /** Formats the count. */
@@ -122,6 +132,22 @@ export function stepTokens(step: UsageStep): number | undefined {
 export function messageTokens(message: { tokenUsage?: { total?: number }; metrics?: { tokens?: { total?: number } }; tokens?: { value?: number | string } }): number | undefined {
   const tokenValue = typeof message.tokens?.value === "number" ? message.tokens.value : undefined;
   return finiteNumber(message.tokenUsage?.total) ?? finiteNumber(message.metrics?.tokens?.total) ?? tokenValue;
+}
+
+function tokenContext(usage: UsageTokenUsage | undefined): number | undefined {
+  if (!usage) return undefined;
+  return finiteNumber(usage.context) ?? finiteNumber(usage.input) ?? sumTokens([usage.cacheRead, usage.cacheCreation]);
+}
+
+function sumTokens(values: Array<number | undefined>): number | undefined {
+  const present = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  return present.length ? present.reduce((sum, value) => sum + value, 0) : undefined;
+}
+
+function formatMessageTokenCount(value: number): string {
+  if (Math.abs(value) < 1_000) return Intl.NumberFormat("en").format(Math.round(value));
+  if (Math.abs(value) < 1_000_000) return `${trimFixed(value / 1_000, 1)}k`;
+  return `${trimFixed(value / 1_000_000, 1)}M`;
 }
 
 /** Returns unique values. */

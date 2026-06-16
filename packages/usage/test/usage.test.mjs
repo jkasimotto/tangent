@@ -174,6 +174,19 @@ test("Codex native import emits per-model-call usage and tool result size metada
   assert.equal("output_token_source" in toolResult.data, false);
 });
 
+test("Codex native token snapshots attach to assistant messages in projection order", () => {
+  const sourcePath = "/tmp/codex-two-snapshots.jsonl";
+  const records = codexNativeTwoSnapshotSession({ repo: "/repo", sessionId: "codex-two-snapshots" }).map((record, index) => ({ line: index + 1, record }));
+  const projections = eventsToProjections(normalizeCodexNativeRecords(records, { sourcePath, completed: true, inferredComplete: false }));
+  const assistantMessages = projections.messages.filter((message) => message.role === "assistant");
+
+  assert.deepEqual(assistantMessages.map((message) => message.textPreview), ["I will read it.", "ok"]);
+  assert.deepEqual(assistantMessages.map((message) => message.tokenUsage?.input), [100, 130]);
+  assert.deepEqual(assistantMessages.map((message) => message.tokenUsage?.cacheRead), [40, 80]);
+  assert.deepEqual(assistantMessages.map((message) => message.tokenUsage?.output), [9, 5]);
+  assert.deepEqual(assistantMessages.map((message) => message.tokenUsage?.total), [109, 135]);
+});
+
 test("usage index skips incomplete Codex native transcripts until the quiet window", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "usage-native-codex-quiet-"));
   process.env.USAGE_HOME = path.join(dir, "home");

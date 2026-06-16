@@ -1,4 +1,4 @@
-import { cleanTitle, confidenceOrUnknown, formatDuration, formatTokens, messageTokens, stepDuration, stepKindLabel, truncateText } from "./format.js";
+import { cleanTitle, confidenceOrUnknown, formatDuration, formatMessageTokenUsage, formatTokens, messageTokens, stepDuration, stepKindLabel, truncateText } from "./format.js";
 import type {
   UsageConversationChartRow,
   UsageConversationChartSegment,
@@ -99,7 +99,7 @@ function conversationMessage(message: UsageMessage): UsageConversationMessage {
     at: message.createdAt || message.at,
     text: message.text,
     textPreview: message.textPreview || truncateText(message.text, 500),
-    tokenLabel: formatTokens(tokens),
+    tokenLabel: formatMessageTokenUsage(message.tokenUsage || message.metrics?.tokens, tokens),
     tokens,
     durationLabel: formatDuration(duration),
     durationMs: duration,

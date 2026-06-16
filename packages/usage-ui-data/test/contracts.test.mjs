@@ -155,6 +155,22 @@ test("builds conversation chart rows from assistant messages with internal step 
   assert.equal(view.chart.rows[0].segments[0].heightShare > view.chart.rows[0].segments[1].heightShare, true);
 });
 
+test("builds conversation token labels from context and output usage", () => {
+  const view = buildUsageConversationView(
+    { id: "s1", provider: "codex", title: "Tokens", metrics: {}, availability: { notes: [] } },
+    [],
+    [
+      { id: "m1", role: "assistant", turnId: "turn1", textPreview: "Working", tokenUsage: { input: 103_100, output: 1_500, total: 104_600 }, toolCalls: [] },
+      { id: "m2", role: "assistant", turnId: "turn1", textPreview: "Done", tokenUsage: { total: 1_200 }, toolCalls: [] }
+    ],
+    []
+  );
+
+  assert.equal(view.messages[0].tokenLabel, "103.1k ctx / 1.5k out");
+  assert.equal(view.chart.rows[0].tokenLabel, "103.1k ctx / 1.5k out");
+  assert.equal(view.messages[1].tokenLabel, "1.2K");
+});
+
 test("uses equal internal segment heights when step durations are unavailable", () => {
   const view = buildUsageConversationView(
     { id: "s1", provider: "codex", title: "Partial", metrics: {}, availability: { notes: [] } },

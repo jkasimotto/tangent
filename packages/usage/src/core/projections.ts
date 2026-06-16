@@ -486,6 +486,20 @@ function attachMessageTokens(messages: UsageMessage[], events: AnnotatedEvent[])
     const direct = usageEvents.get(`${message.sessionId}:${message.id}`) || [];
     if (direct.length) message.tokenUsage = aggregateTokenUsage(direct.map((event) => event.data.usage).filter(isDefined));
   }
+
+  const assistantMessages = messages
+    .filter((message) => message.role === "assistant" && message.turnId)
+    .sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || "") || a.ordinal - b.ordinal);
+  const assistantByTurn = groupBy(assistantMessages, (message) => `${message.sessionId}:${message.turnId}`);
+
+  for (const event of events.filter((row) => row.data.usage && row.scope.turnId && !row.scope.messageId)) {
+    const candidates = assistantByTurn.get(`${event.scope.sessionId}:${event.scope.turnId}`) || [];
+    const eventAt = eventTime(event);
+    const message = [...candidates]
+      .reverse()
+      .find((candidate) => !candidate.tokenUsage && (!candidate.createdAt || !eventAt || candidate.createdAt <= eventAt));
+    if (message) message.tokenUsage = aggregateTokenUsage([event.data.usage!]);
+  }
 }
 
 function computeStepSelfDurations(steps: UsageStep[]): void {

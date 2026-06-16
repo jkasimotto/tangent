@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { sqliteIndex } from "../dist/index.js";
+import { ensureUsageIndex, openUsage, openUsageFromSqlite } from "../dist/index.js";
 
-test("describes sqlite index", () => {
-  assert.deepEqual(sqliteIndex("usage.db"), { kind: "sqlite", path: "usage.db" });
+test("usage index sqlite exports compatibility and client loaders", () => {
+  assert.equal(typeof ensureUsageIndex, "function");
+  assert.equal(typeof openUsage, "function");
+  assert.equal(typeof openUsageFromSqlite, "function");
 });

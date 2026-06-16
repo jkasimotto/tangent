@@ -57,6 +57,9 @@
     "@tangent/core": "^0.1.0",
     "@tangent/repo": "^0.1.0",
     "@tangent/ui-server": "^0.1.0",
+    "@tangent/usage-core": "^0.1.0",
+    "@tangent/usage-index-sqlite": "^0.1.0",
+    "@tangent/usage-providers": "^0.1.0",
     "@tangent/usage-ui": "^0.1.0",
     "@tangent/usage-ui-data": "^0.1.0"
   },

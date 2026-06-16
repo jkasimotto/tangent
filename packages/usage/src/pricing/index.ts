@@ -1,4 +1,4 @@
-import type { UsageCost, UsageTokenUsage } from "../schema/index.js";
+import type { UsageCost, UsageTokenUsage } from "@tangent/usage-core/schema";
 
 export type UsagePricingInput = {
   provider?: string;

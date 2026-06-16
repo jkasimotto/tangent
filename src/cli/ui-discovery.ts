@@ -33,12 +33,6 @@ type UiAppCandidate = {
   order?: number;
 };
 
-const fallbackCandidates: UiAppCandidate[] = [
-  { id: "usage", label: "Usage", serverExport: "@tangent/usage/server", factory: "createUsageUiApp", order: 10 },
-  { id: "trees", label: "Trees", serverExport: "@tangent/trees-server", factory: "createTreesUiApp", order: 20 },
-  { id: "eval", label: "Eval", serverExport: "@tangent/eval/server", factory: "createEvalUiApp", order: 30 }
-];
-
 /** Discovers installed Tangent UI apps and creates their registrations. */
 export async function discoverUiApps(options: DiscoverUiAppsOptions): Promise<UiAppRegistration[]> {
   const candidates = await discoverUiAppCandidates(options);
@@ -54,7 +48,6 @@ export async function discoverUiApps(options: DiscoverUiAppsOptions): Promise<Ui
 /** Discovers UI app factory descriptors from package manifests plus transitional first-party fallbacks. */
 export async function discoverUiAppCandidates(options: Pick<DiscoverUiAppsOptions, "startDir" | "readPackageJson" | "listNodeModulesPackages"> = {}): Promise<UiAppCandidate[]> {
   const byId = new Map<string, UiAppCandidate>();
-  for (const candidate of fallbackCandidates) byId.set(candidate.id, candidate);
   for (const candidate of await manifestCandidates(options)) byId.set(candidate.id, candidate);
   return [...byId.values()].sort((left, right) => (left.order ?? 100) - (right.order ?? 100) || left.id.localeCompare(right.id));
 }
@@ -142,12 +135,12 @@ function parseManifestCandidate(manifest: unknown): UiAppCandidate | undefined {
   const uiApp = (tangent as { uiApp?: unknown }).uiApp;
   if (!uiApp || typeof uiApp !== "object") return undefined;
   const raw = uiApp as Partial<UiAppCandidate>;
-  if (!raw.id || !raw.serverExport || !raw.factory) return undefined;
+  if (!raw.id || !raw.label || !raw.serverExport || !raw.factory || typeof raw.order !== "number") return undefined;
   return {
     id: String(raw.id),
-    label: raw.label ? String(raw.label) : undefined,
+    label: String(raw.label),
     serverExport: String(raw.serverExport),
     factory: String(raw.factory),
-    order: typeof raw.order === "number" ? raw.order : undefined
+    order: raw.order
   };
 }

@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "description": "Workspace for local coding-agent conversation tools.",
   "type": "module",
+  "tangent": {
+    "packageMode": "thin-shell"
+  },
   "bin": {
     "tangent": "./dist/cli/index.js"
   },
@@ -12,12 +15,7 @@
     "packages/repo",
     "packages/trees-schema",
     "packages/trees-core",
-    "packages/trees-store-fs",
-    "packages/trees-store-sqlite",
-    "packages/trees-git",
-    "packages/trees-terminal",
-    "packages/trees-agents",
-    "packages/trees-attention",
+    "packages/trees-runtime",
     "packages/trees-mcp",
     "packages/trees-cli",
     "packages/trees-ui",
@@ -27,7 +25,6 @@
     "packages/usage-core",
     "packages/usage-index-sqlite",
     "packages/usage-providers",
-    "packages/usage-cli",
     "packages/usage",
     "packages/ui-tokens",
     "packages/ui-server",

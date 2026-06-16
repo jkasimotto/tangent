@@ -1,5 +1,5 @@
-import type { ConversationListItem, ToolCallWithResult, TurnListItem, VisibleMessage } from "../core/dataset.js";
-import type { NormalizedConversation, TokenUsage } from "../core/conversation-report.js";
+import type { ConversationListItem, ToolCallWithResult, TurnListItem, VisibleMessage } from "@tangent/usage-core/core/dataset";
+import type { NormalizedConversation, TokenUsage } from "@tangent/usage-core/core/conversation-report";
 
 export function printTranscript(rows: VisibleMessage[], resolved?: { shortId: string }): void {
   if (resolved) console.log(`Transcript: ${resolved.shortId}\n`);

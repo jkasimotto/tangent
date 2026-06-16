@@ -1,16 +1,16 @@
 import { renderCommandHelp } from "@tangent/core";
 import { parseArgs, stringArg } from "@tangent/core/cli";
 
-import { archiveUsageTelemetry, ensureUsageIndex, loadUsageDatasetFromIndex, resolveConversationRef } from "../sdk/indexStore.js";
-import type { UsageIndexSource } from "../sdk/indexStore.js";
-import { importNative } from "../sdk/importNative.js";
-import { status } from "../sdk/status.js";
-import { inspectNativeLogFile } from "../providers/native/inspect.js";
-import { listNativeSchemas } from "../providers/native/schema-registry.js";
-import { nativeSchemaStatus } from "../providers/native/status.js";
-import type { NativeLogInspection, NativeProviderSchemaStatus } from "../providers/native/types.js";
-import type { UsageDataset, VisibleMessage } from "../core/dataset.js";
-import type { UsageProvider } from "../core/schema/usage-jsonl-v1.js";
+import { archiveUsageTelemetry, ensureUsageIndex, loadUsageDatasetFromIndex, resolveConversationRef } from "@tangent/usage-index-sqlite/sdk/indexStore";
+import type { UsageIndexSource } from "@tangent/usage-index-sqlite/sdk/indexStore";
+import { importNative } from "@tangent/usage-index-sqlite/sdk/importNative";
+import { status } from "@tangent/usage-index-sqlite/sdk/status";
+import { inspectNativeLogFile } from "@tangent/usage-providers/providers/native/inspect";
+import { listNativeSchemas } from "@tangent/usage-providers/providers/native/schema-registry";
+import { nativeSchemaStatus } from "@tangent/usage-providers/providers/native/status";
+import type { NativeLogInspection, NativeProviderSchemaStatus } from "@tangent/usage-providers/providers/native/types";
+import type { UsageDataset, VisibleMessage } from "@tangent/usage-core/core/dataset";
+import type { UsageProvider } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
 import { runUsageResourceCommand } from "./resource-commands.js";
 import { usageCommandSpec } from "./spec.js";
 import { usageUiCommand } from "./ui.js";

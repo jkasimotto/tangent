@@ -14,21 +14,21 @@ UI platform packages:
 - Product UI packages such as @tangent/usage-ui, @tangent/trees-ui, and @tangent/eval-ui own embedded browser modules for the combined shell.
 
 Vertical apps:
-- @tangent/usage owns conversation telemetry schemas, native transcript normalization, legacy usage-jsonl reading, native-log schema compatibility checks, canonical session/turn/step/message projections, dependency-light core/query APIs, optional SQLite indexing, assistant/session reports, datasets, SDK, CLI, and the local Usage UI server.
+- @tangent/usage owns the full Usage app surface: compatibility SDK exports, standalone CLI, and local Usage UI server.
 - @tangent/rollup owns rollup note schemas, period-level user-message rollup inputs, examples, rendering, ledgers, and summarization workflows.
 - @tangent/eval owns eval specs, contexts, run manifests, metrics, reports, diffs, and the local read-only Eval UI server.
 - @tangent/search owns structural indexing and search.
-- Tangent Trees owns the `tangent trees` command center across split packages: schema, core, FS store, optional SQLite projection boundary, Git, terminal runtimes, agent adapters, attention, MCP, CLI, server, and UI.
+- Tangent Trees owns the `tangent trees` command center across split packages: schema, core, runtime adapters, MCP, CLI, server, and UI.
 
 Split Trees packages:
 - @tangent/trees-schema has no Node-only runtime integrations, UI, SQLite, tmux, Git adapters, or old `pa` code.
 - @tangent/trees-core has event APIs, projections, and lifecycle services with no React, SQLite, tmux implementation, iTerm, or old `pa` imports.
-- @tangent/trees-store-fs owns the canonical V1 event log under `~/.tangent/trees`.
-- @tangent/trees-store-sqlite is optional projection/index infrastructure and is not imported by core.
-- @tangent/trees-git owns project/worktree behavior and may use `@tangent/repo`.
-- @tangent/trees-terminal owns tmux/process runtime adapters.
-- @tangent/trees-agents owns manual/custom/Codex/Claude/Gemini command adapters.
-- @tangent/trees-attention owns status resolution and deterministic attention rules.
+- @tangent/trees-runtime/fs owns the canonical V1 event log under `~/.tangent/trees`.
+- @tangent/trees-runtime/sqlite is optional projection/index infrastructure and is not imported by core.
+- @tangent/trees-runtime/git owns project/worktree behavior and may use `@tangent/repo`.
+- @tangent/trees-runtime/terminal owns tmux/process runtime adapters.
+- @tangent/trees-runtime/agents owns manual/custom/Codex/Claude/Gemini command adapters.
+- @tangent/trees-runtime/attention owns status resolution and deterministic attention rules.
 - @tangent/trees-mcp owns typed MCP tools.
 - @tangent/trees-cli owns the CLI adapter and must not import React.
 - @tangent/trees-ui owns the Trees browser bundle and must not import old `pa` code.
@@ -36,10 +36,10 @@ Split Trees packages:
 
 Split Usage packages:
 - @tangent/usage-schema has no UI, SQLite, or provider parser dependencies.
-- @tangent/usage-core has in-memory projections/query contracts and no UI or SQLite.
-- @tangent/usage-index-sqlite owns optional SQLite projection/index behavior.
+- @tangent/usage-core has dependency-light schemas, query helpers, in-memory projections, dataset/report types, and client construction with no UI, SQLite, or built-in provider loading.
+- @tangent/usage-index-sqlite owns repo/native data loading, optional SQLite projection/index behavior, status, archive, and compatibility SDK APIs.
 - @tangent/usage-providers owns provider adapters/native transcript loading.
-- @tangent/usage-cli owns CLI-only composition.
+- @tangent/usage owns the standalone Usage CLI; the former usage-cli migration scaffold is removed.
 - @tangent/usage remains the compatibility meta-package during migration.
 
 Root CLI:
@@ -49,20 +49,20 @@ Root CLI:
 Install contract:
 - This remains one git monorepo and one workspace for development.
 - `@tangent/usage`, `@tangent/search`, `@tangent/rollup`, and `@tangent/eval` must be publishable and installable independently.
-- Standalone app packages may depend on platform packages. Rollup and Eval may also depend on Usage. Product UI bundles may be dependencies of their owning app package. No standalone app may pull an unrelated vertical app.
+- Standalone app packages may depend on platform packages. Rollup and Eval may depend on dependency-light Usage data packages, but must not pull the full Usage app or Usage UI packages. Product UI bundles may be dependencies of their owning app package. No standalone app may pull an unrelated vertical app.
 - The root `tangent ui` command may compose installed vertical UI descriptors. Standalone app CLIs keep their own UI entrypoints when provided.
 - UI-capable product packages declare `tangent.uiApp` metadata in `package.json`; the root shell discovers manifests and imports only selected installed app factories.
 - Publishable manifests must use semver `@tangent/*` dependencies, not `file:`, `link:`, or `workspace:` protocols.
 - Standalone CLIs use `tangent-usage`, `tangent-search`, `tangent-rollup`, and `tangent-eval`; the root `tangent` package keeps short subcommands.
 
 Hard rules:
-- rollup and eval may depend on usage.
+- rollup and eval may depend on dependency-light Usage data packages, not the full Usage app or Usage UI packages.
 - usage must not depend on rollup, eval, or search.
 - search must not depend on usage, rollup, or eval.
 - Hook install and hook record product surfaces are retired; do not add new provider hook config mechanics.
 - Native provider transcript formats are interpreted in usage, not hooks. Schema inference tools may live outside runtime packages, but runtime compatibility checks and user-facing version messages belong in usage.
-- Rollup must consume Usage reports rather than parsing Claude or Codex provider schemas directly.
-- `@tangent/usage/schema`, `@tangent/usage/core`, and `@tangent/usage/query` must not load SQLite, pricing, server, or UI code. SQLite belongs behind `@tangent/usage/sqlite` and CLI/index compatibility paths. Usage UI serving belongs behind `@tangent/usage/server` and the `usage ui` CLI command.
+- Rollup must consume Usage data APIs rather than parsing Claude or Codex provider schemas directly.
+- `@tangent/usage-core` must not load SQLite, pricing, server, UI, or built-in provider parser code.
 - `@tangent/usage-schema` and `@tangent/usage-core` must not import UI, SQLite, or provider parser packages.
 - UI platform packages must not import Usage, Eval, Rollup, or Search product packages.
 - The root `tangent` package must not depend on product packages or statically import product source; products are optional peers or separate installs.

@@ -1,4 +1,4 @@
-import type { openUsage } from "@tangent/usage";
+import type { openUsage } from "@tangent/usage-index-sqlite";
 
 import { appendLedgerLine } from "../core/ledger.js";
 import { loadRollupStyleExamples } from "../core/examples.js";

@@ -17,7 +17,11 @@ test("dependency lint flags disallowed vertical package dependencies", async () 
       type: "module",
       tangent: {
         uiApp: {
-          id: "usage"
+          id: "usage",
+          label: "Usage",
+          serverExport: "@tangent/usage/server",
+          factory: "createUsageUiApp",
+          order: 10
         }
       },
       bin: {
@@ -48,7 +52,11 @@ test("dependency lint flags local-only Tangent dependency specs", async () => {
       type: "module",
       tangent: {
         uiApp: {
-          id: "usage"
+          id: "usage",
+          label: "Usage",
+          serverExport: "@tangent/usage/server",
+          factory: "createUsageUiApp",
+          order: 10
         }
       },
       bin: {
@@ -98,6 +106,9 @@ test("dependency lint keeps root product dependencies optional", async () => {
       name: "tangent",
       version: "0.0.0",
       type: "module",
+      tangent: {
+        packageMode: "thin-shell"
+      },
       dependencies: {
         "@tangent/usage": "^0.1.0"
       }
@@ -114,11 +125,27 @@ test("dependency lint flags root static product imports", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
   try {
     await mkdir(path.join(root, "src", "cli"), { recursive: true });
-    await writeFile(path.join(root, "package.json"), JSON.stringify({ name: "tangent", version: "0.0.0", type: "module" }), "utf8");
+    await writeFile(path.join(root, "package.json"), JSON.stringify({ name: "tangent", version: "0.0.0", type: "module", tangent: { packageMode: "thin-shell" } }), "utf8");
     await writeFile(path.join(root, "src", "cli", "index.ts"), "import { runUsageCli } from '@tangent/usage/cli';\n", "utf8");
 
     const result = await lintGovernance({ root, groups: ["deps"] });
     assert.ok(result.findings.some((finding) => finding.rule === "deps/root-no-static-product-imports"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("dependency lint requires root package mode", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
+  try {
+    await writeFile(path.join(root, "package.json"), JSON.stringify({
+      name: "tangent",
+      version: "0.0.0",
+      type: "module"
+    }), "utf8");
+
+    const result = await lintGovernance({ root, groups: ["deps"] });
+    assert.ok(result.findings.some((finding) => finding.rule === "deps/root-package-mode"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -143,6 +170,49 @@ test("dependency lint requires UI app manifest metadata", async () => {
 
     const result = await lintGovernance({ root, groups: ["deps"] });
     assert.ok(result.findings.some((finding) => finding.rule === "deps/ui-apps-declare-manifest"));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("dependency lint prevents Rollup and Eval from pulling Usage UI transitively", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
+  try {
+    const rollupDir = path.join(root, "packages", "rollup");
+    const usageDir = path.join(root, "packages", "usage");
+    await mkdir(rollupDir, { recursive: true });
+    await mkdir(usageDir, { recursive: true });
+    await writeFile(path.join(rollupDir, "package.json"), JSON.stringify({
+      name: "@tangent/rollup",
+      version: "0.0.0",
+      type: "module",
+      dependencies: {
+        "@tangent/usage": "^0.1.0"
+      }
+    }), "utf8");
+    await writeFile(path.join(usageDir, "package.json"), JSON.stringify({
+      name: "@tangent/usage",
+      version: "0.0.0",
+      type: "module",
+      tangent: {
+        uiApp: {
+          id: "usage",
+          label: "Usage",
+          serverExport: "@tangent/usage/server",
+          factory: "createUsageUiApp",
+          order: 10
+        }
+      },
+      bin: {
+        "tangent-usage": "./dist/cli/index.js"
+      },
+      dependencies: {
+        "@tangent/usage-ui": "^0.1.0"
+      }
+    }), "utf8");
+
+    const result = await lintGovernance({ root, groups: ["deps"] });
+    assert.ok(result.findings.some((finding) => finding.rule === "deps/no-ui-transitive-for-data-consumers"));
   } finally {
     await rm(root, { recursive: true, force: true });
   }

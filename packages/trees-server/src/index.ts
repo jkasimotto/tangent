@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { TreeEntity } from "@tangent/trees-schema";
-import { openFsTrees, type FsTreesClientOptions } from "@tangent/trees-store-fs";
+import { openFsTrees, type FsTreesClientOptions } from "@tangent/trees-runtime/fs";
 import type { LocalUiApp, StaticAssetMount, UiModePreference, UiRoute } from "@tangent/ui-server";
 import { treesUiEmbeddedAssets } from "@tangent/trees-ui/assets";
 

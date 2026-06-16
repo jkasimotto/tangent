@@ -1,10 +1,5 @@
-# Agent Notes
+# @tangent/usage core
 
-Purpose: @tangent/usage core source area.
+Purpose: Compatibility wrapper for `@tangent/usage/core`.
 
-Local rules: none. Follow the nearest parent AGENTS.md and the package docs.
-
-Read next:
-- ../../docs/index.md
-- ../../docs/architecture.md
-- ../../docs/public-api.md
+Read next: ../../docs/index.md.

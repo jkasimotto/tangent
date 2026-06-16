@@ -1,4 +1,4 @@
-import { openUsage } from "@tangent/usage";
+import { openUsage } from "@tangent/usage-index-sqlite";
 
 import { ensureOutputDirs } from "../core/paths.js";
 import { loadConfig } from "../core/config.js";

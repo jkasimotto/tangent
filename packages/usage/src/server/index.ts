@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import type { LocalUiApp, StaticAssetMount, UiModePreference, UiRoute, UiRouteResponse } from "@tangent/ui-server";
 import { createUsageUiClient, type UsageUiClient } from "@tangent/usage-ui-data";
-import { openUsage, type OpenUsageOptions, type UsageClient } from "../core/index.js";
+import { openUsageFromSqlite as openUsage, type OpenUsageOptions, type UsageClient } from "@tangent/usage-index-sqlite/sqlite";
 
 export type StartUsageUiServerOptions = {
   sessionId?: string;

@@ -1,4 +1,4 @@
-import type { UsageDataset, TurnListItem } from "@tangent/usage";
+import type { UsageDataset, TurnListItem } from "@tangent/usage-index-sqlite";
 import type { ResolvedRepoInfo as RollupRepoInfo } from "@tangent/repo";
 
 import type { RollupConfig } from "../types/config.js";

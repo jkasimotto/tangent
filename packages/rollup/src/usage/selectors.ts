@@ -1,4 +1,4 @@
-import { openUsage, type UsageProvider, type TurnListItem } from "@tangent/usage";
+import { openUsage, type UsageProvider, type TurnListItem } from "@tangent/usage-index-sqlite";
 
 import { readLedger, latestLedgerBySource } from "../core/ledger.js";
 import type { LoadedRollupConfig } from "../core/config.js";

@@ -5,7 +5,7 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import test from "node:test";
 
-import { openFsTrees } from "@tangent/trees-store-fs";
+import { openFsTrees } from "@tangent/trees-runtime/fs";
 
 import { createTreesUiApp } from "../dist/index.js";
 

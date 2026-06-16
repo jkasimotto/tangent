@@ -1,8 +1,8 @@
 import { numberArg, stringArg, stringsArg, type Args } from "@tangent/core/cli";
 
-import { openUsage, type UsageClient } from "../core/index.js";
-import { ensureUsageIndex, type UsageIndexSource } from "../sdk/indexStore.js";
-import type { UsageProvider } from "../core/schema/usage-jsonl-v1.js";
+import { openUsageFromSqlite as openUsage, type UsageClient } from "@tangent/usage-index-sqlite/sqlite";
+import { ensureUsageIndex, type UsageIndexSource } from "@tangent/usage-index-sqlite/sdk/indexStore";
+import type { UsageProvider } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
 import { objectField } from "./human-output.js";
 
 export async function runUsageResourceCommand(args: Args): Promise<boolean> {

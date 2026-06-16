@@ -1,4 +1,4 @@
-import { openUsage, status as usageStatus, type ConversationListItem, type TurnListItem } from "@tangent/usage";
+import { openUsage, status as usageStatus, type ConversationListItem, type TurnListItem } from "@tangent/usage-index-sqlite";
 import { pathExists } from "@tangent/repo";
 
 import { loadConfig } from "../core/config.js";

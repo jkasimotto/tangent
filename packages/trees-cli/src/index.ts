@@ -4,14 +4,14 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { booleanArg, numberArg, parseArgs, renderCommandHelp, requiredString, stringArg, type Args } from "@tangent/core";
-import { createBuiltInAgentAdapters, buildTreesAgentEnv, findAgentAdapter } from "@tangent/trees-agents";
-import { generateAttentionItems } from "@tangent/trees-attention";
+import { createBuiltInAgentAdapters, buildTreesAgentEnv, findAgentAdapter } from "@tangent/trees-runtime/agents";
+import { generateAttentionItems } from "@tangent/trees-runtime/attention";
 import type { TreesClient } from "@tangent/trees-core";
-import { ensureEntityWorktree, worktreeStatus } from "@tangent/trees-git";
+import { ensureEntityWorktree, worktreeStatus } from "@tangent/trees-runtime/git";
 import { runTreesMcpStdio } from "@tangent/trees-mcp";
 import type { AgentRun, TerminalSession } from "@tangent/trees-schema";
-import { defaultTreesHome, openFsTrees } from "@tangent/trees-store-fs";
-import { createProcessRuntimeAdapter, createTmuxRuntimeAdapter, type TerminalRuntimeAdapter } from "@tangent/trees-terminal";
+import { defaultTreesHome, openFsTrees } from "@tangent/trees-runtime/fs";
+import { createProcessRuntimeAdapter, createTmuxRuntimeAdapter, type TerminalRuntimeAdapter } from "@tangent/trees-runtime/terminal";
 
 import { importPa } from "./import-pa.js";
 import { captureIds, estimateArg, humanEntity, humanRows, outcomeArg, output, promptArg, providerFromAdapter, requiredPos, spawnInherited, stdinText } from "./helpers.js";

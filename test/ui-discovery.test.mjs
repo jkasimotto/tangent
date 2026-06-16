@@ -10,6 +10,9 @@ test("UI discovery skips missing optional apps and loads installed apps", async 
     mode: "static",
     providers: [],
     sources: [],
+    startDir: "/repo",
+    listNodeModulesPackages: listUsageManifest,
+    readPackageJson: readUsageManifest,
     resolveModule: resolveOnlyUsage,
     importModule: importUsageRegistration
   });
@@ -27,6 +30,9 @@ test("UI discovery surfaces broken installed apps", async () => {
       mode: "static",
       providers: [],
       sources: [],
+      startDir: "/repo",
+      listNodeModulesPackages: listUsageManifest,
+      readPackageJson: readUsageManifest,
       resolveModule: resolveInstalledUsage,
       importModule: importBrokenUsage
     }),
@@ -46,6 +52,25 @@ test("UI discovery errors on unknown requested apps", async () => {
     }),
     /Unknown UI app: missing/
   );
+});
+
+test("UI discovery ignores incomplete manifest metadata", async () => {
+  const candidates = await discoverUiAppCandidates({
+    startDir: "/repo",
+    listNodeModulesPackages: listUsageManifest,
+    readPackageJson: async () => ({
+      name: "@tangent/usage",
+      tangent: {
+        uiApp: {
+          id: "usage",
+          serverExport: "@tangent/usage/server",
+          factory: "createUsageUiApp"
+        }
+      }
+    })
+  });
+
+  assert.deepEqual(candidates, []);
 });
 
 test("manifest UI app candidates override fallback candidates", async () => {

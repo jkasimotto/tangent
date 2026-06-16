@@ -3,7 +3,7 @@ import path from "node:path";
 import { changedFiles, currentCommit, diffStat, statusPorcelain } from "@tangent/repo/git";
 import { commitAll } from "@tangent/repo/worktree";
 
-import { scanRepo, type UsageJsonlLineV1 } from "@tangent/usage";
+import { scanRepo, type UsageJsonlLineV1 } from "@tangent/usage-index-sqlite";
 
 import type { EvalMetrics } from "../types/metrics.js";
 import type { EvalRunManifest, EvalRunVariantState } from "../types/run.js";

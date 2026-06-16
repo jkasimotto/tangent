@@ -7,6 +7,10 @@
     ".": {
       "types": "./src/index.ts",
       "import": "./dist/index.js"
+    },
+    "./providers/*": {
+      "types": "./src/providers/*.ts",
+      "import": "./dist/providers/*.js"
     }
   },
   "files": [
@@ -20,6 +24,8 @@
     "test": "npm run build && node --test test/*.test.mjs"
   },
   "dependencies": {
+    "@tangent/repo": "^0.1.0",
+    "@tangent/usage-core": "^0.1.0",
     "@tangent/usage-schema": "^0.1.0"
   },
   "license": "MIT",

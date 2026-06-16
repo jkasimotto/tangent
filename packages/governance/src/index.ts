@@ -60,32 +60,26 @@ const allowedPackageDeps: Record<string, string[]> = {
   "@tangent/repo": ["@tangent/core"],
   "@tangent/trees-schema": [],
   "@tangent/trees-core": ["@tangent/trees-schema"],
-  "@tangent/trees-store-fs": ["@tangent/trees-schema", "@tangent/trees-core"],
-  "@tangent/trees-store-sqlite": ["@tangent/trees-schema", "@tangent/trees-core"],
-  "@tangent/trees-git": ["@tangent/trees-schema", "@tangent/trees-core", "@tangent/repo"],
-  "@tangent/trees-terminal": ["@tangent/trees-schema", "@tangent/trees-core", "@tangent/core", "@tangent/agent-runtime"],
-  "@tangent/trees-agents": ["@tangent/trees-schema", "@tangent/trees-core"],
-  "@tangent/trees-attention": ["@tangent/trees-schema"],
+  "@tangent/trees-runtime": ["@tangent/trees-schema", "@tangent/trees-core", "@tangent/repo", "@tangent/core", "@tangent/agent-runtime"],
   "@tangent/trees-mcp": ["@tangent/trees-schema", "@tangent/trees-core"],
-  "@tangent/trees-cli": ["@tangent/core", "@tangent/trees-schema", "@tangent/trees-core", "@tangent/trees-store-fs", "@tangent/trees-git", "@tangent/trees-terminal", "@tangent/trees-agents", "@tangent/trees-attention", "@tangent/trees-mcp"],
+  "@tangent/trees-cli": ["@tangent/core", "@tangent/trees-schema", "@tangent/trees-core", "@tangent/trees-runtime", "@tangent/trees-mcp"],
   "@tangent/trees-ui": ["@tangent/ui-tokens"],
-  "@tangent/trees-server": ["@tangent/ui-server", "@tangent/trees-ui", "@tangent/trees-schema", "@tangent/trees-store-fs"],
+  "@tangent/trees-server": ["@tangent/ui-server", "@tangent/trees-ui", "@tangent/trees-schema", "@tangent/trees-runtime"],
   "@tangent/agent-runtime": ["@tangent/core"],
   "@tangent/governance": ["@tangent/core", "@tangent/repo"],
   "@tangent/usage-schema": [],
   "@tangent/usage-core": ["@tangent/core", "@tangent/repo", "@tangent/usage-schema"],
-  "@tangent/usage-index-sqlite": ["@tangent/usage-core", "@tangent/usage-schema"],
-  "@tangent/usage-providers": ["@tangent/usage-schema"],
-  "@tangent/usage-cli": ["@tangent/core", "@tangent/usage-core", "@tangent/usage-index-sqlite", "@tangent/usage-providers"],
-  "@tangent/usage": ["@tangent/core", "@tangent/repo", "@tangent/ui-server", "@tangent/usage-ui", "@tangent/usage-ui-data"],
+  "@tangent/usage-index-sqlite": ["@tangent/repo", "@tangent/usage-core", "@tangent/usage-schema", "@tangent/usage-providers"],
+  "@tangent/usage-providers": ["@tangent/repo", "@tangent/usage-core", "@tangent/usage-schema"],
+  "@tangent/usage": ["@tangent/core", "@tangent/repo", "@tangent/ui-server", "@tangent/usage-core", "@tangent/usage-index-sqlite", "@tangent/usage-providers", "@tangent/usage-ui", "@tangent/usage-ui-data"],
   "@tangent/ui-tokens": [],
   "@tangent/ui-server": ["@tangent/core"],
   "@tangent/tangent-ui": ["@tangent/ui-tokens"],
   "@tangent/usage-ui-data": [],
   "@tangent/usage-ui": ["@tangent/usage-ui-data", "@tangent/ui-tokens"],
   "@tangent/eval-ui": ["@tangent/ui-tokens"],
-  "@tangent/rollup": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage"],
-  "@tangent/eval": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage", "@tangent/ui-server", "@tangent/eval-ui"],
+  "@tangent/rollup": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage-index-sqlite"],
+  "@tangent/eval": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage-index-sqlite", "@tangent/ui-server", "@tangent/eval-ui"],
   "@tangent/search": ["@tangent/core", "@tangent/repo"]
 };
 
@@ -370,10 +364,10 @@ async function lintTreesPackageBoundaries(ctx: LintContext): Promise<GovernanceF
         findings.push(treeBoundaryFinding(rel, "trees-core imports trees-ui.", "Move view logic to trees-ui-data or trees-ui."));
       }
       if (/tmux|createTmuxRuntimeAdapter|tmuxSessionNameForEntityPath/.test(text)) {
-        findings.push(treeBoundaryFinding(rel, "trees-core references tmux implementation details.", "Keep tmux behavior inside @tangent/trees-terminal."));
+        findings.push(treeBoundaryFinding(rel, "trees-core references tmux implementation details.", "Keep tmux behavior inside @tangent/trees-runtime/terminal."));
       }
       if (/from\s+["']better-sqlite3["']|import\s+["']better-sqlite3["']/.test(text)) {
-        findings.push(treeBoundaryFinding(rel, "trees-core imports better-sqlite3.", "Move SQLite behavior to @tangent/trees-store-sqlite."));
+        findings.push(treeBoundaryFinding(rel, "trees-core imports better-sqlite3.", "Move SQLite behavior to @tangent/trees-runtime/sqlite."));
       }
     }
 

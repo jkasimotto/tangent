@@ -37,13 +37,16 @@ const uiAppPackages = new Map([
 /** Lints publishable package installability and optional root product composition. */
 export async function lintPackageInstallability(ctx: InstallabilityLintContext): Promise<GovernanceFinding[]> {
   const findings: GovernanceFinding[] = [];
-  for (const pkg of await packageDependencyInfos(ctx)) {
+  const packages = await packageDependencyInfos(ctx);
+  findings.push(...lintNoUiTransitiveForDataConsumers(ctx.root, packages));
+  for (const pkg of packages) {
     if (pkg.name === "tangent") {
+      findings.push(...lintRootPackageMode(ctx.root, pkg));
       findings.push(...lintRootOptionalProducts(ctx.root, pkg));
       findings.push(...await lintRootStaticProductImports(ctx.root));
     }
     const expectedUiApp = uiAppPackages.get(pkg.name);
-    if (expectedUiApp && uiAppId(pkg.manifest) !== expectedUiApp) {
+    if (expectedUiApp && uiAppMetadataError(pkg.manifest, expectedUiApp)) {
       findings.push({
         rule: "deps/ui-apps-declare-manifest",
         severity: "error",
@@ -92,6 +95,67 @@ export async function lintPackageInstallability(ctx: InstallabilityLintContext):
     }
   }
   return findings;
+}
+
+/** Prevents data consumers from pulling the full Usage app or Usage UI packages. */
+function lintNoUiTransitiveForDataConsumers(root: string, packages: PackageInfo[]): GovernanceFinding[] {
+  const byName = new Map(packages.map((pkg) => [pkg.name, pkg]));
+  const consumers = new Set(["@tangent/rollup", "@tangent/eval"]);
+  const forbidden = new Set(["@tangent/usage", "@tangent/usage-ui", "@tangent/usage-ui-data"]);
+  const findings: GovernanceFinding[] = [];
+  for (const consumer of consumers) {
+    const pkg = byName.get(consumer);
+    if (!pkg) continue;
+    const path = dependencyPath(pkg.name, forbidden, byName);
+    if (!path) continue;
+    findings.push({
+      rule: "deps/no-ui-transitive-for-data-consumers",
+      severity: "error",
+      file: relative(root, pkg.packageJsonPath),
+      message: `${consumer} pulls Usage UI/full app dependency path: ${path.join(" -> ")}.`,
+      fix: [
+        "Depend on @tangent/usage-index-sqlite and @tangent/usage-core for telemetry data.",
+        "Do not depend on @tangent/usage unless serving the Usage app UI."
+      ]
+    });
+  }
+  return findings;
+}
+
+/** Finds the first Tangent dependency path from a package to a forbidden target. */
+function dependencyPath(start: string, forbidden: Set<string>, packages: Map<string, PackageInfo>): string[] | undefined {
+  const queue: string[][] = [[start]];
+  const seen = new Set([start]);
+  while (queue.length) {
+    const path = queue.shift()!;
+    const current = packages.get(path.at(-1)!);
+    if (!current) continue;
+    for (const dep of Object.keys(current.manifest.dependencies || {})) {
+      if (!isTangentPackage(dep) || seen.has(dep)) continue;
+      const next = [...path, dep];
+      if (forbidden.has(dep)) return next;
+      seen.add(dep);
+      queue.push(next);
+    }
+  }
+  return undefined;
+}
+
+/** Requires the root package to declare its install/composition contract. */
+function lintRootPackageMode(root: string, pkg: PackageInfo): GovernanceFinding[] {
+  const tangent = pkg.manifest.tangent;
+  const mode = tangent && typeof tangent === "object" ? (tangent as { packageMode?: unknown }).packageMode : undefined;
+  if (mode === "thin-shell") return [];
+  return [{
+    rule: "deps/root-package-mode",
+    severity: "error",
+    file: relative(root, pkg.packageJsonPath),
+    message: "root tangent must declare tangent.packageMode as thin-shell.",
+    fix: [
+      "Add tangent.packageMode = \"thin-shell\" to the root package manifest.",
+      "Keep product packages as optional peers or separate installs."
+    ]
+  }];
 }
 
 /** Flags product packages that root installs as hard dependencies. */
@@ -149,14 +213,18 @@ async function rootSourceFiles(dir: string): Promise<string[]> {
   return files;
 }
 
-/** Reads the Tangent UI app id from a package manifest. */
-function uiAppId(manifest: PackageInfo["manifest"]): string | undefined {
+/** Validates Tangent UI app metadata in a package manifest. */
+function uiAppMetadataError(manifest: PackageInfo["manifest"], expectedId: string): boolean {
   const tangent = manifest.tangent;
-  if (!tangent || typeof tangent !== "object") return undefined;
+  if (!tangent || typeof tangent !== "object") return true;
   const uiApp = (tangent as { uiApp?: unknown }).uiApp;
-  if (!uiApp || typeof uiApp !== "object") return undefined;
-  const id = (uiApp as { id?: unknown }).id;
-  return typeof id === "string" ? id : undefined;
+  if (!uiApp || typeof uiApp !== "object") return true;
+  const raw = uiApp as { id?: unknown; label?: unknown; serverExport?: unknown; factory?: unknown; order?: unknown };
+  return raw.id !== expectedId ||
+    typeof raw.label !== "string" ||
+    typeof raw.serverExport !== "string" ||
+    typeof raw.factory !== "string" ||
+    typeof raw.order !== "number";
 }
 
 /** Returns root and workspace package manifests for dependency linting. */

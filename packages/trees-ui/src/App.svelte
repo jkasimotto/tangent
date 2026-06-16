@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { onMount } from "svelte";
-  import { createMemoryTreesUiClient, type TreesUiClient, type TreesUiEntity, type TreesUiProject, type TreesUiWorkspace } from "./client.js";
+  import { onDestroy, onMount } from "svelte";
+  import { createTreesApiClient, type TreesUiClient, type TreesUiEntity, type TreesUiProject, type TreesUiWorkspace } from "./client.js";
 
-  export let client: TreesUiClient = createMemoryTreesUiClient();
+  export let client: TreesUiClient = createTreesApiClient();
 
   type TreeNode = {
     entity: TreesUiEntity;
@@ -29,9 +29,18 @@
   let formProjectId = "";
   let formBranch = "";
   let formWorktreePath = "";
+  let pollTimer: ReturnType<typeof setInterval> | undefined;
+  let requestSequence = 0;
 
   onMount(() => {
     void loadWorkspace();
+    pollTimer = setInterval(() => {
+      if (!saving) void loadWorkspace({ polling: true });
+    }, 2000);
+  });
+
+  onDestroy(() => {
+    if (pollTimer) clearInterval(pollTimer);
   });
 
   $: nodes = buildTree(workspace.entities);
@@ -42,16 +51,18 @@
   $: configuredCount = workspace.entities.filter(isConfiguredLeafEntity).length;
   $: syncSelectedForm(selectedEntity);
 
-  async function loadWorkspace(): Promise<void> {
-    loading = true;
+  async function loadWorkspace(options: { polling?: boolean } = {}): Promise<void> {
+    const sequence = ++requestSequence;
+    if (!options.polling) loading = true;
     try {
       const next = await client.loadWorkspace();
+      if (sequence !== requestSequence) return;
       receiveWorkspace(next);
       error = "";
     } catch (caught) {
-      error = friendlyError(caught);
+      if (!options.polling) error = friendlyError(caught);
     } finally {
-      loading = false;
+      if (sequence === requestSequence && !options.polling) loading = false;
     }
   }
 
@@ -74,8 +85,11 @@
       return;
     }
     saving = true;
+    const sequence = ++requestSequence;
     try {
-      receiveWorkspace(await client.createPath(normalized), normalized);
+      const next = await client.createPath(normalized);
+      if (sequence !== requestSequence) return;
+      receiveWorkspace(next, normalized);
       expandAncestors(normalized);
       addPath = "";
       error = "";
@@ -93,12 +107,15 @@
       return;
     }
     saving = true;
+    const sequence = ++requestSequence;
     try {
-      receiveWorkspace(await client.saveLeaf(selectedEntity.id || selectedEntity.path, {
+      const next = await client.saveLeaf(selectedEntity.id || selectedEntity.path, {
         projectId: formProjectId,
         branch: formBranch.trim(),
         worktreePath: formWorktreePath.trim() || undefined
-      }), selectedEntity.path);
+      });
+      if (sequence !== requestSequence) return;
+      receiveWorkspace(next, selectedEntity.path);
       error = "";
     } catch (caught) {
       error = friendlyError(caught);
@@ -110,8 +127,11 @@
   async function clearLeaf(): Promise<void> {
     if (!selectedEntity) return;
     saving = true;
+    const sequence = ++requestSequence;
     try {
-      receiveWorkspace(await client.clearLeaf(selectedEntity.id || selectedEntity.path), selectedEntity.path);
+      const next = await client.clearLeaf(selectedEntity.id || selectedEntity.path);
+      if (sequence !== requestSequence) return;
+      receiveWorkspace(next, selectedEntity.path);
       error = "";
     } catch (caught) {
       error = friendlyError(caught);

@@ -6,3 +6,4 @@ Public import paths:
 Important exports:
 - `createTreesUiApp`
 - `TreesUiApp`
+- `TreesUiAppOptions`

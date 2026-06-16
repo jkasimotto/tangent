@@ -26,6 +26,28 @@ export type TreesUiClient = {
   clearLeaf(ref: string): Promise<TreesUiWorkspace>;
 };
 
+/** Creates a browser client backed by the local Trees HTTP API. */
+export function createTreesApiClient(basePath = "/api/trees"): TreesUiClient {
+  return {
+    /** Loads the current workspace from the Trees API. */
+    async loadWorkspace() {
+      return requestWorkspace(`${basePath}/workspace`);
+    },
+    /** Creates a semantic path through the Trees API. */
+    async createPath(path) {
+      return requestWorkspace(`${basePath}/entities/path`, { method: "POST", body: { path } });
+    },
+    /** Saves leaf metadata through the Trees API. */
+    async saveLeaf(ref, input) {
+      return requestWorkspace(`${basePath}/entities/${encodeURIComponent(ref)}/leaf`, { method: "POST", body: input });
+    },
+    /** Clears leaf metadata through the Trees API. */
+    async clearLeaf(ref) {
+      return requestWorkspace(`${basePath}/entities/${encodeURIComponent(ref)}/leaf/clear`, { method: "POST" });
+    }
+  };
+}
+
 /** Creates an in-memory Trees UI client for local previews and component tests. */
 export function createMemoryTreesUiClient(initial: Partial<TreesUiWorkspace> = {}): TreesUiClient {
   let workspace: TreesUiWorkspace = {
@@ -78,6 +100,39 @@ export function createMemoryTreesUiClient(initial: Partial<TreesUiWorkspace> = {
       return cloneWorkspace(workspace);
     }
   };
+}
+
+type RequestOptions = {
+  method?: "GET" | "POST";
+  body?: unknown;
+};
+
+/** Requests and validates a Trees workspace response. */
+async function requestWorkspace(url: string, options: RequestOptions = {}): Promise<TreesUiWorkspace> {
+  const response = await fetch(url, {
+    method: options.method || "GET",
+    headers: options.body === undefined ? undefined : { "content-type": "application/json" },
+    body: options.body === undefined ? undefined : JSON.stringify(options.body)
+  });
+  if (!response.ok) throw new Error(await responseError(response));
+  const value = await response.json() as Partial<TreesUiWorkspace>;
+  return {
+    entities: Array.isArray(value.entities) ? value.entities : [],
+    projects: Array.isArray(value.projects) ? value.projects : []
+  };
+}
+
+/** Reads a useful error message from a failed API response. */
+async function responseError(response: Response): Promise<string> {
+  const text = await response.text();
+  try {
+    const parsed = JSON.parse(text) as { error?: unknown };
+    if (typeof parsed.error === "string") return parsed.error;
+  } catch {
+    // Fall back to the raw response text below.
+  }
+  if (text.includes("<!doctype") || text.includes("<html")) return "Trees API unavailable. Start the app through `tangent ui trees`.";
+  return text.trim() || `Trees API request failed with ${response.status}.`;
 }
 
 /** Normalizes and validates user-entered tree paths. */

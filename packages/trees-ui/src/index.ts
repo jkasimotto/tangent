@@ -1,4 +1,5 @@
 export {
+  createTreesApiClient,
   createMemoryTreesUiClient,
   type TreesUiClient,
   type TreesUiEntity,

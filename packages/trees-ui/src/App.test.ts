@@ -5,7 +5,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App.svelte";
 import type { TreesUiClient, TreesUiWorkspace } from "./client.js";
 
-afterEach(() => cleanup());
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 describe("trees svelte app", () => {
   it("starts empty with the add-path form", async () => {
@@ -123,6 +126,33 @@ describe("trees svelte app", () => {
     expect(await screen.findByRole("treeitem", { name: /foo/i })).toHaveTextContent("Mixed");
     expect(screen.getByText("Group with leaf metadata")).toBeInTheDocument();
     expect(screen.getByText("This node has children and leaf metadata. Clear metadata to keep it as a group.")).toBeInTheDocument();
+  });
+
+  it("polls for workspace changes while preserving selection", async () => {
+    vi.useFakeTimers();
+    let workspace: TreesUiWorkspace = {
+      entities: [entity("foo", "group")],
+      projects: []
+    };
+    const client: TreesUiClient = {
+      loadWorkspace: vi.fn(async () => clone(workspace)),
+      createPath: vi.fn(),
+      saveLeaf: vi.fn(),
+      clearLeaf: vi.fn()
+    };
+    render(App, { props: { client } });
+
+    expect(await screen.findByRole("heading", { name: "foo" })).toBeInTheDocument();
+    workspace = {
+      entities: [entity("foo", "group")],
+      projects: [project("p1", "polez")]
+    };
+
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(client.loadWorkspace).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("heading", { name: "foo" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Project")).toHaveTextContent("polez");
   });
 });
 

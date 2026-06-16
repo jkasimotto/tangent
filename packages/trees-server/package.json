@@ -16,9 +16,11 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build -w @tangent/ui-server && npm run build -w @tangent/trees-ui && npm run build && node --test test/*.test.mjs"
+    "test": "npm run build -w @tangent/trees-schema && npm run build -w @tangent/trees-core && npm run build -w @tangent/trees-store-fs && npm run build -w @tangent/ui-server && npm run build -w @tangent/trees-ui && npm run build && node --test test/*.test.mjs"
   },
   "dependencies": {
+    "@tangent/trees-schema": "^0.1.0",
+    "@tangent/trees-store-fs": "^0.1.0",
     "@tangent/trees-ui": "^0.1.0",
     "@tangent/ui-server": "^0.1.0"
   },

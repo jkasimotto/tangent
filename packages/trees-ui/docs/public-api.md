@@ -10,4 +10,5 @@ Important exports:
 - `TreesUiWorkspace`
 - `TreesUiEntity`
 - `TreesUiProject`
+- `createTreesApiClient`
 - `createMemoryTreesUiClient`

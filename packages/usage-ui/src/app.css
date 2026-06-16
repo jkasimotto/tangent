@@ -435,7 +435,8 @@ button {
 .bar {
   width: calc(max(0.02, var(--row-width)) * 100%);
   min-width: 4px;
-  height: calc(20px + max(0.08, var(--row-height)) * 82px);
+  height: calc(var(--row-height) * 320px);
+  min-height: 4px;
   display: flex;
   flex-direction: column;
   gap: 2px;

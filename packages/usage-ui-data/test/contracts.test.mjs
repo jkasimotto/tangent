@@ -171,11 +171,48 @@ test("builds conversation token labels from context and output usage", () => {
   assert.equal(view.messages[1].tokenLabel, "1.2K");
 });
 
+test("scales conversation chart row heights by message duration", () => {
+  const view = buildUsageConversationView(
+    { id: "s1", provider: "codex", title: "Durations", endedAt: "2026-06-16T10:00:51.000Z", metrics: {}, availability: { notes: [] } },
+    [],
+    [
+      { id: "user", role: "user", textPreview: "Go", createdAt: "2026-06-16T10:00:00.000Z", toolCalls: [] },
+      { id: "short", role: "assistant", turnId: "turn1", textPreview: "Short", createdAt: "2026-06-16T10:00:01.000Z", tokenUsage: { total: 10 }, toolCalls: [] },
+      { id: "long", role: "assistant", turnId: "turn2", textPreview: "Long", createdAt: "2026-06-16T10:00:11.000Z", tokenUsage: { total: 10 }, toolCalls: [] }
+    ],
+    []
+  );
+
+  assert.equal(view.chart.rows[1].durationMs, 10_000);
+  assert.equal(view.chart.rows[2].durationMs, 40_000);
+  assert.equal(view.chart.rows[1].heightShare, 0.25);
+  assert.equal(view.chart.rows[2].heightShare, 1);
+});
+
+test("links unowned steps to the assistant row whose timestamp window contains them", () => {
+  const view = buildUsageConversationView(
+    { id: "s1", provider: "codex", title: "Step windows", endedAt: "2026-06-16T10:00:30.000Z", metrics: {}, availability: { notes: [] } },
+    [],
+    [
+      { id: "user", role: "user", textPreview: "Go", createdAt: "2026-06-16T10:00:00.000Z", toolCalls: [] },
+      { id: "m1", role: "assistant", turnId: "turn1", textPreview: "First", createdAt: "2026-06-16T10:00:01.000Z", tokenUsage: { total: 10 }, toolCalls: [] },
+      { id: "m2", role: "assistant", turnId: "turn1", textPreview: "Second", createdAt: "2026-06-16T10:00:20.000Z", tokenUsage: { total: 10 }, toolCalls: [] }
+    ],
+    [
+      { id: "inside", turnId: "turn1", kind: "command", label: "inside command", startedAt: "2026-06-16T10:00:05.000Z", durationMs: 8_000, order: 1, metrics: {} },
+      { id: "outside", turnId: "turn1", kind: "command", label: "outside command", startedAt: "2026-06-16T10:00:25.000Z", durationMs: 4_000, order: 2, metrics: {} }
+    ]
+  );
+
+  assert.deepEqual(view.chart.rows[1].segments.map((segment) => segment.label), ["inside command"]);
+  assert.deepEqual(view.chart.rows[2].segments.map((segment) => segment.label), ["outside command"]);
+});
+
 test("uses equal internal segment heights when step durations are unavailable", () => {
   const view = buildUsageConversationView(
     { id: "s1", provider: "codex", title: "Partial", metrics: {}, availability: { notes: [] } },
     [],
-    [{ id: "m1", role: "assistant", turnId: "turn1", textPreview: "Done", tokenUsage: { total: 10 }, toolCalls: [] }],
+    [{ id: "m1", role: "assistant", turnId: "turn1", stepId: "a", textPreview: "Done", tokenUsage: { total: 10 }, toolCalls: [{ id: "tool", stepId: "b" }] }],
     [
       { id: "a", turnId: "turn1", kind: "assistant_response", label: "Assistant", order: 1, metrics: {} },
       { id: "b", turnId: "turn1", kind: "command", label: "Command", order: 2, metrics: {} }

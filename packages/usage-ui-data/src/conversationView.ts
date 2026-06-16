@@ -27,7 +27,7 @@ export function buildUsageConversationView(
   const query = (options.query || "").trim().toLowerCase();
   const visibleSessions = query ? sessions.filter((session) => sessionMatches(session, query)) : sessions;
   const conversationMessages = messages.map(conversationMessage);
-  const rows = chartRows(conversationMessages, messages, steps);
+  const rows = chartRows(conversationMessages, messages, steps, selectedSession.endedAt);
   const maxTokens = Math.max(1, ...rows.map((row) => row.tokens || 0));
   const maxDurationMs = Math.max(1, ...rows.map((row) => row.durationMs || 0));
   return {
@@ -46,7 +46,7 @@ export function buildUsageConversationView(
       rows: rows.map((row) => ({
         ...row,
         widthShare: row.tokens === undefined ? 0.02 : Math.max(0.02, row.tokens / maxTokens),
-        heightShare: row.durationMs === undefined ? 0.12 : Math.max(0.08, row.durationMs / maxDurationMs)
+        heightShare: row.durationMs === undefined ? 0.08 : row.durationMs / maxDurationMs
       }))
     },
     caveats: conversationCaveats(rows, options.caveats || [])
@@ -115,10 +115,10 @@ function conversationMessage(message: UsageMessage): UsageConversationMessage {
 }
 
 /** Builds chart rows from messages and their linked steps. */
-function chartRows(conversationMessages: UsageConversationMessage[], rawMessages: UsageMessage[], steps: UsageStep[]): UsageConversationChartRow[] {
+function chartRows(conversationMessages: UsageConversationMessage[], rawMessages: UsageMessage[], steps: UsageStep[], sessionEndedAt?: string): UsageConversationChartRow[] {
   const rawById = new Map(rawMessages.map((message) => [message.id, message]));
   const stepById = new Map(steps.map((step) => [step.id, step]));
-  const stepsByTurn = groupBy(steps.filter((step) => step.turnId && step.kind !== "session" && step.kind !== "turn"), (step) => step.turnId!);
+  const stepCandidates = steps.filter((step) => step.kind !== "session" && step.kind !== "turn" && step.kind !== "user_message");
   return conversationMessages.map((message, index) => {
     const raw = rawById.get(message.id);
     if (message.role !== "assistant") {
@@ -140,9 +140,11 @@ function chartRows(conversationMessages: UsageConversationMessage[], rawMessages
       };
     }
 
-    const linked = linkedMessageSteps(raw, stepById, stepsByTurn);
+    const startMs = parseTimeMs(message.at);
+    const endMs = parseTimeMs(conversationMessages[index + 1]?.at) ?? parseTimeMs(sessionEndedAt);
+    const linked = linkedMessageSteps(raw, stepById, stepCandidates, startMs, endMs);
     const segments = chartSegments(message.id, linked);
-    const duration = message.durationMs ?? stepDurationTotal(linked) ?? segmentDurationTotal(segments);
+    const duration = message.durationMs ?? stepDurationTotal(linked) ?? segmentDurationTotal(segments) ?? elapsedUntilNextMessage(conversationMessages, index, sessionEndedAt);
     return {
       id: `row:${message.id}`,
       messageId: message.id,
@@ -163,7 +165,7 @@ function chartRows(conversationMessages: UsageConversationMessage[], rawMessages
 }
 
 /** Finds message-owned and turn-owned steps for an assistant row. */
-function linkedMessageSteps(message: UsageMessage | undefined, stepById: Map<string, UsageStep>, stepsByTurn: Map<string, UsageStep[]>): UsageStep[] {
+function linkedMessageSteps(message: UsageMessage | undefined, stepById: Map<string, UsageStep>, steps: UsageStep[], startMs: number | undefined, endMs: number | undefined): UsageStep[] {
   if (!message) return [];
   const direct = message.stepId ? stepById.get(message.stepId) : undefined;
   const result = new Map<string, UsageStep>();
@@ -174,9 +176,10 @@ function linkedMessageSteps(message: UsageMessage | undefined, stepById: Map<str
     if (callStep) result.set(callStep.id, callStep);
     if (resultStep) result.set(resultStep.id, resultStep);
   }
-  if (result.size <= 1 && message.turnId) {
-    for (const step of stepsByTurn.get(message.turnId) || []) {
-      if (step.kind === "user_message") continue;
+  if (result.size <= 1 && startMs !== undefined && endMs !== undefined && endMs >= startMs) {
+    for (const step of steps) {
+      const stepMs = parseTimeMs(step.startedAt);
+      if (stepMs === undefined || stepMs < startMs || stepMs >= endMs) continue;
       result.set(step.id, step);
     }
   }
@@ -235,6 +238,14 @@ function messageDuration(message: UsageMessage): number | undefined {
   return direct ?? (toolTotal || undefined);
 }
 
+/** Derives message work time from this message timestamp to the next message or session end. */
+function elapsedUntilNextMessage(messages: UsageConversationMessage[], index: number, sessionEndedAt: string | undefined): number | undefined {
+  const start = parseTimeMs(messages[index]?.at);
+  const end = parseTimeMs(messages[index + 1]?.at) ?? parseTimeMs(sessionEndedAt);
+  if (start === undefined || end === undefined || end < start) return undefined;
+  return end - start;
+}
+
 /** Maps a step to an internal chart segment kind. */
 function segmentKind(step: UsageStep): UsageConversationChartSegment["kind"] {
   if (step.kind === "assistant_response" || step.kind === "model_call" || step.kind === "subagent") return "assistant";
@@ -256,6 +267,13 @@ function stepDurationTotal(values: UsageStep[]): number | undefined {
 function segmentDurationTotal(values: UsageConversationChartSegment[]): number | undefined {
   const total = values.reduce((sum, value) => sum + (value.durationMs || 0), 0);
   return total || undefined;
+}
+
+/** Parses a timestamp into epoch milliseconds. */
+function parseTimeMs(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 /** Returns whether a session matches a picker query. */

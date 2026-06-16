@@ -39,6 +39,7 @@ import { eventsToProjections, type UsageProjectionInput, type UsageProjections }
 
 export type OpenUsageOptions = {
   repo?: string;
+  scope?: "repo" | "all";
   workspace?: string;
   providers?: string[];
   sources?: Array<UsageSourceKind | string>;

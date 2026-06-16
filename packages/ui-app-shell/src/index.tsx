@@ -6,15 +6,26 @@ export type TangentNavModel = {
   product: "usage" | "eval" | "rollup" | string;
   sections: Array<{
     label?: string;
-    items: Array<{
-      id: string;
-      label: string;
-      href: string;
-      icon?: string;
-      badge?: string | number;
-    }>;
+    items: TangentNavItem[];
   }>;
   actions?: ActionModel[];
+};
+
+export type TangentNavItem = {
+  id: string;
+  label: string;
+  href: string;
+  icon?: string;
+  badge?: string | number;
+};
+
+export type TangentAppShellProps = {
+  nav: TangentNavModel;
+  repo?: string;
+  inspector?: ReactNode;
+  activeItemId?: string;
+  onNavigate?: (item: TangentNavItem) => void;
+  children: ReactNode;
 };
 
 /** Renders the TangentAppShell UI. */
@@ -22,17 +33,14 @@ export function TangentAppShell({
   nav,
   repo,
   inspector,
+  activeItemId,
+  onNavigate,
   children
-}: {
-  nav: TangentNavModel;
-  repo?: string;
-  inspector?: ReactNode;
-  children: ReactNode;
-}): React.ReactElement {
+}: TangentAppShellProps): React.ReactElement {
   return (
     <AppFrame
       topBar={<TopBar nav={nav} repo={repo} />}
-      sidebar={<PackageNavigation nav={nav} />}
+      sidebar={<PackageNavigation nav={nav} activeItemId={activeItemId} onNavigate={onNavigate} />}
       inspector={inspector}
     >
       {children}
@@ -89,14 +97,31 @@ function TopBar({ nav, repo }: { nav: TangentNavModel; repo?: string }): React.R
 }
 
 /** Renders the PackageNavigation UI. */
-function PackageNavigation({ nav }: { nav: TangentNavModel }): React.ReactElement {
+function PackageNavigation({
+  nav,
+  activeItemId,
+  onNavigate
+}: {
+  nav: TangentNavModel;
+  activeItemId?: string;
+  onNavigate?: (item: TangentNavItem) => void;
+}): React.ReactElement {
   return (
     <nav className="tg-shell-nav" aria-label={`${nav.product} navigation`}>
       {nav.sections.map((section, index) => (
         <section key={section.label || index}>
           {section.label ? <h2>{section.label}</h2> : null}
           {section.items.map((item) => (
-            <a key={item.id} href={item.href}>
+            <a
+              key={item.id}
+              href={item.href}
+              aria-current={item.id === activeItemId ? "page" : undefined}
+              onClick={(event) => {
+                if (!onNavigate || event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+                event.preventDefault();
+                onNavigate(item);
+              }}
+            >
               <span>{item.label}</span>
               {item.badge !== undefined ? <Badge>{String(item.badge)}</Badge> : null}
             </a>

@@ -276,6 +276,10 @@ function projectSteps(events: AnnotatedEvent[]): UsageStep[] {
 
 function projectMessages(events: AnnotatedEvent[], steps: UsageStep[], contentMode: UsageContentMode): UsageMessage[] {
   const messageEvents = events.filter((event) => event.kind === "message");
+  const stepIndex = indexStepsByEvent(steps);
+  const toolUseByMessage = new Set(events
+    .filter((event) => event.kind === "tool.call" && event.scope.messageId)
+    .map((event) => `${event.scope.sessionId}:${event.scope.messageId}`));
   const bySession = new Map<string, number>();
   return messageEvents.map((event) => {
     const ordinal = (bySession.get(event.scope.sessionId) || 0) + 1;
@@ -283,7 +287,7 @@ function projectMessages(events: AnnotatedEvent[], steps: UsageStep[], contentMo
     const text = contentMode === "metadata-only" ? undefined : event.data.text;
     const textPreviewValue = event.data.textPreview || preview(text);
     const id = event.scope.messageId || `msg:${event.scope.sessionId}:${ordinal}`;
-    const step = steps.find((item) => item.evidence.some((evidence) => evidence.eventId === event.id));
+    const step = stepIndex.get(event.id);
     const role = normalizeMessageRole(messageRole(event));
     return {
       schema: "tangent.usage.message.v1",
@@ -300,7 +304,7 @@ function projectMessages(events: AnnotatedEvent[], steps: UsageStep[], contentMo
       textBytes: text ? Buffer.byteLength(text, "utf8") : textPreviewValue ? Buffer.byteLength(textPreviewValue, "utf8") : undefined,
       contentMode,
       model: event.actor?.model || event.data.model,
-      hasToolUse: events.some((candidate) => candidate.scope.messageId === id && candidate.kind === "tool.call"),
+      hasToolUse: toolUseByMessage.has(`${event.scope.sessionId}:${id}`),
       hasThinking: Boolean(event.data.thinkingSummary || event.data.summary || event.data.encrypted_content_present),
       thinkingSummary: stringValue(field(event.data, "thinkingSummary")) || stringValue(field(event.data, "summary")),
       confidence: event.availability.confidence,
@@ -311,10 +315,15 @@ function projectMessages(events: AnnotatedEvent[], steps: UsageStep[], contentMo
 }
 
 function projectToolCalls(events: AnnotatedEvent[], steps: UsageStep[], results: UsageToolResult[]): UsageToolCall[] {
+  const stepIndex = indexStepsByEvent(steps);
+  const resultByToolCallId = new Map<string, UsageToolResult>();
+  for (const result of results) {
+    if (result.toolCallId && !resultByToolCallId.has(result.toolCallId)) resultByToolCallId.set(result.toolCallId, result);
+  }
   return events.filter((event) => event.kind === "tool.call").map((event) => {
     const id = event.scope.toolCallId || event.data.tool?.id || `tool:${event.id}`;
-    const step = stepForEvent(steps, event);
-    const result = results.find((candidate) => candidate.toolCallId === id);
+    const step = stepIndex.get(event.id);
+    const result = resultByToolCallId.get(id);
     return {
       schema: "tangent.usage.tool_call.v1",
       id,
@@ -338,8 +347,9 @@ function projectToolCalls(events: AnnotatedEvent[], steps: UsageStep[], results:
 }
 
 function projectToolResults(events: AnnotatedEvent[], steps: UsageStep[]): UsageToolResult[] {
+  const stepIndex = indexStepsByEvent(steps);
   return events.filter((event) => event.kind === "tool.result").map((event) => {
-    const step = stepForEvent(steps, event);
+    const step = stepIndex.get(event.id);
     return {
       schema: "tangent.usage.tool_result.v1",
       id: `tool-result:${event.id}`,
@@ -360,14 +370,17 @@ function projectToolResults(events: AnnotatedEvent[], steps: UsageStep[]): Usage
 }
 
 function refreshSessionCounts(sessions: UsageSession[], turns: UsageTurn[], steps: UsageStep[], messages: UsageMessage[]): UsageSession[] {
+  const turnsBySession = groupBy(turns, (turn) => turn.sessionId);
+  const stepsBySession = groupBy(steps, (step) => step.sessionId);
+  const messagesBySession = groupBy(messages, (message) => message.sessionId);
   return sessions.map((session) => {
-    const sessionMessages = messages.filter((message) => message.sessionId === session.id);
-    const sessionSteps = steps.filter((step) => step.sessionId === session.id);
+    const sessionMessages = messagesBySession.get(session.id) || [];
+    const sessionSteps = stepsBySession.get(session.id) || [];
     const files = new Set(sessionSteps.flatMap((step) => step.targetPaths));
     return {
       ...session,
       counts: {
-        turns: turns.filter((turn) => turn.sessionId === session.id).length,
+        turns: (turnsBySession.get(session.id) || []).length,
         messages: sessionMessages.length,
         userMessages: sessionMessages.filter((message) => message.role === "user").length,
         assistantMessages: sessionMessages.filter((message) => message.role === "assistant").length,
@@ -411,15 +424,16 @@ function annotateTurns(events: UsageEventV3[]): AnnotatedEvent[] {
 
 function linkToolResultSteps(steps: UsageStep[], events: AnnotatedEvent[]): void {
   const callStepById = new Map<string, UsageStep>();
+  const stepIndex = indexStepsByEvent(steps);
   for (const event of events) {
     if (event.kind !== "tool.call") continue;
-    const step = stepForEvent(steps, event);
+    const step = stepIndex.get(event.id);
     const id = event.scope.toolCallId || event.data.tool?.id;
     if (id && step) callStepById.set(id, step);
   }
   for (const event of events) {
     if (event.kind !== "tool.result") continue;
-    const resultStep = stepForEvent(steps, event);
+    const resultStep = stepIndex.get(event.id);
     const callId = event.scope.toolCallId || event.data.tool?.id;
     const callStep = callId ? callStepById.get(callId) : undefined;
     if (resultStep && callStep) resultStep.parentStepId = callStep.id;
@@ -433,18 +447,28 @@ function linkToolResultSteps(steps: UsageStep[], events: AnnotatedEvent[]): void
   }
 }
 
-function stepForEvent(steps: UsageStep[], event: UsageEventV3): UsageStep | undefined {
-  return steps.find((step) =>
-    step.kind !== "session" &&
-    step.kind !== "turn" &&
-    step.evidence.some((evidence) => evidence.eventId === event.id)
-  ) || steps.find((step) => step.evidence.some((evidence) => evidence.eventId === event.id));
+function indexStepsByEvent(steps: UsageStep[]): Map<string, UsageStep> {
+  const result = new Map<string, UsageStep>();
+  for (const step of steps) {
+    for (const evidence of step.evidence) {
+      const current = result.get(evidence.eventId);
+      if (!current || stepSpecificity(step) > stepSpecificity(current)) result.set(evidence.eventId, step);
+    }
+  }
+  return result;
+}
+
+function stepSpecificity(step: UsageStep): number {
+  if (step.kind === "session") return 0;
+  if (step.kind === "turn") return 1;
+  return 2;
 }
 
 function attachToolResultSteps(steps: UsageStep[], calls: UsageToolCall[]): void {
+  const stepById = new Map(steps.map((step) => [step.id, step]));
   for (const call of calls) {
-    const step = steps.find((item) => item.id === call.stepId);
-    const result = call.result?.stepId ? steps.find((item) => item.id === call.result?.stepId) : undefined;
+    const step = call.stepId ? stepById.get(call.stepId) : undefined;
+    const result = call.result?.stepId ? stepById.get(call.result.stepId) : undefined;
     if (step && result && step.durationMs === undefined && result.durationMs !== undefined) {
       step.durationMs = result.durationMs;
       step.selfDurationMs = result.durationMs;
@@ -456,9 +480,9 @@ function attachToolResultSteps(steps: UsageStep[], calls: UsageToolCall[]): void
 }
 
 function attachMessageTokens(messages: UsageMessage[], events: AnnotatedEvent[]): void {
-  const usageEvents = events.filter((event) => event.data.usage);
+  const usageEvents = groupBy(events.filter((event) => event.data.usage && event.scope.messageId), (event) => `${event.scope.sessionId}:${event.scope.messageId}`);
   for (const message of messages) {
-    const direct = usageEvents.filter((event) => event.scope.messageId === message.id && event.scope.sessionId === message.sessionId);
+    const direct = usageEvents.get(`${message.sessionId}:${message.id}`) || [];
     if (direct.length) message.tokenUsage = aggregateTokenUsage(direct.map((event) => event.data.usage).filter(isDefined));
   }
 }

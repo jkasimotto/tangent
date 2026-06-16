@@ -44,3 +44,9 @@
 .tg-shell-nav a:hover {
   background: var(--tangent-color-surface-inset);
 }
+
+.tg-shell-nav a[aria-current="page"] {
+  background: var(--tangent-color-surface-inset);
+  color: var(--tangent-color-accent);
+  font-weight: 650;
+}

@@ -13,6 +13,7 @@ import type { UsageDataset, VisibleMessage } from "../core/dataset.js";
 import type { UsageProvider } from "../core/schema/usage-jsonl-v1.js";
 import { runUsageResourceCommand } from "./resource-commands.js";
 import { usageCommandSpec } from "./spec.js";
+import { usageUiCommand } from "./ui.js";
 import {
   formatDatePart,
   formatDateTime,
@@ -54,6 +55,7 @@ type UsageRow = {
   confidence: string;
 };
 
+/** Runs the Usage CLI dispatcher for normalized telemetry commands. */
 export async function runUsageCli(argv = process.argv.slice(2)): Promise<void> {
   const args = parseArgs(argv, { repeatable: ["metric", "group"] });
   const [command, subcommand] = args._;
@@ -74,6 +76,11 @@ export async function runUsageCli(argv = process.argv.slice(2)): Promise<void> {
     const value = await status({ repo: args._[1] || ".", providers: providerList(args.provider).filter((p): p is UsageProvider => p !== "all") });
     if (args.json) console.log(JSON.stringify(value, null, 2));
     else printUsageStatus(value, Boolean(args.verbose));
+    return;
+  }
+
+  if (command === "ui") {
+    await usageUiCommand(args);
     return;
   }
 
@@ -319,6 +326,7 @@ export async function runUsageCli(argv = process.argv.slice(2)): Promise<void> {
   throw new Error(`Unknown usage command: ${command}`);
 }
 
+/** Prints repository capture coverage and provider capability status. */
 function printUsageStatus(value: Awaited<ReturnType<typeof status>>, verbose: boolean): void {
   const repoName = value.repo.gitRoot ? value.repo.gitRoot.split("/").at(-1) : value.repo.path.split("/").at(-1);
   console.log(`Repo: ${repoName || value.repo.path} (${value.repo.branch || "unknown"})`);
@@ -344,6 +352,7 @@ function printUsageStatus(value: Awaited<ReturnType<typeof status>>, verbose: bo
   }
 }
 
+/** Prints native transcript discovery output for usage init. */
 function printNativeInit(value: Awaited<ReturnType<typeof status>>): void {
   console.log(`Repo: ${value.repo.gitRoot || value.repo.path}`);
   for (const provider of value.providers) {
@@ -357,6 +366,7 @@ function printNativeInit(value: Awaited<ReturnType<typeof status>>): void {
   console.log("Native transcripts are the usage source of truth. Legacy usage-jsonl files remain readable with --source all.");
 }
 
+/** Prints registered native provider schema descriptors. */
 function printNativeSchemas(rows: ReturnType<typeof listNativeSchemas>): void {
   console.log("Known native log schemas");
   if (!rows.length) {
@@ -371,6 +381,7 @@ function printNativeSchemas(rows: ReturnType<typeof listNativeSchemas>): void {
   }
 }
 
+/** Prints native provider schema compatibility rows. */
 function printNativeSchemaStatuses(rows: NativeProviderSchemaStatus[]): void {
   console.log("Native log schema status");
   for (const row of rows) {
@@ -379,6 +390,7 @@ function printNativeSchemaStatuses(rows: NativeProviderSchemaStatus[]): void {
   }
 }
 
+/** Prints a concise summary of one inspected native log file. */
 function printNativeInspection(row: NativeLogInspection): void {
   console.log(`Native log: ${row.path}`);
   console.log(`  Provider: ${row.provider || "unknown"}`);
@@ -394,6 +406,7 @@ function printNativeInspection(row: NativeLogInspection): void {
   if (row.variants.length > 20) console.log(`    ... ${row.variants.length - 20} more`);
 }
 
+/** Formats native schema compatibility into a single terminal line. */
 function nativeSchemaSummary(row: NativeProviderSchemaStatus): string {
   if (row.compatibility === "no-native-logs") return "no native logs found";
   const versions = row.observedVersions.length ? row.observedVersions.join(", ") : "version unknown";
@@ -402,6 +415,7 @@ function nativeSchemaSummary(row: NativeProviderSchemaStatus): string {
   return `${row.compatibility} files=${row.files} records=${row.records} versions=${versions}${schemas}${parse}`;
 }
 
+/** Maps a usage dataset into sorted session rows for CLI output. */
 function sessionRows(dataset: UsageDataset, query: { date?: string; provider?: UsageProvider } = {}): SessionRow[] {
   const turns = dataset.turns.list({ provider: query.provider }).data;
   const conversations = dataset.conversations.all().data
@@ -430,6 +444,7 @@ function sessionRows(dataset: UsageDataset, query: { date?: string; provider?: U
     .sort((a, b) => (b.lastActivityAt?.getTime() || 0) - (a.lastActivityAt?.getTime() || 0));
 }
 
+/** Prints a compact session list. */
 function printUsageSessions(rows: SessionRow[], date?: string): void {
   console.log(date ? `Sessions for ${date}` : "Sessions");
   if (!rows.length) {
@@ -444,6 +459,7 @@ function printUsageSessions(rows: SessionRow[], date?: string): void {
   }
 }
 
+/** Prints one session summary. */
 function printUsageSession(row: SessionRow): void {
   console.log(`Session: ${row.shortId}`);
   console.log(`Provider: ${row.provider}`);
@@ -457,6 +473,7 @@ function printUsageSession(row: SessionRow): void {
   if (row.firstPrompt) console.log(`Prompt:   ${preview(row.firstPrompt, 140)}`);
 }
 
+/** Aggregates token usage events for raw rows or model-level totals. */
 function aggregateUsageEvents(events: UsageDataset["events"], by?: string, includeEstimates = false): Array<Record<string, unknown>> {
   const usageEvents: UsageRow[] = events.flatMap((event) => {
     const usage = objectField(event.data, "usage") || (event.kind === "token.usage" ? objectField(event.data, "totals") || event.data : undefined);
@@ -488,6 +505,7 @@ function aggregateUsageEvents(events: UsageDataset["events"], by?: string, inclu
   return [...grouped.values()];
 }
 
+/** Builds estimated token rows from visible message text. */
 function estimatedUsageRows(events: UsageDataset["events"]): UsageRow[] {
   return events.flatMap((event) => {
     if (event.kind !== "message.user" && event.kind !== "message.assistant.visible") return [];
@@ -507,10 +525,12 @@ function estimatedUsageRows(events: UsageDataset["events"]): UsageRow[] {
   });
 }
 
+/** Estimates token count from text length when provider totals are absent. */
 function estimateTokens(text: string): number {
   return Math.max(1, Math.ceil(text.replace(/\s+/g, " ").trim().length / 4));
 }
 
+/** Prints known or estimated token usage rows. */
 function printUsageTokens(rows: Array<Record<string, unknown>>, providers: UsageProvider[]): void {
   console.log("Known token usage");
   if (!rows.length) {
@@ -529,6 +549,7 @@ function printUsageTokens(rows: Array<Record<string, unknown>>, providers: Usage
   }
 }
 
+/** Normalizes common token usage field names into CLI totals. */
 function usageTotals(value: unknown): { input: number; output: number; total: number; cacheRead: number } {
   return {
     input: numberField(value, "input") || numberField(value, "input_tokens") || 0,
@@ -538,49 +559,60 @@ function usageTotals(value: unknown): { input: number; output: number; total: nu
   };
 }
 
+/** Returns a required session argument or throws a CLI error. */
 function requiredSession(value: string | undefined): string {
   if (!value) throw new Error("A session id is required.");
   return value;
 }
+/** Returns a required path argument or throws the provided CLI error. */
 function requiredPath(value: string | undefined, message: string): string {
   if (!value) throw new Error(message);
   return value;
 }
+/** Returns the latest defined date from a list. */
 function latestDate(values: Array<Date | undefined>): Date | undefined {
   return values.filter(Boolean).sort((a, b) => b!.getTime() - a!.getTime())[0];
 }
+/** Sums a list of numeric values. */
 function sumNumbers(values: number[]): number {
   return values.reduce((sum, value) => sum + value, 0);
 }
+/** Returns today's local date in report date format. */
 function todayDate(): string {
   return formatDatePart(new Date());
 }
+/** Parses an optional CLI date argument. */
 function dateArg(value: unknown): Date | undefined {
   if (typeof value !== "string") return undefined;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) throw new Error(`Invalid date: ${value}`);
   return date;
 }
+/** Parses a required provider CLI argument. */
 function providerArg(value: unknown): UsageProvider {
   if (value === "claude" || value === "codex") return value;
   throw new Error("--provider must be claude or codex.");
 }
 
+/** Parses an optional provider CLI argument. */
 function providerArgOrUndefined(value: unknown): UsageProvider | undefined {
   if (value === undefined) return undefined;
   return providerArg(value);
 }
+/** Parses a provider argument that may request all providers. */
 function providerOrAll(value: unknown): UsageProvider | "all" {
   if (value === undefined) return "all";
   if (value === "all" || value === "claude" || value === "codex") return value;
   throw new Error("--provider must be claude, codex, or all.");
 }
 
+/** Expands the provider CLI argument into provider filters. */
 function providerList(value: unknown): Array<UsageProvider | "all"> {
   const provider = providerOrAll(value);
   return provider === "all" ? ["claude", "codex"] : [provider];
 }
 
+/** Parses the usage index source CLI argument. */
 function sourceList(value: unknown): UsageIndexSource[] {
   if (value === undefined || value === "native") return ["native"];
   if (value === "all") return ["native", "usage-jsonl"];

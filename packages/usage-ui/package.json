@@ -21,7 +21,7 @@
   "scripts": {
     "build": "vite build && tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && vitest run --environment jsdom"
+    "test": "npm run build -w @tangent/usage-ui-data && npm run build && vitest run --environment jsdom"
   },
   "dependencies": {
     "@tangent/usage-ui-data": "^0.1.0",

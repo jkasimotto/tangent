@@ -17,6 +17,7 @@ export async function openUsageFromSqlite(options: OpenUsageOptions = {}): Promi
   const providers = options.providers?.filter((provider) => provider === "claude" || provider === "codex") as Array<"claude" | "codex"> | undefined;
   const dataset = await loadUsageDatasetFromIndex({
     repo: options.repo || ".",
+    scope: options.scope,
     providers,
     sources: sqliteSources(options.sources),
     since: options.from ? new Date(options.from) : undefined,

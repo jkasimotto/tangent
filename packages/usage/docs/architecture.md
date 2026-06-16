@@ -4,6 +4,7 @@ Conversation telemetry domain: schemas, native-log schema compatibility, legacy 
 
 Product split:
 - `usage` is the human-readable activity CLI: sessions, messages, steps, tools, tokens, analytics, raw events, status, and export.
+- `usage ui` starts the local Usage UI server, serving compiled `@tangent/usage-ui` assets and `/api/usage/*` routes over public Usage core APIs.
 - `tangent-usage` is the standalone install binary; `tangent usage` is the full-suite root command.
 - `@tangent/usage/schema`, `/core`, and `/query` are dependency-light and must not import SQLite, pricing tables, server/UI code, or provider-specific native parser dependencies at module load time.
 - `@tangent/usage/core` projects normalized events into `tangent.usage.session.v1`, `turn.v1`, `step.v1`, `message.v1`, timeline, and aggregate resources.
@@ -20,6 +21,7 @@ Capture notes:
 - Native transcript indexing skips incomplete in-progress files. A file is eligible when the provider marks it complete, or when it has been quiet for at least 15 minutes and does not end on a user message.
 - Native schemas remain version-tagged and permissive so Tangent can warn when provider versions drift beyond known ranges.
 - `openUsage({ index: "auto" })` uses SQLite when the optional dependency is available and falls back to in-memory projections when it is not.
+- `startUsageUiServer` uses `openUsage({ index: "auto" })`, maps domain data through `@tangent/usage-ui-data`, and lazily imports UI server/assets only when the UI command starts.
 - Provider native transcript files and legacy hook JSONL files are ingested incrementally by source-file metadata when SQLite is available.
 - Provider ids are open strings in public APIs. Built-in Claude/Codex adapters are registered through the provider adapter contract; unknown providers require caller-supplied adapters.
 

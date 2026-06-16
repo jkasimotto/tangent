@@ -5,4 +5,6 @@ Public import paths:
 
 Important exports:
 - `UsageUiClient`
+- `createUsageApiClient`
+- `createUsageUiClient`
 - Usage session, timeline, transcript, metrics, provider, and message-selection DTOs.

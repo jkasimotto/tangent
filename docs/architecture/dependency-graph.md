@@ -14,7 +14,7 @@ root CLI
 
 @tangent/rollup -> @tangent/usage, @tangent/core, @tangent/repo, @tangent/agent-runtime
 @tangent/eval -> @tangent/usage, @tangent/core, @tangent/repo, @tangent/agent-runtime
-@tangent/usage -> @tangent/core, @tangent/repo (optional: better-sqlite3 behind @tangent/usage/sqlite)
+@tangent/usage -> @tangent/core, @tangent/repo, @tangent/ui-server, @tangent/usage-ui, @tangent/usage-ui-data (optional: better-sqlite3 behind @tangent/usage/sqlite)
 @tangent/search -> @tangent/core, @tangent/repo
 @tangent/trees-cli -> @tangent/core, @tangent/trees-schema, @tangent/trees-core, @tangent/trees-store-fs, @tangent/trees-git, @tangent/trees-terminal, @tangent/trees-agents, @tangent/trees-attention, @tangent/trees-mcp, @tangent/trees-server
 @tangent/repo -> @tangent/core
@@ -66,6 +66,6 @@ Trees graph:
 @tangent/trees-server -> @tangent/trees-core, @tangent/trees-store-fs, @tangent/trees-ui-data, @tangent/trees-ui, @tangent/ui-server, @tangent/core
 ```
 
-The graph is enforced by @tangent/governance. If a package dependency changes, update this file and the lint allowlist in the same change. Usage subpaths `/schema`, `/core`, and `/query` are dependency-light entrypoints and must not load optional SQLite.
+The graph is enforced by @tangent/governance. If a package dependency changes, update this file and the lint allowlist in the same change. Usage subpaths `/schema`, `/core`, and `/query` are dependency-light entrypoints and must not load optional SQLite, server, or UI code. The Usage package-level UI dependencies are for `tangent usage ui` and the `@tangent/usage/server` subpath.
 
 Package manifests must keep this graph publishable: use normal semver ranges for `@tangent/*` dependencies, not local workspace protocols. Installing one vertical app should install only that app plus its declared platform dependencies, except Rollup/Eval may also install Usage.

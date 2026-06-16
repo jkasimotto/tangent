@@ -37,6 +37,40 @@ export type UsageSessionListView = {
   caveats: string[];
 };
 
+export type UsageToolCallSummaryView = {
+  id: string;
+  name: string;
+  status?: string;
+  durationMs?: number;
+  target?: string;
+};
+
+export type UsageTranscriptMessageView = {
+  id: string;
+  role: "user" | "assistant" | "system" | "tool";
+  at?: string;
+  title?: string;
+  text?: string;
+  textPreview?: string;
+  tokens?: { label: string; value?: number | string; unit?: "tokens" };
+  toolCalls?: UsageToolCallSummaryView[];
+  confidence?: string;
+};
+
+export type UsageTimelineItemView = {
+  id: string;
+  label: string;
+  kind: string;
+  startedAt?: string;
+  endedAt?: string;
+  offsetMs?: number;
+  durationMs?: number;
+  metricValue?: number;
+  depth?: number;
+  status?: string;
+  confidence?: string;
+};
+
 type UsageDomainResult<T> = {
   data: T;
   meta: {
@@ -71,10 +105,31 @@ type UsageDomainSession = {
 
 type UsageDomainMessage = {
   id: string;
-  role: string;
+  role: "user" | "assistant" | "system" | "tool" | string;
+  createdAt?: string;
+  model?: string;
   text?: string;
   textPreview?: string;
+  tokenUsage?: { total?: number; confidence?: string };
   metrics?: { tokens?: { total?: number } };
+  confidence?: string;
+  toolCalls?: Array<{
+    id: string;
+    toolName?: string;
+    name?: string;
+    status?: string;
+    result?: { durationMs?: number };
+    targetPaths?: string[];
+  }>;
+};
+
+type UsageDomainTranscript = {
+  schema: string;
+  session?: unknown;
+  messages: UsageDomainMessage[];
+  totals?: unknown;
+  caveats: string[];
+  [key: string]: unknown;
 };
 
 export type UsageDomainClient = {
@@ -82,7 +137,7 @@ export type UsageDomainClient = {
     list(query?: unknown): Promise<UsageDomainResult<UsageDomainSession[]>>;
     get(id: string): Promise<UsageDomainResult<UsageDomainSession>>;
     timeline(id: string, query?: unknown): Promise<UsageDomainResult<UsageTimelineView>>;
-    report(id: string, query?: unknown): Promise<UsageDomainResult<UsageTranscriptView>>;
+    report(id: string, query?: unknown): Promise<UsageDomainResult<UsageDomainTranscript>>;
   };
   messages: {
     query(query?: unknown): Promise<UsageDomainResult<UsageDomainMessage[]>>;
@@ -103,14 +158,14 @@ export type UsageTimelineView = {
   schema: string;
   metric?: string;
   unit?: string;
-  items: unknown[];
+  items: UsageTimelineItemView[];
   caveats?: string[];
   [key: string]: unknown;
 };
 export type UsageTranscriptView = {
   schema: string;
   session?: unknown;
-  messages: unknown[];
+  messages: UsageTranscriptMessageView[];
   totals?: unknown;
   caveats: string[];
   [key: string]: unknown;
@@ -128,12 +183,42 @@ export interface UsageUiClient {
   getMessageSelection(query: MessageSelectionQuery): Promise<MessageSelectionView>;
 }
 
+/** Creates a browser API client for Usage UI view models. */
+export function createUsageApiClient(baseUrl = ""): UsageUiClient {
+  /** Requests JSON from the local Usage UI API. */
+  const api = async <T>(path: string, init?: RequestInit): Promise<T> => {
+    const response = await fetch(`${baseUrl}${path}`, init);
+    const contentType = response.headers.get("content-type") || "";
+    if (!response.ok) throw new Error(await response.text());
+    if (!contentType.includes("application/json")) {
+      const body = await response.text();
+      const hint = body.trimStart().startsWith("<!doctype") || contentType.includes("text/html")
+        ? "Usage API unavailable. Start the app with `tangent usage ui`; the standalone Vite server only serves the shell."
+        : `Usage API returned ${contentType || "unknown content type"}.`;
+      throw new Error(hint);
+    }
+    return response.json() as Promise<T>;
+  };
+  return {
+    /** Lists sessions through the local API. */
+    listSessions: (query = {}) => api(`/api/usage/sessions${queryString(query)}`),
+    /** Gets a session detail view through the local API. */
+    getSession: (id) => api(`/api/usage/sessions/${encodeURIComponent(id)}`),
+    /** Gets a session timeline through the local API. */
+    getSessionTimeline: (id, query = {}) => api(`/api/usage/sessions/${encodeURIComponent(id)}/timeline${queryString(query)}`),
+    /** Gets a transcript through the local API. */
+    getTranscript: (id, query = {}) => api(`/api/usage/sessions/${encodeURIComponent(id)}/transcript${queryString(query)}`),
+    /** Gets message selection through the local API. */
+    getMessageSelection: (query) => api(`/api/usage/messages/selection${queryString(query)}`)
+  };
+}
+
 /** Creates create usage ui client. */
 export function createUsageUiClient(usage: UsageDomainClient): UsageUiClient {
   return {
     /** Lists sessions. */
     async listSessions(query = {}) {
-      const result = await usage.sessions.list({ provider: query.provider, limit: query.limit });
+      const result = await usage.sessions.list({ provider: query.provider, limit: query.limit, orderBy: [{ field: "lastActivityAt", direction: "desc" }] });
       return {
         sessions: result.data.map((session) => ({
           id: session.id,
@@ -187,11 +272,24 @@ export function createUsageUiClient(usage: UsageDomainClient): UsageUiClient {
     },
     /** Gets session timeline. */
     async getSessionTimeline(id, query = {}) {
-      return (await usage.sessions.timeline(id, query)).data as UsageTimelineView;
+      const result = await usage.sessions.timeline(id, query);
+      const data = result.data as UsageTimelineView & { items?: unknown[] };
+      return {
+        ...data,
+        items: (data.items || []).map(timelineItem),
+        caveats: [...(data.caveats || []), ...result.meta.warnings.map((warning) => warning.message)]
+      };
     },
     /** Gets transcript. */
     async getTranscript(id, query = {}) {
-      return (await usage.sessions.report(id, { includeTools: query.includeTools !== false })).data;
+      const result = await usage.sessions.report(id, { includeTools: query.includeTools !== false });
+      const data = result.data as UsageTranscriptView & { messages?: UsageDomainMessage[] };
+      return {
+        ...data,
+        schema: data.schema || "tangent.usage.transcript.v1",
+        messages: (data.messages || []).map(transcriptMessage),
+        caveats: [...(data.caveats || []), ...result.meta.warnings.map((warning) => warning.message)]
+      };
     },
     /** Gets message selection. */
     async getMessageSelection(query) {
@@ -211,4 +309,80 @@ export function createUsageUiClient(usage: UsageDomainClient): UsageUiClient {
       };
     }
   };
+}
+
+/** Builds a query string from defined scalar values. */
+function queryString(query: Record<string, unknown>): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value === undefined || value === false) continue;
+    params.set(key, String(value));
+  }
+  const text = params.toString();
+  return text ? `?${text}` : "";
+}
+
+/** Maps a Usage timeline item into the chart DTO. */
+function timelineItem(value: unknown): UsageTimelineItemView {
+  const item = objectValue(value);
+  return {
+    id: stringValue(item.id) || stringValue(item.stepId) || "unknown",
+    label: stringValue(item.label) || stringValue(item.kind) || "Step",
+    kind: stringValue(item.kind) || "unknown",
+    startedAt: stringValue(item.startedAt),
+    endedAt: stringValue(item.endedAt),
+    offsetMs: numberValue(item.offsetMs),
+    durationMs: numberValue(item.durationMs),
+    metricValue: numberValue(item.metricValue),
+    depth: numberValue(item.depth),
+    status: stringValue(item.status),
+    confidence: stringValue(item.durationConfidence) || stringValue(item.confidence)
+  };
+}
+
+/** Maps a Usage message into a transcript DTO. */
+function transcriptMessage(message: UsageDomainMessage): UsageTranscriptMessageView {
+  const totalTokens = message.tokenUsage?.total ?? message.metrics?.tokens?.total;
+  return {
+    id: message.id,
+    role: roleValue(message.role),
+    at: message.createdAt,
+    title: message.model,
+    text: message.text,
+    textPreview: message.textPreview || message.text,
+    tokens: totalTokens === undefined ? undefined : { label: "Tokens", value: totalTokens, unit: "tokens" },
+    toolCalls: message.toolCalls?.map(toolCall),
+    confidence: message.confidence || message.tokenUsage?.confidence
+  };
+}
+
+/** Maps a Usage tool call into a compact transcript summary. */
+function toolCall(call: NonNullable<UsageDomainMessage["toolCalls"]>[number]): UsageToolCallSummaryView {
+  return {
+    id: call.id,
+    name: call.toolName || call.name || "tool",
+    status: call.status,
+    durationMs: call.result?.durationMs,
+    target: call.targetPaths?.[0]
+  };
+}
+
+/** Normalizes arbitrary role strings to transcript roles. */
+function roleValue(value: string): UsageTranscriptMessageView["role"] {
+  return value === "user" || value === "assistant" || value === "system" || value === "tool" ? value : "assistant";
+}
+
+/** Returns an object view of an unknown value. */
+function objectValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? value as Record<string, unknown> : {};
+}
+
+/** Returns a string value when present. */
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value ? value : undefined;
+}
+
+/** Returns a number value when present. */
+function numberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }

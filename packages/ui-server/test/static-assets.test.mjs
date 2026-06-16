@@ -14,6 +14,10 @@ test("serves health and static index", async () => {
   try {
     assert.equal(await fetchText(`${server.url}healthz`), "{\n  \"ok\": true,\n  \"product\": \"test\"\n}\n");
     assert.equal(await fetchText(server.url), "ok");
+    const apiResponse = await fetch(`${server.url}api/missing`);
+    assert.equal(apiResponse.status, 404);
+    assert.equal(apiResponse.headers.get("content-type"), "application/json; charset=utf-8");
+    assert.deepEqual(await apiResponse.json(), { error: "API route not found." });
   } finally {
     await server.close();
   }

@@ -24,6 +24,10 @@ export function repoIndexPath(repoRoot: string): string {
   return path.join(usageHome(), "repos", repoHash(repoRoot), "index", "usage.sqlite");
 }
 
+export function globalIndexPath(): string {
+  return path.join(usageHome(), "global", "index", "usage.sqlite");
+}
+
 export function repoArchiveDir(repoRoot: string): string {
   return path.join(usageHome(), "repos", repoHash(repoRoot), "archive");
 }
@@ -32,6 +36,10 @@ export function globalEventDir(provider: UsageProvider, date = new Date()): stri
   const yyyy = String(date.getUTCFullYear());
   const mm = String(date.getUTCMonth() + 1).padStart(2, "0");
   return path.join(usageHome(), "events", provider, yyyy, mm);
+}
+
+export function globalEventRoot(provider: UsageProvider): string {
+  return path.join(usageHome(), "events", provider);
 }
 
 export function eventFileForConversation(repoRoot: string | undefined, provider: UsageProvider, conversationId: string): string {

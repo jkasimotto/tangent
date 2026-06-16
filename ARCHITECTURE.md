@@ -24,7 +24,7 @@ trees -> schema, core, fs store, git, terminal, agents, attention, MCP, server, 
 
 rollup -> usage, core, repo, agent-runtime
 eval  -> usage, core, repo, agent-runtime
-usage -> core, repo
+usage -> core, repo, ui-server, usage-ui, usage-ui-data
 search -> core, repo
 repo -> core
 agent-runtime -> core
@@ -50,7 +50,7 @@ Human-facing root commands are `setup`, `status`, `usage`, `trees`, `rollup`, `s
 
 Standalone package CLIs use collision-resistant binary names: `tangent-usage`, `tangent-search`, `tangent-rollup`, and `tangent-eval`. The root `tangent` CLI keeps the short subcommands for full-suite installs.
 
-Usage owns conversation telemetry: event schemas, dependency-light core/query APIs, datasets, SDKs, CLI, native transcript normalization, native-log schema compatibility checks, legacy usage-jsonl reading, v3 event-to-session/turn/step/message projections, and assistant/session reports. Native provider transcripts are the source of truth for new data. Hook installation and hook recording are retired product surfaces; legacy `capture.source: "hook"` events remain readable through usage-jsonl compatibility. `@tangent/usage/schema`, `/core`, and `/query` must not load SQLite or pricing code; `@tangent/usage/sqlite` is the optional index layer. Rollup and Eval may consume Usage data, but Usage must not learn about Rollup, Eval, or Search.
+Usage owns conversation telemetry: event schemas, dependency-light core/query APIs, datasets, SDKs, CLI, native transcript normalization, native-log schema compatibility checks, legacy usage-jsonl reading, v3 event-to-session/turn/step/message projections, and assistant/session reports. It also owns the local `tangent usage ui` server, which lazily serves `@tangent/usage-ui` assets and framework-agnostic `/api/usage/*` routes over public Usage core APIs. Native provider transcripts are the source of truth for new data. Hook installation and hook recording are retired product surfaces; legacy `capture.source: "hook"` events remain readable through usage-jsonl compatibility. `@tangent/usage/schema`, `/core`, and `/query` must not load SQLite, pricing, server, or UI code; `@tangent/usage/sqlite` is the optional index layer. Rollup and Eval may consume Usage data, but Usage must not learn about Rollup, Eval, or Search.
 
 Rollup consumes selected Usage turns and visible user messages under the configured length limit, then owns the summarization workflow: `tangent rollup <selector>` caches one period-level `rollup.input.v1` artifact, includes style examples from explicit examples and prior notes, runs one summary provider roll-up, and writes the generated note block. Assistant messages, tool calls, tool results, token metadata, and oversized pasted user messages are intentionally excluded from rollup input. Selectors support single days and compact inclusive ranges. Rollup does not parse Claude or Codex native schemas and does not preserve a topic or turn-digest architecture.
 

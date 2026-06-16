@@ -11,7 +11,9 @@ export function claudeHome(): string {
   return process.env.CLAUDE_HOME || path.join(homedir(), ".claude");
 }
 
-export async function discoverClaudeNative(repoRoot: string): Promise<string[]> {
-  const projectDir = path.join(claudeHome(), "projects", claudeProjectKey(repoRoot));
+export async function discoverClaudeNative(repoRoot?: string): Promise<string[]> {
+  const projectsDir = path.join(claudeHome(), "projects");
+  if (!repoRoot) return listJsonlFiles(projectsDir);
+  const projectDir = path.join(projectsDir, claudeProjectKey(repoRoot));
   return listJsonlFiles(projectDir);
 }

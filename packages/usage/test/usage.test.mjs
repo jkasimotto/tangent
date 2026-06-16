@@ -119,6 +119,40 @@ test("usage index defaults to completed Codex native transcripts instead of hook
   }
 });
 
+test("usage all scope indexes Codex native transcripts across repos", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "usage-native-codex-global-"));
+  const previousUsageHome = process.env.USAGE_HOME;
+  const previousCodexHome = process.env.CODEX_HOME;
+  process.env.USAGE_HOME = path.join(dir, "home");
+  const codexHome = path.join(dir, "codex-home");
+  const repoA = path.join(dir, "repo-a");
+  const repoB = path.join(dir, "repo-b");
+  await mkdir(repoA, { recursive: true });
+  await mkdir(repoB, { recursive: true });
+  const nativePathA = path.join(codexHome, "sessions", "2026", "06", "09", "rollout-2026-06-09T08-00-00-repo-a.jsonl");
+  const nativePathB = path.join(codexHome, "sessions", "2026", "06", "09", "rollout-2026-06-09T08-00-00-repo-b.jsonl");
+  await writeJsonl(nativePathA, codexNativeSession({ repo: repoA, sessionId: "repo-a", prompt: "repo a prompt", complete: true }));
+  await writeJsonl(nativePathB, codexNativeSession({ repo: repoB, sessionId: "repo-b", prompt: "repo b prompt", complete: true }));
+
+  try {
+    process.env.CODEX_HOME = codexHome;
+    const globalIndex = await ensureUsageIndex({ repo: repoA, scope: "all", providers: ["codex"], now: new Date("2026-06-09T08:30:00.000Z") });
+    assert.equal(globalIndex.repoRoot, "all-local-sessions");
+    assert.deepEqual([...globalIndex.sourceFiles].sort(), [nativePathA, nativePathB].sort());
+
+    const globalDataset = await loadUsageDatasetFromIndex({ repo: repoA, scope: "all", providers: ["codex"], now: new Date("2026-06-09T08:30:00.000Z") });
+    assert.deepEqual(globalDataset.messages.list({ role: "user" }).data.map((row) => row.text).sort(), ["repo a prompt", "repo b prompt"]);
+
+    const repoDataset = await loadUsageDatasetFromIndex({ repo: repoA, providers: ["codex"], now: new Date("2026-06-09T08:30:00.000Z") });
+    assert.deepEqual(repoDataset.messages.list({ role: "user" }).data.map((row) => row.text), ["repo a prompt"]);
+  } finally {
+    if (previousUsageHome === undefined) delete process.env.USAGE_HOME;
+    else process.env.USAGE_HOME = previousUsageHome;
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+  }
+});
+
 test("Codex native import emits per-model-call usage and tool result size metadata", () => {
   const sourcePath = "/tmp/codex-two-snapshots.jsonl";
   const records = codexNativeTwoSnapshotSession({ repo: "/repo", sessionId: "codex-two-snapshots" }).map((record, index) => ({ line: index + 1, record }));
@@ -201,6 +235,43 @@ test("usage index reads Claude native visible messages, tools, and usage", async
     assert.equal(dataset.tools.calls({ conversationId }).data[0].result.status, "success");
     assert.deepEqual(dataset.tokens.byConversation({ conversationId }).data.map((row) => row.usage.output_tokens), [2, 4]);
   } finally {
+    if (previousClaudeHome === undefined) delete process.env.CLAUDE_HOME;
+    else process.env.CLAUDE_HOME = previousClaudeHome;
+  }
+});
+
+test("usage all scope indexes Claude native transcripts across project directories", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "usage-native-claude-global-"));
+  const previousUsageHome = process.env.USAGE_HOME;
+  const previousClaudeHome = process.env.CLAUDE_HOME;
+  process.env.USAGE_HOME = path.join(dir, "home");
+  const claudeHome = path.join(dir, "claude-home");
+  const repoA = path.join(dir, "repo-a");
+  const repoB = path.join(dir, "repo-b");
+  await mkdir(repoA, { recursive: true });
+  await mkdir(repoB, { recursive: true });
+  const nativePathA = path.join(claudeHome, "projects", claudeProjectKey(repoA), "claude-a.jsonl");
+  const nativePathB = path.join(claudeHome, "projects", claudeProjectKey(repoB), "claude-b.jsonl");
+  await writeJsonl(nativePathA, claudeNativeSession({ repo: repoA, sessionId: "claude-a" }));
+  await writeJsonl(nativePathB, claudeNativeSession({ repo: repoB, sessionId: "claude-b" }));
+  const mtime = new Date("2026-06-09T08:00:20.000Z");
+  await utimes(nativePathA, mtime, mtime);
+  await utimes(nativePathB, mtime, mtime);
+
+  try {
+    process.env.CLAUDE_HOME = claudeHome;
+    const globalIndex = await ensureUsageIndex({ repo: repoA, scope: "all", providers: ["claude"], now: new Date("2026-06-09T08:30:00.000Z") });
+    assert.equal(globalIndex.repoRoot, "all-local-sessions");
+    assert.deepEqual([...globalIndex.sourceFiles].sort(), [nativePathA, nativePathB].sort());
+
+    const globalDataset = await loadUsageDatasetFromIndex({ repo: repoA, scope: "all", providers: ["claude"], now: new Date("2026-06-09T08:30:00.000Z") });
+    assert.deepEqual(globalDataset.messages.list({ role: "user" }).data.map((row) => row.text).sort(), ["run test", "run test"]);
+
+    const repoDataset = await loadUsageDatasetFromIndex({ repo: repoA, providers: ["claude"], now: new Date("2026-06-09T08:30:00.000Z") });
+    assert.deepEqual(repoDataset.messages.list({ role: "user" }).data.map((row) => row.text), ["run test"]);
+  } finally {
+    if (previousUsageHome === undefined) delete process.env.USAGE_HOME;
+    else process.env.USAGE_HOME = previousUsageHome;
     if (previousClaudeHome === undefined) delete process.env.CLAUDE_HOME;
     else process.env.CLAUDE_HOME = previousClaudeHome;
   }

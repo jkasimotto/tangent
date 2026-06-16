@@ -1,7 +1,7 @@
 import { repoInfo } from "@tangent/repo";
 
 import { listJsonlFiles, readJsonl } from "../core/append-jsonl.js";
-import { repoEventDir } from "../core/paths.js";
+import { globalEventRoot, repoEventDir } from "../core/paths.js";
 import type { UsageJsonlLineV1, UsageProvider as LegacyUsageProvider } from "../core/schema/usage-jsonl-v1.js";
 import { capabilitiesForProvider } from "../core/schema/capabilities.js";
 import type { OpenUsageOptions } from "../core/index.js";
@@ -31,9 +31,8 @@ export const builtInProviderAdapters: UsageProviderAdapter[] = builtInProviderId
   id: provider,
   displayName: provider === "claude" ? "Claude Code" : "Codex",
   async *discover(ctx) {
-    if (!ctx.repo) return;
-    const repo = await repoInfo(ctx.repo);
-    const native = await loadNativeSourceFiles({ repoRoot: repo.root || repo.cwd, providers: [provider], now: ctx.now });
+    const repo = ctx.repo ? await repoInfo(ctx.repo) : undefined;
+    const native = await loadNativeSourceFiles({ repoRoot: repo ? repo.root || repo.cwd : undefined, providers: [provider], now: ctx.now });
     for (const file of native.files) {
       yield {
         id: file.path,
@@ -53,8 +52,8 @@ export const builtInProviderAdapters: UsageProviderAdapter[] = builtInProviderId
 }));
 
 export async function loadProviderEvents(options: OpenUsageOptions = {}): Promise<LoadedProviderEvents> {
-  const repo = await repoInfo(options.repo || ".");
-  const root = repo.root || repo.cwd;
+  const repo = options.scope === "all" ? undefined : await repoInfo(options.repo || ".");
+  const root = repo ? repo.root || repo.cwd : undefined;
   const requestedProviders = options.providers?.length ? options.providers : [...builtInProviderIds];
   const sources = options.sources?.length ? options.sources : ["native"];
   const builtIns = requestedProviders.filter(isBuiltInProvider);
@@ -82,7 +81,8 @@ export async function loadProviderEvents(options: OpenUsageOptions = {}): Promis
 
   if (sources.includes("usage-jsonl") || sources.includes("hook")) {
     for (const provider of builtIns) {
-      for (const file of await listJsonlFiles(repoEventDir(root, provider))) {
+      const eventRoot = root ? repoEventDir(root, provider) : globalEventRoot(provider);
+      for (const file of await listJsonlFiles(eventRoot)) {
         try {
           const rows = await readJsonl<UsageJsonlLineV1>(file);
           sourceRefs.push({ id: file, provider, kind: "usage-jsonl", path: file });

@@ -69,6 +69,7 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
     }
 
     if (request.method !== "GET" && request.method !== "HEAD") return sendJson(response, 405, { error: "Method not allowed." });
+    if (url.pathname.startsWith("/api/")) return sendJson(response, 404, { error: "API route not found." });
     return await sendStatic(response, url.pathname, options.assets);
   } catch (error) {
     return sendJson(response, 500, { error: (error as Error).message });

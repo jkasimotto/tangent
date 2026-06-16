@@ -7,6 +7,12 @@ export const usageCommandSpec: CliCommandSpec = {
     { name: "init", description: "Check native activity capture for a provider", args: "[repo]", options: commonJsonOptions(["provider", "json"]) },
     { name: "status", description: "Show capture health and capability coverage", args: "[repo]", options: commonJsonOptions(["verbose"]) },
     {
+      name: "ui",
+      description: "Start a local Usage UI",
+      args: "[session|latest]",
+      options: commonJsonOptions(["repo", "scope", "host", "port", "no-browser", "json", "provider", "source"])
+    },
+    {
       name: "index",
       description: "Manage the usage index",
       subcommands: [
@@ -99,17 +105,19 @@ export const usageCommandSpec: CliCommandSpec = {
   ]
 };
 
+/** Builds shared Usage CLI option descriptors by option name. */
 function commonJsonOptions(names: string[]) {
   return names.map((name) => {
     if (name === "json") return { name, description: "Print JSON" };
     if (name === "verbose") return { name, description: "Print verbose details" };
     if (name === "trace") return { name, description: "Print timing trace" };
     if (name === "provider") return { name, takesValue: true, values: ["claude", "codex"], description: "Provider filter" };
+    if (name === "scope") return { name, takesValue: true, values: ["all", "repo"], description: "Session discovery scope (default: repo)" };
     if (name === "source") return { name, takesValue: true, values: ["native", "all"], description: "Data source" };
     if (name === "by") return { name, takesValue: true, values: ["model"], description: "Grouping mode" };
     if (name === "before" || name === "date" || name === "since" || name === "until") return { name, takesValue: true, description: `${name} date` };
     if (["format", "metric", "group", "session", "role", "min-chars", "contains", "limit", "kind", "order", "bucket", "name", "include-results"].includes(name)) return { name, takesValue: true, description: `${name} value` };
-    if (name === "internal" || name === "force" || name === "dry-run" || name === "estimate" || name === "ndjson") return { name, description: "Enable this option" };
+    if (name === "internal" || name === "force" || name === "dry-run" || name === "estimate" || name === "ndjson" || name === "no-browser") return { name, description: "Enable this option" };
     return { name, takesValue: true, description: `${name} value` };
   });
 }

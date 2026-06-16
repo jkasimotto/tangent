@@ -1,6 +1,6 @@
 # @tangent/usage Docs
 
-Purpose: Conversation telemetry domain: schemas, native transcript normalization, legacy usage-jsonl reading, native-log compatibility checks, assistant-centered conversation reports, dataset message queries, SDK, human `usage` CLI, and explicit raw/debug subcommands.
+Purpose: Conversation telemetry domain: schemas, native transcript normalization, legacy usage-jsonl reading, native-log compatibility checks, assistant-centered conversation reports, dataset message queries, SDK, human `usage` CLI, local `usage ui` server, and explicit raw/debug subcommands.
 
 Read next:
 - architecture.md

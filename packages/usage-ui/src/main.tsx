@@ -10,6 +10,7 @@ import "@tangent/ui-charts/styles.css";
 import "@tangent/ui-code/styles.css";
 import "@tangent/ui-app-shell/styles.css";
 
+import "./app.css";
 import { UsageApp } from "./app/UsageApp.js";
 
 createRoot(document.getElementById("root")!).render(<UsageApp />);

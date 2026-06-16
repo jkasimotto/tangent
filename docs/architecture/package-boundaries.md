@@ -17,7 +17,7 @@ UI platform packages:
 - @tangent/ui-app-shell contains the global shell, navigation, search, command palette, and server status UI.
 
 Vertical apps:
-- @tangent/usage owns conversation telemetry schemas, native transcript normalization, legacy usage-jsonl reading, native-log schema compatibility checks, canonical session/turn/step/message projections, dependency-light core/query APIs, optional SQLite indexing, assistant/session reports, datasets, SDK, and CLI.
+- @tangent/usage owns conversation telemetry schemas, native transcript normalization, legacy usage-jsonl reading, native-log schema compatibility checks, canonical session/turn/step/message projections, dependency-light core/query APIs, optional SQLite indexing, assistant/session reports, datasets, SDK, CLI, and the local Usage UI server.
 - @tangent/rollup owns rollup note schemas, period-level user-message rollup inputs, examples, rendering, ledgers, and summarization workflows.
 - @tangent/eval owns eval specs, contexts, run manifests, metrics, reports, diffs, and the local eval comparison UI.
 - @tangent/search owns structural indexing and search.
@@ -64,7 +64,7 @@ Hard rules:
 - Hook install and hook record product surfaces are retired; do not add new provider hook config mechanics.
 - Native provider transcript formats are interpreted in usage, not hooks. Schema inference tools may live outside runtime packages, but runtime compatibility checks and user-facing version messages belong in usage.
 - Rollup must consume Usage reports rather than parsing Claude or Codex provider schemas directly.
-- `@tangent/usage/schema`, `@tangent/usage/core`, and `@tangent/usage/query` must not load SQLite, pricing, server, or UI code. SQLite belongs behind `@tangent/usage/sqlite` and CLI/index compatibility paths.
+- `@tangent/usage/schema`, `@tangent/usage/core`, and `@tangent/usage/query` must not load SQLite, pricing, server, or UI code. SQLite belongs behind `@tangent/usage/sqlite` and CLI/index compatibility paths. Usage UI serving belongs behind `@tangent/usage/server` and the `usage ui` CLI command.
 - `@tangent/usage-schema` and `@tangent/usage-core` must not import UI, SQLite, or provider parser packages.
 - `ui-*` packages must not import Usage, Eval, Rollup, or Search product packages, except `ui-docs` may import product UI packages for examples.
 - agent-runtime must not import Rollup or Eval schemas.

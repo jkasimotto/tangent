@@ -16,18 +16,23 @@ export type NativeSourceFile = {
   events: UsageJsonlLineV1[];
 };
 
+export type NativeSourceFileStat = Omit<NativeSourceFile, "events">;
+
 export type LoadNativeOptions = {
-  repoRoot: string;
+  repoRoot?: string;
   providers: UsageProvider[];
   now?: Date;
+  skipUnchanged?: (file: NativeSourceFileStat) => boolean;
 };
 
 export async function loadNativeSourceFiles(options: LoadNativeOptions): Promise<{
   files: NativeSourceFile[];
+  skipped: NativeSourceFileStat[];
   seenPaths: string[];
   warnings: UsageWarning[];
 }> {
   const files: NativeSourceFile[] = [];
+  const skipped: NativeSourceFileStat[] = [];
   const seenPaths: string[] = [];
   const warnings: UsageWarning[] = [];
   const now = options.now || new Date();
@@ -38,6 +43,11 @@ export async function loadNativeSourceFiles(options: LoadNativeOptions): Promise
       seenPaths.push(filePath);
       try {
         const fileStat = await stat(filePath);
+        const source = { path: filePath, provider, mtimeMs: fileStat.mtimeMs, size: fileStat.size };
+        if (options.skipUnchanged?.(source)) {
+          skipped.push(source);
+          continue;
+        }
         const parsed = await readNativeJsonl(filePath);
         const eligibility = provider === "codex"
           ? codexEligibility(parsed.records, fileStat.mtimeMs, now)
@@ -67,7 +77,7 @@ export async function loadNativeSourceFiles(options: LoadNativeOptions): Promise
     }
   }
 
-  return { files, seenPaths, warnings };
+  return { files, skipped, seenPaths, warnings };
 }
 
 async function readNativeJsonl(filePath: string): Promise<{

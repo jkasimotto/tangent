@@ -7,7 +7,7 @@ import { pathExists, repoInfo } from "@tangent/repo";
 import { listJsonlFiles, readJsonl } from "../core/append-jsonl.js";
 import { UsageDataset } from "../core/dataset.js";
 import { eventsToProjections } from "../core/projections.js";
-import { repoArchiveDir, repoEventDir, repoIndexPath } from "../core/paths.js";
+import { globalEventRoot, globalIndexPath, repoArchiveDir, repoEventDir, repoIndexPath } from "../core/paths.js";
 import type { UsageJsonlLineV1, UsageProvider, UsageWarning } from "../core/schema/usage-jsonl-v1.js";
 import { loadNativeSourceFiles } from "../providers/native/load.js";
 import { usageProjectionSchemaSql } from "../sqlite/schema.js";
@@ -28,6 +28,7 @@ export type UsageIndexSource = "native" | "usage-jsonl";
 
 export type UsageIndexOptions = {
   repo: string;
+  scope?: "repo" | "all";
   providers?: UsageProvider[];
   sources?: UsageIndexSource[];
   now?: Date;
@@ -47,6 +48,7 @@ export type UsageIndexResult = {
 
 export type UsageDatasetQuery = {
   repo: string;
+  scope?: "repo" | "all";
   providers?: UsageProvider[];
   sources?: UsageIndexSource[];
   now?: Date;
@@ -97,12 +99,19 @@ type ConversationRow = {
   last_activity_at: string | null;
 };
 
+type UsageIndexTarget = {
+  repoRoot: string;
+  sourceRepoRoot?: string;
+  dbPath: string;
+  global: boolean;
+};
+
 export async function ensureUsageIndex(options: UsageIndexOptions): Promise<UsageIndexResult> {
-  const repo = await repoInfo(options.repo);
-  const root = repo.root || repo.cwd;
+  const target = await usageIndexTarget(options);
+  const root = target.repoRoot;
   const providers = options.providers?.length ? options.providers : ["claude", "codex"] as UsageProvider[];
   const sources = options.sources?.length ? options.sources : ["native"] as UsageIndexSource[];
-  const db = await openDb(root);
+  const db = await openDb(target);
   const warnings: UsageWarning[] = [];
   let indexed = 0;
   let skipped = 0;
@@ -116,9 +125,23 @@ export async function ensureUsageIndex(options: UsageIndexOptions): Promise<Usag
     const found = new Set<string>();
 
     if (sources.includes("native")) {
-      const native = await loadNativeSourceFiles({ repoRoot: root, providers, now: options.now });
+      const existingNative = options.force ? new Map<string, Pick<SourceFileRow, "mtime_ms" | "size">>() : sourceFileMetadata(db, providers, "native");
+      const native = await loadNativeSourceFiles({
+        repoRoot: target.sourceRepoRoot,
+        providers,
+        now: options.now,
+        skipUnchanged: options.force ? undefined : (file) => {
+          const existing = existingNative.get(file.path);
+          return Boolean(existing && existing.mtime_ms === file.mtimeMs && existing.size === file.size);
+        }
+      });
       warnings.push(...native.warnings);
       for (const file of native.seenPaths) seenNative.add(file);
+      for (const file of native.skipped) {
+        found.add(file.path);
+        sourceFiles.push(file.path);
+        skipped += 1;
+      }
       for (const file of native.files) {
         found.add(file.path);
         sourceFiles.push(file.path);
@@ -136,7 +159,8 @@ export async function ensureUsageIndex(options: UsageIndexOptions): Promise<Usag
 
     if (sources.includes("usage-jsonl")) {
       for (const provider of providers) {
-        const files = await listJsonlFiles(repoEventDir(root, provider));
+        const eventRoot = target.sourceRepoRoot ? repoEventDir(target.sourceRepoRoot, provider) : globalEventRoot(provider);
+        const files = await listJsonlFiles(eventRoot);
         for (const file of files) {
           found.add(file);
           sourceFiles.push(file);
@@ -171,10 +195,12 @@ export async function ensureUsageIndex(options: UsageIndexOptions): Promise<Usag
         removed += 1;
       }
     }
-    refreshDerivedTables(db);
+    if (options.force || indexed > 0 || removed > 0 || !hasDerivedRows(db)) {
+      refreshDerivedTables(db);
+    }
     return {
       repoRoot: root,
-      dbPath: repoIndexPath(root),
+      dbPath: target.dbPath,
       indexed,
       skipped,
       removed,
@@ -189,7 +215,7 @@ export async function ensureUsageIndex(options: UsageIndexOptions): Promise<Usag
 
 export async function loadUsageDatasetFromIndex(query: UsageDatasetQuery): Promise<UsageDataset> {
   const index = await ensureUsageIndex(query);
-  const db = await openDb(index.repoRoot);
+  const db = await openDb(await usageIndexTarget(query));
   try {
     ensureSchema(db);
     const clauses: string[] = [];
@@ -228,7 +254,7 @@ export async function loadUsageDatasetFromIndex(query: UsageDatasetQuery): Promi
 
 export async function resolveConversationRef(options: { repo: string; ref: string; providers?: UsageProvider[]; sources?: UsageIndexSource[] }): Promise<ResolvedConversationRef> {
   const index = await ensureUsageIndex({ repo: options.repo, providers: options.providers, sources: options.sources });
-  const db = await openDb(index.repoRoot);
+  const db = await openDb(repoIndexTarget(index.repoRoot));
   try {
     ensureSchema(db);
     const rows = conversationRows(db, options.providers);
@@ -256,7 +282,7 @@ export async function resolveConversationRef(options: { repo: string; ref: strin
 
 export async function archiveUsageTelemetry(options: UsageArchiveOptions): Promise<UsageArchiveResult> {
   const index = await ensureUsageIndex({ repo: options.repo, providers: options.providers, sources: ["usage-jsonl"] });
-  const db = await openDb(index.repoRoot);
+  const db = await openDb(repoIndexTarget(index.repoRoot));
   const result: UsageArchiveResult = {
     repoRoot: index.repoRoot,
     before: options.before.toISOString(),
@@ -296,11 +322,32 @@ export async function archiveUsageTelemetry(options: UsageArchiveOptions): Promi
   }
 }
 
-async function openDb(repoRoot: string): Promise<DatabaseHandle> {
-  const dbPath = repoIndexPath(repoRoot);
+async function openDb(target: UsageIndexTarget): Promise<DatabaseHandle> {
+  const dbPath = target.dbPath;
   mkdirSyncForDb(dbPath);
   const Database = optionalSqlite();
   return new Database(dbPath) as DatabaseHandle;
+}
+
+async function usageIndexTarget(options: { repo: string; scope?: "repo" | "all" }): Promise<UsageIndexTarget> {
+  if (options.scope === "all") {
+    return {
+      repoRoot: "all-local-sessions",
+      dbPath: globalIndexPath(),
+      global: true
+    };
+  }
+  const repo = await repoInfo(options.repo);
+  return repoIndexTarget(repo.root || repo.cwd);
+}
+
+function repoIndexTarget(repoRoot: string): UsageIndexTarget {
+  return {
+    repoRoot,
+    sourceRepoRoot: repoRoot,
+    dbPath: repoIndexPath(repoRoot),
+    global: false
+  };
 }
 
 function optionalSqlite(): new (path: string, options?: unknown) => unknown {
@@ -309,6 +356,11 @@ function optionalSqlite(): new (path: string, options?: unknown) => unknown {
   } catch (error) {
     throw new Error(`SQLite index support requires optional dependency better-sqlite3: ${(error as Error).message}`);
   }
+}
+
+function hasDerivedRows(db: DatabaseHandle): boolean {
+  const row = db.prepare("select count(*) as count from sessions").get() as { count: number } | undefined;
+  return Number(row?.count || 0) > 0;
 }
 
 function ensureSchema(db: DatabaseHandle): void {
@@ -556,6 +608,17 @@ function sourceFileRows(db: DatabaseHandle, providers: UsageProvider[] | undefin
     params.push(...providers);
   }
   return db.prepare(`select path, provider, source_kind, mtime_ms, size, event_count from source_files where ${clauses.join(" and ")}`).all(...params) as SourceFileRow[];
+}
+
+function sourceFileMetadata(db: DatabaseHandle, providers: UsageProvider[], sourceKind: UsageIndexSource): Map<string, Pick<SourceFileRow, "mtime_ms" | "size">> {
+  const clauses = ["source_kind = ?", "archived_at is null"];
+  const params: unknown[] = [sourceKind];
+  if (providers.length) {
+    clauses.push(`provider in (${providers.map(() => "?").join(", ")})`);
+    params.push(...providers);
+  }
+  const rows = db.prepare(`select path, mtime_ms, size from source_files where ${clauses.join(" and ")}`).all(...params) as Array<Pick<SourceFileRow, "path" | "mtime_ms" | "size">>;
+  return new Map(rows.map((row) => [row.path, { mtime_ms: row.mtime_ms, size: row.size }]));
 }
 
 function latestEventForSource(db: DatabaseHandle, sourcePath: string): string | undefined {

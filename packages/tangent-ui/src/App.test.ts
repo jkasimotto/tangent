@@ -24,7 +24,9 @@ test("renders discovered apps and mounts the active app", async () => {
 
   const switcher = await screen.findByRole("button", { name: "Switch Tangent app" });
   expect(switcher).toHaveTextContent("Usage");
-  expect(await screen.findByText("Mounted usage")).toBeInTheDocument();
+  expect(switcher.closest(".shell-chrome")).toBeInTheDocument();
+  const mountedUsage = await screen.findByText("Mounted usage");
+  expect(mountedUsage.closest(".shell-workspace")).toBeInTheDocument();
   await fireEvent.click(switcher);
   expect(screen.getByRole("button", { name: "Usage" })).toHaveClass("active");
   await fireEvent.click(screen.getByRole("button", { name: "Trees" }));

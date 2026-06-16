@@ -1,5 +1,4 @@
-import App from "./App.svelte";
-import { mount, unmount } from "svelte";
+import { mountUsageApp } from "./mount.js";
 
 import "@tangent/ui-tokens/css/tokens.css";
 import "@tangent/ui-tokens/css/theme-light.css";
@@ -11,10 +10,5 @@ export type EmbeddedAppContext = {
 
 /** Mounts Usage into an existing Tangent shell host. */
 export function mountApp(target: HTMLElement, _context?: EmbeddedAppContext): () => void {
-  target.classList.add("usage-embedded-host");
-  const app = mount(App, { target });
-  return () => {
-    target.classList.remove("usage-embedded-host");
-    void unmount(app);
-  };
+  return mountUsageApp(target, { embedded: true });
 }

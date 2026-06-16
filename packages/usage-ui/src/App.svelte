@@ -29,6 +29,8 @@
   const messagePreviewLimit = 360;
   const messageElements = new Map<string, HTMLElement>();
   const rowElements = new Map<string, HTMLElement>();
+  let messageListNode: HTMLElement;
+  let chartScrollNode: HTMLElement;
 
   type DisplayChartRow = UsageConversationChartRow & {
     displayTokenLabel?: string;
@@ -90,9 +92,8 @@
 
   function scrollToPair(messageId: string, source: "message" | "chart"): void {
     const target = source === "message" ? rowElements.get(messageId) : messageElements.get(messageId);
-    if (target && typeof target.scrollIntoView === "function") {
-      target.scrollIntoView({ block: source === "chart" ? "start" : "center" });
-    }
+    const container = source === "message" ? chartScrollNode : messageListNode;
+    if (target && container) scrollWithin(container, target, source === "chart" ? "start" : "center");
   }
 
   async function activateChartRow(row: UsageConversationChartRow): Promise<void> {
@@ -336,6 +337,19 @@
       ? expandedMessageIds.filter((id) => id !== messageId)
       : [...expandedMessageIds, messageId];
   }
+
+  function scrollWithin(container: HTMLElement, target: HTMLElement, block: "start" | "center"): void {
+    const containerRect = container.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const offset = targetRect.top - containerRect.top;
+    const centered = offset - (container.clientHeight / 2) + (targetRect.height / 2);
+    const top = container.scrollTop + (block === "center" ? centered : offset);
+    if (typeof container.scrollTo === "function") {
+      container.scrollTo({ top: Math.max(0, top), behavior: "auto" });
+      return;
+    }
+    container.scrollTop = Math.max(0, top);
+  }
 </script>
 
 {#if error}
@@ -407,7 +421,7 @@
     </aside>
 
     <section class:loading-pane={conversationLoading} class="pane pane-conversation" aria-label="Conversation">
-      <div class="message-list">
+      <div class="message-list" bind:this={messageListNode}>
         {#each view.messages as message}
           <div
             use:rememberMessage={message.id}
@@ -504,7 +518,7 @@
             </button>
           </div>
         </header>
-        <div class="chart-scroll">
+        <div class="chart-scroll" bind:this={chartScrollNode}>
           <div class="axis-labels">
             <span>Tokens</span>
             <span>Duration</span>

@@ -1,8 +1,9 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App.svelte";
+import { mountUsageApp } from "./mount.js";
 import type { UsageConversationView, UsageUiClient } from "@tangent/usage-ui-data";
 
 afterEach(() => cleanup());
@@ -176,12 +177,7 @@ describe("usage svelte app", () => {
     expect(container.querySelector(".chart-row")).toHaveClass("active");
   });
 
-  it("scrolls grouped work turns to their user prompt at the top of the conversation pane", async () => {
-    const scrollIntoView = vi.fn();
-    Object.defineProperty(window.HTMLElement.prototype, "scrollIntoView", {
-      configurable: true,
-      value: scrollIntoView
-    });
+  it("scrolls activation targets inside the intended Usage pane", async () => {
     const view = fakeConversationView();
     view.messages.unshift({
       id: "u1",
@@ -202,11 +198,54 @@ describe("usage svelte app", () => {
     });
 
     expect(await screen.findByText("Done")).toBeInTheDocument();
-    scrollIntoView.mockClear();
+    const messageList = container.querySelector<HTMLElement>(".message-list")!;
+    const chartScroll = container.querySelector<HTMLElement>(".chart-scroll")!;
+    const userMessage = container.querySelector<HTMLElement>(".message-user")!;
+    const chartRow = container.querySelector<HTMLButtonElement>(".chart-row")!;
+    const messageScrollTo = vi.fn();
+    const chartScrollTo = vi.fn();
+    installScrollGeometry(messageList, { top: 0, height: 600, scrollTo: messageScrollTo });
+    installScrollGeometry(chartScroll, { top: 0, height: 420, scrollTo: chartScrollTo });
+    installRect(userMessage, { top: 160, height: 48 });
+    installRect(chartRow, { top: 96, height: 32 });
+    await settleMicrotasks();
+    messageScrollTo.mockClear();
+    chartScrollTo.mockClear();
+
     await fireEvent.click(container.querySelector<HTMLButtonElement>(".chart-row")!);
 
-    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
-    expect(scrollIntoView.mock.contexts.at(-1)).toBe(container.querySelector(".message-user"));
+    expect(messageScrollTo).toHaveBeenCalledWith({ top: 160, behavior: "auto" });
+    expect(chartScrollTo).not.toHaveBeenCalled();
+
+    messageScrollTo.mockClear();
+    await fireEvent.click(userMessage.querySelector<HTMLButtonElement>(".message-main")!);
+
+    expect(chartScrollTo).toHaveBeenCalledWith({ top: 0, behavior: "auto" });
+    expect(messageScrollTo).not.toHaveBeenCalled();
+  });
+
+  it("keeps work-turn activation identical in standalone and embedded mount modes", async () => {
+    const standalone = document.body.appendChild(document.createElement("div"));
+    const embedded = document.body.appendChild(document.createElement("div"));
+    const disposeStandalone = mountUsageApp(standalone, { client: fakeUsageClient() });
+    const disposeEmbedded = mountUsageApp(embedded, { client: fakeUsageClient(), embedded: true });
+
+    try {
+      await within(standalone).findByText("Done");
+      await within(embedded).findByText("Done");
+
+      await fireEvent.click(standalone.querySelector<HTMLButtonElement>(".chart-row")!);
+      await fireEvent.click(embedded.querySelector<HTMLButtonElement>(".chart-row")!);
+
+      expect(standalone.querySelector(".chart-row")).toHaveClass("active");
+      expect(standalone.querySelector(".message")).toHaveClass("active");
+      expect(embedded.querySelector(".chart-row")).toHaveClass("active");
+      expect(embedded.querySelector(".message")).toHaveClass("active");
+      expect(standalone.querySelector(".usage-shell")?.outerHTML).toEqual(embedded.querySelector(".usage-shell")?.outerHTML);
+    } finally {
+      disposeStandalone();
+      disposeEmbedded();
+    }
   });
 
   it("previews long messages until they are expanded", async () => {
@@ -413,4 +452,37 @@ function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
     resolve = done;
   });
   return { promise, resolve };
+}
+
+/** Waits for Svelte's async load/tick work to settle in component tests. */
+async function settleMicrotasks(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** Installs deterministic dimensions and a scroll spy on a scroll container. */
+function installScrollGeometry(node: HTMLElement, options: { top: number; height: number; scrollTo: ReturnType<typeof vi.fn> }): void {
+  installRect(node, { top: options.top, height: options.height });
+  Object.defineProperty(node, "clientHeight", { configurable: true, value: options.height });
+  Object.defineProperty(node, "scrollTop", { configurable: true, writable: true, value: 0 });
+  Object.defineProperty(node, "scrollTo", { configurable: true, value: options.scrollTo });
+}
+
+/** Installs deterministic viewport geometry on an element. */
+function installRect(node: HTMLElement, rect: { top: number; height: number }): void {
+  Object.defineProperty(node, "getBoundingClientRect", {
+    configurable: true,
+    /** Returns deterministic viewport geometry for jsdom. */
+    value: () => ({
+      top: rect.top,
+      bottom: rect.top + rect.height,
+      height: rect.height,
+      left: 0,
+      right: 0,
+      width: 0,
+      x: 0,
+      y: rect.top,
+      /** Supports DOMRect JSON serialization in tests. */
+      toJSON: () => undefined
+    })
+  });
 }

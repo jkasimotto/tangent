@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
+  import ShellLayout from "./ShellLayout.svelte";
 
   type UiApp = {
     id: string;
@@ -115,23 +116,25 @@
   }
 </script>
 
-<main class="tangent-shell">
-  <div class="app-switcher">
-    {#if apps.length}
-      <button class="switcher-trigger" type="button" aria-label="Switch Tangent app" aria-expanded={switcherOpen} on:click={() => switcherOpen = !switcherOpen}>
-        {activeApp?.label || "Apps"}
-      </button>
-      {#if switcherOpen}
-        <nav aria-label="Tangent apps" class="switcher-menu">
-          {#each apps as app}
-            <button class:active={app.id === activeId} type="button" on:click={() => selectApp(app)}>
-              {app.label}
-            </button>
-          {/each}
-        </nav>
+<ShellLayout>
+  <svelte:fragment slot="chrome">
+    <div class="app-switcher">
+      {#if apps.length}
+        <button class="switcher-trigger" type="button" aria-label="Switch Tangent app" aria-expanded={switcherOpen} on:click={() => switcherOpen = !switcherOpen}>
+          {activeApp?.label || "Apps"}
+        </button>
+        {#if switcherOpen}
+          <nav aria-label="Tangent apps" class="switcher-menu">
+            {#each apps as app}
+              <button class:active={app.id === activeId} type="button" on:click={() => selectApp(app)}>
+                {app.label}
+              </button>
+            {/each}
+          </nav>
+        {/if}
       {/if}
-    {/if}
-  </div>
+    </div>
+  </svelte:fragment>
 
   <section class="workspace" aria-busy={loading}>
     {#if loading}
@@ -143,4 +146,4 @@
     {/if}
     <div class="app-host" bind:this={mountNode}></div>
   </section>
-</main>
+</ShellLayout>

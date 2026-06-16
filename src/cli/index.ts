@@ -1,12 +1,7 @@
 #!/usr/bin/env node
 import { completeCommand, completionScript, renderCommandHelp, type CliCommandSpec, type CliCompletionShell } from "@tangent/core";
-import { runUsageCli, usageCommandSpec } from "@tangent/usage/cli";
-import { rollupCommandSpec, runRollupCli } from "@tangent/rollup/cli";
-import { evalCommandSpec, runEvalCli } from "@tangent/eval/cli";
-import { governanceCommandSpec, runGovernanceCli } from "@tangent/governance/cli";
-import { runSearchCli, searchCommandSpec } from "@tangent/search/cli";
-import { runTreesCli, treesCommandSpec } from "@tangent/trees-cli/cli";
 import { dataCommandSpec, devCommandSpec, doctorCommandSpec, runProductStatusCommand, runSetupCommand, runTangentUiCommand, setupCommandSpec, statusCommandSpec, uiCommandSpec } from "./product.js";
+import { requiredProductModule } from "./module-loader.js";
 
 const tangentCommandSpec: CliCommandSpec = {
   name: "tangent",
@@ -15,13 +10,13 @@ const tangentCommandSpec: CliCommandSpec = {
     setupCommandSpec,
     statusCommandSpec,
     uiCommandSpec,
-    usageCommandSpec,
-    treesCommandSpec,
-    rollupCommandSpec,
-    searchCommandSpec,
-    evalCommandSpec,
+    productCommandSpec("usage", "Inspect coding-agent activity"),
+    productCommandSpec("trees", "Manage Tangent work trees"),
+    productCommandSpec("rollup", "Generate private rollup notes"),
+    productCommandSpec("search", "Index and search repository structure"),
+    productCommandSpec("eval", "Run and inspect coding-agent evals"),
     doctorCommandSpec,
-    { ...governanceCommandSpec, hidden: true },
+    { name: "governance", description: "Run architecture governance lints", hidden: true },
     devCommandSpec,
     dataCommandSpec,
     {
@@ -63,31 +58,37 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
   }
 
   if (app === "usage") {
+    const { runUsageCli } = await requiredProductModule<{ runUsageCli(argv: string[]): Promise<void> }>("@tangent/usage/cli", "usage");
     await runUsageCli(rest);
     return;
   }
 
   if (app === "trees") {
+    const { runTreesCli } = await requiredProductModule<{ runTreesCli(argv: string[]): Promise<void> }>("@tangent/trees-cli/cli", "trees");
     await runTreesCli(rest);
     return;
   }
 
   if (app === "rollup") {
+    const { runRollupCli } = await requiredProductModule<{ runRollupCli(argv: string[]): Promise<void> }>("@tangent/rollup/cli", "rollup");
     await runRollupCli(rest);
     return;
   }
 
   if (app === "eval") {
+    const { runEvalCli } = await requiredProductModule<{ runEvalCli(argv: string[]): Promise<void> }>("@tangent/eval/cli", "eval");
     await runEvalCli(rest);
     return;
   }
 
   if (app === "search") {
+    const { runSearchCli } = await requiredProductModule<{ runSearchCli(argv: string[]): Promise<void> }>("@tangent/search/cli", "search");
     await runSearchCli(rest);
     return;
   }
 
   if (app === "governance") {
+    const { runGovernanceCli } = await requiredProductModule<{ runGovernanceCli(argv: string[]): Promise<void> }>("@tangent/governance/cli", "governance");
     await runGovernanceCli(rest);
     return;
   }
@@ -95,6 +96,7 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
   if (app === "dev") {
     const [command, ...devRest] = rest;
     if (!command || command === "lint") {
+      const { runGovernanceCli } = await requiredProductModule<{ runGovernanceCli(argv: string[]): Promise<void> }>("@tangent/governance/cli", "dev lint");
       await runGovernanceCli(["lint", ...devRest]);
       return;
     }
@@ -104,10 +106,12 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
   if (app === "data") {
     const [command, ...dataRest] = rest;
     if (command === "export") {
+      const { runUsageCli } = await requiredProductModule<{ runUsageCli(argv: string[]): Promise<void> }>("@tangent/usage/cli", "data export");
       await runUsageCli(["export", ...dataRest]);
       return;
     }
     if (command === "archive") {
+      const { runUsageCli } = await requiredProductModule<{ runUsageCli(argv: string[]): Promise<void> }>("@tangent/usage/cli", "data archive");
       await runUsageCli(["archive", ...dataRest]);
       return;
     }
@@ -131,6 +135,14 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
   }
 
   throw new Error(`Unknown command: ${app}`);
+}
+
+/** Creates a root-owned command stub for an optional product package. */
+function productCommandSpec(name: string, description: string): CliCommandSpec {
+  return {
+    name,
+    description: `${description}; install @tangent/${name === "trees" ? "trees-cli" : name} if unavailable`
+  };
 }
 
 /** Documents the help helper. */

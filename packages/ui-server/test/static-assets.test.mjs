@@ -12,12 +12,34 @@ test("serves health and static index", async () => {
   await writeFile(path.join(root, "index.html"), "ok");
   const server = await createLocalUiServer({ product: "test", assets: { rootDir: root }, open: false });
   try {
-    assert.equal(await fetchText(`${server.url}healthz`), "{\n  \"ok\": true,\n  \"product\": \"test\"\n}\n");
+    assert.equal(await fetchText(`${server.url}healthz`), "{\n  \"ok\": true,\n  \"product\": \"test\",\n  \"dev\": false\n}\n");
     assert.equal(await fetchText(server.url), "ok");
     const apiResponse = await fetch(`${server.url}api/missing`);
     assert.equal(apiResponse.status, 404);
     assert.equal(apiResponse.headers.get("content-type"), "application/json; charset=utf-8");
     assert.deepEqual(await apiResponse.json(), { error: "API route not found." });
+  } finally {
+    await server.close();
+  }
+});
+
+test("serves dev asset mounts through Vite middleware", async () => {
+  const shell = path.join(tmpdir(), `tangent-ui-server-shell-${Date.now()}`);
+  const product = path.join(tmpdir(), `tangent-ui-server-dev-${Date.now()}`);
+  await mkdir(path.join(product, "src"), { recursive: true });
+  await mkdir(shell, { recursive: true });
+  await writeFile(path.join(shell, "index.html"), "shell");
+  await writeFile(path.join(product, "src", "embedded.ts"), "export const ok = true;");
+  const server = await createLocalUiServer({
+    product: "test",
+    mode: "dev",
+    assets: { rootDir: shell },
+    assetMounts: [{ pathPrefix: "/apps/dev", assets: { rootDir: product, dev: { sourceRoot: product } } }],
+    open: false
+  });
+  try {
+    assert.match(await fetchText(`${server.url}apps/dev/src/embedded.ts`), /ok = true/);
+    assert.equal((await (await fetch(`${server.url}healthz`)).json()).dev, true);
   } finally {
     await server.close();
   }

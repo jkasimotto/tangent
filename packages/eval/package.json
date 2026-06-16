@@ -3,6 +3,15 @@
   "version": "0.1.0",
   "description": "Local comparison harness for coding agents.",
   "type": "module",
+  "tangent": {
+    "uiApp": {
+      "id": "eval",
+      "label": "Eval",
+      "serverExport": "@tangent/eval/server",
+      "factory": "createEvalUiApp",
+      "order": 30
+    }
+  },
   "bin": {
     "tangent-eval": "./dist/cli/index.js"
   },

@@ -17,6 +17,7 @@
   let activeId = "";
   let loading = true;
   let error = "";
+  let switcherOpen = false;
   let mountNode: HTMLElement;
   let dispose: void | (() => void);
   let mountedKey = "";
@@ -53,6 +54,7 @@
 
   function selectApp(app: UiApp): void {
     activeId = app.id;
+    switcherOpen = false;
     syncLocation(true);
   }
 
@@ -114,21 +116,22 @@
 </script>
 
 <main class="tangent-shell">
-  <header class="topbar">
-    <div class="brand">
-      <strong>Tangent</strong>
-      <span>Local UI</span>
-    </div>
+  <div class="app-switcher">
     {#if apps.length}
-      <nav aria-label="Tangent apps">
-        {#each apps as app}
-          <button class:active={app.id === activeId} type="button" on:click={() => selectApp(app)}>
-            {app.label}
-          </button>
-        {/each}
-      </nav>
+      <button class="switcher-trigger" type="button" aria-label="Switch Tangent app" aria-expanded={switcherOpen} on:click={() => switcherOpen = !switcherOpen}>
+        {activeApp?.label || "Apps"}
+      </button>
+      {#if switcherOpen}
+        <nav aria-label="Tangent apps" class="switcher-menu">
+          {#each apps as app}
+            <button class:active={app.id === activeId} type="button" on:click={() => selectApp(app)}>
+              {app.label}
+            </button>
+          {/each}
+        </nav>
+      {/if}
     {/if}
-  </header>
+  </div>
 
   <section class="workspace" aria-busy={loading}>
     {#if loading}

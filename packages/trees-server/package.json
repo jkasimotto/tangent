@@ -3,6 +3,15 @@
   "version": "0.1.0",
   "description": "Local UI server adapter for Tangent Trees.",
   "type": "module",
+  "tangent": {
+    "uiApp": {
+      "id": "trees",
+      "label": "Trees",
+      "serverExport": "@tangent/trees-server",
+      "factory": "createTreesUiApp",
+      "order": 20
+    }
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

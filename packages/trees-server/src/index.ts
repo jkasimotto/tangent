@@ -1,8 +1,11 @@
 import type { IncomingMessage } from "node:http";
+import { stat } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import type { TreeEntity } from "@tangent/trees-schema";
 import { openFsTrees, type FsTreesClientOptions } from "@tangent/trees-store-fs";
-import type { LocalUiApp, StaticAssetMount, UiRoute } from "@tangent/ui-server";
+import type { LocalUiApp, StaticAssetMount, UiModePreference, UiRoute } from "@tangent/ui-server";
 import { treesUiEmbeddedAssets } from "@tangent/trees-ui/assets";
 
 export type TreesUiApp = {
@@ -13,21 +16,45 @@ export type TreesUiApp = {
 
 export type TreesUiAppOptions = {
   store?: FsTreesClientOptions;
+  mode?: UiModePreference;
 };
 
 /** Creates a Trees app registration for the combined Tangent UI. */
-export function createTreesUiApp(options: TreesUiAppOptions = {}): TreesUiApp {
+export async function createTreesUiApp(options: TreesUiAppOptions = {}): Promise<TreesUiApp> {
+  const mode = options.mode || "static";
+  const devRoot = mode !== "static" ? await treesUiSourceRoot() : undefined;
   return {
     app: {
       id: "trees",
       label: "Trees",
       routePath: "/trees",
-      modulePath: "/apps/trees/embedded.js",
-      stylePaths: ["/apps/trees/embedded.css"]
+      modulePath: devRoot ? "/apps/trees/src/embedded.ts" : "/apps/trees/embedded.js",
+      stylePaths: devRoot ? [] : ["/apps/trees/embedded.css"]
     },
     routes: treesApiRoutes(options),
-    assetMounts: [{ pathPrefix: "/apps/trees", assets: treesUiEmbeddedAssets }]
+    assetMounts: [{ pathPrefix: "/apps/trees", assets: devRoot ? { ...treesUiEmbeddedAssets, dev: { sourceRoot: devRoot } } : treesUiEmbeddedAssets }]
   };
+}
+
+/** Resolves the workspace Trees UI source root if this install includes it. */
+async function treesUiSourceRoot(): Promise<string | undefined> {
+  const assetsUrl = import.meta.resolve("@tangent/trees-ui/assets");
+  let current = path.dirname(fileURLToPath(assetsUrl));
+  for (let index = 0; index < 6; index += 1) {
+    const packageJson = path.join(current, "package.json");
+    const indexHtml = path.join(current, "index.html");
+    const main = path.join(current, "src", "main.ts");
+    if (await isFile(packageJson) && await isFile(indexHtml) && await isFile(main)) return current;
+    const parent = path.dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return undefined;
+}
+
+/** Tests whether a path is a readable file. */
+async function isFile(filePath: string): Promise<boolean> {
+  return stat(filePath).then((entry) => entry.isFile()).catch(() => false);
 }
 
 /** Builds Trees API routes for the local UI server. */

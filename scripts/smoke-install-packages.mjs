@@ -11,6 +11,17 @@ const packages = {
   core: "packages/core",
   repo: "packages/repo",
   "agent-runtime": "packages/agent-runtime",
+  "ui-tokens": "packages/ui-tokens",
+  "ui-server": "packages/ui-server",
+  "tangent-ui": "packages/tangent-ui",
+  "usage-ui-data": "packages/usage-ui-data",
+  "usage-ui": "packages/usage-ui",
+  "trees-schema": "packages/trees-schema",
+  "trees-core": "packages/trees-core",
+  "trees-store-fs": "packages/trees-store-fs",
+  "trees-ui": "packages/trees-ui",
+  "trees-server": "packages/trees-server",
+  "eval-ui": "packages/eval-ui",
   governance: "packages/governance",
   usage: "packages/usage",
   search: "packages/search",
@@ -23,6 +34,17 @@ const packageNames = {
   core: "@tangent/core",
   repo: "@tangent/repo",
   "agent-runtime": "@tangent/agent-runtime",
+  "ui-tokens": "@tangent/ui-tokens",
+  "ui-server": "@tangent/ui-server",
+  "tangent-ui": "@tangent/tangent-ui",
+  "usage-ui-data": "@tangent/usage-ui-data",
+  "usage-ui": "@tangent/usage-ui",
+  "trees-schema": "@tangent/trees-schema",
+  "trees-core": "@tangent/trees-core",
+  "trees-store-fs": "@tangent/trees-store-fs",
+  "trees-ui": "@tangent/trees-ui",
+  "trees-server": "@tangent/trees-server",
+  "eval-ui": "@tangent/eval-ui",
   governance: "@tangent/governance",
   usage: "@tangent/usage",
   search: "@tangent/search",
@@ -34,7 +56,7 @@ const packageNames = {
 const smokeTargets = [
   {
     name: "@tangent/usage",
-    tarballs: ["core", "repo", "usage"],
+    tarballs: ["core", "repo", "ui-tokens", "ui-server", "usage-ui-data", "usage-ui", "usage"],
     importName: "@tangent/usage",
     bin: "tangent-usage",
     absentPackages: ["search", "rollup", "eval"]
@@ -48,23 +70,41 @@ const smokeTargets = [
   },
   {
     name: "@tangent/rollup",
-    tarballs: ["core", "repo", "agent-runtime", "usage", "rollup"],
+    tarballs: ["core", "repo", "agent-runtime", "ui-tokens", "ui-server", "usage-ui-data", "usage-ui", "usage", "rollup"],
     importName: "@tangent/rollup",
     bin: "tangent-rollup",
     absentPackages: ["search", "eval"]
   },
   {
     name: "@tangent/eval",
-    tarballs: ["core", "repo", "agent-runtime", "usage", "eval"],
+    tarballs: ["core", "repo", "agent-runtime", "ui-tokens", "ui-server", "usage-ui-data", "usage-ui", "usage", "eval-ui", "eval"],
     importName: "@tangent/eval",
     bin: "tangent-eval",
     absentPackages: ["search", "rollup"]
   },
   {
     name: "tangent",
-    tarballs: ["core", "repo", "agent-runtime", "governance", "usage", "search", "rollup", "eval", "tangent"],
+    tarballs: ["core", "ui-tokens", "ui-server", "tangent-ui", "tangent"],
     bin: "tangent",
-    absentPackages: []
+    smokeArgs: ["ui", "--list-apps", "--json"],
+    expectedStdout: "\"apps\": []",
+    absentPackages: ["usage", "search", "rollup", "eval", "trees-cli"]
+  },
+  {
+    name: "tangent + @tangent/usage",
+    tarballs: ["core", "repo", "ui-tokens", "ui-server", "tangent-ui", "usage-ui-data", "usage-ui", "usage", "tangent"],
+    bin: "tangent",
+    smokeArgs: ["ui", "--list-apps", "--json"],
+    expectedStdout: "\"id\": \"usage\"",
+    absentPackages: ["search", "rollup", "eval", "trees-cli", "trees-server"]
+  },
+  {
+    name: "tangent + @tangent/usage + @tangent/trees-server",
+    tarballs: ["core", "repo", "ui-tokens", "ui-server", "tangent-ui", "usage-ui-data", "usage-ui", "usage", "trees-schema", "trees-core", "trees-store-fs", "trees-ui", "trees-server", "tangent"],
+    bin: "tangent",
+    smokeArgs: ["ui", "--list-apps", "--json"],
+    expectedStdout: "\"id\": \"trees\"",
+    absentPackages: ["search", "rollup", "eval", "trees-cli"]
   }
 ];
 
@@ -89,6 +129,7 @@ try {
   rmSync(tmp, { recursive: true, force: true });
 }
 
+/** Packs workspace packages into local tarballs for smoke installs. */
 function packPackages(packDir) {
   const tarballs = {};
   for (const [name, packageDir] of Object.entries(packages)) {
@@ -103,6 +144,7 @@ function packPackages(packDir) {
   return tarballs;
 }
 
+/** Installs and verifies each smoke target with one package manager. */
 function smokeWithManager(manager, tarballs, targets) {
   for (const target of targets) {
     const projectDir = mkdtempSync(path.join(tmp, `${manager}-${target.name.replace(/[@/]/g, "-")}-`));
@@ -114,10 +156,12 @@ function smokeWithManager(manager, tarballs, targets) {
         stdio: "inherit"
       });
     }
-    execFileSync(path.join(projectDir, "node_modules", ".bin", target.bin), ["--help"], {
+    const smokeArgs = target.smokeArgs || ["--help"];
+    const output = execFileSync(path.join(projectDir, "node_modules", ".bin", target.bin), smokeArgs, {
       cwd: projectDir,
-      stdio: "ignore"
+      encoding: "utf8"
     });
+    if (target.expectedStdout && !output.includes(target.expectedStdout)) throw new Error(`${target.name} smoke output did not include ${target.expectedStdout}`);
     for (const packageName of target.absentPackages) {
       const installed = path.join(projectDir, "node_modules", "@tangent", packageName);
       if (existsSync(installed)) {
@@ -128,6 +172,7 @@ function smokeWithManager(manager, tarballs, targets) {
   }
 }
 
+/** Writes the temporary package manifest for one smoke target. */
 function writeSmokeManifest(projectDir, packageKeys, tarballs) {
   const dependencies = Object.fromEntries(packageKeys.map((key) => [packageNames[key], `file:${tarballs[key]}`]));
   writeFileSync(path.join(projectDir, "package.json"), JSON.stringify({
@@ -138,6 +183,7 @@ function writeSmokeManifest(projectDir, packageKeys, tarballs) {
   }, null, 2), "utf8");
 }
 
+/** Runs the package-manager install command for a smoke project. */
 function installTarballs(manager, cwd) {
   if (manager === "npm") {
     execFileSync("npm", ["install", "--no-audit", "--no-fund"], { cwd, stdio: "inherit" });
@@ -158,6 +204,7 @@ function installTarballs(manager, cwd) {
   throw new Error(`Unsupported package manager: ${manager}`);
 }
 
+/** Tests whether a command is available on PATH. */
 function commandAvailable(command) {
   try {
     execFileSync(command, ["--version"], { stdio: "ignore" });

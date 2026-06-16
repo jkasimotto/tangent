@@ -9,7 +9,7 @@ Platform packages:
 
 UI platform packages:
 - @tangent/ui-tokens contains framework-free semantic tokens and theme CSS.
-- @tangent/ui-server contains framework-agnostic local HTTP static serving, mounted app assets, and API route dispatch.
+- @tangent/ui-server contains framework-agnostic local HTTP static serving, optional Vite middleware for workspace dev, mounted app assets, and API route dispatch.
 - @tangent/tangent-ui contains the Svelte combined-app shell and must not import product packages.
 - Product UI packages such as @tangent/usage-ui, @tangent/trees-ui, and @tangent/eval-ui own embedded browser modules for the combined shell.
 
@@ -43,7 +43,7 @@ Split Usage packages:
 - @tangent/usage remains the compatibility meta-package during migration.
 
 Root CLI:
-- Owns human command taxonomy (`setup`, `status`, `ui`, `usage`, `rollup`, `search`, `eval`, `doctor`) and may compose public SDKs and installed UI app descriptors.
+- Owns human command taxonomy (`setup`, `status`, `ui`, `usage`, `rollup`, `search`, `eval`, `doctor`) and may compose installed product commands and UI app descriptors through lazy imports.
 - Must keep raw/debug/CI surfaces hidden from default help when they are not human product commands.
 
 Install contract:
@@ -51,6 +51,7 @@ Install contract:
 - `@tangent/usage`, `@tangent/search`, `@tangent/rollup`, and `@tangent/eval` must be publishable and installable independently.
 - Standalone app packages may depend on platform packages. Rollup and Eval may also depend on Usage. Product UI bundles may be dependencies of their owning app package. No standalone app may pull an unrelated vertical app.
 - The root `tangent ui` command may compose installed vertical UI descriptors. Standalone app CLIs keep their own UI entrypoints when provided.
+- UI-capable product packages declare `tangent.uiApp` metadata in `package.json`; the root shell discovers manifests and imports only selected installed app factories.
 - Publishable manifests must use semver `@tangent/*` dependencies, not `file:`, `link:`, or `workspace:` protocols.
 - Standalone CLIs use `tangent-usage`, `tangent-search`, `tangent-rollup`, and `tangent-eval`; the root `tangent` package keeps short subcommands.
 
@@ -64,6 +65,7 @@ Hard rules:
 - `@tangent/usage/schema`, `@tangent/usage/core`, and `@tangent/usage/query` must not load SQLite, pricing, server, or UI code. SQLite belongs behind `@tangent/usage/sqlite` and CLI/index compatibility paths. Usage UI serving belongs behind `@tangent/usage/server` and the `usage ui` CLI command.
 - `@tangent/usage-schema` and `@tangent/usage-core` must not import UI, SQLite, or provider parser packages.
 - UI platform packages must not import Usage, Eval, Rollup, or Search product packages.
+- The root `tangent` package must not depend on product packages or statically import product source; products are optional peers or separate installs.
 - agent-runtime must not import Rollup or Eval schemas.
 - Cross-package imports must use public package exports.
 - Trees package boundaries are enforced by `deps/trees-boundaries`.

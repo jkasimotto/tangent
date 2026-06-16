@@ -4,14 +4,21 @@ import { readFile, stat } from "node:fs/promises";
 import http, { type Server } from "node:http";
 import path from "node:path";
 
+export type UiModePreference = "auto" | "dev" | "static";
+
 export type StaticUiAssets = {
   rootDir: string;
   indexFile?: string;
+  dev?: DevUiAssets;
 };
 
 export type StaticAssetMount = {
   pathPrefix: string;
   assets: StaticUiAssets;
+};
+
+export type DevUiAssets = {
+  sourceRoot: string;
 };
 
 export type EmbeddedUiAssets = StaticUiAssets & {
@@ -24,6 +31,14 @@ export type LocalUiApp = {
   modulePath: string;
   stylePaths?: string[];
   routePath?: string;
+};
+
+export type UiAppContext = {
+  repo: string;
+  scope: "repo" | "all";
+  mode: UiModePreference;
+  providers?: string[];
+  sources?: string[];
 };
 
 export type UiRouteResponse = {
@@ -39,11 +54,21 @@ export type UiRoute = {
   handle(request: http.IncomingMessage, url: URL, match: RegExpMatchArray): Promise<UiRouteResponse | undefined> | UiRouteResponse | undefined;
 };
 
+export type UiAppRegistration = {
+  app: LocalUiApp;
+  routes: UiRoute[];
+  assetMounts: StaticAssetMount[];
+  close?: () => Promise<void>;
+};
+
+export type UiAppFactory = (context: UiAppContext) => Promise<UiAppRegistration | undefined> | UiAppRegistration | undefined;
+
 export type CreateLocalUiServerOptions = {
   product: string;
   host?: string;
   port?: number;
   open?: boolean;
+  mode?: UiModePreference;
   assets: StaticUiAssets;
   assetMounts?: StaticAssetMount[];
   routes?: UiRoute[];
@@ -51,14 +76,26 @@ export type CreateLocalUiServerOptions = {
 
 export type LocalUiServer = {
   url: string;
+  dev?: boolean;
   close(): Promise<void>;
+};
+
+type ViteDevServerLike = {
+  middlewares(request: http.IncomingMessage, response: http.ServerResponse, next: (error?: unknown) => void): void;
+  close(): Promise<void>;
+};
+
+type ActiveDevMount = {
+  pathPrefix: string;
+  server: ViteDevServerLike;
 };
 
 /** Creates create local ui server. */
 export async function createLocalUiServer(options: CreateLocalUiServerOptions): Promise<LocalUiServer> {
   const host = options.host || "127.0.0.1";
+  const devMounts = await startDevMounts(options);
   const server = http.createServer((request, response) => {
-    void handleRequest(request, response, options);
+    void handleRequest(request, response, options, devMounts);
   });
   await listen(server, options.port ?? 0, host);
   const address = server.address();
@@ -67,16 +104,20 @@ export async function createLocalUiServer(options: CreateLocalUiServerOptions): 
   if (options.open) openBrowser(url);
   return {
     url,
+    dev: devMounts.length > 0,
     /** Closes the local server instance. */
-    close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+    close: () => Promise.all([
+      ...devMounts.map((mount) => mount.server.close()),
+      new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+    ]).then(() => undefined)
   };
 }
 
 /** Handles the local UI request. */
-async function handleRequest(request: http.IncomingMessage, response: http.ServerResponse, options: CreateLocalUiServerOptions): Promise<void> {
+async function handleRequest(request: http.IncomingMessage, response: http.ServerResponse, options: CreateLocalUiServerOptions, devMounts: ActiveDevMount[]): Promise<void> {
   try {
     const url = new URL(request.url || "/", "http://localhost");
-    if (url.pathname === "/healthz") return sendJson(response, 200, { ok: true, product: options.product });
+    if (url.pathname === "/healthz") return sendJson(response, 200, { ok: true, product: options.product, dev: devMounts.length > 0 });
 
     for (const route of options.routes || []) {
       if (route.method && route.method !== request.method) continue;
@@ -88,12 +129,60 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
 
     if (request.method !== "GET" && request.method !== "HEAD") return sendJson(response, 405, { error: "Method not allowed." });
     if (url.pathname.startsWith("/api/")) return sendJson(response, 404, { error: "API route not found." });
+    const devMount = matchingDevMount(url.pathname, devMounts);
+    if (devMount) return handleDevMount(request, response, url, devMount);
     const mount = matchingAssetMount(url.pathname, options.assetMounts || []);
     if (mount) return await sendStatic(response, mountedPathname(url.pathname, mount.pathPrefix), mount.assets);
     return await sendStatic(response, url.pathname, options.assets);
   } catch (error) {
     return sendJson(response, 500, { error: (error as Error).message });
   }
+}
+
+/** Starts Vite middleware for dev-capable mounted assets. */
+async function startDevMounts(options: CreateLocalUiServerOptions): Promise<ActiveDevMount[]> {
+  const mode = options.mode || "static";
+  if (mode === "static") return [];
+  const candidates = (options.assetMounts || []).filter((mount) => mount.assets.dev);
+  if (!candidates.length) {
+    if (mode === "dev") throw new Error(`${options.product} UI dev mode is unavailable: no dev asset mounts are registered.`);
+    return [];
+  }
+  const vite = await optionalImport<{ createServer(options: unknown): Promise<ViteDevServerLike> }>("vite");
+  if (!vite?.createServer) {
+    if (mode === "dev") throw new Error(`${options.product} UI dev mode requires Vite to be installed.`);
+    return [];
+  }
+  const mounts: ActiveDevMount[] = [];
+  for (const mount of candidates) {
+    mounts.push({
+      pathPrefix: mount.pathPrefix,
+      server: await vite.createServer({
+        root: mount.assets.dev!.sourceRoot,
+        appType: "custom",
+        server: { middlewareMode: true }
+      })
+    });
+  }
+  return mounts;
+}
+
+/** Finds the most specific active dev mount for a pathname. */
+function matchingDevMount(pathname: string, mounts: ActiveDevMount[]): ActiveDevMount | undefined {
+  return mounts
+    .filter((mount) => mountMatches(pathname, mount.pathPrefix))
+    .sort((left, right) => normalizedPrefix(right.pathPrefix).length - normalizedPrefix(left.pathPrefix).length)[0];
+}
+
+/** Rewrites and forwards a mounted request into Vite middleware. */
+function handleDevMount(request: http.IncomingMessage, response: http.ServerResponse, url: URL, mount: ActiveDevMount): void {
+  const originalUrl = request.url;
+  request.url = `${mountedPathname(url.pathname, mount.pathPrefix)}${url.search}`;
+  mount.server.middlewares(request, response, (error) => {
+    request.url = originalUrl;
+    if (error) return sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) });
+    return sendJson(response, 404, { error: "Not found." });
+  });
 }
 
 /** Finds the most specific static asset mount for a pathname. */
@@ -189,4 +278,10 @@ export function openBrowser(url: string): void {
   const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
   const child = spawn(command, args, { stdio: "ignore", detached: true });
   child.unref();
+}
+
+/** Dynamically imports an optional development dependency. */
+async function optionalImport<T>(specifier: string): Promise<T | undefined> {
+  const dynamicImport = new Function("specifier", "return import(specifier)") as (value: string) => Promise<T>;
+  return dynamicImport(specifier).catch(() => undefined);
 }

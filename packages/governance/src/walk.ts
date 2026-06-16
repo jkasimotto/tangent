@@ -13,6 +13,7 @@ export type PackageInfo = {
     devDependencies?: Record<string, string>;
     optionalDependencies?: Record<string, string>;
     peerDependencies?: Record<string, string>;
+    tangent?: unknown;
   };
 };
 

@@ -3,6 +3,15 @@
   "version": "0.1.0",
   "description": "Local conversation telemetry and queryability for coding-agent sessions.",
   "type": "module",
+  "tangent": {
+    "uiApp": {
+      "id": "usage",
+      "label": "Usage",
+      "serverExport": "@tangent/usage/server",
+      "factory": "createUsageUiApp",
+      "order": 10
+    }
+  },
   "bin": {
     "tangent-usage": "./dist/cli/index.js"
   },

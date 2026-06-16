@@ -9,8 +9,8 @@ import { openFsTrees } from "@tangent/trees-store-fs";
 
 import { createTreesUiApp } from "../dist/index.js";
 
-test("creates a trees ui app descriptor", () => {
-  const registration = createTreesUiApp();
+test("creates a trees ui app descriptor", async () => {
+  const registration = await createTreesUiApp({ mode: "static" });
   assert.deepEqual(registration.app, {
     id: "trees",
     label: "Trees",
@@ -26,7 +26,7 @@ test("workspace route returns persisted Trees projects", async () => {
   const root = await treesRoot();
   const client = await openFsTrees({ root });
   const project = await client.projects.add("polez", "/repo/polez");
-  const route = treesRoute(root);
+  const route = await treesRoute(root);
 
   const result = await callRoute(route, "GET", "/api/trees/workspace");
 
@@ -36,7 +36,7 @@ test("workspace route returns persisted Trees projects", async () => {
 
 test("create path route persists missing group-ready entities", async () => {
   const root = await treesRoot();
-  const route = treesRoute(root);
+  const route = await treesRoute(root);
 
   const result = await callRoute(route, "POST", "/api/trees/entities/path", { path: "foo/bar" });
 
@@ -50,7 +50,7 @@ test("save and clear leaf routes persist leaf metadata", async () => {
   const client = await openFsTrees({ root });
   const project = await client.projects.add("polez", "/repo/polez");
   const entity = await client.entities.create({ path: "foo/bar", kind: "group" });
-  const route = treesRoute(root);
+  const route = await treesRoute(root);
 
   const saved = await callRoute(route, "POST", `/api/trees/entities/${encodeURIComponent(entity.id)}/leaf`, {
     projectId: project.id,
@@ -85,7 +85,7 @@ test("create path route rejects children under locked leaves", async () => {
   const client = await openFsTrees({ root });
   const project = await client.projects.add("polez", "/repo/polez");
   await client.entities.create({ path: "foo/bar", kind: "work", projectId: project.id, branch: "main" });
-  const route = treesRoute(root);
+  const route = await treesRoute(root);
 
   const result = await callRoute(route, "POST", "/api/trees/entities/path", { path: "foo/bar/baz" });
 
@@ -99,8 +99,8 @@ async function treesRoot() {
 }
 
 /** Returns the Trees API route registered for a temp root. */
-function treesRoute(root) {
-  return createTreesUiApp({ store: { root } }).routes[0];
+async function treesRoute(root) {
+  return (await createTreesUiApp({ store: { root }, mode: "static" })).routes[0];
 }
 
 /** Calls a UI route with a small JSON request body. */

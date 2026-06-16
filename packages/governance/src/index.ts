@@ -53,18 +53,8 @@ export const governanceCommandSpec: CliCommandSpec = {
 const allowedPackageDeps: Record<string, string[]> = {
   "tangent": [
     "@tangent/core",
-    "@tangent/repo",
-    "@tangent/trees-cli",
-    "@tangent/trees-server",
-    "@tangent/agent-runtime",
-    "@tangent/governance",
     "@tangent/ui-server",
-    "@tangent/tangent-ui",
-    "@tangent/usage",
-    "@tangent/rollup",
-    "@tangent/eval",
-    "@tangent/eval-ui",
-    "@tangent/search"
+    "@tangent/tangent-ui"
   ],
   "@tangent/core": [],
   "@tangent/repo": ["@tangent/core"],
@@ -79,7 +69,7 @@ const allowedPackageDeps: Record<string, string[]> = {
   "@tangent/trees-mcp": ["@tangent/trees-schema", "@tangent/trees-core"],
   "@tangent/trees-cli": ["@tangent/core", "@tangent/trees-schema", "@tangent/trees-core", "@tangent/trees-store-fs", "@tangent/trees-git", "@tangent/trees-terminal", "@tangent/trees-agents", "@tangent/trees-attention", "@tangent/trees-mcp"],
   "@tangent/trees-ui": ["@tangent/ui-tokens"],
-  "@tangent/trees-server": ["@tangent/ui-server", "@tangent/trees-ui"],
+  "@tangent/trees-server": ["@tangent/ui-server", "@tangent/trees-ui", "@tangent/trees-schema", "@tangent/trees-store-fs"],
   "@tangent/agent-runtime": ["@tangent/core"],
   "@tangent/governance": ["@tangent/core", "@tangent/repo"],
   "@tangent/usage-schema": [],

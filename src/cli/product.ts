@@ -4,11 +4,9 @@ import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import type { CliCommandSpec } from "@tangent/core";
 import { booleanArg, numberArg, parseArgs, stringArg, stringsArg } from "@tangent/core/cli";
-import type { LocalUiApp, StaticAssetMount, UiRoute } from "@tangent/ui-server";
-import { status as usageStatus } from "@tangent/usage";
-import type { UsageProvider } from "@tangent/usage";
-import { configure as configureRollup, status as rollupStatus } from "@tangent/rollup";
-import { configure as configureSearch, indexRepo, status as searchStatus } from "@tangent/search";
+import type { UiRoute } from "@tangent/ui-server";
+import { optionalModule, requiredProductModule } from "./module-loader.js";
+import { discoverUiApps } from "./ui-discovery.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -64,6 +62,9 @@ export const uiCommandSpec: CliCommandSpec = {
     { name: "port", takesValue: true, description: "Port to bind" },
     { name: "provider", takesValue: true, values: ["claude", "codex"], description: "Usage provider filter" },
     { name: "source", takesValue: true, values: ["native", "all"], description: "Usage data source" },
+    { name: "list-apps", description: "List installed UI apps and exit" },
+    { name: "dev", description: "Force workspace hot-reload serving and fail if unavailable" },
+    { name: "static-ui", description: "Serve compiled UI assets instead of workspace hot reload" },
     { name: "no-browser", description: "Do not open the browser" },
     { name: "json", description: "Print JSON" }
   ]
@@ -99,10 +100,12 @@ export async function runSetupCommand(argv: string[]): Promise<void> {
   const actions = results.actions as unknown[];
 
   if (selected.usage) {
+    const { status: usageStatus } = await requiredProductModule<{ status(options: unknown): Promise<unknown> }>("@tangent/usage", "setup --usage");
     actions.push({ usage: await usageStatus({ repo, providers: usageProviders(selected.provider) }) });
   }
 
   if (selected.rollup) {
+    const { configure: configureRollup } = await requiredProductModule<{ configure(options: unknown): Promise<unknown> }>("@tangent/rollup", "setup --rollup");
     const rollup = await configureRollup({
       repo,
       output: selected.output,
@@ -113,6 +116,7 @@ export async function runSetupCommand(argv: string[]): Promise<void> {
   }
 
   if (selected.search) {
+    const { configure: configureSearch, indexRepo } = await requiredProductModule<{ configure(options: unknown): Promise<unknown>; indexRepo(options: unknown): Promise<unknown> }>("@tangent/search", "setup --search");
     const search = await configureSearch({
       repo,
       storage: selected.output,
@@ -141,9 +145,9 @@ export async function runProductStatusCommand(argv: string[], verboseDefault = f
   const repo = stringArg(args.repo) || args._[0] || ".";
   const verbose = verboseDefault || booleanArg(args.verbose);
   const [usage, rollup, search] = await Promise.allSettled([
-    usageStatus({ repo }),
-    rollupStatus({ repo }),
-    searchStatus({ repo })
+    productStatus("@tangent/usage", { repo }),
+    productStatus("@tangent/rollup", { repo }),
+    productStatus("@tangent/search", { repo })
   ]);
   const value = {
     repo,
@@ -166,13 +170,21 @@ export async function runTangentUiCommand(argv: string[]): Promise<void> {
   const args = parseArgs(argv, { repeatable: ["provider", "source"] });
   const requestedApp = stringArg(args._[0]);
   const host = stringArg(args.host) || "127.0.0.1";
-  const registrations = await installedUiApps({
+  const mode = uiMode(args);
+  const registrations = await discoverUiApps({
     requestedApp,
     repo: stringArg(args.repo) || ".",
     scope: stringArg(args.scope) === "all" ? "all" : "repo",
+    mode,
     providers: stringsArg(args.provider),
     sources: stringsArg(args.source)
   });
+  if (booleanArg(args["list-apps"])) {
+    const apps = registrations.map((registration) => registration.app);
+    if (booleanArg(args.json)) console.log(JSON.stringify({ apps }, null, 2));
+    else for (const app of apps) console.log(`${app.id}\t${app.label}`);
+    return;
+  }
   if (!registrations.length) throw new Error("No installed Tangent UI apps found.");
 
   const initialApp = registrations.find((registration) => registration.app.id === requestedApp)?.app.id || registrations[0]!.app.id;
@@ -192,6 +204,7 @@ export async function runTangentUiCommand(argv: string[]): Promise<void> {
     host,
     port: numberArg(args.port) ?? 0,
     open: !booleanArg(args["no-browser"]),
+    mode,
     assets: tangentUiAssets,
     assetMounts: registrations.flatMap((registration) => registration.assetMounts),
     routes
@@ -200,65 +213,6 @@ export async function runTangentUiCommand(argv: string[]): Promise<void> {
   if (booleanArg(args.json)) console.log(JSON.stringify({ url: server.url, apps: apps.map((app) => app.id), initialApp }, null, 2));
   else console.log(`Tangent UI: ${server.url}`);
   await waitForInterrupt(server.close);
-}
-
-type InstalledUiAppOptions = {
-  requestedApp?: string;
-  repo: string;
-  scope: "repo" | "all";
-  providers: string[];
-  sources: string[];
-};
-
-type UiAppRegistration = {
-  app: LocalUiApp;
-  routes: UiRoute[];
-  assetMounts: StaticAssetMount[];
-};
-
-/** Loads registrations for installed UI apps. */
-async function installedUiApps(options: InstalledUiAppOptions): Promise<UiAppRegistration[]> {
-  const loaders: Record<string, () => Promise<UiAppRegistration | undefined>> = {
-    /** Loads the Usage UI app if installed. */
-    usage: () => loadUsageUiApp(options),
-    /** Loads the Trees UI app if installed. */
-    trees: () => loadTreesUiApp(),
-    /** Loads the Eval UI app if installed. */
-    eval: () => loadEvalUiApp()
-  };
-  const ids = options.requestedApp ? [options.requestedApp] : Object.keys(loaders);
-  const registrations = await Promise.all(ids.map(async (id) => {
-    const loader = loaders[id];
-    if (!loader) throw new Error(`Unknown UI app: ${id}`);
-    return loader();
-  }));
-  return registrations.filter((registration): registration is UiAppRegistration => Boolean(registration));
-}
-
-/** Imports and creates the Usage UI app registration. */
-async function loadUsageUiApp(options: InstalledUiAppOptions): Promise<UiAppRegistration | undefined> {
-  const usage = await optionalImport<{ createUsageUiApp(options: unknown): Promise<UiAppRegistration> }>("@tangent/usage/server");
-  if (!usage?.createUsageUiApp) return undefined;
-  return usage.createUsageUiApp({
-    repo: options.repo,
-    scope: options.scope,
-    providers: options.providers,
-    sources: options.sources
-  });
-}
-
-/** Imports and creates the Trees UI app registration. */
-async function loadTreesUiApp(): Promise<UiAppRegistration | undefined> {
-  const trees = await optionalImport<{ createTreesUiApp(): UiAppRegistration }>("@tangent/trees-server");
-  if (!trees?.createTreesUiApp) return undefined;
-  return trees.createTreesUiApp();
-}
-
-/** Imports and creates the Eval UI app registration. */
-async function loadEvalUiApp(): Promise<UiAppRegistration | undefined> {
-  const evalServer = await optionalImport<{ createEvalUiApp(): Promise<UiAppRegistration> }>("@tangent/eval/server");
-  if (!evalServer?.createEvalUiApp) return undefined;
-  return evalServer.createEvalUiApp();
 }
 
 type SetupSelection = {
@@ -356,7 +310,14 @@ function printUsageHealth(value: unknown): void {
     console.log(`Usage: error - ${value.error}`);
     return;
   }
-  const status = value as Awaited<ReturnType<typeof usageStatus>>;
+  if (isNotInstalled(value)) {
+    console.log("Usage: not installed");
+    return;
+  }
+  const status = value as {
+    providers: Array<{ provider: string; nativePaths: string[]; capture: { lastEvent?: string } }>;
+    index: { exists: boolean; sourceFiles: number };
+  };
   const native = status.providers.filter((provider) => provider.nativePaths.length).map((provider) => `${provider.provider}:${provider.nativePaths.length}`).join(", ") || "none";
   const seen = status.providers.filter((provider) => provider.capture.lastEvent).map((provider) => `${provider.provider} last seen ${provider.capture.lastEvent}`).join("; ") || "no sessions seen yet";
   console.log(`Usage: native=${native}; index=${status.index.exists ? `${status.index.sourceFiles} files` : "missing"}; ${seen}`);
@@ -368,7 +329,11 @@ function printRollupHealth(value: unknown, verbose: boolean): void {
     console.log(`Rollup: error - ${value.error}`);
     return;
   }
-  const status = value as Awaited<ReturnType<typeof rollupStatus>>;
+  if (isNotInstalled(value)) {
+    console.log("Rollup: not installed");
+    return;
+  }
+  const status = value as { rollup: { initialized: boolean; outputDir: string; ledgerPath: string } };
   console.log(`Rollup: initialized=${status.rollup.initialized ? "yes" : "no"} output=${status.rollup.outputDir}`);
   if (verbose) console.log(`       ledger=${status.rollup.ledgerPath}`);
 }
@@ -379,7 +344,11 @@ function printSearchHealth(value: unknown, verbose: boolean): void {
     console.log(`Search: error - ${value.error}`);
     return;
   }
-  const status = value as Awaited<ReturnType<typeof searchStatus>>;
+  if (isNotInstalled(value)) {
+    console.log("Search: not installed");
+    return;
+  }
+  const status = value as { exists: boolean; dbPath: string; languages: Array<{ language: string; files: number }> };
   console.log(`Search: ${status.exists ? "indexed" : "missing"} db=${status.dbPath}`);
   if (verbose && status.exists) console.log(`        languages=${status.languages.map((row) => `${row.language}:${row.files}`).join(", ")}`);
 }
@@ -388,6 +357,13 @@ function printSearchHealth(value: unknown, verbose: boolean): void {
 function settledValue<T>(result: PromiseSettledResult<T>): T | { error: string } {
   if (result.status === "fulfilled") return result.value;
   return { error: result.reason instanceof Error ? result.reason.message : String(result.reason) };
+}
+
+/** Loads a product status function when installed. */
+async function productStatus(specifier: string, options: { repo: string }): Promise<unknown> {
+  const product = await optionalModule<{ status(options: { repo: string }): Promise<unknown> }>(specifier);
+  if (!product?.status) return { installed: false };
+  return product.status(options);
 }
 
 /** Keeps a long-running server alive until interrupted. */
@@ -402,15 +378,14 @@ function waitForInterrupt(close: () => Promise<void>): Promise<void> {
   });
 }
 
-/** Dynamically imports an optional package dependency. */
-async function optionalImport<T>(specifier: string): Promise<T | undefined> {
-  const dynamicImport = new Function("specifier", "return import(specifier)") as (value: string) => Promise<T>;
-  return dynamicImport(specifier).catch(() => undefined);
-}
-
 /** Tests whether a status value is an error envelope. */
 function isErrorValue(value: unknown): value is { error: string } {
   return Boolean(value && typeof value === "object" && "error" in value);
+}
+
+/** Tests whether a status value represents an absent optional product. */
+function isNotInstalled(value: unknown): value is { installed: false } {
+  return Boolean(value && typeof value === "object" && (value as { installed?: unknown }).installed === false);
 }
 
 /** Parses a provider CLI argument. */
@@ -426,8 +401,16 @@ function outputArg(value: unknown): SetupSelection["output"] {
 }
 
 /** Expands the setup provider selection into Usage providers. */
-function usageProviders(provider: SetupSelection["provider"]): UsageProvider[] {
+function usageProviders(provider: SetupSelection["provider"]): string[] {
   return provider === "all" ? ["claude", "codex"] : [provider];
+}
+
+/** Parses the root UI dev/static mode flags. */
+function uiMode(args: ReturnType<typeof parseArgs>): "auto" | "dev" | "static" {
+  if (booleanArg(args.dev) && booleanArg(args["static-ui"])) throw new Error("--dev and --static-ui are mutually exclusive.");
+  if (booleanArg(args.dev)) return "dev";
+  if (booleanArg(args["static-ui"])) return "static";
+  return "auto";
 }
 
 /** Parses the rollup summary provider CLI argument. */

@@ -6,6 +6,7 @@
     type UsageConversationMessage,
     type UsageConversationProjectGroup,
     type UsageConversationSessionItem,
+    type UsageConversationTokenMode,
     type UsageConversationView,
     type UsageSessionListItem,
     type UsageUiClient
@@ -24,9 +25,15 @@
   let expandedProjectIds: string[] = [];
   let expandedMessageIds: string[] = [];
   let expandedToolIds: string[] = [];
+  let chartTokenMode: "cumulative" | "added" = "cumulative";
   const messagePreviewLimit = 360;
   const messageElements = new Map<string, HTMLElement>();
   const rowElements = new Map<string, HTMLElement>();
+
+  type DisplayChartRow = UsageConversationChartRow & {
+    displayTokenLabel?: string;
+    displayWidthShare: number;
+  };
 
   onMount(() => {
     void loadSessions();
@@ -88,8 +95,11 @@
     }
   }
 
-  function activateChartRow(row: UsageConversationChartRow): void {
-    activate(chartRowAnchorMessageId(row), "chart");
+  async function activateChartRow(row: UsageConversationChartRow): Promise<void> {
+    const messageId = chartRowAnchorMessageId(row);
+    activeMessageId = messageId;
+    await tick();
+    scrollToPair(messageId, "chart");
   }
 
   function chartRowAnchorMessageId(row: UsageConversationChartRow): string {
@@ -169,8 +179,97 @@
     return [session.messageCountLabel, session.toolCallLabel, session.status].filter((value): value is string => Boolean(value));
   }
 
-  function chartLabel(row: UsageConversationChartRow): string {
-    return `${row.label}: ${row.tokenLabel || "tokens unknown"}${row.durationLabel ? `, ${row.durationLabel}` : ""}`;
+  function chartMode(row: UsageConversationChartRow, modeName: "cumulative" | "added"): UsageConversationTokenMode {
+    return row.tokenModes?.[modeName] || { tokens: row.tokens, tokenLabel: row.tokenLabel, widthShare: row.widthShare };
+  }
+
+  function chartRowsForMode(rows: UsageConversationChartRow[], modeName: "cumulative" | "added"): DisplayChartRow[] {
+    const normalized = normalizeChartTokenModes(rows);
+    return normalized.map((row) => {
+      const mode = chartMode(row, modeName);
+      return {
+        ...row,
+        displayTokenLabel: mode.tokenLabel,
+        displayWidthShare: mode.widthShare
+      };
+    });
+  }
+
+  function normalizeChartTokenModes(rows: UsageConversationChartRow[]): UsageConversationChartRow[] {
+    if (rows.every((row) => row.tokenModes)) return rows;
+    const cumulativeTokens = rows.map((row) => row.tokenModes?.cumulative.tokens ?? contextTokensFromLabel(row.tokenLabel) ?? row.tokens);
+    const addedTokens = cumulativeTokens.map((tokens, index) => {
+      if (tokens === undefined) return undefined;
+      const previous = previousDefinedNumber(cumulativeTokens, index) ?? 0;
+      return tokens >= previous ? tokens - previous : tokens;
+    });
+    const maxCumulative = Math.max(1, ...cumulativeTokens.map((tokens) => tokens || 0));
+    const maxAdded = Math.max(1, ...addedTokens.map((tokens) => tokens || 0));
+    return rows.map((row, index) => ({
+      ...row,
+      tokens: cumulativeTokens[index],
+      tokenLabel: formatContextTokenLabel(cumulativeTokens[index]) || row.tokenLabel,
+      widthShare: widthShare(cumulativeTokens[index], maxCumulative),
+      tokenModes: {
+        cumulative: row.tokenModes?.cumulative || {
+          tokens: cumulativeTokens[index],
+          tokenLabel: formatContextTokenLabel(cumulativeTokens[index]) || row.tokenLabel,
+          widthShare: widthShare(cumulativeTokens[index], maxCumulative)
+        },
+        added: row.tokenModes?.added || {
+          tokens: addedTokens[index],
+          tokenLabel: formatAddedTokenLabel(addedTokens[index]),
+          widthShare: widthShare(addedTokens[index], maxAdded)
+        }
+      }
+    }));
+  }
+
+  function chartLabel(row: DisplayChartRow): string {
+    return `${row.label}: ${row.displayTokenLabel || "tokens unknown"}${row.durationLabel ? `, ${row.durationLabel}` : ""}`;
+  }
+
+  function previousDefinedNumber(values: Array<number | undefined>, beforeIndex: number): number | undefined {
+    for (let index = beforeIndex - 1; index >= 0; index -= 1) {
+      const value = values[index];
+      if (value !== undefined) return value;
+    }
+    return undefined;
+  }
+
+  function contextTokensFromLabel(value: string | undefined): number | undefined {
+    const match = /([0-9]+(?:\.[0-9]+)?)\s*([kKmM]?)\s*ctx\b/.exec(value || "");
+    if (!match) return undefined;
+    const amount = Number(match[1]);
+    if (!Number.isFinite(amount)) return undefined;
+    const suffix = match[2]?.toLowerCase();
+    const multiplier = suffix === "m" ? 1_000_000 : suffix === "k" ? 1_000 : 1;
+    return Math.round(amount * multiplier);
+  }
+
+  function formatContextTokenLabel(value: number | undefined): string | undefined {
+    const formatted = formatTokenCount(value);
+    return formatted ? `${formatted} ctx` : undefined;
+  }
+
+  function formatAddedTokenLabel(value: number | undefined): string | undefined {
+    const formatted = formatTokenCount(value);
+    return formatted ? `${formatted} added` : undefined;
+  }
+
+  function formatTokenCount(value: number | undefined): string | undefined {
+    if (value === undefined || !Number.isFinite(value)) return undefined;
+    if (Math.abs(value) < 1_000) return Intl.NumberFormat("en").format(Math.round(value));
+    if (Math.abs(value) < 1_000_000) return `${trimFixed(value / 1_000, 1)}k`;
+    return `${trimFixed(value / 1_000_000, 1)}M`;
+  }
+
+  function widthShare(value: number | undefined, maxValue: number): number {
+    return value === undefined ? 0.02 : Math.max(0.02, value / maxValue);
+  }
+
+  function trimFixed(value: number, digits: number): string {
+    return value.toFixed(digits).replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1");
   }
 
   /** Builds compact metadata for a tool event row. */
@@ -383,6 +482,24 @@
             <p>Tokens × duration</p>
             <h1>Work Turns</h1>
           </div>
+          <div class="chart-mode-toggle" aria-label="Token chart mode">
+            <button
+              type="button"
+              class:active={chartTokenMode === "cumulative"}
+              aria-pressed={chartTokenMode === "cumulative"}
+              onclick={() => chartTokenMode = "cumulative"}
+            >
+              Cumulative
+            </button>
+            <button
+              type="button"
+              class:active={chartTokenMode === "added"}
+              aria-pressed={chartTokenMode === "added"}
+              onclick={() => chartTokenMode = "added"}
+            >
+              Added
+            </button>
+          </div>
         </header>
         <div class="chart-scroll">
           <div class="axis-labels">
@@ -390,14 +507,14 @@
             <span>Duration</span>
           </div>
           <div class="chart-rows">
-            {#each view.chart.rows as row}
+            {#each chartRowsForMode(view.chart.rows, chartTokenMode) as row}
               <button
                 type="button"
                 use:rememberRow={row.messageIds || row.messageId}
                 class:active={isRowActive(row)}
                 class:anchor={row.anchor}
                 class="chart-row"
-                style={`--row-width:${row.widthShare}; --row-height:${row.heightShare};`}
+                style={`--row-width:${row.displayWidthShare}; --row-height:${row.heightShare};`}
                 aria-label={chartLabel(row)}
                 onclick={() => activateChartRow(row)}
               >
@@ -414,7 +531,7 @@
                     {/each}
                   {/if}
                 </span>
-                <span class="row-metrics">{row.tokenLabel || "tokens unknown"}{row.durationLabel ? ` · ${row.durationLabel}` : ""}</span>
+                <span class="row-metrics">{row.displayTokenLabel || "tokens unknown"}{row.durationLabel ? ` · ${row.durationLabel}` : ""}</span>
               </button>
             {/each}
           </div>

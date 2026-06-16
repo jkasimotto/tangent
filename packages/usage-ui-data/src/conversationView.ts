@@ -46,7 +46,9 @@ export function buildUsageConversationView(
   const baseConversationMessages = messages.map(conversationMessage);
   const rows = chartRows(baseConversationMessages, messages, steps, selectedSession.endedAt, options.toolCalls || []);
   const conversationMessages = withTimelineToolEvents(baseConversationMessages, rows, options.toolCalls || []);
-  const maxTokens = Math.max(1, ...rows.map((row) => row.tokens || 0));
+  const tokenModeRows = withTokenModes(rows);
+  const maxTokens = Math.max(1, ...tokenModeRows.map((row) => row.tokenModes.cumulative.tokens || 0));
+  const maxAddedTokens = Math.max(1, ...tokenModeRows.map((row) => row.tokenModes.added.tokens || 0));
   const maxDurationMs = Math.max(1, ...rows.map((row) => row.durationMs || 0));
   return {
     selected: {
@@ -60,10 +62,23 @@ export function buildUsageConversationView(
     messages: conversationMessages,
     chart: {
       maxTokens,
+      maxAddedTokens,
       maxDurationMs,
-      rows: rows.map((row) => ({
+      rows: tokenModeRows.map((row) => ({
         ...row,
-        widthShare: row.tokens === undefined ? 0.02 : Math.max(0.02, row.tokens / maxTokens),
+        tokens: row.tokenModes.cumulative.tokens,
+        tokenLabel: row.tokenModes.cumulative.tokenLabel,
+        widthShare: row.tokenModes.cumulative.tokens === undefined ? 0.02 : Math.max(0.02, row.tokenModes.cumulative.tokens / maxTokens),
+        tokenModes: {
+          cumulative: {
+            ...row.tokenModes.cumulative,
+            widthShare: row.tokenModes.cumulative.tokens === undefined ? 0.02 : Math.max(0.02, row.tokenModes.cumulative.tokens / maxTokens)
+          },
+          added: {
+            ...row.tokenModes.added,
+            widthShare: row.tokenModes.added.tokens === undefined ? 0.02 : Math.max(0.02, row.tokenModes.added.tokens / maxAddedTokens)
+          }
+        },
         heightShare: row.durationMs === undefined ? 0.08 : row.durationMs / maxDurationMs
       }))
     },
@@ -71,8 +86,51 @@ export function buildUsageConversationView(
   };
 }
 
+/** Adds cumulative and added token views to chart rows. */
+function withTokenModes(rows: ChartRowDraft[]): UsageConversationChartRow[] {
+  let previousContext = 0;
+  return rows.map((row) => {
+    const cumulative = row.tokens;
+    const added = contextDelta(cumulative, previousContext);
+    if (cumulative !== undefined) previousContext = cumulative;
+    return {
+      ...row,
+      tokenModes: {
+        cumulative: {
+          tokens: cumulative,
+          tokenLabel: formatContextTokenLabel(cumulative),
+          widthShare: 0
+        },
+        added: {
+          tokens: added,
+          tokenLabel: formatAddedTokenLabel(added),
+          widthShare: 0
+        }
+      }
+    };
+  });
+}
+
+/** Returns context growth, treating decreases as compaction to the current size. */
+function contextDelta(current: number | undefined, previous: number): number | undefined {
+  if (current === undefined) return undefined;
+  return current >= previous ? current - previous : current;
+}
+
+/** Formats cumulative context tokens for the chart. */
+function formatContextTokenLabel(value: number | undefined): string | undefined {
+  const formatted = formatMessageTokenCount(value);
+  return formatted ? `${formatted} ctx` : undefined;
+}
+
+/** Formats per-turn context additions for the chart. */
+function formatAddedTokenLabel(value: number | undefined): string | undefined {
+  const formatted = formatMessageTokenCount(value);
+  return formatted ? `${formatted} added` : undefined;
+}
+
 /** Backfills chart-linked tool and command steps into the conversation thread. */
-function withTimelineToolEvents(messages: UsageConversationMessage[], rows: UsageConversationChartRow[], toolCalls: UsageConversationToolCall[]): UsageConversationMessage[] {
+function withTimelineToolEvents(messages: UsageConversationMessage[], rows: ChartRowDraft[], toolCalls: UsageConversationToolCall[]): UsageConversationMessage[] {
   const eventsByMessageId = new Map<string, UsageConversationMessage["toolCalls"]>();
   const toolByStepId = new Map<string, UsageConversationToolCall>();
   for (const tool of toolCalls) {
@@ -279,8 +337,10 @@ type ToolTimingIndex = {
   pairedResultStepIds: Set<string>;
 };
 
+type ChartRowDraft = Omit<UsageConversationChartRow, "tokenModes">;
+
 /** Builds chart rows grouped by user-request work turns. */
-function chartRows(conversationMessages: UsageConversationMessage[], rawMessages: UsageMessage[], steps: UsageStep[], sessionEndedAt?: string, toolCalls: UsageConversationToolCall[] = []): UsageConversationChartRow[] {
+function chartRows(conversationMessages: UsageConversationMessage[], rawMessages: UsageMessage[], steps: UsageStep[], sessionEndedAt?: string, toolCalls: UsageConversationToolCall[] = []): ChartRowDraft[] {
   const rawById = new Map(rawMessages.map((message) => [message.id, message]));
   const stepCandidates = steps.filter((step) => step.kind !== "session" && step.kind !== "turn" && step.kind !== "user_message");
   const toolTiming = toolTimingIndex(toolCalls);
@@ -415,7 +475,7 @@ function workTurnTokenUsage(messages: UsageMessage[]): UsageTokenUsage | undefin
 
 /** Returns the token total that should drive work-turn bar width. */
 function workTurnTokens(usage: UsageTokenUsage | undefined): number | undefined {
-  return finiteNumber(usage?.total) ?? sumNumbers([tokenContext(usage), finiteNumber(usage?.output)]);
+  return tokenContext(usage) ?? finiteNumber(usage?.total) ?? sumNumbers([tokenContext(usage), finiteNumber(usage?.output)]);
 }
 
 /** Returns the lowest-confidence message state represented inside a work turn. */
@@ -427,6 +487,19 @@ function workTurnConfidence(messages: UsageConversationMessage[]): UsageConversa
 function tokenContext(usage: UsageTokenUsage | undefined): number | undefined {
   if (!usage) return undefined;
   return finiteNumber(usage.context) ?? finiteNumber(usage.input) ?? sumNumbers([finiteNumber(usage.cacheRead), finiteNumber(usage.cacheCreation)]);
+}
+
+/** Formats chart token counts with compact lower-case units. */
+function formatMessageTokenCount(value: number | undefined): string | undefined {
+  if (value === undefined || !Number.isFinite(value)) return undefined;
+  if (Math.abs(value) < 1_000) return Intl.NumberFormat("en").format(Math.round(value));
+  if (Math.abs(value) < 1_000_000) return `${trimFixed(value / 1_000, 1)}k`;
+  return `${trimFixed(value / 1_000_000, 1)}M`;
+}
+
+/** Trims insignificant decimal zeros from fixed-point values. */
+function trimFixed(value: number, digits: number): string {
+  return value.toFixed(digits).replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1");
 }
 
 /** Collapses mixed source confidence to the most conservative UI value. */
@@ -498,7 +571,7 @@ function chartSegments(messageId: string, steps: UsageStep[], toolTiming: ToolTi
 }
 
 /** Builds chart caveats without hiding source warnings. */
-function conversationCaveats(rows: UsageConversationChartRow[], existing: string[]): string[] {
+function conversationCaveats(rows: ChartRowDraft[], existing: string[]): string[] {
   const caveats = new Set(existing.filter(Boolean));
   if (rows.some((row) => row.role === "assistant" && row.tokens === undefined)) caveats.add("Some assistant messages do not include provider token totals.");
   if (rows.some((row) => row.role === "assistant" && row.durationMs === undefined)) caveats.add("Some assistant message durations are unavailable; chart heights use a fallback.");

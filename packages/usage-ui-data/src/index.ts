@@ -15,6 +15,7 @@ export type {
   UsageConversationMessage,
   UsageConversationProjectGroup,
   UsageConversationSessionItem,
+  UsageConversationTokenMode,
   UsageConversationView,
   UsageInspectorDefaultView,
   UsageInspectorTarget,

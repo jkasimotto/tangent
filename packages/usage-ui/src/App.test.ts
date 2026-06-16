@@ -84,6 +84,66 @@ describe("usage svelte app", () => {
     expect(container.querySelector(".message")).toHaveClass("active");
   });
 
+  it("switches work-turn chart rows between cumulative and added tokens", async () => {
+    const { container } = render(App, { props: { client: fakeUsageClient() } });
+
+    expect(await screen.findByText("Done")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cumulative" })).toHaveAttribute("aria-pressed", "true");
+    expect(container.querySelector(".row-metrics")).toHaveTextContent("1.2K · 1m");
+    expect(container.querySelector<HTMLButtonElement>(".chart-row")?.style.getPropertyValue("--row-width")).toBe("1");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Added" }));
+
+    expect(screen.getByRole("button", { name: "Added" })).toHaveAttribute("aria-pressed", "true");
+    expect(container.querySelector(".row-metrics")).toHaveTextContent("400 added · 1m");
+    expect(container.querySelector<HTMLButtonElement>(".chart-row")?.style.getPropertyValue("--row-width")).toBe("0.3333333333333333");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Cumulative" }));
+
+    expect(container.querySelector(".row-metrics")).toHaveTextContent("1.2K · 1m");
+  });
+
+  it("derives token modes when the API still returns legacy chart rows", async () => {
+    const view = fakeConversationView();
+    view.chart.maxTokens = 110_000;
+    view.chart.maxAddedTokens = undefined as never;
+    view.chart.rows = [{
+      ...view.chart.rows[0],
+      tokens: 100_000,
+      tokenLabel: "100k ctx / 30k out",
+      widthShare: 130_000 / 111_000,
+      tokenModes: undefined as never
+    }, {
+      ...view.chart.rows[0],
+      id: "row:m2",
+      messageId: "m2",
+      messageIds: ["m2"],
+      tokens: 110_000,
+      tokenLabel: "110k ctx / 1k out",
+      widthShare: 1,
+      tokenModes: undefined as never
+    }];
+    const { container } = render(App, {
+      props: {
+        client: fakeUsageClient({
+          /** Returns a legacy fixture without server-derived token modes. */
+          getConversationView: async () => view
+        })
+      }
+    });
+
+    expect(await screen.findByText("Done")).toBeInTheDocument();
+    expect(container.querySelectorAll(".row-metrics")[0]).toHaveTextContent("100k ctx · 1m");
+    expect(container.querySelectorAll<HTMLButtonElement>(".chart-row")[0].style.getPropertyValue("--row-width")).toBe(String(100_000 / 110_000));
+    expect(container.querySelectorAll<HTMLButtonElement>(".chart-row")[1].style.getPropertyValue("--row-width")).toBe("1");
+
+    await fireEvent.click(screen.getByRole("button", { name: "Added" }));
+
+    expect(container.querySelectorAll(".row-metrics")[0]).toHaveTextContent("100k added · 1m");
+    expect(container.querySelectorAll(".row-metrics")[1]).toHaveTextContent("10k added · 1m");
+    expect(container.querySelectorAll<HTMLButtonElement>(".chart-row")[1].style.getPropertyValue("--row-width")).toBe("0.1");
+  });
+
   it("keeps a grouped work turn active for any message inside the group", async () => {
     const view = fakeConversationView();
     view.messages.push({
@@ -299,6 +359,7 @@ function fakeConversationView(id = "s1"): UsageConversationView {
     }],
     chart: {
       maxTokens: 1200,
+      maxAddedTokens: 400,
       maxDurationMs: 60000,
       rows: [{
         id: "row:m1",
@@ -311,6 +372,18 @@ function fakeConversationView(id = "s1"): UsageConversationView {
         durationMs: id === "s2" ? 42000 : 60000,
         durationLabel: selected.durationLabel,
         widthShare: 1,
+        tokenModes: {
+          cumulative: {
+            tokens: selected.tokens,
+            tokenLabel: selected.tokenLabel,
+            widthShare: 1
+          },
+          added: {
+            tokens: 400,
+            tokenLabel: "400 added",
+            widthShare: 1 / 3
+          }
+        },
         heightShare: 1,
         anchor: false,
         confidence: "exact",

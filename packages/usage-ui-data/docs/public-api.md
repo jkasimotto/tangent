@@ -9,6 +9,7 @@ Important exports:
 - `createUsageUiClient`
 - `UsageUiClient.getConversationView(id, query?)` returns `UsageConversationView` for the default Svelte Usage UI.
 - `UsageConversationView` defines the project/session picker, conversation messages, assistant-message chart rows, internal step segments, and caveats.
+- `UsageConversationChartRow` exposes cumulative context tokens and per-work-turn added-token modes for chart display.
 - `buildUsageConversationView` maps Usage domain data into the conversation DTO.
 - `UsageUiClient.getSessionTimelineView(id, query?)` returns the legacy `UsageSessionTimelineView`.
 - `UsageSessionTimelineView` and `UsageTimelineStepBar` define the horizontal session timeline DTO.

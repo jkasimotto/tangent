@@ -474,6 +474,12 @@ export type UsageConversationChartSegment = {
   confidence: UsageUiConfidence;
 };
 
+export type UsageConversationTokenMode = {
+  tokens?: number;
+  tokenLabel?: string;
+  widthShare: number;
+};
+
 export type UsageConversationChartRow = {
   id: string;
   messageId: string;
@@ -486,6 +492,10 @@ export type UsageConversationChartRow = {
   durationMs?: number;
   durationLabel?: string;
   widthShare: number;
+  tokenModes: {
+    cumulative: UsageConversationTokenMode;
+    added: UsageConversationTokenMode;
+  };
   heightShare: number;
   anchor: boolean;
   confidence: UsageUiConfidence;
@@ -503,6 +513,7 @@ export type UsageConversationView = {
   messages: UsageConversationMessage[];
   chart: {
     maxTokens: number;
+    maxAddedTokens: number;
     maxDurationMs: number;
     rows: UsageConversationChartRow[];
   };

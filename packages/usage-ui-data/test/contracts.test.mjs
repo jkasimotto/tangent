@@ -244,8 +244,54 @@ test("builds conversation token labels from context and output usage", () => {
   );
 
   assert.equal(view.messages[0].tokenLabel, "103.1k ctx / 1.5k out");
-  assert.equal(view.chart.rows[0].tokenLabel, "103.1k ctx / 1.5k out");
+  assert.equal(view.chart.rows[0].tokenLabel, "103.1k ctx");
+  assert.equal(view.chart.rows[0].tokens, 103_100);
+  assert.equal(view.chart.rows[0].tokenModes.cumulative.tokenLabel, "103.1k ctx");
+  assert.equal(view.chart.rows[0].tokenModes.added.tokenLabel, "103.1k added");
   assert.equal(view.messages[1].tokenLabel, "1.2K");
+});
+
+test("scales cumulative work-turn widths by displayed context tokens", () => {
+  const view = buildUsageConversationView(
+    { id: "s1", provider: "codex", title: "Tokens", endedAt: "2026-06-16T10:00:30.000Z", metrics: {}, availability: { notes: [] } },
+    [],
+    [
+      { id: "user1", role: "user", textPreview: "First", createdAt: "2026-06-16T10:00:00.000Z", toolCalls: [] },
+      { id: "m1", role: "assistant", textPreview: "First answer", createdAt: "2026-06-16T10:00:01.000Z", tokenUsage: { input: 100_000, output: 30_000, total: 130_000 }, toolCalls: [] },
+      { id: "user2", role: "user", textPreview: "Second", createdAt: "2026-06-16T10:00:10.000Z", toolCalls: [] },
+      { id: "m2", role: "assistant", textPreview: "Second answer", createdAt: "2026-06-16T10:00:11.000Z", tokenUsage: { input: 110_000, output: 1_000, total: 111_000 }, toolCalls: [] }
+    ],
+    []
+  );
+
+  assert.equal(view.chart.maxTokens, 110_000);
+  assert.equal(view.chart.rows[0].tokenLabel, "100k ctx");
+  assert.equal(view.chart.rows[1].tokenLabel, "110k ctx");
+  assert.equal(view.chart.rows[0].widthShare, 100_000 / 110_000);
+  assert.equal(view.chart.rows[1].widthShare, 1);
+});
+
+test("builds added token mode from context deltas and compaction drops", () => {
+  const view = buildUsageConversationView(
+    { id: "s1", provider: "codex", title: "Deltas", endedAt: "2026-06-16T10:00:40.000Z", metrics: {}, availability: { notes: [] } },
+    [],
+    [
+      { id: "user1", role: "user", textPreview: "First", createdAt: "2026-06-16T10:00:00.000Z", toolCalls: [] },
+      { id: "m1", role: "assistant", textPreview: "First answer", createdAt: "2026-06-16T10:00:01.000Z", tokenUsage: { input: 100_000, output: 1_000 }, toolCalls: [] },
+      { id: "user2", role: "user", textPreview: "Second", createdAt: "2026-06-16T10:00:10.000Z", toolCalls: [] },
+      { id: "m2", role: "assistant", textPreview: "Second answer", createdAt: "2026-06-16T10:00:11.000Z", tokenUsage: { input: 150_000, output: 1_000 }, toolCalls: [] },
+      { id: "user3", role: "user", textPreview: "Third", createdAt: "2026-06-16T10:00:20.000Z", toolCalls: [] },
+      { id: "m3", role: "assistant", textPreview: "Third answer", createdAt: "2026-06-16T10:00:21.000Z", tokenUsage: { input: 50_000, output: 1_000 }, toolCalls: [] }
+    ],
+    []
+  );
+
+  assert.deepEqual(view.chart.rows.map((row) => row.tokenModes.added.tokens), [100_000, 50_000, 50_000]);
+  assert.deepEqual(view.chart.rows.map((row) => row.tokenModes.added.tokenLabel), ["100k added", "50k added", "50k added"]);
+  assert.equal(view.chart.maxAddedTokens, 100_000);
+  assert.equal(view.chart.rows[0].tokenModes.added.widthShare, 1);
+  assert.equal(view.chart.rows[1].tokenModes.added.widthShare, 0.5);
+  assert.equal(view.chart.rows[2].tokenModes.added.widthShare, 0.5);
 });
 
 test("scales conversation chart row heights by work turn duration", () => {

@@ -23,6 +23,29 @@ test("serves health and static index", async () => {
   }
 });
 
+test("serves mounted static assets by path prefix", async () => {
+  const root = path.join(tmpdir(), `tangent-ui-server-root-${Date.now()}`);
+  const usage = path.join(tmpdir(), `tangent-ui-server-usage-${Date.now()}`);
+  await mkdir(path.join(usage, "assets"), { recursive: true });
+  await mkdir(root, { recursive: true });
+  await writeFile(path.join(root, "index.html"), "shell");
+  await writeFile(path.join(usage, "index.html"), "usage index");
+  await writeFile(path.join(usage, "assets", "embedded.js"), "export const ok = true;");
+  const server = await createLocalUiServer({
+    product: "test",
+    assets: { rootDir: root },
+    assetMounts: [{ pathPrefix: "/apps/usage", assets: { rootDir: usage } }],
+    open: false
+  });
+  try {
+    assert.equal(await fetchText(`${server.url}apps/usage/assets/embedded.js`), "export const ok = true;");
+    assert.equal(await fetchText(`${server.url}apps/usage/missing`), "usage index");
+    assert.equal(await fetchText(server.url), "shell");
+  } finally {
+    await server.close();
+  }
+});
+
 /** Supports the fetch text helper. */
 async function fetchText(url) {
   const response = await fetch(url);

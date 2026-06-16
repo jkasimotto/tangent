@@ -3,7 +3,8 @@ import { promisify } from "node:util";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import type { CliCommandSpec } from "@tangent/core";
-import { booleanArg, parseArgs, stringArg } from "@tangent/core/cli";
+import { booleanArg, numberArg, parseArgs, stringArg, stringsArg } from "@tangent/core/cli";
+import type { LocalUiApp, StaticAssetMount, UiRoute } from "@tangent/ui-server";
 import { status as usageStatus } from "@tangent/usage";
 import type { UsageProvider } from "@tangent/usage";
 import { configure as configureRollup, status as rollupStatus } from "@tangent/rollup";
@@ -52,6 +53,22 @@ export const doctorCommandSpec: CliCommandSpec = {
   ]
 };
 
+export const uiCommandSpec: CliCommandSpec = {
+  name: "ui",
+  description: "Start the local Tangent UI for installed apps",
+  args: "[usage|trees]",
+  options: [
+    { name: "repo", takesValue: true, description: "Repository path" },
+    { name: "scope", takesValue: true, values: ["all", "repo"], description: "Session discovery scope" },
+    { name: "host", takesValue: true, description: "Host to bind" },
+    { name: "port", takesValue: true, description: "Port to bind" },
+    { name: "provider", takesValue: true, values: ["claude", "codex"], description: "Usage provider filter" },
+    { name: "source", takesValue: true, values: ["native", "all"], description: "Usage data source" },
+    { name: "no-browser", description: "Do not open the browser" },
+    { name: "json", description: "Print JSON" }
+  ]
+};
+
 export const devCommandSpec: CliCommandSpec = {
   name: "dev",
   description: "Developer and CI maintenance commands",
@@ -71,6 +88,7 @@ export const dataCommandSpec: CliCommandSpec = {
   ]
 };
 
+/** Runs the interactive or scripted setup workflow. */
 export async function runSetupCommand(argv: string[]): Promise<void> {
   const args = parseArgs(argv);
   const repo = stringArg(args.repo) || args._[0] || ".";
@@ -117,6 +135,7 @@ export async function runSetupCommand(argv: string[]): Promise<void> {
   if (!selected.usage && !selected.rollup && !selected.search) console.log("No setup actions selected.");
 }
 
+/** Prints the aggregate product health status. */
 export async function runProductStatusCommand(argv: string[], verboseDefault = false): Promise<void> {
   const args = parseArgs(argv);
   const repo = stringArg(args.repo) || args._[0] || ".";
@@ -142,6 +161,97 @@ export async function runProductStatusCommand(argv: string[], verboseDefault = f
   printSearchHealth(value.search, verbose);
 }
 
+/** Starts the combined Tangent local UI shell. */
+export async function runTangentUiCommand(argv: string[]): Promise<void> {
+  const args = parseArgs(argv, { repeatable: ["provider", "source"] });
+  const requestedApp = stringArg(args._[0]);
+  const host = stringArg(args.host) || "127.0.0.1";
+  const registrations = await installedUiApps({
+    requestedApp,
+    repo: stringArg(args.repo) || ".",
+    scope: stringArg(args.scope) === "all" ? "all" : "repo",
+    providers: stringsArg(args.provider),
+    sources: stringsArg(args.source)
+  });
+  if (!registrations.length) throw new Error("No installed Tangent UI apps found.");
+
+  const initialApp = registrations.find((registration) => registration.app.id === requestedApp)?.app.id || registrations[0]!.app.id;
+  const apps = registrations.map((registration) => registration.app);
+  const [{ createLocalUiServer }, { tangentUiAssets }] = await Promise.all([
+    import("@tangent/ui-server"),
+    import("@tangent/tangent-ui/assets")
+  ]);
+  const routes: UiRoute[] = [{
+    method: "GET",
+    pattern: /^\/api\/ui\/apps$/,
+    /** Serves the list of available local UI apps. */
+    handle: () => ({ json: { apps, initialApp } })
+  }, ...registrations.flatMap((registration) => registration.routes)];
+  const server = await createLocalUiServer({
+    product: "tangent",
+    host,
+    port: numberArg(args.port) ?? 0,
+    open: !booleanArg(args["no-browser"]),
+    assets: tangentUiAssets,
+    assetMounts: registrations.flatMap((registration) => registration.assetMounts),
+    routes
+  });
+
+  if (booleanArg(args.json)) console.log(JSON.stringify({ url: server.url, apps: apps.map((app) => app.id), initialApp }, null, 2));
+  else console.log(`Tangent UI: ${server.url}`);
+  await waitForInterrupt(server.close);
+}
+
+type InstalledUiAppOptions = {
+  requestedApp?: string;
+  repo: string;
+  scope: "repo" | "all";
+  providers: string[];
+  sources: string[];
+};
+
+type UiAppRegistration = {
+  app: LocalUiApp;
+  routes: UiRoute[];
+  assetMounts: StaticAssetMount[];
+};
+
+/** Loads registrations for installed UI apps. */
+async function installedUiApps(options: InstalledUiAppOptions): Promise<UiAppRegistration[]> {
+  const loaders: Record<string, () => Promise<UiAppRegistration | undefined>> = {
+    /** Loads the Usage UI app if installed. */
+    usage: () => loadUsageUiApp(options),
+    /** Loads the Trees UI app if installed. */
+    trees: () => loadTreesUiApp()
+  };
+  const ids = options.requestedApp ? [options.requestedApp] : Object.keys(loaders);
+  const registrations = await Promise.all(ids.map(async (id) => {
+    const loader = loaders[id];
+    if (!loader) throw new Error(`Unknown UI app: ${id}`);
+    return loader();
+  }));
+  return registrations.filter((registration): registration is UiAppRegistration => Boolean(registration));
+}
+
+/** Imports and creates the Usage UI app registration. */
+async function loadUsageUiApp(options: InstalledUiAppOptions): Promise<UiAppRegistration | undefined> {
+  const usage = await optionalImport<{ createUsageUiApp(options: unknown): Promise<UiAppRegistration> }>("@tangent/usage/server");
+  if (!usage?.createUsageUiApp) return undefined;
+  return usage.createUsageUiApp({
+    repo: options.repo,
+    scope: options.scope,
+    providers: options.providers,
+    sources: options.sources
+  });
+}
+
+/** Imports and creates the Trees UI app registration. */
+async function loadTreesUiApp(): Promise<UiAppRegistration | undefined> {
+  const trees = await optionalImport<{ createTreesUiApp(): UiAppRegistration }>("@tangent/trees-server");
+  if (!trees?.createTreesUiApp) return undefined;
+  return trees.createTreesUiApp();
+}
+
 type SetupSelection = {
   provider: "claude" | "codex" | "all";
   usage: boolean;
@@ -161,6 +271,7 @@ type DetectedProvider = {
   version?: string;
 };
 
+/** Creates setup selections from non-interactive CLI flags. */
 function setupSelection(args: ReturnType<typeof parseArgs>): SetupSelection {
   const provider = providerArg(args.provider || "codex");
   const anyExplicit = Boolean(args.usage || args.rollup || args.search);
@@ -176,6 +287,7 @@ function setupSelection(args: ReturnType<typeof parseArgs>): SetupSelection {
   };
 }
 
+/** Prompts for setup selections in an interactive terminal. */
 async function promptSetup(args: ReturnType<typeof parseArgs>, detected: DetectedProvider[]): Promise<SetupSelection> {
   const rl = createInterface({ input, output });
   try {
@@ -199,11 +311,13 @@ async function promptSetup(args: ReturnType<typeof parseArgs>, detected: Detecte
   }
 }
 
+/** Asks for a string value with a default. */
 async function ask(rl: ReturnType<typeof createInterface>, question: string, defaultValue: string): Promise<string> {
   const answer = await rl.question(`${question} (${defaultValue}): `);
   return answer.trim() || defaultValue;
 }
 
+/** Asks for a boolean value with a default. */
 async function askYes(rl: ReturnType<typeof createInterface>, question: string, raw: unknown, defaultValue: boolean): Promise<boolean> {
   if (raw !== undefined) return booleanArg(raw);
   const answer = (await rl.question(`${question}? ${defaultValue ? "[Y/n]" : "[y/N]"} `)).trim().toLowerCase();
@@ -211,6 +325,7 @@ async function askYes(rl: ReturnType<typeof createInterface>, question: string, 
   return answer === "y" || answer === "yes";
 }
 
+/** Detects supported local coding-agent providers. */
 async function detectProviders(): Promise<DetectedProvider[]> {
   const rows: DetectedProvider[] = [
     { provider: "codex", label: "Codex CLI", command: "codex", available: false },
@@ -226,6 +341,7 @@ async function detectProviders(): Promise<DetectedProvider[]> {
   }));
 }
 
+/** Prints Usage health in a compact human-readable form. */
 function printUsageHealth(value: unknown): void {
   if (isErrorValue(value)) {
     console.log(`Usage: error - ${value.error}`);
@@ -237,6 +353,7 @@ function printUsageHealth(value: unknown): void {
   console.log(`Usage: native=${native}; index=${status.index.exists ? `${status.index.sourceFiles} files` : "missing"}; ${seen}`);
 }
 
+/** Prints Rollup health in a compact human-readable form. */
 function printRollupHealth(value: unknown, verbose: boolean): void {
   if (isErrorValue(value)) {
     console.log(`Rollup: error - ${value.error}`);
@@ -247,6 +364,7 @@ function printRollupHealth(value: unknown, verbose: boolean): void {
   if (verbose) console.log(`       ledger=${status.rollup.ledgerPath}`);
 }
 
+/** Prints Search health in a compact human-readable form. */
 function printSearchHealth(value: unknown, verbose: boolean): void {
   if (isErrorValue(value)) {
     console.log(`Search: error - ${value.error}`);
@@ -257,29 +375,53 @@ function printSearchHealth(value: unknown, verbose: boolean): void {
   if (verbose && status.exists) console.log(`        languages=${status.languages.map((row) => `${row.language}:${row.files}`).join(", ")}`);
 }
 
+/** Converts a settled promise result to a printable value. */
 function settledValue<T>(result: PromiseSettledResult<T>): T | { error: string } {
   if (result.status === "fulfilled") return result.value;
   return { error: result.reason instanceof Error ? result.reason.message : String(result.reason) };
 }
 
+/** Keeps a long-running server alive until interrupted. */
+function waitForInterrupt(close: () => Promise<void>): Promise<void> {
+  return new Promise((resolve) => {
+    /** Stops the server and resolves the wait. */
+    const stop = () => {
+      void close().finally(resolve);
+    };
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+  });
+}
+
+/** Dynamically imports an optional package dependency. */
+async function optionalImport<T>(specifier: string): Promise<T | undefined> {
+  const dynamicImport = new Function("specifier", "return import(specifier)") as (value: string) => Promise<T>;
+  return dynamicImport(specifier).catch(() => undefined);
+}
+
+/** Tests whether a status value is an error envelope. */
 function isErrorValue(value: unknown): value is { error: string } {
   return Boolean(value && typeof value === "object" && "error" in value);
 }
 
+/** Parses a provider CLI argument. */
 function providerArg(value: unknown): SetupSelection["provider"] {
   if (value === "claude" || value === "codex" || value === "all") return value;
   throw new Error("--provider must be claude, codex, or all.");
 }
 
+/** Parses an output location CLI argument. */
 function outputArg(value: unknown): SetupSelection["output"] {
   if (value === "user-global" || value === "repo-local-private") return value;
   throw new Error("--output must be user-global or repo-local-private.");
 }
 
+/** Expands the setup provider selection into Usage providers. */
 function usageProviders(provider: SetupSelection["provider"]): UsageProvider[] {
   return provider === "all" ? ["claude", "codex"] : [provider];
 }
 
+/** Parses the rollup summary provider CLI argument. */
 function summaryProviderArg(value: unknown): SetupSelection["summaryProvider"] {
   if (value === undefined) return undefined;
   if (value === "claude-cli" || value === "claude-sdk" || value === "codex-cli") return value;

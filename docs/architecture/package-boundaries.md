@@ -5,19 +5,20 @@ Platform packages:
 - @tangent/repo contains repo discovery, git, worktree, filesystem path, and safe path helpers.
 - @tangent/agent-runtime contains process execution and reusable agent runner primitives.
 - @tangent/governance contains custom architecture/docs/lint checks.
-- @tangent/ui-server contains reusable local HTTP static serving and API route dispatch for product UIs.
+- @tangent/ui-server contains reusable local HTTP static serving, mounted app assets, and API route dispatch for product UIs.
 
 UI platform packages:
 - @tangent/ui-tokens contains framework-free semantic tokens and theme CSS.
-- @tangent/ui-server contains framework-agnostic local HTTP static serving and API route dispatch.
-- @tangent/usage-ui is the only browser UI package for now and uses Svelte.
+- @tangent/ui-server contains framework-agnostic local HTTP static serving, mounted app assets, and API route dispatch.
+- @tangent/tangent-ui contains the Svelte combined-app shell and must not import product packages.
+- Product UI packages such as @tangent/usage-ui and @tangent/trees-ui own embedded browser modules for the combined shell.
 
 Vertical apps:
 - @tangent/usage owns conversation telemetry schemas, native transcript normalization, legacy usage-jsonl reading, native-log schema compatibility checks, canonical session/turn/step/message projections, dependency-light core/query APIs, optional SQLite indexing, assistant/session reports, datasets, SDK, CLI, and the local Usage UI server.
 - @tangent/rollup owns rollup note schemas, period-level user-message rollup inputs, examples, rendering, ledgers, and summarization workflows.
 - @tangent/eval owns eval specs, contexts, run manifests, metrics, reports, and diffs.
 - @tangent/search owns structural indexing and search.
-- Tangent Trees owns the `tangent trees` command center across split packages: schema, core, FS store, optional SQLite projection boundary, Git, terminal runtimes, agent adapters, attention, MCP, and CLI.
+- Tangent Trees owns the `tangent trees` command center across split packages: schema, core, FS store, optional SQLite projection boundary, Git, terminal runtimes, agent adapters, attention, MCP, CLI, server, and UI.
 
 Split Trees packages:
 - @tangent/trees-schema has no Node-only runtime integrations, UI, SQLite, tmux, Git adapters, or old `pa` code.
@@ -30,6 +31,8 @@ Split Trees packages:
 - @tangent/trees-attention owns status resolution and deterministic attention rules.
 - @tangent/trees-mcp owns typed MCP tools.
 - @tangent/trees-cli owns the CLI adapter and must not import React.
+- @tangent/trees-ui owns the Trees browser bundle and must not import old `pa` code.
+- @tangent/trees-server owns Trees local UI registration and server routes.
 
 Split Usage packages:
 - @tangent/usage-schema has no UI, SQLite, or provider parser dependencies.
@@ -40,13 +43,14 @@ Split Usage packages:
 - @tangent/usage remains the compatibility meta-package during migration.
 
 Root CLI:
-- Owns human command taxonomy (`setup`, `status`, `usage`, `rollup`, `search`, `eval`, `doctor`) and may compose public SDKs.
+- Owns human command taxonomy (`setup`, `status`, `ui`, `usage`, `rollup`, `search`, `eval`, `doctor`) and may compose public SDKs and installed UI app descriptors.
 - Must keep raw/debug/CI surfaces hidden from default help when they are not human product commands.
 
 Install contract:
 - This remains one git monorepo and one workspace for development.
 - `@tangent/usage`, `@tangent/search`, `@tangent/rollup`, and `@tangent/eval` must be publishable and installable independently.
 - Standalone app packages may depend on platform packages. Rollup and Eval may also depend on Usage. No standalone app may pull an unrelated vertical app.
+- The root `tangent ui` command may compose installed vertical UI descriptors. Standalone app CLIs keep their own UI entrypoints when provided.
 - Publishable manifests must use semver `@tangent/*` dependencies, not `file:`, `link:`, or `workspace:` protocols.
 - Standalone CLIs use `tangent-usage`, `tangent-search`, `tangent-rollup`, and `tangent-eval`; the root `tangent` package keeps short subcommands.
 

@@ -5,6 +5,7 @@ Conversation telemetry domain: schemas, native-log schema compatibility, legacy 
 Product split:
 - `usage` is the human-readable activity CLI: sessions, messages, steps, tools, tokens, analytics, raw events, status, and export.
 - `usage ui` starts the local Usage UI server, serving `/api/usage/*` routes over public Usage core APIs. In a workspace checkout it uses Vite middleware for Svelte hot reload when `@tangent/usage-ui` source files and Vite are available; otherwise it serves compiled `@tangent/usage-ui` assets.
+- `createUsageUiApp` registers the same Usage routes and embedded assets for the combined root `tangent ui` shell.
 - `tangent-usage` is the standalone install binary; `tangent usage` is the full-suite root command.
 - `@tangent/usage/schema`, `/core`, and `/query` are dependency-light and must not import SQLite, pricing tables, server/UI code, or provider-specific native parser dependencies at module load time.
 - `@tangent/usage/core` projects normalized events into `tangent.usage.session.v1`, `turn.v1`, `step.v1`, `message.v1`, timeline, and aggregate resources.
@@ -21,7 +22,7 @@ Capture notes:
 - Native transcript indexing skips incomplete in-progress files. A file is eligible when the provider marks it complete, or when it has been quiet for at least 15 minutes and does not end on a user message.
 - Native schemas remain version-tagged and permissive so Tangent can warn when provider versions drift beyond known ranges.
 - `openUsage({ index: "auto" })` uses SQLite when the optional dependency is available and falls back to in-memory projections when it is not.
-- `startUsageUiServer` uses `openUsage({ index: "auto" })`, maps domain data through `@tangent/usage-ui-data`, and lazily imports UI server/assets only when the UI command starts. The optional Vite dev path is requested by the CLI and falls back to static assets when source files or Vite are unavailable.
+- `startUsageUiServer` and `createUsageUiApp` use `openUsage({ index: "auto" })`, map domain data through `@tangent/usage-ui-data`, and lazily import UI server/assets only when a UI command starts. The optional Vite dev path is requested by the standalone Usage UI CLI and falls back to static assets when source files or Vite are unavailable.
 - Provider native transcript files and legacy hook JSONL files are ingested incrementally by source-file metadata when SQLite is available.
 - Provider ids are open strings in public APIs. Built-in Claude/Codex adapters are registered through the provider adapter contract; unknown providers require caller-supplied adapters.
 

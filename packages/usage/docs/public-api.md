@@ -21,7 +21,7 @@ Important exports:
 - Dataset message query types: `MessageListItem`, `MessageListQuery`, `VisibleMessage`.
 - `ensureUsageIndex` and dataset query helpers default to native transcripts. Pass `sources: ["usage-jsonl"]` for legacy hook JSONL, or `sources: ["native", "usage-jsonl"]` for explicit combined debug reads.
 - CLI specs/runners: `usageCommandSpec`, `runUsageCli`.
-- Local UI server: `startUsageUiServer`, `UsageUiServer`, and `StartUsageUiServerOptions`.
+- Local UI server: `startUsageUiServer`, `createUsageUiApp`, `UsageUiServer`, `UsageUiApp`, and `StartUsageUiServerOptions`.
 - Legacy types include `QueryResult`, `QuerySupport`, `UsageProvider`, and `UsageConfidence`; new public provider fields use open `string`.
 
 Dependency contract:
@@ -41,6 +41,7 @@ Human CLI:
 - `tangent usage ...` is the default activity surface.
 - `tangent-usage ...` is the standalone package binary and accepts the same arguments without the root `usage` subcommand.
 - `tangent usage ui [session|latest] --repo . --scope repo --host 127.0.0.1 --port 0 --no-browser --json` starts the local Usage UI backed by `/api/usage/*`; pass `--scope all` to discover sessions across all supported local agent roots. In a workspace checkout the CLI uses Vite hot reload for `@tangent/usage-ui`; pass `--static-ui` to serve built assets instead.
+- `createUsageUiApp(...)` registers Usage for the combined `tangent ui` shell with `/api/usage/*` routes and embedded assets mounted under `/apps/usage/`.
 - `GET /api/usage/sessions/:id/conversation-view` returns the `UsageConversationView` used by the default Svelte UI.
 - `GET /api/usage/sessions/:id/timeline-view` returns the legacy minimal `UsageSessionTimelineView`.
 - Canonical resource commands are `usage sessions list`, `usage sessions get`, `usage sessions report`, `usage sessions timeline`, `usage messages query`, `usage steps query`, `usage tools query`, `usage tokens summary`, `usage analytics aggregate`, and `usage raw events`.

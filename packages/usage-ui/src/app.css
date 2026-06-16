@@ -70,6 +70,10 @@ button {
   scrollbar-gutter: stable;
 }
 
+.usage-embedded-host .usage-shell {
+  height: 100%;
+}
+
 .pane {
   min-width: 0;
   min-height: 0;

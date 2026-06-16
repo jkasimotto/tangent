@@ -6,5 +6,8 @@ Public import paths:
 Important exports:
 - `createLocalUiServer`
 - `StaticUiAssets`
+- `StaticAssetMount`
+- `EmbeddedUiAssets`
+- `LocalUiApp`
 - `UiRoute`
 - `UiRouteResponse`

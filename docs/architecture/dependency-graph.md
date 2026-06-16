@@ -3,8 +3,12 @@
 ```text
 root CLI
   -> @tangent/usage
+  -> @tangent/usage/server
   -> @tangent/usage/cli
   -> @tangent/trees-cli/cli
+  -> @tangent/trees-server
+  -> @tangent/tangent-ui
+  -> @tangent/ui-server
   -> @tangent/rollup
   -> @tangent/rollup/cli
   -> @tangent/search
@@ -17,6 +21,8 @@ root CLI
 @tangent/usage -> @tangent/core, @tangent/repo, @tangent/ui-server, @tangent/usage-ui, @tangent/usage-ui-data (optional: better-sqlite3 behind @tangent/usage/sqlite)
 @tangent/search -> @tangent/core, @tangent/repo
 @tangent/trees-cli -> @tangent/core, @tangent/trees-schema, @tangent/trees-core, @tangent/trees-store-fs, @tangent/trees-git, @tangent/trees-terminal, @tangent/trees-agents, @tangent/trees-attention, @tangent/trees-mcp
+@tangent/trees-server -> @tangent/ui-server, @tangent/trees-ui
+@tangent/trees-ui -> @tangent/ui-tokens
 @tangent/repo -> @tangent/core
 @tangent/agent-runtime -> @tangent/core
 @tangent/governance -> @tangent/core
@@ -34,6 +40,7 @@ UI graph:
 
 @tangent/ui-tokens -> none
 @tangent/ui-server -> @tangent/core
+@tangent/tangent-ui -> @tangent/ui-tokens
 
 @tangent/usage-ui-data -> no React
 @tangent/usage-ui -> @tangent/usage-ui-data, @tangent/ui-tokens, Svelte
@@ -51,6 +58,8 @@ Trees graph:
 @tangent/trees-agents -> @tangent/trees-core, @tangent/trees-schema
 @tangent/trees-attention -> @tangent/trees-schema
 @tangent/trees-mcp -> @tangent/trees-core, @tangent/trees-schema
+@tangent/trees-ui -> @tangent/ui-tokens
+@tangent/trees-server -> @tangent/ui-server, @tangent/trees-ui
 ```
 
 The graph is enforced by @tangent/governance. If a package dependency changes, update this file and the lint allowlist in the same change. Usage subpaths `/schema`, `/core`, and `/query` are dependency-light entrypoints and must not load optional SQLite, server, or UI code. The Usage package-level UI dependencies are for `tangent usage ui` and the `@tangent/usage/server` subpath.

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { startUsageUiServer } from "../dist/server/index.js";
+import { createUsageUiApp, startUsageUiServer } from "../dist/server/index.js";
 
 test("usage ui server serves app assets and session API", async () => {
   const server = await startUsageUiServer({ open: false, client: fakeUsageClient() });
@@ -31,6 +31,22 @@ test("usage ui server serves app assets and session API", async () => {
   } finally {
     await server.close();
   }
+});
+
+test("usage ui app descriptor exposes embedded assets and routes", async () => {
+  const registration = await createUsageUiApp({ client: fakeUsageClient() });
+  assert.deepEqual(registration.app, {
+    id: "usage",
+    label: "Usage",
+    routePath: "/usage",
+    modulePath: "/apps/usage/embedded.js",
+    stylePaths: ["/apps/usage/embedded.css"]
+  });
+  assert.equal(registration.assetMounts[0].pathPrefix, "/apps/usage");
+  assert.equal(registration.routes.length, 1);
+  const response = await registration.routes[0].handle({ method: "GET" }, new URL("http://localhost/api/usage/sessions"), []);
+  assert.equal(response.status, 200);
+  assert.equal(response.json.sessions[0].title, "Implement UI");
 });
 
 /** Creates a fake Usage core client for server route tests. */

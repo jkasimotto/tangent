@@ -1,6 +1,6 @@
 # Tangent UI
 
-Tangent UI is currently the Svelte Usage app, framework-free tokens, Usage UI data contracts, and a reusable local UI server. The old shared React UI platform, Storybook docs, and non-Usage browser apps are retired for now.
+Tangent UI is currently the Svelte combined app shell, framework-free tokens, product-owned embedded UI bundles, Usage UI data contracts, and a reusable local UI server. The old shared React UI platform and Storybook docs are retired.
 
 Read next:
 - architecture.md

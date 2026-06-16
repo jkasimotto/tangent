@@ -9,6 +9,23 @@ export type StaticUiAssets = {
   indexFile?: string;
 };
 
+export type StaticAssetMount = {
+  pathPrefix: string;
+  assets: StaticUiAssets;
+};
+
+export type EmbeddedUiAssets = StaticUiAssets & {
+  modulePath: string;
+};
+
+export type LocalUiApp = {
+  id: string;
+  label: string;
+  modulePath: string;
+  stylePaths?: string[];
+  routePath?: string;
+};
+
 export type UiRouteResponse = {
   status?: number;
   headers?: Record<string, string>;
@@ -28,6 +45,7 @@ export type CreateLocalUiServerOptions = {
   port?: number;
   open?: boolean;
   assets: StaticUiAssets;
+  assetMounts?: StaticAssetMount[];
   routes?: UiRoute[];
 };
 
@@ -70,10 +88,38 @@ async function handleRequest(request: http.IncomingMessage, response: http.Serve
 
     if (request.method !== "GET" && request.method !== "HEAD") return sendJson(response, 405, { error: "Method not allowed." });
     if (url.pathname.startsWith("/api/")) return sendJson(response, 404, { error: "API route not found." });
+    const mount = matchingAssetMount(url.pathname, options.assetMounts || []);
+    if (mount) return await sendStatic(response, mountedPathname(url.pathname, mount.pathPrefix), mount.assets);
     return await sendStatic(response, url.pathname, options.assets);
   } catch (error) {
     return sendJson(response, 500, { error: (error as Error).message });
   }
+}
+
+/** Finds the most specific static asset mount for a pathname. */
+function matchingAssetMount(pathname: string, mounts: StaticAssetMount[]): StaticAssetMount | undefined {
+  return mounts
+    .filter((mount) => mountMatches(pathname, mount.pathPrefix))
+    .sort((left, right) => normalizedPrefix(right.pathPrefix).length - normalizedPrefix(left.pathPrefix).length)[0];
+}
+
+/** Tests whether a mount prefix matches a request pathname. */
+function mountMatches(pathname: string, prefix: string): boolean {
+  const normalized = normalizedPrefix(prefix);
+  return pathname === normalized.slice(0, -1) || pathname.startsWith(normalized);
+}
+
+/** Converts a mounted request path to the path served from the mounted root. */
+function mountedPathname(pathname: string, prefix: string): string {
+  const normalized = normalizedPrefix(prefix);
+  const withoutPrefix = pathname.startsWith(normalized) ? pathname.slice(normalized.length - 1) : "/";
+  return withoutPrefix || "/";
+}
+
+/** Normalizes an asset mount prefix. */
+function normalizedPrefix(prefix: string): string {
+  const withLeading = prefix.startsWith("/") ? prefix : `/${prefix}`;
+  return withLeading.endsWith("/") ? withLeading : `${withLeading}/`;
 }
 
 /** Supports the send static helper. */

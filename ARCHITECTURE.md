@@ -18,9 +18,9 @@ Allowed dependency shape:
 
 ```text
 root CLI
-  -> usage SDK/CLI | trees CLI | rollup SDK/CLI | eval CLI | search SDK/CLI | governance CLI
+  -> usage SDK/CLI/server | trees CLI/server | tangent-ui | ui-server | rollup SDK/CLI | eval CLI | search SDK/CLI | governance CLI
 
-trees -> schema, core, fs store, git, terminal, agents, attention, MCP, server, ui-data, ui
+trees -> schema, core, fs store, git, terminal, agents, attention, MCP, server, ui
 
 rollup -> usage, core, repo, agent-runtime
 eval  -> usage, core, repo, agent-runtime
@@ -36,6 +36,8 @@ UI platform packages are layered separately from product kernels:
 
 ```text
 ui-tokens -> none
+ui-server -> core
+tangent-ui -> ui-tokens
 ui-primitives -> ui-tokens
 ui-components -> ui-primitives
 ui-patterns -> ui-components, ui-primitives
@@ -46,7 +48,7 @@ product-ui -> product-ui-data, ui-* packages
 product-server -> product-core/API routes, product-ui assets, ui-server
 ```
 
-Human-facing root commands are `setup`, `status`, `usage`, `trees`, `rollup`, `search`, `eval`, `doctor`, and `completion`. Raw/debug/CI commands such as `governance`, `data export`, and `data archive` remain callable but hidden from default help.
+Human-facing root commands are `setup`, `status`, `ui`, `usage`, `trees`, `rollup`, `search`, `eval`, `doctor`, and `completion`. Raw/debug/CI commands such as `governance`, `data export`, and `data archive` remain callable but hidden from default help.
 
 Standalone package CLIs use collision-resistant binary names: `tangent-usage`, `tangent-search`, `tangent-rollup`, and `tangent-eval`. The root `tangent` CLI keeps the short subcommands for full-suite installs.
 
@@ -58,4 +60,4 @@ Eval owns local coding-agent evals: specs, contexts, run manifests, agent runs, 
 
 Trees owns Tangent Center: semantic work trees, optional Git worktrees, durable terminal runtimes, agent runs, typed work sessions, captures, observations, generated attention, a text command-center summary, and typed MCP tools. The old `pa` repo is only a behavioral reference and migration source; Trees uses event-sourced TypeScript packages and must not preserve `pa` sidecar status or storage models.
 
-Tangent UI is currently the Svelte `@tangent/usage-ui` app plus framework-free `@tangent/ui-tokens` and `@tangent/ui-server`. API-only Usage consumers can install `@tangent/usage-schema` and `@tangent/usage-core` without Svelte, Vite, browser assets, or SQLite. Local product servers use `@tangent/ui-server` to serve compiled assets and register framework-agnostic JSON API routes.
+Tangent UI is the Svelte `@tangent/tangent-ui` shell plus product-owned embedded UI bundles. The root `tangent ui` command dynamically registers installed product app descriptors, serves the shell, exposes `/api/ui/apps`, and mounts product assets under `/apps/<app>/`. `@tangent/usage-ui` remains the standalone Usage app and also exposes an embedded bundle for the combined shell. `@tangent/trees-ui` starts as a minimal browser surface registered by `@tangent/trees-server`. API-only Usage consumers can install `@tangent/usage-schema` and `@tangent/usage-core` without Svelte, Vite, browser assets, or SQLite. Local product servers use `@tangent/ui-server` to serve compiled assets and register framework-agnostic JSON API routes.

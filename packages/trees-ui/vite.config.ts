@@ -13,17 +13,6 @@ export default defineConfig({
   },
   build: {
     outDir: "dist",
-    emptyOutDir: true,
-    rollupOptions: {
-      input: {
-        index: "index.html",
-        embedded: "src/embedded.ts"
-      },
-      output: {
-        entryFileNames: "assets/[name].js",
-        assetFileNames: "assets/[name][extname]",
-        minifyInternalExports: false
-      }
-    }
+    emptyOutDir: true
   }
 });

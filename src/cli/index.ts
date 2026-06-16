@@ -6,7 +6,7 @@ import { evalCommandSpec, runEvalCli } from "@tangent/eval/cli";
 import { governanceCommandSpec, runGovernanceCli } from "@tangent/governance/cli";
 import { runSearchCli, searchCommandSpec } from "@tangent/search/cli";
 import { runTreesCli, treesCommandSpec } from "@tangent/trees-cli/cli";
-import { dataCommandSpec, devCommandSpec, doctorCommandSpec, runProductStatusCommand, runSetupCommand, setupCommandSpec, statusCommandSpec } from "./product.js";
+import { dataCommandSpec, devCommandSpec, doctorCommandSpec, runProductStatusCommand, runSetupCommand, runTangentUiCommand, setupCommandSpec, statusCommandSpec, uiCommandSpec } from "./product.js";
 
 const tangentCommandSpec: CliCommandSpec = {
   name: "tangent",
@@ -14,6 +14,7 @@ const tangentCommandSpec: CliCommandSpec = {
   subcommands: [
     setupCommandSpec,
     statusCommandSpec,
+    uiCommandSpec,
     usageCommandSpec,
     treesCommandSpec,
     rollupCommandSpec,
@@ -53,6 +54,11 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
 
   if (app === "status") {
     await runProductStatusCommand(rest);
+    return;
+  }
+
+  if (app === "ui") {
+    await runTangentUiCommand(rest);
     return;
   }
 
@@ -134,6 +140,7 @@ function help(): void {
 Examples:
   tangent setup
   tangent status
+  tangent ui
   tangent usage today
   tangent trees list
   tangent usage transcript codex:019ea3ad

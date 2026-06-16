@@ -3,7 +3,7 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { UiRoute, UiRouteResponse } from "@tangent/ui-server";
+import type { LocalUiApp, StaticAssetMount, UiRoute, UiRouteResponse } from "@tangent/ui-server";
 import { createUsageUiClient, type UsageUiClient } from "@tangent/usage-ui-data";
 import { openUsage, type OpenUsageOptions, type UsageClient } from "../core/index.js";
 
@@ -27,6 +27,13 @@ export type UsageUiServer = {
   close(): Promise<void>;
 };
 
+export type UsageUiApp = {
+  app: LocalUiApp;
+  routes: UiRoute[];
+  assetMounts: StaticAssetMount[];
+  sessionId?: string;
+};
+
 type UsageUiRequestContext = {
   client: UsageUiClient;
   usage: UsageClient;
@@ -36,22 +43,19 @@ type UsageUiRequestContext = {
 /** Starts the local Usage UI server. */
 export async function startUsageUiServer(options: StartUsageUiServerOptions = {}): Promise<UsageUiServer> {
   const host = options.host || "127.0.0.1";
-  const usage = options.client || await openUsage(openOptions(options));
-  const client = createUsageUiClient(usage);
-  const preferredSessionId = await preferredSession(options.sessionId, client);
-  const routes = usageApiRoutes({ client, usage, preferredSessionId });
+  const usageApp = await createUsageUiApp(options);
   if (options.dev) {
     const devServer = await tryStartUsageUiDevServer({
       product: "usage",
       host,
       port: options.port ?? 0,
       open: Boolean(options.open),
-      routes
+      routes: usageApp.routes
     });
     if (devServer) {
       return {
         url: devServer.url,
-        sessionId: preferredSessionId,
+        sessionId: usageApp.sessionId,
         dev: true,
         close: devServer.close
       };
@@ -67,13 +71,35 @@ export async function startUsageUiServer(options: StartUsageUiServerOptions = {}
     port: options.port ?? 0,
     open: Boolean(options.open),
     assets: usageUiAssets,
-    routes
+    routes: usageApp.routes
   });
   return {
     url: server.url,
-    sessionId: preferredSessionId,
+    sessionId: usageApp.sessionId,
     dev: false,
     close: server.close
+  };
+}
+
+/** Creates a Usage app registration for the combined Tangent UI. */
+export async function createUsageUiApp(options: StartUsageUiServerOptions = {}): Promise<UsageUiApp> {
+  const usage = options.client || await openUsage(openOptions(options));
+  const client = createUsageUiClient(usage);
+  const preferredSessionId = await preferredSession(options.sessionId, client);
+  const [{ usageUiEmbeddedAssets }] = await Promise.all([
+    import("@tangent/usage-ui/assets")
+  ]);
+  return {
+    app: {
+      id: "usage",
+      label: "Usage",
+      routePath: "/usage",
+      modulePath: "/apps/usage/embedded.js",
+      stylePaths: ["/apps/usage/embedded.css"]
+    },
+    routes: usageApiRoutes({ client, usage, preferredSessionId }),
+    assetMounts: [{ pathPrefix: "/apps/usage", assets: usageUiEmbeddedAssets }],
+    sessionId: preferredSessionId
   };
 }
 

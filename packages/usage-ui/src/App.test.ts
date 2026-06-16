@@ -8,20 +8,23 @@ import type { UsageConversationView, UsageUiClient } from "@tangent/usage-ui-dat
 afterEach(() => cleanup());
 
 describe("usage svelte app", () => {
-  it("renders sessions and opens the chart pane", async () => {
-    render(App, { props: { client: fakeUsageClient() } });
+  it("renders finder, conversation, and chart panes at once", async () => {
+    const { container } = render(App, { props: { client: fakeUsageClient() } });
 
-    expect(await screen.findAllByRole("heading", { name: "Implement UI" })).toHaveLength(2);
+    expect(await screen.findByText("Done")).toBeInTheDocument();
+    const shell = container.querySelector(".usage-shell");
+    expect(shell).not.toHaveAttribute("data-open-drawer");
     expect(screen.getByLabelText("Conversation picker")).toBeInTheDocument();
-    expect(screen.getByText("Done")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Show metrics chart" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Show sessions" })).toBeDisabled();
-
-    await fireEvent.click(screen.getByRole("button", { name: "Show metrics chart" }));
-
+    expect(screen.getByLabelText("Conversation")).toBeInTheDocument();
     expect(screen.getByLabelText("Tokens and duration chart")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Show metrics chart" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Show sessions" })).toBeEnabled();
+    expect(screen.getByRole("heading", { name: "Assistant Messages" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Implement UI" })).not.toBeInTheDocument();
+    expect(container.querySelector(".chart-inner")).toBeInTheDocument();
+    expect(container.querySelector(".finder-content")).toBeInTheDocument();
+    expect(container.querySelector(".drawer")).not.toBeInTheDocument();
+    expect(container.querySelector(".finder-rail")).not.toBeInTheDocument();
+    expect(container.querySelector(".chart-rail")).not.toBeInTheDocument();
+    expect(container.querySelector(".chart-toggle")).not.toBeInTheDocument();
     expect(screen.getAllByText("Assistant · gpt")).toHaveLength(2);
     expect(screen.getByText("exec")).toBeInTheDocument();
   });
@@ -29,49 +32,73 @@ describe("usage svelte app", () => {
   it("drills into project sessions without replacing the shell during session changes", async () => {
     const pending = deferred<UsageConversationView>();
     const getConversationView = vi.fn(async (id: string) => id === "s2" ? pending.promise : fakeConversationView(id));
-    render(App, { props: { client: fakeUsageClient({ getConversationView }) } });
+    const { container } = render(App, { props: { client: fakeUsageClient({ getConversationView }) } });
 
     expect(await screen.findByRole("button", { name: "repo 2 sessions" })).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "repo 2 sessions" }));
     expect(screen.getByRole("button", { name: "← Projects" })).toBeInTheDocument();
 
-    await fireEvent.click(screen.getByRole("button", { name: "Review telemetry codex · 42s · 840" }));
+    await fireEvent.click(container.querySelectorAll<HTMLButtonElement>(".session-row")[1]);
 
     expect(screen.queryByLabelText("Loading Usage UI")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Conversation")).toBeInTheDocument();
+    expect(screen.getByLabelText("Conversation picker")).toBeInTheDocument();
+    expect(screen.getByLabelText("Tokens and duration chart")).toBeInTheDocument();
     expect(getConversationView).toHaveBeenCalledWith("s2", { query: "", limit: 80 });
 
     pending.resolve(fakeConversationView("s2"));
-    expect(await screen.findAllByRole("heading", { name: "Review telemetry" })).toHaveLength(2);
+    expect(await screen.findByText("Checked the trace")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Review telemetry" })).not.toBeInTheDocument();
+  });
+
+  it("keeps active message and chart row activation wired", async () => {
+    const { container } = render(App, { props: { client: fakeUsageClient() } });
+
+    expect(await screen.findByText("Done")).toBeInTheDocument();
+
+    const chartRow = container.querySelector<HTMLButtonElement>(".chart-row")!;
+    await fireEvent.click(chartRow);
+
+    expect(chartRow).toHaveClass("active");
+    expect(container.querySelector(".message")).toHaveClass("active");
   });
 });
 
+/** Creates a Usage UI client with deterministic fixture data for component tests. */
 function fakeUsageClient(overrides: Partial<UsageUiClient> = {}): UsageUiClient {
   return {
+    /** Lists fixture sessions for the finder pane. */
     async listSessions() {
       return {
         sessions: [sessionListItem("s1", "Implement UI", 1200, 60000), sessionListItem("s2", "Review telemetry", 840, 42000)],
         caveats: []
       };
     },
+    /** Returns a fixture conversation view for the selected session. */
     async getConversationView(id = "s1") {
       return fakeConversationView(id);
     },
+    /** Fails if a test unexpectedly calls the session detail endpoint. */
     async getSession() {
       throw new Error("not used");
     },
+    /** Fails if a test unexpectedly calls the cockpit endpoint. */
     async getCockpit() {
       throw new Error("not used");
     },
+    /** Fails if a test unexpectedly calls the timeline view endpoint. */
     async getSessionTimelineView() {
       throw new Error("not used");
     },
+    /** Fails if a test unexpectedly calls the raw timeline endpoint. */
     async getSessionTimeline() {
       throw new Error("not used");
     },
+    /** Fails if a test unexpectedly calls the transcript endpoint. */
     async getTranscript() {
       throw new Error("not used");
     },
+    /** Fails if a test unexpectedly calls the message selection endpoint. */
     async getMessageSelection() {
       throw new Error("not used");
     },
@@ -79,6 +106,7 @@ function fakeUsageClient(overrides: Partial<UsageUiClient> = {}): UsageUiClient 
   };
 }
 
+/** Builds a compact session-list fixture row. */
 function sessionListItem(id: string, title: string, tokensTotal: number, durationMs: number) {
   return {
     id,
@@ -90,6 +118,7 @@ function sessionListItem(id: string, title: string, tokensTotal: number, duratio
   };
 }
 
+/** Builds a conversation fixture with one assistant message and matching chart row. */
 function fakeConversationView(id = "s1"): UsageConversationView {
   const selected = id === "s2"
     ? { title: "Review telemetry", durationLabel: "42s", tokenLabel: "840", tokens: 840, text: "Checked the trace" }
@@ -157,6 +186,7 @@ function fakeConversationView(id = "s1"): UsageConversationView {
   };
 }
 
+/** Creates a promise that tests can resolve after intermediate UI assertions. */
 function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {

@@ -17,7 +17,6 @@
   let view: UsageConversationView | undefined;
   let selectedId: string | undefined;
   let query = "";
-  let mode: "finder" | "chart" = "finder";
   let loading = true;
   let conversationLoading = false;
   let error = "";
@@ -72,7 +71,6 @@
 
   function selectSession(id: string): void {
     selectedId = id;
-    mode = "finder";
   }
 
   function activate(messageId: string, source: "message" | "chart"): void {
@@ -83,7 +81,7 @@
   function scrollToPair(messageId: string, source: "message" | "chart"): void {
     const target = source === "message" ? rowElements.get(messageId) : messageElements.get(messageId);
     if (target && typeof target.scrollIntoView === "function") {
-      target.scrollIntoView({ block: "center", behavior: "smooth" });
+      target.scrollIntoView({ block: "center" });
     }
   }
 
@@ -138,16 +136,9 @@
     <span class="usage-spinner"></span>
   </main>
 {:else}
-  <main class:chart-mode={mode === "chart"} class="usage-shell">
+  <main class="usage-shell">
     <aside class="pane pane-finder" aria-label="Conversation picker">
       <div class="finder-content">
-        <header>
-          <div>
-            <p>Usage</p>
-            <h1>{view.selected.title}</h1>
-          </div>
-          <button class="icon-button" type="button" aria-label="Show chart" on:click={() => mode = "chart"}>→</button>
-        </header>
         <div class="finder-body">
           <label class="search">
             <span>Search sessions</span>
@@ -192,22 +183,9 @@
           {/if}
         </div>
       </div>
-      <button class="finder-rail" type="button" aria-label="Show sessions" disabled={mode !== "chart"} on:click={() => mode = "finder"}>
-        <span>Sessions</span>
-      </button>
     </aside>
 
     <section class:loading-pane={conversationLoading} class="pane pane-conversation" aria-label="Conversation">
-      <header class="conversation-header">
-        <div>
-          <p>{view.selected.provider}{view.selected.model ? ` · ${view.selected.model}` : ""}</p>
-          <h1>{view.selected.title}</h1>
-        </div>
-        <button class="chart-toggle" type="button" on:click={() => mode = mode === "chart" ? "finder" : "chart"}>
-          {mode === "chart" ? "Sessions" : "Chart"}
-        </button>
-      </header>
-
       <div class="message-list">
         {#each view.messages as message}
           <button
@@ -234,18 +212,13 @@
       </div>
     </section>
 
-    <button class="chart-rail" type="button" aria-label="Show metrics chart" disabled={mode === "chart"} on:click={() => mode = "chart"}>
-      <span>Chart</span>
-    </button>
-
-    <section class="pane pane-chart" aria-label="Tokens and duration chart">
+    <aside class="pane pane-chart" aria-label="Tokens and duration chart">
       <div class="chart-inner">
         <header>
           <div>
             <p>Tokens × duration</p>
             <h1>Assistant Messages</h1>
           </div>
-          <button class="icon-button" type="button" aria-label="Hide chart" on:click={() => mode = "finder"}>→</button>
         </header>
         <div class="chart-scroll">
           <div class="axis-labels">
@@ -286,6 +259,6 @@
           {/if}
         </div>
       </div>
-    </section>
+    </aside>
   </main>
 {/if}

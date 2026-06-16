@@ -1,6 +1,6 @@
 # @tangent/eval Docs
 
-Purpose: Prepare, run, collect, compare, and report coding-agent eval variants. CLI shortcuts include `eval quick` and `latest` run resolution for report/diff/open/collect. The local UI can browse eval specs, start full-spec runs, show progress/logs, cancel active jobs, and inspect completed run artifacts.
+Purpose: Prepare, run, collect, compare, and report coding-agent eval variants. CLI shortcuts include `eval quick` and `latest` run resolution for report/diff/open/collect. The local UI inspects prepared run artifacts and compares two variants in one case without running agents.
 
 Read next:
 - architecture.md

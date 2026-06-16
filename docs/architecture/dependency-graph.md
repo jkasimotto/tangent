@@ -13,11 +13,12 @@ root CLI
   -> @tangent/rollup/cli
   -> @tangent/search
   -> @tangent/eval/cli
+  -> @tangent/eval/server
   -> @tangent/search/cli
   -> @tangent/governance/cli
 
 @tangent/rollup -> @tangent/usage, @tangent/core, @tangent/repo, @tangent/agent-runtime
-@tangent/eval -> @tangent/usage, @tangent/core, @tangent/repo, @tangent/agent-runtime
+@tangent/eval -> @tangent/usage, @tangent/core, @tangent/repo, @tangent/agent-runtime, @tangent/ui-server, @tangent/eval-ui
 @tangent/usage -> @tangent/core, @tangent/repo, @tangent/ui-server, @tangent/usage-ui, @tangent/usage-ui-data (optional: better-sqlite3 behind @tangent/usage/sqlite)
 @tangent/search -> @tangent/core, @tangent/repo
 @tangent/trees-cli -> @tangent/core, @tangent/trees-schema, @tangent/trees-core, @tangent/trees-store-fs, @tangent/trees-git, @tangent/trees-terminal, @tangent/trees-agents, @tangent/trees-attention, @tangent/trees-mcp
@@ -44,6 +45,7 @@ UI graph:
 
 @tangent/usage-ui-data -> no React
 @tangent/usage-ui -> @tangent/usage-ui-data, @tangent/ui-tokens, Svelte
+@tangent/eval-ui -> @tangent/ui-tokens, Svelte
 ```
 
 Trees graph:

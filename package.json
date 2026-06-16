@@ -36,6 +36,7 @@
     "packages/tangent-ui",
     "packages/rollup",
     "packages/eval",
+    "packages/eval-ui",
     "packages/search"
   ],
   "scripts": {
@@ -62,6 +63,7 @@
     "@tangent/usage": "^0.1.0",
     "@tangent/rollup": "^0.1.0",
     "@tangent/eval": "^0.1.0",
+    "@tangent/eval-ui": "^0.1.0",
     "@tangent/search": "^0.1.0"
   },
   "devDependencies": {

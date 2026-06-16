@@ -3,6 +3,7 @@
 Public import paths:
 - @tangent/eval
 - @tangent/eval/cli
+- @tangent/eval/server
 
 CLI notes:
 - `tangent eval ...` is the root full-suite command.
@@ -11,6 +12,8 @@ CLI notes:
 - `eval collect|report|diff|open latest ...` resolves `latest` to the newest run manifest.
 - `eval run` runs non-manual variants in parallel by default, prints prepare/run/collect progress in human mode, and keeps `--json` machine-readable.
 - `eval context capture --include-ancestors` includes repo-local ancestor context files from `--cwd` up to the repo root, never files above the repo.
-- The old browser `eval ui` surface is retired for now; use `eval report`, `eval diff`, and `eval open` for inspection.
+- `eval ui [run|latest]` starts the local read-only Eval UI for prepared runs.
+- `createEvalUiApp(...)` registers Eval for the combined `tangent ui` shell with `/api/eval/*` routes and embedded assets mounted under `/apps/eval/`.
+- Eval specs support `prompt` on a variant; variant prompts override the case prompt, and existing case-level prompt specs remain valid.
 
 Agents must import through these public exports, not package src internals.

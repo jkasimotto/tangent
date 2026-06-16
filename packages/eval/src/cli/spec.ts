@@ -95,6 +95,17 @@ export const evalCommandSpec: CliCommandSpec = {
         { name: "case", takesValue: true, description: "Case id when variant ids are ambiguous" }
       ]
     },
-    { name: "open", description: "Print a variant worktree path", args: "<run-id> <variant>", options: [{ name: "case", takesValue: true, description: "Case id" }] }
+    { name: "open", description: "Print a variant worktree path", args: "<run-id> <variant>", options: [{ name: "case", takesValue: true, description: "Case id" }] },
+    {
+      name: "ui",
+      description: "Start the local Eval UI for prepared runs",
+      args: "[run-id|latest]",
+      options: [
+        { name: "host", takesValue: true, description: "Host to bind" },
+        { name: "port", takesValue: true, description: "Port to bind" },
+        { name: "no-browser", description: "Do not open the browser" },
+        { name: "json", description: "Print JSON" }
+      ]
+    }
   ]
 };

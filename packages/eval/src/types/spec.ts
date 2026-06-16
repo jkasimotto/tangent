@@ -25,6 +25,7 @@ export type EvalDefaults = {
 
 export type EvalVariantSpec = {
   id: string;
+  prompt?: string;
   repo?: EvalRepoSpec;
   cwd?: string;
   context?: EvalContextMode;
@@ -34,7 +35,7 @@ export type EvalVariantSpec = {
 
 export type EvalCaseSpec = {
   id: string;
-  prompt: string;
+  prompt?: string;
   cwd?: string;
   phases?: EvalPhaseSpec[];
   variants: EvalVariantSpec[];

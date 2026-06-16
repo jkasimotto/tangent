@@ -11,12 +11,12 @@ UI platform packages:
 - @tangent/ui-tokens contains framework-free semantic tokens and theme CSS.
 - @tangent/ui-server contains framework-agnostic local HTTP static serving, mounted app assets, and API route dispatch.
 - @tangent/tangent-ui contains the Svelte combined-app shell and must not import product packages.
-- Product UI packages such as @tangent/usage-ui and @tangent/trees-ui own embedded browser modules for the combined shell.
+- Product UI packages such as @tangent/usage-ui, @tangent/trees-ui, and @tangent/eval-ui own embedded browser modules for the combined shell.
 
 Vertical apps:
 - @tangent/usage owns conversation telemetry schemas, native transcript normalization, legacy usage-jsonl reading, native-log schema compatibility checks, canonical session/turn/step/message projections, dependency-light core/query APIs, optional SQLite indexing, assistant/session reports, datasets, SDK, CLI, and the local Usage UI server.
 - @tangent/rollup owns rollup note schemas, period-level user-message rollup inputs, examples, rendering, ledgers, and summarization workflows.
-- @tangent/eval owns eval specs, contexts, run manifests, metrics, reports, and diffs.
+- @tangent/eval owns eval specs, contexts, run manifests, metrics, reports, diffs, and the local read-only Eval UI server.
 - @tangent/search owns structural indexing and search.
 - Tangent Trees owns the `tangent trees` command center across split packages: schema, core, FS store, optional SQLite projection boundary, Git, terminal runtimes, agent adapters, attention, MCP, CLI, server, and UI.
 
@@ -49,7 +49,7 @@ Root CLI:
 Install contract:
 - This remains one git monorepo and one workspace for development.
 - `@tangent/usage`, `@tangent/search`, `@tangent/rollup`, and `@tangent/eval` must be publishable and installable independently.
-- Standalone app packages may depend on platform packages. Rollup and Eval may also depend on Usage. No standalone app may pull an unrelated vertical app.
+- Standalone app packages may depend on platform packages. Rollup and Eval may also depend on Usage. Product UI bundles may be dependencies of their owning app package. No standalone app may pull an unrelated vertical app.
 - The root `tangent ui` command may compose installed vertical UI descriptors. Standalone app CLIs keep their own UI entrypoints when provided.
 - Publishable manifests must use semver `@tangent/*` dependencies, not `file:`, `link:`, or `workspace:` protocols.
 - Standalone CLIs use `tangent-usage`, `tangent-search`, `tangent-rollup`, and `tangent-eval`; the root `tangent` package keeps short subcommands.

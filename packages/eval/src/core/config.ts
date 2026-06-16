@@ -14,6 +14,7 @@ export type LoadedEvalSpec = {
   variants: ResolvedEvalVariant[];
 };
 
+/** Loads and validates an eval spec from disk. */
 export async function loadEvalSpec(specPath: string, options: { invocationCwd?: string } = {}): Promise<LoadedEvalSpec> {
   const invocationCwd = options.invocationCwd || process.cwd();
   const absolutePath = resolveMaybeRelative(invocationCwd, specPath);
@@ -29,6 +30,7 @@ export async function loadEvalSpec(specPath: string, options: { invocationCwd?: 
   };
 }
 
+/** Expands eval cases and variants into prepared run inputs. */
 export async function resolveVariants(spec: EvalSpec, options: { specDir: string; invocationCwd: string }): Promise<ResolvedEvalVariant[]> {
   const rows: ResolvedEvalVariant[] = [];
   for (const testCase of spec.cases) {
@@ -37,7 +39,9 @@ export async function resolveVariants(spec: EvalSpec, options: { specDir: string
       const cwd = variant.cwd || testCase.cwd || spec.defaults?.cwd || ".";
       const agent = variant.agent || spec.defaults?.agent || { kind: "manual" as const };
       const phases = normalizePhases(variant.phases || testCase.phases || spec.defaults?.phases || ["implement"]);
-      const promptPath = resolveMaybeRelative(options.specDir, testCase.prompt);
+      const prompt = variant.prompt || testCase.prompt;
+      if (!prompt) throw new Error(`Eval case ${testCase.id} variant ${variant.id} requires prompt on variant or case.`);
+      const promptPath = resolveMaybeRelative(options.specDir, prompt);
       rows.push({
         caseId: testCase.id,
         variantId: variant.id,
@@ -54,6 +58,7 @@ export async function resolveVariants(spec: EvalSpec, options: { specDir: string
   return rows;
 }
 
+/** Normalizes phase shorthand into explicit phase config. */
 export function normalizePhases(phases: EvalPhaseSpec[]): ResolvedEvalVariant["phases"] {
   return phases.map((phase) => {
     const id = typeof phase === "string" ? phase : phase.id;
@@ -69,6 +74,7 @@ export function normalizePhases(phases: EvalPhaseSpec[]): ResolvedEvalVariant["p
   });
 }
 
+/** Normalizes partial agent config into a concrete provider config. */
 export function normalizeAgent(value: Partial<EvalAgentConfig> | undefined): EvalAgentConfig {
   if (!value || !("kind" in value) || !value.kind || value.kind === "manual") return { kind: "manual" };
   if (value.kind === "codex-cli") {
@@ -94,6 +100,7 @@ export function normalizeAgent(value: Partial<EvalAgentConfig> | undefined): Eva
   throw new Error(`Unknown agent kind: ${(value as { kind?: string }).kind}`);
 }
 
+/** Parses a CLI context value into an eval context mode. */
 export function parseContextValue(value: string): EvalContextMode {
   if (value === "repo") return { mode: "repo" };
   if (value === "empty" || value === "no-context") return { mode: "empty" };
@@ -102,25 +109,28 @@ export function parseContextValue(value: string): EvalContextMode {
   return { mode: "snapshot", ref: normalizeContextRef(value) };
 }
 
+/** Normalizes a short context id into the tangent refs namespace. */
 export function normalizeContextRef(value: string): string {
   if (value.startsWith("refs/")) return value;
   return `refs/tangent/eval/contexts/${value}`;
 }
 
+/** Validates required eval spec fields and variant prompts. */
 function validateSpec(spec: EvalSpec): void {
   if (spec.schema !== "eval.spec.v1") throw new Error("Eval spec schema must be eval.spec.v1.");
   if (!spec.name) throw new Error("Eval spec requires a name.");
   if (!Array.isArray(spec.cases) || spec.cases.length === 0) throw new Error("Eval spec requires at least one case.");
   for (const testCase of spec.cases) {
     if (!testCase.id) throw new Error("Eval case requires id.");
-    if (!testCase.prompt) throw new Error(`Eval case ${testCase.id} requires prompt.`);
     if (!Array.isArray(testCase.variants) || testCase.variants.length === 0) throw new Error(`Eval case ${testCase.id} requires variants.`);
     for (const variant of testCase.variants) {
       if (!variant.id) throw new Error(`Eval case ${testCase.id} has variant without id.`);
+      if (!variant.prompt && !testCase.prompt) throw new Error(`Eval case ${testCase.id} variant ${variant.id} requires prompt on variant or case.`);
     }
   }
 }
 
+/** Resolves the required repository config for a variant. */
 function mergeRequiredRepo(variantRepo: EvalRepoSpec | undefined, testCase: EvalCaseSpec, defaultRepo: EvalRepoSpec | undefined): EvalRepoSpec {
   const repo = variantRepo || defaultRepo;
   if (!repo) throw new Error(`Eval case ${testCase.id} requires repo on variant or defaults.`);

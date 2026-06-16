@@ -56,7 +56,7 @@ export const doctorCommandSpec: CliCommandSpec = {
 export const uiCommandSpec: CliCommandSpec = {
   name: "ui",
   description: "Start the local Tangent UI for installed apps",
-  args: "[usage|trees]",
+  args: "[usage|trees|eval]",
   options: [
     { name: "repo", takesValue: true, description: "Repository path" },
     { name: "scope", takesValue: true, values: ["all", "repo"], description: "Session discovery scope" },
@@ -222,7 +222,9 @@ async function installedUiApps(options: InstalledUiAppOptions): Promise<UiAppReg
     /** Loads the Usage UI app if installed. */
     usage: () => loadUsageUiApp(options),
     /** Loads the Trees UI app if installed. */
-    trees: () => loadTreesUiApp()
+    trees: () => loadTreesUiApp(),
+    /** Loads the Eval UI app if installed. */
+    eval: () => loadEvalUiApp()
   };
   const ids = options.requestedApp ? [options.requestedApp] : Object.keys(loaders);
   const registrations = await Promise.all(ids.map(async (id) => {
@@ -250,6 +252,13 @@ async function loadTreesUiApp(): Promise<UiAppRegistration | undefined> {
   const trees = await optionalImport<{ createTreesUiApp(): UiAppRegistration }>("@tangent/trees-server");
   if (!trees?.createTreesUiApp) return undefined;
   return trees.createTreesUiApp();
+}
+
+/** Imports and creates the Eval UI app registration. */
+async function loadEvalUiApp(): Promise<UiAppRegistration | undefined> {
+  const evalServer = await optionalImport<{ createEvalUiApp(): Promise<UiAppRegistration> }>("@tangent/eval/server");
+  if (!evalServer?.createEvalUiApp) return undefined;
+  return evalServer.createEvalUiApp();
 }
 
 type SetupSelection = {

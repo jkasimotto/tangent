@@ -8,6 +8,7 @@ import test from "node:test";
 
 import { captureContext, collectEval, prepareEval, runEval } from "../dist/sdk/index.js";
 import { isEvalRunCancelled, runPreparedEval } from "../dist/core/run.js";
+import { startEvalUiServer } from "../dist/server/index.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -140,6 +141,102 @@ test("prepare creates external worktrees with isolated context commits", async (
   assert.ok(emptyMetrics.files.changed.includes("index.ts"));
 });
 
+test("variant prompts override case prompts during prepare", async () => {
+  const repo = await createRepo();
+  const evalHome = await mkdtemp(path.join(tmpdir(), "tangent-eval-prompt-home-"));
+  process.env.TANGENT_EVAL_HOME = evalHome;
+
+  await writeFile(path.join(repo, "index.ts"), "export const value = 1;\n", "utf8");
+  await git(repo, "add", ".");
+  await git(repo, "commit", "-m", "base");
+
+  const evalDir = path.join(repo, "evals", "variant-prompts");
+  await mkdir(path.join(evalDir, "prompts"), { recursive: true });
+  await writeFile(path.join(evalDir, "prompts", "left.md"), "Left task.\n", "utf8");
+  await writeFile(path.join(evalDir, "prompts", "right.md"), "Right task.\n", "utf8");
+  const specPath = path.join(evalDir, "eval.json");
+  await writeFile(specPath, JSON.stringify({
+    schema: "eval.spec.v1",
+    name: "variant-prompts",
+    defaults: {
+      repo: { path: repo, ref: "HEAD" },
+      cwd: ".",
+      agent: { kind: "manual" },
+      phases: ["implement"]
+    },
+    cases: [{
+      id: "task",
+      variants: [
+        { id: "left", prompt: "prompts/left.md", context: { mode: "repo" } },
+        { id: "right", prompt: "prompts/right.md", context: { mode: "repo" } }
+      ]
+    }]
+  }, null, 2), "utf8");
+
+  const result = await prepareEval(specPath);
+  const left = result.manifest.variants.find((variant) => variant.variantId === "left");
+  const right = result.manifest.variants.find((variant) => variant.variantId === "right");
+
+  assert.ok(left);
+  assert.ok(right);
+  assert.equal(await readFile(left.promptPath, "utf8"), "Left task.\n");
+  assert.equal(await readFile(right.promptPath, "utf8"), "Right task.\n");
+});
+
+test("eval ui api compares prepared prompt and context artifacts", async () => {
+  const repo = await createRepo();
+  const evalHome = await mkdtemp(path.join(tmpdir(), "tangent-eval-ui-home-"));
+  process.env.TANGENT_EVAL_HOME = evalHome;
+
+  await writeFile(path.join(repo, "AGENTS.md"), "repo context\n", "utf8");
+  await writeFile(path.join(repo, "index.ts"), "export const value = 1;\n", "utf8");
+  await git(repo, "add", ".");
+  await git(repo, "commit", "-m", "base");
+
+  const evalDir = path.join(repo, "evals", "ui-compare");
+  await mkdir(path.join(evalDir, "prompts"), { recursive: true });
+  await writeFile(path.join(evalDir, "prompts", "empty.md"), "Use no context.\n", "utf8");
+  await writeFile(path.join(evalDir, "prompts", "repo.md"), "Use repo context.\n", "utf8");
+  const specPath = path.join(evalDir, "eval.json");
+  await writeFile(specPath, JSON.stringify({
+    schema: "eval.spec.v1",
+    name: "ui-compare",
+    defaults: {
+      repo: { path: repo, ref: "HEAD" },
+      cwd: ".",
+      agent: { kind: "codex-cli", command: "codex", model: "fake", sandbox: "workspace-write" },
+      phases: ["plan", "implement"]
+    },
+    cases: [{
+      id: "task",
+      variants: [
+        { id: "empty", prompt: "prompts/empty.md", context: { mode: "empty" } },
+        { id: "repo", prompt: "prompts/repo.md", context: { mode: "repo" } }
+      ]
+    }]
+  }, null, 2), "utf8");
+
+  const prepared = await prepareEval(specPath);
+  const server = await startEvalUiServer({ runId: prepared.manifest.id, open: false });
+  try {
+    const runs = await fetchJson(`${server.url}api/eval/runs`);
+    assert.equal(runs.runs[0].id, prepared.manifest.id);
+
+    const detail = await fetchJson(`${server.url}api/eval/runs/${prepared.manifest.id}`);
+    assert.equal(detail.cases[0].variants[0].model, "fake");
+
+    const compare = await fetchJson(`${server.url}api/eval/runs/${prepared.manifest.id}/compare?caseId=task&left=empty&right=repo`);
+    assert.equal(compare.artifacts.find((artifact) => artifact.kind === "prompt" && artifact.path === "task").status, "changed");
+    assert.equal(compare.artifacts.find((artifact) => artifact.kind === "context" && artifact.path === "AGENTS.md").status, "right-only");
+
+    const diff = await fetchJson(`${server.url}api/eval/runs/${prepared.manifest.id}/diff?caseId=task&left=empty&right=repo&kind=prompt&path=task`);
+    assert.equal(diff.artifact.label, "Task prompt");
+    assert.ok(diff.lines.some((line) => line.kind === "changed" && line.left === "Use no context." && line.right === "Use repo context."));
+  } finally {
+    await server.close();
+  }
+});
+
 test("run eval starts automatic variants in parallel", async () => {
   const repo = await createRepo();
   const evalHome = await mkdtemp(path.join(tmpdir(), "tangent-eval-parallel-home-"));
@@ -224,6 +321,14 @@ async function git(repo, ...args) {
 async function gitShow(repo, ref) {
   const { stdout } = await execFileAsync("git", ["-C", repo, "show", ref]);
   return stdout;
+}
+
+/** Fetches JSON from a local test server. */
+async function fetchJson(url) {
+  const response = await fetch(url);
+  const text = await response.text();
+  assert.equal(response.ok, true, text);
+  return JSON.parse(text);
 }
 
 /** Returns whether a path can be read. */

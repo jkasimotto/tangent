@@ -18,12 +18,12 @@ Allowed dependency shape:
 
 ```text
 root CLI
-  -> usage SDK/CLI/server | trees CLI/server | tangent-ui | ui-server | rollup SDK/CLI | eval CLI | search SDK/CLI | governance CLI
+  -> usage SDK/CLI/server | trees CLI/server | tangent-ui | ui-server | rollup SDK/CLI | eval CLI/server | search SDK/CLI | governance CLI
 
 trees -> schema, core, fs store, git, terminal, agents, attention, MCP, server, ui
 
 rollup -> usage, core, repo, agent-runtime
-eval  -> usage, core, repo, agent-runtime
+eval  -> usage, core, repo, agent-runtime, ui-server, eval-ui
 usage -> core, repo, ui-server, usage-ui, usage-ui-data
 search -> core, repo
 repo -> core
@@ -56,8 +56,8 @@ Usage owns conversation telemetry: event schemas, dependency-light core/query AP
 
 Rollup consumes selected Usage turns and visible user messages under the configured length limit, then owns the summarization workflow: `tangent rollup <selector>` caches one period-level `rollup.input.v1` artifact, includes style examples from explicit examples and prior notes, runs one summary provider roll-up, and writes the generated note block. Assistant messages, tool calls, tool results, token metadata, and oversized pasted user messages are intentionally excluded from rollup input. Selectors support single days and compact inclusive ranges. Rollup does not parse Claude or Codex native schemas and does not preserve a topic or turn-digest architecture.
 
-Eval owns local coding-agent evals: specs, contexts, run manifests, agent runs, metrics, reports, and diffs. Eval may read Usage metrics and git artifacts, but it does not upload eval or usage data. The old browser eval comparison UI is retired for now.
+Eval owns local coding-agent evals: specs, contexts, run manifests, agent runs, metrics, reports, diffs, and the local read-only Eval UI server. Eval may read Usage metrics and git artifacts, but it does not upload eval or usage data. The V1 browser UI inspects prepared runs, compares two variants in one case, and diffs task/phase prompts plus materialized context files without running agents.
 
 Trees owns Tangent Center: semantic work trees, optional Git worktrees, durable terminal runtimes, agent runs, typed work sessions, captures, observations, generated attention, a text command-center summary, and typed MCP tools. The old `pa` repo is only a behavioral reference and migration source; Trees uses event-sourced TypeScript packages and must not preserve `pa` sidecar status or storage models.
 
-Tangent UI is the Svelte `@tangent/tangent-ui` shell plus product-owned embedded UI bundles. The root `tangent ui` command dynamically registers installed product app descriptors, serves the shell, exposes `/api/ui/apps`, and mounts product assets under `/apps/<app>/`. `@tangent/usage-ui` remains the standalone Usage app and also exposes an embedded bundle for the combined shell. `@tangent/trees-ui` starts as a minimal browser surface registered by `@tangent/trees-server`. API-only Usage consumers can install `@tangent/usage-schema` and `@tangent/usage-core` without Svelte, Vite, browser assets, or SQLite. Local product servers use `@tangent/ui-server` to serve compiled assets and register framework-agnostic JSON API routes.
+Tangent UI is the Svelte `@tangent/tangent-ui` shell plus product-owned embedded UI bundles. The root `tangent ui` command dynamically registers installed product app descriptors, serves the shell, exposes `/api/ui/apps`, and mounts product assets under `/apps/<app>/`. `@tangent/usage-ui`, `@tangent/trees-ui`, and `@tangent/eval-ui` expose embedded bundles for the combined shell. API-only Usage consumers can install `@tangent/usage-schema` and `@tangent/usage-core` without Svelte, Vite, browser assets, or SQLite. Local product servers use `@tangent/ui-server` to serve compiled assets and register framework-agnostic JSON API routes.

@@ -63,6 +63,7 @@ const allowedPackageDeps: Record<string, string[]> = {
     "@tangent/usage",
     "@tangent/rollup",
     "@tangent/eval",
+    "@tangent/eval-ui",
     "@tangent/search"
   ],
   "@tangent/core": [],
@@ -92,8 +93,9 @@ const allowedPackageDeps: Record<string, string[]> = {
   "@tangent/tangent-ui": ["@tangent/ui-tokens"],
   "@tangent/usage-ui-data": [],
   "@tangent/usage-ui": ["@tangent/usage-ui-data", "@tangent/ui-tokens"],
+  "@tangent/eval-ui": ["@tangent/ui-tokens"],
   "@tangent/rollup": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage"],
-  "@tangent/eval": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage"],
+  "@tangent/eval": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage", "@tangent/ui-server", "@tangent/eval-ui"],
   "@tangent/search": ["@tangent/core", "@tangent/repo"]
 };
 

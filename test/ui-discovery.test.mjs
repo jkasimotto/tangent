@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { discoverUiApps, discoverUiAppCandidates } from "../dist/cli/ui-discovery.js";
@@ -58,16 +61,7 @@ test("UI discovery ignores incomplete manifest metadata", async () => {
   const candidates = await discoverUiAppCandidates({
     startDir: "/repo",
     listNodeModulesPackages: listUsageManifest,
-    readPackageJson: async () => ({
-      name: "@tangent/usage",
-      tangent: {
-        uiApp: {
-          id: "usage",
-          serverExport: "@tangent/usage/server",
-          factory: "createUsageUiApp"
-        }
-      }
-    })
+    readPackageJson: readIncompleteUsageManifest
   });
 
   assert.deepEqual(candidates, []);
@@ -85,9 +79,41 @@ test("manifest UI app candidates override fallback candidates", async () => {
   assert.equal(candidates[0].order, 5);
 });
 
+test("manifest discovery accepts workspace package symlinks", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "tangent-ui-discovery-"));
+  try {
+    const workspacePackage = path.join(root, "packages", "usage");
+    const scopedModules = path.join(root, "node_modules", "@tangent");
+    await mkdir(workspacePackage, { recursive: true });
+    await mkdir(scopedModules, { recursive: true });
+    await writeFile(path.join(workspacePackage, "package.json"), JSON.stringify(await readUsageManifest()), "utf8");
+    await symlink(workspacePackage, path.join(scopedModules, "usage"), "dir");
+
+    const candidates = await discoverUiAppCandidates({ startDir: root });
+
+    assert.deepEqual(candidates.map((candidate) => candidate.id), ["usage"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 /** Resolves only the Usage UI server fixture. */
 async function resolveOnlyUsage(specifier) {
   return specifier === "@tangent/usage/server" ? "usage-server" : undefined;
+}
+
+/** Reads a Usage manifest fixture with incomplete UI app metadata. */
+async function readIncompleteUsageManifest() {
+  return {
+    name: "@tangent/usage",
+    tangent: {
+      uiApp: {
+        id: "usage",
+        serverExport: "@tangent/usage/server",
+        factory: "createUsageUiApp"
+      }
+    }
+  };
 }
 
 /** Resolves Usage as an installed fixture. */

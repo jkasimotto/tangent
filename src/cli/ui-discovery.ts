@@ -109,16 +109,21 @@ async function listPackageJsonFiles(nodeModules: string, injected?: (dir: string
   const entries = await readdir(nodeModules, { withFileTypes: true }).catch(() => []);
   const files: string[] = [];
   for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+    if (!isPackageDir(entry) || entry.name.startsWith(".")) continue;
     const full = path.join(nodeModules, entry.name);
     if (entry.name.startsWith("@")) {
       const scoped = await readdir(full, { withFileTypes: true }).catch(() => []);
-      files.push(...scoped.filter((pkg) => pkg.isDirectory() && !pkg.name.startsWith(".")).map((pkg) => path.join(full, pkg.name, "package.json")));
+      files.push(...scoped.filter((pkg) => isPackageDir(pkg) && !pkg.name.startsWith(".")).map((pkg) => path.join(full, pkg.name, "package.json")));
     } else {
       files.push(path.join(full, "package.json"));
     }
   }
   return files;
+}
+
+/** Tests whether a node_modules entry can contain a package manifest. */
+function isPackageDir(entry: { isDirectory(): boolean; isSymbolicLink(): boolean }): boolean {
+  return entry.isDirectory() || entry.isSymbolicLink();
 }
 
 /** Reads and parses one package manifest. */

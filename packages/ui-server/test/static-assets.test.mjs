@@ -29,7 +29,8 @@ test("serves dev asset mounts through Vite middleware", async () => {
   await mkdir(path.join(product, "src"), { recursive: true });
   await mkdir(shell, { recursive: true });
   await writeFile(path.join(shell, "index.html"), "shell");
-  await writeFile(path.join(product, "src", "embedded.ts"), "export const ok = true;");
+  await writeFile(path.join(product, "src", "embedded.ts"), "import \"./local.css\";\nexport const ok = true;");
+  await writeFile(path.join(product, "src", "local.css"), ".local { color: red; }");
   const server = await createLocalUiServer({
     product: "test",
     mode: "dev",
@@ -38,7 +39,11 @@ test("serves dev asset mounts through Vite middleware", async () => {
     open: false
   });
   try {
-    assert.match(await fetchText(`${server.url}apps/dev/src/embedded.ts`), /ok = true/);
+    const module = await fetchText(`${server.url}apps/dev/src/embedded.ts`);
+    assert.match(module, /ok = true/);
+    const cssModule = await fetch(`${server.url}apps/dev/src/local.css`);
+    assert.equal(cssModule.headers.get("content-type"), "text/css");
+    assert.match(await cssModule.text(), /color: red/);
     assert.equal((await (await fetch(`${server.url}healthz`)).json()).dev, true);
   } finally {
     await server.close();

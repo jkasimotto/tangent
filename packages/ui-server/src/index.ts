@@ -154,13 +154,14 @@ async function startDevMounts(options: CreateLocalUiServerOptions): Promise<Acti
     return [];
   }
   const mounts: ActiveDevMount[] = [];
-  for (const mount of candidates) {
+  for (const [index, mount] of candidates.entries()) {
     mounts.push({
       pathPrefix: mount.pathPrefix,
       server: await vite.createServer({
         root: mount.assets.dev!.sourceRoot,
+        base: normalizedPrefix(mount.pathPrefix),
         appType: "custom",
-        server: { middlewareMode: true }
+        server: { hmr: { clientPort: 24679 + index, port: 24679 + index }, middlewareMode: true }
       })
     });
   }
@@ -177,7 +178,7 @@ function matchingDevMount(pathname: string, mounts: ActiveDevMount[]): ActiveDev
 /** Rewrites and forwards a mounted request into Vite middleware. */
 function handleDevMount(request: http.IncomingMessage, response: http.ServerResponse, url: URL, mount: ActiveDevMount): void {
   const originalUrl = request.url;
-  request.url = `${mountedPathname(url.pathname, mount.pathPrefix)}${url.search}`;
+  request.url = `${url.pathname}${url.search}`;
   mount.server.middlewares(request, response, (error) => {
     request.url = originalUrl;
     if (error) return sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) });

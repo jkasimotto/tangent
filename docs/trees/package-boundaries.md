@@ -10,8 +10,5 @@
 - `trees-attention`: status and attention rules.
 - `trees-mcp`: typed tool surface.
 - `trees-cli`: command-line adapter.
-- `trees-server`: local UI/API server.
-- `trees-ui-data`: React-free DTOs.
-- `trees-ui`: React command center.
 
 Governance enforces the key forbidden edges from the port specification.

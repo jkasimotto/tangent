@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildUsageCockpitView, createUsageApiClient, createUsageUiClient } from "../dist/index.js";
+import { buildUsageCockpitView, buildUsageConversationView, buildUsageSessionTimelineView, createUsageApiClient, createUsageUiClient } from "../dist/index.js";
 
 test("maps usage sessions into list view models", async () => {
   const client = createUsageUiClient({
@@ -44,6 +44,131 @@ test("browser API client fetches usage session views", async () => {
   } finally {
     globalThis.fetch = previousFetch;
   }
+});
+
+test("browser API client fetches minimal session timeline views", async () => {
+  const previousFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url) => {
+    requests.push(String(url));
+    return new Response(JSON.stringify({
+      selected: { id: "s1", title: "Implement UI", provider: "codex", status: "complete", summaryLabel: "codex · complete" },
+      picker: { query: "ui", results: [] },
+      chart: { totalDurationMs: 1000, maxTokens: 10, widthPx: 1200, heightPx: 420, steps: [] }
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  };
+  try {
+    const client = createUsageApiClient("http://local");
+    const view = await client.getSessionTimelineView("s1", { query: "ui", limit: 5 });
+    assert.deepEqual(requests, ["http://local/api/usage/sessions/s1/timeline-view?query=ui&limit=5"]);
+    assert.equal(view.selected.title, "Implement UI");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("builds minimal timeline view with horizontal time semantics", () => {
+  const view = buildUsageSessionTimelineView(
+    {
+      id: "s1",
+      provider: "codex",
+      title: "Implement UI",
+      status: "completed",
+      startedAt: "2026-06-15T10:00:00.000Z",
+      endedAt: "2026-06-15T10:01:00.000Z",
+      metrics: { durationMs: 60_000, tokens: { total: 1200, confidence: "provider-reported" } }
+    },
+    [
+      { id: "later", kind: "command", label: "Command", offsetMs: 30_000, durationMs: 10_000, metrics: { tokens: { total: 200 } } },
+      { id: "first", kind: "assistant_response", label: "Assistant response", offsetMs: 0, durationMs: 20_000, metrics: { tokens: { total: 1000 } } }
+    ],
+    { range: { durationMs: 60_000 }, items: [] }
+  );
+
+  assert.equal(view.selected.status, "complete");
+  assert.equal(view.chart.totalDurationMs, 60_000);
+  assert.equal(view.chart.maxTokens, 1000);
+  assert.deepEqual(view.chart.steps.map((step) => step.id), ["first", "later"]);
+  assert.equal(view.chart.steps[0].offsetMs, 0);
+  assert.equal(view.chart.steps[1].durationMs, 10_000);
+  assert.equal(view.chart.steps[1].tokens, 200);
+});
+
+test("builds minimal timeline warnings for partial timing and missing tokens", () => {
+  const partialTiming = buildUsageSessionTimelineView(
+    { id: "s1", provider: "codex", title: "Partial", metrics: {}, availability: { notes: [] } },
+    [{ id: "step1", kind: "assistant_response", label: "Assistant response", metrics: { tokens: { total: 10 } } }]
+  );
+  const missingTokens = buildUsageSessionTimelineView(
+    { id: "s2", provider: "codex", title: "No tokens", metrics: {}, availability: { notes: [] } },
+    [{ id: "step1", kind: "command", label: "Command", durationMs: 10_000, metrics: {} }]
+  );
+
+  assert.equal(partialTiming.selected.warning, "Step timing is partial; bar positions are estimated.");
+  assert.equal(missingTokens.selected.warning, "Token data is unavailable for this provider/session.");
+  assert.equal(missingTokens.chart.steps[0].tokens, undefined);
+});
+
+test("builds conversation chart rows from assistant messages with internal step segments", () => {
+  const view = buildUsageConversationView(
+    {
+      id: "s1",
+      provider: "codex",
+      title: "Implement UI",
+      status: "completed",
+      project: "otto-tangent",
+      metrics: { durationMs: 60_000, tokens: { total: 1200 } },
+      availability: { notes: [] }
+    },
+    [{
+      id: "s1",
+      provider: "codex",
+      title: "Implement UI",
+      status: "completed",
+      project: "otto-tangent",
+      metrics: { durationMs: 60_000, tokens: { total: 1200 } },
+      availability: { notes: [] }
+    }],
+    [{
+      id: "m1",
+      role: "assistant",
+      turnId: "turn1",
+      stepId: "assistant",
+      model: "gpt",
+      textPreview: "Done",
+      tokenUsage: { total: 1200, confidence: "provider-reported" },
+      toolCalls: [{ id: "tool1", stepId: "tool", toolName: "exec", status: "success", result: { durationMs: 20_000 } }]
+    }],
+    [
+      { id: "assistant", turnId: "turn1", kind: "assistant_response", label: "Assistant response", durationMs: 40_000, order: 1, metrics: {} },
+      { id: "tool", turnId: "turn1", kind: "command", label: "exec", durationMs: 20_000, order: 2, metrics: {} }
+    ]
+  );
+
+  assert.equal(view.projects[0].label, "otto-tangent");
+  assert.equal(view.messages[0].tokenLabel, "1.2K");
+  assert.equal(view.chart.rows[0].tokens, 1200);
+  assert.equal(view.chart.rows[0].segments.length, 2);
+  assert.equal(view.chart.rows[0].segments[0].heightShare > view.chart.rows[0].segments[1].heightShare, true);
+});
+
+test("uses equal internal segment heights when step durations are unavailable", () => {
+  const view = buildUsageConversationView(
+    { id: "s1", provider: "codex", title: "Partial", metrics: {}, availability: { notes: [] } },
+    [],
+    [{ id: "m1", role: "assistant", turnId: "turn1", textPreview: "Done", tokenUsage: { total: 10 }, toolCalls: [] }],
+    [
+      { id: "a", turnId: "turn1", kind: "assistant_response", label: "Assistant", order: 1, metrics: {} },
+      { id: "b", turnId: "turn1", kind: "command", label: "Command", order: 2, metrics: {} }
+    ]
+  );
+
+  assert.equal(view.chart.rows[0].segments[0].heightShare, 0.5);
+  assert.equal(view.chart.rows[0].segments[1].heightShare, 0.5);
+  assert.match(view.caveats.join("\n"), /evenly sized/);
 });
 
 test("builds cockpit view without mixing session envelope into trace lanes", () => {

@@ -1,5 +1,7 @@
 # @tangent/usage-ui-data Architecture
 
-This package turns Usage client results into stable view models for React apps. It also provides a browser API client for local `/api/usage/*` routes. It keeps raw provider metadata out of default views and preserves it for inspector/evidence surfaces.
+This package turns Usage client results into stable view models for browser apps. It also provides a browser API client for local `/api/usage/*` routes.
 
-Conversation cockpit mappers are pure functions. `buildUsageCockpitView` composes session finder data, hero copy, diagnostic cards, deterministic storyline chapters, trace waterfall lanes, cost breakdowns, transcript highlights, and default inspector state from Usage sessions, steps, messages, and timeline data. React components consume these DTOs without deriving product logic.
+The default Usage UI mapper is `buildUsageConversationView`. It builds `UsageConversationView` from the selected session, session list, transcript messages, and timeline steps. It computes project grouping, conversation messages, assistant-message chart rows, internal step segment sizing, and data-quality caveats outside Svelte.
+
+Legacy timeline/cockpit mappers remain pure functions for compatibility. UI components should consume DTOs without deriving product logic.

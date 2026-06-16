@@ -23,14 +23,12 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && chmod +x dist/cli/index.js",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build -w @tangent/agent-runtime && npm run build -w @tangent/ui-tokens && npm run build -w @tangent/ui-primitives && npm run build -w @tangent/ui-components && npm run build -w @tangent/ui-patterns && npm run build -w @tangent/ui-charts && npm run build -w @tangent/ui-code && npm run build -w @tangent/ui-app-shell && npm run build -w @tangent/eval-ui-data && npm run build -w @tangent/eval-ui && npm run build && node --test test/*.test.mjs"
+    "test": "npm run build -w @tangent/agent-runtime && npm run build && node --test test/*.test.mjs"
   },
   "dependencies": {
     "@tangent/core": "^0.1.0",
     "@tangent/repo": "^0.1.0",
     "@tangent/agent-runtime": "^0.1.0",
-    "@tangent/eval-ui": "^0.1.0",
-    "@tangent/ui-server": "^0.1.0",
     "@tangent/usage": "^0.1.0"
   },
   "engines": {

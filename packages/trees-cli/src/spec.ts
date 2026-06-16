@@ -50,7 +50,6 @@ export const treesCommandSpec: CliCommandSpec = {
       { name: "resolve", description: "Resolve a capture", args: "<id>", options: opts("checkpoint", "dismiss", "note", "json") }
     ] },
     { name: "center", description: "Print a compact command-center summary", args: "[path]" },
-    { name: "ui", description: "Start Tangent Center", args: "[path]", options: opts("host", "port", "no-browser", "json") },
     { name: "events", description: "Print Trees events", options: opts("watch", "json") },
     { name: "import-pa", description: "Import legacy pa data", options: opts("from", "dry-run", "json") },
     { name: "mcp", description: "Start the Trees MCP stdio server" }

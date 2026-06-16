@@ -168,6 +168,8 @@ export function createTreesClient(store: TreeEventStore, options: TreesClientOpt
       /** Documents the create helper. */
       async create(input) {
         const path = validateEntityPath(input.path);
+        const existing = (await projection()).entities.find((entity) => entity.path === path);
+        if (existing) throw new Error(`Tree entity already exists at path: ${path}`);
         const at = now();
         const entity: TreeEntity = {
           schema: "tangent.trees.entity.v1",
@@ -219,12 +221,23 @@ export function createTreesClient(store: TreeEventStore, options: TreesClientOpt
     projects: {
       /** Documents the add helper. */
       async add(name, projectPath) {
+        const trimmedName = name.trim();
+        const trimmedPath = projectPath.trim();
+        if (!trimmedName) throw new Error("Tree project name is required.");
+        if (!trimmedPath) throw new Error("Tree project path is required.");
+        const existingProjects = (await projection()).projects;
+        const sameName = existingProjects.find((project) => project.name === trimmedName);
+        const samePath = existingProjects.find((project) => project.path === trimmedPath);
+        if (sameName && sameName.path === trimmedPath) return sameName;
+        if (samePath && samePath.name === trimmedName) return samePath;
+        if (sameName) throw new Error(`Tree project already exists with name: ${trimmedName}`);
+        if (samePath) throw new Error(`Tree project already exists at path: ${trimmedPath}`);
         const at = now();
         const project: ProjectRef = {
           schema: "tangent.trees.project.v1",
           id: `prj_${randomUUID()}`,
-          name,
-          path: projectPath,
+          name: trimmedName,
+          path: trimmedPath,
           createdAt: at,
           updatedAt: at,
           evidence: []

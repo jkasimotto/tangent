@@ -1,5 +1,7 @@
 # ADR 0002: React And Vite UI Stack
 
-Decision: use React, TypeScript, and Vite for Tangent UI packages.
+Status: superseded by ADR 0006.
 
-Reason: the current eval UI is browser-hosted; React/Vite provides a real component system while keeping server APIs framework-agnostic.
+Original decision: use React, TypeScript, and Vite for Tangent UI packages.
+
+Supersession reason: the shared React UI platform and non-Usage browser apps were removed. Usage UI now uses Svelte with Vite, while local servers remain framework-agnostic.

@@ -24,6 +24,7 @@ import {
 import { toUsageEventV3 } from "./event-v3.js";
 import { aggregateMetrics, aggregateTokenUsage } from "./metrics.js";
 import { pathsForEvent } from "./path-facets.js";
+import { field, groupBy, isDefined, objectValue, stringValue, unique } from "./projection-utils.js";
 
 export type UsageProjectionInput = {
   events: Array<UsageEventV3 | UsageJsonlLineV1>;
@@ -683,39 +684,4 @@ function stableId(value: string): string {
 
 function emptyCounts(): UsageSession["counts"] {
   return { turns: 0, messages: 0, userMessages: 0, assistantMessages: 0, toolCalls: 0, subagents: 0, compactions: 0, filesTouched: 0 };
-}
-
-function groupBy<T, K>(values: T[], keyFn: (value: T) => K): Map<K, T[]> {
-  const map = new Map<K, T[]>();
-  for (const value of values) {
-    const key = keyFn(value);
-    const rows = map.get(key) || [];
-    rows.push(value);
-    map.set(key, rows);
-  }
-  return map;
-}
-
-function unique<T>(values: T[]): T[] {
-  return [...new Set(values.filter((value): value is T & {} => value !== undefined && value !== null))];
-}
-
-function isDefined<T>(value: T | undefined): value is T {
-  return value !== undefined;
-}
-
-function objectValue(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
-}
-
-function field(value: unknown, key: string): unknown {
-  return value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value ? value : undefined;
-}
-
-function numberValue(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }

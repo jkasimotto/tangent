@@ -1,6 +1,6 @@
 # usage-ui/src
 
-Purpose: Usage React app and pages.
+Purpose: Usage Svelte app and browser entry.
 
 Read next:
 - ../docs/index.md

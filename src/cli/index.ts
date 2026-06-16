@@ -136,7 +136,6 @@ Examples:
   tangent status
   tangent usage today
   tangent trees list
-  tangent trees ui
   tangent usage transcript codex:019ea3ad
   tangent rollup today
   tangent rollup 20260601-20260610

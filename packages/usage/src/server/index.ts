@@ -86,6 +86,18 @@ async function handleApiRequest(request: http.IncomingMessage, url: URL, context
       if (parts.length === 5 && parts[4] === "cockpit") {
         return json(200, await context.client.getCockpit(id));
       }
+      if (parts.length === 5 && parts[4] === "conversation-view") {
+        return json(200, await context.client.getConversationView(id, {
+          query: stringParam(url, "query"),
+          limit: numberParam(url.searchParams.get("limit")) ?? 50
+        }));
+      }
+      if (parts.length === 5 && parts[4] === "timeline-view") {
+        return json(200, await context.client.getSessionTimelineView(id, {
+          query: stringParam(url, "query"),
+          limit: numberParam(url.searchParams.get("limit")) ?? 50
+        }));
+      }
       if (parts.length === 5 && parts[4] === "timeline") {
         return json(200, await context.client.getSessionTimeline(id, { metric: timelineMetric(url.searchParams.get("metric")) }));
       }

@@ -16,6 +16,27 @@ test("entities can be created, resolved by suffix, and moved with children", asy
   assert.equal((await client.entities.get(child.id))?.parentPath, "project/renamed");
 });
 
+test("entities reject duplicate paths", async () => {
+  const client = createTreesClient(createMemoryTreeEventStore());
+  await client.entities.create({ path: "project/feature", kind: "work" });
+
+  await assert.rejects(
+    () => client.entities.create({ path: "project/feature", kind: "note" }),
+    /already exists/
+  );
+
+  assert.equal((await client.projection()).entities.length, 1);
+});
+
+test("project registration reuses exact matches and rejects ambiguous duplicates", async () => {
+  const client = createTreesClient(createMemoryTreeEventStore());
+  const project = await client.projects.add("main", "/repo/main");
+
+  assert.equal((await client.projects.add("main", "/repo/main")).id, project.id);
+  await assert.rejects(() => client.projects.add("main", "/repo/other"), /already exists with name/);
+  await assert.rejects(() => client.projects.add("other", "/repo/main"), /already exists at path/);
+});
+
 test("work session checkpoint resolves linked captures", async () => {
   const client = createTreesClient(createMemoryTreeEventStore());
   const entity = await client.entities.create({ path: "project/checkpoints" });

@@ -1,6 +1,6 @@
 # @tangent/usage-ui Docs
 
-Purpose: Usage UI for inspecting one AI-agent conversation at a time through a cockpit with storyline, trace, cost, highlights, and evidence surfaces.
+Purpose: Svelte Usage UI for selecting sessions, reading conversations, and inspecting assistant message token/duration charts.
 
 Read next:
 - architecture.md

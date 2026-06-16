@@ -32,7 +32,6 @@
     "@tangent/trees-git": "^0.1.0",
     "@tangent/trees-mcp": "^0.1.0",
     "@tangent/trees-schema": "^0.1.0",
-    "@tangent/trees-server": "^0.1.0",
     "@tangent/trees-store-fs": "^0.1.0",
     "@tangent/trees-terminal": "^0.1.0"
   },

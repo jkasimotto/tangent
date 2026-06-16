@@ -23,6 +23,7 @@ Decisions:
 - decisions/ADR-0006-trees-clean-rewrite.md
 - ui/adr/0001-ui-package-split.md
 - ui/adr/0002-react-vite-ui-stack.md
+- ui/adr/0006-svelte-usage-ui.md
 - ui/adr/0003-token-system.md
 - ui/adr/0004-local-ui-server.md
 - ui/adr/0005-progressive-disclosure-for-telemetry.md

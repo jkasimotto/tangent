@@ -10,12 +10,11 @@ import type { TreesClient } from "@tangent/trees-core";
 import { ensureEntityWorktree, worktreeStatus } from "@tangent/trees-git";
 import { runTreesMcpStdio } from "@tangent/trees-mcp";
 import type { AgentRun, TerminalSession } from "@tangent/trees-schema";
-import { startTreesUiServer } from "@tangent/trees-server";
 import { defaultTreesHome, openFsTrees } from "@tangent/trees-store-fs";
 import { createProcessRuntimeAdapter, createTmuxRuntimeAdapter, type TerminalRuntimeAdapter } from "@tangent/trees-terminal";
 
 import { importPa } from "./import-pa.js";
-import { captureIds, estimateArg, humanEntity, humanRows, outcomeArg, output, promptArg, providerFromAdapter, requiredPos, spawnInherited, stdinText, waitForInterrupt } from "./helpers.js";
+import { captureIds, estimateArg, humanEntity, humanRows, outcomeArg, output, promptArg, providerFromAdapter, requiredPos, spawnInherited, stdinText } from "./helpers.js";
 import { treesCommandSpec } from "./spec.js";
 
 export { treesCommandSpec } from "./spec.js";
@@ -44,7 +43,6 @@ export async function runTreesCli(argv = process.argv.slice(2)): Promise<void> {
   if (command === "events") return eventsCommand(client, args);
   if (command === "import-pa") return output(args, await importPa(client, { from: stringArg(args.from), dryRun: booleanArg(args["dry-run"]) }));
   if (command === "center") return centerCommand(client, args);
-  if (command === "ui") return uiCommand(args);
   if (command === "mcp") {
     /** Documents the ensureWorktree helper. */
     const ensureWorktree = (input: Record<string, unknown>) => ensureEntityWorktree(client, requiredString(input.ref, "ref"));
@@ -291,13 +289,6 @@ async function centerCommand(client: TreesClient, args: Args): Promise<void> {
   console.log("Tangent Center");
   console.log(`Entities: ${projection.entities.length}  Attention: ${open.length}  Active agents: ${active.length}`);
   for (const item of open.slice(0, 10)) console.log(`! ${item.severity} ${item.title}`);
-}
-
-/** Documents the uiCommand helper. */
-async function uiCommand(args: Args): Promise<void> {
-  const server = await startTreesUiServer({ selectedPath: args._[1], host: stringArg(args.host) || "127.0.0.1", port: numberArg(args.port) ?? 0, open: !booleanArg(args["no-browser"]) });
-  output(args, { url: server.url, token: server.token }, `Tangent Center: ${server.url}`);
-  await waitForInterrupt(server.close);
 }
 
 /** Documents the refreshAttention helper. */

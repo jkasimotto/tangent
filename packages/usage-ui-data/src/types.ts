@@ -146,6 +146,8 @@ export type UsageMessage = {
   confidence?: UsageConfidence;
   toolCalls?: Array<{
     id: string;
+    stepId?: string;
+    resultStepId?: string;
     toolName?: string;
     name?: string;
     status?: string;
@@ -345,6 +347,156 @@ export type UsageInspectorDefaultView = {
   evidence: Array<{ label: string; value: string }>;
   caveats: string[];
   rawEvidenceTarget: UsageInspectorTarget;
+};
+
+export type UsageSessionTimelineView = {
+  selected: {
+    id: string;
+    title: string;
+    provider: string;
+    status: "active" | "complete" | "failed" | "unknown";
+    startedAt?: string;
+    endedAt?: string;
+    durationLabel?: string;
+    tokenLabel?: string;
+    summaryLabel: string;
+    warning?: string;
+  };
+  picker: {
+    query: string;
+    results: Array<{
+      id: string;
+      title: string;
+      provider: string;
+      status: string;
+      durationLabel?: string;
+      tokenLabel?: string;
+      reasonLabel?: "active" | "recent" | "costly" | "slow" | "failed";
+    }>;
+  };
+  chart: {
+    totalDurationMs: number;
+    maxTokens: number;
+    widthPx: number;
+    heightPx: number;
+    steps: UsageTimelineStepBar[];
+  };
+};
+
+export type UsageTimelineStepBar = {
+  id: string;
+  label: string;
+  kind:
+    | "user"
+    | "assistant"
+    | "model"
+    | "tool"
+    | "tool_result"
+    | "command"
+    | "file"
+    | "system"
+    | "unknown";
+  startedAt?: string;
+  endedAt?: string;
+  offsetMs: number;
+  durationMs?: number;
+  tokens?: number;
+  durationLabel?: string;
+  tokenLabel?: string;
+  confidence?: "exact" | "derived" | "partial" | "estimated" | "unknown";
+  detail: {
+    title: string;
+    subtitle?: string;
+    excerpt?: string;
+    toolName?: string;
+    files?: string[];
+    rawEventIds?: string[];
+  };
+};
+
+export type UsageConversationProjectGroup = {
+  id: string;
+  label: string;
+  sessions: UsageConversationSessionItem[];
+};
+
+export type UsageConversationSessionItem = {
+  id: string;
+  title: string;
+  provider: string;
+  status?: string;
+  startedAt?: string;
+  lastActivityAt?: string;
+  durationLabel?: string;
+  tokenLabel?: string;
+  summary?: string;
+};
+
+export type UsageConversationMessage = {
+  id: string;
+  role: "user" | "assistant" | "system" | "tool";
+  title?: string;
+  at?: string;
+  text?: string;
+  textPreview?: string;
+  tokenLabel?: string;
+  tokens?: number;
+  durationLabel?: string;
+  durationMs?: number;
+  confidence?: UsageUiConfidence;
+  toolCalls: Array<{
+    id: string;
+    name: string;
+    status?: string;
+    durationLabel?: string;
+    target?: string;
+  }>;
+};
+
+export type UsageConversationChartSegment = {
+  id: string;
+  label: string;
+  kind: "assistant" | "tool" | "tool_result" | "command" | "file" | "system" | "unknown";
+  messageId: string;
+  stepId?: string;
+  durationMs?: number;
+  durationLabel?: string;
+  heightShare: number;
+  confidence: UsageUiConfidence;
+};
+
+export type UsageConversationChartRow = {
+  id: string;
+  messageId: string;
+  role: "user" | "assistant" | "system" | "tool";
+  label: string;
+  at?: string;
+  tokens?: number;
+  tokenLabel?: string;
+  durationMs?: number;
+  durationLabel?: string;
+  widthShare: number;
+  heightShare: number;
+  anchor: boolean;
+  confidence: UsageUiConfidence;
+  segments: UsageConversationChartSegment[];
+};
+
+export type UsageConversationView = {
+  selected: UsageConversationSessionItem & {
+    model?: string;
+    startedAt?: string;
+    endedAt?: string;
+    caveatCount?: number;
+  };
+  projects: UsageConversationProjectGroup[];
+  messages: UsageConversationMessage[];
+  chart: {
+    maxTokens: number;
+    maxDurationMs: number;
+    rows: UsageConversationChartRow[];
+  };
+  caveats: string[];
 };
 
 export type UsageCockpitView = {

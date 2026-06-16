@@ -10,6 +10,12 @@ export type {
   UsageBreakdownView,
   UsageCockpitOptions,
   UsageCockpitView,
+  UsageConversationChartRow,
+  UsageConversationChartSegment,
+  UsageConversationMessage,
+  UsageConversationProjectGroup,
+  UsageConversationSessionItem,
+  UsageConversationView,
   UsageInspectorDefaultView,
   UsageInspectorTarget,
   UsageMessage,
@@ -17,11 +23,13 @@ export type {
   UsageSessionFinderTabId,
   UsageSessionFinderView,
   UsageSessionHeroView,
+  UsageSessionTimelineView,
   UsageSessionStatus,
   UsageStep,
   UsageStoryChapter,
   UsageStorylineView,
   UsageTimeline,
+  UsageTimelineStepBar,
   UsageTone,
   UsageTraceItem,
   UsageTraceLane,
@@ -32,14 +40,27 @@ export type {
 } from "./types.js";
 export { buildUsageBreakdowns } from "./breakdown.js";
 export { buildUsageCockpitView, buildInspectorDefaultView, buildSessionHeroView, sessionTotalTokens, timelineSteps, transcriptMessages } from "./cockpit.js";
+export { buildUsageConversationView } from "./conversationView.js";
 export { buildDiagnosticCards, primaryFinding } from "./diagnostics.js";
 export { buildSessionFinderView, sessionFinderItem } from "./sessionFinder.js";
+export { buildUsageSessionTimelineView } from "./sessionTimeline.js";
 export { buildSessionStoryline } from "./storyline.js";
 export { buildTraceWaterfall } from "./trace.js";
 export { buildTranscriptHighlights } from "./transcriptHighlights.js";
 
 import { buildUsageCockpitView, timelineSteps, transcriptMessages } from "./cockpit.js";
-import type { UsageCockpitView, UsageMessage, UsageSession, UsageStep, UsageTimeline } from "./types.js";
+import { buildUsageConversationView } from "./conversationView.js";
+import { buildUsageSessionTimelineView } from "./sessionTimeline.js";
+import type {
+  UsageCockpitView,
+  UsageConversationView,
+  UsageMessage,
+  UsageSession,
+  UsageSessionTimelineView,
+  UsageStep,
+  UsageTimeline,
+  UsageUiConfidence
+} from "./types.js";
 
 export type UsageSessionListQuery = {
   provider?: string;
@@ -48,6 +69,17 @@ export type UsageSessionListQuery = {
 
 export type TimelineQuery = {
   metric?: "durationMs" | "selfDurationMs" | "tokens.total" | "cost.amount";
+};
+
+export type UsageSessionTimelineQuery = {
+  query?: string;
+  reason?: "active" | "recent" | "costly" | "slow" | "failed";
+  limit?: number;
+};
+
+export type UsageConversationQuery = {
+  query?: string;
+  limit?: number;
 };
 
 export type TranscriptQuery = {
@@ -169,6 +201,8 @@ type UsageDomainSession = {
 
 type UsageDomainMessage = {
   id: string;
+  turnId?: string;
+  stepId?: string;
   role: "user" | "assistant" | "system" | "tool" | string;
   createdAt?: string;
   model?: string;
@@ -179,6 +213,8 @@ type UsageDomainMessage = {
   confidence?: string;
   toolCalls?: Array<{
     id: string;
+    stepId?: string;
+    resultStepId?: string;
     toolName?: string;
     name?: string;
     status?: string;
@@ -243,6 +279,8 @@ export interface UsageUiClient {
   listSessions(query?: UsageSessionListQuery): Promise<UsageSessionListView>;
   getSession(id: string): Promise<UsageSessionDetailView>;
   getCockpit(id: string): Promise<UsageCockpitView>;
+  getConversationView(id: string, query?: UsageConversationQuery): Promise<UsageConversationView>;
+  getSessionTimelineView(id: string, query?: UsageSessionTimelineQuery): Promise<UsageSessionTimelineView>;
   getSessionTimeline(id: string, query?: TimelineQuery): Promise<UsageTimelineView>;
   getTranscript(id: string, query?: TranscriptQuery): Promise<UsageTranscriptView>;
   getMessageSelection(query: MessageSelectionQuery): Promise<MessageSelectionView>;
@@ -271,6 +309,10 @@ export function createUsageApiClient(baseUrl = ""): UsageUiClient {
     getSession: (id) => api(`/api/usage/sessions/${encodeURIComponent(id)}`),
     /** Gets a conversation-first cockpit view through the local API. */
     getCockpit: (id) => api(`/api/usage/sessions/${encodeURIComponent(id)}/cockpit`),
+    /** Gets the conversation inspector view through the local API. */
+    getConversationView: (id, query = {}) => api(`/api/usage/sessions/${encodeURIComponent(id)}/conversation-view${queryString(query)}`),
+    /** Gets a minimal session timeline view through the local API. */
+    getSessionTimelineView: (id, query = {}) => api(`/api/usage/sessions/${encodeURIComponent(id)}/timeline-view${queryString(query)}`),
     /** Gets a session timeline through the local API. */
     getSessionTimeline: (id, query = {}) => api(`/api/usage/sessions/${encodeURIComponent(id)}/timeline${queryString(query)}`),
     /** Gets a transcript through the local API. */
@@ -367,6 +409,58 @@ export function createUsageUiClient(usage: UsageDomainClient): UsageUiClient {
           detailCaveats: sessionResult.meta.warnings.map((warning) => warning.message),
           timelineCaveats: [...(timeline.caveats || []), ...timelineResult.meta.warnings.map((warning) => warning.message)],
           transcriptCaveats: [...(report.caveats || []), ...reportResult.meta.warnings.map((warning) => warning.message)]
+        }
+      );
+    },
+    /** Gets conversation view. */
+    async getConversationView(id, query = {}) {
+      const [sessionResult, timelineResult, reportResult, listResult] = await Promise.all([
+        usage.sessions.get(id),
+        usage.sessions.timeline(id, { metric: "selfDurationMs" }),
+        usage.sessions.report(id, { includeTools: true }),
+        usage.sessions.list({ limit: query.limit || 50, orderBy: [{ field: "lastActivityAt", direction: "desc" }] })
+      ]);
+      const session = domainSession(sessionResult.data);
+      const timeline = timelineResult.data as UsageTimeline;
+      const report = reportResult.data as { messages?: UsageMessage[]; caveats?: string[] };
+      return buildUsageConversationView(
+        session,
+        listResult.data.map(domainSession),
+        transcriptMessages(report.messages || []),
+        timelineSteps(timeline),
+        {
+          query: query.query,
+          caveats: [
+            ...(session.availability?.notes || []),
+            ...listResult.meta.warnings.map((warning) => warning.message),
+            ...sessionResult.meta.warnings.map((warning) => warning.message),
+            ...(timeline.caveats || []),
+            ...timelineResult.meta.warnings.map((warning) => warning.message),
+            ...(report.caveats || []),
+            ...reportResult.meta.warnings.map((warning) => warning.message)
+          ]
+        }
+      );
+    },
+    /** Gets session timeline view. */
+    async getSessionTimelineView(id, query = {}) {
+      const [sessionResult, timelineResult, listResult] = await Promise.all([
+        usage.sessions.get(id),
+        usage.sessions.timeline(id, { metric: "tokens.total" }),
+        usage.sessions.list({ limit: query.limit || 50, orderBy: [{ field: "lastActivityAt", direction: "desc" }] })
+      ]);
+      const session = domainSession(sessionResult.data);
+      const timeline = timelineResult.data as UsageTimeline;
+      return buildUsageSessionTimelineView(
+        session,
+        timelineSteps(timeline),
+        timeline,
+        {
+          sessions: listResult.data.map(domainSession),
+          selectedSessionId: session.id,
+          query: query.query,
+          listCaveats: listResult.meta.warnings.map((warning) => warning.message),
+          timelineCaveats: [...(timeline.caveats || []), ...timelineResult.meta.warnings.map((warning) => warning.message)]
         }
       );
     },

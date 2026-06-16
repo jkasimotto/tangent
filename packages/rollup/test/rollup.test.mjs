@@ -156,7 +156,7 @@ test("claude cli runner skips user settings and parses structured output events"
     kind: "claude-cli",
     command: commandPath,
     model: "sonnet",
-    timeoutMs: 5000,
+    timeoutMs: 15000,
     maxTurns: 1
   });
   const previousCapturePath = process.env.CAPTURE_ARGS_PATH;

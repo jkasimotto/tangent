@@ -1,6 +1,6 @@
 # @tangent/usage-ui
 
-Purpose: React screens for Usage sessions, timelines, messages, tools, tokens, and providers.
+Purpose: Svelte app for Usage sessions, conversations, assistant message charts, tools, tokens, and caveats.
 
 Read next:
 - docs/index.md

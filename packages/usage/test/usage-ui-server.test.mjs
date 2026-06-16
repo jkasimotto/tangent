@@ -17,6 +17,15 @@ test("usage ui server serves app assets and session API", async () => {
     const transcript = await (await fetch(`${server.url}api/usage/sessions/s1/transcript`)).json();
     assert.equal(transcript.messages[0].textPreview, "Done");
 
+    const timelineView = await (await fetch(`${server.url}api/usage/sessions/s1/timeline-view`)).json();
+    assert.equal(timelineView.selected.title, "Implement UI");
+    assert.equal(timelineView.chart.steps[0].label, "Assistant response");
+
+    const conversationView = await (await fetch(`${server.url}api/usage/sessions/s1/conversation-view`)).json();
+    assert.equal(conversationView.selected.title, "Implement UI");
+    assert.equal(conversationView.messages[0].textPreview, "Done");
+    assert.equal(conversationView.chart.rows[0].segments[0].label, "Assistant response");
+
     const html = await (await fetch(server.url)).text();
     assert.match(html, /Tangent Usage/);
   } finally {
@@ -49,14 +58,14 @@ function fakeUsageClient() {
       },
       /** Gets a fake Usage timeline. */
       async timeline() {
-        return result({ schema: "tangent.usage.timeline.v1", items: [{ id: "step1", label: "Assistant response", kind: "assistant_response", durationMs: 60000, metricValue: 60000 }] });
+        return result({ schema: "tangent.usage.timeline.v1", items: [{ id: "step1", turnId: "turn1", label: "Assistant response", kind: "assistant_response", durationMs: 60000, metricValue: 60000 }] });
       },
       /** Gets a fake Usage transcript. */
       async report() {
         return result({
           schema: "tangent.usage.session_report.v1",
           session,
-          messages: [{ id: "m1", role: "assistant", textPreview: "Done", tokenUsage: { total: 1200, confidence: "provider-reported" }, toolCalls: [] }],
+          messages: [{ id: "m1", turnId: "turn1", stepId: "step1", role: "assistant", textPreview: "Done", tokenUsage: { total: 1200, confidence: "provider-reported" }, toolCalls: [] }],
           totals: { userMessages: 1, assistantMessages: 1, toolCalls: 3, tokens: session.metrics.tokens },
           caveats: []
         });

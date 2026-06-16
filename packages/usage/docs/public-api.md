@@ -41,6 +41,8 @@ Human CLI:
 - `tangent usage ...` is the default activity surface.
 - `tangent-usage ...` is the standalone package binary and accepts the same arguments without the root `usage` subcommand.
 - `tangent usage ui [session|latest] --repo . --scope repo --host 127.0.0.1 --port 0 --no-browser --json` starts the local Usage UI backed by `/api/usage/*`; pass `--scope all` to discover sessions across all supported local agent roots.
+- `GET /api/usage/sessions/:id/conversation-view` returns the `UsageConversationView` used by the default Svelte UI.
+- `GET /api/usage/sessions/:id/timeline-view` returns the legacy minimal `UsageSessionTimelineView`.
 - Canonical resource commands are `usage sessions list`, `usage sessions get`, `usage sessions report`, `usage sessions timeline`, `usage messages query`, `usage steps query`, `usage tools query`, `usage tokens summary`, `usage analytics aggregate`, and `usage raw events`.
 - `--json` on canonical commands emits a `UsageResult<T>` envelope.
 - Legacy `usage report <session|latest> --json` still prints `usage.conversation.v1`.

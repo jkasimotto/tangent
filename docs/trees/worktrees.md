@@ -2,6 +2,8 @@
 
 Trees entities may attach to Git projects, branches, and worktree paths.
 
+Tangent Center can create an entity and optionally ensure a worktree in one flow. If entity creation succeeds but Git setup fails, the entity remains and the UI reports a warning.
+
 Worktree ensure behavior:
 
 1. Resolve project registry and repo root.

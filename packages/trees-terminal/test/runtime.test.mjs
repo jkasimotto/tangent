@@ -21,8 +21,17 @@ test("process runtime captures output", async () => {
   const runtime = createProcessRuntimeAdapter();
   const session = await runtime.create({ id: "term_test", cwd: process.cwd() });
   await runtime.start(session.id, { command: "node", args: ["-e", "console.log('trees-process-output')"], cwd: process.cwd() });
-  await new Promise((resolve) => setTimeout(resolve, 150));
 
-  const capture = await runtime.capture(session.id);
+  const capture = await waitForCapture(runtime, session.id, /trees-process-output/);
   assert.match(capture.text, /trees-process-output/);
 });
+
+async function waitForCapture(runtime, sessionId, pattern) {
+  const deadline = Date.now() + 2000;
+  let capture = await runtime.capture(sessionId);
+  while (!pattern.test(capture.text) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    capture = await runtime.capture(sessionId);
+  }
+  return capture;
+}

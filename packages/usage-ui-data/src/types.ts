@@ -425,6 +425,7 @@ export type UsageConversationSessionItem = {
   id: string;
   title: string;
   provider: string;
+  model?: string;
   status?: string;
   startedAt?: string;
   lastActivityAt?: string;

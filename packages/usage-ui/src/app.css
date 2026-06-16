@@ -57,7 +57,7 @@ button {
 }
 
 .usage-shell {
-  --finder-width: 318px;
+  --finder-width: 260px;
   --conversation-min-width: 520px;
   --chart-width: clamp(420px, 32vw, 620px);
 
@@ -99,7 +99,7 @@ button {
   height: 100%;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  padding: 18px 16px;
+  padding: 16px 12px;
 }
 
 .pane header {
@@ -173,7 +173,7 @@ button {
   background: #fff;
   color: #17201b;
   border-radius: 7px;
-  padding: 10px 11px;
+  padding: 8px 10px;
   outline: none;
 }
 
@@ -183,14 +183,14 @@ button {
 }
 
 .project-count {
-  margin: 12px 0 14px;
+  margin: 10px 0 12px;
   color: #66716a;
   font-size: 12px;
 }
 
 .project-list {
   display: grid;
-  gap: 8px;
+  gap: 4px;
 }
 
 .project-row {
@@ -207,7 +207,7 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 11px;
+  padding: 8px 9px;
 }
 
 .project-row:hover,
@@ -219,7 +219,12 @@ button {
 .project-row span:first-child {
   min-width: 0;
   display: grid;
-  gap: 3px;
+  gap: 1px;
+}
+
+.project-row strong {
+  font-size: 14px;
+  line-height: 1.25;
 }
 
 .project-row strong,
@@ -247,20 +252,20 @@ button {
 
 .session-stack {
   display: grid;
-  gap: 6px;
-  padding: 5px 0 8px 10px;
+  gap: 4px;
+  padding: 4px 0 7px 8px;
 }
 
 .session-row {
   width: 100%;
   display: grid;
-  gap: 7px;
+  gap: 4px;
   text-align: left;
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
   color: #17201b;
-  padding: 10px 10px 10px 12px;
+  padding: 7px 8px;
 }
 
 .session-row:hover,
@@ -273,42 +278,32 @@ button {
   border-color: #2b6e59;
 }
 
-.session-row strong {
-  font-size: 13px;
-  line-height: 1.25;
-}
-
-.session-row-main {
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 10px;
-}
-
-.session-row-main > span,
-.session-row-meta,
-.session-row-totals {
+.session-row-identity,
+.session-row-meta {
   color: #66716a;
   font-size: 12px;
 }
 
+.session-row-identity {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 7px;
+  color: #17201b;
+  font-weight: 720;
+}
+
 .session-row-meta,
-.session-row-totals {
+.session-row-identity {
   display: flex;
   flex-wrap: wrap;
   gap: 5px 8px;
 }
 
 .session-row-meta span:not(:last-child)::after,
-.session-row-totals span:not(:last-child)::after {
+.session-row-identity span:not(:last-child)::after {
   content: "·";
   margin-left: 8px;
   color: #9aa59c;
-}
-
-.session-row-totals {
-  color: #3f4c44;
 }
 
 .pane-conversation {
@@ -430,7 +425,7 @@ button {
 
 .tool-event {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-columns: 96px minmax(0, 1fr) auto;
   align-items: start;
   gap: 8px 10px;
   border: 1px solid #d7e0df;
@@ -442,13 +437,22 @@ button {
 }
 
 .tool-event-kind {
-  min-width: 48px;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
   color: #66756e;
   font-size: 11px;
   font-weight: 750;
-  line-height: 1.5;
+  line-height: 1.2;
   text-transform: uppercase;
   letter-spacing: 0;
+}
+
+.tool-event-duration {
+  color: #1d2a23;
+  font-size: 13px;
+  font-weight: 800;
+  text-transform: none;
 }
 
 .tool-event-command {
@@ -468,16 +472,6 @@ button {
 
 .tool-event.expanded .tool-event-command {
   display: block;
-}
-
-.tool-event-meta {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  line-height: 1.6;
-  color: #66756e;
 }
 
 .tool-event-toggle {
@@ -699,7 +693,7 @@ button {
 
 @media (max-width: 820px) {
   .usage-shell {
-    --finder-width: 300px;
+    --finder-width: 240px;
     --conversation-min-width: 480px;
     --chart-width: 420px;
   }

@@ -69,7 +69,9 @@ describe("usage svelte app", () => {
     await fireEvent.click(await screen.findByRole("button", { name: "repo 2 sessions" }));
     expect(await screen.findByText("Last Jan 2, 9:00 AM")).toBeInTheDocument();
     expect(screen.getByText("6 messages")).toBeInTheDocument();
-    expect(screen.getByText("2 tool calls")).toBeInTheDocument();
+    expect(screen.getByText("1.2K tokens")).toBeInTheDocument();
+    expect(screen.queryByText("2 tool calls")).not.toBeInTheDocument();
+    expect(screen.queryByText("completed")).not.toBeInTheDocument();
   });
 
   it("keeps active message and chart row activation wired", async () => {
@@ -324,14 +326,14 @@ function fakeConversationView(id = "s1"): UsageConversationView {
       id: "repo",
       label: "repo",
       sessions: [
-        { id: "s1", title: "Implement UI", provider: "codex", status: "completed", lastActivityLabel: "Jan 2, 9:00 AM", durationLabel: "1m", tokenLabel: "1.2K", messageCountLabel: "6 messages", toolCallLabel: "2 tool calls" },
-        { id: "s2", title: "Review telemetry", provider: "codex", status: "completed", lastActivityLabel: "Jan 2, 10:00 AM", durationLabel: "42s", tokenLabel: "840", messageCountLabel: "4 messages", toolCallLabel: "1 tool call" }
+        { id: "s1", title: "Implement UI", provider: "codex", model: "gpt", status: "completed", lastActivityLabel: "Jan 2, 9:00 AM", durationLabel: "1m", tokenLabel: "1.2K", messageCountLabel: "6 messages", toolCallLabel: "2 tool calls" },
+        { id: "s2", title: "Review telemetry", provider: "codex", model: "gpt", status: "completed", lastActivityLabel: "Jan 2, 10:00 AM", durationLabel: "42s", tokenLabel: "840", messageCountLabel: "4 messages", toolCallLabel: "1 tool call" }
       ]
     }, {
       id: "other",
       label: "other",
       sessions: [
-        { id: "s3", title: "Other work", provider: "codex", status: "completed", lastActivityLabel: "Jan 1, 4:00 PM", durationLabel: "2m", tokenLabel: "2K", messageCountLabel: "8 messages", toolCallLabel: "3 tool calls" }
+        { id: "s3", title: "Other work", provider: "codex", model: "gpt", status: "completed", lastActivityLabel: "Jan 1, 4:00 PM", durationLabel: "2m", tokenLabel: "2K", messageCountLabel: "8 messages", toolCallLabel: "3 tool calls" }
       ]
     }],
     messages: [{

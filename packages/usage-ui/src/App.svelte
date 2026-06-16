@@ -170,13 +170,17 @@
   function sessionMeta(session: UsageConversationSessionItem): string[] {
     return [
       session.lastActivityLabel ? `Last ${session.lastActivityLabel}` : undefined,
-      session.durationLabel,
+      session.messageCountLabel,
       session.tokenLabel ? `${session.tokenLabel} tokens` : undefined
     ].filter((value): value is string => Boolean(value));
   }
 
-  function sessionTotals(session: UsageConversationSessionItem): string[] {
-    return [session.messageCountLabel, session.toolCallLabel, session.status].filter((value): value is string => Boolean(value));
+  function sessionIdentity(session: UsageConversationSessionItem): string[] {
+    return [session.provider, session.model].filter((value): value is string => Boolean(value));
+  }
+
+  function sessionLabel(session: UsageConversationSessionItem): string {
+    return [session.title, ...sessionIdentity(session), ...sessionMeta(session)].join(" · ");
   }
 
   function chartMode(row: UsageConversationChartRow, modeName: "cumulative" | "added"): UsageConversationTokenMode {
@@ -272,9 +276,9 @@
     return value.toFixed(digits).replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1");
   }
 
-  /** Builds compact metadata for a tool event row. */
-  function toolMeta(tool: UsageConversationMessage["toolCalls"][number]): string[] {
-    return [tool.status, tool.durationLabel].filter((value): value is string => Boolean(value));
+  /** Returns the duration visible with the tool kind. */
+  function toolDuration(tool: UsageConversationMessage["toolCalls"][number]): string | undefined {
+    return tool.durationLabel;
   }
 
   /** Returns the primary visible text for a tool event. */
@@ -378,19 +382,16 @@
                         type="button"
                         class:active={session.id === selectedId}
                         class="session-row"
+                        aria-label={sessionLabel(session)}
                         onclick={() => selectSession(session.id)}
                       >
-                        <span class="session-row-main">
-                          <strong>{session.title}</strong>
-                          <span>{session.provider}</span>
-                        </span>
-                        <span class="session-row-meta">
-                          {#each sessionMeta(session) as item}
+                        <span class="session-row-identity">
+                          {#each sessionIdentity(session) as item}
                             <span>{item}</span>
                           {/each}
                         </span>
-                        <span class="session-row-totals">
-                          {#each sessionTotals(session) as item}
+                        <span class="session-row-meta">
+                          {#each sessionMeta(session) as item}
                             <span>{item}</span>
                           {/each}
                         </span>
@@ -430,11 +431,13 @@
               <div class="tool-events" aria-label="Tool calls">
                 {#each message.toolCalls as tool}
                   <div class:expanded={expandedToolIds.includes(tool.id)} class="tool-event">
-                    <span class="tool-event-kind">{toolKind(tool)}</span>
+                    <span class="tool-event-kind">
+                      <span class="tool-event-kind-label">{toolKind(tool)}</span>
+                      {#if toolDuration(tool)}
+                        <span class="tool-event-duration">{toolDuration(tool)}</span>
+                      {/if}
+                    </span>
                     <code class="tool-event-command">{toolPreview(tool)}</code>
-                    {#if toolMeta(tool).length}
-                      <span class="tool-event-meta">{toolMeta(tool).join(" · ")}</span>
-                    {/if}
                     {#if hasToolDetails(tool)}
                       <button
                         class="tool-event-toggle"

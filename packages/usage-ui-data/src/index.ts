@@ -1,3 +1,46 @@
+export type {
+  DiagnosticMetricCard,
+  SessionFinderBadge,
+  SessionFinderItem,
+  TraceGrouping,
+  TraceMetric,
+  TraceWaterfallOptions,
+  UsageActionModel,
+  UsageBreakdownItem,
+  UsageBreakdownView,
+  UsageCockpitOptions,
+  UsageCockpitView,
+  UsageInspectorDefaultView,
+  UsageInspectorTarget,
+  UsageMessage,
+  UsageSession,
+  UsageSessionFinderTabId,
+  UsageSessionFinderView,
+  UsageSessionHeroView,
+  UsageSessionStatus,
+  UsageStep,
+  UsageStoryChapter,
+  UsageStorylineView,
+  UsageTimeline,
+  UsageTone,
+  UsageTraceItem,
+  UsageTraceLane,
+  UsageTraceWaterfallView,
+  UsageTranscriptHighlight,
+  UsageTranscriptHighlightsView,
+  UsageUiConfidence
+} from "./types.js";
+export { buildUsageBreakdowns } from "./breakdown.js";
+export { buildUsageCockpitView, buildInspectorDefaultView, buildSessionHeroView, sessionTotalTokens, timelineSteps, transcriptMessages } from "./cockpit.js";
+export { buildDiagnosticCards, primaryFinding } from "./diagnostics.js";
+export { buildSessionFinderView, sessionFinderItem } from "./sessionFinder.js";
+export { buildSessionStoryline } from "./storyline.js";
+export { buildTraceWaterfall } from "./trace.js";
+export { buildTranscriptHighlights } from "./transcriptHighlights.js";
+
+import { buildUsageCockpitView, timelineSteps, transcriptMessages } from "./cockpit.js";
+import type { UsageCockpitView, UsageMessage, UsageSession, UsageStep, UsageTimeline } from "./types.js";
+
 export type UsageSessionListQuery = {
   provider?: string;
   limit?: number;
@@ -27,8 +70,12 @@ export type UsageSessionListItem = {
   model?: string;
   startedAt?: string;
   endedAt?: string;
+  lastActivityAt?: string;
+  status?: string;
+  durationMs?: number;
   tokensTotal?: number;
   toolCalls?: number;
+  filesTouched?: number;
   caveatCount?: number;
 };
 
@@ -84,23 +131,40 @@ type UsageDomainSession = {
   providerSessionId?: string;
   title?: string;
   firstPrompt?: string;
+  summary?: string;
+  project?: string;
+  repo?: { id?: string; root?: string; cwd?: string; branch?: string };
+  cwd?: string;
+  gitBranch?: string;
   startedAt?: string;
   endedAt?: string;
+  lastActivityAt?: string;
+  status?: string;
   models?: string[];
   metrics: {
     durationMs?: number;
     durationConfidence?: string;
+    selfDurationMs?: number;
     tokens?: { total?: number; confidence?: string };
+    cost?: { amount?: number; currency?: string; source?: string; priced?: boolean };
   };
   counts: {
+    turns?: number;
+    messages?: number;
     userMessages?: number;
     assistantMessages?: number;
     toolCalls?: number;
+    subagents?: number;
+    compactions?: number;
     filesTouched?: number;
   };
   availability: {
+    confidence?: string;
+    missing?: string[];
     notes: string[];
   };
+  evidence?: Array<{ eventId?: string; sourceId?: string; confidence?: string }>;
+  providerFields?: Record<string, unknown>;
 };
 
 type UsageDomainMessage = {
@@ -178,6 +242,7 @@ export type MessageSelectionView = {
 export interface UsageUiClient {
   listSessions(query?: UsageSessionListQuery): Promise<UsageSessionListView>;
   getSession(id: string): Promise<UsageSessionDetailView>;
+  getCockpit(id: string): Promise<UsageCockpitView>;
   getSessionTimeline(id: string, query?: TimelineQuery): Promise<UsageTimelineView>;
   getTranscript(id: string, query?: TranscriptQuery): Promise<UsageTranscriptView>;
   getMessageSelection(query: MessageSelectionQuery): Promise<MessageSelectionView>;
@@ -204,6 +269,8 @@ export function createUsageApiClient(baseUrl = ""): UsageUiClient {
     listSessions: (query = {}) => api(`/api/usage/sessions${queryString(query)}`),
     /** Gets a session detail view through the local API. */
     getSession: (id) => api(`/api/usage/sessions/${encodeURIComponent(id)}`),
+    /** Gets a conversation-first cockpit view through the local API. */
+    getCockpit: (id) => api(`/api/usage/sessions/${encodeURIComponent(id)}/cockpit`),
     /** Gets a session timeline through the local API. */
     getSessionTimeline: (id, query = {}) => api(`/api/usage/sessions/${encodeURIComponent(id)}/timeline${queryString(query)}`),
     /** Gets a transcript through the local API. */
@@ -228,8 +295,12 @@ export function createUsageUiClient(usage: UsageDomainClient): UsageUiClient {
           model: session.models?.[0],
           startedAt: session.startedAt,
           endedAt: session.endedAt,
+          lastActivityAt: session.lastActivityAt,
+          status: session.status,
+          durationMs: session.metrics.durationMs,
           tokensTotal: session.metrics.tokens?.total,
           toolCalls: session.counts.toolCalls,
+          filesTouched: session.counts.filesTouched,
           caveatCount: session.availability.notes.length
         })),
         caveats: result.meta.warnings.map((warning) => warning.message)
@@ -247,6 +318,8 @@ export function createUsageUiClient(usage: UsageDomainClient): UsageUiClient {
           model: session.models?.[0],
           startedAt: session.startedAt,
           endedAt: session.endedAt,
+          lastActivityAt: session.lastActivityAt,
+          status: session.status,
           durationMs: session.metrics.durationMs,
           tokensTotal: session.metrics.tokens?.total,
           toolCalls: session.counts.toolCalls,
@@ -261,14 +334,41 @@ export function createUsageUiClient(usage: UsageDomainClient): UsageUiClient {
           { label: "Caveats", value: session.availability.notes.length, unit: "count" }
         ],
         nextActions: [
-          { id: "transcript", label: "Open transcript", href: `/usage/sessions/${encodeURIComponent(session.id)}/messages` },
-          { id: "timeline", label: "Open timeline", href: `/usage/sessions/${encodeURIComponent(session.id)}/timeline` },
-          { id: "compare", label: "Compare session", href: `/usage/sessions/${encodeURIComponent(session.id)}/compare` },
-          { id: "rollup", label: "Create rollup from this session", href: `/rollup/new?session=${encodeURIComponent(session.id)}` },
-          { id: "export", label: "Export JSON/CSV", href: `/api/usage/sessions/${encodeURIComponent(session.id)}/export` }
+          { id: "transcript", label: "Read transcript", href: `/usage/sessions/${encodeURIComponent(session.id)}/messages` },
+          { id: "timeline", label: "Inspect trace", href: `/usage/sessions/${encodeURIComponent(session.id)}/timeline` },
+          { id: "compare", label: "Compare with another session", href: `/usage/sessions/${encodeURIComponent(session.id)}/compare` },
+          { id: "rollup", label: "Create rollup", href: `/rollup/new?session=${encodeURIComponent(session.id)}` },
+          { id: "export", label: "Export session data", href: `/api/usage/sessions/${encodeURIComponent(session.id)}/export` },
+          { id: "evidence", label: "Inspect evidence", href: `/usage/sessions/${encodeURIComponent(session.id)}/evidence` }
         ],
         caveats: [...session.availability.notes, ...result.meta.warnings.map((warning) => warning.message)]
       };
+    },
+    /** Gets cockpit. */
+    async getCockpit(id) {
+      const [sessionResult, timelineResult, reportResult, listResult] = await Promise.all([
+        usage.sessions.get(id),
+        usage.sessions.timeline(id, { metric: "selfDurationMs" }),
+        usage.sessions.report(id, { includeTools: true }),
+        usage.sessions.list({ limit: 50, orderBy: [{ field: "lastActivityAt", direction: "desc" }] })
+      ]);
+      const session = domainSession(sessionResult.data);
+      const timeline = timelineResult.data as UsageTimeline;
+      const report = reportResult.data as { messages?: UsageMessage[]; caveats?: string[] };
+      return buildUsageCockpitView(
+        session,
+        timelineSteps(timeline),
+        transcriptMessages(report.messages || []),
+        timeline,
+        {
+          sessions: listResult.data.map(domainSession),
+          selectedSessionId: session.id,
+          listCaveats: listResult.meta.warnings.map((warning) => warning.message),
+          detailCaveats: sessionResult.meta.warnings.map((warning) => warning.message),
+          timelineCaveats: [...(timeline.caveats || []), ...timelineResult.meta.warnings.map((warning) => warning.message)],
+          transcriptCaveats: [...(report.caveats || []), ...reportResult.meta.warnings.map((warning) => warning.message)]
+        }
+      );
     },
     /** Gets session timeline. */
     async getSessionTimeline(id, query = {}) {
@@ -364,6 +464,32 @@ function toolCall(call: NonNullable<UsageDomainMessage["toolCalls"]>[number]): U
     status: call.status,
     durationMs: call.result?.durationMs,
     target: call.targetPaths?.[0]
+  };
+}
+
+/** Normalizes a domain session into the cockpit DTO input shape. */
+function domainSession(session: UsageDomainSession): UsageSession {
+  return {
+    id: session.id,
+    provider: session.provider,
+    providerSessionId: session.providerSessionId,
+    title: session.title,
+    firstPrompt: session.firstPrompt,
+    summary: session.summary,
+    project: session.project,
+    repo: session.repo,
+    cwd: session.cwd,
+    gitBranch: session.gitBranch,
+    startedAt: session.startedAt,
+    endedAt: session.endedAt,
+    lastActivityAt: session.lastActivityAt || session.endedAt || session.startedAt,
+    status: session.status,
+    models: session.models,
+    metrics: session.metrics,
+    counts: session.counts,
+    availability: session.availability,
+    evidence: session.evidence,
+    providerFields: session.providerFields
   };
 }
 

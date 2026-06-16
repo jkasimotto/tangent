@@ -83,6 +83,9 @@ async function handleApiRequest(request: http.IncomingMessage, url: URL, context
       if (!parts[3]) return json(404, { error: "Missing session id." });
       const id = sessionRef(parts[3], context);
       if (parts.length === 4) return json(200, await context.client.getSession(id));
+      if (parts.length === 5 && parts[4] === "cockpit") {
+        return json(200, await context.client.getCockpit(id));
+      }
       if (parts.length === 5 && parts[4] === "timeline") {
         return json(200, await context.client.getSessionTimeline(id, { metric: timelineMetric(url.searchParams.get("metric")) }));
       }

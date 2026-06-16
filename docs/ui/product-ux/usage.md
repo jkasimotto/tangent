@@ -1,3 +1,5 @@
 # Usage UX
 
-The default session screen answers what happened, how long it took, token/tool cost, caveats, and next actions. Raw metadata is hidden behind inspector/disclosure surfaces.
+The default Usage screen is a conversation cockpit. It selects one session and answers what happened, how long it took, where token/tool cost went, which caveats matter, and what action is next.
+
+Usage is not primarily an aggregate dashboard. The central flow is session hero, diagnostic cards, storyline, trace waterfall, cost breakdown, and transcript highlights. Raw metadata and provider evidence are hidden behind inspector/disclosure surfaces.

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createUsageApiClient, createUsageUiClient } from "../dist/index.js";
+import { buildUsageCockpitView, createUsageApiClient, createUsageUiClient } from "../dist/index.js";
 
 test("maps usage sessions into list view models", async () => {
   const client = createUsageUiClient({
@@ -44,6 +44,38 @@ test("browser API client fetches usage session views", async () => {
   } finally {
     globalThis.fetch = previousFetch;
   }
+});
+
+test("builds cockpit view without mixing session envelope into trace lanes", () => {
+  const view = buildUsageCockpitView(
+    {
+      id: "s1",
+      provider: "codex",
+      title: "Implement UI",
+      status: "active",
+      startedAt: "2026-06-15T10:00:00.000Z",
+      endedAt: "2026-06-15T11:00:00.000Z",
+      metrics: { durationMs: 3_600_000, durationConfidence: "derived", tokens: { total: 12_000_000, confidence: "exact" } },
+      counts: { toolCalls: 2, filesTouched: 1 },
+      availability: { notes: ["partial timing"] }
+    },
+    [
+      { id: "session", kind: "session", label: "codex session", durationMs: 3_600_000, selfDurationMs: 1_800_000, status: "success", metrics: {} },
+      { id: "read", kind: "file_read", label: "Read app", durationMs: 10_000, selfDurationMs: 10_000, status: "success", targetPaths: ["src/app.ts"], metrics: {} },
+      { id: "model", kind: "assistant_response", label: "Implementation plan", durationMs: 20_000, selfDurationMs: 20_000, status: "success", metrics: { tokens: { total: 12_000_000 } } }
+    ],
+    [
+      { id: "m1", role: "user", textPreview: "Please redesign the usage UI." },
+      { id: "m2", role: "assistant", textPreview: "I will inspect the current UI first.", tokenUsage: { total: 12_000_000 } }
+    ],
+    { range: { startedAt: "2026-06-15T10:00:00.000Z", endedAt: "2026-06-15T11:00:00.000Z", durationMs: 3_600_000 }, items: [] }
+  );
+
+  assert.equal(view.session.title, "Implement UI");
+  assert.equal(view.storyline.chapters.some((chapter) => chapter.title === "Prompt & setup"), true);
+  assert.equal(view.trace.lanes.flatMap((lane) => lane.items).some((item) => item.kind === "session"), false);
+  assert.equal(view.trace.totals.sessionDurationMs, 3_600_000);
+  assert.equal(view.diagnostics.some((card) => card.label === "Tokens" && card.tone === "warning"), true);
 });
 
 test("browser API client explains missing local Usage API", async () => {

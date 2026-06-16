@@ -31,14 +31,15 @@ describe("usage svelte app", () => {
     expect(screen.getByText("exec")).toBeInTheDocument();
   });
 
-  it("drills into project sessions without replacing the shell during session changes", async () => {
+  it("expands project sessions without replacing the project list during session changes", async () => {
     const pending = deferred<UsageConversationView>();
     const getConversationView = vi.fn(async (id: string) => id === "s2" ? pending.promise : fakeConversationView(id));
     const { container } = render(App, { props: { client: fakeUsageClient({ getConversationView }) } });
 
     expect(await screen.findByRole("button", { name: "repo 2 sessions" })).toBeInTheDocument();
-    await fireEvent.click(screen.getByRole("button", { name: "repo 2 sessions" }));
-    expect(screen.getByRole("button", { name: "← Projects" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "repo 2 sessions" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.queryByRole("button", { name: "← Projects" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "other 1 sessions" })).toBeInTheDocument();
 
     await fireEvent.click(container.querySelectorAll<HTMLButtonElement>(".session-row")[1]);
 
@@ -51,6 +52,14 @@ describe("usage svelte app", () => {
     pending.resolve(fakeConversationView("s2"));
     expect(await screen.findByText("Checked the trace")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Review telemetry" })).not.toBeInTheDocument();
+  });
+
+  it("shows conversation telemetry in project session rows", async () => {
+    render(App, { props: { client: fakeUsageClient() } });
+
+    expect(await screen.findByText("Last Jan 2, 9:00 AM")).toBeInTheDocument();
+    expect(screen.getByText("6 messages")).toBeInTheDocument();
+    expect(screen.getByText("2 tool calls")).toBeInTheDocument();
   });
 
   it("keeps active message and chart row activation wired", async () => {
@@ -139,8 +148,14 @@ function fakeConversationView(id = "s1"): UsageConversationView {
       id: "repo",
       label: "repo",
       sessions: [
-        { id: "s1", title: "Implement UI", provider: "codex", status: "completed", durationLabel: "1m", tokenLabel: "1.2K" },
-        { id: "s2", title: "Review telemetry", provider: "codex", status: "completed", durationLabel: "42s", tokenLabel: "840" }
+        { id: "s1", title: "Implement UI", provider: "codex", status: "completed", lastActivityLabel: "Jan 2, 9:00 AM", durationLabel: "1m", tokenLabel: "1.2K", messageCountLabel: "6 messages", toolCallLabel: "2 tool calls" },
+        { id: "s2", title: "Review telemetry", provider: "codex", status: "completed", lastActivityLabel: "Jan 2, 10:00 AM", durationLabel: "42s", tokenLabel: "840", messageCountLabel: "4 messages", toolCallLabel: "1 tool call" }
+      ]
+    }, {
+      id: "other",
+      label: "other",
+      sessions: [
+        { id: "s3", title: "Other work", provider: "codex", status: "completed", lastActivityLabel: "Jan 1, 4:00 PM", durationLabel: "2m", tokenLabel: "2K", messageCountLabel: "8 messages", toolCallLabel: "3 tool calls" }
       ]
     }],
     messages: [{

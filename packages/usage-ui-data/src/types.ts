@@ -427,8 +427,11 @@ export type UsageConversationSessionItem = {
   status?: string;
   startedAt?: string;
   lastActivityAt?: string;
+  lastActivityLabel?: string;
   durationLabel?: string;
   tokenLabel?: string;
+  messageCountLabel?: string;
+  toolCallLabel?: string;
   summary?: string;
 };
 

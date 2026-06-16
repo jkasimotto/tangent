@@ -21,8 +21,7 @@
   let conversationLoading = false;
   let error = "";
   let activeMessageId = "";
-  let selectedProjectId = "";
-  let drilldownProject: UsageConversationProjectGroup | undefined;
+  let expandedProjectIds: string[] = [];
   const messageElements = new Map<string, HTMLElement>();
   const rowElements = new Map<string, HTMLElement>();
 
@@ -31,7 +30,10 @@
   });
 
   $: selectedId && void loadConversation(selectedId, query);
-  $: drilldownProject = view && selectedProjectId ? selectedProject(view.projects) : undefined;
+  $: if (view) {
+    const nextExpandedProjectIds = expandedIdsWithSelected(view.projects, selectedId, expandedProjectIds);
+    if (nextExpandedProjectIds !== expandedProjectIds) expandedProjectIds = nextExpandedProjectIds;
+  }
 
   async function loadSessions(): Promise<void> {
     loading = true;
@@ -107,16 +109,32 @@
     return projects?.reduce((sum, project) => sum + project.sessions.length, 0) || 0;
   }
 
-  function selectedProject(projects: UsageConversationProjectGroup[]): UsageConversationProjectGroup | undefined {
-    return projects.find((project) => project.id === selectedProjectId);
+  function toggleProject(project: UsageConversationProjectGroup): void {
+    expandedProjectIds = expandedProjectIds.includes(project.id)
+      ? expandedProjectIds.filter((id) => id !== project.id)
+      : [...expandedProjectIds, project.id];
   }
 
-  function selectProject(project: UsageConversationProjectGroup): void {
-    selectedProjectId = project.id;
+  function isProjectExpanded(project: UsageConversationProjectGroup): boolean {
+    return expandedProjectIds.includes(project.id);
   }
 
-  function backToProjects(): void {
-    selectedProjectId = "";
+  function expandedIdsWithSelected(projects: UsageConversationProjectGroup[], id: string | undefined, expanded: string[]): string[] {
+    const selectedProject = projects.find((project) => project.sessions.some((session) => session.id === id));
+    if (!selectedProject || expanded.includes(selectedProject.id)) return expanded;
+    return [...expanded, selectedProject.id];
+  }
+
+  function sessionMeta(session: UsageConversationSessionItem): string[] {
+    return [
+      session.lastActivityLabel ? `Last ${session.lastActivityLabel}` : undefined,
+      session.durationLabel,
+      session.tokenLabel ? `${session.tokenLabel} tokens` : undefined
+    ].filter((value): value is string => Boolean(value));
+  }
+
+  function sessionTotals(session: UsageConversationSessionItem): string[] {
+    return [session.messageCountLabel, session.toolCallLabel, session.status].filter((value): value is string => Boolean(value));
   }
 
   function chartLabel(row: UsageConversationChartRow): string {
@@ -145,42 +163,52 @@
             <input bind:value={query} placeholder="Project or session" />
           </label>
           <div class="project-count">{projectCount(view.projects)} sessions</div>
-          {#if drilldownProject}
-            <section class="project-drilldown">
-              <button class="back-row" type="button" on:click={backToProjects}>← Projects</button>
-              <h2>{drilldownProject.label}</h2>
-              <div class="session-stack">
-                {#each drilldownProject.sessions as session}
-                  <button
-                    type="button"
-                    class:active={session.id === selectedId}
-                    class="session-row"
-                    on:click={() => selectSession(session.id)}
-                  >
-                    <strong>{session.title}</strong>
-                    <span>{session.provider}{session.durationLabel ? ` · ${session.durationLabel}` : ""}{session.tokenLabel ? ` · ${session.tokenLabel}` : ""}</span>
-                  </button>
-                {/each}
-              </div>
-            </section>
-          {:else}
-            <div class="project-list">
-              {#each view.projects as project}
+          <div class="project-list">
+            {#each view.projects as project}
+              <section class="project-group">
                 <button
                   type="button"
                   class:active={project.sessions.some((session) => session.id === selectedId)}
                   class="project-row"
-                  on:click={() => selectProject(project)}
+                  aria-expanded={isProjectExpanded(project)}
+                  on:click={() => toggleProject(project)}
                 >
                   <span>
                     <strong>{project.label}</strong>
                     <small>{project.sessions.length} sessions</small>
                   </span>
-                  <span aria-hidden="true">→</span>
+                  <span class="project-chevron" aria-hidden="true">v</span>
                 </button>
-              {/each}
-            </div>
-          {/if}
+                {#if isProjectExpanded(project)}
+                  <div class="session-stack">
+                    {#each project.sessions as session}
+                      <button
+                        type="button"
+                        class:active={session.id === selectedId}
+                        class="session-row"
+                        on:click={() => selectSession(session.id)}
+                      >
+                        <span class="session-row-main">
+                          <strong>{session.title}</strong>
+                          <span>{session.provider}</span>
+                        </span>
+                        <span class="session-row-meta">
+                          {#each sessionMeta(session) as item}
+                            <span>{item}</span>
+                          {/each}
+                        </span>
+                        <span class="session-row-totals">
+                          {#each sessionTotals(session) as item}
+                            <span>{item}</span>
+                          {/each}
+                        </span>
+                      </button>
+                    {/each}
+                  </div>
+                {/if}
+              </section>
+            {/each}
+          </div>
         </div>
       </div>
     </aside>

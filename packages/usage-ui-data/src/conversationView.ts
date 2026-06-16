@@ -1,4 +1,4 @@
-import { cleanTitle, confidenceOrUnknown, formatDuration, formatMessageTokenUsage, formatTokens, messageTokens, stepDuration, stepKindLabel, truncateText } from "./format.js";
+import { cleanTitle, confidenceOrUnknown, formatDateTime, formatDuration, formatMessageTokenUsage, formatTokens, messageTokens, stepDuration, stepKindLabel, truncateText } from "./format.js";
 import type {
   UsageConversationChartRow,
   UsageConversationChartSegment,
@@ -55,17 +55,28 @@ export function buildUsageConversationView(
 
 /** Converts a session to a conversation picker row. */
 function sessionItem(session: UsageSession): UsageConversationSessionItem {
+  const lastActivityAt = session.lastActivityAt || session.endedAt || session.startedAt;
   return {
     id: session.id,
     title: cleanTitle(session.title || session.firstPrompt || session.id),
     provider: session.provider || "unknown",
     status: session.status,
     startedAt: session.startedAt,
-    lastActivityAt: session.lastActivityAt || session.endedAt || session.startedAt,
+    lastActivityAt,
+    lastActivityLabel: formatDateTime(lastActivityAt),
     durationLabel: formatDuration(session.metrics?.durationMs),
     tokenLabel: formatTokens(session.metrics?.tokens?.total),
+    messageCountLabel: countLabel(session.counts?.messages, "message"),
+    toolCallLabel: countLabel(session.counts?.toolCalls, "tool call"),
     summary: truncateText(session.summary || session.firstPrompt, 140) || undefined
   };
+}
+
+/** Formats a compact singular/plural count label when the value is known. */
+function countLabel(value: number | undefined, unit: string): string | undefined {
+  if (value === undefined || !Number.isFinite(value)) return undefined;
+  const rounded = Math.max(0, Math.round(value));
+  return `${Intl.NumberFormat("en").format(rounded)} ${unit}${rounded === 1 ? "" : "s"}`;
 }
 
 /** Groups sessions by project/repo for the left pane. */

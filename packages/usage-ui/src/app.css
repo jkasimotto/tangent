@@ -156,8 +156,7 @@ button {
   gap: 8px;
 }
 
-.project-row,
-.back-row {
+.project-row {
   width: 100%;
   border: 1px solid transparent;
   background: transparent;
@@ -178,7 +177,6 @@ button {
 .project-row.active {
   background: #ffffff;
   border-color: #d7dfd8;
-  box-shadow: 0 8px 20px rgb(35 50 41 / 6%);
 }
 
 .project-row span:first-child {
@@ -199,48 +197,39 @@ button {
   font-size: 12px;
 }
 
-.project-drilldown h2 {
-  margin: 8px 0 10px;
-  color: #4e5b53;
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0;
+.project-chevron {
+  color: #66716a;
+  font-size: 16px;
+  line-height: 1;
+  transition: transform 140ms ease;
 }
 
-.back-row {
-  margin-bottom: 8px;
-  padding: 8px 9px;
-  color: #3a4a40;
-  font-size: 12px;
-}
-
-.back-row:hover {
-  background: #dfe6df;
+.project-row[aria-expanded="true"] .project-chevron {
+  transform: rotate(180deg);
 }
 
 .session-stack {
   display: grid;
-  gap: 7px;
+  gap: 6px;
+  padding: 5px 0 8px 10px;
 }
 
 .session-row {
   width: 100%;
   display: grid;
-  gap: 4px;
+  gap: 7px;
   text-align: left;
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
   color: #17201b;
-  padding: 11px;
+  padding: 10px 10px 10px 12px;
 }
 
 .session-row:hover,
 .session-row.active {
   background: #ffffff;
   border-color: #d7dfd8;
-  box-shadow: 0 8px 20px rgb(35 50 41 / 6%);
 }
 
 .session-row.active {
@@ -252,9 +241,37 @@ button {
   line-height: 1.25;
 }
 
-.session-row span {
+.session-row-main {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+}
+
+.session-row-main > span,
+.session-row-meta,
+.session-row-totals {
   color: #66716a;
   font-size: 12px;
+}
+
+.session-row-meta,
+.session-row-totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+}
+
+.session-row-meta span:not(:last-child)::after,
+.session-row-totals span:not(:last-child)::after {
+  content: "·";
+  margin-left: 8px;
+  color: #9aa59c;
+}
+
+.session-row-totals {
+  color: #3f4c44;
 }
 
 .pane-conversation {

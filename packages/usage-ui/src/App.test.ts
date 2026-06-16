@@ -25,10 +25,11 @@ describe("usage svelte app", () => {
     expect(container.querySelector(".finder-rail")).not.toBeInTheDocument();
     expect(container.querySelector(".chart-rail")).not.toBeInTheDocument();
     expect(container.querySelector(".chart-toggle")).not.toBeInTheDocument();
-    expect(screen.getAllByText("Assistant · gpt")).toHaveLength(1);
+    expect(screen.queryByText("Assistant · gpt")).not.toBeInTheDocument();
     expect(container.querySelector(".row-label")).not.toBeInTheDocument();
     expect(container.querySelector(".caveats")).not.toBeInTheDocument();
-    expect(screen.getByText("exec")).toBeInTheDocument();
+    expect(container.querySelector(".tool-event")).toHaveTextContent("npm test -w @tangent/usage-ui");
+    expect(container.querySelector(".tool-event")).not.toHaveTextContent("Chunk ID");
   });
 
   it("expands project sessions without replacing the project list during session changes", async () => {
@@ -36,8 +37,11 @@ describe("usage svelte app", () => {
     const getConversationView = vi.fn(async (id: string) => id === "s2" ? pending.promise : fakeConversationView(id));
     const { container } = render(App, { props: { client: fakeUsageClient({ getConversationView }) } });
 
-    expect(await screen.findByRole("button", { name: "repo 2 sessions" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "repo 2 sessions" })).toHaveAttribute("aria-expanded", "true");
+    const projectRow = await screen.findByRole("button", { name: "repo 2 sessions" });
+    expect(projectRow).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".session-row")).not.toBeInTheDocument();
+    await fireEvent.click(projectRow);
+    expect(projectRow).toHaveAttribute("aria-expanded", "true");
     expect(screen.queryByRole("button", { name: "← Projects" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "other 1 sessions" })).toBeInTheDocument();
 
@@ -52,11 +56,16 @@ describe("usage svelte app", () => {
     pending.resolve(fakeConversationView("s2"));
     expect(await screen.findByText("Checked the trace")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Review telemetry" })).not.toBeInTheDocument();
+
+    await fireEvent.click(projectRow);
+    expect(projectRow).toHaveAttribute("aria-expanded", "false");
+    expect(container.querySelector(".session-row")).not.toBeInTheDocument();
   });
 
   it("shows conversation telemetry in project session rows", async () => {
     render(App, { props: { client: fakeUsageClient() } });
 
+    await fireEvent.click(await screen.findByRole("button", { name: "repo 2 sessions" }));
     expect(await screen.findByText("Last Jan 2, 9:00 AM")).toBeInTheDocument();
     expect(screen.getByText("6 messages")).toBeInTheDocument();
     expect(screen.getByText("2 tool calls")).toBeInTheDocument();
@@ -99,9 +108,52 @@ describe("usage svelte app", () => {
     });
 
     expect(await screen.findByText("Still working")).toBeInTheDocument();
-    await fireEvent.click(screen.getByText("Still working").closest("button")!);
+    await fireEvent.click(screen.getByText("Still working").closest<HTMLButtonElement>(".message-main")!);
 
     expect(container.querySelector(".chart-row")).toHaveClass("active");
+  });
+
+  it("previews long messages until they are expanded", async () => {
+    const longText = `${"a".repeat(360)} hidden suffix`;
+    const view = fakeConversationView();
+    view.messages[0] = {
+      ...view.messages[0],
+      text: longText,
+      textPreview: "short preview"
+    };
+    const { container } = render(App, {
+      props: {
+        client: fakeUsageClient({
+          /** Returns a fixture view with one long message body. */
+          getConversationView: async () => view
+        })
+      }
+    });
+
+    expect(await screen.findByRole("button", { name: "Show full message (374 chars)" })).toBeInTheDocument();
+    expect(container).not.toHaveTextContent("hidden suffix");
+
+    await fireEvent.click(container.querySelector<HTMLButtonElement>(".message-expand")!);
+
+    expect(await screen.findByRole("button", { name: "Show less" })).toHaveAttribute("aria-expanded", "true");
+    expect(container).toHaveTextContent("hidden suffix");
+  });
+
+  it("keeps tool output hidden until the command row is expanded", async () => {
+    const { container } = render(App, { props: { client: fakeUsageClient() } });
+
+    expect(await screen.findByText("Done")).toBeInTheDocument();
+    expect(container).toHaveTextContent("npm test -w @tangent/usage-ui");
+    expect(container).not.toHaveTextContent("Chunk ID");
+    expect(container).not.toHaveTextContent("All tests passed");
+
+    await fireEvent.click(screen.getByRole("button", { name: /show npm test -w @tangent\/usage-ui details/i }));
+
+    expect(screen.getByRole("button", { name: /hide npm test -w @tangent\/usage-ui details/i })).toHaveAttribute("aria-expanded", "true");
+    expect(container).toHaveTextContent("Directory");
+    expect(container).toHaveTextContent("/repo");
+    expect(container).toHaveTextContent("All tests passed");
+    expect(container).not.toHaveTextContent("Chunk ID");
   });
 });
 
@@ -198,7 +250,18 @@ function fakeConversationView(id = "s1"): UsageConversationView {
       durationLabel: selected.durationLabel,
       durationMs: id === "s2" ? 42000 : 60000,
       confidence: "exact",
-      toolCalls: [{ id: "t1", name: "exec", durationLabel: "20s" }]
+      toolCalls: [{
+        id: "t1",
+        name: "exec_command",
+        status: "success",
+        durationLabel: "20s",
+        target: "/repo",
+        commandPreview: "npm test -w @tangent/usage-ui",
+        workdir: "/repo",
+        preview: "npm test -w @tangent/usage-ui",
+        resultDisplayPreview: "All tests passed",
+        resultPreview: "Chunk ID: abc\nWall time: 0.0000 seconds\nOutput:\nAll tests passed"
+      }]
     }],
     chart: {
       maxTokens: 1200,

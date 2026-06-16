@@ -151,8 +151,9 @@ export type UsageMessage = {
     toolName?: string;
     name?: string;
     status?: string;
-    result?: { durationMs?: number };
+    result?: { durationMs?: number; outputPreview?: string };
     targetPaths?: string[];
+    input?: unknown;
   }>;
   evidence?: UsageEvidenceRef[];
   providerFields?: Record<string, unknown>;
@@ -453,6 +454,11 @@ export type UsageConversationMessage = {
     status?: string;
     durationLabel?: string;
     target?: string;
+    commandPreview?: string;
+    workdir?: string;
+    preview?: string;
+    resultDisplayPreview?: string;
+    resultPreview?: string;
   }>;
 };
 

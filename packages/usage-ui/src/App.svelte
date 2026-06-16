@@ -22,6 +22,9 @@
   let error = "";
   let activeMessageId = "";
   let expandedProjectIds: string[] = [];
+  let expandedMessageIds: string[] = [];
+  let expandedToolIds: string[] = [];
+  const messagePreviewLimit = 360;
   const messageElements = new Map<string, HTMLElement>();
   const rowElements = new Map<string, HTMLElement>();
 
@@ -30,10 +33,6 @@
   });
 
   $: selectedId && void loadConversation(selectedId, query);
-  $: if (view) {
-    const nextExpandedProjectIds = expandedIdsWithSelected(view.projects, selectedId, expandedProjectIds);
-    if (nextExpandedProjectIds !== expandedProjectIds) expandedProjectIds = nextExpandedProjectIds;
-  }
 
   async function loadSessions(): Promise<void> {
     loading = true;
@@ -61,6 +60,8 @@
       if (loadKey !== key) return;
       view = nextView;
       activeMessageId = view.messages[0]?.id || "";
+      expandedMessageIds = [];
+      expandedToolIds = [];
       error = "";
       await tick();
       if (activeMessageId) scrollToPair(activeMessageId, "message");
@@ -138,16 +139,6 @@
       : [...expandedProjectIds, project.id];
   }
 
-  function isProjectExpanded(project: UsageConversationProjectGroup): boolean {
-    return expandedProjectIds.includes(project.id);
-  }
-
-  function expandedIdsWithSelected(projects: UsageConversationProjectGroup[], id: string | undefined, expanded: string[]): string[] {
-    const selectedProject = projects.find((project) => project.sessions.some((session) => session.id === id));
-    if (!selectedProject || expanded.includes(selectedProject.id)) return expanded;
-    return [...expanded, selectedProject.id];
-  }
-
   function sessionMeta(session: UsageConversationSessionItem): string[] {
     return [
       session.lastActivityLabel ? `Last ${session.lastActivityLabel}` : undefined,
@@ -162,6 +153,67 @@
 
   function chartLabel(row: UsageConversationChartRow): string {
     return `${row.label}: ${row.tokenLabel || "tokens unknown"}${row.durationLabel ? `, ${row.durationLabel}` : ""}`;
+  }
+
+  /** Builds compact metadata for a tool event row. */
+  function toolMeta(tool: UsageConversationMessage["toolCalls"][number]): string[] {
+    return [tool.status, tool.durationLabel].filter((value): value is string => Boolean(value));
+  }
+
+  /** Returns the primary visible text for a tool event. */
+  function toolPreview(tool: UsageConversationMessage["toolCalls"][number]): string {
+    return tool.commandPreview || tool.preview || tool.name;
+  }
+
+  /** Returns a quieter tool label for the event row. */
+  function toolKind(tool: UsageConversationMessage["toolCalls"][number]): string {
+    return tool.name.replace(/_command(?:_result)?$/i, "").replace(/_/g, " ") || "tool";
+  }
+
+  /** Returns whether a tool row has details worth expanding. */
+  function hasToolDetails(tool: UsageConversationMessage["toolCalls"][number]): boolean {
+    return Boolean(tool.resultDisplayPreview || tool.workdir || tool.target || toolPreview(tool) !== tool.name);
+  }
+
+  /** Toggles command details and output for a tool row. */
+  function toggleToolExpansion(toolId: string): void {
+    expandedToolIds = expandedToolIds.includes(toolId)
+      ? expandedToolIds.filter((id) => id !== toolId)
+      : [...expandedToolIds, toolId];
+  }
+
+  /** Returns display-ready output for expanded tool details. */
+  function toolOutput(tool: UsageConversationMessage["toolCalls"][number]): string | undefined {
+    return tool.resultDisplayPreview;
+  }
+
+  /** Returns the full readable body for a message. */
+  function messageBody(message: UsageConversationMessage): string {
+    return message.text || message.textPreview || "No transcript text available.";
+  }
+
+  /** Returns whether a message body should render collapsed by default. */
+  function isLongMessage(message: UsageConversationMessage): boolean {
+    return messageBody(message).length > messagePreviewLimit;
+  }
+
+  /** Returns whether a message body is currently expanded. */
+  function isMessageExpanded(messageId: string): boolean {
+    return expandedMessageIds.includes(messageId);
+  }
+
+  /** Returns the body text currently visible for a message. */
+  function visibleMessageBody(message: UsageConversationMessage, expanded: boolean): string {
+    const body = messageBody(message);
+    if (!isLongMessage(message) || expanded) return body;
+    return `${body.slice(0, messagePreviewLimit).trimEnd()}...`;
+  }
+
+  /** Toggles the full body display for a long message. */
+  function toggleMessageExpansion(messageId: string): void {
+    expandedMessageIds = isMessageExpanded(messageId)
+      ? expandedMessageIds.filter((id) => id !== messageId)
+      : [...expandedMessageIds, messageId];
   }
 </script>
 
@@ -193,8 +245,8 @@
                   type="button"
                   class:active={project.sessions.some((session) => session.id === selectedId)}
                   class="project-row"
-                  aria-expanded={isProjectExpanded(project)}
-                  on:click={() => toggleProject(project)}
+                  aria-expanded={expandedProjectIds.includes(project.id)}
+                  onclick={() => toggleProject(project)}
                 >
                   <span>
                     <strong>{project.label}</strong>
@@ -202,14 +254,14 @@
                   </span>
                   <span class="project-chevron" aria-hidden="true">v</span>
                 </button>
-                {#if isProjectExpanded(project)}
+                {#if expandedProjectIds.includes(project.id)}
                   <div class="session-stack">
                     {#each project.sessions as session}
                       <button
                         type="button"
                         class:active={session.id === selectedId}
                         class="session-row"
-                        on:click={() => selectSession(session.id)}
+                        onclick={() => selectSession(session.id)}
                       >
                         <span class="session-row-main">
                           <strong>{session.title}</strong>
@@ -239,26 +291,69 @@
     <section class:loading-pane={conversationLoading} class="pane pane-conversation" aria-label="Conversation">
       <div class="message-list">
         {#each view.messages as message}
-          <button
-            type="button"
+          <div
             use:rememberMessage={message.id}
             class:active={message.id === activeMessageId}
             class={`message message-${message.role}`}
-            on:click={() => activate(message.id, "message")}
           >
-            <header>
-              <strong>{message.title || message.role}</strong>
-              <span>{message.tokenLabel || ""}{message.durationLabel ? ` · ${message.durationLabel}` : ""}</span>
-            </header>
-            <p>{message.text || message.textPreview || "No transcript text available."}</p>
+            <button class="message-main" type="button" onclick={() => activate(message.id, "message")}>
+              <p>{visibleMessageBody(message, expandedMessageIds.includes(message.id))}</p>
+            </button>
+            {#if isLongMessage(message)}
+              <button
+                class="message-expand"
+                type="button"
+                aria-expanded={expandedMessageIds.includes(message.id)}
+                onclick={() => toggleMessageExpansion(message.id)}
+              >
+                {expandedMessageIds.includes(message.id) ? "Show less" : `Show full message (${Intl.NumberFormat("en").format(messageBody(message).length)} chars)`}
+              </button>
+            {/if}
             {#if message.toolCalls.length}
-              <div class="tool-list">
+              <div class="tool-events" aria-label="Tool calls">
                 {#each message.toolCalls as tool}
-                  <span>{tool.name}{tool.durationLabel ? ` · ${tool.durationLabel}` : ""}</span>
+                  <div class:expanded={expandedToolIds.includes(tool.id)} class="tool-event">
+                    <span class="tool-event-kind">{toolKind(tool)}</span>
+                    <code class="tool-event-command">{toolPreview(tool)}</code>
+                    {#if toolMeta(tool).length}
+                      <span class="tool-event-meta">{toolMeta(tool).join(" · ")}</span>
+                    {/if}
+                    {#if hasToolDetails(tool)}
+                      <button
+                        class="tool-event-toggle"
+                        type="button"
+                        aria-expanded={expandedToolIds.includes(tool.id)}
+                        aria-label={`${expandedToolIds.includes(tool.id) ? "Hide" : "Show"} ${toolPreview(tool)} details`}
+                        onclick={() => toggleToolExpansion(tool.id)}
+                      >
+                        {expandedToolIds.includes(tool.id) ? "Hide" : "Details"}
+                      </button>
+                    {/if}
+                    {#if expandedToolIds.includes(tool.id)}
+                      <div class="tool-event-details">
+                        <div>
+                          <span>Command</span>
+                          <code>{toolPreview(tool)}</code>
+                        </div>
+                        {#if tool.workdir || tool.target}
+                          <div>
+                            <span>Directory</span>
+                            <code>{tool.workdir || tool.target}</code>
+                          </div>
+                        {/if}
+                        {#if toolOutput(tool)}
+                          <div>
+                            <span>Output</span>
+                            <pre>{toolOutput(tool)}</pre>
+                          </div>
+                        {/if}
+                      </div>
+                    {/if}
+                  </div>
                 {/each}
               </div>
             {/if}
-          </button>
+          </div>
         {/each}
       </div>
     </section>
@@ -286,7 +381,7 @@
                 class="chart-row"
                 style={`--row-width:${row.widthShare}; --row-height:${row.heightShare};`}
                 aria-label={chartLabel(row)}
-                on:click={() => activate(row.messageId, "chart")}
+                onclick={() => activate(row.messageId, "chart")}
               >
                 <span class="bar" aria-label={chartLabel(row)}>
                   {#if row.segments.length}

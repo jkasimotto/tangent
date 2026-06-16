@@ -49,7 +49,7 @@ export { buildTraceWaterfall } from "./trace.js";
 export { buildTranscriptHighlights } from "./transcriptHighlights.js";
 
 import { buildUsageCockpitView, timelineSteps, transcriptMessages } from "./cockpit.js";
-import { buildUsageConversationView } from "./conversationView.js";
+import { buildUsageConversationView, type UsageConversationToolCall } from "./conversationView.js";
 import { buildUsageSessionTimelineView } from "./sessionTimeline.js";
 import type {
   UsageCockpitView,
@@ -122,6 +122,11 @@ export type UsageToolCallSummaryView = {
   status?: string;
   durationMs?: number;
   target?: string;
+  commandPreview?: string;
+  workdir?: string;
+  preview?: string;
+  resultDisplayPreview?: string;
+  resultPreview?: string;
 };
 
 export type UsageTranscriptMessageView = {
@@ -218,9 +223,25 @@ type UsageDomainMessage = {
     toolName?: string;
     name?: string;
     status?: string;
-    result?: { durationMs?: number };
+    result?: { durationMs?: number; outputPreview?: string };
     targetPaths?: string[];
+    input?: unknown;
   }>;
+};
+
+type UsageDomainToolCall = {
+  id: string;
+  stepId?: string;
+  resultStepId?: string;
+  toolName?: string;
+  name?: string;
+  status?: string;
+  input?: unknown;
+  targetPaths?: string[];
+  result?: {
+    durationMs?: number;
+    outputPreview?: string;
+  };
 };
 
 type UsageDomainTranscript = {
@@ -241,6 +262,9 @@ export type UsageDomainClient = {
   };
   messages: {
     query(query?: unknown): Promise<UsageDomainResult<UsageDomainMessage[]>>;
+  };
+  tools?: {
+    query(query?: unknown): Promise<UsageDomainResult<UsageDomainToolCall[]>>;
   };
 };
 
@@ -423,6 +447,7 @@ export function createUsageUiClient(usage: UsageDomainClient): UsageUiClient {
       const session = domainSession(sessionResult.data);
       const timeline = timelineResult.data as UsageTimeline;
       const report = reportResult.data as { messages?: UsageMessage[]; caveats?: string[] };
+      const toolResult = await usage.tools?.query({ where: { sessionId: session.id } }).catch(() => undefined);
       return buildUsageConversationView(
         session,
         listResult.data.map(domainSession),
@@ -430,6 +455,7 @@ export function createUsageUiClient(usage: UsageDomainClient): UsageUiClient {
         timelineSteps(timeline),
         {
           query: query.query,
+          toolCalls: (toolResult?.data || []).map(conversationToolCall),
           caveats: [
             ...(session.availability?.notes || []),
             ...listResult.meta.warnings.map((warning) => warning.message),
@@ -557,8 +583,77 @@ function toolCall(call: NonNullable<UsageDomainMessage["toolCalls"]>[number]): U
     name: call.toolName || call.name || "tool",
     status: call.status,
     durationMs: call.result?.durationMs,
-    target: call.targetPaths?.[0]
+    target: call.targetPaths?.[0],
+    commandPreview: toolInputPreview(call.input),
+    workdir: toolWorkdir(call.input) || call.targetPaths?.[0],
+    preview: toolInputPreview(call.input),
+    resultDisplayPreview: cleanToolResultPreview(call.result?.outputPreview),
+    resultPreview: undefined
   };
+}
+
+/** Maps a domain tool call into conversation-view matching input. */
+function conversationToolCall(call: UsageDomainToolCall): UsageConversationToolCall {
+  return {
+    id: call.id,
+    stepId: call.stepId,
+    resultStepId: call.resultStepId,
+    toolName: call.toolName,
+    name: call.name,
+    status: call.status,
+    input: call.input,
+    targetPaths: call.targetPaths,
+    result: call.result
+      ? {
+          durationMs: call.result.durationMs,
+          outputPreview: call.result.outputPreview
+        }
+      : undefined
+  };
+}
+
+/** Extracts a concise preview for common tool input shapes. */
+function toolInputPreview(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return typeof value === "string" ? value : undefined;
+  const input = value as Record<string, unknown>;
+  return stringValue(input.command) || stringValue(input.cmd) || stringValue(input.query) || stringValue(input.pattern) || stringValue(input.path) || stringValue(input.file_path);
+}
+
+/** Extracts the working directory from common command tool payloads. */
+function toolWorkdir(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const input = value as Record<string, unknown>;
+  return stringValue(input.workdir) || stringValue(input.cwd);
+}
+
+/** Strips provider transport boilerplate from compact tool output. */
+function cleanToolResultPreview(value: string | undefined): string | undefined {
+  const text = value?.trim();
+  if (!text) return undefined;
+  const inlineOutput = /\bOutput:\s*/i.exec(text);
+  const displayText = inlineOutput ? text.slice(inlineOutput.index + inlineOutput[0].length) : text;
+  const lines = displayText.split(/\r?\n/);
+  const outputIndex = lines.findIndex((line) => line.trim() === "Output:");
+  const hasBoilerplate = Boolean(inlineOutput) || outputIndex >= 0 || text.split(/\r?\n/).some((line) => {
+    const trimmed = line.trim();
+    return /^Chunk ID:/i.test(trimmed)
+      || /^Wall time:/i.test(trimmed)
+      || /^Process exited with code/i.test(trimmed)
+      || /^Original token count:/i.test(trimmed);
+  });
+  const relevant = outputIndex >= 0 ? lines.slice(outputIndex + 1) : lines;
+  const cleaned = relevant
+    .filter((line) => {
+      const trimmed = line.trim();
+      return !/^Chunk ID:/i.test(trimmed)
+        && !/^Wall time:/i.test(trimmed)
+        && !/^Process exited with code/i.test(trimmed)
+        && !/^Original token count:/i.test(trimmed)
+        && trimmed !== "Output:";
+    })
+    .join("\n")
+    .trim();
+  return cleaned || (hasBoilerplate ? undefined : text);
 }
 
 /** Normalizes a domain session into the cockpit DTO input shape. */

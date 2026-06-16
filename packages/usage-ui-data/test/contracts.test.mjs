@@ -155,6 +155,43 @@ test("builds conversation chart rows from assistant messages with internal step 
   assert.equal(view.chart.rows[0].segments[0].heightShare > view.chart.rows[0].segments[1].heightShare, true);
 });
 
+test("backfills timeline command steps into conversation tool events", () => {
+  const view = buildUsageConversationView(
+    { id: "s1", provider: "codex", title: "Commands", endedAt: "2026-06-16T10:00:10.000Z", metrics: {}, availability: { notes: [] } },
+    [],
+    [
+      { id: "user1", role: "user", textPreview: "Go", createdAt: "2026-06-16T10:00:00.000Z", toolCalls: [] },
+      { id: "m1", role: "assistant", textPreview: "Working", createdAt: "2026-06-16T10:00:01.000Z", tokenUsage: { total: 10 }, toolCalls: [] }
+    ],
+    [
+      { id: "cmd", kind: "command", label: "exec_command", startedAt: "2026-06-16T10:00:02.000Z", durationMs: 2_000, order: 1, metrics: {} },
+      { id: "result", kind: "tool_result", label: "exec_command result", startedAt: "2026-06-16T10:00:04.000Z", durationMs: 1_000, order: 2, metrics: {} }
+    ],
+    {
+      toolCalls: [{
+        id: "tool1",
+        stepId: "cmd",
+        resultStepId: "result",
+        toolName: "exec_command",
+        status: "success",
+        input: { cmd: "git status --short", workdir: "/repo" },
+        result: {
+          durationMs: 1_000,
+          outputPreview: "Chunk ID: abc123 Wall time: 0.0000 seconds Process exited with code 0 Original token count: 12 Output: M packages/usage-ui/src/App.svelte"
+        }
+      }]
+    }
+  );
+
+  assert.deepEqual(view.messages[1].toolCalls.map((call) => call.name), ["exec_command"]);
+  assert.equal(view.messages[1].toolCalls[0].preview, "git status --short");
+  assert.equal(view.messages[1].toolCalls[0].commandPreview, "git status --short");
+  assert.equal(view.messages[1].toolCalls[0].workdir, "/repo");
+  assert.equal(view.messages[1].toolCalls[0].resultDisplayPreview, "M packages/usage-ui/src/App.svelte");
+  assert.match(view.messages[1].toolCalls[0].resultPreview, /Chunk ID/);
+  assert.equal(view.messages[1].toolCalls[0].durationLabel, "1s");
+});
+
 test("builds conversation token labels from context and output usage", () => {
   const view = buildUsageConversationView(
     { id: "s1", provider: "codex", title: "Tokens", metrics: {}, availability: { notes: [] } },

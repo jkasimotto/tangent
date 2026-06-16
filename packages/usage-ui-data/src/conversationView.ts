@@ -15,6 +15,22 @@ import type {
 export type UsageConversationViewOptions = {
   query?: string;
   caveats?: string[];
+  toolCalls?: UsageConversationToolCall[];
+};
+
+export type UsageConversationToolCall = {
+  id: string;
+  stepId?: string;
+  resultStepId?: string;
+  toolName?: string;
+  name?: string;
+  status?: string;
+  input?: unknown;
+  targetPaths?: string[];
+  result?: {
+    durationMs?: number;
+    outputPreview?: string;
+  };
 };
 
 /** Builds the Svelte Usage conversation workspace DTO. */
@@ -27,8 +43,9 @@ export function buildUsageConversationView(
 ): UsageConversationView {
   const query = (options.query || "").trim().toLowerCase();
   const visibleSessions = query ? sessions.filter((session) => sessionMatches(session, query)) : sessions;
-  const conversationMessages = messages.map(conversationMessage);
-  const rows = chartRows(conversationMessages, messages, steps, selectedSession.endedAt);
+  const baseConversationMessages = messages.map(conversationMessage);
+  const rows = chartRows(baseConversationMessages, messages, steps, selectedSession.endedAt);
+  const conversationMessages = withTimelineToolEvents(baseConversationMessages, rows, options.toolCalls || []);
   const maxTokens = Math.max(1, ...rows.map((row) => row.tokens || 0));
   const maxDurationMs = Math.max(1, ...rows.map((row) => row.durationMs || 0));
   return {
@@ -52,6 +69,107 @@ export function buildUsageConversationView(
     },
     caveats: conversationCaveats(rows, options.caveats || [])
   };
+}
+
+/** Backfills chart-linked tool and command steps into the conversation thread. */
+function withTimelineToolEvents(messages: UsageConversationMessage[], rows: UsageConversationChartRow[], toolCalls: UsageConversationToolCall[]): UsageConversationMessage[] {
+  const eventsByMessageId = new Map<string, UsageConversationMessage["toolCalls"]>();
+  const toolByStepId = new Map<string, UsageConversationToolCall>();
+  for (const tool of toolCalls) {
+    if (tool.stepId) toolByStepId.set(tool.stepId, tool);
+    if (tool.resultStepId) toolByStepId.set(tool.resultStepId, tool);
+  }
+  for (const row of rows) {
+    const seenToolIds = new Set<string>();
+    const events: UsageConversationMessage["toolCalls"] = [];
+    for (const segment of row.segments) {
+      if (segment.kind === "assistant") continue;
+      const tool = segment.stepId ? toolByStepId.get(segment.stepId) : undefined;
+      if (tool) {
+        if (seenToolIds.has(tool.id)) continue;
+        seenToolIds.add(tool.id);
+        events.push({
+          id: tool.id,
+          name: tool.toolName || tool.name || segment.label,
+          status: tool.status,
+          durationLabel: formatDuration(tool.result?.durationMs) || segment.durationLabel,
+          target: tool.targetPaths?.[0],
+          commandPreview: toolInputPreview(tool.input),
+          workdir: toolWorkdir(tool.input) || tool.targetPaths?.[0],
+          preview: toolInputPreview(tool.input),
+          resultDisplayPreview: cleanToolResultPreview(tool.result?.outputPreview),
+          resultPreview: truncateText(tool.result?.outputPreview, 260) || undefined
+        });
+        continue;
+      }
+      events.push({
+        id: segment.stepId || segment.id,
+        name: segment.label,
+        status: undefined,
+        durationLabel: segment.durationLabel,
+        target: undefined
+      });
+    }
+    if (events.length) eventsByMessageId.set(row.messageId, [...(eventsByMessageId.get(row.messageId) || []), ...events]);
+  }
+  return messages.map((message) => {
+    if (message.toolCalls.length) return message;
+    const events = eventsByMessageId.get(message.id);
+    return events?.length ? { ...message, toolCalls: events } : message;
+  });
+}
+
+/** Extracts a concise human-readable tool input preview. */
+function toolInputPreview(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return truncateText(String(value || ""), 260) || undefined;
+  const input = value as Record<string, unknown>;
+  const command = stringValue(input.command) || stringValue(input.cmd);
+  if (command) return command;
+  const text = stringValue(input.query) || stringValue(input.pattern) || stringValue(input.path) || stringValue(input.file_path);
+  if (text) return text;
+  return truncateText(JSON.stringify(input), 260) || undefined;
+}
+
+/** Extracts the working directory from common command tool payloads. */
+function toolWorkdir(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const input = value as Record<string, unknown>;
+  return stringValue(input.workdir) || stringValue(input.cwd);
+}
+
+/** Strips provider transport boilerplate from tool output before display. */
+function cleanToolResultPreview(value: string | undefined): string | undefined {
+  const text = value?.trim();
+  if (!text) return undefined;
+  const inlineOutput = /\bOutput:\s*/i.exec(text);
+  const displayText = inlineOutput ? text.slice(inlineOutput.index + inlineOutput[0].length) : text;
+  const lines = displayText.split(/\r?\n/);
+  const outputIndex = lines.findIndex((line) => line.trim() === "Output:");
+  const hasBoilerplate = Boolean(inlineOutput) || outputIndex >= 0 || text.split(/\r?\n/).some((line) => {
+    const trimmed = line.trim();
+    return /^Chunk ID:/i.test(trimmed)
+      || /^Wall time:/i.test(trimmed)
+      || /^Process exited with code/i.test(trimmed)
+      || /^Original token count:/i.test(trimmed);
+  });
+  const relevant = outputIndex >= 0 ? lines.slice(outputIndex + 1) : lines;
+  const cleaned = relevant
+    .filter((line) => {
+      const trimmed = line.trim();
+      return !/^Chunk ID:/i.test(trimmed)
+        && !/^Wall time:/i.test(trimmed)
+        && !/^Process exited with code/i.test(trimmed)
+        && !/^Original token count:/i.test(trimmed)
+        && trimmed !== "Output:";
+    })
+    .join("\n")
+    .trim();
+  return truncateText(cleaned || (hasBoilerplate ? "" : text), 1200) || undefined;
+}
+
+/** Returns a string value from unknown structured data. */
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 /** Converts a session to a conversation picker row. */
@@ -121,7 +239,12 @@ function conversationMessage(message: UsageMessage): UsageConversationMessage {
       name: call.toolName || call.name || "tool",
       status: call.status,
       durationLabel: formatDuration(call.result?.durationMs),
-      target: call.targetPaths?.[0]
+      target: call.targetPaths?.[0],
+      commandPreview: toolInputPreview(call.input),
+      workdir: toolWorkdir(call.input) || call.targetPaths?.[0],
+      preview: toolInputPreview(call.input),
+      resultDisplayPreview: cleanToolResultPreview(call.result?.outputPreview),
+      resultPreview: truncateText(call.result?.outputPreview, 260) || undefined
     }))
   };
 }

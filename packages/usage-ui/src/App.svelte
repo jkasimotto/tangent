@@ -92,9 +92,32 @@
     return { destroy: () => messageElements.delete(id) };
   }
 
-  function rememberRow(node: HTMLElement, id: string): { destroy(): void } {
-    rowElements.set(id, node);
-    return { destroy: () => rowElements.delete(id) };
+  function rememberRow(node: HTMLElement, value: string | string[]): { update(next: string | string[]): void; destroy(): void } {
+    let ids = rowIds(value);
+    for (const id of ids) rowElements.set(id, node);
+    return {
+      update(next: string | string[]): void {
+        for (const id of ids) {
+          if (rowElements.get(id) === node) rowElements.delete(id);
+        }
+        ids = rowIds(next);
+        for (const id of ids) rowElements.set(id, node);
+      },
+      destroy(): void {
+        for (const id of ids) {
+          if (rowElements.get(id) === node) rowElements.delete(id);
+        }
+      }
+    };
+  }
+
+  function rowIds(value: string | string[] | undefined): string[] {
+    if (Array.isArray(value)) return value;
+    return value ? [value] : [];
+  }
+
+  function isRowActive(row: UsageConversationChartRow): boolean {
+    return rowIds(row.messageIds || row.messageId).includes(activeMessageId);
   }
 
   function bestSessionCandidate(values: UsageSessionListItem[]): UsageSessionListItem | undefined {
@@ -245,7 +268,7 @@
         <header>
           <div>
             <p>Tokens × duration</p>
-            <h1>Assistant Messages</h1>
+            <h1>Work Turns</h1>
           </div>
         </header>
         <div class="chart-scroll">
@@ -257,8 +280,8 @@
             {#each view.chart.rows as row}
               <button
                 type="button"
-                use:rememberRow={row.messageId}
-                class:active={row.messageId === activeMessageId}
+                use:rememberRow={row.messageIds || row.messageId}
+                class:active={isRowActive(row)}
                 class:anchor={row.anchor}
                 class="chart-row"
                 style={`--row-width:${row.widthShare}; --row-height:${row.heightShare};`}

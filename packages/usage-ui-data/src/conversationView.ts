@@ -1,4 +1,4 @@
-import { cleanTitle, confidenceOrUnknown, formatDateTime, formatDuration, formatMessageTokenUsage, formatTokens, messageTokens, stepDuration, stepKindLabel, truncateText } from "./format.js";
+import { cleanTitle, confidenceOrUnknown, finiteNumber, formatDateTime, formatDuration, formatMessageTokenUsage, formatTokens, messageTokens, stepDuration, stepKindLabel, truncateText } from "./format.js";
 import type {
   UsageConversationChartRow,
   UsageConversationChartSegment,
@@ -8,7 +8,8 @@ import type {
   UsageConversationView,
   UsageMessage,
   UsageSession,
-  UsageStep
+  UsageStep,
+  UsageTokenUsage
 } from "./types.js";
 
 export type UsageConversationViewOptions = {
@@ -125,76 +126,192 @@ function conversationMessage(message: UsageMessage): UsageConversationMessage {
   };
 }
 
-/** Builds chart rows from messages and their linked steps. */
+type WorkTurn = {
+  id: string;
+  label: string;
+  primaryMessageId: string;
+  messageIds: string[];
+  startMs?: number;
+  endMs?: number;
+  at?: string;
+  rawMessages: UsageMessage[];
+  messages: UsageConversationMessage[];
+};
+
+/** Builds chart rows grouped by user-request work turns. */
 function chartRows(conversationMessages: UsageConversationMessage[], rawMessages: UsageMessage[], steps: UsageStep[], sessionEndedAt?: string): UsageConversationChartRow[] {
   const rawById = new Map(rawMessages.map((message) => [message.id, message]));
-  const stepById = new Map(steps.map((step) => [step.id, step]));
   const stepCandidates = steps.filter((step) => step.kind !== "session" && step.kind !== "turn" && step.kind !== "user_message");
-  return conversationMessages.map((message, index) => {
-    const raw = rawById.get(message.id);
-    if (message.role !== "assistant") {
-      return {
-        id: `anchor:${message.id}`,
-        messageId: message.id,
-        role: message.role,
-        label: message.title || `Message ${index + 1}`,
-        at: message.at,
-        tokens: message.tokens,
-        tokenLabel: message.tokenLabel,
-        durationMs: message.durationMs,
-        durationLabel: message.durationLabel,
-        widthShare: 0.02,
-        heightShare: 0.08,
-        anchor: true,
-        confidence: message.confidence || "unknown",
-        segments: []
-      };
-    }
-
-    const startMs = parseTimeMs(message.at);
-    const endMs = parseTimeMs(conversationMessages[index + 1]?.at) ?? parseTimeMs(sessionEndedAt);
-    const linked = linkedMessageSteps(raw, stepById, stepCandidates, startMs, endMs);
-    const segments = chartSegments(message.id, linked);
-    const duration = message.durationMs ?? stepDurationTotal(linked) ?? segmentDurationTotal(segments) ?? elapsedUntilNextMessage(conversationMessages, index, sessionEndedAt);
+  return workTurns(conversationMessages, rawMessages, sessionEndedAt).map((turn, index) => {
+    const linked = linkedWorkTurnSteps(turn, rawById, steps, stepCandidates);
+    const segments = chartSegments(turn.primaryMessageId, linked);
+    const duration = workTurnDuration(turn) ?? stepDurationTotal(linked) ?? segmentDurationTotal(segments);
+    const tokenUsage = workTurnTokenUsage(turn.rawMessages);
+    const tokens = workTurnTokens(tokenUsage);
     return {
-      id: `row:${message.id}`,
-      messageId: message.id,
+      id: `work-turn:${turn.primaryMessageId}`,
+      messageId: turn.primaryMessageId,
+      messageIds: turn.messageIds,
       role: "assistant",
-      label: message.title || `Assistant ${index + 1}`,
-      at: message.at,
-      tokens: message.tokens,
-      tokenLabel: message.tokenLabel,
+      label: turn.label || `Work turn ${index + 1}`,
+      at: turn.at,
+      tokens,
+      tokenLabel: formatMessageTokenUsage(tokenUsage, tokens),
       durationMs: duration,
       durationLabel: formatDuration(duration),
       widthShare: 0,
       heightShare: 0,
       anchor: false,
-      confidence: message.confidence || "unknown",
+      confidence: workTurnConfidence(turn.messages),
       segments
     };
   });
 }
 
-/** Finds message-owned and turn-owned steps for an assistant row. */
-function linkedMessageSteps(message: UsageMessage | undefined, stepById: Map<string, UsageStep>, steps: UsageStep[], startMs: number | undefined, endMs: number | undefined): UsageStep[] {
-  if (!message) return [];
-  const direct = message.stepId ? stepById.get(message.stepId) : undefined;
-  const result = new Map<string, UsageStep>();
-  if (direct) result.set(direct.id, direct);
-  for (const call of message.toolCalls || []) {
-    const callStep = call.stepId ? stepById.get(call.stepId) : undefined;
-    const resultStep = call.resultStepId ? stepById.get(call.resultStepId) : undefined;
-    if (callStep) result.set(callStep.id, callStep);
-    if (resultStep) result.set(resultStep.id, resultStep);
+/** Builds user-request work turns from ordered conversation messages. */
+function workTurns(conversationMessages: UsageConversationMessage[], rawMessages: UsageMessage[], sessionEndedAt?: string): WorkTurn[] {
+  const rawById = new Map(rawMessages.map((message) => [message.id, message]));
+  const turns: WorkTurn[] = [];
+  let current: WorkTurn | undefined;
+  for (const [index, message] of conversationMessages.entries()) {
+    if (message.role === "user" || !current) {
+      if (current) turns.push(finalizeWorkTurn(current, message.at));
+      const primary = nextNonUserMessage(conversationMessages, index + 1);
+      current = {
+        id: `work-turn:${message.id}`,
+        label: truncateText(message.textPreview || message.text || `Work turn ${turns.length + 1}`, 80) || `Work turn ${turns.length + 1}`,
+        primaryMessageId: primary?.id || message.id,
+        messageIds: [message.id],
+        startMs: parseTimeMs(message.at),
+        at: message.at,
+        rawMessages: [rawById.get(message.id)].filter(isDefined),
+        messages: [message]
+      };
+      continue;
+    }
+    current.messageIds.push(message.id);
+    current.rawMessages.push(...[rawById.get(message.id)].filter(isDefined));
+    current.messages.push(message);
+    if (current.primaryMessageId === current.messageIds[0]) current.primaryMessageId = message.id;
   }
-  if (result.size <= 1 && startMs !== undefined && endMs !== undefined && endMs >= startMs) {
-    for (const step of steps) {
+  if (current) turns.push(finalizeWorkTurn(current, sessionEndedAt));
+  return turns.filter((turn) => turn.messages.some((message) => message.role !== "user"));
+}
+
+/** Finalizes a work turn with an exclusive end timestamp. */
+function finalizeWorkTurn(turn: WorkTurn, endedAt: string | undefined): WorkTurn {
+  return { ...turn, endMs: parseTimeMs(endedAt) };
+}
+
+/** Returns the next non-user message after an index. */
+function nextNonUserMessage(messages: UsageConversationMessage[], startIndex: number): UsageConversationMessage | undefined {
+  for (const message of messages.slice(startIndex)) {
+    if (message.role === "user") return undefined;
+    return message;
+  }
+  return undefined;
+}
+
+/** Finds message-owned and timestamp-window steps for a work turn. */
+function linkedWorkTurnSteps(turn: WorkTurn, rawById: Map<string, UsageMessage>, steps: UsageStep[], candidates: UsageStep[]): UsageStep[] {
+  const stepById = new Map(steps.map((step) => [step.id, step]));
+  const result = new Map<string, UsageStep>();
+  for (const messageId of turn.messageIds) {
+    const message = rawById.get(messageId);
+    const direct = message?.stepId ? stepById.get(message.stepId) : undefined;
+    if (direct && direct.kind !== "user_message") result.set(direct.id, direct);
+    for (const call of message?.toolCalls || []) {
+      const callStep = call.stepId ? stepById.get(call.stepId) : undefined;
+      const resultStep = call.resultStepId ? stepById.get(call.resultStepId) : undefined;
+      if (callStep) result.set(callStep.id, callStep);
+      if (resultStep) result.set(resultStep.id, resultStep);
+    }
+  }
+  if (turn.startMs !== undefined && turn.endMs !== undefined && turn.endMs >= turn.startMs) {
+    for (const step of candidates) {
       const stepMs = parseTimeMs(step.startedAt);
-      if (stepMs === undefined || stepMs < startMs || stepMs >= endMs) continue;
+      if (stepMs === undefined || stepMs < turn.startMs || stepMs >= turn.endMs) continue;
       result.set(step.id, step);
     }
   }
   return [...result.values()].sort((left, right) => (left.order ?? 0) - (right.order ?? 0) || (left.startedAt || "").localeCompare(right.startedAt || ""));
+}
+
+/** Derives a work turn duration from its exclusive timestamp boundary. */
+function workTurnDuration(turn: WorkTurn): number | undefined {
+  if (turn.startMs === undefined || turn.endMs === undefined || turn.endMs < turn.startMs) return undefined;
+  return turn.endMs - turn.startMs;
+}
+
+/** Aggregates assistant message token usage for one user-request work turn. */
+function workTurnTokenUsage(messages: UsageMessage[]): UsageTokenUsage | undefined {
+  const usages = messages
+    .filter((message) => conversationRole(message.role) === "assistant")
+    .map((message) => message.tokenUsage || message.metrics?.tokens)
+    .filter(isDefined);
+  if (!usages.length) return undefined;
+
+  const context = maxNumbers(usages.map(tokenContext));
+  const output = sumNumbers(usages.map((usage) => finiteNumber(usage.output)));
+  const cacheRead = sumNumbers(usages.map((usage) => finiteNumber(usage.cacheRead)));
+  const cacheCreation = sumNumbers(usages.map((usage) => finiteNumber(usage.cacheCreation)));
+  const reasoning = sumNumbers(usages.map((usage) => finiteNumber(usage.reasoning)));
+  const explicitTotal = maxNumbers(usages.map((usage) => finiteNumber(usage.total)));
+  const total = sumNumbers([context, output]) ?? explicitTotal;
+  return {
+    context,
+    input: context,
+    output,
+    total,
+    cacheRead,
+    cacheCreation,
+    reasoning,
+    confidence: combinedConfidence(usages.map((usage) => usage.confidence)),
+    source: usages.map((usage) => usage.source).filter(isDefined)[0]
+  };
+}
+
+/** Returns the token total that should drive work-turn bar width. */
+function workTurnTokens(usage: UsageTokenUsage | undefined): number | undefined {
+  return finiteNumber(usage?.total) ?? sumNumbers([tokenContext(usage), finiteNumber(usage?.output)]);
+}
+
+/** Returns the lowest-confidence message state represented inside a work turn. */
+function workTurnConfidence(messages: UsageConversationMessage[]): UsageConversationChartRow["confidence"] {
+  return combinedConfidence(messages.map((message) => message.confidence));
+}
+
+/** Returns the context token count from all compatible Usage token fields. */
+function tokenContext(usage: UsageTokenUsage | undefined): number | undefined {
+  if (!usage) return undefined;
+  return finiteNumber(usage.context) ?? finiteNumber(usage.input) ?? sumNumbers([finiteNumber(usage.cacheRead), finiteNumber(usage.cacheCreation)]);
+}
+
+/** Collapses mixed source confidence to the most conservative UI value. */
+function combinedConfidence(values: Array<string | undefined>): UsageConversationChartRow["confidence"] {
+  const normalized = values.map((value) => confidenceOrUnknown(value)).filter(isDefined);
+  if (normalized.includes("partial")) return "partial";
+  if (normalized.includes("estimated")) return "estimated";
+  if (normalized.includes("unknown")) return "unknown";
+  if (normalized.includes("derived")) return "derived";
+  return normalized[0] || "unknown";
+}
+
+/** Sums finite numeric values when at least one value is present. */
+function sumNumbers(values: Array<number | undefined>): number | undefined {
+  const present = values.filter((value): value is number => value !== undefined && Number.isFinite(value));
+  return present.length ? present.reduce((sum, value) => sum + value, 0) : undefined;
+}
+
+/** Returns the maximum finite numeric value when at least one value is present. */
+function maxNumbers(values: Array<number | undefined>): number | undefined {
+  const present = values.filter((value): value is number => value !== undefined && Number.isFinite(value));
+  return present.length ? Math.max(...present) : undefined;
+}
+
+/** Narrows undefined values out of arrays. */
+function isDefined<T>(value: T | undefined): value is T {
+  return value !== undefined;
 }
 
 /** Converts linked steps to proportional row segments. */
@@ -249,14 +366,6 @@ function messageDuration(message: UsageMessage): number | undefined {
   return direct ?? (toolTotal || undefined);
 }
 
-/** Derives message work time from this message timestamp to the next message or session end. */
-function elapsedUntilNextMessage(messages: UsageConversationMessage[], index: number, sessionEndedAt: string | undefined): number | undefined {
-  const start = parseTimeMs(messages[index]?.at);
-  const end = parseTimeMs(messages[index + 1]?.at) ?? parseTimeMs(sessionEndedAt);
-  if (start === undefined || end === undefined || end < start) return undefined;
-  return end - start;
-}
-
 /** Maps a step to an internal chart segment kind. */
 function segmentKind(step: UsageStep): UsageConversationChartSegment["kind"] {
   if (step.kind === "assistant_response" || step.kind === "model_call" || step.kind === "subagent") return "assistant";
@@ -297,11 +406,4 @@ function sessionMatches(session: UsageSession, query: string): boolean {
 function basename(value: string | undefined): string | undefined {
   if (!value) return undefined;
   return value.split(/[\\/]/).filter(Boolean).at(-1);
-}
-
-/** Groups values by a stable key. */
-function groupBy<T>(values: T[], key: (value: T) => string): Map<string, T[]> {
-  const groups = new Map<string, T[]>();
-  for (const value of values) groups.set(key(value), [...(groups.get(key(value)) || []), value]);
-  return groups;
 }

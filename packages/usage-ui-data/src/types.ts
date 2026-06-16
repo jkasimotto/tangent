@@ -471,6 +471,7 @@ export type UsageConversationChartSegment = {
 export type UsageConversationChartRow = {
   id: string;
   messageId: string;
+  messageIds?: string[];
   role: "user" | "assistant" | "system" | "tool";
   label: string;
   at?: string;

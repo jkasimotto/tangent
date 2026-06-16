@@ -17,7 +17,7 @@ describe("usage svelte app", () => {
     expect(screen.getByLabelText("Conversation picker")).toBeInTheDocument();
     expect(screen.getByLabelText("Conversation")).toBeInTheDocument();
     expect(screen.getByLabelText("Tokens and duration chart")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Assistant Messages" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Work Turns" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Implement UI" })).not.toBeInTheDocument();
     expect(container.querySelector(".chart-inner")).toBeInTheDocument();
     expect(container.querySelector(".finder-content")).toBeInTheDocument();
@@ -72,6 +72,36 @@ describe("usage svelte app", () => {
 
     expect(chartRow).toHaveClass("active");
     expect(container.querySelector(".message")).toHaveClass("active");
+  });
+
+  it("keeps a grouped work turn active for any message inside the group", async () => {
+    const view = fakeConversationView();
+    view.messages.push({
+      id: "m2",
+      role: "assistant",
+      title: "Assistant · gpt",
+      textPreview: "Still working",
+      tokenLabel: "400",
+      tokens: 400,
+      durationLabel: "20s",
+      durationMs: 20000,
+      confidence: "exact",
+      toolCalls: []
+    });
+    view.chart.rows[0].messageIds = ["m1", "m2"];
+    const { container } = render(App, {
+      props: {
+        client: fakeUsageClient({
+          /** Returns a fixture view with a chart row covering multiple messages. */
+          getConversationView: async () => view
+        })
+      }
+    });
+
+    expect(await screen.findByText("Still working")).toBeInTheDocument();
+    await fireEvent.click(screen.getByText("Still working").closest("button")!);
+
+    expect(container.querySelector(".chart-row")).toHaveClass("active");
   });
 });
 
@@ -176,6 +206,7 @@ function fakeConversationView(id = "s1"): UsageConversationView {
       rows: [{
         id: "row:m1",
         messageId: "m1",
+        messageIds: ["m1"],
         role: "assistant",
         label: "Assistant · gpt",
         tokens: selected.tokens,

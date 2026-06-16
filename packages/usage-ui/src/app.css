@@ -575,7 +575,7 @@ button {
   align-self: center;
   justify-self: center;
   position: relative;
-  width: 18px;
+  width: 22px;
   height: calc(var(--row-height) * 320px);
   min-height: 4px;
   display: grid;
@@ -591,7 +591,7 @@ button {
 
 .duration-ruler-label {
   position: absolute;
-  left: 1px;
+  left: 8px;
   top: 50%;
   transform: translate(-100%, -50%) rotate(-90deg);
   color: #aab8af;

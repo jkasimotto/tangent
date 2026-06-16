@@ -192,6 +192,46 @@ test("backfills timeline command steps into conversation tool events", () => {
   assert.equal(view.messages[1].toolCalls[0].durationLabel, "1s");
 });
 
+test("sizes paired command chart segments by tool wall time", () => {
+  const view = buildUsageConversationView(
+    { id: "s1", provider: "codex", title: "Commands", endedAt: "2026-06-16T10:00:20.000Z", metrics: {}, availability: { notes: [] } },
+    [],
+    [
+      { id: "user1", role: "user", textPreview: "Go", createdAt: "2026-06-16T10:00:00.000Z", toolCalls: [] },
+      { id: "m1", role: "assistant", textPreview: "Working", createdAt: "2026-06-16T10:00:01.000Z", tokenUsage: { total: 10 }, toolCalls: [] }
+    ],
+    [
+      { id: "cmd1", kind: "command", label: "exec_command", startedAt: "2026-06-16T10:00:02.000Z", order: 1, metrics: {} },
+      { id: "result1", kind: "tool_result", label: "exec_command result", startedAt: "2026-06-16T10:00:03.000Z", order: 2, metrics: {} },
+      { id: "cmd2", kind: "command", label: "exec_command", startedAt: "2026-06-16T10:00:04.000Z", order: 3, metrics: {} },
+      { id: "result2", kind: "tool_result", label: "exec_command result", startedAt: "2026-06-16T10:00:05.000Z", order: 4, metrics: {} }
+    ],
+    {
+      toolCalls: [{
+        id: "tool1",
+        stepId: "cmd1",
+        resultStepId: "result1",
+        toolName: "exec_command",
+        status: "success",
+        result: { outputPreview: "Chunk ID: a Wall time: 0.2500 seconds Process exited with code 0 Output:" }
+      }, {
+        id: "tool2",
+        stepId: "cmd2",
+        resultStepId: "result2",
+        toolName: "exec_command",
+        status: "success",
+        result: { outputPreview: "Chunk ID: b Wall time: 1.0000 seconds Process exited with code 0 Output:" }
+      }]
+    }
+  );
+
+  assert.deepEqual(view.chart.rows[0].segments.map((segment) => segment.stepId), ["cmd1", "cmd2"]);
+  assert.equal(view.chart.rows[0].segments[0].durationMs, 250);
+  assert.equal(view.chart.rows[0].segments[1].durationMs, 1000);
+  assert.equal(view.chart.rows[0].segments[0].heightShare, 0.2);
+  assert.equal(view.chart.rows[0].segments[1].heightShare, 0.8);
+});
+
 test("builds conversation token labels from context and output usage", () => {
   const view = buildUsageConversationView(
     { id: "s1", provider: "codex", title: "Tokens", metrics: {}, availability: { notes: [] } },

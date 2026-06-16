@@ -44,7 +44,7 @@ export function buildUsageConversationView(
   const query = (options.query || "").trim().toLowerCase();
   const visibleSessions = query ? sessions.filter((session) => sessionMatches(session, query)) : sessions;
   const baseConversationMessages = messages.map(conversationMessage);
-  const rows = chartRows(baseConversationMessages, messages, steps, selectedSession.endedAt);
+  const rows = chartRows(baseConversationMessages, messages, steps, selectedSession.endedAt, options.toolCalls || []);
   const conversationMessages = withTimelineToolEvents(baseConversationMessages, rows, options.toolCalls || []);
   const maxTokens = Math.max(1, ...rows.map((row) => row.tokens || 0));
   const maxDurationMs = Math.max(1, ...rows.map((row) => row.durationMs || 0));
@@ -92,7 +92,7 @@ function withTimelineToolEvents(messages: UsageConversationMessage[], rows: Usag
           id: tool.id,
           name: tool.toolName || tool.name || segment.label,
           status: tool.status,
-          durationLabel: formatDuration(tool.result?.durationMs) || segment.durationLabel,
+          durationLabel: formatDuration(toolDuration(tool)) || segment.durationLabel,
           target: tool.targetPaths?.[0],
           commandPreview: toolInputPreview(tool.input),
           workdir: toolWorkdir(tool.input) || tool.targetPaths?.[0],
@@ -172,6 +172,19 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 
+/** Returns structured or parsed duration for a tool call result. */
+function toolDuration(tool: UsageConversationToolCall | NonNullable<UsageMessage["toolCalls"]>[number]): number | undefined {
+  return finiteNumber(tool.result?.durationMs) ?? parseWallTimeMs(tool.result?.outputPreview);
+}
+
+/** Parses Codex exec wall-time text into milliseconds. */
+function parseWallTimeMs(value: string | undefined): number | undefined {
+  const match = /\bWall time:\s*([0-9]+(?:\.[0-9]+)?)\s*seconds\b/i.exec(value || "");
+  if (!match) return undefined;
+  const seconds = Number(match[1]);
+  return Number.isFinite(seconds) ? Math.max(0, Math.round(seconds * 1000)) : undefined;
+}
+
 /** Converts a session to a conversation picker row. */
 function sessionItem(session: UsageSession): UsageConversationSessionItem {
   const lastActivityAt = session.lastActivityAt || session.endedAt || session.startedAt;
@@ -238,7 +251,7 @@ function conversationMessage(message: UsageMessage): UsageConversationMessage {
       id: call.id,
       name: call.toolName || call.name || "tool",
       status: call.status,
-      durationLabel: formatDuration(call.result?.durationMs),
+      durationLabel: formatDuration(toolDuration(call)),
       target: call.targetPaths?.[0],
       commandPreview: toolInputPreview(call.input),
       workdir: toolWorkdir(call.input) || call.targetPaths?.[0],
@@ -261,14 +274,20 @@ type WorkTurn = {
   messages: UsageConversationMessage[];
 };
 
+type ToolTimingIndex = {
+  durationsByStepId: Map<string, number>;
+  pairedResultStepIds: Set<string>;
+};
+
 /** Builds chart rows grouped by user-request work turns. */
-function chartRows(conversationMessages: UsageConversationMessage[], rawMessages: UsageMessage[], steps: UsageStep[], sessionEndedAt?: string): UsageConversationChartRow[] {
+function chartRows(conversationMessages: UsageConversationMessage[], rawMessages: UsageMessage[], steps: UsageStep[], sessionEndedAt?: string, toolCalls: UsageConversationToolCall[] = []): UsageConversationChartRow[] {
   const rawById = new Map(rawMessages.map((message) => [message.id, message]));
   const stepCandidates = steps.filter((step) => step.kind !== "session" && step.kind !== "turn" && step.kind !== "user_message");
+  const toolTiming = toolTimingIndex(toolCalls);
   return workTurns(conversationMessages, rawMessages, sessionEndedAt).map((turn, index) => {
     const linked = linkedWorkTurnSteps(turn, rawById, steps, stepCandidates);
-    const segments = chartSegments(turn.primaryMessageId, linked);
-    const duration = workTurnDuration(turn) ?? stepDurationTotal(linked) ?? segmentDurationTotal(segments);
+    const segments = chartSegments(turn.primaryMessageId, linked, toolTiming);
+    const duration = workTurnDuration(turn) ?? stepDurationTotal(linked, toolTiming) ?? segmentDurationTotal(segments);
     const tokenUsage = workTurnTokenUsage(turn.rawMessages);
     const tokens = workTurnTokens(tokenUsage);
     return {
@@ -432,18 +451,38 @@ function maxNumbers(values: Array<number | undefined>): number | undefined {
   return present.length ? Math.max(...present) : undefined;
 }
 
+/** Indexes tool-call durations onto command steps and marks paired result steps. */
+function toolTimingIndex(toolCalls: UsageConversationToolCall[]): ToolTimingIndex {
+  const durationsByStepId = new Map<string, number>();
+  const pairedResultStepIds = new Set<string>();
+  for (const tool of toolCalls) {
+    const duration = toolDuration(tool);
+    if (duration !== undefined) {
+      if (tool.stepId) durationsByStepId.set(tool.stepId, duration);
+      else if (tool.resultStepId) durationsByStepId.set(tool.resultStepId, duration);
+    }
+    if (tool.stepId && tool.resultStepId) pairedResultStepIds.add(tool.resultStepId);
+  }
+  return { durationsByStepId, pairedResultStepIds };
+}
+
+/** Resolves a step duration using timeline data first, then paired tool-call timing. */
+function timedStepDuration(step: UsageStep, toolTiming: ToolTimingIndex): number | undefined {
+  return stepDuration(step) ?? toolTiming.durationsByStepId.get(step.id);
+}
+
 /** Narrows undefined values out of arrays. */
 function isDefined<T>(value: T | undefined): value is T {
   return value !== undefined;
 }
 
 /** Converts linked steps to proportional row segments. */
-function chartSegments(messageId: string, steps: UsageStep[]): UsageConversationChartSegment[] {
-  const visible = steps.filter((step) => step.kind !== "turn" && step.kind !== "session");
-  const durations = visible.map((step) => stepDuration(step));
+function chartSegments(messageId: string, steps: UsageStep[], toolTiming: ToolTimingIndex): UsageConversationChartSegment[] {
+  const visible = steps.filter((step) => step.kind !== "turn" && step.kind !== "session" && !toolTiming.pairedResultStepIds.has(step.id));
+  const durations = visible.map((step) => timedStepDuration(step, toolTiming));
   const durationTotal = durations.reduce<number>((sum, value) => sum + (value || 0), 0);
   return visible.map((step, index) => {
-    const duration = stepDuration(step);
+    const duration = timedStepDuration(step, toolTiming);
     return {
       id: `${messageId}:${step.id}`,
       label: cleanTitle(step.label || step.toolName || stepKindLabel(step.kind), `Step ${index + 1}`),
@@ -452,7 +491,7 @@ function chartSegments(messageId: string, steps: UsageStep[]): UsageConversation
       stepId: step.id,
       durationMs: duration,
       durationLabel: formatDuration(duration),
-      heightShare: durationTotal > 0 && duration !== undefined ? Math.max(0.04, duration / durationTotal) : 1 / Math.max(1, visible.length),
+      heightShare: durationTotal > 0 && duration !== undefined ? duration / durationTotal : 1 / Math.max(1, visible.length),
       confidence: confidenceOrUnknown(step.durationConfidence || step.confidence)
     };
   });
@@ -485,7 +524,7 @@ function messageTitle(message: UsageMessage): string {
 /** Resolves message duration from its own fields or tool-call results. */
 function messageDuration(message: UsageMessage): number | undefined {
   const direct = typeof message.providerFields?.durationMs === "number" ? message.providerFields.durationMs : undefined;
-  const toolTotal = (message.toolCalls || []).reduce((sum, call) => sum + (call.result?.durationMs || 0), 0);
+  const toolTotal = (message.toolCalls || []).reduce((sum, call) => sum + (toolDuration(call) || 0), 0);
   return direct ?? (toolTotal || undefined);
 }
 
@@ -501,8 +540,8 @@ function segmentKind(step: UsageStep): UsageConversationChartSegment["kind"] {
 }
 
 /** Sums linked Usage step durations. */
-function stepDurationTotal(values: UsageStep[]): number | undefined {
-  const total = values.reduce((sum, value) => sum + (stepDuration(value) || 0), 0);
+function stepDurationTotal(values: UsageStep[], toolTiming: ToolTimingIndex): number | undefined {
+  const total = values.reduce((sum, value) => sum + (toolTiming.pairedResultStepIds.has(value.id) ? 0 : timedStepDuration(value, toolTiming) || 0), 0);
   return total || undefined;
 }
 

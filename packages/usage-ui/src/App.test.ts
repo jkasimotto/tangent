@@ -28,6 +28,7 @@ describe("usage svelte app", () => {
     expect(screen.queryByText("Assistant · gpt")).not.toBeInTheDocument();
     expect(container.querySelector(".row-label")).not.toBeInTheDocument();
     expect(container.querySelector(".caveats")).not.toBeInTheDocument();
+    expect(container.querySelector(".duration-ruler-label")).toHaveTextContent("1m");
     expect(container.querySelector(".tool-event")).toHaveTextContent("npm test -w @tangent/usage-ui");
     expect(container.querySelector(".tool-event")).not.toHaveTextContent("Chunk ID");
   });

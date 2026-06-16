@@ -538,9 +538,9 @@ button {
 
 .chart-row {
   display: grid;
-  grid-template-columns: minmax(130px, 1fr) minmax(98px, 0.28fr);
+  grid-template-columns: 24px minmax(130px, 1fr) minmax(98px, 0.28fr);
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   width: 100%;
   min-height: 28px;
   border: 1px solid transparent;
@@ -571,6 +571,38 @@ button {
   font-size: 12px;
 }
 
+.duration-ruler {
+  align-self: center;
+  justify-self: center;
+  position: relative;
+  width: 18px;
+  height: calc(var(--row-height) * 320px);
+  min-height: 4px;
+  display: grid;
+  place-items: center;
+}
+
+.duration-ruler-line {
+  width: 2px;
+  height: 100%;
+  border-radius: 999px;
+  background: rgb(127 210 179 / 42%);
+}
+
+.duration-ruler-label {
+  position: absolute;
+  left: 1px;
+  top: 50%;
+  transform: translate(-100%, -50%) rotate(-90deg);
+  color: #aab8af;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  opacity: 0.82;
+  pointer-events: none;
+}
+
 .bar {
   width: calc(max(0.02, var(--row-width)) * 100%);
   min-width: 4px;
@@ -578,7 +610,6 @@ button {
   min-height: 4px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
   border-radius: 5px;
   background: #315a4d;
   overflow: hidden;
@@ -589,22 +620,26 @@ button {
   background: #6f7d74;
 }
 
+.anchor .duration-ruler {
+  height: 4px;
+}
+
+.anchor .duration-ruler-label {
+  display: none;
+}
+
 .segment {
-  min-height: 4px;
-  flex: max(0.04, var(--segment-height));
-  display: grid;
-  align-items: center;
+  min-height: 1px;
+  flex: var(--segment-height) 1 0;
   background: #7fd2b3;
   color: #07100c;
-  padding: 0 6px;
-  font-size: 10px;
+  padding: 0;
+  font-size: 0;
   overflow: hidden;
 }
 
 .segment span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: none;
 }
 
 .segment-tool,

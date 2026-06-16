@@ -383,6 +383,10 @@
                 aria-label={chartLabel(row)}
                 onclick={() => activate(row.messageId, "chart")}
               >
+                <span class="duration-ruler" aria-hidden="true">
+                  <span class="duration-ruler-line"></span>
+                  <span class="duration-ruler-label">{row.durationLabel || "unknown"}</span>
+                </span>
                 <span class="bar" aria-label={chartLabel(row)}>
                   {#if row.segments.length}
                     {#each row.segments as segment}

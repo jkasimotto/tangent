@@ -582,7 +582,7 @@ function toolCall(call: NonNullable<UsageDomainMessage["toolCalls"]>[number]): U
     id: call.id,
     name: call.toolName || call.name || "tool",
     status: call.status,
-    durationMs: call.result?.durationMs,
+    durationMs: toolResultDuration(call.result),
     target: call.targetPaths?.[0],
     commandPreview: toolInputPreview(call.input),
     workdir: toolWorkdir(call.input) || call.targetPaths?.[0],
@@ -605,7 +605,7 @@ function conversationToolCall(call: UsageDomainToolCall): UsageConversationToolC
     targetPaths: call.targetPaths,
     result: call.result
       ? {
-          durationMs: call.result.durationMs,
+          durationMs: toolResultDuration(call.result),
           outputPreview: call.result.outputPreview
         }
       : undefined
@@ -654,6 +654,19 @@ function cleanToolResultPreview(value: string | undefined): string | undefined {
     .join("\n")
     .trim();
   return cleaned || (hasBoilerplate ? undefined : text);
+}
+
+/** Returns structured or parsed duration for a domain tool result. */
+function toolResultDuration(result: { durationMs?: number; outputPreview?: string } | undefined): number | undefined {
+  return numberValue(result?.durationMs) ?? parseWallTimeMs(result?.outputPreview);
+}
+
+/** Parses Codex exec wall-time text into milliseconds. */
+function parseWallTimeMs(value: string | undefined): number | undefined {
+  const match = /\bWall time:\s*([0-9]+(?:\.[0-9]+)?)\s*seconds\b/i.exec(value || "");
+  if (!match) return undefined;
+  const seconds = Number(match[1]);
+  return Number.isFinite(seconds) ? Math.max(0, Math.round(seconds * 1000)) : undefined;
 }
 
 /** Normalizes a domain session into the cockpit DTO input shape. */

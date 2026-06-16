@@ -1,0 +1,29 @@
+{
+  "name": "@tangent/trees-git",
+  "version": "0.1.0",
+  "description": "Project registry and Git worktree orchestration for Tangent Trees.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@tangent/repo": "^0.1.0",
+    "@tangent/trees-core": "^0.1.0",
+    "@tangent/trees-schema": "^0.1.0"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}

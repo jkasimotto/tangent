@@ -5,6 +5,7 @@ import { rollupCommandSpec, runRollupCli } from "@tangent/rollup/cli";
 import { evalCommandSpec, runEvalCli } from "@tangent/eval/cli";
 import { governanceCommandSpec, runGovernanceCli } from "@tangent/governance/cli";
 import { runSearchCli, searchCommandSpec } from "@tangent/search/cli";
+import { runTreesCli, treesCommandSpec } from "@tangent/trees-cli/cli";
 import { dataCommandSpec, devCommandSpec, doctorCommandSpec, runProductStatusCommand, runSetupCommand, setupCommandSpec, statusCommandSpec } from "./product.js";
 
 const tangentCommandSpec: CliCommandSpec = {
@@ -14,6 +15,7 @@ const tangentCommandSpec: CliCommandSpec = {
     setupCommandSpec,
     statusCommandSpec,
     usageCommandSpec,
+    treesCommandSpec,
     rollupCommandSpec,
     searchCommandSpec,
     evalCommandSpec,
@@ -35,6 +37,7 @@ const tangentCommandSpec: CliCommandSpec = {
   ]
 };
 
+/** Documents the main helper. */
 async function main(argv = process.argv.slice(2)): Promise<void> {
   const [app, ...rest] = argv;
 
@@ -55,6 +58,11 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
 
   if (app === "usage") {
     await runUsageCli(rest);
+    return;
+  }
+
+  if (app === "trees") {
+    await runTreesCli(rest);
     return;
   }
 
@@ -119,6 +127,7 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
   throw new Error(`Unknown command: ${app}`);
 }
 
+/** Documents the help helper. */
 function help(): void {
   console.log(renderCommandHelp(tangentCommandSpec));
   console.log(`
@@ -126,6 +135,8 @@ Examples:
   tangent setup
   tangent status
   tangent usage today
+  tangent trees list
+  tangent trees ui
   tangent usage transcript codex:019ea3ad
   tangent rollup today
   tangent rollup 20260601-20260610
@@ -136,6 +147,7 @@ Examples:
 `);
 }
 
+/** Documents the shellArg helper. */
 function shellArg(value: string | undefined): CliCompletionShell {
   if (value === "bash" || value === "zsh" || value === "fish") return value;
   throw new Error("completion requires bash, zsh, or fish.");

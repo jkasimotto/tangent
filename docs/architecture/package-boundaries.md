@@ -21,6 +21,22 @@ Vertical apps:
 - @tangent/rollup owns rollup note schemas, period-level user-message rollup inputs, examples, rendering, ledgers, and summarization workflows.
 - @tangent/eval owns eval specs, contexts, run manifests, metrics, reports, diffs, and the local eval comparison UI.
 - @tangent/search owns structural indexing and search.
+- Tangent Trees owns the `tangent trees` command center across split packages: schema, core, FS store, optional SQLite projection boundary, Git, terminal runtimes, agent adapters, attention, MCP, CLI, local server, UI data, and UI.
+
+Split Trees packages:
+- @tangent/trees-schema has no Node-only runtime integrations, UI, SQLite, tmux, Git adapters, or old `pa` code.
+- @tangent/trees-core has event APIs, projections, and lifecycle services with no React, SQLite, tmux implementation, iTerm, or old `pa` imports.
+- @tangent/trees-store-fs owns the canonical V1 event log under `~/.tangent/trees`.
+- @tangent/trees-store-sqlite is optional projection/index infrastructure and is not imported by core.
+- @tangent/trees-git owns project/worktree behavior and may use `@tangent/repo`.
+- @tangent/trees-terminal owns tmux/process runtime adapters.
+- @tangent/trees-agents owns manual/custom/Codex/Claude/Gemini command adapters.
+- @tangent/trees-attention owns status resolution and deterministic attention rules.
+- @tangent/trees-mcp owns typed MCP tools.
+- @tangent/trees-cli owns the CLI adapter and must not import React.
+- @tangent/trees-server owns the loopback local server and serves `trees-ui` assets.
+- @tangent/trees-ui-data is React-free DTO mapping.
+- @tangent/trees-ui owns React command-center components and must not import old `pa` code.
 
 Split Usage packages:
 - @tangent/usage-schema has no UI, SQLite, or provider parser dependencies.
@@ -53,3 +69,4 @@ Hard rules:
 - `ui-*` packages must not import Usage, Eval, Rollup, or Search product packages, except `ui-docs` may import product UI packages for examples.
 - agent-runtime must not import Rollup or Eval schemas.
 - Cross-package imports must use public package exports.
+- Trees package boundaries are enforced by `deps/trees-boundaries`.

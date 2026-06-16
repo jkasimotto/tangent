@@ -54,6 +54,7 @@ const allowedPackageDeps: Record<string, string[]> = {
   "tangent": [
     "@tangent/core",
     "@tangent/repo",
+    "@tangent/trees-cli",
     "@tangent/agent-runtime",
     "@tangent/governance",
     "@tangent/usage",
@@ -63,6 +64,19 @@ const allowedPackageDeps: Record<string, string[]> = {
   ],
   "@tangent/core": [],
   "@tangent/repo": ["@tangent/core"],
+  "@tangent/trees-schema": [],
+  "@tangent/trees-core": ["@tangent/trees-schema"],
+  "@tangent/trees-store-fs": ["@tangent/trees-schema", "@tangent/trees-core"],
+  "@tangent/trees-store-sqlite": ["@tangent/trees-schema", "@tangent/trees-core"],
+  "@tangent/trees-git": ["@tangent/trees-schema", "@tangent/trees-core", "@tangent/repo"],
+  "@tangent/trees-terminal": ["@tangent/trees-schema", "@tangent/trees-core", "@tangent/core", "@tangent/agent-runtime"],
+  "@tangent/trees-agents": ["@tangent/trees-schema", "@tangent/trees-core"],
+  "@tangent/trees-attention": ["@tangent/trees-schema"],
+  "@tangent/trees-mcp": ["@tangent/trees-schema", "@tangent/trees-core"],
+  "@tangent/trees-ui-data": ["@tangent/trees-schema", "@tangent/trees-core"],
+  "@tangent/trees-ui": ["@tangent/trees-ui-data", "@tangent/ui-tokens", "@tangent/ui-primitives", "@tangent/ui-components", "@tangent/ui-patterns", "@tangent/ui-app-shell"],
+  "@tangent/trees-server": ["@tangent/core", "@tangent/trees-core", "@tangent/trees-store-fs", "@tangent/trees-ui-data", "@tangent/trees-ui", "@tangent/ui-server"],
+  "@tangent/trees-cli": ["@tangent/core", "@tangent/trees-schema", "@tangent/trees-core", "@tangent/trees-store-fs", "@tangent/trees-git", "@tangent/trees-terminal", "@tangent/trees-agents", "@tangent/trees-attention", "@tangent/trees-mcp", "@tangent/trees-server"],
   "@tangent/agent-runtime": ["@tangent/core"],
   "@tangent/governance": ["@tangent/core", "@tangent/repo"],
   "@tangent/usage-schema": [],
@@ -99,7 +113,7 @@ export async function lintGovernance(options: GovernanceLintOptions = {}): Promi
   const ctx = { root, packages: await packageInfos(root) };
 
   if (hasGroup(groups, "agents") || hasGroup(groups, "docs")) findings.push(...await lintAgentDocs(ctx));
-  if (hasGroup(groups, "deps")) findings.push(...await lintPackageDeps(ctx), ...await lintPackageInstallability(ctx), ...await lintImports(ctx), ...await lintUsageDependencyLightEntrypoints(ctx), ...await lintUiPackageBoundaries(ctx));
+  if (hasGroup(groups, "deps")) findings.push(...await lintPackageDeps(ctx), ...await lintPackageInstallability(ctx), ...await lintImports(ctx), ...await lintUsageDependencyLightEntrypoints(ctx), ...await lintUiPackageBoundaries(ctx), ...await lintTreesPackageBoundaries(ctx));
   if (hasGroup(groups, "shared")) findings.push(...await lintSharedHelpers(ctx));
   if (hasGroup(groups, "hooks")) findings.push(...await lintHookBoundaries(ctx));
   if (hasGroup(groups, "files")) findings.push(...await lintFileSizes(ctx));
@@ -311,8 +325,8 @@ async function lintUsageDependencyLightEntrypoints(ctx: LintContext): Promise<Go
 /** Supports the lint ui package boundaries helper. */
 async function lintUiPackageBoundaries(ctx: LintContext): Promise<GovernanceFinding[]> {
   const findings: GovernanceFinding[] = [];
-  const productPackages = new Set(["@tangent/usage", "@tangent/eval", "@tangent/rollup", "@tangent/search"]);
-  const apiOnlyPackages = new Set(["@tangent/usage-schema", "@tangent/usage-core"]);
+  const productPackages = new Set(["@tangent/usage", "@tangent/eval", "@tangent/rollup", "@tangent/search", "@tangent/trees-cli"]);
+  const apiOnlyPackages = new Set(["@tangent/usage-schema", "@tangent/usage-core", "@tangent/trees-schema", "@tangent/trees-core"]);
   for (const file of await sourceFiles(ctx.root)) {
     const owner = ownerPackage(file, ctx.packages);
     if (!owner) continue;
@@ -354,6 +368,63 @@ async function lintUiPackageBoundaries(ctx: LintContext): Promise<GovernanceFind
     }
   }
   return findings;
+}
+
+/** Supports Tangent Trees package-boundary guardrails. */
+async function lintTreesPackageBoundaries(ctx: LintContext): Promise<GovernanceFinding[]> {
+  const findings: GovernanceFinding[] = [];
+  for (const file of await sourceFiles(ctx.root)) {
+    const owner = ownerPackage(file, ctx.packages);
+    if (!owner) continue;
+    const rel = relative(ctx.root, file);
+    const text = await readFile(file, "utf8");
+    const imports = importSpecifiers(text);
+    const tangentImports = imports.map(tangentPackageName).filter((value): value is string => Boolean(value));
+
+    if (owner.name === "@tangent/trees-core") {
+      if (tangentImports.includes("@tangent/trees-ui")) {
+        findings.push(treeBoundaryFinding(rel, "trees-core imports trees-ui.", "Move view logic to trees-ui-data or trees-ui."));
+      }
+      if (/tmux|createTmuxRuntimeAdapter|tmuxSessionNameForEntityPath/.test(text)) {
+        findings.push(treeBoundaryFinding(rel, "trees-core references tmux implementation details.", "Keep tmux behavior inside @tangent/trees-terminal."));
+      }
+      if (/from\s+["']better-sqlite3["']|import\s+["']better-sqlite3["']/.test(text)) {
+        findings.push(treeBoundaryFinding(rel, "trees-core imports better-sqlite3.", "Move SQLite behavior to @tangent/trees-store-sqlite."));
+      }
+    }
+
+    if (owner.name === "@tangent/trees-schema") {
+      const forbidden = imports.find((specifier) => specifier === "node:child_process" || /sqlite|better-sqlite3/.test(specifier));
+      if (forbidden) findings.push(treeBoundaryFinding(rel, `trees-schema imports forbidden runtime dependency ${forbidden}.`, "Keep schema dependency-light and adapter-free."));
+    }
+
+    if (owner.name === "@tangent/trees-ui") {
+      const oldPaImport = imports.find((specifier) => /(^|\/)(pa|otto-pa)(\/|$)/.test(specifier) || specifier.includes("otto-pa"));
+      if (oldPaImport || /user\.pa_|current_pulse\.conf|pulses\.jsonl|\.state|\.tokens|\.label/.test(text)) {
+        findings.push(treeBoundaryFinding(rel, "trees-ui references old pa code or sidecar concepts.", "Keep legacy pa handling in explicit import code only."));
+      }
+    }
+
+    if (owner.name === "@tangent/trees-cli" && tangentImports.includes("@tangent/trees-ui")) {
+      findings.push(treeBoundaryFinding(rel, "trees-cli imports React UI package.", "Run the UI through trees-server and static assets instead."));
+    }
+
+    if (owner.name === "@tangent/trees-cli" && imports.includes("react")) {
+      findings.push(treeBoundaryFinding(rel, "trees-cli imports React.", "Keep CLI output text/JSON only."));
+    }
+  }
+  return findings;
+}
+
+/** Documents the treeBoundaryFinding helper. */
+function treeBoundaryFinding(file: string, message: string, fix: string): GovernanceFinding {
+  return {
+    rule: "deps/trees-boundaries",
+    severity: "error",
+    file,
+    message,
+    fix: [fix]
+  };
 }
 
 /** Supports the lint shared helpers helper. */

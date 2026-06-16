@@ -1,0 +1,32 @@
+{
+  "name": "@tangent/trees-server",
+  "version": "0.1.0",
+  "description": "Local HTTP server for Tangent Center.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@tangent/core": "^0.1.0",
+    "@tangent/trees-core": "^0.1.0",
+    "@tangent/trees-store-fs": "^0.1.0",
+    "@tangent/trees-ui": "^0.1.0",
+    "@tangent/trees-ui-data": "^0.1.0",
+    "@tangent/ui-server": "^0.1.0"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -4,6 +4,7 @@
 root CLI
   -> @tangent/usage
   -> @tangent/usage/cli
+  -> @tangent/trees-cli/cli
   -> @tangent/rollup
   -> @tangent/rollup/cli
   -> @tangent/search
@@ -15,6 +16,7 @@ root CLI
 @tangent/eval -> @tangent/usage, @tangent/core, @tangent/repo, @tangent/agent-runtime
 @tangent/usage -> @tangent/core, @tangent/repo (optional: better-sqlite3 behind @tangent/usage/sqlite)
 @tangent/search -> @tangent/core, @tangent/repo
+@tangent/trees-cli -> @tangent/core, @tangent/trees-schema, @tangent/trees-core, @tangent/trees-store-fs, @tangent/trees-git, @tangent/trees-terminal, @tangent/trees-agents, @tangent/trees-attention, @tangent/trees-mcp, @tangent/trees-server
 @tangent/repo -> @tangent/core
 @tangent/agent-runtime -> @tangent/core
 @tangent/governance -> @tangent/core
@@ -45,6 +47,23 @@ UI graph:
 @tangent/usage-ui -> @tangent/usage-ui-data, ui-* packages
 @tangent/eval-ui -> @tangent/eval-ui-data, ui-* packages
 @tangent/rollup-ui -> @tangent/rollup-ui-data, @tangent/usage-ui, ui-* packages
+```
+
+Trees graph:
+
+```text
+@tangent/trees-schema -> none
+@tangent/trees-core -> @tangent/trees-schema
+@tangent/trees-store-fs -> @tangent/trees-core, @tangent/trees-schema
+@tangent/trees-store-sqlite -> @tangent/trees-core, @tangent/trees-schema
+@tangent/trees-git -> @tangent/trees-core, @tangent/trees-schema, @tangent/repo
+@tangent/trees-terminal -> @tangent/trees-core, @tangent/trees-schema, @tangent/core, @tangent/agent-runtime
+@tangent/trees-agents -> @tangent/trees-core, @tangent/trees-schema
+@tangent/trees-attention -> @tangent/trees-schema
+@tangent/trees-mcp -> @tangent/trees-core, @tangent/trees-schema
+@tangent/trees-ui-data -> @tangent/trees-core, @tangent/trees-schema
+@tangent/trees-ui -> @tangent/trees-ui-data, ui-* packages
+@tangent/trees-server -> @tangent/trees-core, @tangent/trees-store-fs, @tangent/trees-ui-data, @tangent/trees-ui, @tangent/ui-server, @tangent/core
 ```
 
 The graph is enforced by @tangent/governance. If a package dependency changes, update this file and the lint allowlist in the same change. Usage subpaths `/schema`, `/core`, and `/query` are dependency-light entrypoints and must not load optional SQLite.

@@ -1,0 +1,29 @@
+{
+  "name": "@tangent/trees-agents",
+  "version": "0.1.0",
+  "description": "Agent command adapters for Tangent Trees.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build -w @tangent/trees-schema && npm run build && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@tangent/trees-core": "^0.1.0",
+    "@tangent/trees-schema": "^0.1.0"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}

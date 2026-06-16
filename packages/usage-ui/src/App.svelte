@@ -234,9 +234,9 @@
                 class:anchor={row.anchor}
                 class="chart-row"
                 style={`--row-width:${row.widthShare}; --row-height:${row.heightShare};`}
+                aria-label={chartLabel(row)}
                 on:click={() => activate(row.messageId, "chart")}
               >
-                <span class="row-label">{row.label}</span>
                 <span class="bar" aria-label={chartLabel(row)}>
                   {#if row.segments.length}
                     {#each row.segments as segment}
@@ -250,13 +250,6 @@
               </button>
             {/each}
           </div>
-          {#if view.caveats.length}
-            <footer class="caveats">
-              {#each view.caveats as caveat}
-                <p>{caveat}</p>
-              {/each}
-            </footer>
-          {/if}
         </div>
       </div>
     </aside>

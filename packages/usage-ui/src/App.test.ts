@@ -25,7 +25,9 @@ describe("usage svelte app", () => {
     expect(container.querySelector(".finder-rail")).not.toBeInTheDocument();
     expect(container.querySelector(".chart-rail")).not.toBeInTheDocument();
     expect(container.querySelector(".chart-toggle")).not.toBeInTheDocument();
-    expect(screen.getAllByText("Assistant · gpt")).toHaveLength(2);
+    expect(screen.getAllByText("Assistant · gpt")).toHaveLength(1);
+    expect(container.querySelector(".row-label")).not.toBeInTheDocument();
+    expect(container.querySelector(".caveats")).not.toBeInTheDocument();
     expect(screen.getByText("exec")).toBeInTheDocument();
   });
 

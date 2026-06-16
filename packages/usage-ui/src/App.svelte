@@ -84,8 +84,26 @@
   function scrollToPair(messageId: string, source: "message" | "chart"): void {
     const target = source === "message" ? rowElements.get(messageId) : messageElements.get(messageId);
     if (target && typeof target.scrollIntoView === "function") {
-      target.scrollIntoView({ block: "center" });
+      target.scrollIntoView({ block: source === "chart" ? "start" : "center" });
     }
+  }
+
+  function activateChartRow(row: UsageConversationChartRow): void {
+    activate(chartRowAnchorMessageId(row), "chart");
+  }
+
+  function chartRowAnchorMessageId(row: UsageConversationChartRow): string {
+    const ids = rowIds(row.messageIds || row.messageId);
+    const rowUserMessage = ids.find((id) => view?.messages.find((message) => message.id === id)?.role === "user");
+    if (rowUserMessage) return rowUserMessage;
+
+    const messageIndex = view?.messages.findIndex((message) => message.id === row.messageId) ?? -1;
+    if (!view || messageIndex < 0) return row.messageId;
+    for (let index = messageIndex; index >= 0; index -= 1) {
+      const message = view.messages[index];
+      if (message?.role === "user") return message.id;
+    }
+    return row.messageId;
   }
 
   function rememberMessage(node: HTMLElement, id: string): { destroy(): void } {
@@ -381,7 +399,7 @@
                 class="chart-row"
                 style={`--row-width:${row.widthShare}; --row-height:${row.heightShare};`}
                 aria-label={chartLabel(row)}
-                onclick={() => activate(row.messageId, "chart")}
+                onclick={() => activateChartRow(row)}
               >
                 <span class="duration-ruler" aria-hidden="true">
                   <span class="duration-ruler-line"></span>

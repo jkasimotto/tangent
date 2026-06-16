@@ -114,6 +114,39 @@ describe("usage svelte app", () => {
     expect(container.querySelector(".chart-row")).toHaveClass("active");
   });
 
+  it("scrolls grouped work turns to their user prompt at the top of the conversation pane", async () => {
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(window.HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView
+    });
+    const view = fakeConversationView();
+    view.messages.unshift({
+      id: "u1",
+      role: "user",
+      title: "User",
+      textPreview: "Please implement the UI",
+      confidence: "exact",
+      toolCalls: []
+    });
+    view.chart.rows[0].messageIds = ["u1", "m1"];
+    const { container } = render(App, {
+      props: {
+        client: fakeUsageClient({
+          /** Returns a fixture view with a work turn anchored by a user prompt. */
+          getConversationView: async () => view
+        })
+      }
+    });
+
+    expect(await screen.findByText("Done")).toBeInTheDocument();
+    scrollIntoView.mockClear();
+    await fireEvent.click(container.querySelector<HTMLButtonElement>(".chart-row")!);
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+    expect(scrollIntoView.mock.contexts.at(-1)).toBe(container.querySelector(".message-user"));
+  });
+
   it("previews long messages until they are expanded", async () => {
     const longText = `${"a".repeat(360)} hidden suffix`;
     const view = fakeConversationView();

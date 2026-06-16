@@ -560,11 +560,13 @@ test("usage core client satisfies query, timeline, analytics, capabilities, raw,
   assert.equal(typeof createUsageClient, "function");
 });
 
+/** Writes JSONL fixture events to disk for index tests. */
 async function writeJsonl(filePath, events) {
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, `${events.map((event) => JSON.stringify(event)).join("\n")}\n`, "utf8");
 }
 
+/** Builds a single-turn Codex native fixture. */
 function codexNativeSession({ repo, sessionId, prompt, complete }) {
   const turnId = `${sessionId}-turn`;
   return [
@@ -603,6 +605,7 @@ function codexNativeSession({ repo, sessionId, prompt, complete }) {
   ];
 }
 
+/** Builds a Codex native fixture with two unique token snapshots. */
 function codexNativeTwoSnapshotSession({ repo, sessionId }) {
   const turnId = `${sessionId}-turn`;
   return [
@@ -671,6 +674,7 @@ function codexNativeTwoSnapshotSession({ repo, sessionId }) {
   ];
 }
 
+/** Builds a Claude native fixture with assistant usage and tool result rows. */
 function claudeNativeSession({ repo, sessionId }) {
   return [
     {
@@ -737,6 +741,7 @@ function claudeNativeSession({ repo, sessionId }) {
   ];
 }
 
+/** Builds a Claude native fixture with two tool calls in one assistant message. */
 function claudeNativeTwoToolSession() {
   const sessionId = "claude-two-tools";
   return [
@@ -816,10 +821,12 @@ function claudeNativeTwoToolSession() {
   ];
 }
 
+/** Converts a repo root into Claude's project directory key. */
 function claudeProjectKey(repoRoot) {
   return repoRoot.replace(/\//g, "-").replace(/^-/, "-");
 }
 
+/** Builds a Codex rollout fixture for native schema compatibility tests. */
 function codexRollout({ repo, sessionId, version }) {
   return [
     {
@@ -856,6 +863,7 @@ function codexRollout({ repo, sessionId, version }) {
   ].map((record) => JSON.stringify(record)).join("\n");
 }
 
+/** Builds legacy usage events for a simple completed session. */
 function sessionEvents({ provider = "codex", sessionId, prompt, at }) {
   const end = new Date(new Date(at).getTime() + 60000).toISOString();
   return [
@@ -867,6 +875,7 @@ function sessionEvents({ provider = "codex", sessionId, prompt, at }) {
   ];
 }
 
+/** Builds a legacy usage event fixture row. */
 function usageEvent({ provider = "codex", sessionId, id, kind, at, data, turn, actor, links }) {
   return {
     schema: "usage.event.v2",

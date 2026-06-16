@@ -64,6 +64,7 @@ type AnnotatedEvent = UsageEventV3 & {
   _turnOrder?: number;
 };
 
+/** Projects normalized usage events into queryable session, turn, step, message, and tool views. */
 export function eventsToProjections(input: UsageProjectionInput | Array<UsageEventV3 | UsageJsonlLineV1>): UsageProjections {
   const args = Array.isArray(input) ? { events: input } : input;
   const contentMode = args.contentMode || "metadata-with-excerpts";
@@ -95,6 +96,7 @@ export function eventsToProjections(input: UsageProjectionInput | Array<UsageEve
   };
 }
 
+/** Builds session projections from all events grouped by session id. */
 function projectSessions(events: AnnotatedEvent[], capabilities: UsageProviderCapabilities[]): UsageSession[] {
   return [...groupBy(events, (event) => event.scope.sessionId).entries()].map(([sessionId, rows]) => {
     const first = rows[0]!;
@@ -145,6 +147,7 @@ function projectSessions(events: AnnotatedEvent[], capabilities: UsageProviderCa
   }).sort((a, b) => (a.startedAt || "").localeCompare(b.startedAt || ""));
 }
 
+/** Builds turn projections from turn-scoped events. */
 function projectTurns(events: AnnotatedEvent[]): UsageTurn[] {
   const turnRows = events.filter((event) => event.scope.turnId);
   return [...groupBy(turnRows, (event) => `${event.scope.sessionId}:${event.scope.turnId}`).entries()].map(([, rows]) => {
@@ -173,6 +176,7 @@ function projectTurns(events: AnnotatedEvent[]): UsageTurn[] {
   }).sort((a, b) => (a.startedAt || a.lastActivityAt || "").localeCompare(b.startedAt || b.lastActivityAt || ""));
 }
 
+/** Builds session, turn, message, model, tool, and file step projections. */
 function projectSteps(events: AnnotatedEvent[]): UsageStep[] {
   const steps: UsageStep[] = [];
   const sessionSteps = new Map<string, string>();
@@ -275,6 +279,7 @@ function projectSteps(events: AnnotatedEvent[]): UsageStep[] {
   return steps.sort((a, b) => a.order - b.order || (a.startedAt || "").localeCompare(b.startedAt || ""));
 }
 
+/** Builds visible message projections from normalized message events. */
 function projectMessages(events: AnnotatedEvent[], steps: UsageStep[], contentMode: UsageContentMode): UsageMessage[] {
   const messageEvents = events.filter((event) => event.kind === "message");
   const stepIndex = indexStepsByEvent(steps);
@@ -315,6 +320,7 @@ function projectMessages(events: AnnotatedEvent[], steps: UsageStep[], contentMo
   });
 }
 
+/** Builds tool-call projections and links them to matching results. */
 function projectToolCalls(events: AnnotatedEvent[], steps: UsageStep[], results: UsageToolResult[]): UsageToolCall[] {
   const stepIndex = indexStepsByEvent(steps);
   const resultByToolCallId = new Map<string, UsageToolResult>();
@@ -347,6 +353,7 @@ function projectToolCalls(events: AnnotatedEvent[], steps: UsageStep[], results:
   });
 }
 
+/** Builds tool-result projections from normalized result events. */
 function projectToolResults(events: AnnotatedEvent[], steps: UsageStep[]): UsageToolResult[] {
   const stepIndex = indexStepsByEvent(steps);
   return events.filter((event) => event.kind === "tool.result").map((event) => {
@@ -370,6 +377,7 @@ function projectToolResults(events: AnnotatedEvent[], steps: UsageStep[]): Usage
   });
 }
 
+/** Recomputes session counts and aggregate metrics from projected child rows. */
 function refreshSessionCounts(sessions: UsageSession[], turns: UsageTurn[], steps: UsageStep[], messages: UsageMessage[]): UsageSession[] {
   const turnsBySession = groupBy(turns, (turn) => turn.sessionId);
   const stepsBySession = groupBy(steps, (step) => step.sessionId);
@@ -395,6 +403,7 @@ function refreshSessionCounts(sessions: UsageSession[], turns: UsageTurn[], step
   });
 }
 
+/** Ensures every turn-scoped event has a stable turn id and order. */
 function annotateTurns(events: UsageEventV3[]): AnnotatedEvent[] {
   const state = new Map<string, { current?: string; counter: number; indexes: Map<string, number> }>();
   return events.map((event, index) => {
@@ -423,6 +432,7 @@ function annotateTurns(events: UsageEventV3[]): AnnotatedEvent[] {
   });
 }
 
+/** Connects tool result steps back to their call steps when provider ids allow it. */
 function linkToolResultSteps(steps: UsageStep[], events: AnnotatedEvent[]): void {
   const callStepById = new Map<string, UsageStep>();
   const stepIndex = indexStepsByEvent(steps);
@@ -448,6 +458,7 @@ function linkToolResultSteps(steps: UsageStep[], events: AnnotatedEvent[]): void
   }
 }
 
+/** Indexes projected steps by the evidence event that produced them. */
 function indexStepsByEvent(steps: UsageStep[]): Map<string, UsageStep> {
   const result = new Map<string, UsageStep>();
   for (const step of steps) {
@@ -459,12 +470,14 @@ function indexStepsByEvent(steps: UsageStep[]): Map<string, UsageStep> {
   return result;
 }
 
+/** Scores step granularity so event indexes prefer specific child steps. */
 function stepSpecificity(step: UsageStep): number {
   if (step.kind === "session") return 0;
   if (step.kind === "turn") return 1;
   return 2;
 }
 
+/** Copies result timing onto call steps that lack direct duration data. */
 function attachToolResultSteps(steps: UsageStep[], calls: UsageToolCall[]): void {
   const stepById = new Map(steps.map((step) => [step.id, step]));
   for (const call of calls) {
@@ -480,6 +493,7 @@ function attachToolResultSteps(steps: UsageStep[], calls: UsageToolCall[]): void
   }
 }
 
+/** Attaches model token usage to the message it belongs to. */
 function attachMessageTokens(messages: UsageMessage[], events: AnnotatedEvent[]): void {
   const usageEvents = groupBy(events.filter((event) => event.data.usage && event.scope.messageId), (event) => `${event.scope.sessionId}:${event.scope.messageId}`);
   for (const message of messages) {
@@ -502,6 +516,7 @@ function attachMessageTokens(messages: UsageMessage[], events: AnnotatedEvent[])
   }
 }
 
+/** Computes self duration by subtracting child durations from parent steps. */
 function computeStepSelfDurations(steps: UsageStep[]): void {
   const children = groupBy(steps.filter((step) => step.parentStepId), (step) => step.parentStepId!);
   for (const step of steps) {
@@ -513,6 +528,7 @@ function computeStepSelfDurations(steps: UsageStep[]): void {
   }
 }
 
+/** Resolves the parent step id for a projected event step. */
 function parentStepId(event: AnnotatedEvent, kind: UsageStepKind, turnSteps: Map<string, string>, sessionSteps: Map<string, string>): string | undefined {
   if (event.scope.parentStepId) return event.scope.parentStepId;
   if (kind === "tool_result") return undefined;
@@ -520,6 +536,7 @@ function parentStepId(event: AnnotatedEvent, kind: UsageStepKind, turnSteps: Map
   return sessionSteps.get(event.scope.sessionId);
 }
 
+/** Extracts aggregate metrics directly available on a normalized event. */
 function eventMetrics(event: UsageEventV3): UsageMetrics {
   const text = event.data.text;
   const output = event.kind === "message" && messageRole(event) === "assistant" ? text : undefined;
@@ -538,6 +555,7 @@ function eventMetrics(event: UsageEventV3): UsageMetrics {
   };
 }
 
+/** Maps a normalized event kind and payload into a Usage step kind. */
 function stepKind(event: UsageEventV3): UsageStepKind {
   if (event.kind === "message") {
     const role = messageRole(event);
@@ -563,6 +581,7 @@ function stepKind(event: UsageEventV3): UsageStepKind {
   return "unknown";
 }
 
+/** Creates a human-readable label for a projected step. */
 function stepLabel(event: UsageEventV3, kind: UsageStepKind): string {
   if (kind === "user_message") return "User message";
   if (kind === "assistant_response") return event.actor?.model ? `Assistant response (${event.actor.model})` : "Assistant response";
@@ -575,6 +594,7 @@ function stepLabel(event: UsageEventV3, kind: UsageStepKind): string {
   return event.kind;
 }
 
+/** Normalizes provider event status into Usage status values. */
 function statusForEvent(event: UsageEventV3): "success" | "error" | "cancelled" | "unknown" {
   const status = event.data.tool?.status || stringValue(field(event.data, "status"));
   if (event.kind === "error" || status === "error" || Boolean(event.data.error)) return "error";
@@ -583,22 +603,26 @@ function statusForEvent(event: UsageEventV3): "success" | "error" | "cancelled" 
   return "unknown";
 }
 
+/** Computes session status from terminal and error events. */
 function sessionStatus(events: UsageEventV3[], end: UsageEventV3 | undefined): UsageSession["status"] {
   if (events.some((event) => event.kind === "error")) return "failed";
   if (end) return "completed";
   return "active";
 }
 
+/** Computes turn status from a terminal turn event. */
 function turnStatus(end: UsageEventV3 | undefined): UsageTurn["status"] {
   const status = stringValue(field(end?.data, "status"));
   if (status === "completed" || status === "failed") return status;
   return end ? "completed" : "unknown";
 }
 
+/** Converts a list of events into evidence references. */
 function evidenceForRows(rows: UsageEventV3[]): UsageEvidenceRef[] {
   return rows.map(evidenceForEvent);
 }
 
+/** Converts a single event into an evidence reference. */
 function evidenceForEvent(event: UsageEventV3): UsageEvidenceRef {
   return {
     eventId: event.id,
@@ -608,6 +632,7 @@ function evidenceForEvent(event: UsageEventV3): UsageEvidenceRef {
   };
 }
 
+/** Builds a native source reference for an event when source metadata exists. */
 function nativeRef(event: UsageEventV3): UsageNativeRef | undefined {
   if (!event.source.path && !event.source.rawHash && !event.source.line && !event.source.jsonPointer) return undefined;
   return {
@@ -619,6 +644,7 @@ function nativeRef(event: UsageEventV3): UsageNativeRef | undefined {
   };
 }
 
+/** Builds unique source references from projected events. */
 function sourceRefs(events: UsageEventV3[]): UsageSourceRef[] {
   const rows = new Map<string, UsageSourceRef>();
   for (const event of events) {
@@ -633,24 +659,29 @@ function sourceRefs(events: UsageEventV3[]): UsageSourceRef[] {
   return [...rows.values()];
 }
 
+/** Sorts events by observed time, recorded time, then id for deterministic projection. */
 function compareEvents(left: UsageEventV3, right: UsageEventV3): number {
   return (eventTime(left) || "").localeCompare(eventTime(right) || "") || left.recordedAt.localeCompare(right.recordedAt) || left.id.localeCompare(right.id);
 }
 
+/** Reads the most specific role available for a message-like event. */
 function messageRole(event: UsageEventV3): string {
   return stringValue(event.data.role) || event.actor?.role || "assistant";
 }
 
+/** Coerces provider roles into the Usage message role enum. */
 function normalizeMessageRole(role: string): UsageMessage["role"] {
   if (role === "user" || role === "assistant" || role === "system" || role === "tool") return role;
   return "assistant";
 }
 
+/** Extracts the file operation category from file events. */
 function fileCategory(event: UsageEventV3): string | undefined {
   if (event.kind !== "file.event") return undefined;
   return event.data.file?.operation;
 }
 
+/** Collapses event-level confidence values into a session confidence. */
 function confidenceForRows(rows: UsageEventV3[]): UsageAvailability["confidence"] {
   const values = rows.map((event) => event.availability.confidence);
   if (values.includes("estimated") || values.includes("partial")) return "partial";
@@ -660,10 +691,12 @@ function confidenceForRows(rows: UsageEventV3[]): UsageAvailability["confidence"
   return "unknown";
 }
 
+/** Returns the best timestamp for ordering and displaying an event. */
 function eventTime(event: UsageEventV3 | undefined): string | undefined {
   return event?.observedAt || event?.recordedAt || event?.time?.startedAt;
 }
 
+/** Computes a non-negative duration between ISO timestamps. */
 function durationBetween(startedAt: string | undefined, endedAt: string | undefined): number | undefined {
   if (!startedAt || !endedAt) return undefined;
   const started = Date.parse(startedAt);
@@ -672,30 +705,36 @@ function durationBetween(startedAt: string | undefined, endedAt: string | undefi
   return Math.max(0, ended - started);
 }
 
+/** Reads full text when available, falling back to preview text. */
 function textValue(event: UsageEventV3 | undefined): string | undefined {
   return event?.data.text || event?.data.textPreview;
 }
 
+/** Reads provider preview text or builds one from full text. */
 function textPreview(event: UsageEventV3 | undefined): string | undefined {
   return event?.data.textPreview || preview(event?.data.text);
 }
 
+/** Compacts a string into a single-line preview. */
 function preview(value: unknown, length = 160): string | undefined {
   if (typeof value !== "string") return undefined;
   const singleLine = value.replace(/\s+/g, " ").trim();
   return singleLine.length > length ? `${singleLine.slice(0, length - 1)}...` : singleLine;
 }
 
+/** Builds a preview for string or JSON-serializable values. */
 function previewUnknown(value: unknown, length = 1000): string | undefined {
   if (typeof value === "string") return preview(value, length);
   if (value === undefined) return undefined;
   return preview(JSON.stringify(value), length);
 }
 
+/** Hashes a value into a deterministic identifier. */
 function stableId(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+/** Creates an empty session count object. */
 function emptyCounts(): UsageSession["counts"] {
   return { turns: 0, messages: 0, userMessages: 0, assistantMessages: 0, toolCalls: 0, subagents: 0, compactions: 0, filesTouched: 0 };
 }

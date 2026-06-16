@@ -134,16 +134,19 @@ export function messageTokens(message: { tokenUsage?: { total?: number }; metric
   return finiteNumber(message.tokenUsage?.total) ?? finiteNumber(message.metrics?.tokens?.total) ?? tokenValue;
 }
 
+/** Returns the context token count to show in message summaries. */
 function tokenContext(usage: UsageTokenUsage | undefined): number | undefined {
   if (!usage) return undefined;
   return finiteNumber(usage.context) ?? finiteNumber(usage.input) ?? sumTokens([usage.cacheRead, usage.cacheCreation]);
 }
 
+/** Sums finite token counts when at least one value is present. */
 function sumTokens(values: Array<number | undefined>): number | undefined {
   const present = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
   return present.length ? present.reduce((sum, value) => sum + value, 0) : undefined;
 }
 
+/** Formats a message token count with AgentsView-style compact units. */
 function formatMessageTokenCount(value: number): string {
   if (Math.abs(value) < 1_000) return Intl.NumberFormat("en").format(Math.round(value));
   if (Math.abs(value) < 1_000_000) return `${trimFixed(value / 1_000, 1)}k`;

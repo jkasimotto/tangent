@@ -10,7 +10,7 @@ export const usageCommandSpec: CliCommandSpec = {
       name: "ui",
       description: "Start a local Usage UI",
       args: "[session|latest]",
-      options: commonJsonOptions(["repo", "scope", "host", "port", "no-browser", "json", "provider", "source"])
+      options: commonJsonOptions(["repo", "scope", "host", "port", "no-browser", "static-ui", "json", "provider", "source"])
     },
     {
       name: "index",
@@ -117,6 +117,7 @@ function commonJsonOptions(names: string[]) {
     if (name === "by") return { name, takesValue: true, values: ["model"], description: "Grouping mode" };
     if (name === "before" || name === "date" || name === "since" || name === "until") return { name, takesValue: true, description: `${name} date` };
     if (["format", "metric", "group", "session", "role", "min-chars", "contains", "limit", "kind", "order", "bucket", "name", "include-results"].includes(name)) return { name, takesValue: true, description: `${name} value` };
+    if (name === "static-ui") return { name, description: "Serve built UI assets instead of the workspace hot-reload server" };
     if (name === "internal" || name === "force" || name === "dry-run" || name === "estimate" || name === "ndjson" || name === "no-browser") return { name, description: "Enable this option" };
     return { name, takesValue: true, description: `${name} value` };
   });

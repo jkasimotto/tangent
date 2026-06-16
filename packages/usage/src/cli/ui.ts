@@ -12,10 +12,11 @@ export async function usageUiCommand(args: Args): Promise<void> {
     sources: stringsArg(args.source),
     host: stringArg(args.host) || "127.0.0.1",
     port: numberArg(args.port) ?? 0,
-    open: !booleanArg(args["no-browser"])
+    open: !booleanArg(args["no-browser"]),
+    dev: !booleanArg(args["static-ui"])
   });
-  if (booleanArg(args.json)) console.log(JSON.stringify({ url: server.url, sessionId: server.sessionId }, null, 2));
-  else console.log(`Usage UI: ${server.url}`);
+  if (booleanArg(args.json)) console.log(JSON.stringify({ url: server.url, sessionId: server.sessionId, dev: server.dev }, null, 2));
+  else console.log(`Usage UI: ${server.url}${server.dev ? " (hot reload)" : ""}`);
   await waitForInterrupt(server.close);
 }
 

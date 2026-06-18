@@ -32,6 +32,51 @@ select:disabled {
   opacity: 0.58;
 }
 
+.app-shell {
+  --surface: #f3f5f1;
+  --pane: #fbfcf9;
+  --line: #d4dcd2;
+  --text: #14231b;
+  --muted: #657268;
+  --accent: #246b58;
+
+  height: 100vh;
+  height: 100svh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.app-shell > .trees-workspace,
+.app-shell > .worklog-view {
+  min-height: 0;
+  height: 100%;
+}
+
+.view-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 22px;
+  border-bottom: 1px solid var(--line);
+  background: var(--pane);
+}
+
+.view-tabs button {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 760;
+  padding: 6px 12px;
+  border-radius: 7px;
+}
+
+.view-tabs button.active {
+  background: var(--accent);
+  color: #fff;
+}
+
 .trees-workspace {
   --surface: #f3f5f1;
   --pane: #fbfcf9;
@@ -554,6 +599,72 @@ select:disabled {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0;
+}
+
+.intent-form {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.intent-form label {
+  display: grid;
+  gap: 7px;
+}
+
+.intent-form label span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.intent-form input,
+.intent-form textarea {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid #c6d1c8;
+  border-radius: 7px;
+  background: #fff;
+  color: var(--text);
+  outline: none;
+  padding: 8px 10px;
+  resize: vertical;
+}
+
+.intent-form input:focus,
+.intent-form textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgb(36 107 88 / 13%);
+}
+
+.estimate-row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.chips button {
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.chips button.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
 }
 
 @media (max-width: 860px) {

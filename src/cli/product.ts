@@ -9,6 +9,7 @@ import { booleanArg, numberArg, parseArgs, stringArg, stringsArg } from "@tangen
 import type { UiRoute } from "@tangent/ui-server";
 import { optionalModule, requiredProductModule } from "./module-loader.js";
 import { discoverUiApps } from "./ui-discovery.js";
+import { appendWorklogEntry, listWorklogEntries, setWorklogActual } from "./worklog.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -262,6 +263,18 @@ export async function runTangentUiCommand(argv: string[]): Promise<void> {
       const effectiveConfig = typeof body["tmux"] === "boolean" ? { ...config, tmux: body["tmux"] } : config;
       if (body["type"] === "agent") {
         await launcher.openAgent(targetPath, { config: effectiveConfig, title });
+        const name = typeof body["name"] === "string" ? body["name"].trim() : "";
+        const estimateMinutes = typeof body["estimateMinutes"] === "number" ? body["estimateMinutes"] : undefined;
+        if (name && estimateMinutes !== undefined) {
+          await appendWorklogEntry({
+            entityPath: title,
+            cwd: targetPath,
+            name,
+            description: typeof body["description"] === "string" ? body["description"].trim() || undefined : undefined,
+            estimateMinutes,
+            startedAt: new Date().toISOString()
+          });
+        }
       } else {
         await launcher.openDirectory(targetPath, { config: effectiveConfig, title });
       }
@@ -285,6 +298,24 @@ export async function runTangentUiCommand(argv: string[]): Promise<void> {
     return undefined;
   }
 
+  /** Dispatches /api/worklog requests to the worklog store. */
+  async function handleWorklogRoute(
+    request: IncomingMessage,
+    url: URL
+  ): Promise<{ status: number; json: unknown } | undefined> {
+    if (request.method === "GET" && url.pathname === "/api/worklog") {
+      return { status: 200, json: await listWorklogEntries() };
+    }
+    if (request.method === "POST" && url.pathname === "/api/worklog/actual") {
+      const body = await readJson(request) as Record<string, unknown>;
+      if (typeof body["id"] === "string" && typeof body["minutes"] === "number") {
+        await setWorklogActual(body["id"], body["minutes"]);
+      }
+      return { status: 204, json: null };
+    }
+    return undefined;
+  }
+
   const routes: UiRoute[] = [
     {
       method: "GET",
@@ -296,6 +327,11 @@ export async function runTangentUiCommand(argv: string[]): Promise<void> {
       pattern: /^\/api\/launcher\//,
       /** Routes launcher API requests to handleLauncherRoute. */
       handle: (request, url) => handleLauncherRoute(request, url)
+    },
+    {
+      pattern: /^\/api\/worklog/,
+      /** Routes worklog API requests to handleWorklogRoute. */
+      handle: (request, url) => handleWorklogRoute(request, url)
     },
     ...registrations.flatMap((registration) => registration.routes)
   ];

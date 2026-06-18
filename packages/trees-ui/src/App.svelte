@@ -2,9 +2,19 @@
   import { onDestroy, onMount } from "svelte";
   import { createTreesApiClient, type TreesUiClient, type TreesUiEntity, type TreesUiProject, type TreesUiWorkspace } from "./client.js";
   import { createLauncherApiClient, type LauncherClient, type LaunchConfig, type LaunchSession } from "./launcher-client.js";
+  import { createWorklogApiClient, type WorklogClient } from "./worklog-client.js";
+  import Worklog from "./Worklog.svelte";
 
   export let client: TreesUiClient = createTreesApiClient();
   export let launcher: LauncherClient = createLauncherApiClient();
+  export let worklog: WorklogClient = createWorklogApiClient();
+
+  let view: "trees" | "worklog" = "trees";
+
+  // Intent captured before opening an agent: what + how long.
+  let intentName = "";
+  let intentEstimate: number | null = null;
+  let intentDescription = "";
 
   type TreeNode = {
     entity: TreesUiEntity;
@@ -80,6 +90,7 @@
   $: selectedOpenPath = selectedEntity
     ? (selectedEntity.worktreePath || workspace.projects.find((p) => p.id === selectedEntity?.projectId)?.path)
     : undefined;
+  $: intentReady = intentName.trim().length > 0 && typeof intentEstimate === "number" && intentEstimate > 0;
 
   async function loadWorkspace(options: { polling?: boolean } = {}): Promise<void> {
     const sequence = ++requestSequence;
@@ -138,7 +149,16 @@
     try {
       const title = selectedEntity?.path;
       if (type === "agent") {
-        await launcher.openAgent(selectedOpenPath, { tmux, title });
+        await launcher.openAgent(selectedOpenPath, {
+          tmux,
+          title,
+          name: intentName.trim(),
+          description: intentDescription.trim() || undefined,
+          estimateMinutes: intentEstimate ?? undefined
+        });
+        intentName = "";
+        intentEstimate = null;
+        intentDescription = "";
       } else {
         await launcher.openTerminal(selectedOpenPath, { title });
       }
@@ -442,6 +462,14 @@
   }
 </script>
 
+<div class="app-shell">
+  <nav class="view-tabs" aria-label="Views">
+    <button type="button" class:active={view === "trees"} on:click={() => view = "trees"}>Trees</button>
+    <button type="button" class:active={view === "worklog"} on:click={() => view = "worklog"}>Worklog</button>
+  </nav>
+  {#if view === "worklog"}
+    <Worklog {worklog} />
+  {:else}
 <main class="trees-workspace" aria-label="Trees workspace">
   <section class="trees-pane trees-main" aria-label="Tree builder">
     <header class="workspace-header">
@@ -651,12 +679,35 @@
 
       {#if selectedOpenPath && launcherConfig}
         <div class="open-actions">
-          <p class="open-actions-label">Open</p>
+          <p class="open-actions-label">Start work</p>
+          <div class="intent-form">
+            <label>
+              <span>What are you working on?</span>
+              <input bind:value={intentName} placeholder="e.g. Wire up worklog API" autocomplete="off" />
+            </label>
+            <label>
+              <span>Estimate (minutes)</span>
+              <div class="estimate-row">
+                <input type="number" min="1" bind:value={intentEstimate} placeholder="60" />
+                <div class="chips">
+                  {#each [15, 30, 60, 120] as preset}
+                    <button type="button" class:active={intentEstimate === preset} on:click={() => intentEstimate = preset}>
+                      {preset >= 60 ? `${preset / 60}h` : `${preset}m`}
+                    </button>
+                  {/each}
+                </div>
+              </div>
+            </label>
+            <label>
+              <span>Notes (optional)</span>
+              <textarea bind:value={intentDescription} rows="2" placeholder="Optional context"></textarea>
+            </label>
+          </div>
           <div class="actions">
-            <button type="button" on:click={() => openSession("agent")}>
+            <button type="button" disabled={!intentReady} title={intentReady ? "" : "Add a name and estimate first"} on:click={() => openSession("agent")}>
               Open Agent
             </button>
-            <button type="button" on:click={() => openSession("agent", true)}>
+            <button type="button" disabled={!intentReady} title={intentReady ? "" : "Add a name and estimate first"} on:click={() => openSession("agent", true)}>
               Open Agent in tmux
             </button>
             <button type="button" class="secondary" on:click={() => openSession("terminal")}>
@@ -700,3 +751,5 @@
     {/if}
   </aside>
 </main>
+  {/if}
+</div>

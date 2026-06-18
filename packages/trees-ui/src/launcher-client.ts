@@ -18,7 +18,7 @@ export type LauncherClient = {
   loadConfig(): Promise<LaunchConfig>;
   saveConfig(config: LaunchConfig): Promise<void>;
   listSessions(): Promise<LaunchSession[]>;
-  openAgent(path: string, options?: { tmux?: boolean; title?: string }): Promise<void>;
+  openAgent(path: string, options?: { tmux?: boolean; title?: string; name?: string; description?: string; estimateMinutes?: number }): Promise<void>;
   openTerminal(path: string, options?: { title?: string }): Promise<void>;
   stopSession(session: LaunchSession): Promise<void>;
   focusSession(session: LaunchSession): Promise<void>;
@@ -54,7 +54,7 @@ export function createLauncherApiClient(basePath = "/api/launcher"): LauncherCli
       const response = await fetch(`${basePath}/open`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ type: "agent", path, tmux: options?.tmux, title: options?.title })
+        body: JSON.stringify({ type: "agent", path, tmux: options?.tmux, title: options?.title, name: options?.name, description: options?.description, estimateMinutes: options?.estimateMinutes })
       });
       if (!response.ok) throw new Error(`Launcher API error (${response.status}).`);
     },

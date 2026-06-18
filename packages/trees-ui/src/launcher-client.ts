@@ -10,6 +10,7 @@ export interface LaunchSession {
   tmux: boolean;
   tmuxSession?: string;
   title?: string;
+  iterm2SessionId?: string;
   startedAt: string;
 }
 

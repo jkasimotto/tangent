@@ -16,6 +16,8 @@ export interface LaunchSession {
   tmuxSession?: string;
   /** iTerm2 tab name set when the session was opened, used for liveness detection. */
   title?: string;
+  /** iTerm2 session unique ID captured at open time, used for close/focus by ID. */
+  iterm2SessionId?: string;
   startedAt: string;
 }
 
@@ -56,18 +58,24 @@ export async function recordSession(session: LaunchSession): Promise<void> {
 /**
  * Returns sessions that are still live. Tmux sessions are checked via
  * `tmux has-session`; non-tmux sessions with a title are checked against
- * current iTerm2 tab names; others fall back to a 24h window.
- * Dead sessions are pruned from the file.
+ * current iTerm2 tab names (with a 30s grace period for newly opened sessions);
+ * others fall back to a 24h window. Dead sessions are pruned from the file.
  */
 export async function listActiveSessions(): Promise<LaunchSession[]> {
   const sessions = await readSessions();
   const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
+  // Only use iTerm2 name-matching when we actually get names back. An empty result
+  // means iTerm2 is unavailable or returned nothing — fall through to time-based.
   let iterm2Names: Set<string> | undefined;
   if (sessions.some((s) => !s.tmuxSession && s.title)) {
     const names = await listIterm2SessionNames();
-    iterm2Names = new Set(names);
+    if (names.length > 0) iterm2Names = new Set(names);
   }
+
+  // Sessions opened within this window are always kept regardless of iTerm2 state,
+  // because the tab name may not yet be registered right after opening.
+  const graceCutoff = new Date(Date.now() - 30_000).toISOString();
 
   const active: LaunchSession[] = [];
   for (const session of sessions) {
@@ -79,7 +87,7 @@ export async function listActiveSessions(): Promise<LaunchSession[]> {
         // dead tmux session — omit
       }
     } else if (session.title && iterm2Names !== undefined) {
-      if (iterm2Names.has(session.title)) active.push(session);
+      if (iterm2Names.has(session.title) || session.startedAt >= graceCutoff) active.push(session);
     } else if (session.startedAt >= cutoff) {
       active.push(session);
     }

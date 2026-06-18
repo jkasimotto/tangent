@@ -40,17 +40,18 @@ export async function openTerminalSession(
   }
 
   const { driver } = config;
+  let iterm2SessionId: string | undefined;
   if (driver === "iterm2-tab") {
-    await openIterm2Tab(actualCommand, cwd, title);
+    iterm2SessionId = await openIterm2Tab(actualCommand, cwd, title);
   } else if (driver === "iterm2-window") {
-    await openIterm2Window(actualCommand, cwd, title);
+    iterm2SessionId = await openIterm2Window(actualCommand, cwd, title);
   } else if (driver.type === "custom") {
     await openCustom(driver.template, actualCommand, cwd);
   } else {
     throw new Error(`Unknown launcher driver: ${JSON.stringify(driver)}`);
   }
 
-  await recordSession({ cwd, kind, tmux: config.tmux, tmuxSession, title, startedAt: new Date().toISOString() });
+  await recordSession({ cwd, kind, tmux: config.tmux, tmuxSession, title, iterm2SessionId, startedAt: new Date().toISOString() });
 }
 
 /** Single-quotes a value for safe shell interpolation. */

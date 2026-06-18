@@ -2,7 +2,7 @@ import { loadLaunchConfig } from "./config.js";
 import type { LaunchConfig } from "./config.js";
 import type { LaunchSession } from "./sessions.js";
 import { openIterm2Tab } from "./drivers/iterm2.js";
-import { focusIterm2SessionByName } from "./drivers/iterm2.js";
+import { focusIterm2SessionById, focusIterm2SessionByName } from "./drivers/iterm2.js";
 
 /** Focuses a live session: brings the iTerm2 tab to front, or opens a new terminal attached to the tmux session. */
 export async function focusSession(session: LaunchSession, config?: LaunchConfig): Promise<void> {
@@ -15,7 +15,9 @@ export async function focusSession(session: LaunchSession, config?: LaunchConfig
     }
     return;
   }
-  if (session.title) {
+  if (session.iterm2SessionId) {
+    await focusIterm2SessionById(session.iterm2SessionId);
+  } else if (session.title) {
     await focusIterm2SessionByName(session.title);
   }
 }

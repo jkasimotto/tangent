@@ -5,9 +5,10 @@ const execFileAsync = promisify(execFile);
 
 /**
  * Opens a new iTerm2 tab in the current window running the given command.
+ * Returns the iTerm2 session unique ID, which is stable even after the tab title changes.
  * Requires iTerm2 to already be running on macOS.
  */
-export async function openIterm2Tab(command: string, cwd: string, title?: string): Promise<void> {
+export async function openIterm2Tab(command: string, cwd: string, title?: string): Promise<string> {
   const escaped = shellCommand(command, cwd);
   const nameStmt = title ? `set name of current session of newTab to ${appleScriptString(title)}` : "";
   const script = `
@@ -17,17 +18,20 @@ export async function openIterm2Tab(command: string, cwd: string, title?: string
         set newTab to (create tab with default profile command ${appleScriptString(escaped)})
         select newTab
         ${nameStmt}
+        return unique ID of current session of newTab
       end tell
     end tell
   `;
-  await execFileAsync("osascript", ["-e", script]);
+  const { stdout } = await execFileAsync("osascript", ["-e", script]);
+  return stdout.trim();
 }
 
 /**
  * Opens a new iTerm2 window running the given command.
+ * Returns the iTerm2 session unique ID, which is stable even after the tab title changes.
  * Requires iTerm2 to already be running on macOS.
  */
-export async function openIterm2Window(command: string, cwd: string, title?: string): Promise<void> {
+export async function openIterm2Window(command: string, cwd: string, title?: string): Promise<string> {
   const escaped = shellCommand(command, cwd);
   const nameStmt = title ? `set name of current session of newWindow to ${appleScriptString(title)}` : "";
   const script = `
@@ -35,9 +39,11 @@ export async function openIterm2Window(command: string, cwd: string, title?: str
       activate
       set newWindow to (create window with default profile command ${appleScriptString(escaped)})
       ${nameStmt}
+      return unique ID of current session of newWindow
     end tell
   `;
-  await execFileAsync("osascript", ["-e", script]);
+  const { stdout } = await execFileAsync("osascript", ["-e", script]);
+  return stdout.trim();
 }
 
 /** Wraps a command in a login zsh invocation so PATH includes user profile entries. */
@@ -74,6 +80,29 @@ export async function listIterm2SessionNames(): Promise<string[]> {
   }
 }
 
+/** Closes the iTerm2 tab identified by the given session unique ID. No-op if not found. */
+export async function closeIterm2SessionById(sessionId: string): Promise<void> {
+  const script = `
+    tell application "iTerm2"
+      repeat with w in windows
+        repeat with t in tabs of w
+          repeat with s in sessions of t
+            if unique ID of s is ${appleScriptString(sessionId)} then
+              close t
+              return
+            end if
+          end repeat
+        end repeat
+      end repeat
+    end tell
+  `;
+  try {
+    await execFileAsync("osascript", ["-e", script]);
+  } catch {
+    // session not found or iTerm2 not running
+  }
+}
+
 /** Closes the first iTerm2 tab whose session name matches the given title. No-op if not found. */
 export async function closeIterm2SessionByName(title: string): Promise<void> {
   const script = `
@@ -94,6 +123,31 @@ export async function closeIterm2SessionByName(title: string): Promise<void> {
     await execFileAsync("osascript", ["-e", script]);
   } catch {
     // tab not found or iTerm2 not running
+  }
+}
+
+/** Brings the iTerm2 tab identified by the given session unique ID to the foreground. No-op if not found. */
+export async function focusIterm2SessionById(sessionId: string): Promise<void> {
+  const script = `
+    tell application "iTerm2"
+      activate
+      repeat with w in windows
+        repeat with t in tabs of w
+          repeat with s in sessions of t
+            if unique ID of s is ${appleScriptString(sessionId)} then
+              set index of w to 1
+              select t
+              return
+            end if
+          end repeat
+        end repeat
+      end repeat
+    end tell
+  `;
+  try {
+    await execFileAsync("osascript", ["-e", script]);
+  } catch {
+    // session not found or iTerm2 not running
   }
 }
 

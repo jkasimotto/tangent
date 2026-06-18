@@ -9,17 +9,19 @@ export { listActiveSessions } from "./sessions.js";
 
 export interface OpenOptions {
   config?: LaunchConfig;
+  /** Label shown as the terminal tab/window title. */
+  title?: string;
 }
 
 /** Opens a new terminal session running the configured agent command in cwd. */
 export async function openAgent(cwd: string, options: OpenOptions = {}): Promise<void> {
   const config = options.config ?? await loadLaunchConfig();
-  await openTerminalSession(config.agentCommand, cwd, config, "agent");
+  await openTerminalSession(config.agentCommand, cwd, config, "agent", options.title);
 }
 
 /** Opens a new terminal session at path with no agent command (shell login). */
 export async function openDirectory(dirPath: string, options: OpenOptions = {}): Promise<void> {
   const config = options.config ?? await loadLaunchConfig();
   const shell = process.env["SHELL"] || "bash";
-  await openTerminalSession(shell, dirPath, config, "terminal");
+  await openTerminalSession(shell, dirPath, config, "terminal", options.title);
 }

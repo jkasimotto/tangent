@@ -7,12 +7,16 @@ const execFileAsync = promisify(execFile);
  * Opens a new iTerm2 tab in the current window running the given command.
  * Requires iTerm2 to already be running on macOS.
  */
-export async function openIterm2Tab(command: string, cwd: string): Promise<void> {
+export async function openIterm2Tab(command: string, cwd: string, title?: string): Promise<void> {
   const escaped = shellCommand(command, cwd);
+  const nameStmt = title ? `set name of current session of newTab to ${appleScriptString(title)}` : "";
   const script = `
     tell application "iTerm2"
+      activate
       tell current window
-        create tab with default profile command ${appleScriptString(escaped)}
+        set newTab to (create tab with default profile command ${appleScriptString(escaped)})
+        select newTab
+        ${nameStmt}
       end tell
     end tell
   `;
@@ -23,11 +27,14 @@ export async function openIterm2Tab(command: string, cwd: string): Promise<void>
  * Opens a new iTerm2 window running the given command.
  * Requires iTerm2 to already be running on macOS.
  */
-export async function openIterm2Window(command: string, cwd: string): Promise<void> {
+export async function openIterm2Window(command: string, cwd: string, title?: string): Promise<void> {
   const escaped = shellCommand(command, cwd);
+  const nameStmt = title ? `set name of current session of newWindow to ${appleScriptString(title)}` : "";
   const script = `
     tell application "iTerm2"
-      create window with default profile command ${appleScriptString(escaped)}
+      activate
+      set newWindow to (create window with default profile command ${appleScriptString(escaped)})
+      ${nameStmt}
     end tell
   `;
   await execFileAsync("osascript", ["-e", script]);

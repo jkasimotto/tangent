@@ -16,8 +16,8 @@ export type LauncherClient = {
   loadConfig(): Promise<LaunchConfig>;
   saveConfig(config: LaunchConfig): Promise<void>;
   listSessions(): Promise<LaunchSession[]>;
-  openAgent(path: string, options?: { tmux?: boolean }): Promise<void>;
-  openTerminal(path: string): Promise<void>;
+  openAgent(path: string, options?: { tmux?: boolean; title?: string }): Promise<void>;
+  openTerminal(path: string, options?: { title?: string }): Promise<void>;
 };
 
 /** Creates a browser client backed by the local launcher HTTP API. */
@@ -50,16 +50,16 @@ export function createLauncherApiClient(basePath = "/api/launcher"): LauncherCli
       const response = await fetch(`${basePath}/open`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ type: "agent", path, tmux: options?.tmux })
+        body: JSON.stringify({ type: "agent", path, tmux: options?.tmux, title: options?.title })
       });
       if (!response.ok) throw new Error(`Launcher API error (${response.status}).`);
     },
     /** Opens a plain terminal in the given path. */
-    async openTerminal(path) {
+    async openTerminal(path, options) {
       const response = await fetch(`${basePath}/open`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ type: "terminal", path })
+        body: JSON.stringify({ type: "terminal", path, title: options?.title })
       });
       if (!response.ok) throw new Error(`Launcher API error (${response.status}).`);
     }

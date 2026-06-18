@@ -123,10 +123,11 @@
   async function openSession(type: "agent" | "terminal", tmux?: boolean): Promise<void> {
     if (!selectedOpenPath) return;
     try {
+      const title = selectedEntity?.path;
       if (type === "agent") {
-        await launcher.openAgent(selectedOpenPath, { tmux });
+        await launcher.openAgent(selectedOpenPath, { tmux, title });
       } else {
-        await launcher.openTerminal(selectedOpenPath);
+        await launcher.openTerminal(selectedOpenPath, { title });
       }
       activeSessions = await launcher.listSessions();
     } catch (caught) {

@@ -21,7 +21,8 @@ export async function openTerminalSession(
   command: string,
   cwd: string,
   config: LaunchConfig,
-  kind: "agent" | "terminal" = "agent"
+  kind: "agent" | "terminal" = "agent",
+  title?: string
 ): Promise<void> {
   if (config.tmux && process.env["TMUX"]) {
     await execFileAsync("tmux", ["new-window", "-c", cwd, command]);
@@ -40,9 +41,9 @@ export async function openTerminalSession(
 
   const { driver } = config;
   if (driver === "iterm2-tab") {
-    await openIterm2Tab(actualCommand, cwd);
+    await openIterm2Tab(actualCommand, cwd, title);
   } else if (driver === "iterm2-window") {
-    await openIterm2Window(actualCommand, cwd);
+    await openIterm2Window(actualCommand, cwd, title);
   } else if (driver.type === "custom") {
     await openCustom(driver.template, actualCommand, cwd);
   } else {

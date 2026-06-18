@@ -258,11 +258,12 @@ export async function runTangentUiCommand(argv: string[]): Promise<void> {
       const body = await readJson(request) as Record<string, unknown>;
       const config = await launcher.loadLaunchConfig();
       const targetPath = typeof body["path"] === "string" ? body["path"] : ".";
+      const title = typeof body["title"] === "string" ? body["title"] : undefined;
       const effectiveConfig = typeof body["tmux"] === "boolean" ? { ...config, tmux: body["tmux"] } : config;
       if (body["type"] === "agent") {
-        await launcher.openAgent(targetPath, { config: effectiveConfig });
+        await launcher.openAgent(targetPath, { config: effectiveConfig, title });
       } else {
-        await launcher.openDirectory(targetPath, { config: effectiveConfig });
+        await launcher.openDirectory(targetPath, { config: effectiveConfig, title });
       }
       return { status: 200, json: { ok: true } };
     }

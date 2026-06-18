@@ -25,6 +25,7 @@ export type LoadNativeOptions = {
   skipUnchanged?: (file: NativeSourceFileStat) => boolean;
 };
 
+/** Discovers, parses, and normalizes native transcripts for the requested providers. */
 export async function loadNativeSourceFiles(options: LoadNativeOptions): Promise<{
   files: NativeSourceFile[];
   skipped: NativeSourceFileStat[];
@@ -80,6 +81,7 @@ export async function loadNativeSourceFiles(options: LoadNativeOptions): Promise
   return { files, skipped, seenPaths, warnings };
 }
 
+/** Reads a JSONL transcript into object records, collecting warnings for unparseable lines. */
 async function readNativeJsonl(filePath: string): Promise<{
   records: Array<{ line: number; record: Record<string, unknown> }>;
   warnings: UsageWarning[];
@@ -99,6 +101,7 @@ async function readNativeJsonl(filePath: string): Promise<{
   return { records, warnings };
 }
 
+/** Decides whether a Codex transcript should be indexed, and whether it reads as complete. */
 function codexEligibility(records: Array<{ record: Record<string, unknown> }>, mtimeMs: number, now: Date): {
   eligible: boolean;
   completed: boolean;
@@ -110,24 +113,33 @@ function codexEligibility(records: Array<{ record: Record<string, unknown> }>, m
   });
   const quiet = isQuiet(records, mtimeMs, now);
   const inferredComplete = !completed && quiet && !lastRecordIsUser(records, "codex");
-  return { eligible: completed || inferredComplete, completed, inferredComplete };
+  // Index any session with content, including ones still in progress, so the live UI sees
+  // active conversations. `completed`/`inferredComplete` stay quiet-gated and only add the
+  // synthetic end markers once the transcript settles.
+  return { eligible: records.length > 0, completed, inferredComplete };
 }
 
+/** Decides whether a Claude transcript should be indexed, and whether it reads as complete. */
 function claudeEligibility(records: Array<{ record: Record<string, unknown> }>, mtimeMs: number, now: Date): {
   eligible: boolean;
   completed: boolean;
   inferredComplete: boolean;
 } {
   const inferredComplete = isQuiet(records, mtimeMs, now) && !lastRecordIsUser(records, "claude");
-  return { eligible: inferredComplete, completed: false, inferredComplete };
+  // Native Claude transcripts have no explicit completion marker, so eligibility used to wait
+  // for a 15-minute quiet window, which hid every active conversation from the live UI. Index
+  // as soon as there is content; `inferredComplete` still gates the synthetic end markers.
+  return { eligible: records.length > 0, completed: false, inferredComplete };
 }
 
+/** Returns whether the transcript's latest activity is older than the quiet window. */
 function isQuiet(records: Array<{ record: Record<string, unknown> }>, mtimeMs: number, now: Date): boolean {
   const latestTimestamp = Math.max(0, ...records.map((row) => timestampMs(row.record)).filter((value) => value > 0));
   const latest = Math.max(latestTimestamp, mtimeMs);
   return latest > 0 && now.getTime() - latest >= nativeQuietMs;
 }
 
+/** Returns whether the last conversational turn was the user, used to avoid marking a waiting turn complete. */
 function lastRecordIsUser(records: Array<{ record: Record<string, unknown> }>, provider: UsageProvider): boolean {
   for (const row of [...records].reverse()) {
     const type = stringValue(row.record.type);
@@ -148,16 +160,19 @@ function lastRecordIsUser(records: Array<{ record: Record<string, unknown> }>, p
   return false;
 }
 
+/** Parses a record's timestamp to epoch milliseconds, or 0 when absent or invalid. */
 function timestampMs(record: Record<string, unknown>): number {
   const timestamp = stringValue(record.timestamp) || stringValue(record.created_at);
   const ms = timestamp ? Date.parse(timestamp) : NaN;
   return Number.isFinite(ms) ? ms : 0;
 }
 
+/** Narrows a value to a plain object, or undefined. */
 function objectValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
+/** Narrows a value to a non-empty string, or undefined. */
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value ? value : undefined;
 }

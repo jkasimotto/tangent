@@ -1,8 +1,42 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 
 import { builtInProviderAdapters } from "../dist/index.js";
 import { normalizeClaudeNativeRecords } from "../dist/providers/claude/native/normalize.js";
+import { loadNativeSourceFiles } from "../dist/providers/native/load.js";
+import { claudeProjectKey } from "../dist/providers/claude/native/discover.js";
+
+test("indexes an active claude transcript instead of waiting for the quiet window", async () => {
+  const home = mkdtempSync(path.join(tmpdir(), "claude-home-"));
+  const previousHome = process.env.CLAUDE_HOME;
+  process.env.CLAUDE_HOME = home;
+  try {
+    const repoRoot = "/tmp/example-repo";
+    const projectDir = path.join(home, "projects", claudeProjectKey(repoRoot));
+    mkdirSync(projectDir, { recursive: true });
+    // A conversation written one second ago: well inside the old 15-minute quiet gate.
+    const now = new Date();
+    const line = JSON.stringify({
+      type: "assistant",
+      timestamp: new Date(now.getTime() - 1000).toISOString(),
+      uuid: "asst-1",
+      sessionId: "active-session",
+      message: { id: "msg-1", model: "claude-opus-4-8", role: "assistant", usage: { input_tokens: 1, output_tokens: 1 } }
+    });
+    writeFileSync(path.join(projectDir, "active-session.jsonl"), line + "\n");
+
+    const result = await loadNativeSourceFiles({ repoRoot, providers: ["claude"], now });
+    assert.equal(result.files.length, 1, "active transcript should be indexed, not dropped");
+    assert.ok(result.files[0].path.endsWith("active-session.jsonl"));
+  } finally {
+    if (previousHome === undefined) delete process.env.CLAUDE_HOME;
+    else process.env.CLAUDE_HOME = previousHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
 
 test("lists built-in providers", () => {
   assert.deepEqual(builtInProviderAdapters.map((provider) => provider.id), ["claude", "codex"]);
@@ -102,6 +136,7 @@ test("claude native derives per-tool-call duration from timestamps, skipping sub
 
 test("claude native merges streamed assistant chunks sharing one message.id", () => {
   const usage = { input_tokens: 100, output_tokens: 50 };
+  /** Builds a streamed assistant record sharing one message.id for the merge test. */
   const chunk = (line, block, stop) => ({
     line,
     record: {

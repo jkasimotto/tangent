@@ -22,11 +22,13 @@ export async function openTerminalSession(
   cwd: string,
   config: LaunchConfig,
   kind: "agent" | "terminal" = "agent",
-  title?: string
+  title?: string,
+  name?: string,
+  estimateMinutes?: number
 ): Promise<void> {
   if (config.tmux && process.env["TMUX"]) {
     await execFileAsync("tmux", ["new-window", "-c", cwd, command]);
-    await recordSession({ cwd, kind, tmux: true, startedAt: new Date().toISOString() });
+    await recordSession({ cwd, kind, tmux: true, startedAt: new Date().toISOString(), name, estimateMinutes });
     return;
   }
 
@@ -51,7 +53,7 @@ export async function openTerminalSession(
     throw new Error(`Unknown launcher driver: ${JSON.stringify(driver)}`);
   }
 
-  await recordSession({ cwd, kind, tmux: config.tmux, tmuxSession, title, iterm2SessionId, startedAt: new Date().toISOString() });
+  await recordSession({ cwd, kind, tmux: config.tmux, tmuxSession, title, iterm2SessionId, startedAt: new Date().toISOString(), name, estimateMinutes });
 }
 
 /** Single-quotes a value for safe shell interpolation. */

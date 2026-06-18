@@ -19,6 +19,9 @@ export interface LaunchSession {
   /** iTerm2 session unique ID captured at open time, used for close/focus by ID. */
   iterm2SessionId?: string;
   startedAt: string;
+  /** Work intent captured at open time. */
+  name?: string;
+  estimateMinutes?: number;
 }
 
 /** Returns a stable tmux session name derived from the cwd path. */

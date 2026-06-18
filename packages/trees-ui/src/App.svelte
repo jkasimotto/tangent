@@ -543,9 +543,9 @@
                   <button type="button" class="node-select session-select" on:click={() => selectSession(row.session)}>
                     <span class="node-name">
                       <span class="session-kind-dot" aria-hidden="true">●</span>
-                      {row.session.kind}
+                      {row.session.name || row.session.kind}
                     </span>
-                    <span class="node-meta">{relativeTime(row.session.startedAt)}</span>
+                    <span class="node-meta">{row.session.estimateMinutes ? `${row.session.estimateMinutes >= 60 ? `${row.session.estimateMinutes / 60}h` : `${row.session.estimateMinutes}m`} · ` : ""}{relativeTime(row.session.startedAt)}</span>
                   </button>
                   <button type="button" class="session-stop" aria-label="Stop session" on:click|stopPropagation={() => stopSession(row.session)}>×</button>
                 </div>

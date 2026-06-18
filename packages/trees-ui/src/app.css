@@ -409,6 +409,7 @@ select:disabled {
   align-content: start;
   padding: 20px;
   background: var(--pane);
+  overflow-y: auto;
 }
 
 .inspector h2 {

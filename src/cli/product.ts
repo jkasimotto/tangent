@@ -262,9 +262,9 @@ export async function runTangentUiCommand(argv: string[]): Promise<void> {
       const title = typeof body["title"] === "string" ? body["title"] : undefined;
       const effectiveConfig = typeof body["tmux"] === "boolean" ? { ...config, tmux: body["tmux"] } : config;
       if (body["type"] === "agent") {
-        await launcher.openAgent(targetPath, { config: effectiveConfig, title });
         const name = typeof body["name"] === "string" ? body["name"].trim() : "";
         const estimateMinutes = typeof body["estimateMinutes"] === "number" ? body["estimateMinutes"] : undefined;
+        await launcher.openAgent(targetPath, { config: effectiveConfig, title, name: name || undefined, estimateMinutes });
         if (name && estimateMinutes !== undefined) {
           await appendWorklogEntry({
             entityPath: title,

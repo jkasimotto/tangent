@@ -13,12 +13,14 @@ export interface OpenOptions {
   config?: LaunchConfig;
   /** Label shown as the terminal tab/window title. */
   title?: string;
+  name?: string;
+  estimateMinutes?: number;
 }
 
 /** Opens a new terminal session running the configured agent command in cwd. */
 export async function openAgent(cwd: string, options: OpenOptions = {}): Promise<void> {
   const config = options.config ?? await loadLaunchConfig();
-  await openTerminalSession(config.agentCommand, cwd, config, "agent", options.title);
+  await openTerminalSession(config.agentCommand, cwd, config, "agent", options.title, options.name, options.estimateMinutes);
 }
 
 /** Opens a new terminal session at path with no agent command (shell login). */

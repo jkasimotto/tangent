@@ -12,6 +12,8 @@ export interface LaunchSession {
   title?: string;
   iterm2SessionId?: string;
   startedAt: string;
+  name?: string;
+  estimateMinutes?: number;
 }
 
 export type LauncherClient = {

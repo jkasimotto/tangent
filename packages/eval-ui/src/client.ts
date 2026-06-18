@@ -36,8 +36,40 @@ export type EvalRunSummaryView = {
   statuses: Record<EvalRunStatus, number>;
 };
 
-export type EvalCompareArtifactKind = "prompt" | "context";
+export type EvalCompareArtifactKind = "prompt" | "context" | "code";
 export type EvalCompareArtifactStatus = "same" | "changed" | "left-only" | "right-only";
+
+export type EvalSparklineKind = "assistant" | "tool" | "command" | "file" | "unknown";
+
+export type EvalSparklineBucket = {
+  kind: EvalSparklineKind;
+  tokenShare: number;
+  durationShare: number;
+};
+
+export type EvalSparkline = {
+  durationMs: number;
+  tokensTotal?: number;
+  buckets: EvalSparklineBucket[];
+};
+
+export type EvalVariantMetricsView = {
+  durationMs?: number;
+  activeAgentDurationMs?: number;
+  tokensTotal?: number;
+  peakContextTokens?: number;
+  filesChanged: number;
+  diffStat?: string;
+  conversationIds: string[];
+  sparkline?: EvalSparkline;
+};
+
+export type EvalSpecSummaryView = {
+  path: string;
+  name: string;
+  caseCount: number;
+  variantCount: number;
+};
 
 export type EvalCompareArtifactView = {
   id: string;
@@ -61,6 +93,7 @@ export type EvalVariantSummaryView = {
   baseCommit: string;
   contextCommit?: string;
   promptArtifacts: EvalCompareArtifactView[];
+  metrics?: EvalVariantMetricsView | null;
   warnings: string[];
 };
 
@@ -99,6 +132,8 @@ export type EvalDiffView = {
 export type EvalUiClient = {
   getSelection(): Promise<{ runId?: string }>;
   listRuns(): Promise<{ runs: EvalRunSummaryView[] }>;
+  listSpecs(): Promise<{ specs: EvalSpecSummaryView[] }>;
+  launchRun(args: { specPath: string }): Promise<{ runId: string }>;
   getRun(runId: string): Promise<EvalRunDetailView>;
   compareRun(args: { runId: string; caseId: string; left: string; right: string }): Promise<EvalCompareView>;
   getDiff(args: { runId: string; caseId: string; left: string; right: string; kind: EvalCompareArtifactKind; path: string }): Promise<EvalDiffView>;
@@ -111,6 +146,10 @@ export function createEvalApiClient(baseUrl = ""): EvalUiClient {
     getSelection: () => getJson(`${baseUrl}/api/eval/selection`),
     /** Lists discovered eval runs. */
     listRuns: () => getJson(`${baseUrl}/api/eval/runs`),
+    /** Lists eval specs the UI can launch. */
+    listSpecs: () => getJson(`${baseUrl}/api/eval/specs`),
+    /** Launches a run from a spec and returns its new run id. */
+    launchRun: (args) => postJson(`${baseUrl}/api/eval/runs`, args),
     /** Fetches one eval run by id. */
     getRun: (runId) => getJson(`${baseUrl}/api/eval/runs/${encodeURIComponent(runId)}`),
     /** Fetches the comparison view for a variant pair. */
@@ -133,6 +172,20 @@ export function createEvalApiClient(baseUrl = ""): EvalUiClient {
 /** Fetches and parses a JSON response. */
 async function getJson<T>(url: string): Promise<T> {
   const response = await fetch(url);
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `${response.status} ${response.statusText}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+/** Posts a JSON body and parses the JSON response. */
+async function postJson<T>(url: string, body: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body)
+  });
   if (!response.ok) {
     const text = await response.text();
     throw new Error(text || `${response.status} ${response.statusText}`);

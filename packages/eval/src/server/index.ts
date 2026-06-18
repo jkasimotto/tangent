@@ -1,13 +1,20 @@
 import http from "node:http";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
+import path from "node:path";
 
 import type { LocalUiApp, StaticAssetMount, UiRoute, UiRouteResponse } from "@tangent/ui-server";
-import { listFilesAtRef, showFile } from "@tangent/repo/git";
+import { changedFiles, listFilesAtRef, showFile } from "@tangent/repo/git";
 
 import type { EvalAgentConfig } from "../types/provider.js";
 import type { EvalRunManifest, EvalRunStatus, EvalRunVariantState } from "../types/run.js";
+import type { EvalSpec } from "../types/spec.js";
 import { isContextPath } from "../core/context-discovery.js";
+import { loadEvalSpec } from "../core/config.js";
 import { listRuns, loadRunManifest } from "../core/run-store.js";
+import { collectEval } from "../core/metrics.js";
+import { runPreparedEval } from "../core/run.js";
+import { prepareEval } from "../core/worktree.js";
+import { readVariantMetricsView } from "./metrics-read.js";
 import { diffLines } from "./diff.js";
 import type {
   EvalCompareArtifactKind,
@@ -15,8 +22,10 @@ import type {
   EvalCompareArtifactView,
   EvalCompareView,
   EvalDiffView,
+  EvalLaunchResultView,
   EvalRunDetailView,
   EvalRunSummaryView,
+  EvalSpecSummaryView,
   EvalVariantSummaryView
 } from "./types.js";
 
@@ -28,8 +37,14 @@ export type {
   EvalCompareView,
   EvalDiffLineView,
   EvalDiffView,
+  EvalLaunchResultView,
   EvalRunDetailView,
   EvalRunSummaryView,
+  EvalSparkline,
+  EvalSparklineBucket,
+  EvalSparklineKind,
+  EvalSpecSummaryView,
+  EvalVariantMetricsView,
   EvalVariantSummaryView
 } from "./types.js";
 
@@ -115,11 +130,17 @@ function evalApiRoutes(context: EvalUiRequestContext): UiRoute[] {
 /** Dispatches one Eval API request to the matching read-only handler. */
 async function handleApiRequest(request: http.IncomingMessage, url: URL, context: EvalUiRequestContext): Promise<UiRouteResponse> {
   try {
-    if (request.method !== "GET") return json(405, { error: "Method not allowed." });
     const parts = url.pathname.split("/").filter(Boolean).map((part) => decodeURIComponent(part));
     if (parts[0] !== "api" || parts[1] !== "eval") return json(404, { error: "Not found." });
 
+    if (request.method === "POST") {
+      if (parts.length === 3 && parts[2] === "runs") return json(202, await launchRun(request));
+      return json(405, { error: "Method not allowed." });
+    }
+    if (request.method !== "GET") return json(405, { error: "Method not allowed." });
+
     if (parts.length === 3 && parts[2] === "selection") return json(200, { runId: await preferredRun(context.preferredRunId) });
+    if (parts.length === 3 && parts[2] === "specs") return json(200, { specs: await listSpecSummaries() });
 
     if (parts[2] === "runs") {
       if (parts.length === 3) return json(200, { runs: (await listRuns()).map(runSummary) });
@@ -135,6 +156,63 @@ async function handleApiRequest(request: http.IncomingMessage, url: URL, context
   } catch (error) {
     return json(errorStatus(error), { error: (error as Error).message });
   }
+}
+
+/** Prepares a run from a spec and starts execution in the background, returning the new run id. */
+async function launchRun(request: http.IncomingMessage): Promise<EvalLaunchResultView> {
+  const body = await readJsonBody(request);
+  const specPath = typeof body.specPath === "string" ? body.specPath : undefined;
+  if (!specPath) throw new Error("specPath is required.");
+  const prepared = await prepareEval(await loadEvalSpec(specPath));
+  // Run and collect detached; the manifest is persisted after each phase so polling sees progress.
+  void runPreparedEval(prepared.manifest)
+    .then(() => collectEval(prepared.manifest))
+    .catch(() => undefined);
+  return { runId: prepared.manifest.id };
+}
+
+/** Lists eval specs the UI can launch: project `evals/*.json` plus specs of prior runs. */
+async function listSpecSummaries(): Promise<EvalSpecSummaryView[]> {
+  const summaries = new Map<string, EvalSpecSummaryView>();
+  for (const specPath of await discoverSpecPaths()) {
+    const summary = await readSpecSummary(specPath);
+    if (summary) summaries.set(summary.path, summary);
+  }
+  return [...summaries.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Collects candidate spec paths from the project evals directory and prior run manifests. */
+async function discoverSpecPaths(): Promise<string[]> {
+  const evalsDir = path.resolve("evals");
+  const entries = await readdir(evalsDir, { withFileTypes: true }).catch(() => []);
+  const fromDir = entries.filter((entry) => entry.isFile() && entry.name.endsWith(".json")).map((entry) => path.join(evalsDir, entry.name));
+  const fromRuns = (await listRuns()).map((manifest) => manifest.specPath).filter((value): value is string => Boolean(value));
+  return [...new Set([...fromDir, ...fromRuns])];
+}
+
+/** Reads a spec file into a UI summary, returning undefined when it is not a valid spec. */
+async function readSpecSummary(specPath: string): Promise<EvalSpecSummaryView | undefined> {
+  try {
+    const spec = JSON.parse(await readFile(specPath, "utf8")) as EvalSpec;
+    if (spec.schema !== "eval.spec.v1" || !Array.isArray(spec.cases)) return undefined;
+    return {
+      path: specPath,
+      name: spec.name || path.basename(specPath),
+      caseCount: spec.cases.length,
+      variantCount: spec.cases.reduce((sum, testCase) => sum + (testCase.variants?.length || 0), 0)
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Reads and parses a JSON request body. */
+async function readJsonBody(request: http.IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) chunks.push(chunk as Buffer);
+  const text = Buffer.concat(chunks).toString("utf8").trim();
+  if (!text) return {};
+  return JSON.parse(text) as Record<string, unknown>;
 }
 
 /** Resolves a requested run id or latest selector to a concrete run id. */
@@ -156,7 +234,7 @@ async function runDetail(manifest: EvalRunManifest): Promise<EvalRunDetailView> 
   const cases = new Map<string, EvalVariantSummaryView[]>();
   for (const variant of manifest.variants) {
     const rows = cases.get(variant.caseId) || [];
-    rows.push(await variantSummary(variant));
+    rows.push(await variantSummary(manifest, variant));
     cases.set(variant.caseId, rows);
   }
   return {
@@ -195,7 +273,7 @@ function statusCounts(variants: EvalRunVariantState[]): Record<EvalRunStatus, nu
 }
 
 /** Converts a variant manifest entry into UI metadata. */
-async function variantSummary(variant: EvalRunVariantState): Promise<EvalVariantSummaryView> {
+async function variantSummary(manifest: EvalRunManifest, variant: EvalRunVariantState): Promise<EvalVariantSummaryView> {
   return {
     caseId: variant.caseId,
     variantId: variant.variantId,
@@ -210,6 +288,7 @@ async function variantSummary(variant: EvalRunVariantState): Promise<EvalVariant
     baseCommit: variant.baseCommit,
     contextCommit: variant.contextCommit,
     promptArtifacts: await promptArtifacts(variant),
+    metrics: await readVariantMetricsView(manifest, variant),
     warnings: variant.warnings
   };
 }
@@ -220,8 +299,8 @@ async function compareView(manifest: EvalRunManifest, url: URL): Promise<EvalCom
   return {
     run: runSummary(manifest),
     caseId,
-    left: await variantSummary(left),
-    right: await variantSummary(right),
+    left: await variantSummary(manifest, left),
+    right: await variantSummary(manifest, right),
     artifacts: (await artifactCandidates(left, right)).map(publicArtifact)
   };
 }
@@ -230,7 +309,7 @@ async function compareView(manifest: EvalRunManifest, url: URL): Promise<EvalCom
 async function diffView(manifest: EvalRunManifest, url: URL): Promise<EvalDiffView> {
   const { left, right } = selectedPair(manifest, url);
   const kind = requiredParam(url, "kind") as EvalCompareArtifactKind;
-  if (kind !== "prompt" && kind !== "context") throw new Error("kind must be prompt or context.");
+  if (kind !== "prompt" && kind !== "context" && kind !== "code") throw new Error("kind must be prompt, context, or code.");
   const artifactPath = requiredParam(url, "path");
   const candidates = await artifactCandidates(left, right);
   const artifact = candidates.find((candidate) => candidate.kind === kind && candidate.path === artifactPath);
@@ -264,10 +343,11 @@ function selectedPair(manifest: EvalRunManifest, url: URL): { caseId: string; le
 
 /** Lists prompt and context artifacts that can be compared for a pair. */
 async function artifactCandidates(left: EvalRunVariantState, right: EvalRunVariantState): Promise<ArtifactCandidate[]> {
-  const [leftPrompts, rightPrompts, contextPaths] = await Promise.all([
+  const [leftPrompts, rightPrompts, contextPaths, codePaths] = await Promise.all([
     promptCandidates(left),
     promptCandidates(right),
-    contextArtifactPaths(left, right)
+    contextArtifactPaths(left, right),
+    codeArtifactPaths(left, right)
   ]);
   const rows: ArtifactCandidate[] = [];
   const promptPaths = new Set([...leftPrompts.keys(), ...rightPrompts.keys()]);
@@ -299,7 +379,41 @@ async function artifactCandidates(left: EvalRunVariantState, right: EvalRunVaria
       rightContent
     });
   }
+  for (const codePath of codePaths) {
+    const [leftContent, rightContent] = await Promise.all([
+      showImplementationFile(left, codePath),
+      showImplementationFile(right, codePath)
+    ]);
+    rows.push({
+      id: `code:${codePath}`,
+      kind: "code",
+      path: codePath,
+      label: codePath,
+      status: contentStatus(leftContent, rightContent),
+      leftContent,
+      rightContent
+    });
+  }
   return rows.sort((a, b) => artifactSortKey(a).localeCompare(artifactSortKey(b)));
+}
+
+/** Lists files either variant changed from its base commit, for the A-vs-B code diff. */
+async function codeArtifactPaths(left: EvalRunVariantState, right: EvalRunVariantState): Promise<string[]> {
+  const [leftPaths, rightPaths] = await Promise.all([variantChangedFiles(left), variantChangedFiles(right)]);
+  return [...new Set([...leftPaths, ...rightPaths])].sort();
+}
+
+/** Lists files a variant changed between its base and implementation (or context) commit. */
+async function variantChangedFiles(variant: EvalRunVariantState): Promise<string[]> {
+  const head = variant.implementationCommit || variant.planCommit || variant.contextCommit;
+  if (!head) return [];
+  return changedFiles(variant.worktree, variant.baseCommit, head).catch(() => []);
+}
+
+/** Reads a file at a variant's implementation commit, falling back to its base. */
+async function showImplementationFile(variant: EvalRunVariantState, filePath: string): Promise<string | undefined> {
+  const head = variant.implementationCommit || variant.planCommit || variant.contextCommit || variant.baseCommit;
+  return showFile(variant.worktree, head, filePath).catch(() => undefined);
 }
 
 /** Lists prompt artifacts attached to a variant. */
@@ -376,7 +490,7 @@ function contentStatus(left: string | undefined, right: string | undefined): Eva
 
 /** Returns a stable artifact ordering key for UI lists. */
 function artifactSortKey(artifact: EvalCompareArtifactView): string {
-  const kind = artifact.kind === "prompt" ? "0" : "1";
+  const kind = artifact.kind === "prompt" ? "0" : artifact.kind === "context" ? "1" : "2";
   const promptOrder = artifact.path === "task" ? "0" : artifact.path === "plan" ? "1" : artifact.path === "implement" ? "2" : artifact.path;
   return `${kind}:${artifact.kind === "prompt" ? promptOrder : artifact.path}`;
 }

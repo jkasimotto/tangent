@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import {
     createEvalApiClient,
     type EvalCaseView,
@@ -9,13 +9,19 @@
     type EvalDiffView,
     type EvalRunDetailView,
     type EvalRunSummaryView,
+    type EvalSpecSummaryView,
     type EvalUiClient,
+    type EvalVariantMetricsView,
     type EvalVariantSummaryView
   } from "./client.js";
 
   export let client: EvalUiClient = createEvalApiClient();
 
   let runs: EvalRunSummaryView[] = [];
+  let specs: EvalSpecSummaryView[] = [];
+  let selectedSpecPath = "";
+  let launching = false;
+  let launchError = "";
   let selectedRunId = "";
   let runDetail: EvalRunDetailView | undefined;
   let selectedCaseId = "";
@@ -31,10 +37,13 @@
   let runLoadKey = "";
   let compareLoadKey = "";
   let diffLoadKey = "";
+  let pollTimer: ReturnType<typeof setTimeout> | undefined;
 
   onMount(() => {
     void loadInitial();
   });
+
+  onDestroy(() => clearTimeout(pollTimer));
 
   $: selectedCase = runDetail?.cases.find((item) => item.id === selectedCaseId);
   $: selectedCase && syncVariantSelection(selectedCase);
@@ -46,8 +55,14 @@
   async function loadInitial(): Promise<void> {
     loading = true;
     try {
-      const [selection, list] = await Promise.all([client.getSelection().catch(() => ({ runId: undefined })), client.listRuns()]);
+      const [selection, list, specList] = await Promise.all([
+        client.getSelection().catch(() => ({ runId: undefined })),
+        client.listRuns(),
+        client.listSpecs().catch(() => ({ specs: [] }))
+      ]);
       runs = list.runs;
+      specs = specList.specs;
+      selectedSpecPath = specs[0]?.path || "";
       selectedRunId = selection.runId && runs.some((run) => run.id === selection.runId) ? selection.runId : runs[0]?.id || "";
       error = "";
     } catch (caught) {
@@ -55,6 +70,50 @@
     } finally {
       loading = false;
     }
+  }
+
+  async function launch(): Promise<void> {
+    if (!selectedSpecPath || launching) return;
+    launching = true;
+    launchError = "";
+    try {
+      const { runId } = await client.launchRun({ specPath: selectedSpecPath });
+      runs = (await client.listRuns()).runs;
+      selectRun(runId);
+    } catch (caught) {
+      launchError = friendlyError(caught);
+    } finally {
+      launching = false;
+    }
+  }
+
+  /** Re-fetches the run while any variant is still preparing or running, then refreshes the comparison. */
+  function schedulePoll(runId: string): void {
+    clearTimeout(pollTimer);
+    pollTimer = setTimeout(() => void poll(runId), 1500);
+  }
+
+  async function poll(runId: string): Promise<void> {
+    if (runId !== selectedRunId) return;
+    try {
+      const next = await client.getRun(runId);
+      if (runId !== selectedRunId) return;
+      runDetail = next;
+      if (runActive(next)) {
+        schedulePoll(runId);
+      } else {
+        compareLoadKey = "";
+        diffLoadKey = "";
+        void loadCompare();
+      }
+    } catch {
+      // Stop polling on transient errors; the user can reselect the run to retry.
+    }
+  }
+
+  /** Returns whether a run still has variants that are preparing or running. */
+  function runActive(detail: EvalRunDetailView): boolean {
+    return detail.statuses.prepared + detail.statuses.running > 0;
   }
 
   async function loadRun(runId: string): Promise<void> {
@@ -70,6 +129,8 @@
       compare = undefined;
       diff = undefined;
       error = "";
+      if (runActive(next)) schedulePoll(runId);
+      else clearTimeout(pollTimer);
     } catch (caught) {
       error = friendlyError(caught);
     } finally {
@@ -211,6 +272,66 @@
     const changed = diff.lines.filter((line) => line.kind !== "equal").length;
     return `${diff.lines.length} lines, ${changed} changed`;
   }
+
+  type ResultRow = {
+    label: string;
+    aText: string;
+    bText: string;
+    aPct: number;
+    bPct: number;
+    delta: string;
+    deltaBad: boolean;
+    deltaGood: boolean;
+  };
+
+  $: resultRows = compare ? buildResultRows(compare.left.metrics, compare.right.metrics) : [];
+
+  /** Builds the A-vs-B output rows (time, peak context, files changed). Lower is treated as better. */
+  function buildResultRows(left: EvalVariantMetricsView | null | undefined, right: EvalVariantMetricsView | null | undefined): ResultRow[] {
+    if (!left && !right) return [];
+    return [
+      resultRow("Time", left?.durationMs, right?.durationMs, formatDurationMs),
+      resultRow("Peak context", left?.peakContextTokens, right?.peakContextTokens, formatTokens),
+      resultRow("Files changed", left?.filesChanged, right?.filesChanged, (value) => `${value}`)
+    ];
+  }
+
+  /** Builds one comparison row, scaling both bars against the larger value. */
+  function resultRow(label: string, a: number | undefined, b: number | undefined, format: (value: number) => string): ResultRow {
+    const aValue = a ?? 0;
+    const bValue = b ?? 0;
+    const max = Math.max(aValue, bValue, 1);
+    const delta = bValue - aValue;
+    return {
+      label,
+      aText: a === undefined ? "—" : format(aValue),
+      bText: b === undefined ? "—" : format(bValue),
+      aPct: (aValue / max) * 100,
+      bPct: (bValue / max) * 100,
+      delta: delta === 0 ? "even" : `${delta > 0 ? "+" : "−"}${format(Math.abs(delta))} B`,
+      deltaBad: delta > 0,
+      deltaGood: delta < 0
+    };
+  }
+
+  function sparklineBarStyle(tokenShare: number, durationShare: number): string {
+    return `height:${Math.max(10, Math.round(tokenShare * 100))}%;opacity:${(0.4 + durationShare * 0.6).toFixed(2)}`;
+  }
+
+  function formatDurationMs(value: number): string {
+    if (value < 1000) return `${Math.round(value)}ms`;
+    const seconds = value / 1000;
+    if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
+    const minutes = Math.floor(seconds / 60);
+    const rest = Math.round(seconds % 60);
+    return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
+  }
+
+  function formatTokens(value: number): string {
+    if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+    if (value >= 1000) return `${Math.round(value / 1000)}K`;
+    return `${Math.round(value)}`;
+  }
 </script>
 
 <main class="eval-workspace" aria-label="Eval viewer">
@@ -219,6 +340,25 @@
       <p>Tangent Eval</p>
       <h1>Prepared runs</h1>
     </header>
+
+    <section class="run-launch" aria-label="Run an eval">
+      <label>
+        <span>Spec</span>
+        <select bind:value={selectedSpecPath} disabled={launching || specs.length === 0}>
+          {#if specs.length === 0}
+            <option value="">No specs found</option>
+          {:else}
+            {#each specs as spec}
+              <option value={spec.path}>{spec.name} ({spec.variantCount} configs)</option>
+            {/each}
+          {/if}
+        </select>
+      </label>
+      <button type="button" class="run-button" on:click={launch} disabled={launching || !selectedSpecPath}>
+        {launching ? "Starting…" : "Run"}
+      </button>
+      {#if launchError}<small class="run-error" role="alert">{launchError}</small>{/if}
+    </section>
 
     {#if loading}
       <div class="state">Loading runs</div>
@@ -284,19 +424,40 @@
 
       {#if compare}
         <div class="variant-strip">
-          <section>
-            <p>A · {compare.left.status}</p>
-            <h3>{compare.left.variantId}</h3>
-            <span>{agentLabel(compare.left) || "manual"}</span>
-            <small>{contextLabel(compare.left)}</small>
-          </section>
-          <section>
-            <p>B · {compare.right.status}</p>
-            <h3>{compare.right.variantId}</h3>
-            <span>{agentLabel(compare.right) || "manual"}</span>
-            <small>{contextLabel(compare.right)}</small>
-          </section>
+          {#each [{ tag: "A", variant: compare.left }, { tag: "B", variant: compare.right }] as side}
+            <section>
+              <p>{side.tag} · {side.variant.status}</p>
+              <h3>{side.variant.variantId}</h3>
+              <span>{agentLabel(side.variant) || "manual"}</span>
+              <small>{contextLabel(side.variant)}</small>
+              {#if side.variant.metrics?.sparkline}
+                <div class="spark" aria-label={`${side.tag} activity`}>
+                  {#each side.variant.metrics.sparkline.buckets as bucket}
+                    <span class="spark-bar spark-{bucket.kind}" style={sparklineBarStyle(bucket.tokenShare, bucket.durationShare)}></span>
+                  {/each}
+                </div>
+                {#if side.variant.metrics.conversationIds[0]}
+                  <a class="spark-link" href={`/usage?conversation=${encodeURIComponent(side.variant.metrics.conversationIds[0])}`}>Open flamegraph</a>
+                {/if}
+              {/if}
+            </section>
+          {/each}
         </div>
+
+        {#if resultRows.length}
+          <div class="results-strip" aria-label="Output comparison">
+            {#each resultRows as row}
+              <div class="result-metric">
+                <span class="result-label">{row.label}</span>
+                <div class="versus">
+                  <div class="versus-row"><span class="versus-tag">A</span><div class="versus-track"><span class="versus-fill a" style={`width:${row.aPct}%`}></span></div><span class="versus-value">{row.aText}</span></div>
+                  <div class="versus-row"><span class="versus-tag">B</span><div class="versus-track"><span class="versus-fill b" style={`width:${row.bPct}%`}></span></div><span class="versus-value">{row.bText}</span></div>
+                </div>
+                <span class="result-delta" class:good={row.deltaGood} class:bad={row.deltaBad}>{row.delta}</span>
+              </div>
+            {/each}
+          </div>
+        {/if}
 
         <div class="artifact-and-diff">
           <aside class="artifact-list" aria-label="Artifacts">
@@ -319,6 +480,19 @@
                 <p>No context files</p>
               {:else}
                 {#each artifactGroup("context") as artifact}
+                  <button type="button" class:active={artifact.id === selectedArtifactId} on:click={() => selectArtifact(artifact)}>
+                    <span>{artifact.label}</span>
+                    <small>{artifact.status || "available"}</small>
+                  </button>
+                {/each}
+              {/if}
+            </section>
+            <section>
+              <h3>Changed files</h3>
+              {#if artifactGroup("code").length === 0}
+                <p>No code changes</p>
+              {:else}
+                {#each artifactGroup("code") as artifact}
                   <button type="button" class:active={artifact.id === selectedArtifactId} on:click={() => selectArtifact(artifact)}>
                     <span>{artifact.label}</span>
                     <small>{artifact.status || "available"}</small>

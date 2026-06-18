@@ -4,5 +4,5 @@ Eval UI is a product-owned Svelte app. It renders serializable view models from 
 
 Rules:
 - Keep domain artifact discovery and filesystem/git access in `@tangent/eval/server`.
-- Keep the UI read-only in V1; no prepare, run, collect, cancel, or mutation controls.
+- The UI may launch runs through `POST /api/eval/runs` and poll status, but holds no run mechanics itself; preparation, execution, and collection stay in `@tangent/eval/server`.
 - Support both standalone serving and embedded mounting inside the combined Tangent UI shell.

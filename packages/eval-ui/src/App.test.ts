@@ -3,12 +3,12 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App.svelte";
-import type { EvalCompareView, EvalDiffView, EvalRunDetailView, EvalUiClient } from "./client.js";
+import type { EvalCompareView, EvalDiffView, EvalRunDetailView, EvalUiClient, EvalVariantMetricsView } from "./client.js";
 
 afterEach(() => cleanup());
 
 describe("eval svelte app", () => {
-  it("renders run selection, variant metadata, artifacts, and diff rows", async () => {
+  it("renders run selection, variant metadata, output comparison, artifacts, and diff rows", async () => {
     const client = fakeEvalClient();
     const { container } = render(App, { props: { client } });
 
@@ -18,6 +18,10 @@ describe("eval svelte app", () => {
     expect(screen.getByRole("button", { name: /Task prompt changed/ })).toHaveClass("active");
     expect(await screen.findByText("Use repo context.")).toBeInTheDocument();
     expect(container.querySelector(".diff-row.changed")).toHaveTextContent("Use no context.");
+
+    expect(screen.getByLabelText("Output comparison")).toBeInTheDocument();
+    expect(screen.getByText("Peak context")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /src\/foo.ts changed/ })).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole("button", { name: /AGENTS.md right-only/ }));
 
@@ -30,10 +34,31 @@ describe("eval svelte app", () => {
       path: "AGENTS.md"
     });
   });
+
+  it("launches a run from the selected spec", async () => {
+    const client = fakeEvalClient();
+    render(App, { props: { client } });
+
+    await screen.findByRole("button", { name: /ui-compare/ });
+    await fireEvent.click(screen.getByRole("button", { name: "Run" }));
+
+    expect(client.launchRun).toHaveBeenCalledWith({ specPath: "/evals/compare.json" });
+  });
 });
 
 /** Creates a deterministic client for app rendering tests. */
 function fakeEvalClient(): EvalUiClient {
+  /** Builds a deterministic output-metrics summary for a variant. */
+  const metrics = (durationMs: number, peak: number): EvalVariantMetricsView => ({
+    durationMs,
+    activeAgentDurationMs: durationMs,
+    tokensTotal: peak * 2,
+    peakContextTokens: peak,
+    filesChanged: 1,
+    diffStat: "1 file changed",
+    conversationIds: ["conv-1"],
+    sparkline: { durationMs, tokensTotal: peak, buckets: [{ kind: "assistant", tokenShare: 1, durationShare: 1 }] }
+  });
   const run: EvalRunDetailView = {
     id: "run1",
     name: "ui-compare",
@@ -41,14 +66,14 @@ function fakeEvalClient(): EvalUiClient {
     runDir: "/tmp/run1",
     variantCount: 2,
     caseCount: 1,
-    statuses: { prepared: 1, running: 0, done: 0, failed: 0, manual: 0, cancelled: 0 },
+    statuses: { prepared: 0, running: 0, done: 2, failed: 0, manual: 0, cancelled: 0 },
     cases: [{
       id: "task",
       variants: [{
         caseId: "task",
         variantId: "empty",
         label: "task/empty",
-        status: "prepared",
+        status: "done",
         agent: { kind: "codex-cli", model: "fake", sandbox: "workspace-write" },
         model: "fake",
         context: { mode: "empty" },
@@ -58,12 +83,13 @@ function fakeEvalClient(): EvalUiClient {
         baseCommit: "base",
         contextCommit: "empty-context",
         promptArtifacts: [],
+        metrics: metrics(12000, 42000),
         warnings: []
       }, {
         caseId: "task",
         variantId: "repo",
         label: "task/repo",
-        status: "prepared",
+        status: "done",
         agent: { kind: "codex-cli", model: "fake", sandbox: "workspace-write" },
         model: "fake",
         context: { mode: "repo" },
@@ -73,6 +99,7 @@ function fakeEvalClient(): EvalUiClient {
         baseCommit: "base",
         contextCommit: "repo-context",
         promptArtifacts: [],
+        metrics: metrics(9000, 51000),
         warnings: []
       }]
     }]
@@ -84,7 +111,8 @@ function fakeEvalClient(): EvalUiClient {
     right: run.cases[0].variants[1],
     artifacts: [
       { id: "prompt:task", kind: "prompt", path: "task", label: "Task prompt", status: "changed" },
-      { id: "context:AGENTS.md", kind: "context", path: "AGENTS.md", label: "AGENTS.md", status: "right-only" }
+      { id: "context:AGENTS.md", kind: "context", path: "AGENTS.md", label: "AGENTS.md", status: "right-only" },
+      { id: "code:src/foo.ts", kind: "code", path: "src/foo.ts", label: "src/foo.ts", status: "changed" }
     ]
   };
   const promptDiff: EvalDiffView = {
@@ -104,6 +132,10 @@ function fakeEvalClient(): EvalUiClient {
     getSelection: async () => ({ runId: "run1" }),
     /** Returns the seeded run list. */
     listRuns: async () => ({ runs: [run] }),
+    /** Returns the seeded launchable specs. */
+    listSpecs: async () => ({ specs: [{ path: "/evals/compare.json", name: "compare", caseCount: 1, variantCount: 2 }] }),
+    /** Records launch requests. */
+    launchRun: vi.fn(async () => ({ runId: "run1" })),
     /** Returns the seeded run detail. */
     getRun: async () => run,
     /** Returns the seeded comparison view. */

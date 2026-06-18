@@ -13,9 +13,45 @@ export type EvalRunSummaryView = {
   statuses: Record<EvalRunStatus, number>;
 };
 
-export type EvalCompareArtifactKind = "prompt" | "context";
+export type EvalCompareArtifactKind = "prompt" | "context" | "code";
 
 export type EvalCompareArtifactStatus = "same" | "changed" | "left-only" | "right-only";
+
+export type EvalSparklineKind = "assistant" | "tool" | "command" | "file" | "unknown";
+
+export type EvalSparklineBucket = {
+  kind: EvalSparklineKind;
+  tokenShare: number;
+  durationShare: number;
+};
+
+export type EvalSparkline = {
+  durationMs: number;
+  tokensTotal?: number;
+  buckets: EvalSparklineBucket[];
+};
+
+export type EvalVariantMetricsView = {
+  durationMs?: number;
+  activeAgentDurationMs?: number;
+  tokensTotal?: number;
+  peakContextTokens?: number;
+  filesChanged: number;
+  diffStat?: string;
+  conversationIds: string[];
+  sparkline?: EvalSparkline;
+};
+
+export type EvalSpecSummaryView = {
+  path: string;
+  name: string;
+  caseCount: number;
+  variantCount: number;
+};
+
+export type EvalLaunchResultView = {
+  runId: string;
+};
 
 export type EvalCompareArtifactView = {
   id: string;
@@ -39,6 +75,7 @@ export type EvalVariantSummaryView = {
   baseCommit: string;
   contextCommit?: string;
   promptArtifacts: EvalCompareArtifactView[];
+  metrics?: EvalVariantMetricsView | null;
   warnings: string[];
 };
 

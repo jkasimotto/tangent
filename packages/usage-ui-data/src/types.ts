@@ -139,6 +139,8 @@ export type UsageMessage = {
   model?: string;
   hasToolUse?: boolean;
   hasThinking?: boolean;
+  thinking?: string;
+  thinkingPreview?: string;
   thinkingSummary?: string;
   tokenUsage?: UsageTokenUsage;
   tokens?: { label?: string; value?: number | string; unit?: string };
@@ -154,6 +156,7 @@ export type UsageMessage = {
     result?: { durationMs?: number; outputPreview?: string };
     targetPaths?: string[];
     input?: unknown;
+    plan?: string;
   }>;
   evidence?: UsageEvidenceRef[];
   providerFields?: Record<string, unknown>;
@@ -483,6 +486,8 @@ export type UsageConversationMessage = {
   at?: string;
   text?: string;
   textPreview?: string;
+  thinking?: string;
+  thinkingPreview?: string;
   tokenLabel?: string;
   tokens?: number;
   durationLabel?: string;
@@ -499,6 +504,7 @@ export type UsageConversationMessage = {
     preview?: string;
     resultDisplayPreview?: string;
     resultPreview?: string;
+    plan?: string;
   }>;
 };
 

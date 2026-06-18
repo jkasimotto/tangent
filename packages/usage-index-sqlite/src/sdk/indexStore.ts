@@ -418,6 +418,12 @@ function ensureSchema(db: DatabaseHandle): void {
   `);
   db.exec(usageProjectionSchemaSql);
   if (!tableHasColumn(db, "events", "source_path")) db.exec("alter table events add column source_path text");
+  if (!tableHasColumn(db, "messages", "text_full")) db.exec("alter table messages add column text_full text");
+  if (!tableHasColumn(db, "messages", "thinking_text")) db.exec("alter table messages add column thinking_text text");
+  if (!tableHasColumn(db, "messages", "thinking_preview")) db.exec("alter table messages add column thinking_preview text");
+  if (!tableHasColumn(db, "tool_calls", "input_json")) db.exec("alter table tool_calls add column input_json text");
+  if (!tableHasColumn(db, "tool_calls", "plan_text")) db.exec("alter table tool_calls add column plan_text text");
+  if (!tableHasColumn(db, "tool_results", "output_full")) db.exec("alter table tool_results add column output_full text");
 }
 
 function upsertSourceFile(db: DatabaseHandle, file: string, provider: UsageProvider, sourceKind: UsageIndexSource, mtimeMs: number, size: number, events: UsageJsonlLineV1[]): void {
@@ -485,18 +491,18 @@ function refreshDerivedTables(db: DatabaseHandle): void {
   `);
   const insertMessage = db.prepare(`
     insert or replace into messages
-    (id, session_id, turn_id, step_id, role, ordinal, created_at, text_preview, text_chars, text_bytes, content_mode, model, has_tool_use, has_thinking, token_usage_json, confidence, evidence_json, provider_fields_json)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (id, session_id, turn_id, step_id, role, ordinal, created_at, text_preview, text_chars, text_bytes, content_mode, model, has_tool_use, has_thinking, token_usage_json, confidence, evidence_json, provider_fields_json, text_full, thinking_text, thinking_preview)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertToolCall = db.prepare(`
     insert or replace into tool_calls
-    (id, session_id, turn_id, step_id, message_id, provider, tool_name, category, target_paths_json, model, status, result_step_id, evidence_json, provider_fields_json)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (id, session_id, turn_id, step_id, message_id, provider, tool_name, category, target_paths_json, model, status, result_step_id, evidence_json, provider_fields_json, input_json, plan_text)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertToolResult = db.prepare(`
     insert or replace into tool_results
-    (id, session_id, turn_id, step_id, tool_call_id, provider, tool_name, status, output_preview, duration_ms, evidence_json, provider_fields_json)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (id, session_id, turn_id, step_id, tool_call_id, provider, tool_name, status, output_preview, duration_ms, evidence_json, provider_fields_json, output_full)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const insertUsageSample = db.prepare(`
     insert or replace into usage_samples
@@ -561,15 +567,15 @@ function refreshDerivedTables(db: DatabaseHandle): void {
       if (row.parentStepId) insertEdge.run(`edge:${row.parentStepId}:${row.id}`, row.parentStepId, row.id, "parent");
     }
     for (const row of projections.messages) {
-      insertMessage.run(row.id, row.sessionId, row.turnId, row.stepId, row.role, row.ordinal, row.createdAt, row.textPreview, row.textChars, row.textBytes, row.contentMode, row.model, row.hasToolUse ? 1 : 0, row.hasThinking ? 1 : 0, jsonOrNull(row.tokenUsage), row.confidence, JSON.stringify(row.evidence), jsonOrNull(row.providerFields));
+      insertMessage.run(row.id, row.sessionId, row.turnId, row.stepId, row.role, row.ordinal, row.createdAt, row.textPreview, row.textChars, row.textBytes, row.contentMode, row.model, row.hasToolUse ? 1 : 0, row.hasThinking ? 1 : 0, jsonOrNull(row.tokenUsage), row.confidence, JSON.stringify(row.evidence), jsonOrNull(row.providerFields), row.text ?? null, row.thinking ?? null, row.thinkingPreview ?? null);
       if (row.stepId) insertEdge.run(`edge:${row.stepId}:${row.id}`, row.stepId, row.id, "message");
     }
     for (const row of projections.toolCalls) {
-      insertToolCall.run(row.id, row.sessionId, row.turnId, row.stepId, row.messageId, row.provider, row.toolName, row.category, JSON.stringify(row.targetPaths), row.model, row.status, row.resultStepId, JSON.stringify(row.evidence), jsonOrNull(row.providerFields));
+      insertToolCall.run(row.id, row.sessionId, row.turnId, row.stepId, row.messageId, row.provider, row.toolName, row.category, JSON.stringify(row.targetPaths), row.model, row.status, row.resultStepId, JSON.stringify(row.evidence), jsonOrNull(row.providerFields), jsonOrNull(row.input), row.plan ?? null);
       if (row.stepId) insertEdge.run(`edge:${row.stepId}:${row.id}`, row.stepId, row.id, "tool_call");
     }
     for (const row of projections.toolResults) {
-      insertToolResult.run(row.id, row.sessionId, row.turnId, row.stepId, row.toolCallId, row.provider, row.toolName, row.status, row.outputPreview, row.durationMs, JSON.stringify(row.evidence), jsonOrNull(row.providerFields));
+      insertToolResult.run(row.id, row.sessionId, row.turnId, row.stepId, row.toolCallId, row.provider, row.toolName, row.status, row.outputPreview, row.durationMs, JSON.stringify(row.evidence), jsonOrNull(row.providerFields), typeof row.output === "string" ? row.output : jsonOrNull(row.output));
       if (row.stepId) insertEdge.run(`edge:${row.stepId}:${row.id}`, row.stepId, row.id, "tool_result");
     }
     for (const row of projections.usageSamples) {

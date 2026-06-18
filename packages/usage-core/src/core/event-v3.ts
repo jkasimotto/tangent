@@ -24,7 +24,8 @@ export function toUsageEventV3(event: UsageEventV3 | UsageJsonlLineV1, index = 0
     output: field(data, "output") ?? field(data, "tool_response") ?? field(data, "response"),
     status: stringValue(field(data, "status")),
     targetPaths: pathsForData(data),
-    durationMs: numberValue(field(data, "duration_ms")) ?? numberValue(field(data, "durationMs"))
+    durationMs: numberValue(field(data, "duration_ms")) ?? numberValue(field(data, "durationMs")),
+    plan: stringValue(field(data, "plan"))
   } : undefined;
   const role = roleForLegacyEvent(legacy);
   const observedAt = legacy.observed_at || legacy.recorded_at;
@@ -78,6 +79,8 @@ export function toUsageEventV3(event: UsageEventV3 | UsageJsonlLineV1, index = 0
       role,
       text: contentMode === "metadata-only" ? undefined : stringValue(field(data, "text")) || stringValue(field(data, "delta")),
       textPreview: stringValue(field(data, "text_preview")) || preview(stringValue(field(data, "text")) || stringValue(field(data, "delta"))),
+      thinking: contentMode === "metadata-only" ? undefined : stringValue(field(data, "thinking")),
+      thinkingPreview: stringValue(field(data, "thinking_preview")) || preview(stringValue(field(data, "thinking"))),
       model: legacy.actor?.model || stringValue(field(data, "model")),
       tool,
       usage,

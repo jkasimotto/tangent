@@ -49,6 +49,11 @@ export function printConversationReport(report: NormalizedConversation): void {
     const tokenText = message.tokens ? `  ${formatTokens(message.tokens)}` : "";
     console.log("");
     console.log(`${formatIsoTime(message.at)} assistant${message.model ? `  ${shortModel(message.model)}` : ""}${tokenText}`);
+    if (message.thinking) {
+      console.log(indent("[thinking]"));
+      console.log(indent(message.thinking, 4));
+      console.log("");
+    }
     console.log(indent(message.text || "(no text captured)"));
     if (message.toolCalls.length) {
       console.log("");
@@ -56,6 +61,10 @@ export function printConversationReport(report: NormalizedConversation): void {
       for (const [index, tool] of message.toolCalls.entries()) {
         const target = tool.targetPaths.length ? `  ${tool.targetPaths.slice(0, 3).join(", ")}` : "";
         console.log(`    ${index + 1}. ${tool.name}  ${tool.result?.status || "unknown"}${target}`);
+        if (tool.plan) {
+          console.log(indent("plan:", 6));
+          console.log(indent(tool.plan, 8));
+        }
       }
     }
   }
@@ -186,8 +195,9 @@ function shortModel(model: string): string {
     .replace(/-\d{8}$/, "");
 }
 
-function indent(value: string): string {
-  return value.split(/\r?\n/).map((line) => `  ${line}`).join("\n");
+function indent(value: string, width = 2): string {
+  const pad = " ".repeat(width);
+  return value.split(/\r?\n/).map((line) => `${pad}${line}`).join("\n");
 }
 
 function pad(value: number): string {

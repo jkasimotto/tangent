@@ -274,6 +274,8 @@ export type UsageMessage = {
   model?: string;
   hasToolUse: boolean;
   hasThinking: boolean;
+  thinking?: string;
+  thinkingPreview?: string;
   thinkingSummary?: string;
   tokenUsage?: UsageTokenUsage;
   confidence: UsageConfidence;
@@ -292,6 +294,8 @@ export type UsageToolCall = {
   toolName: string;
   category: string;
   input?: unknown;
+  plan?: string;
+  planPreview?: string;
   targetPaths: string[];
   model?: string;
   status: UsageStatus;
@@ -333,6 +337,7 @@ export type UsageToolFacet = {
   status?: string;
   targetPaths?: string[];
   durationMs?: number;
+  plan?: string;
 };
 
 export type UsagePermissionFacet = {
@@ -411,6 +416,8 @@ export type UsageEventV3 = {
   data: {
     text?: string;
     textPreview?: string;
+    thinking?: string;
+    thinkingPreview?: string;
     role?: string;
     model?: string;
     tool?: UsageToolFacet;

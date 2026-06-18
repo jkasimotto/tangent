@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 import type { UsageEventKind, UsageJsonlLineV1 } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
 import { conversationId } from "@tangent/usage-core/core/ids";
-import { defaultRedaction, previewText, redactUnknown } from "@tangent/usage-core/core/redaction";
+import { previewText } from "@tangent/usage-core/core/redaction";
 
 export type ClaudeNativeRecord = {
   line: number;
@@ -113,16 +113,18 @@ export function normalizeClaudeNativeRecords(records: ClaudeNativeRecord[], opti
     if (role === "assistant") {
       const model = stringValue(message.model) || stringValue(item.model);
       const text = extractText(message, "assistant");
+      const thinking = extractThinking(message);
       const toolCalls = toolCallsFromMessage(message);
       const usage = objectValue(message.usage) || objectValue(item.usage);
       const assistantMessageId =
         stringValue(message.id) ||
         stringValue(item.uuid) ||
         deterministicMessageId(options.sourcePath, source.line);
-      if (text || toolCalls.length || usage) {
+      if (text || thinking || toolCalls.length || usage) {
         events.push(base(source, "message.assistant.visible", {
           text: text || "",
-          text_preview: previewText(text || "")
+          text_preview: previewText(text || ""),
+          ...(thinking ? { thinking, thinking_preview: previewText(thinking) } : {})
         }, {
           turn: turn(currentTurnId),
           actor: { role: "assistant", model },
@@ -244,6 +246,7 @@ export function normalizeClaudeNativeRecord(record: unknown, sourcePath: string,
 
   if (role === "assistant") {
     const usage = objectValue(message)?.usage || item.usage;
+    const thinkingText = extractThinking(message);
     const assistantMessageId = stringValue(objectValue(message)?.id) || stringValue(item.uuid) || deterministicMessageId(sourcePath, line);
     const toolCalls = toolCallsFromMessage(objectValue(message) || item);
     const messageEvent: UsageJsonlLineV1 = {
@@ -252,6 +255,7 @@ export function normalizeClaudeNativeRecord(record: unknown, sourcePath: string,
       actor: { role: "assistant", model: stringValue(objectValue(message)?.model) || stringValue(item.model) },
       data: {
         ...(contentText ? { text: contentText, text_preview: previewText(contentText) } : {}),
+        ...(thinkingText ? { thinking: thinkingText, thinking_preview: previewText(thinkingText) } : {}),
         ...(usage ? { usage } : {})
       },
       links: { message_id: assistantMessageId },
@@ -339,6 +343,28 @@ function extractText(value: unknown, mode: "user" | "assistant" = "assistant"): 
   return undefined;
 }
 
+/** Concatenates the text of any `thinking` content blocks on an assistant message; returns undefined when none carry plaintext. */
+function extractThinking(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  if (!Array.isArray(record.content)) return undefined;
+  const parts = record.content
+    .map((part) => {
+      if (part && typeof part === "object" && (part as { type?: unknown }).type === "thinking") {
+        return stringValue((part as { thinking?: unknown }).thinking);
+      }
+      return undefined;
+    })
+    .filter((part): part is string => Boolean(part));
+  return parts.length ? parts.join("\n\n") : undefined;
+}
+
+/** Lifts the markdown plan from an ExitPlanMode tool input so it can be surfaced as first-class content. */
+function planText(input: unknown): string | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
+  return stringValue((input as Record<string, unknown>).plan);
+}
+
 function toolCallsFromMessage(message: Record<string, unknown>): Array<{ toolCallId?: string; data: Record<string, unknown> }> {
   const content = Array.isArray(message.content) ? message.content : [];
   return content.flatMap((part) => {
@@ -346,13 +372,15 @@ function toolCallsFromMessage(message: Record<string, unknown>): Array<{ toolCal
     const record = part as Record<string, unknown>;
     const toolName = stringValue(record.name) || "unknown";
     const input = record.input;
+    const plan = toolName === "ExitPlanMode" ? planText(input) : undefined;
     return [{
       toolCallId: stringValue(record.id),
       data: {
         tool_name: toolName,
         category: categorizeTool(toolName),
-        input: redactUnknown(input, defaultRedaction),
-        target_paths: extractPaths(input)
+        input,
+        target_paths: extractPaths(input),
+        ...(plan ? { plan, plan_preview: previewText(plan) } : {})
       }
     }];
   });
@@ -368,7 +396,7 @@ function toolResultsFromMessage(message: Record<string, unknown>): Array<{ toolC
       data: {
         tool_name: "unknown",
         category: "other",
-        output: redactUnknown(record.content, defaultRedaction),
+        output: record.content,
         status: record.is_error === true ? "error" : "success",
         ...toolResultMetadata(record.content)
       }
@@ -412,6 +440,7 @@ function syntheticTurnId(line: number): string {
 }
 function categorizeTool(toolName: string): string {
   const lower = toolName.toLowerCase();
+  if (lower === "exitplanmode") return "plan";
   if (lower === "bash" || lower === "exec_command" || lower.includes("shell")) return "command";
   if (lower.includes("edit") || lower.includes("write") || lower.includes("patch")) return "write";
   if (lower.includes("read") || lower.includes("open") || lower.includes("view")) return "read";

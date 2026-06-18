@@ -496,6 +496,12 @@
                 <div class="message-main">
                   <p>{visibleMessageBody(message, expandedMessageIds.includes(message.id))}</p>
                 </div>
+                {#if message.thinking}
+                  <details class="message-thinking">
+                    <summary>Thinking</summary>
+                    <pre>{message.thinking}</pre>
+                  </details>
+                {/if}
                 {#if isLongMessage(message)}
                   <button
                     class="message-expand"
@@ -517,6 +523,12 @@
                           {/if}
                         </span>
                         <code class="tool-event-command">{toolPreview(tool)}</code>
+                        {#if tool.plan}
+                          <details class="tool-event-plan" open>
+                            <summary>Proposed plan</summary>
+                            <pre>{tool.plan}</pre>
+                          </details>
+                        {/if}
                         {#if hasToolDetails(tool)}
                           <button
                             class="tool-event-toggle"

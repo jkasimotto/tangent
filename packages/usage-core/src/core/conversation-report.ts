@@ -65,6 +65,7 @@ export function conversationReport(
         at: eventTime(event),
         model: event.actor?.model || stringValue(field(event.data, "model")),
         text: eventText(event),
+        thinking: stringValue(field(event.data, "thinking")),
         toolCalls: [],
         confidence: messageConfidence(event)
       };
@@ -167,6 +168,7 @@ function normalizedToolCall(call: AnnotatedEvent, result: ToolResultEvent | unde
     name: stringValue(field(call.data, "tool_name")) || stringValue(field(call.data, "name")) || "unknown",
     category: stringValue(field(call.data, "category")) || "other",
     input: field(call.data, "input") ?? field(call.data, "tool_input") ?? field(call.data, "arguments"),
+    plan: stringValue(field(call.data, "plan")),
     result: result ? {
       status: result.status,
       outputPreview: result.outputPreview,

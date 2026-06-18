@@ -28,6 +28,7 @@ export type UsageConversationToolCall = {
   name?: string;
   status?: string;
   input?: unknown;
+  plan?: string;
   targetPaths?: string[];
   result?: {
     durationMs?: number;
@@ -161,7 +162,8 @@ function withTimelineToolEvents(messages: UsageConversationMessage[], rows: Char
           workdir: toolWorkdir(tool.input) || tool.targetPaths?.[0],
           preview: toolInputPreview(tool.input),
           resultDisplayPreview: cleanToolResultPreview(tool.result?.outputPreview),
-          resultPreview: truncateText(tool.result?.outputPreview, 260) || undefined
+          resultPreview: truncateText(tool.result?.outputPreview, 260) || undefined,
+          plan: tool.plan
         });
         continue;
       }
@@ -283,6 +285,8 @@ function conversationMessage(message: UsageMessage): UsageConversationMessage {
     at: message.createdAt || message.at,
     text: message.text,
     textPreview: message.textPreview || truncateText(message.text, 500),
+    thinking: message.thinking,
+    thinkingPreview: message.thinkingPreview || truncateText(message.thinking, 500),
     tokenLabel: formatMessageTokenUsage(message.tokenUsage || message.metrics?.tokens, tokens),
     tokens,
     durationLabel: formatDuration(duration),
@@ -298,7 +302,8 @@ function conversationMessage(message: UsageMessage): UsageConversationMessage {
       workdir: toolWorkdir(call.input) || call.targetPaths?.[0],
       preview: toolInputPreview(call.input),
       resultDisplayPreview: cleanToolResultPreview(call.result?.outputPreview),
-      resultPreview: truncateText(call.result?.outputPreview, 260) || undefined
+      resultPreview: truncateText(call.result?.outputPreview, 260) || undefined,
+      plan: call.plan
     }))
   };
 }

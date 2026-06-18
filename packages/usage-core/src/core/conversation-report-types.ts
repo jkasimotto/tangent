@@ -15,6 +15,7 @@ export type NormalizedToolCall = {
   name: string;
   category: string;
   input?: unknown;
+  plan?: string;
   result?: {
     status: "success" | "error" | "unknown";
     outputPreview?: string;
@@ -38,6 +39,7 @@ export type NormalizedConversationMessage =
       at?: string;
       model?: string;
       text: string;
+      thinking?: string;
       tokens?: TokenUsage;
       toolCalls: NormalizedToolCall[];
       confidence: "exact" | "partial" | "best-effort";

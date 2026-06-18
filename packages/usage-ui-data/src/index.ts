@@ -203,6 +203,7 @@ type UsageDomainToolCall = {
   name?: string;
   status?: string;
   input?: unknown;
+  plan?: string;
   targetPaths?: string[];
   result?: {
     durationMs?: number;
@@ -583,6 +584,7 @@ function conversationToolCall(call: UsageDomainToolCall): UsageConversationToolC
     name: call.name,
     status: call.status,
     input: call.input,
+    plan: call.plan,
     targetPaths: call.targetPaths,
     result: call.result
       ? {

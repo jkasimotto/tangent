@@ -334,7 +334,7 @@
                     <span></span>
                   {/if}
                 </span>
-                <button type="button" class="node-select" on:click={() => selectEntity(row.entity.path)}>
+                <button type="button" class="node-select" on:click={() => { selectEntity(row.entity.path); if (row.hasChildren) toggleExpanded(row.entity.path); }}>
                   <span class="node-name">{row.name}</span>
                   <span class="node-meta">
                     {#if row.conflict}

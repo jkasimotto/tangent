@@ -48,6 +48,7 @@
 
   let launcherConfig: LaunchConfig | null = null;
   let activeSessions: LaunchSession[] = [];
+  let selectedSessionKey = "";
   let driverSelectValue = "iterm2-tab";
   let customDriverTemplate = "";
 
@@ -68,9 +69,10 @@
 
   $: nodes = buildTree(workspace.entities);
   $: rows = flattenTree(nodes, expandedPaths);
-  $: displayRows = injectSessionRows(rows, activeSessions, workspace.projects);
+  $: displayRows = injectSessionRows(rows, activeSessions, workspace.projects, expandedPaths);
   $: selectedEntity = selectedPath ? workspace.entities.find((entity) => entity.path === selectedPath) : undefined;
   $: selectedNode = selectedPath ? findNode(nodes, selectedPath) : undefined;
+  $: selectedSession = selectedSessionKey ? activeSessions.find((s) => sessionKey(s) === selectedSessionKey) : undefined;
   $: entityCount = workspace.entities.length;
   $: configuredCount = workspace.entities.filter(isConfiguredLeafEntity).length;
   $: syncSelectedForm(selectedEntity);
@@ -141,6 +143,7 @@
         await launcher.openTerminal(selectedOpenPath, { title });
       }
       activeSessions = await launcher.listSessions();
+      if (selectedEntity?.path) expandedPaths = [...new Set([...expandedPaths, selectedEntity.path])];
     } catch (caught) {
       error = friendlyError(caught);
     }
@@ -158,6 +161,7 @@
     try {
       await launcher.stopSession(session);
       activeSessions = await launcher.listSessions();
+      if (selectedSessionKey === sessionKey(session)) selectedSessionKey = "";
     } catch (caught) {
       error = friendlyError(caught);
     }
@@ -270,6 +274,8 @@
       projects: [...next.projects].sort((left, right) => left.name.localeCompare(right.name))
     };
     if (wasEmpty) expandedPaths = expandablePaths(workspace.entities);
+    // If a session is selected and no explicit entity path was requested, don't clobber the empty selectedPath.
+    if (!preferredPath && selectedSessionKey) return;
     selectedPath = preferredPath && workspace.entities.some((entity) => entity.path === preferredPath)
       ? preferredPath
       : workspace.entities[0]?.path || "";
@@ -278,7 +284,18 @@
 
   function selectEntity(path: string): void {
     selectedPath = path;
+    selectedSessionKey = "";
     error = "";
+  }
+
+  function selectSession(session: LaunchSession): void {
+    selectedSessionKey = sessionKey(session);
+    selectedPath = "";
+    error = "";
+  }
+
+  function sessionKey(session: LaunchSession): string {
+    return `${session.cwd}:${session.startedAt}`;
   }
 
   function toggleExpanded(path: string): void {
@@ -392,11 +409,21 @@
     return value instanceof Error ? value.message : String(value);
   }
 
-  function injectSessionRows(entityRows: TreeRow[], sessions: LaunchSession[], projects: TreesUiProject[]): AnyRow[] {
+  function entityCwd(entity: TreesUiEntity, projects: TreesUiProject[]): string {
+    return entity.worktreePath ?? projects.find((p) => p.id === entity.projectId)?.path ?? "";
+  }
+
+  function entityHasSessions(entity: TreesUiEntity): boolean {
+    const cwd = entityCwd(entity, workspace.projects);
+    return Boolean(cwd) && activeSessions.some((s) => s.cwd === cwd);
+  }
+
+  function injectSessionRows(entityRows: TreeRow[], sessions: LaunchSession[], projects: TreesUiProject[], expanded: string[]): AnyRow[] {
     const result: AnyRow[] = [];
     for (const row of entityRows) {
       result.push({ kind: "entity", ...row });
-      const cwd = row.entity.worktreePath ?? projects.find((p) => p.id === row.entity.projectId)?.path ?? "";
+      if (!expanded.includes(row.entity.path)) continue;
+      const cwd = entityCwd(row.entity, projects);
       if (!cwd) continue;
       const entitySessions = sessions.filter((s) => s.cwd === cwd);
       for (let j = 0; j < entitySessions.length; j++) {
@@ -490,9 +517,9 @@
                 <span class="elbow" class:last={row.last}></span>
               </div>
               {#if row.kind === "session"}
-                <div class="tree-row session-row">
+                <div class="tree-row session-row" class:selected={selectedSessionKey === sessionKey(row.session)}>
                   <span class="disclosure"><span></span></span>
-                  <button type="button" class="node-select session-select" on:click={() => focusSession(row.session)}>
+                  <button type="button" class="node-select session-select" on:click={() => selectSession(row.session)}>
                     <span class="node-name">
                       <span class="session-kind-dot" aria-hidden="true">●</span>
                       {row.session.kind}
@@ -502,17 +529,18 @@
                   <button type="button" class="session-stop" aria-label="Stop session" on:click|stopPropagation={() => stopSession(row.session)}>×</button>
                 </div>
               {:else}
+                {@const expandable = row.hasChildren || entityHasSessions(row.entity)}
                 <div
                   role="treeitem"
                   aria-selected={selectedPath === row.entity.path}
-                  aria-expanded={row.hasChildren ? expandedPaths.includes(row.entity.path) : undefined}
+                  aria-expanded={expandable ? expandedPaths.includes(row.entity.path) : undefined}
                   class="tree-row"
                   class:selected={selectedPath === row.entity.path}
-                  class:locked={row.configured && !row.hasChildren}
+                  class:locked={row.configured && !row.hasChildren && !entityHasSessions(row.entity)}
                   class:conflict={row.conflict}
                 >
                   <span class="disclosure">
-                    {#if row.hasChildren}
+                    {#if expandable}
                       <button
                         type="button"
                         aria-label={`${expandedPaths.includes(row.entity.path) ? "Collapse" : "Expand"} ${row.entity.path}`}
@@ -524,7 +552,7 @@
                       <span></span>
                     {/if}
                   </span>
-                  <button type="button" class="node-select" on:click={() => { selectEntity(row.entity.path); if (row.hasChildren) toggleExpanded(row.entity.path); }}>
+                  <button type="button" class="node-select" on:click={() => { selectEntity(row.entity.path); if (expandable) toggleExpanded(row.entity.path); }}>
                     <span class="node-name">
                       {row.name}
                     </span>
@@ -644,6 +672,33 @@
           </div>
         </div>
       {/if}
+    {:else if selectedSession}
+      <header>
+        <p>Session</p>
+        <h2>{selectedSession.title || selectedSession.cwd}</h2>
+      </header>
+      <dl class="node-facts">
+        <div>
+          <dt>Kind</dt>
+          <dd>{selectedSession.kind}</dd>
+        </div>
+        <div>
+          <dt>Started</dt>
+          <dd>{relativeTime(selectedSession.startedAt)}</dd>
+        </div>
+        {#if selectedSession.tmuxSession}
+          <div>
+            <dt>Tmux</dt>
+            <dd>{selectedSession.tmuxSession}</dd>
+          </div>
+        {/if}
+      </dl>
+      <div class="open-actions">
+        <div class="actions">
+          <button type="button" on:click={() => focusSession(selectedSession)}>Open</button>
+          <button type="button" class="danger" on:click={() => stopSession(selectedSession)}>Close</button>
+        </div>
+      </div>
     {:else}
       <div class="empty-inspector">
         <strong>No node selected.</strong>

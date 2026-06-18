@@ -24,6 +24,7 @@ export type TreesUiClient = {
   createPath(path: string): Promise<TreesUiWorkspace>;
   saveLeaf(ref: string, input: { projectId: string; branch: string; worktreePath?: string }): Promise<TreesUiWorkspace>;
   clearLeaf(ref: string): Promise<TreesUiWorkspace>;
+  deleteEntity(ref: string): Promise<TreesUiWorkspace>;
 };
 
 /** Creates a browser client backed by the local Trees HTTP API. */
@@ -44,6 +45,10 @@ export function createTreesApiClient(basePath = "/api/trees"): TreesUiClient {
     /** Clears leaf metadata through the Trees API. */
     async clearLeaf(ref) {
       return requestWorkspace(`${basePath}/entities/${encodeURIComponent(ref)}/leaf/clear`, { method: "POST" });
+    },
+    /** Deletes an entity and all its descendants through the Trees API. */
+    async deleteEntity(ref) {
+      return requestWorkspace(`${basePath}/entities/${encodeURIComponent(ref)}/delete`, { method: "POST" });
     }
   };
 }
@@ -96,6 +101,17 @@ export function createMemoryTreesUiClient(initial: Partial<TreesUiWorkspace> = {
         entities: workspace.entities.map((entity) => entity.id === ref || entity.path === ref
           ? { ...entity, kind: "group", projectId: undefined, branch: undefined, worktreePath: undefined }
           : entity)
+      };
+      return cloneWorkspace(workspace);
+    },
+    /** Deletes an entity and all its descendants. */
+    async deleteEntity(ref) {
+      const target = workspace.entities.find((e) => e.id === ref || e.path === ref);
+      if (!target) throw new Error(`Unknown tree entity: ${ref}`);
+      const prefix = target.path + "/";
+      workspace = {
+        ...workspace,
+        entities: workspace.entities.filter((e) => e.path !== target.path && !e.path.startsWith(prefix))
       };
       return cloneWorkspace(workspace);
     }

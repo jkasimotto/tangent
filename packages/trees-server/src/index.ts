@@ -101,6 +101,11 @@ async function handleTreesApiRequest(request: IncomingMessage, url: URL, options
       return json(200, await workspace(client));
     }
 
+    if (request.method === "POST" && parts.length === 5 && parts[2] === "entities" && parts[4] === "delete") {
+      await client.entities.delete(parts[3]!);
+      return json(200, await workspace(client));
+    }
+
     if (url.pathname.startsWith("/api/trees")) return json(request.method === "GET" || request.method === "POST" ? 404 : 405, { error: request.method === "GET" || request.method === "POST" ? "Not found." : "Method not allowed." });
     return json(404, { error: "Not found." });
   } catch (error) {

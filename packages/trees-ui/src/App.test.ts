@@ -138,7 +138,8 @@ describe("trees svelte app", () => {
       loadWorkspace: vi.fn(async () => clone(workspace)),
       createPath: vi.fn(),
       saveLeaf: vi.fn(),
-      clearLeaf: vi.fn()
+      clearLeaf: vi.fn(),
+      deleteEntity: vi.fn()
     };
     render(App, { props: { client } });
 
@@ -167,6 +168,7 @@ function fakeTreesClient(initial: Partial<TreesUiWorkspace> = {}): TreesUiClient
   createPath: ReturnType<typeof vi.fn>;
   saveLeaf: ReturnType<typeof vi.fn>;
   clearLeaf: ReturnType<typeof vi.fn>;
+  deleteEntity: ReturnType<typeof vi.fn>;
 } {
   let workspace: TreesUiWorkspace = {
     entities: [...(initial.entities || [])],
@@ -198,6 +200,16 @@ function fakeTreesClient(initial: Partial<TreesUiWorkspace> = {}): TreesUiClient
         entities: workspace.entities.map((item) => item.id === ref || item.path === ref
           ? { ...item, kind: "group", projectId: undefined, branch: undefined, worktreePath: undefined }
           : item)
+      };
+      return clone(workspace);
+    }),
+    deleteEntity: vi.fn(async (ref: string) => {
+      const target = workspace.entities.find((item) => item.id === ref || item.path === ref);
+      if (!target) throw new Error(`Unknown tree entity: ${ref}`);
+      const prefix = target.path + "/";
+      workspace = {
+        ...workspace,
+        entities: workspace.entities.filter((item) => item.path !== target.path && !item.path.startsWith(prefix))
       };
       return clone(workspace);
     })

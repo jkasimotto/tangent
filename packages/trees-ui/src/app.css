@@ -172,6 +172,11 @@ select:disabled {
   color: var(--text);
 }
 
+.actions .danger {
+  background: #c0392b;
+  color: #fff;
+}
+
 .notice {
   border-left: 3px solid var(--warning);
   background: #fff7dc;

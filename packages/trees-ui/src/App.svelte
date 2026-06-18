@@ -29,6 +29,7 @@
   let formProjectId = "";
   let formBranch = "";
   let formWorktreePath = "";
+  let confirmingDelete = false;
   let pollTimer: ReturnType<typeof setInterval> | undefined;
   let requestSequence = 0;
 
@@ -140,6 +141,23 @@
     }
   }
 
+  async function deleteNode(): Promise<void> {
+    if (!selectedEntity) return;
+    saving = true;
+    const sequence = ++requestSequence;
+    try {
+      const next = await client.deleteEntity(selectedEntity.id || selectedEntity.path);
+      if (sequence !== requestSequence) return;
+      receiveWorkspace(next, "");
+      confirmingDelete = false;
+      error = "";
+    } catch (caught) {
+      error = friendlyError(caught);
+    } finally {
+      saving = false;
+    }
+  }
+
   function receiveWorkspace(next: TreesUiWorkspace, preferredPath = selectedPath): void {
     const wasEmpty = expandedPaths.length === 0;
     workspace = {
@@ -178,6 +196,7 @@
     formProjectId = entity?.projectId || "";
     formBranch = entity?.branch || "";
     formWorktreePath = entity?.worktreePath || "";
+    confirmingDelete = false;
   }
 
   function buildTree(entities: TreesUiEntity[]): TreeNode[] {
@@ -420,6 +439,18 @@
           <button type="button" class="secondary" on:click={clearLeaf} disabled={saving || !selectedNode?.configured}>
             Clear metadata
           </button>
+          {#if confirmingDelete}
+            <button type="button" class="danger" on:click={deleteNode} disabled={saving}>
+              Really delete?
+            </button>
+            <button type="button" class="secondary" on:click={() => confirmingDelete = false} disabled={saving}>
+              Cancel
+            </button>
+          {:else}
+            <button type="button" class="secondary" on:click={() => confirmingDelete = true} disabled={saving}>
+              Delete node
+            </button>
+          {/if}
         </div>
       </form>
     {:else}

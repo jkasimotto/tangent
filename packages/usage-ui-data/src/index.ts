@@ -13,6 +13,7 @@ export { buildTranscriptHighlights } from "./transcriptHighlights.js";
 import { buildUsageCockpitView, timelineSteps, transcriptMessages } from "./cockpit.js";
 import { buildUsageConversationView, type UsageConversationToolCall } from "./conversationView.js";
 import { buildSparkline } from "./flame.js";
+import { peakContextTokens } from "./format.js";
 import { buildUsageSessionTimelineView } from "./sessionTimeline.js";
 import type {
   UsageCockpitView,
@@ -69,7 +70,8 @@ export type UsageSessionListItem = {
   lastActivityAt?: string;
   status?: string;
   durationMs?: number;
-  tokensTotal?: number;
+  /** Peak context-window size the session reached, not a cumulative token sum. */
+  peakContext?: number;
   toolCalls?: number;
   filesTouched?: number;
   caveatCount?: number;
@@ -341,7 +343,7 @@ export function createUsageUiClient(usage: UsageDomainClient): UsageUiClient {
           lastActivityAt: session.lastActivityAt,
           status: session.status,
           durationMs: session.metrics.durationMs,
-          tokensTotal: session.metrics.tokens?.total,
+          peakContext: peakContextTokens(session.metrics.tokens),
           toolCalls: session.counts.toolCalls,
           filesTouched: session.counts.filesTouched,
           caveatCount: session.availability.notes.length,
@@ -365,14 +367,14 @@ export function createUsageUiClient(usage: UsageDomainClient): UsageUiClient {
           lastActivityAt: session.lastActivityAt,
           status: session.status,
           durationMs: session.metrics.durationMs,
-          tokensTotal: session.metrics.tokens?.total,
+          peakContext: peakContextTokens(session.metrics.tokens),
           toolCalls: session.counts.toolCalls,
           filesTouched: session.counts.filesTouched,
           caveatCount: session.availability.notes.length
         },
         summaryCards: [
           { label: "Duration", value: session.metrics.durationMs, unit: "ms", confidence: session.metrics.durationConfidence },
-          { label: "Tokens", value: session.metrics.tokens?.total, unit: "tokens", confidence: session.metrics.tokens?.confidence },
+          { label: "Peak context", value: peakContextTokens(session.metrics.tokens), unit: "tokens", confidence: session.metrics.tokens?.confidence },
           { label: "Tool calls", value: session.counts.toolCalls, unit: "count" },
           { label: "Files touched", value: session.counts.filesTouched, unit: "files" },
           { label: "Caveats", value: session.availability.notes.length, unit: "count" }

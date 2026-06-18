@@ -244,7 +244,7 @@ function fakeUsageClient(overrides: Partial<UsageUiClient> = {}): UsageUiClient 
 }
 
 /** Builds a compact session-list fixture row with a flame series. */
-function sessionListItem(id: string, title: string, tokensTotal: number, durationMs: number, startedAt: string) {
+function sessionListItem(id: string, title: string, peakContext: number, durationMs: number, startedAt: string) {
   return {
     id,
     title,
@@ -252,7 +252,7 @@ function sessionListItem(id: string, title: string, tokensTotal: number, duratio
     model: "gpt",
     status: "completed",
     startedAt,
-    tokensTotal,
+    peakContext,
     durationMs,
     flame: fakeSparkline(durationMs)
   };

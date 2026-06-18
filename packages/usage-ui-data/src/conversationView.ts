@@ -1,5 +1,5 @@
 import { rankBottlenecks } from "./bottlenecks.js";
-import { cleanTitle, confidenceOrUnknown, finiteNumber, formatDateTime, formatDuration, formatMessageTokenUsage, formatTokens, messageTokens, stepDuration, stepKindLabel, truncateText } from "./format.js";
+import { cleanTitle, confidenceOrUnknown, finiteNumber, formatContextTokens, formatDateTime, formatDuration, formatMessageTokenUsage, messageTokens, peakContextTokens, stepDuration, stepKindLabel, truncateText } from "./format.js";
 import { stepInputPreviews, toolInputPreview, toolWorkdir } from "./toolInput.js";
 import type {
   UsageConversationChartRow,
@@ -242,7 +242,7 @@ function sessionItem(session: UsageSession): UsageConversationSessionItem {
     lastActivityAt,
     lastActivityLabel: formatDateTime(lastActivityAt),
     durationLabel: formatDuration(session.metrics?.durationMs),
-    tokenLabel: formatTokens(session.metrics?.tokens?.total),
+    tokenLabel: formatContextTokens(peakContextTokens(session.metrics?.tokens)),
     messageCountLabel: countLabel(session.counts?.messages, "message"),
     toolCallLabel: countLabel(session.counts?.toolCalls, "tool call"),
     summary: truncateText(session.summary || session.firstPrompt, 140) || undefined

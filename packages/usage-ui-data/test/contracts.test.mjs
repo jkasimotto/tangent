@@ -13,7 +13,7 @@ test("maps usage sessions into list view models", async () => {
           provider: "codex",
           title: "Implement UI",
           models: ["gpt"],
-          metrics: { tokens: { total: 10 }, durationMs: 25 },
+          metrics: { tokens: { total: 10, context: 8 }, durationMs: 25 },
           counts: { toolCalls: 2 },
           availability: { notes: ["partial"] }
         }],
@@ -23,7 +23,7 @@ test("maps usage sessions into list view models", async () => {
   });
   const view = await client.listSessions();
   assert.equal(view.sessions[0].title, "Implement UI");
-  assert.equal(view.sessions[0].tokensTotal, 10);
+  assert.equal(view.sessions[0].peakContext, 8, "list cards show peak context, not the cumulative token sum");
 });
 
 test("attaches a per-session flame series to list items from the timeline", async () => {
@@ -549,6 +549,14 @@ test("reports Claude per-message context as input+cache and output tokens", () =
   assert.equal(message.outputTokens, 1400);
   assert.match(message.tokenLabel, /26\.3k ctx/);
   assert.match(message.tokenLabel, /1\.4k out/);
+});
+
+test("conversation header reports peak context, not the cumulative token sum", () => {
+  const session = { id: "s1", provider: "claude", title: "Header", metrics: { durationMs: 60_000, tokens: { total: 11_503_008, context: 78_768 } }, availability: { notes: [] } };
+  const view = buildUsageConversationView(session, [session], [
+    { id: "m1", role: "assistant", textPreview: "Working", tokenUsage: { total: 10 }, toolCalls: [] }
+  ], []);
+  assert.equal(view.selected.tokenLabel, "79K ctx", "the 11.5M cumulative total is a cache-read artifact; show the peak working set");
 });
 
 test("derives assistant turn duration and a solo tool-call duration from transcript timestamps", () => {

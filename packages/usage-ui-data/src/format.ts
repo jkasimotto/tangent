@@ -49,6 +49,22 @@ export function formatTokens(value: number | undefined): string | undefined {
   return Intl.NumberFormat("en").format(Math.round(value));
 }
 
+/**
+ * Returns a session's peak context-window size: the largest single-turn context the run reached.
+ * Aggregate token usage maxes per-turn context, so this is the honest "how big did this conversation
+ * get" figure, unlike `tokens.total`, which sums cache reads across every turn into a number that
+ * dwarfs the real working set.
+ */
+export function peakContextTokens(usage: UsageTokenUsage | undefined): number | undefined {
+  return finiteNumber(usage?.peakContext) ?? finiteNumber(usage?.context);
+}
+
+/** Formats a context-window size with a trailing `ctx`, matching the per-turn labels. */
+export function formatContextTokens(value: number | undefined): string | undefined {
+  const formatted = formatTokens(value);
+  return formatted === undefined ? undefined : `${formatted} ctx`;
+}
+
 /** Formats message-level token usage. */
 export function formatMessageTokenUsage(usage: UsageTokenUsage | undefined, fallbackTotal?: number): string | undefined {
   const context = tokenContext(usage);

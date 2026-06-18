@@ -73,3 +73,20 @@ test("session duration falls back to wall-clock span when events carry no per-ev
   const projections = eventsToProjections({ events });
   assert.equal(projections.sessions[0].metrics.durationMs, 300_000, "Claude sessions report their first-to-last span");
 });
+
+test("session peak context is the largest single-turn resident window, not a sum of cache reads", () => {
+  /** Builds one assistant token-usage turn whose resident context is dominated by cache reads. */
+  const turn = (eventId, time, cacheRead) => claudeBase(eventId, "token.usage", {
+    recorded_at: time, observed_at: time,
+    actor: { role: "assistant", model: "claude-opus-4-8" }, links: { message_id: eventId },
+    data: { usage: { input_tokens: 2, cache_read_input_tokens: cacheRead, cache_creation_input_tokens: 1000, output_tokens: 50 } }
+  });
+  const events = [
+    turn("c1", "2026-06-18T00:00:00.000Z", 30_000),
+    turn("c2", "2026-06-18T00:01:00.000Z", 78_000),
+    turn("c3", "2026-06-18T00:02:00.000Z", 60_000)
+  ];
+  const tokens = eventsToProjections({ events }).sessions[0].metrics.tokens;
+  assert.equal(tokens.context, 79_002, "context is the max per-turn (input + cacheRead + cacheCreation), i.e. the peak window");
+  assert.ok(tokens.total > tokens.context * 2, "the cumulative total dwarfs the real working set, which is why the UI shows peak context instead");
+});

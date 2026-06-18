@@ -125,9 +125,9 @@
     }
   }
 
-  /** Cheap fingerprint of the session list: ids plus their latest activity and token totals. */
+  /** Cheap fingerprint of the session list: ids plus their latest activity and peak context. */
   function sessionListSignature(items: UsageSessionListItem[]): string {
-    return items.map((session) => `${session.id}:${session.lastActivityAt || session.endedAt || ""}:${session.tokensTotal ?? ""}`).join("|");
+    return items.map((session) => `${session.id}:${session.lastActivityAt || session.endedAt || ""}:${session.peakContext ?? ""}`).join("|");
   }
 
   /** Cheap fingerprint of a conversation view: message count plus the last message's timing and tokens. */
@@ -456,7 +456,7 @@
             <span>{session.provider || "unknown"}</span>
             {#if session.model}<span>{session.model}</span>{/if}
             {#if formatDurationMs(session.durationMs)}<span>{formatDurationMs(session.durationMs)}</span>{/if}
-            {#if formatTokenCount(session.tokensTotal)}<span>{formatTokenCount(session.tokensTotal)} tokens</span>{/if}
+            {#if formatTokenCount(session.peakContext)}<span>{formatTokenCount(session.peakContext)} ctx</span>{/if}
           </span>
           {#if session.flame}
             <span class="session-card-flame" style={`width:${flameWidthPct(session.flame, maxFlameDurationMs)}%`}>{@render sparkline(session.flame, "card")}</span>

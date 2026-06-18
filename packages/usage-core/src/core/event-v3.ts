@@ -125,7 +125,12 @@ function normalizeTokenUsage(value: unknown, data: Record<string, unknown>, even
   const cacheRead = numberValue(field(usage, "cacheRead")) ?? numberValue(field(usage, "cache_read_input_tokens")) ?? numberValue(field(usage, "cached_input_tokens"));
   const cacheCreation = numberValue(field(usage, "cacheCreation")) ?? numberValue(field(usage, "cache_creation_input_tokens"));
   const reasoning = numberValue(field(usage, "reasoning")) ?? numberValue(field(usage, "reasoning_tokens"));
-  const context = numberValue(field(usage, "context")) ?? numberValue(field(usage, "context_tokens"));
+  // Claude and Codex never report a context-window size, only the per-call token kinds. The
+  // resident context is the sum of uncached input plus the cache-read and cache-creation prefix,
+  // so derive it here when no explicit field exists. This lets session aggregates take a max over
+  // turns and surface peak context, instead of summing cache reads into a meaningless grand total.
+  const explicitContext = numberValue(field(usage, "context")) ?? numberValue(field(usage, "context_tokens"));
+  const context = explicitContext ?? sum([input, cacheRead, cacheCreation]);
   const peakContext = numberValue(field(usage, "peakContext")) ?? numberValue(field(usage, "peak_context_tokens"));
   const total = numberValue(field(usage, "total")) ?? numberValue(field(usage, "total_tokens")) ?? sum([input, output, cacheRead, cacheCreation, reasoning]);
   if ([input, output, cacheRead, cacheCreation, reasoning, context, peakContext, total].every((item) => item === undefined)) return undefined;

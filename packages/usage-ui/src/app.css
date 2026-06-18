@@ -66,7 +66,7 @@ button {
 }
 
 .usage-shell {
-  --finder-width: 260px;
+  --finder-width: 220px;
   --conversation-min-width: 520px;
   --chart-width: clamp(420px, 32vw, 620px);
 
@@ -106,7 +106,7 @@ button {
   height: 100%;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  padding: 16px 12px;
+  padding: 12px 9px;
 }
 
 .pane header {
@@ -169,9 +169,9 @@ button {
 
 .search {
   display: grid;
-  gap: 6px;
+  gap: 5px;
   color: #66716a;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .search input {
@@ -179,8 +179,8 @@ button {
   border: 1px solid #c7d0c8;
   background: #fff;
   color: #17201b;
-  border-radius: 7px;
-  padding: 8px 10px;
+  border-radius: 6px;
+  padding: 6px 8px;
   outline: none;
 }
 
@@ -190,14 +190,14 @@ button {
 }
 
 .project-count {
-  margin: 10px 0 12px;
+  margin: 8px 0 10px;
   color: #66716a;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .project-list {
   display: grid;
-  gap: 4px;
+  gap: 3px;
 }
 
 .project-row {
@@ -213,8 +213,8 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 8px 9px;
+  gap: 8px;
+  padding: 6px 7px;
 }
 
 .project-row:hover,
@@ -230,7 +230,7 @@ button {
 }
 
 .project-row strong {
-  font-size: 14px;
+  font-size: 12px;
   line-height: 1.25;
 }
 
@@ -243,12 +243,12 @@ button {
 
 .project-row small {
   color: #66716a;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .project-chevron {
   color: #66716a;
-  font-size: 16px;
+  font-size: 14px;
   line-height: 1;
   transition: transform 140ms ease;
 }
@@ -259,20 +259,20 @@ button {
 
 .session-stack {
   display: grid;
-  gap: 4px;
-  padding: 4px 0 7px 8px;
+  gap: 3px;
+  padding: 3px 0 5px 6px;
 }
 
 .session-row {
   width: 100%;
   display: grid;
-  gap: 4px;
+  gap: 3px;
   text-align: left;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 7px;
   background: transparent;
   color: #17201b;
-  padding: 7px 8px;
+  padding: 5px 6px;
 }
 
 .session-row:hover,
@@ -288,7 +288,7 @@ button {
 .session-row-identity,
 .session-row-meta {
   color: #66716a;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .session-row-identity {
@@ -303,13 +303,13 @@ button {
 .session-row-identity {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px 8px;
+  gap: 4px 6px;
 }
 
 .session-row-meta span:not(:last-child)::after,
 .session-row-identity span:not(:last-child)::after {
   content: "·";
-  margin-left: 8px;
+  margin-left: 6px;
   color: #9aa59c;
 }
 
@@ -700,7 +700,7 @@ button {
 
 @media (max-width: 820px) {
   .usage-shell {
-    --finder-width: 240px;
+    --finder-width: 210px;
     --conversation-min-width: 480px;
     --chart-width: 420px;
   }

@@ -1,4 +1,6 @@
+import { rankBottlenecks } from "./bottlenecks.js";
 import { cleanTitle, confidenceOrUnknown, finiteNumber, formatDateTime, formatDuration, formatMessageTokenUsage, formatTokens, messageTokens, stepDuration, stepKindLabel, truncateText } from "./format.js";
+import { stepInputPreviews, toolInputPreview, toolWorkdir } from "./toolInput.js";
 import type {
   UsageConversationChartRow,
   UsageConversationChartSegment,
@@ -44,12 +46,30 @@ export function buildUsageConversationView(
   const query = (options.query || "").trim().toLowerCase();
   const visibleSessions = query ? sessions.filter((session) => sessionMatches(session, query)) : sessions;
   const baseConversationMessages = messages.map(conversationMessage);
-  const rows = chartRows(baseConversationMessages, messages, steps, selectedSession.endedAt, options.toolCalls || []);
+  const inputPreviews = stepInputPreviews(options.toolCalls || []);
+  const rows = chartRows(baseConversationMessages, messages, steps, selectedSession.endedAt, options.toolCalls || [], inputPreviews);
   const conversationMessages = withTimelineToolEvents(baseConversationMessages, rows, options.toolCalls || []);
   const tokenModeRows = withTokenModes(rows);
   const maxTokens = Math.max(1, ...tokenModeRows.map((row) => row.tokenModes.cumulative.tokens || 0));
   const maxAddedTokens = Math.max(1, ...tokenModeRows.map((row) => row.tokenModes.added.tokens || 0));
   const maxDurationMs = Math.max(1, ...rows.map((row) => row.durationMs || 0));
+  const chartRowsFinal: UsageConversationChartRow[] = tokenModeRows.map((row) => ({
+    ...row,
+    tokens: row.tokenModes.cumulative.tokens,
+    tokenLabel: row.tokenModes.cumulative.tokenLabel,
+    widthShare: row.tokenModes.cumulative.tokens === undefined ? 0.02 : Math.max(0.02, row.tokenModes.cumulative.tokens / maxTokens),
+    tokenModes: {
+      cumulative: {
+        ...row.tokenModes.cumulative,
+        widthShare: row.tokenModes.cumulative.tokens === undefined ? 0.02 : Math.max(0.02, row.tokenModes.cumulative.tokens / maxTokens)
+      },
+      added: {
+        ...row.tokenModes.added,
+        widthShare: row.tokenModes.added.tokens === undefined ? 0.02 : Math.max(0.02, row.tokenModes.added.tokens / maxAddedTokens)
+      }
+    },
+    heightShare: row.durationMs === undefined ? 0.08 : row.durationMs / maxDurationMs
+  }));
   return {
     selected: {
       ...sessionItem(selectedSession),
@@ -64,24 +84,9 @@ export function buildUsageConversationView(
       maxTokens,
       maxAddedTokens,
       maxDurationMs,
-      rows: tokenModeRows.map((row) => ({
-        ...row,
-        tokens: row.tokenModes.cumulative.tokens,
-        tokenLabel: row.tokenModes.cumulative.tokenLabel,
-        widthShare: row.tokenModes.cumulative.tokens === undefined ? 0.02 : Math.max(0.02, row.tokenModes.cumulative.tokens / maxTokens),
-        tokenModes: {
-          cumulative: {
-            ...row.tokenModes.cumulative,
-            widthShare: row.tokenModes.cumulative.tokens === undefined ? 0.02 : Math.max(0.02, row.tokenModes.cumulative.tokens / maxTokens)
-          },
-          added: {
-            ...row.tokenModes.added,
-            widthShare: row.tokenModes.added.tokens === undefined ? 0.02 : Math.max(0.02, row.tokenModes.added.tokens / maxAddedTokens)
-          }
-        },
-        heightShare: row.durationMs === undefined ? 0.08 : row.durationMs / maxDurationMs
-      }))
+      rows: chartRowsFinal
     },
+    bottlenecks: rankBottlenecks(chartRowsFinal, inputPreviews),
     caveats: conversationCaveats(rows, options.caveats || [])
   };
 }
@@ -177,24 +182,6 @@ function withTimelineToolEvents(messages: UsageConversationMessage[], rows: Char
   });
 }
 
-/** Extracts a concise human-readable tool input preview. */
-function toolInputPreview(value: unknown): string | undefined {
-  if (!value || typeof value !== "object") return truncateText(String(value || ""), 260) || undefined;
-  const input = value as Record<string, unknown>;
-  const command = stringValue(input.command) || stringValue(input.cmd);
-  if (command) return command;
-  const text = stringValue(input.query) || stringValue(input.pattern) || stringValue(input.path) || stringValue(input.file_path);
-  if (text) return text;
-  return truncateText(JSON.stringify(input), 260) || undefined;
-}
-
-/** Extracts the working directory from common command tool payloads. */
-function toolWorkdir(value: unknown): string | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const input = value as Record<string, unknown>;
-  return stringValue(input.workdir) || stringValue(input.cwd);
-}
-
 /** Strips provider transport boilerplate from tool output before display. */
 function cleanToolResultPreview(value: string | undefined): string | undefined {
   const text = value?.trim();
@@ -223,11 +210,6 @@ function cleanToolResultPreview(value: string | undefined): string | undefined {
     .join("\n")
     .trim();
   return truncateText(cleaned || (hasBoilerplate ? "" : text), 1200) || undefined;
-}
-
-/** Returns a string value from unknown structured data. */
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value : undefined;
 }
 
 /** Returns structured or parsed duration for a tool call result. */
@@ -341,13 +323,13 @@ type ToolTimingIndex = {
 type ChartRowDraft = Omit<UsageConversationChartRow, "tokenModes">;
 
 /** Builds chart rows grouped by user-request work turns. */
-function chartRows(conversationMessages: UsageConversationMessage[], rawMessages: UsageMessage[], steps: UsageStep[], sessionEndedAt?: string, toolCalls: UsageConversationToolCall[] = []): ChartRowDraft[] {
+function chartRows(conversationMessages: UsageConversationMessage[], rawMessages: UsageMessage[], steps: UsageStep[], sessionEndedAt?: string, toolCalls: UsageConversationToolCall[] = [], inputPreviews: Map<string, string> = new Map()): ChartRowDraft[] {
   const rawById = new Map(rawMessages.map((message) => [message.id, message]));
   const stepCandidates = steps.filter((step) => step.kind !== "session" && step.kind !== "turn" && step.kind !== "user_message");
   const toolTiming = toolTimingIndex(toolCalls);
   return workTurns(conversationMessages, rawMessages, sessionEndedAt).map((turn, index) => {
     const linked = linkedWorkTurnSteps(turn, rawById, steps, stepCandidates);
-    const segments = chartSegments(turn.primaryMessageId, linked, toolTiming);
+    const segments = chartSegments(turn.primaryMessageId, linked, toolTiming, inputPreviews);
     const duration = workTurnDuration(turn) ?? stepDurationTotal(linked, toolTiming) ?? segmentDurationTotal(segments);
     const tokenUsage = workTurnTokenUsage(turn.rawMessages);
     const tokens = workTurnTokens(tokenUsage);
@@ -551,7 +533,7 @@ function isDefined<T>(value: T | undefined): value is T {
 }
 
 /** Converts linked steps to proportional row segments. */
-function chartSegments(messageId: string, steps: UsageStep[], toolTiming: ToolTimingIndex): UsageConversationChartSegment[] {
+function chartSegments(messageId: string, steps: UsageStep[], toolTiming: ToolTimingIndex, inputPreviews: Map<string, string>): UsageConversationChartSegment[] {
   const visible = steps.filter((step) => step.kind !== "turn" && step.kind !== "session" && !toolTiming.pairedResultStepIds.has(step.id));
   const durations = visible.map((step) => timedStepDuration(step, toolTiming));
   const durationTotal = durations.reduce<number>((sum, value) => sum + (value || 0), 0);
@@ -563,6 +545,7 @@ function chartSegments(messageId: string, steps: UsageStep[], toolTiming: ToolTi
       kind: segmentKind(step),
       messageId,
       stepId: step.id,
+      detail: inputPreviews.get(step.id),
       durationMs: duration,
       durationLabel: formatDuration(duration),
       heightShare: durationTotal > 0 && duration !== undefined ? duration / durationTotal : 1 / Math.max(1, visible.length),

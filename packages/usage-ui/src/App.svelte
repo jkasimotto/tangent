@@ -2,13 +2,13 @@
   import { onMount, tick } from "svelte";
   import {
     createUsageApiClient,
+    type UsageBottleneck,
     type UsageConversationChartRow,
+    type UsageConversationChartSegment,
     type UsageConversationMessage,
-    type UsageConversationProjectGroup,
-    type UsageConversationSessionItem,
-    type UsageConversationTokenMode,
     type UsageConversationView,
     type UsageSessionListItem,
+    type UsageSparkline,
     type UsageUiClient
   } from "@tangent/usage-ui-data";
 
@@ -17,38 +17,47 @@
   let sessions: UsageSessionListItem[] = [];
   let view: UsageConversationView | undefined;
   let selectedId: string | undefined;
+  let mode: "browse" | "read" = "browse";
   let query = "";
   let loading = true;
   let conversationLoading = false;
   let error = "";
   let activeMessageId = "";
-  let expandedProjectIds: string[] = [];
+  let activeSegmentId = "";
+  let bottleneckIndex = -1;
   let expandedMessageIds: string[] = [];
   let expandedToolIds: string[] = [];
-  let chartTokenMode: "cumulative" | "added" = "cumulative";
+  let zoom = 1;
+
+  const ZOOM_LEVELS = [0.25, 0.5, 1, 2, 4];
+  const BASE_PX_PER_MS = 0.001; // ~1px per second at zoom 1; a 2min turn ≈ the min width, longer turns grow
+  const MIN_TURN_PX = 120; // keeps the prompt label readable even for short turns
+  const MIN_BAR_HEIGHT = 16; // token-light / token-less turns still show a clickable bar
+  const MAX_BAR_HEIGHT = 72; // the busiest-context turn
+  const LABEL_MIN_PX = 64; // only label a segment in-bar when it is wide enough to read
+  const MIN_FLAME_WIDTH_PCT = 12;
   const messagePreviewLimit = 360;
   const messageElements = new Map<string, HTMLElement>();
-  const rowElements = new Map<string, HTMLElement>();
+  const segmentElements = new Map<string, HTMLElement>();
   let messageListNode: HTMLElement;
-  let chartScrollNode: HTMLElement;
-
-  type DisplayChartRow = UsageConversationChartRow & {
-    displayTokenLabel?: string;
-    displayWidthShare: number;
-  };
+  let flameScrollNode: HTMLElement;
 
   onMount(() => {
     void loadSessions();
   });
 
-  $: selectedId && void loadConversation(selectedId, query);
+  $: pxPerMs = BASE_PX_PER_MS * zoom;
+  $: filteredSessions = filterSessions(sessions, query);
+  $: maxFlameDurationMs = Math.max(1, ...filteredSessions.map((session) => session.flame?.durationMs || 0));
+  $: bottleneckIds = new Set((view?.bottlenecks || []).map((bottleneck) => bottleneck.id));
+  $: activeRow = view?.chart.rows.find((row) => rowIds(row.messageIds || row.messageId).includes(activeMessageId)) || view?.chart.rows[0];
+  $: detailMessages = detailMessagesFor(view, activeRow);
 
   async function loadSessions(): Promise<void> {
     loading = true;
     try {
       const list = await client.listSessions({ limit: 80 });
       sessions = list.sessions;
-      selectedId = selectedId || bestSessionCandidate(sessions)?.id;
       error = "";
     } catch (caught) {
       error = friendlyError((caught as Error).message);
@@ -68,12 +77,12 @@
       const nextView = await client.getConversationView(id, { query: search, limit: 80 });
       if (loadKey !== key) return;
       view = nextView;
-      activeMessageId = view.messages[0]?.id || "";
+      activeMessageId = view.chart.rows[0]?.messageId || view.messages[0]?.id || "";
+      activeSegmentId = "";
+      bottleneckIndex = -1;
       expandedMessageIds = [];
       expandedToolIds = [];
       error = "";
-      await tick();
-      if (activeMessageId) scrollToPair(activeMessageId, "message");
     } catch (caught) {
       error = friendlyError((caught as Error).message);
     } finally {
@@ -81,64 +90,29 @@
     }
   }
 
-  function selectSession(id: string): void {
+  function openSession(id: string): void {
     selectedId = id;
+    mode = "read";
+    void loadConversation(id, query);
   }
 
-  function activate(messageId: string, source: "message" | "chart"): void {
-    activeMessageId = messageId;
-    scrollToPair(messageId, source);
+  function backToBrowse(): void {
+    mode = "browse";
   }
 
-  function scrollToPair(messageId: string, source: "message" | "chart"): void {
-    const target = source === "message" ? rowElements.get(messageId) : messageElements.get(messageId);
-    const container = source === "message" ? chartScrollNode : messageListNode;
-    if (target && container) scrollWithin(container, target, source === "chart" ? "start" : "center");
+  /** Filters the session list for the browse gallery and rail. */
+  function filterSessions(values: UsageSessionListItem[], search: string): UsageSessionListItem[] {
+    const needle = search.trim().toLowerCase();
+    if (!needle) return values;
+    return values.filter((session) => `${session.title} ${session.provider || ""} ${session.model || ""}`.toLowerCase().includes(needle));
   }
 
-  async function activateChartRow(row: UsageConversationChartRow): Promise<void> {
-    const messageId = chartRowAnchorMessageId(row);
-    activeMessageId = messageId;
-    await tick();
-    scrollToPair(messageId, "chart");
-  }
-
-  function chartRowAnchorMessageId(row: UsageConversationChartRow): string {
-    const ids = rowIds(row.messageIds || row.messageId);
-    const rowUserMessage = ids.find((id) => view?.messages.find((message) => message.id === id)?.role === "user");
-    if (rowUserMessage) return rowUserMessage;
-
-    const messageIndex = view?.messages.findIndex((message) => message.id === row.messageId) ?? -1;
-    if (!view || messageIndex < 0) return row.messageId;
-    for (let index = messageIndex; index >= 0; index -= 1) {
-      const message = view.messages[index];
-      if (message?.role === "user") return message.id;
-    }
-    return row.messageId;
-  }
-
-  function rememberMessage(node: HTMLElement, id: string): { destroy(): void } {
-    messageElements.set(id, node);
-    return { destroy: () => messageElements.delete(id) };
-  }
-
-  function rememberRow(node: HTMLElement, value: string | string[]): { update(next: string | string[]): void; destroy(): void } {
-    let ids = rowIds(value);
-    for (const id of ids) rowElements.set(id, node);
-    return {
-      update(next: string | string[]): void {
-        for (const id of ids) {
-          if (rowElements.get(id) === node) rowElements.delete(id);
-        }
-        ids = rowIds(next);
-        for (const id of ids) rowElements.set(id, node);
-      },
-      destroy(): void {
-        for (const id of ids) {
-          if (rowElements.get(id) === node) rowElements.delete(id);
-        }
-      }
-    };
+  /** Returns the messages that belong to the active work turn for the detail panel. */
+  function detailMessagesFor(currentView: UsageConversationView | undefined, row: UsageConversationChartRow | undefined): UsageConversationMessage[] {
+    if (!currentView) return [];
+    const ids = rowIds(row?.messageIds || row?.messageId);
+    const scoped = currentView.messages.filter((message) => ids.includes(message.id));
+    return scoped.length ? scoped : currentView.messages;
   }
 
   function rowIds(value: string | string[] | undefined): string[] {
@@ -146,120 +120,168 @@
     return value ? [value] : [];
   }
 
-  function isRowActive(row: UsageConversationChartRow): boolean {
-    return rowIds(row.messageIds || row.messageId).includes(activeMessageId);
+  function zoomIn(): void {
+    zoom = ZOOM_LEVELS[Math.min(ZOOM_LEVELS.length - 1, ZOOM_LEVELS.indexOf(zoom) + 1)] ?? zoom;
   }
 
-  function bestSessionCandidate(values: UsageSessionListItem[]): UsageSessionListItem | undefined {
-    return values.find((session) => session.status === "active") || values[0] || [...values].sort((left, right) => (right.tokensTotal || 0) - (left.tokensTotal || 0))[0];
+  function zoomOut(): void {
+    zoom = ZOOM_LEVELS[Math.max(0, ZOOM_LEVELS.indexOf(zoom) - 1)] ?? zoom;
+  }
+
+  /** Returns the work-turn wall duration that drives its horizontal width. Uses the turn's own
+   * timestamp-window duration (reliable) and only falls back to summed step durations when absent. */
+  function turnDurationMs(row: UsageConversationChartRow): number {
+    if (row.durationMs !== undefined) return row.durationMs;
+    const total = row.segments.reduce((sum, segment) => sum + (segment.durationMs || 0), 0);
+    return total || Math.max(1, row.segments.length) * 1000;
+  }
+
+  /** Returns the pixel width of a whole work turn, proportional to its wall duration. `scale` is
+   * passed in (not read from `pxPerMs`) so Svelte tracks the zoom dependency on re-render. */
+  function turnWidthPx(row: UsageConversationChartRow, scale: number): number {
+    return Math.max(MIN_TURN_PX, turnDurationMs(row) * scale);
+  }
+
+  /** Returns the bar height for a turn, proportional to its cumulative context tokens, so
+   * token-heavy turns stand taller and compactions read as a drop. */
+  function turnBarHeightPx(row: UsageConversationChartRow, maxTokens: number): number {
+    const share = row.tokens === undefined ? 0 : Math.min(1, row.tokens / Math.max(1, maxTokens));
+    return Math.round(MIN_BAR_HEIGHT + (MAX_BAR_HEIGHT - MIN_BAR_HEIGHT) * share);
+  }
+
+  /** Returns each segment's effective duration, attributing the turn's untracked time (model /
+   * thinking, which carries no per-step timing) evenly to the segments that lack a duration, so the
+   * segments still sum to the turn's wall duration. */
+  function effectiveSegmentDurations(row: UsageConversationChartRow): number[] {
+    const segments = row.segments ?? [];
+    const known = segments.map((segment) => (segment.durationMs && segment.durationMs > 0 ? segment.durationMs : undefined));
+    const knownSum = known.reduce<number>((sum, value) => sum + (value || 0), 0);
+    const unknownCount = known.filter((value) => value === undefined).length;
+    const remainder = Math.max(0, turnDurationMs(row) - knownSum);
+    const perUnknown = unknownCount > 0 ? remainder / unknownCount : 0;
+    return known.map((value) => (value === undefined ? perUnknown : value));
+  }
+
+  /** Returns the pixel width of each segment, partitioning the turn's width by effective duration. */
+  function segmentWidths(row: UsageConversationChartRow, scale: number): number[] {
+    const effective = effectiveSegmentDurations(row);
+    const total = effective.reduce((sum, value) => sum + value, 0) || 1;
+    const turnWidth = turnWidthPx(row, scale);
+    return effective.map((value) => (value / total) * turnWidth);
+  }
+
+  /** Fades bars whose timing is less trustworthy so estimated widths are not over-read. */
+  function confidenceOpacity(confidence: UsageUiConfidence | undefined): number {
+    if (confidence === "exact") return 1;
+    if (confidence === "derived") return 0.85;
+    if (confidence === "partial") return 0.65;
+    if (confidence === "estimated") return 0.55;
+    return 0.45;
+  }
+
+  function activateSegment(row: UsageConversationChartRow, segment: UsageConversationChartSegment): void {
+    activeMessageId = row.messageId;
+    activeSegmentId = segment.id;
+  }
+
+  function activateRow(row: UsageConversationChartRow): void {
+    activeMessageId = row.messageId;
+    activeSegmentId = "";
+  }
+
+  function isSegmentActive(segment: UsageConversationChartSegment): boolean {
+    return segment.id === activeSegmentId;
+  }
+
+  async function jumpToBottleneck(index: number): Promise<void> {
+    const bottleneck = view?.bottlenecks?.[index];
+    if (!bottleneck) return;
+    bottleneckIndex = index;
+    activeMessageId = bottleneck.messageId;
+    activeSegmentId = bottleneck.id;
+    await tick();
+    scrollFlameToSegment(bottleneck.id);
+  }
+
+  function nextBottleneck(): void {
+    if (!view?.bottlenecks?.length) return;
+    void jumpToBottleneck((bottleneckIndex + 1) % view.bottlenecks.length);
+  }
+
+  function prevBottleneck(): void {
+    if (!view?.bottlenecks?.length) return;
+    void jumpToBottleneck((bottleneckIndex - 1 + view.bottlenecks.length) % view.bottlenecks.length);
+  }
+
+  /** Placeholder for the future "send this bottleneck to the eval project" action. */
+  function markForEval(bottleneck: UsageBottleneck): void {
+    // Intentionally a no-op stub until the eval hand-off is wired.
+    void bottleneck;
+  }
+
+  function scrollFlameToSegment(id: string): void {
+    const target = segmentElements.get(id);
+    const container = flameScrollNode;
+    if (!target || !container) return;
+    const containerRect = container.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const offset = targetRect.left - containerRect.left;
+    const left = container.scrollLeft + offset - container.clientWidth / 2 + targetRect.width / 2;
+    if (typeof container.scrollTo === "function") {
+      container.scrollTo({ left: Math.max(0, left), behavior: "auto" });
+      return;
+    }
+    container.scrollLeft = Math.max(0, left);
+  }
+
+  function rememberMessage(node: HTMLElement, id: string): { destroy(): void } {
+    messageElements.set(id, node);
+    return { destroy: () => messageElements.delete(id) };
+  }
+
+  function rememberSegment(node: HTMLElement, id: string): { update(next: string): void; destroy(): void } {
+    let current = id;
+    segmentElements.set(current, node);
+    return {
+      update(next: string): void {
+        if (segmentElements.get(current) === node) segmentElements.delete(current);
+        current = next;
+        segmentElements.set(current, node);
+      },
+      destroy(): void {
+        if (segmentElements.get(current) === node) segmentElements.delete(current);
+      }
+    };
   }
 
   function friendlyError(value: string): string {
     return value.includes("<!doctype") ? "Usage API unavailable. Start the app with `tangent usage ui`." : value;
   }
 
-  function projectCount(projects: UsageConversationProjectGroup[] | undefined): number {
-    return projects?.reduce((sum, project) => sum + project.sessions.length, 0) || 0;
+  /** Formats a session timestamp as a compact date for cards and the rail. */
+  function formatDate(value: string | undefined): string {
+    if (!value) return "Date unknown";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(date);
   }
 
-  function toggleProject(project: UsageConversationProjectGroup): void {
-    expandedProjectIds = expandedProjectIds.includes(project.id)
-      ? expandedProjectIds.filter((id) => id !== project.id)
-      : [...expandedProjectIds, project.id];
+  function sessionDate(session: UsageSessionListItem): string {
+    return formatDate(session.startedAt || session.lastActivityAt || session.endedAt);
   }
 
-  function sessionMeta(session: UsageConversationSessionItem): string[] {
-    return [
-      session.lastActivityLabel ? `Last ${session.lastActivityLabel}` : undefined,
-      session.messageCountLabel,
-      session.tokenLabel ? `${session.tokenLabel} tokens` : undefined
-    ].filter((value): value is string => Boolean(value));
-  }
-
-  function sessionIdentity(session: UsageConversationSessionItem): string[] {
-    return [session.provider, session.model].filter((value): value is string => Boolean(value));
-  }
-
-  function sessionLabel(session: UsageConversationSessionItem): string {
-    return [session.title, ...sessionIdentity(session), ...sessionMeta(session)].join(" · ");
-  }
-
-  function chartMode(row: UsageConversationChartRow, modeName: "cumulative" | "added"): UsageConversationTokenMode {
-    return row.tokenModes?.[modeName] || { tokens: row.tokens, tokenLabel: row.tokenLabel, widthShare: row.widthShare };
-  }
-
-  function chartRowsForMode(rows: UsageConversationChartRow[], modeName: "cumulative" | "added"): DisplayChartRow[] {
-    const normalized = normalizeChartTokenModes(rows);
-    return normalized.map((row) => {
-      const mode = chartMode(row, modeName);
-      return {
-        ...row,
-        displayTokenLabel: mode.tokenLabel,
-        displayWidthShare: mode.widthShare
-      };
-    });
-  }
-
-  function normalizeChartTokenModes(rows: UsageConversationChartRow[]): UsageConversationChartRow[] {
-    if (rows.every((row) => row.tokenModes)) return rows;
-    const cumulativeTokens = rows.map((row) => row.tokenModes?.cumulative.tokens ?? contextTokensFromLabel(row.tokenLabel) ?? row.tokens);
-    const addedTokens = cumulativeTokens.map((tokens, index) => {
-      if (tokens === undefined) return undefined;
-      const previous = previousDefinedNumber(cumulativeTokens, index) ?? 0;
-      return tokens >= previous ? tokens - previous : tokens;
-    });
-    const maxCumulative = Math.max(1, ...cumulativeTokens.map((tokens) => tokens || 0));
-    const maxAdded = Math.max(1, ...addedTokens.map((tokens) => tokens || 0));
-    return rows.map((row, index) => ({
-      ...row,
-      tokens: cumulativeTokens[index],
-      tokenLabel: formatContextTokenLabel(cumulativeTokens[index]) || row.tokenLabel,
-      widthShare: widthShare(cumulativeTokens[index], maxCumulative),
-      tokenModes: {
-        cumulative: row.tokenModes?.cumulative || {
-          tokens: cumulativeTokens[index],
-          tokenLabel: formatContextTokenLabel(cumulativeTokens[index]) || row.tokenLabel,
-          widthShare: widthShare(cumulativeTokens[index], maxCumulative)
-        },
-        added: row.tokenModes?.added || {
-          tokens: addedTokens[index],
-          tokenLabel: formatAddedTokenLabel(addedTokens[index]),
-          widthShare: widthShare(addedTokens[index], maxAdded)
-        }
-      }
-    }));
-  }
-
-  function chartLabel(row: DisplayChartRow): string {
-    return `${row.label}: ${row.displayTokenLabel || "tokens unknown"}${row.durationLabel ? `, ${row.durationLabel}` : ""}`;
-  }
-
-  function previousDefinedNumber(values: Array<number | undefined>, beforeIndex: number): number | undefined {
-    for (let index = beforeIndex - 1; index >= 0; index -= 1) {
-      const value = values[index];
-      if (value !== undefined) return value;
-    }
-    return undefined;
-  }
-
-  function contextTokensFromLabel(value: string | undefined): number | undefined {
-    const match = /([0-9]+(?:\.[0-9]+)?)\s*([kKmM]?)\s*ctx\b/.exec(value || "");
-    if (!match) return undefined;
-    const amount = Number(match[1]);
-    if (!Number.isFinite(amount)) return undefined;
-    const suffix = match[2]?.toLowerCase();
-    const multiplier = suffix === "m" ? 1_000_000 : suffix === "k" ? 1_000 : 1;
-    return Math.round(amount * multiplier);
-  }
-
-  function formatContextTokenLabel(value: number | undefined): string | undefined {
-    const formatted = formatTokenCount(value);
-    return formatted ? `${formatted} ctx` : undefined;
-  }
-
-  function formatAddedTokenLabel(value: number | undefined): string | undefined {
-    const formatted = formatTokenCount(value);
-    return formatted ? `${formatted} added` : undefined;
+  function formatDurationMs(value: number | undefined): string | undefined {
+    if (value === undefined || !Number.isFinite(value)) return undefined;
+    const rounded = Math.max(0, Math.round(value));
+    if (rounded < 1000) return `${rounded}ms`;
+    const seconds = Math.round(rounded / 1000);
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    const restSeconds = seconds % 60;
+    if (minutes < 60) return restSeconds ? `${minutes}m ${restSeconds}s` : `${minutes}m`;
+    const hours = Math.floor(minutes / 60);
+    const restMinutes = minutes % 60;
+    return restMinutes ? `${hours}h ${restMinutes}m` : `${hours}h`;
   }
 
   function formatTokenCount(value: number | undefined): string | undefined {
@@ -269,17 +291,21 @@
     return `${trimFixed(value / 1_000_000, 1)}M`;
   }
 
-  function widthShare(value: number | undefined, maxValue: number): number {
-    return value === undefined ? 0.02 : Math.max(0.02, value / maxValue);
-  }
-
   function trimFixed(value: number, digits: number): string {
     return value.toFixed(digits).replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1");
   }
 
-  /** Returns the duration visible with the tool kind. */
-  function toolDuration(tool: UsageConversationMessage["toolCalls"][number]): string | undefined {
-    return tool.durationLabel;
+  /** Returns the card flame width as a percentage of the longest session, so card lengths compare
+   * by active duration at a glance. `max` is passed in so Svelte tracks the dependency on re-render. */
+  function flameWidthPct(flame: UsageSparkline, max: number): number {
+    const share = (flame.durationMs / Math.max(1, max)) * 100;
+    return Math.max(MIN_FLAME_WIDTH_PCT, Math.min(100, share));
+  }
+
+  /** Returns the relative height (0..1) for one sparkline bucket. */
+  function sparkHeight(tokenShare: number, durationShare: number): number {
+    const value = tokenShare > 0 ? tokenShare : durationShare;
+    return Math.max(0.08, Math.min(1, value));
   }
 
   /** Returns the primary visible text for a tool event. */
@@ -314,43 +340,36 @@
     return message.text || message.textPreview || "No transcript text available.";
   }
 
-  /** Returns whether a message body should render collapsed by default. */
   function isLongMessage(message: UsageConversationMessage): boolean {
     return messageBody(message).length > messagePreviewLimit;
   }
 
-  /** Returns whether a message body is currently expanded. */
-  function isMessageExpanded(messageId: string): boolean {
-    return expandedMessageIds.includes(messageId);
-  }
-
-  /** Returns the body text currently visible for a message. */
   function visibleMessageBody(message: UsageConversationMessage, expanded: boolean): string {
     const body = messageBody(message);
     if (!isLongMessage(message) || expanded) return body;
     return `${body.slice(0, messagePreviewLimit).trimEnd()}...`;
   }
 
-  /** Toggles the full body display for a long message. */
   function toggleMessageExpansion(messageId: string): void {
-    expandedMessageIds = isMessageExpanded(messageId)
+    expandedMessageIds = expandedMessageIds.includes(messageId)
       ? expandedMessageIds.filter((id) => id !== messageId)
       : [...expandedMessageIds, messageId];
   }
-
-  function scrollWithin(container: HTMLElement, target: HTMLElement, block: "start" | "center"): void {
-    const containerRect = container.getBoundingClientRect();
-    const targetRect = target.getBoundingClientRect();
-    const offset = targetRect.top - containerRect.top;
-    const centered = offset - (container.clientHeight / 2) + (targetRect.height / 2);
-    const top = container.scrollTop + (block === "center" ? centered : offset);
-    if (typeof container.scrollTo === "function") {
-      container.scrollTo({ top: Math.max(0, top), behavior: "auto" });
-      return;
-    }
-    container.scrollTop = Math.max(0, top);
-  }
 </script>
+
+{#snippet sparkline(flame: UsageSparkline, variant: string)}
+  <span class={`spark spark-${variant}`} aria-hidden="true">
+    {#each flame.buckets ?? [] as bucket}
+      <span
+        class={`spark-bar spark-${bucket.kind}`}
+        style={`height:${sparkHeight(bucket.tokenShare, bucket.durationShare) * 100}%`}
+      ></span>
+    {/each}
+    {#if flame.compactions}
+      <span class="spark-compactions" title={`${flame.compactions} compactions`}>◆{flame.compactions}</span>
+    {/if}
+  </span>
+{/snippet}
 
 {#if error}
   <main class="usage-loading">
@@ -359,201 +378,219 @@
       <p>{error}</p>
     </section>
   </main>
-{:else if loading || !view}
+{:else if loading}
   <main class="usage-loading" aria-label="Loading Usage UI">
     <span class="usage-spinner"></span>
   </main>
+{:else if mode === "browse"}
+  <main class="usage-browse" data-mode="browse">
+    <header class="browse-header">
+      <div>
+        <p>Tangent Usage</p>
+        <h1>Conversations</h1>
+      </div>
+      <label class="search">
+        <span>Search sessions</span>
+        <input bind:value={query} placeholder="Project or session" />
+      </label>
+    </header>
+    <div class="gallery" aria-label="Conversation gallery">
+      {#each filteredSessions as session}
+        <button type="button" class="session-card" onclick={() => openSession(session.id)}>
+          <span class="session-card-date">{sessionDate(session)}</span>
+          <span class="session-card-title">{session.title}</span>
+          <span class="session-card-meta">
+            <span>{session.provider || "unknown"}</span>
+            {#if session.model}<span>{session.model}</span>{/if}
+            {#if formatDurationMs(session.durationMs)}<span>{formatDurationMs(session.durationMs)}</span>{/if}
+            {#if formatTokenCount(session.tokensTotal)}<span>{formatTokenCount(session.tokensTotal)} tokens</span>{/if}
+          </span>
+          {#if session.flame}
+            <span class="session-card-flame" style={`width:${flameWidthPct(session.flame, maxFlameDurationMs)}%`}>{@render sparkline(session.flame, "card")}</span>
+          {/if}
+        </button>
+      {/each}
+    </div>
+  </main>
 {:else}
-  <main class="usage-shell">
-    <aside class="pane pane-finder" aria-label="Conversation picker">
-      <div class="finder-content">
-        <div class="finder-body">
-          <label class="search">
-            <span>Search sessions</span>
-            <input bind:value={query} placeholder="Project or session" />
-          </label>
-          <div class="project-count">{projectCount(view.projects)} sessions</div>
-          <div class="project-list">
-            {#each view.projects as project}
-              <section class="project-group">
-                <button
-                  type="button"
-                  class:active={project.sessions.some((session) => session.id === selectedId)}
-                  class="project-row"
-                  aria-expanded={expandedProjectIds.includes(project.id)}
-                  onclick={() => toggleProject(project)}
-                >
-                  <span>
-                    <strong>{project.label}</strong>
-                    <small>{project.sessions.length} sessions</small>
+  <main class="usage-shell" data-mode="read">
+    <header class="read-bar">
+      <button type="button" class="read-back" onclick={backToBrowse}>← All conversations</button>
+      <div class="read-heading">
+        <p>Active work over time</p>
+        <h1>{view ? view.selected.title : "Loading conversation"}</h1>
+      </div>
+      <div class="read-controls">
+        {#if view?.selected.durationLabel}<span class="read-stat">{view.selected.durationLabel}</span>{/if}
+        {#if view?.selected.tokenLabel}<span class="read-stat">{view.selected.tokenLabel}</span>{/if}
+        <div class="zoom" aria-label="Zoom timeline">
+          <button type="button" aria-label="Zoom out" onclick={zoomOut} disabled={zoom === ZOOM_LEVELS[0]}>−</button>
+          <span class="zoom-level">{zoom}×</span>
+          <button type="button" aria-label="Zoom in" onclick={zoomIn} disabled={zoom === ZOOM_LEVELS[ZOOM_LEVELS.length - 1]}>+</button>
+        </div>
+      </div>
+    </header>
+
+    {#if !view}
+      <div class="usage-loading" aria-label="Loading conversation"><span class="usage-spinner"></span></div>
+    {:else}
+      <section class:loading-pane={conversationLoading} class="flame-band" aria-label="Conversation flame graph">
+        <div class="flame-scroll" bind:this={flameScrollNode}>
+          <div class="flame-track">
+            {#each view.chart.rows as row}
+              {@const barWidth = turnWidthPx(row, pxPerMs)}
+              {@const barHeight = turnBarHeightPx(row, view.chart.maxTokens)}
+              {@const widths = segmentWidths(row, pxPerMs)}
+              <div class="turn-column" style={`width:${barWidth}px; --bar-slot:${MAX_BAR_HEIGHT}px`}>
+                <button type="button" class:active={row.messageId === activeMessageId} class="turn-prompt" onclick={() => activateRow(row)}>
+                  <span class="turn-prompt-label">{row.label}</span>
+                  <span class="turn-prompt-meta">
+                    {#if row.durationLabel}<span>{row.durationLabel}</span>{/if}
+                    {#if row.tokenLabel}<span>{row.tokenLabel}</span>{/if}
                   </span>
-                  <span class="project-chevron" aria-hidden="true">v</span>
                 </button>
-                {#if expandedProjectIds.includes(project.id)}
-                  <div class="session-stack">
-                    {#each project.sessions as session}
+                <div class="turn-bar-slot">
+                  <div class="turn-bar" style={`height:${barHeight}px`}>
+                    {#if row.segments?.length}
+                      {#each row.segments as segment, index}
+                        <button
+                          type="button"
+                          use:rememberSegment={segment.id}
+                          class:active={isSegmentActive(segment)}
+                          class:is-bottleneck={bottleneckIds.has(segment.id)}
+                          class={`segment segment-${segment.kind}`}
+                          style={`width:${widths[index]}px; opacity:${confidenceOpacity(segment.confidence)}`}
+                          title={`${segment.detail || segment.label}${segment.durationLabel ? ` · ${segment.durationLabel}` : ""}`}
+                          onclick={() => activateSegment(row, segment)}
+                        >
+                          {#if segment.detail && widths[index] >= LABEL_MIN_PX}
+                            <span class="segment-label">{segment.detail}</span>
+                          {/if}
+                        </button>
+                      {/each}
+                    {:else}
                       <button
                         type="button"
-                        class:active={session.id === selectedId}
-                        class="session-row"
-                        aria-label={sessionLabel(session)}
-                        onclick={() => selectSession(session.id)}
-                      >
-                        <span class="session-row-identity">
-                          {#each sessionIdentity(session) as item}
-                            <span>{item}</span>
-                          {/each}
-                        </span>
-                        <span class="session-row-meta">
-                          {#each sessionMeta(session) as item}
-                            <span>{item}</span>
-                          {/each}
-                        </span>
-                      </button>
-                    {/each}
+                        use:rememberSegment={row.id}
+                        class:active={row.id === activeSegmentId}
+                        class:is-bottleneck={bottleneckIds.has(row.id)}
+                        class="segment segment-assistant"
+                        style={`width:${barWidth}px; opacity:${confidenceOpacity(row.confidence)}`}
+                        title={`${row.label}${row.durationLabel ? ` · ${row.durationLabel}` : ""}`}
+                        onclick={() => activateRow(row)}
+                      ></button>
+                    {/if}
                   </div>
-                {/if}
-              </section>
+                </div>
+              </div>
             {/each}
           </div>
         </div>
-      </div>
-    </aside>
+      </section>
 
-    <section class:loading-pane={conversationLoading} class="pane pane-conversation" aria-label="Conversation">
-      <div class="message-list" bind:this={messageListNode}>
-        {#each view.messages as message}
-          <div
-            use:rememberMessage={message.id}
-            class:active={message.id === activeMessageId}
-            class={`message message-${message.role}`}
-          >
-            <button class="message-main" type="button" onclick={() => activate(message.id, "message")}>
-              <p>{visibleMessageBody(message, expandedMessageIds.includes(message.id))}</p>
-            </button>
-            {#if isLongMessage(message)}
-              <button
-                class="message-expand"
-                type="button"
-                aria-expanded={expandedMessageIds.includes(message.id)}
-                onclick={() => toggleMessageExpansion(message.id)}
-              >
-                {expandedMessageIds.includes(message.id) ? "Show less" : `Show full message (${Intl.NumberFormat("en").format(messageBody(message).length)} chars)`}
-              </button>
-            {/if}
-            {#if message.toolCalls.length}
-              <div class="tool-events" aria-label="Tool calls">
-                {#each message.toolCalls as tool}
-                  <div class:expanded={expandedToolIds.includes(tool.id)} class="tool-event">
-                    <span class="tool-event-kind">
-                      <span class="tool-event-kind-label">{toolKind(tool)}</span>
-                      {#if toolDuration(tool)}
-                        <span class="tool-event-duration">{toolDuration(tool)}</span>
-                      {/if}
-                    </span>
-                    <code class="tool-event-command">{toolPreview(tool)}</code>
-                    {#if hasToolDetails(tool)}
-                      <button
-                        class="tool-event-toggle"
-                        type="button"
-                        aria-expanded={expandedToolIds.includes(tool.id)}
-                        aria-label={`${expandedToolIds.includes(tool.id) ? "Hide" : "Show"} ${toolPreview(tool)} details`}
-                        onclick={() => toggleToolExpansion(tool.id)}
-                      >
-                        {expandedToolIds.includes(tool.id) ? "Hide" : "Details"}
-                      </button>
-                    {/if}
-                    {#if expandedToolIds.includes(tool.id)}
-                      <div class="tool-event-details">
-                        <div>
-                          <span>Command</span>
-                          <code>{toolPreview(tool)}</code>
-                        </div>
-                        {#if tool.workdir || tool.target}
-                          <div>
-                            <span>Directory</span>
-                            <code>{tool.workdir || tool.target}</code>
-                          </div>
+      <div class:loading-pane={conversationLoading} class="read-body">
+        <section class="transcript-pane" aria-label="Conversation">
+          <div class="message-list" bind:this={messageListNode}>
+            {#each detailMessages as message}
+              <div use:rememberMessage={message.id} class={`message message-${message.role}`}>
+                <div class="message-main">
+                  <p>{visibleMessageBody(message, expandedMessageIds.includes(message.id))}</p>
+                </div>
+                {#if isLongMessage(message)}
+                  <button
+                    class="message-expand"
+                    type="button"
+                    aria-expanded={expandedMessageIds.includes(message.id)}
+                    onclick={() => toggleMessageExpansion(message.id)}
+                  >
+                    {expandedMessageIds.includes(message.id) ? "Show less" : `Show full message (${Intl.NumberFormat("en").format(messageBody(message).length)} chars)`}
+                  </button>
+                {/if}
+                {#if message.toolCalls.length}
+                  <div class="tool-events" aria-label="Tool calls">
+                    {#each message.toolCalls as tool}
+                      <div class:expanded={expandedToolIds.includes(tool.id)} class="tool-event">
+                        <span class="tool-event-kind">
+                          <span class="tool-event-kind-label">{toolKind(tool)}</span>
+                          {#if tool.durationLabel}
+                            <span class="tool-event-duration">{tool.durationLabel}</span>
+                          {/if}
+                        </span>
+                        <code class="tool-event-command">{toolPreview(tool)}</code>
+                        {#if hasToolDetails(tool)}
+                          <button
+                            class="tool-event-toggle"
+                            type="button"
+                            aria-expanded={expandedToolIds.includes(tool.id)}
+                            aria-label={`${expandedToolIds.includes(tool.id) ? "Hide" : "Show"} ${toolPreview(tool)} details`}
+                            onclick={() => toggleToolExpansion(tool.id)}
+                          >
+                            {expandedToolIds.includes(tool.id) ? "Hide" : "Details"}
+                          </button>
                         {/if}
-                        {#if toolOutput(tool)}
-                          <div>
-                            <span>Output</span>
-                            <pre>{toolOutput(tool)}</pre>
+                        {#if expandedToolIds.includes(tool.id)}
+                          <div class="tool-event-details">
+                            <div>
+                              <span>Command</span>
+                              <code>{toolPreview(tool)}</code>
+                            </div>
+                            {#if tool.workdir || tool.target}
+                              <div>
+                                <span>Directory</span>
+                                <code>{tool.workdir || tool.target}</code>
+                              </div>
+                            {/if}
+                            {#if toolOutput(tool)}
+                              <div>
+                                <span>Output</span>
+                                <pre>{toolOutput(tool)}</pre>
+                              </div>
+                            {/if}
                           </div>
                         {/if}
                       </div>
-                    {/if}
-                  </div>
-                {/each}
-              </div>
-            {/if}
-          </div>
-        {/each}
-      </div>
-    </section>
-
-    <aside class="pane pane-chart" aria-label="Tokens and duration chart">
-      <div class="chart-inner">
-        <header>
-          <div>
-            <p>Tokens × duration</p>
-            <h1>Work Turns</h1>
-          </div>
-          <div class="chart-mode-toggle" aria-label="Token chart mode">
-            <button
-              type="button"
-              class:active={chartTokenMode === "cumulative"}
-              aria-pressed={chartTokenMode === "cumulative"}
-              onclick={() => chartTokenMode = "cumulative"}
-            >
-              Cumulative
-            </button>
-            <button
-              type="button"
-              class:active={chartTokenMode === "added"}
-              aria-pressed={chartTokenMode === "added"}
-              onclick={() => chartTokenMode = "added"}
-            >
-              Added
-            </button>
-          </div>
-        </header>
-        <div class="chart-scroll" bind:this={chartScrollNode}>
-          <div class="axis-labels">
-            <span>Tokens</span>
-            <span>Duration</span>
-          </div>
-          <div class="chart-rows">
-            {#each chartRowsForMode(view.chart.rows, chartTokenMode) as row}
-              <button
-                type="button"
-                use:rememberRow={row.messageIds || row.messageId}
-                class:active={isRowActive(row)}
-                class:anchor={row.anchor}
-                class="chart-row"
-                style={`--row-width:${row.displayWidthShare}; --row-height:${row.heightShare};`}
-                aria-label={chartLabel(row)}
-                onclick={() => activateChartRow(row)}
-              >
-                <span class="duration-ruler" aria-hidden="true">
-                  <span class="duration-ruler-line"></span>
-                  <span class="duration-ruler-label">{row.durationLabel || "unknown"}</span>
-                </span>
-                <span class="bar" aria-label={chartLabel(row)}>
-                  {#if row.segments.length}
-                    {#each row.segments as segment}
-                      <span class={`segment segment-${segment.kind}`} style={`--segment-height:${segment.heightShare};`} title={`${segment.label}${segment.durationLabel ? ` · ${segment.durationLabel}` : ""}`}>
-                        <span>{segment.label}</span>
-                      </span>
                     {/each}
-                  {/if}
-                </span>
-                <span class="row-metrics">{row.displayTokenLabel || "tokens unknown"}{row.durationLabel ? ` · ${row.durationLabel}` : ""}</span>
-              </button>
+                  </div>
+                {/if}
+              </div>
             {/each}
           </div>
-        </div>
+        </section>
+
+        <aside class="pane-bottlenecks" aria-label="Bottlenecks">
+          <header class="bottlenecks-header">
+            <div>
+              <p>Where the time went</p>
+              <h1>Slowest</h1>
+            </div>
+            <div class="bottleneck-nav" aria-label="Jump between bottlenecks">
+              <button type="button" aria-label="Previous bottleneck" onclick={prevBottleneck} disabled={!view.bottlenecks?.length}>◀</button>
+              <button type="button" aria-label="Next bottleneck" onclick={nextBottleneck} disabled={!view.bottlenecks?.length}>▶</button>
+            </div>
+          </header>
+          {#if view.bottlenecks?.length}
+            <ol class="bottleneck-list">
+              {#each view.bottlenecks as bottleneck, index}
+                <li class:active={index === bottleneckIndex} class="bottleneck-row">
+                  <button type="button" class="bottleneck-jump" onclick={() => jumpToBottleneck(index)}>
+                    <span class="bottleneck-rank">{bottleneck.rank}</span>
+                    <span class="bottleneck-body">
+                      <span class="bottleneck-label" class:is-command={Boolean(bottleneck.detail)}>{bottleneck.detail || bottleneck.label}</span>
+                      <span class="bottleneck-meta">
+                        <span class={`bottleneck-kind kind-${bottleneck.kind}`}>{bottleneck.kind}</span>
+                        {#if bottleneck.durationLabel}<span class="bottleneck-duration">{bottleneck.durationLabel}</span>{/if}
+                      </span>
+                    </span>
+                  </button>
+                  <button type="button" class="bottleneck-mark" aria-label={`Mark ${bottleneck.detail || bottleneck.label} for eval`} title="Mark for eval (coming soon)" onclick={() => markForEval(bottleneck)}>★</button>
+                </li>
+              {/each}
+            </ol>
+          {:else}
+            <p class="bottlenecks-empty">No step timing available for this session.</p>
+          {/if}
+        </aside>
       </div>
-    </aside>
+    {/if}
   </main>
 {/if}

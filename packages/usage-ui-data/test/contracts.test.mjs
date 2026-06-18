@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildUsageCockpitView, buildUsageConversationView, buildUsageSessionTimelineView, createUsageApiClient, createUsageUiClient } from "../dist/index.js";
+import { buildSparkline, buildUsageCockpitView, buildUsageConversationView, buildUsageSessionTimelineView, createUsageApiClient, createUsageUiClient } from "../dist/index.js";
 
 test("maps usage sessions into list view models", async () => {
   const client = createUsageUiClient({
@@ -24,6 +24,52 @@ test("maps usage sessions into list view models", async () => {
   const view = await client.listSessions();
   assert.equal(view.sessions[0].title, "Implement UI");
   assert.equal(view.sessions[0].tokensTotal, 10);
+});
+
+test("attaches a per-session flame series to list items from the timeline", async () => {
+  const client = createUsageUiClient({
+    sessions: {
+      /** Lists one session for the flame-series test. */
+      list: async () => ({ data: [{ id: "s1", provider: "codex", title: "Implement UI", models: ["gpt"], metrics: {}, counts: {}, availability: { notes: [] } }], meta: { warnings: [] } }),
+      /** Returns a timeline with model, tool, and compaction steps. */
+      timeline: async () => ({
+        data: {
+          items: [
+            { id: "model", kind: "model_call", label: "Model call", durationMs: 10_000, metrics: { tokens: { total: 4_000 } } },
+            { id: "tool", kind: "tool_call", label: "Tool", durationMs: 30_000, metrics: { tokens: { total: 200 } } },
+            { id: "comp", kind: "compaction", label: "Compaction", durationMs: 1_000, metrics: {} }
+          ]
+        },
+        meta: { warnings: [] }
+      })
+    }
+  });
+  const view = await client.listSessions();
+  assert.ok(view.sessions[0].flame, "expected a flame series on the list item");
+  assert.equal(view.sessions[0].flame.compactions, 1);
+  assert.ok(view.sessions[0].flame.buckets.length > 0);
+});
+
+test("tolerates a missing timeline endpoint when listing sessions", async () => {
+  const client = createUsageUiClient({
+    sessions: {
+      /** Lists one session without a timeline endpoint. */
+      list: async () => ({ data: [{ id: "s1", provider: "codex", title: "Implement UI", metrics: {}, counts: {}, availability: { notes: [] } }], meta: { warnings: [] } })
+    }
+  });
+  const view = await client.listSessions();
+  assert.equal(view.sessions[0].flame, undefined);
+});
+
+test("packs steps end-to-end and colours buckets by dominant kind", () => {
+  const flame = buildSparkline([
+    { id: "model", kind: "model_call", label: "Model", durationMs: 100_000, metrics: { tokens: { total: 5_000 } } },
+    { id: "tool", kind: "tool_call", label: "Tool", durationMs: 100_000, metrics: { tokens: { total: 0 } } }
+  ], 4);
+  assert.equal(flame.buckets.length, 4);
+  assert.equal(flame.buckets[0].kind, "model");
+  assert.equal(flame.buckets[3].kind, "tool");
+  assert.equal(flame.tokensTotal, 5_000);
 });
 
 test("browser API client fetches usage session views", async () => {
@@ -153,6 +199,24 @@ test("builds conversation chart rows from assistant messages with internal step 
   assert.equal(view.chart.rows[0].tokens, 1200);
   assert.equal(view.chart.rows[0].segments.length, 2);
   assert.equal(view.chart.rows[0].segments[0].heightShare > view.chart.rows[0].segments[1].heightShare, true);
+});
+
+test("labels command segments with the command that ran", () => {
+  const view = buildUsageConversationView(
+    { id: "s1", provider: "codex", title: "Commands", endedAt: "2026-06-16T10:01:00.000Z", metrics: {}, availability: { notes: [] } },
+    [],
+    [
+      { id: "user1", role: "user", textPreview: "Go", createdAt: "2026-06-16T10:00:00.000Z", toolCalls: [] },
+      { id: "m1", role: "assistant", turnId: "turn1", textPreview: "Working", createdAt: "2026-06-16T10:00:01.000Z", tokenUsage: { total: 10 }, toolCalls: [] }
+    ],
+    [
+      { id: "slow", turnId: "turn1", kind: "command", label: "exec_command", startedAt: "2026-06-16T10:00:08.000Z", durationMs: 40_000, order: 1, metrics: {} }
+    ],
+    { toolCalls: [{ id: "tool1", stepId: "slow", toolName: "exec_command", status: "success", input: { cmd: "npm run build" }, result: { durationMs: 40_000 } }] }
+  );
+
+  const segment = view.chart.rows[0].segments.find((entry) => entry.stepId === "slow");
+  assert.equal(segment.detail, "npm run build");
 });
 
 test("backfills timeline command steps into conversation tool events", () => {
@@ -350,6 +414,65 @@ test("uses equal internal segment heights when step durations are unavailable", 
   assert.equal(view.chart.rows[0].segments[0].heightShare, 0.5);
   assert.equal(view.chart.rows[0].segments[1].heightShare, 0.5);
   assert.match(view.caveats.join("\n"), /evenly sized/);
+});
+
+test("ranks the slowest step segments as bottlenecks", () => {
+  const view = buildUsageConversationView(
+    { id: "s1", provider: "codex", title: "Bottlenecks", endedAt: "2026-06-16T10:01:00.000Z", metrics: {}, availability: { notes: [] } },
+    [],
+    [
+      { id: "user1", role: "user", textPreview: "Go", createdAt: "2026-06-16T10:00:00.000Z", toolCalls: [] },
+      { id: "m1", role: "assistant", turnId: "turn1", textPreview: "Working", createdAt: "2026-06-16T10:00:01.000Z", tokenUsage: { total: 10 }, toolCalls: [] }
+    ],
+    [
+      { id: "fast", turnId: "turn1", kind: "model_call", label: "Quick model call", startedAt: "2026-06-16T10:00:02.000Z", durationMs: 5_000, order: 1, metrics: {} },
+      { id: "slow", turnId: "turn1", kind: "command", label: "Slow build", startedAt: "2026-06-16T10:00:08.000Z", durationMs: 40_000, order: 2, metrics: {} }
+    ]
+  );
+
+  assert.equal(view.bottlenecks.length, 2);
+  assert.equal(view.bottlenecks[0].rank, 1);
+  assert.equal(view.bottlenecks[0].label, "Slow build");
+  assert.equal(view.bottlenecks[0].durationMs, 40_000);
+  assert.equal(view.bottlenecks[0].stepId, "slow");
+  assert.equal(view.bottlenecks[0].messageId, "m1");
+  assert.equal(view.bottlenecks[1].label, "Quick model call");
+});
+
+test("surfaces the command that ran as bottleneck detail", () => {
+  const view = buildUsageConversationView(
+    { id: "s1", provider: "codex", title: "Bottlenecks", endedAt: "2026-06-16T10:01:00.000Z", metrics: {}, availability: { notes: [] } },
+    [],
+    [
+      { id: "user1", role: "user", textPreview: "Go", createdAt: "2026-06-16T10:00:00.000Z", toolCalls: [] },
+      { id: "m1", role: "assistant", turnId: "turn1", textPreview: "Working", createdAt: "2026-06-16T10:00:01.000Z", tokenUsage: { total: 10 }, toolCalls: [] }
+    ],
+    [
+      { id: "slow", turnId: "turn1", kind: "command", label: "exec_command", startedAt: "2026-06-16T10:00:08.000Z", durationMs: 40_000, order: 1, metrics: {} }
+    ],
+    { toolCalls: [{ id: "tool1", stepId: "slow", toolName: "exec_command", status: "success", input: { command: "npm run build" }, result: { durationMs: 40_000 } }] }
+  );
+
+  assert.equal(view.bottlenecks[0].label, "exec_command");
+  assert.equal(view.bottlenecks[0].detail, "npm run build");
+});
+
+test("falls back to work-turn bottlenecks when no segment carries timing", () => {
+  const view = buildUsageConversationView(
+    { id: "s1", provider: "codex", title: "Turn bottlenecks", endedAt: "2026-06-16T10:00:50.000Z", metrics: {}, availability: { notes: [] } },
+    [],
+    [
+      { id: "user1", role: "user", textPreview: "Go", createdAt: "2026-06-16T10:00:00.000Z", toolCalls: [] },
+      { id: "short", role: "assistant", turnId: "turn1", textPreview: "Short", createdAt: "2026-06-16T10:00:01.000Z", tokenUsage: { total: 10 }, toolCalls: [] },
+      { id: "user2", role: "user", textPreview: "Again", createdAt: "2026-06-16T10:00:10.000Z", toolCalls: [] },
+      { id: "long", role: "assistant", turnId: "turn2", textPreview: "Long", createdAt: "2026-06-16T10:00:11.000Z", tokenUsage: { total: 10 }, toolCalls: [] }
+    ],
+    []
+  );
+
+  assert.equal(view.bottlenecks[0].kind, "turn");
+  assert.equal(view.bottlenecks[0].durationMs, 40_000);
+  assert.equal(view.bottlenecks[0].messageId, "long");
 });
 
 test("builds cockpit view without mixing session envelope into trace lanes", () => {

@@ -2,6 +2,7 @@ export type * from "./publicTypes.js";
 export { buildUsageBreakdowns } from "./breakdown.js";
 export { buildUsageCockpitView, buildInspectorDefaultView, buildSessionHeroView, sessionTotalTokens, timelineSteps, transcriptMessages } from "./cockpit.js";
 export { buildUsageConversationView } from "./conversationView.js";
+export { buildSparkline } from "./flame.js";
 export { buildDiagnosticCards, primaryFinding } from "./diagnostics.js";
 export { buildSessionFinderView, sessionFinderItem } from "./sessionFinder.js";
 export { buildUsageSessionTimelineView } from "./sessionTimeline.js";
@@ -11,6 +12,7 @@ export { buildTranscriptHighlights } from "./transcriptHighlights.js";
 
 import { buildUsageCockpitView, timelineSteps, transcriptMessages } from "./cockpit.js";
 import { buildUsageConversationView, type UsageConversationToolCall } from "./conversationView.js";
+import { buildSparkline } from "./flame.js";
 import { buildUsageSessionTimelineView } from "./sessionTimeline.js";
 import type {
   UsageCockpitView,
@@ -18,6 +20,7 @@ import type {
   UsageMessage,
   UsageSession,
   UsageSessionTimelineView,
+  UsageSparkline,
   UsageStep,
   UsageTimeline,
   UsageUiConfidence
@@ -70,6 +73,8 @@ export type UsageSessionListItem = {
   toolCalls?: number;
   filesTouched?: number;
   caveatCount?: number;
+  /** Compact activity series for the list card / rail flame graph. */
+  flame?: UsageSparkline;
 };
 
 export type UsageSessionListView = {
@@ -313,8 +318,12 @@ export function createUsageUiClient(usage: UsageDomainClient): UsageUiClient {
     /** Lists sessions. */
     async listSessions(query = {}) {
       const result = await usage.sessions.list({ provider: query.provider, limit: query.limit, orderBy: [{ field: "lastActivityAt", direction: "desc" }] });
+      // One timeline query per listed session powers the card/rail flame graphs. The list is bounded
+      // by `limit`, the sqlite reads are in-process, and the series is downsampled before it leaves
+      // the server. If the domain layer later exposes a bucketed series in a single query, prefer it.
+      const flames = await Promise.all(result.data.map((session) => sessionSparkline(usage, session.id)));
       return {
-        sessions: result.data.map((session) => ({
+        sessions: result.data.map((session, index) => ({
           id: session.id,
           title: session.title || session.firstPrompt || session.id,
           subtitle: [session.provider, session.models?.join(", ")].filter(Boolean).join(" · "),
@@ -328,7 +337,8 @@ export function createUsageUiClient(usage: UsageDomainClient): UsageUiClient {
           tokensTotal: session.metrics.tokens?.total,
           toolCalls: session.counts.toolCalls,
           filesTouched: session.counts.filesTouched,
-          caveatCount: session.availability.notes.length
+          caveatCount: session.availability.notes.length,
+          flame: flames[index]
         })),
         caveats: result.meta.warnings.map((warning) => warning.message)
       };
@@ -490,6 +500,16 @@ export function createUsageUiClient(usage: UsageDomainClient): UsageUiClient {
       };
     }
   };
+}
+
+/** Builds the compact activity series for one listed session, tolerating timeline failures. */
+async function sessionSparkline(usage: UsageDomainClient, id: string): Promise<UsageSparkline | undefined> {
+  try {
+    const result = await usage.sessions.timeline(id, { metric: "selfDurationMs" });
+    return buildSparkline(timelineSteps(result.data as UsageTimeline));
+  } catch {
+    return undefined;
+  }
 }
 
 /** Builds a query string from defined scalar values. */

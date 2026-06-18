@@ -1,304 +1,213 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/svelte";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import App from "./App.svelte";
 import { mountUsageApp } from "./mount.js";
-import type { UsageConversationView, UsageUiClient } from "@tangent/usage-ui-data";
+import type { UsageConversationView, UsageSparkline, UsageUiClient } from "@tangent/usage-ui-data";
 
 afterEach(() => cleanup());
 
 describe("usage svelte app", () => {
-  it("renders finder, conversation, and chart panes at once", async () => {
+  it("opens in browse mode with date and a per-conversation flame graph", async () => {
     const { container } = render(App, { props: { client: fakeUsageClient() } });
 
-    expect(await screen.findByText("Done")).toBeInTheDocument();
-    const shell = container.querySelector(".usage-shell");
-    expect(shell).not.toHaveAttribute("data-open-drawer");
-    expect(screen.getByLabelText("Conversation picker")).toBeInTheDocument();
-    expect(screen.getByLabelText("Conversation")).toBeInTheDocument();
-    expect(screen.getByLabelText("Tokens and duration chart")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Work Turns" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Implement UI" })).not.toBeInTheDocument();
-    expect(container.querySelector(".chart-inner")).toBeInTheDocument();
-    expect(container.querySelector(".finder-content")).toBeInTheDocument();
-    expect(container.querySelector(".drawer")).not.toBeInTheDocument();
-    expect(container.querySelector(".finder-rail")).not.toBeInTheDocument();
-    expect(container.querySelector(".chart-rail")).not.toBeInTheDocument();
-    expect(container.querySelector(".chart-toggle")).not.toBeInTheDocument();
-    expect(screen.queryByText("Assistant · gpt")).not.toBeInTheDocument();
-    expect(container.querySelector(".row-label")).not.toBeInTheDocument();
-    expect(container.querySelector(".caveats")).not.toBeInTheDocument();
-    expect(container.querySelector(".duration-ruler-label")).toHaveTextContent("1m");
-    expect(container.querySelector(".tool-event")).toHaveTextContent("npm test -w @tangent/usage-ui");
-    expect(container.querySelector(".tool-event")).not.toHaveTextContent("Chunk ID");
+    const card = await screen.findByRole("button", { name: /Implement UI/ });
+    expect(card).toHaveClass("session-card");
+    expect(card.querySelector(".session-card-date")?.textContent).toMatch(/Jan 2/);
+    expect(card.querySelector(".spark")).toBeInTheDocument();
+    expect(card.querySelectorAll(".spark-bar").length).toBe(2);
+    expect(card.querySelector(".spark-compactions")).toHaveTextContent("◆1");
+    expect(container.querySelector(".usage-shell")).not.toBeInTheDocument();
   });
 
-  it("expands project sessions without replacing the project list during session changes", async () => {
-    const pending = deferred<UsageConversationView>();
-    const getConversationView = vi.fn(async (id: string) => id === "s2" ? pending.promise : fakeConversationView(id));
-    const { container } = render(App, { props: { client: fakeUsageClient({ getConversationView }) } });
-
-    const projectRow = await screen.findByRole("button", { name: "repo 2 sessions" });
-    expect(projectRow).toHaveAttribute("aria-expanded", "false");
-    expect(container.querySelector(".session-row")).not.toBeInTheDocument();
-    await fireEvent.click(projectRow);
-    expect(projectRow).toHaveAttribute("aria-expanded", "true");
-    expect(screen.queryByRole("button", { name: "← Projects" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "other 1 sessions" })).toBeInTheDocument();
-
-    await fireEvent.click(container.querySelectorAll<HTMLButtonElement>(".session-row")[1]);
-
-    expect(screen.queryByLabelText("Loading Usage UI")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Conversation")).toBeInTheDocument();
-    expect(screen.getByLabelText("Conversation picker")).toBeInTheDocument();
-    expect(screen.getByLabelText("Tokens and duration chart")).toBeInTheDocument();
-    expect(getConversationView).toHaveBeenCalledWith("s2", { query: "", limit: 80 });
-
-    pending.resolve(fakeConversationView("s2"));
-    expect(await screen.findByText("Checked the trace")).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Review telemetry" })).not.toBeInTheDocument();
-
-    await fireEvent.click(projectRow);
-    expect(projectRow).toHaveAttribute("aria-expanded", "false");
-    expect(container.querySelector(".session-row")).not.toBeInTheDocument();
-  });
-
-  it("shows conversation telemetry in project session rows", async () => {
+  it("scales the card flame width by session duration so lengths compare", async () => {
     render(App, { props: { client: fakeUsageClient() } });
 
-    await fireEvent.click(await screen.findByRole("button", { name: "repo 2 sessions" }));
-    expect(await screen.findByText("Last Jan 2, 9:00 AM")).toBeInTheDocument();
-    expect(screen.getByText("6 messages")).toBeInTheDocument();
-    expect(screen.getByText("1.2K tokens")).toBeInTheDocument();
-    expect(screen.queryByText("2 tool calls")).not.toBeInTheDocument();
-    expect(screen.queryByText("completed")).not.toBeInTheDocument();
+    const longCard = await screen.findByRole("button", { name: /Implement UI/ });
+    const shortCard = screen.getByRole("button", { name: /Review telemetry/ });
+
+    // 60000ms is the longest session, so it fills the card; the 42000ms session is proportionally shorter.
+    expect(longCard.querySelector<HTMLElement>(".session-card-flame")!.style.width).toBe("100%");
+    expect(shortCard.querySelector<HTMLElement>(".session-card-flame")!.style.width).toBe("70%");
   });
 
-  it("keeps active message and chart row activation wired", async () => {
+  it("opens a conversation into the top bar, flame graph, and bottleneck panel", async () => {
     const { container } = render(App, { props: { client: fakeUsageClient() } });
 
+    await fireEvent.click(await screen.findByRole("button", { name: /Implement UI/ }));
+
     expect(await screen.findByText("Done")).toBeInTheDocument();
-
-    const chartRow = container.querySelector<HTMLButtonElement>(".chart-row")!;
-    await fireEvent.click(chartRow);
-
-    expect(chartRow).toHaveClass("active");
-    expect(container.querySelector(".message")).toHaveClass("active");
+    expect(screen.getByRole("button", { name: "← All conversations" })).toBeInTheDocument();
+    expect(container.querySelector(".read-heading h1")).toHaveTextContent("Implement UI");
+    expect(screen.getByLabelText("Conversation flame graph")).toBeInTheDocument();
+    expect(screen.getByLabelText("Bottlenecks")).toBeInTheDocument();
+    expect(screen.getByLabelText("Conversation")).toBeInTheDocument();
+    expect(container.querySelector(".pane-rail")).not.toBeInTheDocument();
+    expect(container.querySelector(".turn-prompt-label")).toHaveTextContent("Assistant · gpt");
+    expect(container.querySelector(".segment")).toBeInTheDocument();
   });
 
-  it("switches work-turn chart rows between cumulative and added tokens", async () => {
+  it("scales turn width by wall duration and zoom", async () => {
     const { container } = render(App, { props: { client: fakeUsageClient() } });
 
-    expect(await screen.findByText("Done")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Cumulative" })).toHaveAttribute("aria-pressed", "true");
-    expect(container.querySelector(".row-metrics")).toHaveTextContent("1.2K · 1m");
-    expect(container.querySelector<HTMLButtonElement>(".chart-row")?.style.getPropertyValue("--row-width")).toBe("1");
+    await fireEvent.click(await screen.findByRole("button", { name: /Implement UI/ }));
+    await screen.findByText("Done");
 
-    await fireEvent.click(screen.getByRole("button", { name: "Added" }));
+    const turn = container.querySelector<HTMLElement>(".turn-column")!;
+    expect(turn.style.width).toBe("600px"); // 600000ms * 0.001 px/ms at zoom 1
 
-    expect(screen.getByRole("button", { name: "Added" })).toHaveAttribute("aria-pressed", "true");
-    expect(container.querySelector(".row-metrics")).toHaveTextContent("400 added · 1m");
-    expect(container.querySelector<HTMLButtonElement>(".chart-row")?.style.getPropertyValue("--row-width")).toBe("0.3333333333333333");
+    await fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    expect(container.querySelector<HTMLElement>(".turn-column")!.style.width).toBe("1200px");
 
-    await fireEvent.click(screen.getByRole("button", { name: "Cumulative" }));
-
-    expect(container.querySelector(".row-metrics")).toHaveTextContent("1.2K · 1m");
+    await fireEvent.click(screen.getByRole("button", { name: "Zoom out" }));
+    expect(container.querySelector<HTMLElement>(".turn-column")!.style.width).toBe("600px");
   });
 
-  it("derives token modes when the API still returns legacy chart rows", async () => {
-    const view = fakeConversationView();
-    view.chart.maxTokens = 110_000;
-    view.chart.maxAddedTokens = undefined as never;
-    view.chart.rows = [{
-      ...view.chart.rows[0],
-      tokens: 100_000,
-      tokenLabel: "100k ctx / 30k out",
-      widthShare: 130_000 / 111_000,
-      tokenModes: undefined as never
-    }, {
-      ...view.chart.rows[0],
-      id: "row:m2",
-      messageId: "m2",
-      messageIds: ["m2"],
-      tokens: 110_000,
-      tokenLabel: "110k ctx / 1k out",
-      widthShare: 1,
-      tokenModes: undefined as never
-    }];
-    const { container } = render(App, {
-      props: {
-        client: fakeUsageClient({
-          /** Returns a legacy fixture without server-derived token modes. */
-          getConversationView: async () => view
-        })
-      }
-    });
+  it("scales bar height by cumulative context tokens", async () => {
+    const { container } = render(App, { props: { client: fakeUsageClient() } });
 
-    expect(await screen.findByText("Done")).toBeInTheDocument();
-    expect(container.querySelectorAll(".row-metrics")[0]).toHaveTextContent("100k ctx · 1m");
-    expect(container.querySelectorAll<HTMLButtonElement>(".chart-row")[0].style.getPropertyValue("--row-width")).toBe(String(100_000 / 110_000));
-    expect(container.querySelectorAll<HTMLButtonElement>(".chart-row")[1].style.getPropertyValue("--row-width")).toBe("1");
+    await fireEvent.click(await screen.findByRole("button", { name: /Implement UI/ }));
+    await screen.findByText("Done");
 
-    await fireEvent.click(screen.getByRole("button", { name: "Added" }));
-
-    expect(container.querySelectorAll(".row-metrics")[0]).toHaveTextContent("100k added · 1m");
-    expect(container.querySelectorAll(".row-metrics")[1]).toHaveTextContent("10k added · 1m");
-    expect(container.querySelectorAll<HTMLButtonElement>(".chart-row")[1].style.getPropertyValue("--row-width")).toBe("0.1");
+    const bars = container.querySelectorAll<HTMLElement>(".turn-bar");
+    // 1200/1200 ctx -> full height; 600/1200 -> half of the 16..72px range.
+    expect(bars[0].style.height).toBe("72px");
+    expect(bars[1].style.height).toBe("44px");
   });
 
-  it("keeps a grouped work turn active for any message inside the group", async () => {
-    const view = fakeConversationView();
-    view.messages.push({
-      id: "m2",
-      role: "assistant",
-      title: "Assistant · gpt",
-      textPreview: "Still working",
-      tokenLabel: "400",
-      tokens: 400,
-      durationLabel: "20s",
-      durationMs: 20000,
-      confidence: "exact",
-      toolCalls: []
-    });
-    view.chart.rows[0].messageIds = ["m1", "m2"];
-    const { container } = render(App, {
-      props: {
-        client: fakeUsageClient({
-          /** Returns a fixture view with a chart row covering multiple messages. */
-          getConversationView: async () => view
-        })
-      }
-    });
+  it("labels a wide command segment with the command that ran", async () => {
+    const { container } = render(App, { props: { client: fakeUsageClient() } });
 
-    expect(await screen.findByText("Still working")).toBeInTheDocument();
-    await fireEvent.click(screen.getByText("Still working").closest<HTMLButtonElement>(".message-main")!);
+    await fireEvent.click(await screen.findByRole("button", { name: /Implement UI/ }));
+    await screen.findByText("Done");
 
-    expect(container.querySelector(".chart-row")).toHaveClass("active");
+    const label = container.querySelector(".segment-label");
+    expect(label).toHaveTextContent("npm test -w @tangent/usage-ui");
   });
 
-  it("scrolls activation targets inside the intended Usage pane", async () => {
-    const view = fakeConversationView();
-    view.messages.unshift({
-      id: "u1",
-      role: "user",
-      title: "User",
-      textPreview: "Please implement the UI",
-      confidence: "exact",
-      toolCalls: []
-    });
-    view.chart.rows[0].messageIds = ["u1", "m1"];
-    const { container } = render(App, {
-      props: {
-        client: fakeUsageClient({
-          /** Returns a fixture view with a work turn anchored by a user prompt. */
-          getConversationView: async () => view
-        })
-      }
-    });
+  it("activates a segment and shows its work-turn transcript", async () => {
+    const { container } = render(App, { props: { client: fakeUsageClient() } });
 
-    expect(await screen.findByText("Done")).toBeInTheDocument();
-    const messageList = container.querySelector<HTMLElement>(".message-list")!;
-    const chartScroll = container.querySelector<HTMLElement>(".chart-scroll")!;
-    const userMessage = container.querySelector<HTMLElement>(".message-user")!;
-    const chartRow = container.querySelector<HTMLButtonElement>(".chart-row")!;
-    const messageScrollTo = vi.fn();
-    const chartScrollTo = vi.fn();
-    installScrollGeometry(messageList, { top: 0, height: 600, scrollTo: messageScrollTo });
-    installScrollGeometry(chartScroll, { top: 0, height: 420, scrollTo: chartScrollTo });
-    installRect(userMessage, { top: 160, height: 48 });
-    installRect(chartRow, { top: 96, height: 32 });
-    await settleMicrotasks();
-    messageScrollTo.mockClear();
-    chartScrollTo.mockClear();
+    await fireEvent.click(await screen.findByRole("button", { name: /Implement UI/ }));
+    await screen.findByText("Done");
 
-    await fireEvent.click(container.querySelector<HTMLButtonElement>(".chart-row")!);
+    const segment = container.querySelector<HTMLButtonElement>(".segment")!;
+    await fireEvent.click(segment);
 
-    expect(messageScrollTo).toHaveBeenCalledWith({ top: 160, behavior: "auto" });
-    expect(chartScrollTo).not.toHaveBeenCalled();
-
-    messageScrollTo.mockClear();
-    await fireEvent.click(userMessage.querySelector<HTMLButtonElement>(".message-main")!);
-
-    expect(chartScrollTo).toHaveBeenCalledWith({ top: 0, behavior: "auto" });
-    expect(messageScrollTo).not.toHaveBeenCalled();
+    expect(container.querySelector(".segment")).toHaveClass("active");
+    expect(screen.getByLabelText("Conversation")).toHaveTextContent("Done");
   });
 
-  it("keeps work-turn activation identical in standalone and embedded mount modes", async () => {
-    const standalone = document.body.appendChild(document.createElement("div"));
-    const embedded = document.body.appendChild(document.createElement("div"));
-    const disposeStandalone = mountUsageApp(standalone, { client: fakeUsageClient() });
-    const disposeEmbedded = mountUsageApp(embedded, { client: fakeUsageClient(), embedded: true });
+  it("ranks slow steps and jumps to them from the bottleneck panel", async () => {
+    const { container } = render(App, { props: { client: fakeUsageClient() } });
 
-    try {
-      await within(standalone).findByText("Done");
-      await within(embedded).findByText("Done");
+    await fireEvent.click(await screen.findByRole("button", { name: /Implement UI/ }));
+    await screen.findByText("Done");
 
-      await fireEvent.click(standalone.querySelector<HTMLButtonElement>(".chart-row")!);
-      await fireEvent.click(embedded.querySelector<HTMLButtonElement>(".chart-row")!);
+    const bottleneck = container.querySelector<HTMLButtonElement>(".bottleneck-jump")!;
+    // The row leads with the actual command that ran, not the generic step kind.
+    expect(bottleneck.querySelector(".bottleneck-label")).toHaveTextContent("npm test -w @tangent/usage-ui");
+    expect(bottleneck.querySelector(".bottleneck-label")).toHaveClass("is-command");
+    expect(bottleneck).toHaveTextContent("command");
+    expect(bottleneck).toHaveTextContent("5m");
 
-      expect(standalone.querySelector(".chart-row")).toHaveClass("active");
-      expect(standalone.querySelector(".message")).toHaveClass("active");
-      expect(embedded.querySelector(".chart-row")).toHaveClass("active");
-      expect(embedded.querySelector(".message")).toHaveClass("active");
-      expect(standalone.querySelector(".usage-shell")?.outerHTML).toEqual(embedded.querySelector(".usage-shell")?.outerHTML);
-    } finally {
-      disposeStandalone();
-      disposeEmbedded();
-    }
+    await fireEvent.click(bottleneck);
+
+    expect(container.querySelector(".bottleneck-row")).toHaveClass("active");
+    expect(container.querySelector(".segment.active")).not.toBeNull();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Next bottleneck" }));
+    expect(container.querySelector(".bottleneck-row")).toHaveClass("active");
+  });
+
+  it("marks bottleneck segments on the flame graph", async () => {
+    const { container } = render(App, { props: { client: fakeUsageClient() } });
+
+    await fireEvent.click(await screen.findByRole("button", { name: /Implement UI/ }));
+    await screen.findByText("Done");
+
+    expect(container.querySelector(".segment.is-bottleneck")).not.toBeNull();
+  });
+
+  it("returns to the browse gallery from the top bar", async () => {
+    const { container } = render(App, { props: { client: fakeUsageClient() } });
+
+    await fireEvent.click(await screen.findByRole("button", { name: /Implement UI/ }));
+    await screen.findByText("Done");
+
+    await fireEvent.click(screen.getByRole("button", { name: "← All conversations" }));
+
+    expect(container.querySelector(".usage-browse")).toBeInTheDocument();
+    expect(container.querySelector(".usage-shell")).not.toBeInTheDocument();
   });
 
   it("previews long messages until they are expanded", async () => {
     const longText = `${"a".repeat(360)} hidden suffix`;
     const view = fakeConversationView();
-    view.messages[0] = {
-      ...view.messages[0],
-      text: longText,
-      textPreview: "short preview"
-    };
+    view.messages[0] = { ...view.messages[0], text: longText, textPreview: "short preview" };
     const { container } = render(App, {
       props: {
         client: fakeUsageClient({
-          /** Returns a fixture view with one long message body. */
+          /** Returns the prepared long-message view. */
           getConversationView: async () => view
         })
       }
     });
 
+    await fireEvent.click(await screen.findByRole("button", { name: /Implement UI/ }));
+
     expect(await screen.findByRole("button", { name: "Show full message (374 chars)" })).toBeInTheDocument();
-    expect(container).not.toHaveTextContent("hidden suffix");
+    expect(screen.getByLabelText("Conversation")).not.toHaveTextContent("hidden suffix");
 
     await fireEvent.click(container.querySelector<HTMLButtonElement>(".message-expand")!);
 
     expect(await screen.findByRole("button", { name: "Show less" })).toHaveAttribute("aria-expanded", "true");
-    expect(container).toHaveTextContent("hidden suffix");
+    expect(screen.getByLabelText("Conversation")).toHaveTextContent("hidden suffix");
   });
 
   it("keeps tool output hidden until the command row is expanded", async () => {
     const { container } = render(App, { props: { client: fakeUsageClient() } });
 
+    await fireEvent.click(await screen.findByRole("button", { name: /Implement UI/ }));
     expect(await screen.findByText("Done")).toBeInTheDocument();
     expect(container).toHaveTextContent("npm test -w @tangent/usage-ui");
-    expect(container).not.toHaveTextContent("Chunk ID");
     expect(container).not.toHaveTextContent("All tests passed");
 
     await fireEvent.click(screen.getByRole("button", { name: /show npm test -w @tangent\/usage-ui details/i }));
 
     expect(screen.getByRole("button", { name: /hide npm test -w @tangent\/usage-ui details/i })).toHaveAttribute("aria-expanded", "true");
     expect(container).toHaveTextContent("Directory");
-    expect(container).toHaveTextContent("/repo");
     expect(container).toHaveTextContent("All tests passed");
-    expect(container).not.toHaveTextContent("Chunk ID");
+  });
+
+  it("renders identically in standalone and embedded mount modes", async () => {
+    const standalone = document.body.appendChild(document.createElement("div"));
+    const embedded = document.body.appendChild(document.createElement("div"));
+    const disposeStandalone = mountUsageApp(standalone, { client: fakeUsageClient() });
+    const disposeEmbedded = mountUsageApp(embedded, { client: fakeUsageClient(), embedded: true });
+
+    try {
+      await within(standalone).findByRole("button", { name: /Implement UI/ });
+      await within(embedded).findByRole("button", { name: /Implement UI/ });
+      expect(standalone.querySelector(".usage-browse")?.outerHTML).toEqual(embedded.querySelector(".usage-browse")?.outerHTML);
+    } finally {
+      disposeStandalone();
+      disposeEmbedded();
+    }
   });
 });
 
 /** Creates a Usage UI client with deterministic fixture data for component tests. */
 function fakeUsageClient(overrides: Partial<UsageUiClient> = {}): UsageUiClient {
   return {
-    /** Lists fixture sessions for the finder pane. */
+    /** Lists fixture sessions for the browse gallery and rail. */
     async listSessions() {
       return {
-        sessions: [sessionListItem("s1", "Implement UI", 1200, 60000), sessionListItem("s2", "Review telemetry", 840, 42000)],
+        sessions: [
+          sessionListItem("s1", "Implement UI", 1200, 60000, "2026-01-02T09:00:00.000Z"),
+          sessionListItem("s2", "Review telemetry", 840, 42000, "2026-01-02T10:00:00.000Z")
+        ],
         caveats: []
       };
     },
@@ -334,62 +243,66 @@ function fakeUsageClient(overrides: Partial<UsageUiClient> = {}): UsageUiClient 
   };
 }
 
-/** Builds a compact session-list fixture row. */
-function sessionListItem(id: string, title: string, tokensTotal: number, durationMs: number) {
+/** Builds a compact session-list fixture row with a flame series. */
+function sessionListItem(id: string, title: string, tokensTotal: number, durationMs: number, startedAt: string) {
   return {
     id,
     title,
     provider: "codex",
+    model: "gpt",
     status: "completed",
+    startedAt,
     tokensTotal,
-    durationMs
+    durationMs,
+    flame: fakeSparkline(durationMs)
   };
 }
 
-/** Builds a conversation fixture with one assistant message and matching chart row. */
+/** Builds a deterministic two-bucket sparkline with one compaction marker. */
+function fakeSparkline(durationMs = 60000): UsageSparkline {
+  return {
+    durationMs,
+    tokensTotal: 1200,
+    compactions: 1,
+    buckets: [
+      { kind: "model", tokenShare: 1, durationShare: 1 },
+      { kind: "tool", tokenShare: 0.3, durationShare: 0.5 }
+    ]
+  };
+}
+
+/**
+ * Builds a two-turn conversation fixture. The first turn is long (10m) and token-heavy (1.2K ctx)
+ * with a model segment plus a slow `npm test` command; the second is shorter (2m) and lighter
+ * (600 ctx). This lets tests prove turn width tracks duration and bar height tracks tokens.
+ */
 function fakeConversationView(id = "s1"): UsageConversationView {
-  const selected = id === "s2"
-    ? { title: "Review telemetry", durationLabel: "42s", tokenLabel: "840", tokens: 840, text: "Checked the trace" }
-    : { title: "Implement UI", durationLabel: "1m", tokenLabel: "1.2K", tokens: 1200, text: "Done" };
   return {
     selected: {
       id,
-      title: selected.title,
+      title: "Implement UI",
       provider: "codex",
       status: "completed",
       model: "gpt",
-      durationLabel: selected.durationLabel,
-      tokenLabel: selected.tokenLabel
+      durationLabel: "10m",
+      tokenLabel: "1.2K ctx"
     },
-    projects: [{
-      id: "repo",
-      label: "repo",
-      sessions: [
-        { id: "s1", title: "Implement UI", provider: "codex", model: "gpt", status: "completed", lastActivityLabel: "Jan 2, 9:00 AM", durationLabel: "1m", tokenLabel: "1.2K", messageCountLabel: "6 messages", toolCallLabel: "2 tool calls" },
-        { id: "s2", title: "Review telemetry", provider: "codex", model: "gpt", status: "completed", lastActivityLabel: "Jan 2, 10:00 AM", durationLabel: "42s", tokenLabel: "840", messageCountLabel: "4 messages", toolCallLabel: "1 tool call" }
-      ]
-    }, {
-      id: "other",
-      label: "other",
-      sessions: [
-        { id: "s3", title: "Other work", provider: "codex", model: "gpt", status: "completed", lastActivityLabel: "Jan 1, 4:00 PM", durationLabel: "2m", tokenLabel: "2K", messageCountLabel: "8 messages", toolCallLabel: "3 tool calls" }
-      ]
-    }],
+    projects: [],
     messages: [{
       id: "m1",
       role: "assistant",
       title: "Assistant · gpt",
-      textPreview: selected.text,
-      tokenLabel: selected.tokenLabel,
-      tokens: selected.tokens,
-      durationLabel: selected.durationLabel,
-      durationMs: id === "s2" ? 42000 : 60000,
+      textPreview: "Done",
+      tokenLabel: "1.2K ctx",
+      tokens: 1200,
+      durationLabel: "10m",
+      durationMs: 600000,
       confidence: "exact",
       toolCalls: [{
         id: "t1",
         name: "exec_command",
         status: "success",
-        durationLabel: "20s",
+        durationLabel: "5m",
         target: "/repo",
         commandPreview: "npm test -w @tangent/usage-ui",
         workdir: "/repo",
@@ -397,92 +310,106 @@ function fakeConversationView(id = "s1"): UsageConversationView {
         resultDisplayPreview: "All tests passed",
         resultPreview: "Chunk ID: abc\nWall time: 0.0000 seconds\nOutput:\nAll tests passed"
       }]
+    }, {
+      id: "m2",
+      role: "assistant",
+      title: "Assistant · gpt",
+      textPreview: "Committed",
+      tokenLabel: "600 ctx",
+      tokens: 600,
+      durationLabel: "2m",
+      durationMs: 120000,
+      confidence: "exact",
+      toolCalls: []
     }],
     chart: {
       maxTokens: 1200,
       maxAddedTokens: 400,
-      maxDurationMs: 60000,
+      maxDurationMs: 600000,
       rows: [{
         id: "row:m1",
         messageId: "m1",
         messageIds: ["m1"],
         role: "assistant",
         label: "Assistant · gpt",
-        tokens: selected.tokens,
-        tokenLabel: selected.tokenLabel,
-        durationMs: id === "s2" ? 42000 : 60000,
-        durationLabel: selected.durationLabel,
+        tokens: 1200,
+        tokenLabel: "1.2K ctx",
+        durationMs: 600000,
+        durationLabel: "10m",
         widthShare: 1,
         tokenModes: {
-          cumulative: {
-            tokens: selected.tokens,
-            tokenLabel: selected.tokenLabel,
-            widthShare: 1
-          },
-          added: {
-            tokens: 400,
-            tokenLabel: "400 added",
-            widthShare: 1 / 3
-          }
+          cumulative: { tokens: 1200, tokenLabel: "1.2K ctx", widthShare: 1 },
+          added: { tokens: 400, tokenLabel: "400 added", widthShare: 1 / 3 }
         },
         heightShare: 1,
         anchor: false,
         confidence: "exact",
         segments: [{
+          id: "m1:model",
+          messageId: "m1",
+          stepId: "model",
+          label: "Assistant response",
+          kind: "assistant",
+          durationLabel: undefined,
+          heightShare: 0.5,
+          confidence: "exact"
+        }, {
           id: "m1:s1",
           messageId: "m1",
           stepId: "s1",
           label: "exec",
+          detail: "npm test -w @tangent/usage-ui",
           kind: "command",
-          durationMs: 20000,
-          durationLabel: "20s",
+          durationMs: 300000,
+          durationLabel: "5m",
+          heightShare: 0.5,
+          confidence: "exact"
+        }]
+      }, {
+        id: "row:m2",
+        messageId: "m2",
+        messageIds: ["m2"],
+        role: "assistant",
+        label: "Commit",
+        tokens: 600,
+        tokenLabel: "600 ctx",
+        durationMs: 120000,
+        durationLabel: "2m",
+        widthShare: 0.5,
+        tokenModes: {
+          cumulative: { tokens: 600, tokenLabel: "600 ctx", widthShare: 0.5 },
+          added: { tokens: 200, tokenLabel: "200 added", widthShare: 1 / 6 }
+        },
+        heightShare: 0.2,
+        anchor: false,
+        confidence: "exact",
+        segments: [{
+          id: "m2:s1",
+          messageId: "m2",
+          stepId: "s2",
+          label: "exec",
+          detail: "git commit",
+          kind: "command",
+          durationMs: 120000,
+          durationLabel: "2m",
           heightShare: 1,
           confidence: "exact"
         }]
       }]
     },
+    bottlenecks: [{
+      id: "m1:s1",
+      rowId: "row:m1",
+      messageId: "m1",
+      stepId: "s1",
+      label: "exec",
+      detail: "npm test -w @tangent/usage-ui",
+      kind: "command",
+      durationMs: 300000,
+      durationLabel: "5m",
+      confidence: "exact",
+      rank: 1
+    }],
     caveats: []
   };
-}
-
-/** Creates a promise that tests can resolve after intermediate UI assertions. */
-function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => {
-    resolve = done;
-  });
-  return { promise, resolve };
-}
-
-/** Waits for Svelte's async load/tick work to settle in component tests. */
-async function settleMicrotasks(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 0));
-}
-
-/** Installs deterministic dimensions and a scroll spy on a scroll container. */
-function installScrollGeometry(node: HTMLElement, options: { top: number; height: number; scrollTo: ReturnType<typeof vi.fn> }): void {
-  installRect(node, { top: options.top, height: options.height });
-  Object.defineProperty(node, "clientHeight", { configurable: true, value: options.height });
-  Object.defineProperty(node, "scrollTop", { configurable: true, writable: true, value: 0 });
-  Object.defineProperty(node, "scrollTo", { configurable: true, value: options.scrollTo });
-}
-
-/** Installs deterministic viewport geometry on an element. */
-function installRect(node: HTMLElement, rect: { top: number; height: number }): void {
-  Object.defineProperty(node, "getBoundingClientRect", {
-    configurable: true,
-    /** Returns deterministic viewport geometry for jsdom. */
-    value: () => ({
-      top: rect.top,
-      bottom: rect.top + rect.height,
-      height: rect.height,
-      left: 0,
-      right: 0,
-      width: 0,
-      x: 0,
-      y: rect.top,
-      /** Supports DOMRect JSON serialization in tests. */
-      toJSON: () => undefined
-    })
-  });
 }

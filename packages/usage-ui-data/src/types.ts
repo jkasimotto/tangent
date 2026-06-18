@@ -415,6 +415,45 @@ export type UsageTimelineStepBar = {
   };
 };
 
+export type UsageFlameKind = UsageTimelineStepBar["kind"];
+
+export type UsageSparklineBucket = {
+  /** Dominant step kind in this time slice, used for the bar colour. */
+  kind: UsageFlameKind;
+  /** Bar height for token intensity, 0..1 relative to the busiest slice. */
+  tokenShare: number;
+  /** Bar height fallback for duration when tokens are unavailable, 0..1. */
+  durationShare: number;
+};
+
+/** Compact per-session activity series for the conversation list cards and rail. */
+export type UsageSparkline = {
+  /** Total active (gap-removed) duration the series represents. */
+  durationMs: number;
+  tokensTotal?: number;
+  /** Number of compaction steps, drawn as markers on the card. */
+  compactions: number;
+  buckets: UsageSparklineBucket[];
+};
+
+/** A slow step or work turn surfaced for the bottleneck panel, ranked by duration. */
+export type UsageBottleneck = {
+  /** Segment id when step-level, otherwise the work-turn row id. */
+  id: string;
+  rowId: string;
+  /** Anchor message for linking the transcript and cross-pane scroll. */
+  messageId: string;
+  stepId?: string;
+  label: string;
+  /** The command, query, or path that actually ran; undefined for model turns. */
+  detail?: string;
+  kind: UsageConversationChartSegment["kind"] | "turn";
+  durationMs: number;
+  durationLabel?: string;
+  confidence: UsageUiConfidence;
+  rank: number;
+};
+
 export type UsageConversationProjectGroup = {
   id: string;
   label: string;
@@ -469,6 +508,8 @@ export type UsageConversationChartSegment = {
   kind: "assistant" | "tool" | "tool_result" | "command" | "file" | "system" | "unknown";
   messageId: string;
   stepId?: string;
+  /** The command, query, or path that ran; undefined for model/thinking steps. */
+  detail?: string;
   durationMs?: number;
   durationLabel?: string;
   heightShare: number;
@@ -518,6 +559,7 @@ export type UsageConversationView = {
     maxDurationMs: number;
     rows: UsageConversationChartRow[];
   };
+  bottlenecks: UsageBottleneck[];
   caveats: string[];
 };
 

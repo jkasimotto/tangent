@@ -120,7 +120,7 @@ function timelineDuration(session: UsageSession, steps: UsageTimelineStepBar[], 
 }
 
 /** Maps raw Usage kinds into the minimal chart semantic set. */
-function timelineKind(kind: string | undefined): UsageTimelineStepBar["kind"] {
+export function timelineKind(kind: string | undefined): UsageTimelineStepBar["kind"] {
   if (kind === "user" || kind === "user_message" || kind === "prompt") return "user";
   if (kind === "assistant" || kind === "assistant_response") return "assistant";
   if (kind === "model" || kind === "model_call" || kind === "subagent") return "model";

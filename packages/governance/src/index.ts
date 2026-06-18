@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { lstat, readFile, readlink } from "node:fs/promises";
 import path from "node:path";
 import { pathExists, type CliCommandSpec } from "@tangent/core";
 import {
@@ -119,7 +119,14 @@ type LintContext = {
 /** Supports the lint agent docs helper. */
 async function lintAgentDocs(ctx: LintContext): Promise<GovernanceFinding[]> {
   const findings: GovernanceFinding[] = [];
-  await requireFile(findings, ctx.root, "AGENTS.md", "agent-docs/required", [
+  const requiredAgentDirs = new Map<string, string[]>();
+  for (const dir of await walkDirs(ctx.root)) {
+    requiredAgentDirs.set(dir, [
+      "Create AGENTS.md in this folder with purpose, local rules, and read-next links.",
+      "Add a sibling CLAUDE.md symlink that points to AGENTS.md."
+    ]);
+  }
+  requiredAgentDirs.set(ctx.root, [
     "Create a short root AGENTS.md table of contents.",
     "Link to ARCHITECTURE.md, docs/index.md, and validation commands."
   ]);
@@ -133,7 +140,7 @@ async function lintAgentDocs(ctx: LintContext): Promise<GovernanceFinding[]> {
   ]);
 
   for (const pkg of ctx.packages) {
-    await requireFile(findings, pkg.dir, "AGENTS.md", "agent-docs/required", [
+    requiredAgentDirs.set(pkg.dir, [
       "Create packages/<pkg>/AGENTS.md with package purpose, local rules, and docs links.",
       "Keep detailed architecture notes in packages/<pkg>/docs/."
     ]);
@@ -153,12 +160,19 @@ async function lintAgentDocs(ctx: LintContext): Promise<GovernanceFinding[]> {
     const srcDir = path.join(pkg.dir, "src");
     if (await pathExists(srcDir)) {
       for (const dir of await walkDirs(srcDir)) {
-        await requireFile(findings, dir, "AGENTS.md", "agent-docs/required", [
+        requiredAgentDirs.set(dir, [
           "Add a short AGENTS.md to this source directory.",
           "State the directory purpose and point back to package docs."
         ]);
       }
     }
+  }
+
+  const pairedAgentDirs = new Set(requiredAgentDirs.keys());
+  for (const agentFile of await findFiles(ctx.root, "AGENTS.md")) pairedAgentDirs.add(path.dirname(agentFile));
+  for (const claudeFile of await findFiles(ctx.root, "CLAUDE.md")) pairedAgentDirs.add(path.dirname(claudeFile));
+  for (const dir of [...pairedAgentDirs].sort((a, b) => relative(ctx.root, a).localeCompare(relative(ctx.root, b)))) {
+    await requireAgentDocPair(findings, ctx, dir, requiredAgentDirs.get(dir));
   }
 
   for (const agentFile of await findFiles(ctx.root, "AGENTS.md")) {
@@ -193,6 +207,70 @@ async function lintAgentDocs(ctx: LintContext): Promise<GovernanceFinding[]> {
   }
 
   return findings;
+}
+
+/** Supports the agent instruction file pair lint. */
+async function requireAgentDocPair(findings: GovernanceFinding[], ctx: LintContext, dir: string, agentFix?: string[]): Promise<void> {
+  const agentPath = path.join(dir, "AGENTS.md");
+  const claudePath = path.join(dir, "CLAUDE.md");
+  const relAgent = relative(ctx.root, agentPath);
+  const relClaude = relative(ctx.root, claudePath);
+  const hasAgent = await pathExists(agentPath);
+  if (!hasAgent) {
+    findings.push({
+      rule: "agent-docs/required",
+      severity: "error",
+      file: relAgent,
+      message: "required AGENTS.md file is missing.",
+      fix: agentFix || [
+        "Create AGENTS.md in this folder with purpose, local rules, and read-next links.",
+        "Add a sibling CLAUDE.md symlink that points to AGENTS.md."
+      ]
+    });
+    return;
+  }
+
+  let stats: Awaited<ReturnType<typeof lstat>>;
+  try {
+    stats = await lstat(claudePath);
+  } catch {
+    findings.push({
+      rule: "agent-docs/claude-symlink",
+      severity: "error",
+      file: relClaude,
+      message: "CLAUDE.md symlink is missing for AGENTS.md.",
+      fix: [`Run: ln -s AGENTS.md ${relClaude}`]
+    });
+    return;
+  }
+
+  if (!stats.isSymbolicLink()) {
+    findings.push({
+      rule: "agent-docs/claude-symlink",
+      severity: "error",
+      file: relClaude,
+      message: "CLAUDE.md must be a symlink to sibling AGENTS.md.",
+      fix: [
+        `Remove ${relClaude}.`,
+        `Run: ln -s AGENTS.md ${relClaude}`
+      ]
+    });
+    return;
+  }
+
+  const target = await readlink(claudePath);
+  if (path.resolve(dir, target) !== agentPath) {
+    findings.push({
+      rule: "agent-docs/claude-symlink",
+      severity: "error",
+      file: relClaude,
+      message: `CLAUDE.md points to ${target}; expected AGENTS.md.`,
+      fix: [
+        `Remove ${relClaude}.`,
+        `Run: ln -s AGENTS.md ${relClaude}`
+      ]
+    });
+  }
 }
 
 /** Supports the lint package deps helper. */

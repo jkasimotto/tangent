@@ -1,10 +1,70 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { lintGovernance } from "../dist/index.js";
+
+test("agent lint requires CLAUDE.md next to AGENTS.md", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
+  try {
+    await writeMinimalRootAgentDocs(root);
+
+    const result = await lintGovernance({ root, groups: ["agents"] });
+    const finding = result.findings.find((candidate) => candidate.rule === "agent-docs/claude-symlink");
+    assert.ok(finding);
+    assert.equal(finding.file, "CLAUDE.md");
+    assert.equal(finding.message, "CLAUDE.md symlink is missing for AGENTS.md.");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("agent lint accepts CLAUDE.md symlinked to AGENTS.md", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
+  try {
+    await writeMinimalRootAgentDocs(root);
+    await symlink("AGENTS.md", path.join(root, "CLAUDE.md"));
+
+    const result = await lintGovernance({ root, groups: ["agents"] });
+    assert.equal(result.errors, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("agent lint rejects plain CLAUDE.md files", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
+  try {
+    await writeMinimalRootAgentDocs(root);
+    await writeFile(path.join(root, "CLAUDE.md"), "# Agent Notes\n", "utf8");
+
+    const result = await lintGovernance({ root, groups: ["agents"] });
+    const finding = result.findings.find((candidate) => candidate.rule === "agent-docs/claude-symlink");
+    assert.ok(finding);
+    assert.equal(finding.file, "CLAUDE.md");
+    assert.equal(finding.message, "CLAUDE.md must be a symlink to sibling AGENTS.md.");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("agent lint requires AGENTS.md in every repo directory", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
+  try {
+    await writeMinimalRootAgentDocs(root);
+    await symlink("AGENTS.md", path.join(root, "CLAUDE.md"));
+    await mkdir(path.join(root, "scripts"), { recursive: true });
+
+    const result = await lintGovernance({ root, groups: ["agents"] });
+    const finding = result.findings.find((candidate) => candidate.rule === "agent-docs/required" && candidate.file === "scripts/AGENTS.md");
+    assert.ok(finding);
+    assert.equal(finding.message, "required AGENTS.md file is missing.");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("dependency lint flags disallowed vertical package dependencies", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
@@ -217,3 +277,13 @@ test("dependency lint prevents Rollup and Eval from pulling Usage UI transitivel
     await rm(root, { recursive: true, force: true });
   }
 });
+
+/** Writes the minimal root agent docs required by the agent lint tests. */
+async function writeMinimalRootAgentDocs(root) {
+  await mkdir(path.join(root, "docs"), { recursive: true });
+  await writeFile(path.join(root, "AGENTS.md"), "# Agent Notes\n\nRead next:\n- docs/index.md\n", "utf8");
+  await writeFile(path.join(root, "ARCHITECTURE.md"), "# Architecture\n", "utf8");
+  await writeFile(path.join(root, "docs", "index.md"), "# Docs\n", "utf8");
+  await writeFile(path.join(root, "docs", "AGENTS.md"), "# Agent Notes\n\nRead next:\n- docs/index.md\n", "utf8");
+  await symlink("AGENTS.md", path.join(root, "docs", "CLAUDE.md"));
+}

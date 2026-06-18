@@ -74,7 +74,7 @@ export async function findFiles(root: string, basename: string): Promise<string[
     if (ignoredDir(entry.name)) continue;
     const fullPath = path.join(root, entry.name);
     if (entry.isDirectory()) files.push(...await findFiles(fullPath, basename));
-    else if (entry.isFile() && entry.name === basename) files.push(fullPath);
+    else if ((entry.isFile() || entry.isSymbolicLink()) && entry.name === basename) files.push(fullPath);
   }
   return files;
 }

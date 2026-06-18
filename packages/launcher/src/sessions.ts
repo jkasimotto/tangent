@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { configPath } from "./config.js";
-import { listIterm2SessionNames } from "./drivers/iterm2.js";
+import { listIterm2Sessions } from "./drivers/iterm2.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -57,24 +57,31 @@ export async function recordSession(session: LaunchSession): Promise<void> {
 
 /**
  * Returns sessions that are still live. Tmux sessions are checked via
- * `tmux has-session`; non-tmux sessions with a title are checked against
- * current iTerm2 tab names (with a 30s grace period for newly opened sessions);
- * others fall back to a 24h window. Dead sessions are pruned from the file.
+ * `tmux has-session`. Non-tmux sessions with an iterm2SessionId are checked
+ * by unique ID (reliable even after the tab title changes); those with only a
+ * title fall back to name-matching with a 30s grace period for newly opened
+ * sessions; those with neither fall back to a 24h window.
+ * Dead sessions are pruned from the file.
  */
 export async function listActiveSessions(): Promise<LaunchSession[]> {
   const sessions = await readSessions();
   const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-  // Only use iTerm2 name-matching when we actually get names back. An empty result
-  // means iTerm2 is unavailable or returned nothing — fall through to time-based.
+  // Query iTerm2 once if any non-tmux sessions need checking.
+  let iterm2Ids: Set<string> | undefined;
   let iterm2Names: Set<string> | undefined;
-  if (sessions.some((s) => !s.tmuxSession && s.title)) {
-    const names = await listIterm2SessionNames();
-    if (names.length > 0) iterm2Names = new Set(names);
+  if (sessions.some((s) => !s.tmuxSession && (s.iterm2SessionId || s.title))) {
+    try {
+      const open = await listIterm2Sessions();
+      iterm2Ids = new Set(open.map((s) => s.id));
+      iterm2Names = new Set(open.map((s) => s.name).filter(Boolean));
+    } catch {
+      // iTerm2 unavailable — fall through to time-based for all non-tmux sessions
+    }
   }
 
-  // Sessions opened within this window are always kept regardless of iTerm2 state,
-  // because the tab name may not yet be registered right after opening.
+  // Grace period only needed for legacy (name-based) sessions where the name
+  // may not be registered yet immediately after opening.
   const graceCutoff = new Date(Date.now() - 30_000).toISOString();
 
   const active: LaunchSession[] = [];
@@ -86,7 +93,11 @@ export async function listActiveSessions(): Promise<LaunchSession[]> {
       } catch {
         // dead tmux session — omit
       }
+    } else if (session.iterm2SessionId && iterm2Ids !== undefined) {
+      // ID-based: no grace period needed — ID is stable from the moment the tab opens
+      if (iterm2Ids.has(session.iterm2SessionId)) active.push(session);
     } else if (session.title && iterm2Names !== undefined) {
+      // Name-based (legacy): tab title may have changed, so include grace period
       if (iterm2Names.has(session.title) || session.startedAt >= graceCutoff) active.push(session);
     } else if (session.startedAt >= cutoff) {
       active.push(session);

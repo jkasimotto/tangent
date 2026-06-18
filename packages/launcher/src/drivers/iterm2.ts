@@ -57,15 +57,19 @@ function shellEscape(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
-/** Lists the names of all currently open iTerm2 sessions across all windows and tabs. Returns empty array if iTerm2 is not running or AppleScript fails. */
-export async function listIterm2SessionNames(): Promise<string[]> {
+/**
+ * Lists all open iTerm2 sessions as `{id, name}` pairs. Returns empty array if
+ * iTerm2 is not running or AppleScript fails. The unique ID is stable even after
+ * the running process overrides the tab title.
+ */
+export async function listIterm2Sessions(): Promise<Array<{ id: string; name: string }>> {
   const script = `
     tell application "iTerm2"
       set out to {}
       repeat with w in windows
         repeat with t in tabs of w
           repeat with s in sessions of t
-            set end of out to name of s
+            set end of out to (unique ID of s) & "|||" & (name of s)
           end repeat
         end repeat
       end repeat
@@ -74,7 +78,12 @@ export async function listIterm2SessionNames(): Promise<string[]> {
   `;
   try {
     const { stdout } = await execFileAsync("osascript", ["-e", script]);
-    return stdout.trim().split(", ").filter(Boolean);
+    return stdout.trim().split(", ").filter(Boolean).map((entry) => {
+      const sep = entry.indexOf("|||");
+      return sep >= 0
+        ? { id: entry.slice(0, sep), name: entry.slice(sep + 3) }
+        : { id: entry, name: "" };
+    });
   } catch {
     return [];
   }

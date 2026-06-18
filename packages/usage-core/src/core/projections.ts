@@ -358,6 +358,14 @@ function refreshSessionCounts(sessions: UsageSession[], turns: UsageTurn[], step
     const sessionMessages = messagesBySession.get(session.id) || [];
     const sessionSteps = stepsBySession.get(session.id) || [];
     const files = new Set(sessionSteps.flatMap((step) => step.targetPaths));
+    const metrics = aggregateMetrics(sessionSteps.map((step) => step.metrics));
+    // Step metrics sum per-event durations, which Claude native transcripts never record, so the
+    // session ends up with no duration while Codex (whose steps carry durations) shows one. Fall
+    // back to the session's wall-clock span so every session reports a time on its card and header.
+    if (metrics.durationMs === undefined) {
+      const span = durationBetween(session.startedAt, session.endedAt || session.lastActivityAt);
+      if (span !== undefined) metrics.durationMs = span;
+    }
     return {
       ...session,
       counts: {
@@ -370,7 +378,7 @@ function refreshSessionCounts(sessions: UsageSession[], turns: UsageTurn[], step
         compactions: sessionSteps.filter((step) => step.kind === "compaction").length,
         filesTouched: files.size
       },
-      metrics: aggregateMetrics(sessionSteps.map((step) => step.metrics))
+      metrics
     };
   });
 }

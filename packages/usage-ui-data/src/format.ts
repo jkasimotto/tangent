@@ -134,10 +134,18 @@ export function messageTokens(message: { tokenUsage?: { total?: number }; metric
   return finiteNumber(message.tokenUsage?.total) ?? finiteNumber(message.metrics?.tokens?.total) ?? tokenValue;
 }
 
-/** Returns the context token count to show in message summaries. */
+/**
+ * Returns the context-window size for a message: the provider's explicit context
+ * field when present, otherwise the sum of the input token kinds. Claude reports
+ * `input_tokens` (uncached, often single digits) separately from
+ * `cache_read_input_tokens`/`cache_creation_input_tokens` (the bulk of the prompt),
+ * so the true context size is their sum, matching AgentsView's
+ * `input + cache_creation + cache_read`. Using `input` alone would report ~2 tokens
+ * for a 300k-token prompt.
+ */
 function tokenContext(usage: UsageTokenUsage | undefined): number | undefined {
   if (!usage) return undefined;
-  return finiteNumber(usage.context) ?? finiteNumber(usage.input) ?? sumTokens([usage.cacheRead, usage.cacheCreation]);
+  return finiteNumber(usage.context) ?? sumTokens([usage.input, usage.cacheRead, usage.cacheCreation]);
 }
 
 /** Sums finite token counts when at least one value is present. */

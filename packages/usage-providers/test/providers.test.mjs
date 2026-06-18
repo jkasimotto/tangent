@@ -61,6 +61,45 @@ test("claude native capture keeps thinking, plans, and verbatim tool output", ()
   assert.equal(result.data.output, longOutput, "tool output must be stored verbatim, not truncated");
 });
 
+test("claude native derives per-tool-call duration from timestamps, skipping subagents", () => {
+  const records = [
+    {
+      line: 0,
+      record: {
+        type: "assistant", timestamp: "2026-06-18T00:00:00.000Z", sessionId: "sess-dur",
+        message: { id: "m-a", model: "claude-opus-4-8", content: [{ type: "tool_use", id: "tu-read", name: "Read", input: { file_path: "/a" } }], usage: { input_tokens: 1, output_tokens: 1 } }
+      }
+    },
+    {
+      line: 1,
+      record: {
+        type: "user", timestamp: "2026-06-18T00:00:00.250Z", sessionId: "sess-dur",
+        message: { role: "user", content: [{ type: "tool_result", tool_use_id: "tu-read", content: "ok", is_error: false }] }
+      }
+    },
+    {
+      line: 2,
+      record: {
+        type: "assistant", timestamp: "2026-06-18T00:00:01.000Z", sessionId: "sess-dur",
+        message: { id: "m-b", model: "claude-opus-4-8", content: [{ type: "tool_use", id: "tu-task", name: "Task", input: { description: "spawn" } }], usage: { input_tokens: 1, output_tokens: 1 } }
+      }
+    },
+    {
+      line: 3,
+      record: {
+        type: "user", timestamp: "2026-06-18T00:00:01.005Z", sessionId: "sess-dur",
+        message: { role: "user", content: [{ type: "tool_result", tool_use_id: "tu-task", content: "done", is_error: false }] }
+      }
+    }
+  ];
+
+  const events = normalizeClaudeNativeRecords(records, { sourcePath: "/tmp/sess-dur.jsonl", inferredComplete: false });
+  const readResult = events.find((event) => event.kind === "tool.result" && event.links?.tool_call_id === "tu-read");
+  const taskResult = events.find((event) => event.kind === "tool.result" && event.links?.tool_call_id === "tu-task");
+  assert.equal(readResult.data.duration_ms, 250, "Read duration is result time minus call time");
+  assert.equal(taskResult.data.duration_ms, undefined, "subagent result time does not reflect its runtime, so no per-call duration");
+});
+
 test("claude native merges streamed assistant chunks sharing one message.id", () => {
   const usage = { input_tokens: 100, output_tokens: 50 };
   const chunk = (line, block, stop) => ({

@@ -320,12 +320,17 @@ export function createUsageUiClient(usage: UsageDomainClient): UsageUiClient {
     /** Lists sessions. */
     async listSessions(query = {}) {
       const result = await usage.sessions.list({ provider: query.provider, limit: query.limit, orderBy: [{ field: "lastActivityAt", direction: "desc" }] });
+      // Claude writes placeholder transcripts (a lone `ai-title` record, no messages, tokens, or
+      // timestamps) for title generation and aborted starts. They carry nothing to show and read as
+      // token-less, time-less noise next to real sessions, so drop the completely empty ones. A
+      // just-started session keeps at least its user message, so this never hides live work.
+      const sessions = result.data.filter((session) => !isEmptySession(session));
       // One timeline query per listed session powers the card/rail flame graphs. The list is bounded
       // by `limit`, the sqlite reads are in-process, and the series is downsampled before it leaves
       // the server. If the domain layer later exposes a bucketed series in a single query, prefer it.
-      const flames = await Promise.all(result.data.map((session) => sessionSparkline(usage, session.id)));
+      const flames = await Promise.all(sessions.map((session) => sessionSparkline(usage, session.id)));
       return {
-        sessions: result.data.map((session, index) => ({
+        sessions: sessions.map((session, index) => ({
           id: session.id,
           title: session.title || session.firstPrompt || session.id,
           subtitle: [session.provider, session.models?.join(", ")].filter(Boolean).join(" · "),
@@ -502,6 +507,13 @@ export function createUsageUiClient(usage: UsageDomainClient): UsageUiClient {
       };
     }
   };
+}
+
+/** Reports whether a listed session has no conversation to show: no messages and no recorded tokens. */
+function isEmptySession(session: { counts?: { messages?: number }; metrics?: { tokens?: { total?: number } } }): boolean {
+  const messages = session.counts?.messages ?? 0;
+  const tokens = session.metrics?.tokens?.total ?? 0;
+  return messages === 0 && tokens === 0;
 }
 
 /** Builds the compact activity series for one listed session, tolerating timeline failures. */

@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import type { LocalUiApp, StaticAssetMount, UiModePreference, UiRoute, UiRouteResponse } from "@tangent/ui-server";
 import { createUsageUiClient, type UsageUiClient } from "@tangent/usage-ui-data";
 import { openUsageFromSqlite as openUsage, type OpenUsageOptions, type UsageClient } from "@tangent/usage-index-sqlite/sqlite";
+import { nativeWatchRoots } from "@tangent/usage-providers/providers/index";
+import { watchUsageSources, type UsageSourceWatcher } from "./watch.js";
 
 export type StartUsageUiServerOptions = {
   sessionId?: string;
@@ -19,6 +21,8 @@ export type StartUsageUiServerOptions = {
   dev?: boolean;
   mode?: UiModePreference;
   client?: UsageClient;
+  /** Watch native transcript dirs and rebuild the snapshot on change. Defaults to true. */
+  watch?: boolean;
 };
 
 export type UsageUiServer = {
@@ -33,6 +37,8 @@ export type UsageUiApp = {
   routes: UiRoute[];
   assetMounts: StaticAssetMount[];
   sessionId?: string;
+  /** Stops the transcript watcher started for live updates, if any. */
+  close?: () => void;
 };
 
 type UsageUiRequestContext = {
@@ -64,7 +70,11 @@ export async function startUsageUiServer(options: StartUsageUiServerOptions = {}
     url: server.url,
     sessionId: usageApp.sessionId,
     dev: Boolean(server.dev),
-    close: server.close
+    /** Stops the transcript watcher first so no rebuild runs after the server closes. */
+    close: async () => {
+      usageApp.close?.();
+      await server.close();
+    }
   };
 }
 
@@ -79,6 +89,8 @@ export async function createUsageUiApp(options: StartUsageUiServerOptions = {}):
   const mode = options.mode || "static";
   const devRoot = mode !== "static" ? await usageUiSourceRoot() : undefined;
   const modulePath = devRoot ? "/apps/usage/src/embedded.ts" : "/apps/usage/embedded.js";
+  const context: UsageUiRequestContext = { client, usage, preferredSessionId };
+  const watcher = startSourceWatcher(options, context);
   return {
     app: {
       id: "usage",
@@ -87,10 +99,51 @@ export async function createUsageUiApp(options: StartUsageUiServerOptions = {}):
       modulePath,
       stylePaths: devRoot ? [] : ["/apps/usage/embedded.css"]
     },
-    routes: usageApiRoutes({ client, usage, preferredSessionId }),
+    routes: usageApiRoutes(context),
     assetMounts: [{ pathPrefix: "/apps/usage", assets: devRoot ? { ...usageUiEmbeddedAssets, dev: { sourceRoot: devRoot } } : usageUiEmbeddedAssets }],
-    sessionId: preferredSessionId
+    sessionId: preferredSessionId,
+    close: watcher ? () => watcher.close() : undefined
   };
+}
+
+/**
+ * Watches the native transcript directories and rebuilds the served snapshot in place
+ * when they change, so the UI's polling sees new turns. Skipped when the caller injects
+ * its own client (nothing to rebuild from disk) or disables watching. The Usage client
+ * is an immutable projection snapshot, so a fresh `openUsage` is the way to pick up new
+ * events; the rebuilt client and wrapper are swapped onto the shared request context,
+ * which every route reads by reference. A reentrancy guard coalesces overlapping
+ * rebuilds, and rebuild failures are swallowed so a mid-write transcript never crashes
+ * the server.
+ */
+function startSourceWatcher(options: StartUsageUiServerOptions, context: UsageUiRequestContext): UsageSourceWatcher | undefined {
+  if (options.client || options.watch === false) return undefined;
+  const roots = nativeWatchRoots(options.providers);
+  if (!roots.length) return undefined;
+  let rebuilding = false;
+  let pending = false;
+  /** Reopens the snapshot and swaps it onto the shared context, coalescing overlapping rebuilds. */
+  const rebuild = async (): Promise<void> => {
+    if (rebuilding) {
+      pending = true;
+      return;
+    }
+    rebuilding = true;
+    try {
+      const usage = await openUsage(openOptions(options));
+      context.usage = usage;
+      context.client = createUsageUiClient(usage);
+    } catch {
+      // A transcript caught mid-write yields a transient parse error; the next change reruns this.
+    } finally {
+      rebuilding = false;
+      if (pending) {
+        pending = false;
+        void rebuild();
+      }
+    }
+  };
+  return watchUsageSources({ roots, onChange: () => { void rebuild(); } });
 }
 
 /** Resolves the workspace Usage UI source root if this install includes it. */

@@ -58,3 +58,18 @@ test("projections carry thinking onto messages and plan onto tool calls", () => 
   const toolCall = projections.toolCalls.find((row) => row.category === "plan");
   assert.equal(toolCall.plan, "# Plan");
 });
+
+test("session duration falls back to wall-clock span when events carry no per-event durations", () => {
+  const events = [
+    claudeBase("d1", "message.assistant.visible", {
+      recorded_at: "2026-06-18T00:00:00.000Z", observed_at: "2026-06-18T00:00:00.000Z",
+      actor: { role: "assistant", model: "claude-opus-4-8" }, links: { message_id: "m1" }, data: { text: "start" }
+    }),
+    claudeBase("d2", "message.assistant.visible", {
+      recorded_at: "2026-06-18T00:05:00.000Z", observed_at: "2026-06-18T00:05:00.000Z",
+      actor: { role: "assistant", model: "claude-opus-4-8" }, links: { message_id: "m2" }, data: { text: "end" }
+    })
+  ];
+  const projections = eventsToProjections({ events });
+  assert.equal(projections.sessions[0].metrics.durationMs, 300_000, "Claude sessions report their first-to-last span");
+});

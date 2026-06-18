@@ -30,6 +30,9 @@
   let zoom = 1;
 
   const ZOOM_LEVELS = [0.25, 0.5, 1, 2, 4];
+  const LIVE_REFRESH_MS = 2000; // poll cadence for live transcript updates; the server watches files and rebuilds
+  let sessionsSignature = "";
+  let viewSignature = "";
   const BASE_PX_PER_MS = 0.001; // ~1px per second at zoom 1; a 2min turn ≈ the min width, longer turns grow
   const MIN_TURN_PX = 120; // keeps the prompt label readable even for short turns
   const MIN_BAR_HEIGHT = 16; // token-light / token-less turns still show a clickable bar
@@ -44,6 +47,8 @@
 
   onMount(() => {
     void loadSessions();
+    const timer = setInterval(() => void refreshLive(), LIVE_REFRESH_MS);
+    return () => clearInterval(timer);
   });
 
   $: pxPerMs = BASE_PX_PER_MS * zoom;
@@ -58,6 +63,7 @@
     try {
       const list = await client.listSessions({ limit: 80 });
       sessions = list.sessions;
+      sessionsSignature = sessionListSignature(sessions);
       error = "";
     } catch (caught) {
       error = friendlyError((caught as Error).message);
@@ -77,6 +83,7 @@
       const nextView = await client.getConversationView(id, { query: search, limit: 80 });
       if (loadKey !== key) return;
       view = nextView;
+      viewSignature = conversationSignature(nextView);
       activeMessageId = view.chart.rows[0]?.messageId || view.messages[0]?.id || "";
       activeSegmentId = "";
       bottleneckIndex = -1;
@@ -88,6 +95,45 @@
     } finally {
       if (loadKey === key) conversationLoading = false;
     }
+  }
+
+  /**
+   * Polls for new transcript data and swaps it in only when it actually changed, so the
+   * server's file-watch rebuilds surface live without resetting the reader's scroll
+   * position, active turn, or expanded rows. Signatures keep an idle conversation from
+   * re-rendering every tick. Skipped while a full load or search is mid-flight.
+   */
+  async function refreshLive(): Promise<void> {
+    if (loading || conversationLoading) return;
+    try {
+      const list = await client.listSessions({ limit: 80 });
+      const nextSignature = sessionListSignature(list.sessions);
+      if (nextSignature !== sessionsSignature) {
+        sessions = list.sessions;
+        sessionsSignature = nextSignature;
+      }
+      if (mode === "read" && selectedId) {
+        const nextView = await client.getConversationView(selectedId, { query, limit: 80 });
+        const nextViewSignature = conversationSignature(nextView);
+        if (nextViewSignature !== viewSignature) {
+          view = nextView;
+          viewSignature = nextViewSignature;
+        }
+      }
+    } catch {
+      // A transient fetch failure (e.g. mid-rebuild) is ignored; the next tick retries.
+    }
+  }
+
+  /** Cheap fingerprint of the session list: ids plus their latest activity and token totals. */
+  function sessionListSignature(items: UsageSessionListItem[]): string {
+    return items.map((session) => `${session.id}:${session.lastActivityAt || session.endedAt || ""}:${session.tokensTotal ?? ""}`).join("|");
+  }
+
+  /** Cheap fingerprint of a conversation view: message count plus the last message's timing and tokens. */
+  function conversationSignature(value: UsageConversationView): string {
+    const last = value.messages[value.messages.length - 1];
+    return `${value.messages.length}:${last?.at || ""}:${last?.tokenLabel || ""}:${last?.turnLabel || ""}`;
   }
 
   function openSession(id: string): void {
@@ -510,6 +556,12 @@
           <div class="message-list" bind:this={messageListNode}>
             {#each detailMessages as message}
               <div use:rememberMessage={message.id} class={`message message-${message.role}`}>
+                <div class="message-meta">
+                  <span class="message-role">{message.title || message.role}</span>
+                  {#if message.tokenLabel}<span class="message-tokens">{message.tokenLabel}</span>{/if}
+                  {#if message.turnLabel}<span class="message-turn">{message.turnLabel}</span>{/if}
+                  {#if message.at}<span class="message-time">{formatDate(message.at)}</span>{/if}
+                </div>
                 <div class="message-main">
                   <p>{visibleMessageBody(message, expandedMessageIds.includes(message.id))}</p>
                 </div>

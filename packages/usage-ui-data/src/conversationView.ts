@@ -46,7 +46,7 @@ export function buildUsageConversationView(
 ): UsageConversationView {
   const query = (options.query || "").trim().toLowerCase();
   const visibleSessions = query ? sessions.filter((session) => sessionMatches(session, query)) : sessions;
-  const baseConversationMessages = messages.map(conversationMessage);
+  const baseConversationMessages = messages.map((message, index) => conversationMessage(message, messageTurnDuration(messages, index, selectedSession.endedAt)));
   const inputPreviews = stepInputPreviews(options.toolCalls || []);
   const rows = chartRows(baseConversationMessages, messages, steps, selectedSession.endedAt, options.toolCalls || [], inputPreviews);
   const conversationMessages = withTimelineToolEvents(baseConversationMessages, rows, options.toolCalls || []);
@@ -277,9 +277,14 @@ function projectLabel(session: Pick<UsageSession, "project" | "repo" | "cwd">): 
 }
 
 /** Converts a message into the conversation pane DTO. */
-function conversationMessage(message: UsageMessage): UsageConversationMessage {
+function conversationMessage(message: UsageMessage, turnDurationMs: number | undefined): UsageConversationMessage {
   const tokens = messageTokens(message);
-  const duration = messageDuration(message);
+  const usage = message.tokenUsage || message.metrics?.tokens;
+  const contextTokens = tokenContext(usage);
+  const outputTokens = finiteNumber(usage?.output);
+  const duration = finiteNumber(message.providerFields?.durationMs) ?? turnDurationMs;
+  const calls = message.toolCalls || [];
+  const callDuration = soloCallDuration(calls, duration);
   return {
     id: message.id,
     role: conversationRole(message.role),
@@ -289,16 +294,20 @@ function conversationMessage(message: UsageMessage): UsageConversationMessage {
     textPreview: message.textPreview || truncateText(message.text, 500),
     thinking: message.thinking,
     thinkingPreview: message.thinkingPreview || truncateText(message.thinking, 500),
-    tokenLabel: formatMessageTokenUsage(message.tokenUsage || message.metrics?.tokens, tokens),
+    tokenLabel: formatMessageTokenUsage(usage, tokens),
     tokens,
+    contextTokens,
+    outputTokens,
+    callCount: calls.length || undefined,
+    turnLabel: turnSummaryLabel(duration, calls.length),
     durationLabel: formatDuration(duration),
     durationMs: duration,
     confidence: confidenceOrUnknown(message.confidence || message.tokenUsage?.confidence),
-    toolCalls: (message.toolCalls || []).map((call) => ({
+    toolCalls: calls.map((call) => ({
       id: call.id,
       name: call.toolName || call.name || "tool",
       status: call.status,
-      durationLabel: formatDuration(toolDuration(call)),
+      durationLabel: formatDuration(toolDuration(call) ?? callDuration),
       target: call.targetPaths?.[0],
       commandPreview: toolInputPreview(call.input),
       workdir: toolWorkdir(call.input) || call.targetPaths?.[0],
@@ -308,6 +317,26 @@ function conversationMessage(message: UsageMessage): UsageConversationMessage {
       plan: call.plan
     }))
   };
+}
+
+/**
+ * Returns the wall-clock duration to attribute to a single tool call, matching
+ * AgentsView: a solo (non-parallel) call inherits its assistant message's turn
+ * duration, while parallel siblings get no per-call timing because the native
+ * transcript records no per-call result timestamps to split the turn between them.
+ */
+function soloCallDuration(calls: NonNullable<UsageMessage["toolCalls"]>, turnDurationMs: number | undefined): number | undefined {
+  return calls.length === 1 ? turnDurationMs : undefined;
+}
+
+/** Builds the "turn 1m 10s · N calls" badge, matching AgentsView's per-message summary. */
+function turnSummaryLabel(durationMs: number | undefined, callCount: number): string | undefined {
+  const duration = formatDuration(durationMs);
+  if (!duration && !callCount) return undefined;
+  const parts: string[] = [];
+  if (duration) parts.push(`turn ${duration}`);
+  if (callCount) parts.push(`${callCount} call${callCount === 1 ? "" : "s"}`);
+  return parts.join(" · ");
 }
 
 type WorkTurn = {
@@ -473,10 +502,17 @@ function workTurnConfidence(messages: UsageConversationMessage[]): UsageConversa
   return combinedConfidence(messages.map((message) => message.confidence));
 }
 
-/** Returns the context token count from all compatible Usage token fields. */
+/**
+ * Returns the context-window size for a message: the provider's explicit context
+ * field when present, otherwise the sum of the input token kinds. Claude reports
+ * `input_tokens` (uncached) separately from the cache-read/cache-creation tokens
+ * that carry the bulk of the prompt, so the true context size is their sum
+ * (matching AgentsView's `input + cache_creation + cache_read`); `input` alone
+ * understates a cached prompt by orders of magnitude.
+ */
 function tokenContext(usage: UsageTokenUsage | undefined): number | undefined {
   if (!usage) return undefined;
-  return finiteNumber(usage.context) ?? finiteNumber(usage.input) ?? sumNumbers([finiteNumber(usage.cacheRead), finiteNumber(usage.cacheCreation)]);
+  return finiteNumber(usage.context) ?? sumNumbers([finiteNumber(usage.input), finiteNumber(usage.cacheRead), finiteNumber(usage.cacheCreation)]);
 }
 
 /** Formats chart token counts with compact lower-case units. */
@@ -585,11 +621,23 @@ function messageTitle(message: UsageMessage): string {
   return cleanTitle(message.role, "Message");
 }
 
-/** Resolves message duration from its own fields or tool-call results. */
-function messageDuration(message: UsageMessage): number | undefined {
-  const direct = typeof message.providerFields?.durationMs === "number" ? message.providerFields.durationMs : undefined;
-  const toolTotal = (message.toolCalls || []).reduce((sum, call) => sum + (toolDuration(call) || 0), 0);
-  return direct ?? (toolTotal || undefined);
+/**
+ * Derives an assistant message's turn duration from transcript timestamps, the way
+ * AgentsView does: the wall-clock gap from this message to the next record (or the
+ * session end for the final message). Native Claude transcripts carry no per-message
+ * or per-tool-call duration, so this delta is the only available timing signal. It is
+ * computed only for assistant messages that issued a tool call; a text-only reply's
+ * "next record" is usually the user's next prompt, whose gap is idle time, not work.
+ */
+function messageTurnDuration(messages: UsageMessage[], index: number, sessionEndedAt: string | undefined): number | undefined {
+  const message = messages[index];
+  if (!message || conversationRole(message.role) !== "assistant" || !(message.toolCalls?.length)) return undefined;
+  const start = parseTimeMs(message.createdAt || message.at);
+  if (start === undefined) return undefined;
+  const next = messages[index + 1];
+  const end = parseTimeMs(next ? next.createdAt || next.at : sessionEndedAt);
+  if (end === undefined || end < start) return undefined;
+  return end - start;
 }
 
 /** Maps a step to an internal chart segment kind. */

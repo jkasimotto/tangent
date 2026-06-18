@@ -17,6 +17,13 @@ export type ClaudeNativeNormalizeOptions = {
 export function normalizeClaudeNativeRecords(records: ClaudeNativeRecord[], options: ClaudeNativeNormalizeOptions): UsageJsonlLineV1[] {
   const visible = mergeClaudeAssistantChunks(records.filter((row) => !isMetaRecord(row.record)));
   if (!visible.length) return [];
+  // Each tool_use is written on its own line with its own timestamp; the matching tool_result
+  // arrives later on a user line. Capturing the first timestamp per tool_use id (before chunk
+  // merging collapses them) lets us derive a real per-call duration = result time - call time,
+  // which is the only per-tool-call timing Claude records. Subagent (Task) calls are excluded:
+  // their main-thread result is logged near-instantly while the real work runs in a sidechain, so
+  // the delta would read as a few milliseconds; those fall back to the turn duration downstream.
+  const { starts: toolUseStartByCallId, subagentCallIds } = indexToolUseStarts(records);
   const first = visible[0]!;
   const last = visible.at(-1)!;
   const sessionId = stringValue(first.record.sessionId) || stringValue(first.record.session_id) || pathSessionId(options.sourcePath);
@@ -100,7 +107,10 @@ export function normalizeClaudeNativeRecords(records: ClaudeNativeRecord[], opti
         }));
       }
       for (const result of toolResultsFromMessage(message)) {
-        events.push(base(source, "tool.result", result.data, {
+        const durationMs = result.toolCallId && subagentCallIds.has(result.toolCallId)
+          ? undefined
+          : toolCallDurationMs(toolUseStartByCallId, result.toolCallId, timestampFor(item));
+        events.push(base(source, "tool.result", durationMs !== undefined ? { ...result.data, duration_ms: durationMs } : result.data, {
           turn: { id: currentTurnId },
           actor: { role: "tool" },
           links: { tool_call_id: result.toolCallId },
@@ -528,6 +538,51 @@ function timestampFor(record: Record<string, unknown>): string | undefined {
 }
 function isMetaRecord(item: Record<string, unknown>): boolean {
   return item.isMeta === true || item.is_meta === true;
+}
+
+/**
+ * Indexes the earliest timestamp at which each tool_use id appeared across the raw records, and flags
+ * the ids that are subagent (Task) calls. Claude streams one tool_use per assistant line with its own
+ * timestamp, and chunk merging later keeps only the turn's first timestamp, so this captures the
+ * per-call start time before that information is lost. Subagent ids are tracked separately because
+ * their result timestamp does not reflect the subagent's real runtime.
+ */
+function indexToolUseStarts(records: ClaudeNativeRecord[]): { starts: Map<string, string>; subagentCallIds: Set<string> } {
+  const starts = new Map<string, string>();
+  const subagentCallIds = new Set<string>();
+  for (const row of records) {
+    const item = row.record;
+    if (isMetaRecord(item) || stringValue(item.type) !== "assistant") continue;
+    const message = objectValue(item.message) || item;
+    const content = Array.isArray(message.content) ? message.content : [];
+    const ts = timestampFor(item);
+    for (const part of content) {
+      if (!part || typeof part !== "object" || (part as { type?: unknown }).type !== "tool_use") continue;
+      const block = part as Record<string, unknown>;
+      const id = stringValue(block.id);
+      if (!id) continue;
+      if (isSubagentTool(stringValue(block.name))) subagentCallIds.add(id);
+      if (ts && !starts.has(id)) starts.set(id, ts);
+    }
+  }
+  return { starts, subagentCallIds };
+}
+
+/** Reports whether a tool name denotes a subagent dispatch, whose result time does not reflect its runtime. */
+function isSubagentTool(name: string | undefined): boolean {
+  const lower = (name || "").toLowerCase();
+  return lower === "task" || lower === "agent";
+}
+
+/** Returns the non-negative milliseconds a tool call took: its result timestamp minus its call timestamp. */
+function toolCallDurationMs(starts: Map<string, string>, callId: string | undefined, resultTs: string | undefined): number | undefined {
+  if (!callId || !resultTs) return undefined;
+  const startTs = starts.get(callId);
+  if (!startTs) return undefined;
+  const start = Date.parse(startTs);
+  const end = Date.parse(resultTs);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return undefined;
+  return end - start;
 }
 function turn(id: string | undefined): { id?: string } | undefined {
   return id ? { id } : undefined;

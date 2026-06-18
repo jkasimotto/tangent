@@ -16,6 +16,9 @@ import {
   type UsageWarning
 } from "@tangent/usage-core/schema/index";
 import { loadNativeSourceFiles } from "./native/load.js";
+import { claudeHome } from "./claude/native/discover.js";
+import { codexHome } from "./codex/native/discover.js";
+import nodePath from "node:path";
 
 export type LoadedProviderEvents = {
   events: UsageEventV3[];
@@ -129,6 +132,23 @@ export async function loadProviderEvents(options: OpenUsageOptions = {}): Promis
     sources: dedupeSources(sourceRefs),
     capabilities
   };
+}
+
+/**
+ * Returns the base directories that hold native transcripts for the given providers,
+ * so a caller can watch them for live updates. These are the provider homes the
+ * discovery walkers scan (`~/.claude/projects`, `~/.codex/sessions`), watched
+ * recursively rather than per repo-key so newly created session files and project
+ * subdirectories are caught without re-resolving the repo on every filesystem event.
+ */
+export function nativeWatchRoots(providers?: string[]): string[] {
+  const requested = providers?.length ? providers.filter(isBuiltInProvider) : [...builtInProviderIds];
+  const roots: string[] = [];
+  for (const provider of requested) {
+    if (provider === "claude") roots.push(nodePath.join(claudeHome(), "projects"));
+    if (provider === "codex") roots.push(nodePath.join(codexHome(), "sessions"));
+  }
+  return [...new Set(roots)];
 }
 
 export function getBuiltInProviderAdapter(id: string): UsageProviderAdapter {

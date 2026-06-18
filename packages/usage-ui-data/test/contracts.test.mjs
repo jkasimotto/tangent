@@ -30,7 +30,7 @@ test("attaches a per-session flame series to list items from the timeline", asyn
   const client = createUsageUiClient({
     sessions: {
       /** Lists one session for the flame-series test. */
-      list: async () => ({ data: [{ id: "s1", provider: "codex", title: "Implement UI", models: ["gpt"], metrics: {}, counts: {}, availability: { notes: [] } }], meta: { warnings: [] } }),
+      list: async () => ({ data: [{ id: "s1", provider: "codex", title: "Implement UI", models: ["gpt"], metrics: {}, counts: { messages: 2 }, availability: { notes: [] } }], meta: { warnings: [] } }),
       /** Returns a timeline with model, tool, and compaction steps. */
       timeline: async () => ({
         data: {
@@ -54,11 +54,28 @@ test("tolerates a missing timeline endpoint when listing sessions", async () => 
   const client = createUsageUiClient({
     sessions: {
       /** Lists one session without a timeline endpoint. */
-      list: async () => ({ data: [{ id: "s1", provider: "codex", title: "Implement UI", metrics: {}, counts: {}, availability: { notes: [] } }], meta: { warnings: [] } })
+      list: async () => ({ data: [{ id: "s1", provider: "codex", title: "Implement UI", metrics: {}, counts: { messages: 2 }, availability: { notes: [] } }], meta: { warnings: [] } })
     }
   });
   const view = await client.listSessions();
   assert.equal(view.sessions[0].flame, undefined);
+});
+
+test("drops empty placeholder sessions but keeps sessions with messages or tokens", async () => {
+  const client = createUsageUiClient({
+    sessions: {
+      /** Lists a real session alongside an empty Claude title-stub. */
+      list: async () => ({
+        data: [
+          { id: "real", provider: "claude", title: "Real work", metrics: { tokens: { total: 1200 } }, counts: { messages: 4 }, availability: { notes: [] } },
+          { id: "stub", provider: "claude", title: "claude:abc-123", metrics: {}, counts: { messages: 0 }, availability: { notes: [] } }
+        ],
+        meta: { warnings: [] }
+      })
+    }
+  });
+  const view = await client.listSessions();
+  assert.deepEqual(view.sessions.map((session) => session.id), ["real"]);
 });
 
 test("packs steps end-to-end and colours buckets by dominant kind", () => {
@@ -505,6 +522,88 @@ test("builds cockpit view without mixing session envelope into trace lanes", () 
   assert.equal(view.trace.lanes.flatMap((lane) => lane.items).some((item) => item.kind === "session"), false);
   assert.equal(view.trace.totals.sessionDurationMs, 3_600_000);
   assert.equal(view.diagnostics.some((card) => card.label === "Tokens" && card.tone === "warning"), true);
+});
+
+test("reports Claude per-message context as input+cache and output tokens", () => {
+  const session = { id: "s1", provider: "claude", title: "Parity", metrics: {}, availability: { notes: [] } };
+  const view = buildUsageConversationView(
+    session,
+    [session],
+    [
+      { id: "u1", role: "user", textPreview: "Go", createdAt: "2026-06-18T09:36:40.000Z", toolCalls: [] },
+      {
+        id: "m1",
+        role: "assistant",
+        model: "claude",
+        textPreview: "Working",
+        createdAt: "2026-06-18T09:36:44.673Z",
+        // Claude reports input_tokens (uncached) apart from the cache tokens that hold the prompt.
+        tokenUsage: { input: 2, cacheCreation: 10441, cacheRead: 15860, output: 1400, confidence: "provider-reported" },
+        toolCalls: []
+      }
+    ],
+    []
+  );
+  const message = view.messages.find((entry) => entry.id === "m1");
+  assert.equal(message.contextTokens, 26303, "context = input + cache_creation + cache_read");
+  assert.equal(message.outputTokens, 1400);
+  assert.match(message.tokenLabel, /26\.3k ctx/);
+  assert.match(message.tokenLabel, /1\.4k out/);
+});
+
+test("derives assistant turn duration and a solo tool-call duration from transcript timestamps", () => {
+  const view = buildUsageConversationView(
+    { id: "s1", provider: "claude", title: "Timing", endedAt: "2026-06-18T09:38:00.000Z", metrics: {}, availability: { notes: [] } },
+    [],
+    [
+      { id: "u1", role: "user", textPreview: "Go", createdAt: "2026-06-18T09:36:00.000Z", toolCalls: [] },
+      {
+        id: "m1",
+        role: "assistant",
+        model: "claude",
+        textPreview: "Running",
+        createdAt: "2026-06-18T09:36:01.000Z",
+        tokenUsage: { input: 2, cacheRead: 100, output: 10 },
+        toolCalls: [{ id: "t1", toolName: "Bash", status: "success" }]
+      },
+      { id: "u2", role: "user", textPreview: "next", createdAt: "2026-06-18T09:36:31.000Z", toolCalls: [] }
+    ],
+    []
+  );
+  const message = view.messages.find((entry) => entry.id === "m1");
+  assert.equal(message.durationMs, 30_000, "turn = gap to the next record");
+  assert.equal(message.callCount, 1);
+  assert.equal(message.turnLabel, "turn 30s · 1 call");
+  assert.equal(message.toolCalls[0].durationLabel, "30s", "a lone tool call inherits the turn duration");
+});
+
+test("leaves parallel tool calls without an inherited per-call duration", () => {
+  const view = buildUsageConversationView(
+    { id: "s1", provider: "claude", title: "Parallel", endedAt: "2026-06-18T09:38:00.000Z", metrics: {}, availability: { notes: [] } },
+    [],
+    [
+      { id: "u1", role: "user", textPreview: "Go", createdAt: "2026-06-18T09:36:00.000Z", toolCalls: [] },
+      {
+        id: "m1",
+        role: "assistant",
+        model: "claude",
+        textPreview: "Running",
+        createdAt: "2026-06-18T09:36:01.000Z",
+        tokenUsage: { input: 2, cacheRead: 100, output: 10 },
+        toolCalls: [
+          { id: "t1", toolName: "Read", status: "success" },
+          { id: "t2", toolName: "Read", status: "success" }
+        ]
+      },
+      { id: "u2", role: "user", textPreview: "next", createdAt: "2026-06-18T09:36:31.000Z", toolCalls: [] }
+    ],
+    []
+  );
+  const message = view.messages.find((entry) => entry.id === "m1");
+  assert.equal(message.callCount, 2);
+  assert.equal(message.turnLabel, "turn 30s · 2 calls");
+  assert.equal(message.toolCalls[0].durationLabel, undefined, "parallel siblings have no per-call timing");
+  assert.equal(message.toolCalls[1].durationLabel, undefined);
 });
 
 test("browser API client explains missing local Usage API", async () => {

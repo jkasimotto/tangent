@@ -493,6 +493,14 @@ export type UsageConversationMessage = {
   thinkingPreview?: string;
   tokenLabel?: string;
   tokens?: number;
+  /** Context-window size for this message: input + cache-read + cache-creation tokens. */
+  contextTokens?: number;
+  /** Output tokens the model generated for this message. */
+  outputTokens?: number;
+  /** Number of tool calls the assistant issued in this message. */
+  callCount?: number;
+  /** "turn 1m 10s · N calls" summary for assistant messages, when timing is available. */
+  turnLabel?: string;
   durationLabel?: string;
   durationMs?: number;
   confidence?: UsageUiConfidence;

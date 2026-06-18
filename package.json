@@ -12,6 +12,7 @@
   "workspaces": [
     "packages/agent-runtime",
     "packages/core",
+    "packages/launcher",
     "packages/repo",
     "packages/trees-schema",
     "packages/trees-core",
@@ -50,6 +51,7 @@
   },
   "dependencies": {
     "@tangent/core": "^0.1.0",
+    "@tangent/launcher": "^0.1.0",
     "@tangent/ui-server": "^0.1.0",
     "@tangent/tangent-ui": "^0.1.0"
   },

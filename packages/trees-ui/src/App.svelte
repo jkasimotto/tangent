@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { createTreesApiClient, type TreesUiClient, type TreesUiEntity, type TreesUiProject, type TreesUiWorkspace } from "./client.js";
+  import { createLauncherApiClient, type LauncherClient, type LaunchConfig, type LaunchSession } from "./launcher-client.js";
 
   export let client: TreesUiClient = createTreesApiClient();
+  export let launcher: LauncherClient = createLauncherApiClient();
 
   type TreeNode = {
     entity: TreesUiEntity;
@@ -33,10 +35,19 @@
   let pollTimer: ReturnType<typeof setInterval> | undefined;
   let requestSequence = 0;
 
+  let launcherConfig: LaunchConfig | null = null;
+  let activeSessions: LaunchSession[] = [];
+  let driverSelectValue = "iterm2-tab";
+  let customDriverTemplate = "";
+
   onMount(() => {
     void loadWorkspace();
+    void loadLauncherData();
     pollTimer = setInterval(() => {
-      if (!saving) void loadWorkspace({ polling: true });
+      if (!saving) {
+        void loadWorkspace({ polling: true });
+        void refreshActiveSessions();
+      }
     }, 2000);
   });
 
@@ -51,6 +62,11 @@
   $: entityCount = workspace.entities.length;
   $: configuredCount = workspace.entities.filter(isConfiguredLeafEntity).length;
   $: syncSelectedForm(selectedEntity);
+  $: syncLauncherForm(launcherConfig);
+  $: activeSessionCwds = new Set(activeSessions.map((s) => s.cwd));
+  $: selectedOpenPath = selectedEntity
+    ? (selectedEntity.worktreePath || workspace.projects.find((p) => p.id === selectedEntity?.projectId)?.path)
+    : undefined;
 
   async function loadWorkspace(options: { polling?: boolean } = {}): Promise<void> {
     const sequence = ++requestSequence;
@@ -65,6 +81,66 @@
     } finally {
       if (sequence === requestSequence && !options.polling) loading = false;
     }
+  }
+
+  async function loadLauncherData(): Promise<void> {
+    try {
+      const [config, sessions] = await Promise.all([launcher.loadConfig(), launcher.listSessions()]);
+      launcherConfig = config;
+      activeSessions = sessions;
+    } catch {
+      // launcher API not available — hide launcher UI gracefully
+    }
+  }
+
+  async function refreshActiveSessions(): Promise<void> {
+    try {
+      activeSessions = await launcher.listSessions();
+    } catch {
+      // ignore polling errors
+    }
+  }
+
+  async function saveLauncherConfig(): Promise<void> {
+    if (!launcherConfig) return;
+    try {
+      await launcher.saveConfig(launcherConfig);
+    } catch (caught) {
+      error = friendlyError(caught);
+    }
+  }
+
+  function handleDriverChange(): void {
+    if (!launcherConfig) return;
+    if (driverSelectValue === "custom") {
+      launcherConfig = { ...launcherConfig, driver: { type: "custom", template: customDriverTemplate } };
+    } else {
+      launcherConfig = { ...launcherConfig, driver: driverSelectValue as "iterm2-tab" | "iterm2-window" };
+    }
+    void saveLauncherConfig();
+  }
+
+  async function openSession(type: "agent" | "terminal", tmux?: boolean): Promise<void> {
+    if (!selectedOpenPath) return;
+    try {
+      if (type === "agent") {
+        await launcher.openAgent(selectedOpenPath, { tmux });
+      } else {
+        await launcher.openTerminal(selectedOpenPath);
+      }
+      activeSessions = await launcher.listSessions();
+    } catch (caught) {
+      error = friendlyError(caught);
+    }
+  }
+
+  let syncedDriverKey = "";
+  function syncLauncherForm(config: LaunchConfig | null): void {
+    const key = config ? JSON.stringify(config.driver) : "";
+    if (syncedDriverKey === key) return;
+    syncedDriverKey = key;
+    driverSelectValue = typeof config?.driver === "string" ? config.driver : "custom";
+    customDriverTemplate = typeof config?.driver === "object" ? config.driver.template : "";
   }
 
   async function addTreePath(): Promise<void> {
@@ -291,14 +367,38 @@
 <main class="trees-workspace" aria-label="Trees workspace">
   <section class="trees-pane trees-main" aria-label="Tree builder">
     <header class="workspace-header">
-      <div>
-        <p>Tangent Trees</p>
-        <h1>Work tree</h1>
+      <div class="workspace-header-top">
+        <div>
+          <p>Tangent Trees</p>
+          <h1>Work tree</h1>
+        </div>
+        <div class="summary" aria-label="Tree summary">
+          <span>{entityCount} nodes</span>
+          <span>{configuredCount} leaves</span>
+        </div>
       </div>
-      <div class="summary" aria-label="Tree summary">
-        <span>{entityCount} nodes</span>
-        <span>{configuredCount} leaves</span>
-      </div>
+      {#if launcherConfig}
+        <div class="launcher-settings" aria-label="Terminal launcher settings">
+          <label>
+            <span>Driver</span>
+            <select bind:value={driverSelectValue} on:change={handleDriverChange}>
+              <option value="iterm2-tab">iTerm2 tab</option>
+              <option value="iterm2-window">iTerm2 window</option>
+              <option value="custom">Custom</option>
+            </select>
+          </label>
+          {#if driverSelectValue === "custom"}
+            <label>
+              <span>Template</span>
+              <input bind:value={customDriverTemplate} placeholder="kitty --directory {'{cwd}'} -- {'{cmd}'}" on:change={handleDriverChange} />
+            </label>
+          {/if}
+          <label class="tmux-toggle" title="Wrap new sessions in tmux by default">
+            <input type="checkbox" bind:checked={launcherConfig.tmux} on:change={saveLauncherConfig} />
+            <span>Tmux</span>
+          </label>
+        </div>
+      {/if}
     </header>
 
     <form class="add-path" aria-label="Add tree path" on:submit|preventDefault={addTreePath}>
@@ -354,7 +454,12 @@
                   {/if}
                 </span>
                 <button type="button" class="node-select" on:click={() => { selectEntity(row.entity.path); if (row.hasChildren) toggleExpanded(row.entity.path); }}>
-                  <span class="node-name">{row.name}</span>
+                  <span class="node-name">
+                    {row.name}
+                    {#if activeSessionCwds.has(row.entity.worktreePath ?? workspace.projects.find((p) => p.id === row.entity.projectId)?.path ?? "")}
+                      <span class="session-dot" aria-hidden="true" title="Active session">●</span>
+                    {/if}
+                  </span>
                   <span class="node-meta">
                     {#if row.conflict}
                       Mixed
@@ -453,6 +558,23 @@
           {/if}
         </div>
       </form>
+
+      {#if selectedOpenPath && launcherConfig}
+        <div class="open-actions">
+          <p class="open-actions-label">Open</p>
+          <div class="actions">
+            <button type="button" on:click={() => openSession("agent")}>
+              Open Agent
+            </button>
+            <button type="button" on:click={() => openSession("agent", true)}>
+              Open Agent in tmux
+            </button>
+            <button type="button" class="secondary" on:click={() => openSession("terminal")}>
+              Open Terminal
+            </button>
+          </div>
+        </div>
+      {/if}
     {:else}
       <div class="empty-inspector">
         <strong>No node selected.</strong>

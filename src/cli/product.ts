@@ -2,6 +2,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
+import path from "node:path";
+import type { IncomingMessage } from "node:http";
 import type { CliCommandSpec } from "@tangent/core";
 import { booleanArg, numberArg, parseArgs, stringArg, stringsArg } from "@tangent/core/cli";
 import type { UiRoute } from "@tangent/ui-server";
@@ -67,6 +69,29 @@ export const uiCommandSpec: CliCommandSpec = {
     { name: "static-ui", description: "Serve compiled UI assets instead of workspace hot reload" },
     { name: "no-browser", description: "Do not open the browser" },
     { name: "json", description: "Print JSON" }
+  ]
+};
+
+export const openCommandSpec: CliCommandSpec = {
+  name: "open",
+  description: "Open an agent or project directory in the configured terminal",
+  subcommands: [
+    {
+      name: "agent",
+      description: "Open a new agent session in path",
+      args: "[path]",
+      options: [{ name: "path", takesValue: true, description: "Directory to open (default: git root or cwd)" }]
+    },
+    {
+      name: "project",
+      description: "Open a terminal at path with no agent command",
+      args: "[path]",
+      options: [{ name: "path", takesValue: true, description: "Directory to open (default: cwd)" }]
+    },
+    {
+      name: "setup",
+      description: "Configure terminal driver and tmux preference"
+    }
   ]
 };
 
@@ -165,6 +190,19 @@ export async function runProductStatusCommand(argv: string[], verboseDefault = f
   printSearchHealth(value.search, verbose);
 }
 
+/** Reads and JSON-parses the body of an incoming HTTP request. */
+async function readJson(request: IncomingMessage): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: unknown) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as string)));
+    request.on("end", () => {
+      const text = Buffer.concat(chunks).toString("utf8");
+      try { resolve(text ? JSON.parse(text) : {}); } catch { resolve({}); }
+    });
+    request.on("error", (err: Error) => reject(err));
+  });
+}
+
 /** Starts the combined Tangent local UI shell. */
 export async function runTangentUiCommand(argv: string[]): Promise<void> {
   const args = parseArgs(argv, { repeatable: ["provider", "source"] });
@@ -189,16 +227,62 @@ export async function runTangentUiCommand(argv: string[]): Promise<void> {
 
   const initialApp = registrations.find((registration) => registration.app.id === requestedApp)?.app.id || registrations[0]!.app.id;
   const apps = registrations.map((registration) => registration.app);
-  const [{ createLocalUiServer }, { tangentUiAssets }] = await Promise.all([
+  const [{ createLocalUiServer }, { tangentUiAssets }, launcher] = await Promise.all([
     import("@tangent/ui-server"),
-    import("@tangent/tangent-ui/assets")
+    import("@tangent/tangent-ui/assets"),
+    import("@tangent/launcher")
   ]);
-  const routes: UiRoute[] = [{
-    method: "GET",
-    pattern: /^\/api\/ui\/apps$/,
-    /** Serves the list of available local UI apps. */
-    handle: () => ({ json: { apps, initialApp } })
-  }, ...registrations.flatMap((registration) => registration.routes)];
+
+  /** Dispatches /api/launcher/* requests to the launcher package. */
+  async function handleLauncherRoute(
+    request: IncomingMessage,
+    url: URL
+  ): Promise<{ status: number; json: unknown } | undefined> {
+    if (request.method === "GET" && url.pathname === "/api/launcher/config") {
+      return { status: 200, json: await launcher.loadLaunchConfig() };
+    }
+    if (request.method === "POST" && url.pathname === "/api/launcher/config") {
+      const body = await readJson(request) as Record<string, unknown>;
+      const current = await launcher.loadLaunchConfig();
+      const merged = { driver: current.driver, tmux: current.tmux, agentCommand: current.agentCommand };
+      if ("driver" in body) merged.driver = body["driver"] as typeof current.driver;
+      if (typeof body["tmux"] === "boolean") merged.tmux = body["tmux"];
+      if (typeof body["agentCommand"] === "string") merged.agentCommand = body["agentCommand"];
+      await launcher.saveLaunchConfig(merged);
+      return { status: 200, json: merged };
+    }
+    if (request.method === "GET" && url.pathname === "/api/launcher/sessions") {
+      return { status: 200, json: await launcher.listActiveSessions() };
+    }
+    if (request.method === "POST" && url.pathname === "/api/launcher/open") {
+      const body = await readJson(request) as Record<string, unknown>;
+      const config = await launcher.loadLaunchConfig();
+      const targetPath = typeof body["path"] === "string" ? body["path"] : ".";
+      const effectiveConfig = typeof body["tmux"] === "boolean" ? { ...config, tmux: body["tmux"] } : config;
+      if (body["type"] === "agent") {
+        await launcher.openAgent(targetPath, { config: effectiveConfig });
+      } else {
+        await launcher.openDirectory(targetPath, { config: effectiveConfig });
+      }
+      return { status: 200, json: { ok: true } };
+    }
+    return undefined;
+  }
+
+  const routes: UiRoute[] = [
+    {
+      method: "GET",
+      pattern: /^\/api\/ui\/apps$/,
+      /** Serves the list of available local UI apps. */
+      handle: () => ({ json: { apps, initialApp } })
+    },
+    {
+      pattern: /^\/api\/launcher\//,
+      /** Routes launcher API requests to handleLauncherRoute. */
+      handle: (request, url) => handleLauncherRoute(request, url)
+    },
+    ...registrations.flatMap((registration) => registration.routes)
+  ];
   const server = await createLocalUiServer({
     product: "tangent",
     host,
@@ -213,6 +297,84 @@ export async function runTangentUiCommand(argv: string[]): Promise<void> {
   if (booleanArg(args.json)) console.log(JSON.stringify({ url: server.url, apps: apps.map((app) => app.id), initialApp }, null, 2));
   else console.log(`Tangent UI: ${server.url}`);
   await waitForInterrupt(server.close);
+}
+
+/** Runs the open agent/project/setup commands. */
+export async function runOpenCommand(argv: string[]): Promise<void> {
+  const [subcommand, ...rest] = argv;
+  const { loadLaunchConfig, saveLaunchConfig, defaultLaunchConfig, openAgent, openDirectory } = await import("@tangent/launcher");
+
+  if (!subcommand || subcommand === "--help" || subcommand === "-h") {
+    console.log("Usage: tangent open <agent|project|setup> [path]");
+    return;
+  }
+
+  if (subcommand === "setup") {
+    await runOpenSetup(loadLaunchConfig, saveLaunchConfig, defaultLaunchConfig);
+    return;
+  }
+
+  if (subcommand === "agent" || subcommand === "project") {
+    const args = parseArgs(rest);
+    const targetPath = stringArg(args._[0]) || path.resolve(".");
+    const config = await loadLaunchConfig();
+
+    if (subcommand === "agent") {
+      await openAgent(targetPath, { config });
+      console.log(`Opening agent in ${targetPath}`);
+    } else {
+      await openDirectory(targetPath, { config });
+      console.log(`Opening terminal at ${targetPath}`);
+    }
+    return;
+  }
+
+  throw new Error(`Unknown open subcommand: ${subcommand}`);
+}
+
+type LaunchSetup = {
+  driver: "iterm2-tab" | "iterm2-window" | { type: "custom"; template: string };
+  tmux: boolean;
+  agentCommand: string;
+};
+
+/** Prompts the user to configure their launcher preferences. */
+async function runOpenSetup(
+  loadConfig: () => Promise<LaunchSetup>,
+  saveConfig: (config: LaunchSetup) => Promise<void>,
+  defaultConfig: () => LaunchSetup
+): Promise<void> {
+  const existing = await loadConfig();
+  const rl = createInterface({ input, output });
+  try {
+    console.log("Configure terminal launcher.");
+    console.log("Driver options: iterm2-tab, iterm2-window, custom");
+    const rawDriver = (await rl.question(`Driver [${JSON.stringify(existing.driver)}]: `)).trim();
+    let driver: LaunchSetup["driver"] = existing.driver;
+    if (rawDriver === "iterm2-tab" || rawDriver === "iterm2-window") {
+      driver = rawDriver;
+    } else if (rawDriver === "custom") {
+      const template = (await rl.question("Custom template ({cmd} and {cwd} tokens): ")).trim();
+      driver = { type: "custom", template: template || "{cmd}" };
+    } else if (!rawDriver) {
+      driver = existing.driver;
+    } else {
+      driver = { type: "custom", template: rawDriver };
+    }
+
+    const rawTmux = (await rl.question(`Use tmux? [${existing.tmux ? "Y/n" : "y/N"}]: `)).trim().toLowerCase();
+    const tmux = rawTmux === "" ? existing.tmux : rawTmux === "y" || rawTmux === "yes";
+
+    const defaults = defaultConfig();
+    const rawCmd = (await rl.question(`Agent command [${existing.agentCommand || defaults.agentCommand}]: `)).trim();
+    const agentCommand = rawCmd || existing.agentCommand || defaults.agentCommand;
+
+    const config: LaunchSetup = { driver, tmux, agentCommand };
+    await saveConfig(config);
+    console.log(`Saved: driver=${JSON.stringify(driver)} tmux=${tmux} agentCommand=${agentCommand}`);
+  } finally {
+    rl.close();
+  }
 }
 
 type SetupSelection = {

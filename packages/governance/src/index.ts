@@ -53,6 +53,7 @@ export const governanceCommandSpec: CliCommandSpec = {
 const allowedPackageDeps: Record<string, string[]> = {
   "tangent": [
     "@tangent/core",
+    "@tangent/launcher",
     "@tangent/ui-server",
     "@tangent/tangent-ui"
   ],
@@ -80,6 +81,7 @@ const allowedPackageDeps: Record<string, string[]> = {
   "@tangent/eval-ui": ["@tangent/ui-tokens"],
   "@tangent/rollup": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage-index-sqlite"],
   "@tangent/eval": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage-index-sqlite", "@tangent/ui-server", "@tangent/eval-ui"],
+  "@tangent/launcher": ["@tangent/core"],
   "@tangent/search": ["@tangent/core", "@tangent/repo"]
 };
 

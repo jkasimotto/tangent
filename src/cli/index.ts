@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { completeCommand, completionScript, renderCommandHelp, type CliCommandSpec, type CliCompletionShell } from "@tangent/core";
-import { dataCommandSpec, devCommandSpec, doctorCommandSpec, runProductStatusCommand, runSetupCommand, runTangentUiCommand, setupCommandSpec, statusCommandSpec, uiCommandSpec } from "./product.js";
+import { dataCommandSpec, devCommandSpec, doctorCommandSpec, openCommandSpec, runOpenCommand, runProductStatusCommand, runSetupCommand, runTangentUiCommand, setupCommandSpec, statusCommandSpec, uiCommandSpec } from "./product.js";
 import { requiredProductModule } from "./module-loader.js";
 
 const tangentCommandSpec: CliCommandSpec = {
@@ -10,6 +10,7 @@ const tangentCommandSpec: CliCommandSpec = {
     setupCommandSpec,
     statusCommandSpec,
     uiCommandSpec,
+    openCommandSpec,
     productCommandSpec("usage", "Inspect coding-agent activity"),
     productCommandSpec("trees", "Manage Tangent work trees"),
     productCommandSpec("rollup", "Generate private rollup notes"),
@@ -54,6 +55,11 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
 
   if (app === "ui") {
     await runTangentUiCommand(rest);
+    return;
+  }
+
+  if (app === "open") {
+    await runOpenCommand(rest);
     return;
   }
 
@@ -153,6 +159,10 @@ Examples:
   tangent setup
   tangent status
   tangent ui
+  tangent open setup
+  tangent open agent
+  tangent open agent ~/Projects/my-project
+  tangent open project ~/Projects/my-project
   tangent usage today
   tangent trees list
   tangent usage transcript codex:019ea3ad

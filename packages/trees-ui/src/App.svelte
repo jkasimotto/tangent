@@ -2,7 +2,7 @@
   import { onDestroy, onMount } from "svelte";
   import { createTreesApiClient, type TreesUiClient, type TreesUiEntity, type TreesUiProject, type TreesUiWorkspace } from "./client.js";
   import { createLauncherApiClient, type LauncherClient, type LaunchConfig, type LaunchSession } from "./launcher-client.js";
-  import { createWorklogApiClient, type WorklogClient } from "./worklog-client.js";
+  import { createWorklogApiClient, type WorklogClient, type WorklogEntry } from "./worklog-client.js";
   import Worklog from "./Worklog.svelte";
 
   export let client: TreesUiClient = createTreesApiClient();
@@ -58,6 +58,8 @@
 
   let launcherConfig: LaunchConfig | null = null;
   let activeSessions: LaunchSession[] = [];
+  let worklogEntries: WorklogEntry[] = [];
+  let actualInput: number | null = null;
   let selectedSessionKey = "";
   let driverSelectValue = "iterm2-tab";
   let customDriverTemplate = "";
@@ -65,13 +67,49 @@
   onMount(() => {
     void loadWorkspace();
     void loadLauncherData();
+    void loadWorklog();
     pollTimer = setInterval(() => {
       if (!saving) {
         void loadWorkspace({ polling: true });
         void refreshActiveSessions();
+        void loadWorklog();
       }
     }, 2000);
   });
+
+  async function loadWorklog(): Promise<void> {
+    try {
+      worklogEntries = await worklog.list();
+    } catch {
+      // Worklog is non-critical; keep the last good list on error.
+    }
+  }
+
+  /** Worklog entry for a session, matched by cwd and near-identical start time. */
+  function findWorklogForSession(session: LaunchSession, entries: WorklogEntry[]): WorklogEntry | undefined {
+    const startedAt = new Date(session.startedAt).getTime();
+    let best: WorklogEntry | undefined;
+    let bestDelta = 2000;
+    for (const entry of entries) {
+      if (entry.cwd !== session.cwd) continue;
+      const delta = Math.abs(new Date(entry.startedAt).getTime() - startedAt);
+      if (delta <= bestDelta) {
+        bestDelta = delta;
+        best = entry;
+      }
+    }
+    return best;
+  }
+
+  async function markSessionDone(entry: WorklogEntry): Promise<void> {
+    const minutes = Math.max(1, Math.round(Number(actualInput)));
+    try {
+      await worklog.setActual(entry.id, minutes);
+      await loadWorklog();
+    } catch (caught) {
+      error = friendlyError(caught);
+    }
+  }
 
   onDestroy(() => {
     if (pollTimer) clearInterval(pollTimer);
@@ -83,6 +121,7 @@
   $: selectedEntity = selectedPath ? workspace.entities.find((entity) => entity.path === selectedPath) : undefined;
   $: selectedNode = selectedPath ? findNode(nodes, selectedPath) : undefined;
   $: selectedSession = selectedSessionKey ? activeSessions.find((s) => sessionKey(s) === selectedSessionKey) : undefined;
+  $: selectedWorklog = selectedSession ? findWorklogForSession(selectedSession, worklogEntries) : undefined;
   $: entityCount = workspace.entities.length;
   $: configuredCount = workspace.entities.filter(isConfiguredLeafEntity).length;
   $: syncSelectedForm(selectedEntity);
@@ -310,6 +349,8 @@
     selectedSessionKey = sessionKey(session);
     selectedPath = "";
     error = "";
+    // Prefill the actual-time field with elapsed minutes so "Mark done" is one click.
+    actualInput = Math.max(1, Math.round((Date.now() - new Date(session.startedAt).getTime()) / 60000));
   }
 
   function sessionKey(session: LaunchSession): string {
@@ -460,6 +501,32 @@
     if (minutes < 60) return `${minutes}m ago`;
     return `${Math.floor(minutes / 60)}h ago`;
   }
+
+  function durationLabel(minutes: number): string {
+    const m = Math.max(0, Math.round(minutes));
+    if (m < 60) return `${m}m`;
+    return m % 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${Math.floor(m / 60)}h`;
+  }
+
+  // Live progress of an agent against its time estimate. Recomputed on each
+  // template render, which the 2s session poll triggers, so the bar and the
+  // remaining-time label tick on their own without a dedicated clock.
+  function estimateStatus(session: LaunchSession): { ratio: number; remainingMinutes: number; over: boolean } | null {
+    if (!session.estimateMinutes) return null;
+    const elapsedMinutes = (Date.now() - new Date(session.startedAt).getTime()) / 60000;
+    const remainingMinutes = session.estimateMinutes - elapsedMinutes;
+    return {
+      ratio: Math.min(elapsedMinutes / session.estimateMinutes, 1),
+      remainingMinutes,
+      over: remainingMinutes < 0
+    };
+  }
+
+  function remainingLabel(remainingMinutes: number): string {
+    return remainingMinutes < 0
+      ? `${durationLabel(-remainingMinutes)} over`
+      : `${durationLabel(remainingMinutes)} left`;
+  }
 </script>
 
 <div class="app-shell">
@@ -538,6 +605,7 @@
                 <span class="elbow" class:last={row.last}></span>
               </div>
               {#if row.kind === "session"}
+                {@const est = estimateStatus(row.session)}
                 <div class="tree-row session-row" class:selected={selectedSessionKey === sessionKey(row.session)}>
                   <span class="disclosure"><span></span></span>
                   <button type="button" class="node-select session-select" on:click={() => selectSession(row.session)}>
@@ -545,7 +613,10 @@
                       <span class="session-kind-dot" aria-hidden="true">●</span>
                       {row.session.name || row.session.kind}
                     </span>
-                    <span class="node-meta">{row.session.estimateMinutes ? `${row.session.estimateMinutes >= 60 ? `${row.session.estimateMinutes / 60}h` : `${row.session.estimateMinutes}m`} · ` : ""}{relativeTime(row.session.startedAt)}</span>
+                    <span class="node-meta" class:over={est?.over}>{est ? `${durationLabel(row.session.estimateMinutes)} · ${remainingLabel(est.remainingMinutes)}` : relativeTime(row.session.startedAt)}</span>
+                    {#if est}
+                      <span class="estimate-bar" class:over={est.over} style={`--ratio: ${est.ratio}`} aria-hidden="true"></span>
+                    {/if}
                   </button>
                   <button type="button" class="session-stop" aria-label="Stop session" on:click|stopPropagation={() => stopSession(row.session)}>×</button>
                 </div>
@@ -717,9 +788,10 @@
         </div>
       {/if}
     {:else if selectedSession}
+      {@const est = estimateStatus(selectedSession)}
       <header>
         <p>Session</p>
-        <h2>{selectedSession.title || selectedSession.cwd}</h2>
+        <h2>{selectedSession.name || selectedSession.title || selectedSession.cwd}</h2>
       </header>
       <dl class="node-facts">
         <div>
@@ -730,6 +802,18 @@
           <dt>Started</dt>
           <dd>{relativeTime(selectedSession.startedAt)}</dd>
         </div>
+        {#if selectedSession.estimateMinutes}
+          <div>
+            <dt>Estimate</dt>
+            <dd>{durationLabel(selectedSession.estimateMinutes)}</dd>
+          </div>
+        {/if}
+        {#if est}
+          <div>
+            <dt>Remaining</dt>
+            <dd class:over={est.over}>{remainingLabel(est.remainingMinutes)}</dd>
+          </div>
+        {/if}
         {#if selectedSession.tmuxSession}
           <div>
             <dt>Tmux</dt>
@@ -737,6 +821,26 @@
           </div>
         {/if}
       </dl>
+      {#if est}
+        <div class="estimate-track" class:over={est.over} aria-hidden="true">
+          <span style={`width: ${est.ratio * 100}%`}></span>
+        </div>
+      {/if}
+      {#if selectedWorklog}
+        {@const wl = selectedWorklog}
+        {#if wl.actualMinutes != null}
+          <div class="done-banner">Done · took {durationLabel(wl.actualMinutes)}</div>
+        {:else}
+          <div class="mark-done">
+            <label>
+              <span>Time taken</span>
+              <input type="number" min="1" bind:value={actualInput} />
+              <span class="unit">min</span>
+            </label>
+            <button type="button" on:click={() => markSessionDone(wl)}>Mark done</button>
+          </div>
+        {/if}
+      {/if}
       <div class="open-actions">
         <div class="actions">
           <button type="button" on:click={() => focusSession(selectedSession)}>Open</button>

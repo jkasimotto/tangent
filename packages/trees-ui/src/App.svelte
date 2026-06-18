@@ -268,12 +268,10 @@
   }
 
   function receiveWorkspace(next: TreesUiWorkspace, preferredPath = selectedPath): void {
-    const wasEmpty = expandedPaths.length === 0;
     workspace = {
       entities: [...next.entities].sort((left, right) => left.path.localeCompare(right.path)),
       projects: [...next.projects].sort((left, right) => left.name.localeCompare(right.name))
     };
-    if (wasEmpty) expandedPaths = expandablePaths(workspace.entities);
     // If a session is selected and no explicit entity path was requested, don't clobber the empty selectedPath.
     if (!preferredPath && selectedSessionKey) return;
     selectedPath = preferredPath && workspace.entities.some((entity) => entity.path === preferredPath)
@@ -385,11 +383,6 @@
       if (entity && isConfiguredLeafEntity(entity) && !hasChildren) return prefix;
     }
     return undefined;
-  }
-
-  function expandablePaths(entities: TreesUiEntity[]): string[] {
-    const paths = entities.map((entity) => entity.path);
-    return paths.filter((path) => paths.some((candidate) => candidate.startsWith(`${path}/`)));
   }
 
   function parentPathFor(path: string): string | undefined {

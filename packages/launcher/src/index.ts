@@ -6,6 +6,8 @@ export type { LaunchConfig, DriverId, CustomDriver } from "./config.js";
 export { loadLaunchConfig, saveLaunchConfig, defaultLaunchConfig, configPath } from "./config.js";
 export type { LaunchSession } from "./sessions.js";
 export { listActiveSessions } from "./sessions.js";
+export { stopSession } from "./stop.js";
+export { focusSession } from "./focus.js";
 
 export interface OpenOptions {
   config?: LaunchConfig;

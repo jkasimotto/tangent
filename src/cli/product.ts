@@ -267,6 +267,21 @@ export async function runTangentUiCommand(argv: string[]): Promise<void> {
       }
       return { status: 200, json: { ok: true } };
     }
+    if (request.method === "POST" && url.pathname === "/api/launcher/sessions/stop") {
+      const body = await readJson(request) as Record<string, unknown>;
+      if (typeof body["cwd"] === "string") {
+        await launcher.stopSession(body as unknown as Parameters<typeof launcher.stopSession>[0]);
+      }
+      return { status: 204, json: null };
+    }
+    if (request.method === "POST" && url.pathname === "/api/launcher/sessions/focus") {
+      const body = await readJson(request) as Record<string, unknown>;
+      if (typeof body["cwd"] === "string") {
+        const config = await launcher.loadLaunchConfig();
+        await launcher.focusSession(body as unknown as Parameters<typeof launcher.focusSession>[0], config);
+      }
+      return { status: 204, json: null };
+    }
     return undefined;
   }
 

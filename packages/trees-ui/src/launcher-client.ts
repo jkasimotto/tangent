@@ -9,6 +9,7 @@ export interface LaunchSession {
   kind: "agent" | "terminal";
   tmux: boolean;
   tmuxSession?: string;
+  title?: string;
   startedAt: string;
 }
 
@@ -18,6 +19,8 @@ export type LauncherClient = {
   listSessions(): Promise<LaunchSession[]>;
   openAgent(path: string, options?: { tmux?: boolean; title?: string }): Promise<void>;
   openTerminal(path: string, options?: { title?: string }): Promise<void>;
+  stopSession(session: LaunchSession): Promise<void>;
+  focusSession(session: LaunchSession): Promise<void>;
 };
 
 /** Creates a browser client backed by the local launcher HTTP API. */
@@ -60,6 +63,24 @@ export function createLauncherApiClient(basePath = "/api/launcher"): LauncherCli
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ type: "terminal", path, title: options?.title })
+      });
+      if (!response.ok) throw new Error(`Launcher API error (${response.status}).`);
+    },
+    /** Stops a running session by killing the tmux session or closing the iTerm2 tab. */
+    async stopSession(session) {
+      const response = await fetch(`${basePath}/sessions/stop`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(session)
+      });
+      if (!response.ok) throw new Error(`Launcher API error (${response.status}).`);
+    },
+    /** Focuses a running session by bringing the iTerm2 tab to front or attaching to the tmux session. */
+    async focusSession(session) {
+      const response = await fetch(`${basePath}/sessions/focus`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(session)
       });
       if (!response.ok) throw new Error(`Launcher API error (${response.status}).`);
     }

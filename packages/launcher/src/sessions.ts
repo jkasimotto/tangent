@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { configPath } from "./config.js";
+import { listIterm2SessionNames } from "./drivers/iterm2.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -13,6 +14,8 @@ export interface LaunchSession {
   tmux: boolean;
   /** Named tmux session created for this launch. Set only when tmux is true and no existing session was active. */
   tmuxSession?: string;
+  /** iTerm2 tab name set when the session was opened, used for liveness detection. */
+  title?: string;
   startedAt: string;
 }
 
@@ -52,14 +55,21 @@ export async function recordSession(session: LaunchSession): Promise<void> {
 
 /**
  * Returns sessions that are still live. Tmux sessions are checked via
- * `tmux has-session`; non-tmux sessions are returned if started within 24h.
- * Dead tmux sessions are pruned from the file.
+ * `tmux has-session`; non-tmux sessions with a title are checked against
+ * current iTerm2 tab names; others fall back to a 24h window.
+ * Dead sessions are pruned from the file.
  */
 export async function listActiveSessions(): Promise<LaunchSession[]> {
   const sessions = await readSessions();
   const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const active: LaunchSession[] = [];
 
+  let iterm2Names: Set<string> | undefined;
+  if (sessions.some((s) => !s.tmuxSession && s.title)) {
+    const names = await listIterm2SessionNames();
+    iterm2Names = new Set(names);
+  }
+
+  const active: LaunchSession[] = [];
   for (const session of sessions) {
     if (session.tmuxSession) {
       try {
@@ -68,17 +78,20 @@ export async function listActiveSessions(): Promise<LaunchSession[]> {
       } catch {
         // dead tmux session — omit
       }
+    } else if (session.title && iterm2Names !== undefined) {
+      if (iterm2Names.has(session.title)) active.push(session);
     } else if (session.startedAt >= cutoff) {
       active.push(session);
     }
   }
 
-  if (active.length !== sessions.length) {
-    const pruned = sessions.filter((s) =>
-      s.tmuxSession ? active.includes(s) : s.startedAt >= cutoff
-    );
-    await writeSessions(pruned);
-  }
+  if (active.length !== sessions.length) await writeSessions(active);
 
   return active;
+}
+
+/** Removes the session record identified by cwd and startedAt from the sessions file. */
+export async function removeSession(cwd: string, startedAt: string): Promise<void> {
+  const sessions = await readSessions();
+  await writeSessions(sessions.filter((s) => !(s.cwd === cwd && s.startedAt === startedAt)));
 }

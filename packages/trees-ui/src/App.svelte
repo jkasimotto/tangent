@@ -21,6 +21,17 @@
     last: boolean;
   };
 
+  type SessionRow = {
+    kind: "session";
+    session: LaunchSession;
+    entity: TreesUiEntity;
+    depth: number;
+    connectors: boolean[];
+    last: boolean;
+  };
+
+  type AnyRow = ({ kind: "entity" } & TreeRow) | SessionRow;
+
   let workspace: TreesUiWorkspace = { entities: [], projects: [] };
   let loading = true;
   let saving = false;
@@ -57,13 +68,13 @@
 
   $: nodes = buildTree(workspace.entities);
   $: rows = flattenTree(nodes, expandedPaths);
+  $: displayRows = injectSessionRows(rows, activeSessions, workspace.projects);
   $: selectedEntity = selectedPath ? workspace.entities.find((entity) => entity.path === selectedPath) : undefined;
   $: selectedNode = selectedPath ? findNode(nodes, selectedPath) : undefined;
   $: entityCount = workspace.entities.length;
   $: configuredCount = workspace.entities.filter(isConfiguredLeafEntity).length;
   $: syncSelectedForm(selectedEntity);
   $: syncLauncherForm(launcherConfig);
-  $: activeSessionCwds = new Set(activeSessions.map((s) => s.cwd));
   $: selectedOpenPath = selectedEntity
     ? (selectedEntity.worktreePath || workspace.projects.find((p) => p.id === selectedEntity?.projectId)?.path)
     : undefined;
@@ -129,6 +140,23 @@
       } else {
         await launcher.openTerminal(selectedOpenPath, { title });
       }
+      activeSessions = await launcher.listSessions();
+    } catch (caught) {
+      error = friendlyError(caught);
+    }
+  }
+
+  async function focusSession(session: LaunchSession): Promise<void> {
+    try {
+      await launcher.focusSession(session);
+    } catch (caught) {
+      error = friendlyError(caught);
+    }
+  }
+
+  async function stopSession(session: LaunchSession): Promise<void> {
+    try {
+      await launcher.stopSession(session);
       activeSessions = await launcher.listSessions();
     } catch (caught) {
       error = friendlyError(caught);
@@ -363,6 +391,35 @@
   function friendlyError(value: unknown): string {
     return value instanceof Error ? value.message : String(value);
   }
+
+  function injectSessionRows(entityRows: TreeRow[], sessions: LaunchSession[], projects: TreesUiProject[]): AnyRow[] {
+    const result: AnyRow[] = [];
+    for (const row of entityRows) {
+      result.push({ kind: "entity", ...row });
+      const cwd = row.entity.worktreePath ?? projects.find((p) => p.id === row.entity.projectId)?.path ?? "";
+      if (!cwd) continue;
+      const entitySessions = sessions.filter((s) => s.cwd === cwd);
+      for (let j = 0; j < entitySessions.length; j++) {
+        result.push({
+          kind: "session",
+          session: entitySessions[j],
+          entity: row.entity,
+          depth: row.depth + 1,
+          connectors: [...row.connectors, !row.last],
+          last: j === entitySessions.length - 1
+        });
+      }
+    }
+    return result;
+  }
+
+  function relativeTime(iso: string): string {
+    const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+    if (seconds < 60) return `${seconds}s ago`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    return `${Math.floor(minutes / 60)}h ago`;
+  }
 </script>
 
 <main class="trees-workspace" aria-label="Trees workspace">
@@ -424,7 +481,7 @@
         </div>
       {:else}
         <div class="tree-list" role="tree" aria-label="Tree nodes">
-          {#each rows as row}
+          {#each displayRows as row}
             <div class="tree-row-wrap" style={`--depth: ${row.depth}`}>
               <div class="tree-guides" aria-hidden="true">
                 {#each row.connectors as connector}
@@ -432,48 +489,59 @@
                 {/each}
                 <span class="elbow" class:last={row.last}></span>
               </div>
-              <div
-                role="treeitem"
-                aria-selected={selectedPath === row.entity.path}
-                aria-expanded={row.hasChildren ? expandedPaths.includes(row.entity.path) : undefined}
-                class="tree-row"
-                class:selected={selectedPath === row.entity.path}
-                class:locked={row.configured && !row.hasChildren}
-                class:conflict={row.conflict}
-              >
-                <span class="disclosure">
-                  {#if row.hasChildren}
-                    <button
-                      type="button"
-                      aria-label={`${expandedPaths.includes(row.entity.path) ? "Collapse" : "Expand"} ${row.entity.path}`}
-                      on:click|stopPropagation={() => toggleExpanded(row.entity.path)}
-                    >
-                      {expandedPaths.includes(row.entity.path) ? "▾" : "▸"}
-                    </button>
-                  {:else}
-                    <span></span>
-                  {/if}
-                </span>
-                <button type="button" class="node-select" on:click={() => { selectEntity(row.entity.path); if (row.hasChildren) toggleExpanded(row.entity.path); }}>
-                  <span class="node-name">
-                    {row.name}
-                    {#if activeSessionCwds.has(row.entity.worktreePath ?? workspace.projects.find((p) => p.id === row.entity.projectId)?.path ?? "")}
-                      <span class="session-dot" aria-hidden="true" title="Active session">●</span>
-                    {/if}
-                  </span>
-                  <span class="node-meta">
-                    {#if row.conflict}
-                      Mixed
-                    {:else if row.configured}
-                      {projectName(workspace.projects, row.entity.projectId)} · {row.entity.branch}
-                    {:else if row.hasChildren}
-                      Group
+              {#if row.kind === "session"}
+                <div class="tree-row session-row">
+                  <span class="disclosure"><span></span></span>
+                  <button type="button" class="node-select session-select" on:click={() => focusSession(row.session)}>
+                    <span class="node-name">
+                      <span class="session-kind-dot" aria-hidden="true">●</span>
+                      {row.session.kind}
+                    </span>
+                    <span class="node-meta">{relativeTime(row.session.startedAt)}</span>
+                  </button>
+                  <button type="button" class="session-stop" aria-label="Stop session" on:click|stopPropagation={() => stopSession(row.session)}>×</button>
+                </div>
+              {:else}
+                <div
+                  role="treeitem"
+                  aria-selected={selectedPath === row.entity.path}
+                  aria-expanded={row.hasChildren ? expandedPaths.includes(row.entity.path) : undefined}
+                  class="tree-row"
+                  class:selected={selectedPath === row.entity.path}
+                  class:locked={row.configured && !row.hasChildren}
+                  class:conflict={row.conflict}
+                >
+                  <span class="disclosure">
+                    {#if row.hasChildren}
+                      <button
+                        type="button"
+                        aria-label={`${expandedPaths.includes(row.entity.path) ? "Collapse" : "Expand"} ${row.entity.path}`}
+                        on:click|stopPropagation={() => toggleExpanded(row.entity.path)}
+                      >
+                        {expandedPaths.includes(row.entity.path) ? "▾" : "▸"}
+                      </button>
                     {:else}
-                      Unassigned
+                      <span></span>
                     {/if}
                   </span>
-                </button>
-              </div>
+                  <button type="button" class="node-select" on:click={() => { selectEntity(row.entity.path); if (row.hasChildren) toggleExpanded(row.entity.path); }}>
+                    <span class="node-name">
+                      {row.name}
+                    </span>
+                    <span class="node-meta">
+                      {#if row.conflict}
+                        Mixed
+                      {:else if row.configured}
+                        {projectName(workspace.projects, row.entity.projectId)} · {row.entity.branch}
+                      {:else if row.hasChildren}
+                        Group
+                      {:else}
+                        Unassigned
+                      {/if}
+                    </span>
+                  </button>
+                </div>
+              {/if}
             </div>
           {/each}
         </div>

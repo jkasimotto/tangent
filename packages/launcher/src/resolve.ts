@@ -50,7 +50,7 @@ export async function openTerminalSession(
     throw new Error(`Unknown launcher driver: ${JSON.stringify(driver)}`);
   }
 
-  await recordSession({ cwd, kind, tmux: config.tmux, tmuxSession, startedAt: new Date().toISOString() });
+  await recordSession({ cwd, kind, tmux: config.tmux, tmuxSession, title, startedAt: new Date().toISOString() });
 }
 
 /** Single-quotes a value for safe shell interpolation. */

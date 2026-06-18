@@ -506,6 +506,51 @@ select:disabled {
   vertical-align: 2px;
 }
 
+.session-row {
+  grid-template-columns: 28px minmax(0, 1fr) 24px;
+  opacity: 0.85;
+}
+
+.session-row:hover {
+  opacity: 1;
+}
+
+.session-select .node-name {
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.session-select:hover .node-name {
+  color: var(--accent);
+}
+
+.session-kind-dot {
+  color: var(--accent);
+  font-size: 8px;
+  margin-right: 6px;
+  vertical-align: 1px;
+}
+
+.session-stop {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.session-stop:hover {
+  background: var(--danger-muted, #fee);
+  color: var(--danger, #c0392b);
+}
+
 .open-actions {
   margin-top: 20px;
   padding-top: 16px;

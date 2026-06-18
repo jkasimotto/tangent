@@ -51,6 +51,77 @@ function shellEscape(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
+/** Lists the names of all currently open iTerm2 sessions across all windows and tabs. Returns empty array if iTerm2 is not running or AppleScript fails. */
+export async function listIterm2SessionNames(): Promise<string[]> {
+  const script = `
+    tell application "iTerm2"
+      set out to {}
+      repeat with w in windows
+        repeat with t in tabs of w
+          repeat with s in sessions of t
+            set end of out to name of s
+          end repeat
+        end repeat
+      end repeat
+      return out
+    end tell
+  `;
+  try {
+    const { stdout } = await execFileAsync("osascript", ["-e", script]);
+    return stdout.trim().split(", ").filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/** Closes the first iTerm2 tab whose session name matches the given title. No-op if not found. */
+export async function closeIterm2SessionByName(title: string): Promise<void> {
+  const script = `
+    tell application "iTerm2"
+      repeat with w in windows
+        repeat with t in tabs of w
+          repeat with s in sessions of t
+            if name of s is ${appleScriptString(title)} then
+              close t
+              return
+            end if
+          end repeat
+        end repeat
+      end repeat
+    end tell
+  `;
+  try {
+    await execFileAsync("osascript", ["-e", script]);
+  } catch {
+    // tab not found or iTerm2 not running
+  }
+}
+
+/** Brings the iTerm2 tab with the given session name to the foreground. No-op if not found. */
+export async function focusIterm2SessionByName(title: string): Promise<void> {
+  const script = `
+    tell application "iTerm2"
+      activate
+      repeat with w in windows
+        repeat with t in tabs of w
+          repeat with s in sessions of t
+            if name of s is ${appleScriptString(title)} then
+              set index of w to 1
+              select t
+              return
+            end if
+          end repeat
+        end repeat
+      end repeat
+    end tell
+  `;
+  try {
+    await execFileAsync("osascript", ["-e", script]);
+  } catch {
+    // tab not found or iTerm2 not running
+  }
+}
+
 /** Double-quotes a value for safe AppleScript string interpolation. */
 function appleScriptString(value: string): string {
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;

@@ -183,6 +183,7 @@ export type UsageSession = {
   id: string;
   provider: string;
   providerSessionId?: string;
+  transcriptPath?: string;
   title?: string;
   firstPrompt?: string;
   summary?: string;

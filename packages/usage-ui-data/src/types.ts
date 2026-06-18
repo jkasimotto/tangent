@@ -24,6 +24,7 @@ export type UsageSession = {
   id: string;
   provider: string;
   providerSessionId?: string;
+  transcriptPath?: string;
   title?: string;
   firstPrompt?: string;
   summary?: string;
@@ -467,6 +468,8 @@ export type UsageConversationSessionItem = {
   id: string;
   title: string;
   provider: string;
+  providerSessionId?: string;
+  transcriptPath?: string;
   model?: string;
   status?: string;
   startedAt?: string;

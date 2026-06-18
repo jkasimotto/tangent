@@ -335,9 +335,16 @@
     return tool.resultDisplayPreview;
   }
 
-  /** Returns the full readable body for a message. */
+  /** Copies a value to the clipboard when available; used for the session id chip. */
+  function copyText(value: string | undefined): void {
+    if (value && typeof navigator !== "undefined" && navigator.clipboard) void navigator.clipboard.writeText(value);
+  }
+
+  /** Returns the full readable body for a message, falling back to a placeholder that names the session for raw-transcript lookup. */
   function messageBody(message: UsageConversationMessage): string {
-    return message.text || message.textPreview || "No transcript text available.";
+    if (message.text || message.textPreview) return message.text || message.textPreview || "";
+    const sessionId = view?.selected.providerSessionId;
+    return sessionId ? `No transcript text available. Session ${sessionId}` : "No transcript text available.";
   }
 
   function isLongMessage(message: UsageConversationMessage): boolean {
@@ -419,6 +426,16 @@
       <div class="read-heading">
         <p>Active work over time</p>
         <h1>{view ? view.selected.title : "Loading conversation"}</h1>
+        {#if view?.selected.providerSessionId}
+          <button
+            type="button"
+            class="read-id"
+            title={`Copy session id${view.selected.transcriptPath ? ` · ${view.selected.transcriptPath}` : ""}`}
+            onclick={() => copyText(view?.selected.providerSessionId)}
+          >
+            {view.selected.providerSessionId} ⧉
+          </button>
+        {/if}
       </div>
       <div class="read-controls">
         {#if view?.selected.durationLabel}<span class="read-stat">{view.selected.durationLabel}</span>{/if}

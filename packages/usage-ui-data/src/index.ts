@@ -132,6 +132,7 @@ type UsageDomainSession = {
   id: string;
   provider: string;
   providerSessionId?: string;
+  transcriptPath?: string;
   title?: string;
   firstPrompt?: string;
   summary?: string;
@@ -658,6 +659,7 @@ function domainSession(session: UsageDomainSession): UsageSession {
     id: session.id,
     provider: session.provider,
     providerSessionId: session.providerSessionId,
+    transcriptPath: session.transcriptPath,
     title: session.title,
     firstPrompt: session.firstPrompt,
     summary: session.summary,

@@ -84,6 +84,7 @@ function projectSessions(events: AnnotatedEvent[], capabilities: UsageProviderCa
       id: sessionId,
       provider: first.provider,
       providerSessionId: first.scope.providerSessionId,
+      transcriptPath: stringValue(first.source.path),
       title: stringValue(first.providerFields?.conversation && objectValue(first.providerFields.conversation)?.title) || textPreview(firstPrompt),
       firstPrompt: textValue(firstPrompt),
       summary: stringValue(first.providerFields?.conversation && objectValue(first.providerFields.conversation)?.summary),

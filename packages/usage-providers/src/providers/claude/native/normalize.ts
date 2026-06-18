@@ -15,7 +15,7 @@ export type ClaudeNativeNormalizeOptions = {
 };
 
 export function normalizeClaudeNativeRecords(records: ClaudeNativeRecord[], options: ClaudeNativeNormalizeOptions): UsageJsonlLineV1[] {
-  const visible = records.filter((row) => !isMetaRecord(row.record));
+  const visible = mergeClaudeAssistantChunks(records.filter((row) => !isMetaRecord(row.record)));
   if (!visible.length) return [];
   const first = visible[0]!;
   const last = visible.at(-1)!;
@@ -341,6 +341,103 @@ function extractText(value: unknown, mode: "user" | "assistant" = "assistant"): 
       .join("\n");
   }
   return undefined;
+}
+
+/**
+ * Collapses the streamed chunks of one assistant turn into a single record.
+ * Claude writes one assistant turn across several JSONL lines sharing a
+ * `message.id` (a thinking line, a text line, then each tool_use on its own
+ * line), and every line repeats the identical `usage` object. Emitting events
+ * per line therefore duplicates the message, splits its text, and multiplies
+ * token totals. A `message.id` is unique per API response, so all records that
+ * carry it belong to one turn even when interleaved tool_result lines separate
+ * them (parallel tool calls). This groups every same-id assistant record,
+ * regardless of contiguity, into one record emitted at the turn's first
+ * occurrence, so the rest of the pipeline sees a single message, all distinct
+ * tool calls, and one usage reading.
+ */
+function mergeClaudeAssistantChunks(records: ClaudeNativeRecord[]): ClaudeNativeRecord[] {
+  const groups = new Map<string, ClaudeNativeRecord[]>();
+  const slots: Array<{ record?: ClaudeNativeRecord; id?: string }> = [];
+  for (const row of records) {
+    const mid = assistantRunMessageId(row.record);
+    if (!mid) {
+      slots.push({ record: row });
+      continue;
+    }
+    if (!groups.has(mid)) {
+      groups.set(mid, []);
+      slots.push({ id: mid });
+    }
+    groups.get(mid)!.push(row);
+  }
+  return slots.map((slot) => (slot.record ? slot.record : mergeAssistantRun(groups.get(slot.id!)!)));
+}
+
+/** Returns the assistant `message.id` for a record, or undefined for non-assistant records and records without an id. */
+function assistantRunMessageId(record: Record<string, unknown>): string | undefined {
+  if (stringValue(record.type) !== "assistant") return undefined;
+  return stringValue(objectValue(record.message)?.id);
+}
+
+/** Builds one record from all chunks of an assistant turn: first chunk's envelope, last chunk's message metadata, merged content blocks. */
+function mergeAssistantRun(run: ClaudeNativeRecord[]): ClaudeNativeRecord {
+  if (run.length === 1) return run[0]!;
+  const lastMessage = objectValue(run.at(-1)!.record.message) || {};
+  const blocks = mergeClaudeContentBlocks(run.map((row) => objectValue(row.record.message)?.content));
+  return {
+    line: run[0]!.line,
+    record: { ...run[0]!.record, message: { ...lastMessage, content: blocks } }
+  };
+}
+
+/**
+ * Merges content blocks across chunks, deduplicating by alignment so neither
+ * additive chunks (distinct block per line) nor cumulative snapshots (each line
+ * repeats prior blocks) double-count. Text blocks align by prefix and keep the
+ * longest; tool_use blocks align by id and keep the latest; other blocks align
+ * only on deep equality.
+ */
+function mergeClaudeContentBlocks(contents: Array<unknown>): unknown[] {
+  const merged: Record<string, unknown>[] = [];
+  for (const content of contents) {
+    if (!Array.isArray(content)) continue;
+    for (const raw of content) {
+      const block = objectValue(raw);
+      if (!block) continue;
+      const index = merged.findIndex((existing) => blocksAlign(existing, block));
+      if (index === -1) merged.push(block);
+      else merged[index] = pickLatestBlock(merged[index]!, block);
+    }
+  }
+  return merged;
+}
+
+/** Reports whether two content blocks represent the same logical block (text prefix, tool_use id, else deep equality). */
+function blocksAlign(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+  const type = stringValue(a.type);
+  if (type !== stringValue(b.type)) return false;
+  if (type === "text") {
+    const ta = stringValue(a.text) || "";
+    const tb = stringValue(b.text) || "";
+    return ta === tb || tb.startsWith(ta) || ta.startsWith(tb);
+  }
+  if (type === "tool_use") {
+    const ida = stringValue(a.id);
+    const idb = stringValue(b.id);
+    if (ida && idb) return ida === idb;
+  }
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/** Picks the more complete of two aligned blocks: the longer text, the latest tool_use, otherwise the existing block. */
+function pickLatestBlock(existing: Record<string, unknown>, candidate: Record<string, unknown>): Record<string, unknown> {
+  const type = stringValue(existing.type);
+  if (type === "text") {
+    return (stringValue(candidate.text) || "").length >= (stringValue(existing.text) || "").length ? candidate : existing;
+  }
+  if (type === "tool_use") return candidate;
+  return existing;
 }
 
 /** Concatenates the text of any `thinking` content blocks on an assistant message; returns undefined when none carry plaintext. */

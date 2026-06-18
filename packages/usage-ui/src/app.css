@@ -307,6 +307,27 @@ button {
   white-space: nowrap;
 }
 
+.read-id {
+  margin: 3px 0 0;
+  padding: 1px 6px;
+  border: 1px solid #d4dad6;
+  border-radius: 4px;
+  background: #f4f6f5;
+  color: #66716a;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.read-id:hover {
+  color: #2f3a34;
+  border-color: #b7c0ba;
+}
+
 .read-controls {
   flex: 0 0 auto;
   display: flex;

@@ -60,3 +60,35 @@ test("claude native capture keeps thinking, plans, and verbatim tool output", ()
   const result = events.find((event) => event.kind === "tool.result");
   assert.equal(result.data.output, longOutput, "tool output must be stored verbatim, not truncated");
 });
+
+test("claude native merges streamed assistant chunks sharing one message.id", () => {
+  const usage = { input_tokens: 100, output_tokens: 50 };
+  const chunk = (line, block, stop) => ({
+    line,
+    record: {
+      type: "assistant",
+      timestamp: `2026-06-18T00:00:0${line}.000Z`,
+      sessionId: "sess-2",
+      message: { id: "msg-merge", model: "claude-opus-4-8", content: [block], usage, stop_reason: stop }
+    }
+  });
+  const records = [
+    chunk(0, { type: "thinking", thinking: "let me reason" }, "tool_use"),
+    chunk(1, { type: "text", text: "doing it" }, "tool_use"),
+    chunk(2, { type: "tool_use", id: "tu-a", name: "Read", input: { file_path: "/a" } }, "tool_use"),
+    chunk(3, { type: "tool_use", id: "tu-b", name: "Bash", input: { command: "ls" } }, "tool_use")
+  ];
+
+  const events = normalizeClaudeNativeRecords(records, { sourcePath: "/tmp/sess-2.jsonl", inferredComplete: false });
+
+  const messages = events.filter((event) => event.kind === "message.assistant.visible");
+  assert.equal(messages.length, 1, "streamed chunks collapse to one assistant message");
+  assert.equal(messages[0].data.text, "doing it");
+  assert.equal(messages[0].data.thinking, "let me reason");
+
+  assert.equal(events.filter((event) => event.kind === "tool.call").length, 2, "both distinct tool calls preserved");
+
+  const tokenEvents = events.filter((event) => event.kind === "token.usage");
+  assert.equal(tokenEvents.length, 1, "usage emitted once per turn, not once per chunk");
+  assert.equal(tokenEvents[0].data.usage.output_tokens, 50, "no token multiplication across chunks");
+});

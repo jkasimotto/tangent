@@ -234,6 +234,8 @@ function sessionItem(session: UsageSession): UsageConversationSessionItem {
     id: session.id,
     title: cleanTitle(session.title || session.firstPrompt || session.id),
     provider: session.provider || "unknown",
+    providerSessionId: session.providerSessionId,
+    transcriptPath: session.transcriptPath,
     model: session.models?.[0],
     status: session.status,
     startedAt: session.startedAt,

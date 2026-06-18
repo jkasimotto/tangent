@@ -33,6 +33,8 @@ export function printToolRows(rows: ToolCallWithResult[]): void {
 
 export function printConversationReport(report: NormalizedConversation): void {
   console.log(`Session ${report.conversationId}`);
+  if (report.providerSessionId) console.log(`Provider session ${report.providerSessionId}`);
+  if (report.transcriptPath) console.log(`Transcript ${report.transcriptPath}`);
   if (!report.messages.length) {
     console.log("No visible transcript messages captured.");
     return;

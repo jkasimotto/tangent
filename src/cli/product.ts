@@ -326,7 +326,8 @@ export async function runTangentUiCommand(argv: string[]): Promise<void> {
     if (request.method === "POST" && url.pathname === "/api/worklog/actual") {
       const body = await readJson(request) as Record<string, unknown>;
       if (typeof body["id"] === "string" && typeof body["minutes"] === "number") {
-        await setWorklogActual(body["id"], body["minutes"]);
+        const note = typeof body["note"] === "string" ? body["note"].trim() || undefined : undefined;
+        await setWorklogActual(body["id"], body["minutes"], note);
       }
       return { status: 204, json: null };
     }

@@ -20,7 +20,7 @@ export type WorklogManualInput = {
 
 export type WorklogClient = {
   list(): Promise<WorklogEntry[]>;
-  setActual(id: string, minutes: number): Promise<void>;
+  setActual(id: string, minutes: number, note?: string): Promise<void>;
   create(input: WorklogManualInput): Promise<WorklogEntry | null>;
 };
 
@@ -34,12 +34,12 @@ export function createWorklogApiClient(basePath = "/api/worklog"): WorklogClient
       const value = await response.json() as unknown;
       return Array.isArray(value) ? (value as WorklogEntry[]) : [];
     },
-    /** Records the user-confirmed actual minutes for an entry. */
-    async setActual(id, minutes) {
+    /** Records the user-confirmed actual minutes for an entry, with an optional note about what happened. */
+    async setActual(id, minutes, note) {
       const response = await fetch(`${basePath}/actual`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ id, minutes })
+        body: JSON.stringify({ id, minutes, note })
       });
       if (!response.ok) throw new Error(`Worklog API error (${response.status}).`);
     },

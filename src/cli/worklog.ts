@@ -64,8 +64,12 @@ export async function listWorklogEntries(): Promise<WorklogEntry[]> {
   return readEntries();
 }
 
-/** Records the user-confirmed actual time for a worklog entry. */
-export async function setWorklogActual(id: string, minutes: number): Promise<void> {
+/** Records the user-confirmed actual time for a worklog entry, optionally appending a note about what happened. */
+export async function setWorklogActual(id: string, minutes: number, note?: string): Promise<void> {
   const entries = await readEntries();
-  await writeEntries(entries.map((entry) => (entry.id === id ? { ...entry, actualMinutes: minutes } : entry)));
+  await writeEntries(entries.map((entry) => {
+    if (entry.id !== id) return entry;
+    const description = note ? [entry.description, note].filter(Boolean).join("\n") : entry.description;
+    return { ...entry, actualMinutes: minutes, description };
+  }));
 }

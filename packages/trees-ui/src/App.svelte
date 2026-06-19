@@ -66,6 +66,7 @@
   let activeSessions: LaunchSession[] = [];
   let worklogEntries: WorklogEntry[] = [];
   let actualInput: number | null = null;
+  let doneNote = "";
   let selectedSessionKey = "";
   let driverSelectValue = "iterm2-tab";
   let customDriverTemplate = "";
@@ -110,7 +111,8 @@
   async function markSessionDone(entry: WorklogEntry): Promise<void> {
     const minutes = Math.max(1, Math.round(Number(actualInput)));
     try {
-      await worklog.setActual(entry.id, minutes);
+      await worklog.setActual(entry.id, minutes, doneNote.trim() || undefined);
+      doneNote = "";
       await loadWorklog();
     } catch (caught) {
       error = friendlyError(caught);
@@ -380,6 +382,7 @@
     error = "";
     // Prefill the actual-time field with elapsed minutes so "Mark done" is one click.
     actualInput = Math.max(1, Math.round((Date.now() - new Date(session.startedAt).getTime()) / 60000));
+    doneNote = "";
   }
 
   function sessionKey(session: LaunchSession): string {
@@ -901,6 +904,10 @@
               <span>Time taken</span>
               <input type="number" min="1" bind:value={actualInput} />
               <span class="unit">min</span>
+            </label>
+            <label class="done-note">
+              <span>Notes (optional)</span>
+              <textarea bind:value={doneNote} rows="2" placeholder="What happened this session"></textarea>
             </label>
             <button type="button" on:click={() => markSessionDone(wl)}>Mark done</button>
           </div>

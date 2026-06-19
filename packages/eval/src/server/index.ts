@@ -102,7 +102,7 @@ export async function startEvalUiServer(options: StartEvalUiServerOptions = {}):
 
 /** Creates an Eval app registration for the combined Tangent UI. */
 export async function createEvalUiApp(options: StartEvalUiServerOptions = {}): Promise<EvalUiApp> {
-  const [{ evalUiAssets }] = await Promise.all([
+  const [{ evalUiEmbeddedAssets }] = await Promise.all([
     import("@tangent/eval-ui/assets")
   ]);
   return {
@@ -110,10 +110,11 @@ export async function createEvalUiApp(options: StartEvalUiServerOptions = {}): P
       id: "eval",
       label: "Eval",
       routePath: "/eval",
-      modulePath: "/apps/eval/assets/embedded.js"
+      modulePath: "/apps/eval/embedded.js",
+      stylePaths: ["/apps/eval/embedded.css"]
     },
     routes: evalApiRoutes({ preferredRunId: options.runId }),
-    assetMounts: [{ pathPrefix: "/apps/eval", assets: evalUiAssets }],
+    assetMounts: [{ pathPrefix: "/apps/eval", assets: evalUiEmbeddedAssets }],
     runId: options.runId
   };
 }
@@ -349,12 +350,11 @@ async function artifactCandidates(left: EvalRunVariantState, right: EvalRunVaria
     contextArtifactPaths(left, right),
     codeArtifactPaths(left, right)
   ]);
-  const rows: ArtifactCandidate[] = [];
   const promptPaths = new Set([...leftPrompts.keys(), ...rightPrompts.keys()]);
-  for (const promptPath of promptPaths) {
+  const promptRows: ArtifactCandidate[] = [...promptPaths].map((promptPath) => {
     const leftContent = leftPrompts.get(promptPath);
     const rightContent = rightPrompts.get(promptPath);
-    rows.push({
+    return {
       id: `prompt:${promptPath}`,
       kind: "prompt",
       path: promptPath,
@@ -362,38 +362,18 @@ async function artifactCandidates(left: EvalRunVariantState, right: EvalRunVaria
       status: contentStatus(leftContent, rightContent),
       leftContent,
       rightContent
-    });
-  }
-  for (const contextPath of contextPaths) {
-    const [leftContent, rightContent] = await Promise.all([
-      showContextFile(left, contextPath),
-      showContextFile(right, contextPath)
-    ]);
-    rows.push({
-      id: `context:${contextPath}`,
-      kind: "context",
-      path: contextPath,
-      label: contextPath,
-      status: contentStatus(leftContent, rightContent),
-      leftContent,
-      rightContent
-    });
-  }
-  for (const codePath of codePaths) {
-    const [leftContent, rightContent] = await Promise.all([
-      showImplementationFile(left, codePath),
-      showImplementationFile(right, codePath)
-    ]);
-    rows.push({
-      id: `code:${codePath}`,
-      kind: "code",
-      path: codePath,
-      label: codePath,
-      status: contentStatus(leftContent, rightContent),
-      leftContent,
-      rightContent
-    });
-  }
+    };
+  });
+  // git show spawns one subprocess per file, so read every context/code file pair concurrently rather than per-iteration.
+  const contextRows = Promise.all(contextPaths.map(async (contextPath): Promise<ArtifactCandidate> => {
+    const [leftContent, rightContent] = await Promise.all([showContextFile(left, contextPath), showContextFile(right, contextPath)]);
+    return { id: `context:${contextPath}`, kind: "context", path: contextPath, label: contextPath, status: contentStatus(leftContent, rightContent), leftContent, rightContent };
+  }));
+  const codeRows = Promise.all(codePaths.map(async (codePath): Promise<ArtifactCandidate> => {
+    const [leftContent, rightContent] = await Promise.all([showImplementationFile(left, codePath), showImplementationFile(right, codePath)]);
+    return { id: `code:${codePath}`, kind: "code", path: codePath, label: codePath, status: contentStatus(leftContent, rightContent), leftContent, rightContent };
+  }));
+  const rows = [...promptRows, ...await contextRows, ...await codeRows];
   return rows.sort((a, b) => artifactSortKey(a).localeCompare(artifactSortKey(b)));
 }
 

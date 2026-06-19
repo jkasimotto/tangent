@@ -27,9 +27,16 @@ test("worklog round-trips entries and records actuals", async () => {
     assert.equal(entries.find((entry) => entry.id === a.id).actualMinutes, 45);
     assert.equal(entries.find((entry) => entry.id === b.id).actualMinutes, null);
 
+    // Non-agent work logs its actual up front and needs no cwd.
+    const meeting = await appendWorklogEntry({ entityPath: "foo/bar", name: "Planning meeting", estimateMinutes: 60, startedAt: "2026-06-19T12:00:00.000Z", actualMinutes: 80 });
+    assert.equal(meeting.actualMinutes, 80);
+    assert.equal(meeting.cwd, undefined);
+    entries = await listWorklogEntries();
+    assert.equal(entries.find((entry) => entry.id === meeting.id).actualMinutes, 80);
+
     // One JSON object per line.
     const raw = await readFile(path.join(home, ".tangent", "worklog.jsonl"), "utf8");
-    assert.equal(raw.trim().split("\n").length, 2);
+    assert.equal(raw.trim().split("\n").length, 3);
   } finally {
     if (prevHome === undefined) delete process.env.HOME;
     else process.env.HOME = prevHome;

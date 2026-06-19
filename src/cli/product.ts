@@ -306,6 +306,23 @@ export async function runTangentUiCommand(argv: string[]): Promise<void> {
     if (request.method === "GET" && url.pathname === "/api/worklog") {
       return { status: 200, json: await listWorklogEntries() };
     }
+    if (request.method === "POST" && url.pathname === "/api/worklog") {
+      const body = await readJson(request) as Record<string, unknown>;
+      const name = typeof body["name"] === "string" ? body["name"].trim() : "";
+      const estimateMinutes = typeof body["estimateMinutes"] === "number" ? body["estimateMinutes"] : undefined;
+      if (!name || estimateMinutes === undefined) {
+        return { status: 400, json: { error: "name and estimateMinutes are required" } };
+      }
+      const entry = await appendWorklogEntry({
+        entityPath: typeof body["entityPath"] === "string" ? body["entityPath"] : undefined,
+        name,
+        description: typeof body["description"] === "string" ? body["description"].trim() || undefined : undefined,
+        estimateMinutes,
+        startedAt: new Date().toISOString(),
+        actualMinutes: typeof body["actualMinutes"] === "number" ? body["actualMinutes"] : null
+      });
+      return { status: 200, json: entry };
+    }
     if (request.method === "POST" && url.pathname === "/api/worklog/actual") {
       const body = await readJson(request) as Record<string, unknown>;
       if (typeof body["id"] === "string" && typeof body["minutes"] === "number") {

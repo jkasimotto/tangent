@@ -13,8 +13,8 @@ export interface WorklogEntry {
   id: string;
   /** Tree node path this work belongs to (the launcher "title"). */
   entityPath?: string;
-  /** Working directory the agent was opened in, for correlating with launcher sessions. */
-  cwd: string;
+  /** Working directory the agent was opened in, for correlating with launcher sessions. Absent for manually logged non-agent work. */
+  cwd?: string;
   name: string;
   description?: string;
   estimateMinutes: number;
@@ -46,9 +46,14 @@ async function writeEntries(entries: WorklogEntry[]): Promise<void> {
   await writeFile(file, `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`, "utf8");
 }
 
-/** Appends a new work entry with a fresh id and unlogged actual. */
-export async function appendWorklogEntry(input: Omit<WorklogEntry, "id" | "actualMinutes">): Promise<WorklogEntry> {
-  const entry: WorklogEntry = { ...input, id: randomUUID(), actualMinutes: null };
+/**
+ * Appends a new work entry with a fresh id. `actualMinutes` defaults to null (agent opens log it later);
+ * pass it to record already-finished work (e.g. a meeting) in one shot.
+ */
+export async function appendWorklogEntry(
+  input: Omit<WorklogEntry, "id" | "actualMinutes"> & { actualMinutes?: number | null }
+): Promise<WorklogEntry> {
+  const entry: WorklogEntry = { ...input, id: randomUUID(), actualMinutes: input.actualMinutes ?? null };
   const entries = await readEntries();
   await writeEntries([...entries, entry]);
   return entry;

@@ -16,6 +16,12 @@
   let intentEstimate: number | null = null;
   let intentDescription = "";
 
+  // Non-agent work logged after the fact (e.g. a meeting): what + estimate + actual.
+  let loggedName = "";
+  let loggedEstimate: number | null = null;
+  let loggedActual: number | null = null;
+  let loggedDescription = "";
+
   type TreeNode = {
     entity: TreesUiEntity;
     name: string;
@@ -130,6 +136,9 @@
     ? (selectedEntity.worktreePath || workspace.projects.find((p) => p.id === selectedEntity?.projectId)?.path)
     : undefined;
   $: intentReady = intentName.trim().length > 0 && typeof intentEstimate === "number" && intentEstimate > 0;
+  $: loggedReady = loggedName.trim().length > 0
+    && typeof loggedEstimate === "number" && loggedEstimate > 0
+    && typeof loggedActual === "number" && loggedActual > 0;
 
   async function loadWorkspace(options: { polling?: boolean } = {}): Promise<void> {
     const sequence = ++requestSequence;
@@ -203,6 +212,26 @@
       }
       activeSessions = await launcher.listSessions();
       if (selectedEntity?.path) expandedPaths = [...new Set([...expandedPaths, selectedEntity.path])];
+    } catch (caught) {
+      error = friendlyError(caught);
+    }
+  }
+
+  async function logWork(): Promise<void> {
+    if (!loggedReady || !selectedEntity) return;
+    try {
+      await worklog.create({
+        entityPath: selectedEntity.path,
+        name: loggedName.trim(),
+        description: loggedDescription.trim() || undefined,
+        estimateMinutes: loggedEstimate as number,
+        actualMinutes: loggedActual as number
+      });
+      worklogEntries = await worklog.list();
+      loggedName = "";
+      loggedEstimate = null;
+      loggedActual = null;
+      loggedDescription = "";
     } catch (caught) {
       error = friendlyError(caught);
     }
@@ -787,6 +816,42 @@
           </div>
         </div>
       {/if}
+
+      <div class="open-actions">
+        <p class="open-actions-label">Log past work</p>
+        <div class="intent-form">
+          <label>
+            <span>What did you do?</span>
+            <input bind:value={loggedName} placeholder="e.g. Planning meeting" autocomplete="off" />
+          </label>
+          <label>
+            <span>Estimate (minutes)</span>
+            <div class="estimate-row">
+              <input type="number" min="1" bind:value={loggedEstimate} placeholder="60" />
+              <div class="chips">
+                {#each [15, 30, 60, 120] as preset}
+                  <button type="button" class:active={loggedEstimate === preset} on:click={() => loggedEstimate = preset}>
+                    {preset >= 60 ? `${preset / 60}h` : `${preset}m`}
+                  </button>
+                {/each}
+              </div>
+            </div>
+          </label>
+          <label>
+            <span>Actual (minutes)</span>
+            <input type="number" min="1" bind:value={loggedActual} placeholder="80" />
+          </label>
+          <label>
+            <span>Notes (optional)</span>
+            <textarea bind:value={loggedDescription} rows="2" placeholder="What was discussed / done"></textarea>
+          </label>
+        </div>
+        <div class="actions">
+          <button type="button" disabled={!loggedReady} title={loggedReady ? "" : "Add a name, estimate, and actual time first"} on:click={logWork}>
+            Log work
+          </button>
+        </div>
+      </div>
     {:else if selectedSession}
       {@const est = estimateStatus(selectedSession)}
       <header>

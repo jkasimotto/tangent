@@ -32,6 +32,7 @@ Never:
 - Do not duplicate parseArgs, runProcess, repo discovery, or git/worktree helpers in vertical apps.
 - Do not import another package's src internals; use public exports.
 - Do not let @tangent/core shell out, write provider config, or learn product schemas.
+- Do not create a new git branch unless the user requests it; commit on the current branch.
 
 When architecture changes:
 - Update ARCHITECTURE.md and the relevant docs/architecture/*.md file.

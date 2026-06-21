@@ -676,7 +676,7 @@
                       <span></span>
                     {/if}
                   </span>
-                  <button type="button" class="node-select" on:click={() => { selectEntity(row.entity.path); if (expandable) toggleExpanded(row.entity.path); }}>
+                  <button type="button" class="node-select" on:click={() => selectEntity(row.entity.path)}>
                     <span class="node-name">
                       {row.name}
                     </span>

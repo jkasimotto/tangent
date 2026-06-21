@@ -314,7 +314,7 @@ select:disabled {
 .tree-row {
   min-width: 0;
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
+  grid-template-columns: 36px minmax(0, 1fr);
   align-items: center;
   border-radius: 7px;
   transition: background var(--tangent-motion-fast), color var(--tangent-motion-fast);
@@ -332,15 +332,16 @@ select:disabled {
 
 .disclosure {
   display: grid;
-  place-items: center;
+  place-items: stretch;
 }
 
 .disclosure button,
 .disclosure span {
-  width: 22px;
-  height: 22px;
+  width: 36px;
+  height: 36px;
   display: grid;
   place-items: center;
+  cursor: pointer;
   border: 0;
   border-radius: 5px;
   background: transparent;

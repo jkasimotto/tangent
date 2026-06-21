@@ -76,6 +76,9 @@ async function handleTreesApiRequest(request: IncomingMessage, url: URL, options
     const parts = url.pathname.split("/").filter(Boolean).map((part) => decodeURIComponent(part));
     if (parts[0] !== "api" || parts[1] !== "trees") return json(404, { error: "Not found." });
 
+    // Trees mutations (create/save/clear/delete entities) write durable state, so the verify harness blocks them.
+    if (request.method !== "GET" && process.env.TANGENT_VERIFY_READONLY) return json(403, { error: "Writes disabled in verify harness." });
+
     if (request.method === "GET" && parts.length === 3 && parts[2] === "workspace") {
       return json(200, await workspace(client));
     }

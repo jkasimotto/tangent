@@ -19,7 +19,7 @@ root CLI lazy optional products
 
 @tangent/rollup -> @tangent/usage-index-sqlite, @tangent/core, @tangent/repo, @tangent/agent-runtime
 @tangent/eval -> @tangent/usage-index-sqlite, @tangent/core, @tangent/repo, @tangent/agent-runtime, @tangent/ui-server, @tangent/eval-ui
-@tangent/usage -> @tangent/core, @tangent/repo, @tangent/agent-runtime, @tangent/ui-server, @tangent/usage-core, @tangent/usage-index-sqlite, @tangent/usage-providers, @tangent/usage-ui, @tangent/usage-ui-data
+@tangent/usage -> @tangent/core, @tangent/repo, @tangent/ui-server, @tangent/usage-core, @tangent/usage-index-sqlite, @tangent/usage-providers, @tangent/usage-ui, @tangent/usage-ui-data
 @tangent/search -> @tangent/core, @tangent/repo
 @tangent/trees-cli -> @tangent/core, @tangent/trees-schema, @tangent/trees-core, @tangent/trees-runtime/fs, @tangent/trees-runtime/git, @tangent/trees-runtime/terminal, @tangent/trees-runtime/agents, @tangent/trees-runtime/attention, @tangent/trees-mcp
 @tangent/trees-server -> @tangent/ui-server, @tangent/trees-ui, @tangent/trees-schema, @tangent/trees-runtime/fs

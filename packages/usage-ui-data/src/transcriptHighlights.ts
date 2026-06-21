@@ -1,21 +1,6 @@
 import { formatTokens, messageTokens, stepKindLabel, truncateText } from "./format.js";
 import type { UsageMessage, UsageStep, UsageTranscriptHighlight, UsageTranscriptHighlightsView } from "./types.js";
 
-/** How the assistant's final message reads: a finished result, a question back to the user, or a blocker. */
-export type FinalAssistantCategory = "done" | "question" | "blocked";
-
-/**
- * Categorises the last assistant message in a finished turn. Drives the completion
- * notification label so the user can tell "done" from "needs me" at a glance.
- * ponytail: regex heuristic; swap for an LLM classifier if accuracy matters.
- */
-export function categorizeFinalAssistant(message: UsageMessage): FinalAssistantCategory {
-  const text = (message.textPreview || message.text || "").trim();
-  if (/\b(error|failed|blocked|cannot|can't|unable|stuck)\b/i.test(text)) return "blocked";
-  if (text.endsWith("?") || /\b(could you|should i|which one|let me know|do you want|would you like)\b/i.test(text)) return "question";
-  return "done";
-}
-
 /** Builds the transcript highlights. */
 export function buildTranscriptHighlights(messages: UsageMessage[], steps: UsageStep[]): UsageTranscriptHighlightsView {
   const highlights: UsageTranscriptHighlight[] = [];

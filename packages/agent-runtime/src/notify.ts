@@ -10,15 +10,23 @@ import os from "node:os";
  */
 export type NotifyDriver = "auto" | "macos" | "linux" | "none" | { type: "custom"; template: string };
 
+/** Which agent lifecycle events fire a notification. */
+export interface NotifyEvents {
+  done: boolean;
+  needsInput: boolean;
+  failed: boolean;
+}
+
 export interface NotifyConfig {
   driver: NotifyDriver;
-  /** Skip turns shorter than this so quick foreground turns do not ping. */
-  minTurnSeconds: number;
+  /** Watcher poll interval in seconds. */
+  pollSeconds: number;
+  events: NotifyEvents;
 }
 
 /** Returns the built-in default notify configuration. */
 export function defaultNotifyConfig(): NotifyConfig {
-  return { driver: "auto", minTurnSeconds: 60 };
+  return { driver: "auto", pollSeconds: 5, events: { done: true, needsInput: true, failed: false } };
 }
 
 /** Returns the path to the notify config file (~/.tangent/notify/config.json). */
@@ -27,13 +35,14 @@ export function notifyConfigPath(): string {
   return path.join(home, "notify", "config.json");
 }
 
-/** Loads notify config from disk; falls back to defaults if missing or unreadable. */
+/** Loads notify config from disk; falls back to defaults if missing or unreadable. A partial `events` object still merges over the defaults. */
 export function loadNotifyConfig(): NotifyConfig {
+  const defaults = defaultNotifyConfig();
   try {
     const parsed = JSON.parse(readFileSync(notifyConfigPath(), "utf8")) as Partial<NotifyConfig>;
-    return { ...defaultNotifyConfig(), ...parsed };
+    return { ...defaults, ...parsed, events: { ...defaults.events, ...parsed.events } };
   } catch {
-    return defaultNotifyConfig();
+    return defaults;
   }
 }
 

@@ -12,10 +12,9 @@ describe("eval svelte app", () => {
     const client = fakeEvalClient();
     const { container } = render(App, { props: { client } });
 
-    expect(await screen.findByRole("button", { name: /ui-compare/ })).toHaveClass("active");
-    expect(await screen.findAllByText("codex-cli / fake")).toHaveLength(2);
-    expect(screen.getByLabelText("Compare configurations")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Task prompt changed/ })).toHaveClass("active");
+    expect(await screen.findByText(/ui-compare/)).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Task prompt changed/ })).toHaveClass("active");
+    expect(container.querySelectorAll(".entity select")).toHaveLength(2);
     expect(await screen.findByText("Use repo context.")).toBeInTheDocument();
     expect(container.querySelector(".diff-row.changed")).toHaveTextContent("Use no context.");
 
@@ -39,7 +38,7 @@ describe("eval svelte app", () => {
     const client = fakeEvalClient();
     render(App, { props: { client } });
 
-    await screen.findByRole("button", { name: /ui-compare/ });
+    await screen.findByText(/ui-compare/);
     await fireEvent.click(screen.getByRole("button", { name: "Run" }));
 
     expect(client.launchRun).toHaveBeenCalledWith({ specPath: "/evals/compare.json" });

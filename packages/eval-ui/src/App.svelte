@@ -181,6 +181,7 @@
       });
       if (diffLoadKey !== key) return;
       diff = next;
+      expandedGaps = new Set();
       error = "";
     } catch (caught) {
       error = friendlyError(caught);
@@ -236,6 +237,82 @@
     return compare?.artifacts.filter((artifact) => artifact.kind === kind) || [];
   }
 
+  const artifactSections: { kind: EvalCompareArtifactKind; title: string; empty: string }[] = [
+    { kind: "prompt", title: "Prompts", empty: "No prompt artifacts" },
+    { kind: "context", title: "Context files", empty: "No context files" },
+    { kind: "code", title: "Changed files", empty: "No code changes" }
+  ];
+
+  /** Splits a kind's artifacts into changed (surfaced first) and same (collapsed). */
+  function splitArtifacts(kind: EvalCompareArtifactKind): { changed: EvalCompareArtifactView[]; same: EvalCompareArtifactView[] } {
+    const group = artifactGroup(kind);
+    return {
+      changed: group.filter((artifact) => artifact.status !== "same"),
+      same: group.filter((artifact) => artifact.status === "same")
+    };
+  }
+
+  let expandedUnchanged = new Set<EvalCompareArtifactKind>();
+
+  function toggleUnchanged(kind: EvalCompareArtifactKind): void {
+    if (expandedUnchanged.has(kind)) expandedUnchanged.delete(kind);
+    else expandedUnchanged.add(kind);
+    expandedUnchanged = expandedUnchanged;
+  }
+
+  type DiffSegment =
+    | { kind: "lines"; lines: EvalDiffLineView[] }
+    | { kind: "gap"; index: number; count: number; lines: EvalDiffLineView[] };
+
+  const DIFF_CONTEXT = 3;
+  const DIFF_GAP_MIN = 3;
+
+  let expandedGaps = new Set<number>();
+
+  /** Collapses long runs of equal lines into expandable gaps, keeping a few context lines around changes. */
+  function diffSegments(lines: EvalDiffLineView[]): DiffSegment[] {
+    const segments: DiffSegment[] = [];
+    let visible: EvalDiffLineView[] = [];
+    let equalRun: EvalDiffLineView[] = [];
+    let gapIndex = 0;
+    const flushVisible = () => {
+      if (visible.length) segments.push({ kind: "lines", lines: visible });
+      visible = [];
+    };
+    const flushEqual = (atEnd: boolean) => {
+      const leadingContext = segments.length === 0 ? 0 : DIFF_CONTEXT;
+      const trailingContext = atEnd ? 0 : DIFF_CONTEXT;
+      if (equalRun.length <= leadingContext + trailingContext + DIFF_GAP_MIN) {
+        visible.push(...equalRun);
+      } else {
+        visible.push(...equalRun.slice(0, leadingContext));
+        flushVisible();
+        const middle = equalRun.slice(leadingContext, equalRun.length - trailingContext);
+        segments.push({ kind: "gap", index: gapIndex++, count: middle.length, lines: middle });
+        visible.push(...equalRun.slice(equalRun.length - trailingContext));
+      }
+      equalRun = [];
+    };
+    for (const line of lines) {
+      if (line.kind === "equal") {
+        equalRun.push(line);
+      } else {
+        flushEqual(false);
+        visible.push(line);
+      }
+    }
+    flushEqual(true);
+    flushVisible();
+    return segments;
+  }
+
+  function toggleGap(index: number): void {
+    expandedGaps.add(index);
+    expandedGaps = expandedGaps;
+  }
+
+  $: segments = diff ? diffSegments(diff.lines) : [];
+
   function friendlyError(value: unknown): string {
     const message = value instanceof Error ? value.message : String(value);
     return message.includes("<!doctype") ? "Eval API unavailable. Start the app with `tangent eval ui`." : message;
@@ -246,13 +323,6 @@
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return value;
     return new Intl.DateTimeFormat("en", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(date);
-  }
-
-  function statusSummary(run: EvalRunSummaryView): string {
-    return Object.entries(run.statuses)
-      .filter(([, count]) => count > 0)
-      .map(([status, count]) => `${count} ${status}`)
-      .join(", ");
   }
 
   function contextLabel(variant: EvalVariantSummaryView | undefined): string {
@@ -314,10 +384,6 @@
     };
   }
 
-  function sparklineBarStyle(tokenShare: number, durationShare: number): string {
-    return `height:${Math.max(10, Math.round(tokenShare * 100))}%;opacity:${(0.4 + durationShare * 0.6).toFixed(2)}`;
-  }
-
   function formatDurationMs(value: number): string {
     if (value < 1000) return `${Math.round(value)}ms`;
     const seconds = value / 1000;
@@ -335,47 +401,45 @@
 </script>
 
 <main class="eval-workspace" aria-label="Eval viewer">
-  <aside class="run-rail" aria-label="Eval runs">
-    <header>
-      <p>Tangent Eval</p>
-      <h1>Prepared runs</h1>
-    </header>
-
-    <section class="run-launch" aria-label="Run an eval">
-      <label>
-        <span>Spec</span>
-        <select bind:value={selectedSpecPath} disabled={launching || specs.length === 0}>
-          {#if specs.length === 0}
-            <option value="">No specs found</option>
-          {:else}
-            {#each specs as spec}
-              <option value={spec.path}>{spec.name} ({spec.variantCount} configs)</option>
-            {/each}
-          {/if}
+  <div class="topbar">
+    <span class="brand">Tangent Eval</span>
+    <label class="topbar-pick">
+      <select bind:value={selectedRunId} on:change={() => selectRun(selectedRunId)} disabled={runs.length === 0}>
+        {#if runs.length === 0}
+          <option value="">{loading ? "Loading runs…" : "No prepared runs"}</option>
+        {:else}
+          {#each runs as run}
+            <option value={run.id}>{run.name} · {formatDate(run.createdAt)}</option>
+          {/each}
+        {/if}
+      </select>
+    </label>
+    {#if runDetail && runDetail.cases.length > 1}
+      <label class="topbar-pick">
+        <select bind:value={selectedCaseId} on:change={() => selectCase(selectedCaseId)}>
+          {#each runDetail.cases as testCase}
+            <option value={testCase.id}>{testCase.id}</option>
+          {/each}
         </select>
       </label>
-      <button type="button" class="run-button" on:click={launch} disabled={launching || !selectedSpecPath}>
-        {launching ? "Starting…" : "Run"}
-      </button>
-      {#if launchError}<small class="run-error" role="alert">{launchError}</small>{/if}
-    </section>
-
-    {#if loading}
-      <div class="state">Loading runs</div>
-    {:else if runs.length === 0}
-      <div class="state">No prepared eval runs found.</div>
-    {:else}
-      <div class="run-list">
-        {#each runs as run}
-          <button type="button" class:active={run.id === selectedRunId} on:click={() => selectRun(run.id)}>
-            <strong>{run.name}</strong>
-            <span>{formatDate(run.createdAt)}</span>
-            <small>{run.variantCount} variants · {statusSummary(run)}</small>
-          </button>
-        {/each}
-      </div>
     {/if}
-  </aside>
+    <span class="topbar-spacer"></span>
+    {#if launchError}<small class="run-error" role="alert">{launchError}</small>{/if}
+    <label class="topbar-pick">
+      <select bind:value={selectedSpecPath} disabled={launching || specs.length === 0}>
+        {#if specs.length === 0}
+          <option value="">No specs</option>
+        {:else}
+          {#each specs as spec}
+            <option value={spec.path}>{spec.name} ({spec.variantCount} configs)</option>
+          {/each}
+        {/if}
+      </select>
+    </label>
+    <button type="button" class="run-button" on:click={launch} disabled={launching || !selectedSpecPath}>
+      {launching ? "Starting…" : "Run"}
+    </button>
+  </div>
 
   <section class="compare-shell" aria-busy={runLoading || compareLoading}>
     {#if error}
@@ -383,67 +447,7 @@
     {/if}
 
     {#if runDetail}
-      <header class="run-header">
-        <div>
-          <p>{runDetail.id}</p>
-          <h2>{runDetail.name}</h2>
-        </div>
-        <div class="run-meta">
-          <span>{runDetail.caseCount} cases</span>
-          <span>{runDetail.variantCount} variants</span>
-          <span>{statusSummary(runDetail)}</span>
-        </div>
-      </header>
-
-      <div class="compare-controls" aria-label="Compare configurations">
-        <label>
-          <span>Case</span>
-          <select bind:value={selectedCaseId} on:change={() => selectCase(selectedCaseId)}>
-            {#each runDetail.cases as testCase}
-              <option value={testCase.id}>{testCase.id}</option>
-            {/each}
-          </select>
-        </label>
-        <label>
-          <span>Configuration A</span>
-          <select bind:value={leftVariantId}>
-            {#each selectedCase?.variants || [] as variant}
-              <option value={variant.variantId}>{variant.variantId}</option>
-            {/each}
-          </select>
-        </label>
-        <label>
-          <span>Configuration B</span>
-          <select bind:value={rightVariantId}>
-            {#each selectedCase?.variants || [] as variant}
-              <option value={variant.variantId}>{variant.variantId}</option>
-            {/each}
-          </select>
-        </label>
-      </div>
-
       {#if compare}
-        <div class="variant-strip">
-          {#each [{ tag: "A", variant: compare.left }, { tag: "B", variant: compare.right }] as side}
-            <section>
-              <p>{side.tag} · {side.variant.status}</p>
-              <h3>{side.variant.variantId}</h3>
-              <span>{agentLabel(side.variant) || "manual"}</span>
-              <small>{contextLabel(side.variant)}</small>
-              {#if side.variant.metrics?.sparkline}
-                <div class="spark" aria-label={`${side.tag} activity`}>
-                  {#each side.variant.metrics.sparkline.buckets as bucket}
-                    <span class="spark-bar spark-{bucket.kind}" style={sparklineBarStyle(bucket.tokenShare, bucket.durationShare)}></span>
-                  {/each}
-                </div>
-                {#if side.variant.metrics.conversationIds[0]}
-                  <a class="spark-link" href={`/usage?conversation=${encodeURIComponent(side.variant.metrics.conversationIds[0])}`}>Open flamegraph</a>
-                {/if}
-              {/if}
-            </section>
-          {/each}
-        </div>
-
         {#if resultRows.length}
           <div class="results-strip" aria-label="Output comparison">
             {#each resultRows as row}
@@ -461,64 +465,93 @@
 
         <div class="artifact-and-diff">
           <aside class="artifact-list" aria-label="Artifacts">
-            <section>
-              <h3>Prompts</h3>
-              {#if artifactGroup("prompt").length === 0}
-                <p>No prompt artifacts</p>
-              {:else}
-                {#each artifactGroup("prompt") as artifact}
-                  <button type="button" class:active={artifact.id === selectedArtifactId} on:click={() => selectArtifact(artifact)}>
-                    <span>{artifact.label}</span>
-                    <small>{artifact.status || "available"}</small>
-                  </button>
-                {/each}
-              {/if}
-            </section>
-            <section>
-              <h3>Context files</h3>
-              {#if artifactGroup("context").length === 0}
-                <p>No context files</p>
-              {:else}
-                {#each artifactGroup("context") as artifact}
-                  <button type="button" class:active={artifact.id === selectedArtifactId} on:click={() => selectArtifact(artifact)}>
-                    <span>{artifact.label}</span>
-                    <small>{artifact.status || "available"}</small>
-                  </button>
-                {/each}
-              {/if}
-            </section>
-            <section>
-              <h3>Changed files</h3>
-              {#if artifactGroup("code").length === 0}
-                <p>No code changes</p>
-              {:else}
-                {#each artifactGroup("code") as artifact}
-                  <button type="button" class:active={artifact.id === selectedArtifactId} on:click={() => selectArtifact(artifact)}>
-                    <span>{artifact.label}</span>
-                    <small>{artifact.status || "available"}</small>
-                  </button>
-                {/each}
-              {/if}
-            </section>
+            {#each artifactSections as section}
+              {@const split = splitArtifacts(section.kind)}
+              <section>
+                <h3>{section.title}</h3>
+                {#if split.changed.length === 0 && split.same.length === 0}
+                  <p>{section.empty}</p>
+                {:else}
+                  {#each split.changed as artifact}
+                    <button type="button" class:active={artifact.id === selectedArtifactId} on:click={() => selectArtifact(artifact)}>
+                      <span>{artifact.label}</span>
+                      <small class="badge badge-{artifact.status || 'available'}">{artifact.status || "available"}</small>
+                    </button>
+                  {/each}
+                  {#if split.same.length}
+                    <button type="button" class="unchanged-toggle" aria-expanded={expandedUnchanged.has(section.kind)} on:click={() => toggleUnchanged(section.kind)}>
+                      {expandedUnchanged.has(section.kind) ? "▾" : "▸"} {split.same.length} unchanged
+                    </button>
+                    {#if expandedUnchanged.has(section.kind)}
+                      {#each split.same as artifact}
+                        <button type="button" class="same-row" class:active={artifact.id === selectedArtifactId} on:click={() => selectArtifact(artifact)}>
+                          <span>{artifact.label}</span>
+                          <small class="badge badge-same">same</small>
+                        </button>
+                      {/each}
+                    {/if}
+                  {/if}
+                {/if}
+              </section>
+            {/each}
           </aside>
 
           <section class="diff-pane" aria-label="Artifact diff">
+            <div class="entity-heads">
+              <div class="entity entity-a">
+                <label>
+                  <span class="entity-tag">A</span>
+                  <select bind:value={leftVariantId}>
+                    {#each selectedCase?.variants || [] as variant}
+                      <option value={variant.variantId}>{variant.variantId}</option>
+                    {/each}
+                  </select>
+                </label>
+                <small>
+                  {agentLabel(compare.left) || "manual"} · {contextLabel(compare.left)}
+                  {#if compare.left.metrics?.conversationIds?.[0]}
+                    · <a href={`/usage?conversation=${encodeURIComponent(compare.left.metrics.conversationIds[0])}`}>flamegraph</a>
+                  {/if}
+                </small>
+              </div>
+              <div class="entity entity-b">
+                <label>
+                  <span class="entity-tag">B</span>
+                  <select bind:value={rightVariantId}>
+                    {#each selectedCase?.variants || [] as variant}
+                      <option value={variant.variantId}>{variant.variantId}</option>
+                    {/each}
+                  </select>
+                </label>
+                <small>
+                  {agentLabel(compare.right) || "manual"} · {contextLabel(compare.right)}
+                  {#if compare.right.metrics?.conversationIds?.[0]}
+                    · <a href={`/usage?conversation=${encodeURIComponent(compare.right.metrics.conversationIds[0])}`}>flamegraph</a>
+                  {/if}
+                </small>
+              </div>
+            </div>
             {#if diff}
-              <header>
-                <div>
-                  <p>{diff.artifact.kind}</p>
-                  <h3>{diff.artifact.label}</h3>
-                </div>
+              <header class="diff-head">
+                <h3>{diff.artifact.label}</h3>
                 <span>{lineCount()}</span>
               </header>
               <div class="diff-grid" role="table" aria-label={`${diff.artifact.label} diff`}>
-                {#each diff.lines as line}
-                  <div class:changed={line.kind === "changed"} class:add={line.kind === "add"} class:delete={line.kind === "delete"} class:equal={line.kind === "equal"} class="diff-row">
-                    <span class="line-no">{line.leftNumber || ""}</span>
-                    <code>{line.left || ""}</code>
-                    <span class="line-no">{line.rightNumber || ""}</span>
-                    <code>{line.right || ""}</code>
-                  </div>
+                {#each segments as segment}
+                  {#if segment.kind === "gap" && !expandedGaps.has(segment.index)}
+                    <button type="button" class="diff-gap" on:click={() => toggleGap(segment.index)}>
+                      ⋯ {segment.count} unchanged lines
+                    </button>
+                  {:else}
+                    {#each segment.lines as line}
+                      <div class:changed={line.kind === "changed"} class:add={line.kind === "add"} class:delete={line.kind === "delete"} class:equal={line.kind === "equal"} class="diff-row">
+                        <span class="line-no">{line.leftNumber || ""}</span>
+                        <code>{line.left || ""}</code>
+                        <span class="line-no">{line.rightNumber || ""}</span>
+                        <code>{line.right || ""}</code>
+                      </div>
+                    {/each}
+                  {/if}
                 {/each}
               </div>
             {:else}

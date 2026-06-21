@@ -3,7 +3,7 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
 import type { LocalUiApp, StaticAssetMount, UiRoute, UiRouteResponse } from "@tangent/ui-server";
-import { changedFiles, listFilesAtRef, showFile } from "@tangent/repo/git";
+import { changedFiles, fileOidsAtRef, showFile } from "@tangent/repo/git";
 
 import type { EvalAgentConfig } from "../types/provider.js";
 import type { EvalRunManifest, EvalRunStatus, EvalRunVariantState } from "../types/run.js";
@@ -70,11 +70,6 @@ export type EvalUiApp = {
 
 type EvalUiRequestContext = {
   preferredRunId?: string;
-};
-
-type ArtifactCandidate = EvalCompareArtifactView & {
-  leftContent?: string;
-  rightContent?: string;
 };
 
 /** Starts the local Eval UI server. */
@@ -219,7 +214,10 @@ async function readJsonBody(request: http.IncomingMessage): Promise<Record<strin
 /** Resolves a requested run id or latest selector to a concrete run id. */
 async function preferredRun(value: string | undefined): Promise<string | undefined> {
   if (value && value !== "latest") return value;
-  return (await listRuns())[0]?.id;
+  // Default to the newest run that has variants: an empty run (e.g. an aborted prepare) has nothing
+  // to compare and would otherwise leave the UI on a permanent "Loading comparison" with no request.
+  const runs = await listRuns();
+  return (runs.find((run) => run.variants.length > 0) || runs[0])?.id;
 }
 
 /** Resolves a URL run reference, including selected/latest aliases. */
@@ -275,6 +273,7 @@ function statusCounts(variants: EvalRunVariantState[]): Record<EvalRunStatus, nu
 
 /** Converts a variant manifest entry into UI metadata. */
 async function variantSummary(manifest: EvalRunManifest, variant: EvalRunVariantState): Promise<EvalVariantSummaryView> {
+  const metrics = await readVariantMetricsView(manifest, variant);
   return {
     caseId: variant.caseId,
     variantId: variant.variantId,
@@ -289,7 +288,7 @@ async function variantSummary(manifest: EvalRunManifest, variant: EvalRunVariant
     baseCommit: variant.baseCommit,
     contextCommit: variant.contextCommit,
     promptArtifacts: await promptArtifacts(variant),
-    metrics: await readVariantMetricsView(manifest, variant),
+    metrics,
     warnings: variant.warnings
   };
 }
@@ -297,13 +296,12 @@ async function variantSummary(manifest: EvalRunManifest, variant: EvalRunVariant
 /** Builds the two-variant comparison view for one case. */
 async function compareView(manifest: EvalRunManifest, url: URL): Promise<EvalCompareView> {
   const { caseId, left, right } = selectedPair(manifest, url);
-  return {
-    run: runSummary(manifest),
-    caseId,
-    left: await variantSummary(manifest, left),
-    right: await variantSummary(manifest, right),
-    artifacts: (await artifactCandidates(left, right)).map(publicArtifact)
-  };
+  const [leftSummary, rightSummary, artifacts] = await Promise.all([
+    variantSummary(manifest, left),
+    variantSummary(manifest, right),
+    compareArtifacts(left, right)
+  ]);
+  return { run: runSummary(manifest), caseId, left: leftSummary, right: rightSummary, artifacts };
 }
 
 /** Builds a diff view for one selected comparison artifact. */
@@ -312,18 +310,23 @@ async function diffView(manifest: EvalRunManifest, url: URL): Promise<EvalDiffVi
   const kind = requiredParam(url, "kind") as EvalCompareArtifactKind;
   if (kind !== "prompt" && kind !== "context" && kind !== "code") throw new Error("kind must be prompt, context, or code.");
   const artifactPath = requiredParam(url, "path");
-  const candidates = await artifactCandidates(left, right);
-  const artifact = candidates.find((candidate) => candidate.kind === kind && candidate.path === artifactPath);
-  if (!artifact) {
+  const { leftContent, rightContent } = await artifactContent(left, right, kind, artifactPath);
+  if (leftContent === undefined && rightContent === undefined) {
     const error = new Error(`Artifact not found for selected variants: ${kind}:${artifactPath}`) as Error & { status?: number };
     error.status = 404;
     throw error;
   }
   return {
-    artifact: publicArtifact(artifact),
+    artifact: {
+      id: `${kind}:${artifactPath}`,
+      kind,
+      path: artifactPath,
+      label: kind === "prompt" ? promptLabel(artifactPath) : artifactPath,
+      status: contentStatus(leftContent, rightContent)
+    },
     left: { variantId: left.variantId, label: `${left.caseId}/${left.variantId}` },
     right: { variantId: right.variantId, label: `${right.caseId}/${right.variantId}` },
-    lines: diffLines(artifact.leftContent || "", artifact.rightContent || "")
+    lines: diffLines(leftContent || "", rightContent || "")
   };
 }
 
@@ -342,45 +345,108 @@ function selectedPair(manifest: EvalRunManifest, url: URL): { caseId: string; le
   return { caseId, left, right };
 }
 
-/** Lists prompt and context artifacts that can be compared for a pair. */
-async function artifactCandidates(left: EvalRunVariantState, right: EvalRunVariantState): Promise<ArtifactCandidate[]> {
-  const [leftPrompts, rightPrompts, contextPaths, codePaths] = await Promise.all([
-    promptCandidates(left),
-    promptCandidates(right),
-    contextArtifactPaths(left, right),
-    codeArtifactPaths(left, right)
+/**
+ * Lists prompt, context, and code artifacts for a pair with same/changed badges, without reading any
+ * file content. Context and code badges come from comparing blob OIDs at each variant's ref (two
+ * `git ls-tree` calls per ref), so the comparison list stays fast even when a repo has hundreds of
+ * context files. Content for a single artifact is read lazily by the diff endpoint via artifactContent.
+ */
+async function compareArtifacts(left: EvalRunVariantState, right: EvalRunVariantState): Promise<EvalCompareArtifactView[]> {
+  // Memoize ls-tree per (worktree, ref): a variant's context and code refs usually coincide
+  // (prepared runs have no implementation commit), so this collapses four ls-tree calls into two.
+  const oidCache = new Map<string, Promise<Map<string, string>>>();
+  /** Returns the cached path-to-OID map for a worktree+ref, running ls-tree only on the first request. */
+  const oidsAt = (repo: string, ref: string): Promise<Map<string, string>> => {
+    const key = `${repo}\0${ref}`;
+    const cached = oidCache.get(key);
+    if (cached) return cached;
+    const pending = fileOidsAtRef(repo, ref).catch(() => new Map<string, string>());
+    oidCache.set(key, pending);
+    return pending;
+  };
+  const [promptRows, contextRows, codeRows] = await Promise.all([
+    promptArtifactStatuses(left, right),
+    contextArtifactStatuses(left, right, oidsAt),
+    codeArtifactStatuses(left, right, oidsAt)
   ]);
-  const promptPaths = new Set([...leftPrompts.keys(), ...rightPrompts.keys()]);
-  const promptRows: ArtifactCandidate[] = [...promptPaths].map((promptPath) => {
-    const leftContent = leftPrompts.get(promptPath);
-    const rightContent = rightPrompts.get(promptPath);
-    return {
-      id: `prompt:${promptPath}`,
-      kind: "prompt",
-      path: promptPath,
-      label: promptLabel(promptPath),
-      status: contentStatus(leftContent, rightContent),
-      leftContent,
-      rightContent
-    };
-  });
-  // git show spawns one subprocess per file, so read every context/code file pair concurrently rather than per-iteration.
-  const contextRows = Promise.all(contextPaths.map(async (contextPath): Promise<ArtifactCandidate> => {
-    const [leftContent, rightContent] = await Promise.all([showContextFile(left, contextPath), showContextFile(right, contextPath)]);
-    return { id: `context:${contextPath}`, kind: "context", path: contextPath, label: contextPath, status: contentStatus(leftContent, rightContent), leftContent, rightContent };
-  }));
-  const codeRows = Promise.all(codePaths.map(async (codePath): Promise<ArtifactCandidate> => {
-    const [leftContent, rightContent] = await Promise.all([showImplementationFile(left, codePath), showImplementationFile(right, codePath)]);
-    return { id: `code:${codePath}`, kind: "code", path: codePath, label: codePath, status: contentStatus(leftContent, rightContent), leftContent, rightContent };
-  }));
-  const rows = [...promptRows, ...await contextRows, ...await codeRows];
-  return rows.sort((a, b) => artifactSortKey(a).localeCompare(artifactSortKey(b)));
+  return [...promptRows, ...contextRows, ...codeRows].sort((a, b) => artifactSortKey(a).localeCompare(artifactSortKey(b)));
 }
 
-/** Lists files either variant changed from its base commit, for the A-vs-B code diff. */
-async function codeArtifactPaths(left: EvalRunVariantState, right: EvalRunVariantState): Promise<string[]> {
-  const [leftPaths, rightPaths] = await Promise.all([variantChangedFiles(left), variantChangedFiles(right)]);
-  return [...new Set([...leftPaths, ...rightPaths])].sort();
+type OidsAt = (repo: string, ref: string) => Promise<Map<string, string>>;
+
+/** Badges prompt artifacts by comparing their (small, local) contents. */
+async function promptArtifactStatuses(left: EvalRunVariantState, right: EvalRunVariantState): Promise<EvalCompareArtifactView[]> {
+  const [leftPrompts, rightPrompts] = await Promise.all([promptCandidates(left), promptCandidates(right)]);
+  const paths = new Set([...leftPrompts.keys(), ...rightPrompts.keys()]);
+  return [...paths].map((promptPath) => ({
+    id: `prompt:${promptPath}`,
+    kind: "prompt",
+    path: promptPath,
+    label: promptLabel(promptPath),
+    status: contentStatus(leftPrompts.get(promptPath), rightPrompts.get(promptPath))
+  }));
+}
+
+/** Badges context artifacts by comparing blob OIDs at each variant's context ref. */
+async function contextArtifactStatuses(left: EvalRunVariantState, right: EvalRunVariantState, oidsAt: OidsAt): Promise<EvalCompareArtifactView[]> {
+  const [leftOids, rightOids] = await Promise.all([contextOids(left, oidsAt), contextOids(right, oidsAt)]);
+  const paths = [...new Set([...leftOids.keys(), ...rightOids.keys()])].sort();
+  return paths.map((contextPath) => ({
+    id: `context:${contextPath}`,
+    kind: "context",
+    path: contextPath,
+    label: contextPath,
+    status: oidStatus(leftOids.get(contextPath), rightOids.get(contextPath))
+  }));
+}
+
+/** Badges code artifacts (files either variant changed) by comparing blob OIDs at each variant's head. */
+async function codeArtifactStatuses(left: EvalRunVariantState, right: EvalRunVariantState, oidsAt: OidsAt): Promise<EvalCompareArtifactView[]> {
+  const [leftPaths, rightPaths, leftOids, rightOids] = await Promise.all([
+    variantChangedFiles(left),
+    variantChangedFiles(right),
+    implementationOids(left, oidsAt),
+    implementationOids(right, oidsAt)
+  ]);
+  const paths = [...new Set([...leftPaths, ...rightPaths])].sort();
+  return paths.map((codePath) => ({
+    id: `code:${codePath}`,
+    kind: "code",
+    path: codePath,
+    label: codePath,
+    status: oidStatus(leftOids.get(codePath), rightOids.get(codePath))
+  }));
+}
+
+/** Reads left/right content for one selected artifact, the only place compare reads file content. */
+async function artifactContent(left: EvalRunVariantState, right: EvalRunVariantState, kind: EvalCompareArtifactKind, artifactPath: string): Promise<{ leftContent?: string; rightContent?: string }> {
+  if (kind === "prompt") {
+    const [leftPrompts, rightPrompts] = await Promise.all([promptCandidates(left), promptCandidates(right)]);
+    return { leftContent: leftPrompts.get(artifactPath), rightContent: rightPrompts.get(artifactPath) };
+  }
+  const read = kind === "context" ? showContextFile : showImplementationFile;
+  const [leftContent, rightContent] = await Promise.all([read(left, artifactPath), read(right, artifactPath)]);
+  return { leftContent, rightContent };
+}
+
+/** Blob OIDs of a variant's context files at its context commit. */
+async function contextOids(variant: EvalRunVariantState, oidsAt: OidsAt): Promise<Map<string, string>> {
+  const ref = variant.contextCommit || variant.baseCommit;
+  const oids = await oidsAt(variant.worktree, ref);
+  return new Map([...oids].filter(([filePath]) => isContextPath(filePath)));
+}
+
+/** Blob OIDs at a variant's implementation commit, for code-artifact comparison. */
+async function implementationOids(variant: EvalRunVariantState, oidsAt: OidsAt): Promise<Map<string, string>> {
+  const head = variant.implementationCommit || variant.planCommit || variant.contextCommit || variant.baseCommit;
+  return oidsAt(variant.worktree, head);
+}
+
+/** Computes same/changed/one-sided status from two blob OIDs. */
+function oidStatus(left: string | undefined, right: string | undefined): EvalCompareArtifactStatus {
+  if (left === undefined) return "right-only";
+  if (right === undefined) return "left-only";
+  return left === right ? "same" : "changed";
 }
 
 /** Lists files a variant changed between its base and implementation (or context) commit. */
@@ -431,34 +497,10 @@ function promptLabel(value: string): string {
   return value;
 }
 
-/** Lists all comparable context file paths across a variant pair. */
-async function contextArtifactPaths(left: EvalRunVariantState, right: EvalRunVariantState): Promise<string[]> {
-  const [leftPaths, rightPaths] = await Promise.all([contextPaths(left), contextPaths(right)]);
-  return [...new Set([...leftPaths, ...rightPaths])].sort();
-}
-
-/** Lists context files visible at a variant's context commit. */
-async function contextPaths(variant: EvalRunVariantState): Promise<string[]> {
-  const ref = variant.contextCommit || variant.baseCommit;
-  const files = await listFilesAtRef(variant.worktree, ref).catch(() => []);
-  return files.filter(isContextPath).sort();
-}
-
 /** Reads a context file from the variant's context commit. */
 async function showContextFile(variant: EvalRunVariantState, filePath: string): Promise<string | undefined> {
   const ref = variant.contextCommit || variant.baseCommit;
   return showFile(variant.worktree, ref, filePath).catch(() => undefined);
-}
-
-/** Strips artifact content before returning it to list endpoints. */
-function publicArtifact(candidate: ArtifactCandidate): EvalCompareArtifactView {
-  return {
-    id: candidate.id,
-    kind: candidate.kind,
-    path: candidate.path,
-    label: candidate.label,
-    status: candidate.status
-  };
 }
 
 /** Computes same/changed/one-sided status for artifact content. */

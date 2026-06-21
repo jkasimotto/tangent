@@ -528,8 +528,10 @@
         </div>
       {:else if selectedCase?.variants.length === 1}
         <div class="state">This case has one configuration. Add another variant to compare.</div>
-      {:else}
+      {:else if selectedCase && selectedCase.variants.length >= 2}
         <div class="state">Loading comparison</div>
+      {:else}
+        <div class="state">This run has no variants to compare yet.</div>
       {/if}
     {:else if !loading}
       <div class="state">Select a prepared run.</div>

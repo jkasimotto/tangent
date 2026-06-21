@@ -8,6 +8,7 @@ export type GitResult = {
   stderr: string;
 };
 
+/** Runs a git command in a repo and returns its stdout/stderr, throwing on a non-zero exit. */
 export async function git(repo: string, args: string[], options: { stdin?: string; env?: NodeJS.ProcessEnv } = {}): Promise<GitResult> {
   if (options.stdin !== undefined) {
     const result = await runGitProcess(repo, args, options);
@@ -22,56 +23,86 @@ export async function git(repo: string, args: string[], options: { stdin?: strin
   return { stdout, stderr };
 }
 
+/** Runs a git command and returns its stdout trimmed of surrounding whitespace. */
 export async function gitText(repo: string, args: string[], options: { stdin?: string; env?: NodeJS.ProcessEnv } = {}): Promise<string> {
   return (await git(repo, args, options)).stdout.trim();
 }
 
+/** Runs a git command and returns its raw stdout without trimming. */
 export async function gitRaw(repo: string, args: string[], options: { stdin?: string; env?: NodeJS.ProcessEnv } = {}): Promise<string> {
   return (await git(repo, args, options)).stdout;
 }
 
+/** Resolves the top-level working directory of the repo containing a path. */
 export async function resolveGitRoot(inputPath: string): Promise<string> {
   const root = await gitText(inputPath, ["rev-parse", "--show-toplevel"]);
   if (!root) throw new Error(`Not a git repository: ${inputPath}`);
   return root;
 }
 
+/** Resolves a ref to its full commit SHA. */
 export async function resolveCommit(repo: string, ref: string): Promise<string> {
   return gitText(repo, ["rev-parse", "--verify", `${ref}^{commit}`]);
 }
 
+/** Returns the current HEAD commit SHA. */
 export async function currentCommit(repo: string): Promise<string> {
   return gitText(repo, ["rev-parse", "HEAD"]);
 }
 
+/** Returns the current branch name, or undefined in detached HEAD. */
 export async function branchName(repo: string): Promise<string | undefined> {
   const branch = await gitText(repo, ["branch", "--show-current"]).catch(() => "");
   return branch || undefined;
 }
 
+/** Returns `git status --porcelain` output for the repo. */
 export async function statusPorcelain(repo: string): Promise<string> {
   return gitText(repo, ["status", "--porcelain"]);
 }
 
+/** Lists the paths that differ between two refs. */
 export async function changedFiles(repo: string, fromRef: string, toRef = "HEAD"): Promise<string[]> {
   const output = await gitText(repo, ["diff", "--name-only", `${fromRef}..${toRef}`]);
   return output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 }
 
+/** Returns the `git diff --stat` summary between two refs, or undefined when empty. */
 export async function diffStat(repo: string, fromRef: string, toRef = "HEAD"): Promise<string | undefined> {
   const output = await gitText(repo, ["diff", "--stat", `${fromRef}..${toRef}`]);
   return output || undefined;
 }
 
+/** Reads the contents of a file at a given ref. */
 export async function showFile(repo: string, ref: string, filePath: string): Promise<string> {
   return gitRaw(repo, ["show", `${ref}:${filePath}`]);
 }
 
+/** Lists every tracked file path at a ref. */
 export async function listFilesAtRef(repo: string, ref: string): Promise<string[]> {
   const output = await gitText(repo, ["ls-tree", "-r", "--name-only", ref]);
   return output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 }
 
+/**
+ * Maps every file at a ref to its blob OID in one `git ls-tree` call. Because blob OIDs are
+ * content hashes, comparing two refs' maps tells you which files changed without reading any
+ * content, even across separate worktrees. Used to badge eval comparisons cheaply instead of
+ * spawning one `git show` per file.
+ */
+export async function fileOidsAtRef(repo: string, ref: string): Promise<Map<string, string>> {
+  const output = await gitText(repo, ["ls-tree", "-r", ref]);
+  const oids = new Map<string, string>();
+  for (const line of output.split(/\r?\n/)) {
+    const tab = line.indexOf("\t");
+    if (tab < 0) continue;
+    const oid = line.slice(0, tab).split(/\s+/)[2];
+    if (oid) oids.set(line.slice(tab + 1), oid);
+  }
+  return oids;
+}
+
+/** Spawns git with piped stdin (for commands that read from stdin) and returns stdout, stderr, and exit code. */
 async function runGitProcess(repo: string, args: string[], options: { stdin?: string; env?: NodeJS.ProcessEnv }): Promise<GitResult & { code: number | null }> {
   return new Promise((resolve, reject) => {
     const child = spawn("git", ["-C", repo, ...args], {

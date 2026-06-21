@@ -221,6 +221,16 @@ export function createProcessRuntimeAdapter(initialSessions: TerminalSession[] =
   };
 }
 
+/** Returns the foreground command in a tmux pane ("claude"/"codex"/"node" while the agent runs, a shell name once it exits), or undefined if the session is gone. Used by the notify watcher to detect completion. */
+export async function tmuxPaneCurrentCommand(tmuxSessionName: string): Promise<string | undefined> {
+  return tmuxText(["display-message", "-p", "-t", tmuxSessionName, "#{pane_current_command}"]).then((text) => text.trim() || undefined).catch(() => undefined);
+}
+
+/** Whether a tmux pane_current_command value is an interactive shell (the agent has returned control). */
+export function isShellCommand(command: string | undefined): boolean {
+  return !!command && /^-?(zsh|bash|sh|fish|dash|ksh)$/.test(command);
+}
+
 /** Documents the tmux helper. */
 async function tmux(args: string[], env?: NodeJS.ProcessEnv): Promise<void> {
   const result = await runProcess({ command: "tmux", args, env: sanitizeTmuxEnvironment(env), timeoutMs: 15000 });

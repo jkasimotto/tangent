@@ -31,6 +31,10 @@
     "./attention": {
       "types": "./dist/attention/index.d.ts",
       "import": "./dist/attention/index.js"
+    },
+    "./notify": {
+      "types": "./dist/notify/index.d.ts",
+      "import": "./dist/notify/index.js"
     }
   },
   "files": [

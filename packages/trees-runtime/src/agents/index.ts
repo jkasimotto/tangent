@@ -172,8 +172,8 @@ export function buildTreesAgentEnv(input: {
   });
 }
 
-/** Documents the parseCommonAgentOutput helper. */
-function parseCommonAgentOutput(input: AgentObservationInput): TreeObservation[] {
+/** Parses common agent terminal output into observations (permission requested, done, failed). Used by the notify watcher to read a captured tmux pane. */
+export function parseCommonAgentOutput(input: AgentObservationInput): TreeObservation[] {
   const lower = input.text.toLowerCase();
   if (!/(permission|approve|deny|failed|error|done|complete)/.test(lower)) return [];
   const kind = lower.includes("permission") || lower.includes("approve") ? "agent.permission_requested" : lower.includes("failed") || lower.includes("error") ? "agent.status" : "agent.status";

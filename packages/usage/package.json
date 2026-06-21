@@ -54,6 +54,7 @@
     }
   },
   "dependencies": {
+    "@tangent/agent-runtime": "^0.1.0",
     "@tangent/core": "^0.1.0",
     "@tangent/repo": "^0.1.0",
     "@tangent/ui-server": "^0.1.0",

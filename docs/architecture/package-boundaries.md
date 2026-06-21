@@ -3,7 +3,7 @@
 Platform packages:
 - @tangent/core contains pure shared primitives. It must not shell out, write provider config, or know product domains.
 - @tangent/repo contains repo discovery, git, worktree, filesystem path, and safe path helpers.
-- @tangent/agent-runtime contains process execution and reusable agent runner primitives.
+- @tangent/agent-runtime contains process execution, the OS-agnostic desktop notifier, and reusable agent runner primitives.
 - @tangent/governance contains custom architecture/docs/lint checks.
 - @tangent/ui-server contains reusable local HTTP static serving, mounted app assets, and API route dispatch for product UIs.
 

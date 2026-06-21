@@ -8,7 +8,7 @@ export { buildSessionFinderView, sessionFinderItem } from "./sessionFinder.js";
 export { buildUsageSessionTimelineView } from "./sessionTimeline.js";
 export { buildSessionStoryline } from "./storyline.js";
 export { buildTraceWaterfall } from "./trace.js";
-export { buildTranscriptHighlights } from "./transcriptHighlights.js";
+export { buildTranscriptHighlights, categorizeFinalAssistant, type FinalAssistantCategory } from "./transcriptHighlights.js";
 
 import { buildUsageCockpitView, timelineSteps, transcriptMessages } from "./cockpit.js";
 import { buildUsageConversationView, type UsageConversationToolCall } from "./conversationView.js";

@@ -11,6 +11,10 @@
     "./process": {
       "types": "./dist/process.d.ts",
       "import": "./dist/process.js"
+    },
+    "./notify": {
+      "types": "./dist/notify.d.ts",
+      "import": "./dist/notify.js"
     }
   },
   "files": [

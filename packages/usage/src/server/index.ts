@@ -4,8 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { LocalUiApp, StaticAssetMount, UiModePreference, UiRoute, UiRouteResponse } from "@tangent/ui-server";
-import { createUsageUiClient, type UsageUiClient } from "@tangent/usage-ui-data";
+import { createUsageUiClient, categorizeFinalAssistant, type UsageUiClient } from "@tangent/usage-ui-data";
+import { notify, loadNotifyConfig, type NotifyConfig } from "@tangent/agent-runtime/notify";
 import { openUsageFromSqlite as openUsage, type OpenUsageOptions, type UsageClient } from "@tangent/usage-index-sqlite/sqlite";
+import type { UsageTurn } from "@tangent/usage-core/schema";
 import { nativeWatchRoots } from "@tangent/usage-providers/providers/index";
 import { watchUsageSources, type UsageSourceWatcher } from "./watch.js";
 
@@ -90,7 +92,7 @@ export async function createUsageUiApp(options: StartUsageUiServerOptions = {}):
   const devRoot = mode !== "static" ? await usageUiSourceRoot() : undefined;
   const modulePath = devRoot ? "/apps/usage/src/embedded.ts" : "/apps/usage/embedded.js";
   const context: UsageUiRequestContext = { client, usage, preferredSessionId };
-  const watcher = startSourceWatcher(options, context);
+  const watcher = await startSourceWatcher(options, context);
   return {
     app: {
       id: "usage",
@@ -114,12 +116,20 @@ export async function createUsageUiApp(options: StartUsageUiServerOptions = {}):
  * events; the rebuilt client and wrapper are swapped onto the shared request context,
  * which every route reads by reference. A reentrancy guard coalesces overlapping
  * rebuilds, and rebuild failures are swallowed so a mid-write transcript never crashes
- * the server.
+ * the server. Each rebuild also fires a desktop notification for turns that just
+ * finished, so the user can step away and learn when an agent comes to rest.
  */
-function startSourceWatcher(options: StartUsageUiServerOptions, context: UsageUiRequestContext): UsageSourceWatcher | undefined {
+async function startSourceWatcher(options: StartUsageUiServerOptions, context: UsageUiRequestContext): Promise<UsageSourceWatcher | undefined> {
   if (options.client || options.watch === false) return undefined;
   const roots = nativeWatchRoots(options.providers);
   if (!roots.length) return undefined;
+  const notifyConfig = loadNotifyConfig();
+  // Seed with turns already complete at startup so the existing backlog does not all ping at once.
+  const notified = new Set<string>();
+  if (notifyConfig.driver !== "none") {
+    const seed = await context.usage.turns.query({}).catch(() => undefined);
+    for (const turn of seed?.data ?? []) if (turn.status === "completed") notified.add(turn.id);
+  }
   let rebuilding = false;
   let pending = false;
   /** Reopens the snapshot and swaps it onto the shared context, coalescing overlapping rebuilds. */
@@ -133,6 +143,7 @@ function startSourceWatcher(options: StartUsageUiServerOptions, context: UsageUi
       const usage = await openUsage(openOptions(options));
       context.usage = usage;
       context.client = createUsageUiClient(usage);
+      if (notifyConfig.driver !== "none") await notifyCompletedTurns(usage, notified, notifyConfig);
     } catch {
       // A transcript caught mid-write yields a transient parse error; the next change reruns this.
     } finally {
@@ -143,7 +154,44 @@ function startSourceWatcher(options: StartUsageUiServerOptions, context: UsageUi
       }
     }
   };
-  return watchUsageSources({ roots, onChange: () => { void rebuild(); } });
+  /** Triggers a debounced rebuild whenever a watched transcript changes. */
+  const onChange = () => { void rebuild(); };
+  return watchUsageSources({ roots, onChange });
+}
+
+/**
+ * Fires a notification for each turn that newly reached "completed", categorising the
+ * final assistant message (done / question / blocked) and labelling it with the session.
+ * Short turns are skipped via minTurnSeconds so quick foreground turns do not ping.
+ */
+async function notifyCompletedTurns(usage: UsageClient, notified: Set<string>, config: NotifyConfig): Promise<void> {
+  const turns = await usage.turns.query({}).catch(() => undefined);
+  for (const turn of turns?.data ?? []) {
+    if (turn.status !== "completed" || notified.has(turn.id)) continue;
+    notified.add(turn.id);
+    if (turnSeconds(turn) < config.minTurnSeconds) continue;
+    const messages = await usage.messages.query({ where: { turnId: turn.id, role: "assistant" } }).catch(() => undefined);
+    const final = messages?.data?.[messages.data.length - 1];
+    if (!final) continue;
+    await notify({
+      title: `Agent ${categorizeFinalAssistant(final)}: ${await sessionLabel(usage, turn.sessionId)}`,
+      body: (final.textPreview || final.text || "").slice(0, 120)
+    }, config);
+  }
+}
+
+/** Turn duration in seconds; Infinity when timestamps are missing so unknown-length turns still notify. */
+function turnSeconds(turn: UsageTurn): number {
+  if (!turn.startedAt || !turn.endedAt) return Infinity;
+  const ms = Date.parse(turn.endedAt) - Date.parse(turn.startedAt);
+  return Number.isFinite(ms) ? ms / 1000 : Infinity;
+}
+
+/** Human-friendly session label for a notification: title, else cwd/repo basename, else the id. */
+async function sessionLabel(usage: UsageClient, sessionId: string): Promise<string> {
+  const session = await usage.sessions.get(sessionId).then((r) => r.data).catch(() => undefined);
+  const dir = session?.cwd || session?.repo?.root;
+  return session?.title || (dir ? path.basename(dir) : undefined) || sessionId;
 }
 
 /** Resolves the workspace Usage UI source root if this install includes it. */

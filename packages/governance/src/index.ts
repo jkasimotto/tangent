@@ -72,7 +72,7 @@ const allowedPackageDeps: Record<string, string[]> = {
   "@tangent/usage-core": ["@tangent/core", "@tangent/repo", "@tangent/usage-schema"],
   "@tangent/usage-index-sqlite": ["@tangent/repo", "@tangent/usage-core", "@tangent/usage-schema", "@tangent/usage-providers"],
   "@tangent/usage-providers": ["@tangent/repo", "@tangent/usage-core", "@tangent/usage-schema"],
-  "@tangent/usage": ["@tangent/core", "@tangent/repo", "@tangent/ui-server", "@tangent/usage-core", "@tangent/usage-index-sqlite", "@tangent/usage-providers", "@tangent/usage-ui", "@tangent/usage-ui-data"],
+  "@tangent/usage": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/ui-server", "@tangent/usage-core", "@tangent/usage-index-sqlite", "@tangent/usage-providers", "@tangent/usage-ui", "@tangent/usage-ui-data"],
   "@tangent/ui-tokens": [],
   "@tangent/ui-server": ["@tangent/core"],
   "@tangent/tangent-ui": ["@tangent/ui-tokens"],

@@ -74,6 +74,13 @@ export function humanRows(rows: string[]): string {
   return rows.join("\n");
 }
 
+/** Spawns a fully detached, fire-and-forget background process (no stdio, survives this CLI exiting). Used to launch the per-run notify watcher. */
+export function spawnDetached(command: string, args: string[]): void {
+  const child = spawn(command, args, { detached: true, stdio: "ignore" });
+  child.on("error", () => {});
+  child.unref();
+}
+
 /** Documents the spawnInherited helper. */
 export function spawnInherited(command: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {

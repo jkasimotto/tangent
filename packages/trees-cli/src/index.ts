@@ -12,9 +12,10 @@ import { runTreesMcpStdio } from "@tangent/trees-mcp";
 import type { AgentRun, TerminalSession } from "@tangent/trees-schema";
 import { defaultTreesHome, openFsTrees } from "@tangent/trees-runtime/fs";
 import { createProcessRuntimeAdapter, createTmuxRuntimeAdapter, type TerminalRuntimeAdapter } from "@tangent/trees-runtime/terminal";
+import { watchAgentRunNotifications, loadNotifyConfig } from "@tangent/trees-runtime/notify";
 
 import { importPa } from "./import-pa.js";
-import { captureIds, estimateArg, humanEntity, humanRows, outcomeArg, output, promptArg, providerFromAdapter, requiredPos, spawnInherited, stdinText } from "./helpers.js";
+import { captureIds, estimateArg, humanEntity, humanRows, outcomeArg, output, promptArg, providerFromAdapter, requiredPos, spawnDetached, spawnInherited, stdinText } from "./helpers.js";
 import { treesCommandSpec } from "./spec.js";
 
 export { treesCommandSpec } from "./spec.js";
@@ -186,6 +187,7 @@ async function attentionCommand(client: TreesClient, subcommand: string | undefi
 /** Documents the agentCommand helper. */
 async function agentCommand(client: TreesClient, subcommand: string | undefined, args: Args): Promise<void> {
   if (subcommand === "start") return startAgent(client, args);
+  if (subcommand === "watch") return watchAgent(client, requiredPos(args, 2, "trees agent watch requires a run id."));
   if (subcommand === "status") return output(args, await agentRows(client, args._[2]));
   if (subcommand === "send") return sendToTerminalLike(client, args, "agent");
   if (subcommand === "stop") {
@@ -239,7 +241,21 @@ async function startAgent(client: TreesClient, args: Args): Promise<void> {
     evidence: []
   };
   await client.agents.recordStarted(agentRun);
+  // Spawn a detached watcher that notifies when this run finishes or needs input, then exits.
+  // Trees has no live supervisor, so without this nothing notices the agent come to rest.
+  if (loadNotifyConfig().driver !== "none") spawnDetached(process.execPath, [process.argv[1], "agent", "watch", agentRunId]);
   output(args, { agentRun, terminalSession: startedTerminal }, `agent ${agentRun.id} started in ${startedTerminal.runtimeRef.tmuxSessionName || startedTerminal.id}`);
+}
+
+/** Runs the foreground notify watcher for one agent run (invoked detached by `trees agent start`). */
+async function watchAgent(client: TreesClient, agentRunId: string): Promise<void> {
+  const projection = await client.projection();
+  const agentRun = projection.agentRuns.find((run) => run.id === agentRunId);
+  if (!agentRun) throw new Error(`Unknown agent run: ${agentRunId}`);
+  const terminalSession = projection.terminalSessions.find((terminal) => terminal.id === agentRun.terminalSessionId || terminal.agentRunId === agentRunId);
+  if (!terminalSession) throw new Error(`No terminal session for agent run: ${agentRunId}`);
+  const runtime = runtimeFor(terminalSession.runtimeId, [terminalSession]);
+  await watchAgentRunNotifications({ client, agentRun, runtime, terminalSession, config: loadNotifyConfig() });
 }
 
 /** Documents the terminalCommand helper. */

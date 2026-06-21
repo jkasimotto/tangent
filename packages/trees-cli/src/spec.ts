@@ -25,7 +25,8 @@ export const treesCommandSpec: CliCommandSpec = {
       { name: "start", description: "Start an agent", args: "<path|id>", options: opts("agent", "model", "prompt", "runtime", "intent", "estimate", "done-when", "json") },
       { name: "send", description: "Send text to an agent", args: "<run|path> <message|->", options: opts("json") },
       { name: "status", description: "List agent status", args: "[path]", options: opts("json") },
-      { name: "stop", description: "Stop an agent", args: "<run|path>", options: opts("json") }
+      { name: "stop", description: "Stop an agent", args: "<run|path>", options: opts("json") },
+      { name: "watch", description: "Watch a run and notify on done/needs-input (auto-started by start)", args: "<run>", options: opts("json") }
     ] },
     { name: "terminal", description: "Open and control terminals", subcommands: [
       { name: "open", description: "Open a terminal", args: "<path|run|terminal>", options: opts("host", "json") },

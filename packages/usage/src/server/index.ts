@@ -117,7 +117,8 @@ export async function createUsageUiApp(options: StartUsageUiServerOptions = {}):
  * the server.
  */
 function startSourceWatcher(options: StartUsageUiServerOptions, context: UsageUiRequestContext): UsageSourceWatcher | undefined {
-  if (options.client || options.watch === false) return undefined;
+  // The watcher is the only thing that writes (it rebuilds the index), so the verify harness disables it.
+  if (options.client || options.watch === false || process.env.TANGENT_VERIFY_READONLY) return undefined;
   const roots = nativeWatchRoots(options.providers);
   if (!roots.length) return undefined;
   let rebuilding = false;

@@ -130,7 +130,11 @@ async function handleApiRequest(request: http.IncomingMessage, url: URL, context
     if (parts[0] !== "api" || parts[1] !== "eval") return json(404, { error: "Not found." });
 
     if (request.method === "POST") {
-      if (parts.length === 3 && parts[2] === "runs") return json(202, await launchRun(request));
+      if (parts.length === 3 && parts[2] === "runs") {
+        // Launching spawns real coding-agent processes and spends tokens, so the verify harness disables it.
+        if (process.env.TANGENT_VERIFY_READONLY) return json(403, { error: "Launch disabled in verify harness." });
+        return json(202, await launchRun(request));
+      }
       return json(405, { error: "Method not allowed." });
     }
     if (request.method !== "GET") return json(405, { error: "Method not allowed." });

@@ -10,6 +10,7 @@ import type { UiRoute } from "@tangent/ui-server";
 import { optionalModule, requiredProductModule } from "./module-loader.js";
 import { discoverUiApps } from "./ui-discovery.js";
 import { appendWorklogEntry, listWorklogEntries, setWorklogActual } from "./worklog.js";
+import { appendFocusEvent, listFocusEvents, readAgentStatus, transcriptDirFor, type FocusEvent } from "./focus.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -334,12 +335,51 @@ export async function runTangentUiCommand(argv: string[]): Promise<void> {
     return undefined;
   }
 
+  /** Dispatches /api/focus requests to the command-and-control event log. */
+  async function handleFocusRoute(
+    request: IncomingMessage,
+    url: URL
+  ): Promise<{ status: number; json: unknown } | undefined> {
+    if (request.method === "GET" && url.pathname === "/api/focus/events") {
+      return { status: 200, json: await listFocusEvents() };
+    }
+    if (request.method === "POST" && url.pathname === "/api/focus/events") {
+      const body = await readJson(request) as { events?: FocusEvent[]; event?: FocusEvent };
+      const events = body.events ?? (body.event ? [body.event] : []);
+      for (const event of events) await appendFocusEvent(event);
+      return { status: 200, json: { ok: true, count: events.length } };
+    }
+    if (request.method === "POST" && url.pathname === "/api/focus/dispatch") {
+      const body = await readJson(request) as Record<string, unknown>;
+      const taskId = typeof body["taskId"] === "string" ? body["taskId"] : "";
+      const cwd = typeof body["cwd"] === "string" ? body["cwd"] : ".";
+      const adapter = typeof body["adapter"] === "string" ? body["adapter"] : "claude";
+      if (!taskId) return { status: 400, json: { error: "taskId is required" } };
+      const config = await launcher.loadLaunchConfig();
+      await launcher.openAgent(cwd, { config, title: taskId });
+      await appendFocusEvent({ type: "agent_dispatched", ts: Date.now(), taskId, adapter, cwd, transcriptDir: transcriptDirFor(cwd) });
+      return { status: 200, json: { ok: true } };
+    }
+    if (request.method === "POST" && url.pathname === "/api/focus/agent-status") {
+      const body = await readJson(request) as { dirs?: Array<{ id: string; dir: string }> };
+      const statuses: Record<string, string> = {};
+      for (const { id, dir } of body.dirs ?? []) statuses[id] = await readAgentStatus(dir);
+      return { status: 200, json: statuses };
+    }
+    return undefined;
+  }
+
   const routes: UiRoute[] = [
     {
       method: "GET",
       pattern: /^\/api\/ui\/apps$/,
       /** Serves the list of available local UI apps. */
       handle: () => ({ json: { apps, initialApp } })
+    },
+    {
+      pattern: /^\/api\/focus\//,
+      /** Routes focus (command-and-control) API requests. */
+      handle: (request, url) => handleFocusRoute(request, url)
     },
     {
       pattern: /^\/api\/launcher\//,

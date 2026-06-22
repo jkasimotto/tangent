@@ -12,7 +12,7 @@ afterEach(() => {
 
 describe("trees svelte app", () => {
   it("starts empty with the add-path form", async () => {
-    render(App, { props: { client: fakeTreesClient() } });
+    render(App, { props: { client: fakeTreesClient(), initialView: "trees" } });
 
     expect(await screen.findByText("No tree nodes yet.")).toBeInTheDocument();
     expect(screen.getByLabelText("Add tree path")).toBeInTheDocument();
@@ -21,7 +21,7 @@ describe("trees svelte app", () => {
 
   it("adds a full path and renders expandable group-ready nodes", async () => {
     const client = fakeTreesClient();
-    render(App, { props: { client } });
+    render(App, { props: { client, initialView: "trees" } });
 
     await addPath("foo/bar");
 
@@ -40,7 +40,7 @@ describe("trees svelte app", () => {
       ],
       projects: [project("p1", "otto-tangent")]
     });
-    render(App, { props: { client } });
+    render(App, { props: { client, initialView: "trees" } });
 
     await screen.findByRole("treeitem", { name: /foo/i });
     await fireEvent.click(screen.getByRole("button", { name: /bar/i }));
@@ -66,7 +66,7 @@ describe("trees svelte app", () => {
       ],
       projects: [project("p1", "otto-tangent")]
     });
-    render(App, { props: { client } });
+    render(App, { props: { client, initialView: "trees" } });
 
     await addPath("foo/bar/baz");
 
@@ -82,7 +82,7 @@ describe("trees svelte app", () => {
       ],
       projects: [project("p1", "otto-tangent")]
     });
-    render(App, { props: { client } });
+    render(App, { props: { client, initialView: "trees" } });
 
     await screen.findByRole("treeitem", { name: /foo/i });
     await fireEvent.click(screen.getByRole("button", { name: /bar/i }));
@@ -97,6 +97,7 @@ describe("trees svelte app", () => {
   it("requires registered projects before saving leaf metadata", async () => {
     render(App, {
       props: {
+        initialView: "trees",
         client: fakeTreesClient({
           entities: [entity("foo", "work")],
           projects: []
@@ -113,6 +114,7 @@ describe("trees svelte app", () => {
   it("renders mixed nodes with children as group conflicts", async () => {
     render(App, {
       props: {
+        initialView: "trees",
         client: fakeTreesClient({
           entities: [
             { ...entity("foo", "work"), projectId: "p1", branch: "main" },
@@ -141,7 +143,7 @@ describe("trees svelte app", () => {
       clearLeaf: vi.fn(),
       deleteEntity: vi.fn()
     };
-    render(App, { props: { client } });
+    render(App, { props: { client, initialView: "trees" } });
 
     expect(await screen.findByRole("heading", { name: "foo" })).toBeInTheDocument();
     workspace = {

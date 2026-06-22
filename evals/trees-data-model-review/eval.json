@@ -1,0 +1,27 @@
+{
+  "schema": "eval.spec.v1",
+  "name": "trees-data-model-review",
+  "defaults": {
+    "repo": { "path": ".", "ref": "HEAD" },
+    "cwd": ".",
+    "phases": [{ "id": "implement", "mode": "workspace-write", "commit": true }]
+  },
+  "cases": [
+    {
+      "id": "data-model-review",
+      "prompt": "prompts/task.md",
+      "variants": [
+        {
+          "id": "sonnet-4-6",
+          "context": { "mode": "repo" },
+          "agent": { "kind": "claude-cli", "model": "claude-sonnet-4-6", "permissionMode": "bypassPermissions" }
+        },
+        {
+          "id": "opus-4-8",
+          "context": { "mode": "repo" },
+          "agent": { "kind": "claude-cli", "model": "claude-opus-4-8", "permissionMode": "bypassPermissions" }
+        }
+      ]
+    }
+  ]
+}

@@ -6,9 +6,11 @@
     type EvalCompareArtifactKind,
     type EvalCompareArtifactView,
     type EvalCompareView,
+    type EvalDiffLineView,
     type EvalDiffView,
     type EvalRunDetailView,
     type EvalRunSummaryView,
+    type EvalSparkline,
     type EvalSpecSummaryView,
     type EvalUiClient,
     type EvalVariantMetricsView,
@@ -343,46 +345,47 @@
     return `${diff.lines.length} lines, ${changed} changed`;
   }
 
-  type ResultRow = {
-    label: string;
-    aText: string;
-    bText: string;
-    aPct: number;
-    bPct: number;
-    delta: string;
-    deltaBad: boolean;
-    deltaGood: boolean;
-  };
-
-  $: resultRows = compare ? buildResultRows(compare.left.metrics, compare.right.metrics) : [];
-
-  /** Builds the A-vs-B output rows (time, peak context, files changed). Lower is treated as better. */
-  function buildResultRows(left: EvalVariantMetricsView | null | undefined, right: EvalVariantMetricsView | null | undefined): ResultRow[] {
-    if (!left && !right) return [];
-    return [
-      resultRow("Time", left?.durationMs, right?.durationMs, formatDurationMs),
-      resultRow("Peak context", left?.peakContextTokens, right?.peakContextTokens, formatTokens),
-      resultRow("Files changed", left?.filesChanged, right?.filesChanged, (value) => `${value}`)
-    ];
+  /** Height (0..1) for one flame bucket, matching the Usage UI sparkline. */
+  function sparkHeight(tokenShare: number, durationShare: number): number {
+    const value = tokenShare > 0 ? tokenShare : durationShare;
+    return Math.max(0.08, Math.min(1, value));
   }
 
-  /** Builds one comparison row, scaling both bars against the larger value. */
-  function resultRow(label: string, a: number | undefined, b: number | undefined, format: (value: number) => string): ResultRow {
-    const aValue = a ?? 0;
-    const bValue = b ?? 0;
-    const max = Math.max(aValue, bValue, 1);
-    const delta = bValue - aValue;
-    return {
-      label,
-      aText: a === undefined ? "—" : format(aValue),
-      bText: b === undefined ? "—" : format(bValue),
-      aPct: (aValue / max) * 100,
-      bPct: (bValue / max) * 100,
-      delta: delta === 0 ? "even" : `${delta > 0 ? "+" : "−"}${format(Math.abs(delta))} B`,
-      deltaBad: delta > 0,
-      deltaGood: delta < 0
-    };
+  /** Width percent for a flame strip, scaling each conversation against the longer one so relative length reads at a glance. */
+  function flameWidth(self: EvalSparkline | undefined, other: EvalSparkline | undefined): number {
+    if (!self) return 0;
+    const max = Math.max(self.durationMs, other?.durationMs || 0, 1);
+    return Math.max(20, Math.min(100, (self.durationMs / max) * 100));
   }
+
+  /** One-line flame caption: how long the conversation ran and how many tokens it spent. */
+  function flameCaption(metrics: EvalVariantMetricsView | null | undefined): string {
+    if (!metrics) return "";
+    const parts: string[] = [];
+    if (metrics.durationMs !== undefined) parts.push(formatDurationMs(metrics.durationMs));
+    if (metrics.tokensTotal) parts.push(`${formatTokens(metrics.tokensTotal)} tok`);
+    if (metrics.peakContextTokens) parts.push(`${formatTokens(metrics.peakContextTokens)} ctx`);
+    return parts.join(" · ");
+  }
+
+  /**
+   * Reconstructs one side's full document from the aligned diff. Produced output (a generated file)
+   * is two independent results to read side by side, not a diff: each is shown whole so its length and
+   * shape are visible. Inputs (prompts, context) keep the diff, where "what differs" is the point.
+   */
+  function readerLines(lines: EvalDiffLineView[], side: "left" | "right"): { n: number; text: string }[] {
+    const rows: { n: number; text: string }[] = [];
+    for (const line of lines) {
+      const num = side === "left" ? line.leftNumber : line.rightNumber;
+      if (num === undefined) continue;
+      rows.push({ n: num, text: (side === "left" ? line.left : line.right) || "" });
+    }
+    return rows;
+  }
+
+  $: isOutput = diff?.artifact.kind === "code";
+  $: leftReader = diff && isOutput ? readerLines(diff.lines, "left") : [];
+  $: rightReader = diff && isOutput ? readerLines(diff.lines, "right") : [];
 
   function formatDurationMs(value: number): string {
     if (value < 1000) return `${Math.round(value)}ms`;
@@ -448,21 +451,6 @@
 
     {#if runDetail}
       {#if compare}
-        {#if resultRows.length}
-          <div class="results-strip" aria-label="Output comparison">
-            {#each resultRows as row}
-              <div class="result-metric">
-                <span class="result-label">{row.label}</span>
-                <div class="versus">
-                  <div class="versus-row"><span class="versus-tag">A</span><div class="versus-track"><span class="versus-fill a" style={`width:${row.aPct}%`}></span></div><span class="versus-value">{row.aText}</span></div>
-                  <div class="versus-row"><span class="versus-tag">B</span><div class="versus-track"><span class="versus-fill b" style={`width:${row.bPct}%`}></span></div><span class="versus-value">{row.bText}</span></div>
-                </div>
-                <span class="result-delta" class:good={row.deltaGood} class:bad={row.deltaBad}>{row.delta}</span>
-              </div>
-            {/each}
-          </div>
-        {/if}
-
         <div class="artifact-and-diff">
           <aside class="artifact-list" aria-label="Artifacts">
             {#each artifactSections as section}
@@ -507,12 +495,15 @@
                     {/each}
                   </select>
                 </label>
-                <small>
-                  {agentLabel(compare.left) || "manual"} · {contextLabel(compare.left)}
-                  {#if compare.left.metrics?.conversationIds?.[0]}
-                    · <a href={`/usage?conversation=${encodeURIComponent(compare.left.metrics.conversationIds[0])}`}>flamegraph</a>
-                  {/if}
-                </small>
+                <small>{agentLabel(compare.left) || "manual"} · {contextLabel(compare.left)}</small>
+                {#if compare.left.metrics?.sparkline}
+                  <span class="flame" style={`width:${flameWidth(compare.left.metrics.sparkline, compare.right.metrics?.sparkline)}%`} aria-label="Conversation flame graph">
+                    {#each compare.left.metrics.sparkline.buckets as bucket}
+                      <span class={`flame-bar flame-${bucket.kind}`} style={`height:${sparkHeight(bucket.tokenShare, bucket.durationShare) * 100}%`}></span>
+                    {/each}
+                  </span>
+                  <small class="flame-caption">{flameCaption(compare.left.metrics)}</small>
+                {/if}
               </div>
               <div class="entity entity-b">
                 <label>
@@ -523,15 +514,35 @@
                     {/each}
                   </select>
                 </label>
-                <small>
-                  {agentLabel(compare.right) || "manual"} · {contextLabel(compare.right)}
-                  {#if compare.right.metrics?.conversationIds?.[0]}
-                    · <a href={`/usage?conversation=${encodeURIComponent(compare.right.metrics.conversationIds[0])}`}>flamegraph</a>
-                  {/if}
-                </small>
+                <small>{agentLabel(compare.right) || "manual"} · {contextLabel(compare.right)}</small>
+                {#if compare.right.metrics?.sparkline}
+                  <span class="flame" style={`width:${flameWidth(compare.right.metrics.sparkline, compare.left.metrics?.sparkline)}%`} aria-label="Conversation flame graph">
+                    {#each compare.right.metrics.sparkline.buckets as bucket}
+                      <span class={`flame-bar flame-${bucket.kind}`} style={`height:${sparkHeight(bucket.tokenShare, bucket.durationShare) * 100}%`}></span>
+                    {/each}
+                  </span>
+                  <small class="flame-caption">{flameCaption(compare.right.metrics)}</small>
+                {/if}
               </div>
             </div>
-            {#if diff}
+            {#if diff && isOutput}
+              <header class="diff-head">
+                <h3>{diff.artifact.label}</h3>
+                <span>A {leftReader.length} · B {rightReader.length} lines</span>
+              </header>
+              <div class="reader" aria-label={`${diff.artifact.label} side by side`}>
+                <div class="reader-col">
+                  {#each leftReader as row}
+                    <div class="reader-row"><span class="line-no">{row.n}</span><code>{row.text}</code></div>
+                  {/each}
+                </div>
+                <div class="reader-col reader-col-b">
+                  {#each rightReader as row}
+                    <div class="reader-row"><span class="line-no">{row.n}</span><code>{row.text}</code></div>
+                  {/each}
+                </div>
+              </div>
+            {:else if diff}
               <header class="diff-head">
                 <h3>{diff.artifact.label}</h3>
                 <span>{lineCount()}</span>

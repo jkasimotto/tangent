@@ -285,6 +285,7 @@ function baseTask(overrides: Partial<Task>): Task {
   };
 }
 
+/** A trees client with one configured entity, for the command-center UI tests. */
 function treesClient(): TreesUiClient {
   const workspace: TreesUiWorkspace = {
     entities: [{ id: "ent_eval", path: "eval", title: "eval", kind: "work", projectId: "p1", branch: "main", worktreePath: "/repo/eval" }],

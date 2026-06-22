@@ -271,8 +271,8 @@ function projectGroups(sessions: UsageSession[], selectedSessionId: string): Usa
   return [...groups.values()];
 }
 
-/** Builds a project label from stable session metadata. */
-function projectLabel(session: Pick<UsageSession, "project" | "repo" | "cwd">): string {
+/** Builds a project label from stable session metadata. Shared with the session list so cards and the rail agree on names. */
+export function projectLabel(session: Pick<UsageSession, "project" | "repo" | "cwd">): string {
   return cleanTitle(session.project || session.repo?.id || basename(session.repo?.root || session.repo?.cwd || session.cwd) || "Unknown project", "Unknown project");
 }
 

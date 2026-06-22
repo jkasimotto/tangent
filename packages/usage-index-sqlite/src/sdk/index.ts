@@ -2,6 +2,8 @@ export { scanRepo, openUsage } from "./scanRepo.js";
 export type { ScanRepoOptions } from "./scanRepo.js";
 export { archiveUsageTelemetry, ensureUsageIndex, loadUsageDatasetFromIndex, resolveConversationRef } from "./indexStore.js";
 export type { ResolvedConversationRef, UsageArchiveOptions, UsageArchiveResult, UsageDatasetQuery, UsageIndexOptions, UsageIndexResult, UsageIndexSource } from "./indexStore.js";
+export { pruneUsageIndex } from "./prune.js";
+export type { UsagePruneOptions, UsagePruneResult } from "./prune.js";
 export { status } from "./status.js";
 export type { RepoStatus, StatusOptions } from "./status.js";
 export { importNative } from "./importNative.js";

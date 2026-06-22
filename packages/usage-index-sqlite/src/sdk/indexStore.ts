@@ -106,6 +106,7 @@ type UsageIndexTarget = {
   global: boolean;
 };
 
+/** Builds or incrementally updates the repo or global usage index from its native and usage-jsonl sources, returning what changed. */
 export async function ensureUsageIndex(options: UsageIndexOptions): Promise<UsageIndexResult> {
   const target = await usageIndexTarget(options);
   const root = target.repoRoot;
@@ -213,6 +214,7 @@ export async function ensureUsageIndex(options: UsageIndexOptions): Promise<Usag
   }
 }
 
+/** Ensures the index is current, then loads a filtered event dataset from it for projection. */
 export async function loadUsageDatasetFromIndex(query: UsageDatasetQuery): Promise<UsageDataset> {
   const index = await ensureUsageIndex(query);
   const db = await openDb(await usageIndexTarget(query));
@@ -252,6 +254,7 @@ export async function loadUsageDatasetFromIndex(query: UsageDatasetQuery): Promi
   }
 }
 
+/** Resolves a user-supplied session ref (full id, short id, or prefix) to a single indexed conversation. */
 export async function resolveConversationRef(options: { repo: string; ref: string; providers?: UsageProvider[]; sources?: UsageIndexSource[] }): Promise<ResolvedConversationRef> {
   const index = await ensureUsageIndex({ repo: options.repo, providers: options.providers, sources: options.sources });
   const db = await openDb(repoIndexTarget(index.repoRoot));
@@ -280,6 +283,7 @@ export async function resolveConversationRef(options: { repo: string; ref: strin
   }
 }
 
+/** Moves indexed usage-jsonl source files older than the cutoff to an archive dir, marking them archived in the index. */
 export async function archiveUsageTelemetry(options: UsageArchiveOptions): Promise<UsageArchiveResult> {
   const index = await ensureUsageIndex({ repo: options.repo, providers: options.providers, sources: ["usage-jsonl"] });
   const db = await openDb(repoIndexTarget(index.repoRoot));
@@ -322,14 +326,16 @@ export async function archiveUsageTelemetry(options: UsageArchiveOptions): Promi
   }
 }
 
-async function openDb(target: UsageIndexTarget): Promise<DatabaseHandle> {
+/** Opens (creating its parent directory) the better-sqlite3 database for an index target. */
+export async function openDb(target: UsageIndexTarget): Promise<DatabaseHandle> {
   const dbPath = target.dbPath;
   mkdirSyncForDb(dbPath);
   const Database = optionalSqlite();
   return new Database(dbPath) as DatabaseHandle;
 }
 
-async function usageIndexTarget(options: { repo: string; scope?: "repo" | "all" }): Promise<UsageIndexTarget> {
+/** Resolves the index target (the global all-sessions db, or the per-repo db) for the given scope. */
+export async function usageIndexTarget(options: { repo: string; scope?: "repo" | "all" }): Promise<UsageIndexTarget> {
   if (options.scope === "all") {
     return {
       repoRoot: "all-local-sessions",
@@ -341,6 +347,7 @@ async function usageIndexTarget(options: { repo: string; scope?: "repo" | "all" 
   return repoIndexTarget(repo.root || repo.cwd);
 }
 
+/** Builds the per-repo index target for a resolved repo root. */
 function repoIndexTarget(repoRoot: string): UsageIndexTarget {
   return {
     repoRoot,
@@ -350,6 +357,7 @@ function repoIndexTarget(repoRoot: string): UsageIndexTarget {
   };
 }
 
+/** Loads the optional better-sqlite3 dependency lazily, throwing a clear error when it is not installed. */
 function optionalSqlite(): new (path: string, options?: unknown) => unknown {
   try {
     return require("better-sqlite3") as new (path: string, options?: unknown) => unknown;
@@ -358,12 +366,14 @@ function optionalSqlite(): new (path: string, options?: unknown) => unknown {
   }
 }
 
+/** Returns whether the derived projection tables already hold any rows. */
 function hasDerivedRows(db: DatabaseHandle): boolean {
   const row = db.prepare("select count(*) as count from sessions").get() as { count: number } | undefined;
   return Number(row?.count || 0) > 0;
 }
 
-function ensureSchema(db: DatabaseHandle): void {
+/** Creates the index tables if missing and applies additive column migrations. */
+export function ensureSchema(db: DatabaseHandle): void {
   db.exec(`
     create table if not exists source_files (
       path text primary key,
@@ -426,6 +436,7 @@ function ensureSchema(db: DatabaseHandle): void {
   if (!tableHasColumn(db, "tool_results", "output_full")) db.exec("alter table tool_results add column output_full text");
 }
 
+/** Replaces a source file's row and all its events in the index within a single transaction. */
 function upsertSourceFile(db: DatabaseHandle, file: string, provider: UsageProvider, sourceKind: UsageIndexSource, mtimeMs: number, size: number, events: UsageJsonlLineV1[]): void {
   const dataset = new UsageDataset(events);
   const insertSource = db.prepare(`
@@ -459,6 +470,7 @@ function upsertSourceFile(db: DatabaseHandle, file: string, provider: UsageProvi
   transaction();
 }
 
+/** Deletes a source file's row and all its events from the index. */
 function removeSourceFile(db: DatabaseHandle, file: string): void {
   const transaction = db.transaction(() => {
     db.prepare("delete from events where source_path = ?").run(file);
@@ -467,7 +479,8 @@ function removeSourceFile(db: DatabaseHandle, file: string): void {
   transaction();
 }
 
-function refreshDerivedTables(db: DatabaseHandle): void {
+/** Rebuilds the derived projection tables (sessions, turns, messages, tools, and so on) from the current raw events. */
+export function refreshDerivedTables(db: DatabaseHandle): void {
   const events = (db.prepare("select json from events order by coalesce(observed_at, recorded_at), recorded_at").all() as EventRow[])
     .map((row) => JSON.parse(row.json) as UsageJsonlLineV1);
   const dataset = new UsageDataset(events);
@@ -588,6 +601,7 @@ function refreshDerivedTables(db: DatabaseHandle): void {
   transaction();
 }
 
+/** Returns indexed conversation rows, newest first, optionally filtered by provider. */
 function conversationRows(db: DatabaseHandle, providers: UsageProvider[] | undefined): ConversationRow[] {
   const clauses: string[] = [];
   const params: unknown[] = [];
@@ -606,6 +620,7 @@ function conversationRows(db: DatabaseHandle, providers: UsageProvider[] | undef
   return db.prepare(sql).all(...params) as ConversationRow[];
 }
 
+/** Returns non-archived source file rows, optionally filtered by provider. */
 function sourceFileRows(db: DatabaseHandle, providers: UsageProvider[] | undefined): SourceFileRow[] {
   const clauses = ["source_kind = 'usage-jsonl'", "archived_at is null"];
   const params: unknown[] = [];
@@ -616,6 +631,7 @@ function sourceFileRows(db: DatabaseHandle, providers: UsageProvider[] | undefin
   return db.prepare(`select path, provider, source_kind, mtime_ms, size, event_count from source_files where ${clauses.join(" and ")}`).all(...params) as SourceFileRow[];
 }
 
+/** Maps each indexed source file path to its mtime and size, for skip-unchanged change detection. */
 function sourceFileMetadata(db: DatabaseHandle, providers: UsageProvider[], sourceKind: UsageIndexSource): Map<string, Pick<SourceFileRow, "mtime_ms" | "size">> {
   const clauses = ["source_kind = ?", "archived_at is null"];
   const params: unknown[] = [sourceKind];
@@ -627,11 +643,13 @@ function sourceFileMetadata(db: DatabaseHandle, providers: UsageProvider[], sour
   return new Map(rows.map((row) => [row.path, { mtime_ms: row.mtime_ms, size: row.size }]));
 }
 
+/** Returns the latest event timestamp recorded for a source file, if any. */
 function latestEventForSource(db: DatabaseHandle, sourcePath: string): string | undefined {
   const row = db.prepare("select max(coalesce(observed_at, recorded_at)) as latest from events where source_path = ?").get(sourcePath) as { latest: string | null } | undefined;
   return row?.latest || undefined;
 }
 
+/** Builds the archive destination path for a source file being retired. */
 function archivePathFor(repoRoot: string, provider: UsageProvider, sourcePath: string): string {
   const base = repoEventDir(repoRoot, provider);
   const relative = path.relative(base, sourcePath);
@@ -639,23 +657,28 @@ function archivePathFor(repoRoot: string, provider: UsageProvider, sourcePath: s
   return path.join(repoArchiveDir(repoRoot), "events", provider, safeRelative);
 }
 
+/** Builds the short, human-facing id (provider plus first 8 chars of the session) for a conversation row. */
 function shortConversationId(row: Pick<ConversationRow, "provider" | "id" | "session_id">): string {
   const session = row.session_id || row.id.split(":").slice(1).join(":");
   return `${row.provider}:${session.slice(0, 8)}`;
 }
 
+/** Formats a date as an ISO string, or undefined when absent. */
 function iso(date: Date | undefined): string | undefined {
   return date?.toISOString();
 }
 
+/** Serializes a value to JSON, or null when it is undefined. */
 function jsonOrNull(value: unknown): string | null {
   return value === undefined ? null : JSON.stringify(value);
 }
 
+/** Creates the parent directory for a database file synchronously. */
 function mkdirSyncForDb(dbPath: string): void {
   mkdirSync(path.dirname(dbPath), { recursive: true });
 }
 
+/** Returns whether a table already has the named column. */
 function tableHasColumn(db: DatabaseHandle, table: string, column: string): boolean {
   return (db.prepare(`pragma table_info(${table})`).all() as Array<{ name: string }>).some((row) => row.name === column);
 }

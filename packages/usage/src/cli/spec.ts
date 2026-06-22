@@ -10,7 +10,7 @@ export const usageCommandSpec: CliCommandSpec = {
       name: "ui",
       description: "Start a local Usage UI",
       args: "[session|latest]",
-      options: commonJsonOptions(["repo", "scope", "host", "port", "no-browser", "static-ui", "json", "provider", "source"])
+      options: commonJsonOptions(["repo", "scope", "days", "host", "port", "no-browser", "static-ui", "json", "provider", "source"])
     },
     {
       name: "index",
@@ -100,6 +100,7 @@ export const usageCommandSpec: CliCommandSpec = {
       ]
     },
     { name: "archive", description: "Archive indexed raw telemetry", hidden: true, args: "[repo]", options: commonJsonOptions(["before", "dry-run", "provider"]) },
+    { name: "prune", description: "Trim the usage index to a retention window", args: "[repo]", options: commonJsonOptions(["scope", "days", "before", "vacuum", "dry-run", "json"]) },
     { name: "import-native", description: "Import provider native transcripts as best-effort backfill", hidden: true, args: "[repo]", options: commonJsonOptions(["provider"]) },
     { name: "doctor", description: "Show verbose diagnostics", hidden: true, args: "[repo]", options: commonJsonOptions(["trace"]) }
   ]
@@ -118,7 +119,8 @@ function commonJsonOptions(names: string[]) {
     if (name === "before" || name === "date" || name === "since" || name === "until") return { name, takesValue: true, description: `${name} date` };
     if (["format", "metric", "group", "session", "role", "min-chars", "contains", "limit", "kind", "order", "bucket", "name", "include-results"].includes(name)) return { name, takesValue: true, description: `${name} value` };
     if (name === "static-ui") return { name, description: "Serve built UI assets instead of the workspace hot-reload server" };
-    if (name === "internal" || name === "force" || name === "dry-run" || name === "estimate" || name === "ndjson" || name === "no-browser") return { name, description: "Enable this option" };
+    if (name === "days") return { name, takesValue: true, description: "Retention window in days (default 60); applies to ui as the default view window (default 14)" };
+    if (name === "internal" || name === "force" || name === "dry-run" || name === "estimate" || name === "ndjson" || name === "no-browser" || name === "vacuum") return { name, description: "Enable this option" };
     return { name, takesValue: true, description: `${name} value` };
   });
 }

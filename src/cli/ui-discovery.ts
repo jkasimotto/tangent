@@ -15,6 +15,8 @@ export type DiscoverUiAppsOptions = {
   requestedApp?: string;
   repo: string;
   scope: "repo" | "all";
+  /** Usage view window in days; forwarded to the usage app factory. Other apps ignore it. */
+  windowDays?: number;
   mode: UiModePreference;
   providers: string[];
   sources: string[];
@@ -62,6 +64,7 @@ async function loadUiApp(candidate: UiAppCandidate, options: DiscoverUiAppsOptio
     return await factory({
       repo: options.repo,
       scope: options.scope,
+      windowDays: options.windowDays,
       mode: options.mode,
       providers: options.providers,
       sources: options.sources

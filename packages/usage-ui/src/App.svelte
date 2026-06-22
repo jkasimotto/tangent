@@ -19,6 +19,7 @@
   let selectedId: string | undefined;
   let mode: "browse" | "read" = "browse";
   let query = "";
+  let projectFilter = "all";
   let loading = true;
   let conversationLoading = false;
   let error = "";
@@ -52,7 +53,8 @@
   });
 
   $: pxPerMs = BASE_PX_PER_MS * zoom;
-  $: filteredSessions = filterSessions(sessions, query);
+  $: projectOptions = Array.from(new Set(sessions.map((session) => session.project).filter((value): value is string => Boolean(value)))).sort((left, right) => left.localeCompare(right));
+  $: filteredSessions = filterSessions(sessions, query, projectFilter);
   $: maxFlameDurationMs = Math.max(1, ...filteredSessions.map((session) => session.flame?.durationMs || 0));
   $: bottleneckIds = new Set((view?.bottlenecks || []).map((bottleneck) => bottleneck.id));
   $: activeRow = view?.chart.rows.find((row) => rowIds(row.messageIds || row.messageId).includes(activeMessageId)) || view?.chart.rows[0];
@@ -146,11 +148,14 @@
     mode = "browse";
   }
 
-  /** Filters the session list for the browse gallery and rail. */
-  function filterSessions(values: UsageSessionListItem[], search: string): UsageSessionListItem[] {
+  /** Filters the session list for the browse gallery and rail by the project dropdown and free-text search. */
+  function filterSessions(values: UsageSessionListItem[], search: string, project: string): UsageSessionListItem[] {
     const needle = search.trim().toLowerCase();
-    if (!needle) return values;
-    return values.filter((session) => `${session.title} ${session.provider || ""} ${session.model || ""}`.toLowerCase().includes(needle));
+    return values.filter((session) => {
+      if (project !== "all" && session.project !== project) return false;
+      if (!needle) return true;
+      return `${session.title} ${session.project || ""} ${session.provider || ""} ${session.model || ""}`.toLowerCase().includes(needle);
+    });
   }
 
   /** Returns the messages that belong to the active work turn for the detail panel. */
@@ -442,15 +447,31 @@
         <p>Tangent Usage</p>
         <h1>Conversations</h1>
       </div>
-      <label class="search">
-        <span>Search sessions</span>
-        <input bind:value={query} placeholder="Project or session" />
-      </label>
+      <div class="browse-filters">
+        {#if projectOptions.length > 1}
+          <label class="project-filter">
+            <span>Project</span>
+            <select bind:value={projectFilter}>
+              <option value="all">All projects</option>
+              {#each projectOptions as project}
+                <option value={project}>{project}</option>
+              {/each}
+            </select>
+          </label>
+        {/if}
+        <label class="search">
+          <span>Search sessions</span>
+          <input bind:value={query} placeholder="Project or session" />
+        </label>
+      </div>
     </header>
     <div class="gallery" aria-label="Conversation gallery">
       {#each filteredSessions as session}
         <button type="button" class="session-card" onclick={() => openSession(session.id)}>
-          <span class="session-card-date">{sessionDate(session)}</span>
+          <span class="session-card-date">
+            {sessionDate(session)}
+            {#if session.project}<span class="session-card-project">{session.project}</span>{/if}
+          </span>
           <span class="session-card-title">{session.title}</span>
           <span class="session-card-meta">
             <span>{session.provider || "unknown"}</span>

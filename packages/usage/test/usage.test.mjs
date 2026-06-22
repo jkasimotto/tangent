@@ -10,7 +10,7 @@ import { eventFileForConversation } from "../dist/core/paths.js";
 import { normalizeClaudeNativeRecord, normalizeClaudeNativeRecords } from "../dist/providers/claude/native/normalize.js";
 import { normalizeCodexNativeRecords } from "../dist/providers/codex/native/normalize.js";
 import { providerCapabilities } from "../dist/providers/index.js";
-import { archiveUsageTelemetry, ensureUsageIndex, loadUsageDatasetFromIndex, resolveConversationRef } from "../dist/sdk/indexStore.js";
+import { archiveUsageTelemetry, ensureUsageIndex, loadUsageDatasetFromIndex, pruneUsageIndex, resolveConversationRef } from "../dist/sdk/index.js";
 import { inspectNativeLogFile, listNativeSchemas, nativeSchemaStatus } from "../dist/sdk/index.js";
 
 test("Claude native import emits visible message and token usage event", () => {
@@ -187,7 +187,7 @@ test("Codex native token snapshots attach to assistant messages in projection or
   assert.deepEqual(assistantMessages.map((message) => message.tokenUsage?.total), [109, 135]);
 });
 
-test("usage index skips incomplete Codex native transcripts until the quiet window", async () => {
+test("usage index marks incomplete Codex native transcripts complete only after the quiet window", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "usage-native-codex-quiet-"));
   process.env.USAGE_HOME = path.join(dir, "home");
   const previousCodexHome = process.env.CODEX_HOME;
@@ -201,13 +201,17 @@ test("usage index skips incomplete Codex native transcripts until the quiet wind
 
   try {
     process.env.CODEX_HOME = codexHome;
+    const conversationId = "codex:quiet";
+    // Active conversations are indexed immediately; within the quiet window the turn reads as not-yet-complete.
     let index = await ensureUsageIndex({ repo, providers: ["codex"], now: new Date("2026-06-09T08:10:00.000Z"), force: true });
-    assert.equal(index.sourceFiles.length, 0);
+    assert.deepEqual(index.sourceFiles, [nativePath]);
+    let dataset = await loadUsageDatasetFromIndex({ repo, providers: ["codex"], conversationId, now: new Date("2026-06-09T08:10:00.000Z") });
+    assert.notEqual(dataset.turns.list().data[0].status, "completed");
 
+    // Once the quiet window passes with no further activity, the transcript reads as completed.
     index = await ensureUsageIndex({ repo, providers: ["codex"], now: new Date("2026-06-09T08:30:00.000Z"), force: true });
     assert.deepEqual(index.sourceFiles, [nativePath]);
-    const conversationId = "codex:quiet";
-    const dataset = await loadUsageDatasetFromIndex({ repo, providers: ["codex"], conversationId, now: new Date("2026-06-09T08:30:00.000Z") });
+    dataset = await loadUsageDatasetFromIndex({ repo, providers: ["codex"], conversationId, now: new Date("2026-06-09T08:30:00.000Z") });
     assert.equal(dataset.turns.list().data[0].status, "completed");
 
     await writeJsonl(nativePath, [
@@ -217,8 +221,9 @@ test("usage index skips incomplete Codex native transcripts until the quiet wind
     const incompleteMtime = new Date("2026-06-09T08:31:00.000Z");
     await utimes(nativePath, incompleteMtime, incompleteMtime);
     await ensureUsageIndex({ repo, providers: ["codex"], now: new Date("2026-06-09T08:35:00.000Z") });
-    const preserved = await loadUsageDatasetFromIndex({ repo, providers: ["codex"], conversationId, now: new Date("2026-06-09T08:35:00.000Z") });
-    assert.deepEqual(preserved.messages.visible({ conversationId }).data.map((row) => row.text), ["quiet prompt", "native done"]);
+    // New activity is reflected immediately, so the in-flight prompt is visible even inside its quiet window.
+    const reindexed = await loadUsageDatasetFromIndex({ repo, providers: ["codex"], conversationId, now: new Date("2026-06-09T08:35:00.000Z") });
+    assert.deepEqual(reindexed.messages.visible({ conversationId }).data.map((row) => row.text), ["quiet prompt", "native done", "new incomplete prompt"]);
   } finally {
     if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
     else process.env.CODEX_HOME = previousCodexHome;
@@ -282,6 +287,54 @@ test("usage all scope indexes Claude native transcripts across project directori
 
     const repoDataset = await loadUsageDatasetFromIndex({ repo: repoA, providers: ["claude"], now: new Date("2026-06-09T08:30:00.000Z") });
     assert.deepEqual(repoDataset.messages.list({ role: "user" }).data.map((row) => row.text), ["run test"]);
+  } finally {
+    if (previousUsageHome === undefined) delete process.env.USAGE_HOME;
+    else process.env.USAGE_HOME = previousUsageHome;
+    if (previousClaudeHome === undefined) delete process.env.CLAUDE_HOME;
+    else process.env.CLAUDE_HOME = previousClaudeHome;
+  }
+});
+
+test("usage prune trims the index to a retention window and tombstones the pruned transcript", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "usage-prune-"));
+  const previousUsageHome = process.env.USAGE_HOME;
+  const previousClaudeHome = process.env.CLAUDE_HOME;
+  process.env.USAGE_HOME = path.join(dir, "home");
+  const claudeHome = path.join(dir, "claude-home");
+  const repoOld = path.join(dir, "repo-old");
+  const repoNew = path.join(dir, "repo-new");
+  await mkdir(repoOld, { recursive: true });
+  await mkdir(repoNew, { recursive: true });
+  const oldPath = path.join(claudeHome, "projects", claudeProjectKey(repoOld), "old.jsonl");
+  const newPath = path.join(claudeHome, "projects", claudeProjectKey(repoNew), "new.jsonl");
+  await writeJsonl(oldPath, shiftSessionToDay(claudeNativeSession({ repo: repoOld, sessionId: "old" }), "2026-04-01"));
+  await writeJsonl(newPath, shiftSessionToDay(claudeNativeSession({ repo: repoNew, sessionId: "new" }), "2026-06-20"));
+  await utimes(oldPath, new Date("2026-04-01T08:00:20.000Z"), new Date("2026-04-01T08:00:20.000Z"));
+  await utimes(newPath, new Date("2026-06-20T08:00:20.000Z"), new Date("2026-06-20T08:00:20.000Z"));
+
+  try {
+    process.env.CLAUDE_HOME = claudeHome;
+    const now = new Date("2026-06-23T08:30:00.000Z");
+    await ensureUsageIndex({ repo: repoOld, scope: "all", providers: ["claude"], now });
+    const before = await loadUsageDatasetFromIndex({ repo: repoOld, scope: "all", providers: ["claude"], now });
+    assert.deepEqual(before.messages.list({ role: "user" }).data.map((row) => row.text).sort(), ["run test", "run test"]);
+
+    const result = await pruneUsageIndex({ repo: repoOld, scope: "all", before: new Date("2026-06-01T00:00:00.000Z") });
+    assert.equal(result.scope, "all");
+    assert.ok(result.deletedEvents > 0, "prune removes events older than the cutoff");
+
+    const after = await loadUsageDatasetFromIndex({ repo: repoOld, scope: "all", providers: ["claude"], now });
+    assert.deepEqual(after.messages.list({ role: "user" }).data.map((row) => row.text), ["run test"]);
+
+    // The native transcript is untouched on disk, so the tombstone must keep a normal rebuild from re-importing it.
+    await ensureUsageIndex({ repo: repoOld, scope: "all", providers: ["claude"], now });
+    const rebuilt = await loadUsageDatasetFromIndex({ repo: repoOld, scope: "all", providers: ["claude"], now });
+    assert.deepEqual(rebuilt.messages.list({ role: "user" }).data.map((row) => row.text), ["run test"]);
+
+    // A forced rebuild re-imports full history from the still-present native transcript.
+    await ensureUsageIndex({ repo: repoOld, scope: "all", providers: ["claude"], now, force: true });
+    const forced = await loadUsageDatasetFromIndex({ repo: repoOld, scope: "all", providers: ["claude"], now });
+    assert.deepEqual(forced.messages.list({ role: "user" }).data.map((row) => row.text).sort(), ["run test", "run test"]);
   } finally {
     if (previousUsageHome === undefined) delete process.env.USAGE_HOME;
     else process.env.USAGE_HOME = previousUsageHome;
@@ -819,6 +872,11 @@ function claudeNativeTwoToolSession() {
       }
     }
   ];
+}
+
+/** Rewrites every record's timestamp onto the given YYYY-MM-DD, keeping the time-of-day, so fixtures can sit on either side of a prune cutoff. */
+function shiftSessionToDay(records, day) {
+  return records.map((record) => (record.timestamp ? { ...record, timestamp: record.timestamp.replace(/^\d{4}-\d{2}-\d{2}/, day) } : record));
 }
 
 /** Converts a repo root into Claude's project directory key. */

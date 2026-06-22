@@ -2,6 +2,7 @@ import { renderCommandHelp } from "@tangent/core";
 import { parseArgs, stringArg } from "@tangent/core/cli";
 
 import { archiveUsageTelemetry, ensureUsageIndex, loadUsageDatasetFromIndex, resolveConversationRef } from "@tangent/usage-index-sqlite/sdk/indexStore";
+import { pruneUsageIndex } from "@tangent/usage-index-sqlite/sdk/prune";
 import type { UsageIndexSource } from "@tangent/usage-index-sqlite/sdk/indexStore";
 import { importNative } from "@tangent/usage-index-sqlite/sdk/importNative";
 import { status } from "@tangent/usage-index-sqlite/sdk/status";
@@ -278,6 +279,27 @@ export async function runUsageCli(argv = process.argv.slice(2)): Promise<void> {
       console.log(`${result.dryRun ? "Would archive" : "Archived"}: ${result.archived.length}`);
       for (const row of result.archived) console.log(`  ${row.path} -> ${row.archivePath}`);
       for (const row of result.skipped) console.log(`  skipped: ${row.path} (${row.reason})`);
+    }
+    return;
+  }
+
+  if (command === "prune") {
+    const before = dateArg(args.before) || daysAgo(numberOr(stringArg(args.days), DEFAULT_RETENTION_DAYS));
+    const result = await pruneUsageIndex({
+      repo: args._[1] || ".",
+      // The global all-projects index is the one that balloons, so prune it by default.
+      scope: stringArg(args.scope) === "repo" ? "repo" : "all",
+      before,
+      dryRun: Boolean(args["dry-run"]),
+      vacuum: Boolean(args.vacuum)
+    });
+    if (args.json) console.log(JSON.stringify(result, null, 2));
+    else {
+      console.log(`Index:   ${result.dbPath} (${result.scope})`);
+      console.log(`${result.dryRun ? "Would delete" : "Deleted"} events before ${result.before.slice(0, 10)}: ${result.deletedEvents}`);
+      const delta = result.bytesBefore - result.bytesAfter;
+      if (result.vacuumed) console.log(`Reclaimed: ${formatBytes(delta)} (${formatBytes(result.bytesBefore)} -> ${formatBytes(result.bytesAfter)})`);
+      else if (!result.dryRun) console.log(`Size:      ${formatBytes(result.bytesAfter)} on disk; rerun with --vacuum to reclaim freed space.`);
     }
     return;
   }
@@ -581,6 +603,33 @@ function sumNumbers(values: number[]): number {
 function todayDate(): string {
   return formatDatePart(new Date());
 }
+/** Default retention window for `usage prune`: keep roughly two months of history. */
+const DEFAULT_RETENTION_DAYS = 60;
+
+/** Returns the timestamp `days` days before now, the lower bound prune keeps. */
+function daysAgo(days: number): Date {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+}
+
+/** Parses a numeric CLI argument, falling back to a default when absent or invalid. */
+function numberOr(value: string | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+/** Formats a byte count as a compact human-readable size. */
+function formatBytes(bytes: number): string {
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = Math.abs(bytes);
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${(bytes < 0 ? -value : value).toFixed(value < 10 && unit > 0 ? 1 : 0)} ${units[unit]}`;
+}
+
 /** Parses an optional CLI date argument. */
 function dateArg(value: unknown): Date | undefined {
   if (typeof value !== "string") return undefined;

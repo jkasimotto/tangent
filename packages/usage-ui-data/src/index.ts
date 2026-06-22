@@ -11,7 +11,7 @@ export { buildTraceWaterfall } from "./trace.js";
 export { buildTranscriptHighlights } from "./transcriptHighlights.js";
 
 import { buildUsageCockpitView, timelineSteps, transcriptMessages } from "./cockpit.js";
-import { buildUsageConversationView, type UsageConversationToolCall } from "./conversationView.js";
+import { buildUsageConversationView, projectLabel, type UsageConversationToolCall } from "./conversationView.js";
 import { buildSparkline } from "./flame.js";
 import { peakContextTokens } from "./format.js";
 import { buildUsageSessionTimelineView } from "./sessionTimeline.js";
@@ -77,6 +77,8 @@ export type UsageSessionListItem = {
   caveatCount?: number;
   /** Compact activity series for the list card / rail flame graph. */
   flame?: UsageSparkline;
+  /** Project the session ran in (basename of its repo/cwd), for the card badge and project filter. */
+  project?: string;
 };
 
 export type UsageSessionListView = {
@@ -347,7 +349,8 @@ export function createUsageUiClient(usage: UsageDomainClient): UsageUiClient {
           toolCalls: session.counts.toolCalls,
           filesTouched: session.counts.filesTouched,
           caveatCount: session.availability.notes.length,
-          flame: flames[index]
+          flame: flames[index],
+          project: projectLabel(session)
         })),
         caveats: result.meta.warnings.map((warning) => warning.message)
       };

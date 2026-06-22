@@ -23,6 +23,12 @@ export type StartUsageUiServerOptions = {
   client?: UsageClient;
   /** Watch native transcript dirs and rebuild the snapshot on change. Defaults to true. */
   watch?: boolean;
+  /**
+   * Only load conversations active within this many days, applied as a SQL date filter so the
+   * all-projects global index (which the projection loads fully into memory) stays fast. Omit or
+   * pass a non-finite value to load all history.
+   */
+  windowDays?: number;
 };
 
 export type UsageUiServer = {
@@ -247,9 +253,17 @@ function openOptions(options: StartUsageUiServerOptions): OpenUsageOptions {
     scope: options.scope || "repo",
     providers: options.providers,
     sources: options.sources,
+    // Rolling window recomputed on each (re)open so the watcher's rebuilds stay current.
+    from: windowStart(options.windowDays),
     contentMode: "metadata-with-excerpts",
     index: "auto"
   };
+}
+
+/** Resolves the inclusive lower bound for the recent-activity window, or undefined for all history. */
+function windowStart(windowDays: number | undefined): string | undefined {
+  if (windowDays === undefined || !Number.isFinite(windowDays) || windowDays <= 0) return undefined;
+  return new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
 }
 
 /** Resolves the initially selected session id. */

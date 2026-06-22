@@ -9,6 +9,12 @@ import { normalizeClaudeNativeRecords } from "../dist/providers/claude/native/no
 import { loadNativeSourceFiles } from "../dist/providers/native/load.js";
 import { claudeProjectKey } from "../dist/providers/claude/native/discover.js";
 
+test("claude project key encodes both slashes and dots, matching Claude Code's project dir names", () => {
+  // A worktree under ~/.tangent: the dot in `.tangent` must become `-`, or transcripts are never found.
+  assert.equal(claudeProjectKey("/Users/me/.tangent/eval/work"), "-Users-me--tangent-eval-work");
+  assert.equal(claudeProjectKey("/Users/me/Projects/otto-tangent"), "-Users-me-Projects-otto-tangent");
+});
+
 test("indexes an active claude transcript instead of waiting for the quiet window", async () => {
   const home = mkdtempSync(path.join(tmpdir(), "claude-home-"));
   const previousHome = process.env.CLAUDE_HOME;

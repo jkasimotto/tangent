@@ -20,6 +20,11 @@ Architecture docs:
 - docs/agent/coding-rules.md
 - docs/agent/validation.md
 
+Primary entry point:
+- `tangent ui` is how the user enters the app every time. It is the combined launcher in `src/cli/product.ts` (`runTangentUiCommand`), mounting usage + trees + eval together. The standalone `tangent usage ui` is secondary; do not assume the user runs it.
+- Any change to how an app behaves on launch (scope, default window, mounted routes, app discovery) must work through `tangent ui`, not just the per-app command. Verify the combined launcher, not only `tangent usage ui`.
+- The Usage panel defaults to all projects across `~/.claude/projects` (`scope: "all"`), bounded to a recent view window (`--days`, default 7). Keep it cross-project: never silently scope it back to a single repo.
+
 Validate work:
 - npm run check
 - npm run test

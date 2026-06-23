@@ -119,7 +119,7 @@ function commonJsonOptions(names: string[]) {
     if (name === "before" || name === "date" || name === "since" || name === "until") return { name, takesValue: true, description: `${name} date` };
     if (["format", "metric", "group", "session", "role", "min-chars", "contains", "limit", "kind", "order", "bucket", "name", "include-results"].includes(name)) return { name, takesValue: true, description: `${name} value` };
     if (name === "static-ui") return { name, description: "Serve built UI assets instead of the workspace hot-reload server" };
-    if (name === "days") return { name, takesValue: true, description: "Retention window in days (default 60); applies to ui as the default view window (default 14)" };
+    if (name === "days") return { name, takesValue: true, description: "Retention window in days (default 60); applies to ui as the default view window (default 7)" };
     if (name === "internal" || name === "force" || name === "dry-run" || name === "estimate" || name === "ndjson" || name === "no-browser" || name === "vacuum") return { name, description: "Enable this option" };
     return { name, takesValue: true, description: `${name} value` };
   });

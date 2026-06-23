@@ -62,7 +62,7 @@ export const uiCommandSpec: CliCommandSpec = {
   options: [
     { name: "repo", takesValue: true, description: "Repository path" },
     { name: "scope", takesValue: true, values: ["all", "repo"], description: "Session discovery scope (default: all projects)" },
-    { name: "days", takesValue: true, description: "Usage view window in days (default 14); use 'all' for full history" },
+    { name: "days", takesValue: true, description: "Usage view window in days (default 7); use 'all' for full history" },
     { name: "host", takesValue: true, description: "Host to bind" },
     { name: "port", takesValue: true, description: "Port to bind" },
     { name: "provider", takesValue: true, values: ["claude", "codex"], description: "Usage provider filter" },
@@ -217,7 +217,7 @@ export async function runTangentUiCommand(argv: string[]): Promise<void> {
     repo: stringArg(args.repo) || ".",
     // Default to every project so the panel is a cross-project view; `--scope repo` limits it to one.
     scope: stringArg(args.scope) === "repo" ? "repo" : "all",
-    // Default the Usage view to the last 14 days so the global index loads fast; `--days all` widens it.
+    // Default the Usage view to the last 7 days so the global index loads fast; `--days all` widens it.
     windowDays: uiWindowDaysArg(stringArg(args.days)),
     mode,
     providers: stringsArg(args.provider),
@@ -689,12 +689,12 @@ function uiMode(args: ReturnType<typeof parseArgs>): "auto" | "dev" | "static" {
   return "auto";
 }
 
-/** Parses `--days` for the Usage view window: a positive number of days, or `all`/`0` for full history. Defaults to 14. */
+/** Parses `--days` for the Usage view window: a positive number of days, or `all`/`0` for full history. Defaults to 7. */
 function uiWindowDaysArg(value: string | undefined): number {
-  if (value === undefined) return 14;
+  if (value === undefined) return 7;
   if (value === "all" || value === "0") return Number.POSITIVE_INFINITY;
   const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 14;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 7;
 }
 
 /** Parses the rollup summary provider CLI argument. */

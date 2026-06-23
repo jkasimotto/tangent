@@ -9,7 +9,7 @@ export async function usageUiCommand(args: Args): Promise<void> {
     repo: stringArg(args.repo) || ".",
     // Default to every project so the panel is a cross-project view; `--scope repo` limits it to one.
     scope: stringArg(args.scope) === "repo" ? "repo" : "all",
-    // Default to the last 14 days to keep the global index fast; `--days N` widens it, `--days all` loads everything.
+    // Default to the last 7 days to keep the global index fast; `--days N` widens it, `--days all` loads everything.
     windowDays: windowDaysArg(stringArg(args.days)),
     providers: stringsArg(args.provider),
     sources: stringsArg(args.source),
@@ -23,12 +23,12 @@ export async function usageUiCommand(args: Args): Promise<void> {
   await waitForInterrupt(server.close);
 }
 
-/** Parses `--days`: a positive number of days, or `all`/`0` for no window. Defaults to 14. */
+/** Parses `--days`: a positive number of days, or `all`/`0` for no window. Defaults to 7. */
 function windowDaysArg(value: string | undefined): number {
-  if (value === undefined) return 14;
+  if (value === undefined) return 7;
   if (value === "all" || value === "0") return Number.POSITIVE_INFINITY;
   const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 14;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 7;
 }
 
 /** Keeps the UI server alive until the process is interrupted. */

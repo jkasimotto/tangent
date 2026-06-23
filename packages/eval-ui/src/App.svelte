@@ -8,16 +8,35 @@
     type EvalCompareView,
     type EvalDiffLineView,
     type EvalDiffView,
+    type EvalReviews,
+    type EvalReviewNote,
+    type EvalReviewSentiment,
     type EvalRunDetailView,
     type EvalRunSummaryView,
     type EvalSparkline,
     type EvalSpecSummaryView,
     type EvalUiClient,
     type EvalVariantMetricsView,
-    type EvalVariantSummaryView
+    type EvalVariantReview,
+    type EvalVariantSummaryView,
+    type EvalVerdictSentiment
   } from "./client.js";
 
   export let client: EvalUiClient = createEvalApiClient();
+
+  // Review mode: read one config's result at a time and annotate it (inline good/bad notes + an
+  // overall verdict); Compare synthesizes those notes into a side-by-side, not a code diff; Diff keeps
+  // the original A/B line view. Notes persist per run via the reviews API.
+  type ReviewMode = "review" | "compare" | "diff";
+  let mode: ReviewMode = "review";
+  let reviewVariantId = "";
+  let reviews: EvalReviews = { schema: "eval.reviews.v1", variants: {} };
+  let reviewDiff: EvalDiffView | undefined;
+  let reviewDiffLoadKey = "";
+  let noteLine: number | undefined;
+  let noteSentiment: EvalReviewSentiment = "bad";
+  let noteText = "";
+  let savingReview = false;
 
   let runs: EvalRunSummaryView[] = [];
   let specs: EvalSpecSummaryView[] = [];
@@ -52,7 +71,11 @@
   $: selectedRunId && void loadRun(selectedRunId);
   $: selectedCase && leftVariantId && rightVariantId && void loadCompare();
   $: compare && syncArtifactSelection(compare.artifacts);
-  $: compare && selectedArtifactId && void loadDiff();
+  $: compare && selectedArtifactId && mode === "diff" && void loadDiff();
+  $: compare && selectedArtifactId && reviewVariantId && mode === "review" && void loadReviewDiff();
+  $: reviewKey = variantKey(selectedCaseId, reviewVariantId);
+  $: currentReview = reviews.variants[reviewKey] || { notes: [] };
+  $: reviewReader = reviewDiff ? readerLines(reviewDiff.lines, "left") : [];
 
   async function loadInitial(): Promise<void> {
     loading = true;
@@ -130,6 +153,9 @@
       selectedArtifactId = "";
       compare = undefined;
       diff = undefined;
+      reviewDiff = undefined;
+      reviewDiffLoadKey = "";
+      void loadReviews(runId);
       error = "";
       if (runActive(next)) schedulePoll(runId);
       else clearTimeout(pollTimer);
@@ -190,6 +216,128 @@
     }
   }
 
+  /** Loads the single reviewed variant's content for the selected artifact (left=right=that variant). */
+  async function loadReviewDiff(): Promise<void> {
+    if (!compare || !reviewVariantId) return;
+    const artifact = compare.artifacts.find((item) => item.id === selectedArtifactId);
+    if (!artifact) { reviewDiff = undefined; return; }
+    const key = `${selectedRunId}:${selectedCaseId}:${reviewVariantId}:${artifact.id}`;
+    if (reviewDiffLoadKey === key) return;
+    reviewDiffLoadKey = key;
+    try {
+      reviewDiff = await client.getDiff({ runId: selectedRunId, caseId: selectedCaseId, left: reviewVariantId, right: reviewVariantId, kind: artifact.kind, path: artifact.path });
+      noteLine = undefined;
+      noteText = "";
+    } catch {
+      reviewDiff = undefined;
+    }
+  }
+
+  /** Loads persisted review notes for a run. */
+  async function loadReviews(runId: string): Promise<void> {
+    try {
+      reviews = await client.getReviews(runId);
+    } catch {
+      reviews = { schema: "eval.reviews.v1", variants: {} };
+    }
+  }
+
+  /** The storage key for one variant's review. */
+  function variantKey(caseId: string, variantId: string): string {
+    return `${caseId}/${variantId}`;
+  }
+
+  /** Returns the mutable review record for a variant, creating it if missing. */
+  function ensureReview(key: string): EvalVariantReview {
+    if (!reviews.variants[key]) reviews.variants[key] = { notes: [] };
+    return reviews.variants[key];
+  }
+
+  /** Persists the current reviews document. */
+  async function persistReviews(): Promise<void> {
+    if (!selectedRunId) return;
+    savingReview = true;
+    try {
+      reviews = await client.putReviews(selectedRunId, reviews);
+    } catch (caught) {
+      error = friendlyError(caught);
+    } finally {
+      savingReview = false;
+    }
+  }
+
+  /** Opens the inline note composer on a line with a sentiment. */
+  function openNote(line: number, sentiment: EvalReviewSentiment): void {
+    noteLine = line;
+    noteSentiment = sentiment;
+    noteText = "";
+  }
+
+  /** Saves the drafted note against the reviewed variant's current artifact line. */
+  async function saveNote(line: number, snippet: string): Promise<void> {
+    if (!reviewDiff || !noteText.trim()) return;
+    const note: EvalReviewNote = {
+      id: newId(),
+      artifactId: reviewDiff.artifact.id,
+      artifactLabel: reviewDiff.artifact.label,
+      line,
+      snippet,
+      sentiment: noteSentiment,
+      text: noteText.trim(),
+      ts: Date.now()
+    };
+    ensureReview(reviewKey).notes.push(note);
+    reviews = reviews;
+    noteLine = undefined;
+    noteText = "";
+    await persistReviews();
+  }
+
+  /** Removes a note by id from the reviewed variant. */
+  async function removeNote(id: string): Promise<void> {
+    const review = reviews.variants[reviewKey];
+    if (!review) return;
+    review.notes = review.notes.filter((note) => note.id !== id);
+    reviews = reviews;
+    await persistReviews();
+  }
+
+  /** Sets the overall verdict sentiment for the reviewed variant. */
+  async function setVerdict(sentiment: EvalVerdictSentiment): Promise<void> {
+    const review = ensureReview(reviewKey);
+    review.verdict = { sentiment, text: review.verdict?.text };
+    reviews = reviews;
+    await persistReviews();
+  }
+
+  /** Saves the free-text part of the reviewed variant's verdict on blur. */
+  async function setVerdictText(text: string): Promise<void> {
+    const review = ensureReview(reviewKey);
+    review.verdict = { sentiment: review.verdict?.sentiment || "mixed", text: text.trim() || undefined };
+    reviews = reviews;
+    await persistReviews();
+  }
+
+  /** Notes for one artifact line, used to render inline markers under that line. */
+  function notesAt(review: EvalVariantReview, artifactId: string, line: number): EvalReviewNote[] {
+    return review.notes.filter((note) => note.artifactId === artifactId && note.line === line);
+  }
+
+  /** A variant's notes of one sentiment, for the Compare synthesis. */
+  function notesBySentiment(key: string, sentiment: EvalReviewSentiment): EvalReviewNote[] {
+    return (reviews.variants[key]?.notes || []).filter((note) => note.sentiment === sentiment);
+  }
+
+  /** A short label for a verdict sentiment. */
+  function verdictLabel(sentiment: EvalVerdictSentiment | undefined): string {
+    return sentiment === "like" ? "👍 Liked" : sentiment === "dislike" ? "👎 Disliked" : sentiment === "mixed" ? "🤔 Mixed" : "No verdict";
+  }
+
+  /** Generates a fresh note id. */
+  function newId(): string {
+    return crypto.randomUUID ? crypto.randomUUID() : `n_${Date.now()}_${Math.round(Math.random() * 1e9)}`;
+  }
+
   function selectRun(runId: string): void {
     selectedRunId = runId;
     runLoadKey = "";
@@ -208,6 +356,7 @@
   function selectArtifact(artifact: EvalCompareArtifactView): void {
     selectedArtifactId = artifact.id;
     diffLoadKey = "";
+    reviewDiffLoadKey = "";
   }
 
   function syncVariantSelection(testCase: EvalCaseView): void {
@@ -221,6 +370,13 @@
     if (!variants.some((variant) => variant.variantId === rightVariantId) || rightVariantId === leftVariantId) {
       rightVariantId = variants.find((variant) => variant.variantId !== leftVariantId)?.variantId || leftVariantId;
     }
+    if (!variants.some((variant) => variant.variantId === reviewVariantId)) reviewVariantId = leftVariantId;
+  }
+
+  function selectReviewVariant(variantId: string): void {
+    reviewVariantId = variantId;
+    reviewDiffLoadKey = "";
+    noteLine = undefined;
   }
 
   function syncArtifactSelection(artifacts: EvalCompareArtifactView[]): void {
@@ -484,89 +640,192 @@
             {/each}
           </aside>
 
-          <section class="diff-pane" aria-label="Artifact diff">
-            <div class="entity-heads">
-              <div class="entity entity-a">
-                <label>
-                  <span class="entity-tag">A</span>
-                  <select bind:value={leftVariantId}>
-                    {#each selectedCase?.variants || [] as variant}
-                      <option value={variant.variantId}>{variant.variantId}</option>
-                    {/each}
-                  </select>
-                </label>
-                <small>{agentLabel(compare.left) || "manual"} · {contextLabel(compare.left)}</small>
-                {#if compare.left.metrics?.sparkline}
-                  <span class="flame" style={`width:${flameWidth(compare.left.metrics.sparkline, compare.right.metrics?.sparkline)}%`} aria-label="Conversation flame graph">
-                    {#each compare.left.metrics.sparkline.buckets as bucket}
-                      <span class={`flame-bar flame-${bucket.kind}`} style={`height:${sparkHeight(bucket.tokenShare, bucket.durationShare) * 100}%`}></span>
-                    {/each}
-                  </span>
-                  <small class="flame-caption">{flameCaption(compare.left.metrics)}</small>
-                {/if}
-              </div>
-              <div class="entity entity-b">
-                <label>
-                  <span class="entity-tag">B</span>
-                  <select bind:value={rightVariantId}>
-                    {#each selectedCase?.variants || [] as variant}
-                      <option value={variant.variantId}>{variant.variantId}</option>
-                    {/each}
-                  </select>
-                </label>
-                <small>{agentLabel(compare.right) || "manual"} · {contextLabel(compare.right)}</small>
-                {#if compare.right.metrics?.sparkline}
-                  <span class="flame" style={`width:${flameWidth(compare.right.metrics.sparkline, compare.left.metrics?.sparkline)}%`} aria-label="Conversation flame graph">
-                    {#each compare.right.metrics.sparkline.buckets as bucket}
-                      <span class={`flame-bar flame-${bucket.kind}`} style={`height:${sparkHeight(bucket.tokenShare, bucket.durationShare) * 100}%`}></span>
-                    {/each}
-                  </span>
-                  <small class="flame-caption">{flameCaption(compare.right.metrics)}</small>
-                {/if}
-              </div>
+          <section class="diff-pane" aria-label="Artifact view">
+            <div class="mode-tabs" aria-label="View mode">
+              <button type="button" class:active={mode === "review"} on:click={() => mode = "review"}>Review</button>
+              <button type="button" class:active={mode === "compare"} on:click={() => mode = "compare"}>Compare</button>
+              <button type="button" class:active={mode === "diff"} on:click={() => mode = "diff"}>Diff</button>
+              {#if savingReview}<small class="saving">saving…</small>{/if}
             </div>
-            {#if diff && isOutput}
-              <header class="diff-head">
-                <h3>{diff.artifact.label}</h3>
-                <span>A {leftReader.length} · B {rightReader.length} lines</span>
-              </header>
-              <div class="reader" aria-label={`${diff.artifact.label} side by side`}>
-                <div class="reader-col">
-                  {#each leftReader as row}
-                    <div class="reader-row"><span class="line-no">{row.n}</span><code>{row.text}</code></div>
+
+            {#if mode === "review"}
+              <div class="review-head">
+                <div class="review-pick">
+                  <span class="review-eyebrow">Reviewing</span>
+                  {#each selectedCase?.variants || [] as variant}
+                    <button type="button" class="variant-chip" class:active={variant.variantId === reviewVariantId} on:click={() => selectReviewVariant(variant.variantId)}>{variant.variantId}</button>
                   {/each}
                 </div>
-                <div class="reader-col reader-col-b">
-                  {#each rightReader as row}
-                    <div class="reader-row"><span class="line-no">{row.n}</span><code>{row.text}</code></div>
-                  {/each}
+                <div class="verdict" aria-label="Overall verdict">
+                  <button type="button" class:active={currentReview.verdict?.sentiment === "like"} on:click={() => setVerdict("like")}>👍</button>
+                  <button type="button" class:active={currentReview.verdict?.sentiment === "mixed"} on:click={() => setVerdict("mixed")}>🤔</button>
+                  <button type="button" class:active={currentReview.verdict?.sentiment === "dislike"} on:click={() => setVerdict("dislike")}>👎</button>
+                  <input class="verdict-text" placeholder="overall note (optional)" value={currentReview.verdict?.text || ""} on:change={(event) => setVerdictText(event.currentTarget.value)} />
                 </div>
               </div>
-            {:else if diff}
-              <header class="diff-head">
-                <h3>{diff.artifact.label}</h3>
-                <span>{lineCount()}</span>
-              </header>
-              <div class="diff-grid" role="table" aria-label={`${diff.artifact.label} diff`}>
-                {#each segments as segment}
-                  {#if segment.kind === "gap" && !expandedGaps.has(segment.index)}
-                    <button type="button" class="diff-gap" on:click={() => toggleGap(segment.index)}>
-                      ⋯ {segment.count} unchanged lines
-                    </button>
-                  {:else}
-                    {#each segment.lines as line}
-                      <div class:changed={line.kind === "changed"} class:add={line.kind === "add"} class:delete={line.kind === "delete"} class:equal={line.kind === "equal"} class="diff-row">
-                        <span class="line-no">{line.leftNumber || ""}</span>
-                        <code>{line.left || ""}</code>
-                        <span class="line-no">{line.rightNumber || ""}</span>
-                        <code>{line.right || ""}</code>
+              {#if reviewDiff}
+                <header class="diff-head">
+                  <h3>{reviewDiff.artifact.label}</h3>
+                  <span>{reviewReader.length} lines · 👍/👎 a line to note it</span>
+                </header>
+                <div class="review-reader" aria-label={`${reviewDiff.artifact.label} review`}>
+                  {#each reviewReader as row}
+                    {@const lineNotes = notesAt(currentReview, reviewDiff.artifact.id, row.n)}
+                    <div class="review-row" class:has-notes={lineNotes.length}>
+                      <span class="line-no">{row.n}</span>
+                      <code>{row.text}</code>
+                      <span class="row-actions">
+                        <button type="button" class="mark good" title="Mark this line good" on:click={() => openNote(row.n, "good")}>👍</button>
+                        <button type="button" class="mark bad" title="Mark this line bad" on:click={() => openNote(row.n, "bad")}>👎</button>
+                      </span>
+                    </div>
+                    {#each lineNotes as note}
+                      <div class="line-note {note.sentiment}">
+                        <span class="note-icon">{note.sentiment === "good" ? "👍" : "👎"}</span>
+                        <span class="note-text">{note.text}</span>
+                        <button type="button" class="note-del" title="Remove note" on:click={() => removeNote(note.id)}>×</button>
                       </div>
                     {/each}
-                  {/if}
+                    {#if noteLine === row.n}
+                      <form class="note-composer {noteSentiment}" on:submit|preventDefault={() => saveNote(row.n, row.text)}>
+                        <span class="note-icon">{noteSentiment === "good" ? "👍" : "👎"}</span>
+                        <!-- svelte-ignore a11y-autofocus -->
+                        <input class="note-input" placeholder={noteSentiment === "good" ? "what's good here…" : "what's wrong here…"} bind:value={noteText} autofocus />
+                        <button type="submit" class="primary" disabled={!noteText.trim()}>Add</button>
+                        <button type="button" class="ghost" on:click={() => noteLine = undefined}>Cancel</button>
+                      </form>
+                    {/if}
+                  {/each}
+                </div>
+              {:else}
+                <div class="state">Pick an artifact on the left to review “{reviewVariantId}”.</div>
+              {/if}
+
+            {:else if mode === "compare"}
+              <div class="compare-pick">
+                <label><span class="entity-tag">A</span>
+                  <select bind:value={leftVariantId}>{#each selectedCase?.variants || [] as variant}<option value={variant.variantId}>{variant.variantId}</option>{/each}</select>
+                </label>
+                <label><span class="entity-tag">B</span>
+                  <select bind:value={rightVariantId}>{#each selectedCase?.variants || [] as variant}<option value={variant.variantId}>{variant.variantId}</option>{/each}</select>
+                </label>
+                <small class="compare-hint">Built from your review notes</small>
+              </div>
+              <div class="review-compare">
+                {#each [leftVariantId, rightVariantId] as variantId, index}
+                  {@const key = variantKey(selectedCaseId, variantId)}
+                  {@const review = reviews.variants[key]}
+                  <div class="review-col">
+                    <header class="review-col-head">
+                      <span class="entity-tag">{index === 0 ? "A" : "B"}</span>
+                      <h3>{variantId}</h3>
+                      <span class="verdict-badge {review?.verdict?.sentiment || 'none'}">{verdictLabel(review?.verdict?.sentiment)}</span>
+                    </header>
+                    {#if review?.verdict?.text}<p class="verdict-note">{review.verdict.text}</p>{/if}
+                    <section class="syn-group good">
+                      <h4>👍 Did well</h4>
+                      {#each notesBySentiment(key, "good") as note}
+                        <div class="syn-note"><p class="syn-text">{note.text}</p><code class="syn-snippet">{note.artifactLabel}:{note.line} · {note.snippet.trim()}</code></div>
+                      {:else}
+                        <p class="syn-empty">No notes yet.</p>
+                      {/each}
+                    </section>
+                    <section class="syn-group bad">
+                      <h4>👎 Mistakes</h4>
+                      {#each notesBySentiment(key, "bad") as note}
+                        <div class="syn-note"><p class="syn-text">{note.text}</p><code class="syn-snippet">{note.artifactLabel}:{note.line} · {note.snippet.trim()}</code></div>
+                      {:else}
+                        <p class="syn-empty">No notes yet.</p>
+                      {/each}
+                    </section>
+                  </div>
                 {/each}
               </div>
+
             {:else}
-              <div class="state">Select an artifact to view its diff.</div>
+              <div class="entity-heads">
+                <div class="entity entity-a">
+                  <label>
+                    <span class="entity-tag">A</span>
+                    <select bind:value={leftVariantId}>
+                      {#each selectedCase?.variants || [] as variant}
+                        <option value={variant.variantId}>{variant.variantId}</option>
+                      {/each}
+                    </select>
+                  </label>
+                  <small>{agentLabel(compare.left) || "manual"} · {contextLabel(compare.left)}</small>
+                  {#if compare.left.metrics?.sparkline}
+                    <span class="flame" style={`width:${flameWidth(compare.left.metrics.sparkline, compare.right.metrics?.sparkline)}%`} aria-label="Conversation flame graph">
+                      {#each compare.left.metrics.sparkline.buckets as bucket}
+                        <span class={`flame-bar flame-${bucket.kind}`} style={`height:${sparkHeight(bucket.tokenShare, bucket.durationShare) * 100}%`}></span>
+                      {/each}
+                    </span>
+                    <small class="flame-caption">{flameCaption(compare.left.metrics)}</small>
+                  {/if}
+                </div>
+                <div class="entity entity-b">
+                  <label>
+                    <span class="entity-tag">B</span>
+                    <select bind:value={rightVariantId}>
+                      {#each selectedCase?.variants || [] as variant}
+                        <option value={variant.variantId}>{variant.variantId}</option>
+                      {/each}
+                    </select>
+                  </label>
+                  <small>{agentLabel(compare.right) || "manual"} · {contextLabel(compare.right)}</small>
+                  {#if compare.right.metrics?.sparkline}
+                    <span class="flame" style={`width:${flameWidth(compare.right.metrics.sparkline, compare.left.metrics?.sparkline)}%`} aria-label="Conversation flame graph">
+                      {#each compare.right.metrics.sparkline.buckets as bucket}
+                        <span class={`flame-bar flame-${bucket.kind}`} style={`height:${sparkHeight(bucket.tokenShare, bucket.durationShare) * 100}%`}></span>
+                      {/each}
+                    </span>
+                    <small class="flame-caption">{flameCaption(compare.right.metrics)}</small>
+                  {/if}
+                </div>
+              </div>
+              {#if diff && isOutput}
+                <header class="diff-head">
+                  <h3>{diff.artifact.label}</h3>
+                  <span>A {leftReader.length} · B {rightReader.length} lines</span>
+                </header>
+                <div class="reader" aria-label={`${diff.artifact.label} side by side`}>
+                  <div class="reader-col">
+                    {#each leftReader as row}
+                      <div class="reader-row"><span class="line-no">{row.n}</span><code>{row.text}</code></div>
+                    {/each}
+                  </div>
+                  <div class="reader-col reader-col-b">
+                    {#each rightReader as row}
+                      <div class="reader-row"><span class="line-no">{row.n}</span><code>{row.text}</code></div>
+                    {/each}
+                  </div>
+                </div>
+              {:else if diff}
+                <header class="diff-head">
+                  <h3>{diff.artifact.label}</h3>
+                  <span>{lineCount()}</span>
+                </header>
+                <div class="diff-grid" role="table" aria-label={`${diff.artifact.label} diff`}>
+                  {#each segments as segment}
+                    {#if segment.kind === "gap" && !expandedGaps.has(segment.index)}
+                      <button type="button" class="diff-gap" on:click={() => toggleGap(segment.index)}>
+                        ⋯ {segment.count} unchanged lines
+                      </button>
+                    {:else}
+                      {#each segment.lines as line}
+                        <div class:changed={line.kind === "changed"} class:add={line.kind === "add"} class:delete={line.kind === "delete"} class:equal={line.kind === "equal"} class="diff-row">
+                          <span class="line-no">{line.leftNumber || ""}</span>
+                          <code>{line.left || ""}</code>
+                          <span class="line-no">{line.rightNumber || ""}</span>
+                          <code>{line.right || ""}</code>
+                        </div>
+                      {/each}
+                    {/if}
+                  {/each}
+                </div>
+              {:else}
+                <div class="state">Select an artifact to view its diff.</div>
+              {/if}
             {/if}
           </section>
         </div>

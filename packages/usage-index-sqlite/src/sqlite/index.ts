@@ -13,6 +13,7 @@ import type {
 } from "../sdk/indexStore.js";
 import { providerCapabilities } from "@tangent/usage-providers/providers/index";
 
+/** Opens a Usage client backed by the SQLite index, ensuring it is current and loading the windowed dataset into a projection. */
 export async function openUsageFromSqlite(options: OpenUsageOptions = {}): Promise<UsageClient> {
   const providers = options.providers?.filter((provider) => provider === "claude" || provider === "codex") as Array<"claude" | "codex"> | undefined;
   const dataset = await loadUsageDatasetFromIndex({
@@ -38,6 +39,24 @@ export async function openUsageFromSqlite(options: OpenUsageOptions = {}): Promi
   return createUsageClient(projections);
 }
 
+/**
+ * Builds an empty Usage client without touching the index, for instant non-blocking startup.
+ * The server serves this while the real snapshot loads in the background, then swaps it in.
+ */
+export function emptyUsageFromSqlite(options: OpenUsageOptions = {}): UsageClient {
+  const providers = options.providers?.filter((provider) => provider === "claude" || provider === "codex") as Array<"claude" | "codex"> | undefined;
+  const projections = eventsToProjections({
+    events: [],
+    warnings: [],
+    sources: [],
+    capabilities: (providers || ["claude", "codex"]).map(providerCapabilities),
+    contentMode: options.contentMode || "metadata-with-excerpts",
+    index: { kind: "sqlite", version: "usage.index.v2" }
+  });
+  return createUsageClient(projections);
+}
+
+/** Maps requested source names to the SQLite index source kinds. */
 function sqliteSources(sources: Array<string> | undefined): UsageIndexSource[] | undefined {
   if (!sources?.length) return undefined;
   const mapped = sources.flatMap((source) => {

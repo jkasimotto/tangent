@@ -106,10 +106,14 @@ export async function createLocalUiServer(options: CreateLocalUiServerOptions): 
     url,
     dev: devMounts.length > 0,
     /** Closes the local server instance. */
-    close: () => Promise.all([
-      ...devMounts.map((mount) => mount.server.close()),
-      new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
-    ]).then(() => undefined)
+    close: () => {
+      // Drop idle keep-alive sockets (e.g. the browser's) so server.close() actually resolves instead of hanging.
+      server.closeAllConnections?.();
+      return Promise.all([
+        ...devMounts.map((mount) => mount.server.close()),
+        new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
+      ]).then(() => undefined);
+    }
   };
 }
 

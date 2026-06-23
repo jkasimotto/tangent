@@ -645,8 +645,10 @@ async function productStatus(specifier: string, options: { repo: string }): Prom
 /** Keeps a long-running server alive until interrupted. */
 function waitForInterrupt(close: () => Promise<void>): Promise<void> {
   return new Promise((resolve) => {
-    /** Stops the server and resolves the wait. */
+    /** Stops the server and resolves the wait, force-exiting if a graceful close stalls. */
     const stop = () => {
+      // Safety net: Vite signal handlers or lingering sockets can keep close() from resolving; never leave the process unkillable.
+      setTimeout(() => process.exit(0), 500).unref();
       void close().finally(resolve);
     };
     process.once("SIGINT", stop);
@@ -681,12 +683,11 @@ function usageProviders(provider: SetupSelection["provider"]): string[] {
   return provider === "all" ? ["claude", "codex"] : [provider];
 }
 
-/** Parses the root UI dev/static mode flags. */
+/** Parses the root UI dev/static mode flags. Defaults to static so `tangent ui` serves pre-built assets and loads instantly; `--dev` opts into Vite hot reload. */
 function uiMode(args: ReturnType<typeof parseArgs>): "auto" | "dev" | "static" {
   if (booleanArg(args.dev) && booleanArg(args["static-ui"])) throw new Error("--dev and --static-ui are mutually exclusive.");
   if (booleanArg(args.dev)) return "dev";
-  if (booleanArg(args["static-ui"])) return "static";
-  return "auto";
+  return "static";
 }
 
 /** Parses `--days` for the Usage view window: a positive number of days, or `all`/`0` for full history. Defaults to 7. */

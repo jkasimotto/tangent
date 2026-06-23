@@ -30,6 +30,7 @@
   let feedbackText = "";
   let feedbackSaved = false;
   let feedbackError = "";
+  let feedbackCloseTimer: ReturnType<typeof setTimeout> | undefined;
 
   onMount(() => {
     window.addEventListener("popstate", applyLocation);
@@ -60,6 +61,7 @@
   }
 
   function closeFeedback(): void {
+    if (feedbackCloseTimer) { clearTimeout(feedbackCloseTimer); feedbackCloseTimer = undefined; }
     feedbackOpen = false;
     feedbackSaved = false;
     feedbackError = "";
@@ -92,6 +94,8 @@
       if (!response.ok) throw new Error(await response.text());
       feedbackText = "";
       feedbackSaved = true;
+      // Flash the confirmation, then dismiss on its own so ⌘↵ is the whole interaction — no mouse.
+      feedbackCloseTimer = setTimeout(closeFeedback, 1100);
     } catch (caught) {
       feedbackError = (caught as Error).message;
     }

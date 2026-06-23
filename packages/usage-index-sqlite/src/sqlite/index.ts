@@ -12,6 +12,7 @@ import type {
   UsageIndexSource
 } from "../sdk/indexStore.js";
 import { providerCapabilities } from "@tangent/usage-providers/providers/index";
+export { openUsageUiFromSqlite, type UsageSessionWithSparkline } from "./uiClient.js";
 
 /** Opens a Usage client backed by the SQLite index, ensuring it is current and loading the windowed dataset into a projection. */
 export async function openUsageFromSqlite(options: OpenUsageOptions = {}): Promise<UsageClient> {

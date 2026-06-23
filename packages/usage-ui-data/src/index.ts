@@ -10,9 +10,10 @@ export { buildSessionStoryline } from "./storyline.js";
 export { buildTraceWaterfall } from "./trace.js";
 export { buildTranscriptHighlights } from "./transcriptHighlights.js";
 
+import type { UsageDomainMessage, UsageDomainResult, UsageDomainSession, UsageDomainToolCall, UsageDomainTranscript } from "./domainTypes.js";
 import { buildUsageCockpitView, timelineSteps, transcriptMessages } from "./cockpit.js";
 import { buildUsageConversationView, projectLabel, type UsageConversationToolCall } from "./conversationView.js";
-import { buildSparkline } from "./flame.js";
+import { buildSparkline, sparklineFromPrecomputed } from "./flame.js";
 import { peakContextTokens } from "./format.js";
 import { buildUsageSessionTimelineView } from "./sessionTimeline.js";
 import type {
@@ -125,106 +126,6 @@ export type UsageTimelineItemView = {
   confidence?: string;
 };
 
-type UsageDomainResult<T> = {
-  data: T;
-  meta: {
-    warnings: Array<{ message: string }>;
-  };
-};
-
-type UsageDomainSession = {
-  id: string;
-  provider: string;
-  providerSessionId?: string;
-  transcriptPath?: string;
-  title?: string;
-  firstPrompt?: string;
-  summary?: string;
-  project?: string;
-  repo?: { id?: string; root?: string; cwd?: string; branch?: string };
-  cwd?: string;
-  gitBranch?: string;
-  startedAt?: string;
-  endedAt?: string;
-  lastActivityAt?: string;
-  status?: string;
-  models?: string[];
-  metrics: {
-    durationMs?: number;
-    durationConfidence?: string;
-    selfDurationMs?: number;
-    tokens?: { total?: number; confidence?: string };
-    cost?: { amount?: number; currency?: string; source?: string; priced?: boolean };
-  };
-  counts: {
-    turns?: number;
-    messages?: number;
-    userMessages?: number;
-    assistantMessages?: number;
-    toolCalls?: number;
-    subagents?: number;
-    compactions?: number;
-    filesTouched?: number;
-  };
-  availability: {
-    confidence?: string;
-    missing?: string[];
-    notes: string[];
-  };
-  evidence?: Array<{ eventId?: string; sourceId?: string; confidence?: string }>;
-  providerFields?: Record<string, unknown>;
-};
-
-type UsageDomainMessage = {
-  id: string;
-  turnId?: string;
-  stepId?: string;
-  role: "user" | "assistant" | "system" | "tool" | string;
-  createdAt?: string;
-  model?: string;
-  text?: string;
-  textPreview?: string;
-  tokenUsage?: { total?: number; confidence?: string };
-  metrics?: { tokens?: { total?: number } };
-  confidence?: string;
-  toolCalls?: Array<{
-    id: string;
-    stepId?: string;
-    resultStepId?: string;
-    toolName?: string;
-    name?: string;
-    status?: string;
-    result?: { durationMs?: number; outputPreview?: string };
-    targetPaths?: string[];
-    input?: unknown;
-  }>;
-};
-
-type UsageDomainToolCall = {
-  id: string;
-  stepId?: string;
-  resultStepId?: string;
-  toolName?: string;
-  name?: string;
-  status?: string;
-  input?: unknown;
-  plan?: string;
-  targetPaths?: string[];
-  result?: {
-    durationMs?: number;
-    outputPreview?: string;
-  };
-};
-
-type UsageDomainTranscript = {
-  schema: string;
-  session?: unknown;
-  messages: UsageDomainMessage[];
-  totals?: unknown;
-  caveats: string[];
-  [key: string]: unknown;
-};
-
 export type UsageDomainClient = {
   sessions: {
     list(query?: unknown): Promise<UsageDomainResult<UsageDomainSession[]>>;
@@ -329,10 +230,11 @@ export function createUsageUiClient(usage: UsageDomainClient): UsageUiClient {
       // token-less, time-less noise next to real sessions, so drop the completely empty ones. A
       // just-started session keeps at least its user message, so this never hides live work.
       const sessions = result.data.filter((session) => !isEmptySession(session));
-      // One timeline query per listed session powers the card/rail flame graphs. The list is bounded
-      // by `limit`, the sqlite reads are in-process, and the series is downsampled before it leaves
-      // the server. If the domain layer later exposes a bucketed series in a single query, prefer it.
-      const flames = await Promise.all(sessions.map((session) => sessionSparkline(usage, session.id)));
+      // The SQLite client returns each session's sparkline precomputed at index time, so the list
+      // renders every card from that single payload with no per-card timeline query (the old N+1).
+      // The in-memory client (tests, injected) has no precomputed series, so fall back to a timeline.
+      const flames = await Promise.all(sessions.map((session) =>
+        session.sparkline ? sparklineFromPrecomputed(session.sparkline) : sessionSparkline(usage, session.id)));
       return {
         sessions: sessions.map((session, index) => ({
           id: session.id,

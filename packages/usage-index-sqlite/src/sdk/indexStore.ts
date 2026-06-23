@@ -7,12 +7,18 @@ import { pathExists, repoInfo } from "@tangent/repo";
 import { listJsonlFiles, readJsonl } from "@tangent/usage-core/core/append-jsonl";
 import { UsageDataset } from "@tangent/usage-core/core/dataset";
 import { eventsToProjections } from "@tangent/usage-core/core/projections";
+import { buildSessionSparkline } from "@tangent/usage-core/core/sparkline";
 import { globalEventRoot, globalIndexPath, repoArchiveDir, repoEventDir, repoIndexPath } from "@tangent/usage-core/core/paths";
 import type { UsageJsonlLineV1, UsageProvider, UsageWarning } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
 import { loadNativeSourceFiles } from "@tangent/usage-providers/providers/native/load";
-import { usageProjectionSchemaSql } from "@tangent/usage-index-sqlite/sqlite/schema";
+import { usageProjectionSchemaSql, obsoleteProjectionTables } from "@tangent/usage-index-sqlite/sqlite/schema";
 
 const require = createRequire(import.meta.url);
+
+// Bumped when the derived-table shape changes so an older on-disk index re-derives once. The slim
+// schema (sessions + messages only, with a precomputed sparkline) is version 3; opening an index
+// stamped with an earlier version drops the obsolete tables and rebuilds the kept ones from `events`.
+const DERIVE_VERSION = "usage.derive.v3";
 type StatementHandle = {
   run(...params: unknown[]): unknown;
   all(...params: unknown[]): unknown[];
@@ -120,6 +126,7 @@ export async function ensureUsageIndex(options: UsageIndexOptions): Promise<Usag
   let eventCount = 0;
   const sourceFiles: string[] = [];
   const seenNative = new Set<string>();
+  const affected = new Set<string>();
 
   try {
     ensureSchema(db);
@@ -152,7 +159,7 @@ export async function ensureUsageIndex(options: UsageIndexOptions): Promise<Usag
           continue;
         }
 
-        upsertSourceFile(db, file.path, file.provider, "native", file.mtimeMs, file.size, file.events);
+        for (const id of upsertSourceFile(db, file.path, file.provider, "native", file.mtimeMs, file.size, file.events)) affected.add(id);
         indexed += 1;
         eventCount += file.events.length;
       }
@@ -174,7 +181,7 @@ export async function ensureUsageIndex(options: UsageIndexOptions): Promise<Usag
 
           try {
             const events = await readJsonl<UsageJsonlLineV1>(file);
-            upsertSourceFile(db, file, provider, "usage-jsonl", fileStat.mtimeMs, fileStat.size, events);
+            for (const id of upsertSourceFile(db, file, provider, "usage-jsonl", fileStat.mtimeMs, fileStat.size, events)) affected.add(id);
             indexed += 1;
             eventCount += events.length;
           } catch (error) {
@@ -192,12 +199,17 @@ export async function ensureUsageIndex(options: UsageIndexOptions): Promise<Usag
           if (!sourceFiles.includes(row.path)) sourceFiles.push(row.path);
           continue;
         }
-        removeSourceFile(db, row.path);
+        for (const id of removeSourceFile(db, row.path)) affected.add(id);
         removed += 1;
       }
     }
-    if (options.force || indexed > 0 || removed > 0 || !hasDerivedRows(db)) {
+    // A version bump, an explicit force, or an empty index rebuilds everything once; otherwise only
+    // the conversations whose source files changed are re-derived, so a single new turn no longer
+    // rewrites the whole index.
+    if (options.force || !hasDerivedRows(db) || deriveVersion(db) !== DERIVE_VERSION) {
       refreshDerivedTables(db);
+    } else if (affected.size) {
+      refreshDerivedTablesForSessions(db, affected);
     }
     return {
       repoRoot: root,
@@ -331,7 +343,11 @@ export async function openDb(target: UsageIndexTarget): Promise<DatabaseHandle> 
   const dbPath = target.dbPath;
   mkdirSyncForDb(dbPath);
   const Database = optionalSqlite();
-  return new Database(dbPath) as DatabaseHandle;
+  const db = new Database(dbPath) as DatabaseHandle;
+  // WAL lets the UI's read queries run while the watcher writes the next incremental update, instead
+  // of blocking on the writer's lock; the busy timeout absorbs the brief checkpoint overlaps.
+  db.exec("pragma journal_mode = WAL; pragma busy_timeout = 5000; pragma synchronous = normal");
+  return db;
 }
 
 /** Resolves the index target (the global all-sessions db, or the per-repo db) for the given scope. */
@@ -426,18 +442,35 @@ export function ensureSchema(db: DatabaseHandle): void {
     create index if not exists events_provider_recorded_idx on events (provider, recorded_at);
     create index if not exists turns_conversation_idx on turns (conversation_id, last_activity_at);
   `);
+  // The slim sessions table stores the projected session as a `session_json` payload; a pre-slim index
+  // has a columnar sessions table without it, so drop it here and let the slim create plus the
+  // version-triggered rebuild repopulate it from `events`.
+  if (tableExists(db, "sessions") && !tableHasColumn(db, "sessions", "session_json")) db.exec("drop table sessions");
   db.exec(usageProjectionSchemaSql);
+  db.exec("create table if not exists meta (key text primary key, value text)");
   if (!tableHasColumn(db, "events", "source_path")) db.exec("alter table events add column source_path text");
-  if (!tableHasColumn(db, "messages", "text_full")) db.exec("alter table messages add column text_full text");
-  if (!tableHasColumn(db, "messages", "thinking_text")) db.exec("alter table messages add column thinking_text text");
-  if (!tableHasColumn(db, "messages", "thinking_preview")) db.exec("alter table messages add column thinking_preview text");
-  if (!tableHasColumn(db, "tool_calls", "input_json")) db.exec("alter table tool_calls add column input_json text");
-  if (!tableHasColumn(db, "tool_calls", "plan_text")) db.exec("alter table tool_calls add column plan_text text");
-  if (!tableHasColumn(db, "tool_results", "output_full")) db.exec("alter table tool_results add column output_full text");
+  // Reclaim the multi-GB the pre-slim index spent on derived tables the UI never read.
+  for (const table of obsoleteProjectionTables) db.exec(`drop table if exists ${table}`);
+}
+
+/** Reports whether a table exists in the index. */
+function tableExists(db: DatabaseHandle, name: string): boolean {
+  return Boolean(db.prepare("select name from sqlite_master where type = 'table' and name = ?").get(name));
+}
+
+/** Reads the derive-schema version stamped on the index, or undefined for a pre-versioned index. */
+function deriveVersion(db: DatabaseHandle): string | undefined {
+  const row = db.prepare("select value from meta where key = 'derive_version'").get() as { value?: string } | undefined;
+  return row?.value;
+}
+
+/** Stamps the current derive-schema version after a (re)build so later opens skip the rebuild. */
+function setDeriveVersion(db: DatabaseHandle): void {
+  db.prepare("insert or replace into meta (key, value) values ('derive_version', ?)").run(DERIVE_VERSION);
 }
 
 /** Replaces a source file's row and all its events in the index within a single transaction. */
-function upsertSourceFile(db: DatabaseHandle, file: string, provider: UsageProvider, sourceKind: UsageIndexSource, mtimeMs: number, size: number, events: UsageJsonlLineV1[]): void {
+function upsertSourceFile(db: DatabaseHandle, file: string, provider: UsageProvider, sourceKind: UsageIndexSource, mtimeMs: number, size: number, events: UsageJsonlLineV1[]): string[] {
   const dataset = new UsageDataset(events);
   const insertSource = db.prepare(`
     insert or replace into source_files (path, provider, source_kind, mtime_ms, size, event_count, indexed_at, archived_at, archive_path)
@@ -449,10 +482,14 @@ function upsertSourceFile(db: DatabaseHandle, file: string, provider: UsageProvi
     (event_id, kind, provider, conversation_id, session_id, turn_id, observed_at, recorded_at, source_path, json)
     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
+  // A rewritten file can drop a conversation it used to hold, so a conversation present before the
+  // upsert is affected even if it has no events after it; capture both sides for the incremental pass.
+  const affected = new Set<string>(sessionIdsForSource(db, file));
   const transaction = db.transaction(() => {
     deleteEvents.run(file);
     insertSource.run(file, provider, sourceKind, mtimeMs, size, events.length, new Date().toISOString());
     for (const event of dataset.annotatedEvents) {
+      affected.add(event.conversation.id);
       insertEvent.run(
         event.event_id,
         event.kind,
@@ -468,135 +505,110 @@ function upsertSourceFile(db: DatabaseHandle, file: string, provider: UsageProvi
     }
   });
   transaction();
+  return [...affected];
 }
 
-/** Deletes a source file's row and all its events from the index. */
-function removeSourceFile(db: DatabaseHandle, file: string): void {
+/** Deletes a source file's row and all its events from the index, returning the conversations it touched. */
+function removeSourceFile(db: DatabaseHandle, file: string): string[] {
+  const affected = sessionIdsForSource(db, file);
   const transaction = db.transaction(() => {
     db.prepare("delete from events where source_path = ?").run(file);
     db.prepare("delete from source_files where path = ?").run(file);
   });
   transaction();
+  return affected;
 }
 
-/** Rebuilds the derived projection tables (sessions, turns, messages, tools, and so on) from the current raw events. */
-export function refreshDerivedTables(db: DatabaseHandle): void {
-  const events = (db.prepare("select json from events order by coalesce(observed_at, recorded_at), recorded_at").all() as EventRow[])
-    .map((row) => JSON.parse(row.json) as UsageJsonlLineV1);
+/** Returns the distinct conversation ids whose events currently come from a source file. */
+function sessionIdsForSource(db: DatabaseHandle, file: string): string[] {
+  return (db.prepare("select distinct conversation_id from events where source_path = ?").all(file) as Array<{ conversation_id: string }>).map((row) => row.conversation_id);
+}
+
+type DeriveStatements = {
+  insertConversation: StatementHandle;
+  insertTurn: StatementHandle;
+  insertSession: StatementHandle;
+  insertMessage: StatementHandle;
+  deleteConversation: StatementHandle;
+  deleteTurns: StatementHandle;
+  deleteSession: StatementHandle;
+  deleteMessages: StatementHandle;
+  loadEvents: StatementHandle;
+};
+
+/** Prepares the statements used to (re)derive one session's rows in the slim schema. */
+function deriveStatements(db: DatabaseHandle): DeriveStatements {
+  return {
+    insertConversation: db.prepare("insert or replace into conversations values (?, ?, ?, ?, ?, ?, ?, ?)"),
+    insertTurn: db.prepare("insert or replace into turns values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"),
+    insertSession: db.prepare(`
+      insert or replace into sessions
+      (id, provider, started_at, last_activity_at, status, session_json, sparkline_json)
+      values (?, ?, ?, ?, ?, ?, ?)
+    `),
+    insertMessage: db.prepare(`
+      insert or replace into messages
+      (id, session_id, turn_id, step_id, role, ordinal, created_at, text_preview, text_full, text_chars, text_bytes, content_mode, model, has_tool_use, has_thinking, thinking_text, thinking_preview, token_usage_json, confidence, evidence_json, provider_fields_json)
+      values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `),
+    deleteConversation: db.prepare("delete from conversations where id = ?"),
+    deleteTurns: db.prepare("delete from turns where conversation_id = ?"),
+    deleteSession: db.prepare("delete from sessions where id = ?"),
+    deleteMessages: db.prepare("delete from messages where session_id = ?"),
+    loadEvents: db.prepare("select json from events where conversation_id = ? order by coalesce(observed_at, recorded_at), recorded_at")
+  };
+}
+
+/**
+ * Re-derives a single conversation's slim rows (conversation, turns, session with precomputed
+ * sparkline, messages) from its events, replacing any prior rows. A conversation whose events have
+ * all been removed leaves no rows behind. The projection is scoped to one conversation, so this is
+ * the cheap unit the incremental watcher path replays instead of rebuilding the whole index.
+ */
+function deriveSession(db: DatabaseHandle, conversationId: string, stmts: DeriveStatements): void {
+  const events = (stmts.loadEvents.all(conversationId) as EventRow[]).map((row) => JSON.parse(row.json) as UsageJsonlLineV1);
+  stmts.deleteMessages.run(conversationId);
+  stmts.deleteTurns.run(conversationId);
+  stmts.deleteConversation.run(conversationId);
+  stmts.deleteSession.run(conversationId);
+  if (!events.length) return;
   const dataset = new UsageDataset(events);
   const projections = eventsToProjections(events);
-  const insertConversation = db.prepare("insert or replace into conversations values (?, ?, ?, ?, ?, ?, ?, ?)");
-  const insertTurn = db.prepare("insert or replace into turns values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-  const insertRawEvent = db.prepare(`
-    insert or replace into raw_events
-    (id, source_file_id, provider, kind, recorded_at, observed_at, session_id, turn_id, step_id, json)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  const insertSession = db.prepare(`
-    insert or replace into sessions
-    (id, provider, provider_session_id, title, first_prompt, started_at, ended_at, last_activity_at, status, counts_json, metrics_json, availability_json, evidence_json, provider_fields_json)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  const insertStep = db.prepare(`
-    insert or replace into steps
-    (id, session_id, turn_id, parent_step_id, step_order, kind, label, category, status, provider, model, tool_name, started_at, ended_at, duration_ms, self_duration_ms, duration_confidence, metrics_json, target_paths_json, evidence_json, native_refs_json, provider_fields_json)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  const insertMessage = db.prepare(`
-    insert or replace into messages
-    (id, session_id, turn_id, step_id, role, ordinal, created_at, text_preview, text_chars, text_bytes, content_mode, model, has_tool_use, has_thinking, token_usage_json, confidence, evidence_json, provider_fields_json, text_full, thinking_text, thinking_preview)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  const insertToolCall = db.prepare(`
-    insert or replace into tool_calls
-    (id, session_id, turn_id, step_id, message_id, provider, tool_name, category, target_paths_json, model, status, result_step_id, evidence_json, provider_fields_json, input_json, plan_text)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  const insertToolResult = db.prepare(`
-    insert or replace into tool_results
-    (id, session_id, turn_id, step_id, tool_call_id, provider, tool_name, status, output_preview, duration_ms, evidence_json, provider_fields_json, output_full)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  const insertUsageSample = db.prepare(`
-    insert or replace into usage_samples
-    (id, session_id, turn_id, step_id, provider, model, tokens_json, evidence_json)
-    values (?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  const insertFileEvent = db.prepare(`
-    insert or replace into file_events
-    (id, session_id, step_id, provider, operation, target_paths_json, evidence_json)
-    values (?, ?, ?, ?, ?, ?, ?)
-  `);
-  const insertEdge = db.prepare("insert or replace into edges (id, from_id, to_id, kind) values (?, ?, ?, ?)");
+  for (const row of dataset.conversations.all().data) {
+    stmts.insertConversation.run(row.id, row.provider, row.providerSessionId, iso(row.startedAt), iso(row.endedAt), row.firstPrompt, row.cwd, row.gitBranch);
+  }
+  for (const row of dataset.turns.list().data) {
+    stmts.insertTurn.run(row.sourceKey, row.provider, row.conversationId, row.providerSessionId, row.turnId, iso(row.startedAt), iso(row.endedAt), row.lastActivityAt.toISOString(), row.status, row.sourceFingerprint, JSON.stringify(row.stats));
+  }
+  for (const row of projections.sessions) {
+    const sparkline = buildSessionSparkline(projections.steps.filter((step) => step.sessionId === row.id));
+    stmts.insertSession.run(row.id, row.provider, row.startedAt, row.lastActivityAt, row.status, JSON.stringify(row), jsonOrNull(sparkline));
+  }
+  for (const row of projections.messages) {
+    stmts.insertMessage.run(row.id, row.sessionId, row.turnId, row.stepId, row.role, row.ordinal, row.createdAt, row.textPreview, row.text ?? null, row.textChars, row.textBytes, row.contentMode, row.model, row.hasToolUse ? 1 : 0, row.hasThinking ? 1 : 0, row.thinking ?? null, row.thinkingPreview ?? null, jsonOrNull(row.tokenUsage), row.confidence, JSON.stringify(row.evidence), jsonOrNull(row.providerFields));
+  }
+}
+
+/** Fully rebuilds the slim derived tables from `events`, one conversation at a time, and stamps the derive version. */
+export function refreshDerivedTables(db: DatabaseHandle): void {
+  const stmts = deriveStatements(db);
+  const ids = (db.prepare("select distinct conversation_id from events").all() as Array<{ conversation_id: string }>).map((row) => row.conversation_id);
   const transaction = db.transaction(() => {
     db.prepare("delete from conversations").run();
     db.prepare("delete from turns").run();
-    db.prepare("delete from raw_events").run();
     db.prepare("delete from sessions").run();
-    db.prepare("delete from steps").run();
     db.prepare("delete from messages").run();
-    db.prepare("delete from tool_calls").run();
-    db.prepare("delete from tool_results").run();
-    db.prepare("delete from usage_samples").run();
-    db.prepare("delete from file_events").run();
-    db.prepare("delete from edges").run();
-    for (const row of dataset.conversations.all().data) {
-      insertConversation.run(row.id, row.provider, row.providerSessionId, iso(row.startedAt), iso(row.endedAt), row.firstPrompt, row.cwd, row.gitBranch);
-    }
-    for (const row of dataset.turns.list().data) {
-      insertTurn.run(
-        row.sourceKey,
-        row.provider,
-        row.conversationId,
-        row.providerSessionId,
-        row.turnId,
-        iso(row.startedAt),
-        iso(row.endedAt),
-        row.lastActivityAt.toISOString(),
-        row.status,
-        row.sourceFingerprint,
-        JSON.stringify(row.stats)
-      );
-    }
-    for (const event of projections.rawEvents) {
-      insertRawEvent.run(
-        event.id,
-        event.source.path || event.source.id,
-        event.provider,
-        event.kind,
-        event.recordedAt,
-        event.observedAt,
-        event.scope.sessionId,
-        event.scope.turnId,
-        event.scope.stepId,
-        JSON.stringify(event)
-      );
-    }
-    for (const row of projections.sessions) {
-      insertSession.run(row.id, row.provider, row.providerSessionId, row.title, row.firstPrompt, row.startedAt, row.endedAt, row.lastActivityAt, row.status, JSON.stringify(row.counts), JSON.stringify(row.metrics), JSON.stringify(row.availability), JSON.stringify(row.evidence), jsonOrNull(row.providerFields));
-    }
-    for (const row of projections.steps) {
-      insertStep.run(row.id, row.sessionId, row.turnId, row.parentStepId, row.order, row.kind, row.label, row.category, row.status, row.provider, row.model, row.toolName, row.startedAt, row.endedAt, row.durationMs, row.selfDurationMs, row.durationConfidence, JSON.stringify(row.metrics), JSON.stringify(row.targetPaths), JSON.stringify(row.evidence), JSON.stringify(row.nativeRefs), jsonOrNull(row.providerFields));
-      if (row.parentStepId) insertEdge.run(`edge:${row.parentStepId}:${row.id}`, row.parentStepId, row.id, "parent");
-    }
-    for (const row of projections.messages) {
-      insertMessage.run(row.id, row.sessionId, row.turnId, row.stepId, row.role, row.ordinal, row.createdAt, row.textPreview, row.textChars, row.textBytes, row.contentMode, row.model, row.hasToolUse ? 1 : 0, row.hasThinking ? 1 : 0, jsonOrNull(row.tokenUsage), row.confidence, JSON.stringify(row.evidence), jsonOrNull(row.providerFields), row.text ?? null, row.thinking ?? null, row.thinkingPreview ?? null);
-      if (row.stepId) insertEdge.run(`edge:${row.stepId}:${row.id}`, row.stepId, row.id, "message");
-    }
-    for (const row of projections.toolCalls) {
-      insertToolCall.run(row.id, row.sessionId, row.turnId, row.stepId, row.messageId, row.provider, row.toolName, row.category, JSON.stringify(row.targetPaths), row.model, row.status, row.resultStepId, JSON.stringify(row.evidence), jsonOrNull(row.providerFields), jsonOrNull(row.input), row.plan ?? null);
-      if (row.stepId) insertEdge.run(`edge:${row.stepId}:${row.id}`, row.stepId, row.id, "tool_call");
-    }
-    for (const row of projections.toolResults) {
-      insertToolResult.run(row.id, row.sessionId, row.turnId, row.stepId, row.toolCallId, row.provider, row.toolName, row.status, row.outputPreview, row.durationMs, JSON.stringify(row.evidence), jsonOrNull(row.providerFields), typeof row.output === "string" ? row.output : jsonOrNull(row.output));
-      if (row.stepId) insertEdge.run(`edge:${row.stepId}:${row.id}`, row.stepId, row.id, "tool_result");
-    }
-    for (const row of projections.usageSamples) {
-      insertUsageSample.run(row.id, row.sessionId, row.turnId, row.id, row.provider, row.model, JSON.stringify(row.metrics.tokens), JSON.stringify(row.evidence));
-    }
-    for (const row of projections.steps.filter((step) => step.kind === "file_read" || step.kind === "file_search" || step.kind === "file_write")) {
-      insertFileEvent.run(row.id, row.sessionId, row.id, row.provider, row.kind.replace("file_", ""), JSON.stringify(row.targetPaths), JSON.stringify(row.evidence));
-    }
+    for (const id of ids) deriveSession(db, id, stmts);
+    setDeriveVersion(db);
+  });
+  transaction();
+}
+
+/** Re-derives only the named conversations' slim rows, the incremental unit replayed when a few transcripts change. */
+export function refreshDerivedTablesForSessions(db: DatabaseHandle, conversationIds: Iterable<string>): void {
+  const stmts = deriveStatements(db);
+  const transaction = db.transaction(() => {
+    for (const id of conversationIds) deriveSession(db, id, stmts);
   });
   transaction();
 }

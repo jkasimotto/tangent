@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import type { LocalUiApp, StaticAssetMount, UiModePreference, UiRoute, UiRouteResponse } from "@tangent/ui-server";
 import { createUsageUiClient, type UsageUiClient } from "@tangent/usage-ui-data";
-import { openUsageFromSqlite as openUsage, emptyUsageFromSqlite as emptyUsage, type OpenUsageOptions, type UsageClient } from "@tangent/usage-index-sqlite/sqlite";
+import { openUsageUiFromSqlite, ensureUsageIndex, type OpenUsageOptions, type UsageClient } from "@tangent/usage-index-sqlite/sqlite";
 import { nativeWatchRoots } from "@tangent/usage-providers/providers/index";
 import { watchUsageSources, type UsageSourceWatcher } from "./watch.js";
 
@@ -86,20 +86,22 @@ export async function startUsageUiServer(options: StartUsageUiServerOptions = {}
 
 /** Creates a Usage app registration for the combined Tangent UI. */
 export async function createUsageUiApp(options: StartUsageUiServerOptions = {}): Promise<UsageUiApp> {
-  // Serving the real snapshot means loading and projecting the whole window into memory (tens of
-  // seconds for a busy all-projects index), so we boot on an empty snapshot and load the real one in
-  // the background, swapping it onto the shared context the same way the watcher does. An injected
-  // client (tests, verify harness) is already in memory, so use it directly with no background load.
-  const usage = options.client || emptyUsage(openOptions(options));
-  const preferredSessionId = options.client ? await preferredSession(options.sessionId, createUsageUiClient(usage)) : options.sessionId;
+  // The SQLite UI client serves the list with indexed reads and projects one session's detail on
+  // demand, so it opens instantly with no in-memory projection of the window. The watcher keeps the
+  // index current with cheap per-session updates; the client reads the live DB, so nothing is swapped.
+  // An injected client (tests, verify harness) is used directly.
+  const usage = options.client || await openUsageUiFromSqlite(openOptions(options));
+  const context: UsageUiRequestContext = { client: createUsageUiClient(usage), usage, preferredSessionId: options.sessionId };
+  context.preferredSessionId = await preferredSession(options.sessionId, context.client);
   const [{ usageUiEmbeddedAssets }] = await Promise.all([
     import("@tangent/usage-ui/assets")
   ]);
   const mode = options.mode || "static";
   const devRoot = mode !== "static" ? await usageUiSourceRoot() : undefined;
   const modulePath = devRoot ? "/apps/usage/src/embedded.ts" : "/apps/usage/embedded.js";
-  const context: UsageUiRequestContext = { client: createUsageUiClient(usage), usage, preferredSessionId };
   const reload = makeReloader(options, context);
+  // Kick off index maintenance off the request path: the first run does any one-time rebuild (e.g. a
+  // schema-version bump) and later runs are incremental. Skipped when a client is injected.
   if (!options.client) void reload();
   const watcher = startSourceWatcher(options, reload);
   return {
@@ -112,7 +114,7 @@ export async function createUsageUiApp(options: StartUsageUiServerOptions = {}):
     },
     routes: usageApiRoutes(context),
     assetMounts: [{ pathPrefix: "/apps/usage", assets: devRoot ? { ...usageUiEmbeddedAssets, dev: { sourceRoot: devRoot } } : usageUiEmbeddedAssets }],
-    sessionId: preferredSessionId,
+    sessionId: context.preferredSessionId,
     close: watcher ? () => watcher.close() : undefined
   };
 }
@@ -136,16 +138,16 @@ function startSourceWatcher(options: StartUsageUiServerOptions, reload: () => vo
 }
 
 /**
- * Builds the reopen-and-swap function shared by the initial background load and the watcher. Reopening
- * the snapshot loads and projects the window into memory, so this runs off the request path; a
- * reentrancy guard coalesces overlapping reloads and failures are swallowed so a transcript caught
- * mid-write never crashes the server. The new client and snapshot are swapped onto the shared request
- * context, which every route reads by reference.
+ * Builds the index-maintenance function shared by the initial background build and the watcher. It
+ * brings the SQLite index current (a full rebuild only on first run or a schema-version bump,
+ * otherwise per-session incremental updates) and refreshes the preferred session. The client reads
+ * the live DB, so there is nothing to swap. Runs off the request path; a reentrancy guard coalesces
+ * overlapping runs and failures are swallowed so a transcript caught mid-write never crashes the server.
  */
 function makeReloader(options: StartUsageUiServerOptions, context: UsageUiRequestContext): () => void {
   let running = false;
   let pending = false;
-  /** Reopens the snapshot and swaps it onto the shared context, coalescing overlapping reloads. */
+  /** Brings the index current and refreshes the preferred session, coalescing overlapping runs. */
   const run = async (): Promise<void> => {
     if (running) {
       pending = true;
@@ -153,14 +155,12 @@ function makeReloader(options: StartUsageUiServerOptions, context: UsageUiReques
     }
     running = true;
     try {
-      const usage = await openUsage(openOptions(options));
-      context.usage = usage;
-      context.client = createUsageUiClient(usage);
+      await ensureUsageIndex(maintenanceOptions(options));
       if (!options.sessionId || options.sessionId === "latest") {
         context.preferredSessionId = await preferredSession(options.sessionId, context.client);
       }
     } catch {
-      // A transcript caught mid-write yields a transient parse error; the next reload reruns this.
+      // A transcript caught mid-write yields a transient parse error; the next run reruns this.
     } finally {
       running = false;
       if (pending) {
@@ -170,6 +170,13 @@ function makeReloader(options: StartUsageUiServerOptions, context: UsageUiReques
     }
   };
   return () => { void run(); };
+}
+
+/** Maps server options to the index-maintenance options. The index spans all history; the view window is applied at read time. */
+function maintenanceOptions(options: StartUsageUiServerOptions): { repo: string; scope?: "repo" | "all"; providers?: Array<"claude" | "codex">; sources?: Array<"native" | "usage-jsonl"> } {
+  const providers = options.providers?.filter((provider) => provider === "claude" || provider === "codex") as Array<"claude" | "codex"> | undefined;
+  const sources = options.sources?.some((source) => source === "usage-jsonl" || source === "hook") ? ["native", "usage-jsonl"] as const : ["native"] as const;
+  return { repo: options.repo || ".", scope: options.scope || "repo", providers, sources: [...sources] };
 }
 
 /** Resolves the workspace Usage UI source root if this install includes it. */

@@ -1,29 +1,27 @@
-import type { SessionSparkline } from "@tangent/usage-core/core/sparkline";
-import { stepSelfDuration, stepTokens } from "./format.js";
-import { timelineKind } from "./sessionTimeline.js";
-import type { UsageFlameKind, UsageSparkline, UsageSparklineBucket, UsageStep } from "./types.js";
+import type { UsageStep } from "../schema/index.js";
 
 const DEFAULT_BUCKETS = 28;
 
-/**
- * Maps the index-precomputed session sparkline (raw step kinds, built at index time so the list view
- * needs no per-card timeline projection) into the UI shape by colouring each bucket's dominant kind.
- */
-export function sparklineFromPrecomputed(precomputed: SessionSparkline): UsageSparkline {
-  return {
-    durationMs: precomputed.durationMs,
-    tokensTotal: precomputed.tokensTotal,
-    compactions: precomputed.compactions,
-    buckets: precomputed.buckets.map((bucket) => ({
-      kind: timelineKind(bucket.kind),
-      tokenShare: bucket.tokenShare,
-      durationShare: bucket.durationShare
-    }))
-  };
-}
+/** A single time slice of a session's activity, coloured by its dominant raw step kind. */
+export type SessionSparklineBucket = {
+  /** Dominant raw step kind in this slice (e.g. "model_call", "tool_call"); the UI maps it to a flame colour. */
+  kind: string;
+  /** Token intensity for this slice, 0..1 relative to the busiest slice. */
+  tokenShare: number;
+  /** Duration intensity fallback for this slice when tokens are unavailable, 0..1. */
+  durationShare: number;
+};
+
+/** Compact, precomputed per-session activity series shown on the session list cards and rail. */
+export type SessionSparkline = {
+  durationMs: number;
+  tokensTotal?: number;
+  compactions: number;
+  buckets: SessionSparklineBucket[];
+};
 
 type PackedStep = {
-  kind: UsageFlameKind;
+  kind: string;
   durationMs: number;
   tokens: number;
 };
@@ -31,25 +29,26 @@ type PackedStep = {
 type BucketAccumulator = {
   durationMs: number;
   tokens: number;
-  kindMs: Map<UsageFlameKind, number>;
+  kindMs: Map<string, number>;
 };
 
 /**
- * Builds the compact per-session activity series shown on the conversation list cards and rail.
- * Steps are packed end-to-end by their active duration (idle gaps removed, matching the main
- * flame graph) and downsampled into fixed-width time buckets so every card renders with one
- * cheap payload instead of a per-card timeline fetch.
+ * Builds the compact activity series for one session by packing its steps end-to-end by active
+ * duration (idle gaps removed) and downsampling into fixed-width time buckets. Precomputed once at
+ * index time and stored on the session row so the list view renders every card from a single cheap
+ * payload instead of a per-card timeline projection (the N+1 that made the list slow). Buckets carry
+ * the raw step kind; the UI maps it to a flame colour at render time, keeping this layer UI-free.
  */
-export function buildSparkline(steps: UsageStep[], bucketCount = DEFAULT_BUCKETS): UsageSparkline | undefined {
+export function buildSessionSparkline(steps: UsageStep[], bucketCount = DEFAULT_BUCKETS): SessionSparkline | undefined {
   const visible = steps.filter((step) => step.kind !== "session" && step.kind !== "turn");
   if (!visible.length) return undefined;
 
   const ordered = [...visible].sort((left, right) => (left.order ?? 0) - (right.order ?? 0) || (left.startedAt || "").localeCompare(right.startedAt || ""));
   const fallbackSlot = averageKnownDuration(ordered);
   const packed: PackedStep[] = ordered.map((step) => ({
-    kind: timelineKind(step.kind),
-    durationMs: positiveDuration(stepSelfDuration(step)) ?? fallbackSlot,
-    tokens: stepTokens(step) ?? 0
+    kind: step.kind,
+    durationMs: positiveDuration(selfDuration(step)) ?? fallbackSlot,
+    tokens: finite(step.metrics?.tokens?.total) ?? 0
   }));
 
   const totalDuration = packed.reduce((sum, item) => sum + item.durationMs, 0) || packed.length;
@@ -78,7 +77,7 @@ function accumulateBuckets(packed: PackedStep[], totalDuration: number, bucketCo
     for (let index = 0; index < bucketCount; index += 1) {
       const overlap = Math.max(0, Math.min(end, (index + 1) * bucketMs) - Math.max(start, index * bucketMs));
       if (overlap <= 0) continue;
-      const bucket = buckets[index];
+      const bucket = buckets[index]!;
       bucket.durationMs += overlap;
       bucket.tokens += tokenRate * overlap;
       bucket.kindMs.set(item.kind, (bucket.kindMs.get(item.kind) || 0) + overlap);
@@ -88,7 +87,7 @@ function accumulateBuckets(packed: PackedStep[], totalDuration: number, bucketCo
 }
 
 /** Converts an accumulator into the normalized bucket view, colouring by the dominant kind. */
-function bucketView(bucket: BucketAccumulator, maxTokens: number, maxDuration: number): UsageSparklineBucket {
+function bucketView(bucket: BucketAccumulator, maxTokens: number, maxDuration: number): SessionSparklineBucket {
   return {
     kind: dominantKind(bucket.kindMs),
     tokenShare: maxTokens > 0 ? bucket.tokens / maxTokens : 0,
@@ -97,8 +96,8 @@ function bucketView(bucket: BucketAccumulator, maxTokens: number, maxDuration: n
 }
 
 /** Returns the kind holding the most duration in a bucket. */
-function dominantKind(kindMs: Map<UsageFlameKind, number>): UsageFlameKind {
-  let best: UsageFlameKind = "unknown";
+function dominantKind(kindMs: Map<string, number>): string {
+  let best = "unknown";
   let bestMs = -1;
   for (const [kind, ms] of kindMs) {
     if (ms > bestMs) {
@@ -111,12 +110,22 @@ function dominantKind(kindMs: Map<UsageFlameKind, number>): UsageFlameKind {
 
 /** Returns the mean of known positive step durations, used to slot steps with missing timing. */
 function averageKnownDuration(steps: UsageStep[]): number {
-  const known = steps.map((step) => positiveDuration(stepSelfDuration(step))).filter((value): value is number => value !== undefined);
+  const known = steps.map((step) => positiveDuration(selfDuration(step))).filter((value): value is number => value !== undefined);
   if (!known.length) return 1;
   return Math.round(known.reduce((sum, value) => sum + value, 0) / known.length);
+}
+
+/** Resolves a step's self-duration, falling back through metrics and total duration. */
+function selfDuration(step: UsageStep): number | undefined {
+  return finite(step.selfDurationMs) ?? finite(step.metrics?.selfDurationMs) ?? finite(step.durationMs) ?? finite(step.metrics?.durationMs);
 }
 
 /** Returns a strictly positive duration or undefined. */
 function positiveDuration(value: number | undefined): number | undefined {
   return value !== undefined && value > 0 ? value : undefined;
+}
+
+/** Returns a finite number or undefined. */
+function finite(value: number | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }

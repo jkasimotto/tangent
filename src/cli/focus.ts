@@ -18,7 +18,9 @@ export type FocusEvent =
   | { type: "checkin_set"; ts: number; taskId: string; dueAt: number }
   | { type: "agent_dispatched"; ts: number; taskId: string; adapter: string; cwd: string; transcriptDir?: string }
   | { type: "task_done"; ts: number; taskId: string; note?: string }
-  | { type: "task_dropped"; ts: number; taskId: string; note?: string };
+  | { type: "task_dropped"; ts: number; taskId: string; note?: string }
+  | { type: "rest_started"; ts: number; durationMin: number }
+  | { type: "rest_ended"; ts: number };
 
 /** Root of the focus data (overridable via TANGENT_HOME so tests/harnesses can use a temp dir). */
 function focusDir(): string {

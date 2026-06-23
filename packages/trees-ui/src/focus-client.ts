@@ -12,7 +12,11 @@ export type FocusEvent =
   | { type: "checkin_set"; ts: number; taskId: string; dueAt: number }
   | { type: "agent_dispatched"; ts: number; taskId: string; adapter: string; cwd: string; transcriptDir?: string }
   | { type: "task_done"; ts: number; taskId: string; note?: string; actualUnknown?: boolean }
-  | { type: "task_dropped"; ts: number; taskId: string; note?: string };
+  | { type: "task_dropped"; ts: number; taskId: string; note?: string }
+  // A break. Independent of tasks: a focused task's wall-clock keeps running through a rest by design
+  // (break time is part of how long the work really took), so rest events never touch focus segments.
+  | { type: "rest_started"; ts: number; durationMin: number }
+  | { type: "rest_ended"; ts: number };
 
 export type TaskStatus = "focus" | "parked" | "watching" | "done" | "dropped";
 
@@ -44,6 +48,8 @@ export interface FocusState {
   focusId?: string;
   switchCountToday: number;
   incoming: Task[];
+  /** The active break, if any. Set while a `rest_started` has no later `rest_ended`; stays set past `endsAt` (that is the "break's over, awaiting end" state). */
+  rest?: { startedAt: number; endsAt: number };
 }
 
 /** A task is due (bidding to become focus) when its check-in has passed or its agent needs you. */
@@ -58,6 +64,7 @@ export function projectFocus(events: FocusEvent[], now: number, statuses: Record
   const switchTimestamps: number[] = [];
   let currentFocus: string | undefined;
   let lastFocused: string | undefined;
+  let activeRest: FocusState["rest"];
 
   /** Closes a task's currently-open focus segment at the given timestamp. */
   const closeSegment = (id: string, ts: number) => {
@@ -69,6 +76,9 @@ export function projectFocus(events: FocusEvent[], now: number, statuses: Record
   const restingStatus = (task: Task): TaskStatus => (task.agent ? "watching" : "parked");
 
   for (const event of events) {
+    // Rest is global (no taskId) and handled before the task switch so it never touches segments.
+    if (event.type === "rest_started") { activeRest = { startedAt: event.ts, endsAt: event.ts + event.durationMin * 60000 }; continue; }
+    if (event.type === "rest_ended") { activeRest = undefined; continue; }
     const task = tasks.get(event.taskId);
     switch (event.type) {
       case "task_started":
@@ -159,7 +169,8 @@ export function projectFocus(events: FocusEvent[], now: number, statuses: Record
     tasks: all,
     focusId: currentFocus,
     switchCountToday: switchTimestamps.filter((ts) => ts >= startOfDay).length,
-    incoming
+    incoming,
+    rest: activeRest
   };
 }
 
@@ -180,6 +191,8 @@ export type FocusClient = {
   dispatchAgent(taskId: string, adapter: string, cwd: string): Promise<void>;
   done(taskId: string, note?: string, actualUnknown?: boolean): Promise<void>;
   drop(taskId: string, note?: string): Promise<void>;
+  startRest(durationMin: number): Promise<void>;
+  endRest(): Promise<void>;
   agentStatuses(tasks: Task[]): Promise<Record<string, AgentStatus>>;
 };
 
@@ -248,6 +261,14 @@ export function createFocusApiClient(basePath = "/api/focus"): FocusClient {
     /** Drops a task as incomplete. */
     async drop(taskId, note) {
       await append([{ type: "task_dropped", ts: Date.now(), taskId, note }]);
+    },
+    /** Starts a break for the given number of minutes. */
+    async startRest(durationMin) {
+      await append([{ type: "rest_started", ts: Date.now(), durationMin }]);
+    },
+    /** Ends the active break. */
+    async endRest() {
+      await append([{ type: "rest_ended", ts: Date.now() }]);
     },
     /** Fetches current agent statuses for the given watched tasks. */
     async agentStatuses(tasks) {

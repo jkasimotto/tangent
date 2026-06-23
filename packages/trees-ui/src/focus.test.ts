@@ -43,6 +43,33 @@ describe("focus projection invariants", () => {
     expect(state.focusId).toBe("b");
   });
 
+  it("rest: an active break exposes its window and clears on end", () => {
+    const startedAt = at();
+    const events: FocusEvent[] = [{ type: "rest_started", ts: startedAt, durationMin: 15 }];
+    const active = projectFocus(events, startedAt + 1000);
+    expect(active.rest).toEqual({ startedAt, endsAt: startedAt + 15 * 60000 });
+    // The break stays active past its end time (the "break's over, awaiting end" state).
+    expect(projectFocus(events, startedAt + 999 * 60000).rest).toBeTruthy();
+    // Ending the break clears it.
+    const ended: FocusEvent[] = [...events, { type: "rest_ended", ts: at() }];
+    expect(projectFocus(ended, clock + 1000).rest).toBeUndefined();
+  });
+
+  it("rest: a break never alters the focused task's wall-clock segments", () => {
+    const focusOn = at();
+    const events: FocusEvent[] = [
+      { type: "task_started", ts: focusOn - 1, taskId: "a", entity: "x", intent: "do a", estimateMin: 30 },
+      { type: "focus_on", ts: focusOn, taskId: "a" },
+      { type: "rest_started", ts: at(), durationMin: 10 },
+      { type: "rest_ended", ts: at() }
+    ];
+    const state = projectFocus(events, clock + 1000);
+    const task = state.tasks.find((t) => t.id === "a")!;
+    // Still focused, with a single open segment from focus_on — rest left it untouched.
+    expect(task.status).toBe("focus");
+    expect(task.segments).toEqual([{ on: focusOn }]);
+  });
+
   it("G14: no parked/watching task lacks a return-time", () => {
     const events: FocusEvent[] = [
       ...startEvents("a", "x"),
@@ -345,6 +372,10 @@ function fakeFocus(): FocusClient & { events: FocusEvent[]; setStatus(id: string
     done: async (taskId, note, actualUnknown) => { events.push({ type: "task_done", ts: at(), taskId, note, actualUnknown }); },
     /** Records task_dropped. */
     drop: async (taskId, note) => { events.push({ type: "task_dropped", ts: at(), taskId, note }); },
+    /** Records rest_started. */
+    startRest: async (durationMin) => { events.push({ type: "rest_started", ts: at(), durationMin }); },
+    /** Records rest_ended. */
+    endRest: async () => { events.push({ type: "rest_ended", ts: at() }); },
     /** Returns fake statuses for watched tasks. */
     agentStatuses: async (tasks) => {
       const out: Record<string, AgentStatus> = {};

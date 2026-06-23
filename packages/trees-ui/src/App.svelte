@@ -26,7 +26,10 @@
   let showCommand = false;
   let actionsOpen = false;
   let notesEl: HTMLElement | undefined;
+  let restPickerOpen = false;
+  let restCustomMin: number | null = null;
   const DEFAULT_CHECKIN_MIN = 30;
+  const REST_PRESETS = [15, 30, 45, 60];
 
   /** Pins the note stream to the newest note after an add/load. */
   async function scrollNotesToEnd(): Promise<void> {
@@ -45,6 +48,7 @@
   $: state = projectFocus(focusEvents, now, agentStatusMap);
   $: focusTask = state.focusId ? state.tasks.find((t) => t.id === state.focusId) : undefined;
   $: dueTask = state.incoming.find((t) => isDue(t, now));
+  $: rest = state.rest;
   $: startReady = cmdEntity.trim().length > 0 && cmdIntent.trim().length > 0 && typeof cmdMinutes === "number" && cmdMinutes > 0;
 
   // --- Trees state ---
@@ -235,6 +239,40 @@
     const m = Math.max(0, Math.round(minutes));
     if (m < 60) return `${m}m`;
     return m % 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${Math.floor(m / 60)}h`;
+  }
+
+  /** Geometry for the break ring: the arc depletes over the break, then reads "over" until you end it. */
+  function restClock(active: { startedAt: number; endsAt: number }, at: number): { dash: number; over: boolean; centerLabel: string; subLabel: string } {
+    const totalMs = Math.max(1, active.endsAt - active.startedAt);
+    const remainingMs = active.endsAt - at;
+    const ratio = Math.max(0, Math.min(1, remainingMs / totalMs));
+    const over = remainingMs <= 0;
+    return {
+      dash: ratio * CLOCK_CIRCUMFERENCE,
+      over,
+      centerLabel: over ? "Break's over" : `${durationLabel(remainingMs / 60000)} left`,
+      subLabel: over ? "Welcome back" : `back at ${clockTime(active.endsAt)}`
+    };
+  }
+
+  /** Formats an epoch ms as a short wall-clock time, e.g. "3:45 PM". */
+  function clockTime(ts: number): string {
+    return new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  }
+
+  /** Starts a break for the given minutes; the takeover shows on the next projection. */
+  async function startRest(durationMin: number): Promise<void> {
+    if (!(durationMin > 0)) return;
+    restPickerOpen = false;
+    restCustomMin = null;
+    await focus.startRest(durationMin);
+    await loadFocus();
+  }
+
+  /** Ends the active break and returns to the normal view. */
+  async function endRest(): Promise<void> {
+    await focus.endRest();
+    await loadFocus();
   }
 
   function countdownLabel(task: Task, at: number): string {
@@ -457,10 +495,45 @@
 </script>
 
 <div class="app-shell">
+  {#if rest}
+    {@const clock = restClock(rest, now)}
+    <main class="rest-takeover" class:over={clock.over} aria-label="On a break">
+      <div class="rest-card">
+        <p class="rest-eyebrow">On a break</p>
+        <div class="rest-clock clock" class:over={clock.over} aria-label="Time left on break">
+          <svg viewBox="0 0 120 120" role="img" aria-hidden="true">
+            <circle class="clock-track" cx="60" cy="60" r="52" />
+            <circle class="clock-arc" cx="60" cy="60" r="52"
+              style={`stroke-dasharray: ${clock.dash} ${CLOCK_CIRCUMFERENCE}`} transform="rotate(-90 60 60)" />
+          </svg>
+          <span class="rest-center" class:over={clock.over}>{clock.centerLabel}</span>
+        </div>
+        <p class="rest-sub">{clock.subLabel}</p>
+        <button type="button" class="primary rest-end" on:click={endRest}>End break</button>
+      </div>
+    </main>
+  {:else}
   <nav class="view-tabs" aria-label="Views">
     <span class="chrome-slot" data-tangent-chrome-slot></span>
     <button type="button" class:active={view === "focus"} on:click={() => view = "focus"}>Focus</button>
     <button type="button" class:active={view === "trees"} on:click={() => view = "trees"}>Trees</button>
+    <div class="rest-entry">
+      <button type="button" class="rest-trigger" aria-haspopup="true" aria-expanded={restPickerOpen} on:click={() => restPickerOpen = !restPickerOpen}>Rest</button>
+      {#if restPickerOpen}
+        <div class="rest-picker" role="menu">
+          <p class="rest-picker-label">Break for…</p>
+          <div class="rest-presets">
+            {#each REST_PRESETS as min}
+              <button type="button" role="menuitem" on:click={() => startRest(min)}>{min}m</button>
+            {/each}
+          </div>
+          <form class="rest-custom" on:submit|preventDefault={() => startRest(restCustomMin ?? 0)}>
+            <input type="number" min="1" bind:value={restCustomMin} placeholder="custom" aria-label="Custom break minutes" />
+            <button type="submit" class="primary" disabled={!(restCustomMin && restCustomMin > 0)}>Start</button>
+          </form>
+        </div>
+      {/if}
+    </div>
   </nav>
 
   {#if view === "focus"}
@@ -717,6 +790,7 @@
       </aside>
     </main>
   {/if}
+  {/if}
 </div>
 
 <style>
@@ -738,6 +812,32 @@
     border-radius: 16px;
     box-sizing: border-box;
   }
+
+  /* Rest (break) mode: entry picker in the nav, plus the full-pane takeover. */
+  .rest-entry { margin-left: auto; position: relative; }
+  .rest-trigger { cursor: pointer; border: 0; background: transparent; color: var(--muted, #657268); font-size: 13px; font-weight: 760; padding: 6px 12px; border-radius: 7px; }
+  .rest-trigger:hover { color: var(--text, #14231b); }
+  .rest-picker { position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; width: 220px; padding: 14px; background: var(--pane, #fbfcf9); border: 1px solid var(--line, #d4dcd2); border-radius: 14px; box-shadow: 0 12px 30px rgba(20, 35, 27, 0.14); display: flex; flex-direction: column; gap: 10px; }
+  .rest-picker-label { margin: 0; font-size: 12px; font-weight: 700; color: var(--muted, #657268); text-transform: uppercase; letter-spacing: 0.04em; }
+  .rest-presets { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .rest-presets button { cursor: pointer; border: 1px solid var(--line, #d4dcd2); background: #fff; color: var(--text, #14231b); border-radius: 10px; padding: 10px 0; font-size: 14px; font-weight: 700; }
+  .rest-presets button:hover { border-color: var(--accent, #246b58); color: var(--accent, #246b58); }
+  .rest-custom { display: flex; gap: 8px; }
+  .rest-custom input { flex: 1; min-width: 0; padding: 9px 11px; font-size: 14px; background: #fff; color: var(--text, #14231b); border: 1px solid var(--line, #d4dcd2); border-radius: 10px; box-sizing: border-box; }
+  .rest-custom button { cursor: pointer; border: 0; border-radius: 10px; padding: 0 14px; font-size: 14px; font-weight: 700; background: var(--accent, #246b58); color: #fff; }
+  .rest-custom button:disabled { opacity: 0.5; cursor: default; }
+
+  .rest-takeover { grid-row: 1 / -1; height: 100%; display: flex; align-items: center; justify-content: center; padding: 24px; box-sizing: border-box; }
+  .rest-card { display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center; }
+  .rest-eyebrow { margin: 0; font-size: 13px; font-weight: 760; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted, #657268); }
+  .rest-clock { width: 220px; height: 220px; display: grid; place-items: center; }
+  .rest-clock svg { width: 220px; height: 220px; display: block; grid-area: 1 / 1; }
+  .rest-clock .rest-center { grid-area: 1 / 1; font-size: 26px; font-weight: 760; color: var(--accent, #246b58); font-variant-numeric: tabular-nums; }
+  .rest-clock.over .rest-center { color: #c0392b; }
+  .rest-sub { margin: 0; font-size: 15px; color: var(--text, #14231b); font-variant-numeric: tabular-nums; }
+  .rest-takeover.over .rest-sub { color: var(--muted, #657268); }
+  .rest-end { cursor: pointer; border: 0; border-radius: 12px; padding: 12px 28px; font-size: 15px; font-weight: 700; background: var(--accent, #246b58); color: #fff; margin-top: 8px; }
+  .rest-end:hover { filter: brightness(1.05); }
   .cc button { cursor: pointer; border-radius: 10px; border: 1px solid var(--line, #d4dcd2); background: #fff; color: var(--text, #14231b); padding: 9px 16px; font-size: 14px; font-weight: 600; }
   .cc button:hover:not(:disabled) { border-color: var(--muted, #98a39a); }
   .cc button:disabled { opacity: 0.5; cursor: not-allowed; }

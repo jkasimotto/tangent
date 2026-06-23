@@ -11,6 +11,7 @@ import { optionalModule, requiredProductModule } from "./module-loader.js";
 import { discoverUiApps } from "./ui-discovery.js";
 import { appendWorklogEntry, listWorklogEntries, setWorklogActual } from "./worklog.js";
 import { appendFocusEvent, listFocusEvents, readAgentStatus, transcriptDirFor, type FocusEvent } from "./focus.js";
+import { appendFeedbackEntry, listFeedbackEntries } from "./feedback.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -373,6 +374,29 @@ export async function runTangentUiCommand(argv: string[]): Promise<void> {
     return undefined;
   }
 
+  /** Dispatches /api/feedback requests to the in-app feedback log a coding agent reads directly. */
+  async function handleFeedbackRoute(
+    request: IncomingMessage,
+    url: URL
+  ): Promise<{ status: number; json: unknown } | undefined> {
+    if (request.method === "GET" && url.pathname === "/api/feedback") {
+      return { status: 200, json: await listFeedbackEntries() };
+    }
+    if (request.method === "POST" && url.pathname === "/api/feedback") {
+      const body = await readJson(request) as Record<string, unknown>;
+      const text = typeof body["text"] === "string" ? body["text"].trim() : "";
+      if (!text) return { status: 400, json: { error: "text is required" } };
+      const entry = await appendFeedbackEntry({
+        ts: Date.now(),
+        text,
+        app: typeof body["app"] === "string" ? body["app"] : undefined,
+        route: typeof body["route"] === "string" ? body["route"] : undefined
+      });
+      return { status: 200, json: entry };
+    }
+    return undefined;
+  }
+
   const routes: UiRoute[] = [
     {
       method: "GET",
@@ -394,6 +418,11 @@ export async function runTangentUiCommand(argv: string[]): Promise<void> {
       pattern: /^\/api\/worklog/,
       /** Routes worklog API requests to handleWorklogRoute. */
       handle: (request, url) => handleWorklogRoute(request, url)
+    },
+    {
+      pattern: /^\/api\/feedback$/,
+      /** Routes feedback API requests to handleFeedbackRoute. */
+      handle: (request, url) => handleFeedbackRoute(request, url)
     },
     ...registrations.flatMap((registration) => registration.routes)
   ];

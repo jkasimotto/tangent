@@ -1,5 +1,6 @@
 import path from "node:path";
 import { homedir } from "node:os";
+import { existsSync, readdirSync, statSync } from "node:fs";
 
 import { listJsonlFiles } from "@tangent/usage-core/core/append-jsonl";
 
@@ -14,15 +15,49 @@ export function claudeProjectKey(repoRoot: string): string {
   return repoRoot.replace(/[/.]/g, "-");
 }
 
-/** Root of Claude Code's data directory, honoring CLAUDE_HOME so tests can point it at a fixture. */
-export function claudeHome(): string {
-  return process.env.CLAUDE_HOME || path.join(homedir(), ".claude");
+/**
+ * Every Claude Code data directory to scan. The user runs more than one Claude
+ * profile (`~/.claude`, `~/.claude-otto`, ...), each with its own `projects/`
+ * transcript tree, so discovery must union them all or conversations under the
+ * extra profiles are invisible. CLAUDE_HOME overrides the glob entirely and may
+ * list several dirs (`path.delimiter`-separated) so tests can point at fixtures.
+ */
+export function claudeHomes(): string[] {
+  const override = process.env.CLAUDE_HOME;
+  if (override) return override.split(path.delimiter).filter(Boolean);
+  const home = homedir();
+  try {
+    return readdirSync(home)
+      .filter((name) => name.startsWith(".claude"))
+      .map((name) => path.join(home, name))
+      .filter((dir) => isClaudeProfileDir(dir))
+      .sort();
+  } catch {
+    return [path.join(home, ".claude")];
+  }
 }
 
-/** Lists Claude native transcript files, scoped to one repo/worktree's project dir when given, else all of them. */
+/** A profile dir counts only if it is a directory (following symlinks) holding a `projects/` tree. */
+function isClaudeProfileDir(dir: string): boolean {
+  try {
+    return statSync(dir).isDirectory() && existsSync(path.join(dir, "projects"));
+  } catch {
+    return false;
+  }
+}
+
+/** First Claude data directory, for the rare caller that needs a single home rather than all of them. */
+export function claudeHome(): string {
+  return claudeHomes()[0] ?? path.join(homedir(), ".claude");
+}
+
+/** Lists Claude native transcript files across every profile, scoped to one repo/worktree's project dir when given, else all of them. */
 export async function discoverClaudeNative(repoRoot?: string): Promise<string[]> {
-  const projectsDir = path.join(claudeHome(), "projects");
-  if (!repoRoot) return listJsonlFiles(projectsDir);
-  const projectDir = path.join(projectsDir, claudeProjectKey(repoRoot));
-  return listJsonlFiles(projectDir);
+  const files: string[] = [];
+  for (const home of claudeHomes()) {
+    const projectsDir = path.join(home, "projects");
+    const target = repoRoot ? path.join(projectsDir, claudeProjectKey(repoRoot)) : projectsDir;
+    files.push(...(await listJsonlFiles(target)));
+  }
+  return files;
 }

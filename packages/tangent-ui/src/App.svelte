@@ -26,15 +26,76 @@
   let dispose: void | (() => void);
   let mountedKey = "";
 
+  let feedbackOpen = false;
+  let feedbackText = "";
+  let feedbackSaved = false;
+  let feedbackError = "";
+
   onMount(() => {
     window.addEventListener("popstate", applyLocation);
+    window.addEventListener("keydown", onGlobalKeydown);
     void loadApps();
   });
 
   onDestroy(() => {
     window.removeEventListener("popstate", applyLocation);
+    window.removeEventListener("keydown", onGlobalKeydown);
     disposeApp();
   });
+
+  /** Cmd/Ctrl+/ opens the feedback composer from any app; Escape closes it. */
+  function onGlobalKeydown(event: KeyboardEvent): void {
+    if ((event.metaKey || event.ctrlKey) && event.key === "/") {
+      event.preventDefault();
+      toggleFeedback();
+    } else if (event.key === "Escape" && feedbackOpen) {
+      event.preventDefault();
+      closeFeedback();
+    }
+  }
+
+  function toggleFeedback(): void {
+    if (feedbackOpen) closeFeedback();
+    else { feedbackOpen = true; feedbackSaved = false; feedbackError = ""; }
+  }
+
+  function closeFeedback(): void {
+    feedbackOpen = false;
+    feedbackSaved = false;
+    feedbackError = "";
+    feedbackText = "";
+  }
+
+  /** Focuses the composer the moment it mounts so the user can type immediately. */
+  function autofocus(node: HTMLElement): void {
+    node.focus();
+  }
+
+  function onComposerKeydown(event: KeyboardEvent): void {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      void submitFeedback();
+    }
+  }
+
+  /** Appends the note (with the active app + route as context) to ~/.tangent/feedback.jsonl, which a coding agent reads directly. */
+  async function submitFeedback(): Promise<void> {
+    const text = feedbackText.trim();
+    if (!text) return;
+    feedbackError = "";
+    try {
+      const response = await fetch("/api/feedback", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text, app: activeId, route: window.location.pathname })
+      });
+      if (!response.ok) throw new Error(await response.text());
+      feedbackText = "";
+      feedbackSaved = true;
+    } catch (caught) {
+      feedbackError = (caught as Error).message;
+    }
+  }
 
   $: activeApp = apps.find((app) => app.id === activeId);
   $: activeApp && mountNode && void mountActiveApp(activeApp);
@@ -169,3 +230,134 @@
     <div class="app-host" bind:this={mountNode}></div>
   </section>
 </ShellLayout>
+
+{#if feedbackOpen}
+  <div class="feedback-backdrop" role="presentation" on:click={closeFeedback}>
+    <div class="feedback-card" role="dialog" aria-label="Send Tangent feedback" on:click|stopPropagation>
+      {#if feedbackSaved}
+        <div class="feedback-saved">Saved ✓</div>
+        <div class="feedback-row">
+          <span class="feedback-hint">Appended to ~/.tangent/feedback.jsonl</span>
+          <button type="button" class="feedback-send" on:click={closeFeedback}>Close</button>
+        </div>
+      {:else}
+        <header class="feedback-head">
+          <span class="feedback-title">Feedback</span>
+          <span class="feedback-context">{activeApp?.label || activeId || ""}</span>
+        </header>
+        <textarea
+          class="feedback-input"
+          bind:value={feedbackText}
+          on:keydown={onComposerKeydown}
+          use:autofocus
+          placeholder="What should change about Tangent? An agent reads this directly."
+          rows="4"
+        ></textarea>
+        {#if feedbackError}<div class="feedback-error">{feedbackError}</div>{/if}
+        <div class="feedback-row">
+          <span class="feedback-hint">⌘⏎ send · esc close</span>
+          <button type="button" class="feedback-send" on:click={submitFeedback} disabled={!feedbackText.trim()}>Send</button>
+        </div>
+      {/if}
+    </div>
+  </div>
+{/if}
+
+<style>
+  .feedback-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 14vh;
+    background: rgba(23, 32, 27, 0.28);
+  }
+
+  .feedback-card {
+    width: min(560px, calc(100vw - 32px));
+    display: grid;
+    gap: 10px;
+    padding: 16px;
+    border: 1px solid #c9d1c8;
+    border-radius: 12px;
+    background: #f8faf6;
+    box-shadow: 0 18px 50px rgba(23, 32, 27, 0.28);
+  }
+
+  .feedback-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .feedback-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #17201b;
+  }
+
+  .feedback-context {
+    font-size: 12px;
+    color: #6b776f;
+  }
+
+  .feedback-input {
+    width: 100%;
+    resize: vertical;
+    border: 1px solid #c9d1c8;
+    border-radius: 8px;
+    background: #ffffff;
+    color: #17201b;
+    padding: 10px;
+    font: inherit;
+    font-size: 14px;
+    line-height: 1.4;
+  }
+
+  .feedback-input:focus-visible {
+    outline: 2px solid #7a8f82;
+    outline-offset: 1px;
+  }
+
+  .feedback-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .feedback-hint {
+    font-size: 12px;
+    color: #6b776f;
+  }
+
+  .feedback-send {
+    border: 1px solid #c9d1c8;
+    border-radius: 7px;
+    background: #17201b;
+    color: #f8faf6;
+    padding: 7px 14px;
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .feedback-send:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .feedback-error {
+    font-size: 12px;
+    color: #b4452f;
+  }
+
+  .feedback-saved {
+    font-size: 15px;
+    font-weight: 600;
+    color: #2c6e49;
+  }
+</style>

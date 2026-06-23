@@ -23,7 +23,12 @@ Architecture docs:
 Primary entry point:
 - `tangent ui` is how the user enters the app every time. It is the combined launcher in `src/cli/product.ts` (`runTangentUiCommand`), mounting usage + trees + eval together. The standalone `tangent usage ui` is secondary; do not assume the user runs it.
 - Any change to how an app behaves on launch (scope, default window, mounted routes, app discovery) must work through `tangent ui`, not just the per-app command. Verify the combined launcher, not only `tangent usage ui`.
-- The Usage panel defaults to all projects across `~/.claude/projects` (`scope: "all"`), bounded to a recent view window (`--days`, default 7). Keep it cross-project: never silently scope it back to a single repo.
+- The Usage panel defaults to all projects across every Claude profile (`~/.claude*/projects`, unioned by `claudeHomes()`; `scope: "all"`), bounded to a recent view window (`--days`, default 7). Keep it cross-project and cross-profile: never silently scope it back to a single repo or a single `~/.claude`.
+
+Development workflow:
+- Do substantive code changes in a dedicated git worktree, never on the `main` checkout the user runs live. The user keeps `tangent ui` running on `main` while you work; develop in the worktree and let the user (or you) verify the change from the worktree's own app instance.
+- Create one with `node scripts/dev-worktree.mjs create [name]` (branches `dev/<name>` off main). From the worktree, `node scripts/verify-app.mjs ui` boots a read-only instance on its own port, so the live main app and the worktree instance coexist with no port or `~/.tangent` collision.
+- IMPORTANT: when working in a worktree, target it with absolute paths or run from its directory. Editing the main `otto-tangent/` checkout instead silently changes the app the user is running live.
 
 Validate work:
 - npm run check
@@ -37,7 +42,7 @@ Never:
 - Do not duplicate parseArgs, runProcess, repo discovery, or git/worktree helpers in vertical apps.
 - Do not import another package's src internals; use public exports.
 - Do not let @tangent/core shell out, write provider config, or learn product schemas.
-- Do not create a new git branch unless the user requests it; commit on the current branch.
+- Do not create unrelated git branches. The dev worktree branch (`dev/<name>`, see Development workflow) is the expected exception and needs no separate per-task permission; otherwise commit on the current branch.
 
 When architecture changes:
 - Update ARCHITECTURE.md and the relevant docs/architecture/*.md file.

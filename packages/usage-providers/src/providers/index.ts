@@ -16,7 +16,7 @@ import {
   type UsageWarning
 } from "@tangent/usage-core/schema/index";
 import { loadNativeSourceFiles } from "./native/load.js";
-import { claudeHome } from "./claude/native/discover.js";
+import { claudeHomes } from "./claude/native/discover.js";
 import { codexHome } from "./codex/native/discover.js";
 import nodePath from "node:path";
 
@@ -33,6 +33,7 @@ type BuiltInProviderId = typeof builtInProviderIds[number];
 export const builtInProviderAdapters: UsageProviderAdapter[] = builtInProviderIds.map((provider) => ({
   id: provider,
   displayName: provider === "claude" ? "Claude Code" : "Codex",
+  /** Yields one native source file per transcript discovered for this provider, scoped to the context's repo. */
   async *discover(ctx) {
     const repo = ctx.repo ? await repoInfo(ctx.repo) : undefined;
     const native = await loadNativeSourceFiles({ repoRoot: repo ? repo.root || repo.cwd : undefined, providers: [provider], now: ctx.now });
@@ -48,12 +49,15 @@ export const builtInProviderAdapters: UsageProviderAdapter[] = builtInProviderId
       };
     }
   },
+  /** Re-emits a source's pre-parsed events; native sources arrive already normalized, so this is a pass-through. */
   async *normalize(source) {
     for (const event of source.events || []) yield event;
   },
+  /** Reports this provider's field support so the UI can show what is and isn't measurable. */
   capabilities: () => providerCapabilities(provider)
 }));
 
+/** Loads and merges usage events from the requested providers and sources (native transcripts, usage-jsonl, custom adapters), filtered to the requested time window. The single entry point Usage uses to read a session corpus. */
 export async function loadProviderEvents(options: OpenUsageOptions = {}): Promise<LoadedProviderEvents> {
   const repo = options.scope === "all" ? undefined : await repoInfo(options.repo || ".");
   const root = repo ? repo.root || repo.cwd : undefined;
@@ -145,18 +149,20 @@ export function nativeWatchRoots(providers?: string[]): string[] {
   const requested = providers?.length ? providers.filter(isBuiltInProvider) : [...builtInProviderIds];
   const roots: string[] = [];
   for (const provider of requested) {
-    if (provider === "claude") roots.push(nodePath.join(claudeHome(), "projects"));
+    if (provider === "claude") for (const home of claudeHomes()) roots.push(nodePath.join(home, "projects"));
     if (provider === "codex") roots.push(nodePath.join(codexHome(), "sessions"));
   }
   return [...new Set(roots)];
 }
 
+/** Returns the built-in adapter for a provider id, throwing a typed UsageError when the id is unknown. */
 export function getBuiltInProviderAdapter(id: string): UsageProviderAdapter {
   const adapter = builtInProviderAdapters.find((candidate) => candidate.id === id);
   if (!adapter) throw new UsageError("USAGE_UNSUPPORTED_PROVIDER", `Unsupported usage provider: ${id}`, { details: { provider: id }, retryable: false });
   return adapter;
 }
 
+/** Maps a built-in provider's legacy field-support table into the public capabilities shape the UI and SDK consume. */
 export function providerCapabilities(provider: BuiltInProviderId): UsageProviderCapabilities {
   const legacy = capabilitiesForProvider(provider as LegacyUsageProvider);
   return {
@@ -171,6 +177,7 @@ export function providerCapabilities(provider: BuiltInProviderId): UsageProvider
   };
 }
 
+/** Builds a capabilities record for a provider with no registered adapter, so the UI can show it as known-but-unsupported. */
 function unsupportedCapabilities(provider: string): UsageProviderCapabilities {
   return {
     provider,
@@ -186,14 +193,17 @@ function unsupportedCapabilities(provider: string): UsageProviderCapabilities {
   };
 }
 
+/** Type guard narrowing an arbitrary provider id to a built-in one. */
 function isBuiltInProvider(provider: string): provider is BuiltInProviderId {
   return (builtInProviderIds as readonly string[]).includes(provider);
 }
 
+/** Normalizes a Date or string to an ISO string for time-window comparisons. */
 function iso(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : value;
 }
 
+/** Collapses source refs to one entry per id, keeping the last seen, so a source discovered twice is reported once. */
 function dedupeSources(sources: UsageSourceRef[]): UsageSourceRef[] {
   return [...new Map(sources.map((source) => [source.id, source])).values()];
 }

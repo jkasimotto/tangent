@@ -1,4 +1,5 @@
 import { readFile, writeFile, mkdir, stat, readdir } from "node:fs/promises";
+import { existsSync, readdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -48,13 +49,37 @@ export async function appendFocusEvent(event: FocusEvent): Promise<FocusEvent> {
   return event;
 }
 
-/** Mirrors Claude Code's transcript layout: ~/.claude/projects/<cwd with / and . as ->. */
-function transcriptDirForCwd(cwd: string): string {
-  const encoded = cwd.replace(/[/.]/g, "-");
-  return path.join(homedir(), ".claude", "projects", encoded);
+/**
+ * Lists every Claude profile data dir (`~/.claude`, `~/.claude-otto`, ...). A
+ * dispatched agent's transcript can land under any profile the user runs, so
+ * status resolution has to look across all of them.
+ *
+ * This duplicates the smaller half of @tangent/usage-providers' `claudeHomes()`
+ * on purpose: command-and-control must not take a vertical dependency on the
+ * usage package (see the root AGENTS.md boundary rule), and this is a few lines.
+ */
+function claudeProfileHomes(): string[] {
+  const home = homedir();
+  try {
+    return readdirSync(home)
+      .filter((name) => name.startsWith(".claude"))
+      .map((name) => path.join(home, name))
+      .filter((dir) => existsSync(path.join(dir, "projects")))
+      .sort();
+  } catch {
+    return [path.join(home, ".claude")];
+  }
 }
 
-/** Resolves the transcript directory to record at dispatch time. */
+/** Mirrors Claude Code's transcript layout: <profile>/projects/<cwd with / and . as ->. */
+function transcriptDirForCwd(cwd: string): string {
+  const encoded = cwd.replace(/[/.]/g, "-");
+  const homes = claudeProfileHomes();
+  const existing = homes.find((home) => existsSync(path.join(home, "projects", encoded)));
+  return path.join(existing ?? path.join(homedir(), ".claude"), "projects", encoded);
+}
+
+/** Resolves the transcript directory to record at dispatch time, preferring the profile that already holds it. */
 export function transcriptDirFor(cwd: string): string {
   return transcriptDirForCwd(cwd);
 }

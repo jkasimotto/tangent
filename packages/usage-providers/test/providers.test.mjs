@@ -7,7 +7,7 @@ import path from "node:path";
 import { builtInProviderAdapters } from "../dist/index.js";
 import { normalizeClaudeNativeRecords } from "../dist/providers/claude/native/normalize.js";
 import { loadNativeSourceFiles } from "../dist/providers/native/load.js";
-import { claudeProjectKey } from "../dist/providers/claude/native/discover.js";
+import { claudeProjectKey, discoverClaudeNative } from "../dist/providers/claude/native/discover.js";
 
 test("claude project key encodes both slashes and dots, matching Claude Code's project dir names", () => {
   // A worktree under ~/.tangent: the dot in `.tangent` must become `-`, or transcripts are never found.
@@ -41,6 +41,34 @@ test("indexes an active claude transcript instead of waiting for the quiet windo
     if (previousHome === undefined) delete process.env.CLAUDE_HOME;
     else process.env.CLAUDE_HOME = previousHome;
     rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("unions transcripts across every CLAUDE_HOME profile dir", async () => {
+  const homeA = mkdtempSync(path.join(tmpdir(), "claude-a-"));
+  const homeB = mkdtempSync(path.join(tmpdir(), "claude-b-"));
+  const previousHome = process.env.CLAUDE_HOME;
+  process.env.CLAUDE_HOME = [homeA, homeB].join(path.delimiter);
+  try {
+    const repoRoot = "/tmp/example-repo";
+    for (const [home, session] of [[homeA, "from-a"], [homeB, "from-b"]]) {
+      const projectDir = path.join(home, "projects", claudeProjectKey(repoRoot));
+      mkdirSync(projectDir, { recursive: true });
+      writeFileSync(path.join(projectDir, `${session}.jsonl`), "{}\n");
+    }
+    const scoped = await discoverClaudeNative(repoRoot);
+    assert.deepEqual(
+      scoped.map((file) => path.basename(file)).sort(),
+      ["from-a.jsonl", "from-b.jsonl"],
+      "a repo present under two profiles yields transcripts from both"
+    );
+    const all = await discoverClaudeNative();
+    assert.equal(all.length, 2, "unscoped discovery also unions every profile");
+  } finally {
+    if (previousHome === undefined) delete process.env.CLAUDE_HOME;
+    else process.env.CLAUDE_HOME = previousHome;
+    rmSync(homeA, { recursive: true, force: true });
+    rmSync(homeB, { recursive: true, force: true });
   }
 });
 

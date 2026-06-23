@@ -14,6 +14,8 @@ describe("eval svelte app", () => {
 
     expect(await screen.findByText(/ui-compare/)).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /Task prompt changed/ })).toHaveClass("active");
+    // Review is the default mode; the A/B line diff now lives behind the Diff tab.
+    await fireEvent.click(screen.getByRole("button", { name: "Diff" }));
     expect(container.querySelectorAll(".entity select")).toHaveLength(2);
     expect(await screen.findByText("Use repo context.")).toBeInTheDocument();
     expect(container.querySelector(".diff-row.changed")).toHaveTextContent("Use no context.");
@@ -32,6 +34,21 @@ describe("eval svelte app", () => {
       kind: "context",
       path: "AGENTS.md"
     });
+  });
+
+  it("defaults to Review mode and synthesizes a Compare view from notes", async () => {
+    const client = fakeEvalClient();
+    const { container } = render(App, { props: { client } });
+
+    // Review is the default mode, with a chip per reviewed config.
+    expect(await screen.findByRole("button", { name: "Review" })).toHaveClass("active");
+    expect(container.querySelector(".variant-chip")).toBeInTheDocument();
+
+    // Compare synthesizes one column per config (A/B) with Did well / Mistakes groups.
+    await fireEvent.click(screen.getByRole("button", { name: "Compare" }));
+    expect(container.querySelectorAll(".review-col")).toHaveLength(2);
+    expect(screen.getAllByText(/Did well/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Mistakes/).length).toBeGreaterThan(0);
   });
 
   it("launches a run from the selected spec", async () => {
@@ -140,6 +157,10 @@ function fakeEvalClient(): EvalUiClient {
     /** Returns the seeded comparison view. */
     compareRun: async () => compare,
     /** Returns the seeded diff matching the requested artifact kind. */
-    getDiff: vi.fn(async (args) => args.kind === "context" ? contextDiff : promptDiff)
+    getDiff: vi.fn(async (args) => args.kind === "context" ? contextDiff : promptDiff),
+    /** Returns empty reviews. */
+    getReviews: async () => ({ schema: "eval.reviews.v1" as const, variants: {} }),
+    /** Echoes persisted reviews. */
+    putReviews: vi.fn(async (_runId, reviews) => reviews)
   };
 }

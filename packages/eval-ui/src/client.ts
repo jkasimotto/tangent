@@ -129,6 +129,30 @@ export type EvalDiffView = {
   lines: EvalDiffLineView[];
 };
 
+export type EvalReviewSentiment = "good" | "bad";
+export type EvalVerdictSentiment = "like" | "dislike" | "mixed";
+
+export type EvalReviewNote = {
+  id: string;
+  artifactId: string;
+  artifactLabel: string;
+  line: number;
+  snippet: string;
+  sentiment: EvalReviewSentiment;
+  text: string;
+  ts: number;
+};
+
+export type EvalVariantReview = {
+  verdict?: { sentiment: EvalVerdictSentiment; text?: string };
+  notes: EvalReviewNote[];
+};
+
+export type EvalReviews = {
+  schema: "eval.reviews.v1";
+  variants: Record<string, EvalVariantReview>;
+};
+
 export type EvalUiClient = {
   getSelection(): Promise<{ runId?: string }>;
   listRuns(): Promise<{ runs: EvalRunSummaryView[] }>;
@@ -137,6 +161,8 @@ export type EvalUiClient = {
   getRun(runId: string): Promise<EvalRunDetailView>;
   compareRun(args: { runId: string; caseId: string; left: string; right: string }): Promise<EvalCompareView>;
   getDiff(args: { runId: string; caseId: string; left: string; right: string; kind: EvalCompareArtifactKind; path: string }): Promise<EvalDiffView>;
+  getReviews(runId: string): Promise<EvalReviews>;
+  putReviews(runId: string, reviews: EvalReviews): Promise<EvalReviews>;
 };
 
 /** Creates an HTTP-backed Eval UI client. */
@@ -165,7 +191,11 @@ export function createEvalApiClient(baseUrl = ""): EvalUiClient {
       right: args.right,
       kind: args.kind,
       path: args.path
-    })}`)
+    })}`),
+    /** Fetches the human review notes for a run. */
+    getReviews: (runId) => getJson(`${baseUrl}/api/eval/runs/${encodeURIComponent(runId)}/reviews`),
+    /** Persists the human review notes for a run. */
+    putReviews: (runId, reviews) => putJson(`${baseUrl}/api/eval/runs/${encodeURIComponent(runId)}/reviews`, reviews)
   };
 }
 
@@ -183,6 +213,20 @@ async function getJson<T>(url: string): Promise<T> {
 async function postJson<T>(url: string, body: unknown): Promise<T> {
   const response = await fetch(url, {
     method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `${response.status} ${response.statusText}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+/** Puts a JSON body and parses the JSON response. */
+async function putJson<T>(url: string, body: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body)
   });

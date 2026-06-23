@@ -16,6 +16,7 @@ import { runPreparedEval } from "../core/run.js";
 import { prepareEval } from "../core/worktree.js";
 import { readVariantMetricsView } from "./metrics-read.js";
 import { diffLines } from "./diff.js";
+import { readReviews, writeReviews, type EvalReviews } from "./reviews.js";
 import type {
   EvalCompareArtifactKind,
   EvalCompareArtifactStatus,
@@ -137,6 +138,17 @@ async function handleApiRequest(request: http.IncomingMessage, url: URL, context
       }
       return json(405, { error: "Method not allowed." });
     }
+    if (request.method === "PUT") {
+      // Reviews are the user's own notes about a run, not agent execution, so they persist even in the
+      // read-only verify harness.
+      if (parts.length === 5 && parts[2] === "runs" && parts[4] === "reviews") {
+        const runId = await runRef(parts[3], context);
+        if (!runId) return json(404, { error: "Missing run id." });
+        const manifest = await loadRunManifest(runId);
+        return json(200, await writeReviews(manifest.runDir, await readJsonBody(request) as unknown as EvalReviews));
+      }
+      return json(405, { error: "Method not allowed." });
+    }
     if (request.method !== "GET") return json(405, { error: "Method not allowed." });
 
     if (parts.length === 3 && parts[2] === "selection") return json(200, { runId: await preferredRun(context.preferredRunId) });
@@ -150,6 +162,7 @@ async function handleApiRequest(request: http.IncomingMessage, url: URL, context
       if (parts.length === 4) return json(200, await runDetail(manifest));
       if (parts.length === 5 && parts[4] === "compare") return json(200, await compareView(manifest, url));
       if (parts.length === 5 && parts[4] === "diff") return json(200, await diffView(manifest, url));
+      if (parts.length === 5 && parts[4] === "reviews") return json(200, await readReviews(manifest.runDir));
     }
 
     return json(404, { error: "Not found." });

@@ -212,10 +212,18 @@ button {
 .diff-pane {
   min-width: 0;
   min-height: 0;
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   padding: 0 0 0 16px;
+}
+
+/* The artifact body is whichever scroll area the current mode renders; it grows, siblings stay auto. */
+.reader,
+.diff-grid,
+.review-reader,
+.review-compare {
+  flex: 1 1 auto;
 }
 
 .entity-heads {
@@ -506,4 +514,316 @@ button {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+/* --- Review / Compare (human evaluation) --- */
+.mode-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+}
+.mode-tabs button {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 5px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.mode-tabs button.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: transparent;
+}
+.mode-tabs .saving {
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.review-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 6px 0 10px;
+}
+.review-pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.review-eyebrow {
+  font-size: 11px;
+  font-weight: 760;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.variant-chip {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 5px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.variant-chip.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: transparent;
+}
+.verdict {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.verdict button {
+  border: 1px solid var(--line);
+  background: #fff;
+  font-size: 15px;
+  line-height: 1;
+  padding: 5px 9px;
+  border-radius: 8px;
+  cursor: pointer;
+  filter: grayscale(0.5);
+}
+.verdict button.active {
+  border-color: var(--accent);
+  background: #eef5f1;
+  filter: none;
+}
+.verdict-text {
+  margin-left: 6px;
+  min-width: 220px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+  background: #fff;
+  color: var(--text);
+}
+
+.review-reader {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  background: #fff;
+  scrollbar-gutter: stable;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+}
+.review-row {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  align-items: start;
+  border-bottom: 1px solid #f1f4ef;
+}
+.review-row .line-no {
+  text-align: right;
+  padding: 2px 10px 2px 0;
+  color: var(--muted);
+  user-select: none;
+}
+.review-row code {
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 2px 8px;
+}
+.review-row .row-actions {
+  display: none;
+  gap: 2px;
+  padding: 1px 6px;
+}
+.review-row:hover .row-actions {
+  display: inline-flex;
+}
+.review-row.has-notes {
+  background: #fbfdfb;
+}
+.row-actions .mark {
+  border: 0;
+  background: transparent;
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0.55;
+}
+.row-actions .mark:hover {
+  opacity: 1;
+  background: var(--pane-muted);
+}
+
+.line-note,
+.note-composer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 8px 6px 56px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-family: system-ui, sans-serif;
+  font-size: 13px;
+}
+.line-note.good,
+.note-composer.good {
+  background: var(--add);
+}
+.line-note.bad,
+.note-composer.bad {
+  background: var(--delete);
+}
+.line-note .note-text {
+  flex: 1;
+  color: var(--text);
+}
+.note-del {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.note-input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font-size: 13px;
+  background: #fff;
+  color: var(--text);
+}
+.note-composer .primary {
+  border: 0;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.note-composer .primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.note-composer .ghost {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.compare-pick {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 0 10px;
+}
+.compare-pick label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.compare-pick select {
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  font-size: 13px;
+}
+.compare-hint {
+  color: var(--muted);
+  font-size: 12px;
+}
+.review-compare {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  padding-bottom: 12px;
+}
+.review-col {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 14px;
+  min-width: 0;
+}
+.review-col-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.review-col-head h3 {
+  margin: 0;
+  font-size: 15px;
+  flex: 1;
+}
+.verdict-badge {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--pane-muted);
+  color: var(--muted);
+}
+.verdict-badge.like { background: var(--add); color: #14231b; }
+.verdict-badge.dislike { background: var(--delete); color: #14231b; }
+.verdict-note {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--text);
+}
+.syn-group {
+  margin-top: 10px;
+}
+.syn-group h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 760;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.syn-note {
+  border-left: 3px solid var(--line);
+  padding: 4px 0 4px 10px;
+  margin-bottom: 8px;
+}
+.syn-group.good .syn-note { border-left-color: #22a06b; }
+.syn-group.bad .syn-note { border-left-color: #c0392b; }
+.syn-text {
+  margin: 0 0 3px;
+  font-size: 13px;
+  color: var(--text);
+}
+.syn-snippet {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.syn-empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
 }

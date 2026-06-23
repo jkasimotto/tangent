@@ -42,6 +42,12 @@ button {
   z-index: 2;
 }
 
+/* When the active app hosts the switcher in its own top row, the chrome band is
+   empty and should claim no space. */
+.shell-chrome.hidden {
+  display: none;
+}
+
 .shell-workspace {
   min-width: 0;
   min-height: 0;

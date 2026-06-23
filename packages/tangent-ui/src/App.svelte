@@ -20,6 +20,9 @@
   let error = "";
   let switcherOpen = false;
   let mountNode: HTMLElement;
+  let switcherNode: HTMLElement;
+  let switcherHome: HTMLElement | undefined;
+  let chromeHidden = false;
   let dispose: void | (() => void);
   let mountedKey = "";
 
@@ -91,9 +94,23 @@
       if (!module.mountApp) throw new Error("embedded module does not export mountApp.");
       loadStyles(app);
       dispose = module.mountApp(mountNode, { appId: app.id });
+      placeSwitcher();
     } catch (caught) {
       error = `Unable to load ${app.label}: ${(caught as Error).message}`;
     }
+  }
+
+  /** Moves the switcher into a `[data-tangent-chrome-slot]` the mounted app exposes,
+      so it sits inside the app's own top row. Apps without a slot keep it in the
+      chrome header. The switcher node is stable once apps load, so a one-time move
+      is safe. */
+  function placeSwitcher(): void {
+    if (!switcherNode || !mountNode) return;
+    if (!switcherHome) switcherHome = switcherNode.parentElement ?? undefined;
+    const slot = mountNode.querySelector<HTMLElement>("[data-tangent-chrome-slot]");
+    const target = slot ?? switcherHome;
+    if (target && switcherNode.parentElement !== target) target.appendChild(switcherNode);
+    chromeHidden = Boolean(slot);
   }
 
   function loadStyles(app: UiApp): void {
@@ -109,6 +126,11 @@
   }
 
   function disposeApp(): void {
+    // Rescue the switcher before clearing the host, in case the app slotted it in.
+    if (switcherNode && switcherHome && switcherNode.parentElement !== switcherHome) {
+      switcherHome.appendChild(switcherNode);
+    }
+    chromeHidden = false;
     if (dispose) dispose();
     dispose = undefined;
     mountedKey = "";
@@ -116,9 +138,9 @@
   }
 </script>
 
-<ShellLayout>
+<ShellLayout {chromeHidden}>
   <svelte:fragment slot="chrome">
-    <div class="app-switcher">
+    <div class="app-switcher" bind:this={switcherNode}>
       {#if apps.length}
         <button class="switcher-trigger" type="button" aria-label="Switch Tangent app" aria-expanded={switcherOpen} on:click={() => switcherOpen = !switcherOpen}>
           {activeApp?.label || "Apps"}

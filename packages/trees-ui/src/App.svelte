@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, onMount, tick } from "svelte";
   import { createTreesApiClient, type TreesUiClient, type TreesUiEntity, type TreesUiProject, type TreesUiWorkspace } from "./client.js";
   import {
     createFocusApiClient, isDue, projectFocus,
@@ -23,7 +23,24 @@
   let noteText = "";
   let justDone: Task | undefined;
   let rollupText = "";
+  let showCommand = false;
+  let actionsOpen = false;
+  let notesEl: HTMLElement | undefined;
   const DEFAULT_CHECKIN_MIN = 30;
+
+  /** Pins the note stream to the newest note after an add/load. */
+  async function scrollNotesToEnd(): Promise<void> {
+    await tick();
+    if (notesEl) notesEl.scrollTop = notesEl.scrollHeight;
+  }
+
+  /** Cmd/Ctrl+Enter adds a note; plain Enter stays a newline for multi-line capture. */
+  function onComposerKeydown(event: KeyboardEvent): void {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      void addNoteToFocus();
+    }
+  }
 
   $: state = projectFocus(focusEvents, now, agentStatusMap);
   $: focusTask = state.focusId ? state.tasks.find((t) => t.id === state.focusId) : undefined;
@@ -105,6 +122,7 @@
       });
       cmdEntity = ""; cmdIntent = ""; cmdOutcome = ""; cmdMinutes = null;
       justDone = undefined;
+      showCommand = false;
       await loadFocus();
     } catch (caught) { error = friendlyError(caught); }
   }
@@ -125,6 +143,7 @@
       await focus.addNote(focusTask.id, noteText.trim());
       noteText = "";
       await loadFocus();
+      await scrollNotesToEnd();
     } catch (caught) { error = friendlyError(caught); }
   }
 
@@ -439,26 +458,29 @@
 
 <div class="app-shell">
   <nav class="view-tabs" aria-label="Views">
+    <span class="chrome-slot" data-tangent-chrome-slot></span>
     <button type="button" class:active={view === "focus"} on:click={() => view = "focus"}>Focus</button>
     <button type="button" class:active={view === "trees"} on:click={() => view = "trees"}>Trees</button>
   </nav>
 
   {#if view === "focus"}
-    <main class="cc" aria-label="Command and control">
-      <form class="command-bar card" aria-label="Start a task" on:submit|preventDefault={startTask}>
-        <div class="cmd-row cmd-primary">
-          <input class="cmd-entity" aria-label="Entity" bind:value={cmdEntity} list="cc-entities" placeholder="entity" autocomplete="off" />
-          <input class="cmd-intent" aria-label="What are you doing" bind:value={cmdIntent} placeholder="what you're working on" autocomplete="off" />
-        </div>
-        <datalist id="cc-entities">
-          {#each workspace.entities as entity}<option value={entity.path}></option>{/each}
-        </datalist>
-        <div class="cmd-row cmd-secondary">
-          <input class="cmd-outcome" aria-label="Predicted outcome" bind:value={cmdOutcome} placeholder="predicted outcome (optional)" autocomplete="off" />
-          <input class="cmd-minutes" aria-label="Estimate minutes" type="number" min="1" bind:value={cmdMinutes} placeholder="min" />
-          <button type="submit" class="primary cmd-go" disabled={!startReady}>Start</button>
-        </div>
-      </form>
+    <main class="cc" class:focus-mode={focusTask} aria-label="Command and control">
+      {#if !focusTask || showCommand}
+        <form class="command-bar card" aria-label="Start a task" on:submit|preventDefault={startTask}>
+          <div class="cmd-row cmd-primary">
+            <input class="cmd-entity" aria-label="Entity" bind:value={cmdEntity} list="cc-entities" placeholder="entity" autocomplete="off" />
+            <input class="cmd-intent" aria-label="What are you doing" bind:value={cmdIntent} placeholder="what you're working on" autocomplete="off" />
+          </div>
+          <datalist id="cc-entities">
+            {#each workspace.entities as entity}<option value={entity.path}></option>{/each}
+          </datalist>
+          <div class="cmd-row cmd-secondary">
+            <input class="cmd-outcome" aria-label="Predicted outcome" bind:value={cmdOutcome} placeholder="predicted outcome (optional)" autocomplete="off" />
+            <input class="cmd-minutes" aria-label="Estimate minutes" type="number" min="1" bind:value={cmdMinutes} placeholder="min" />
+            <button type="submit" class="primary cmd-go" disabled={!startReady}>Start</button>
+          </div>
+        </form>
+      {/if}
 
       {#if error}<div class="notice" role="alert">{error}</div>{/if}
 
@@ -475,49 +497,61 @@
         </div>
       {/if}
 
-      <section class="focus-zone card" aria-label="Focus">
+      <section class="focus-zone card" class:focus-active={focusTask} aria-label="Focus">
         {#if focusTask}
           {@const clock = focusClock(focusTask, now)}
-          <div class="focus-grid">
-            <div class="clock" class:over={clock.over} aria-label="Time used against estimate">
+          <header class="focus-head">
+            <div class="clock clock-chip" class:over={clock.over} aria-label="Time used against estimate" title={clock.subLabel}>
               <svg viewBox="0 0 120 120" role="img" aria-hidden="true">
                 <circle class="clock-track" cx="60" cy="60" r="52" />
                 <circle class="clock-arc" cx="60" cy="60" r="52"
                   style={`stroke-dasharray: ${clock.dash} ${CLOCK_CIRCUMFERENCE}`} transform="rotate(-90 60 60)" />
               </svg>
-              <div class="clock-center">
-                <strong>{clock.centerLabel}</strong>
-                <span>{clock.subLabel}</span>
-              </div>
             </div>
             <div class="focus-meta">
-              <p class="eyebrow">Now{#if focusTask.agent} · agent {focusTask.agent.status}{/if}</p>
               <h1>{focusTask.intent}</h1>
-              <p class="focus-entity">{focusTask.entity}</p>
-              {#if focusTask.outcome}<p class="focus-predict">predict: {focusTask.outcome}</p>{/if}
+              <p class="focus-sub">
+                <span class="focus-time" class:over={clock.over}>{clock.centerLabel}</span>
+                <span class="focus-entity">{focusTask.entity}</span>{#if focusTask.agent}<span class="focus-agent">agent {focusTask.agent.status}</span>{/if}
+              </p>
             </div>
-          </div>
+            <div class="focus-head-actions">
+              <button type="button" class="ghost" title="Start another task" aria-label="Start another task" on:click={() => showCommand = !showCommand}>＋</button>
+              <button type="button" class="primary" on:click={() => doneFocus(false)}>Done</button>
+              <div class="more">
+                <button type="button" class="secondary more-trigger" aria-haspopup="true" aria-expanded={actionsOpen} aria-label="More actions" on:click={() => actionsOpen = !actionsOpen}>⋯</button>
+                {#if actionsOpen}
+                  <div class="more-menu" role="menu">
+                    <button type="button" role="menuitem" on:click={() => { actionsOpen = false; doneFocus(true); }} title="Mark done but don't record a time (you finished earlier and forgot)">Done · don't know when</button>
+                    {#if focusTask.agent}
+                      <button type="button" role="menuitem" disabled>Agent running</button>
+                    {:else}
+                      <button type="button" role="menuitem" on:click={() => { actionsOpen = false; dispatchToFocus(); }}>Dispatch agent</button>
+                    {/if}
+                    <button type="button" role="menuitem" on:click={() => { actionsOpen = false; parkFocus(); }}>Park</button>
+                    <button type="button" role="menuitem" on:click={() => { actionsOpen = false; rollup(focusTask.entity); }}>Roll up</button>
+                    <button type="button" role="menuitem" class="danger" on:click={() => { actionsOpen = false; dropFocus(); }}>Drop</button>
+                  </div>
+                {/if}
+              </div>
+            </div>
+          </header>
 
-          <div class="focus-actions">
-            <button type="button" class="primary big" on:click={() => doneFocus(false)}>Done</button>
-            <button type="button" class="secondary" on:click={() => doneFocus(true)} title="Mark done but don't record a time (you finished earlier and forgot)">Done · don't know when</button>
-            {#if focusTask.agent}
-              <button type="button" class="secondary" disabled title="Agent already running for this task">Agent running</button>
-            {:else}
-              <button type="button" on:click={dispatchToFocus}>Dispatch agent</button>
-            {/if}
-            <button type="button" class="secondary" on:click={parkFocus}>Park</button>
-            <button type="button" class="secondary" on:click={() => rollup(focusTask.entity)}>Roll up</button>
-            <button type="button" class="danger" on:click={dropFocus}>Drop</button>
-          </div>
+          {#if focusTask.outcome}<p class="focus-predict">predict: {focusTask.outcome}</p>{/if}
+
+          {#if focusTask.notes.length}
+            <ul class="focus-notes" bind:this={notesEl}>{#each focusTask.notes as note}<li>{note}</li>{/each}</ul>
+          {:else}
+            <div class="focus-notes focus-notes-empty" bind:this={notesEl}><span>No notes yet. Dump thoughts as they come; they feed the rollup.</span></div>
+          {/if}
 
           <div class="focus-note">
-            <textarea aria-label="Notes" bind:value={noteText} rows="2" placeholder="dump a thought, a link, a finding; it feeds the rollup"></textarea>
-            <button type="button" class="secondary" on:click={addNoteToFocus} disabled={!noteText.trim()}>Add note</button>
+            <textarea aria-label="Notes" bind:value={noteText} rows="3" on:keydown={onComposerKeydown} placeholder="dump a thought, a link, a finding…"></textarea>
+            <div class="composer-side">
+              <button type="button" class="primary" on:click={addNoteToFocus} disabled={!noteText.trim()}>Add note</button>
+              <span class="composer-hint">⌘⏎</span>
+            </div>
           </div>
-          {#if focusTask.notes.length}
-            <ul class="focus-notes">{#each focusTask.notes as note}<li>{note}</li>{/each}</ul>
-          {/if}
         {:else if justDone}
           <div class="bet-result" aria-label="Bet result">
             <p class="eyebrow">Done</p>
@@ -723,40 +757,62 @@
   .cmd-minutes { flex: 0 0 96px; text-align: center; }
   .cmd-go { flex: 0 0 120px; font-size: 16px; }
 
-  /* The single dominant focal point. */
+  /* Focus zone. When a task is active it becomes a full-height note surface. */
   .focus-zone {
-    padding: 28px;
+    padding: 20px 24px;
     border: 2px solid var(--text, #1b1b1f);
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.10);
-    display: flex; flex-direction: column; gap: 20px;
+    display: flex; flex-direction: column; gap: 14px;
   }
-  .focus-grid { display: grid; grid-template-columns: 132px 1fr; gap: 24px; align-items: center; }
-  .focus-meta { min-width: 0; }
-  .focus-meta h1 { font-size: 30px; line-height: 1.15; margin: 4px 0 6px; word-break: break-word; }
   .eyebrow { text-transform: uppercase; letter-spacing: 0.09em; font-size: 11px; font-weight: 600; opacity: 0.55; margin: 0; }
-  .focus-entity { font-family: var(--font-mono, ui-monospace, monospace); font-size: 13px; opacity: 0.6; margin: 0; word-break: break-all; }
-  .focus-predict { margin: 8px 0 0; font-size: 14px; opacity: 0.8; }
 
-  /* The depleting time ring: the arc shrinks as the estimate is used up. */
-  .clock { position: relative; width: 132px; height: 132px; }
-  .clock svg { width: 132px; height: 132px; }
+  /* Slim context header: chip clock + intent, primary Done, overflow menu. */
+  .focus-head { display: flex; align-items: center; gap: 14px; }
+  .focus-meta { min-width: 0; flex: 1; }
+  .focus-meta h1 { font-size: 19px; line-height: 1.2; margin: 0; word-break: break-word; }
+  .focus-sub { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin: 3px 0 0; font-size: 12px; }
+  .focus-time { font-weight: 700; color: var(--accent, #246b58); font-variant-numeric: tabular-nums; }
+  .focus-time.over { color: #c0392b; }
+  .focus-entity { font-family: var(--font-mono, ui-monospace, monospace); opacity: 0.6; word-break: break-all; }
+  .focus-agent { opacity: 0.6; }
+  .focus-predict { margin: 0; font-size: 13px; opacity: 0.75; }
+
+  .focus-head-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .focus-head-actions .ghost { border-color: transparent; background: transparent; font-size: 18px; line-height: 1; padding: 8px 10px; }
+  .more { position: relative; }
+  .more-trigger { font-size: 16px; line-height: 1; padding: 9px 12px; }
+  .more-menu {
+    position: absolute; top: calc(100% + 6px); right: 0; z-index: 5;
+    display: flex; flex-direction: column; gap: 2px; padding: 6px; min-width: 210px;
+    background: var(--pane, #fbfcf9); border: 1px solid var(--line, #d4dcd2);
+    border-radius: 12px; box-shadow: 0 12px 30px rgba(0, 0, 0, 0.16);
+  }
+  .more-menu button { width: 100%; text-align: left; border-color: transparent; font-weight: 500; }
+  .more-menu button:hover:not(:disabled) { background: #eef2ec; }
+
+  /* The depleting time ring, shrunk to a header chip. */
+  .clock { position: relative; }
   .clock-track { fill: none; stroke: var(--line, #e3e8e2); stroke-width: 10; }
   .clock-arc { fill: none; stroke: var(--accent, #246b58); stroke-width: 10; stroke-linecap: round; transition: stroke-dasharray 0.6s linear; }
   .clock.over .clock-arc { stroke: #c0392b; }
-  .clock-center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
-  .clock-center strong { font-size: 16px; font-variant-numeric: tabular-nums; }
-  .clock.over .clock-center strong { color: #c0392b; }
-  .clock-center span { font-size: 11px; opacity: 0.55; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .clock-chip { width: 40px; height: 40px; flex-shrink: 0; }
+  .clock-chip svg { width: 40px; height: 40px; display: block; }
 
-  .focus-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-  .focus-actions .big { padding: 12px 28px; font-size: 16px; }
-  .focus-actions .danger { margin-left: auto; }
-
-  .focus-note { display: flex; gap: 10px; align-items: flex-start; }
-  .focus-note textarea { flex: 1; padding: 11px 14px; font-size: 14px; background: #fff; color: var(--text, #14231b); border: 1px solid var(--line, #d4dcd2); border-radius: 11px; resize: vertical; box-sizing: border-box; font-family: inherit; }
-  .focus-note textarea::placeholder { color: var(--muted, #98a39a); }
-  .focus-notes { margin: 0; padding-left: 20px; opacity: 0.85; font-size: 14px; max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+  /* Note stream: grows with content up to ~half the screen, then scrolls.
+     Content-sized so an empty or short list never leaves a cavern. */
+  .focus-notes { margin: 0; padding: 0 4px 0 20px; font-size: 14px; max-height: 52vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
   .focus-notes li { word-break: break-word; }
+  .focus-notes-empty { list-style: none; padding: 2px 0 0; color: var(--muted, #657268); font-size: 13px; }
+  .cc:not(.focus-mode) .focus-notes { max-height: 200px; }
+
+  /* Composer pinned below the stream. */
+  .focus-note { display: flex; gap: 10px; align-items: stretch; flex-shrink: 0; }
+  .focus-note textarea { flex: 1; padding: 12px 14px; font-size: 15px; background: #fff; color: var(--text, #14231b); border: 1px solid var(--line, #d4dcd2); border-radius: 11px; resize: vertical; box-sizing: border-box; font-family: inherit; min-height: 64px; }
+  .focus-note textarea::placeholder { color: var(--muted, #98a39a); }
+  .focus-note textarea:focus-visible { outline: 2px solid var(--accent, #246b58); outline-offset: 1px; }
+  .composer-side { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; }
+  .composer-hint { font-size: 11px; opacity: 0.5; font-variant-numeric: tabular-nums; }
+
   .focus-empty, .bet-result { display: flex; flex-direction: column; gap: 8px; padding: 24px 0; }
   .focus-empty strong { font-size: 20px; }
   .focus-empty span { opacity: 0.6; }

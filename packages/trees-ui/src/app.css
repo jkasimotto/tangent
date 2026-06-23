@@ -56,10 +56,23 @@ select:disabled {
 
 .view-tabs {
   display: flex;
-  gap: 4px;
+  align-items: center;
+  gap: 8px;
   padding: 8px 22px;
   border-bottom: 1px solid var(--line);
   background: var(--pane);
+}
+
+/* Anchor where the shared shell teleports its app switcher, so it sits inline
+   with the Focus/Trees tabs instead of in a dedicated header band. Empty when
+   the app runs standalone. */
+.view-tabs .chrome-slot:empty {
+  display: none;
+}
+
+.view-tabs .chrome-slot {
+  display: inline-flex;
+  margin-right: 4px;
 }
 
 .view-tabs button {

@@ -122,6 +122,30 @@ describe("focus projection invariants", () => {
     expect(task.actualMin).toBe(45);
   });
 
+  it("outcomes: a checklist projects in order, and outcome_checked toggles doneAt", () => {
+    const t0 = at();
+    const events: FocusEvent[] = [
+      { type: "task_started", ts: t0, taskId: "a", entity: "x", outcomes: [{ id: "a:0", text: "one" }, { id: "a:1", text: "two" }], estimateMin: 30 },
+      { type: "outcome_checked", ts: t0 + 1, taskId: "a", outcomeId: "a:1", done: true }
+    ];
+    const task = projectFocus(events, clock + 1000).tasks.find((t) => t.id === "a")!;
+    expect(task.outcomes.map((o) => o.text)).toEqual(["one", "two"]);
+    expect(task.outcomes[0].doneAt).toBeUndefined();
+    expect(task.outcomes[1].doneAt).toBe(t0 + 1);
+    expect(task.title).toBe("one"); // first outcome is the compact title
+  });
+
+  it("outcomes: a legacy task (intent/outcome) projects to one outcome and keeps its title", () => {
+    const t0 = at();
+    const task = projectFocus(
+      [{ type: "task_started", ts: t0, taskId: "a", entity: "x", intent: "refactor parser", outcome: "handles nesting", estimateMin: 30 }],
+      clock + 1000
+    ).tasks.find((t) => t.id === "a")!;
+    expect(task.title).toBe("refactor parser");
+    expect(task.outcomes).toHaveLength(1);
+    expect(task.outcomes[0].text).toBe("handles nesting");
+  });
+
   it("isDue is true only for passed check-ins or agents needing you (G12 quiet running)", () => {
     const now = clock + 1000;
     const running: Task = baseTask({ status: "watching", agent: { adapter: "claude", cwd: "/w", status: "running" } });
@@ -145,8 +169,37 @@ describe("command and control UI", () => {
     await fireEvent.submit(screen.getByLabelText("Start a task")); // the Enter
 
     const focusRegion = await screen.findByLabelText("Focus");
-    expect(within(focusRegion).getByRole("heading", { name: "speed up compare" })).toBeInTheDocument();
+    expect(within(focusRegion).getByRole("heading", { name: "eval" })).toBeInTheDocument();
+    expect(within(focusRegion).getByRole("button", { name: /speed up compare/ })).toBeInTheDocument();
     expect(clicks).toBe(0);
+  });
+
+  it("outcomes: starts with a checklist, checks one off, and the bet counts completion", async () => {
+    const focus = fakeFocus();
+    render(App, { props: { client: treesClient(), focus } });
+
+    // Two outcomes: first committed with Enter, second left as the draft (still counts on submit).
+    await fireEvent.input(screen.getByLabelText("Entity"), { target: { value: "eval" } });
+    const outcomeInput = screen.getByLabelText("Add an outcome");
+    await fireEvent.input(outcomeInput, { target: { value: "ship compare view" } });
+    await fireEvent.keyDown(outcomeInput, { key: "Enter" });
+    await fireEvent.input(outcomeInput, { target: { value: "write tests" } });
+    await fireEvent.input(screen.getByLabelText("Estimate minutes"), { target: { value: "45" } });
+    await fireEvent.submit(screen.getByLabelText("Start a task"));
+
+    const focusRegion = await screen.findByLabelText("Focus");
+    expect(within(focusRegion).getByRole("button", { name: /ship compare view/ })).toBeInTheDocument();
+    expect(within(focusRegion).getByText("0/2 done")).toBeInTheDocument();
+
+    // Check one off; progress updates.
+    await click(within(focusRegion).getByRole("button", { name: /ship compare view/ }));
+    await within(focusRegion).findByText("1/2 done");
+
+    // The bet result reports the completion count against the prediction.
+    await click(screen.getByRole("button", { name: "Done" }));
+    const result = await screen.findByLabelText("Bet result");
+    expect(result).toHaveTextContent(/predicted 2 outcomes/i);
+    expect(result).toHaveTextContent(/completed 1\/2/i);
   });
 
   it("G7/G13: exactly one dominant Focus region, one task in focus", async () => {
@@ -166,10 +219,10 @@ describe("command and control UI", () => {
     // Switch: just type the new task and Enter. No clicks needed; old task auto-parks.
     await typeCommand("docs", "second", "30");
     await fireEvent.submit(screen.getByLabelText("Start a task"));
-    await screen.findByRole("heading", { name: "second" });
+    await screen.findByRole("heading", { name: "docs" });
 
     const state = projectFocus(focus.events, Date.now());
-    const parked = state.tasks.find((t) => t.intent === "first")!;
+    const parked = state.tasks.find((t) => t.title === "first")!;
     expect(parked.status).toBe("parked");
     expect(parked.checkinAt).toBeTypeOf("number"); // no limbo
     expect(clicks).toBeLessThanOrEqual(2);
@@ -193,12 +246,15 @@ describe("command and control UI", () => {
     render(App, { props: { client: treesClient(), focus } });
     await startTaskUI("eval", "build ui", "120");
 
-    await click(screen.getByRole("button", { name: "Dispatch agent" }));
+    await openMore();
+    await click(screen.getByRole("menuitem", { name: "Dispatch agent" }));
     // Stays focused: the agent runs in the background; the task is NOT moved to Incoming.
-    await screen.findByRole("button", { name: "Agent running" });
+    // Reopening the menu shows the dispatch slot is now a disabled running indicator.
+    await openMore();
+    await screen.findByRole("menuitem", { name: "Agent running" });
 
     const state = projectFocus(focus.events, Date.now());
-    const task = state.tasks.find((t) => t.intent === "build ui")!;
+    const task = state.tasks.find((t) => t.title === "build ui")!;
     expect(state.focusId).toBe(task.id);
     expect(task.status).toBe("focus");
     expect(task.agent?.transcriptDir).toBeTruthy();
@@ -220,7 +276,8 @@ describe("command and control UI", () => {
     const focus = fakeFocus();
     render(App, { props: { client: treesClient(), focus } });
     await startTaskUI("eval", "agent task", "60");
-    await click(screen.getByRole("button", { name: "Dispatch agent" }));
+    await openMore();
+    await click(screen.getByRole("menuitem", { name: "Dispatch agent" }));
     clicks = 0;
     await startTaskUI("docs", "other work", "30");
 
@@ -240,7 +297,7 @@ describe("command and control UI", () => {
     // G4: one click makes it the focus.
     clicks = 0;
     await click(within(band).getByRole("button", { name: "Make this my focus" }));
-    await screen.findByRole("heading", { name: "agent task" });
+    await screen.findByRole("heading", { name: "eval" });
     expect(clicks).toBe(1);
   });
 
@@ -249,11 +306,12 @@ describe("command and control UI", () => {
     render(App, { props: { client: treesClient(), focus } });
     await startTaskUI("eval", "long task", "30");
 
-    await click(screen.getByRole("button", { name: "Done · don't know when" }));
+    await openMore();
+    await click(screen.getByRole("menuitem", { name: "Done · don't know when" }));
 
     const result = await screen.findByLabelText("Bet result");
     expect(result).toHaveTextContent(/time unknown/i);
-    const task = projectFocus(focus.events, Date.now()).tasks.find((t) => t.intent === "long task")!;
+    const task = projectFocus(focus.events, Date.now()).tasks.find((t) => t.title === "long task")!;
     expect(task.status).toBe("done");
     expect(task.actualMin).toBeUndefined();
   });
@@ -266,11 +324,12 @@ describe("command and control UI", () => {
     await fireEvent.input(screen.getByLabelText("Notes"), { target: { value: "found N+1 in loader" } });
     await click(screen.getByRole("button", { name: "Add note" }));
     clicks = 0;
-    await click(screen.getByRole("button", { name: "Roll up" }));
+    await openMore();
+    await click(screen.getByRole("menuitem", { name: "Roll up" }));
 
     const rollup = await screen.findByLabelText("Rollup");
     expect(rollup).toHaveTextContent("found N+1 in loader");
-    expect(clicks).toBe(1);
+    expect(clicks).toBe(2); // overflow menu disclosure + the action
   });
 
   it("G8: the Trees view contains no agent or session nodes", async () => {
@@ -284,18 +343,24 @@ describe("command and control UI", () => {
 
 // --- helpers ---
 
-/** Types entity, intent, and estimate into the command bar. */
-async function typeCommand(entity: string, intent: string, minutes: string): Promise<void> {
+/** Types entity, one outcome, and an estimate. Reveals the command bar first if a task is already focused. */
+async function typeCommand(entity: string, outcome: string, minutes: string): Promise<void> {
+  if (!screen.queryByLabelText("Entity")) await fireEvent.click(screen.getByLabelText("Start another task"));
   await fireEvent.input(screen.getByLabelText("Entity"), { target: { value: entity } });
-  await fireEvent.input(screen.getByLabelText("What are you doing"), { target: { value: intent } });
+  await fireEvent.input(screen.getByLabelText("Add an outcome"), { target: { value: outcome } });
   await fireEvent.input(screen.getByLabelText("Estimate minutes"), { target: { value: minutes } });
 }
 
-/** Starts a task through the UI (setup; not counted against a specific goal's click budget). */
-async function startTaskUI(entity: string, intent: string, minutes: string): Promise<void> {
-  await typeCommand(entity, intent, minutes);
+/** Starts a task through the UI (setup; not counted against a specific goal's click budget). The heading is the entity. */
+async function startTaskUI(entity: string, outcome: string, minutes: string): Promise<void> {
+  await typeCommand(entity, outcome, minutes);
   await fireEvent.submit(screen.getByLabelText("Start a task"));
-  await screen.findByRole("heading", { name: intent });
+  await screen.findByRole("heading", { name: entity });
+}
+
+/** Opens the focus overflow menu (⋯) so its items are clickable. Counts as a disclosure click. */
+async function openMore(): Promise<void> {
+  await click(screen.getByRole("button", { name: "More actions" }));
 }
 
 /** Forces a focus reload (the App reloads agent statuses after every action). */
@@ -307,7 +372,7 @@ async function tickPoll(): Promise<void> {
 /** A minimal task for projection helper tests. */
 function baseTask(overrides: Partial<Task>): Task {
   return {
-    id: "t", entity: "x", intent: "i", estimateMin: 30, status: "parked",
+    id: "t", entity: "x", outcomes: [], title: "i", estimateMin: 30, status: "parked",
     notes: [], startedAt: 0, segments: [], ...overrides
   };
 }
@@ -349,10 +414,13 @@ function fakeFocus(): FocusClient & { events: FocusEvent[]; setStatus(id: string
     /** Records task_started + focus_on. */
     startTask: async (input: StartTaskInput) => {
       const taskId = `task_${counter += 1}`;
-      events.push({ type: "task_started", ts: at(), taskId, entity: input.entity, intent: input.intent, outcome: input.outcome, estimateMin: input.estimateMin });
+      const outcomes = input.outcomes.map((text, i) => ({ id: `${taskId}:${i}`, text }));
+      events.push({ type: "task_started", ts: at(), taskId, entity: input.entity, outcomes, estimateMin: input.estimateMin });
       events.push({ type: "focus_on", ts: at(), taskId });
       return taskId;
     },
+    /** Records outcome_checked. */
+    checkOutcome: async (taskId, outcomeId, done) => { events.push({ type: "outcome_checked", ts: at(), taskId, outcomeId, done }); },
     /** Records focus_on. */
     focusOn: async (taskId) => { events.push({ type: "focus_on", ts: at(), taskId }); },
     /** Records focus_off and an optional check-in. */

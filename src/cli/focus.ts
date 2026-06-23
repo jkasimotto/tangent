@@ -11,8 +11,11 @@ import path from "node:path";
  * single log (see docs/design/command-and-control.md). No other store is needed.
  */
 export type FocusEvent =
-  | { type: "task_started"; ts: number; taskId: string; entity: string; intent: string; outcome?: string; estimateMin: number }
+  // `outcomes` is the session's deliverable checklist; `intent`/`outcome` are legacy single-string fields kept
+  // optional so the old log still parses. See packages/trees-ui/src/focus-client.ts for the projection.
+  | { type: "task_started"; ts: number; taskId: string; entity: string; intent?: string; outcome?: string; outcomes?: { id: string; text: string }[]; estimateMin: number }
   | { type: "focus_on"; ts: number; taskId: string }
+  | { type: "outcome_checked"; ts: number; taskId: string; outcomeId: string; done: boolean }
   | { type: "focus_off"; ts: number; taskId: string }
   | { type: "note_added"; ts: number; taskId: string; text: string }
   | { type: "checkin_set"; ts: number; taskId: string; dueAt: number }

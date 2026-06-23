@@ -5,8 +5,12 @@
 export type AgentStatus = "running" | "waiting" | "done" | "unknown";
 
 export type FocusEvent =
-  | { type: "task_started"; ts: number; taskId: string; entity: string; intent: string; outcome?: string; estimateMin: number }
+  // `outcomes` is the session's checklist of concrete deliverables. `intent`/`outcome` are legacy single-string
+  // fields kept optional so the old log still projects; new tasks set `outcomes` and leave them undefined.
+  | { type: "task_started"; ts: number; taskId: string; entity: string; intent?: string; outcome?: string; outcomes?: { id: string; text: string }[]; estimateMin: number }
   | { type: "focus_on"; ts: number; taskId: string }
+  // Checks or unchecks one outcome as the session progresses; `done` carries the new state.
+  | { type: "outcome_checked"; ts: number; taskId: string; outcomeId: string; done: boolean }
   | { type: "focus_off"; ts: number; taskId: string }
   | { type: "note_added"; ts: number; taskId: string; text: string }
   | { type: "checkin_set"; ts: number; taskId: string; dueAt: number }
@@ -25,11 +29,20 @@ export interface FocusSegment {
   off?: number;
 }
 
+/** One concrete deliverable the session is betting on. `doneAt` is set when it has been checked off. */
+export interface TaskOutcome {
+  id: string;
+  text: string;
+  doneAt?: number;
+}
+
 export interface Task {
   id: string;
   entity: string;
-  intent: string;
-  outcome?: string;
+  /** The session's checklist of deliverables. At least one for tasks started after the outcomes change. */
+  outcomes: TaskOutcome[];
+  /** Short display title for compact surfaces (incoming list, bet, rollup). First outcome's text, or a legacy intent. */
+  title: string;
   estimateMin: number;
   status: TaskStatus;
   notes: string[];
@@ -81,12 +94,17 @@ export function projectFocus(events: FocusEvent[], now: number, statuses: Record
     if (event.type === "rest_ended") { activeRest = undefined; continue; }
     const task = tasks.get(event.taskId);
     switch (event.type) {
-      case "task_started":
+      case "task_started": {
+        // New tasks carry `outcomes`. Legacy tasks (single `intent`/`outcome`) synthesize one outcome so they
+        // still render in the checklist, with the old activity `intent` kept as the compact title.
+        const outcomes: TaskOutcome[] = event.outcomes
+          ? event.outcomes.map((o) => ({ id: o.id, text: o.text }))
+          : [event.outcome ?? event.intent].filter((t): t is string => !!t).map((text, i) => ({ id: `${event.taskId}:${i}`, text }));
         tasks.set(event.taskId, {
           id: event.taskId,
           entity: event.entity,
-          intent: event.intent,
-          outcome: event.outcome,
+          outcomes,
+          title: event.intent ?? outcomes[0]?.text ?? event.entity,
           estimateMin: event.estimateMin,
           status: "parked",
           notes: [],
@@ -94,6 +112,13 @@ export function projectFocus(events: FocusEvent[], now: number, statuses: Record
           segments: []
         });
         break;
+      }
+      case "outcome_checked": {
+        if (!task) break;
+        const outcome = task.outcomes.find((o) => o.id === event.outcomeId);
+        if (outcome) outcome.doneAt = event.done ? event.ts : undefined;
+        break;
+      }
       case "focus_on":
         if (!task) break;
         if (currentFocus && currentFocus !== event.taskId) {
@@ -176,14 +201,15 @@ export function projectFocus(events: FocusEvent[], now: number, statuses: Record
 
 export interface StartTaskInput {
   entity: string;
-  intent: string;
-  outcome?: string;
+  /** The deliverables to bet on this session, in order. At least one. */
+  outcomes: string[];
   estimateMin: number;
 }
 
 export type FocusClient = {
   listEvents(): Promise<FocusEvent[]>;
   startTask(input: StartTaskInput): Promise<string>;
+  checkOutcome(taskId: string, outcomeId: string, done: boolean): Promise<void>;
   focusOn(taskId: string): Promise<void>;
   park(taskId: string, dueAt?: number): Promise<void>;
   addNote(taskId: string, text: string): Promise<void>;
@@ -225,11 +251,16 @@ export function createFocusApiClient(basePath = "/api/focus"): FocusClient {
     async startTask(input) {
       const ts = Date.now();
       const taskId = newId();
+      const outcomes = input.outcomes.map((text, i) => ({ id: `${taskId}:${i}`, text }));
       await append([
-        { type: "task_started", ts, taskId, entity: input.entity, intent: input.intent, outcome: input.outcome, estimateMin: input.estimateMin },
+        { type: "task_started", ts, taskId, entity: input.entity, outcomes, estimateMin: input.estimateMin },
         { type: "focus_on", ts: ts + 1, taskId }
       ]);
       return taskId;
+    },
+    /** Checks or unchecks one of a task's outcomes. */
+    async checkOutcome(taskId, outcomeId, done) {
+      await append([{ type: "outcome_checked", ts: Date.now(), taskId, outcomeId, done }]);
     },
     /** Makes an existing task the current focus. */
     async focusOn(taskId) {

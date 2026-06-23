@@ -17,8 +17,8 @@
   let agentStatusMap: Record<string, AgentStatus> = {};
   let now = Date.now();
   let cmdEntity = "";
-  let cmdIntent = "";
-  let cmdOutcome = "";
+  let cmdOutcomes: string[] = [];
+  let cmdOutcomeDraft = "";
   let cmdMinutes: number | null = null;
   let noteText = "";
   let justDone: Task | undefined;
@@ -49,7 +49,8 @@
   $: focusTask = state.focusId ? state.tasks.find((t) => t.id === state.focusId) : undefined;
   $: dueTask = state.incoming.find((t) => isDue(t, now));
   $: rest = state.rest;
-  $: startReady = cmdEntity.trim().length > 0 && cmdIntent.trim().length > 0 && typeof cmdMinutes === "number" && cmdMinutes > 0;
+  $: pendingOutcomes = [...cmdOutcomes, cmdOutcomeDraft.trim()].map((o) => o.trim()).filter(Boolean);
+  $: startReady = cmdEntity.trim().length > 0 && pendingOutcomes.length > 0 && typeof cmdMinutes === "number" && cmdMinutes > 0;
 
   // --- Trees state ---
   type TreeNode = {
@@ -113,6 +114,30 @@
     return entity.worktreePath ?? workspace.projects.find((p) => p.id === entity.projectId)?.path ?? "";
   }
 
+  /** Commits the outcome draft as a checklist item so the next one can be typed. */
+  function addOutcomeDraft(): void {
+    const text = cmdOutcomeDraft.trim();
+    if (!text) return;
+    cmdOutcomes = [...cmdOutcomes, text];
+    cmdOutcomeDraft = "";
+  }
+
+  /** Removes the outcome at the given index from the draft checklist. */
+  function removeOutcome(index: number): void {
+    cmdOutcomes = cmdOutcomes.filter((_, i) => i !== index);
+  }
+
+  /** Enter commits the current outcome; Backspace on an empty draft pops the last one. Submit stays on the Start button / Cmd+Enter. */
+  function onOutcomeKeydown(event: KeyboardEvent): void {
+    if (event.key === "Enter" && !(event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      addOutcomeDraft();
+    } else if (event.key === "Backspace" && cmdOutcomeDraft === "" && cmdOutcomes.length) {
+      event.preventDefault();
+      cmdOutcomes = cmdOutcomes.slice(0, -1);
+    }
+  }
+
   /** Starts a task from the command bar. Parks the current focus first so nothing slips into limbo. */
   async function startTask(): Promise<void> {
     if (!startReady) return;
@@ -120,13 +145,20 @@
       if (state.focusId) await focus.park(state.focusId, Date.now() + DEFAULT_CHECKIN_MIN * 60000);
       await focus.startTask({
         entity: cmdEntity.trim(),
-        intent: cmdIntent.trim(),
-        outcome: cmdOutcome.trim() || undefined,
+        outcomes: pendingOutcomes,
         estimateMin: cmdMinutes as number
       });
-      cmdEntity = ""; cmdIntent = ""; cmdOutcome = ""; cmdMinutes = null;
+      cmdEntity = ""; cmdOutcomes = []; cmdOutcomeDraft = ""; cmdMinutes = null;
       justDone = undefined;
       showCommand = false;
+      await loadFocus();
+    } catch (caught) { error = friendlyError(caught); }
+  }
+
+  /** Toggles whether a focused task's outcome is checked off. */
+  async function toggleOutcome(taskId: string, outcomeId: string, done: boolean): Promise<void> {
+    try {
+      await focus.checkOutcome(taskId, outcomeId, done);
       await loadFocus();
     } catch (caught) { error = friendlyError(caught); }
   }
@@ -203,7 +235,8 @@
     const tasks = state.tasks.filter((t) => t.entity === entity).sort((a, b) => a.startedAt - b.startedAt);
     const lines: string[] = [`# Rollup: ${entity}`, ""];
     for (const task of tasks) {
-      lines.push(`## ${task.intent}${task.outcome ? ` -> ${task.outcome}` : ""}`);
+      lines.push(`## ${task.title}`);
+      for (const outcome of task.outcomes) lines.push(`- [${outcome.doneAt ? "x" : " "}] ${outcome.text}`);
       if (task.status === "done" || task.status === "dropped") {
         const took = task.actualMin == null ? "unknown" : durationLabel(task.actualMin);
         lines.push(`${task.status} · predicted ${durationLabel(task.estimateMin)} · took ${took}`);
@@ -283,10 +316,13 @@
   }
 
   function betResult(task: Task): string {
-    if (task.status === "dropped") return `dropped early · predicted ${durationLabel(task.estimateMin)} · took ${durationLabel(task.actualMin ?? 0)}`;
-    if (task.actualMin == null) return `predicted ${task.outcome || task.intent} in ${durationLabel(task.estimateMin)} · finished, time unknown`;
+    const n = task.outcomes.length;
+    const done = task.outcomes.filter((o) => o.doneAt).length;
+    const predicted = `predicted ${n} ${n === 1 ? "outcome" : "outcomes"} in ${durationLabel(task.estimateMin)}`;
+    if (task.status === "dropped") return `dropped early · ${predicted} · completed ${done}/${n} · took ${durationLabel(task.actualMin ?? 0)}`;
+    if (task.actualMin == null) return `${predicted} · completed ${done}/${n} · time unknown`;
     const verdict = task.actualMin <= task.estimateMin ? "on time" : "over";
-    return `predicted ${task.outcome || task.intent} in ${durationLabel(task.estimateMin)} · took ${durationLabel(task.actualMin)} · ${verdict}`;
+    return `${predicted} · completed ${done}/${n} · took ${durationLabel(task.actualMin)} · ${verdict}`;
   }
 
   // --- Trees logic ---
@@ -542,13 +578,20 @@
         <form class="command-bar card" aria-label="Start a task" on:submit|preventDefault={startTask}>
           <div class="cmd-row cmd-primary">
             <input class="cmd-entity" aria-label="Entity" bind:value={cmdEntity} list="cc-entities" placeholder="entity" autocomplete="off" />
-            <input class="cmd-intent" aria-label="What are you doing" bind:value={cmdIntent} placeholder="what you're working on" autocomplete="off" />
           </div>
           <datalist id="cc-entities">
             {#each workspace.entities as entity}<option value={entity.path}></option>{/each}
           </datalist>
+          <ul class="cmd-outcomes" aria-label="Outcomes for this session">
+            {#each cmdOutcomes as outcome, i}
+              <li class="cmd-outcome-chip">
+                <span>{outcome}</span>
+                <button type="button" class="chip-remove" aria-label={`Remove outcome: ${outcome}`} on:click={() => removeOutcome(i)}>×</button>
+              </li>
+            {/each}
+          </ul>
           <div class="cmd-row cmd-secondary">
-            <input class="cmd-outcome" aria-label="Predicted outcome" bind:value={cmdOutcome} placeholder="predicted outcome (optional)" autocomplete="off" />
+            <input class="cmd-outcome" aria-label="Add an outcome" bind:value={cmdOutcomeDraft} on:keydown={onOutcomeKeydown} placeholder={cmdOutcomes.length ? "another outcome — Enter to add" : "an outcome you want done — Enter to add"} autocomplete="off" />
             <input class="cmd-minutes" aria-label="Estimate minutes" type="number" min="1" bind:value={cmdMinutes} placeholder="min" />
             <button type="submit" class="primary cmd-go" disabled={!startReady}>Start</button>
           </div>
@@ -560,7 +603,7 @@
       {#if dueTask}
         <div class="checkin-band" role="alert" aria-label="Check-in due">
           <div class="checkin-text">
-            <strong>⏰ You wanted to check: {dueTask.intent}</strong>
+            <strong>⏰ You wanted to check: {dueTask.title}</strong>
             <span>{dueTask.agent ? `agent ${dueTask.agent.status}` : "parked"}{dueTask.agent?.status === "running" ? " · no input needed" : ""}</span>
           </div>
           <div class="checkin-actions">
@@ -573,6 +616,7 @@
       <section class="focus-zone card" class:focus-active={focusTask} aria-label="Focus">
         {#if focusTask}
           {@const clock = focusClock(focusTask, now)}
+          {@const doneCount = focusTask.outcomes.filter((o) => o.doneAt).length}
           <header class="focus-head">
             <div class="clock clock-chip" class:over={clock.over} aria-label="Time used against estimate" title={clock.subLabel}>
               <svg viewBox="0 0 120 120" role="img" aria-hidden="true">
@@ -582,10 +626,11 @@
               </svg>
             </div>
             <div class="focus-meta">
-              <h1>{focusTask.intent}</h1>
+              <p class="focus-eyebrow">working on</p>
+              <h1>{focusTask.entity}</h1>
               <p class="focus-sub">
                 <span class="focus-time" class:over={clock.over}>{clock.centerLabel}</span>
-                <span class="focus-entity">{focusTask.entity}</span>{#if focusTask.agent}<span class="focus-agent">agent {focusTask.agent.status}</span>{/if}
+                {#if focusTask.outcomes.length}<span class="focus-progress">{doneCount}/{focusTask.outcomes.length} done</span>{/if}{#if focusTask.agent}<span class="focus-agent">agent {focusTask.agent.status}</span>{/if}
               </p>
             </div>
             <div class="focus-head-actions">
@@ -610,7 +655,18 @@
             </div>
           </header>
 
-          {#if focusTask.outcome}<p class="focus-predict">predict: {focusTask.outcome}</p>{/if}
+          {#if focusTask.outcomes.length}
+            <ul class="focus-outcomes" aria-label="Outcomes">
+              {#each focusTask.outcomes as outcome}
+                <li>
+                  <button type="button" class="outcome-toggle" class:done={outcome.doneAt} aria-pressed={!!outcome.doneAt} on:click={() => toggleOutcome(focusTask.id, outcome.id, !outcome.doneAt)}>
+                    <span class="outcome-box" aria-hidden="true">{outcome.doneAt ? "✓" : ""}</span>
+                    <span class="outcome-text">{outcome.text}</span>
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
 
           {#if focusTask.notes.length}
             <ul class="focus-notes" bind:this={notesEl}>{#each focusTask.notes as note}<li>{note}</li>{/each}</ul>
@@ -628,7 +684,7 @@
         {:else if justDone}
           <div class="bet-result" aria-label="Bet result">
             <p class="eyebrow">Done</p>
-            <h1>{justDone.intent}</h1>
+            <h1>{justDone.entity}</h1>
             <p class="bet-line">{betResult(justDone)}</p>
           </div>
         {:else}
@@ -642,7 +698,7 @@
           {#each state.incoming as task}
             <div class="incoming-item" class:due={isDue(task, now)}>
               <button type="button" class="incoming-select" on:click={() => makeFocus(task.id)}>
-                <span class="incoming-name">{task.entity} · {task.intent}</span>
+                <span class="incoming-name">{task.entity} · {task.title}</span>
                 <span class="incoming-status">{countdownLabel(task, now)}</span>
               </button>
             </div>
@@ -656,7 +712,7 @@
           <div class="timeline-track">
             {#each state.tasks.filter((t) => t.segments.length) as task}
               {#each task.segments as segment}
-                <span class="timeline-seg" title={`${task.entity}: ${task.intent} (${durationLabel(((segment.off ?? now) - segment.on) / 60000)})`}
+                <span class="timeline-seg" title={`${task.entity}: ${task.title} (${durationLabel(((segment.off ?? now) - segment.on) / 60000)})`}
                   style={`--len: ${Math.max(1, ((segment.off ?? now) - segment.on) / 60000)}`}>{task.entity}</span>
               {/each}
             {/each}
@@ -851,11 +907,15 @@
   .command-bar input { padding: 13px 15px; font-size: 16px; background: #fff; color: var(--text, #14231b); border: 1px solid var(--line, #d4dcd2); border-radius: 11px; box-sizing: border-box; }
   .command-bar input::placeholder { color: var(--muted, #98a39a); }
   .command-bar input:focus-visible { outline: 2px solid var(--accent, #246b58); outline-offset: 1px; }
-  .cmd-entity { flex: 0 0 200px; }
-  .cmd-intent { flex: 1; }
+  .cmd-entity { flex: 1; }
   .cmd-outcome { flex: 1; }
   .cmd-minutes { flex: 0 0 96px; text-align: center; }
   .cmd-go { flex: 0 0 120px; font-size: 16px; }
+  .cmd-outcomes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .cmd-outcome-chip { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--surface-2, #f1f5ef); border: 1px solid var(--line, #d4dcd2); border-radius: 9px; font-size: 14px; }
+  .cmd-outcome-chip span { flex: 1; word-break: break-word; }
+  .chip-remove { border: none; background: transparent; color: var(--muted, #657268); font-size: 18px; line-height: 1; padding: 0 4px; cursor: pointer; }
+  .chip-remove:hover { color: #c0392b; }
 
   /* Focus zone. When a task is active it becomes a full-height note surface. */
   .focus-zone {
@@ -866,16 +926,26 @@
   }
   .eyebrow { text-transform: uppercase; letter-spacing: 0.09em; font-size: 11px; font-weight: 600; opacity: 0.55; margin: 0; }
 
-  /* Slim context header: chip clock + intent, primary Done, overflow menu. */
+  /* Slim context header: chip clock + entity, primary Done, overflow menu. */
   .focus-head { display: flex; align-items: center; gap: 14px; }
   .focus-meta { min-width: 0; flex: 1; }
-  .focus-meta h1 { font-size: 19px; line-height: 1.2; margin: 0; word-break: break-word; }
+  .focus-eyebrow { text-transform: uppercase; letter-spacing: 0.09em; font-size: 11px; font-weight: 600; opacity: 0.55; margin: 0 0 2px; }
+  .focus-meta h1 { font-size: 19px; line-height: 1.2; margin: 0; word-break: break-all; font-family: var(--font-mono, ui-monospace, monospace); }
   .focus-sub { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin: 3px 0 0; font-size: 12px; }
   .focus-time { font-weight: 700; color: var(--accent, #246b58); font-variant-numeric: tabular-nums; }
   .focus-time.over { color: #c0392b; }
-  .focus-entity { font-family: var(--font-mono, ui-monospace, monospace); opacity: 0.6; word-break: break-all; }
+  .focus-progress { font-variant-numeric: tabular-nums; opacity: 0.7; }
   .focus-agent { opacity: 0.6; }
-  .focus-predict { margin: 0; font-size: 13px; opacity: 0.75; }
+
+  /* The session's deliverable checklist: the focus body. Click an item to check it off. */
+  .focus-outcomes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  .outcome-toggle { display: flex; align-items: flex-start; gap: 10px; width: 100%; text-align: left; border: none; background: transparent; padding: 8px 6px; border-radius: 8px; font-size: 15px; line-height: 1.35; color: var(--text, #14231b); cursor: pointer; }
+  .outcome-toggle:hover { background: var(--surface-2, #f1f5ef); }
+  .outcome-toggle:focus-visible { outline: 2px solid var(--accent, #246b58); outline-offset: 1px; }
+  .outcome-box { flex: 0 0 20px; height: 20px; margin-top: 1px; border: 2px solid var(--line, #c3ccbf); border-radius: 6px; display: grid; place-items: center; font-size: 13px; color: #fff; }
+  .outcome-text { flex: 1; word-break: break-word; }
+  .outcome-toggle.done .outcome-box { background: var(--accent, #246b58); border-color: var(--accent, #246b58); }
+  .outcome-toggle.done .outcome-text { text-decoration: line-through; opacity: 0.55; }
 
   .focus-head-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
   .focus-head-actions .ghost { border-color: transparent; background: transparent; font-size: 18px; line-height: 1; padding: 8px 10px; }

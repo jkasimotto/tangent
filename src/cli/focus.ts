@@ -20,8 +20,13 @@ export type FocusEvent =
   | { type: "note_added"; ts: number; taskId: string; text: string }
   | { type: "checkin_set"; ts: number; taskId: string; dueAt: number }
   | { type: "agent_dispatched"; ts: number; taskId: string; adapter: string; cwd: string; transcriptDir?: string }
-  | { type: "task_done"; ts: number; taskId: string; note?: string }
+  // `actualUnknown` is a dead legacy field kept optional so old logs still parse; a forgotten finish is now
+  // repaired with `session_retimed` instead. The projection ignores it.
+  | { type: "task_done"; ts: number; taskId: string; note?: string; actualUnknown?: boolean }
   | { type: "task_dropped"; ts: number; taskId: string; note?: string }
+  // Retroactively corrects a finished session's boundaries. See packages/trees-ui/src/focus-client.ts for how
+  // actualMin and the session's day re-derive from the corrected bounds.
+  | { type: "session_retimed"; ts: number; taskId: string; startedAt?: number; doneAt?: number }
   | { type: "rest_started"; ts: number; durationMin: number }
   | { type: "rest_ended"; ts: number };
 

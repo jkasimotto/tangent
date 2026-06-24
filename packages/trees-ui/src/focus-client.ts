@@ -15,8 +15,15 @@ export type FocusEvent =
   | { type: "note_added"; ts: number; taskId: string; text: string }
   | { type: "checkin_set"; ts: number; taskId: string; dueAt: number }
   | { type: "agent_dispatched"; ts: number; taskId: string; adapter: string; cwd: string; transcriptDir?: string }
+  // `actualUnknown` is a dead legacy field kept optional so old logs still parse; the projection ignores it.
+  // A late or forgotten finish is now repaired by retiming the boundary (see `session_retimed`), not by dropping the actual.
   | { type: "task_done"; ts: number; taskId: string; note?: string; actualUnknown?: boolean }
   | { type: "task_dropped"; ts: number; taskId: string; note?: string }
+  // Retroactively corrects a session's boundaries; either corrected absolute timestamp may be set. `actualMin`
+  // and the day the session groups under both re-derive from the new bounds, so a forgotten "done" or an
+  // overnight runaway becomes a true-enough number. Applied as a patch in append order: it never reorders the
+  // event replay, so focus switches and the timeline stay as they really happened. Latest value per field wins.
+  | { type: "session_retimed"; ts: number; taskId: string; startedAt?: number; doneAt?: number }
   // A break. Independent of tasks: a focused task's wall-clock keeps running through a rest by design
   // (break time is part of how long the work really took), so rest events never touch focus segments.
   | { type: "rest_started"; ts: number; durationMin: number }
@@ -166,17 +173,29 @@ export function projectFocus(events: FocusEvent[], now: number, statuses: Record
         task.status = event.type === "task_done" ? "done" : "dropped";
         task.doneAt = event.ts;
         task.doneNote = event.note;
-        // When the user marks done late (forgot, went for a walk), wall-clock is
-        // meaningless, so actual is left unknown rather than recording a bogus number.
-        task.actualMin = (event.type === "task_done" && event.actualUnknown)
-          ? undefined
-          : Math.max(1, Math.round((event.ts - task.startedAt) / 60000));
+        // actualMin is not computed here: it derives from the (possibly retimed) bounds in the post-pass below.
+        break;
+      case "session_retimed":
+        // A correction to a past session's boundaries. Patch only the fields supplied; the post-pass re-derives
+        // actualMin and re-clamps the focus segments to the new window. Does not touch focus/switch bookkeeping.
+        if (!task) break;
+        if (event.startedAt != null) task.startedAt = event.startedAt;
+        if (event.doneAt != null) task.doneAt = event.doneAt;
         break;
     }
   }
 
   for (const task of tasks.values()) {
     if (task.agent && statuses[task.id]) task.agent.status = statuses[task.id];
+    // Derive the actual from the final bounds and keep the focus segments inside them. A floor of one minute
+    // guards against an incoherent retime (finish at/under start); the editor blocks that at write time.
+    if (task.doneAt != null) {
+      const end = Math.max(task.doneAt, task.startedAt + 60000);
+      task.actualMin = Math.max(1, Math.round((end - task.startedAt) / 60000));
+      task.segments = task.segments
+        .map((segment) => ({ on: Math.max(segment.on, task.startedAt), off: segment.off == null ? undefined : Math.min(segment.off, end) }))
+        .filter((segment) => segment.off == null || segment.off > segment.on);
+    }
   }
 
   const startOfDay = new Date(now).setHours(0, 0, 0, 0);
@@ -215,8 +234,10 @@ export type FocusClient = {
   addNote(taskId: string, text: string): Promise<void>;
   setCheckin(taskId: string, dueAt: number): Promise<void>;
   dispatchAgent(taskId: string, adapter: string, cwd: string): Promise<void>;
-  done(taskId: string, note?: string, actualUnknown?: boolean): Promise<void>;
+  done(taskId: string, note?: string): Promise<void>;
   drop(taskId: string, note?: string): Promise<void>;
+  /** Retroactively corrects a finished session's start and/or finish. Clamps to a coherent window before appending. */
+  retime(taskId: string, bounds: { startedAt?: number; doneAt?: number }): Promise<void>;
   startRest(durationMin: number): Promise<void>;
   endRest(): Promise<void>;
   agentStatuses(tasks: Task[]): Promise<Record<string, AgentStatus>>;
@@ -285,13 +306,20 @@ export function createFocusApiClient(basePath = "/api/focus"): FocusClient {
     async dispatchAgent(taskId, adapter, cwd) {
       await post("/dispatch", { taskId, adapter, cwd });
     },
-    /** Marks a task done; actualUnknown records no actual time when the finish time is unknown. */
-    async done(taskId, note, actualUnknown) {
-      await append([{ type: "task_done", ts: Date.now(), taskId, note, actualUnknown }]);
+    /** Marks a task done. The actual derives from its start and finish; correct either later with retime. */
+    async done(taskId, note) {
+      await append([{ type: "task_done", ts: Date.now(), taskId, note }]);
     },
     /** Drops a task as incomplete. */
     async drop(taskId, note) {
       await append([{ type: "task_dropped", ts: Date.now(), taskId, note }]);
+    },
+    /** Corrects a finished session's boundaries; emits one event carrying only the fields that changed. */
+    async retime(taskId, bounds) {
+      const event: FocusEvent = { type: "session_retimed", ts: Date.now(), taskId };
+      if (bounds.startedAt != null) event.startedAt = bounds.startedAt;
+      if (bounds.doneAt != null) event.doneAt = bounds.doneAt;
+      await append([event]);
     },
     /** Starts a break for the given number of minutes. */
     async startRest(durationMin) {

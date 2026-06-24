@@ -122,6 +122,63 @@ describe("focus projection invariants", () => {
     expect(task.actualMin).toBe(45);
   });
 
+  it("retime: correcting the finish re-derives the actual from the new bounds", () => {
+    const t0 = at();
+    const events: FocusEvent[] = [
+      { type: "task_started", ts: t0, taskId: "a", entity: "x", intent: "do a", estimateMin: 20 },
+      { type: "focus_on", ts: t0, taskId: "a" },
+      // Marked done hours late (left running): wall-clock would read 6h.
+      { type: "task_done", ts: t0 + 360 * 60_000, taskId: "a" },
+      // Corrected to the rough real finish: 90 minutes in.
+      { type: "session_retimed", ts: t0 + 400 * 60_000, taskId: "a", doneAt: t0 + 90 * 60_000 }
+    ];
+    const task = projectFocus(events, clock + 1000).tasks.find((t) => t.id === "a")!;
+    expect(task.actualMin).toBe(90);
+    expect(task.doneAt).toBe(t0 + 90 * 60_000);
+  });
+
+  it("retime: the last correction wins per field, and start and finish patch independently", () => {
+    const t0 = at();
+    const events: FocusEvent[] = [
+      { type: "task_started", ts: t0, taskId: "a", entity: "x", intent: "do a", estimateMin: 20 },
+      { type: "focus_on", ts: t0, taskId: "a" },
+      { type: "task_done", ts: t0 + 120 * 60_000, taskId: "a" },
+      { type: "session_retimed", ts: t0 + 200 * 60_000, taskId: "a", doneAt: t0 + 100 * 60_000 },
+      { type: "session_retimed", ts: t0 + 201 * 60_000, taskId: "a", startedAt: t0 + 30 * 60_000 },
+      { type: "session_retimed", ts: t0 + 202 * 60_000, taskId: "a", doneAt: t0 + 90 * 60_000 }
+    ];
+    const task = projectFocus(events, clock + 1000).tasks.find((t) => t.id === "a")!;
+    expect(task.startedAt).toBe(t0 + 30 * 60_000); // start from the middle correction
+    expect(task.doneAt).toBe(t0 + 90 * 60_000); // finish from the latest correction
+    expect(task.actualMin).toBe(60); // 90 - 30
+  });
+
+  it("retime: an incoherent finish (at/under start) floors the actual at one minute", () => {
+    const t0 = at();
+    const events: FocusEvent[] = [
+      { type: "task_started", ts: t0, taskId: "a", entity: "x", intent: "do a", estimateMin: 20 },
+      { type: "focus_on", ts: t0, taskId: "a" },
+      { type: "task_done", ts: t0 + 60 * 60_000, taskId: "a" },
+      { type: "session_retimed", ts: t0 + 90 * 60_000, taskId: "a", doneAt: t0 - 60_000 }
+    ];
+    const task = projectFocus(events, clock + 1000).tasks.find((t) => t.id === "a")!;
+    expect(task.actualMin).toBe(1);
+  });
+
+  it("retime: moving the start clamps the focus segments into the new window", () => {
+    const t0 = at();
+    const events: FocusEvent[] = [
+      { type: "task_started", ts: t0, taskId: "a", entity: "x", intent: "do a", estimateMin: 20 },
+      { type: "focus_on", ts: t0, taskId: "a" },
+      { type: "task_done", ts: t0 + 60 * 60_000, taskId: "a" },
+      // Actually started 30 minutes later than recorded.
+      { type: "session_retimed", ts: t0 + 90 * 60_000, taskId: "a", startedAt: t0 + 30 * 60_000 }
+    ];
+    const task = projectFocus(events, clock + 1000).tasks.find((t) => t.id === "a")!;
+    expect(task.segments.every((s) => s.on >= task.startedAt)).toBe(true);
+    expect(task.actualMin).toBe(30);
+  });
+
   it("outcomes: a checklist projects in order, and outcome_checked toggles doneAt", () => {
     const t0 = at();
     const events: FocusEvent[] = [
@@ -301,19 +358,18 @@ describe("command and control UI", () => {
     expect(clicks).toBe(1);
   });
 
-  it("done with unknown finish records no actual (the walk-away case)", async () => {
+  it("a finished session always records an actual from its boundaries", async () => {
     const focus = fakeFocus();
     render(App, { props: { client: treesClient(), focus } });
     await startTaskUI("eval", "long task", "30");
 
-    await openMore();
-    await click(screen.getByRole("menuitem", { name: "Done · don't know when" }));
+    await click(screen.getByRole("button", { name: "Done" }));
 
     const result = await screen.findByLabelText("Bet result");
-    expect(result).toHaveTextContent(/time unknown/i);
+    expect(result).not.toHaveTextContent(/time unknown/i);
     const task = projectFocus(focus.events, Date.now()).tasks.find((t) => t.title === "long task")!;
     expect(task.status).toBe("done");
-    expect(task.actualMin).toBeUndefined();
+    expect(task.actualMin).toBeGreaterThanOrEqual(1);
   });
 
   it("G6: rolling up an entity surfaces its note text", async () => {
@@ -437,9 +493,11 @@ function fakeFocus(): FocusClient & { events: FocusEvent[]; setStatus(id: string
       events.push({ type: "agent_dispatched", ts: at(), taskId, adapter, cwd, transcriptDir: `/transcripts/${taskId}` });
     },
     /** Records task_done. */
-    done: async (taskId, note, actualUnknown) => { events.push({ type: "task_done", ts: at(), taskId, note, actualUnknown }); },
+    done: async (taskId, note) => { events.push({ type: "task_done", ts: at(), taskId, note }); },
     /** Records task_dropped. */
     drop: async (taskId, note) => { events.push({ type: "task_dropped", ts: at(), taskId, note }); },
+    /** Records session_retimed with the corrected bounds. */
+    retime: async (taskId, bounds) => { events.push({ type: "session_retimed", ts: at(), taskId, startedAt: bounds.startedAt, doneAt: bounds.doneAt }); },
     /** Records rest_started. */
     startRest: async (durationMin) => { events.push({ type: "rest_started", ts: at(), durationMin }); },
     /** Records rest_ended. */

@@ -5,6 +5,7 @@
     createFocusApiClient, isDue, projectFocus,
     type AgentStatus, type FocusClient, type FocusEvent, type Task
   } from "./focus-client.js";
+  import DayLedger from "./DayLedger.svelte";
 
   export let client: TreesUiClient = createTreesApiClient();
   export let focus: FocusClient = createFocusApiClient();
@@ -183,11 +184,11 @@
     } catch (caught) { error = friendlyError(caught); }
   }
 
-  async function doneFocus(actualUnknown = false): Promise<void> {
+  async function doneFocus(): Promise<void> {
     if (!focusTask) return;
     const task = focusTask;
     try {
-      await focus.done(task.id, noteText.trim() || undefined, actualUnknown);
+      await focus.done(task.id, noteText.trim() || undefined);
       noteText = "";
       await loadFocus();
       justDone = state.tasks.find((t) => t.id === task.id);
@@ -573,6 +574,7 @@
   </nav>
 
   {#if view === "focus"}
+    <div class="focus-layout">
     <main class="cc" class:focus-mode={focusTask} aria-label="Command and control">
       {#if !focusTask || showCommand}
         <form class="command-bar card" aria-label="Start a task" on:submit|preventDefault={startTask}>
@@ -635,12 +637,11 @@
             </div>
             <div class="focus-head-actions">
               <button type="button" class="ghost" title="Start another task" aria-label="Start another task" on:click={() => showCommand = !showCommand}>＋</button>
-              <button type="button" class="primary" on:click={() => doneFocus(false)}>Done</button>
+              <button type="button" class="primary" on:click={doneFocus}>Done</button>
               <div class="more">
                 <button type="button" class="secondary more-trigger" aria-haspopup="true" aria-expanded={actionsOpen} aria-label="More actions" on:click={() => actionsOpen = !actionsOpen}>⋯</button>
                 {#if actionsOpen}
                   <div class="more-menu" role="menu">
-                    <button type="button" role="menuitem" on:click={() => { actionsOpen = false; doneFocus(true); }} title="Mark done but don't record a time (you finished earlier and forgot)">Done · don't know when</button>
                     {#if focusTask.agent}
                       <button type="button" role="menuitem" disabled>Agent running</button>
                     {:else}
@@ -726,6 +727,8 @@
         </section>
       {/if}
     </main>
+    <DayLedger tasks={state.tasks} {now} retime={(id, bounds) => focus.retime(id, bounds)} reload={loadFocus} />
+    </div>
   {:else}
     <main class="trees-workspace" aria-label="Trees workspace">
       <section class="trees-pane trees-main" aria-label="Tree builder">
@@ -850,6 +853,34 @@
 </div>
 
 <style>
+  /* Focus page: the command column plus the day ledger rail, centered as a pair. The rail fills the wide-desktop
+     whitespace; below 1024px the two stack and the whole page scrolls as one. */
+  .focus-layout {
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    justify-content: center;
+    overflow: hidden;
+  }
+  .focus-layout > .cc { flex: 1 1 760px; }
+  .focus-layout > :global(.day-ledger) {
+    flex: 0 0 332px;
+    align-self: stretch;
+    overflow-y: auto;
+    min-height: 0;
+    border-left: 1px solid var(--line, #d4dcd2);
+    padding-left: 18px;
+    margin-top: 24px;
+  }
+  @media (max-width: 1024px) {
+    .focus-layout { flex-direction: column; overflow-y: auto; }
+    .focus-layout > .cc { flex: 0 0 auto; overflow: visible; }
+    .focus-layout > :global(.day-ledger) {
+      flex: 0 0 auto; overflow: visible; min-height: 0;
+      border-left: 0; border-top: 1px solid var(--line, #d4dcd2);
+      padding-left: 20px; margin: 0 auto; width: 100%; max-width: 760px; box-sizing: border-box;
+    }
+  }
   .cc {
     color-scheme: light;
     display: flex;
@@ -857,7 +888,6 @@
     gap: 18px;
     padding: 24px 20px 48px;
     max-width: 760px;
-    margin: 0 auto;
     width: 100%;
     box-sizing: border-box;
     overflow-y: auto;

@@ -4,6 +4,7 @@ import { changedFiles, currentCommit, statusPorcelain } from "@tangent/repo/git"
 import { commitAll } from "@tangent/repo/worktree";
 
 import type { EvalRunManifest, EvalRunVariantState } from "../types/run.js";
+import type { EvalAgentEvent, EvalAgentTelemetry } from "../types/telemetry.js";
 import { runAgent } from "../runners/index.js";
 import { implementationPrompt, planPrompt } from "./phase-prompts.js";
 import { saveRunManifest } from "./run-store.js";
@@ -128,6 +129,15 @@ async function runVariant(manifest: EvalRunManifest, variant: EvalRunVariantStat
   const task = await readFile(variant.promptPath, "utf8");
   let plan = variant.planPath ? await readFile(variant.planPath, "utf8").catch(() => "") : "";
 
+  // Accumulate the agent's activity stream across phases and persist it live, so the Eval UI can draw a
+  // growing flame for this config while it runs (headless `claude --print` writes no scannable transcript).
+  const telemetryEvents: EvalAgentEvent[] = [];
+  let telemetryTotal: number | undefined;
+  const writeTelemetry = createQueuedTelemetryWriter(
+    path.join(path.dirname(variant.metricsPath), "agent-telemetry.json"),
+    () => ({ schema: "eval.agent-telemetry.v1", events: telemetryEvents, tokensTotal: telemetryTotal })
+  );
+
   for (const phase of variant.phases) {
     throwIfCancelled(options.signal);
     if (phase.status === "done") continue;
@@ -166,6 +176,14 @@ async function runVariant(manifest: EvalRunManifest, variant: EvalRunVariantStat
           TANGENT_EVAL_PHASE: phase.id
         },
         signal: options.signal,
+        onEvent: (event) => {
+          telemetryEvents.push(event);
+          void writeTelemetry();
+        },
+        onUsageTotal: (total) => {
+          telemetryTotal = (telemetryTotal || 0) + total;
+          void writeTelemetry();
+        },
         onOutput: (chunk) => emit(manifest, options, {
           type: "phase.output",
           caseId: variant.caseId,
@@ -258,6 +276,16 @@ function createQueuedManifestSaver(manifest: EvalRunManifest): SaveManifest {
     const save = queue.catch(() => undefined).then(() => saveRunManifest(manifest));
     queue = save;
     return save;
+  };
+}
+
+/** Serializes telemetry-sidecar writes so frequent activity events never interleave a partial file. */
+function createQueuedTelemetryWriter(filePath: string, build: () => EvalAgentTelemetry): () => Promise<void> {
+  let queue = Promise.resolve();
+  return () => {
+    const write = queue.catch(() => undefined).then(() => writeFile(filePath, `${JSON.stringify(build(), null, 2)}\n`, "utf8"));
+    queue = write;
+    return write;
   };
 }
 

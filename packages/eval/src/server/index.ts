@@ -17,6 +17,7 @@ import { prepareEval } from "../core/worktree.js";
 import { readVariantMetricsView } from "./metrics-read.js";
 import { diffLines } from "./diff.js";
 import { readReviews, writeReviews, type EvalReviews } from "./reviews.js";
+import { readSpecPrompts, writeSpecPrompt } from "./prompts.js";
 import type {
   EvalCompareArtifactKind,
   EvalCompareArtifactStatus,
@@ -44,8 +45,11 @@ export type {
   EvalSparkline,
   EvalSparklineBucket,
   EvalSparklineKind,
+  EvalSpecPromptsView,
+  EvalSpecPromptView,
   EvalSpecSummaryView,
   EvalVariantMetricsView,
+  EvalVariantPhaseView,
   EvalVariantSummaryView
 } from "./types.js";
 
@@ -147,11 +151,24 @@ async function handleApiRequest(request: http.IncomingMessage, url: URL, context
         const manifest = await loadRunManifest(runId);
         return json(200, await writeReviews(manifest.runDir, await readJsonBody(request) as unknown as EvalReviews));
       }
+      // Editing an eval's task prompt writes into the project evals dir, not agent execution, so it is
+      // allowed in the verify harness (which runs against an isolated worktree copy).
+      if (parts.length === 4 && parts[2] === "specs" && parts[3] === "prompts") {
+        const body = await readJsonBody(request);
+        const specPath = typeof body.specPath === "string" ? body.specPath : undefined;
+        const promptPath = typeof body.promptPath === "string" ? body.promptPath : undefined;
+        const content = typeof body.content === "string" ? body.content : undefined;
+        if (!specPath || !promptPath || content === undefined) throw new Error("specPath, promptPath, and content are required.");
+        return json(200, await writeSpecPrompt(specPath, promptPath, content));
+      }
       return json(405, { error: "Method not allowed." });
     }
     if (request.method !== "GET") return json(405, { error: "Method not allowed." });
 
     if (parts.length === 3 && parts[2] === "selection") return json(200, { runId: await preferredRun(context.preferredRunId) });
+    if (parts.length === 4 && parts[2] === "specs" && parts[3] === "prompts") {
+      return json(200, await readSpecPrompts(requiredParam(url, "path")));
+    }
     if (parts.length === 3 && parts[2] === "specs") return json(200, { specs: await listSpecSummaries() });
 
     if (parts[2] === "runs") {
@@ -184,7 +201,7 @@ async function launchRun(request: http.IncomingMessage): Promise<EvalLaunchResul
   return { runId: prepared.manifest.id };
 }
 
-/** Lists eval specs the UI can launch: project `evals/*.json` plus specs of prior runs. */
+/** Lists eval specs the UI can launch: project `evals/` specs plus specs of prior runs. */
 async function listSpecSummaries(): Promise<EvalSpecSummaryView[]> {
   const summaries = new Map<string, EvalSpecSummaryView>();
   for (const specPath of await discoverSpecPaths()) {
@@ -194,11 +211,23 @@ async function listSpecSummaries(): Promise<EvalSpecSummaryView[]> {
   return [...summaries.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** Collects candidate spec paths from the project evals directory and prior run manifests. */
+/**
+ * Collects candidate spec paths from the project evals directory and prior run manifests. Evals are
+ * conventionally a directory (`evals/<name>/eval.json` alongside a `prompts/` folder), so this scans one
+ * level into subdirectories for an `eval.json`, and still accepts a flat `evals/<name>.json`.
+ */
 async function discoverSpecPaths(): Promise<string[]> {
   const evalsDir = path.resolve("evals");
   const entries = await readdir(evalsDir, { withFileTypes: true }).catch(() => []);
-  const fromDir = entries.filter((entry) => entry.isFile() && entry.name.endsWith(".json")).map((entry) => path.join(evalsDir, entry.name));
+  const fromDir: string[] = [];
+  for (const entry of entries) {
+    if (entry.isFile() && entry.name.endsWith(".json")) {
+      fromDir.push(path.join(evalsDir, entry.name));
+    } else if (entry.isDirectory()) {
+      const nested = path.join(evalsDir, entry.name, "eval.json");
+      if (await isFile(nested)) fromDir.push(nested);
+    }
+  }
   const fromRuns = (await listRuns()).map((manifest) => manifest.specPath).filter((value): value is string => Boolean(value));
   return [...new Set([...fromDir, ...fromRuns])];
 }
@@ -304,6 +333,10 @@ async function variantSummary(manifest: EvalRunManifest, variant: EvalRunVariant
     executionCwd: variant.executionCwd,
     baseCommit: variant.baseCommit,
     contextCommit: variant.contextCommit,
+    startedAt: variant.startedAt,
+    endedAt: variant.endedAt,
+    phases: variant.phases.map((phase) => ({ id: phase.id, status: phase.status, agentDurationMs: phase.agentDurationMs })),
+    error: variant.error,
     promptArtifacts: await promptArtifacts(variant),
     metrics,
     warnings: variant.warnings

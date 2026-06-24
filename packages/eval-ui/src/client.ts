@@ -79,6 +79,12 @@ export type EvalCompareArtifactView = {
   status?: EvalCompareArtifactStatus;
 };
 
+export type EvalVariantPhaseView = {
+  id: "plan" | "implement";
+  status?: EvalRunStatus;
+  agentDurationMs?: number;
+};
+
 export type EvalVariantSummaryView = {
   caseId: string;
   variantId: string;
@@ -92,9 +98,26 @@ export type EvalVariantSummaryView = {
   executionCwd: string;
   baseCommit: string;
   contextCommit?: string;
+  startedAt?: string;
+  endedAt?: string;
+  phases: EvalVariantPhaseView[];
+  error?: string;
   promptArtifacts: EvalCompareArtifactView[];
   metrics?: EvalVariantMetricsView | null;
   warnings: string[];
+};
+
+export type EvalSpecPromptView = {
+  id: string;
+  label: string;
+  path: string;
+  content: string;
+};
+
+export type EvalSpecPromptsView = {
+  specPath: string;
+  name: string;
+  prompts: EvalSpecPromptView[];
 };
 
 export type EvalCaseView = {
@@ -137,6 +160,7 @@ export type EvalReviewNote = {
   artifactId: string;
   artifactLabel: string;
   line: number;
+  endLine?: number;
   snippet: string;
   sentiment: EvalReviewSentiment;
   text: string;
@@ -144,7 +168,7 @@ export type EvalReviewNote = {
 };
 
 export type EvalVariantReview = {
-  verdict?: { sentiment: EvalVerdictSentiment; text?: string };
+  verdict?: { sentiment: EvalVerdictSentiment; text?: string; score?: number };
   notes: EvalReviewNote[];
 };
 
@@ -157,6 +181,8 @@ export type EvalUiClient = {
   getSelection(): Promise<{ runId?: string }>;
   listRuns(): Promise<{ runs: EvalRunSummaryView[] }>;
   listSpecs(): Promise<{ specs: EvalSpecSummaryView[] }>;
+  getSpecPrompts(specPath: string): Promise<EvalSpecPromptsView>;
+  saveSpecPrompt(args: { specPath: string; promptPath: string; content: string }): Promise<EvalSpecPromptsView>;
   launchRun(args: { specPath: string }): Promise<{ runId: string }>;
   getRun(runId: string): Promise<EvalRunDetailView>;
   compareRun(args: { runId: string; caseId: string; left: string; right: string }): Promise<EvalCompareView>;
@@ -174,6 +200,10 @@ export function createEvalApiClient(baseUrl = ""): EvalUiClient {
     listRuns: () => getJson(`${baseUrl}/api/eval/runs`),
     /** Lists eval specs the UI can launch. */
     listSpecs: () => getJson(`${baseUrl}/api/eval/specs`),
+    /** Fetches a spec's editable prompt files. */
+    getSpecPrompts: (specPath) => getJson(`${baseUrl}/api/eval/specs/prompts?${query({ path: specPath })}`),
+    /** Saves one edited prompt file and returns the refreshed prompt set. */
+    saveSpecPrompt: (args) => putJson(`${baseUrl}/api/eval/specs/prompts`, args),
     /** Launches a run from a spec and returns its new run id. */
     launchRun: (args) => postJson(`${baseUrl}/api/eval/runs`, args),
     /** Fetches one eval run by id. */

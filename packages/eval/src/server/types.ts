@@ -61,6 +61,12 @@ export type EvalCompareArtifactView = {
   status?: EvalCompareArtifactStatus;
 };
 
+export type EvalVariantPhaseView = {
+  id: "plan" | "implement";
+  status?: EvalRunStatus;
+  agentDurationMs?: number;
+};
+
 export type EvalVariantSummaryView = {
   caseId: string;
   variantId: string;
@@ -74,9 +80,26 @@ export type EvalVariantSummaryView = {
   executionCwd: string;
   baseCommit: string;
   contextCommit?: string;
+  startedAt?: string;
+  endedAt?: string;
+  phases: EvalVariantPhaseView[];
+  error?: string;
   promptArtifacts: EvalCompareArtifactView[];
   metrics?: EvalVariantMetricsView | null;
   warnings: string[];
+};
+
+export type EvalSpecPromptView = {
+  id: string;
+  label: string;
+  path: string;
+  content: string;
+};
+
+export type EvalSpecPromptsView = {
+  specPath: string;
+  name: string;
+  prompts: EvalSpecPromptView[];
 };
 
 export type EvalCaseView = {

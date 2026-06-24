@@ -1,0 +1,27 @@
+{
+  "schema": "eval.spec.v1",
+  "name": "haiku-poems",
+  "defaults": {
+    "repo": { "path": ".", "ref": "HEAD" },
+    "cwd": ".",
+    "phases": [{ "id": "implement", "mode": "workspace-write", "commit": true }]
+  },
+  "cases": [
+    {
+      "id": "seasons",
+      "prompt": "prompts/task.md",
+      "variants": [
+        {
+          "id": "haiku-a",
+          "context": { "mode": "empty" },
+          "agent": { "kind": "claude-cli", "model": "claude-haiku-4-5-20251001", "permissionMode": "bypassPermissions" }
+        },
+        {
+          "id": "haiku-b",
+          "context": { "mode": "empty" },
+          "agent": { "kind": "claude-cli", "model": "claude-haiku-4-5-20251001", "permissionMode": "bypassPermissions" }
+        }
+      ]
+    }
+  ]
+}

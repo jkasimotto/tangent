@@ -14,14 +14,14 @@ describe("eval svelte app", () => {
 
     expect(await screen.findByText(/ui-compare/)).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /Task prompt changed/ })).toHaveClass("active");
-    // Review is the default mode; the A/B line diff now lives behind the Diff tab.
-    await fireEvent.click(screen.getByRole("button", { name: "Diff" }));
+    // Individual review is the default mode; the A/B line diff lives behind the Side by side tab.
+    await fireEvent.click(screen.getByRole("button", { name: "Side by side" }));
     expect(container.querySelectorAll(".entity select")).toHaveLength(2);
     expect(await screen.findByText("Use repo context.")).toBeInTheDocument();
     expect(container.querySelector(".diff-row.changed")).toHaveTextContent("Use no context.");
 
-    expect(screen.getByLabelText("Output comparison")).toBeInTheDocument();
-    expect(screen.getByText("Peak context")).toBeInTheDocument();
+    // Each config's metrics surface as a flame caption (duration / tokens / peak context).
+    expect(container.querySelector(".flame-caption")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /src\/foo.ts changed/ })).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole("button", { name: /AGENTS.md right-only/ }));
@@ -40,12 +40,12 @@ describe("eval svelte app", () => {
     const client = fakeEvalClient();
     const { container } = render(App, { props: { client } });
 
-    // Review is the default mode, with a chip per reviewed config.
-    expect(await screen.findByRole("button", { name: "Review" })).toHaveClass("active");
+    // Individual review is the default mode, with a chip per reviewed config.
+    expect(await screen.findByRole("button", { name: "Individual" })).toHaveClass("active");
     expect(container.querySelector(".variant-chip")).toBeInTheDocument();
 
-    // Compare synthesizes one column per config (A/B) with Did well / Mistakes groups.
-    await fireEvent.click(screen.getByRole("button", { name: "Compare" }));
+    // Compare notes synthesizes one column per config (A/B) with Did well / Mistakes groups.
+    await fireEvent.click(screen.getByRole("button", { name: "Compare notes" }));
     expect(container.querySelectorAll(".review-col")).toHaveLength(2);
     expect(screen.getAllByText(/Did well/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/Mistakes/).length).toBeGreaterThan(0);
@@ -98,6 +98,7 @@ function fakeEvalClient(): EvalUiClient {
         executionCwd: "/tmp/empty",
         baseCommit: "base",
         contextCommit: "empty-context",
+        phases: [{ id: "implement", status: "done" }],
         promptArtifacts: [],
         metrics: metrics(12000, 42000),
         warnings: []
@@ -114,6 +115,7 @@ function fakeEvalClient(): EvalUiClient {
         executionCwd: "/tmp/repo",
         baseCommit: "base",
         contextCommit: "repo-context",
+        phases: [{ id: "implement", status: "done" }],
         promptArtifacts: [],
         metrics: metrics(9000, 51000),
         warnings: []
@@ -150,6 +152,10 @@ function fakeEvalClient(): EvalUiClient {
     listRuns: async () => ({ runs: [run] }),
     /** Returns the seeded launchable specs. */
     listSpecs: async () => ({ specs: [{ path: "/evals/compare.json", name: "compare", caseCount: 1, variantCount: 2 }] }),
+    /** Returns the seeded editable prompts. */
+    getSpecPrompts: async (specPath) => ({ specPath, name: "compare", prompts: [{ id: "prompts/task.md", label: "Task prompt", path: "prompts/task.md", content: "Do the task." }] }),
+    /** Echoes the saved prompt. */
+    saveSpecPrompt: vi.fn(async ({ specPath, promptPath, content }) => ({ specPath, name: "compare", prompts: [{ id: promptPath, label: "Task prompt", path: promptPath, content }] })),
     /** Records launch requests. */
     launchRun: vi.fn(async () => ({ runId: "run1" })),
     /** Returns the seeded run detail. */

@@ -38,7 +38,8 @@ async function captureManualTail(variant: EvalRunVariantState): Promise<void> {
   }
 }
 
-async function collectVariantMetrics(manifest: EvalRunManifest, variant: EvalRunVariantState): Promise<EvalMetrics> {
+/** Computes one variant's metrics from the usage index and git; the window ends "now" while the variant still runs, so the Eval UI can reuse it for a live snapshot before collectEval writes metrics.json. */
+export async function collectVariantMetrics(manifest: EvalRunManifest, variant: EvalRunVariantState): Promise<EvalMetrics> {
   const since = variant.startedAt || manifest.createdAt;
   const until = variant.endedAt || new Date().toISOString();
   const worktreeAliases = await pathAliases(variant.worktree);

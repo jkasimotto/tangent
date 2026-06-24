@@ -13,7 +13,10 @@ export type EvalReviewNote = {
   id: string;
   artifactId: string;
   artifactLabel: string;
+  // A note anchors to a line block: `line` is the first line, `endLine` the last (omitted/equal for a
+  // single line). `snippet` carries the block's text so Compare renders without re-reading the artifact.
   line: number;
+  endLine?: number;
   snippet: string;
   sentiment: EvalReviewSentiment;
   text: string;
@@ -21,7 +24,8 @@ export type EvalReviewNote = {
 };
 
 export type EvalVariantReview = {
-  verdict?: { sentiment: EvalVerdictSentiment; text?: string };
+  // `sentiment` is the at-a-glance verdict; `score` is an optional 0-10 rating for ranking configs.
+  verdict?: { sentiment: EvalVerdictSentiment; text?: string; score?: number };
   notes: EvalReviewNote[];
 };
 

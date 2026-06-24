@@ -1,4 +1,5 @@
 import type { EvalAgentConfig } from "../types/provider.js";
+import type { EvalAgentEvent } from "../types/telemetry.js";
 import { runClaudeCli } from "./claude-cli.js";
 import { runCodexCli } from "./codex-cli.js";
 
@@ -15,9 +16,11 @@ export async function runAgent(args: {
   env: NodeJS.ProcessEnv;
   signal?: AbortSignal;
   onOutput?: (chunk: AgentRunProgress) => void;
+  onEvent?: (event: EvalAgentEvent) => void;
+  onUsageTotal?: (tokensTotal: number) => void;
 }): Promise<string> {
   if (args.agent.kind === "manual") throw new Error("Manual agent cannot be run automatically.");
   if (args.agent.kind === "codex-cli") return runCodexCli({ config: args.agent, prompt: args.prompt, cwd: args.cwd, sandbox: args.sandbox, env: args.env, signal: args.signal, onOutput: args.onOutput });
-  if (args.agent.kind === "claude-cli") return runClaudeCli({ config: args.agent, prompt: args.prompt, cwd: args.cwd, env: args.env, signal: args.signal, onOutput: args.onOutput });
+  if (args.agent.kind === "claude-cli") return runClaudeCli({ config: args.agent, prompt: args.prompt, cwd: args.cwd, env: args.env, signal: args.signal, onOutput: args.onOutput, onEvent: args.onEvent, onUsageTotal: args.onUsageTotal });
   throw new Error(`Unknown agent kind: ${(args.agent as { kind?: string }).kind}`);
 }

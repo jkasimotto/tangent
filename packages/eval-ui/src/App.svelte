@@ -12,11 +12,14 @@
     type EvalReviewNote,
     type EvalReviewSentiment,
     type EvalRunDetailView,
+    type EvalRunStatus,
     type EvalRunSummaryView,
     type EvalSparkline,
+    type EvalSpecPromptsView,
     type EvalSpecSummaryView,
     type EvalUiClient,
     type EvalVariantMetricsView,
+    type EvalVariantPhaseView,
     type EvalVariantReview,
     type EvalVariantSummaryView,
     type EvalVerdictSentiment
@@ -60,11 +63,68 @@
   let diffLoadKey = "";
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
 
+  // Primary view: the live run dashboard (a running eval is the focal point) vs the results explorer.
+  // An active run snaps the view to "live"; finishing snaps it back to "results". The user can switch
+  // freely between them, so a finished config can be inspected while others still run.
+  type WorkspaceView = "live" | "results";
+  let view: WorkspaceView = "results";
+  let prevActive = false;
+  let now = Date.now();
+  let nowTimer: ReturnType<typeof setInterval> | undefined;
+
+  // Prompt editor (workflow 2): edit the selected spec's task prompt(s) and save them back to disk.
+  let promptEditorOpen = false;
+  let promptDoc: EvalSpecPromptsView | undefined;
+  let promptDraft = "";
+  let promptSelectedId = "";
+  let promptLoading = false;
+  let promptSaving = false;
+  let promptError = "";
+
+  // Side-by-side layout (workflow 5): "diff" aligns changes; "split" shows both results whole with no
+  // diff markers. Defaults per artifact kind (generated code reads better whole) but the user overrides.
+  type DiffLayout = "diff" | "split";
+  let diffLayoutOverride: DiffLayout | undefined;
+
+  // Block selection for review notes (workflow 5): a note can target a range of lines, picked by
+  // clicking the start gutter then the end gutter. noteEndLine carries the block end while composing.
+  let selStart: number | undefined;
+  let selEnd: number | undefined;
+  let noteEndLine: number | undefined;
+
   onMount(() => {
     void loadInitial();
   });
 
-  onDestroy(() => clearTimeout(pollTimer));
+  onDestroy(() => {
+    clearTimeout(pollTimer);
+    if (nowTimer) clearInterval(nowTimer);
+  });
+
+  $: anyActive = runDetail ? runActive(runDetail) : false;
+  $: variantsFlat = runDetail ? runDetail.cases.flatMap((testCase) => testCase.variants.map((variant) => ({ caseId: testCase.id, variant }))) : [];
+  $: multiCase = (runDetail?.cases.length || 0) > 1;
+  $: manageNowTimer(anyActive);
+  $: handleActivity(anyActive);
+
+  /** Ticks a clock once a second while a run is active, so live elapsed times advance without a poll. */
+  function manageNowTimer(active: boolean): void {
+    if (active && !nowTimer) {
+      now = Date.now();
+      nowTimer = setInterval(() => { now = Date.now(); }, 1000);
+    } else if (!active && nowTimer) {
+      clearInterval(nowTimer);
+      nowTimer = undefined;
+    }
+  }
+
+  /** Snaps the focus to the live dashboard when a run starts, and back to results when it finishes. */
+  function handleActivity(active: boolean): void {
+    if (active === prevActive) return;
+    prevActive = active;
+    if (active) view = "live";
+    else if (view === "live") view = "results";
+  }
 
   $: selectedCase = runDetail?.cases.find((item) => item.id === selectedCaseId);
   $: selectedCase && syncVariantSelection(selectedCase);
@@ -111,6 +171,152 @@
       launching = false;
     }
   }
+
+  // --- Prompt editor (workflow 2) ----------------------------------------------------------------
+
+  /** Opens the prompt editor for the selected spec, loading its task prompt(s) from disk. */
+  async function openPromptEditor(): Promise<void> {
+    if (!selectedSpecPath) return;
+    promptEditorOpen = true;
+    promptError = "";
+    promptLoading = true;
+    try {
+      promptDoc = await client.getSpecPrompts(selectedSpecPath);
+      const first = promptDoc.prompts[0];
+      promptSelectedId = first?.id || "";
+      promptDraft = first?.content || "";
+    } catch (caught) {
+      promptError = friendlyError(caught);
+    } finally {
+      promptLoading = false;
+    }
+  }
+
+  /** Switches the editor to another of the spec's prompts, discarding the current unsaved draft. */
+  function selectPrompt(id: string): void {
+    promptSelectedId = id;
+    promptDraft = promptDoc?.prompts.find((prompt) => prompt.id === id)?.content || "";
+  }
+
+  /** Saves the edited prompt back to disk and refreshes the loaded prompt set. */
+  async function savePrompt(): Promise<void> {
+    if (!promptDoc || !promptSelectedId || promptSaving) return;
+    promptSaving = true;
+    promptError = "";
+    try {
+      promptDoc = await client.saveSpecPrompt({ specPath: promptDoc.specPath, promptPath: promptSelectedId, content: promptDraft });
+    } catch (caught) {
+      promptError = friendlyError(caught);
+    } finally {
+      promptSaving = false;
+    }
+  }
+
+  $: promptDirty = promptDoc ? (promptDoc.prompts.find((prompt) => prompt.id === promptSelectedId)?.content ?? "") !== promptDraft : false;
+
+  // --- Live run dashboard (workflows 4 & 9) ------------------------------------------------------
+
+  /** Live (or final) wall-clock duration of a variant, ticking while it runs. */
+  function variantElapsedMs(variant: EvalVariantSummaryView): number | undefined {
+    if (!variant.startedAt) return undefined;
+    const start = Date.parse(variant.startedAt);
+    if (Number.isNaN(start)) return undefined;
+    const end = variant.endedAt ? Date.parse(variant.endedAt) : now;
+    return Math.max(0, end - start);
+  }
+
+  /** The phase a variant is currently in (running first, else the latest finished, else the first). */
+  function activePhase(variant: EvalVariantSummaryView): EvalVariantPhaseView | undefined {
+    return variant.phases.find((phase) => phase.status === "running") ||
+      [...variant.phases].reverse().find((phase) => phase.status === "done") ||
+      variant.phases[0];
+  }
+
+  /** Short, human label for a run status, used on dashboard badges. */
+  function statusText(status: EvalRunStatus): string {
+    if (status === "prepared") return "queued";
+    if (status === "running") return "running";
+    if (status === "done") return "done";
+    if (status === "failed") return "failed";
+    if (status === "cancelled") return "cancelled";
+    return "manual";
+  }
+
+  /** Longest variant duration in the run, so dashboard flames scale against the same baseline. */
+  function maxRunDurationMs(): number {
+    return Math.max(1, ...variantsFlat.map(({ variant }) => variant.metrics?.sparkline?.durationMs || variantElapsedMs(variant) || 0));
+  }
+
+  /** Width percent for a dashboard flame, scaled against the run's longest conversation. */
+  function dashboardFlameWidth(variant: EvalVariantSummaryView): number {
+    const self = variant.metrics?.sparkline?.durationMs || variantElapsedMs(variant) || 0;
+    return Math.max(18, Math.min(100, (self / maxRunDurationMs()) * 100));
+  }
+
+  /** Opens the live dashboard from the run controls, even before activity (e.g. just-launched runs). */
+  function showLive(): void {
+    view = "live";
+  }
+
+  /** Opens the results explorer. */
+  function showResults(): void {
+    view = "results";
+  }
+
+  // --- Block selection + scoring for review notes (workflows 5 & 7) ------------------------------
+
+  /** Click the line gutter to anchor a selection, click again to extend it into a block, or clear it. */
+  function selectGutter(line: number): void {
+    if (selStart === undefined) {
+      selStart = line;
+      selEnd = line;
+      return;
+    }
+    if (line === selStart && selEnd === selStart) {
+      clearSelection();
+      return;
+    }
+    selEnd = line;
+  }
+
+  $: selRange = selStart !== undefined && selEnd !== undefined
+    ? { start: Math.min(selStart, selEnd), end: Math.max(selStart, selEnd) }
+    : undefined;
+
+  /** Whether a line falls inside the active selection block. */
+  function inSelection(line: number): boolean {
+    return selRange ? line >= selRange.start && line <= selRange.end : false;
+  }
+
+  /** Clears the current line-block selection. */
+  function clearSelection(): void {
+    selStart = undefined;
+    selEnd = undefined;
+  }
+
+  /** Opens the note composer for a line block with a sentiment. */
+  function openNote(start: number, end: number, sentiment: EvalReviewSentiment): void {
+    noteLine = start;
+    noteEndLine = end;
+    noteSentiment = sentiment;
+    noteText = "";
+  }
+
+  /** Opens the note composer for the current selection block. */
+  function openSelectionNote(sentiment: EvalReviewSentiment): void {
+    if (selRange) openNote(selRange.start, selRange.end, sentiment);
+  }
+
+  /** Sets the overall numeric score (0-10) for the reviewed variant. */
+  async function setScore(score: number | undefined): Promise<void> {
+    const review = ensureReview(reviewKey);
+    review.verdict = { sentiment: review.verdict?.sentiment || "mixed", text: review.verdict?.text, score };
+    reviews = reviews;
+    await persistReviews();
+  }
+
+  $: effectiveLayout = (diffLayoutOverride ?? (diff?.artifact.kind === "code" ? "split" : "diff")) as DiffLayout;
+  $: isSplit = effectiveLayout === "split";
 
   /** Re-fetches the run while any variant is still preparing or running, then refreshes the comparison. */
   function schedulePoll(runId: string): void {
@@ -266,21 +472,18 @@
     }
   }
 
-  /** Opens the inline note composer on a line with a sentiment. */
-  function openNote(line: number, sentiment: EvalReviewSentiment): void {
-    noteLine = line;
-    noteSentiment = sentiment;
-    noteText = "";
-  }
-
-  /** Saves the drafted note against the reviewed variant's current artifact line. */
-  async function saveNote(line: number, snippet: string): Promise<void> {
-    if (!reviewDiff || !noteText.trim()) return;
+  /** Saves the drafted note against the reviewed variant's current artifact line block. */
+  async function saveNote(): Promise<void> {
+    if (!reviewDiff || noteLine === undefined || !noteText.trim()) return;
+    const start = noteLine;
+    const end = noteEndLine ?? noteLine;
+    const snippet = reviewReader.filter((row) => row.n >= start && row.n <= end).map((row) => row.text).join("\n");
     const note: EvalReviewNote = {
       id: newId(),
       artifactId: reviewDiff.artifact.id,
       artifactLabel: reviewDiff.artifact.label,
-      line,
+      line: start,
+      endLine: end > start ? end : undefined,
       snippet,
       sentiment: noteSentiment,
       text: noteText.trim(),
@@ -289,7 +492,9 @@
     ensureReview(reviewKey).notes.push(note);
     reviews = reviews;
     noteLine = undefined;
+    noteEndLine = undefined;
     noteText = "";
+    clearSelection();
     await persistReviews();
   }
 
@@ -302,25 +507,35 @@
     await persistReviews();
   }
 
-  /** Sets the overall verdict sentiment for the reviewed variant. */
+  /** Sets the overall verdict sentiment for the reviewed variant, preserving any score and text. */
   async function setVerdict(sentiment: EvalVerdictSentiment): Promise<void> {
     const review = ensureReview(reviewKey);
-    review.verdict = { sentiment, text: review.verdict?.text };
+    review.verdict = { sentiment, text: review.verdict?.text, score: review.verdict?.score };
     reviews = reviews;
     await persistReviews();
   }
 
-  /** Saves the free-text part of the reviewed variant's verdict on blur. */
+  /** Saves the free-text part of the reviewed variant's verdict on blur, preserving sentiment and score. */
   async function setVerdictText(text: string): Promise<void> {
     const review = ensureReview(reviewKey);
-    review.verdict = { sentiment: review.verdict?.sentiment || "mixed", text: text.trim() || undefined };
+    review.verdict = { sentiment: review.verdict?.sentiment || "mixed", text: text.trim() || undefined, score: review.verdict?.score };
     reviews = reviews;
     await persistReviews();
   }
 
-  /** Notes for one artifact line, used to render inline markers under that line. */
+  /** Notes anchored at a line (a note renders once, at its block's first line). */
   function notesAt(review: EvalVariantReview, artifactId: string, line: number): EvalReviewNote[] {
     return review.notes.filter((note) => note.artifactId === artifactId && note.line === line);
+  }
+
+  /** Whether any note's block covers a line, used to shade reviewed lines. */
+  function lineCovered(review: EvalVariantReview, artifactId: string, line: number): boolean {
+    return review.notes.some((note) => note.artifactId === artifactId && line >= note.line && line <= (note.endLine ?? note.line));
+  }
+
+  /** A short range label for a note block, e.g. "L12" or "L12–15". */
+  function noteRangeLabel(note: EvalReviewNote): string {
+    return note.endLine && note.endLine > note.line ? `L${note.line}–${note.endLine}` : `L${note.line}`;
   }
 
   /** A variant's notes of one sentiment, for the Compare synthesis. */
@@ -539,9 +754,8 @@
     return rows;
   }
 
-  $: isOutput = diff?.artifact.kind === "code";
-  $: leftReader = diff && isOutput ? readerLines(diff.lines, "left") : [];
-  $: rightReader = diff && isOutput ? readerLines(diff.lines, "right") : [];
+  $: leftReader = diff && isSplit ? readerLines(diff.lines, "left") : [];
+  $: rightReader = diff && isSplit ? readerLines(diff.lines, "right") : [];
 
   function formatDurationMs(value: number): string {
     if (value < 1000) return `${Math.round(value)}ms`;
@@ -584,7 +798,7 @@
     {/if}
     <span class="topbar-spacer"></span>
     {#if launchError}<small class="run-error" role="alert">{launchError}</small>{/if}
-    <label class="topbar-pick">
+    <label class="topbar-pick" aria-label="Eval to run">
       <select bind:value={selectedSpecPath} disabled={launching || specs.length === 0}>
         {#if specs.length === 0}
           <option value="">No specs</option>
@@ -595,17 +809,124 @@
         {/if}
       </select>
     </label>
+    <button type="button" class="ghost-button" on:click={openPromptEditor} disabled={!selectedSpecPath} title="Edit this eval's task prompt">
+      Edit prompt
+    </button>
     <button type="button" class="run-button" on:click={launch} disabled={launching || !selectedSpecPath}>
       {launching ? "Starting…" : "Run"}
     </button>
   </div>
+
+  {#if runDetail}
+    <div class="runbar" class:running={anyActive}>
+      <div class="run-tabs" aria-label="Workspace view">
+        <button type="button" class:active={view === "live"} on:click={showLive}>
+          Live{#if anyActive}<span class="live-dot" aria-hidden="true"></span>{/if}
+        </button>
+        <button type="button" class:active={view === "results"} on:click={showResults}>Results</button>
+      </div>
+      <span class="run-name">{runDetail.name}</span>
+      <span class="run-pills" aria-label="Run status">
+        {#if runDetail.statuses.running}<span class="pill pill-running">{runDetail.statuses.running} running</span>{/if}
+        {#if runDetail.statuses.prepared}<span class="pill pill-prepared">{runDetail.statuses.prepared} queued</span>{/if}
+        {#if runDetail.statuses.done}<span class="pill pill-done">{runDetail.statuses.done} done</span>{/if}
+        {#if runDetail.statuses.failed}<span class="pill pill-failed">{runDetail.statuses.failed} failed</span>{/if}
+        {#if runDetail.statuses.cancelled}<span class="pill pill-cancelled">{runDetail.statuses.cancelled} cancelled</span>{/if}
+      </span>
+    </div>
+  {/if}
+
+  {#if promptEditorOpen}
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+    <div class="modal-scrim" role="presentation" on:click={() => (promptEditorOpen = false)}>
+      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+      <div class="prompt-editor" role="dialog" aria-modal="true" aria-label="Edit eval prompt" tabindex="-1" on:click|stopPropagation>
+        <header class="prompt-editor-head">
+          <h2>Edit prompt{#if promptDoc} · {promptDoc.name}{/if}</h2>
+          <button type="button" class="ghost" on:click={() => (promptEditorOpen = false)}>Close</button>
+        </header>
+        {#if promptLoading}
+          <div class="state">Loading prompts…</div>
+        {:else if promptError}
+          <div class="notice" role="alert">{promptError}</div>
+        {:else if promptDoc}
+          {#if promptDoc.prompts.length === 0}
+            <div class="state">This spec references no editable prompt files.</div>
+          {:else}
+            {#if promptDoc.prompts.length > 1}
+              <div class="prompt-tabs">
+                {#each promptDoc.prompts as prompt}
+                  <button type="button" class:active={prompt.id === promptSelectedId} on:click={() => selectPrompt(prompt.id)}>{prompt.label}</button>
+                {/each}
+              </div>
+            {/if}
+            <textarea class="prompt-text" bind:value={promptDraft} spellcheck="false" aria-label="Prompt text"></textarea>
+            <footer class="prompt-editor-foot">
+              <small class="prompt-path">{promptSelectedId}{#if promptDirty} · unsaved{/if}</small>
+              <span class="topbar-spacer"></span>
+              <button type="button" class="run-button" on:click={savePrompt} disabled={promptSaving || !promptDirty}>
+                {promptSaving ? "Saving…" : "Save prompt"}
+              </button>
+            </footer>
+          {/if}
+        {/if}
+      </div>
+    </div>
+  {/if}
 
   <section class="compare-shell" aria-busy={runLoading || compareLoading}>
     {#if error}
       <div class="notice" role="alert">{error}</div>
     {/if}
 
-    {#if runDetail}
+    {#if runDetail && view === "live"}
+      <div class="dashboard" aria-label="Live run dashboard">
+        <header class="dashboard-head">
+          <h2>{anyActive ? "Running" : "Run complete"}</h2>
+          <small>{variantsFlat.length} config{variantsFlat.length === 1 ? "" : "s"} · {runDetail.statuses.done} done</small>
+          <span class="topbar-spacer"></span>
+          {#if !anyActive}<button type="button" class="ghost-button" on:click={showResults}>Review results →</button>{/if}
+        </header>
+        <div class="config-grid">
+          {#each variantsFlat as row (row.caseId + "/" + row.variant.variantId)}
+            {@const variant = row.variant}
+            {@const phase = activePhase(variant)}
+            {@const elapsed = variantElapsedMs(variant)}
+            <article class="config-card status-{variant.status}">
+              <header class="config-card-head">
+                <div class="config-id">
+                  {#if multiCase}<span class="config-case">{row.caseId}</span>{/if}
+                  <strong>{variant.variantId}</strong>
+                </div>
+                <span class="config-status badge-status-{variant.status}">
+                  {#if variant.status === "running"}<span class="live-dot" aria-hidden="true"></span>{/if}
+                  {statusText(variant.status)}
+                </span>
+              </header>
+              <div class="config-meta">
+                <span>{variant.model || variant.agent.kind}</span>
+                {#if phase}<span class="config-phase">{phase.id}{phase.status === "running" ? "…" : ""}</span>{/if}
+                <span class="config-time">{elapsed !== undefined ? formatDurationMs(elapsed) : "—"}</span>
+              </div>
+              {#if variant.metrics?.sparkline}
+                <span class="flame flame-dashboard" style={`width:${dashboardFlameWidth(variant)}%`} aria-label="Live conversation flame graph">
+                  {#each variant.metrics.sparkline.buckets as bucket}
+                    <span class={`flame-bar flame-${bucket.kind}`} style={`height:${sparkHeight(bucket.tokenShare, bucket.durationShare) * 100}%`}></span>
+                  {/each}
+                </span>
+                <small class="flame-caption">{flameCaption(variant.metrics)}</small>
+              {:else if variant.status === "running"}
+                <span class="flame flame-dashboard flame-warming" aria-label="Waiting for activity"></span>
+                <small class="flame-caption">warming up…</small>
+              {:else if variant.status === "prepared"}
+                <small class="flame-caption muted">queued</small>
+              {/if}
+              {#if variant.error}<p class="config-error" title={variant.error}>{variant.error}</p>{/if}
+            </article>
+          {/each}
+        </div>
+      </div>
+    {:else if runDetail}
       {#if compare}
         <div class="artifact-and-diff">
           <aside class="artifact-list" aria-label="Artifacts">
@@ -642,9 +963,15 @@
 
           <section class="diff-pane" aria-label="Artifact view">
             <div class="mode-tabs" aria-label="View mode">
-              <button type="button" class:active={mode === "review"} on:click={() => mode = "review"}>Review</button>
-              <button type="button" class:active={mode === "compare"} on:click={() => mode = "compare"}>Compare</button>
-              <button type="button" class:active={mode === "diff"} on:click={() => mode = "diff"}>Diff</button>
+              <button type="button" class:active={mode === "review"} on:click={() => mode = "review"} title="Review one config on its own">Individual</button>
+              <button type="button" class:active={mode === "compare"} on:click={() => mode = "compare"} title="Compare the review notes you left">Compare notes</button>
+              <button type="button" class:active={mode === "diff"} on:click={() => mode = "diff"} title="View two configs side by side">Side by side</button>
+              {#if mode === "diff"}
+                <span class="layout-toggle" aria-label="Side-by-side layout">
+                  <button type="button" class:active={effectiveLayout === "split"} on:click={() => diffLayoutOverride = "split"}>No diff</button>
+                  <button type="button" class:active={effectiveLayout === "diff"} on:click={() => diffLayoutOverride = "diff"}>Diff</button>
+                </span>
+              {/if}
               {#if savingReview}<small class="saving">saving…</small>{/if}
             </div>
 
@@ -660,39 +987,57 @@
                   <button type="button" class:active={currentReview.verdict?.sentiment === "like"} on:click={() => setVerdict("like")}>👍</button>
                   <button type="button" class:active={currentReview.verdict?.sentiment === "mixed"} on:click={() => setVerdict("mixed")}>🤔</button>
                   <button type="button" class:active={currentReview.verdict?.sentiment === "dislike"} on:click={() => setVerdict("dislike")}>👎</button>
+                  <span class="score" aria-label="Score out of 10">
+                    <span class="score-label">Score</span>
+                    {#each [0,1,2,3,4,5,6,7,8,9,10] as value}
+                      <button type="button" class="score-pip" class:active={currentReview.verdict?.score === value} on:click={() => setScore(currentReview.verdict?.score === value ? undefined : value)}>{value}</button>
+                    {/each}
+                  </span>
                   <input class="verdict-text" placeholder="overall note (optional)" value={currentReview.verdict?.text || ""} on:change={(event) => setVerdictText(event.currentTarget.value)} />
                 </div>
               </div>
               {#if reviewDiff}
                 <header class="diff-head">
                   <h3>{reviewDiff.artifact.label}</h3>
-                  <span>{reviewReader.length} lines · 👍/👎 a line to note it</span>
+                  {#if selRange}
+                    <span class="sel-bar">
+                      Lines {selRange.start}{#if selRange.end > selRange.start}–{selRange.end}{/if} selected
+                      <button type="button" class="mark good" on:click={() => openSelectionNote("good")}>👍 good</button>
+                      <button type="button" class="mark bad" on:click={() => openSelectionNote("bad")}>👎 bad</button>
+                      <button type="button" class="ghost" on:click={clearSelection}>clear</button>
+                    </span>
+                  {:else}
+                    <span>{reviewReader.length} lines · click line #s to select a block, 👍/👎 to note it</span>
+                  {/if}
                 </header>
                 <div class="review-reader" aria-label={`${reviewDiff.artifact.label} review`}>
                   {#each reviewReader as row}
                     {@const lineNotes = notesAt(currentReview, reviewDiff.artifact.id, row.n)}
-                    <div class="review-row" class:has-notes={lineNotes.length}>
-                      <span class="line-no">{row.n}</span>
+                    {@const covered = lineCovered(currentReview, reviewDiff.artifact.id, row.n)}
+                    <div class="review-row" class:has-notes={covered} class:selected={inSelection(row.n)}>
+                      <button type="button" class="line-no line-no-pick" class:anchor={row.n === selStart} title="Click to start/extend a selection block" on:click={() => selectGutter(row.n)}>{row.n}</button>
                       <code>{row.text}</code>
                       <span class="row-actions">
-                        <button type="button" class="mark good" title="Mark this line good" on:click={() => openNote(row.n, "good")}>👍</button>
-                        <button type="button" class="mark bad" title="Mark this line bad" on:click={() => openNote(row.n, "bad")}>👎</button>
+                        <button type="button" class="mark good" title="Mark this line good" on:click={() => openNote(row.n, row.n, "good")}>👍</button>
+                        <button type="button" class="mark bad" title="Mark this line bad" on:click={() => openNote(row.n, row.n, "bad")}>👎</button>
                       </span>
                     </div>
                     {#each lineNotes as note}
                       <div class="line-note {note.sentiment}">
                         <span class="note-icon">{note.sentiment === "good" ? "👍" : "👎"}</span>
+                        <span class="note-range">{noteRangeLabel(note)}</span>
                         <span class="note-text">{note.text}</span>
                         <button type="button" class="note-del" title="Remove note" on:click={() => removeNote(note.id)}>×</button>
                       </div>
                     {/each}
                     {#if noteLine === row.n}
-                      <form class="note-composer {noteSentiment}" on:submit|preventDefault={() => saveNote(row.n, row.text)}>
+                      <form class="note-composer {noteSentiment}" on:submit|preventDefault={() => saveNote()}>
                         <span class="note-icon">{noteSentiment === "good" ? "👍" : "👎"}</span>
+                        <span class="note-range">{noteEndLine && noteEndLine > noteLine ? `L${noteLine}–${noteEndLine}` : `L${noteLine}`}</span>
                         <!-- svelte-ignore a11y-autofocus -->
                         <input class="note-input" placeholder={noteSentiment === "good" ? "what's good here…" : "what's wrong here…"} bind:value={noteText} autofocus />
                         <button type="submit" class="primary" disabled={!noteText.trim()}>Add</button>
-                        <button type="button" class="ghost" on:click={() => noteLine = undefined}>Cancel</button>
+                        <button type="button" class="ghost" on:click={() => { noteLine = undefined; noteEndLine = undefined; }}>Cancel</button>
                       </form>
                     {/if}
                   {/each}
@@ -720,6 +1065,7 @@
                       <span class="entity-tag">{index === 0 ? "A" : "B"}</span>
                       <h3>{variantId}</h3>
                       <span class="verdict-badge {review?.verdict?.sentiment || 'none'}">{verdictLabel(review?.verdict?.sentiment)}</span>
+                      {#if review?.verdict?.score !== undefined}<span class="score-badge">{review.verdict.score}/10</span>{/if}
                     </header>
                     {#if review?.verdict?.text}<p class="verdict-note">{review.verdict.text}</p>{/if}
                     <section class="syn-group good">
@@ -783,7 +1129,7 @@
                   {/if}
                 </div>
               </div>
-              {#if diff && isOutput}
+              {#if diff && isSplit}
                 <header class="diff-head">
                   <h3>{diff.artifact.label}</h3>
                   <span>A {leftReader.length} · B {rightReader.length} lines</span>

@@ -45,6 +45,10 @@
   let versionTimer: ReturnType<typeof setInterval> | undefined;
   let labelTimer: ReturnType<typeof setInterval> | undefined;
   let highlightTimer: ReturnType<typeof setTimeout> | undefined;
+  // The asset-manifest hash is long; a 7-char prefix is the git-short-sha width the eye
+  // pattern-matches and is enough to disambiguate builds across reloads. Full hash on hover.
+  $: buildShort = buildId ? buildId.slice(0, 7) : "";
+  $: buildLabel = buildId ? `build ${buildShort}` : "";
 
   onMount(() => {
     window.addEventListener("popstate", applyLocation);
@@ -317,6 +321,16 @@
           </nav>
         {/if}
       {/if}
+      {#if buildId}
+        <span
+          class="version-label"
+          aria-label={"Build " + buildShort}
+          title={buildId}
+        >{buildLabel}</span>
+      {/if}
+      {#if buildId && builtAt}
+        <span class="version-sep" aria-hidden="true">·</span>
+      {/if}
       {#if builtAt}
         <span
           class="updated-label"
@@ -373,14 +387,28 @@
 {/if}
 
 <style>
-  /* Lowest-weight chrome element on every screen: the freshness label, anchored beside the switcher so
-     it rides into /trees where the shell chrome is hidden. Muted tone clears WCAG AA on the chrome. */
-  .updated-label {
-    margin-left: 8px;
+  /* Lowest-weight chrome on every screen: the build-identity cluster (version + freshness), anchored
+     beside the switcher so it rides into /trees where the shell chrome is hidden. Both strings sit at
+     the same muted weight so neither dominates; the token clears WCAG AA on the chrome background. */
+  .updated-label, .version-label, .version-sep {
     font-size: 12px;
     line-height: 1;
     color: #5c6962;
     white-space: nowrap;
+  }
+
+  /* The version label leads the cluster, so it carries the gap from the switcher. */
+  .version-label {
+    margin-left: 8px;
+  }
+
+  /* Decorative join between the two strings; breathes equally on both sides. */
+  .version-sep {
+    margin: 0 4px;
+  }
+
+  /* Only the freshness label transitions/flashes; the version's changed value is its own signal. */
+  .updated-label {
     transition: color 0.6s ease;
   }
 

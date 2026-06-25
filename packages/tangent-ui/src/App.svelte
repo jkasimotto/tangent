@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from "svelte";
   import ShellLayout from "./ShellLayout.svelte";
+  import { formatUpdatedLabel, formatBuiltAtAbsolute } from "./relative-time.js";
 
   type UiApp = {
     id: string;
@@ -32,17 +33,113 @@
   let feedbackError = "";
   let feedbackCloseTimer: ReturnType<typeof setTimeout> | undefined;
 
+  // Build-freshness loop: the installed PWA is a long-lived window, so it polls the server's build
+  // identity and silently reloads into a new build. `builtAt`/`updatedLabel` drive the passive label.
+  const VERSION_POLL_MS = 60_000;
+  const UPDATED_MARKER = "tangent:just-updated";
+  let buildId: string | undefined;
+  let builtAt = "";
+  let updatedLabel = "";
+  let reloadPending = false;
+  let justUpdated = false;
+  let versionTimer: ReturnType<typeof setInterval> | undefined;
+  let labelTimer: ReturnType<typeof setInterval> | undefined;
+  let highlightTimer: ReturnType<typeof setTimeout> | undefined;
+
   onMount(() => {
     window.addEventListener("popstate", applyLocation);
     window.addEventListener("keydown", onGlobalKeydown);
+    document.addEventListener("visibilitychange", onVisibleOrFocus);
+    window.addEventListener("focus", onVisibleOrFocus);
+    document.addEventListener("focusout", onFocusOut, true);
     void loadApps();
+    void pollVersion();
+    versionTimer = setInterval(() => void pollVersion(), VERSION_POLL_MS);
+    labelTimer = setInterval(tickFreshness, VERSION_POLL_MS);
+    showPostReloadHighlight();
   });
 
   onDestroy(() => {
     window.removeEventListener("popstate", applyLocation);
     window.removeEventListener("keydown", onGlobalKeydown);
+    document.removeEventListener("visibilitychange", onVisibleOrFocus);
+    window.removeEventListener("focus", onVisibleOrFocus);
+    document.removeEventListener("focusout", onFocusOut, true);
+    if (versionTimer) clearInterval(versionTimer);
+    if (labelTimer) clearInterval(labelTimer);
+    if (highlightTimer) clearTimeout(highlightTimer);
     disposeApp();
   });
+
+  /** Polls the server build identity; captures it on the first read, reloads on a later change.
+      Fails quiet (no UI) on a missing route, non-OK response, or fetch error so an invisible
+      mechanism never surfaces noise; the last-known label is kept. */
+  async function pollVersion(): Promise<void> {
+    try {
+      const response = await fetch("/api/version");
+      if (!response.ok) return;
+      const payload = await response.json() as { buildId?: string; builtAt?: string };
+      if (typeof payload.buildId !== "string" || typeof payload.builtAt !== "string") return;
+      builtAt = payload.builtAt;
+      updatedLabel = formatUpdatedLabel(builtAt);
+      if (buildId === undefined) { buildId = payload.buildId; return; }
+      if (payload.buildId !== buildId) maybeReload();
+    } catch {
+      // Swallow: poll failures are noise about an invisible mechanism.
+    }
+  }
+
+  /** Reloads into the new build, or defers when the user is mid-input so no in-progress text is lost. */
+  function maybeReload(): void {
+    if (canReloadNow()) applyUpdate();
+    else reloadPending = true;
+  }
+
+  /** False while the user is typing (shell composer or any focused editable element in the mounted app),
+      so an auto-reload never destroys half-typed text. */
+  function canReloadNow(): boolean {
+    if (feedbackOpen || feedbackText.trim()) return false;
+    const active = document.activeElement as HTMLElement | null;
+    if (!active) return true;
+    return !(active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable);
+  }
+
+  /** Marks the reload so the freshly mounted shell highlights the label, then reloads into the new build. */
+  function applyUpdate(): void {
+    reloadPending = false;
+    try { sessionStorage.setItem(UPDATED_MARKER, "1"); } catch { /* private mode: skip the highlight */ }
+    location.reload();
+  }
+
+  /** Re-render the relative label and retry a deferred reload once the user is idle. */
+  function tickFreshness(): void {
+    if (builtAt) updatedLabel = formatUpdatedLabel(builtAt);
+    if (reloadPending && canReloadNow()) applyUpdate();
+  }
+
+  /** On focus/visibility regain, re-poll and retry any reload that was deferred while hidden. */
+  function onVisibleOrFocus(): void {
+    void pollVersion();
+    if (reloadPending && canReloadNow()) applyUpdate();
+  }
+
+  /** When focus leaves an input, retry a deferred reload on the next tick (activeElement has settled). */
+  function onFocusOut(): void {
+    if (!reloadPending) return;
+    void tick().then(() => { if (reloadPending && canReloadNow()) applyUpdate(); });
+  }
+
+  /** One-shot, reduced-motion-safe highlight of the label right after an auto-reload explains the blink. */
+  function showPostReloadHighlight(): void {
+    let marked = false;
+    try {
+      marked = sessionStorage.getItem(UPDATED_MARKER) === "1";
+      if (marked) sessionStorage.removeItem(UPDATED_MARKER);
+    } catch { /* private mode: no marker, no highlight */ }
+    if (!marked) return;
+    justUpdated = true;
+    highlightTimer = setTimeout(() => { justUpdated = false; }, 1100);
+  }
 
   /** Cmd/Ctrl+/ opens the feedback composer from any app; Escape closes it. */
   function onGlobalKeydown(event: KeyboardEvent): void {
@@ -220,6 +317,14 @@
           </nav>
         {/if}
       {/if}
+      {#if builtAt}
+        <span
+          class="updated-label"
+          class:just-updated={justUpdated}
+          aria-label={"Last updated: " + updatedLabel}
+          title={formatBuiltAtAbsolute(builtAt)}
+        >{updatedLabel}</span>
+      {/if}
     </div>
   </svelte:fragment>
 
@@ -268,6 +373,27 @@
 {/if}
 
 <style>
+  /* Lowest-weight chrome element on every screen: the freshness label, anchored beside the switcher so
+     it rides into /trees where the shell chrome is hidden. Muted tone clears WCAG AA on the chrome. */
+  .updated-label {
+    margin-left: 8px;
+    font-size: 12px;
+    line-height: 1;
+    color: #5c6962;
+    white-space: nowrap;
+    transition: color 0.6s ease;
+  }
+
+  .updated-label.just-updated {
+    color: #2c6e49;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .updated-label {
+      transition: none;
+    }
+  }
+
   .feedback-backdrop {
     position: fixed;
     inset: 0;

@@ -6,7 +6,7 @@ import path from "node:path";
 import type { IncomingMessage } from "node:http";
 import type { CliCommandSpec } from "@tangent/core";
 import { booleanArg, numberArg, parseArgs, stringArg, stringsArg } from "@tangent/core/cli";
-import type { UiRoute } from "@tangent/ui-server";
+import { readBuildIdentity, type UiRoute } from "@tangent/ui-server";
 import { optionalModule, requiredProductModule } from "./module-loader.js";
 import { discoverUiApps } from "./ui-discovery.js";
 import { appendWorklogEntry, listWorklogEntries, setWorklogActual } from "./worklog.js";
@@ -445,6 +445,19 @@ export async function runTangentUiCommand(argv: string[]): Promise<void> {
       pattern: /^\/api\/feedback$/,
       /** Routes feedback API requests to handleFeedbackRoute. */
       handle: (request, url) => handleFeedbackRoute(request, url)
+    },
+    {
+      method: "GET",
+      pattern: /^\/api\/version$/,
+      /** Reports the on-disk build identity so the long-lived PWA can detect a new build and reload.
+          A read failure (older or unbuilt server) returns 500 so the client fails quiet. */
+      handle: () => {
+        try {
+          return { json: readBuildIdentity(tangentUiAssets.rootDir) };
+        } catch {
+          return { status: 500 };
+        }
+      }
     },
     ...registrations.flatMap((registration) => registration.routes)
   ];

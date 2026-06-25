@@ -4,6 +4,8 @@ import { readFile, stat } from "node:fs/promises";
 import http, { type Server } from "node:http";
 import path from "node:path";
 
+export * from "./build-identity.js";
+
 export type UiModePreference = "auto" | "dev" | "static";
 
 export type StaticUiAssets = {

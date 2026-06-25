@@ -14,7 +14,14 @@ cd "$REPO_ROOT"
 model_args=()
 [ -n "$MODEL" ] && model_args=(--model "$MODEL")
 
+# Run under the claude-otto profile (the `claude-otto` shell alias's real effect): its own config
+# dir, separate from the interactive ~/.claude. The alias isn't usable here (aliases don't expand in
+# scripts), and tmux won't reliably inherit an exported value, so set it on the process itself.
+# Override by exporting CLAUDE_CONFIG_DIR before run-loops.sh if you want a different profile.
+export CLAUDE_CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude-otto}"
+
 # ${arr[@]+"${arr[@]}"} expands safely even when empty under `set -u` (macOS bash 3.2).
 exec claude \
+  --verbose \
   --dangerously-skip-permissions \
   ${model_args[@]+"${model_args[@]}"}

@@ -74,17 +74,21 @@ Stages always resolve a dossier's directory with `path` rather than hardcoding `
 ## Running the loops
 
 ```
-TANGENT_LOOPS_YES=1 ./pipeline/run-loops.sh     start all 7 loops as detached background processes
-./pipeline/stop-loops.sh                          stop them
+TANGENT_LOOPS_YES=1 ./pipeline/run-loops.sh     start all 7 loops, one interactive tmux session each
+./pipeline/stop-loops.sh                          stop them (kills every tangent-loop-* session)
+tmux attach -t tangent-loop-scope                 attach to one stage to watch / steer it
+tmux ls | grep tangent-loop                       list the running stage sessions
 ```
 
-Each loop is a `while true; do claude -p <stage prompt>; sleep 30m; done` process (`loop-stage.sh`),
-launched once per stage by `run-loops.sh`. The prompts self-gate: an empty inbox exits the tick
-immediately, so idle loops are cheap. Logs and pids live in `~/.tangent/loops/` (override with
-`TANGENT_LOOPS_LOG_DIR`).
+Each stage runs as a single **interactive** `claude <stage prompt>` (`loop-stage.sh`) inside its own
+detached tmux session `tangent-loop-<stage>`, launched by `run-loops.sh`. The prompts still self-gate
+(an empty inbox exits early), but interactive claude then waits at the REPL instead of auto-ticking:
+you attach to a session to watch the agent work, answer it, or kick off the next run. Each pane is
+mirrored to `~/.tangent/loops/<stage>.log` via `tmux pipe-pane`; panes use `remain-on-exit` so a
+crash or early exit stays inspectable.
 
-Knobs: `TANGENT_LOOPS_TICK` (seconds, default 1800), `TANGENT_LOOPS_MODEL` (`claude --model`),
-`TANGENT_LOOPS_LOG_DIR`.
+Knobs: `TANGENT_LOOPS_MODEL` (`claude --model`), `TANGENT_LOOPS_LOG_DIR`. (There is no tick/sleep
+timer anymore; the sessions are persistent rather than ticking on a clock.)
 
 ### ⚠️ Autonomy and safety
 

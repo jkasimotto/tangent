@@ -207,6 +207,28 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
   });
 }
 
+// One stable port for `tangent ui`. A PWA locks its start URL (origin + port) at install time, so the
+// server it points at must always live at the same address; an OS-assigned port breaks the installed app
+// on the next launch. An explicit --port still overrides this (dev worktrees pass --port 0 to coexist).
+const DEFAULT_UI_PORT = 58888;
+
+/** True if the error is a "port already in use" bind failure. */
+function isAddressInUse(error: unknown): boolean {
+  return typeof error === "object" && error !== null && (error as { code?: string }).code === "EADDRINUSE";
+}
+
+/** True if a Tangent UI server is already answering at the given base URL (via its /healthz route). */
+async function isTangentServer(baseUrl: string): Promise<boolean> {
+  try {
+    const response = await fetch(new URL("/healthz", baseUrl), { signal: AbortSignal.timeout(1000) });
+    if (!response.ok) return false;
+    const body = await response.json() as { ok?: boolean; product?: string };
+    return body.ok === true && body.product === "tangent";
+  } catch {
+    return false;
+  }
+}
+
 /** Starts the combined Tangent local UI shell. */
 export async function runTangentUiCommand(argv: string[]): Promise<void> {
   const args = parseArgs(argv, { repeatable: ["provider", "source"] });
@@ -234,7 +256,7 @@ export async function runTangentUiCommand(argv: string[]): Promise<void> {
 
   const initialApp = registrations.find((registration) => registration.app.id === requestedApp)?.app.id || registrations[0]!.app.id;
   const apps = registrations.map((registration) => registration.app);
-  const [{ createLocalUiServer }, { tangentUiAssets }, launcher] = await Promise.all([
+  const [{ createLocalUiServer, openBrowser }, { tangentUiAssets }, launcher] = await Promise.all([
     import("@tangent/ui-server"),
     import("@tangent/tangent-ui/assets"),
     import("@tangent/launcher")
@@ -426,16 +448,33 @@ export async function runTangentUiCommand(argv: string[]): Promise<void> {
     },
     ...registrations.flatMap((registration) => registration.routes)
   ];
-  const server = await createLocalUiServer({
+  const serverOptions = {
     product: "tangent",
     host,
-    port: numberArg(args.port) ?? 0,
     open: !booleanArg(args["no-browser"]),
     mode,
     assets: tangentUiAssets,
     assetMounts: registrations.flatMap((registration) => registration.assetMounts),
     routes
-  });
+  };
+  const explicitPort = numberArg(args.port);
+  let server;
+  try {
+    server = await createLocalUiServer({ ...serverOptions, port: explicitPort ?? DEFAULT_UI_PORT });
+  } catch (error) {
+    if (explicitPort !== undefined || !isAddressInUse(error)) throw error;
+    // The stable port is taken. If Tangent already owns it, point the user at the running instance rather
+    // than spawning a second server on a throwaway port (the stray random-port server is what broke the PWA).
+    const running = `http://${host}:${DEFAULT_UI_PORT}/`;
+    if (await isTangentServer(running)) {
+      if (serverOptions.open) openBrowser(running);
+      if (booleanArg(args.json)) console.log(JSON.stringify({ url: running, apps: apps.map((app) => app.id), initialApp, alreadyRunning: true }, null, 2));
+      else console.log(`Tangent UI already running: ${running}`);
+      return;
+    }
+    // A non-Tangent process holds the port; fall back to an OS-assigned one so the launch still succeeds.
+    server = await createLocalUiServer({ ...serverOptions, port: 0 });
+  }
 
   if (booleanArg(args.json)) console.log(JSON.stringify({ url: server.url, apps: apps.map((app) => app.id), initialApp }, null, 2));
   else console.log(`Tangent UI: ${server.url}`);

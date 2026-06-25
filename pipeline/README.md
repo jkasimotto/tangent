@@ -80,15 +80,18 @@ tmux attach -t tangent-loop-scope                 attach to one stage to watch /
 tmux ls | grep tangent-loop                       list the running stage sessions
 ```
 
-Each stage runs as a single **interactive** `claude <stage prompt>` (`loop-stage.sh`) inside its own
-detached tmux session `tangent-loop-<stage>`, launched by `run-loops.sh`. The prompts still self-gate
-(an empty inbox exits early), but interactive claude then waits at the REPL instead of auto-ticking:
-you attach to a session to watch the agent work, answer it, or kick off the next run. Each pane is
-mirrored to `~/.tangent/loops/<stage>.log` via `tmux pipe-pane`; panes use `remain-on-exit` so a
-crash or early exit stays inspectable.
+Each stage runs as a single **interactive** claude inside its own detached tmux session
+`tangent-loop-<stage>`, launched by `run-loops.sh`. `loop-stage.sh` only starts bare interactive
+claude; `run-loops.sh` then types the stage's `/loop <prompt>` into the REPL (via bracketed paste,
+once the input box is up) so Claude Code's **`/loop` skill** drives the recurrence. A slash command
+can't be passed as the initial CLI argument (it would be treated as literal text), which is why it is
+typed in after launch. The prompts still self-gate (an empty inbox exits the tick early), then `/loop`
+self-paces the next run. Each pane is mirrored to `~/.tangent/loops/<stage>.log` via `tmux pipe-pane`;
+panes use `remain-on-exit` so a crash or early exit stays inspectable. Attach to a session any time to
+watch or steer it.
 
-Knobs: `TANGENT_LOOPS_MODEL` (`claude --model`), `TANGENT_LOOPS_LOG_DIR`. (There is no tick/sleep
-timer anymore; the sessions are persistent rather than ticking on a clock.)
+Knobs: `TANGENT_LOOPS_MODEL` (`claude --model`), `TANGENT_LOOPS_LOG_DIR`. The cadence is whatever
+`/loop` self-paces; there is no fixed tick/sleep timer.
 
 ### ⚠️ Autonomy and safety
 

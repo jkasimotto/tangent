@@ -66,11 +66,23 @@ for entry in "${STAGES[@]}"; do
   # Build the in-session command with shell-safe quoting, then let tmux run it in a fresh pty so
   # claude sees a TTY and starts interactive. remain-on-exit keeps the pane around after claude
   # quits so a crash or early exit is inspectable; pipe-pane mirrors the pane to the stage log.
-  cmd=$(printf '%q ' "$PIPELINE_DIR/loop-stage.sh" "$name" "$prompt_path" "$REPO_ROOT")
+  cmd=$(printf '%q ' "$PIPELINE_DIR/loop-stage.sh" "$name" "$REPO_ROOT")
   tmux new-session -d -s "$session" -c "$REPO_ROOT" "$cmd"
   tmux set-option -t "$session" remain-on-exit on >/dev/null   # window option: plain session target, not =exact (that resolves a window name)
   logcmd=$(printf 'cat >> %q' "$LOG_DIR/$name.log")
   tmux pipe-pane -o -t "$session" "$logcmd"
+
+  # Type the stage's `/loop <prompt>` into the REPL once claude is up. We can't pass it as the CLI
+  # arg (a leading slash command there is treated as literal text, not invoked). Wait for the input
+  # box, then paste with bracketed paste (-p) so the multi-line prompt lands as ONE input that still
+  # starts with `/loop`, then submit with Enter.
+  for _ in $(seq 1 40); do
+    tmux capture-pane -p -t "$session" 2>/dev/null | grep -q 'bypass permissions on' && break
+    sleep 0.5
+  done
+  tmux set-buffer -b "$session" -- "/loop $(cat "$prompt_path")"
+  tmux paste-buffer -p -b "$session" -t "$session"   # -p = bracketed paste so the multi-line prompt is one input
+  tmux send-keys -t "$session" Enter
   echo "started loop '$name' (tmux session $session)"
 done
 

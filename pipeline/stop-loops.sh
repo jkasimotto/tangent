@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Stops every interactive loop session started by run-loops.sh by killing its tmux session,
-# which also kills the claude process running inside it.
+# Stops the pipeline by killing every tangent-loop-* tmux session: the watcher (tangent-loop-watch)
+# and any in-flight per-feature agents (tangent-loop-<stage>-<slug>), which kills the claude process
+# running inside each. New work won't be dispatched once the watcher is gone.
 set -uo pipefail
 
 SESSION_PREFIX="tangent-loop-"

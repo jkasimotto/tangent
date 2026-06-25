@@ -74,24 +74,34 @@ Stages always resolve a dossier's directory with `path` rather than hardcoding `
 ## Running the loops
 
 ```
-TANGENT_LOOPS_YES=1 ./pipeline/run-loops.sh     start all 7 loops, one interactive tmux session each
-./pipeline/stop-loops.sh                          stop them (kills every tangent-loop-* session)
-tmux attach -t tangent-loop-scope                 attach to one stage to watch / steer it
-tmux ls | grep tangent-loop                       list the running stage sessions
+TANGENT_LOOPS_YES=1 ./pipeline/run-loops.sh     start the watcher (+ an initial dispatch sweep)
+./pipeline/stop-loops.sh                          stop the watcher + any in-flight agents
+tmux attach -t tangent-loop-watch                 watch the dispatcher
+tmux ls | grep tangent-loop                       list the watcher + in-flight per-feature agents
 ```
 
-Each stage runs as a single **interactive** claude inside its own detached tmux session
-`tangent-loop-<stage>`, launched by `run-loops.sh`. `loop-stage.sh` only starts bare interactive
-claude; `run-loops.sh` then types the stage's `/loop <prompt>` into the REPL (via bracketed paste,
-once the input box is up) so Claude Code's **`/loop` skill** drives the recurrence. A slash command
-can't be passed as the initial CLI argument (it would be treated as literal text), which is why it is
-typed in after launch. The prompts still self-gate (an empty inbox exits the tick early), then `/loop`
-self-paces the next run. Each pane is mirrored to `~/.tangent/loops/<stage>.log` via `tmux pipe-pane`;
-panes use `remain-on-exit` so a crash or early exit stays inspectable. Attach to a session any time to
-watch or steer it.
+The pipeline is **event-driven**, not a set of always-on loops. One tmux session (`tangent-loop-watch`)
+runs the watcher (`watch.mjs`), which watches `~/.tangent` with Node's recursive `fs.watch`. On any
+change (new feedback captured, a stage advancing a feature, you answering questions), it debounces
+~1.5s and runs the dispatcher (`dispatch.mjs`). A cron job calling `node pipeline/dispatch.mjs` every
+minute is a coarser polling alternative.
 
-Knobs: `TANGENT_LOOPS_MODEL` (`claude --model`), `TANGENT_LOOPS_LOG_DIR`. The cadence is whatever
-`/loop` self-paces; there is no fixed tick/sleep timer.
+The dispatcher scans every stage's inbox and, for each work item **not already in flight**, spawns a
+**fresh `claude -p` for that one feature** (`loop-stage.sh`) in its own tmux session
+`tangent-loop-<stage>-<slug>` (or `tangent-loop-feedback` for the triage batch). Fresh process per
+feature means **clean context per feature**: one feature's reasoning never leaks into the next. The
+agent does its single unit of work, advances the dossier, and exits, which ends the session; that
+status advance is itself a `~/.tangent` change, so the watcher immediately dispatches the next stage.
+
+The in-flight lock is the tmux session itself: a feature whose `tangent-loop-<stage>-<slug>` session
+already exists is skipped, so repeated dispatches are idempotent. `awaiting-answers` features are not
+re-dispatched until you write `12-answers.md` (the watcher sees it land and resumes scope). Agents are
+headless but their panes are attachable and mirrored to `~/.tangent/loops/<stage>-<slug>.log`; when an
+agent needs a human (parked on answers, blocked, or shipped something you were waiting on) it pings you
+with `terminal-notifier`.
+
+Knobs: `TANGENT_LOOPS_MODEL` (`claude --model`), `TANGENT_LOOPS_LOG_DIR`, `TANGENT_HOME`. There is no
+tick/sleep timer; agents run only when there is work.
 
 ### ⚠️ Autonomy and safety
 
@@ -108,6 +118,6 @@ why `run-loops.sh` refuses to start without `TANGENT_LOOPS_YES=1`. The brakes th
 
 ## Customizing a loop
 
-Every loop is just a markdown prompt in `pipeline/prompts/`. Edit the file; the next tick picks it up.
+Every loop is just a markdown prompt in `pipeline/prompts/`. Edit the file; the next dispatch picks it up.
 The review loop (`5-review.md`) is the one you intend to design yourself: keep its contract (inbox
 `implemented`; outbox `deploy-ready` to ship or `planned` to send back for rework).

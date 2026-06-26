@@ -34,6 +34,10 @@ Split Trees packages:
 - @tangent/trees-ui owns the Trees browser bundle and must not import old `pa` code.
 - @tangent/trees-server owns Trees local UI registration and server routes.
 
+Designs (pipeline) app:
+- @tangent/pipeline-ui owns the Designs browser bundle (read-only list-detail view of scope-stage output) and imports only @tangent/ui-tokens.
+- @tangent/pipeline-server owns Designs local UI registration and read-only `/api/pipeline/*` routes that read `~/.tangent/features`. It is a leaf vertical and introduces no cross-dependency on Usage, Trees, or Eval.
+
 Split Usage packages:
 - @tangent/usage-schema has no UI, SQLite, or provider parser dependencies.
 - @tangent/usage-core has dependency-light schemas, query helpers, in-memory projections, dataset/report types, and client construction with no UI, SQLite, or built-in provider loading.

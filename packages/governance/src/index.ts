@@ -66,6 +66,8 @@ const allowedPackageDeps: Record<string, string[]> = {
   "@tangent/trees-cli": ["@tangent/core", "@tangent/trees-schema", "@tangent/trees-core", "@tangent/trees-runtime", "@tangent/trees-mcp"],
   "@tangent/trees-ui": ["@tangent/ui-tokens"],
   "@tangent/trees-server": ["@tangent/ui-server", "@tangent/trees-ui", "@tangent/trees-schema", "@tangent/trees-runtime"],
+  "@tangent/pipeline-ui": ["@tangent/ui-tokens"],
+  "@tangent/pipeline-server": ["@tangent/ui-server", "@tangent/pipeline-ui", "@tangent/core"],
   "@tangent/agent-runtime": ["@tangent/core"],
   "@tangent/governance": ["@tangent/core", "@tangent/repo"],
   "@tangent/usage-schema": [],

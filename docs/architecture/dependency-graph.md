@@ -11,6 +11,7 @@ root CLI lazy optional products
   -> @tangent/usage/server
   -> @tangent/trees-cli/cli
   -> @tangent/trees-server
+  -> @tangent/pipeline-server
   -> @tangent/rollup/cli
   -> @tangent/search/cli
   -> @tangent/eval/cli
@@ -24,6 +25,8 @@ root CLI lazy optional products
 @tangent/trees-cli -> @tangent/core, @tangent/trees-schema, @tangent/trees-core, @tangent/trees-runtime/fs, @tangent/trees-runtime/git, @tangent/trees-runtime/terminal, @tangent/trees-runtime/agents, @tangent/trees-runtime/attention, @tangent/trees-mcp
 @tangent/trees-server -> @tangent/ui-server, @tangent/trees-ui, @tangent/trees-schema, @tangent/trees-runtime/fs
 @tangent/trees-ui -> @tangent/ui-tokens
+@tangent/pipeline-server -> @tangent/ui-server, @tangent/pipeline-ui, @tangent/core
+@tangent/pipeline-ui -> @tangent/ui-tokens
 @tangent/repo -> @tangent/core
 @tangent/agent-runtime -> @tangent/core
 @tangent/governance -> @tangent/core
@@ -56,6 +59,15 @@ Trees graph:
 @tangent/trees-ui -> @tangent/ui-tokens
 @tangent/trees-server -> @tangent/ui-server, @tangent/trees-ui, @tangent/trees-schema, @tangent/trees-runtime/fs
 ```
+
+Designs (pipeline) graph:
+
+```text
+@tangent/pipeline-ui -> @tangent/ui-tokens
+@tangent/pipeline-server -> @tangent/ui-server, @tangent/pipeline-ui, @tangent/core
+```
+
+The Designs app is a leaf vertical: it reads `~/.tangent/features` on disk and depends on no Usage, Trees, or Eval package. It is discovered dynamically via its `tangent.uiApp` manifest, so the thin root shell stays unchanged.
 
 The graph is enforced by @tangent/governance. If a package dependency changes, update this file and the lint allowlist in the same change. Usage subpaths `/schema`, `/core`, and `/query` are dependency-light entrypoints and must not load optional SQLite, server, or UI code. The Usage package-level UI dependencies are for `tangent usage ui` and the `@tangent/usage/server` subpath.
 

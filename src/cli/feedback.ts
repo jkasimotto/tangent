@@ -1,6 +1,7 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { homedir } from "node:os";
 import path from "node:path";
+
+import { tangentHome } from "@tangent/core";
 
 /**
  * The feedback log: feature requests and notes the user jots straight from the
@@ -13,7 +14,7 @@ export type FeedbackEntry = { ts: number; text: string; app?: string; route?: st
 
 /** Path to the append-only feedback log (overridable via TANGENT_HOME for tests/harnesses). */
 function feedbackPath(): string {
-  return path.join(process.env.TANGENT_HOME || homedir(), ".tangent", "feedback.jsonl");
+  return path.join(tangentHome(), ".tangent", "feedback.jsonl");
 }
 
 /** Reads all feedback entries in order; empty if the log is missing. */

@@ -1,0 +1,19 @@
+{
+  "name": "listen",
+  "version": "0.1.0",
+  "description": "Event-driven agent pipelines: listen for new work landing on disk and run a fresh agent per item through configurable stages (scope, plan, build, ship). Project-agnostic.",
+  "type": "module",
+  "bin": {
+    "listen": "./bin/listen.mjs"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "templates",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}

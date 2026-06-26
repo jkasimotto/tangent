@@ -21,6 +21,8 @@
     "packages/trees-cli",
     "packages/trees-ui",
     "packages/trees-server",
+    "packages/pipeline-ui",
+    "packages/pipeline-server",
     "packages/governance",
     "packages/usage-schema",
     "packages/usage-core",

@@ -1,4 +1,4 @@
-import type { SessionSparkline } from "@tangent/usage-core/core/sparkline";
+import type { PrecomputedSparkline } from "./types.js";
 
 // Domain DTO shapes the Usage UI adapters read from the Usage client. Kept here so index.ts stays the
 // adapter surface rather than the type catalogue. UsageDomainClient stays in index.ts because it also
@@ -53,7 +53,7 @@ export type UsageDomainSession = {
   evidence?: Array<{ eventId?: string; sourceId?: string; confidence?: string }>;
   providerFields?: Record<string, unknown>;
   /** Index-precomputed activity series; present from the SQLite client so the list skips a per-card timeline. */
-  sparkline?: SessionSparkline;
+  sparkline?: PrecomputedSparkline;
 };
 
 export type UsageDomainMessage = {

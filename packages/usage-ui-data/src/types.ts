@@ -440,6 +440,18 @@ export type UsageSparkline = {
   buckets: UsageSparklineBucket[];
 };
 
+/**
+ * Wire shape of the index-precomputed sparkline that usage-core emits on a session (`session.sparkline`).
+ * Mirrors usage-core's `SessionSparkline` so usage-ui-data can consume the precomputed series without
+ * importing the domain core (the buckets carry the raw step `kind`, which the UI maps to a flame colour).
+ */
+export type PrecomputedSparkline = {
+  durationMs: number;
+  tokensTotal?: number;
+  compactions: number;
+  buckets: Array<{ kind: string; tokenShare: number; durationShare: number }>;
+};
+
 /** A slow step or work turn surfaced for the bottleneck panel, ranked by duration. */
 export type UsageBottleneck = {
   /** Segment id when step-level, otherwise the work-turn row id. */

@@ -1,7 +1,6 @@
-import type { SessionSparkline } from "@tangent/usage-core/core/sparkline";
 import { stepSelfDuration, stepTokens } from "./format.js";
 import { timelineKind } from "./sessionTimeline.js";
-import type { UsageFlameKind, UsageSparkline, UsageSparklineBucket, UsageStep } from "./types.js";
+import type { PrecomputedSparkline, UsageFlameKind, UsageSparkline, UsageSparklineBucket, UsageStep } from "./types.js";
 
 const DEFAULT_BUCKETS = 28;
 
@@ -9,7 +8,7 @@ const DEFAULT_BUCKETS = 28;
  * Maps the index-precomputed session sparkline (raw step kinds, built at index time so the list view
  * needs no per-card timeline projection) into the UI shape by colouring each bucket's dominant kind.
  */
-export function sparklineFromPrecomputed(precomputed: SessionSparkline): UsageSparkline {
+export function sparklineFromPrecomputed(precomputed: PrecomputedSparkline): UsageSparkline {
   return {
     durationMs: precomputed.durationMs,
     tokensTotal: precomputed.tokensTotal,

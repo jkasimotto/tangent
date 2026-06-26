@@ -35,9 +35,13 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     rollupOptions: {
+      // Content-hash the shell bundles so each build produces new filenames. index.html is served
+      // `no-store` and the hashed assets `immutable`, so a reload (manual or the pwa-stale-version
+      // auto-reload) always fetches the new entry instead of a stale immutable-cached `index.js`.
       output: {
-        entryFileNames: "assets/[name].js",
-        assetFileNames: "assets/[name][extname]"
+        entryFileNames: "assets/[name]-[hash].js",
+        chunkFileNames: "assets/[name]-[hash].js",
+        assetFileNames: "assets/[name]-[hash][extname]"
       }
     }
   }

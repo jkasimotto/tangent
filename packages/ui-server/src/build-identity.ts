@@ -15,9 +15,9 @@ export type BuildIdentity = {
 /**
  * Derives a build identity from the bundle files under a shell asset root. The id is a short hash of
  * the asset manifest (each file's relative path, size, and mtime), so it changes whenever a new build
- * lands on disk, with or without a server restart, and stays stable when nothing changed. The shell's
- * own entry filenames are not content-hashed (`assets/index.js` is byte-stable across rebuilds), so the
- * manifest hash, not `index.html`'s contents, is what makes a rebuilt shell detectable.
+ * lands on disk, with or without a server restart, and stays stable when nothing changed. The shell
+ * bundles are content-hashed, so their filenames already change per build; hashing the whole manifest
+ * (name + size + mtime) detects rebuilds regardless of which files changed.
  *
  * Reads the `assets/` directory beneath `rootDir` (the vite bundle output). Throws if it cannot be read,
  * which the `/api/version` route maps to a 500 so the client fails quiet on an older or unbuilt server.

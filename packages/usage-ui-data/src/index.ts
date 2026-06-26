@@ -71,6 +71,8 @@ export type UsageSessionListItem = {
   lastActivityAt?: string;
   status?: string;
   durationMs?: number;
+  /** Cumulative tokens the session consumed (from metrics.tokens.total), for the list card total. */
+  tokensTotal?: number;
   /** Peak context-window size the session reached, not a cumulative token sum. */
   peakContext?: number;
   toolCalls?: number;
@@ -247,6 +249,7 @@ export function createUsageUiClient(usage: UsageDomainClient): UsageUiClient {
           lastActivityAt: session.lastActivityAt,
           status: session.status,
           durationMs: session.metrics.durationMs,
+          tokensTotal: session.metrics.tokens?.total,
           peakContext: peakContextTokens(session.metrics.tokens),
           toolCalls: session.counts.toolCalls,
           filesTouched: session.counts.filesTouched,

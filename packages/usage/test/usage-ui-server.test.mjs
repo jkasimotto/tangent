@@ -58,7 +58,7 @@ function fakeUsageClient() {
     models: ["gpt"],
     startedAt: "2026-06-15T10:00:00.000Z",
     endedAt: "2026-06-15T10:01:00.000Z",
-    metrics: { durationMs: 60000, durationConfidence: "derived", tokens: { total: 1200, confidence: "provider-reported" } },
+    metrics: { durationMs: 60000, durationConfidence: "derived", tokens: { total: 1200, peakContext: 1200, confidence: "provider-reported" } },
     counts: { toolCalls: 3, filesTouched: 2, userMessages: 1, assistantMessages: 1 },
     availability: { notes: [] }
   };

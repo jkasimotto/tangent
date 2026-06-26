@@ -122,7 +122,11 @@ type LintContext = {
 async function lintAgentDocs(ctx: LintContext): Promise<GovernanceFinding[]> {
   const findings: GovernanceFinding[] = [];
   const requiredAgentDirs = new Map<string, string[]>();
+  // `.claude/worktrees` is the gitignored mount point for throwaway dev worktrees (full checkouts);
+  // it is not source to document, so do not require agent docs inside it.
+  const worktreeMount = `${path.sep}.claude${path.sep}worktrees`;
   for (const dir of await walkDirs(ctx.root)) {
+    if (dir.includes(worktreeMount)) continue;
     requiredAgentDirs.set(dir, [
       "Create AGENTS.md in this folder with purpose, local rules, and read-next links.",
       "Add a sibling CLAUDE.md symlink that points to AGENTS.md."

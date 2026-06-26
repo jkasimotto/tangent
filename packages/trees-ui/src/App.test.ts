@@ -43,7 +43,8 @@ describe("trees svelte app", () => {
     render(App, { props: { client, initialView: "trees" } });
 
     await screen.findByRole("treeitem", { name: /foo/i });
-    await fireEvent.click(screen.getByRole("button", { name: /bar/i }));
+    await fireEvent.click(screen.getByRole("button", { name: /Expand foo/i }));
+    await fireEvent.click(await screen.findByRole("button", { name: /bar/i }));
     await fireEvent.change(screen.getByLabelText("Project"), { target: { value: "p1" } });
     await fireEvent.input(screen.getByLabelText("Branch"), { target: { value: "feature/trees-ui" } });
     await fireEvent.input(screen.getByLabelText("Worktree"), { target: { value: "/tmp/trees-ui" } });
@@ -85,7 +86,8 @@ describe("trees svelte app", () => {
     render(App, { props: { client, initialView: "trees" } });
 
     await screen.findByRole("treeitem", { name: /foo/i });
-    await fireEvent.click(screen.getByRole("button", { name: /bar/i }));
+    await fireEvent.click(screen.getByRole("button", { name: /Expand foo/i }));
+    await fireEvent.click(await screen.findByRole("button", { name: /bar/i }));
     await fireEvent.click(screen.getByRole("button", { name: "Clear metadata" }));
     await addPath("foo/bar/baz");
 

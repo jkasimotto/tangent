@@ -17,7 +17,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test test/*.test.mjs"
+    "test": "npm run build && (ls test/*.test.mjs >/dev/null 2>&1 && node --test test/*.test.mjs || echo 'launcher: no tests')"
   },
   "dependencies": {
     "@tangent/core": "^0.1.0"

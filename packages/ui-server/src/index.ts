@@ -232,9 +232,23 @@ async function sendStatic(response: http.ServerResponse, pathname: string, asset
   }
   response.writeHead(200, {
     "content-type": contentType(file),
-    "cache-control": file.endsWith("index.html") ? "no-store" : "public, max-age=31536000, immutable"
+    "cache-control": cacheControlFor(file)
   });
   createReadStream(file).pipe(response);
+}
+
+/**
+ * Cache policy by filename. index.html must never cache (it points at the current bundles). Only
+ * content-hashed files (e.g. `index-CfM7sdH4.js`) are safe to cache `immutable`, because a new build
+ * gives them a new name. Stable-named files like the embedded apps' `embedded.js` / `embedded.css`
+ * MUST revalidate (`no-cache`): their name never changes, so serving them `immutable` would pin the
+ * browser to a stale build forever (the cause of the persistently stale PWA backdrop).
+ */
+function cacheControlFor(file: string): string {
+  const name = path.basename(file);
+  if (name === "index.html") return "no-store";
+  if (/-[A-Za-z0-9_]{8,}\.[a-z0-9]+$/i.test(name)) return "public, max-age=31536000, immutable";
+  return "no-cache";
 }
 
 /** Supports the send route response helper. */

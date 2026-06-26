@@ -423,8 +423,21 @@ export async function runTangentUiCommand(argv: string[]): Promise<void> {
     {
       method: "GET",
       pattern: /^\/api\/ui\/apps$/,
-      /** Serves the list of available local UI apps. */
-      handle: () => ({ json: { apps, initialApp } })
+      /** Serves the list of available local UI apps. The embedded app entries (embedded.js/.css) have
+          stable filenames, so stamp each with the current build id (`?v=`) so a new build is a new URL
+          the browser must refetch, instead of an immutable-cached stale bundle. */
+      handle: () => {
+        let version = "";
+        try { version = readBuildIdentity(tangentUiAssets.rootDir).buildId; } catch { /* unbuilt server */ }
+        /** Appends the build id as a `?v=` query so a new build is a new URL the browser must refetch. */
+        const stamp = (assetPath: string): string => version ? `${assetPath}${assetPath.includes("?") ? "&" : "?"}v=${version}` : assetPath;
+        const versionedApps = apps.map((app) => ({
+          ...app,
+          modulePath: stamp(app.modulePath),
+          stylePaths: app.stylePaths?.map(stamp)
+        }));
+        return { json: { apps: versionedApps, initialApp } };
+      }
     },
     {
       pattern: /^\/api\/focus\//,

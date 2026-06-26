@@ -689,7 +689,7 @@
             <p class="bet-line">{betResult(justDone)}</p>
           </div>
         {:else}
-          <div class="focus-empty"><strong>Nothing in focus.</strong><span>Start a task above to begin.</span></div>
+          <div class="focus-empty"><strong>NOTHING IN FOCUS</strong><span>Start a task above to begin.</span></div>
         {/if}
       </section>
 
@@ -1014,7 +1014,7 @@
   .composer-hint { font-size: 11px; opacity: 0.5; font-variant-numeric: tabular-nums; }
 
   .focus-empty, .bet-result { display: flex; flex-direction: column; gap: 8px; padding: 24px 0; }
-  .focus-empty strong { font-size: 20px; }
+  .focus-empty strong { font-size: 36px; font-weight: 800; color: var(--text, #14231b); letter-spacing: 0.02em; }
   .focus-empty span { opacity: 0.6; }
   .bet-result h1 { font-size: 26px; margin: 6px 0; }
   .bet-line { font-size: 17px; }

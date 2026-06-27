@@ -147,8 +147,8 @@
       ]);
       runs = list.runs;
       specs = specList.specs;
-      selectedSpecPath = specs[0]?.path || "";
       selectedRunId = selection.runId && runs.some((run) => run.id === selection.runId) ? selection.runId : runs[0]?.id || "";
+      selectedSpecPath = specPathForRun(selectedRunId) ?? (specs[0]?.path || "");
       error = "";
     } catch (caught) {
       error = friendlyError(caught);
@@ -553,8 +553,19 @@
     return crypto.randomUUID ? crypto.randomUUID() : `n_${Date.now()}_${Math.round(Math.random() * 1e9)}`;
   }
 
+  /**
+   * The spec a run was launched from, when that spec is still known to the spec picker. Lets run
+   * selection drive the "Eval to run" picker and the prompt editor, so they describe the run being
+   * viewed rather than a stale leftover spec.
+   */
+  function specPathForRun(runId: string): string | undefined {
+    const runSpecPath = runs.find((run) => run.id === runId)?.specPath;
+    return runSpecPath && specs.some((spec) => spec.path === runSpecPath) ? runSpecPath : undefined;
+  }
+
   function selectRun(runId: string): void {
     selectedRunId = runId;
+    selectedSpecPath = specPathForRun(runId) ?? selectedSpecPath;
     runLoadKey = "";
     compareLoadKey = "";
     diffLoadKey = "";

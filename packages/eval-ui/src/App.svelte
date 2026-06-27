@@ -644,6 +644,16 @@
     expandedUnchanged = expandedUnchanged;
   }
 
+  // Each artifact section (Prompts / Context files / Changed files) collapses to just its header so the
+  // list stays scannable when one kind has many files.
+  let collapsedSections = new Set<EvalCompareArtifactKind>();
+
+  function toggleSection(kind: EvalCompareArtifactKind): void {
+    if (collapsedSections.has(kind)) collapsedSections.delete(kind);
+    else collapsedSections.add(kind);
+    collapsedSections = collapsedSections;
+  }
+
   type DiffSegment =
     | { kind: "lines"; lines: EvalDiffLineView[] }
     | { kind: "gap"; index: number; count: number; lines: EvalDiffLineView[] };
@@ -944,8 +954,15 @@
             {#each artifactSections as section}
               {@const split = splitArtifacts(section.kind)}
               <section>
-                <h3>{section.title}</h3>
-                {#if split.changed.length === 0 && split.same.length === 0}
+                <h3>
+                  <button type="button" class="section-toggle" aria-expanded={!collapsedSections.has(section.kind)} on:click={() => toggleSection(section.kind)}>
+                    <span class="section-caret" aria-hidden="true">{collapsedSections.has(section.kind) ? "▸" : "▾"}</span>
+                    {section.title}
+                  </button>
+                </h3>
+                {#if collapsedSections.has(section.kind)}
+                  <!-- collapsed: header only -->
+                {:else if split.changed.length === 0 && split.same.length === 0}
                   <p>{section.empty}</p>
                 {:else}
                   {#each split.changed as artifact}

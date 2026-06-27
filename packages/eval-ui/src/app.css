@@ -165,6 +165,31 @@ button {
   text-transform: uppercase;
 }
 
+.artifact-list h3 .section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+}
+
+.artifact-list h3 .section-toggle:hover {
+  color: var(--text);
+}
+
+.section-caret {
+  flex: 0 0 auto;
+  width: 10px;
+  font-size: 10px;
+}
+
 .artifact-list button {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -373,7 +398,7 @@ button {
 }
 
 .line-no {
-  color: #8b978f;
+  color: #566057;
   text-align: right;
   background: #f3f5f1;
   border-right: 1px solid #e1e6df;
@@ -1068,7 +1093,7 @@ button {
   border: 0;
   background: transparent;
   font: inherit;
-  color: var(--muted);
+  color: #566057;
 }
 .line-no-pick:hover {
   color: var(--accent);

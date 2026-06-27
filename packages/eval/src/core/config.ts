@@ -84,7 +84,8 @@ export function normalizeAgent(value: Partial<EvalAgentConfig> | undefined): Eva
       model: value.model || "gpt-5.4",
       profile: value.profile,
       sandbox: value.sandbox || "workspace-write",
-      timeoutMs: value.timeoutMs
+      timeoutMs: value.timeoutMs,
+      env: value.env
     };
   }
   if (value.kind === "claude-cli") {
@@ -94,7 +95,8 @@ export function normalizeAgent(value: Partial<EvalAgentConfig> | undefined): Eva
       model: value.model || "sonnet",
       permissionMode: value.permissionMode,
       maxTurns: value.maxTurns,
-      timeoutMs: value.timeoutMs
+      timeoutMs: value.timeoutMs,
+      env: value.env
     };
   }
   throw new Error(`Unknown agent kind: ${(value as { kind?: string }).kind}`);

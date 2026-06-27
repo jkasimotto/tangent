@@ -302,6 +302,40 @@ test("run eval records failures after sibling variants finish", async () => {
   assert.equal(await readFile(path.join(coordinationDir, "pass.done"), "utf8"), "done\n");
 });
 
+test("claude-cli agent env selects the config home for the spawned process", async () => {
+  const repo = await createRepo();
+  const evalHome = await mkdtemp(path.join(tmpdir(), "tangent-eval-env-home-"));
+  process.env.TANGENT_EVAL_HOME = evalHome;
+
+  await writeFile(path.join(repo, "index.ts"), "export const value = 1;\n", "utf8");
+  await git(repo, "add", ".");
+  await git(repo, "commit", "-m", "base");
+
+  const probeDir = await mkdtemp(path.join(tmpdir(), "tangent-eval-probe-"));
+  const probe = path.join(probeDir, "config-dir");
+  const command = await fakeClaudeCommand(probe);
+  const configHome = "/tmp/claude-otto-home";
+
+  const evalDir = path.join(repo, "evals", "claude-env");
+  await mkdir(path.join(evalDir, "prompts"), { recursive: true });
+  await writeFile(path.join(evalDir, "prompts", "task.md"), "Change the value.\n", "utf8");
+  const specPath = path.join(evalDir, "eval.json");
+  await writeFile(specPath, JSON.stringify({
+    schema: "eval.spec.v1",
+    name: "claude-env",
+    defaults: {
+      repo: { path: repo, ref: "HEAD" },
+      cwd: ".",
+      agent: { kind: "claude-cli", command, model: "fake", permissionMode: "bypassPermissions", env: { CLAUDE_CONFIG_DIR: configHome }, timeoutMs: 10000 },
+      phases: ["implement"]
+    },
+    cases: [{ id: "case-a", prompt: "prompts/task.md", variants: [{ id: "repo", context: { mode: "repo" } }] }]
+  }, null, 2), "utf8");
+
+  await runEval(specPath);
+  assert.equal((await readFile(probe, "utf8")).trim(), configHome);
+});
+
 /** Creates a temporary git repository for eval tests. */
 async function createRepo(repoPath) {
   const repo = repoPath || await mkdtemp(path.join(tmpdir(), "tangent-eval-repo-"));
@@ -404,6 +438,20 @@ fi
 coord=${shellQuote(coordinationDir)}
 printf 'done\\n' > "$coord/$TANGENT_EVAL_VARIANT_ID.done"
 [ -n "$out" ] && printf 'fake final %s\\n' "$TANGENT_EVAL_VARIANT_ID" > "$out"
+exit 0
+`, "utf8");
+  await chmod(file, 0o755);
+  return file;
+}
+
+/** Fake claude-cli that records CLAUDE_CONFIG_DIR and emits a stream-json result line. */
+async function fakeClaudeCommand(probeFile) {
+  const dir = await mkdtemp(path.join(tmpdir(), "tangent-fake-claude-"));
+  const file = path.join(dir, "fake-claude.sh");
+  await writeFile(file, `#!/bin/sh
+cat >/dev/null
+printf '%s\\n' "$CLAUDE_CONFIG_DIR" > ${shellQuote(probeFile)}
+printf '{"type":"result","result":"ok","usage":{"output_tokens":1,"input_tokens":1}}\\n'
 exit 0
 `, "utf8");
   await chmod(file, 0o755);

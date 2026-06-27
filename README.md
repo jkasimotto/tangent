@@ -1,73 +1,77 @@
 # tangent
 
-`tangent` is an npm workspace for local coding-agent conversation tools.
+`tangent` is a collection of local applications for improving how you use LLMs and coding agents. They are small, focused tools that sit tangential to agentic coding: they watch what your agents do, measure it, and help you spend less to get more.
 
-Packages:
+The name is a small joke. A tangent line touches a curve at a single point, and at a minimum that point is where the cost is lowest. These tools are about finding the lowest cost. They are also, literally, tangents to the main work of coding.
 
-- `@tangent/core`: shared command metadata, help, and shell completion primitives.
-- `@tangent/usage` / `tangent-usage`: local conversation telemetry and human-readable activity views for Claude Code and Codex sessions.
-- `@tangent/search` / `tangent-search`: structural repository search for Dart and TypeScript/JavaScript.
-- `@tangent/rollup` / `tangent-rollup`: private rollup engineering notes generated from Usage conversations.
-- `@tangent/eval` / `tangent-eval`: local coding-agent eval preparation, execution, and reports.
+## The apps
 
-## Quick start
+Two apps are proven and ship by default:
+
+- **Usage** reads your Claude Code and Codex transcripts and turns them into readable activity views: what ran, how long, how much it cost. Data is indexed locally under `~/.tangent/usage`.
+- **Eval** prepares, runs, and reports local coding-agent evals so you can compare agents and prompts on real tasks.
+
+Everything runs locally against your own data. Nothing is uploaded.
+
+The default install gives you Usage and Eval, and `tangent ui` opens exactly those two.
+
+## Install
 
 ```bash
-npm install
-npm run build
+npm install -g tangent
 
-tangent setup --provider codex --usage --rollup --search --summary-provider codex-cli --model gpt-5.4-mini --yes
-tangent status
+tangent ui          # opens Usage and Eval
+```
+
+Quick CLI entry points without the UI:
+
+```bash
 tangent usage today
-tangent usage transcript codex:019ea3ad
-
-tangent rollup status .
-tangent rollup today
-tangent rollup yesterday
-tangent rollup 2026-06-07
-tangent rollup 20260601-20260610
-
-tangent search index
-tangent search "horizontal tension"
-tangent search symbol calculateHorizontalTension
-tangent eval quick --prompt prompts/task.md --context empty --context repo
+tangent eval ui
 ```
 
-`usage` is the human-facing telemetry surface. Raw telemetry API/debug views require explicit JSON/export commands.
+## Add more apps (opt-in)
 
-`usage` reads Claude Code and Codex native transcripts by default and indexes normalized activity under `~/.tangent/usage`. Human commands default to readable text; raw provenance and event streams live under `usage export` and `usage events --json`. Hook capture is retired, but old hook-sourced JSONL remains readable through explicit legacy source options.
+`tangent ui` shows whichever app packages are installed, so adding an app is just installing it. These are available but not part of the default experience:
 
-`rollup` stores private generated notes, cached digests, and processing state under `~/.tangent/rollup/repos/<repo-name>` by default. `tangent rollup today` writes `notes/YYYY-MM-DD.md`; compact ranges such as `tangent rollup 20260601-20260610` write one combined note at `notes/YYYY-MM-DD--YYYY-MM-DD.md`. Repo-local output is opt-in:
+- **Trees** (experimental, not design-validated yet): agent run trees in the UI.
+  ```bash
+  npm install -g @tangent/trees-server @tangent/trees-cli
+  ```
+- **Rollup**: private engineering notes generated from your Usage conversations.
+  ```bash
+  npm install -g @tangent/rollup
+  ```
+- **Search**: structural repository search for Dart and TypeScript/JavaScript.
+  ```bash
+  npm install -g @tangent/search
+  ```
 
-`search` stores its derived SQLite index under `~/.tangent/search/repos/<repo-name>-<hash>` by default. It is zero-config: run `tangent search index` in a repo, then query with `tangent search "query"`. Private overrides are created with:
+After installing one of these, run `tangent ui` again and the new app appears. Trees is included so you can try it, but its design is still in flux; treat it as a preview.
+
+## Standalone installs
+
+The monorepo is the single development home, but each app package is installable on its own with a collision-resistant binary name:
 
 ```bash
-tangent search init .
-tangent search config set search.maxResults 20
+npm install -g @tangent/usage   # tangent-usage today
+npm install -g @tangent/search  # tangent-search index
+npm install -g @tangent/rollup  # tangent-rollup today
+npm install -g @tangent/eval    # tangent-eval ui
 ```
 
-Repo-shared defaults are explicit and should contain only team-safe indexing/search settings:
+The full-suite `tangent` package keeps the shorter root subcommands: `tangent usage`, `tangent eval`, `tangent search`, `tangent rollup`.
 
-```bash
-tangent search init . --scope repo-shared --language typescript
-```
+## Where data lives
 
-```bash
-tangent rollup init . --output repo-local-private
-```
+- Usage indexes normalized activity under `~/.tangent/usage`. Human commands default to readable text; raw provenance and event streams live under `tangent usage export` and `tangent usage events --json`.
+- Rollup stores generated notes and processing state under `~/.tangent/rollup/repos/<repo-name>`. Repo-local output is opt-in:
+  ```bash
+  tangent rollup init . --output repo-local-private
+  ```
+- Search stores its SQLite index under `~/.tangent/search/repos/<repo-name>-<hash>`. It is zero-config: run `tangent search index` in a repo, then `tangent search "query"`.
 
-Repo-local `rollup` output is written to `.tangent/rollup/` and excluded through `.git/info/exclude`.
-
-Custom locations are supported:
-
-```bash
-tangent rollup init . --base-dir ~/rollup-agent-notes/otto-tangent
-tangent rollup config set output.baseDir ~/rollup-agent-notes/otto-tangent
-```
-
-Rollup runner failures are summarized in the terminal and written to `artifacts/failures/<date>/*.log`; use `--verbose` or `--json` when debugging.
-
-Shell completion is generated from the shared command registry:
+## Shell completion
 
 ```bash
 tangent completion zsh > ~/.zsh/completions/_tangent
@@ -75,24 +79,26 @@ tangent completion bash > ~/.tangent-completion.bash
 tangent completion fish > ~/.config/fish/completions/tangent.fish
 ```
 
-## Standalone installs
-
-The monorepo is the single development home, but each app package is installable on its own:
+## Develop from source
 
 ```bash
-npm install @tangent/usage
-npm install @tangent/search
-npm install @tangent/rollup
-npm install @tangent/eval
+git clone <repo-url>
+cd tangent
+npm install
+npm run build
+
+tangent ui
 ```
 
-Standalone binaries use collision-resistant names:
+Validate changes with `npm run check`, `npm run test`, `npm run governance`, and `npm run build`. See `ARCHITECTURE.md` and `docs/` for package boundaries and design notes.
+
+## Release
+
+Maintainers cut a release by bumping every package in lockstep and pushing a tag:
 
 ```bash
-tangent-usage today
-tangent-search index
-tangent-rollup today
-tangent-eval ui
+node scripts/release.mjs version minor   # bumps all packages, rewrites cross-refs, commits, tags vX.Y.Z
+git push --follow-tags
 ```
 
-The full-suite package keeps the shorter root subcommands through `tangent usage`, `tangent search`, `tangent rollup`, and `tangent eval`.
+The `release` workflow publishes the public packages to npm in dependency order on tag push. `node scripts/release.mjs check` verifies all versions and internal ranges are consistent, and `node scripts/release.mjs publish --dry-run` previews what would ship.

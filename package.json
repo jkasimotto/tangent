@@ -49,31 +49,29 @@
     "test": "npm run test --workspaces --if-present && node --test test/*.test.mjs",
     "test:install": "node scripts/smoke-install-packages.mjs",
     "test:install:all-managers": "node scripts/smoke-install-packages.mjs --all-package-managers",
+    "release:check": "node scripts/release.mjs check",
+    "release:publish": "node scripts/release.mjs publish",
     "clean": "rm -rf dist packages/*/dist"
   },
   "dependencies": {
     "@tangent/core": "^0.1.0",
     "@tangent/launcher": "^0.1.0",
     "@tangent/ui-server": "^0.1.0",
-    "@tangent/tangent-ui": "^0.1.0"
+    "@tangent/tangent-ui": "^0.1.0",
+    "@tangent/usage": "^0.1.0",
+    "@tangent/eval": "^0.1.0"
   },
   "peerDependencies": {
-    "@tangent/eval": "^0.1.0",
-    "@tangent/governance": "^0.1.0",
     "@tangent/rollup": "^0.1.0",
     "@tangent/search": "^0.1.0",
     "@tangent/trees-cli": "^0.1.0",
-    "@tangent/trees-server": "^0.1.0",
-    "@tangent/usage": "^0.1.0"
+    "@tangent/trees-server": "^0.1.0"
   },
   "peerDependenciesMeta": {
-    "@tangent/eval": { "optional": true },
-    "@tangent/governance": { "optional": true },
     "@tangent/rollup": { "optional": true },
     "@tangent/search": { "optional": true },
     "@tangent/trees-cli": { "optional": true },
-    "@tangent/trees-server": { "optional": true },
-    "@tangent/usage": { "optional": true }
+    "@tangent/trees-server": { "optional": true }
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.6.3",
@@ -89,6 +87,9 @@
     "dist",
     "README.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "license": "MIT",
   "engines": {
     "node": ">=24"

@@ -1,0 +1,30 @@
+name: release
+
+# Publishes the tangent packages to npm when a vX.Y.Z tag is pushed.
+# The tag is produced by `node scripts/release.mjs version <ver>`, so the published
+# commit is exactly the tagged, version-consistent tree.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write # OIDC for npm provenance / trusted publishing
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      - run: npm ci
+      - run: npm run build
+      - run: npm run release:check
+      - run: npm test
+      - run: node scripts/release.mjs publish --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

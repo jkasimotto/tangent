@@ -11,6 +11,7 @@ const packages = {
   core: "packages/core",
   repo: "packages/repo",
   "agent-runtime": "packages/agent-runtime",
+  launcher: "packages/launcher",
   "ui-tokens": "packages/ui-tokens",
   "ui-server": "packages/ui-server",
   "tangent-ui": "packages/tangent-ui",
@@ -38,6 +39,7 @@ const packageNames = {
   core: "@tangent/core",
   repo: "@tangent/repo",
   "agent-runtime": "@tangent/agent-runtime",
+  launcher: "@tangent/launcher",
   "ui-tokens": "@tangent/ui-tokens",
   "ui-server": "@tangent/ui-server",
   "tangent-ui": "@tangent/tangent-ui",
@@ -60,6 +62,17 @@ const packageNames = {
   eval: "@tangent/eval",
   tangent: "tangent"
 };
+
+// Tarball closure for a default `tangent` install: the shell plus the usage and eval
+// apps that the root package now hard-depends on.
+const DEFAULT_TANGENT = [
+  "core", "repo", "agent-runtime", "launcher", "ui-tokens", "ui-server", "tangent-ui",
+  "usage-schema", "usage-core", "usage-providers", "usage-index-sqlite", "usage-ui-data", "usage-ui", "usage",
+  "eval-ui", "eval"
+];
+
+// Tarball closure for the opt-in trees app.
+const TREES = ["trees-schema", "trees-core", "trees-runtime", "trees-ui", "trees-server"];
 
 const smokeTargets = [
   {
@@ -91,43 +104,27 @@ const smokeTargets = [
     absentPackages: ["usage", "usage-ui", "usage-ui-data", "search", "rollup"]
   },
   {
-    name: "tangent",
-    tarballs: ["core", "ui-tokens", "ui-server", "tangent-ui", "tangent"],
+    // Default `npm install -g tangent`: the root package hard-depends on usage and eval,
+    // so a plain install must surface exactly those two apps and nothing else.
+    name: "tangent (default: usage + eval)",
+    tarballs: [...DEFAULT_TANGENT, "tangent"],
+    // usage declares better-sqlite3 as an optional dependency; npm pulls it for a real
+    // registry install but not for these file: tarballs, so supply it explicitly.
+    registryDeps: { "better-sqlite3": "^11.10.0" },
     bin: "tangent",
     smokeArgs: ["ui", "--list-apps", "--json"],
-    expectedStdout: "\"apps\": []",
-    absentPackages: ["usage", "search", "rollup", "eval", "trees-cli"]
+    expectedStdouts: ["\"id\": \"usage\"", "\"id\": \"eval\""],
+    absentPackages: ["search", "rollup", "trees-server", "trees-cli"]
   },
   {
-    name: "tangent + @tangent/usage",
-    tarballs: ["core", "repo", "usage-schema", "usage-core", "usage-providers", "usage-index-sqlite", "ui-tokens", "ui-server", "tangent-ui", "usage-ui-data", "usage-ui", "usage", "tangent"],
+    // Opt-in trees: installing the trees server on top of the default adds the Trees app
+    // while usage and eval remain.
+    name: "tangent + opt-in trees-server",
+    tarballs: [...DEFAULT_TANGENT, ...TREES, "tangent"],
+    registryDeps: { "better-sqlite3": "^11.10.0" },
     bin: "tangent",
     smokeArgs: ["ui", "--list-apps", "--json"],
-    expectedStdout: "\"id\": \"usage\"",
-    absentPackages: ["search", "rollup", "eval", "trees-cli", "trees-server"]
-  },
-  {
-    name: "tangent + @tangent/trees-server",
-    tarballs: ["core", "repo", "agent-runtime", "ui-tokens", "ui-server", "tangent-ui", "trees-schema", "trees-core", "trees-runtime", "trees-ui", "trees-server", "tangent"],
-    bin: "tangent",
-    smokeArgs: ["ui", "--list-apps", "--json"],
-    expectedStdout: "\"id\": \"trees\"",
-    absentPackages: ["usage", "search", "rollup", "eval", "trees-cli"]
-  },
-  {
-    name: "tangent + @tangent/eval",
-    tarballs: ["core", "repo", "agent-runtime", "usage-schema", "usage-core", "usage-providers", "usage-index-sqlite", "ui-tokens", "ui-server", "tangent-ui", "eval-ui", "eval", "tangent"],
-    bin: "tangent",
-    smokeArgs: ["ui", "--list-apps", "--json"],
-    expectedStdout: "\"id\": \"eval\"",
-    absentPackages: ["usage", "usage-ui", "usage-ui-data", "search", "rollup", "trees-cli", "trees-server"]
-  },
-  {
-    name: "tangent + usage + trees-server + eval",
-    tarballs: ["core", "repo", "agent-runtime", "usage-schema", "usage-core", "usage-providers", "usage-index-sqlite", "ui-tokens", "ui-server", "tangent-ui", "usage-ui-data", "usage-ui", "usage", "trees-schema", "trees-core", "trees-runtime", "trees-ui", "trees-server", "eval-ui", "eval", "tangent"],
-    bin: "tangent",
-    smokeArgs: ["ui", "--list-apps", "--json"],
-    expectedStdout: "\"id\": \"trees\"",
+    expectedStdouts: ["\"id\": \"usage\"", "\"id\": \"eval\"", "\"id\": \"trees\""],
     absentPackages: ["search", "rollup", "trees-cli"]
   }
 ];
@@ -171,8 +168,11 @@ function packPackages(packDir) {
 /** Installs and verifies each smoke target with one package manager. */
 function smokeWithManager(manager, tarballs, targets) {
   for (const target of targets) {
-    const projectDir = mkdtempSync(path.join(tmp, `${manager}-${target.name.replace(/[@/]/g, "-")}-`));
-    writeSmokeManifest(projectDir, target.tarballs, tarballs);
+    // Keep the dir name free of spaces and shell-special characters; native prebuild
+    // tooling (better-sqlite3) mishandles paths containing them and falls back to source builds.
+    const safeName = target.name.replace(/[^a-z0-9]+/gi, "-");
+    const projectDir = mkdtempSync(path.join(tmp, `${manager}-${safeName}-`));
+    writeSmokeManifest(projectDir, target.tarballs, tarballs, target.registryDeps);
     installTarballs(manager, projectDir);
     if (target.importName) {
       execFileSync("node", ["--input-type=module", "-e", `await import(${JSON.stringify(target.importName)});`], {
@@ -185,7 +185,9 @@ function smokeWithManager(manager, tarballs, targets) {
       cwd: projectDir,
       encoding: "utf8"
     });
-    if (target.expectedStdout && !output.includes(target.expectedStdout)) throw new Error(`${target.name} smoke output did not include ${target.expectedStdout}`);
+    for (const expected of [...(target.expectedStdout ? [target.expectedStdout] : []), ...(target.expectedStdouts || [])]) {
+      if (!output.includes(expected)) throw new Error(`${target.name} smoke output did not include ${expected}`);
+    }
     for (const packageName of target.absentPackages) {
       const installed = path.join(projectDir, "node_modules", "@tangent", packageName);
       if (existsSync(installed)) {
@@ -197,13 +199,14 @@ function smokeWithManager(manager, tarballs, targets) {
 }
 
 /** Writes the temporary package manifest for one smoke target. */
-function writeSmokeManifest(projectDir, packageKeys, tarballs) {
-  const dependencies = Object.fromEntries(packageKeys.map((key) => [packageNames[key], `file:${tarballs[key]}`]));
+function writeSmokeManifest(projectDir, packageKeys, tarballs, registryDeps = {}) {
+  const tarballDeps = Object.fromEntries(packageKeys.map((key) => [packageNames[key], `file:${tarballs[key]}`]));
+  const dependencies = { ...tarballDeps, ...registryDeps };
   writeFileSync(path.join(projectDir, "package.json"), JSON.stringify({
     private: true,
     type: "module",
     dependencies,
-    resolutions: dependencies
+    resolutions: tarballDeps
   }, null, 2), "utf8");
 }
 

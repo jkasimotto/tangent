@@ -4,12 +4,14 @@ import path from "node:path";
 
 import { currentCommit, git, gitText, statusPorcelain } from "./git.js";
 
+/** Creates (or resets) a git worktree at the given path on a branch pointing at a commit. */
 export async function worktreeAdd(args: { sourceRepo: string; branch: string; worktree: string; commit: string }): Promise<void> {
   await rm(args.worktree, { recursive: true, force: true });
   await mkdir(path.dirname(args.worktree), { recursive: true });
   await git(args.sourceRepo, ["worktree", "add", "-B", args.branch, args.worktree, args.commit]);
 }
 
+/** Stages everything and commits it, returning the resulting commit (or the current one when nothing changed). */
 export async function commitAll(repo: string, message: string, options: { allowEmpty?: boolean } = {}): Promise<string> {
   await git(repo, ["add", "-A"]);
   const status = await statusPorcelain(repo);
@@ -19,7 +21,11 @@ export async function commitAll(repo: string, message: string, options: { allowE
     "user.name=Tangent Eval",
     "-c",
     "user.email=tangent-eval@example.invalid",
-    "commit"
+    "commit",
+    // These commits snapshot an isolated throwaway worktree (eval context/plan/implement). Running the
+    // target repo's commit hooks is wrong here and routinely fails: a freshly checked-out worktree lacks
+    // installed dev deps, so a lint/test pre-commit hook aborts the snapshot and leaves the run empty.
+    "--no-verify"
   ];
   if (options.allowEmpty) args.push("--allow-empty");
   args.push("-m", message);
@@ -27,6 +33,7 @@ export async function commitAll(repo: string, message: string, options: { allowE
   return currentCommit(repo);
 }
 
+/** Builds a commit from in-memory file contents via a temporary index and points a ref at it, without touching the worktree. */
 export async function createSyntheticCommit(args: {
   repo: string;
   ref: string;
@@ -50,6 +57,7 @@ export async function createSyntheticCommit(args: {
   }
 }
 
+/** Removes a git worktree, falling back to a forced directory delete if git refuses. */
 export async function removeGitWorktree(repo: string, worktree: string): Promise<void> {
   await git(repo, ["worktree", "remove", "--force", worktree]).catch(async () => {
     await rm(worktree, { recursive: true, force: true });

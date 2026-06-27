@@ -30,6 +30,28 @@
   let expandedToolIds: string[] = [];
   let zoom = 1;
 
+  // Correction-metrics rollup: select conversations in the gallery, then have a cheap judge (haiku)
+  // count how many times the user had to correct the agent. Results render in an overlay panel.
+  type MetricCorrection = { quote: string; why: string };
+  type ConversationMetric = {
+    conversationId: string;
+    title?: string;
+    status: "analyzed" | "cached" | "failed";
+    correctionCount: number;
+    corrections: MetricCorrection[];
+    firstPass: boolean;
+    error?: string;
+  };
+  type MetricsRollup = {
+    perConversation: ConversationMetric[];
+    aggregate: { conversationsAnalyzed: number; totalCorrections: number; firstPassRate: number };
+  };
+  let selectedIds: string[] = [];
+  let metricsLoading = false;
+  let metricsResult: MetricsRollup | undefined;
+  let metricsError = "";
+  let expandedMetricIds: string[] = [];
+
   const ZOOM_LEVELS = [0.25, 0.5, 1, 2, 4];
   const LIVE_REFRESH_MS = 2000; // poll cadence for live transcript updates; the server watches files and rebuilds
   let sessionsSignature = "";
@@ -146,6 +168,54 @@
 
   function backToBrowse(): void {
     mode = "browse";
+  }
+
+  /** Toggles a conversation's membership in the metrics selection. */
+  function toggleSelect(id: string): void {
+    selectedIds = selectedIds.includes(id) ? selectedIds.filter((value) => value !== id) : [...selectedIds, id];
+  }
+
+  /** Clears the selection and any rendered metrics. */
+  function clearMetrics(): void {
+    selectedIds = [];
+    metricsResult = undefined;
+    metricsError = "";
+    expandedMetricIds = [];
+  }
+
+  /** Rolls up correction metrics for the selected conversations via the shell's metrics route. */
+  async function rollupMetrics(): Promise<void> {
+    if (!selectedIds.length || metricsLoading) return;
+    metricsLoading = true;
+    metricsError = "";
+    try {
+      const response = await fetch("/api/metrics/rollup", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ conversationIds: selectedIds })
+      });
+      if (!response.ok) throw new Error(`Metrics unavailable (${response.status}). Run from \`tangent ui\`.`);
+      metricsResult = await response.json() as MetricsRollup;
+      expandedMetricIds = [];
+    } catch (caught) {
+      metricsError = (caught as Error).message;
+    } finally {
+      metricsLoading = false;
+    }
+  }
+
+  function toggleMetricExpansion(id: string): void {
+    expandedMetricIds = expandedMetricIds.includes(id) ? expandedMetricIds.filter((value) => value !== id) : [...expandedMetricIds, id];
+  }
+
+  /** Resolves a conversation's display title for the metrics panel, falling back to the id. */
+  function metricTitle(metric: ConversationMetric): string {
+    return metric.title || sessions.find((session) => session.id === metric.conversationId)?.title || metric.conversationId;
+  }
+
+  /** Formats the first-pass rate (0..1) as a whole percentage. */
+  function firstPassPercent(rate: number): string {
+    return `${Math.round(rate * 100)}%`;
   }
 
   /** Filters the session list for the browse gallery and rail by the project dropdown and free-text search. */
@@ -467,24 +537,87 @@
     </header>
     <div class="gallery" aria-label="Conversation gallery">
       {#each filteredSessions as session}
-        <button type="button" class="session-card" onclick={() => openSession(session.id)}>
-          <span class="session-card-date">
-            {sessionDate(session)}
-            {#if session.project}<span class="session-card-project">{session.project}</span>{/if}
-          </span>
-          <span class="session-card-title">{session.title}</span>
-          <span class="session-card-meta">
-            <span>{session.provider || "unknown"}</span>
-            {#if session.model}<span>{session.model}</span>{/if}
-            {#if formatDurationMs(session.durationMs)}<span>{formatDurationMs(session.durationMs)}</span>{/if}
-            {#if formatTokenCount(session.peakContext)}<span>{formatTokenCount(session.peakContext)} ctx</span>{/if}
-          </span>
-          {#if session.flame}
-            <span class="session-card-flame" style={`width:${flameWidthPct(session.flame, maxFlameDurationMs)}%`}>{@render sparkline(session.flame, "card")}</span>
-          {/if}
-        </button>
+        <div class="session-card-wrap" class:selected={selectedIds.includes(session.id)}>
+          <label class="session-card-select" title="Select for metrics rollup">
+            <input type="checkbox" checked={selectedIds.includes(session.id)} onchange={() => toggleSelect(session.id)} />
+          </label>
+          <button type="button" class="session-card" onclick={() => openSession(session.id)}>
+            <span class="session-card-date">
+              {sessionDate(session)}
+              {#if session.project}<span class="session-card-project">{session.project}</span>{/if}
+            </span>
+            <span class="session-card-title">{session.title}</span>
+            <span class="session-card-meta">
+              <span>{session.provider || "unknown"}</span>
+              {#if session.model}<span>{session.model}</span>{/if}
+              {#if formatDurationMs(session.durationMs)}<span>{formatDurationMs(session.durationMs)}</span>{/if}
+              {#if formatTokenCount(session.peakContext)}<span>{formatTokenCount(session.peakContext)} ctx</span>{/if}
+            </span>
+            {#if session.flame}
+              <span class="session-card-flame" style={`width:${flameWidthPct(session.flame, maxFlameDurationMs)}%`}>{@render sparkline(session.flame, "card")}</span>
+            {/if}
+          </button>
+        </div>
       {/each}
     </div>
+
+    {#if selectedIds.length}
+      <div class="metrics-actionbar" role="region" aria-label="Metrics selection">
+        <span class="metrics-actionbar-count">{selectedIds.length} selected</span>
+        <button type="button" class="metrics-run" onclick={rollupMetrics} disabled={metricsLoading}>
+          {metricsLoading ? "Analyzing…" : "Roll up metrics"}
+        </button>
+        <button type="button" class="metrics-clear" onclick={clearMetrics}>Clear</button>
+      </div>
+    {/if}
+
+    {#if metricsError}
+      <aside class="metrics-panel" aria-label="Correction metrics">
+        <header class="metrics-panel-head">
+          <h2>Correction metrics</h2>
+          <button type="button" class="metrics-panel-close" aria-label="Close metrics" onclick={clearMetrics}>×</button>
+        </header>
+        <p class="metrics-panel-error">{metricsError}</p>
+      </aside>
+    {:else if metricsResult}
+      <aside class="metrics-panel" aria-label="Correction metrics">
+        <header class="metrics-panel-head">
+          <div class="metrics-aggregate">
+            <span class="metrics-aggregate-rate">{firstPassPercent(metricsResult.aggregate.firstPassRate)}</span>
+            <span class="metrics-aggregate-caption">first-pass · {metricsResult.aggregate.totalCorrections} corrections across {metricsResult.aggregate.conversationsAnalyzed} conversations</span>
+          </div>
+          <button type="button" class="metrics-panel-close" aria-label="Close metrics" onclick={clearMetrics}>×</button>
+        </header>
+        <ul class="metrics-rows">
+          {#each metricsResult.perConversation as metric}
+            <li class="metrics-row" class:failed={metric.status === "failed"}>
+              <button type="button" class="metrics-row-head" onclick={() => toggleMetricExpansion(metric.conversationId)} disabled={!metric.corrections.length && metric.status !== "failed"}>
+                <span class="metrics-row-title">{metricTitle(metric)}</span>
+                {#if metric.status === "failed"}
+                  <span class="metrics-badge metrics-badge-failed">failed</span>
+                {:else}
+                  <span class="metrics-badge" class:metrics-badge-clean={metric.correctionCount === 0}>{metric.correctionCount} {metric.correctionCount === 1 ? "correction" : "corrections"}</span>
+                {/if}
+              </button>
+              {#if expandedMetricIds.includes(metric.conversationId)}
+                {#if metric.status === "failed"}
+                  <p class="metrics-row-error">{metric.error}</p>
+                {:else}
+                  <ol class="metrics-evidence">
+                    {#each metric.corrections as correction}
+                      <li>
+                        <blockquote>{correction.quote}</blockquote>
+                        <span class="metrics-evidence-why">{correction.why}</span>
+                      </li>
+                    {/each}
+                  </ol>
+                {/if}
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      </aside>
+    {/if}
   </main>
 {:else}
   <main class="usage-shell" data-mode="read">

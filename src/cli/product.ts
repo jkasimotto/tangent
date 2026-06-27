@@ -419,6 +419,30 @@ export async function runTangentUiCommand(argv: string[]): Promise<void> {
     return undefined;
   }
 
+  // Correction metrics are judged by the rollup package, which may depend on Usage; the Usage app
+  // may not depend on rollup, so the route lives here in the shell (the composition root) under its
+  // own namespace rather than under /api/usage. The selection's scope and providers match the panel.
+  const metricsRepo = stringArg(args.repo) || ".";
+  const metricsScope = stringArg(args.scope) === "repo" ? "repo" : "all";
+  const metricsProviders = stringsArg(args.provider).filter((provider): provider is "claude" | "codex" => provider === "claude" || provider === "codex");
+
+  /** Dispatches /api/metrics requests to the rollup metrics engine. */
+  async function handleMetricsRoute(
+    request: IncomingMessage,
+    url: URL
+  ): Promise<{ status: number; json: unknown } | undefined> {
+    if (request.method === "POST" && url.pathname === "/api/metrics/rollup") {
+      const body = await readJson(request) as { conversationIds?: unknown };
+      const conversationIds = Array.isArray(body.conversationIds) ? body.conversationIds.filter((id): id is string => typeof id === "string") : [];
+      if (!conversationIds.length) return { status: 400, json: { error: "conversationIds is required" } };
+      const rollup = await optionalModule<{ processMetrics(options: unknown): Promise<unknown> }>("@tangent/rollup");
+      if (!rollup?.processMetrics) return { status: 501, json: { error: "Rollup is not installed." } };
+      const result = await rollup.processMetrics({ conversationIds, repo: metricsRepo, scope: metricsScope, providers: metricsProviders.length ? metricsProviders : undefined });
+      return { status: 200, json: result };
+    }
+    return undefined;
+  }
+
   const routes: UiRoute[] = [
     {
       method: "GET",
@@ -458,6 +482,11 @@ export async function runTangentUiCommand(argv: string[]): Promise<void> {
       pattern: /^\/api\/feedback$/,
       /** Routes feedback API requests to handleFeedbackRoute. */
       handle: (request, url) => handleFeedbackRoute(request, url)
+    },
+    {
+      pattern: /^\/api\/metrics\//,
+      /** Routes correction-metrics API requests to handleMetricsRoute. */
+      handle: (request, url) => handleMetricsRoute(request, url)
     },
     {
       method: "GET",

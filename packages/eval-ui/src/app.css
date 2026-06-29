@@ -1298,6 +1298,10 @@ button {
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
+  /* Do not shrink to fit .compare-stack. Without this, a long section shrinks as a flex child and its
+     overflow:hidden clips the rows instead of letting .compare-stack scroll. Keep full height so the
+     stack's overflow:auto scrolls the panel. */
+  flex: 0 0 auto;
 }
 
 .aligned-section .section-toggle {

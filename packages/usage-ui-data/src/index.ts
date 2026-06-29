@@ -4,6 +4,7 @@ export { buildUsageCockpitView, buildInspectorDefaultView, buildSessionHeroView,
 export { buildUsageConversationView } from "./conversationView.js";
 export { buildSparkline } from "./flame.js";
 export { buildDiagnosticCards, primaryFinding } from "./diagnostics.js";
+export { groupSessionsByProject, projectSlug, type UsageProjectRailItem } from "./projects.js";
 export { buildSessionFinderView, sessionFinderItem } from "./sessionFinder.js";
 export { buildUsageSessionTimelineView } from "./sessionTimeline.js";
 export { buildSessionStoryline } from "./storyline.js";
@@ -80,7 +81,7 @@ export type UsageSessionListItem = {
   caveatCount?: number;
   /** Compact activity series for the list card / rail flame graph. */
   flame?: UsageSparkline;
-  /** Project the session ran in (basename of its repo/cwd), for the card badge and project filter. */
+  /** Project the session ran in (basename of its repo/cwd), for the card badge and project rail. */
   project?: string;
 };
 

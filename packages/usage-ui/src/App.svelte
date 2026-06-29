@@ -2,11 +2,13 @@
   import { onMount, tick } from "svelte";
   import {
     createUsageApiClient,
+    groupSessionsByProject,
     type UsageBottleneck,
     type UsageConversationChartRow,
     type UsageConversationChartSegment,
     type UsageConversationMessage,
     type UsageConversationView,
+    type UsageProjectRailItem,
     type UsageSessionListItem,
     type UsageSparkline,
     type UsageUiClient
@@ -19,7 +21,8 @@
   let selectedId: string | undefined;
   let mode: "browse" | "read" = "browse";
   let query = "";
-  let projectFilter = "all";
+  // The browse view leads with a project (the "project of intention"); selectedProject holds its label.
+  let selectedProject: string | undefined;
   let loading = true;
   let conversationLoading = false;
   let error = "";
@@ -61,7 +64,7 @@
   const MIN_BAR_HEIGHT = 16; // token-light / token-less turns still show a clickable bar
   const MAX_BAR_HEIGHT = 72; // the busiest-context turn
   const LABEL_MIN_PX = 64; // only label a segment in-bar when it is wide enough to read
-  const MIN_FLAME_WIDTH_PCT = 12;
+  const FLAME_FULL_WIDTH_MINUTES = 30; // a card's full flame width represents 30 minutes; longer convos scroll
   const messagePreviewLimit = 360;
   const messageElements = new Map<string, HTMLElement>();
   const segmentElements = new Map<string, HTMLElement>();
@@ -75,9 +78,11 @@
   });
 
   $: pxPerMs = BASE_PX_PER_MS * zoom;
-  $: projectOptions = Array.from(new Set(sessions.map((session) => session.project).filter((value): value is string => Boolean(value)))).sort((left, right) => left.localeCompare(right));
-  $: filteredSessions = filterSessions(sessions, query, projectFilter);
-  $: maxFlameDurationMs = Math.max(1, ...filteredSessions.map((session) => session.flame?.durationMs || 0));
+  $: railItems = groupSessionsByProject(sessions);
+  // Default the selection to the most recently active project, and re-anchor if the current one drops
+  // out of the window. A user choice persists because this only fires when it is absent or stale.
+  $: if (railItems.length && (!selectedProject || !railItems.some((item) => item.label === selectedProject))) selectedProject = railItems[0].label;
+  $: filteredSessions = filterSessions(sessions, query, selectedProject);
   $: bottleneckIds = new Set((view?.bottlenecks || []).map((bottleneck) => bottleneck.id));
   $: activeRow = view?.chart.rows.find((row) => rowIds(row.messageIds || row.messageId).includes(activeMessageId)) || view?.chart.rows[0];
   $: detailMessages = detailMessagesFor(view, activeRow);
@@ -218,14 +223,32 @@
     return `${Math.round(rate * 100)}%`;
   }
 
-  /** Filters the session list for the browse gallery and rail by the project dropdown and free-text search. */
-  function filterSessions(values: UsageSessionListItem[], search: string, project: string): UsageSessionListItem[] {
+  /** Scopes the card list to the selected project, then applies free-text search. */
+  function filterSessions(values: UsageSessionListItem[], search: string, project: string | undefined): UsageSessionListItem[] {
     const needle = search.trim().toLowerCase();
     return values.filter((session) => {
-      if (project !== "all" && session.project !== project) return false;
+      if (project && (session.project || "Unknown project") !== project) return false;
       if (!needle) return true;
       return `${session.title} ${session.project || ""} ${session.provider || ""} ${session.model || ""}`.toLowerCase().includes(needle);
     });
+  }
+
+  /** Selects a project in the rail, scoping the card list to it. */
+  function selectProject(label: string): void {
+    selectedProject = label;
+  }
+
+  /** Formats a session timestamp as a compact relative age for the project rail. */
+  function formatRelative(value: string | undefined): string {
+    if (!value) return "";
+    const then = new Date(value).getTime();
+    if (Number.isNaN(then)) return "";
+    const minutes = Math.round((Date.now() - then) / 60000);
+    if (minutes < 1) return "now";
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    return `${Math.round(hours / 24)}d ago`;
   }
 
   /** Returns the messages that belong to the active work turn for the detail panel. */
@@ -416,11 +439,13 @@
     return value.toFixed(digits).replace(/\.0+$/, "").replace(/(\.\d*[1-9])0+$/, "$1");
   }
 
-  /** Returns the card flame width as a percentage of the longest session, so card lengths compare
-   * by active duration at a glance. `max` is passed in so Svelte tracks the dependency on re-render. */
-  function flameWidthPct(flame: UsageSparkline, max: number): number {
-    const share = (flame.durationMs / Math.max(1, max)) * 100;
-    return Math.max(MIN_FLAME_WIDTH_PCT, Math.min(100, share));
+  /** Returns the card flame track width as a percentage of an absolute 30-minute axis, so a card's
+   * full width is 30 min: shorter convos fill less, longer convos exceed 100% and scroll in the card.
+   * This makes durations comparable by width across cards instead of relative to the longest one. */
+  function flameTimePercent(session: UsageSessionListItem): number {
+    const durationMs = session.durationMs ?? session.flame?.durationMs ?? 0;
+    const minutes = durationMs / 60000;
+    return (minutes / FLAME_FULL_WIDTH_MINUTES) * 100;
   }
 
   /** Returns the relative height (0..1) for one sparkline bucket. */
@@ -515,50 +540,63 @@
     <header class="browse-header">
       <div>
         <p>Tangent Usage</p>
-        <h1>Conversations</h1>
+        <h1>{selectedProject || "Conversations"}</h1>
       </div>
       <div class="browse-filters">
-        {#if projectOptions.length > 1}
-          <label class="project-filter">
-            <span>Project</span>
-            <select bind:value={projectFilter}>
-              <option value="all">All projects</option>
-              {#each projectOptions as project}
-                <option value={project}>{project}</option>
-              {/each}
-            </select>
-          </label>
-        {/if}
         <label class="search">
-          <span>Search sessions</span>
-          <input bind:value={query} placeholder="Project or session" />
+          <span>Search this project</span>
+          <input bind:value={query} placeholder="Title, model, provider" />
         </label>
       </div>
     </header>
-    <div class="gallery" aria-label="Conversation gallery">
-      {#each filteredSessions as session}
-        <div class="session-card-wrap" class:selected={selectedIds.includes(session.id)}>
-          <label class="session-card-select" title="Select for metrics rollup">
-            <input type="checkbox" checked={selectedIds.includes(session.id)} onchange={() => toggleSelect(session.id)} />
-          </label>
-          <button type="button" class="session-card" onclick={() => openSession(session.id)}>
-            <span class="session-card-date">
-              {sessionDate(session)}
-              {#if session.project}<span class="session-card-project">{session.project}</span>{/if}
+    <div class="browse-layout">
+      <aside class="project-rail" aria-label="Projects">
+        {#each railItems as item}
+          <button type="button" class="project-rail-item" class:active={item.label === selectedProject} onclick={() => selectProject(item.label)}>
+            <span class="project-rail-name">{item.label}</span>
+            <span class="project-rail-meta">
+              <span class="project-rail-count">{item.total} {item.total === 1 ? "chat" : "chats"}</span>
+              {#if formatRelative(item.lastActivityAt)}<span class="project-rail-age">{formatRelative(item.lastActivityAt)}</span>{/if}
             </span>
-            <span class="session-card-title">{session.title}</span>
-            <span class="session-card-meta">
-              <span>{session.provider || "unknown"}</span>
-              {#if session.model}<span>{session.model}</span>{/if}
-              {#if formatDurationMs(session.durationMs)}<span>{formatDurationMs(session.durationMs)}</span>{/if}
-              {#if formatTokenCount(session.peakContext)}<span>{formatTokenCount(session.peakContext)} ctx</span>{/if}
-            </span>
-            {#if session.flame}
-              <span class="session-card-flame" style={`width:${flameWidthPct(session.flame, maxFlameDurationMs)}%`}>{@render sparkline(session.flame, "card")}</span>
-            {/if}
           </button>
-        </div>
-      {/each}
+        {/each}
+      </aside>
+      <div class="gallery-pane">
+        {#if filteredSessions.length}
+          <div class="gallery" aria-label="Conversation gallery">
+            {#each filteredSessions as session}
+              <div class="session-card-wrap" class:selected={selectedIds.includes(session.id)}>
+                <label class="session-card-select" title="Select for metrics rollup">
+                  <input type="checkbox" checked={selectedIds.includes(session.id)} onchange={() => toggleSelect(session.id)} />
+                </label>
+                <button type="button" class="session-card" onclick={() => openSession(session.id)}>
+                  <span class="session-card-date">
+                    {sessionDate(session)}
+                  </span>
+                  <span class="session-card-title">{session.title}</span>
+                  <span class="session-card-meta">
+                    <span>{session.provider || "unknown"}</span>
+                    {#if session.model}<span>{session.model}</span>{/if}
+                    {#if formatDurationMs(session.durationMs)}<span>{formatDurationMs(session.durationMs)}</span>{/if}
+                    {#if formatTokenCount(session.peakContext)}<span>{formatTokenCount(session.peakContext)} ctx</span>{/if}
+                  </span>
+                  {#if session.flame}
+                    <span class="session-card-flame" style={`--flame-width:${flameTimePercent(session)}%`}>{@render sparkline(session.flame, "card")}</span>
+                  {/if}
+                </button>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <div class="gallery-empty">
+            {#if query}
+              <p>No conversations match “{query}”.</p>
+            {:else}
+              <p>No conversations in this project.</p>
+            {/if}
+          </div>
+        {/if}
+      </div>
     </div>
 
     {#if selectedIds.length}

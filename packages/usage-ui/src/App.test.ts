@@ -21,15 +21,15 @@ describe("usage svelte app", () => {
     expect(container.querySelector(".usage-shell")).not.toBeInTheDocument();
   });
 
-  it("scales the card flame width by session duration so lengths compare", async () => {
+  it("scales the card flame to an absolute 30-minute axis so durations compare and long convos scroll", async () => {
     render(App, { props: { client: fakeUsageClient() } });
 
-    const longCard = await screen.findByRole("button", { name: /Implement UI/ });
-    const shortCard = screen.getByRole("button", { name: /Review telemetry/ });
+    const fifteenMin = await screen.findByRole("button", { name: /Implement UI/ });
+    const sixtyMin = screen.getByRole("button", { name: /Review telemetry/ });
 
-    // 60000ms is the longest session, so it fills the card; the 42000ms session is proportionally shorter.
-    expect(longCard.querySelector<HTMLElement>(".session-card-flame")!.style.width).toBe("100%");
-    expect(shortCard.querySelector<HTMLElement>(".session-card-flame")!.style.width).toBe("70%");
+    // Full flame width represents 30 minutes: 15m fills half, 60m exceeds 100% and scrolls in the card.
+    expect(fifteenMin.querySelector<HTMLElement>(".session-card-flame")!.style.getPropertyValue("--flame-width")).toBe("50%");
+    expect(sixtyMin.querySelector<HTMLElement>(".session-card-flame")!.style.getPropertyValue("--flame-width")).toBe("200%");
   });
 
   it("opens a conversation into the top bar, flame graph, and bottleneck panel", async () => {
@@ -181,6 +181,35 @@ describe("usage svelte app", () => {
     expect(container).toHaveTextContent("All tests passed");
   });
 
+  it("leads with a project rail and scopes the cards to the selected project", async () => {
+    const { container } = render(App, {
+      props: {
+        client: fakeUsageClient({
+          /** Two projects, alpha more recently active than beta. */
+          async listSessions() {
+            return {
+              sessions: [
+                { ...sessionListItem("a1", "Work one", 100, 1000, "2026-01-02T12:00:00.000Z"), project: "alpha" },
+                { ...sessionListItem("b1", "Work two", 100, 1000, "2026-01-02T09:00:00.000Z"), project: "beta" }
+              ],
+              caveats: []
+            };
+          }
+        })
+      }
+    });
+
+    // The most recently active project leads and is auto-selected; only its card shows.
+    await screen.findByRole("button", { name: /Work one/ });
+    expect(container.querySelector(".project-rail-item.active")).toHaveTextContent("alpha");
+    expect(screen.queryByRole("button", { name: /Work two/ })).not.toBeInTheDocument();
+
+    // Selecting beta in the rail scopes the gallery to beta's card.
+    await fireEvent.click(screen.getByRole("button", { name: /beta/ }));
+    expect(await screen.findByRole("button", { name: /Work two/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Work one/ })).not.toBeInTheDocument();
+  });
+
   it("renders identically in standalone and embedded mount modes", async () => {
     const standalone = document.body.appendChild(document.createElement("div"));
     const embedded = document.body.appendChild(document.createElement("div"));
@@ -205,8 +234,8 @@ function fakeUsageClient(overrides: Partial<UsageUiClient> = {}): UsageUiClient 
     async listSessions() {
       return {
         sessions: [
-          sessionListItem("s1", "Implement UI", 1200, 60000, "2026-01-02T09:00:00.000Z"),
-          sessionListItem("s2", "Review telemetry", 840, 42000, "2026-01-02T10:00:00.000Z")
+          sessionListItem("s1", "Implement UI", 1200, 900000, "2026-01-02T09:00:00.000Z"),
+          sessionListItem("s2", "Review telemetry", 840, 3600000, "2026-01-02T10:00:00.000Z")
         ],
         caveats: []
       };

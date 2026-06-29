@@ -41,6 +41,9 @@
   let noteSentiment: EvalReviewSentiment = "bad";
   let noteText = "";
   let savingReview = false;
+  // Per-file note drill-in: the focused single-variant reader for one artifact, opened from an expanded
+  // compare side. While set, reviewVariantId/selectedArtifactId track it and loadReviewDiff loads its content.
+  let drill: { variantId: string; artifact: EvalCompareArtifactView } | undefined;
 
   let runs: EvalRunSummaryView[] = [];
   let specs: EvalSpecSummaryView[] = [];
@@ -147,6 +150,8 @@
   $: reviewIsDiff = reviewDiff?.artifact.kind === "code";
   $: reviewChangedCount = reviewDiff ? reviewDiff.lines.filter((line) => line.kind !== "equal").length : 0;
   $: reviewRows = buildReviewRows(reviewDiff, reviewIsDiff, expandedReviewGaps);
+  // The drill-in owns the single-variant reader: when open, load that one variant+file's content.
+  $: compare && selectedArtifactId && reviewVariantId && drill && void loadReviewDiff();
 
   async function loadInitial(): Promise<void> {
     loading = true;
@@ -448,6 +453,21 @@
     } finally {
       loadingRows.delete(key); loadingRows = loadingRows;
     }
+  }
+
+  /** Opens the focused single-variant reader for one file, to add per-line notes. */
+  function openDrill(variantId: string, artifact: EvalCompareArtifactView): void {
+    drill = { variantId, artifact };
+    reviewVariantId = variantId;
+    selectedArtifactId = artifact.id;
+    reviewDiffLoadKey = "";
+  }
+
+  /** Closes the drill-in and returns to the comparison. */
+  function closeDrill(): void {
+    drill = undefined;
+    noteLine = undefined;
+    clearSelection();
   }
 
   /** Review rows for a cached side (collapsed unified diff for code, full read otherwise). */
@@ -957,6 +977,83 @@
     </div>
   {/if}
 
+  {#if drill}
+    <div class="modal-scrim drill-overlay" role="dialog" aria-modal="true" aria-label={`Review ${drill.variantId} · ${drill.artifact.label}`}>
+      <div class="drill-panel">
+        <header class="drill-head">
+          <h3>{drill.variantId} · {drill.artifact.label}</h3>
+          <span class="topbar-spacer"></span>
+          {#if savingReview}<small class="saving" aria-live="polite">saving…</small>{/if}
+          <button type="button" class="ghost" on:click={closeDrill}>Close</button>
+        </header>
+        {#if reviewDiffLoading}
+          <div class="state">Loading…</div>
+        {:else if reviewDiff}
+          <header class="diff-head">
+            {#if selRange}
+              <span class="sel-bar">
+                Lines {selRange.start}{#if selRange.end > selRange.start}–{selRange.end}{/if} selected
+                <button type="button" class="mark good" on:click={() => openSelectionNote("good")}>👍 good</button>
+                <button type="button" class="mark bad" on:click={() => openSelectionNote("bad")}>👎 bad</button>
+                <button type="button" class="ghost" on:click={clearSelection}>clear</button>
+              </span>
+            {:else if reviewIsDiff}
+              <span>{reviewChangedCount} changed {reviewChangedCount === 1 ? "line" : "lines"} · unchanged code collapsed · click line #s to select, 👍/👎 to note</span>
+            {:else}
+              <span>{reviewReader.length} lines · click line #s to select a block, 👍/👎 to note it</span>
+            {/if}
+          </header>
+          <div class="review-reader" class:review-diff={reviewIsDiff} aria-label={`${reviewDiff.artifact.label} review`}>
+            {#if reviewIsDiff && reviewChangedCount === 0}
+              <div class="state">This config made no changes to {reviewDiff.artifact.label}.</div>
+            {/if}
+            {#each reviewRows as row}
+              {#if row.kind === "gap"}
+                <button type="button" class="diff-gap" on:click={() => expandReviewGap(row.index)}>⋯ {row.count} unchanged lines</button>
+              {:else if row.line !== undefined}
+                {@const lineNotes = notesAt(currentReview, reviewDiff.artifact.id, row.line)}
+                {@const covered = lineCovered(currentReview, reviewDiff.artifact.id, row.line)}
+                <div class="review-row review-{row.marker}" class:has-notes={covered} class:selected={inSelection(row.line)}>
+                  <button type="button" class="line-no line-no-pick" class:anchor={row.line === selStart} title="Click to start/extend a selection block" on:click={() => selectGutter(row.line)}>{row.gutter}</button>
+                  <code>{row.text}</code>
+                  <span class="row-actions">
+                    <button type="button" class="mark good" title="Mark this line good" on:click={() => openNote(row.line, row.line, "good")}>👍</button>
+                    <button type="button" class="mark bad" title="Mark this line bad" on:click={() => openNote(row.line, row.line, "bad")}>👎</button>
+                  </span>
+                </div>
+                {#each lineNotes as note}
+                  <div class="line-note {note.sentiment}">
+                    <span class="note-icon">{note.sentiment === "good" ? "👍" : "👎"}</span>
+                    <span class="note-range">{noteRangeLabel(note)}</span>
+                    <span class="note-text">{note.text}</span>
+                    <button type="button" class="note-del" title="Remove note" on:click={() => removeNote(note.id)}>×</button>
+                  </div>
+                {/each}
+                {#if noteLine === row.line}
+                  <form class="note-composer {noteSentiment}" on:submit|preventDefault={() => saveNote()}>
+                    <span class="note-icon">{noteSentiment === "good" ? "👍" : "👎"}</span>
+                    <span class="note-range">{noteEndLine && noteEndLine > noteLine ? `L${noteLine}–${noteEndLine}` : `L${noteLine}`}</span>
+                    <!-- svelte-ignore a11y-autofocus -->
+                    <input class="note-input" placeholder={noteSentiment === "good" ? "what's good here…" : "what's wrong here…"} bind:value={noteText} autofocus />
+                    <button type="submit" class="primary" disabled={!noteText.trim()}>Add</button>
+                    <button type="button" class="ghost" on:click={() => { noteLine = undefined; noteEndLine = undefined; }}>Cancel</button>
+                  </form>
+                {/if}
+              {:else}
+                <div class="review-row review-{row.marker} review-context">
+                  <span class="line-no muted">{row.gutter}</span>
+                  <code>{row.text}</code>
+                </div>
+              {/if}
+            {/each}
+          </div>
+        {:else}
+          <div class="state">No content to review for {drill.artifact.label}.</div>
+        {/if}
+      </div>
+    </div>
+  {/if}
+
   <section class="compare-shell" aria-busy={runLoading || compareLoading}>
     {#if error}
       <div class="notice" role="alert">{error}</div>
@@ -1084,6 +1181,7 @@
                           </button>
                           {#if expandedRows.has(key)}
                             <div class="aligned-detail review-reader review-diff">
+                              <button type="button" class="row-note" aria-label={`Add notes on ${row.artifact.label} for ${leftVariantId}`} on:click={() => openDrill(leftVariantId, row.artifact)}>note ✎</button>
                               {#if loadingRows.has(key)}<div class="state">Loading…</div>
                               {:else}
                                 {#each sideRows(key) as r}
@@ -1105,6 +1203,7 @@
                           </button>
                           {#if expandedRows.has(key)}
                             <div class="aligned-detail review-reader review-diff">
+                              <button type="button" class="row-note" aria-label={`Add notes on ${row.artifact.label} for ${rightVariantId}`} on:click={() => openDrill(rightVariantId, row.artifact)}>note ✎</button>
                               {#if loadingRows.has(key)}<div class="state">Loading…</div>
                               {:else}
                                 {#each sideRows(key) as r}

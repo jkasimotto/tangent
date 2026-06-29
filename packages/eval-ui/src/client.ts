@@ -77,6 +77,9 @@ export type EvalCompareArtifactView = {
   path: string;
   label: string;
   status?: EvalCompareArtifactStatus;
+  /** For code artifacts: whether the left/right variant's agent changed this file (context -> implementation). */
+  changedLeft?: boolean;
+  changedRight?: boolean;
 };
 
 export type EvalVariantPhaseView = {

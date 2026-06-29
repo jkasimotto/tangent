@@ -36,6 +36,7 @@
   let reviews: EvalReviews = { schema: "eval.reviews.v1", variants: {} };
   let reviewDiff: EvalDiffView | undefined;
   let reviewDiffLoadKey = "";
+  let reviewDiffLoading = false;
   let noteLine: number | undefined;
   let noteSentiment: EvalReviewSentiment = "bad";
   let noteText = "";
@@ -134,7 +135,7 @@
   // recomputes the list when the reviewed variant changes; reading them only inside a filter callback would
   // not register them as reactive dependencies.
   $: selectableArtifacts = artifactsForReview(compare?.artifacts || [], mode, reviewVariantId, leftVariantId, rightVariantId);
-  $: compare && syncArtifactSelection(selectableArtifacts);
+  $: compare && syncArtifactSelection(selectableArtifacts, mode);
   $: compare && selectedArtifactId && mode === "diff" && void loadDiff();
   $: compare && selectedArtifactId && reviewVariantId && mode === "review" && void loadReviewDiff();
   $: reviewKey = variantKey(selectedCaseId, reviewVariantId);
@@ -397,7 +398,11 @@
       });
       if (compareLoadKey !== key) return;
       compare = next;
-      selectedArtifactId = preferredArtifact(next.artifacts, selectedArtifactId)?.id || "";
+      // Pick the initial artifact from the mode-scoped list so Individual review opens on the agent's work,
+      // not whatever sorts first across the whole pair.
+      const scoped = artifactsForReview(next.artifacts, mode, reviewVariantId, leftVariantId, rightVariantId);
+      const initial = mode === "review" ? preferredReviewArtifact(scoped) : preferredArtifact(scoped, selectedArtifactId);
+      selectedArtifactId = initial?.id || "";
       diff = undefined;
       error = "";
     } catch (caught) {
@@ -436,17 +441,26 @@
   async function loadReviewDiff(): Promise<void> {
     if (!compare || !reviewVariantId) return;
     const artifact = compare.artifacts.find((item) => item.id === selectedArtifactId);
-    if (!artifact) { reviewDiff = undefined; return; }
+    if (!artifact) { reviewDiff = undefined; reviewDiffLoading = false; return; }
     const key = `${selectedRunId}:${selectedCaseId}:${reviewVariantId}:${artifact.id}`;
     if (reviewDiffLoadKey === key) return;
     reviewDiffLoadKey = key;
+    // Clear the previous file's diff and show a loading state: the git read can take a couple of seconds, and
+    // leaving the old diff on screen makes a variant or artifact switch look stuck on the wrong file.
+    reviewDiff = undefined;
+    reviewDiffLoading = true;
     try {
-      reviewDiff = await client.getDiff({ runId: selectedRunId, caseId: selectedCaseId, left: reviewVariantId, right: reviewVariantId, kind: artifact.kind, path: artifact.path });
+      const next = await client.getDiff({ runId: selectedRunId, caseId: selectedCaseId, left: reviewVariantId, right: reviewVariantId, kind: artifact.kind, path: artifact.path });
+      // Discard a stale response: switching the reviewed variant or artifact can leave an earlier request in
+      // flight, and without this guard its late resolution would overwrite the current selection's diff.
+      if (reviewDiffLoadKey !== key) return;
+      reviewDiff = next;
+      reviewDiffLoading = false;
       expandedReviewGaps = new Set();
       noteLine = undefined;
       noteText = "";
     } catch {
-      reviewDiff = undefined;
+      if (reviewDiffLoadKey === key) { reviewDiff = undefined; reviewDiffLoading = false; }
     }
   }
 
@@ -616,9 +630,10 @@
     noteLine = undefined;
   }
 
-  function syncArtifactSelection(artifacts: EvalCompareArtifactView[]): void {
+  function syncArtifactSelection(artifacts: EvalCompareArtifactView[], mode: ReviewMode): void {
     if (!artifacts.some((artifact) => artifact.id === selectedArtifactId)) {
-      selectedArtifactId = preferredArtifact(artifacts, "")?.id || "";
+      const pick = mode === "review" ? preferredReviewArtifact(artifacts) : preferredArtifact(artifacts, "");
+      selectedArtifactId = pick?.id || "";
     }
   }
 
@@ -628,12 +643,18 @@
       artifacts[0];
   }
 
+  /** Individual review opens on the agent's work: its first changed code file, else the first artifact present. */
+  function preferredReviewArtifact(artifacts: EvalCompareArtifactView[]): EvalCompareArtifactView | undefined {
+    return artifacts.find((artifact) => artifact.kind === "code") || artifacts[0];
+  }
+
   /**
    * The artifacts selectable for the current view. Compare and Side-by-side use the whole pair. Individual
-   * review scopes the list to artifacts that exist in the reviewed variant: compare status is relative to the
-   * left/right pair, so a "left-only"/"right-only" artifact is absent from the opposite variant, and reviewing
-   * that variant would fetch a diff that 404s and leave the pane blank. Such artifacts are filtered out here so
-   * they are neither listed nor auto-selected.
+   * review scopes the list to what the reviewed variant actually has: the code files its agent changed, the
+   * context files present in it, and the prompts. Compare status is relative to the pair, so a "changed" code
+   * file may be one only the other variant touched (it still differs between the two outputs) and a
+   * "left-only"/"right-only" context file is absent from the opposite variant; either would open onto an empty
+   * diff. Filtering here keeps the review list and its auto-selection to artifacts with something to review.
    */
   function artifactsForReview(
     artifacts: EvalCompareArtifactView[],
@@ -643,9 +664,14 @@
     rightVariantId: string
   ): EvalCompareArtifactView[] {
     if (mode !== "review") return artifacts;
+    const reviewingLeft = reviewVariantId === leftVariantId;
+    const reviewingRight = reviewVariantId === rightVariantId;
     return artifacts.filter((artifact) => {
-      if (artifact.status === "left-only") return reviewVariantId === leftVariantId;
-      if (artifact.status === "right-only") return reviewVariantId === rightVariantId;
+      if (artifact.kind === "code" && (artifact.changedLeft !== undefined || artifact.changedRight !== undefined)) {
+        return reviewingLeft ? artifact.changedLeft === true : reviewingRight ? artifact.changedRight === true : false;
+      }
+      if (artifact.status === "left-only") return reviewingLeft;
+      if (artifact.status === "right-only") return reviewingRight;
       return true;
     });
   }
@@ -1096,7 +1122,9 @@
                   <input class="verdict-text" placeholder="overall note (optional)" value={currentReview.verdict?.text || ""} on:change={(event) => setVerdictText(event.currentTarget.value)} />
                 </div>
               </div>
-              {#if reviewDiff}
+              {#if reviewDiffLoading}
+                <div class="state">Loading…</div>
+              {:else if reviewDiff}
                 <header class="diff-head">
                   <h3>{reviewDiff.artifact.label}</h3>
                   {#if selRange}

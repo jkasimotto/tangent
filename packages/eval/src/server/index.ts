@@ -450,7 +450,12 @@ async function contextArtifactStatuses(left: EvalRunVariantState, right: EvalRun
   }));
 }
 
-/** Badges code artifacts (files either variant changed) by comparing blob OIDs at each variant's head. */
+/**
+ * Lists code artifacts (files either variant's agent changed) with a pair status comparing the two
+ * outputs and per-variant flags for which variant actually changed each file. The flags let single-variant
+ * review show only the files that variant changed (the pair status alone can't: a file only one variant
+ * touched still differs between the two outputs and would read as "changed").
+ */
 async function codeArtifactStatuses(left: EvalRunVariantState, right: EvalRunVariantState, oidsAt: OidsAt): Promise<EvalCompareArtifactView[]> {
   const [leftPaths, rightPaths, leftOids, rightOids] = await Promise.all([
     variantChangedFiles(left),
@@ -458,13 +463,17 @@ async function codeArtifactStatuses(left: EvalRunVariantState, right: EvalRunVar
     implementationOids(left, oidsAt),
     implementationOids(right, oidsAt)
   ]);
+  const leftChanged = new Set(leftPaths);
+  const rightChanged = new Set(rightPaths);
   const paths = [...new Set([...leftPaths, ...rightPaths])].sort();
   return paths.map((codePath) => ({
     id: `code:${codePath}`,
     kind: "code",
     path: codePath,
     label: codePath,
-    status: oidStatus(leftOids.get(codePath), rightOids.get(codePath))
+    status: oidStatus(leftOids.get(codePath), rightOids.get(codePath)),
+    changedLeft: leftChanged.has(codePath),
+    changedRight: rightChanged.has(codePath)
   }));
 }
 
@@ -474,14 +483,17 @@ async function artifactContent(left: EvalRunVariantState, right: EvalRunVariantS
     const [leftPrompts, rightPrompts] = await Promise.all([promptCandidates(left), promptCandidates(right)]);
     return { leftContent: leftPrompts.get(artifactPath), rightContent: rightPrompts.get(artifactPath) };
   }
-  // Reviewing a single variant's code (left === right) shows the agent's change, base -> implementation,
-  // not the post-edit file against itself (which would be all-equal: a whole file with nothing to find).
+  // Reviewing a single variant's code (left === right) shows the agent's change: its context commit (the
+  // state it started from, after context setup) to its implementation. Diffing against the file itself
+  // would be all-equal (a whole file with nothing to find); diffing against the base commit would fold in
+  // context setup (e.g. empty-context mode stripping files) as if the agent had done it.
   if (kind === "code" && left.caseId === right.caseId && left.variantId === right.variantId) {
-    const [baseContent, headContent] = await Promise.all([
-      showFile(left.worktree, left.baseCommit, artifactPath).catch(() => undefined),
+    const from = left.contextCommit || left.baseCommit;
+    const [fromContent, headContent] = await Promise.all([
+      showFile(left.worktree, from, artifactPath).catch(() => undefined),
       showImplementationFile(left, artifactPath)
     ]);
-    return { leftContent: baseContent, rightContent: headContent };
+    return { leftContent: fromContent, rightContent: headContent };
   }
   const read = kind === "context" ? showContextFile : showImplementationFile;
   const [leftContent, rightContent] = await Promise.all([read(left, artifactPath), read(right, artifactPath)]);
@@ -508,11 +520,16 @@ function oidStatus(left: string | undefined, right: string | undefined): EvalCom
   return left === right ? "same" : "changed";
 }
 
-/** Lists files a variant changed between its base and implementation (or context) commit. */
+/**
+ * Lists files the variant's agent changed: from its context commit (the state it started from, after
+ * context setup) to its implementation. Diffing from the base commit instead would include context setup
+ * (e.g. empty-context mode stripping files) as files the agent "changed".
+ */
 async function variantChangedFiles(variant: EvalRunVariantState): Promise<string[]> {
+  const from = variant.contextCommit || variant.baseCommit;
   const head = variant.implementationCommit || variant.planCommit || variant.contextCommit;
-  if (!head) return [];
-  return changedFiles(variant.worktree, variant.baseCommit, head).catch(() => []);
+  if (!head || head === from) return [];
+  return changedFiles(variant.worktree, from, head).catch(() => []);
 }
 
 /** Reads a file at a variant's implementation commit, falling back to its base. */

@@ -15,6 +15,7 @@ import { collectEval } from "../core/metrics.js";
 import { runPreparedEval } from "../core/run.js";
 import { prepareEval } from "../core/worktree.js";
 import { readVariantMetricsView } from "./metrics-read.js";
+import { readVariantEvaluation } from "./evaluation-read.js";
 import { variantConversationsView } from "./conversation-view.js";
 import { assembleContextView, contextManifestView } from "./variant-views.js";
 import { diffLines } from "./diff.js";
@@ -328,6 +329,7 @@ function statusCounts(variants: EvalRunVariantState[]): Record<EvalRunStatus, nu
 /** Converts a variant manifest entry into UI metadata. */
 async function variantSummary(manifest: EvalRunManifest, variant: EvalRunVariantState): Promise<EvalVariantSummaryView> {
   const metrics = await readVariantMetricsView(manifest, variant);
+  const evaluation = await readVariantEvaluation(manifest, variant);
   return {
     caseId: variant.caseId,
     variantId: variant.variantId,
@@ -347,6 +349,7 @@ async function variantSummary(manifest: EvalRunManifest, variant: EvalRunVariant
     error: variant.error,
     promptArtifacts: await promptArtifacts(variant),
     metrics,
+    evaluation,
     warnings: variant.warnings
   };
 }

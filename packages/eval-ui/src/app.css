@@ -1211,6 +1211,8 @@ button {
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
+  /* Sits in the .compare-stack flex column; without this it shrinks and clips the verdict/score row. */
+  flex: 0 0 auto;
 }
 
 .compare-col-head {

@@ -165,6 +165,37 @@ describe("eval svelte app", () => {
   });
   it.todo("collapses unchanged code in Individual review so the agent's edit is the focus");
 
+  it("renders +N -M counts on the side that changed a file", async () => {
+    const client = fakeEvalClient({
+      artifacts: [
+        {
+          id: "code:src/foo.ts",
+          kind: "code",
+          path: "src/foo.ts",
+          label: "src/foo.ts",
+          status: "changed",
+          changedLeft: true,
+          changedRight: true,
+          addedLeft: 5,
+          removedLeft: 2,
+          addedRight: 3,
+          removedRight: 1
+        }
+      ]
+    });
+    const { container } = render(App, { props: { client } });
+    await screen.findByText(/ui-compare/);
+    await screen.findByLabelText("Configs compared");
+
+    // Left side (aligned-a) shows its counts.
+    const sideA = container.querySelector(".aligned-a") as HTMLElement;
+    expect(within(sideA).getByText("+5 -2")).toBeInTheDocument();
+
+    // Right side (aligned-b) shows its counts.
+    const sideB = container.querySelector(".aligned-b") as HTMLElement;
+    expect(within(sideB).getByText("+3 -1")).toBeInTheDocument();
+  });
+
   it("launches a run from the selected spec", async () => {
     const client = fakeEvalClient();
     render(App, { props: { client } });

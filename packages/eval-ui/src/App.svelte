@@ -1178,6 +1178,7 @@
                             aria-label={`${expandedRows.has(key) ? "Collapse" : "Expand"} ${row.artifact.label} for ${leftVariantId}`}
                             on:click={() => expandRow(leftVariantId, row.artifact)}>
                             <span class="badge badge-{row.a.changed ? 'changed' : 'same'}">{row.artifact.label}</span>
+                            {#if row.a.changed && row.artifact.addedLeft !== undefined}<small class="counts">+{row.artifact.addedLeft} -{row.artifact.removedLeft}</small>{/if}
                           </button>
                           {#if expandedRows.has(key)}
                             <div class="aligned-detail review-reader review-diff">
@@ -1200,6 +1201,7 @@
                             aria-label={`${expandedRows.has(key) ? "Collapse" : "Expand"} ${row.artifact.label} for ${rightVariantId}`}
                             on:click={() => expandRow(rightVariantId, row.artifact)}>
                             <span class="badge badge-{row.b.changed ? 'changed' : 'same'}">{row.artifact.label}</span>
+                            {#if row.b.changed && row.artifact.addedRight !== undefined}<small class="counts">+{row.artifact.addedRight} -{row.artifact.removedRight}</small>{/if}
                           </button>
                           {#if expandedRows.has(key)}
                             <div class="aligned-detail review-reader review-diff">

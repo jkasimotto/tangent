@@ -62,6 +62,11 @@ export type EvalCompareArtifactView = {
   /** For code artifacts: whether the left/right variant's agent changed this file (context -> implementation). */
   changedLeft?: boolean;
   changedRight?: boolean;
+  /** For code artifacts: added/removed line counts from the agent's own change (context -> implementation). Undefined when not a changed code file or when binary. */
+  addedLeft?: number;
+  removedLeft?: number;
+  addedRight?: number;
+  removedRight?: number;
 };
 
 export type EvalVariantPhaseView = {

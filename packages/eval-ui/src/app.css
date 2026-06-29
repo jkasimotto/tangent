@@ -1653,3 +1653,12 @@ button {
   gap: 4px;
   font-size: 12px;
 }
+.assembled-divider.differs {
+  color: #7a4f00;
+}
+.diff-tag {
+  margin-left: 6px;
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 10px;
+}

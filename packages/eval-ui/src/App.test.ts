@@ -232,6 +232,16 @@ describe("eval svelte app", () => {
     expect(screen.getByText("No repo context loads at this path.")).toBeInTheDocument();
   });
 
+  it("marks a context block present on only one side", async () => {
+    const client = fakeEvalClient();
+    render(App, { props: { client } });
+    await screen.findByText(/ui-compare/);
+    await fireEvent.click(await screen.findByRole("button", { name: "Assembled" }));
+    await screen.findByText("root rules");
+    // The repo side's CLAUDE.md is absent from the empty side, so its divider is tagged "only here".
+    expect(screen.getAllByText("only here").length).toBeGreaterThanOrEqual(1);
+  });
+
   it("re-assembles both sides when the cwd changes", async () => {
     const client = fakeEvalClient();
     render(App, { props: { client } });

@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { EvalAssembledContext } from "./client.js";
-  import { concatBlocks } from "./assembled-model.js";
+  import { concatBlocks, alignBySource } from "./assembled-model.js";
 
   export let left: EvalAssembledContext | undefined;
   export let right: EvalAssembledContext | undefined;
@@ -9,10 +9,19 @@
   export let loading = false;
   export let errorText = "";
 
-  const sides = () => [
-    { key: "a", label: leftLabel, ctx: left },
-    { key: "b", label: rightLabel, ctx: right }
-  ];
+  // Maps each source to its A/B difference status, so a divider can show "only here" / "differs".
+  $: statusBySource = (() => {
+    const map = new Map<string, string>();
+    if (left && right) for (const row of alignBySource(left.blocks, right.blocks)) map.set(row.source, row.status);
+    return map;
+  })();
+  /** A short difference tag for a block, from this side's perspective. */
+  function diffTag(source: string, sideKey: string): string {
+    const status = statusBySource.get(source);
+    if (status === "changed") return "differs";
+    if ((status === "left-only" && sideKey === "a") || (status === "right-only" && sideKey === "b")) return "only here";
+    return "";
+  }
 
   /** Copies a side's verbatim concatenation (no provenance dividers). */
   async function copySide(ctx: EvalAssembledContext | undefined): Promise<void> {
@@ -28,6 +37,7 @@
     if (kind === "import") return `${source} (imported)`;
     return source;
   }
+
 </script>
 
 <div class="assembled" aria-label="Assembled context">
@@ -47,8 +57,12 @@
             <p class="assembled-empty">No repo context loads at this path.</p>
           {:else}
             {#each side.ctx.blocks as block, i (`${block.source}:${i}`)}
+              {@const tag = diffTag(block.source, side.key)}
               <div class="assembled-block assembled-{block.kind}">
-                <div class="assembled-divider">{dividerLabel(block.kind, block.source)}</div>
+                <div class="assembled-divider" class:differs={tag === "differs"}>
+                  {dividerLabel(block.kind, block.source)}
+                  {#if tag}<span class="diff-tag">{tag}</span>{/if}
+                </div>
                 <pre class="assembled-text">{block.text}</pre>
               </div>
             {/each}

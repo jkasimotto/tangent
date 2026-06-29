@@ -25,6 +25,8 @@
     type EvalVerdictSentiment
   } from "./client.js";
   import { buildAlignedSections, diffCacheKey, fileNotes, rowsWithNotes, type AlignedSection, type AlignedRow } from "./compare-model.js";
+  import AssembledContext from "./AssembledContext.svelte";
+  import type { EvalAssembledContext } from "./client.js";
 
   export let client: EvalUiClient = createEvalApiClient();
 
@@ -57,6 +59,16 @@
   let rightVariantId = "";
   let compare: EvalCompareView | undefined;
   let selectedArtifactId = "";
+  // Context section view: the raw file diff list vs the assembled "what the agent sees" reconstruction.
+  let contextView: "files" | "assembled" = "files";
+  let assembleCwd = "";
+  let loadedSkills = new Set<string>();
+  let assembledLeft: EvalAssembledContext | undefined;
+  let assembledRight: EvalAssembledContext | undefined;
+  let assembledLoading = false;
+  let assembledError = "";
+  let assembledKey = "";
+
   // Per-side content cache for the aligned view: keyed by diffCacheKey so re-expanding never refetches.
   let diffCache = new Map<string, EvalDiffView>();
   let expandedRows = new Set<string>(); // diffCacheKey values currently open
@@ -438,6 +450,34 @@
     selectedArtifactId = artifact.id;
     reviewDiffLoadKey = "";
   }
+
+  /** Fetches both variants' assembled context for the current cwd and loaded skills, memoized by key. */
+  async function loadAssembled(): Promise<void> {
+    if (contextView !== "assembled" || !selectedRunId || !selectedCaseId || !leftVariantId || !rightVariantId) return;
+    const skills = [...loadedSkills].sort();
+    const key = `${selectedRunId}::${selectedCaseId}::${leftVariantId}::${rightVariantId}::${assembleCwd}::${skills.join(",")}`;
+    if (key === assembledKey) return;
+    assembledKey = key;
+    assembledLoading = true;
+    assembledError = "";
+    try {
+      const [a, b] = await Promise.all([
+        client.assembleContext({ runId: selectedRunId, caseId: selectedCaseId, variant: leftVariantId, cwd: assembleCwd, skills }),
+        client.assembleContext({ runId: selectedRunId, caseId: selectedCaseId, variant: rightVariantId, cwd: assembleCwd, skills })
+      ]);
+      assembledLeft = a; assembledRight = b;
+    } catch (loadError) {
+      assembledError = (loadError as Error).message;
+    } finally {
+      assembledLoading = false;
+    }
+  }
+
+  // Re-assemble when the view opens or any input changes. Svelte only re-runs a reactive block when a
+  // variable it directly reads changes; it does not track reads inside loadAssembled. Referencing the dep
+  // string here is what makes cwd and skill changes refetch.
+  $: assembleDeps = `${contextView}|${selectedRunId}|${selectedCaseId}|${leftVariantId}|${rightVariantId}|${assembleCwd}|${[...loadedSkills].sort().join(",")}`;
+  $: if (contextView === "assembled") { void assembleDeps; void loadAssembled(); }
 
   /** Closes the drill-in and returns to the comparison. */
   function closeDrill(): void {
@@ -1087,6 +1127,21 @@
                 <h3>{section.title}</h3>
                 <small class="section-summary">{section.differs ? "differs" : "identical"}</small>
               </button>
+              {#if section.kind === "context"}
+                <div class="context-toggle">
+                  <button type="button" class="seg" class:active={contextView === "files"} on:click={() => (contextView = "files")}>Files</button>
+                  <button type="button" class="seg" class:active={contextView === "assembled"} on:click={() => (contextView = "assembled")}>Assembled</button>
+                </div>
+              {/if}
+              {#if section.kind === "context" && contextView === "assembled"}
+                <AssembledContext
+                  left={assembledLeft}
+                  right={assembledRight}
+                  leftLabel={leftVariantId}
+                  rightLabel={rightVariantId}
+                  loading={assembledLoading}
+                  errorText={assembledError} />
+              {:else}
               <div class="aligned-rows">
                 {#each rows as row}
                   <div class="aligned-row" class:identical={row.identical}>
@@ -1161,6 +1216,7 @@
                   {/if}
                 {/if}
               </div>
+              {/if}
             </section>
           {/each}
         </div>

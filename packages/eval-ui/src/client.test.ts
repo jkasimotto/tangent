@@ -26,4 +26,16 @@ describe("eval api client context methods", () => {
     await client.getContextManifest({ runId: "r1", caseId: "task", variant: "repo" });
     expect(fetchMock.mock.calls[0][0] as string).toContain("/api/eval/runs/r1/context/manifest?");
   });
+
+  it("builds the conversations URL for one variant", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ schema: "eval.conversations.v1", caseId: "task", variantId: "repo", conversations: [], notes: [] }), { status: 200 })
+    );
+    const client = createEvalApiClient("");
+    await client.getConversations({ runId: "r1", caseId: "task", variant: "repo" });
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain("/api/eval/runs/r1/conversations?");
+    expect(url).toContain("caseId=task");
+    expect(url).toContain("variant=repo");
+  });
 });

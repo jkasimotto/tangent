@@ -167,6 +167,40 @@ export type EvalContextSubagent = { name: string; description: string; path: str
 export type EvalAssembledContext = { blocks: EvalAssembledBlock[]; skills: EvalContextSkill[]; subagents: EvalContextSubagent[]; lazyClaudeMd: string[] };
 export type EvalContextManifest = { skills: EvalContextSkill[]; subagents: EvalContextSubagent[] };
 
+export type EvalConversationToolCall = {
+  id: string;
+  name: string;
+  category: string;
+  targetPaths: string[];
+  status?: "success" | "error" | "unknown";
+  durationMs?: number;
+  inputPreview?: string;
+};
+export type EvalConversationMessage = {
+  id: string;
+  role: "user" | "assistant";
+  at?: string;
+  model?: string;
+  text: string;
+  thinking?: string;
+  toolCalls: EvalConversationToolCall[];
+};
+export type EvalConversation = {
+  id: string;
+  provider: "claude" | "codex";
+  startedAt?: string;
+  endedAt?: string;
+  messages: EvalConversationMessage[];
+  totals: { userMessages: number; assistantMessages: number; toolCalls: number };
+};
+export type EvalConversationsView = {
+  schema: "eval.conversations.v1";
+  caseId: string;
+  variantId: string;
+  conversations: EvalConversation[];
+  notes: string[];
+};
+
 export type EvalReviewSentiment = "good" | "bad";
 export type EvalVerdictSentiment = "like" | "dislike" | "mixed";
 
@@ -204,6 +238,7 @@ export type EvalUiClient = {
   getDiff(args: { runId: string; caseId: string; left: string; right: string; kind: EvalCompareArtifactKind; path: string }): Promise<EvalDiffView>;
   getContextManifest(args: { runId: string; caseId: string; variant: string }): Promise<EvalContextManifest>;
   assembleContext(args: { runId: string; caseId: string; variant: string; cwd: string; skills: string[] }): Promise<EvalAssembledContext>;
+  getConversations(args: { runId: string; caseId: string; variant: string }): Promise<EvalConversationsView>;
   getReviews(runId: string): Promise<EvalReviews>;
   putReviews(runId: string, reviews: EvalReviews): Promise<EvalReviews>;
 };
@@ -243,6 +278,8 @@ export function createEvalApiClient(baseUrl = ""): EvalUiClient {
     getContextManifest: (args) => getJson(`${baseUrl}/api/eval/runs/${encodeURIComponent(args.runId)}/context/manifest?${query({ caseId: args.caseId, variant: args.variant })}`),
     /** Assembles a variant's repo-contributed context at a cwd with a loaded-skill set. */
     assembleContext: (args) => getJson(`${baseUrl}/api/eval/runs/${encodeURIComponent(args.runId)}/context/assemble?${query({ caseId: args.caseId, variant: args.variant, cwd: args.cwd, skills: args.skills.join(",") })}`),
+    /** Reconstructs a variant's agent conversations (turns and tool calls) for the compare view. */
+    getConversations: (args) => getJson(`${baseUrl}/api/eval/runs/${encodeURIComponent(args.runId)}/conversations?${query({ caseId: args.caseId, variant: args.variant })}`),
     /** Fetches the human review notes for a run. */
     getReviews: (runId) => getJson(`${baseUrl}/api/eval/runs/${encodeURIComponent(runId)}/reviews`),
     /** Persists the human review notes for a run. */

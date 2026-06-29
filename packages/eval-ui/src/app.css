@@ -329,29 +329,6 @@ button {
   color: var(--accent);
 }
 
-.diff-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 8px 12px;
-  border: 1px solid var(--line);
-  border-bottom: 0;
-  background: var(--pane-muted);
-}
-
-.diff-head h3 {
-  margin: 0;
-  font-size: 14px;
-  line-height: 1.2;
-}
-
-.diff-head > span {
-  flex: 0 0 auto;
-  color: var(--muted);
-  font-size: 12px;
-}
-
 .diff-grid {
   min-width: 0;
   min-height: 0;
@@ -664,14 +641,6 @@ button {
   word-break: break-word;
   padding: 2px 8px;
 }
-.review-row .row-actions {
-  display: none;
-  gap: 2px;
-  padding: 1px 6px;
-}
-.review-row:hover .row-actions {
-  display: inline-flex;
-}
 .review-row.has-notes {
   background: #fbfdfb;
 }
@@ -691,22 +660,21 @@ button {
 .review-diff .review-delete .line-no::before {
   content: "− ";
 }
-.review-row.review-context .line-no.muted {
-  opacity: 0.55;
-}
-.row-actions .mark {
+.note-composer .mark {
   border: 0;
   background: transparent;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1;
-  padding: 2px 4px;
-  border-radius: 6px;
+  padding: 4px 7px;
+  border-radius: 7px;
   cursor: pointer;
-  opacity: 0.55;
 }
-.row-actions .mark:hover {
-  opacity: 1;
+.note-composer .mark:hover {
   background: var(--pane-muted);
+}
+.note-composer .mark:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .line-note,
@@ -749,20 +717,6 @@ button {
   font-size: 13px;
   background: #fff;
   color: var(--text);
-}
-.note-composer .primary {
-  border: 0;
-  background: var(--accent);
-  color: #fff;
-  font-weight: 700;
-  font-size: 13px;
-  padding: 6px 12px;
-  border-radius: 7px;
-  cursor: pointer;
-}
-.note-composer .primary:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 .note-composer .ghost {
   border: 0;
@@ -1108,53 +1062,6 @@ button {
 }
 
 /* --- Block selection + scoring --- */
-.line-no-pick {
-  border: 0;
-  background: transparent;
-  font: inherit;
-  color: #566057;
-}
-.line-no-pick:hover {
-  color: var(--accent);
-  text-decoration: underline;
-}
-.line-no-pick.anchor {
-  color: var(--accent);
-  font-weight: 800;
-}
-.review-row.selected {
-  background: #eaf3ff;
-}
-.review-row.selected code {
-  background: #eaf3ff;
-}
-.sel-bar {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--text);
-}
-.sel-bar .mark {
-  border: 1px solid var(--line);
-  background: #fff;
-  font-size: 12px;
-  padding: 3px 9px;
-  border-radius: 7px;
-}
-.sel-bar .ghost {
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-}
-.note-range {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--muted);
-  white-space: nowrap;
-}
 
 .score {
   display: inline-flex;
@@ -1436,54 +1343,6 @@ button {
   z-index: 50;
 }
 .prompt-editor,
-.drill-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  width: min(820px, 100%);
-  max-height: 86vh;
-  padding: 18px 20px;
-  border-radius: 14px;
-  background: var(--pane);
-  border: 1px solid var(--line);
-  box-shadow: 0 24px 60px rgb(20 35 27 / 28%);
-  outline: none;
-}
-.drill-panel {
-  overflow: auto;
-}
-.drill-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.drill-head h3 {
-  margin: 0;
-  font-size: 16px;
-}
-.drill-head .ghost {
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-  font-size: 14px;
-  cursor: pointer;
-}
-.row-note {
-  align-self: flex-start;
-  border: 1px solid var(--line);
-  background: var(--pane);
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
-  padding: 3px 10px;
-  border-radius: 7px;
-  cursor: pointer;
-  margin-bottom: 6px;
-}
-.row-note:hover {
-  color: var(--accent);
-  border-color: var(--accent);
-}
 .prompt-editor-head {
   display: flex;
   align-items: center;
@@ -1665,4 +1524,166 @@ button {
   font-weight: 700;
   text-transform: uppercase;
   font-size: 10px;
+}
+
+/* A diff line rendered as a button so clicking anywhere on it opens the inline comment composer,
+   like clicking a line in a code review. The base .review-row rule supplies the grid + bottom border;
+   this only resets the browser's button chrome and adds the click affordance. */
+button.review-row {
+  width: 100%;
+  border-left: 0;
+  border-right: 0;
+  border-top: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+button.review-row.commentable:hover {
+  background: #eef6e8;
+}
+button.review-row.commentable:hover .line-no::after {
+  content: " ✎";
+  color: var(--accent);
+}
+
+/* Conversation comparison: two independent transcript columns with a shared highlight box. */
+.convo {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.convo-filter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.convo-filter input {
+  flex: 1 1 auto;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 5px 9px;
+  font-size: 13px;
+}
+.convo-filter-counts {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.convo-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  align-items: start;
+}
+.convo-col {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--pane);
+  max-height: 560px;
+  overflow-y: auto;
+}
+.convo-col-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 11px;
+  background: var(--pane);
+  border-bottom: 1px solid var(--line);
+}
+.convo-label {
+  font-weight: 700;
+  font-size: 13px;
+}
+.convo-totals {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.convo-empty,
+.convo-note {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 8px 11px;
+  margin: 0;
+}
+.convo-note {
+  border-bottom: 1px dashed var(--line);
+}
+.convo-divider {
+  padding: 5px 11px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  background: #f6f8f4;
+  border-bottom: 1px solid var(--line);
+}
+.convo-msg {
+  padding: 7px 11px;
+  border-bottom: 1px solid #f1f4ef;
+}
+.convo-msg.dim {
+  opacity: 0.32;
+}
+.convo-msg.hit {
+  background: #fffbe6;
+}
+.convo-role {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+.convo-user .convo-role {
+  color: var(--accent);
+}
+.convo-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  max-height: 9.5em;
+  overflow-y: auto;
+}
+.convo-thinking {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.convo-thinking pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 4px 0 0;
+}
+.convo-tool {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 12px;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+.convo-tool-status {
+  width: 1em;
+  text-align: center;
+  color: var(--muted);
+}
+.convo-tool-success .convo-tool-status {
+  color: #2f9e44;
+}
+.convo-tool-error .convo-tool-status {
+  color: #e03131;
+}
+.convo-tool-name {
+  font-weight: 700;
+}
+.convo-tool-input {
+  color: var(--muted);
+  word-break: break-all;
 }

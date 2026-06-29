@@ -25,6 +25,7 @@ CLI notes:
 - `POST /api/eval/runs` with `{ specPath }` prepares a run, starts execution in the background, and returns `{ runId }`; the manifest is persisted per phase so polling `GET /api/eval/runs/<id>` shows live status.
 - `GET /api/eval/runs/<id>/context/manifest?caseId=<id>&variant=<id>` returns `{ skills, subagents }`: the discoverable skill and subagent roster for the variant's frozen worktree (frontmatter only, `loaded` is always `false`).
 - `GET /api/eval/runs/<id>/context/assemble?caseId=<id>&variant=<id>&cwd=<path>&skills=<a,b>` returns an `AssembledContext`: ordered blocks (CLAUDE.md chain with `@imports` expanded, skills index, requested skill bodies, subagents index), skill and subagent lists, and the lazy-CLAUDE.md roster. `cwd` is repo-relative; `skills` is a comma-separated list of skill names to load.
+- `GET /api/eval/runs/<id>/conversations?caseId=<id>&variant=<id>` returns a `VariantConversationsView`: the variant's agent conversations reconstructed from the usage index (each turn's prose, hidden thinking, and tool calls with target paths and status), plus `notes` for caveats and any conversation that could not be reconstructed. Conversation ids come from the variant's `metrics.json`, so an uncollected variant returns no conversations and a note.
 
 Context assembly exports (from `@tangent/eval`):
 - `assembleContext(source, cwd, loadedSkills)` assembles the full repo-contributed context for a `cwd` and loaded-skill set.

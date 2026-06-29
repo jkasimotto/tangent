@@ -1,6 +1,14 @@
 # @tangent/eval-ui Architecture
 
-Eval UI is a product-owned Svelte app. It renders serializable view models from `/api/eval/*` and does not import Eval domain code directly. The Results screen is a compare-first aligned view: `buildAlignedSections` groups artifacts by kind (prompts, context, changed files); each row expands per-column via `expandRow`/`diffCache`; the notes-only lens uses `rowsWithNotes`; and the drill-in (`openDrill`/`loadReviewDiff`) loads a single variant's file for line-level annotation.
+Eval UI is a product-owned Svelte app. It renders serializable view models from `/api/eval/*` and does not import Eval domain code directly. The Results screen is a compare-first aligned view: `buildAlignedSections` groups artifacts by kind (prompts, context, changed files); each row expands per-column via `toggleRow`/`diffCache`; and the notes-only lens uses `rowsWithNotes`.
+
+## Inline comments
+
+Diff lines in an expanded column are GitHub-style: each commentable line is a button (`openComposer`) that opens a one-at-a-time composer keyed by `{variantId, artifactId, line}` (`composerAt`). Submitting with 👍/👎 (`saveComposer`) appends a note to that side's variant review and persists via `PUT /api/eval/.../reviews`; saved notes render inline under their line and delete in place (`removeNote` finds a note by id across variants). There is no separate drill-in panel.
+
+## Conversations section
+
+Under Changed files, a collapsed `Conversations` section mounts `ConversationCompare.svelte` and lazily loads `GET /api/eval/.../conversations` for both variants when opened (`loadConversations`). Each column is an independent transcript of turns with tool calls (name, input preview, target paths, status), so differences in what each agent did (which files it read, whether it loaded a skill) are visible side by side. A shared highlight box dims non-matching turns and counts matches per side; `conversation-model.ts` holds the pure matchers (`messageMatches`, `conversationMatchCount`), and the match-count helpers take the needle as an argument so the counts recompute reactively as the box changes.
 
 ## Context section: Assembled view
 

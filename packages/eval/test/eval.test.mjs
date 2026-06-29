@@ -582,3 +582,36 @@ test("context assemble endpoint reconstructs the repo variant and empties the em
     await server.close();
   }
 });
+
+test("conversations endpoint returns the variant view with a note when uncollected", async () => {
+  const repo = await createRepo();
+  const evalHome = await mkdtemp(path.join(tmpdir(), "tangent-eval-home-"));
+  process.env.TANGENT_EVAL_HOME = evalHome;
+
+  await writeFile(path.join(repo, "index.ts"), "export const value = 1;\n", "utf8");
+  await git(repo, "add", ".");
+  await git(repo, "commit", "-m", "base");
+
+  const evalDir = path.join(repo, "evals", "task");
+  await mkdir(path.join(evalDir, "prompts"), { recursive: true });
+  await writeFile(path.join(evalDir, "prompts", "task.md"), "Change the value.\n", "utf8");
+  const specPath = path.join(evalDir, "eval.json");
+  await writeFile(specPath, JSON.stringify({
+    schema: "eval.spec.v1",
+    name: "task",
+    defaults: { repo: { path: repo, ref: "HEAD" }, cwd: ".", agent: { kind: "manual" }, phases: ["plan", "implement"] },
+    cases: [{ id: "task", prompt: "prompts/task.md", variants: [{ id: "empty", context: { mode: "empty" } }, { id: "repo", context: { mode: "repo" } }] }]
+  }, null, 2), "utf8");
+
+  const prepared = await prepareEval(specPath);
+  const server = await startEvalUiServer({ runId: prepared.manifest.id, open: false });
+  try {
+    const view = await fetchJson(`${server.url}api/eval/runs/${prepared.manifest.id}/conversations?caseId=task&variant=repo`);
+    assert.equal(view.schema, "eval.conversations.v1");
+    assert.equal(view.variantId, "repo");
+    assert.deepEqual(view.conversations, []);
+    assert.ok(view.notes.some((note) => /No metrics captured/.test(note)));
+  } finally {
+    await server.close();
+  }
+});

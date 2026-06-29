@@ -759,13 +759,15 @@
     return Math.max(20, Math.min(100, (self.durationMs / max) * 100));
   }
 
-  /** One-line flame caption: how long the conversation ran and how many tokens it spent. */
+  /** One-line flame caption: how long the conversation ran, tokens spent, peak context, and how many
+      distinct files the agent read (a comparable signal of how much it explored). */
   function flameCaption(metrics: EvalVariantMetricsView | null | undefined): string {
     if (!metrics) return "";
     const parts: string[] = [];
     if (metrics.durationMs !== undefined) parts.push(formatDurationMs(metrics.durationMs));
     if (metrics.tokensTotal) parts.push(`${formatTokens(metrics.tokensTotal)} tok`);
     if (metrics.peakContextTokens) parts.push(`${formatTokens(metrics.peakContextTokens)} ctx`);
+    if (metrics.filesRead) parts.push(`${metrics.filesRead} files read`);
     return parts.join(" · ");
   }
 

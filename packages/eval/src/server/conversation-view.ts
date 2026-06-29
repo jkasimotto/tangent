@@ -78,7 +78,7 @@ export async function variantConversationsView(manifest: EvalRunManifest, caseId
         conversationId: ref.id
       });
       const normalized = conversationReport(dataset, { conversationId: ref.id });
-      conversations.push(projectConversation(normalized));
+      conversations.push(projectConversation(normalized, variant.worktree));
       for (const caveat of normalized.caveats) notes.push(caveat);
     } catch (error) {
       notes.push(`Could not reconstruct conversation ${ref.id}: ${(error as Error).message}`);
@@ -87,8 +87,13 @@ export async function variantConversationsView(manifest: EvalRunManifest, caseId
   return { schema: "eval.conversations.v1", caseId, variantId: variant.variantId, conversations, notes: [...new Set(notes)] };
 }
 
-/** Projects a normalized conversation to the compact view the compare UI consumes. */
-export function projectConversation(conversation: NormalizedConversation): ConversationView {
+/**
+ * Projects a normalized conversation to the compact view the compare UI consumes. Tool-call paths and
+ * command previews are relativized against the variant's worktree so a Read shows `polez/lib/x.dart`,
+ * not the full `/Users/.../runs/.../work/polez/lib/x.dart`, and a `find <worktree>/...` command reads as
+ * `find polez/...`. Pass the worktree to relativize; omit it (e.g. unit tests) to leave paths absolute.
+ */
+export function projectConversation(conversation: NormalizedConversation, worktree?: string): ConversationView {
   return {
     id: conversation.conversationId,
     provider: conversation.provider,
@@ -106,34 +111,72 @@ export function projectConversation(conversation: NormalizedConversation): Conve
       model: message.role === "assistant" ? message.model : undefined,
       text: message.text,
       thinking: message.role === "assistant" ? message.thinking : undefined,
-      toolCalls: message.role === "assistant" ? message.toolCalls.map(projectToolCall) : []
+      toolCalls: message.role === "assistant" ? message.toolCalls.map((call) => projectToolCall(call, worktree)) : []
     }))
   };
 }
 
 /** Projects a normalized tool call, deriving a one-line input preview for quick scanning. */
-function projectToolCall(call: NormalizedToolCall): ConversationToolCallView {
+function projectToolCall(call: NormalizedToolCall, worktree?: string): ConversationToolCallView {
+  const raw = rawPreviewValue(call.input);
   return {
     id: call.id,
     name: call.name,
     category: call.category,
-    targetPaths: call.targetPaths,
+    targetPaths: call.targetPaths.map((target) => relativeToWorktree(target, worktree)),
     status: call.result?.status,
     durationMs: call.result?.durationMs,
-    inputPreview: inputPreview(call.input)
+    // Strip the worktree before clipping: a long grep pattern can push the path past the 160-char clip,
+    // so stripping after clip would leave a truncated, unmatchable prefix behind.
+    inputPreview: raw === undefined ? undefined : clip(stripWorktree(raw, worktree))
   };
 }
 
-/** Pulls the most identifying field out of a tool call's input as a short, single-line string. */
+/**
+ * Pulls the most identifying field out of a tool call's input as a short, single-line string. `skill`
+ * is checked first so a Skill call reads as the skill it loaded (the use case "did the agent load the
+ * expression-functions skill"); the rest cover commands, file paths, searches, and prompts.
+ */
 export function inputPreview(input: unknown): string | undefined {
-  if (typeof input === "string") return clip(input);
+  const raw = rawPreviewValue(input);
+  return raw === undefined ? undefined : clip(raw);
+}
+
+/** The raw, unclipped identifying value of a tool call's input, or undefined when none applies. */
+function rawPreviewValue(input: unknown): string | undefined {
+  if (typeof input === "string") return input;
   if (!input || typeof input !== "object") return undefined;
   const record = input as Record<string, unknown>;
-  for (const key of ["command", "file_path", "path", "pattern", "query", "url", "prompt"]) {
+  for (const key of ["skill", "command", "file_path", "path", "pattern", "query", "url", "prompt"]) {
     const value = record[key];
-    if (typeof value === "string" && value.trim()) return clip(value);
+    if (typeof value === "string" && value.trim()) return value;
   }
   return undefined;
+}
+
+/** Strips the `<worktree>/` prefix from an absolute path, leaving paths outside the worktree untouched. */
+function relativeToWorktree(target: string, worktree?: string): string {
+  if (!worktree) return target;
+  const prefix = worktree.endsWith("/") ? worktree : `${worktree}/`;
+  return target.startsWith(prefix) ? target.slice(prefix.length) : target;
+}
+
+/**
+ * Rewrites worktree-absolute paths in a preview to short relative ones: `<worktree>/x` becomes `x`, and a
+ * bare `<worktree>` standing as its own token (e.g. `cd <worktree> && git status`) becomes `.`. The bare
+ * form is matched only at a token boundary so a sibling path like `<worktree>-backup` is left untouched.
+ */
+function stripWorktree(preview: string, worktree?: string): string {
+  if (!worktree) return preview;
+  const bare = worktree.replace(/\/+$/, "");
+  const collapsed = preview.split(`${bare}/`).join("");
+  const bareToken = new RegExp(`${escapeRegExp(bare)}(?=$|[\\s&;|"'])`, "g");
+  return collapsed.replace(bareToken, ".");
+}
+
+/** Escapes a string for safe use inside a RegExp. */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** Trims a value to a single line capped at 160 characters. */

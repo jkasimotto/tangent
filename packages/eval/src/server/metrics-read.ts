@@ -32,6 +32,7 @@ export async function readVariantMetricsView(manifest: EvalRunManifest, variant:
     tokensTotal: metrics?.tokens.total ?? telemetry?.tokensTotal,
     peakContextTokens: metrics ? peakContextTokens(metrics) : undefined,
     filesChanged: metrics?.files.changed.length ?? 0,
+    filesRead: metrics?.files.read.length ?? 0,
     diffStat: metrics?.git.diffStat,
     conversationIds: metrics?.conversations.map((conversation) => conversation.id) ?? [],
     sparkline

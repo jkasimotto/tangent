@@ -10,6 +10,7 @@ test("inputPreview pulls the identifying field and collapses whitespace", () => 
   assert.equal(inputPreview("git   status\n"), "git status");
   assert.equal(inputPreview({ command: "npm run test" }), "npm run test");
   assert.equal(inputPreview({ file_path: "/a/SKILL.md" }), "/a/SKILL.md");
+  assert.equal(inputPreview({ skill: "expression-functions", args: "" }), "expression-functions");
   assert.equal(inputPreview({ unrelated: "x" }), undefined);
   assert.equal(inputPreview(undefined), undefined);
   assert.equal(inputPreview({ command: "x".repeat(200) }).length, 160);
@@ -53,6 +54,44 @@ test("projectConversation flattens turns and tool calls into the compact view", 
   assert.equal(view.messages[1].toolCalls[0].status, "success");
   assert.equal(view.messages[1].toolCalls[0].inputPreview, "/repo/.claude/skills/x/SKILL.md");
   assert.deepEqual(view.messages[1].toolCalls[0].targetPaths, ["/repo/.claude/skills/x/SKILL.md"]);
+});
+
+test("projectConversation relativizes tool paths and commands against the worktree", () => {
+  // A realistic full worktree, so the strip-before-clip case below is genuine (a long grep pattern
+  // pushes the worktree prefix across the 160-char clip boundary, truncating it mid-path).
+  const wt = "/Users/me/.tangent/eval/runs/20260629T031727Z-context/variants/debug-log-haiku-no-ctx/work/polez";
+  const normalized = {
+    schema: "usage.conversation.v1",
+    provider: "claude",
+    conversationId: "claude:rel",
+    messages: [
+      {
+        id: "a1",
+        role: "assistant",
+        model: "claude-haiku",
+        text: "",
+        toolCalls: [
+          { id: "t1", name: "Bash", category: "command", input: { command: `find ${wt}/client -name '*.dart'` }, result: { status: "success" }, targetPaths: [], evidenceEventIds: [] },
+          { id: "t2", name: "Read", category: "file", input: { file_path: `${wt}/lib/a.dart` }, result: { status: "success" }, targetPaths: [`${wt}/lib/a.dart`, "/outside/b.dart"], evidenceEventIds: [] },
+          { id: "t3", name: "Bash", category: "command", input: { command: `grep -r "${"needle ".repeat(10)}" ${wt}/client/lib` }, result: { status: "success" }, targetPaths: [], evidenceEventIds: [] },
+          { id: "t4", name: "Bash", category: "command", input: { command: `cd ${wt} && git status` }, result: { status: "success" }, targetPaths: [], evidenceEventIds: [] }
+        ]
+      }
+    ],
+    totals: { userMessages: 0, assistantMessages: 1, toolCalls: 3 },
+    caveats: []
+  };
+  const view = projectConversation(normalized, wt);
+  assert.equal(view.messages[0].toolCalls[0].inputPreview, "find client -name '*.dart'");
+  assert.equal(view.messages[0].toolCalls[1].inputPreview, "lib/a.dart");
+  assert.deepEqual(view.messages[0].toolCalls[1].targetPaths, ["lib/a.dart", "/outside/b.dart"]);
+  // Strip must happen before clip: the prefix lands past char 160, so stripping after clip would leave
+  // a truncated, unmatchable fragment behind.
+  const longGrep = view.messages[0].toolCalls[2].inputPreview;
+  assert.ok(!longGrep.includes("/Users/me/"), `worktree prefix should be gone: ${longGrep}`);
+  assert.ok(longGrep.includes("client/lib"), `relative path should survive: ${longGrep}`);
+  // A bare `cd <worktree>` (no trailing slash) collapses to the current directory.
+  assert.equal(view.messages[0].toolCalls[3].inputPreview, "cd . && git status");
 });
 
 test("variantConversationsView returns a note when the variant has no metrics", async () => {

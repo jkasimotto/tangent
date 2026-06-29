@@ -56,7 +56,6 @@
   let leftVariantId = "";
   let rightVariantId = "";
   let compare: EvalCompareView | undefined;
-  let diff: EvalDiffView | undefined;
   let selectedArtifactId = "";
   // Per-side content cache for the aligned view: keyed by diffCacheKey so re-expanding never refetches.
   let diffCache = new Map<string, EvalDiffView>();
@@ -68,7 +67,6 @@
   let error = "";
   let runLoadKey = "";
   let compareLoadKey = "";
-  let diffLoadKey = "";
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
 
   // Primary view: the live run dashboard (a running eval is the focal point) vs the results explorer.
@@ -88,11 +86,6 @@
   let promptLoading = false;
   let promptSaving = false;
   let promptError = "";
-
-  // Side-by-side layout (workflow 5): "diff" aligns changes; "split" shows both results whole with no
-  // diff markers. Defaults per artifact kind (generated code reads better whole) but the user overrides.
-  type DiffLayout = "diff" | "split";
-  let diffLayoutOverride: DiffLayout | undefined;
 
   // Block selection for review notes (workflow 5): a note can target a range of lines, picked by
   // clicking the start gutter then the end gutter. noteEndLine carries the block end while composing.
@@ -332,9 +325,6 @@
     await persistReviews();
   }
 
-  $: effectiveLayout = (diffLayoutOverride ?? (diff?.artifact.kind === "code" ? "split" : "diff")) as DiffLayout;
-  $: isSplit = effectiveLayout === "split";
-
   /** Re-fetches the run while any variant is still preparing or running, then refreshes the comparison. */
   function schedulePoll(runId: string): void {
     clearTimeout(pollTimer);
@@ -351,7 +341,6 @@
         schedulePoll(runId);
       } else {
         compareLoadKey = "";
-        diffLoadKey = "";
         void loadCompare();
       }
     } catch {
@@ -375,7 +364,6 @@
       selectedCaseId = next.cases.find((item) => item.id === selectedCaseId)?.id || next.cases[0]?.id || "";
       selectedArtifactId = "";
       compare = undefined;
-      diff = undefined;
       reviewDiff = undefined;
       reviewDiffLoadKey = "";
       void loadReviews(runId);
@@ -405,38 +393,12 @@
       if (compareLoadKey !== key) return;
       compare = next;
       // The aligned view has no single "selected" artifact; per-row expansion drives content loads later.
-      diff = undefined;
       diffCache = new Map(); expandedRows = new Set(); loadingRows = new Set();
       error = "";
     } catch (caught) {
       error = friendlyError(caught);
     } finally {
       if (compareLoadKey === key) compareLoading = false;
-    }
-  }
-
-  async function loadDiff(): Promise<void> {
-    if (!compare) return;
-    const artifact = compare.artifacts.find((item) => item.id === selectedArtifactId);
-    if (!artifact) return;
-    const key = `${selectedRunId}:${selectedCaseId}:${leftVariantId}:${rightVariantId}:${artifact.id}`;
-    if (diffLoadKey === key) return;
-    diffLoadKey = key;
-    try {
-      const next = await client.getDiff({
-        runId: selectedRunId,
-        caseId: selectedCaseId,
-        left: leftVariantId,
-        right: rightVariantId,
-        kind: artifact.kind,
-        path: artifact.path
-      });
-      if (diffLoadKey !== key) return;
-      diff = next;
-      expandedGaps = new Set();
-      error = "";
-    } catch (caught) {
-      error = friendlyError(caught);
     }
   }
 
@@ -581,15 +543,6 @@
     await persistReviews();
   }
 
-  /** Saves the free-text verdict for a given variant, preserving its sentiment and score. */
-  async function setVerdictTextFor(variantId: string, text: string): Promise<void> {
-    const key = variantKey(selectedCaseId, variantId);
-    const review = ensureReview(key);
-    review.verdict = { sentiment: review.verdict?.sentiment || "mixed", text: text.trim() || undefined, score: review.verdict?.score };
-    reviews = reviews;
-    await persistReviews();
-  }
-
   /** Notes anchored at a line (a note renders once, at its block's first line). */
   function notesAt(review: EvalVariantReview, artifactId: string, line: number): EvalReviewNote[] {
     return review.notes.filter((note) => note.artifactId === artifactId && note.line === line);
@@ -603,16 +556,6 @@
   /** A short range label for a note block, e.g. "L12" or "L12–15". */
   function noteRangeLabel(note: EvalReviewNote): string {
     return note.endLine && note.endLine > note.line ? `L${note.line}–${note.endLine}` : `L${note.line}`;
-  }
-
-  /** A variant's notes of one sentiment, for the Compare synthesis. */
-  function notesBySentiment(key: string, sentiment: EvalReviewSentiment): EvalReviewNote[] {
-    return (reviews.variants[key]?.notes || []).filter((note) => note.sentiment === sentiment);
-  }
-
-  /** A short label for a verdict sentiment. */
-  function verdictLabel(sentiment: EvalVerdictSentiment | undefined): string {
-    return sentiment === "like" ? "👍 Liked" : sentiment === "dislike" ? "👎 Disliked" : sentiment === "mixed" ? "🤔 Mixed" : "No verdict";
   }
 
   /** Generates a fresh note id. */
@@ -635,7 +578,6 @@
     selectedSpecPath = specPathForRun(runId) ?? selectedSpecPath;
     runLoadKey = "";
     compareLoadKey = "";
-    diffLoadKey = "";
     diffCache = new Map(); expandedRows = new Set(); loadingRows = new Set();
   }
 
@@ -644,14 +586,7 @@
     leftVariantId = "";
     rightVariantId = "";
     compareLoadKey = "";
-    diffLoadKey = "";
     diffCache = new Map(); expandedRows = new Set(); loadingRows = new Set();
-  }
-
-  function selectArtifact(artifact: EvalCompareArtifactView): void {
-    selectedArtifactId = artifact.id;
-    diffLoadKey = "";
-    reviewDiffLoadKey = "";
   }
 
   function syncVariantSelection(testCase: EvalCaseView): void {
@@ -702,8 +637,6 @@
   const DIFF_CONTEXT = 3;
   const DIFF_GAP_MIN = 3;
 
-  let expandedGaps = new Set<number>();
-
   /** Collapses long runs of equal lines into expandable gaps, keeping a few context lines around changes. */
   function diffSegments(lines: EvalDiffLineView[]): DiffSegment[] {
     const segments: DiffSegment[] = [];
@@ -740,13 +673,6 @@
     flushVisible();
     return segments;
   }
-
-  function toggleGap(index: number): void {
-    expandedGaps.add(index);
-    expandedGaps = expandedGaps;
-  }
-
-  $: segments = diff ? diffSegments(diff.lines) : [];
 
   // One row of the Individual review reader. A "line" row carries the variant line number it annotates when
   // present (added/unchanged code); rows without one (removed code) are shown for context but not annotated.
@@ -813,12 +739,6 @@
     return [variant.agent.kind, variant.model].filter(Boolean).join(" / ");
   }
 
-  function lineCount(): string {
-    if (!diff) return "";
-    const changed = diff.lines.filter((line) => line.kind !== "equal").length;
-    return `${diff.lines.length} lines, ${changed} changed`;
-  }
-
   /** Height (0..1) for one flame bucket, matching the Usage UI sparkline. */
   function sparkHeight(tokenShare: number, durationShare: number): number {
     const value = tokenShare > 0 ? tokenShare : durationShare;
@@ -856,9 +776,6 @@
     }
     return rows;
   }
-
-  $: leftReader = diff && isSplit ? readerLines(diff.lines, "left") : [];
-  $: rightReader = diff && isSplit ? readerLines(diff.lines, "right") : [];
 
   function formatDurationMs(value: number): string {
     if (value < 1000) return `${Math.round(value)}ms`;
@@ -1086,7 +1003,7 @@
               <div class="config-meta">
                 <span>{variant.model || variant.agent.kind}</span>
                 {#if phase}<span class="config-phase">{phase.id}{phase.status === "running" ? "…" : ""}</span>{/if}
-                <span class="config-time">{elapsed !== undefined ? formatDurationMs(elapsed) : "—"}</span>
+                <span class="config-time">{elapsed !== undefined ? formatDurationMs(elapsed) : "-"}</span>
               </div>
               {#if variant.metrics?.sparkline}
                 <span class="flame flame-dashboard" style={`width:${dashboardFlameWidth(variant)}%`} aria-label="Live conversation flame graph">

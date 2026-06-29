@@ -61,7 +61,7 @@ describe("eval svelte app", () => {
 
   it("expands a changed file to each side's diff and caches the fetch", async () => {
     const client = fakeEvalClient();
-    const { container } = render(App, { props: { client } });
+    render(App, { props: { client } });
     await screen.findByText(/ui-compare/);
 
     // Expand the changed code row on side A (empty variant).
@@ -212,7 +212,7 @@ describe("eval svelte app", () => {
       schema: "eval.reviews.v1",
       variants: { "task/empty": { notes: [{ id: "n1", artifactId: "code:src/foo.ts", artifactLabel: "src/foo.ts", line: 2, snippet: "return 1", sentiment: "bad", text: "wrong base case", ts: 1 }] } }
     });
-    const { container } = render(App, { props: { client } });
+    render(App, { props: { client } });
     await screen.findByText(/ui-compare/);
 
     await fireEvent.click(await screen.findByRole("button", { name: "Notes only" }));

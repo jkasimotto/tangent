@@ -51,6 +51,34 @@ describe("eval svelte app", () => {
     expect(screen.getAllByText(/Mistakes/).length).toBeGreaterThan(0);
   });
 
+  it("reviews a variant using only artifacts present in it, never auto-selecting one absent from it", async () => {
+    // The empty-context variant is reviewed by default. Its only changed artifact relative to the repo
+    // variant is a code file; the context files are right-only (they exist solely in the repo variant).
+    // The review pane must load the present code artifact, not the right-only context file (which 404s).
+    const client = fakeEvalClient({
+      artifacts: [
+        { id: "prompt:task", kind: "prompt", path: "task", label: "Task prompt", status: "same" },
+        { id: "context:AGENTS.md", kind: "context", path: "AGENTS.md", label: "AGENTS.md", status: "right-only" },
+        { id: "code:src/foo.ts", kind: "code", path: "src/foo.ts", label: "src/foo.ts", status: "changed" }
+      ]
+    });
+    render(App, { props: { client } });
+
+    // The pane loads content for an artifact that exists in the reviewed variant, scoped to it (left === right).
+    await screen.findByRole("button", { name: /src\/foo.ts changed/ });
+    expect(client.getDiff).toHaveBeenCalled();
+    const lastCall = (client.getDiff as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0];
+    expect(lastCall).toMatchObject({ left: "empty", right: "empty" });
+    expect(lastCall.path).not.toBe("AGENTS.md");
+
+    // The right-only context file is not offered while reviewing the variant it is absent from.
+    expect(screen.queryByRole("button", { name: /AGENTS.md/ })).toBeNull();
+
+    // Switching the reviewed variant to the one the context file belongs to surfaces it in the list.
+    await fireEvent.click(screen.getByRole("button", { name: "repo" }));
+    expect(await screen.findByRole("button", { name: /AGENTS.md right-only/ })).toBeInTheDocument();
+  });
+
   it("launches a run from the selected spec", async () => {
     const client = fakeEvalClient();
     render(App, { props: { client } });
@@ -63,7 +91,7 @@ describe("eval svelte app", () => {
 });
 
 /** Creates a deterministic client for app rendering tests. */
-function fakeEvalClient(): EvalUiClient {
+function fakeEvalClient(overrides?: { artifacts?: EvalCompareView["artifacts"] }): EvalUiClient {
   /** Builds a deterministic output-metrics summary for a variant. */
   const metrics = (durationMs: number, peak: number): EvalVariantMetricsView => ({
     durationMs,
@@ -127,7 +155,7 @@ function fakeEvalClient(): EvalUiClient {
     caseId: "task",
     left: run.cases[0].variants[0],
     right: run.cases[0].variants[1],
-    artifacts: [
+    artifacts: overrides?.artifacts ?? [
       { id: "prompt:task", kind: "prompt", path: "task", label: "Task prompt", status: "changed" },
       { id: "context:AGENTS.md", kind: "context", path: "AGENTS.md", label: "AGENTS.md", status: "right-only" },
       { id: "code:src/foo.ts", kind: "code", path: "src/foo.ts", label: "src/foo.ts", status: "changed" }

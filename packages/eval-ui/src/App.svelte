@@ -130,7 +130,11 @@
   $: selectedCase && syncVariantSelection(selectedCase);
   $: selectedRunId && void loadRun(selectedRunId);
   $: selectedCase && leftVariantId && rightVariantId && void loadCompare();
-  $: compare && syncArtifactSelection(compare.artifacts);
+  // Dependencies (mode, reviewVariantId, leftVariantId, rightVariantId) are passed explicitly so Svelte
+  // recomputes the list when the reviewed variant changes; reading them only inside a filter callback would
+  // not register them as reactive dependencies.
+  $: selectableArtifacts = artifactsForReview(compare?.artifacts || [], mode, reviewVariantId, leftVariantId, rightVariantId);
+  $: compare && syncArtifactSelection(selectableArtifacts);
   $: compare && selectedArtifactId && mode === "diff" && void loadDiff();
   $: compare && selectedArtifactId && reviewVariantId && mode === "review" && void loadReviewDiff();
   $: reviewKey = variantKey(selectedCaseId, reviewVariantId);
@@ -617,8 +621,26 @@
       artifacts[0];
   }
 
-  function artifactGroup(kind: EvalCompareArtifactKind): EvalCompareArtifactView[] {
-    return compare?.artifacts.filter((artifact) => artifact.kind === kind) || [];
+  /**
+   * The artifacts selectable for the current view. Compare and Side-by-side use the whole pair. Individual
+   * review scopes the list to artifacts that exist in the reviewed variant: compare status is relative to the
+   * left/right pair, so a "left-only"/"right-only" artifact is absent from the opposite variant, and reviewing
+   * that variant would fetch a diff that 404s and leave the pane blank. Such artifacts are filtered out here so
+   * they are neither listed nor auto-selected.
+   */
+  function artifactsForReview(
+    artifacts: EvalCompareArtifactView[],
+    mode: ReviewMode,
+    reviewVariantId: string,
+    leftVariantId: string,
+    rightVariantId: string
+  ): EvalCompareArtifactView[] {
+    if (mode !== "review") return artifacts;
+    return artifacts.filter((artifact) => {
+      if (artifact.status === "left-only") return reviewVariantId === leftVariantId;
+      if (artifact.status === "right-only") return reviewVariantId === rightVariantId;
+      return true;
+    });
   }
 
   const artifactSections: { kind: EvalCompareArtifactKind; title: string; empty: string }[] = [
@@ -627,14 +649,17 @@
     { kind: "code", title: "Changed files", empty: "No code changes" }
   ];
 
-  /** Splits a kind's artifacts into changed (surfaced first) and same (collapsed). */
-  function splitArtifacts(kind: EvalCompareArtifactKind): { changed: EvalCompareArtifactView[]; same: EvalCompareArtifactView[] } {
-    const group = artifactGroup(kind);
+  // The artifact list is derived directly into a reactive value (not via a function called from markup) so
+  // Svelte re-renders it when selectableArtifacts changes, e.g. when the mode switches between Individual and
+  // the A/B views. Changed artifacts surface first; same artifacts collapse behind a toggle.
+  $: artifactSectionViews = artifactSections.map((section) => {
+    const group = selectableArtifacts.filter((artifact) => artifact.kind === section.kind);
     return {
+      ...section,
       changed: group.filter((artifact) => artifact.status !== "same"),
       same: group.filter((artifact) => artifact.status === "same")
     };
-  }
+  });
 
   let expandedUnchanged = new Set<EvalCompareArtifactKind>();
 
@@ -951,8 +976,7 @@
       {#if compare}
         <div class="artifact-and-diff">
           <aside class="artifact-list" aria-label="Artifacts">
-            {#each artifactSections as section}
-              {@const split = splitArtifacts(section.kind)}
+            {#each artifactSectionViews as section}
               <section>
                 <h3>
                   <button type="button" class="section-toggle" aria-expanded={!collapsedSections.has(section.kind)} on:click={() => toggleSection(section.kind)}>
@@ -962,21 +986,21 @@
                 </h3>
                 {#if collapsedSections.has(section.kind)}
                   <!-- collapsed: header only -->
-                {:else if split.changed.length === 0 && split.same.length === 0}
+                {:else if section.changed.length === 0 && section.same.length === 0}
                   <p>{section.empty}</p>
                 {:else}
-                  {#each split.changed as artifact}
+                  {#each section.changed as artifact}
                     <button type="button" class:active={artifact.id === selectedArtifactId} on:click={() => selectArtifact(artifact)}>
                       <span>{artifact.label}</span>
                       <small class="badge badge-{artifact.status || 'available'}">{artifact.status || "available"}</small>
                     </button>
                   {/each}
-                  {#if split.same.length}
+                  {#if section.same.length}
                     <button type="button" class="unchanged-toggle" aria-expanded={expandedUnchanged.has(section.kind)} on:click={() => toggleUnchanged(section.kind)}>
-                      {expandedUnchanged.has(section.kind) ? "▾" : "▸"} {split.same.length} unchanged
+                      {expandedUnchanged.has(section.kind) ? "▾" : "▸"} {section.same.length} unchanged
                     </button>
                     {#if expandedUnchanged.has(section.kind)}
-                      {#each split.same as artifact}
+                      {#each section.same as artifact}
                         <button type="button" class="same-row" class:active={artifact.id === selectedArtifactId} on:click={() => selectArtifact(artifact)}>
                           <span>{artifact.label}</span>
                           <small class="badge badge-same">same</small>

@@ -45,16 +45,7 @@ Validation in `core/config.ts` `loadEvalSpec`: when `evaluator` is present, `mod
 
 ### Manifest (`packages/eval/src/types/run.ts`)
 
-`collectEval` works from the persisted `EvalRunManifest`, not the spec, so the resolved evaluator config must be carried into the manifest at prepare time:
-
-```ts
-export type EvalRunManifest = {
-  // ...existing fields...
-  evaluator?: EvalEvaluatorSpec;   // NEW: copied from the spec when the run is prepared
-};
-```
-
-The prepare path that builds the manifest from the resolved spec copies `spec.evaluator` onto the manifest verbatim. No per-variant duplication.
+`collectEval` works from the persisted `EvalRunManifest`. The manifest already carries the full spec (`EvalRunManifest.spec?: EvalSpec`), so collection reads `manifest.spec?.evaluator` directly. No new manifest field and no prepare-path change are required; adding `evaluator` to `EvalSpec` is sufficient for it to be persisted onto the manifest.
 
 ### Verdict sidecar (`eval.evaluation.v1`)
 

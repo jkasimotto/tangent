@@ -183,6 +183,8 @@ describe("eval svelte app", () => {
     expect(container.querySelectorAll(".review-row").length).toBeGreaterThan(20);
   });
 
+  it.todo("scores a specific variant by key, not just the reviewed one");
+
   it("launches a run from the selected spec", async () => {
     const client = fakeEvalClient();
     render(App, { props: { client } });

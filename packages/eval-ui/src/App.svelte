@@ -318,9 +318,10 @@
     if (selRange) openNote(selRange.start, selRange.end, sentiment);
   }
 
-  /** Sets the overall numeric score (0-10) for the reviewed variant. */
-  async function setScore(score: number | undefined): Promise<void> {
-    const review = ensureReview(reviewKey);
+  /** Sets the overall numeric score (0-10) for a given variant, preserving its sentiment and text. */
+  async function setScoreFor(variantId: string, score: number | undefined): Promise<void> {
+    const key = variantKey(selectedCaseId, variantId);
+    const review = ensureReview(key);
     review.verdict = { sentiment: review.verdict?.sentiment || "mixed", text: review.verdict?.text, score };
     reviews = reviews;
     await persistReviews();
@@ -532,17 +533,19 @@
     await persistReviews();
   }
 
-  /** Sets the overall verdict sentiment for the reviewed variant, preserving any score and text. */
-  async function setVerdict(sentiment: EvalVerdictSentiment): Promise<void> {
-    const review = ensureReview(reviewKey);
+  /** Sets the overall verdict sentiment for a given variant, preserving its score and text. */
+  async function setVerdictFor(variantId: string, sentiment: EvalVerdictSentiment): Promise<void> {
+    const key = variantKey(selectedCaseId, variantId);
+    const review = ensureReview(key);
     review.verdict = { sentiment, text: review.verdict?.text, score: review.verdict?.score };
     reviews = reviews;
     await persistReviews();
   }
 
-  /** Saves the free-text part of the reviewed variant's verdict on blur, preserving sentiment and score. */
-  async function setVerdictText(text: string): Promise<void> {
-    const review = ensureReview(reviewKey);
+  /** Saves the free-text verdict for a given variant, preserving its sentiment and score. */
+  async function setVerdictTextFor(variantId: string, text: string): Promise<void> {
+    const key = variantKey(selectedCaseId, variantId);
+    const review = ensureReview(key);
     review.verdict = { sentiment: review.verdict?.sentiment || "mixed", text: text.trim() || undefined, score: review.verdict?.score };
     reviews = reviews;
     await persistReviews();
@@ -1110,16 +1113,16 @@
                   {/each}
                 </div>
                 <div class="verdict" aria-label="Overall verdict">
-                  <button type="button" class:active={currentReview.verdict?.sentiment === "like"} on:click={() => setVerdict("like")}>👍</button>
-                  <button type="button" class:active={currentReview.verdict?.sentiment === "mixed"} on:click={() => setVerdict("mixed")}>🤔</button>
-                  <button type="button" class:active={currentReview.verdict?.sentiment === "dislike"} on:click={() => setVerdict("dislike")}>👎</button>
+                  <button type="button" class:active={currentReview.verdict?.sentiment === "like"} on:click={() => setVerdictFor(reviewVariantId, "like")}>👍</button>
+                  <button type="button" class:active={currentReview.verdict?.sentiment === "mixed"} on:click={() => setVerdictFor(reviewVariantId, "mixed")}>🤔</button>
+                  <button type="button" class:active={currentReview.verdict?.sentiment === "dislike"} on:click={() => setVerdictFor(reviewVariantId, "dislike")}>👎</button>
                   <span class="score" aria-label="Score out of 10">
                     <span class="score-label">Score</span>
                     {#each [0,1,2,3,4,5,6,7,8,9,10] as value}
-                      <button type="button" class="score-pip" class:active={currentReview.verdict?.score === value} on:click={() => setScore(currentReview.verdict?.score === value ? undefined : value)}>{value}</button>
+                      <button type="button" class="score-pip" class:active={currentReview.verdict?.score === value} on:click={() => setScoreFor(reviewVariantId, currentReview.verdict?.score === value ? undefined : value)}>{value}</button>
                     {/each}
                   </span>
-                  <input class="verdict-text" placeholder="overall note (optional)" value={currentReview.verdict?.text || ""} on:change={(event) => setVerdictText(event.currentTarget.value)} />
+                  <input class="verdict-text" placeholder="overall note (optional)" value={currentReview.verdict?.text || ""} on:change={(event) => setVerdictTextFor(reviewVariantId, event.currentTarget.value)} />
                 </div>
               </div>
               {#if reviewDiffLoading}

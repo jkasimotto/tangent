@@ -57,7 +57,7 @@ test("expandImports via assembleContext expands inline, resolves relative, marks
   const joined = claudeBlocks.map((block) => `[${block.kind}:${block.source}] ${block.text}`).join(" | ");
   assert.match(joined, /\[claude-md:CLAUDE\.md\] head/);
   assert.match(joined, /\[import:AGENTS\.md\] agents body/);
-  assert.match(joined, /\[claude-md:CLAUDE\.md\] tail/);
+  assert.match(joined, /\[claude-md:CLAUDE\.md\][\s\S]*?tail/);
   assert.match(joined, /not found: missing\.md/);
 });
 
@@ -66,6 +66,21 @@ test("expandImports caps depth at 4 and guards cycles", async () => {
   const blocks = await assembleContext(source({ "CLAUDE.md": "@a.md", ...files }), "", []);
   const text = blocks.blocks.map((block) => block.text).join("\n");
   assert.match(text, /cycle|max import depth/);
+});
+
+test("expandImports caps at max depth with a pure chain (no cycle)", async () => {
+  const files = {
+    "CLAUDE.md": "@a.md",
+    "a.md": "a content\n@b.md",
+    "b.md": "b content\n@c.md",
+    "c.md": "c content\n@d.md",
+    "d.md": "d content\n@e.md",
+    "e.md": "e content should not appear"
+  };
+  const result = await assembleContext(source(files), "", []);
+  const text = result.blocks.map((block) => block.text).join("\n");
+  assert.match(text, /max import depth/);
+  assert.ok(!text.includes("e content should not appear"), "e.md content must not appear past depth cap");
 });
 
 test("discoverSkills and discoverSubagents match the right paths", () => {

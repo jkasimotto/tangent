@@ -22,17 +22,17 @@
 
 ## File Structure
 
-- **Create** `packages/eval/src/core/context-assembly.ts` — the pure assembly engine and its types (`ContextSource`, `AssembledBlock`, `SkillEntry`, `SubagentEntry`, `AssembledContext`, `ContextManifest`) and functions (`parseFrontmatter`, `claudeMdChain`, `findImportTokens`, `expandImports`, `discoverSkills`, `discoverSubagents`, `contextManifest`, `assembleContext`).
-- **Create** `packages/eval/test/context-assembly.test.mjs` — node --test unit tests over an in-memory `ContextSource`.
-- **Modify** `packages/eval/src/server/index.ts` — `variantContextSource`, `singleVariant`, `contextManifestView`, `assembleContextView`, two route lines.
-- **Modify** `packages/eval/test/eval.test.mjs` — one server test for the assemble endpoint.
-- **Modify** `packages/eval-ui/src/client.ts` — mirrored types + two client methods.
-- **Create** `packages/eval-ui/src/assembled-model.ts` — pure UI helpers (`concatBlocks`, `alignBySource`, `lineDiff`) and their types.
-- **Create** `packages/eval-ui/src/assembled-model.test.ts` — vitest unit tests for the helpers.
-- **Create** `packages/eval-ui/src/AssembledContext.svelte` — the two-column renderer.
-- **Modify** `packages/eval-ui/src/App.svelte` — toggle state, controls, fetch orchestration, mount the component.
-- **Modify** `packages/eval-ui/src/app.css` — toggle/controls/assembled styles + scroll fix.
-- **Modify** `packages/eval-ui/src/App.test.ts` — extend the fake client and add view tests.
+- **Create** `packages/eval/src/core/context-assembly.ts`, the pure assembly engine and its types (`ContextSource`, `AssembledBlock`, `SkillEntry`, `SubagentEntry`, `AssembledContext`, `ContextManifest`) and functions (`parseFrontmatter`, `claudeMdChain`, `findImportTokens`, `expandImports`, `discoverSkills`, `discoverSubagents`, `contextManifest`, `assembleContext`).
+- **Create** `packages/eval/test/context-assembly.test.mjs`, node --test unit tests over an in-memory `ContextSource`.
+- **Modify** `packages/eval/src/server/index.ts`, adding `variantContextSource`, `singleVariant`, `contextManifestView`, `assembleContextView`, two route lines.
+- **Modify** `packages/eval/test/eval.test.mjs`, one server test for the assemble endpoint.
+- **Modify** `packages/eval-ui/src/client.ts`, mirrored types + two client methods.
+- **Create** `packages/eval-ui/src/assembled-model.ts`, pure UI helpers (`concatBlocks`, `alignBySource`, `lineDiff`) and their types.
+- **Create** `packages/eval-ui/src/assembled-model.test.ts`, vitest unit tests for the helpers.
+- **Create** `packages/eval-ui/src/AssembledContext.svelte`, the two-column renderer.
+- **Modify** `packages/eval-ui/src/App.svelte`, toggle state, controls, fetch orchestration, mount the component.
+- **Modify** `packages/eval-ui/src/app.css`, toggle/controls/assembled styles + scroll fix.
+- **Modify** `packages/eval-ui/src/App.test.ts`, extend the fake client and add view tests.
 - **Modify** docs: `packages/eval/docs/index.md`, `packages/eval/docs/architecture.md`, `packages/eval/docs/public-api.md`, `packages/eval-ui/docs/index.md`, `packages/eval-ui/docs/architecture.md`.
 
 ---

@@ -488,13 +488,17 @@
     const key = `${selectedRunId}::${selectedCaseId}::${leftVariantId}::${rightVariantId}`;
     if (key === contextManifestKey) return;
     contextManifestKey = key;
-    const [a, b] = await Promise.all([
-      client.getContextManifest({ runId: selectedRunId, caseId: selectedCaseId, variant: leftVariantId }),
-      client.getContextManifest({ runId: selectedRunId, caseId: selectedCaseId, variant: rightVariantId })
-    ]);
-    const byName = new Map<string, import("./client.js").EvalContextSkill>();
-    for (const skill of [...a.skills, ...b.skills]) if (!byName.has(skill.name)) byName.set(skill.name, skill);
-    contextSkills = [...byName.values()].sort((x, y) => x.name.localeCompare(y.name));
+    try {
+      const [a, b] = await Promise.all([
+        client.getContextManifest({ runId: selectedRunId, caseId: selectedCaseId, variant: leftVariantId }),
+        client.getContextManifest({ runId: selectedRunId, caseId: selectedCaseId, variant: rightVariantId })
+      ]);
+      const byName = new Map<string, import("./client.js").EvalContextSkill>();
+      for (const skill of [...a.skills, ...b.skills]) if (!byName.has(skill.name)) byName.set(skill.name, skill);
+      contextSkills = [...byName.values()].sort((x, y) => x.name.localeCompare(y.name));
+    } catch (loadError) {
+      assembledError = (loadError as Error).message;
+    }
   }
 
   $: manifestDeps = `${contextView}|${selectedRunId}|${selectedCaseId}|${leftVariantId}|${rightVariantId}`;

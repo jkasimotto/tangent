@@ -224,7 +224,7 @@ describe("eval svelte app", () => {
 
   it("switches the Context section to the Assembled view and renders verbatim blocks per side", async () => {
     const client = fakeEvalClient();
-    const { container } = render(App, { props: { client } });
+    render(App, { props: { client } });
     await screen.findByText(/ui-compare/);
     await fireEvent.click(await screen.findByRole("button", { name: "Assembled" }));
     // Repo side shows the CLAUDE.md content; empty side shows the empty state.

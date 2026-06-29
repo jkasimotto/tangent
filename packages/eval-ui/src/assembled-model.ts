@@ -1,6 +1,6 @@
 import type { EvalAssembledBlock } from "./client.js";
 
-/** The verbatim concatenation of block texts (no provenance dividers), for copy. */
+/** The verbatim concatenation of block texts (no provenance dividers), for copy. Joins block texts with "\n\n", not a byte-image of the original files. */
 export function concatBlocks(blocks: EvalAssembledBlock[]): string {
   return blocks.map((block) => block.text).join("\n\n");
 }

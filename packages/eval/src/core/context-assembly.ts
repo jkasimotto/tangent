@@ -73,6 +73,7 @@ export function claudeMdChain(allPaths: string[], cwd: string): { chain: string[
 }
 
 /** Char offsets of @import tokens outside inline backticks and fenced code blocks. */
+// Only ``` fenced blocks and inline backticks are masked; ~~~ fences and 4-space indented code are not, an accepted simplification.
 export function findImportTokens(text: string): { raw: string; start: number; end: number }[] {
   const tokens: { raw: string; start: number; end: number }[] = [];
   let offset = 0;
@@ -87,6 +88,7 @@ export function findImportTokens(text: string): { raw: string; start: number; en
       let m: RegExpExecArray | null;
       while ((m = re.exec(masked)) !== null) {
         const start = offset + m.index + m[1].length;
+        // end includes the leading @ character: start lands on @, raw is the path without it.
         tokens.push({ raw: m[2], start, end: start + m[2].length + 1 });
       }
     }
@@ -103,7 +105,7 @@ export async function expandImports(source: ContextSource, filePath: string, tex
   let cursor = 0;
   for (const token of tokens) {
     const segment = text.slice(cursor, token.start);
-    if (segment.trim().length) blocks.push({ kind, source: filePath, text: segment.trim() });
+    if (segment.trim().length) blocks.push({ kind, source: filePath, text: segment });
     cursor = token.end;
     const target = joinPath(dirOf(filePath), token.raw);
     if (depth >= MAX_IMPORT_DEPTH) { blocks.push({ kind: "import", source: target, text: `(@${token.raw}: max import depth)` }); continue; }
@@ -113,7 +115,7 @@ export async function expandImports(source: ContextSource, filePath: string, tex
     blocks.push(...await expandImports(source, target, imported, "import", depth + 1, new Set([...visited, target])));
   }
   const tail = text.slice(cursor);
-  if (tail.trim().length) blocks.push({ kind, source: filePath, text: tail.trim() });
+  if (tail.trim().length) blocks.push({ kind, source: filePath, text: tail });
   return blocks;
 }
 
@@ -130,6 +132,7 @@ function joinPath(dir: string, rel: string): string {
 }
 
 /** Skill SKILL.md paths under any .claude/skills/<name>/ directory. */
+// Discovery is intentionally repo-wide (all **/.claude/skills), not cwd-scoped, an accepted simplification.
 export function discoverSkills(allPaths: string[]): string[] {
   return allPaths.filter((p) => /(^|\/)\.claude\/skills\/[^/]+\/SKILL\.md$/.test(p)).sort();
 }

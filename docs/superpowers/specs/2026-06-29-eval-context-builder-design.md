@@ -13,7 +13,7 @@ On the Eval compare screen, add an **Assembled** view to the Context section tha
 The current "Context files" section is a raw git-blob diff of every file matching context patterns (`CLAUDE.md`, `AGENTS.md`, `.claude/`, ...) across the whole repo. It misrepresents what the agent actually loaded:
 
 - It lists ~30 `.claude/agents/*.md` subagent files as "context," but a subagent's body never enters the main agent's context (only its metadata, for routing).
-- It lists `AGENTS.md` as independently loaded, but Claude Code reads `CLAUDE.md`, not `AGENTS.md` — `AGENTS.md` enters context only when a `CLAUDE.md` imports it via `@AGENTS.md`.
+- It lists `AGENTS.md` as independently loaded, but Claude Code reads `CLAUDE.md`, not `AGENTS.md`. `AGENTS.md` enters context only when a `CLAUDE.md` imports it via `@AGENTS.md`.
 - It ignores cwd and the CLAUDE.md hierarchy entirely.
 - It shows skill files as opaque blobs, with no notion of "frontmatter always loaded, body only on invoke."
 
@@ -56,11 +56,11 @@ The Context section header gets a segmented toggle: **`Files | Assembled`**.
 │                                │  ┌─ @AGENTS.md (imported by /CLAUDE.md) ──┐  │
 │                                │  …verbatim, expanded inline…              │  │
 │                                │  ┌─ Skills index (frontmatter, always) ──┐  │
-│                                │  expression-functions — "Use when…"       │  │
-│                                │  ┌─ SKILL: testing (body — loaded) ──────┐  │
+│                                │  expression-functions, "Use when…"       │  │
+│                                │  ┌─ SKILL: testing (body, loaded) ───────┐  │
 │                                │  …full skill body…                        │  │
 │                                │  ┌─ Subagents (metadata only) ───────────┐  │
-│                                │  correctness-reviewer — "…"               │  │
+│                                │  correctness-reviewer, "…"               │  │
 │  ▸ Below cwd, loads lazily (not at start): client/.../sub/CLAUDE.md         │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```

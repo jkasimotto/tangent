@@ -1363,6 +1363,36 @@ button {
   font-size: 13px;
 }
 
+.compare-lens {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 2px;
+}
+
+.lens-toggle {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.lens-toggle:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.lens-toggle.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.syn-note.good { border-left-color: #22a06b; }
+.syn-note.bad { border-left-color: #c0392b; }
+
 /* --- Prompt editor modal --- */
 .modal-scrim {
   position: fixed;

@@ -24,7 +24,7 @@
     type EvalVariantSummaryView,
     type EvalVerdictSentiment
   } from "./client.js";
-  import { buildAlignedSections, diffCacheKey, type AlignedSection } from "./compare-model.js";
+  import { buildAlignedSections, diffCacheKey, fileNotes, rowsWithNotes, type AlignedSection } from "./compare-model.js";
 
   export let client: EvalUiClient = createEvalApiClient();
 
@@ -32,6 +32,7 @@
   // notes, persisted per run via the reviews API. The aligned Compare view reads these inline; per-row
   // content expansion and the notes lens build on this state in later tasks.
   let reviewVariantId = "";
+  let notesOnly = false;
   let reviews: EvalReviews = { schema: "eval.reviews.v1", variants: {} };
   let reviewDiff: EvalDiffView | undefined;
   let reviewDiffLoadKey = "";
@@ -1046,7 +1047,12 @@
 
           {#if savingReview}<small class="saving" aria-live="polite">saving…</small>{/if}
 
+          <div class="compare-lens">
+            <button type="button" class="lens-toggle" class:active={notesOnly} on:click={() => (notesOnly = !notesOnly)}>Notes only</button>
+          </div>
+
           {#each alignedSections as section}
+            {@const rows = notesOnly ? rowsWithNotes(section, reviews, selectedCaseId, leftVariantId, rightVariantId) : section.rows}
             <section class="aligned-section" class:collapsed={collapsedSections.has(section.kind)}>
               <button type="button" class="section-toggle" aria-expanded={!collapsedSections.has(section.kind)} on:click={() => toggleSection(section.kind)}>
                 <span class="section-caret" aria-hidden="true">{collapsedSections.has(section.kind) ? "▸" : "▾"}</span>
@@ -1054,53 +1060,72 @@
                 <small class="section-summary">{section.differs ? "differs" : "identical"}</small>
               </button>
               <div class="aligned-rows">
-                {#each section.rows as row}
+                {#each rows as row}
                   <div class="aligned-row" class:identical={row.identical}>
-                    <div class="aligned-a">
-                      {#if row.a.present}
-                        {@const key = diffCacheKey(selectedCaseId, leftVariantId, row.artifact.id)}
-                        <button type="button" class="row-expand"
-                          aria-label={`${expandedRows.has(key) ? "Collapse" : "Expand"} ${row.artifact.label} for ${leftVariantId}`}
-                          on:click={() => expandRow(leftVariantId, row.artifact)}>
-                          <span class="badge badge-{row.a.changed ? 'changed' : 'same'}">{row.artifact.label}</span>
-                        </button>
-                        {#if expandedRows.has(key)}
-                          <div class="aligned-detail review-reader review-diff">
-                            {#if loadingRows.has(key)}<div class="state">Loading…</div>
-                            {:else}
-                              {#each sideRows(key) as r}
-                                {#if r.kind === "gap"}<div class="diff-gap">⋯ {r.count} unchanged lines</div>
-                                {:else}<div class="review-row review-{r.marker}"><span class="line-no">{r.gutter}</span><code>{r.text}</code></div>{/if}
-                              {/each}
-                            {/if}
-                          </div>
-                        {/if}
-                      {:else}<span class="absent">absent</span>{/if}
-                    </div>
-                    <div class="aligned-b">
-                      {#if row.b.present}
-                        {@const key = diffCacheKey(selectedCaseId, rightVariantId, row.artifact.id)}
-                        <button type="button" class="row-expand"
-                          aria-label={`${expandedRows.has(key) ? "Collapse" : "Expand"} ${row.artifact.label} for ${rightVariantId}`}
-                          on:click={() => expandRow(rightVariantId, row.artifact)}>
-                          <span class="badge badge-{row.b.changed ? 'changed' : 'same'}">{row.artifact.label}</span>
-                        </button>
-                        {#if expandedRows.has(key)}
-                          <div class="aligned-detail review-reader review-diff">
-                            {#if loadingRows.has(key)}<div class="state">Loading…</div>
-                            {:else}
-                              {#each sideRows(key) as r}
-                                {#if r.kind === "gap"}<div class="diff-gap">⋯ {r.count} unchanged lines</div>
-                                {:else}<div class="review-row review-{r.marker}"><span class="line-no">{r.gutter}</span><code>{r.text}</code></div>{/if}
-                              {/each}
-                            {/if}
-                          </div>
-                        {/if}
-                      {:else}<span class="absent">absent</span>{/if}
-                    </div>
+                    {#if notesOnly}
+                      {#each [{ id: leftVariantId, cls: "aligned-a" }, { id: rightVariantId, cls: "aligned-b" }] as side}
+                        <div class={side.cls}>
+                          {#each fileNotes(reviews, selectedCaseId, side.id, row.artifact.id) as note}
+                            <div class="syn-note {note.sentiment}">
+                              <p class="note-text">{note.text}</p>
+                              <code class="syn-snippet">{note.artifactLabel}:{note.line} · {note.snippet.trim()}</code>
+                            </div>
+                          {/each}
+                        </div>
+                      {/each}
+                    {:else}
+                      <div class="aligned-a">
+                        {#if row.a.present}
+                          {@const key = diffCacheKey(selectedCaseId, leftVariantId, row.artifact.id)}
+                          <button type="button" class="row-expand"
+                            aria-label={`${expandedRows.has(key) ? "Collapse" : "Expand"} ${row.artifact.label} for ${leftVariantId}`}
+                            on:click={() => expandRow(leftVariantId, row.artifact)}>
+                            <span class="badge badge-{row.a.changed ? 'changed' : 'same'}">{row.artifact.label}</span>
+                          </button>
+                          {#if expandedRows.has(key)}
+                            <div class="aligned-detail review-reader review-diff">
+                              {#if loadingRows.has(key)}<div class="state">Loading…</div>
+                              {:else}
+                                {#each sideRows(key) as r}
+                                  {#if r.kind === "gap"}<div class="diff-gap">⋯ {r.count} unchanged lines</div>
+                                  {:else}<div class="review-row review-{r.marker}"><span class="line-no">{r.gutter}</span><code>{r.text}</code></div>{/if}
+                                {/each}
+                              {/if}
+                            </div>
+                          {/if}
+                        {:else}<span class="absent">absent</span>{/if}
+                      </div>
+                      <div class="aligned-b">
+                        {#if row.b.present}
+                          {@const key = diffCacheKey(selectedCaseId, rightVariantId, row.artifact.id)}
+                          <button type="button" class="row-expand"
+                            aria-label={`${expandedRows.has(key) ? "Collapse" : "Expand"} ${row.artifact.label} for ${rightVariantId}`}
+                            on:click={() => expandRow(rightVariantId, row.artifact)}>
+                            <span class="badge badge-{row.b.changed ? 'changed' : 'same'}">{row.artifact.label}</span>
+                          </button>
+                          {#if expandedRows.has(key)}
+                            <div class="aligned-detail review-reader review-diff">
+                              {#if loadingRows.has(key)}<div class="state">Loading…</div>
+                              {:else}
+                                {#each sideRows(key) as r}
+                                  {#if r.kind === "gap"}<div class="diff-gap">⋯ {r.count} unchanged lines</div>
+                                  {:else}<div class="review-row review-{r.marker}"><span class="line-no">{r.gutter}</span><code>{r.text}</code></div>{/if}
+                                {/each}
+                              {/if}
+                            </div>
+                          {/if}
+                        {:else}<span class="absent">absent</span>{/if}
+                      </div>
+                    {/if}
                   </div>
                 {/each}
-                {#if section.rows.length === 0}<p class="aligned-empty">No {section.title.toLowerCase()}</p>{/if}
+                {#if rows.length === 0}
+                  {#if notesOnly}
+                    <p class="aligned-empty">No notes in {section.title.toLowerCase()}</p>
+                  {:else}
+                    <p class="aligned-empty">No {section.title.toLowerCase()}</p>
+                  {/if}
+                {/if}
               </div>
             </section>
           {/each}

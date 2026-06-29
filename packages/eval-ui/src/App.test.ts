@@ -120,6 +120,21 @@ describe("eval svelte app", () => {
 
     expect(client.launchRun).toHaveBeenCalledWith({ specPath: "/evals/compare.json" });
   });
+
+  it("notes-only collapses to annotated files with their notes", async () => {
+    const client = fakeEvalClient();
+    client.getReviews = async () => ({
+      schema: "eval.reviews.v1",
+      variants: { "task/empty": { notes: [{ id: "n1", artifactId: "code:src/foo.ts", artifactLabel: "src/foo.ts", line: 2, snippet: "return 1", sentiment: "bad", text: "wrong base case", ts: 1 }] } }
+    });
+    const { container } = render(App, { props: { client } });
+    await screen.findByText(/ui-compare/);
+
+    await fireEvent.click(await screen.findByRole("button", { name: "Notes only" }));
+    expect(screen.getByText("wrong base case")).toBeInTheDocument();
+    // The prompt row (no notes) is gone in notes-only.
+    expect(screen.queryByText("Task prompt")).toBeNull();
+  });
 });
 
 /** Creates a deterministic client for app rendering tests. */

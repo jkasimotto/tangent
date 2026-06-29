@@ -1,9 +1,48 @@
 import type { EvalDiffLineView } from "./types.js";
 
-/** Builds a line-oriented diff view for two text values. */
+/**
+ * Builds a line-oriented diff view for two text values.
+ *
+ * The LCS table is O(n*m) in time and memory, which is pathological for large near-identical files (e.g.
+ * an 8000-line source file with a 30-line edit costs ~64M cells and seconds of work). Common leading and
+ * trailing lines are stripped first so the quadratic step runs only over the region that actually differs,
+ * making the typical small edit in a large file near-instant; the trimmed lines are emitted as equal rows.
+ */
 export function diffLines(left: string, right: string): EvalDiffLineView[] {
   const leftLines = splitLines(left);
   const rightLines = splitLines(right);
+
+  let prefix = 0;
+  while (prefix < leftLines.length && prefix < rightLines.length && leftLines[prefix] === rightLines[prefix]) prefix += 1;
+  let suffix = 0;
+  while (
+    suffix < leftLines.length - prefix &&
+    suffix < rightLines.length - prefix &&
+    leftLines[leftLines.length - 1 - suffix] === rightLines[rightLines.length - 1 - suffix]
+  ) suffix += 1;
+
+  const rows: EvalDiffLineView[] = [];
+  for (let index = 0; index < prefix; index += 1) {
+    rows.push({ kind: "equal", leftNumber: index + 1, rightNumber: index + 1, left: leftLines[index], right: rightLines[index] });
+  }
+  // Diff only the differing middle, then shift its 1-based line numbers back to absolute positions.
+  for (const row of diffMiddle(leftLines.slice(prefix, leftLines.length - suffix), rightLines.slice(prefix, rightLines.length - suffix))) {
+    rows.push({
+      ...row,
+      leftNumber: row.leftNumber === undefined ? undefined : row.leftNumber + prefix,
+      rightNumber: row.rightNumber === undefined ? undefined : row.rightNumber + prefix
+    });
+  }
+  for (let index = 0; index < suffix; index += 1) {
+    const leftIndex = leftLines.length - suffix + index;
+    const rightIndex = rightLines.length - suffix + index;
+    rows.push({ kind: "equal", leftNumber: leftIndex + 1, rightNumber: rightIndex + 1, left: leftLines[leftIndex], right: rightLines[rightIndex] });
+  }
+  return pairChangedLines(rows);
+}
+
+/** LCS-aligns the differing region into equal/add/delete rows with 1-based numbers local to that region. */
+function diffMiddle(leftLines: string[], rightLines: string[]): EvalDiffLineView[] {
   const table = lcsTable(leftLines, rightLines);
   const rows: EvalDiffLineView[] = [];
   let leftIndex = 0;
@@ -27,7 +66,7 @@ export function diffLines(left: string, right: string): EvalDiffLineView[] {
       leftIndex += 1;
     }
   }
-  return pairChangedLines(rows);
+  return rows;
 }
 
 /** Collapses adjacent add/delete rows into changed rows. */

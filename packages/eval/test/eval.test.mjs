@@ -537,3 +537,48 @@ async function readLatestRunManifest(evalHome) {
 function shellQuote(value) {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
+
+test("context assemble endpoint reconstructs the repo variant and empties the empty variant", async () => {
+  const repo = await createRepo();
+  const evalHome = await mkdtemp(path.join(tmpdir(), "tangent-eval-home-"));
+  process.env.TANGENT_EVAL_HOME = evalHome;
+
+  await writeFile(path.join(repo, "CLAUDE.md"), "root rules\n", "utf8");
+  await mkdir(path.join(repo, ".claude", "skills", "testing"), { recursive: true });
+  await writeFile(path.join(repo, ".claude", "skills", "testing", "SKILL.md"), "---\nname: testing\ndescription: Use when testing\n---\nFULL BODY\n", "utf8");
+  await writeFile(path.join(repo, "index.ts"), "export const value = 1;\n", "utf8");
+  await git(repo, "add", ".");
+  await git(repo, "commit", "-m", "base");
+
+  const evalDir = path.join(repo, "evals", "task");
+  await mkdir(path.join(evalDir, "prompts"), { recursive: true });
+  await writeFile(path.join(evalDir, "prompts", "task.md"), "Change the value.\n", "utf8");
+  const specPath = path.join(evalDir, "eval.json");
+  await writeFile(specPath, JSON.stringify({
+    schema: "eval.spec.v1",
+    name: "task",
+    defaults: { repo: { path: repo, ref: "HEAD" }, cwd: ".", agent: { kind: "manual" }, phases: ["plan", "implement"] },
+    cases: [{ id: "task", prompt: "prompts/task.md", variants: [{ id: "empty", context: { mode: "empty" } }, { id: "repo", context: { mode: "repo" } }] }]
+  }, null, 2), "utf8");
+
+  const prepared = await prepareEval(specPath);
+  const server = await startEvalUiServer({ runId: prepared.manifest.id, open: false });
+  try {
+    const runId = prepared.manifest.id;
+    const repoCtx = await fetchJson(`${server.url}api/eval/runs/${runId}/context/assemble?caseId=task&variant=repo&cwd=&skills=`);
+    assert.ok(repoCtx.blocks.some((block) => block.kind === "claude-md" && block.text.includes("root rules")));
+    assert.ok(repoCtx.blocks.some((block) => block.kind === "skills-index" && block.text.includes("testing")));
+    assert.ok(!repoCtx.blocks.some((block) => block.kind === "skill-body"));
+
+    const loaded = await fetchJson(`${server.url}api/eval/runs/${runId}/context/assemble?caseId=task&variant=repo&cwd=&skills=testing`);
+    assert.ok(loaded.blocks.some((block) => block.kind === "skill-body" && block.text.includes("FULL BODY")));
+
+    const emptyCtx = await fetchJson(`${server.url}api/eval/runs/${runId}/context/assemble?caseId=task&variant=empty&cwd=&skills=`);
+    assert.equal(emptyCtx.blocks.length, 0);
+
+    const manifest = await fetchJson(`${server.url}api/eval/runs/${runId}/context/manifest?caseId=task&variant=repo`);
+    assert.deepEqual(manifest.skills.map((skill) => skill.name), ["testing"]);
+  } finally {
+    await server.close();
+  }
+});

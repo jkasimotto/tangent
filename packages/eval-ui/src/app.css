@@ -1298,6 +1298,10 @@ button {
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
+  /* Do not shrink to fit .compare-stack. Without this, a long section shrinks as a flex child and its
+     overflow:hidden clips the rows instead of letting .compare-stack scroll. Keep full height so the
+     stack's overflow:auto scrolls the panel. */
+  flex: 0 0 auto;
 }
 
 .aligned-section .section-toggle {
@@ -1542,4 +1546,123 @@ button {
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
+}
+.context-toggle {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+}
+.context-toggle .seg {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.context-toggle .seg.active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+.assembled-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.assembled-col {
+  min-width: 0;
+  padding: 8px 12px;
+}
+.assembled-b {
+  border-left: 1px solid var(--line);
+}
+.assembled-col-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.assembled-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+.assembled-copy {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.assembled-divider {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+  padding: 6px 0 2px;
+  margin-top: 6px;
+}
+.assembled-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.assembled-empty,
+.assembled-error {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+.assembled-lazy {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.assembled-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+}
+.cwd-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.cwd-field input {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font: inherit;
+  min-width: 240px;
+}
+.skill-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.skill-option {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+.assembled-divider.differs {
+  color: #7a4f00;
+}
+.diff-tag {
+  margin-left: 6px;
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 10px;
 }

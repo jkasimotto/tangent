@@ -8,6 +8,7 @@ import { changedFiles, fileOidsAtRef, gitText, showFile } from "@tangent/repo/gi
 import type { EvalAgentConfig } from "../types/provider.js";
 import type { EvalRunManifest, EvalRunStatus, EvalRunVariantState } from "../types/run.js";
 import type { EvalSpec } from "../types/spec.js";
+import { assembleContext, contextManifest, type AssembledContext, type ContextManifest, type ContextSource } from "../core/context-assembly.js";
 import { isContextPath } from "../core/context-discovery.js";
 import { loadEvalSpec } from "../core/config.js";
 import { listRuns, loadRunManifest } from "../core/run-store.js";
@@ -180,6 +181,8 @@ async function handleApiRequest(request: http.IncomingMessage, url: URL, context
       if (parts.length === 5 && parts[4] === "compare") return json(200, await compareView(manifest, url));
       if (parts.length === 5 && parts[4] === "diff") return json(200, await diffView(manifest, url));
       if (parts.length === 5 && parts[4] === "reviews") return json(200, await readReviews(manifest.runDir));
+      if (parts.length === 6 && parts[4] === "context" && parts[5] === "manifest") return json(200, await contextManifestView(manifest, url));
+      if (parts.length === 6 && parts[4] === "context" && parts[5] === "assemble") return json(200, await assembleContextView(manifest, url));
     }
 
     return json(404, { error: "Not found." });
@@ -378,6 +381,45 @@ async function diffView(manifest: EvalRunManifest, url: URL): Promise<EvalDiffVi
     right: { variantId: right.variantId, label: `${right.caseId}/${right.variantId}` },
     lines: diffLines(leftContent || "", rightContent || "")
   };
+}
+
+/** A ContextSource over a variant's frozen worktree at its context ref, the same ref showContextFile reads. */
+function variantContextSource(variant: EvalRunVariantState): ContextSource {
+  const ref = variant.contextCommit || variant.baseCommit;
+  return {
+    /** Lists all tracked file paths at the variant's context ref. */
+    listFiles: async () => [...(await fileOidsAtRef(variant.worktree, ref)).keys()],
+    /** Reads one file at the variant's context ref, returning undefined when absent. */
+    read: (filePath) => showFile(variant.worktree, ref, filePath).catch(() => undefined)
+  };
+}
+
+/** Resolves and validates a single requested variant (manifest + caseId + variant query params). */
+function singleVariant(manifest: EvalRunManifest, url: URL): { caseId: string; variant: EvalRunVariantState } {
+  const caseId = requiredParam(url, "caseId");
+  const variantId = requiredParam(url, "variant");
+  const variant = manifest.variants.find((entry) => entry.caseId === caseId && entry.variantId === variantId);
+  if (!variant) {
+    const error = new Error(`Variant ${variantId} not found for case ${caseId}.`) as Error & { status?: number };
+    error.status = 404;
+    throw error;
+  }
+  return { caseId, variant };
+}
+
+/** Lists a variant's discoverable skills and subagents (frontmatter only), for the skill picker. */
+async function contextManifestView(manifest: EvalRunManifest, url: URL): Promise<ContextManifest> {
+  const { variant } = singleVariant(manifest, url);
+  return contextManifest(variantContextSource(variant));
+}
+
+/** Assembles a variant's repo-contributed context at the requested cwd and loaded-skill set. */
+async function assembleContextView(manifest: EvalRunManifest, url: URL): Promise<AssembledContext> {
+  const { variant } = singleVariant(manifest, url);
+  const cwd = url.searchParams.get("cwd") || "";
+  const skillsParam = url.searchParams.get("skills") || "";
+  const loadedSkills = skillsParam.split(",").map((name) => name.trim()).filter(Boolean);
+  return assembleContext(variantContextSource(variant), cwd, loadedSkills);
 }
 
 /** Resolves and validates the requested pair of variants. */

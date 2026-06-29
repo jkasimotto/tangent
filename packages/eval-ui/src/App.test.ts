@@ -221,6 +221,63 @@ describe("eval svelte app", () => {
     // The prompt row (no notes) is gone in notes-only.
     expect(screen.queryByText("Task prompt")).toBeNull();
   });
+
+  it("switches the Context section to the Assembled view and renders verbatim blocks per side", async () => {
+    const client = fakeEvalClient();
+    render(App, { props: { client } });
+    await screen.findByText(/ui-compare/);
+    await fireEvent.click(await screen.findByRole("button", { name: "Assembled" }));
+    // Repo side shows the CLAUDE.md content; empty side shows the empty state.
+    expect(await screen.findByText("root rules")).toBeInTheDocument();
+    expect(screen.getByText("No repo context loads at this path.")).toBeInTheDocument();
+  });
+
+  it("marks a context block present on only one side", async () => {
+    const client = fakeEvalClient();
+    render(App, { props: { client } });
+    await screen.findByText(/ui-compare/);
+    await fireEvent.click(await screen.findByRole("button", { name: "Assembled" }));
+    await screen.findByText("root rules");
+    // The repo side's CLAUDE.md is absent from the empty side, so its divider is tagged "only here".
+    expect(screen.getAllByText("only here").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("re-assembles both sides when the cwd changes", async () => {
+    const client = fakeEvalClient();
+    render(App, { props: { client } });
+    await screen.findByText(/ui-compare/);
+    await fireEvent.click(await screen.findByRole("button", { name: "Assembled" }));
+    await screen.findByText("root rules");
+    const calls = (client.assembleContext as ReturnType<typeof vi.fn>).mock.calls.length;
+    await fireEvent.input(screen.getByLabelText("cwd path"), { target: { value: "client/lib" } });
+    // Two more calls (both sides) for the new cwd.
+    await screen.findByText("root rules");
+    expect((client.assembleContext as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(calls);
+    const lastArgs = (client.assembleContext as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0];
+    expect(lastArgs.cwd).toBe("client/lib");
+  });
+
+  it("loads a skill body when its picker checkbox is toggled", async () => {
+    const client = fakeEvalClient();
+    render(App, { props: { client } });
+    await screen.findByText(/ui-compare/);
+    await fireEvent.click(await screen.findByRole("button", { name: "Assembled" }));
+    await screen.findByText("root rules");
+    await fireEvent.click(await screen.findByRole("checkbox", { name: "testing" }));
+    expect(await screen.findByText("FULL TESTING BODY")).toBeInTheDocument();
+  });
+
+  it("copies a side's verbatim concatenation without provenance dividers", async () => {
+    const writeText = vi.fn();
+    Object.assign(navigator, { clipboard: { writeText } });
+    const client = fakeEvalClient();
+    render(App, { props: { client } });
+    await screen.findByText(/ui-compare/);
+    await fireEvent.click(await screen.findByRole("button", { name: "Assembled" }));
+    await screen.findByText("root rules");
+    await fireEvent.click(await screen.findByRole("button", { name: "Copy repo context" }));
+    expect(writeText).toHaveBeenCalledWith("root rules\n\ntesting: Use when testing");
+  });
 });
 
 /** Creates a deterministic client for app rendering tests. */
@@ -328,6 +385,16 @@ function fakeEvalClient(overrides?: { artifacts?: EvalCompareView["artifacts"]; 
       const seed = args.kind === "context" ? contextDiff : args.kind === "code" && overrides?.codeDiff ? overrides.codeDiff : promptDiff;
       return { ...seed, artifact: { ...seed.artifact, id: `${args.kind}:${args.path}`, kind: args.kind, path: args.path } };
     }),
+    /** Returns a deterministic context manifest. */
+    getContextManifest: vi.fn(async () => ({ skills: [{ name: "testing", description: "Use when testing", path: ".claude/skills/testing/SKILL.md", loaded: false }], subagents: [] })),
+    /** Returns a deterministic assembled context: the repo side has blocks, the empty side has none. */
+    assembleContext: vi.fn(async (args: { variant: string; skills: string[] }) => args.variant === "repo"
+      ? { blocks: [
+          { kind: "claude-md" as const, source: "CLAUDE.md", text: "root rules" },
+          { kind: "skills-index" as const, source: "skills", text: "testing: Use when testing" },
+          ...(args.skills.includes("testing") ? [{ kind: "skill-body" as const, source: ".claude/skills/testing/SKILL.md", text: "FULL TESTING BODY" }] : [])
+        ], skills: [{ name: "testing", description: "Use when testing", path: ".claude/skills/testing/SKILL.md", loaded: args.skills.includes("testing") }], subagents: [], lazyClaudeMd: [] }
+      : { blocks: [], skills: [], subagents: [], lazyClaudeMd: [] }),
     /** Returns empty reviews. */
     getReviews: async () => ({ schema: "eval.reviews.v1" as const, variants: {} }),
     /** Echoes persisted reviews. */

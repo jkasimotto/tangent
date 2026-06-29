@@ -2,8 +2,6 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import {
-  conversationReport,
-  loadUsageDatasetFromIndex,
   type NormalizedConversation,
   type NormalizedToolCall
 } from "@tangent/usage-index-sqlite";
@@ -11,6 +9,7 @@ import {
 import type { EvalMetrics } from "../types/metrics.js";
 import type { EvalRunManifest, EvalRunVariantState } from "../types/run.js";
 import { variantDir } from "../core/run-store.js";
+import { reconstructVariantConversations, relativeToWorktree, stripWorktree } from "../core/transcript.js";
 
 /** A single tool invocation, projected to the compact, scannable shape the compare UI renders. */
 export type ConversationToolCallView = {
@@ -68,22 +67,9 @@ export async function variantConversationsView(manifest: EvalRunManifest, caseId
   if (!metrics) {
     return { schema: "eval.conversations.v1", caseId, variantId: variant.variantId, conversations: [], notes: ["No metrics captured for this variant yet; run collection to index its conversation."] };
   }
-  const conversations: ConversationView[] = [];
-  for (const ref of metrics.conversations ?? []) {
-    try {
-      const dataset = await loadUsageDatasetFromIndex({
-        repo: variant.worktree,
-        providers: ["claude", "codex"],
-        sources: ["native", "usage-jsonl"],
-        conversationId: ref.id
-      });
-      const normalized = conversationReport(dataset, { conversationId: ref.id });
-      conversations.push(projectConversation(normalized, variant.worktree));
-      for (const caveat of normalized.caveats) notes.push(caveat);
-    } catch (error) {
-      notes.push(`Could not reconstruct conversation ${ref.id}: ${(error as Error).message}`);
-    }
-  }
+  const { conversations: normalized, notes: reconstructNotes } = await reconstructVariantConversations(variant, metrics.conversations ?? []);
+  for (const note of reconstructNotes) notes.push(note);
+  const conversations = normalized.map((conv) => projectConversation(conv, variant.worktree));
   return { schema: "eval.conversations.v1", caseId, variantId: variant.variantId, conversations, notes: [...new Set(notes)] };
 }
 
@@ -152,31 +138,6 @@ function rawPreviewValue(input: unknown): string | undefined {
     if (typeof value === "string" && value.trim()) return value;
   }
   return undefined;
-}
-
-/** Strips the `<worktree>/` prefix from an absolute path, leaving paths outside the worktree untouched. */
-function relativeToWorktree(target: string, worktree?: string): string {
-  if (!worktree) return target;
-  const prefix = worktree.endsWith("/") ? worktree : `${worktree}/`;
-  return target.startsWith(prefix) ? target.slice(prefix.length) : target;
-}
-
-/**
- * Rewrites worktree-absolute paths in a preview to short relative ones: `<worktree>/x` becomes `x`, and a
- * bare `<worktree>` standing as its own token (e.g. `cd <worktree> && git status`) becomes `.`. The bare
- * form is matched only at a token boundary so a sibling path like `<worktree>-backup` is left untouched.
- */
-function stripWorktree(preview: string, worktree?: string): string {
-  if (!worktree) return preview;
-  const bare = worktree.replace(/\/+$/, "");
-  const collapsed = preview.split(`${bare}/`).join("");
-  const bareToken = new RegExp(`${escapeRegExp(bare)}(?=$|[\\s&;|"'])`, "g");
-  return collapsed.replace(bareToken, ".");
-}
-
-/** Escapes a string for safe use inside a RegExp. */
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /** Trims a value to a single line capped at 160 characters. */

@@ -48,16 +48,24 @@ function extractVerdictMap(rawText: string, warnings: string[]): Map<string, { p
   return map;
 }
 
-/** Returns the substring spanning the first balanced {...} or [...] in the text, or undefined. */
+/** Returns the substring spanning the first balanced {...} or [...] in the text, or undefined. Skips characters inside double-quoted strings so a delimiter inside a reasoning value does not truncate the block. */
 function firstJsonBlock(text: string): string | undefined {
   const start = text.search(/[\[{]/);
   if (start < 0) return undefined;
   const open = text[start];
   const close = open === "{" ? "}" : "]";
   let depth = 0;
+  let inString = false;
   for (let i = start; i < text.length; i++) {
-    if (text[i] === open) depth++;
-    else if (text[i] === close && --depth === 0) return text.slice(start, i + 1);
+    const ch = text[i];
+    if (inString) {
+      if (ch === "\\") { i++; continue; }
+      if (ch === '"') inString = false;
+    } else {
+      if (ch === '"') { inString = true; continue; }
+      if (ch === open) depth++;
+      else if (ch === close && --depth === 0) return text.slice(start, i + 1);
+    }
   }
   return undefined;
 }

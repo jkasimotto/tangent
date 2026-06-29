@@ -18,7 +18,7 @@ CLI notes:
 
 `/api/eval/*` routes:
 - `GET /api/eval/selection` resolves the preferred or latest run id.
-- `GET /api/eval/runs` lists run summaries; `GET /api/eval/runs/<id>` returns run detail with per-variant output metrics (time, peak context, files changed, and an activity sparkline). Each variant also carries an optional `evaluation` block (`{ model, totalPoints, maxPoints, criteria, warnings }`) when `evaluation.json` is present in the variant dir — written by `collectEval` when the spec defines an `evaluator`.
+- `GET /api/eval/runs` lists run summaries; `GET /api/eval/runs/<id>` returns run detail with per-variant output metrics (time, peak context, files changed, and an activity sparkline). Each variant also carries an optional `evaluation` block (`{ model, totalPoints, maxPoints, criteria, warnings }`) when `evaluation.json` is present in the variant dir; this file is written by `collectEval` when the spec defines an `evaluator`.
 - `GET /api/eval/runs/<id>/compare` compares two variants; artifacts cover prompts, context files, and changed code files (A's final file versus B's final file).
 - `GET /api/eval/runs/<id>/diff` returns the line diff for one artifact (`kind` is `prompt`, `context`, or `code`).
 - `GET /api/eval/specs` lists launchable specs from the project `evals/` directory and prior runs.

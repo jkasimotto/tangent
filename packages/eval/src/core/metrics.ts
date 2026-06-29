@@ -18,7 +18,12 @@ export async function collectEval(idOrManifest: string | EvalRunManifest): Promi
     await captureManualTail(variant);
     const metrics = await collectVariantMetrics(manifest, variant);
     await writeFile(variant.metricsPath, `${JSON.stringify(metrics, null, 2)}\n`, "utf8");
-    await evaluateAndWrite(manifest, variant, new Date().toISOString());
+    try {
+      await evaluateAndWrite(manifest, variant, new Date().toISOString());
+    } catch (error) {
+      variant.warnings ??= [];
+      variant.warnings.push(`evaluation failed: ${(error as Error).message}`);
+    }
     rows.push(metrics);
   }
   await writeFile(path.join(manifest.runDir, "report.json"), `${JSON.stringify(rows, null, 2)}\n`, "utf8");
@@ -429,7 +434,7 @@ function isInside(base: string, target: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }
 
-/** Maps a tool name to a broad category string when the event data does not carry an explicit category. */
+/** Maps a tool name to a broad category string using regex pattern matching. */
 function categorizeTool(toolName: string): string {
   if (/bash|shell|exec/i.test(toolName)) return "command";
   if (/apply_patch|edit|write/i.test(toolName)) return "file_write";

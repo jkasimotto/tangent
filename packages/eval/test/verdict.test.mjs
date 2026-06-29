@@ -36,3 +36,17 @@ test("unparseable output yields zero scores and a warning, never throws", () => 
   assert.equal(e.criteria.length, 2);
   assert.ok(e.warnings.length >= 1);
 });
+
+test("reasoning containing a } character does not truncate JSON and still scores correctly", () => {
+  const raw = JSON.stringify({
+    criteria: [
+      { id: "a", passed: true, reasoning: "the function returns {value} correctly" },
+      { id: "b", passed: true, reasoning: "no issues found" }
+    ]
+  });
+  const e = parseJudgeVerdict(raw, ctx);
+  assert.equal(e.totalPoints, 3);
+  assert.equal(e.criteria.find((c) => c.id === "a").passed, true);
+  assert.equal(e.criteria.find((c) => c.id === "b").passed, true);
+  assert.equal(e.warnings.length, 0);
+});

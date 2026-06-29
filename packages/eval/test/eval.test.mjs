@@ -237,6 +237,68 @@ test("eval ui api compares prepared prompt and context artifacts", async () => {
   }
 });
 
+test("code artifact carries per-file changed-line counts from numstat", async () => {
+  const repo = await createRepo();
+  const evalHome = await mkdtemp(path.join(tmpdir(), "tangent-eval-counts-home-"));
+  process.env.TANGENT_EVAL_HOME = evalHome;
+
+  await writeFile(path.join(repo, "index.ts"), "export const value = 1;\n", "utf8");
+  await git(repo, "add", ".");
+  await git(repo, "commit", "-m", "base");
+
+  const evalDir = path.join(repo, "evals", "counts");
+  await mkdir(path.join(evalDir, "prompts"), { recursive: true });
+  await writeFile(path.join(evalDir, "prompts", "left.md"), "Left task.\n", "utf8");
+  await writeFile(path.join(evalDir, "prompts", "right.md"), "Right task.\n", "utf8");
+  const specPath = path.join(evalDir, "eval.json");
+  await writeFile(specPath, JSON.stringify({
+    schema: "eval.spec.v1",
+    name: "counts",
+    defaults: {
+      repo: { path: repo, ref: "HEAD" },
+      cwd: ".",
+      agent: { kind: "manual" },
+      phases: ["implement"]
+    },
+    cases: [{
+      id: "task",
+      variants: [
+        { id: "left", prompt: "prompts/left.md", context: { mode: "repo" } },
+        { id: "right", prompt: "prompts/right.md", context: { mode: "repo" } }
+      ]
+    }]
+  }, null, 2), "utf8");
+
+  const prepared = await prepareEval(specPath);
+
+  // Simulate the right variant's agent replacing one line with three lines.
+  const rightVariant = prepared.manifest.variants.find((v) => v.variantId === "right");
+  await writeFile(
+    path.join(rightVariant.worktree, "index.ts"),
+    "export const value = 2;\nexport const extra = 3;\nexport const more = 4;\n",
+    "utf8"
+  );
+
+  // collectEval commits any pending changes and records implementationCommit on disk.
+  await collectEval(prepared.manifest);
+
+  const server = await startEvalUiServer({ runId: prepared.manifest.id, open: false });
+  try {
+    const compare = await fetchJson(
+      `${server.url}api/eval/runs/${prepared.manifest.id}/compare?caseId=task&left=left&right=right`
+    );
+    const codeArtifact = compare.artifacts.find((a) => a.kind === "code" && a.path === "index.ts");
+    assert.ok(codeArtifact, "code artifact for index.ts should be present");
+    assert.equal(typeof codeArtifact.addedRight, "number", "addedRight should be a number");
+    assert.equal(typeof codeArtifact.removedRight, "number", "removedRight should be a number");
+    assert.ok(codeArtifact.addedRight > 0, "addedRight should be positive (lines were added)");
+    // Left variant made no change, so no counts.
+    assert.equal(codeArtifact.addedLeft, undefined, "left variant made no change");
+  } finally {
+    await server.close();
+  }
+});
+
 test("run eval starts automatic variants in parallel", async () => {
   const repo = await createRepo();
   const evalHome = await mkdtemp(path.join(tmpdir(), "tangent-eval-parallel-home-"));

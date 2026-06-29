@@ -24,15 +24,15 @@
     type EvalVariantSummaryView,
     type EvalVerdictSentiment
   } from "./client.js";
+  import { buildAlignedSections, diffCacheKey, fileNotes, rowsWithNotes, type AlignedSection } from "./compare-model.js";
 
   export let client: EvalUiClient = createEvalApiClient();
 
-  // Review mode: read one config's result at a time and annotate it (inline good/bad notes + an
-  // overall verdict); Compare synthesizes those notes into a side-by-side, not a code diff; Diff keeps
-  // the original A/B line view. Notes persist per run via the reviews API.
-  type ReviewMode = "review" | "compare" | "diff";
-  let mode: ReviewMode = "review";
+  // Per-config review state: an overall verdict (sentiment + score + optional note) plus inline good/bad
+  // notes, persisted per run via the reviews API. The aligned Compare view reads these inline; per-row
+  // content expansion and the notes lens build on this state in later tasks.
   let reviewVariantId = "";
+  let notesOnly = false;
   let reviews: EvalReviews = { schema: "eval.reviews.v1", variants: {} };
   let reviewDiff: EvalDiffView | undefined;
   let reviewDiffLoadKey = "";
@@ -41,6 +41,9 @@
   let noteSentiment: EvalReviewSentiment = "bad";
   let noteText = "";
   let savingReview = false;
+  // Per-file note drill-in: the focused single-variant reader for one artifact, opened from an expanded
+  // compare side. While set, reviewVariantId/selectedArtifactId track it and loadReviewDiff loads its content.
+  let drill: { variantId: string; artifact: EvalCompareArtifactView } | undefined;
 
   let runs: EvalRunSummaryView[] = [];
   let specs: EvalSpecSummaryView[] = [];
@@ -53,15 +56,17 @@
   let leftVariantId = "";
   let rightVariantId = "";
   let compare: EvalCompareView | undefined;
-  let diff: EvalDiffView | undefined;
   let selectedArtifactId = "";
+  // Per-side content cache for the aligned view: keyed by diffCacheKey so re-expanding never refetches.
+  let diffCache = new Map<string, EvalDiffView>();
+  let expandedRows = new Set<string>(); // diffCacheKey values currently open
+  let loadingRows = new Set<string>();
   let loading = true;
   let runLoading = false;
   let compareLoading = false;
   let error = "";
   let runLoadKey = "";
   let compareLoadKey = "";
-  let diffLoadKey = "";
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
 
   // Primary view: the live run dashboard (a running eval is the focal point) vs the results explorer.
@@ -81,11 +86,6 @@
   let promptLoading = false;
   let promptSaving = false;
   let promptError = "";
-
-  // Side-by-side layout (workflow 5): "diff" aligns changes; "split" shows both results whole with no
-  // diff markers. Defaults per artifact kind (generated code reads better whole) but the user overrides.
-  type DiffLayout = "diff" | "split";
-  let diffLayoutOverride: DiffLayout | undefined;
 
   // Block selection for review notes (workflow 5): a note can target a range of lines, picked by
   // clicking the start gutter then the end gutter. noteEndLine carries the block end while composing.
@@ -131,13 +131,9 @@
   $: selectedCase && syncVariantSelection(selectedCase);
   $: selectedRunId && void loadRun(selectedRunId);
   $: selectedCase && leftVariantId && rightVariantId && void loadCompare();
-  // Dependencies (mode, reviewVariantId, leftVariantId, rightVariantId) are passed explicitly so Svelte
-  // recomputes the list when the reviewed variant changes; reading them only inside a filter callback would
-  // not register them as reactive dependencies.
-  $: selectableArtifacts = artifactsForReview(compare?.artifacts || [], mode, reviewVariantId, leftVariantId, rightVariantId);
-  $: compare && syncArtifactSelection(selectableArtifacts, mode);
-  $: compare && selectedArtifactId && mode === "diff" && void loadDiff();
-  $: compare && selectedArtifactId && reviewVariantId && mode === "review" && void loadReviewDiff();
+  // The aligned Compare view shows the whole pair: one identity row per artifact, grouped by kind.
+  $: alignedSections = buildAlignedSections(compare?.artifacts || []);
+  $: defaultCollapsed(alignedSections);
   $: reviewKey = variantKey(selectedCaseId, reviewVariantId);
   $: currentReview = reviews.variants[reviewKey] || { notes: [] };
   $: reviewReader = reviewDiff ? readerLines(reviewDiff.lines, "right") : [];
@@ -147,6 +143,8 @@
   $: reviewIsDiff = reviewDiff?.artifact.kind === "code";
   $: reviewChangedCount = reviewDiff ? reviewDiff.lines.filter((line) => line.kind !== "equal").length : 0;
   $: reviewRows = buildReviewRows(reviewDiff, reviewIsDiff, expandedReviewGaps);
+  // The drill-in owns the single-variant reader: when open, load that one variant+file's content.
+  $: compare && selectedArtifactId && reviewVariantId && drill && void loadReviewDiff();
 
   async function loadInitial(): Promise<void> {
     loading = true;
@@ -318,16 +316,14 @@
     if (selRange) openNote(selRange.start, selRange.end, sentiment);
   }
 
-  /** Sets the overall numeric score (0-10) for the reviewed variant. */
-  async function setScore(score: number | undefined): Promise<void> {
-    const review = ensureReview(reviewKey);
+  /** Sets the overall numeric score (0-10) for a given variant, preserving its sentiment and text. */
+  async function setScoreFor(variantId: string, score: number | undefined): Promise<void> {
+    const key = variantKey(selectedCaseId, variantId);
+    const review = ensureReview(key);
     review.verdict = { sentiment: review.verdict?.sentiment || "mixed", text: review.verdict?.text, score };
     reviews = reviews;
     await persistReviews();
   }
-
-  $: effectiveLayout = (diffLayoutOverride ?? (diff?.artifact.kind === "code" ? "split" : "diff")) as DiffLayout;
-  $: isSplit = effectiveLayout === "split";
 
   /** Re-fetches the run while any variant is still preparing or running, then refreshes the comparison. */
   function schedulePoll(runId: string): void {
@@ -345,7 +341,6 @@
         schedulePoll(runId);
       } else {
         compareLoadKey = "";
-        diffLoadKey = "";
         void loadCompare();
       }
     } catch {
@@ -369,7 +364,6 @@
       selectedCaseId = next.cases.find((item) => item.id === selectedCaseId)?.id || next.cases[0]?.id || "";
       selectedArtifactId = "";
       compare = undefined;
-      diff = undefined;
       reviewDiff = undefined;
       reviewDiffLoadKey = "";
       void loadReviews(runId);
@@ -398,12 +392,8 @@
       });
       if (compareLoadKey !== key) return;
       compare = next;
-      // Pick the initial artifact from the mode-scoped list so Individual review opens on the agent's work,
-      // not whatever sorts first across the whole pair.
-      const scoped = artifactsForReview(next.artifacts, mode, reviewVariantId, leftVariantId, rightVariantId);
-      const initial = mode === "review" ? preferredReviewArtifact(scoped) : preferredArtifact(scoped, selectedArtifactId);
-      selectedArtifactId = initial?.id || "";
-      diff = undefined;
+      // The aligned view has no single "selected" artifact; per-row expansion drives content loads later.
+      diffCache = new Map(); expandedRows = new Set(); loadingRows = new Set();
       error = "";
     } catch (caught) {
       error = friendlyError(caught);
@@ -412,29 +402,41 @@
     }
   }
 
-  async function loadDiff(): Promise<void> {
-    if (!compare) return;
-    const artifact = compare.artifacts.find((item) => item.id === selectedArtifactId);
-    if (!artifact) return;
-    const key = `${selectedRunId}:${selectedCaseId}:${leftVariantId}:${rightVariantId}:${artifact.id}`;
-    if (diffLoadKey === key) return;
-    diffLoadKey = key;
+  /** Loads (or serves from cache) one side's content for an artifact and toggles its row open. */
+  async function expandRow(variantId: string, artifact: EvalCompareArtifactView): Promise<void> {
+    const key = diffCacheKey(selectedCaseId, variantId, artifact.id);
+    if (expandedRows.has(key)) { expandedRows.delete(key); expandedRows = expandedRows; return; }
+    expandedRows.add(key); expandedRows = expandedRows;
+    if (diffCache.has(key)) return;
+    loadingRows.add(key); loadingRows = loadingRows;
     try {
-      const next = await client.getDiff({
-        runId: selectedRunId,
-        caseId: selectedCaseId,
-        left: leftVariantId,
-        right: rightVariantId,
-        kind: artifact.kind,
-        path: artifact.path
-      });
-      if (diffLoadKey !== key) return;
-      diff = next;
-      expandedGaps = new Set();
-      error = "";
-    } catch (caught) {
-      error = friendlyError(caught);
+      const view = await client.getDiff({ runId: selectedRunId, caseId: selectedCaseId, left: variantId, right: variantId, kind: artifact.kind, path: artifact.path });
+      diffCache.set(key, view); diffCache = diffCache;
+    } finally {
+      loadingRows.delete(key); loadingRows = loadingRows;
     }
+  }
+
+  /** Opens the focused single-variant reader for one file, to add per-line notes. */
+  function openDrill(variantId: string, artifact: EvalCompareArtifactView): void {
+    drill = { variantId, artifact };
+    reviewVariantId = variantId;
+    selectedArtifactId = artifact.id;
+    reviewDiffLoadKey = "";
+  }
+
+  /** Closes the drill-in and returns to the comparison. */
+  function closeDrill(): void {
+    drill = undefined;
+    noteLine = undefined;
+    clearSelection();
+  }
+
+  /** Review rows for a cached side (collapsed unified diff for code, full read otherwise). */
+  function sideRows(key: string): ReviewRow[] {
+    const view = diffCache.get(key);
+    if (!view) return [];
+    return buildReviewRows(view, view.artifact.kind === "code", new Set());
   }
 
   /** Loads the single reviewed variant's content for the selected artifact (left=right=that variant). */
@@ -532,18 +534,11 @@
     await persistReviews();
   }
 
-  /** Sets the overall verdict sentiment for the reviewed variant, preserving any score and text. */
-  async function setVerdict(sentiment: EvalVerdictSentiment): Promise<void> {
-    const review = ensureReview(reviewKey);
+  /** Sets the overall verdict sentiment for a given variant, preserving its score and text. */
+  async function setVerdictFor(variantId: string, sentiment: EvalVerdictSentiment): Promise<void> {
+    const key = variantKey(selectedCaseId, variantId);
+    const review = ensureReview(key);
     review.verdict = { sentiment, text: review.verdict?.text, score: review.verdict?.score };
-    reviews = reviews;
-    await persistReviews();
-  }
-
-  /** Saves the free-text part of the reviewed variant's verdict on blur, preserving sentiment and score. */
-  async function setVerdictText(text: string): Promise<void> {
-    const review = ensureReview(reviewKey);
-    review.verdict = { sentiment: review.verdict?.sentiment || "mixed", text: text.trim() || undefined, score: review.verdict?.score };
     reviews = reviews;
     await persistReviews();
   }
@@ -561,16 +556,6 @@
   /** A short range label for a note block, e.g. "L12" or "L12–15". */
   function noteRangeLabel(note: EvalReviewNote): string {
     return note.endLine && note.endLine > note.line ? `L${note.line}–${note.endLine}` : `L${note.line}`;
-  }
-
-  /** A variant's notes of one sentiment, for the Compare synthesis. */
-  function notesBySentiment(key: string, sentiment: EvalReviewSentiment): EvalReviewNote[] {
-    return (reviews.variants[key]?.notes || []).filter((note) => note.sentiment === sentiment);
-  }
-
-  /** A short label for a verdict sentiment. */
-  function verdictLabel(sentiment: EvalVerdictSentiment | undefined): string {
-    return sentiment === "like" ? "👍 Liked" : sentiment === "dislike" ? "👎 Disliked" : sentiment === "mixed" ? "🤔 Mixed" : "No verdict";
   }
 
   /** Generates a fresh note id. */
@@ -593,7 +578,7 @@
     selectedSpecPath = specPathForRun(runId) ?? selectedSpecPath;
     runLoadKey = "";
     compareLoadKey = "";
-    diffLoadKey = "";
+    diffCache = new Map(); expandedRows = new Set(); loadingRows = new Set();
   }
 
   function selectCase(caseId: string): void {
@@ -601,13 +586,7 @@
     leftVariantId = "";
     rightVariantId = "";
     compareLoadKey = "";
-    diffLoadKey = "";
-  }
-
-  function selectArtifact(artifact: EvalCompareArtifactView): void {
-    selectedArtifactId = artifact.id;
-    diffLoadKey = "";
-    reviewDiffLoadKey = "";
+    diffCache = new Map(); expandedRows = new Set(); loadingRows = new Set();
   }
 
   function syncVariantSelection(testCase: EvalCaseView): void {
@@ -630,86 +609,25 @@
     noteLine = undefined;
   }
 
-  function syncArtifactSelection(artifacts: EvalCompareArtifactView[], mode: ReviewMode): void {
-    if (!artifacts.some((artifact) => artifact.id === selectedArtifactId)) {
-      const pick = mode === "review" ? preferredReviewArtifact(artifacts) : preferredArtifact(artifacts, "");
-      selectedArtifactId = pick?.id || "";
-    }
-  }
-
-  function preferredArtifact(artifacts: EvalCompareArtifactView[], currentId: string): EvalCompareArtifactView | undefined {
-    return artifacts.find((artifact) => artifact.id === currentId) ||
-      artifacts.find((artifact) => artifact.status && artifact.status !== "same") ||
-      artifacts[0];
-  }
-
-  /** Individual review opens on the agent's work: its first changed code file, else the first artifact present. */
-  function preferredReviewArtifact(artifacts: EvalCompareArtifactView[]): EvalCompareArtifactView | undefined {
-    return artifacts.find((artifact) => artifact.kind === "code") || artifacts[0];
-  }
-
-  /**
-   * The artifacts selectable for the current view. Compare and Side-by-side use the whole pair. Individual
-   * review scopes the list to what the reviewed variant actually has: the code files its agent changed, the
-   * context files present in it, and the prompts. Compare status is relative to the pair, so a "changed" code
-   * file may be one only the other variant touched (it still differs between the two outputs) and a
-   * "left-only"/"right-only" context file is absent from the opposite variant; either would open onto an empty
-   * diff. Filtering here keeps the review list and its auto-selection to artifacts with something to review.
-   */
-  function artifactsForReview(
-    artifacts: EvalCompareArtifactView[],
-    mode: ReviewMode,
-    reviewVariantId: string,
-    leftVariantId: string,
-    rightVariantId: string
-  ): EvalCompareArtifactView[] {
-    if (mode !== "review") return artifacts;
-    const reviewingLeft = reviewVariantId === leftVariantId;
-    const reviewingRight = reviewVariantId === rightVariantId;
-    return artifacts.filter((artifact) => {
-      if (artifact.kind === "code" && (artifact.changedLeft !== undefined || artifact.changedRight !== undefined)) {
-        return reviewingLeft ? artifact.changedLeft === true : reviewingRight ? artifact.changedRight === true : false;
-      }
-      if (artifact.status === "left-only") return reviewingLeft;
-      if (artifact.status === "right-only") return reviewingRight;
-      return true;
-    });
-  }
-
-  const artifactSections: { kind: EvalCompareArtifactKind; title: string; empty: string }[] = [
-    { kind: "prompt", title: "Prompts", empty: "No prompt artifacts" },
-    { kind: "context", title: "Context files", empty: "No context files" },
-    { kind: "code", title: "Changed files", empty: "No code changes" }
-  ];
-
-  // The artifact list is derived directly into a reactive value (not via a function called from markup) so
-  // Svelte re-renders it when selectableArtifacts changes, e.g. when the mode switches between Individual and
-  // the A/B views. Changed artifacts surface first; same artifacts collapse behind a toggle.
-  $: artifactSectionViews = artifactSections.map((section) => {
-    const group = selectableArtifacts.filter((artifact) => artifact.kind === section.kind);
-    return {
-      ...section,
-      changed: group.filter((artifact) => artifact.status !== "same"),
-      same: group.filter((artifact) => artifact.status === "same")
-    };
-  });
-
-  let expandedUnchanged = new Set<EvalCompareArtifactKind>();
-
-  function toggleUnchanged(kind: EvalCompareArtifactKind): void {
-    if (expandedUnchanged.has(kind)) expandedUnchanged.delete(kind);
-    else expandedUnchanged.add(kind);
-    expandedUnchanged = expandedUnchanged;
-  }
-
-  // Each artifact section (Prompts / Context files / Changed files) collapses to just its header so the
-  // list stays scannable when one kind has many files.
+  // Each aligned section (Prompts / Context files / Changed files) collapses to just its header so the
+  // view stays scannable. A section with no differences starts collapsed so sameness stays out of the way.
   let collapsedSections = new Set<EvalCompareArtifactKind>();
+  let collapsedInitFor = "";
 
   function toggleSection(kind: EvalCompareArtifactKind): void {
     if (collapsedSections.has(kind)) collapsedSections.delete(kind);
     else collapsedSections.add(kind);
     collapsedSections = collapsedSections;
+  }
+
+  /** Collapse a section by default when it has no differences. Runs once per compare load (keyed by
+   * compareLoadKey) so a user's manual toggles are never overridden by a re-render of the same comparison. */
+  function defaultCollapsed(sections: AlignedSection[]): void {
+    if (!compareLoadKey || collapsedInitFor === compareLoadKey) return;
+    collapsedInitFor = compareLoadKey;
+    const next = new Set<EvalCompareArtifactKind>();
+    for (const section of sections) if (!section.differs) next.add(section.kind);
+    collapsedSections = next;
   }
 
   type DiffSegment =
@@ -718,8 +636,6 @@
 
   const DIFF_CONTEXT = 3;
   const DIFF_GAP_MIN = 3;
-
-  let expandedGaps = new Set<number>();
 
   /** Collapses long runs of equal lines into expandable gaps, keeping a few context lines around changes. */
   function diffSegments(lines: EvalDiffLineView[]): DiffSegment[] {
@@ -757,13 +673,6 @@
     flushVisible();
     return segments;
   }
-
-  function toggleGap(index: number): void {
-    expandedGaps.add(index);
-    expandedGaps = expandedGaps;
-  }
-
-  $: segments = diff ? diffSegments(diff.lines) : [];
 
   // One row of the Individual review reader. A "line" row carries the variant line number it annotates when
   // present (added/unchanged code); rows without one (removed code) are shown for context but not annotated.
@@ -830,12 +739,6 @@
     return [variant.agent.kind, variant.model].filter(Boolean).join(" / ");
   }
 
-  function lineCount(): string {
-    if (!diff) return "";
-    const changed = diff.lines.filter((line) => line.kind !== "equal").length;
-    return `${diff.lines.length} lines, ${changed} changed`;
-  }
-
   /** Height (0..1) for one flame bucket, matching the Usage UI sparkline. */
   function sparkHeight(tokenShare: number, durationShare: number): number {
     const value = tokenShare > 0 ? tokenShare : durationShare;
@@ -873,9 +776,6 @@
     }
     return rows;
   }
-
-  $: leftReader = diff && isSplit ? readerLines(diff.lines, "left") : [];
-  $: rightReader = diff && isSplit ? readerLines(diff.lines, "right") : [];
 
   function formatDurationMs(value: number): string {
     if (value < 1000) return `${Math.round(value)}ms`;
@@ -994,6 +894,83 @@
     </div>
   {/if}
 
+  {#if drill}
+    <div class="modal-scrim drill-overlay" role="dialog" aria-modal="true" aria-label={`Review ${drill.variantId} · ${drill.artifact.label}`}>
+      <div class="drill-panel">
+        <header class="drill-head">
+          <h3>{drill.variantId} · {drill.artifact.label}</h3>
+          <span class="topbar-spacer"></span>
+          {#if savingReview}<small class="saving" aria-live="polite">saving…</small>{/if}
+          <button type="button" class="ghost" on:click={closeDrill}>Close</button>
+        </header>
+        {#if reviewDiffLoading}
+          <div class="state">Loading…</div>
+        {:else if reviewDiff}
+          <header class="diff-head">
+            {#if selRange}
+              <span class="sel-bar">
+                Lines {selRange.start}{#if selRange.end > selRange.start}–{selRange.end}{/if} selected
+                <button type="button" class="mark good" on:click={() => openSelectionNote("good")}>👍 good</button>
+                <button type="button" class="mark bad" on:click={() => openSelectionNote("bad")}>👎 bad</button>
+                <button type="button" class="ghost" on:click={clearSelection}>clear</button>
+              </span>
+            {:else if reviewIsDiff}
+              <span>{reviewChangedCount} changed {reviewChangedCount === 1 ? "line" : "lines"} · unchanged code collapsed · click line #s to select, 👍/👎 to note</span>
+            {:else}
+              <span>{reviewReader.length} lines · click line #s to select a block, 👍/👎 to note it</span>
+            {/if}
+          </header>
+          <div class="review-reader" class:review-diff={reviewIsDiff} aria-label={`${reviewDiff.artifact.label} review`}>
+            {#if reviewIsDiff && reviewChangedCount === 0}
+              <div class="state">This config made no changes to {reviewDiff.artifact.label}.</div>
+            {/if}
+            {#each reviewRows as row}
+              {#if row.kind === "gap"}
+                <button type="button" class="diff-gap" on:click={() => expandReviewGap(row.index)}>⋯ {row.count} unchanged lines</button>
+              {:else if row.line !== undefined}
+                {@const lineNotes = notesAt(currentReview, reviewDiff.artifact.id, row.line)}
+                {@const covered = lineCovered(currentReview, reviewDiff.artifact.id, row.line)}
+                <div class="review-row review-{row.marker}" class:has-notes={covered} class:selected={inSelection(row.line)}>
+                  <button type="button" class="line-no line-no-pick" class:anchor={row.line === selStart} title="Click to start/extend a selection block" on:click={() => selectGutter(row.line)}>{row.gutter}</button>
+                  <code>{row.text}</code>
+                  <span class="row-actions">
+                    <button type="button" class="mark good" title="Mark this line good" on:click={() => openNote(row.line, row.line, "good")}>👍</button>
+                    <button type="button" class="mark bad" title="Mark this line bad" on:click={() => openNote(row.line, row.line, "bad")}>👎</button>
+                  </span>
+                </div>
+                {#each lineNotes as note}
+                  <div class="line-note {note.sentiment}">
+                    <span class="note-icon">{note.sentiment === "good" ? "👍" : "👎"}</span>
+                    <span class="note-range">{noteRangeLabel(note)}</span>
+                    <span class="note-text">{note.text}</span>
+                    <button type="button" class="note-del" title="Remove note" on:click={() => removeNote(note.id)}>×</button>
+                  </div>
+                {/each}
+                {#if noteLine === row.line}
+                  <form class="note-composer {noteSentiment}" on:submit|preventDefault={() => saveNote()}>
+                    <span class="note-icon">{noteSentiment === "good" ? "👍" : "👎"}</span>
+                    <span class="note-range">{noteEndLine && noteEndLine > noteLine ? `L${noteLine}–${noteEndLine}` : `L${noteLine}`}</span>
+                    <!-- svelte-ignore a11y-autofocus -->
+                    <input class="note-input" placeholder={noteSentiment === "good" ? "what's good here…" : "what's wrong here…"} bind:value={noteText} autofocus />
+                    <button type="submit" class="primary" disabled={!noteText.trim()}>Add</button>
+                    <button type="button" class="ghost" on:click={() => { noteLine = undefined; noteEndLine = undefined; }}>Cancel</button>
+                  </form>
+                {/if}
+              {:else}
+                <div class="review-row review-{row.marker} review-context">
+                  <span class="line-no muted">{row.gutter}</span>
+                  <code>{row.text}</code>
+                </div>
+              {/if}
+            {/each}
+          </div>
+        {:else}
+          <div class="state">No content to review for {drill.artifact.label}.</div>
+        {/if}
+      </div>
+    </div>
+  {/if}
+
   <section class="compare-shell" aria-busy={runLoading || compareLoading}>
     {#if error}
       <div class="notice" role="alert">{error}</div>
@@ -1026,7 +1003,7 @@
               <div class="config-meta">
                 <span>{variant.model || variant.agent.kind}</span>
                 {#if phase}<span class="config-phase">{phase.id}{phase.status === "running" ? "…" : ""}</span>{/if}
-                <span class="config-time">{elapsed !== undefined ? formatDurationMs(elapsed) : "—"}</span>
+                <span class="config-time">{elapsed !== undefined ? formatDurationMs(elapsed) : "-"}</span>
               </div>
               {#if variant.metrics?.sparkline}
                 <span class="flame flame-dashboard" style={`width:${dashboardFlameWidth(variant)}%`} aria-label="Live conversation flame graph">
@@ -1048,274 +1025,128 @@
       </div>
     {:else if runDetail}
       {#if compare}
-        <div class="artifact-and-diff">
-          <aside class="artifact-list" aria-label="Artifacts">
-            {#each artifactSectionViews as section}
-              <section>
-                <h3>
-                  <button type="button" class="section-toggle" aria-expanded={!collapsedSections.has(section.kind)} on:click={() => toggleSection(section.kind)}>
-                    <span class="section-caret" aria-hidden="true">{collapsedSections.has(section.kind) ? "▸" : "▾"}</span>
-                    {section.title}
-                  </button>
-                </h3>
-                {#if collapsedSections.has(section.kind)}
-                  <!-- collapsed: header only -->
-                {:else if section.changed.length === 0 && section.same.length === 0}
-                  <p>{section.empty}</p>
-                {:else}
-                  {#each section.changed as artifact}
-                    <button type="button" class:active={artifact.id === selectedArtifactId} on:click={() => selectArtifact(artifact)}>
-                      <span>{artifact.label}</span>
-                      <small class="badge badge-{artifact.status || 'available'}">{artifact.status || "available"}</small>
-                    </button>
-                  {/each}
-                  {#if section.same.length}
-                    <button type="button" class="unchanged-toggle" aria-expanded={expandedUnchanged.has(section.kind)} on:click={() => toggleUnchanged(section.kind)}>
-                      {expandedUnchanged.has(section.kind) ? "▾" : "▸"} {section.same.length} unchanged
-                    </button>
-                    {#if expandedUnchanged.has(section.kind)}
-                      {#each section.same as artifact}
-                        <button type="button" class="same-row" class:active={artifact.id === selectedArtifactId} on:click={() => selectArtifact(artifact)}>
-                          <span>{artifact.label}</span>
-                          <small class="badge badge-same">same</small>
-                        </button>
-                      {/each}
-                    {/if}
-                  {/if}
-                {/if}
-              </section>
-            {/each}
-          </aside>
-
-          <section class="diff-pane" aria-label="Artifact view">
-            <div class="mode-tabs" aria-label="View mode">
-              <button type="button" class:active={mode === "review"} on:click={() => mode = "review"} title="Review one config on its own">Individual</button>
-              <button type="button" class:active={mode === "compare"} on:click={() => mode = "compare"} title="Compare the review notes you left">Compare notes</button>
-              <button type="button" class:active={mode === "diff"} on:click={() => mode = "diff"} title="View two configs side by side">Side by side</button>
-              {#if mode === "diff"}
-                <span class="layout-toggle" aria-label="Side-by-side layout">
-                  <button type="button" class:active={effectiveLayout === "split"} on:click={() => diffLayoutOverride = "split"}>No diff</button>
-                  <button type="button" class:active={effectiveLayout === "diff"} on:click={() => diffLayoutOverride = "diff"}>Diff</button>
-                </span>
-              {/if}
-              {#if savingReview}<small class="saving">saving…</small>{/if}
-            </div>
-
-            {#if mode === "review"}
-              <div class="review-head">
-                <div class="review-pick">
-                  <span class="review-eyebrow">Reviewing</span>
-                  {#each selectedCase?.variants || [] as variant}
-                    <button type="button" class="variant-chip" class:active={variant.variantId === reviewVariantId} on:click={() => selectReviewVariant(variant.variantId)}>{variant.variantId}</button>
-                  {/each}
-                </div>
-                <div class="verdict" aria-label="Overall verdict">
-                  <button type="button" class:active={currentReview.verdict?.sentiment === "like"} on:click={() => setVerdict("like")}>👍</button>
-                  <button type="button" class:active={currentReview.verdict?.sentiment === "mixed"} on:click={() => setVerdict("mixed")}>🤔</button>
-                  <button type="button" class:active={currentReview.verdict?.sentiment === "dislike"} on:click={() => setVerdict("dislike")}>👎</button>
-                  <span class="score" aria-label="Score out of 10">
-                    <span class="score-label">Score</span>
-                    {#each [0,1,2,3,4,5,6,7,8,9,10] as value}
-                      <button type="button" class="score-pip" class:active={currentReview.verdict?.score === value} on:click={() => setScore(currentReview.verdict?.score === value ? undefined : value)}>{value}</button>
+        <div class="compare-stack">
+          <header class="compare-head" aria-label="Configs compared">
+            {#each [{ side: "a", id: leftVariantId, v: compare.left, other: compare.right }, { side: "b", id: rightVariantId, v: compare.right, other: compare.left }] as col}
+              {@const review = reviews.variants[variantKey(selectedCaseId, col.id)]}
+              <div class="compare-col-head entity-{col.side}">
+                <label>
+                  <span class="entity-tag">{col.side === "a" ? "A" : "B"}</span>
+                  <select value={col.id} on:change={(event) => col.side === "a" ? (leftVariantId = event.currentTarget.value) : (rightVariantId = event.currentTarget.value)}>
+                    {#each selectedCase?.variants || [] as variant}<option value={variant.variantId}>{variant.variantId}</option>{/each}
+                  </select>
+                </label>
+                <small class="compare-col-meta">{agentLabel(col.v) || "manual"} · {contextLabel(col.v)}</small>
+                {#if col.v.metrics?.sparkline}
+                  <span class="flame" style={`width:${flameWidth(col.v.metrics.sparkline, col.other.metrics?.sparkline)}%`} aria-label="Conversation flame graph">
+                    {#each col.v.metrics.sparkline.buckets as bucket}
+                      <span class={`flame-bar flame-${bucket.kind}`} style={`height:${sparkHeight(bucket.tokenShare, bucket.durationShare) * 100}%`}></span>
                     {/each}
                   </span>
-                  <input class="verdict-text" placeholder="overall note (optional)" value={currentReview.verdict?.text || ""} on:change={(event) => setVerdictText(event.currentTarget.value)} />
+                  <small class="flame-caption">{flameCaption(col.v.metrics)}</small>
+                {/if}
+                <div class="verdict-inline" aria-label={`Verdict for ${col.id}`}>
+                  <button type="button" aria-label={`Verdict ${col.id} like`} class:active={review?.verdict?.sentiment === "like"} on:click={() => setVerdictFor(col.id, "like")}>👍</button>
+                  <button type="button" aria-label={`Verdict ${col.id} mixed`} class:active={review?.verdict?.sentiment === "mixed"} on:click={() => setVerdictFor(col.id, "mixed")}>🤔</button>
+                  <button type="button" aria-label={`Verdict ${col.id} dislike`} class:active={review?.verdict?.sentiment === "dislike"} on:click={() => setVerdictFor(col.id, "dislike")}>👎</button>
+                  <span class="score" aria-label="Score out of 10">
+                    {#each [0,1,2,3,4,5,6,7,8,9,10] as value}
+                      <button type="button" class="score-pip" aria-label={`Score ${col.id} ${value}`} class:active={review?.verdict?.score === value} on:click={() => setScoreFor(col.id, review?.verdict?.score === value ? undefined : value)}>{value}</button>
+                    {/each}
+                  </span>
                 </div>
               </div>
-              {#if reviewDiffLoading}
-                <div class="state">Loading…</div>
-              {:else if reviewDiff}
-                <header class="diff-head">
-                  <h3>{reviewDiff.artifact.label}</h3>
-                  {#if selRange}
-                    <span class="sel-bar">
-                      Lines {selRange.start}{#if selRange.end > selRange.start}–{selRange.end}{/if} selected
-                      <button type="button" class="mark good" on:click={() => openSelectionNote("good")}>👍 good</button>
-                      <button type="button" class="mark bad" on:click={() => openSelectionNote("bad")}>👎 bad</button>
-                      <button type="button" class="ghost" on:click={clearSelection}>clear</button>
-                    </span>
-                  {:else if reviewIsDiff}
-                    <span>{reviewChangedCount} changed {reviewChangedCount === 1 ? "line" : "lines"} · unchanged code collapsed · click line #s to select, 👍/👎 to note</span>
-                  {:else}
-                    <span>{reviewReader.length} lines · click line #s to select a block, 👍/👎 to note it</span>
-                  {/if}
-                </header>
-                <div class="review-reader" class:review-diff={reviewIsDiff} aria-label={`${reviewDiff.artifact.label} review`}>
-                  {#if reviewIsDiff && reviewChangedCount === 0}
-                    <div class="state">This config made no changes to {reviewDiff.artifact.label}.</div>
-                  {/if}
-                  {#each reviewRows as row}
-                    {#if row.kind === "gap"}
-                      <button type="button" class="diff-gap" on:click={() => expandReviewGap(row.index)}>⋯ {row.count} unchanged lines</button>
-                    {:else if row.line !== undefined}
-                      {@const lineNotes = notesAt(currentReview, reviewDiff.artifact.id, row.line)}
-                      {@const covered = lineCovered(currentReview, reviewDiff.artifact.id, row.line)}
-                      <div class="review-row review-{row.marker}" class:has-notes={covered} class:selected={inSelection(row.line)}>
-                        <button type="button" class="line-no line-no-pick" class:anchor={row.line === selStart} title="Click to start/extend a selection block" on:click={() => selectGutter(row.line)}>{row.gutter}</button>
-                        <code>{row.text}</code>
-                        <span class="row-actions">
-                          <button type="button" class="mark good" title="Mark this line good" on:click={() => openNote(row.line, row.line, "good")}>👍</button>
-                          <button type="button" class="mark bad" title="Mark this line bad" on:click={() => openNote(row.line, row.line, "bad")}>👎</button>
-                        </span>
-                      </div>
-                      {#each lineNotes as note}
-                        <div class="line-note {note.sentiment}">
-                          <span class="note-icon">{note.sentiment === "good" ? "👍" : "👎"}</span>
-                          <span class="note-range">{noteRangeLabel(note)}</span>
-                          <span class="note-text">{note.text}</span>
-                          <button type="button" class="note-del" title="Remove note" on:click={() => removeNote(note.id)}>×</button>
+            {/each}
+          </header>
+
+          {#if savingReview}<small class="saving" aria-live="polite">saving…</small>{/if}
+
+          <div class="compare-lens">
+            <button type="button" class="lens-toggle" class:active={notesOnly} on:click={() => (notesOnly = !notesOnly)}>Notes only</button>
+          </div>
+
+          {#each alignedSections as section}
+            {@const rows = notesOnly ? rowsWithNotes(section, reviews, selectedCaseId, leftVariantId, rightVariantId) : section.rows}
+            <section class="aligned-section" class:collapsed={collapsedSections.has(section.kind)}>
+              <button type="button" class="section-toggle" aria-expanded={!collapsedSections.has(section.kind)} on:click={() => toggleSection(section.kind)}>
+                <span class="section-caret" aria-hidden="true">{collapsedSections.has(section.kind) ? "▸" : "▾"}</span>
+                <h3>{section.title}</h3>
+                <small class="section-summary">{section.differs ? "differs" : "identical"}</small>
+              </button>
+              <div class="aligned-rows">
+                {#each rows as row}
+                  <div class="aligned-row" class:identical={row.identical}>
+                    {#if notesOnly}
+                      {#each [{ id: leftVariantId, cls: "aligned-a" }, { id: rightVariantId, cls: "aligned-b" }] as side}
+                        <div class={side.cls}>
+                          {#each fileNotes(reviews, selectedCaseId, side.id, row.artifact.id) as note}
+                            <div class="syn-note {note.sentiment}">
+                              <p class="note-text">{note.text}</p>
+                              <code class="syn-snippet">{note.artifactLabel}:{note.line} · {note.snippet.trim()}</code>
+                            </div>
+                          {/each}
                         </div>
                       {/each}
-                      {#if noteLine === row.line}
-                        <form class="note-composer {noteSentiment}" on:submit|preventDefault={() => saveNote()}>
-                          <span class="note-icon">{noteSentiment === "good" ? "👍" : "👎"}</span>
-                          <span class="note-range">{noteEndLine && noteEndLine > noteLine ? `L${noteLine}–${noteEndLine}` : `L${noteLine}`}</span>
-                          <!-- svelte-ignore a11y-autofocus -->
-                          <input class="note-input" placeholder={noteSentiment === "good" ? "what's good here…" : "what's wrong here…"} bind:value={noteText} autofocus />
-                          <button type="submit" class="primary" disabled={!noteText.trim()}>Add</button>
-                          <button type="button" class="ghost" on:click={() => { noteLine = undefined; noteEndLine = undefined; }}>Cancel</button>
-                        </form>
-                      {/if}
                     {:else}
-                      <div class="review-row review-{row.marker} review-context">
-                        <span class="line-no muted">{row.gutter}</span>
-                        <code>{row.text}</code>
+                      <div class="aligned-a">
+                        {#if row.a.present}
+                          {@const key = diffCacheKey(selectedCaseId, leftVariantId, row.artifact.id)}
+                          <button type="button" class="row-expand"
+                            aria-label={`${expandedRows.has(key) ? "Collapse" : "Expand"} ${row.artifact.label} for ${leftVariantId}`}
+                            on:click={() => expandRow(leftVariantId, row.artifact)}>
+                            <span class="badge badge-{row.a.changed ? 'changed' : 'same'}">{row.artifact.label}</span>
+                            {#if row.a.changed && row.artifact.addedLeft !== undefined}<small class="counts">+{row.artifact.addedLeft} -{row.artifact.removedLeft}</small>{/if}
+                          </button>
+                          {#if expandedRows.has(key)}
+                            <div class="aligned-detail review-reader review-diff">
+                              <button type="button" class="row-note" aria-label={`Add notes on ${row.artifact.label} for ${leftVariantId}`} on:click={() => openDrill(leftVariantId, row.artifact)}>note ✎</button>
+                              {#if loadingRows.has(key)}<div class="state">Loading…</div>
+                              {:else}
+                                {#each sideRows(key) as r}
+                                  {#if r.kind === "gap"}<div class="diff-gap">⋯ {r.count} unchanged lines</div>
+                                  {:else}<div class="review-row review-{r.marker}"><span class="line-no">{r.gutter}</span><code>{r.text}</code></div>{/if}
+                                {/each}
+                              {/if}
+                            </div>
+                          {/if}
+                        {:else}<span class="absent">absent</span>{/if}
+                      </div>
+                      <div class="aligned-b">
+                        {#if row.b.present}
+                          {@const key = diffCacheKey(selectedCaseId, rightVariantId, row.artifact.id)}
+                          <button type="button" class="row-expand"
+                            aria-label={`${expandedRows.has(key) ? "Collapse" : "Expand"} ${row.artifact.label} for ${rightVariantId}`}
+                            on:click={() => expandRow(rightVariantId, row.artifact)}>
+                            <span class="badge badge-{row.b.changed ? 'changed' : 'same'}">{row.artifact.label}</span>
+                            {#if row.b.changed && row.artifact.addedRight !== undefined}<small class="counts">+{row.artifact.addedRight} -{row.artifact.removedRight}</small>{/if}
+                          </button>
+                          {#if expandedRows.has(key)}
+                            <div class="aligned-detail review-reader review-diff">
+                              <button type="button" class="row-note" aria-label={`Add notes on ${row.artifact.label} for ${rightVariantId}`} on:click={() => openDrill(rightVariantId, row.artifact)}>note ✎</button>
+                              {#if loadingRows.has(key)}<div class="state">Loading…</div>
+                              {:else}
+                                {#each sideRows(key) as r}
+                                  {#if r.kind === "gap"}<div class="diff-gap">⋯ {r.count} unchanged lines</div>
+                                  {:else}<div class="review-row review-{r.marker}"><span class="line-no">{r.gutter}</span><code>{r.text}</code></div>{/if}
+                                {/each}
+                              {/if}
+                            </div>
+                          {/if}
+                        {:else}<span class="absent">absent</span>{/if}
                       </div>
                     {/if}
-                  {/each}
-                </div>
-              {:else}
-                <div class="state">Pick an artifact on the left to review “{reviewVariantId}”.</div>
-              {/if}
-
-            {:else if mode === "compare"}
-              <div class="compare-pick">
-                <label><span class="entity-tag">A</span>
-                  <select bind:value={leftVariantId}>{#each selectedCase?.variants || [] as variant}<option value={variant.variantId}>{variant.variantId}</option>{/each}</select>
-                </label>
-                <label><span class="entity-tag">B</span>
-                  <select bind:value={rightVariantId}>{#each selectedCase?.variants || [] as variant}<option value={variant.variantId}>{variant.variantId}</option>{/each}</select>
-                </label>
-                <small class="compare-hint">Built from your review notes</small>
-              </div>
-              <div class="review-compare">
-                {#each [leftVariantId, rightVariantId] as variantId, index}
-                  {@const key = variantKey(selectedCaseId, variantId)}
-                  {@const review = reviews.variants[key]}
-                  <div class="review-col">
-                    <header class="review-col-head">
-                      <span class="entity-tag">{index === 0 ? "A" : "B"}</span>
-                      <h3>{variantId}</h3>
-                      <span class="verdict-badge {review?.verdict?.sentiment || 'none'}">{verdictLabel(review?.verdict?.sentiment)}</span>
-                      {#if review?.verdict?.score !== undefined}<span class="score-badge">{review.verdict.score}/10</span>{/if}
-                    </header>
-                    {#if review?.verdict?.text}<p class="verdict-note">{review.verdict.text}</p>{/if}
-                    <section class="syn-group good">
-                      <h4>👍 Did well</h4>
-                      {#each notesBySentiment(key, "good") as note}
-                        <div class="syn-note"><p class="syn-text">{note.text}</p><code class="syn-snippet">{note.artifactLabel}:{note.line} · {note.snippet.trim()}</code></div>
-                      {:else}
-                        <p class="syn-empty">No notes yet.</p>
-                      {/each}
-                    </section>
-                    <section class="syn-group bad">
-                      <h4>👎 Mistakes</h4>
-                      {#each notesBySentiment(key, "bad") as note}
-                        <div class="syn-note"><p class="syn-text">{note.text}</p><code class="syn-snippet">{note.artifactLabel}:{note.line} · {note.snippet.trim()}</code></div>
-                      {:else}
-                        <p class="syn-empty">No notes yet.</p>
-                      {/each}
-                    </section>
                   </div>
                 {/each}
-              </div>
-
-            {:else}
-              <div class="entity-heads">
-                <div class="entity entity-a">
-                  <label>
-                    <span class="entity-tag">A</span>
-                    <select bind:value={leftVariantId}>
-                      {#each selectedCase?.variants || [] as variant}
-                        <option value={variant.variantId}>{variant.variantId}</option>
-                      {/each}
-                    </select>
-                  </label>
-                  <small>{agentLabel(compare.left) || "manual"} · {contextLabel(compare.left)}</small>
-                  {#if compare.left.metrics?.sparkline}
-                    <span class="flame" style={`width:${flameWidth(compare.left.metrics.sparkline, compare.right.metrics?.sparkline)}%`} aria-label="Conversation flame graph">
-                      {#each compare.left.metrics.sparkline.buckets as bucket}
-                        <span class={`flame-bar flame-${bucket.kind}`} style={`height:${sparkHeight(bucket.tokenShare, bucket.durationShare) * 100}%`}></span>
-                      {/each}
-                    </span>
-                    <small class="flame-caption">{flameCaption(compare.left.metrics)}</small>
+                {#if rows.length === 0}
+                  {#if notesOnly}
+                    <p class="aligned-empty">No notes in {section.title.toLowerCase()}</p>
+                  {:else}
+                    <p class="aligned-empty">No {section.title.toLowerCase()}</p>
                   {/if}
-                </div>
-                <div class="entity entity-b">
-                  <label>
-                    <span class="entity-tag">B</span>
-                    <select bind:value={rightVariantId}>
-                      {#each selectedCase?.variants || [] as variant}
-                        <option value={variant.variantId}>{variant.variantId}</option>
-                      {/each}
-                    </select>
-                  </label>
-                  <small>{agentLabel(compare.right) || "manual"} · {contextLabel(compare.right)}</small>
-                  {#if compare.right.metrics?.sparkline}
-                    <span class="flame" style={`width:${flameWidth(compare.right.metrics.sparkline, compare.left.metrics?.sparkline)}%`} aria-label="Conversation flame graph">
-                      {#each compare.right.metrics.sparkline.buckets as bucket}
-                        <span class={`flame-bar flame-${bucket.kind}`} style={`height:${sparkHeight(bucket.tokenShare, bucket.durationShare) * 100}%`}></span>
-                      {/each}
-                    </span>
-                    <small class="flame-caption">{flameCaption(compare.right.metrics)}</small>
-                  {/if}
-                </div>
+                {/if}
               </div>
-              {#if diff && isSplit}
-                <header class="diff-head">
-                  <h3>{diff.artifact.label}</h3>
-                  <span>A {leftReader.length} · B {rightReader.length} lines</span>
-                </header>
-                <div class="reader" aria-label={`${diff.artifact.label} side by side`}>
-                  <div class="reader-col">
-                    {#each leftReader as row}
-                      <div class="reader-row"><span class="line-no">{row.n}</span><code>{row.text}</code></div>
-                    {/each}
-                  </div>
-                  <div class="reader-col reader-col-b">
-                    {#each rightReader as row}
-                      <div class="reader-row"><span class="line-no">{row.n}</span><code>{row.text}</code></div>
-                    {/each}
-                  </div>
-                </div>
-              {:else if diff}
-                <header class="diff-head">
-                  <h3>{diff.artifact.label}</h3>
-                  <span>{lineCount()}</span>
-                </header>
-                <div class="diff-grid" role="table" aria-label={`${diff.artifact.label} diff`}>
-                  {#each segments as segment}
-                    {#if segment.kind === "gap" && !expandedGaps.has(segment.index)}
-                      <button type="button" class="diff-gap" on:click={() => toggleGap(segment.index)}>
-                        ⋯ {segment.count} unchanged lines
-                      </button>
-                    {:else}
-                      {#each segment.lines as line}
-                        <div class:changed={line.kind === "changed"} class:add={line.kind === "add"} class:delete={line.kind === "delete"} class:equal={line.kind === "equal"} class="diff-row">
-                          <span class="line-no">{line.leftNumber || ""}</span>
-                          <code>{line.left || ""}</code>
-                          <span class="line-no">{line.rightNumber || ""}</span>
-                          <code>{line.right || ""}</code>
-                        </div>
-                      {/each}
-                    {/if}
-                  {/each}
-                </div>
-              {:else}
-                <div class="state">Select an artifact to view its diff.</div>
-              {/if}
-            {/if}
-          </section>
+            </section>
+          {/each}
         </div>
       {:else if selectedCase?.variants.length === 1}
         <div class="state">This case has one configuration. Add another variant to compare.</div>

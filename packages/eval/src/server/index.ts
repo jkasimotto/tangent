@@ -3,7 +3,7 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
 import type { LocalUiApp, StaticAssetMount, UiRoute, UiRouteResponse } from "@tangent/ui-server";
-import { changedFiles, fileOidsAtRef, showFile } from "@tangent/repo/git";
+import { changedFiles, fileOidsAtRef, gitText, showFile } from "@tangent/repo/git";
 
 import type { EvalAgentConfig } from "../types/provider.js";
 import type { EvalRunManifest, EvalRunStatus, EvalRunVariantState } from "../types/run.js";
@@ -457,24 +457,32 @@ async function contextArtifactStatuses(left: EvalRunVariantState, right: EvalRun
  * touched still differs between the two outputs and would read as "changed").
  */
 async function codeArtifactStatuses(left: EvalRunVariantState, right: EvalRunVariantState, oidsAt: OidsAt): Promise<EvalCompareArtifactView[]> {
-  const [leftPaths, rightPaths, leftOids, rightOids] = await Promise.all([
+  const [leftPaths, rightPaths, leftOids, rightOids, leftCounts, rightCounts] = await Promise.all([
     variantChangedFiles(left),
     variantChangedFiles(right),
     implementationOids(left, oidsAt),
-    implementationOids(right, oidsAt)
+    implementationOids(right, oidsAt),
+    variantNumstat(left),
+    variantNumstat(right)
   ]);
   const leftChanged = new Set(leftPaths);
   const rightChanged = new Set(rightPaths);
   const paths = [...new Set([...leftPaths, ...rightPaths])].sort();
-  return paths.map((codePath) => ({
-    id: `code:${codePath}`,
-    kind: "code",
-    path: codePath,
-    label: codePath,
-    status: oidStatus(leftOids.get(codePath), rightOids.get(codePath)),
-    changedLeft: leftChanged.has(codePath),
-    changedRight: rightChanged.has(codePath)
-  }));
+  return paths.map((codePath) => {
+    const lc = leftCounts.get(codePath);
+    const rc = rightCounts.get(codePath);
+    return {
+      id: `code:${codePath}`,
+      kind: "code",
+      path: codePath,
+      label: codePath,
+      status: oidStatus(leftOids.get(codePath), rightOids.get(codePath)),
+      changedLeft: leftChanged.has(codePath),
+      changedRight: rightChanged.has(codePath),
+      ...(lc !== undefined ? { addedLeft: lc.added, removedLeft: lc.removed } : {}),
+      ...(rc !== undefined ? { addedRight: rc.added, removedRight: rc.removed } : {})
+    };
+  });
 }
 
 /** Reads left/right content for one selected artifact, the only place compare reads file content. */
@@ -530,6 +538,32 @@ async function variantChangedFiles(variant: EvalRunVariantState): Promise<string
   const head = variant.implementationCommit || variant.planCommit || variant.contextCommit;
   if (!head || head === from) return [];
   return changedFiles(variant.worktree, from, head).catch(() => []);
+}
+
+type FileCounts = { added: number; removed: number };
+
+/**
+ * Returns per-file added/removed line counts for the variant's agent change (context -> implementation)
+ * via `git diff --numstat`. Binary files (shown as `-\t-` by numstat) and errors produce no entry.
+ * Keeps the same from/head logic as variantChangedFiles so the sets stay consistent.
+ */
+async function variantNumstat(variant: EvalRunVariantState): Promise<Map<string, FileCounts>> {
+  const from = variant.contextCommit || variant.baseCommit;
+  const head = variant.implementationCommit || variant.planCommit || variant.contextCommit;
+  if (!head || head === from) return new Map();
+  const output = await gitText(variant.worktree, ["diff", "--numstat", `${from}..${head}`]).catch(() => "");
+  const result = new Map<string, FileCounts>();
+  for (const line of output.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.split("\t");
+    if (parts.length < 3) continue;
+    const added = parseInt(parts[0], 10);
+    const removed = parseInt(parts[1], 10);
+    const filePath = parts[2];
+    if (!Number.isNaN(added) && !Number.isNaN(removed)) result.set(filePath, { added, removed });
+  }
+  return result;
 }
 
 /** Reads a file at a variant's implementation commit, falling back to its base. */

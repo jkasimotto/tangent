@@ -26,26 +26,21 @@
   } from "./client.js";
   import { buildAlignedSections, diffCacheKey, fileNotes, rowsWithNotes, type AlignedSection, type AlignedRow } from "./compare-model.js";
   import AssembledContext from "./AssembledContext.svelte";
-  import type { EvalAssembledContext } from "./client.js";
+  import ConversationCompare from "./ConversationCompare.svelte";
+  import type { EvalAssembledContext, EvalConversationsView } from "./client.js";
 
   export let client: EvalUiClient = createEvalApiClient();
 
   // Per-config review state: an overall verdict (sentiment + score + optional note) plus inline good/bad
-  // notes, persisted per run via the reviews API. The aligned Compare view reads these inline; per-row
-  // content expansion and the notes lens build on this state in later tasks.
-  let reviewVariantId = "";
+  // notes, persisted per run via the reviews API. The aligned Compare view reads and writes these inline.
   let notesOnly = false;
   let reviews: EvalReviews = { schema: "eval.reviews.v1", variants: {} };
-  let reviewDiff: EvalDiffView | undefined;
-  let reviewDiffLoadKey = "";
-  let reviewDiffLoading = false;
-  let noteLine: number | undefined;
-  let noteSentiment: EvalReviewSentiment = "bad";
-  let noteText = "";
   let savingReview = false;
-  // Per-file note drill-in: the focused single-variant reader for one artifact, opened from an expanded
-  // compare side. While set, reviewVariantId/selectedArtifactId track it and loadReviewDiff loads its content.
-  let drill: { variantId: string; artifact: EvalCompareArtifactView } | undefined;
+  // Inline comment composer: GitHub-style, opened by clicking a diff line in either column. It carries the
+  // side's variant, the artifact, the line, and that line's text (the saved note's snippet). Only one is
+  // open at a time, like a single open comment box in a code review.
+  let composer: { variantId: string; artifactId: string; artifactLabel: string; line: number; snippet: string } | undefined;
+  let composerText = "";
 
   let runs: EvalRunSummaryView[] = [];
   let specs: EvalSpecSummaryView[] = [];
@@ -58,7 +53,6 @@
   let leftVariantId = "";
   let rightVariantId = "";
   let compare: EvalCompareView | undefined;
-  let selectedArtifactId = "";
   // Context section view: the raw file diff list vs the assembled "what the agent sees" reconstruction.
   let contextView: "files" | "assembled" = "files";
   let assembleCwd = "";
@@ -68,6 +62,15 @@
   let assembledLoading = false;
   let assembledError = "";
   let assembledKey = "";
+
+  // Conversations section: a side-by-side reconstruction of what each agent actually did (turns and tool
+  // calls), reconstructed lazily when the section is opened, so it never costs a fetch unless asked for.
+  let conversationsOpen = false;
+  let conversationsLeft: EvalConversationsView | undefined;
+  let conversationsRight: EvalConversationsView | undefined;
+  let conversationsLoading = false;
+  let conversationsError = "";
+  let conversationsKey = "";
 
   // Per-side content cache for the aligned view: keyed by diffCacheKey so re-expanding never refetches.
   let diffCache = new Map<string, EvalDiffView>();
@@ -98,12 +101,6 @@
   let promptLoading = false;
   let promptSaving = false;
   let promptError = "";
-
-  // Block selection for review notes (workflow 5): a note can target a range of lines, picked by
-  // clicking the start gutter then the end gutter. noteEndLine carries the block end while composing.
-  let selStart: number | undefined;
-  let selEnd: number | undefined;
-  let noteEndLine: number | undefined;
 
   onMount(() => {
     void loadInitial();
@@ -146,17 +143,11 @@
   // The aligned Compare view shows the whole pair: one identity row per artifact, grouped by kind.
   $: alignedSections = buildAlignedSections(compare?.artifacts || []);
   $: defaultCollapsed(alignedSections);
-  $: reviewKey = variantKey(selectedCaseId, reviewVariantId);
-  $: currentReview = reviews.variants[reviewKey] || { notes: [] };
-  $: reviewReader = reviewDiff ? readerLines(reviewDiff.lines, "right") : [];
-  // Individual review of code shows the agent's change (base -> this variant) as a unified diff with
-  // unchanged runs collapsed, so the edits are immediately visible instead of buried in the whole file.
-  // Prompts and context are inputs the agent read, not edits it made, so they stay a full read.
-  $: reviewIsDiff = reviewDiff?.artifact.kind === "code";
-  $: reviewChangedCount = reviewDiff ? reviewDiff.lines.filter((line) => line.kind !== "equal").length : 0;
-  $: reviewRows = buildReviewRows(reviewDiff, reviewIsDiff, expandedReviewGaps);
-  // The drill-in owns the single-variant reader: when open, load that one variant+file's content.
-  $: compare && selectedArtifactId && reviewVariantId && drill && void loadReviewDiff();
+  // Reconstruct both sides' conversations when the section opens or the variant pair changes. Svelte only
+  // re-runs a reactive block for variables it directly reads, so the dep string is what makes a pair switch
+  // refetch; loadConversations itself short-circuits when the section is closed or already loaded.
+  $: conversationsDeps = `${conversationsOpen}|${selectedRunId}|${selectedCaseId}|${leftVariantId}|${rightVariantId}`;
+  $: { void conversationsDeps; void loadConversations(); }
 
   async function loadInitial(): Promise<void> {
     loading = true;
@@ -284,48 +275,43 @@
     view = "results";
   }
 
-  // --- Block selection + scoring for review notes (workflows 5 & 7) ------------------------------
+  // --- Inline comments + scoring for review notes -----------------------------------------------
 
-  /** Click the line gutter to anchor a selection, click again to extend it into a block, or clear it. */
-  function selectGutter(line: number): void {
-    if (selStart === undefined) {
-      selStart = line;
-      selEnd = line;
-      return;
-    }
-    if (line === selStart && selEnd === selStart) {
-      clearSelection();
-      return;
-    }
-    selEnd = line;
+  /** Opens the inline comment composer on a diff line in one column. Clicking a line is the whole gesture. */
+  function openComposer(variantId: string, artifact: EvalCompareArtifactView, line: number | undefined, snippet: string): void {
+    if (line === undefined) return;
+    composer = { variantId, artifactId: artifact.id, artifactLabel: artifact.label, line, snippet };
+    composerText = "";
   }
 
-  $: selRange = selStart !== undefined && selEnd !== undefined
-    ? { start: Math.min(selStart, selEnd), end: Math.max(selStart, selEnd) }
-    : undefined;
-
-  /** Whether a line falls inside the active selection block. */
-  function inSelection(line: number): boolean {
-    return selRange ? line >= selRange.start && line <= selRange.end : false;
+  /** Whether the composer is open on this exact line of this side's artifact. */
+  function composerAt(variantId: string, artifactId: string, line: number | undefined): boolean {
+    return Boolean(composer && line !== undefined && composer.variantId === variantId && composer.artifactId === artifactId && composer.line === line);
   }
 
-  /** Clears the current line-block selection. */
-  function clearSelection(): void {
-    selStart = undefined;
-    selEnd = undefined;
+  /** Closes the inline composer without saving. */
+  function closeComposer(): void {
+    composer = undefined;
+    composerText = "";
   }
 
-  /** Opens the note composer for a line block with a sentiment. */
-  function openNote(start: number, end: number, sentiment: EvalReviewSentiment): void {
-    noteLine = start;
-    noteEndLine = end;
-    noteSentiment = sentiment;
-    noteText = "";
-  }
-
-  /** Opens the note composer for the current selection block. */
-  function openSelectionNote(sentiment: EvalReviewSentiment): void {
-    if (selRange) openNote(selRange.start, selRange.end, sentiment);
+  /** Saves the inline comment with a sentiment against the composer's side, then closes it. */
+  async function saveComposer(sentiment: EvalReviewSentiment): Promise<void> {
+    if (!composer || !composerText.trim()) return;
+    const note: EvalReviewNote = {
+      id: newId(),
+      artifactId: composer.artifactId,
+      artifactLabel: composer.artifactLabel,
+      line: composer.line,
+      snippet: composer.snippet,
+      sentiment,
+      text: composerText.trim(),
+      ts: Date.now()
+    };
+    ensureReview(variantKey(selectedCaseId, composer.variantId)).notes.push(note);
+    reviews = reviews;
+    closeComposer();
+    await persistReviews();
   }
 
   /** Sets the overall numeric score (0-10) for a given variant, preserving its sentiment and text. */
@@ -374,10 +360,8 @@
       if (runLoadKey !== runId) return;
       runDetail = next;
       selectedCaseId = next.cases.find((item) => item.id === selectedCaseId)?.id || next.cases[0]?.id || "";
-      selectedArtifactId = "";
       compare = undefined;
-      reviewDiff = undefined;
-      reviewDiffLoadKey = "";
+      composer = undefined;
       void loadReviews(runId);
       error = "";
       if (runActive(next)) schedulePoll(runId);
@@ -443,14 +427,6 @@
     }
   }
 
-  /** Opens the focused single-variant reader for one file, to add per-line notes. */
-  function openDrill(variantId: string, artifact: EvalCompareArtifactView): void {
-    drill = { variantId, artifact };
-    reviewVariantId = variantId;
-    selectedArtifactId = artifact.id;
-    reviewDiffLoadKey = "";
-  }
-
   /** Fetches both variants' assembled context for the current cwd and loaded skills, memoized by key. */
   async function loadAssembled(): Promise<void> {
     if (contextView !== "assembled" || !selectedRunId || !selectedCaseId || !leftVariantId || !rightVariantId) return;
@@ -511,13 +487,6 @@
     loadedSkills = loadedSkills;
   }
 
-  /** Closes the drill-in and returns to the comparison. */
-  function closeDrill(): void {
-    drill = undefined;
-    noteLine = undefined;
-    clearSelection();
-  }
-
   /** Review rows for a cached side (collapsed unified diff for code, full read otherwise). */
   function sideRows(key: string): ReviewRow[] {
     const view = diffCache.get(key);
@@ -525,30 +494,29 @@
     return buildReviewRows(view, view.artifact.kind === "code", new Set());
   }
 
-  /** Loads the single reviewed variant's content for the selected artifact (left=right=that variant). */
-  async function loadReviewDiff(): Promise<void> {
-    if (!compare || !reviewVariantId) return;
-    const artifact = compare.artifacts.find((item) => item.id === selectedArtifactId);
-    if (!artifact) { reviewDiff = undefined; reviewDiffLoading = false; return; }
-    const key = `${selectedRunId}:${selectedCaseId}:${reviewVariantId}:${artifact.id}`;
-    if (reviewDiffLoadKey === key) return;
-    reviewDiffLoadKey = key;
-    // Clear the previous file's diff and show a loading state: the git read can take a couple of seconds, and
-    // leaving the old diff on screen makes a variant or artifact switch look stuck on the wrong file.
-    reviewDiff = undefined;
-    reviewDiffLoading = true;
+  /** Toggles the Conversations section open or closed. */
+  function toggleConversations(): void {
+    conversationsOpen = !conversationsOpen;
+  }
+
+  /** Reconstructs both sides' conversations once the section is open, memoized by the variant pair. */
+  async function loadConversations(): Promise<void> {
+    if (!conversationsOpen || !selectedRunId || !selectedCaseId || !leftVariantId || !rightVariantId) return;
+    const key = `${selectedRunId}::${selectedCaseId}::${leftVariantId}::${rightVariantId}`;
+    if (key === conversationsKey) return;
+    conversationsKey = key;
+    conversationsLoading = true;
+    conversationsError = "";
     try {
-      const next = await client.getDiff({ runId: selectedRunId, caseId: selectedCaseId, left: reviewVariantId, right: reviewVariantId, kind: artifact.kind, path: artifact.path });
-      // Discard a stale response: switching the reviewed variant or artifact can leave an earlier request in
-      // flight, and without this guard its late resolution would overwrite the current selection's diff.
-      if (reviewDiffLoadKey !== key) return;
-      reviewDiff = next;
-      reviewDiffLoading = false;
-      expandedReviewGaps = new Set();
-      noteLine = undefined;
-      noteText = "";
-    } catch {
-      if (reviewDiffLoadKey === key) { reviewDiff = undefined; reviewDiffLoading = false; }
+      const [a, b] = await Promise.all([
+        client.getConversations({ runId: selectedRunId, caseId: selectedCaseId, variant: leftVariantId }),
+        client.getConversations({ runId: selectedRunId, caseId: selectedCaseId, variant: rightVariantId })
+      ]);
+      conversationsLeft = a; conversationsRight = b;
+    } catch (loadError) {
+      conversationsError = (loadError as Error).message;
+    } finally {
+      conversationsLoading = false;
     }
   }
 
@@ -585,37 +553,14 @@
     }
   }
 
-  /** Saves the drafted note against the reviewed variant's current artifact line block. */
-  async function saveNote(): Promise<void> {
-    if (!reviewDiff || noteLine === undefined || !noteText.trim()) return;
-    const start = noteLine;
-    const end = noteEndLine ?? noteLine;
-    const snippet = reviewReader.filter((row) => row.n >= start && row.n <= end).map((row) => row.text).join("\n");
-    const note: EvalReviewNote = {
-      id: newId(),
-      artifactId: reviewDiff.artifact.id,
-      artifactLabel: reviewDiff.artifact.label,
-      line: start,
-      endLine: end > start ? end : undefined,
-      snippet,
-      sentiment: noteSentiment,
-      text: noteText.trim(),
-      ts: Date.now()
-    };
-    ensureReview(reviewKey).notes.push(note);
-    reviews = reviews;
-    noteLine = undefined;
-    noteEndLine = undefined;
-    noteText = "";
-    clearSelection();
-    await persistReviews();
-  }
-
-  /** Removes a note by id from the reviewed variant. */
+  /** Removes a note by id, wherever it lives (notes are uniquely identified across all variants). */
   async function removeNote(id: string): Promise<void> {
-    const review = reviews.variants[reviewKey];
-    if (!review) return;
-    review.notes = review.notes.filter((note) => note.id !== id);
+    let touched = false;
+    for (const review of Object.values(reviews.variants)) {
+      const next = review.notes.filter((note) => note.id !== id);
+      if (next.length !== review.notes.length) { review.notes = next; touched = true; }
+    }
+    if (!touched) return;
     reviews = reviews;
     await persistReviews();
   }
@@ -629,19 +574,9 @@
     await persistReviews();
   }
 
-  /** Notes anchored at a line (a note renders once, at its block's first line). */
+  /** Notes anchored at a line (a note renders once, at its line). */
   function notesAt(review: EvalVariantReview, artifactId: string, line: number): EvalReviewNote[] {
     return review.notes.filter((note) => note.artifactId === artifactId && note.line === line);
-  }
-
-  /** Whether any note's block covers a line, used to shade reviewed lines. */
-  function lineCovered(review: EvalVariantReview, artifactId: string, line: number): boolean {
-    return review.notes.some((note) => note.artifactId === artifactId && line >= note.line && line <= (note.endLine ?? note.line));
-  }
-
-  /** A short range label for a note block, e.g. "L12" or "L12–15". */
-  function noteRangeLabel(note: EvalReviewNote): string {
-    return note.endLine && note.endLine > note.line ? `L${note.line}–${note.endLine}` : `L${note.line}`;
   }
 
   /** Generates a fresh note id. */
@@ -686,13 +621,6 @@
     if (!variants.some((variant) => variant.variantId === rightVariantId) || rightVariantId === leftVariantId) {
       rightVariantId = variants.find((variant) => variant.variantId !== leftVariantId)?.variantId || leftVariantId;
     }
-    if (!variants.some((variant) => variant.variantId === reviewVariantId)) reviewVariantId = leftVariantId;
-  }
-
-  function selectReviewVariant(variantId: string): void {
-    reviewVariantId = variantId;
-    reviewDiffLoadKey = "";
-    noteLine = undefined;
   }
 
   // Each aligned section (Prompts / Context files / Changed files) collapses to just its header so the
@@ -765,13 +693,6 @@
   type ReviewRow =
     | { kind: "gap"; index: number; count: number }
     | { kind: "line"; marker: "equal" | "add" | "delete" | "changed"; gutter: string; line?: number; text: string };
-
-  let expandedReviewGaps = new Set<number>();
-
-  function expandReviewGap(index: number): void {
-    expandedReviewGaps.add(index);
-    expandedReviewGaps = expandedReviewGaps;
-  }
 
   /** Flattens the reviewed artifact into annotatable rows: a collapsed unified diff for code, a full read otherwise. */
   function buildReviewRows(view: EvalDiffView | undefined, isDiff: boolean, expanded: Set<number>): ReviewRow[] {
@@ -980,83 +901,6 @@
     </div>
   {/if}
 
-  {#if drill}
-    <div class="modal-scrim drill-overlay" role="dialog" aria-modal="true" aria-label={`Review ${drill.variantId} · ${drill.artifact.label}`}>
-      <div class="drill-panel">
-        <header class="drill-head">
-          <h3>{drill.variantId} · {drill.artifact.label}</h3>
-          <span class="topbar-spacer"></span>
-          {#if savingReview}<small class="saving" aria-live="polite">saving…</small>{/if}
-          <button type="button" class="ghost" on:click={closeDrill}>Close</button>
-        </header>
-        {#if reviewDiffLoading}
-          <div class="state">Loading…</div>
-        {:else if reviewDiff}
-          <header class="diff-head">
-            {#if selRange}
-              <span class="sel-bar">
-                Lines {selRange.start}{#if selRange.end > selRange.start}–{selRange.end}{/if} selected
-                <button type="button" class="mark good" on:click={() => openSelectionNote("good")}>👍 good</button>
-                <button type="button" class="mark bad" on:click={() => openSelectionNote("bad")}>👎 bad</button>
-                <button type="button" class="ghost" on:click={clearSelection}>clear</button>
-              </span>
-            {:else if reviewIsDiff}
-              <span>{reviewChangedCount} changed {reviewChangedCount === 1 ? "line" : "lines"} · unchanged code collapsed · click line #s to select, 👍/👎 to note</span>
-            {:else}
-              <span>{reviewReader.length} lines · click line #s to select a block, 👍/👎 to note it</span>
-            {/if}
-          </header>
-          <div class="review-reader" class:review-diff={reviewIsDiff} aria-label={`${reviewDiff.artifact.label} review`}>
-            {#if reviewIsDiff && reviewChangedCount === 0}
-              <div class="state">This config made no changes to {reviewDiff.artifact.label}.</div>
-            {/if}
-            {#each reviewRows as row}
-              {#if row.kind === "gap"}
-                <button type="button" class="diff-gap" on:click={() => expandReviewGap(row.index)}>⋯ {row.count} unchanged lines</button>
-              {:else if row.line !== undefined}
-                {@const lineNotes = notesAt(currentReview, reviewDiff.artifact.id, row.line)}
-                {@const covered = lineCovered(currentReview, reviewDiff.artifact.id, row.line)}
-                <div class="review-row review-{row.marker}" class:has-notes={covered} class:selected={inSelection(row.line)}>
-                  <button type="button" class="line-no line-no-pick" class:anchor={row.line === selStart} title="Click to start/extend a selection block" on:click={() => selectGutter(row.line)}>{row.gutter}</button>
-                  <code>{row.text}</code>
-                  <span class="row-actions">
-                    <button type="button" class="mark good" title="Mark this line good" on:click={() => openNote(row.line, row.line, "good")}>👍</button>
-                    <button type="button" class="mark bad" title="Mark this line bad" on:click={() => openNote(row.line, row.line, "bad")}>👎</button>
-                  </span>
-                </div>
-                {#each lineNotes as note}
-                  <div class="line-note {note.sentiment}">
-                    <span class="note-icon">{note.sentiment === "good" ? "👍" : "👎"}</span>
-                    <span class="note-range">{noteRangeLabel(note)}</span>
-                    <span class="note-text">{note.text}</span>
-                    <button type="button" class="note-del" title="Remove note" on:click={() => removeNote(note.id)}>×</button>
-                  </div>
-                {/each}
-                {#if noteLine === row.line}
-                  <form class="note-composer {noteSentiment}" on:submit|preventDefault={() => saveNote()}>
-                    <span class="note-icon">{noteSentiment === "good" ? "👍" : "👎"}</span>
-                    <span class="note-range">{noteEndLine && noteEndLine > noteLine ? `L${noteLine}–${noteEndLine}` : `L${noteLine}`}</span>
-                    <!-- svelte-ignore a11y-autofocus -->
-                    <input class="note-input" placeholder={noteSentiment === "good" ? "what's good here…" : "what's wrong here…"} bind:value={noteText} autofocus />
-                    <button type="submit" class="primary" disabled={!noteText.trim()}>Add</button>
-                    <button type="button" class="ghost" on:click={() => { noteLine = undefined; noteEndLine = undefined; }}>Cancel</button>
-                  </form>
-                {/if}
-              {:else}
-                <div class="review-row review-{row.marker} review-context">
-                  <span class="line-no muted">{row.gutter}</span>
-                  <code>{row.text}</code>
-                </div>
-              {/if}
-            {/each}
-          </div>
-        {:else}
-          <div class="state">No content to review for {drill.artifact.label}.</div>
-        {/if}
-      </div>
-    </div>
-  {/if}
-
   <section class="compare-shell" aria-busy={runLoading || compareLoading}>
     {#if error}
       <div class="notice" role="alert">{error}</div>
@@ -1216,12 +1060,33 @@
                           </button>
                           {#if expandedRows.has(rkey)}
                             <div class="aligned-detail review-reader review-diff">
-                              <button type="button" class="row-note" aria-label={`Add notes on ${row.artifact.label} for ${leftVariantId}`} on:click={() => openDrill(leftVariantId, row.artifact)}>note ✎</button>
                               {#if loadingRows.has(key)}<div class="state">Loading…</div>
                               {:else}
+                                {@const review = reviews.variants[variantKey(selectedCaseId, leftVariantId)]}
                                 {#each sideRows(key) as r}
                                   {#if r.kind === "gap"}<div class="diff-gap">⋯ {r.count} unchanged lines</div>
-                                  {:else}<div class="review-row review-{r.marker}"><span class="line-no">{r.gutter}</span><code>{r.text}</code></div>{/if}
+                                  {:else}
+                                    {@const lineNotes = r.line !== undefined && review ? notesAt(review, row.artifact.id, r.line) : []}
+                                    {#if r.line !== undefined}
+                                      <button type="button" class="review-row review-{r.marker} commentable" class:has-notes={lineNotes.length > 0} aria-label={`Comment on line ${r.line}`} on:click={() => openComposer(leftVariantId, row.artifact, r.line, r.text)}><span class="line-no">{r.gutter}</span><code>{r.text}</code></button>
+                                    {:else}<div class="review-row review-{r.marker}"><span class="line-no">{r.gutter}</span><code>{r.text}</code></div>{/if}
+                                    {#each lineNotes as note}
+                                      <div class="line-note {note.sentiment}">
+                                        <span class="note-icon">{note.sentiment === "good" ? "👍" : "👎"}</span>
+                                        <span class="note-text">{note.text}</span>
+                                        <button type="button" class="note-del" aria-label="Remove note" on:click={() => removeNote(note.id)}>×</button>
+                                      </div>
+                                    {/each}
+                                    {#if composer && composerAt(leftVariantId, row.artifact.id, r.line)}
+                                      <form class="note-composer" on:submit|preventDefault={() => saveComposer("bad")}>
+                                        <!-- svelte-ignore a11y-autofocus -->
+                                        <input class="note-input" placeholder="comment on this line…" bind:value={composerText} autofocus />
+                                        <button type="button" class="mark good" aria-label="Add positive note" disabled={!composerText.trim()} on:click={() => saveComposer("good")}>👍</button>
+                                        <button type="submit" class="mark bad" aria-label="Add note flagging an issue" disabled={!composerText.trim()}>👎</button>
+                                        <button type="button" class="ghost" aria-label="Cancel" on:click={closeComposer}>×</button>
+                                      </form>
+                                    {/if}
+                                  {/if}
                                 {/each}
                               {/if}
                             </div>
@@ -1240,12 +1105,33 @@
                           </button>
                           {#if expandedRows.has(rkey)}
                             <div class="aligned-detail review-reader review-diff">
-                              <button type="button" class="row-note" aria-label={`Add notes on ${row.artifact.label} for ${rightVariantId}`} on:click={() => openDrill(rightVariantId, row.artifact)}>note ✎</button>
                               {#if loadingRows.has(key)}<div class="state">Loading…</div>
                               {:else}
+                                {@const review = reviews.variants[variantKey(selectedCaseId, rightVariantId)]}
                                 {#each sideRows(key) as r}
                                   {#if r.kind === "gap"}<div class="diff-gap">⋯ {r.count} unchanged lines</div>
-                                  {:else}<div class="review-row review-{r.marker}"><span class="line-no">{r.gutter}</span><code>{r.text}</code></div>{/if}
+                                  {:else}
+                                    {@const lineNotes = r.line !== undefined && review ? notesAt(review, row.artifact.id, r.line) : []}
+                                    {#if r.line !== undefined}
+                                      <button type="button" class="review-row review-{r.marker} commentable" class:has-notes={lineNotes.length > 0} aria-label={`Comment on line ${r.line}`} on:click={() => openComposer(rightVariantId, row.artifact, r.line, r.text)}><span class="line-no">{r.gutter}</span><code>{r.text}</code></button>
+                                    {:else}<div class="review-row review-{r.marker}"><span class="line-no">{r.gutter}</span><code>{r.text}</code></div>{/if}
+                                    {#each lineNotes as note}
+                                      <div class="line-note {note.sentiment}">
+                                        <span class="note-icon">{note.sentiment === "good" ? "👍" : "👎"}</span>
+                                        <span class="note-text">{note.text}</span>
+                                        <button type="button" class="note-del" aria-label="Remove note" on:click={() => removeNote(note.id)}>×</button>
+                                      </div>
+                                    {/each}
+                                    {#if composer && composerAt(rightVariantId, row.artifact.id, r.line)}
+                                      <form class="note-composer" on:submit|preventDefault={() => saveComposer("bad")}>
+                                        <!-- svelte-ignore a11y-autofocus -->
+                                        <input class="note-input" placeholder="comment on this line…" bind:value={composerText} autofocus />
+                                        <button type="button" class="mark good" aria-label="Add positive note" disabled={!composerText.trim()} on:click={() => saveComposer("good")}>👍</button>
+                                        <button type="submit" class="mark bad" aria-label="Add note flagging an issue" disabled={!composerText.trim()}>👎</button>
+                                        <button type="button" class="ghost" aria-label="Cancel" on:click={closeComposer}>×</button>
+                                      </form>
+                                    {/if}
+                                  {/if}
                                 {/each}
                               {/if}
                             </div>
@@ -1266,6 +1152,22 @@
               {/if}
             </section>
           {/each}
+          <section class="aligned-section" class:collapsed={!conversationsOpen}>
+            <button type="button" class="section-toggle" aria-expanded={conversationsOpen} on:click={toggleConversations}>
+              <span class="section-caret" aria-hidden="true">{conversationsOpen ? "▾" : "▸"}</span>
+              <h3>Conversations</h3>
+              <small class="section-summary">what each agent did</small>
+            </button>
+            {#if conversationsOpen}
+              <ConversationCompare
+                left={conversationsLeft}
+                right={conversationsRight}
+                leftLabel={leftVariantId}
+                rightLabel={rightVariantId}
+                loading={conversationsLoading}
+                errorText={conversationsError} />
+            {/if}
+          </section>
         </div>
       {:else if selectedCase?.variants.length === 1}
         <div class="state">This case has one configuration. Add another variant to compare.</div>

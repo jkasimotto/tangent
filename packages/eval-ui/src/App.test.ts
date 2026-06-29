@@ -26,9 +26,9 @@ describe("eval svelte app", () => {
 
     // Two config pickers, A and B, in the header.
     expect(container.querySelectorAll(".compare-head select")).toHaveLength(2);
-    // Three aligned sections, in order.
+    // Aligned sections, in order, with Conversations under Changed files.
     const titles = Array.from(container.querySelectorAll(".aligned-section h3")).map((n) => n.textContent?.trim());
-    expect(titles).toEqual(["Prompts", "Context files", "Changed files"]);
+    expect(titles).toEqual(["Prompts", "Context files", "Changed files", "Conversations"]);
     // No legacy mode tabs.
     expect(screen.queryByRole("button", { name: "Individual" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Side by side" })).toBeNull();
@@ -106,64 +106,40 @@ describe("eval svelte app", () => {
     expect(oneDetail.querySelectorAll(".review-row").length).toBeLessThan(80);
   });
 
-  it("drills into a single variant+file to add a per-line note", async () => {
+  it("adds an inline comment by clicking a diff line in the left column", async () => {
     const client = fakeEvalClient();
-    const { container } = render(App, { props: { client } });
+    render(App, { props: { client } });
     await screen.findByText(/ui-compare/);
 
+    // Expand the file (loads both columns). Only this file is expanded, so each side shows one commentable
+    // line: index 0 is the left column (the "empty" variant), index 1 the right.
     await fireEvent.click((await screen.findAllByRole("button", { name: "Expand src/foo.ts" }))[0]);
-    await fireEvent.click(await screen.findByRole("button", { name: "Add notes on src/foo.ts for empty" }));
-
-    // The focused reader opens scoped to empty/src/foo.ts.
-    const overlay = container.querySelector(".drill-overlay") as HTMLElement;
-    expect(overlay).toBeInTheDocument();
-    await fireEvent.click(within(overlay).getAllByRole("button", { name: "👎" })[0]);
-    await fireEvent.input(within(overlay).getByPlaceholderText(/what's wrong here/), { target: { value: "bad guard" } });
-    await fireEvent.click(within(overlay).getByRole("button", { name: "Add" }));
+    await fireEvent.click((await screen.findAllByRole("button", { name: "Comment on line 1" }))[0]);
+    await fireEvent.input(screen.getByPlaceholderText(/comment on this line/), { target: { value: "bad guard" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Add note flagging an issue" }));
 
     const saved = (client.putReviews as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1];
     expect(saved.variants["task/empty"].notes.at(-1).text).toBe("bad guard");
+    expect(saved.variants["task/empty"].notes.at(-1).sentiment).toBe("bad");
   });
 
-  // Task 4 reintroduces per-row content expansion (the unified-diff reader, stale-diff guard, scoped
-  // artifact lists). These specs cover that surface and are restored when expansion lands.
-  it.todo("reviews a variant using only artifacts present in it, never auto-selecting one absent from it");
-  it.todo("lists only the files the reviewed variant changed, not files only the other variant touched");
-  it("ignores a stale in-flight review diff when the drilled variant changes", async () => {
-    // Deferred getDiff: capture each call's resolver so the drill fetches can be resolved out of order.
-    const pending: Array<{ left: string; resolve: (view: EvalDiffView) => void }> = [];
-    /** A one-line added diff whose text names the variant, so a stale overwrite is detectable. */
-    const drillDiff = (variantId: string): EvalDiffView => ({
-      artifact: { id: "code:src/foo.ts", kind: "code", path: "src/foo.ts", label: "src/foo.ts", status: "changed", changedLeft: true, changedRight: true },
-      left: { variantId, label: `task/${variantId}` },
-      right: { variantId, label: `task/${variantId}` },
-      lines: [{ kind: "add", rightNumber: 1, right: `content for ${variantId}` }]
-    });
+  it("saves a positive inline comment against the clicked column's variant and shows it inline", async () => {
     const client = fakeEvalClient();
-    client.getDiff = vi.fn((args) => new Promise<EvalDiffView>((resolve) => pending.push({ left: args.left, resolve })));
-    const { container } = render(App, { props: { client } });
+    render(App, { props: { client } });
     await screen.findByText(/ui-compare/);
 
-    // One expand reveals both columns' note buttons. Drill into empty (its fetch stays in flight), close, then drill into repo.
     await fireEvent.click((await screen.findAllByRole("button", { name: "Expand src/foo.ts" }))[0]);
-    await fireEvent.click(await screen.findByRole("button", { name: "Add notes on src/foo.ts for empty" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    await fireEvent.click(await screen.findByRole("button", { name: "Add notes on src/foo.ts for repo" }));
+    // Index 1 is the right column (the "repo" variant).
+    await fireEvent.click((await screen.findAllByRole("button", { name: "Comment on line 1" }))[1]);
+    await fireEvent.input(screen.getByPlaceholderText(/comment on this line/), { target: { value: "nice fix" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Add positive note" }));
 
-    // The drill fetches: the empty one was issued before the repo one. Resolve repo first, then empty.
-    const repoDrill = pending.filter((p) => p.left === "repo").at(-1);
-    const emptyDrill = pending.filter((p) => p.left === "empty").at(-1);
-    repoDrill?.resolve(drillDiff("repo"));
-    const overlay = container.querySelector(".drill-overlay") as HTMLElement;
-    await within(overlay).findByText("content for repo");
-    emptyDrill?.resolve(drillDiff("empty"));
-    await Promise.resolve();
-    await Promise.resolve();
-
-    // The stale empty diff must not overwrite the current repo drill.
-    expect(within(overlay).getByText("content for repo")).toBeInTheDocument();
-    expect(within(overlay).queryByText("content for empty")).toBeNull();
+    expect(await screen.findByText("nice fix")).toBeInTheDocument();
+    const saved = (client.putReviews as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1];
+    expect(saved.variants["task/repo"].notes.at(-1).sentiment).toBe("good");
+    expect(saved.variants["task/empty"]).toBeUndefined();
   });
+
   it.todo("collapses unchanged code in Individual review so the agent's edit is the focus");
 
   it("renders +N -M counts on the side that changed a file", async () => {
@@ -395,6 +371,8 @@ function fakeEvalClient(overrides?: { artifacts?: EvalCompareView["artifacts"]; 
           ...(args.skills.includes("testing") ? [{ kind: "skill-body" as const, source: ".claude/skills/testing/SKILL.md", text: "FULL TESTING BODY" }] : [])
         ], skills: [{ name: "testing", description: "Use when testing", path: ".claude/skills/testing/SKILL.md", loaded: args.skills.includes("testing") }], subagents: [], lazyClaudeMd: [] }
       : { blocks: [], skills: [], subagents: [], lazyClaudeMd: [] }),
+    /** Returns empty conversations for either side. */
+    getConversations: vi.fn(async (args: { variant: string }) => ({ schema: "eval.conversations.v1" as const, caseId: "task", variantId: args.variant, conversations: [], notes: [] })),
     /** Returns empty reviews. */
     getReviews: async () => ({ schema: "eval.reviews.v1" as const, variants: {} }),
     /** Echoes persisted reviews. */

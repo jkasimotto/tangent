@@ -45,8 +45,9 @@ export function fileNotes(reviews: EvalReviews, caseId: string, variantId: strin
   return review ? review.notes.filter((note) => note.artifactId === artifactId) : [];
 }
 
-/** Rows that carry at least one note on the left side (a), for the notes-only lens. */
+/** Rows that carry at least one note on either side, for the notes-only lens. */
 export function rowsWithNotes(section: AlignedSection, reviews: EvalReviews, caseId: string, a: string, b: string): AlignedRow[] {
   return section.rows.filter((row) =>
-    fileNotes(reviews, caseId, a, row.artifact.id).length > 0);
+    fileNotes(reviews, caseId, a, row.artifact.id).length > 0 ||
+    fileNotes(reviews, caseId, b, row.artifact.id).length > 0);
 }

@@ -1620,3 +1620,36 @@ button {
   font-size: 12px;
   color: var(--muted);
 }
+.assembled-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+}
+.cwd-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.cwd-field input {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 8px;
+  font: inherit;
+  min-width: 240px;
+}
+.skill-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.skill-option {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}

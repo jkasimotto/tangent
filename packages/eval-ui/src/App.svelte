@@ -479,6 +479,34 @@
   $: assembleDeps = `${contextView}|${selectedRunId}|${selectedCaseId}|${leftVariantId}|${rightVariantId}|${assembleCwd}|${[...loadedSkills].sort().join(",")}`;
   $: if (contextView === "assembled") { void assembleDeps; void loadAssembled(); }
 
+  let contextSkills: import("./client.js").EvalContextSkill[] = [];
+  let contextManifestKey = "";
+
+  /** Loads the union of discoverable skills across both variants for the picker. */
+  async function loadContextManifest(): Promise<void> {
+    if (contextView !== "assembled" || !selectedRunId || !selectedCaseId || !leftVariantId || !rightVariantId) return;
+    const key = `${selectedRunId}::${selectedCaseId}::${leftVariantId}::${rightVariantId}`;
+    if (key === contextManifestKey) return;
+    contextManifestKey = key;
+    const [a, b] = await Promise.all([
+      client.getContextManifest({ runId: selectedRunId, caseId: selectedCaseId, variant: leftVariantId }),
+      client.getContextManifest({ runId: selectedRunId, caseId: selectedCaseId, variant: rightVariantId })
+    ]);
+    const byName = new Map<string, import("./client.js").EvalContextSkill>();
+    for (const skill of [...a.skills, ...b.skills]) if (!byName.has(skill.name)) byName.set(skill.name, skill);
+    contextSkills = [...byName.values()].sort((x, y) => x.name.localeCompare(y.name));
+  }
+
+  $: manifestDeps = `${contextView}|${selectedRunId}|${selectedCaseId}|${leftVariantId}|${rightVariantId}`;
+  $: if (contextView === "assembled") { void manifestDeps; void loadContextManifest(); }
+
+  /** Toggles whether a skill's body is included, then re-assembles. */
+  function toggleSkill(name: string): void {
+    if (loadedSkills.has(name)) loadedSkills.delete(name);
+    else loadedSkills.add(name);
+    loadedSkills = loadedSkills;
+  }
+
   /** Closes the drill-in and returns to the comparison. */
   function closeDrill(): void {
     drill = undefined;
@@ -1134,6 +1162,21 @@
                 </div>
               {/if}
               {#if section.kind === "context" && contextView === "assembled"}
+                <div class="assembled-controls">
+                  <label class="cwd-field">cwd
+                    <input type="text" aria-label="cwd path" placeholder="repo root" bind:value={assembleCwd} />
+                  </label>
+                  {#if contextSkills.length}
+                    <div class="skill-picker" role="group" aria-label="Skills to load">
+                      {#each contextSkills as skill}
+                        <label class="skill-option">
+                          <input type="checkbox" aria-label={skill.name} checked={loadedSkills.has(skill.name)} on:change={() => toggleSkill(skill.name)} />
+                          {skill.name}
+                        </label>
+                      {/each}
+                    </div>
+                  {/if}
+                </div>
                 <AssembledContext
                   left={assembledLeft}
                   right={assembledRight}

@@ -232,6 +232,31 @@ describe("eval svelte app", () => {
     expect(screen.getByText("No repo context loads at this path.")).toBeInTheDocument();
   });
 
+  it("re-assembles both sides when the cwd changes", async () => {
+    const client = fakeEvalClient();
+    render(App, { props: { client } });
+    await screen.findByText(/ui-compare/);
+    await fireEvent.click(await screen.findByRole("button", { name: "Assembled" }));
+    await screen.findByText("root rules");
+    const calls = (client.assembleContext as ReturnType<typeof vi.fn>).mock.calls.length;
+    await fireEvent.input(screen.getByLabelText("cwd path"), { target: { value: "client/lib" } });
+    // Two more calls (both sides) for the new cwd.
+    await screen.findByText("root rules");
+    expect((client.assembleContext as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(calls);
+    const lastArgs = (client.assembleContext as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0];
+    expect(lastArgs.cwd).toBe("client/lib");
+  });
+
+  it("loads a skill body when its picker checkbox is toggled", async () => {
+    const client = fakeEvalClient();
+    render(App, { props: { client } });
+    await screen.findByText(/ui-compare/);
+    await fireEvent.click(await screen.findByRole("button", { name: "Assembled" }));
+    await screen.findByText("root rules");
+    await fireEvent.click(await screen.findByRole("checkbox", { name: "testing" }));
+    expect(await screen.findByText("FULL TESTING BODY")).toBeInTheDocument();
+  });
+
   it("copies a side's verbatim concatenation without provenance dividers", async () => {
     const writeText = vi.fn();
     Object.assign(navigator, { clipboard: { writeText } });

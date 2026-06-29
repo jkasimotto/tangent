@@ -24,7 +24,7 @@
     type EvalVariantSummaryView,
     type EvalVerdictSentiment
   } from "./client.js";
-  import { buildAlignedSections, type AlignedSection } from "./compare-model.js";
+  import { buildAlignedSections, diffCacheKey, type AlignedSection } from "./compare-model.js";
 
   export let client: EvalUiClient = createEvalApiClient();
 
@@ -54,6 +54,10 @@
   let compare: EvalCompareView | undefined;
   let diff: EvalDiffView | undefined;
   let selectedArtifactId = "";
+  // Per-side content cache for the aligned view: keyed by diffCacheKey so re-expanding never refetches.
+  let diffCache = new Map<string, EvalDiffView>();
+  let expandedRows = new Set<string>(); // diffCacheKey values currently open
+  let loadingRows = new Set<string>();
   let loading = true;
   let runLoading = false;
   let compareLoading = false;
@@ -396,6 +400,7 @@
       compare = next;
       // The aligned view has no single "selected" artifact; per-row expansion drives content loads later.
       diff = undefined;
+      diffCache = new Map(); expandedRows = new Set(); loadingRows = new Set();
       error = "";
     } catch (caught) {
       error = friendlyError(caught);
@@ -427,6 +432,28 @@
     } catch (caught) {
       error = friendlyError(caught);
     }
+  }
+
+  /** Loads (or serves from cache) one side's content for an artifact and toggles its row open. */
+  async function expandRow(variantId: string, artifact: EvalCompareArtifactView): Promise<void> {
+    const key = diffCacheKey(selectedCaseId, variantId, artifact.id);
+    if (expandedRows.has(key)) { expandedRows.delete(key); expandedRows = expandedRows; return; }
+    expandedRows.add(key); expandedRows = expandedRows;
+    if (diffCache.has(key)) return;
+    loadingRows.add(key); loadingRows = loadingRows;
+    try {
+      const view = await client.getDiff({ runId: selectedRunId, caseId: selectedCaseId, left: variantId, right: variantId, kind: artifact.kind, path: artifact.path });
+      diffCache.set(key, view); diffCache = diffCache;
+    } finally {
+      loadingRows.delete(key); loadingRows = loadingRows;
+    }
+  }
+
+  /** Review rows for a cached side (collapsed unified diff for code, full read otherwise). */
+  function sideRows(key: string): ReviewRow[] {
+    const view = diffCache.get(key);
+    if (!view) return [];
+    return buildReviewRows(view, view.artifact.kind === "code", new Set());
   }
 
   /** Loads the single reviewed variant's content for the selected artifact (left=right=that variant). */
@@ -588,6 +615,7 @@
     runLoadKey = "";
     compareLoadKey = "";
     diffLoadKey = "";
+    diffCache = new Map(); expandedRows = new Set(); loadingRows = new Set();
   }
 
   function selectCase(caseId: string): void {
@@ -596,6 +624,7 @@
     rightVariantId = "";
     compareLoadKey = "";
     diffLoadKey = "";
+    diffCache = new Map(); expandedRows = new Set(); loadingRows = new Set();
   }
 
   function selectArtifact(artifact: EvalCompareArtifactView): void {
@@ -1028,10 +1057,46 @@
                 {#each section.rows as row}
                   <div class="aligned-row" class:identical={row.identical}>
                     <div class="aligned-a">
-                      {#if row.a.present}<span class="badge badge-{row.a.changed ? 'changed' : 'same'}">{row.artifact.label}</span>{:else}<span class="absent">absent</span>{/if}
+                      {#if row.a.present}
+                        {@const key = diffCacheKey(selectedCaseId, leftVariantId, row.artifact.id)}
+                        <button type="button" class="row-expand"
+                          aria-label={`${expandedRows.has(key) ? "Collapse" : "Expand"} ${row.artifact.label} for ${leftVariantId}`}
+                          on:click={() => expandRow(leftVariantId, row.artifact)}>
+                          <span class="badge badge-{row.a.changed ? 'changed' : 'same'}">{row.artifact.label}</span>
+                        </button>
+                        {#if expandedRows.has(key)}
+                          <div class="aligned-detail review-reader review-diff">
+                            {#if loadingRows.has(key)}<div class="state">Loading…</div>
+                            {:else}
+                              {#each sideRows(key) as r}
+                                {#if r.kind === "gap"}<div class="diff-gap">⋯ {r.count} unchanged lines</div>
+                                {:else}<div class="review-row review-{r.marker}"><span class="line-no">{r.gutter}</span><code>{r.text}</code></div>{/if}
+                              {/each}
+                            {/if}
+                          </div>
+                        {/if}
+                      {:else}<span class="absent">absent</span>{/if}
                     </div>
                     <div class="aligned-b">
-                      {#if row.b.present}<span class="badge badge-{row.b.changed ? 'changed' : 'same'}">{row.artifact.label}</span>{:else}<span class="absent">absent</span>{/if}
+                      {#if row.b.present}
+                        {@const key = diffCacheKey(selectedCaseId, rightVariantId, row.artifact.id)}
+                        <button type="button" class="row-expand"
+                          aria-label={`${expandedRows.has(key) ? "Collapse" : "Expand"} ${row.artifact.label} for ${rightVariantId}`}
+                          on:click={() => expandRow(rightVariantId, row.artifact)}>
+                          <span class="badge badge-{row.b.changed ? 'changed' : 'same'}">{row.artifact.label}</span>
+                        </button>
+                        {#if expandedRows.has(key)}
+                          <div class="aligned-detail review-reader review-diff">
+                            {#if loadingRows.has(key)}<div class="state">Loading…</div>
+                            {:else}
+                              {#each sideRows(key) as r}
+                                {#if r.kind === "gap"}<div class="diff-gap">⋯ {r.count} unchanged lines</div>
+                                {:else}<div class="review-row review-{r.marker}"><span class="line-no">{r.gutter}</span><code>{r.text}</code></div>{/if}
+                              {/each}
+                            {/if}
+                          </div>
+                        {/if}
+                      {:else}<span class="absent">absent</span>{/if}
                     </div>
                   </div>
                 {/each}

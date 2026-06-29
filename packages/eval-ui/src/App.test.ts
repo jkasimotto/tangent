@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App.svelte";
-import type { EvalCompareView, EvalDiffView, EvalRunDetailView, EvalUiClient, EvalVariantMetricsView } from "./client.js";
+import type { EvalCompareView, EvalDiffLineView, EvalDiffView, EvalRunDetailView, EvalUiClient, EvalVariantMetricsView } from "./client.js";
 
 afterEach(() => cleanup());
 
@@ -57,6 +57,51 @@ describe("eval svelte app", () => {
     await fireEvent.click(await screen.findByRole("button", { name: "Score repo 8" }));
     const saved = (client.putReviews as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1];
     expect(saved.variants["task/repo"].verdict.score).toBe(8);
+  });
+
+  it("expands a changed file to each side's diff and caches the fetch", async () => {
+    const client = fakeEvalClient();
+    const { container } = render(App, { props: { client } });
+    await screen.findByText(/ui-compare/);
+
+    // Expand the changed code row on side A (empty variant).
+    await fireEvent.click(await screen.findByRole("button", { name: "Expand src/foo.ts for empty" }));
+    expect(await screen.findByText("Use repo context.")).toBeInTheDocument();
+    const callsAfterFirst = (client.getDiff as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    // Collapse and re-expand: no new fetch (served from cache).
+    await fireEvent.click(screen.getByRole("button", { name: "Collapse src/foo.ts for empty" }));
+    await fireEvent.click(screen.getByRole("button", { name: "Expand src/foo.ts for empty" }));
+    expect((client.getDiff as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsAfterFirst);
+  });
+
+  it("collapses unchanged code in the aligned view so the agent's edit is the focus", async () => {
+    const equalBefore: EvalDiffLineView[] = Array.from({ length: 40 }, (_, i) => ({
+      kind: "equal" as const, leftNumber: i + 1, rightNumber: i + 1, left: `line ${i + 1}`, right: `line ${i + 1}`
+    }));
+    const addedLine: EvalDiffLineView = { kind: "add", rightNumber: 41, right: "added feature line" };
+    const equalAfter: EvalDiffLineView[] = Array.from({ length: 40 }, (_, i) => ({
+      kind: "equal" as const, leftNumber: i + 41, rightNumber: i + 42, left: `line ${i + 41}`, right: `line ${i + 42}`
+    }));
+    const codeDiff: EvalDiffView = {
+      artifact: { id: "code:src/foo.ts", kind: "code", path: "src/foo.ts", label: "src/foo.ts", status: "changed", changedLeft: true, changedRight: true },
+      left: { variantId: "empty", label: "task/empty" },
+      right: { variantId: "repo", label: "task/repo" },
+      lines: [...equalBefore, addedLine, ...equalAfter]
+    };
+    const client = fakeEvalClient({ codeDiff });
+    const { container } = render(App, { props: { client } });
+    await screen.findByText(/ui-compare/);
+
+    // Expand side B (repo) - the side with the added line.
+    await fireEvent.click(await screen.findByRole("button", { name: "Expand src/foo.ts for repo" }));
+    // The added line is visible.
+    expect(await screen.findByText("added feature line")).toBeInTheDocument();
+    // Equal runs were collapsed into gap placeholders.
+    expect(container.querySelectorAll(".diff-gap").length).toBeGreaterThanOrEqual(1);
+    // Far fewer rendered rows than the 80 equal lines fed in.
+    const rowsInDetail = container.querySelectorAll(".aligned-detail .review-row");
+    expect(rowsInDetail.length).toBeLessThan(80);
   });
 
   // Task 4 reintroduces per-row content expansion (the unified-diff reader, stale-diff guard, scoped

@@ -59,19 +59,22 @@ describe("eval svelte app", () => {
     expect(saved.variants["task/repo"].verdict.score).toBe(8);
   });
 
-  it("expands a changed file to each side's diff and caches the fetch", async () => {
+  it("expands a changed file on both sides with one click and caches the fetch", async () => {
     const client = fakeEvalClient();
     render(App, { props: { client } });
     await screen.findByText(/ui-compare/);
 
-    // Expand the changed code row on side A (empty variant).
-    await fireEvent.click(await screen.findByRole("button", { name: "Expand src/foo.ts for empty" }));
-    expect(await screen.findByText("Use repo context.")).toBeInTheDocument();
+    // One click on either column's label opens both columns; each side is fetched once.
+    const expandButtons = await screen.findAllByRole("button", { name: "Expand src/foo.ts" });
+    expect(expandButtons.length).toBe(2);
+    await fireEvent.click(expandButtons[0]);
+    expect((await screen.findAllByText("Use repo context.")).length).toBe(2);
     const callsAfterFirst = (client.getDiff as ReturnType<typeof vi.fn>).mock.calls.length;
+    expect(callsAfterFirst).toBe(2);
 
-    // Collapse and re-expand: no new fetch (served from cache).
-    await fireEvent.click(screen.getByRole("button", { name: "Collapse src/foo.ts for empty" }));
-    await fireEvent.click(screen.getByRole("button", { name: "Expand src/foo.ts for empty" }));
+    // Collapse and re-expand: no new fetch (both sides served from cache).
+    await fireEvent.click(screen.getAllByRole("button", { name: "Collapse src/foo.ts" })[0]);
+    await fireEvent.click(screen.getAllByRole("button", { name: "Expand src/foo.ts" })[0]);
     expect((client.getDiff as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsAfterFirst);
   });
 
@@ -93,15 +96,14 @@ describe("eval svelte app", () => {
     const { container } = render(App, { props: { client } });
     await screen.findByText(/ui-compare/);
 
-    // Expand side B (repo) - the side with the added line.
-    await fireEvent.click(await screen.findByRole("button", { name: "Expand src/foo.ts for repo" }));
-    // The added line is visible.
-    expect(await screen.findByText("added feature line")).toBeInTheDocument();
+    // One click opens both columns; the added line shows on each side.
+    await fireEvent.click((await screen.findAllByRole("button", { name: "Expand src/foo.ts" }))[0]);
+    expect((await screen.findAllByText("added feature line")).length).toBe(2);
     // Equal runs were collapsed into gap placeholders.
     expect(container.querySelectorAll(".diff-gap").length).toBeGreaterThanOrEqual(1);
-    // Far fewer rendered rows than the 80 equal lines fed in.
-    const rowsInDetail = container.querySelectorAll(".aligned-detail .review-row");
-    expect(rowsInDetail.length).toBeLessThan(80);
+    // Each side collapses its 80 equal lines: far fewer rendered rows in a single detail.
+    const oneDetail = container.querySelector(".aligned-detail") as HTMLElement;
+    expect(oneDetail.querySelectorAll(".review-row").length).toBeLessThan(80);
   });
 
   it("drills into a single variant+file to add a per-line note", async () => {
@@ -109,7 +111,7 @@ describe("eval svelte app", () => {
     const { container } = render(App, { props: { client } });
     await screen.findByText(/ui-compare/);
 
-    await fireEvent.click(await screen.findByRole("button", { name: "Expand src/foo.ts for empty" }));
+    await fireEvent.click((await screen.findAllByRole("button", { name: "Expand src/foo.ts" }))[0]);
     await fireEvent.click(await screen.findByRole("button", { name: "Add notes on src/foo.ts for empty" }));
 
     // The focused reader opens scoped to empty/src/foo.ts.
@@ -142,11 +144,10 @@ describe("eval svelte app", () => {
     const { container } = render(App, { props: { client } });
     await screen.findByText(/ui-compare/);
 
-    // Drill into empty (its fetch stays in flight), close, then drill into repo.
-    await fireEvent.click(await screen.findByRole("button", { name: "Expand src/foo.ts for empty" }));
+    // One expand reveals both columns' note buttons. Drill into empty (its fetch stays in flight), close, then drill into repo.
+    await fireEvent.click((await screen.findAllByRole("button", { name: "Expand src/foo.ts" }))[0]);
     await fireEvent.click(await screen.findByRole("button", { name: "Add notes on src/foo.ts for empty" }));
     await fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    await fireEvent.click(await screen.findByRole("button", { name: "Expand src/foo.ts for repo" }));
     await fireEvent.click(await screen.findByRole("button", { name: "Add notes on src/foo.ts for repo" }));
 
     // The drill fetches: the empty one was issued before the repo one. Resolve repo first, then empty.

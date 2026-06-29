@@ -206,7 +206,7 @@ button {
 
 .badge-changed,
 .badge-left-only {
-  color: #8a5d05;
+  color: #7a4f00;
 }
 
 .badge-right-only {
@@ -214,7 +214,7 @@ button {
 }
 
 .badge-same {
-  color: #9aa69e;
+  color: #6e7b71;
   font-weight: 400;
 }
 
@@ -1351,6 +1351,24 @@ button {
 .aligned-b .badge {
   font-size: 13px;
   font-weight: 600;
+}
+
+/* Clean text button: strip the UA <button> chrome (a dark fill under the shell's color-scheme) so the label color reads on the panel. */
+.row-expand {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.row-expand:hover .badge {
+  text-decoration: underline;
 }
 
 .counts {

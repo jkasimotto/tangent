@@ -203,10 +203,12 @@ describe("fileNotes / rowsWithNotes", () => {
 
   it("keeps only rows annotated on either side", () => {
     const code = buildAlignedSections(artifacts)[2];
-    const kept = rowsWithNotes(code, reviews, "task", "empty", "repo");
-    expect(kept).toHaveLength(1);
-    const none = rowsWithNotes(code, reviews, "task", "repo", "empty");
-    expect(none).toHaveLength(0);
+    // empty has a note on src/foo.ts; either ordering of the two variants keeps the row.
+    expect(rowsWithNotes(code, reviews, "task", "empty", "repo")).toHaveLength(1);
+    expect(rowsWithNotes(code, reviews, "task", "repo", "empty")).toHaveLength(1);
+    // a section whose rows carry no notes on either side drops to empty.
+    const prompts = buildAlignedSections(artifacts)[0];
+    expect(rowsWithNotes(prompts, reviews, "task", "empty", "repo")).toHaveLength(0);
   });
 });
 ```

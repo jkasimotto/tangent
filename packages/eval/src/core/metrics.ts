@@ -7,8 +7,10 @@ import { scanRepo, type UsageJsonlLineV1 } from "@tangent/usage-index-sqlite";
 
 import type { EvalMetrics } from "../types/metrics.js";
 import type { EvalRunManifest, EvalRunVariantState } from "../types/run.js";
-import { loadRunManifest, saveRunManifest } from "./run-store.js";
+import { evaluateVariant, type EvaluateDeps } from "./evaluator.js";
+import { loadRunManifest, saveRunManifest, variantDir } from "./run-store.js";
 
+/** Collects metrics for every variant in a run and writes metrics.json and evaluation.json for each. */
 export async function collectEval(idOrManifest: string | EvalRunManifest): Promise<{ manifest: EvalRunManifest; metrics: EvalMetrics[] }> {
   const manifest = typeof idOrManifest === "string" ? await loadRunManifest(idOrManifest) : idOrManifest;
   const rows: EvalMetrics[] = [];
@@ -16,6 +18,12 @@ export async function collectEval(idOrManifest: string | EvalRunManifest): Promi
     await captureManualTail(variant);
     const metrics = await collectVariantMetrics(manifest, variant);
     await writeFile(variant.metricsPath, `${JSON.stringify(metrics, null, 2)}\n`, "utf8");
+    try {
+      await evaluateAndWrite(manifest, variant, new Date().toISOString());
+    } catch (error) {
+      variant.warnings ??= [];
+      variant.warnings.push(`evaluation failed: ${(error as Error).message}`);
+    }
     rows.push(metrics);
   }
   await writeFile(path.join(manifest.runDir, "report.json"), `${JSON.stringify(rows, null, 2)}\n`, "utf8");
@@ -23,6 +31,21 @@ export async function collectEval(idOrManifest: string | EvalRunManifest): Promi
   return { manifest, metrics: rows };
 }
 
+/** Scores one variant against the spec rubric and writes evaluation.json, when the eval defines an evaluator. */
+export async function evaluateAndWrite(
+  manifest: EvalRunManifest,
+  variant: EvalRunVariantState,
+  now: string,
+  deps?: EvaluateDeps
+): Promise<void> {
+  const evaluator = manifest.spec?.evaluator;
+  if (!evaluator) return;
+  const evaluation = await evaluateVariant(manifest, variant, evaluator, now, deps);
+  const file = path.join(variantDir(manifest, variant.caseId, variant.variantId), "evaluation.json");
+  await writeFile(file, `${JSON.stringify(evaluation, null, 2)}\n`, "utf8");
+}
+
+/** Commits any uncommitted work in a manual variant's worktree so metrics can reference a stable commit. */
 async function captureManualTail(variant: EvalRunVariantState): Promise<void> {
   if (variant.agent.kind !== "manual") return;
   const head = await currentCommit(variant.worktree).catch(() => undefined);
@@ -105,6 +128,7 @@ export async function collectVariantMetrics(manifest: EvalRunManifest, variant: 
   return metrics;
 }
 
+/** Returns whether a usage event falls within the variant's time window and worktree path. */
 function eventInVariant(event: UsageJsonlLineV1, worktreeAliases: string[], since: string, until: string): boolean {
   const observed = event.observed_at || event.recorded_at;
   if (observed < since || observed > until) return false;
@@ -113,6 +137,7 @@ function eventInVariant(event: UsageJsonlLineV1, worktreeAliases: string[], sinc
   return isInsideAny(worktreeAliases, cwd) || isInsideAny(worktreeAliases, root);
 }
 
+/** Deduplicates usage events by provider+conversation id and returns a flat list. */
 function uniqueConversations(events: UsageJsonlLineV1[]): EvalMetrics["conversations"] {
   const seen = new Set<string>();
   const rows: EvalMetrics["conversations"] = [];
@@ -125,6 +150,7 @@ function uniqueConversations(events: UsageJsonlLineV1[]): EvalMetrics["conversat
   return rows;
 }
 
+/** Aggregates tool-call events into per-model, per-name, and per-category counts. */
 function toolMetrics(events: UsageJsonlLineV1[]): EvalMetrics["tools"] {
   const calls = events.filter((event) => event.kind === "tool.call");
   const byModel: Record<string, number> = {};
@@ -154,6 +180,7 @@ function toolMetrics(events: UsageJsonlLineV1[]): EvalMetrics["tools"] {
   return { total: calls.length, byModel, byName, byCategory, calls: callRows };
 }
 
+/** Aggregates token-usage events into per-model totals and a flat message list. */
 function tokenMetrics(events: UsageJsonlLineV1[]): EvalMetrics["tokens"] {
   const byModel = new Map<string, { model: string; input: number; output: number; cacheRead: number; cacheCreation: number; total: number; found: boolean }>();
   const messages: EvalMetrics["tokens"]["messages"] = [];
@@ -205,6 +232,7 @@ function tokenMetrics(events: UsageJsonlLineV1[]): EvalMetrics["tokens"] {
   };
 }
 
+/** Extracts read, searched, and written file sets from usage events, falling back to command-text inference. */
 function fileMetrics(events: UsageJsonlLineV1[]): Pick<EvalMetrics["files"], "read" | "searched" | "written" | "confidence"> {
   const read = new Set<string>();
   const searched = new Set<string>();
@@ -241,6 +269,7 @@ function fileMetrics(events: UsageJsonlLineV1[]): Pick<EvalMetrics["files"], "re
   };
 }
 
+/** Counts total commands and categorises them into test, build, lint, typecheck, and failure buckets. */
 function commandMetrics(events: UsageJsonlLineV1[]): EvalMetrics["commands"] {
   const commands = events.flatMap((event) => event.kind === "command.exec" || event.kind === "tool.call" || event.kind === "tool.result" ? commandTexts(event.data) : []);
   let tests = 0;
@@ -263,12 +292,14 @@ function commandMetrics(events: UsageJsonlLineV1[]): EvalMetrics["commands"] {
   return { total: commands.length, tests, builds, lints, typechecks, failures };
 }
 
+/** Recursively extracts file-path strings from an arbitrary event data object. */
 function pathsFromUnknown(value: unknown): string[] {
   const rows: string[] = [];
   collectPathFields(value, rows);
   return [...new Set(rows.map(normalizePathLike).filter(Boolean))];
 }
 
+/** Recursively walks an object tree and appends any recognised path-field string values to rows. */
 function collectPathFields(value: unknown, rows: string[]): void {
   if (!value || typeof value !== "object") return;
   if (Array.isArray(value)) {
@@ -285,6 +316,7 @@ function collectPathFields(value: unknown, rows: string[]): void {
   }
 }
 
+/** Extracts the shell command string(s) from an event data object, checking common key names. */
 function commandTexts(value: unknown): string[] {
   if (!value || typeof value !== "object") return [];
   const record = value as Record<string, unknown>;
@@ -299,26 +331,31 @@ function commandTexts(value: unknown): string[] {
   return [];
 }
 
+/** Extracts path-like tokens from a shell command string by splitting on whitespace and filtering flags/operators. */
 function pathsFromCommand(command: string): string[] {
   return command.split(/\s+/)
     .map((part) => part.replace(/^['"]|['"]$/g, ""))
     .filter((part) => Boolean(part) && !part.startsWith("-") && /[./]/.test(part) && !/[;&|]/.test(part));
 }
 
+/** Returns the value of a named key from an unknown object, or undefined if not an object. */
 function field(value: unknown, key: string): unknown {
   return value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
 }
 
+/** Returns a named field as a string, or undefined if absent or not a string. */
 function stringField(value: unknown, key: string): string | undefined {
   const item = field(value, key);
   return typeof item === "string" ? item : undefined;
 }
 
+/** Returns a named field as a finite number, or undefined if absent or non-numeric. */
 function numberField(value: unknown, key: string): number | undefined {
   const item = field(value, key);
   return typeof item === "number" && Number.isFinite(item) ? item : undefined;
 }
 
+/** Extracts the usage sub-object from an event, handling both nested and top-level token.usage events. */
 function usageObject(event: UsageJsonlLineV1): Record<string, unknown> | undefined {
   const usage = field(event.data, "usage");
   if (usage && typeof usage === "object" && !Array.isArray(usage)) return usage as Record<string, unknown>;
@@ -326,6 +363,7 @@ function usageObject(event: UsageJsonlLineV1): Record<string, unknown> | undefin
   return event.data && typeof event.data === "object" && !Array.isArray(event.data) ? event.data as Record<string, unknown> : undefined;
 }
 
+/** Normalises provider-specific token field names into a single set of totals. */
 function usageTotals(usage: Record<string, unknown>): { input: number; output: number; cacheRead: number; cacheCreation: number; total: number } {
   const input = numberField(usage, "input") || numberField(usage, "input_tokens") || 0;
   const output = numberField(usage, "output") || numberField(usage, "output_tokens") || 0;
@@ -339,24 +377,29 @@ function usageTotals(usage: Record<string, unknown>): { input: number; output: n
   return { input, output, cacheRead, cacheCreation, total };
 }
 
+/** Returns the token-count confidence level for an event, preferring an explicit field over capture-source inference. */
 function usageConfidence(event: UsageJsonlLineV1): EvalMetrics["tokens"]["messages"][number]["confidence"] {
   const value = stringField(event.data, "usageConfidence") || stringField(event.data, "confidence");
   if (value === "provider-reported" || value === "derived" || value === "estimated") return value;
   return event.capture.source === "native-import" ? "provider-reported" : "unknown";
 }
 
+/** Increments a counter in a string-keyed record, initialising to 0 if absent. */
 function increment(record: Record<string, number>, key: string): void {
   record[key] = (record[key] || 0) + 1;
 }
 
+/** Adds all strings from an array into a set. */
 function addAll(set: Set<string>, rows: string[]): void {
   for (const row of rows) set.add(row);
 }
 
+/** Normalises a path-like string: trims whitespace, converts backslashes, and strips leading ./. */
 function normalizePathLike(value: string): string {
   return value.trim().replace(/\\/g, "/").replace(/^\.\/+/, "");
 }
 
+/** Returns the millisecond delta between two ISO timestamps, or undefined if either is absent or unparseable. */
 function durationMs(startedAt?: string, endedAt?: string): number | undefined {
   if (!startedAt || !endedAt) return undefined;
   const started = new Date(startedAt).getTime();
@@ -365,28 +408,33 @@ function durationMs(startedAt?: string, endedAt?: string): number | undefined {
   return Math.max(0, ended - started);
 }
 
+/** Sums an array of optional millisecond durations, returning undefined when none are present. */
 function sumDurations(values: Array<number | undefined>): number | undefined {
   const present = values.filter((value): value is number => typeof value === "number");
   if (!present.length) return undefined;
   return present.reduce((sum, value) => sum + value, 0);
 }
 
+/** Returns both the resolved and real (symlink-followed) forms of a path to handle worktree alias matching. */
 async function pathAliases(filePath: string): Promise<string[]> {
   const resolved = path.resolve(filePath);
   const canonical = await realpath(filePath).catch(() => resolved);
   return [...new Set([resolved, canonical])];
 }
 
+/** Returns true when target is inside any of the base paths. */
 function isInsideAny(bases: string[], target: string): boolean {
   return bases.some((base) => isInside(base, target));
 }
 
+/** Returns true when target is the same as base or a descendant of it. */
 function isInside(base: string, target: string): boolean {
   if (!target) return false;
   const rel = path.relative(base, target);
   return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
 }
 
+/** Maps a tool name to a broad category string using regex pattern matching. */
 function categorizeTool(toolName: string): string {
   if (/bash|shell|exec/i.test(toolName)) return "command";
   if (/apply_patch|edit|write/i.test(toolName)) return "file_write";

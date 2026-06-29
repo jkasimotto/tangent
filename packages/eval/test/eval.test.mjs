@@ -9,6 +9,7 @@ import test from "node:test";
 import { captureContext, collectEval, prepareEval, runEval } from "../dist/sdk/index.js";
 import { isEvalRunCancelled, runPreparedEval } from "../dist/core/run.js";
 import { startEvalUiServer } from "../dist/server/index.js";
+import { variantDir } from "../dist/core/run-store.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -537,6 +538,66 @@ async function readLatestRunManifest(evalHome) {
 function shellQuote(value) {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
+
+test("run detail includes evaluation scores when evaluation.json is present in variant dir", async () => {
+  const repo = await createRepo();
+  const evalHome = await mkdtemp(path.join(tmpdir(), "tangent-eval-evaluation-home-"));
+  process.env.TANGENT_EVAL_HOME = evalHome;
+
+  await writeFile(path.join(repo, "index.ts"), "export const value = 1;\n", "utf8");
+  await git(repo, "add", ".");
+  await git(repo, "commit", "-m", "base");
+
+  const evalDir = path.join(repo, "evals", "evaluation-scores");
+  await mkdir(path.join(evalDir, "prompts"), { recursive: true });
+  await writeFile(path.join(evalDir, "prompts", "task.md"), "Change the value.\n", "utf8");
+  const specPath = path.join(evalDir, "eval.json");
+  await writeFile(specPath, JSON.stringify({
+    schema: "eval.spec.v1",
+    name: "evaluation-scores",
+    defaults: {
+      repo: { path: repo, ref: "HEAD" },
+      cwd: ".",
+      agent: { kind: "manual" },
+      phases: ["implement"]
+    },
+    cases: [{
+      id: "task",
+      prompt: "prompts/task.md",
+      variants: [{ id: "v1", context: { mode: "empty" } }]
+    }]
+  }, null, 2), "utf8");
+
+  const prepared = await prepareEval(specPath);
+  const variant = prepared.manifest.variants[0];
+  const vDir = variantDir(prepared.manifest, variant.caseId, variant.variantId);
+  await mkdir(vDir, { recursive: true });
+  await writeFile(path.join(vDir, "evaluation.json"), JSON.stringify({
+    schema: "eval.evaluation.v1",
+    caseId: "task",
+    variantId: "v1",
+    model: "claude-opus-4-5",
+    evaluatedAt: "2026-06-30T00:00:00.000Z",
+    criteria: [{ id: "c1", statement: "Value was changed", points: 5, passed: true, reasoning: "It changed." }],
+    totalPoints: 5,
+    maxPoints: 5,
+    warnings: []
+  }), "utf8");
+
+  const server = await startEvalUiServer({ runId: prepared.manifest.id, open: false });
+  try {
+    const detail = await fetchJson(`${server.url}api/eval/runs/${prepared.manifest.id}`);
+    const variantView = detail.cases[0].variants[0];
+    assert.ok(variantView.evaluation, "variant view should have evaluation");
+    assert.equal(variantView.evaluation.totalPoints, 5);
+    assert.equal(variantView.evaluation.maxPoints, 5);
+    assert.equal(variantView.evaluation.model, "claude-opus-4-5");
+    assert.equal(variantView.evaluation.criteria.length, 1);
+    assert.equal(variantView.evaluation.warnings.length, 0);
+  } finally {
+    await server.close();
+  }
+});
 
 test("context assemble endpoint reconstructs the repo variant and empties the empty variant", async () => {
   const repo = await createRepo();

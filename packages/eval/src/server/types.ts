@@ -31,6 +31,14 @@ export type EvalSparkline = {
   buckets: EvalSparklineBucket[];
 };
 
+export type EvalEvaluationView = {
+  model: string;
+  totalPoints: number;
+  maxPoints: number;
+  criteria: Array<{ id: string; statement: string; points: number; passed: boolean; reasoning: string }>;
+  warnings: string[];
+};
+
 export type EvalVariantMetricsView = {
   durationMs?: number;
   activeAgentDurationMs?: number;
@@ -95,6 +103,7 @@ export type EvalVariantSummaryView = {
   error?: string;
   promptArtifacts: EvalCompareArtifactView[];
   metrics?: EvalVariantMetricsView | null;
+  evaluation?: EvalEvaluationView | null;
   warnings: string[];
 };
 

@@ -22,4 +22,14 @@ Each route constructs a `ContextSource` over the variant's frozen worktree at it
 
 Scope boundary: repo-contributed context only. Base system prompt, `~/.claude` user-global files, plugin skills, and managed policy are excluded by design.
 
+## LLM judge scoring
+
+`core/evaluator.ts` is the judge orchestrator. `evaluateVariant` reads the variant's `metrics.json` to get conversation IDs, calls `reconstructVariantConversations` from `core/transcript.ts` to build a list of `NormalizedConversation` objects from the usage index, and calls `gitText` to get the variant's diff. It then calls `composeJudgePrompt` to assemble the rubric, diff, and transcript into a single instruction prompt. The judge is invoked via `runners/judge.ts` and the raw text response is parsed by `core/verdict.ts` into a scored `EvalEvaluation`.
+
+`core/transcript.ts` provides two utilities used by both the judge formatter and the conversation view: `relativeToWorktree` and `stripWorktree` rewrite worktree-absolute paths to short relative forms; `reconstructVariantConversations` iterates over conversation IDs and calls `loadUsageDatasetFromIndex` for each; `formatTranscriptForJudge` renders a list of `NormalizedConversation` objects as compact plain text capped at 12,000 characters.
+
+`runners/judge.ts` wraps a single `claude --print --output-format stream-json --verbose --model <model>` process call. Prompt is passed via stdin. The runner emits no telemetry, loads no tools, and exists solely to call a distinct model from the agent under test. Failures propagate as thrown errors so `evaluateVariant` can catch them and record a failed evaluation with a warning.
+
+The `evaluation.json` sidecar (schema `eval.evaluation.v1`) sits beside `metrics.json` in each variant's run directory. It records the judge model, the evaluation timestamp, each criterion's `passed` verdict and `reasoning`, and aggregate `totalPoints`/`maxPoints`. The Eval UI reads this sidecar to render score chips and the per-criterion Scoring section.
+
 Refer to ../../../docs/architecture/package-boundaries.md and ../../../docs/architecture/dependency-graph.md for monorepo boundaries.

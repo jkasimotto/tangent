@@ -24,7 +24,7 @@
     type EvalVariantSummaryView,
     type EvalVerdictSentiment
   } from "./client.js";
-  import { buildAlignedSections, diffCacheKey, fileNotes, rowsWithNotes, type AlignedSection } from "./compare-model.js";
+  import { buildAlignedSections, diffCacheKey, fileNotes, rowsWithNotes, type AlignedSection, type AlignedRow } from "./compare-model.js";
 
   export let client: EvalUiClient = createEvalApiClient();
 
@@ -402,11 +402,25 @@
     }
   }
 
-  /** Loads (or serves from cache) one side's content for an artifact and toggles its row open. */
-  async function expandRow(variantId: string, artifact: EvalCompareArtifactView): Promise<void> {
+  /** Row-level open key (per artifact within the selected case), independent of side. */
+  function rowExpandKey(artifact: EvalCompareArtifactView): string {
+    return `${selectedCaseId}::${artifact.id}`;
+  }
+
+  /** Toggles a comparison row open or closed, loading both sides' content together so one click opens both columns. */
+  async function toggleRow(row: AlignedRow): Promise<void> {
+    const rkey = rowExpandKey(row.artifact);
+    if (expandedRows.has(rkey)) { expandedRows.delete(rkey); expandedRows = expandedRows; return; }
+    expandedRows.add(rkey); expandedRows = expandedRows;
+    const sides: string[] = [];
+    if (row.a.present) sides.push(leftVariantId);
+    if (row.b.present) sides.push(rightVariantId);
+    await Promise.all(sides.map((variantId) => ensureSideLoaded(variantId, row.artifact)));
+  }
+
+  /** Loads (or serves from cache) one side's content for an artifact. */
+  async function ensureSideLoaded(variantId: string, artifact: EvalCompareArtifactView): Promise<void> {
     const key = diffCacheKey(selectedCaseId, variantId, artifact.id);
-    if (expandedRows.has(key)) { expandedRows.delete(key); expandedRows = expandedRows; return; }
-    expandedRows.add(key); expandedRows = expandedRows;
     if (diffCache.has(key)) return;
     loadingRows.add(key); loadingRows = loadingRows;
     try {
@@ -1091,13 +1105,14 @@
                       <div class="aligned-a">
                         {#if row.a.present}
                           {@const key = diffCacheKey(selectedCaseId, leftVariantId, row.artifact.id)}
+                          {@const rkey = rowExpandKey(row.artifact)}
                           <button type="button" class="row-expand"
-                            aria-label={`${expandedRows.has(key) ? "Collapse" : "Expand"} ${row.artifact.label} for ${leftVariantId}`}
-                            on:click={() => expandRow(leftVariantId, row.artifact)}>
+                            aria-label={`${expandedRows.has(rkey) ? "Collapse" : "Expand"} ${row.artifact.label}`}
+                            on:click={() => toggleRow(row)}>
                             <span class="badge badge-{row.a.changed ? 'changed' : 'same'}">{row.artifact.label}</span>
                             {#if row.a.changed && row.artifact.addedLeft !== undefined}<small class="counts">+{row.artifact.addedLeft} -{row.artifact.removedLeft}</small>{/if}
                           </button>
-                          {#if expandedRows.has(key)}
+                          {#if expandedRows.has(rkey)}
                             <div class="aligned-detail review-reader review-diff">
                               <button type="button" class="row-note" aria-label={`Add notes on ${row.artifact.label} for ${leftVariantId}`} on:click={() => openDrill(leftVariantId, row.artifact)}>note ✎</button>
                               {#if loadingRows.has(key)}<div class="state">Loading…</div>
@@ -1114,13 +1129,14 @@
                       <div class="aligned-b">
                         {#if row.b.present}
                           {@const key = diffCacheKey(selectedCaseId, rightVariantId, row.artifact.id)}
+                          {@const rkey = rowExpandKey(row.artifact)}
                           <button type="button" class="row-expand"
-                            aria-label={`${expandedRows.has(key) ? "Collapse" : "Expand"} ${row.artifact.label} for ${rightVariantId}`}
-                            on:click={() => expandRow(rightVariantId, row.artifact)}>
+                            aria-label={`${expandedRows.has(rkey) ? "Collapse" : "Expand"} ${row.artifact.label}`}
+                            on:click={() => toggleRow(row)}>
                             <span class="badge badge-{row.b.changed ? 'changed' : 'same'}">{row.artifact.label}</span>
                             {#if row.b.changed && row.artifact.addedRight !== undefined}<small class="counts">+{row.artifact.addedRight} -{row.artifact.removedRight}</small>{/if}
                           </button>
-                          {#if expandedRows.has(key)}
+                          {#if expandedRows.has(rkey)}
                             <div class="aligned-detail review-reader review-diff">
                               <button type="button" class="row-note" aria-label={`Add notes on ${row.artifact.label} for ${rightVariantId}`} on:click={() => openDrill(rightVariantId, row.artifact)}>note ✎</button>
                               {#if loadingRows.has(key)}<div class="state">Loading…</div>

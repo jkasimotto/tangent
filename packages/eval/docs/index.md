@@ -21,3 +21,13 @@ Package rules:
 Boundary: repo-contributed context only. The base system prompt, `~/.claude` user-global files, plugin skills, and managed policy are not included.
 
 Two read-only GET endpoints expose this over the eval server: `GET /api/eval/runs/:runId/context/manifest` for the skill and subagent roster, and `GET /api/eval/runs/:runId/context/assemble` for the full assembled context at a given `cwd` and loaded-skill set.
+
+## LLM judge scoring
+
+An eval spec may carry a top-level `evaluator` block with a `model` string and a `criteria` array. Each criterion has an `id`, a `statement` (a yes/no question the judge answers), and an optional `points` (default 1). Scoring runs automatically during `collectEval` for every completed variant.
+
+`core/evaluator.ts` composes the judge prompt from the rubric, a truncated git diff (up to 20,000 characters), and a formatted transcript (up to 12,000 characters). `core/transcript.ts` reconstructs the variant's conversations from the usage index and formats them as plain text that the judge can read. `runners/judge.ts` calls `claude --print --output-format stream-json` with the composed prompt and the specified judge model; it emits no telemetry and uses no tools.
+
+The judge returns a JSON object with a `criteria` array of `{ id, passed, reasoning }` entries. Each criterion earns its full point allotment (binary scoring: full points or zero). The result is written to an `evaluation.json` sidecar alongside `metrics.json` in the variant's run directory. If the judge call fails, all criteria are recorded as failed with a warning rather than aborting the collection step.
+
+The Eval UI reads `evaluation.json` and shows a score chip on each variant card and a per-criterion Scoring section with A/B verdicts.

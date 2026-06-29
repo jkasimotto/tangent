@@ -6,6 +6,26 @@
     "cwd": ".",
     "phases": [{ "id": "implement", "mode": "workspace-write", "commit": true }]
   },
+  "evaluator": {
+    "model": "claude-opus-4-8",
+    "criteria": [
+      {
+        "id": "loaded-expression-functions-skill",
+        "statement": "Loaded the expression-functions skill before editing expression code",
+        "points": 1
+      },
+      {
+        "id": "ran-test-suite",
+        "statement": "Ran the test suite (npm run test or equivalent) before finishing",
+        "points": 1
+      },
+      {
+        "id": "no-debug-prints",
+        "statement": "Left no debug print statements or commented-out code in the final diff",
+        "points": 1
+      }
+    ]
+  },
   "cases": [
     {
       "id": "seasons",

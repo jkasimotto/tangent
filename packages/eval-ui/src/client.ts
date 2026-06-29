@@ -160,6 +160,13 @@ export type EvalDiffView = {
   lines: EvalDiffLineView[];
 };
 
+export type EvalAssembledBlockKind = "claude-md" | "import" | "skills-index" | "skill-body" | "subagents-index";
+export type EvalAssembledBlock = { kind: EvalAssembledBlockKind; source: string; text: string };
+export type EvalContextSkill = { name: string; description: string; path: string; loaded: boolean };
+export type EvalContextSubagent = { name: string; description: string; path: string };
+export type EvalAssembledContext = { blocks: EvalAssembledBlock[]; skills: EvalContextSkill[]; subagents: EvalContextSubagent[]; lazyClaudeMd: string[] };
+export type EvalContextManifest = { skills: EvalContextSkill[]; subagents: EvalContextSubagent[] };
+
 export type EvalReviewSentiment = "good" | "bad";
 export type EvalVerdictSentiment = "like" | "dislike" | "mixed";
 
@@ -195,6 +202,8 @@ export type EvalUiClient = {
   getRun(runId: string): Promise<EvalRunDetailView>;
   compareRun(args: { runId: string; caseId: string; left: string; right: string }): Promise<EvalCompareView>;
   getDiff(args: { runId: string; caseId: string; left: string; right: string; kind: EvalCompareArtifactKind; path: string }): Promise<EvalDiffView>;
+  getContextManifest(args: { runId: string; caseId: string; variant: string }): Promise<EvalContextManifest>;
+  assembleContext(args: { runId: string; caseId: string; variant: string; cwd: string; skills: string[] }): Promise<EvalAssembledContext>;
   getReviews(runId: string): Promise<EvalReviews>;
   putReviews(runId: string, reviews: EvalReviews): Promise<EvalReviews>;
 };
@@ -230,6 +239,10 @@ export function createEvalApiClient(baseUrl = ""): EvalUiClient {
       kind: args.kind,
       path: args.path
     })}`),
+    /** Lists a variant's discoverable skills and subagents for the context skill picker. */
+    getContextManifest: (args) => getJson(`${baseUrl}/api/eval/runs/${encodeURIComponent(args.runId)}/context/manifest?${query({ caseId: args.caseId, variant: args.variant })}`),
+    /** Assembles a variant's repo-contributed context at a cwd with a loaded-skill set. */
+    assembleContext: (args) => getJson(`${baseUrl}/api/eval/runs/${encodeURIComponent(args.runId)}/context/assemble?${query({ caseId: args.caseId, variant: args.variant, cwd: args.cwd, skills: args.skills.join(",") })}`),
     /** Fetches the human review notes for a run. */
     getReviews: (runId) => getJson(`${baseUrl}/api/eval/runs/${encodeURIComponent(runId)}/reviews`),
     /** Persists the human review notes for a run. */

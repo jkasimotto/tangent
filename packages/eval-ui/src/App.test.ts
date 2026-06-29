@@ -328,6 +328,16 @@ function fakeEvalClient(overrides?: { artifacts?: EvalCompareView["artifacts"]; 
       const seed = args.kind === "context" ? contextDiff : args.kind === "code" && overrides?.codeDiff ? overrides.codeDiff : promptDiff;
       return { ...seed, artifact: { ...seed.artifact, id: `${args.kind}:${args.path}`, kind: args.kind, path: args.path } };
     }),
+    /** Returns a deterministic context manifest. */
+    getContextManifest: vi.fn(async () => ({ skills: [{ name: "testing", description: "Use when testing", path: ".claude/skills/testing/SKILL.md", loaded: false }], subagents: [] })),
+    /** Returns a deterministic assembled context: the repo side has blocks, the empty side has none. */
+    assembleContext: vi.fn(async (args: { variant: string; skills: string[] }) => args.variant === "repo"
+      ? { blocks: [
+          { kind: "claude-md" as const, source: "CLAUDE.md", text: "root rules" },
+          { kind: "skills-index" as const, source: "skills", text: "testing: Use when testing" },
+          ...(args.skills.includes("testing") ? [{ kind: "skill-body" as const, source: ".claude/skills/testing/SKILL.md", text: "FULL TESTING BODY" }] : [])
+        ], skills: [{ name: "testing", description: "Use when testing", path: ".claude/skills/testing/SKILL.md", loaded: args.skills.includes("testing") }], subagents: [], lazyClaudeMd: [] }
+      : { blocks: [], skills: [], subagents: [], lazyClaudeMd: [] }),
     /** Returns empty reviews. */
     getReviews: async () => ({ schema: "eval.reviews.v1" as const, variants: {} }),
     /** Echoes persisted reviews. */

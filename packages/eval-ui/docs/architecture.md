@@ -10,6 +10,12 @@ Diff lines in an expanded column are GitHub-style: each commentable line is a bu
 
 Under Changed files, a collapsed `Conversations` section mounts `ConversationCompare.svelte` and lazily loads `GET /api/eval/.../conversations` for both variants when opened (`loadConversations`). Each column is an independent transcript of turns with tool calls (name, input preview, target paths, status), so differences in what each agent did (which files it read, whether it loaded a skill) are visible side by side. A shared highlight box dims non-matching turns and counts matches per side; `conversation-model.ts` holds the pure matchers (`messageMatches`, `conversationMatchCount`), and the match-count helpers take the needle as an argument so the counts recompute reactively as the box changes.
 
+## Scoring section
+
+When `compare.left.evaluation || compare.right.evaluation` is truthy, a collapsible `Scoring` section appears below Conversations. It mounts `ScoringCompare.svelte` directly with the evaluation data already present on the variant summary view -- no separate API call. `ScoringCompare` renders a two-column rubric grid: a header row with each side's `totalPoints / maxPoints`, then one block per criterion (statement, pass/fail glyph, points, and judge reasoning side by side), and any judge warnings as note lines at the bottom.
+
+`EvalEvaluationView` is defined locally in `client.ts` (mirroring the server shape) and is not imported from `@tangent/eval`. The score chip (`.score-chip`) surfaces the aggregate score on the variant card in the live dashboard and in the compare column header in the Results view.
+
 ## Context section: Assembled view
 
 The Context section's `Files | Assembled` toggle mounts `AssembledContext.svelte`. When Assembled is active:

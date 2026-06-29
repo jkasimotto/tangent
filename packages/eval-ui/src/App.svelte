@@ -27,6 +27,7 @@
   import { buildAlignedSections, diffCacheKey, fileNotes, rowsWithNotes, type AlignedSection, type AlignedRow } from "./compare-model.js";
   import AssembledContext from "./AssembledContext.svelte";
   import ConversationCompare from "./ConversationCompare.svelte";
+  import ScoringCompare from "./ScoringCompare.svelte";
   import type { EvalAssembledContext, EvalConversationsView } from "./client.js";
 
   export let client: EvalUiClient = createEvalApiClient();
@@ -66,6 +67,8 @@
   // Conversations section: a side-by-side reconstruction of what each agent actually did (turns and tool
   // calls), reconstructed lazily when the section is opened, so it never costs a fetch unless asked for.
   let conversationsOpen = false;
+  // Scoring section: shows the evaluator model's rubric judgement for each side, side by side.
+  let scoringOpen = false;
   let conversationsLeft: EvalConversationsView | undefined;
   let conversationsRight: EvalConversationsView | undefined;
   let conversationsLoading = false;
@@ -497,6 +500,11 @@
   /** Toggles the Conversations section open or closed. */
   function toggleConversations(): void {
     conversationsOpen = !conversationsOpen;
+  }
+
+  /** Toggles the Scoring section open or closed. */
+  function toggleScoring(): void {
+    scoringOpen = !scoringOpen;
   }
 
   /** Reconstructs both sides' conversations once the section is open, memoized by the variant pair. */
@@ -944,7 +952,9 @@
                   {/each}
                 </span>
                 <small class="flame-caption">{flameCaption(variant.metrics)}</small>
-              {:else if variant.status === "running"}
+              {/if}
+              {#if variant.evaluation}<span class="score-chip">{variant.evaluation.totalPoints} / {variant.evaluation.maxPoints} pts</span>{/if}
+              {#if !variant.metrics?.sparkline && variant.status === "running"}
                 <span class="flame flame-dashboard flame-warming" aria-label="Waiting for activity"></span>
                 <small class="flame-caption">warming up…</small>
               {:else if variant.status === "prepared"}
@@ -977,6 +987,7 @@
                   </span>
                   <small class="flame-caption">{flameCaption(col.v.metrics)}</small>
                 {/if}
+                {#if col.v.evaluation}<span class="score-chip">{col.v.evaluation.totalPoints} / {col.v.evaluation.maxPoints} pts</span>{/if}
                 <div class="verdict-inline" aria-label={`Verdict for ${col.id}`}>
                   <button type="button" aria-label={`Verdict ${col.id} like`} class:active={review?.verdict?.sentiment === "like"} on:click={() => setVerdictFor(col.id, "like")}>👍</button>
                   <button type="button" aria-label={`Verdict ${col.id} mixed`} class:active={review?.verdict?.sentiment === "mixed"} on:click={() => setVerdictFor(col.id, "mixed")}>🤔</button>
@@ -1170,6 +1181,22 @@
                 errorText={conversationsError} />
             {/if}
           </section>
+          {#if compare.left.evaluation || compare.right.evaluation}
+            <section class="aligned-section" class:collapsed={!scoringOpen}>
+              <button type="button" class="section-toggle" aria-expanded={scoringOpen} on:click={toggleScoring}>
+                <span class="section-caret" aria-hidden="true">{scoringOpen ? "▾" : "▸"}</span>
+                <h3>Scoring</h3>
+                <small class="section-summary">evaluator rubric judgement</small>
+              </button>
+              {#if scoringOpen}
+                <ScoringCompare
+                  left={compare.left.evaluation}
+                  right={compare.right.evaluation}
+                  leftLabel={leftVariantId}
+                  rightLabel={rightVariantId} />
+              {/if}
+            </section>
+          {/if}
         </div>
       {:else if selectedCase?.variants.length === 1}
         <div class="state">This case has one configuration. Add another variant to compare.</div>

@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/sve
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App.svelte";
-import type { EvalCompareView, EvalDiffLineView, EvalDiffView, EvalRunDetailView, EvalUiClient, EvalVariantMetricsView } from "./client.js";
+import type { EvalCompareView, EvalDiffLineView, EvalDiffView, EvalEvaluationView, EvalRunDetailView, EvalUiClient, EvalVariantMetricsView } from "./client.js";
 
 afterEach(() => cleanup());
 
@@ -26,9 +26,9 @@ describe("eval svelte app", () => {
 
     // Two config pickers, A and B, in the header.
     expect(container.querySelectorAll(".compare-head select")).toHaveLength(2);
-    // Aligned sections, in order, with Conversations under Changed files.
+    // Aligned sections, in order, with Conversations and Scoring under Changed files.
     const titles = Array.from(container.querySelectorAll(".aligned-section h3")).map((n) => n.textContent?.trim());
-    expect(titles).toEqual(["Prompts", "Context files", "Changed files", "Conversations"]);
+    expect(titles).toEqual(["Prompts", "Context files", "Changed files", "Conversations", "Scoring"]);
     // No legacy mode tabs.
     expect(screen.queryByRole("button", { name: "Individual" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Side by side" })).toBeNull();
@@ -258,6 +258,17 @@ describe("eval svelte app", () => {
 
 /** Creates a deterministic client for app rendering tests. */
 function fakeEvalClient(overrides?: { artifacts?: EvalCompareView["artifacts"]; codeDiff?: EvalDiffView }): EvalUiClient {
+  /** Builds a deterministic evaluator score for a variant. */
+  const evaluation = (totalPoints: number): EvalEvaluationView => ({
+    model: "judge",
+    totalPoints,
+    maxPoints: 3,
+    criteria: [
+      { id: "a", statement: "loaded skill", points: 2, passed: totalPoints >= 2, reasoning: totalPoints >= 2 ? "did load it" : "skipped" },
+      { id: "b", statement: "ran tests", points: 1, passed: totalPoints === 3, reasoning: totalPoints === 3 ? "ran" : "skipped" }
+    ],
+    warnings: []
+  });
   /** Builds a deterministic output-metrics summary for a variant. */
   const metrics = (durationMs: number, peak: number): EvalVariantMetricsView => ({
     durationMs,
@@ -296,6 +307,7 @@ function fakeEvalClient(overrides?: { artifacts?: EvalCompareView["artifacts"]; 
         phases: [{ id: "implement", status: "done" }],
         promptArtifacts: [],
         metrics: metrics(12000, 42000),
+        evaluation: evaluation(2),
         warnings: []
       }, {
         caseId: "task",
@@ -313,6 +325,7 @@ function fakeEvalClient(overrides?: { artifacts?: EvalCompareView["artifacts"]; 
         phases: [{ id: "implement", status: "done" }],
         promptArtifacts: [],
         metrics: metrics(9000, 51000),
+        evaluation: evaluation(3),
         warnings: []
       }]
     }]

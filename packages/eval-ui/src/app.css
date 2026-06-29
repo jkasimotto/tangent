@@ -1195,6 +1195,174 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
+/* --- Aligned Compare view (stacked, compare-first Results screen) --- */
+.compare-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.compare-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.compare-col-head {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+}
+
+.compare-col-head.entity-b {
+  border-left: 1px solid var(--line);
+}
+
+.compare-col-head label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.compare-col-head select {
+  min-width: 0;
+  flex: 1 1 auto;
+  min-height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  padding: 4px 9px;
+  outline: none;
+}
+
+.compare-col-head select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgb(36 107 88 / 13%);
+}
+
+.compare-col-meta {
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.verdict-inline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.verdict-inline button {
+  border: 1px solid var(--line);
+  background: #fff;
+  font-size: 14px;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  filter: grayscale(0.5);
+}
+
+.verdict-inline button.active {
+  border-color: var(--accent);
+  background: #eef5f1;
+  filter: none;
+}
+
+.verdict-inline .score {
+  display: flex;
+  gap: 2px;
+  flex-wrap: wrap;
+}
+
+.verdict-inline .score .score-pip {
+  filter: none;
+}
+
+.aligned-section {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.aligned-section .section-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--pane-muted);
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.aligned-section .section-toggle h3 {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.section-summary {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.aligned-section.collapsed .aligned-rows {
+  display: none;
+}
+
+.aligned-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  border-top: 1px solid var(--line);
+}
+
+.aligned-row.identical {
+  opacity: 0.55;
+}
+
+.aligned-a,
+.aligned-b {
+  min-width: 0;
+  padding: 8px 12px;
+}
+
+.aligned-b {
+  border-left: 1px solid var(--line);
+}
+
+.aligned-a .badge,
+.aligned-b .badge {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.absent {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.aligned-empty {
+  margin: 0;
+  padding: 10px 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 /* --- Prompt editor modal --- */
 .modal-scrim {
   position: fixed;

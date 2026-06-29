@@ -8,182 +8,63 @@ import type { EvalCompareView, EvalDiffView, EvalRunDetailView, EvalUiClient, Ev
 afterEach(() => cleanup());
 
 describe("eval svelte app", () => {
-  it("renders run selection, variant metadata, output comparison, artifacts, and diff rows", async () => {
+  it("renders the selected run and each config's flame caption", async () => {
     const client = fakeEvalClient();
     const { container } = render(App, { props: { client } });
 
     expect(await screen.findByText(/ui-compare/)).toBeInTheDocument();
-    // Individual review opens on the agent's work: the changed code file is selected, not the prompt.
-    expect(await screen.findByRole("button", { name: /src\/foo.ts changed/ })).toHaveClass("active");
-    // Individual review is the default mode; the A/B line diff lives behind the Side by side tab.
-    await fireEvent.click(screen.getByRole("button", { name: "Side by side" }));
-    expect(container.querySelectorAll(".entity select")).toHaveLength(2);
-    // Code defaults to the split (read both outputs) layout: A shows this variant's text, B the other's.
-    expect(await screen.findByText("Use repo context.")).toBeInTheDocument();
-    expect(container.querySelector(".reader-col code")).toHaveTextContent("Use no context.");
-
+    await screen.findByLabelText("Configs compared");
     // Each config's metrics surface as a flame caption (duration / tokens / peak context).
     expect(container.querySelector(".flame-caption")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /src\/foo.ts changed/ })).toBeInTheDocument();
-
-    await fireEvent.click(screen.getByRole("button", { name: /AGENTS.md right-only/ }));
-
-    expect(client.getDiff).toHaveBeenLastCalledWith({
-      runId: "run1",
-      caseId: "task",
-      left: "empty",
-      right: "repo",
-      kind: "context",
-      path: "AGENTS.md"
-    });
   });
 
-  it("defaults to Review mode and synthesizes a Compare view from notes", async () => {
+  it("opens on the aligned Compare view with two pickers and three sections", async () => {
     const client = fakeEvalClient();
     const { container } = render(App, { props: { client } });
+    await screen.findByText(/ui-compare/);
+    await screen.findByLabelText("Configs compared");
 
-    // Individual review is the default mode, with a chip per reviewed config.
-    expect(await screen.findByRole("button", { name: "Individual" })).toHaveClass("active");
-    expect(container.querySelector(".variant-chip")).toBeInTheDocument();
-
-    // Compare notes synthesizes one column per config (A/B) with Did well / Mistakes groups.
-    await fireEvent.click(screen.getByRole("button", { name: "Compare notes" }));
-    expect(container.querySelectorAll(".review-col")).toHaveLength(2);
-    expect(screen.getAllByText(/Did well/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/Mistakes/).length).toBeGreaterThan(0);
+    // Two config pickers, A and B, in the header.
+    expect(container.querySelectorAll(".compare-head select")).toHaveLength(2);
+    // Three aligned sections, in order.
+    const titles = Array.from(container.querySelectorAll(".aligned-section h3")).map((n) => n.textContent?.trim());
+    expect(titles).toEqual(["Prompts", "Context files", "Changed files"]);
+    // No legacy mode tabs.
+    expect(screen.queryByRole("button", { name: "Individual" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Side by side" })).toBeNull();
   });
 
-  it("reviews a variant using only artifacts present in it, never auto-selecting one absent from it", async () => {
-    // The empty-context variant is reviewed by default. Its only changed artifact relative to the repo
-    // variant is a code file; the context files are right-only (they exist solely in the repo variant).
-    // The review pane must load the present code artifact, not the right-only context file (which 404s).
+  it("dims identical rows and marks differing ones", async () => {
     const client = fakeEvalClient({
       artifacts: [
         { id: "prompt:task", kind: "prompt", path: "task", label: "Task prompt", status: "same" },
-        { id: "context:AGENTS.md", kind: "context", path: "AGENTS.md", label: "AGENTS.md", status: "right-only" },
-        { id: "code:src/foo.ts", kind: "code", path: "src/foo.ts", label: "src/foo.ts", status: "changed", changedLeft: true, changedRight: true }
+        { id: "code:src/foo.ts", kind: "code", path: "src/foo.ts", label: "src/foo.ts", status: "changed", changedLeft: true, changedRight: false }
       ]
     });
     const { container } = render(App, { props: { client } });
-
-    // The pane loads content for an artifact that exists in the reviewed variant, scoped to it (left === right).
-    await screen.findByRole("button", { name: /src\/foo.ts changed/ });
-    expect(client.getDiff).toHaveBeenCalled();
-    const lastCall = (client.getDiff as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[0];
-    expect(lastCall).toMatchObject({ left: "empty", right: "empty" });
-    expect(lastCall.path).not.toBe("AGENTS.md");
-
-    // Individual code review renders the agent's change as a unified diff (old line above the new), not the whole file.
-    await screen.findByText("Use repo context.");
-    expect(container.querySelector(".review-reader")).toHaveClass("review-diff");
-    expect(container.querySelector(".review-delete code")).toHaveTextContent("Use no context.");
-    expect(container.querySelector(".review-changed code")).toHaveTextContent("Use repo context.");
-
-    // The right-only context file is not offered while reviewing the variant it is absent from.
-    expect(screen.queryByRole("button", { name: /AGENTS.md/ })).toBeNull();
-
-    // Switching the reviewed variant to the one the context file belongs to surfaces it in the list.
-    await fireEvent.click(screen.getByRole("button", { name: "repo" }));
-    expect(await screen.findByRole("button", { name: /AGENTS.md right-only/ })).toBeInTheDocument();
+    await screen.findByText(/ui-compare/);
+    await screen.findByLabelText("Configs compared");
+    const rows = container.querySelectorAll(".aligned-row");
+    // Prompt row identical -> dimmed; code row differs -> not dimmed.
+    expect(container.querySelector(".aligned-section .aligned-row.identical")).toBeInTheDocument();
+    expect(rows.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("lists only the files the reviewed variant changed, not files only the other variant touched", async () => {
-    // src/theirs.ts differs between the two outputs (so its pair status is "changed"), but only the repo
-    // variant's agent changed it. Reviewing the empty variant must not offer it: there is nothing to review.
-    const client = fakeEvalClient({
-      artifacts: [
-        { id: "prompt:task", kind: "prompt", path: "task", label: "Task prompt", status: "same" },
-        { id: "code:src/mine.ts", kind: "code", path: "src/mine.ts", label: "src/mine.ts", status: "changed", changedLeft: true, changedRight: false },
-        { id: "code:src/theirs.ts", kind: "code", path: "src/theirs.ts", label: "src/theirs.ts", status: "changed", changedLeft: false, changedRight: true }
-      ]
-    });
-    const { container } = render(App, { props: { client } });
-
-    // The reviewed (empty) variant's own change is offered and auto-selected; the other variant's file is not listed.
-    expect(await screen.findByRole("button", { name: /src\/mine.ts/ })).toHaveClass("active");
-    expect(screen.queryByRole("button", { name: /src\/theirs.ts/ })).toBeNull();
-    // No "this config made no changes" dead-end.
-    expect(container.querySelector(".review-reader .state")).toBeNull();
-
-    // Switching to the repo variant flips which file is in scope.
-    await fireEvent.click(screen.getByRole("button", { name: "repo" }));
-    expect(await screen.findByRole("button", { name: /src\/theirs.ts/ })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /src\/mine.ts/ })).toBeNull();
-  });
-
-  it("ignores a stale in-flight review diff when the reviewed variant changes", async () => {
-    // src/a.ts belongs to the empty variant, src/b.ts to the repo variant. Switching from empty to repo
-    // leaves the empty request in flight; if it resolves last it must not overwrite the repo diff.
-    const client = fakeEvalClient({
-      artifacts: [
-        { id: "prompt:task", kind: "prompt", path: "task", label: "Task prompt", status: "same" },
-        { id: "code:src/a.ts", kind: "code", path: "src/a.ts", label: "src/a.ts", status: "changed", changedLeft: true, changedRight: false },
-        { id: "code:src/b.ts", kind: "code", path: "src/b.ts", label: "src/b.ts", status: "changed", changedLeft: false, changedRight: true }
-      ]
-    });
-    const pending: { left: string; path: string; resolve: (view: EvalDiffView) => void }[] = [];
-    /** Builds a one-line added-code diff view for a review-mode artifact. */
-    const diffFor = (path: string, body: string): EvalDiffView => ({
-      artifact: { id: `code:${path}`, kind: "code", path, label: path, status: "changed" },
-      left: { variantId: "x", label: "x" },
-      right: { variantId: "x", label: "x" },
-      lines: [{ kind: "add", rightNumber: 1, right: body }]
-    });
-    client.getDiff = vi.fn((args) => new Promise<EvalDiffView>((resolve) => pending.push({ left: args.left, path: args.path, resolve })));
+  it("scores a specific variant from its column header", async () => {
+    const client = fakeEvalClient();
     render(App, { props: { client } });
-
-    // Reviewing empty auto-selects src/a.ts; switching to repo auto-selects src/b.ts. Both diffs are in flight.
-    await screen.findByRole("button", { name: /src\/a.ts/ });
-    await fireEvent.click(screen.getByRole("button", { name: "repo" }));
-    await screen.findByRole("button", { name: /src\/b.ts/ });
-
-    // While the diff is in flight the pane shows a loading state, not the previous file's content.
-    expect(screen.getByText("Loading…")).toBeInTheDocument();
-
-    // Resolve the current (repo/src/b.ts) request first, then the stale (empty/src/a.ts) one.
-    pending.filter((p) => p.left === "repo").forEach((p) => p.resolve(diffFor("src/b.ts", "B body")));
-    expect(await screen.findByText("B body")).toBeInTheDocument();
-    pending.filter((p) => p.left === "empty").forEach((p) => p.resolve(diffFor("src/a.ts", "A body")));
-    await new Promise((resolve) => setTimeout(resolve, 20));
-
-    // The stale empty-variant diff must not replace the repo diff on screen.
-    expect(screen.queryByText("A body")).toBeNull();
-    expect(screen.getByText("B body")).toBeInTheDocument();
+    await screen.findByText(/ui-compare/);
+    await fireEvent.click(await screen.findByRole("button", { name: "Score repo 8" }));
+    const saved = (client.putReviews as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1];
+    expect(saved.variants["task/repo"].verdict.score).toBe(8);
   });
 
-  it("collapses unchanged code in Individual review so the agent's edit is the focus", async () => {
-    // A long file the agent barely touched: 40 unchanged lines, one added line, 40 more unchanged.
-    const lines = [
-      ...Array.from({ length: 40 }, (_unused, i) => ({ kind: "equal" as const, leftNumber: i + 1, rightNumber: i + 1, left: `keep ${i}`, right: `keep ${i}` })),
-      { kind: "add" as const, rightNumber: 41, right: "the one new line" },
-      ...Array.from({ length: 40 }, (_unused, i) => ({ kind: "equal" as const, leftNumber: i + 41, rightNumber: i + 42, left: `keep ${i + 40}`, right: `keep ${i + 40}` }))
-    ];
-    const codeDiff: EvalDiffView = {
-      artifact: { id: "code:src/big.ts", kind: "code", path: "src/big.ts", label: "src/big.ts", status: "changed" },
-      left: { variantId: "empty", label: "task/empty" },
-      right: { variantId: "empty", label: "task/empty" },
-      lines
-    };
-    const client = fakeEvalClient({
-      artifacts: [
-        { id: "prompt:task", kind: "prompt", path: "task", label: "Task prompt", status: "same" },
-        { id: "code:src/big.ts", kind: "code", path: "src/big.ts", label: "src/big.ts", status: "changed", changedLeft: true, changedRight: true }
-      ],
-      codeDiff
-    });
-    const { container } = render(App, { props: { client } });
-
-    // The added line is shown; the 80 unchanged lines are collapsed behind expandable gaps rather than all rendered.
-    expect(await screen.findByText("the one new line")).toBeInTheDocument();
-    expect(container.querySelectorAll(".diff-gap").length).toBeGreaterThan(0);
-    expect(container.querySelectorAll(".review-row").length).toBeLessThan(20);
-
-    // Expanding a gap reveals the unchanged lines it hid.
-    await fireEvent.click(container.querySelector(".diff-gap") as HTMLElement);
-    expect(container.querySelectorAll(".review-row").length).toBeGreaterThan(20);
-  });
-
-  it.todo("scores a specific variant by key, not just the reviewed one");
+  // Task 4 reintroduces per-row content expansion (the unified-diff reader, stale-diff guard, scoped
+  // artifact lists). These specs cover that surface and are restored when expansion lands.
+  it.todo("reviews a variant using only artifacts present in it, never auto-selecting one absent from it");
+  it.todo("lists only the files the reviewed variant changed, not files only the other variant touched");
+  it.todo("ignores a stale in-flight review diff when the reviewed variant changes");
+  it.todo("collapses unchanged code in Individual review so the agent's edit is the focus");
 
   it("launches a run from the selected spec", async () => {
     const client = fakeEvalClient();

@@ -16,6 +16,17 @@ export type EvalPhaseSpec =
       commit?: boolean;
     };
 
+export type EvalCriterion = {
+  id: string;
+  statement: string;
+  points?: number;
+};
+
+export type EvalEvaluatorSpec = {
+  model: string;
+  criteria: EvalCriterion[];
+};
+
 export type EvalDefaults = {
   repo?: EvalRepoSpec;
   cwd?: string;
@@ -46,6 +57,7 @@ export type EvalSpec = {
   name: string;
   defaults?: EvalDefaults;
   cases: EvalCaseSpec[];
+  evaluator?: EvalEvaluatorSpec;
 };
 
 export type ResolvedEvalVariant = {

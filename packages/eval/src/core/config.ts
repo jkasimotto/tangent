@@ -117,6 +117,11 @@ export function normalizeContextRef(value: string): string {
   return `refs/tangent/eval/contexts/${value}`;
 }
 
+/** A criterion's resolved point value (default 1). Binary scoring: this is awarded in full or not at all. */
+export function resolveCriterionPoints(points: number | undefined): number {
+  return points ?? 1;
+}
+
 /** Validates required eval spec fields and variant prompts. */
 function validateSpec(spec: EvalSpec): void {
   if (spec.schema !== "eval.spec.v1") throw new Error("Eval spec schema must be eval.spec.v1.");
@@ -128,6 +133,21 @@ function validateSpec(spec: EvalSpec): void {
     for (const variant of testCase.variants) {
       if (!variant.id) throw new Error(`Eval case ${testCase.id} has variant without id.`);
       if (!variant.prompt && !testCase.prompt) throw new Error(`Eval case ${testCase.id} variant ${variant.id} requires prompt on variant or case.`);
+    }
+  }
+  if (spec.evaluator) {
+    const { model, criteria } = spec.evaluator;
+    if (!model) throw new Error("Eval evaluator requires a model.");
+    if (!Array.isArray(criteria) || criteria.length === 0) throw new Error("Eval evaluator criteria must be a non-empty array.");
+    const seen = new Set();
+    for (const criterion of criteria) {
+      if (!criterion.id) throw new Error("Eval evaluator criterion requires id.");
+      if (!criterion.statement) throw new Error(`Eval evaluator criterion ${criterion.id} requires a statement.`);
+      if (seen.has(criterion.id)) throw new Error(`Eval evaluator criterion id ${criterion.id} is duplicate; ids must be unique.`);
+      seen.add(criterion.id);
+      if (criterion.points !== undefined && (!Number.isInteger(criterion.points) || criterion.points <= 0)) {
+        throw new Error(`Eval evaluator criterion ${criterion.id} points must be a positive integer.`);
+      }
     }
   }
 }

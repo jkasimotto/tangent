@@ -139,7 +139,13 @@
   $: compare && selectedArtifactId && reviewVariantId && mode === "review" && void loadReviewDiff();
   $: reviewKey = variantKey(selectedCaseId, reviewVariantId);
   $: currentReview = reviews.variants[reviewKey] || { notes: [] };
-  $: reviewReader = reviewDiff ? readerLines(reviewDiff.lines, "left") : [];
+  $: reviewReader = reviewDiff ? readerLines(reviewDiff.lines, "right") : [];
+  // Individual review of code shows the agent's change (base -> this variant) as a unified diff with
+  // unchanged runs collapsed, so the edits are immediately visible instead of buried in the whole file.
+  // Prompts and context are inputs the agent read, not edits it made, so they stay a full read.
+  $: reviewIsDiff = reviewDiff?.artifact.kind === "code";
+  $: reviewChangedCount = reviewDiff ? reviewDiff.lines.filter((line) => line.kind !== "equal").length : 0;
+  $: reviewRows = buildReviewRows(reviewDiff, reviewIsDiff, expandedReviewGaps);
 
   async function loadInitial(): Promise<void> {
     loading = true;
@@ -436,6 +442,7 @@
     reviewDiffLoadKey = key;
     try {
       reviewDiff = await client.getDiff({ runId: selectedRunId, caseId: selectedCaseId, left: reviewVariantId, right: reviewVariantId, kind: artifact.kind, path: artifact.path });
+      expandedReviewGaps = new Set();
       noteLine = undefined;
       noteText = "";
     } catch {
@@ -731,6 +738,47 @@
   }
 
   $: segments = diff ? diffSegments(diff.lines) : [];
+
+  // One row of the Individual review reader. A "line" row carries the variant line number it annotates when
+  // present (added/unchanged code); rows without one (removed code) are shown for context but not annotated.
+  type ReviewRow =
+    | { kind: "gap"; index: number; count: number }
+    | { kind: "line"; marker: "equal" | "add" | "delete" | "changed"; gutter: string; line?: number; text: string };
+
+  let expandedReviewGaps = new Set<number>();
+
+  function expandReviewGap(index: number): void {
+    expandedReviewGaps.add(index);
+    expandedReviewGaps = expandedReviewGaps;
+  }
+
+  /** Flattens the reviewed artifact into annotatable rows: a collapsed unified diff for code, a full read otherwise. */
+  function buildReviewRows(view: EvalDiffView | undefined, isDiff: boolean, expanded: Set<number>): ReviewRow[] {
+    if (!view) return [];
+    if (!isDiff) {
+      return readerLines(view.lines, "right").map((row) => ({ kind: "line", marker: "equal", gutter: `${row.n}`, line: row.n, text: row.text }));
+    }
+    const rows: ReviewRow[] = [];
+    for (const segment of diffSegments(view.lines)) {
+      if (segment.kind === "gap" && !expanded.has(segment.index)) {
+        rows.push({ kind: "gap", index: segment.index, count: segment.count });
+        continue;
+      }
+      for (const line of segment.lines) rows.push(...reviewLineRows(line));
+    }
+    return rows;
+  }
+
+  /** Renders one diff line as review rows: a changed line becomes a removed row above the added row. */
+  function reviewLineRows(line: EvalDiffLineView): ReviewRow[] {
+    if (line.kind === "delete") return [{ kind: "line", marker: "delete", gutter: `${line.leftNumber ?? ""}`, text: line.left || "" }];
+    if (line.kind === "add") return [{ kind: "line", marker: "add", gutter: `${line.rightNumber ?? ""}`, line: line.rightNumber, text: line.right || "" }];
+    if (line.kind === "changed") return [
+      { kind: "line", marker: "delete", gutter: `${line.leftNumber ?? ""}`, text: line.left || "" },
+      { kind: "line", marker: "changed", gutter: `${line.rightNumber ?? ""}`, line: line.rightNumber, text: line.right || "" }
+    ];
+    return [{ kind: "line", marker: "equal", gutter: `${line.rightNumber ?? ""}`, line: line.rightNumber, text: line.right || "" }];
+  }
 
   function friendlyError(value: unknown): string {
     const message = value instanceof Error ? value.message : String(value);
@@ -1058,39 +1106,53 @@
                       <button type="button" class="mark bad" on:click={() => openSelectionNote("bad")}>👎 bad</button>
                       <button type="button" class="ghost" on:click={clearSelection}>clear</button>
                     </span>
+                  {:else if reviewIsDiff}
+                    <span>{reviewChangedCount} changed {reviewChangedCount === 1 ? "line" : "lines"} · unchanged code collapsed · click line #s to select, 👍/👎 to note</span>
                   {:else}
                     <span>{reviewReader.length} lines · click line #s to select a block, 👍/👎 to note it</span>
                   {/if}
                 </header>
-                <div class="review-reader" aria-label={`${reviewDiff.artifact.label} review`}>
-                  {#each reviewReader as row}
-                    {@const lineNotes = notesAt(currentReview, reviewDiff.artifact.id, row.n)}
-                    {@const covered = lineCovered(currentReview, reviewDiff.artifact.id, row.n)}
-                    <div class="review-row" class:has-notes={covered} class:selected={inSelection(row.n)}>
-                      <button type="button" class="line-no line-no-pick" class:anchor={row.n === selStart} title="Click to start/extend a selection block" on:click={() => selectGutter(row.n)}>{row.n}</button>
-                      <code>{row.text}</code>
-                      <span class="row-actions">
-                        <button type="button" class="mark good" title="Mark this line good" on:click={() => openNote(row.n, row.n, "good")}>👍</button>
-                        <button type="button" class="mark bad" title="Mark this line bad" on:click={() => openNote(row.n, row.n, "bad")}>👎</button>
-                      </span>
-                    </div>
-                    {#each lineNotes as note}
-                      <div class="line-note {note.sentiment}">
-                        <span class="note-icon">{note.sentiment === "good" ? "👍" : "👎"}</span>
-                        <span class="note-range">{noteRangeLabel(note)}</span>
-                        <span class="note-text">{note.text}</span>
-                        <button type="button" class="note-del" title="Remove note" on:click={() => removeNote(note.id)}>×</button>
+                <div class="review-reader" class:review-diff={reviewIsDiff} aria-label={`${reviewDiff.artifact.label} review`}>
+                  {#if reviewIsDiff && reviewChangedCount === 0}
+                    <div class="state">This config made no changes to {reviewDiff.artifact.label}.</div>
+                  {/if}
+                  {#each reviewRows as row}
+                    {#if row.kind === "gap"}
+                      <button type="button" class="diff-gap" on:click={() => expandReviewGap(row.index)}>⋯ {row.count} unchanged lines</button>
+                    {:else if row.line !== undefined}
+                      {@const lineNotes = notesAt(currentReview, reviewDiff.artifact.id, row.line)}
+                      {@const covered = lineCovered(currentReview, reviewDiff.artifact.id, row.line)}
+                      <div class="review-row review-{row.marker}" class:has-notes={covered} class:selected={inSelection(row.line)}>
+                        <button type="button" class="line-no line-no-pick" class:anchor={row.line === selStart} title="Click to start/extend a selection block" on:click={() => selectGutter(row.line)}>{row.gutter}</button>
+                        <code>{row.text}</code>
+                        <span class="row-actions">
+                          <button type="button" class="mark good" title="Mark this line good" on:click={() => openNote(row.line, row.line, "good")}>👍</button>
+                          <button type="button" class="mark bad" title="Mark this line bad" on:click={() => openNote(row.line, row.line, "bad")}>👎</button>
+                        </span>
                       </div>
-                    {/each}
-                    {#if noteLine === row.n}
-                      <form class="note-composer {noteSentiment}" on:submit|preventDefault={() => saveNote()}>
-                        <span class="note-icon">{noteSentiment === "good" ? "👍" : "👎"}</span>
-                        <span class="note-range">{noteEndLine && noteEndLine > noteLine ? `L${noteLine}–${noteEndLine}` : `L${noteLine}`}</span>
-                        <!-- svelte-ignore a11y-autofocus -->
-                        <input class="note-input" placeholder={noteSentiment === "good" ? "what's good here…" : "what's wrong here…"} bind:value={noteText} autofocus />
-                        <button type="submit" class="primary" disabled={!noteText.trim()}>Add</button>
-                        <button type="button" class="ghost" on:click={() => { noteLine = undefined; noteEndLine = undefined; }}>Cancel</button>
-                      </form>
+                      {#each lineNotes as note}
+                        <div class="line-note {note.sentiment}">
+                          <span class="note-icon">{note.sentiment === "good" ? "👍" : "👎"}</span>
+                          <span class="note-range">{noteRangeLabel(note)}</span>
+                          <span class="note-text">{note.text}</span>
+                          <button type="button" class="note-del" title="Remove note" on:click={() => removeNote(note.id)}>×</button>
+                        </div>
+                      {/each}
+                      {#if noteLine === row.line}
+                        <form class="note-composer {noteSentiment}" on:submit|preventDefault={() => saveNote()}>
+                          <span class="note-icon">{noteSentiment === "good" ? "👍" : "👎"}</span>
+                          <span class="note-range">{noteEndLine && noteEndLine > noteLine ? `L${noteLine}–${noteEndLine}` : `L${noteLine}`}</span>
+                          <!-- svelte-ignore a11y-autofocus -->
+                          <input class="note-input" placeholder={noteSentiment === "good" ? "what's good here…" : "what's wrong here…"} bind:value={noteText} autofocus />
+                          <button type="submit" class="primary" disabled={!noteText.trim()}>Add</button>
+                          <button type="button" class="ghost" on:click={() => { noteLine = undefined; noteEndLine = undefined; }}>Cancel</button>
+                        </form>
+                      {/if}
+                    {:else}
+                      <div class="review-row review-{row.marker} review-context">
+                        <span class="line-no muted">{row.gutter}</span>
+                        <code>{row.text}</code>
+                      </div>
                     {/if}
                   {/each}
                 </div>

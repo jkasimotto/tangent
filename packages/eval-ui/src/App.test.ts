@@ -62,7 +62,7 @@ describe("eval svelte app", () => {
         { id: "code:src/foo.ts", kind: "code", path: "src/foo.ts", label: "src/foo.ts", status: "changed" }
       ]
     });
-    render(App, { props: { client } });
+    const { container } = render(App, { props: { client } });
 
     // The pane loads content for an artifact that exists in the reviewed variant, scoped to it (left === right).
     await screen.findByRole("button", { name: /src\/foo.ts changed/ });
@@ -71,12 +71,50 @@ describe("eval svelte app", () => {
     expect(lastCall).toMatchObject({ left: "empty", right: "empty" });
     expect(lastCall.path).not.toBe("AGENTS.md");
 
+    // Individual code review renders the agent's change as a unified diff (old line above the new), not the whole file.
+    await screen.findByText("Use repo context.");
+    expect(container.querySelector(".review-reader")).toHaveClass("review-diff");
+    expect(container.querySelector(".review-delete code")).toHaveTextContent("Use no context.");
+    expect(container.querySelector(".review-changed code")).toHaveTextContent("Use repo context.");
+
     // The right-only context file is not offered while reviewing the variant it is absent from.
     expect(screen.queryByRole("button", { name: /AGENTS.md/ })).toBeNull();
 
     // Switching the reviewed variant to the one the context file belongs to surfaces it in the list.
     await fireEvent.click(screen.getByRole("button", { name: "repo" }));
     expect(await screen.findByRole("button", { name: /AGENTS.md right-only/ })).toBeInTheDocument();
+  });
+
+  it("collapses unchanged code in Individual review so the agent's edit is the focus", async () => {
+    // A long file the agent barely touched: 40 unchanged lines, one added line, 40 more unchanged.
+    const lines = [
+      ...Array.from({ length: 40 }, (_unused, i) => ({ kind: "equal" as const, leftNumber: i + 1, rightNumber: i + 1, left: `keep ${i}`, right: `keep ${i}` })),
+      { kind: "add" as const, rightNumber: 41, right: "the one new line" },
+      ...Array.from({ length: 40 }, (_unused, i) => ({ kind: "equal" as const, leftNumber: i + 41, rightNumber: i + 42, left: `keep ${i + 40}`, right: `keep ${i + 40}` }))
+    ];
+    const codeDiff: EvalDiffView = {
+      artifact: { id: "code:src/big.ts", kind: "code", path: "src/big.ts", label: "src/big.ts", status: "changed" },
+      left: { variantId: "empty", label: "task/empty" },
+      right: { variantId: "empty", label: "task/empty" },
+      lines
+    };
+    const client = fakeEvalClient({
+      artifacts: [
+        { id: "prompt:task", kind: "prompt", path: "task", label: "Task prompt", status: "same" },
+        { id: "code:src/big.ts", kind: "code", path: "src/big.ts", label: "src/big.ts", status: "changed" }
+      ],
+      codeDiff
+    });
+    const { container } = render(App, { props: { client } });
+
+    // The added line is shown; the 80 unchanged lines are collapsed behind expandable gaps rather than all rendered.
+    expect(await screen.findByText("the one new line")).toBeInTheDocument();
+    expect(container.querySelectorAll(".diff-gap").length).toBeGreaterThan(0);
+    expect(container.querySelectorAll(".review-row").length).toBeLessThan(20);
+
+    // Expanding a gap reveals the unchanged lines it hid.
+    await fireEvent.click(container.querySelector(".diff-gap") as HTMLElement);
+    expect(container.querySelectorAll(".review-row").length).toBeGreaterThan(20);
   });
 
   it("launches a run from the selected spec", async () => {
@@ -91,7 +129,7 @@ describe("eval svelte app", () => {
 });
 
 /** Creates a deterministic client for app rendering tests. */
-function fakeEvalClient(overrides?: { artifacts?: EvalCompareView["artifacts"] }): EvalUiClient {
+function fakeEvalClient(overrides?: { artifacts?: EvalCompareView["artifacts"]; codeDiff?: EvalDiffView }): EvalUiClient {
   /** Builds a deterministic output-metrics summary for a variant. */
   const metrics = (durationMs: number, peak: number): EvalVariantMetricsView => ({
     durationMs,
@@ -190,8 +228,11 @@ function fakeEvalClient(overrides?: { artifacts?: EvalCompareView["artifacts"] }
     getRun: async () => run,
     /** Returns the seeded comparison view. */
     compareRun: async () => compare,
-    /** Returns the seeded diff matching the requested artifact kind. */
-    getDiff: vi.fn(async (args) => args.kind === "context" ? contextDiff : promptDiff),
+    /** Returns the seeded diff for the requested artifact kind, with an artifact descriptor matching the request. */
+    getDiff: vi.fn(async (args) => {
+      const seed = args.kind === "context" ? contextDiff : args.kind === "code" && overrides?.codeDiff ? overrides.codeDiff : promptDiff;
+      return { ...seed, artifact: { ...seed.artifact, id: `${args.kind}:${args.path}`, kind: args.kind, path: args.path } };
+    }),
     /** Returns empty reviews. */
     getReviews: async () => ({ schema: "eval.reviews.v1" as const, variants: {} }),
     /** Echoes persisted reviews. */

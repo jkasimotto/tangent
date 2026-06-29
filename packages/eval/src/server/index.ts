@@ -474,6 +474,15 @@ async function artifactContent(left: EvalRunVariantState, right: EvalRunVariantS
     const [leftPrompts, rightPrompts] = await Promise.all([promptCandidates(left), promptCandidates(right)]);
     return { leftContent: leftPrompts.get(artifactPath), rightContent: rightPrompts.get(artifactPath) };
   }
+  // Reviewing a single variant's code (left === right) shows the agent's change, base -> implementation,
+  // not the post-edit file against itself (which would be all-equal: a whole file with nothing to find).
+  if (kind === "code" && left.caseId === right.caseId && left.variantId === right.variantId) {
+    const [baseContent, headContent] = await Promise.all([
+      showFile(left.worktree, left.baseCommit, artifactPath).catch(() => undefined),
+      showImplementationFile(left, artifactPath)
+    ]);
+    return { leftContent: baseContent, rightContent: headContent };
+  }
   const read = kind === "context" ? showContextFile : showImplementationFile;
   const [leftContent, rightContent] = await Promise.all([read(left, artifactPath), read(right, artifactPath)]);
   return { leftContent, rightContent };

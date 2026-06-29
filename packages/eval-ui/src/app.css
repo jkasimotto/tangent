@@ -675,6 +675,25 @@ button {
 .review-row.has-notes {
   background: #fbfdfb;
 }
+/* Unified diff markers for Individual code review: added/changed lines green, removed lines red and muted. */
+.review-diff .review-add code,
+.review-diff .review-changed code {
+  background: var(--add);
+}
+.review-diff .review-delete code {
+  background: var(--delete);
+  color: var(--muted);
+}
+.review-diff .review-add .line-no::before {
+  content: "+ ";
+  color: var(--accent);
+}
+.review-diff .review-delete .line-no::before {
+  content: "− ";
+}
+.review-row.review-context .line-no.muted {
+  opacity: 0.55;
+}
 .row-actions .mark {
   border: 0;
   background: transparent;

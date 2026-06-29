@@ -23,5 +23,15 @@ CLI notes:
 - `GET /api/eval/runs/<id>/diff` returns the line diff for one artifact (`kind` is `prompt`, `context`, or `code`).
 - `GET /api/eval/specs` lists launchable specs from the project `evals/` directory and prior runs.
 - `POST /api/eval/runs` with `{ specPath }` prepares a run, starts execution in the background, and returns `{ runId }`; the manifest is persisted per phase so polling `GET /api/eval/runs/<id>` shows live status.
+- `GET /api/eval/runs/<id>/context/manifest?caseId=<id>&variant=<id>` returns `{ skills, subagents }`: the discoverable skill and subagent roster for the variant's frozen worktree (frontmatter only, `loaded` is always `false`).
+- `GET /api/eval/runs/<id>/context/assemble?caseId=<id>&variant=<id>&cwd=<path>&skills=<a,b>` returns an `AssembledContext`: ordered blocks (CLAUDE.md chain with `@imports` expanded, skills index, requested skill bodies, subagents index), skill and subagent lists, and the lazy-CLAUDE.md roster. `cwd` is repo-relative; `skills` is a comma-separated list of skill names to load.
+
+Context assembly exports (from `@tangent/eval`):
+- `assembleContext(source, cwd, loadedSkills)` assembles the full repo-contributed context for a `cwd` and loaded-skill set.
+- `contextManifest(source)` returns discoverable skills and subagents (frontmatter only).
+- `parseFrontmatter(text)` extracts `name` and `description` from a leading YAML front-matter block.
+- `claudeMdChain(allPaths, cwd)` returns `{ chain, lazy }`: the eager CLAUDE.md chain and the below-cwd lazy list.
+- `discoverSkills(allPaths)`, `discoverSubagents(allPaths)` return sorted paths matching `.claude/skills/*/SKILL.md` and `.claude/agents/*.md`.
+- Types: `AssembledContext`, `AssembledBlock`, `AssembledBlockKind`, `SkillEntry`, `SubagentEntry`, `ContextManifest`, `ContextSource`.
 
 Agents must import through these public exports, not package src internals.

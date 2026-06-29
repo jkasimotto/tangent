@@ -37,6 +37,7 @@ export type EvalVariantMetricsView = {
   tokensTotal?: number;
   peakContextTokens?: number;
   filesChanged: number;
+  filesRead: number;
   diffStat?: string;
   conversationIds: string[];
   sparkline?: EvalSparkline;

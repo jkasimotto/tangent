@@ -265,6 +265,7 @@ function fakeEvalClient(overrides?: { artifacts?: EvalCompareView["artifacts"]; 
     tokensTotal: peak * 2,
     peakContextTokens: peak,
     filesChanged: 1,
+    filesRead: 3,
     diffStat: "1 file changed",
     conversationIds: ["conv-1"],
     sparkline: { durationMs, tokensTotal: peak, buckets: [{ kind: "assistant", tokenShare: 1, durationShare: 1 }] }

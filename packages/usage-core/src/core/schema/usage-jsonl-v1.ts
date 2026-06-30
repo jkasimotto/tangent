@@ -1,4 +1,12 @@
-export type UsageProvider = "claude" | "codex";
+export type UsageProvider = "claude" | "codex" | "gemini";
+
+/** Every provider Tangent ingests natively. The single source of truth for default provider lists, so adding a provider does not require updating scattered `["claude", "codex"]` literals. */
+export const usageProviders: readonly UsageProvider[] = ["claude", "codex", "gemini"];
+
+/** Type guard narrowing an arbitrary value to a known usage provider. */
+export function isUsageProvider(value: unknown): value is UsageProvider {
+  return value === "claude" || value === "codex" || value === "gemini";
+}
 
 export type UsageEventKind =
   | "conversation.start"

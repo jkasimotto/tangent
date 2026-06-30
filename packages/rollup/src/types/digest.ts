@@ -12,7 +12,7 @@ export type EvidenceRef = {
 export type RollupCandidate = {
   schema: "rollup.candidate.v1";
   sourceKey: string;
-  provider: "claude" | "codex";
+  provider: "claude" | "codex" | "gemini";
   conversationId: string;
   turnId: string;
   dateBucket: string;
@@ -45,7 +45,7 @@ export type RollupInput = {
   };
   source: {
     generatedAt: string;
-    providers: Array<"claude" | "codex">;
+    providers: Array<"claude" | "codex" | "gemini">;
     conversationIds: string[];
     sourceFiles: string[];
     caveats: string[];
@@ -59,7 +59,7 @@ export type RollupInput = {
 
 export type RollupUserConversation = {
   schema: "rollup.user-conversation.v1";
-  provider: "claude" | "codex";
+  provider: "claude" | "codex" | "gemini";
   conversationId: string;
   providerSessionId?: string;
   turnId: string;

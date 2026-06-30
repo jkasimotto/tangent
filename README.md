@@ -1,10 +1,10 @@
 # tangent
 
-`tangent` is a local toolkit for the coding agents you already use. It captures your Claude Code and Codex sessions, keeps them on your machine, and lets you run side-by-side evals to see how a change to your prompt, your context files, or your model actually affects the agent.
+`tangent` is a local toolkit for the coding agents you already use. It captures your Claude Code, Codex, and Gemini CLI sessions, keeps them on your machine, and lets you run side-by-side evals to see how a change to your prompt, your context files, or your model actually affects the agent.
 
 Two things ship here, mounted together by `tangent ui`:
 
-- **usage** — read your own agent activity. A local UI and a queryable API over every Claude Code and Codex session on your machine.
+- **usage** — read your own agent activity. A local UI and a queryable API over every Claude Code, Codex, and Gemini CLI session on your machine.
 - **eval** — compare. Run the same task under different contexts, prompts, or models and look at the results next to each other.
 
 ## Get started
@@ -27,9 +27,9 @@ To have Claude Code do the eval work for you, enable the `setup-tangent-eval` sk
 
 ## usage — read your agent activity
 
-`tangent usage` reads the native Claude Code and Codex transcripts already on your disk and indexes them under `~/.tangent/usage`. Nothing leaves your machine.
+`tangent usage` reads the native Claude Code, Codex, and Gemini CLI transcripts already on your disk and indexes them under `~/.tangent/usage`. Nothing leaves your machine. It discovers Claude Code conversations under `~/.claude*/projects`, Codex rollouts under `~/.codex/sessions`, and Gemini CLI chat sessions under `~/.gemini/tmp/<project>/chats` (both the single-document `session-*.json` and the newer `session-*.jsonl` formats).
 
-Most of the time you live in the UI (the Usage panel of `tangent ui`), which defaults to every project across all your Claude profiles for the last week (`--days`, default 7). From the command line, the same data is also an API:
+Most of the time you live in the UI (the Usage panel of `tangent ui`), which defaults to every project and every agent across all your Claude profiles for the last week (`--days`, default 7). From the command line, the same data is also an API:
 
 ```bash
 tangent usage today                      # recent activity, human-readable

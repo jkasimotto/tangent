@@ -112,7 +112,7 @@ function commonJsonOptions(names: string[]) {
     if (name === "json") return { name, description: "Print JSON" };
     if (name === "verbose") return { name, description: "Print verbose details" };
     if (name === "trace") return { name, description: "Print timing trace" };
-    if (name === "provider") return { name, takesValue: true, values: ["claude", "codex"], description: "Provider filter" };
+    if (name === "provider") return { name, takesValue: true, values: ["claude", "codex", "gemini"], description: "Provider filter" };
     if (name === "scope") return { name, takesValue: true, values: ["all", "repo"], description: "Session discovery scope (default: repo)" };
     if (name === "source") return { name, takesValue: true, values: ["native", "all"], description: "Data source" };
     if (name === "by") return { name, takesValue: true, values: ["model"], description: "Grouping mode" };

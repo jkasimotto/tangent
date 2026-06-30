@@ -11,7 +11,7 @@ import { listNativeSchemas } from "@tangent/usage-providers/providers/native/sch
 import { nativeSchemaStatus } from "@tangent/usage-providers/providers/native/status";
 import type { NativeLogInspection, NativeProviderSchemaStatus } from "@tangent/usage-providers/providers/native/types";
 import type { UsageDataset, VisibleMessage } from "@tangent/usage-core/core/dataset";
-import type { UsageProvider } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
+import { isUsageProvider, usageProviders, type UsageProvider } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
 import { runUsageResourceCommand } from "./resource-commands.js";
 import { usageCommandSpec } from "./spec.js";
 import { usageUiCommand } from "./ui.js";
@@ -556,7 +556,7 @@ function estimateTokens(text: string): number {
 function printUsageTokens(rows: Array<Record<string, unknown>>, providers: UsageProvider[]): void {
   console.log("Known token usage");
   if (!rows.length) {
-    for (const provider of providers.length ? providers : ["claude", "codex"] as const) {
+    for (const provider of providers.length ? providers : usageProviders) {
       console.log(`  ${provider}: unavailable  reason=no native token usage found in indexed transcripts`);
     }
     return;
@@ -639,8 +639,8 @@ function dateArg(value: unknown): Date | undefined {
 }
 /** Parses a required provider CLI argument. */
 function providerArg(value: unknown): UsageProvider {
-  if (value === "claude" || value === "codex") return value;
-  throw new Error("--provider must be claude or codex.");
+  if (isUsageProvider(value)) return value;
+  throw new Error("--provider must be claude, codex, or gemini.");
 }
 
 /** Parses an optional provider CLI argument. */
@@ -651,14 +651,14 @@ function providerArgOrUndefined(value: unknown): UsageProvider | undefined {
 /** Parses a provider argument that may request all providers. */
 function providerOrAll(value: unknown): UsageProvider | "all" {
   if (value === undefined) return "all";
-  if (value === "all" || value === "claude" || value === "codex") return value;
-  throw new Error("--provider must be claude, codex, or all.");
+  if (value === "all" || isUsageProvider(value)) return value;
+  throw new Error("--provider must be claude, codex, gemini, or all.");
 }
 
 /** Expands the provider CLI argument into provider filters. */
 function providerList(value: unknown): Array<UsageProvider | "all"> {
   const provider = providerOrAll(value);
-  return provider === "all" ? ["claude", "codex"] : [provider];
+  return provider === "all" ? [...usageProviders] : [provider];
 }
 
 /** Parses the usage index source CLI argument. */

@@ -12,11 +12,12 @@ import type {
   UsageIndexSource
 } from "../sdk/indexStore.js";
 import { providerCapabilities } from "@tangent/usage-providers/providers/index";
+import { isUsageProvider, usageProviders } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
 export { openUsageUiFromSqlite, type UsageSessionWithSparkline } from "./uiClient.js";
 
 /** Opens a Usage client backed by the SQLite index, ensuring it is current and loading the windowed dataset into a projection. */
 export async function openUsageFromSqlite(options: OpenUsageOptions = {}): Promise<UsageClient> {
-  const providers = options.providers?.filter((provider) => provider === "claude" || provider === "codex") as Array<"claude" | "codex"> | undefined;
+  const providers = options.providers?.filter(isUsageProvider);
   const dataset = await loadUsageDatasetFromIndex({
     repo: options.repo || ".",
     scope: options.scope,
@@ -30,7 +31,7 @@ export async function openUsageFromSqlite(options: OpenUsageOptions = {}): Promi
     events: dataset.events,
     warnings: dataset.warnings,
     sources: dataset.provenance.sourceFiles.map((file) => ({ id: file, kind: "native", path: file })),
-    capabilities: (providers || ["claude", "codex"]).map(providerCapabilities),
+    capabilities: (providers || usageProviders).map(providerCapabilities),
     contentMode: options.contentMode || "metadata-with-excerpts",
     index: {
       kind: "sqlite",
@@ -45,12 +46,12 @@ export async function openUsageFromSqlite(options: OpenUsageOptions = {}): Promi
  * The server serves this while the real snapshot loads in the background, then swaps it in.
  */
 export function emptyUsageFromSqlite(options: OpenUsageOptions = {}): UsageClient {
-  const providers = options.providers?.filter((provider) => provider === "claude" || provider === "codex") as Array<"claude" | "codex"> | undefined;
+  const providers = options.providers?.filter(isUsageProvider);
   const projections = eventsToProjections({
     events: [],
     warnings: [],
     sources: [],
-    capabilities: (providers || ["claude", "codex"]).map(providerCapabilities),
+    capabilities: (providers || usageProviders).map(providerCapabilities),
     contentMode: options.contentMode || "metadata-with-excerpts",
     index: { kind: "sqlite", version: "usage.index.v2" }
   });

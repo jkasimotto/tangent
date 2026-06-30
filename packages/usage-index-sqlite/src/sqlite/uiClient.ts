@@ -3,7 +3,7 @@ import { createUsageClient } from "@tangent/usage-core/core/index";
 import { eventsToProjections } from "@tangent/usage-core/core/projections";
 import { resultMeta } from "@tangent/usage-core/query";
 import { UsageError, type UsageMessage, type UsageSession } from "@tangent/usage-core/schema";
-import type { UsageProvider } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
+import { isUsageProvider, usageProviders } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
 import { providerCapabilities } from "@tangent/usage-providers/providers/index";
 import { ensureSchema, openDb, usageIndexTarget } from "../sdk/indexStore.js";
 
@@ -46,9 +46,9 @@ export type UsageSessionWithSparkline = UsageSession & { sparkline?: unknown };
  * empty in-memory client. Reads only; the watcher keeps the index current through `ensureUsageIndex`.
  */
 export async function openUsageUiFromSqlite(options: OpenUsageOptions = {}): Promise<UsageClient> {
-  const providers = options.providers?.filter((provider) => provider === "claude" || provider === "codex") as UsageProvider[] | undefined;
+  const providers = options.providers?.filter(isUsageProvider);
   const contentMode = options.contentMode || "metadata-with-excerpts";
-  const capabilities = (providers || ["claude", "codex"]).map(providerCapabilities);
+  const capabilities = (providers || usageProviders).map(providerCapabilities);
   const since = options.from ? new Date(options.from).toISOString() : undefined;
   const db = await openDb(await usageIndexTarget({ repo: options.repo || ".", scope: options.scope }));
   ensureSchema(db);

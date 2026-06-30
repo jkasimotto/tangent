@@ -4,10 +4,11 @@ import { pathExists, repoInfo } from "@tangent/repo";
 
 import { listJsonlFiles } from "@tangent/usage-core/core/append-jsonl";
 import { repoEventDir, repoIndexPath } from "@tangent/usage-core/core/paths";
-import type { UsageProvider } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
+import { usageProviders, type UsageProvider } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
 import { capabilitiesForProvider } from "@tangent/usage-core/core/schema/capabilities";
 import { discoverClaudeNative } from "@tangent/usage-providers/providers/claude/native/discover";
 import { discoverCodexNative } from "@tangent/usage-providers/providers/codex/native/discover";
+import { discoverGeminiNative } from "@tangent/usage-providers/providers/gemini/native/discover";
 import { nativeSchemaStatus } from "@tangent/usage-providers/providers/native/status";
 import type { NativeProviderSchemaStatus } from "@tangent/usage-providers/providers/native/types";
 
@@ -55,7 +56,7 @@ export type RepoStatus = {
 };
 
 export async function status(options: StatusOptions): Promise<RepoStatus> {
-  const providers = options.providers || ["claude", "codex"];
+  const providers = options.providers || [...usageProviders];
   const info = await repoInfo(options.repo);
   const root = info.root || info.cwd;
   const providerStatuses: ProviderStatus[] = [];
@@ -64,10 +65,14 @@ export async function status(options: StatusOptions): Promise<RepoStatus> {
   for (const provider of providers) {
     const logDir = repoEventDir(root, provider);
     const files = await listJsonlFiles(logDir);
-    const nativePaths = provider === "claude" ? await discoverClaudeNative(root) : await discoverCodexNative(root);
+    const nativePaths = provider === "claude"
+      ? await discoverClaudeNative(root)
+      : provider === "gemini"
+        ? await discoverGeminiNative(root)
+        : await discoverCodexNative(root);
     const nativeSchema = nativeStatuses.find((status) => status.provider === provider) || {
       provider,
-      logKind: provider === "claude" ? "claude.conversation" as const : "codex.rollout" as const,
+      logKind: provider === "claude" ? "claude.conversation" as const : provider === "gemini" ? "gemini.chat" as const : "codex.rollout" as const,
       files: 0,
       records: 0,
       parseErrors: 0,

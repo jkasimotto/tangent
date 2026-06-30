@@ -3,6 +3,7 @@ import { repoInfo } from "@tangent/repo";
 import type { UsageProvider } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
 import { discoverClaudeNative } from "../claude/native/discover.js";
 import { discoverCodexNative } from "../codex/native/discover.js";
+import { discoverGeminiNative } from "../gemini/native/discover.js";
 import { aggregateCompatibility, compatibilityForVersion } from "./schema-registry.js";
 import { inspectNativeLogFile } from "./inspect.js";
 import type {
@@ -13,13 +14,17 @@ import type {
 } from "./types.js";
 
 export async function nativeSchemaStatus(options: NativeSchemaStatusOptions): Promise<NativeProviderSchemaStatus[]> {
-  const providers = options.providers?.length ? options.providers : ["claude", "codex"] as UsageProvider[];
+  const providers = options.providers?.length ? options.providers : ["claude", "codex", "gemini"] as UsageProvider[];
   const info = await repoInfo(options.repo);
   const root = info.root || info.cwd;
   const result: NativeProviderSchemaStatus[] = [];
 
   for (const provider of providers) {
-    const files = provider === "claude" ? await discoverClaudeNative(root) : await discoverCodexNative(root);
+    const files = provider === "claude"
+      ? await discoverClaudeNative(root)
+      : provider === "gemini"
+        ? await discoverGeminiNative(root)
+        : await discoverCodexNative(root);
     result.push(await nativeProviderSchemaStatus(provider, files));
   }
 
@@ -30,7 +35,7 @@ async function nativeProviderSchemaStatus(provider: UsageProvider, files: string
   if (!files.length) {
     return {
       provider,
-      logKind: provider === "claude" ? "claude.conversation" : "codex.rollout",
+      logKind: nativeLogKind(provider),
       files: 0,
       records: 0,
       parseErrors: 0,
@@ -80,7 +85,15 @@ function sum(values: number[]): number {
   return values.reduce((total, value) => total + value, 0);
 }
 
+function nativeLogKind(provider: UsageProvider): NativeProviderSchemaStatus["logKind"] {
+  if (provider === "claude") return "claude.conversation";
+  if (provider === "gemini") return "gemini.chat";
+  return "codex.rollout";
+}
+
 function providerLabel(provider: UsageProvider): string {
-  return provider === "claude" ? "Claude Code" : "Codex";
+  if (provider === "claude") return "Claude Code";
+  if (provider === "gemini") return "Gemini CLI";
+  return "Codex";
 }
 

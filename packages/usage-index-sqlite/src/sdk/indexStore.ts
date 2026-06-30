@@ -9,7 +9,7 @@ import { UsageDataset } from "@tangent/usage-core/core/dataset";
 import { eventsToProjections } from "@tangent/usage-core/core/projections";
 import { buildSessionSparkline } from "@tangent/usage-core/core/sparkline";
 import { globalEventRoot, globalIndexPath, repoArchiveDir, repoEventDir, repoIndexPath } from "@tangent/usage-core/core/paths";
-import type { UsageJsonlLineV1, UsageProvider, UsageWarning } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
+import { usageProviders, type UsageJsonlLineV1, type UsageProvider, type UsageWarning } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
 import { loadNativeSourceFiles } from "@tangent/usage-providers/providers/native/load";
 import { usageProjectionSchemaSql, obsoleteProjectionTables } from "@tangent/usage-index-sqlite/sqlite/schema";
 
@@ -116,7 +116,7 @@ type UsageIndexTarget = {
 export async function ensureUsageIndex(options: UsageIndexOptions): Promise<UsageIndexResult> {
   const target = await usageIndexTarget(options);
   const root = target.repoRoot;
-  const providers = options.providers?.length ? options.providers : ["claude", "codex"] as UsageProvider[];
+  const providers = options.providers?.length ? options.providers : [...usageProviders];
   const sources = options.sources?.length ? options.sources : ["native"] as UsageIndexSource[];
   const db = await openDb(target);
   const warnings: UsageWarning[] = [];

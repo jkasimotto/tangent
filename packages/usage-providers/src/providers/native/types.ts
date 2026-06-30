@@ -1,6 +1,6 @@
 import type { UsageProvider } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
 
-export type NativeLogKind = "codex.rollout" | "claude.conversation";
+export type NativeLogKind = "codex.rollout" | "claude.conversation" | "gemini.chat";
 
 export type NativeSchemaCompatibilityStatus =
   | "compatible"

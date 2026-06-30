@@ -22,7 +22,7 @@ export type RollupConfig = {
     maxTurnDurationMinutesForRollup: number;
   };
   input: {
-    providers: Array<"claude" | "codex">;
+    providers: Array<"claude" | "codex" | "gemini">;
     includeVisibleMessages: boolean;
     includeInternalMessages: boolean;
     includeToolInputs: boolean;

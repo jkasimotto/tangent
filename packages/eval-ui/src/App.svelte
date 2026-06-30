@@ -902,7 +902,12 @@
   <div class="topbar">
     <span class="brand">Tangent Eval</span>
     <label class="topbar-pick">
-      <select bind:value={selectedRunId} on:change={() => selectRun(selectedRunId)} disabled={runs.length === 0}>
+      <!-- One-way value + a single change handler, never bind:value + on:change. With both, a native change
+           writes selectedRunId and flushes the run/manifest reactives with the previous run's variants still
+           set (a 404) before selectRun runs to clear them and reset the load key; selectRun then resets the
+           key mid-flight so getRun's result is discarded and the run sticks on "Loading run…". selectRun is
+           the single source of truth, reading the new id straight off the event. -->
+      <select value={selectedRunId} on:change={(event) => selectRun(event.currentTarget.value)} disabled={runs.length === 0}>
         {#if runs.length === 0}
           <option value="">{loading ? "Loading runs…" : "No prepared runs"}</option>
         {:else}
@@ -914,7 +919,7 @@
     </label>
     {#if runDetail && runDetail.cases.length > 1}
       <label class="topbar-pick">
-        <select bind:value={selectedCaseId} on:change={() => selectCase(selectedCaseId)}>
+        <select value={selectedCaseId} on:change={(event) => selectCase(event.currentTarget.value)}>
           {#each runDetail.cases as testCase}
             <option value={testCase.id}>{testCase.id}</option>
           {/each}

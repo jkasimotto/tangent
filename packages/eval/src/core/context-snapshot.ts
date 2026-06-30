@@ -1,6 +1,6 @@
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { git, gitText, listFilesAtRef, resolveCommit, resolveGitRoot, showFile } from "@tangent/repo/git";
+import { git, gitText, listFilesAtRef, resolveCommit, resolveGitRoot, showFile, showFileFollowingSymlinks } from "@tangent/repo/git";
 import { createSyntheticCommit } from "@tangent/repo/worktree";
 
 import { contextPatterns, type EvalContextFile, type EvalContextManifest, type EvalContextMode } from "../types/context.js";
@@ -29,6 +29,7 @@ type SnapshotFile = {
   content: string;
 };
 
+/** Captures the context files at a worktree or ref into a synthetic commit, returning its ref, commit, and manifest. */
 export async function captureContextSnapshot(options: CaptureContextOptions): Promise<CaptureContextResult> {
   const repoRoot = await resolveGitRoot(path.resolve(options.repo));
   const cwd = normalizeCwd(options.cwd || ".");
@@ -73,6 +74,7 @@ export async function captureContextSnapshot(options: CaptureContextOptions): Pr
   return { ref, commit, manifest };
 }
 
+/** Reads and validates the manifest.json stored at a context snapshot ref. */
 export async function readContextManifest(repo: string, ref: string): Promise<EvalContextManifest> {
   const repoRoot = await resolveGitRoot(path.resolve(repo));
   const raw = await showFile(repoRoot, ref, "manifest.json");
@@ -81,6 +83,7 @@ export async function readContextManifest(repo: string, ref: string): Promise<Ev
   return manifest;
 }
 
+/** Materializes a variant's context into its worktree per the requested mode (repo, empty, snapshot, or git-ref), returning the applied ref and any warnings. */
 export async function applyContextMode(args: {
   sourceRepo: string;
   worktree: string;
@@ -130,6 +133,7 @@ export async function applyContextMode(args: {
   return { appliedContext: snapshotRef, warnings };
 }
 
+/** Discovers and reads context files from the working tree, rejecting uncommitted repo context unless dirty capture is allowed. */
 async function snapshotFilesFromWorktree(args: {
   repoRoot: string;
   cwd: string;
@@ -166,6 +170,7 @@ async function snapshotFilesFromWorktree(args: {
   return rows;
 }
 
+/** Lists and reads the context files matching discovery at a git ref, following symlinks to their target content. */
 async function snapshotFilesFromRef(args: {
   repoRoot: string;
   ref: string;
@@ -177,7 +182,7 @@ async function snapshotFilesFromRef(args: {
     .sort();
   const rows: SnapshotFile[] = [];
   for (const filePath of paths) {
-    const content = await showFile(args.repoRoot, args.ref, filePath);
+    const content = await showFileFollowingSymlinks(args.repoRoot, args.ref, filePath);
     rows.push({
       manifestFile: {
         scope: "repo",
@@ -191,6 +196,7 @@ async function snapshotFilesFromRef(args: {
   return rows;
 }
 
+/** Removes the repo-scoped context files discovered in a worktree, leaving ancestor-scoped files untouched. */
 async function deleteRepoContextFiles(worktree: string, cwd: string): Promise<void> {
   const discovered = await discoverContextFiles({
     repoRoot: worktree,
@@ -203,6 +209,7 @@ async function deleteRepoContextFiles(worktree: string, cwd: string): Promise<vo
   }
 }
 
+/** Returns which of the given repo context paths have uncommitted changes, per `git status --porcelain`. */
 async function dirtyContextPaths(repoRoot: string, repoPaths: string[]): Promise<string[]> {
   if (repoPaths.length === 0) return [];
   const status = await gitText(repoRoot, ["status", "--porcelain", "--", ...repoPaths]).catch(() => "");
@@ -212,12 +219,14 @@ async function dirtyContextPaths(repoRoot: string, repoPaths: string[]): Promise
     .map((line) => line.slice(3).trim().replace(/^"|"$/g, ""));
 }
 
+/** Walks up `depth` parent directories from the work parent to locate an ancestor-scoped file's base. */
 function ancestorBase(workParent: string, depth: number): string {
   let current = workParent;
   for (let index = 1; index < depth; index += 1) current = path.dirname(current);
   return current;
 }
 
+/** Normalizes a cwd to a forward-slash relative path, collapsing "." segments to ".". */
 function normalizeCwd(cwd: string): string {
   const normalized = cwd.split(/[\\/]+/).filter((part) => part && part !== ".").join("/");
   return normalized || ".";

@@ -78,6 +78,48 @@ export async function showFile(repo: string, ref: string, filePath: string): Pro
   return gitRaw(repo, ["show", `${ref}:${filePath}`]);
 }
 
+/**
+ * Reads a file at a ref, following in-tree symlinks to the content they point at.
+ *
+ * Git stores a symlink as a blob whose content is the target path, so a plain `git show ref:link`
+ * yields that path string, not the linked file. Eval context files (CLAUDE.md, AGENTS.md) are
+ * commonly symlinks to one shared file, so reading them this way surfaces the real instructions.
+ * Targets resolve within the tree, relative to the link's directory; broken, out-of-tree, or
+ * cyclic links throw like a missing path so callers fall back to their absent-file handling.
+ */
+export async function showFileFollowingSymlinks(repo: string, ref: string, filePath: string, maxHops = 10): Promise<string> {
+  let current = normalizeTreePath(filePath);
+  for (let hop = 0; hop < maxHops; hop += 1) {
+    if (await treeEntryMode(repo, ref, current) !== "120000") return gitRaw(repo, ["show", `${ref}:${current}`]);
+    const target = (await gitRaw(repo, ["show", `${ref}:${current}`])).trim();
+    current = resolveTreePath(current, target);
+  }
+  throw new Error(`Symlink cycle following ${filePath} at ${ref}`);
+}
+
+/** Returns the octal file mode of a path at a ref (e.g. "120000" for a symlink), or undefined when absent. */
+async function treeEntryMode(repo: string, ref: string, filePath: string): Promise<string | undefined> {
+  const line = await gitText(repo, ["ls-tree", ref, "--", filePath]).catch(() => "");
+  return line ? line.split(/\s+/)[0] : undefined;
+}
+
+/** Resolves a symlink target against the link's directory, collapsing "." and ".." within the tree. */
+function resolveTreePath(from: string, target: string): string {
+  const base = from.includes("/") ? from.slice(0, from.lastIndexOf("/")) : "";
+  return normalizeTreePath(target.startsWith("/") ? target : base ? `${base}/${target}` : target);
+}
+
+/** Collapses a posix tree path: drops empty and "." segments, and pops the parent on "..". */
+function normalizeTreePath(treePath: string): string {
+  const parts: string[] = [];
+  for (const segment of treePath.split("/")) {
+    if (!segment || segment === ".") continue;
+    if (segment === "..") parts.pop();
+    else parts.push(segment);
+  }
+  return parts.join("/");
+}
+
 /** Lists every tracked file path at a ref. */
 export async function listFilesAtRef(repo: string, ref: string): Promise<string[]> {
   const output = await gitText(repo, ["ls-tree", "-r", "--name-only", ref]);

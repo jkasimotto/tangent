@@ -1,4 +1,4 @@
-import { fileOidsAtRef, showFile } from "@tangent/repo/git";
+import { fileOidsAtRef, showFileFollowingSymlinks } from "@tangent/repo/git";
 
 import type { EvalRunVariantState } from "../types/run.js";
 import { assembleContext, contextManifest, type AssembledContext, type ContextManifest, type ContextSource } from "../core/context-assembly.js";
@@ -10,7 +10,7 @@ export function variantContextSource(variant: EvalRunVariantState): ContextSourc
     /** Lists all tracked file paths at the variant's context ref. */
     listFiles: async () => [...(await fileOidsAtRef(variant.worktree, ref)).keys()],
     /** Reads one file at the variant's context ref, returning undefined when absent. */
-    read: (filePath) => showFile(variant.worktree, ref, filePath).catch(() => undefined)
+    read: (filePath) => showFileFollowingSymlinks(variant.worktree, ref, filePath).catch(() => undefined)
   };
 }
 

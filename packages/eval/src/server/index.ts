@@ -3,7 +3,7 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
 import type { LocalUiApp, StaticAssetMount, UiRoute, UiRouteResponse } from "@tangent/ui-server";
-import { changedFiles, fileOidsAtRef, gitText, showFile } from "@tangent/repo/git";
+import { changedFiles, fileOidsAtRef, gitText, showFile, showFileFollowingSymlinks } from "@tangent/repo/git";
 
 import type { EvalAgentConfig } from "../types/provider.js";
 import type { EvalRunManifest, EvalRunStatus, EvalRunVariantState } from "../types/run.js";
@@ -634,7 +634,7 @@ function promptLabel(value: string): string {
 /** Reads a context file from the variant's context commit. */
 async function showContextFile(variant: EvalRunVariantState, filePath: string): Promise<string | undefined> {
   const ref = variant.contextCommit || variant.baseCommit;
-  return showFile(variant.worktree, ref, filePath).catch(() => undefined);
+  return showFileFollowingSymlinks(variant.worktree, ref, filePath).catch(() => undefined);
 }
 
 /** Computes same/changed/one-sided status for artifact content. */

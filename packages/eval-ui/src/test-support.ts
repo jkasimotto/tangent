@@ -10,7 +10,7 @@ import type {
 } from "./client.js";
 
 /** Creates a deterministic client for app rendering tests. */
-export function fakeEvalClient(overrides?: { artifacts?: EvalCompareView["artifacts"]; codeDiff?: EvalDiffView; missingRunId?: string }): EvalUiClient {
+export function fakeEvalClient(overrides?: { artifacts?: EvalCompareView["artifacts"]; codeDiff?: EvalDiffView; missingRunId?: string; secondRunId?: string }): EvalUiClient {
   /** Builds a deterministic evaluator score for a variant. */
   const evaluation = (totalPoints: number): EvalEvaluationView => ({
     model: "judge",
@@ -83,6 +83,32 @@ export function fakeEvalClient(overrides?: { artifacts?: EvalCompareView["artifa
       }]
     }]
   };
+  // A second loadable run that shares the case id "task" but has different variant ids. Switching to it is the
+  // condition that used to fire context fetches against the new run with the previous run's variant ids: the
+  // shared case id let the stale selection survive the switch, producing guaranteed 404s.
+  const secondRun: EvalRunDetailView | undefined = overrides?.secondRunId
+    ? {
+        ...run,
+        id: overrides.secondRunId,
+        name: overrides.secondRunId,
+        cases: [{
+          id: "task",
+          variants: run.cases[0].variants.map((variant) => ({
+            ...variant,
+            variantId: `alt-${variant.variantId}`,
+            label: `task/alt-${variant.variantId}`
+          }))
+        }]
+      }
+    : undefined;
+  /** Resolves a run id to its seeded detail (the second run when configured, else the primary run). */
+  const runById = (runId: string): EvalRunDetailView => (secondRun && runId === secondRun.id ? secondRun : run);
+  /** Asserts a requested variant exists in the run's case, mirroring the server's 404 for a stale pair. */
+  const requireVariant = (runId: string, variant: string): void => {
+    const detail = runById(runId);
+    const exists = detail.cases.some((testCase) => testCase.variants.some((entry) => entry.variantId === variant));
+    if (!exists) throw new Error(`Variant ${variant} not found in run ${runId}.`);
+  };
   const compare: EvalCompareView = {
     run,
     caseId: "task",
@@ -109,8 +135,14 @@ export function fakeEvalClient(overrides?: { artifacts?: EvalCompareView["artifa
   return {
     /** Returns the seeded selected run. */
     getSelection: async () => ({ runId: "run1" }),
-    /** Returns the seeded run list, plus an unloadable run when one is configured (for the failure path). */
-    listRuns: async () => ({ runs: overrides?.missingRunId ? [run, { ...run, id: overrides.missingRunId, name: overrides.missingRunId }] : [run] }),
+    /** Returns the seeded run list, plus an unloadable run or a second loadable run when configured. */
+    listRuns: async () => ({
+      runs: [
+        run,
+        ...(overrides?.missingRunId ? [{ ...run, id: overrides.missingRunId, name: overrides.missingRunId }] : []),
+        ...(secondRun ? [secondRun] : [])
+      ]
+    }),
     /** Returns the seeded launchable specs. */
     listSpecs: async () => ({ specs: [{ path: "/evals/compare.json", name: "compare", caseCount: 1, variantCount: 2 }] }),
     /** Returns the seeded editable prompts. */
@@ -122,27 +154,39 @@ export function fakeEvalClient(overrides?: { artifacts?: EvalCompareView["artifa
     /** Returns the seeded run detail, or rejects for the unloadable run (a deleted or corrupt run). */
     getRun: async (runId) => {
       if (overrides?.missingRunId && runId === overrides.missingRunId) throw new Error("Run not found.");
-      return run;
+      return runById(runId);
     },
-    /** Returns the seeded comparison view. */
-    compareRun: async () => compare,
+    /** Returns the seeded comparison view for the requested run's variant pair. */
+    compareRun: async (args) => {
+      const detail = runById(args.runId);
+      return { ...compare, run: detail, left: detail.cases[0].variants[0], right: detail.cases[0].variants[1] };
+    },
     /** Returns the seeded diff for the requested artifact kind, with an artifact descriptor matching the request. */
     getDiff: vi.fn(async (args) => {
       const seed = args.kind === "context" ? contextDiff : args.kind === "code" && overrides?.codeDiff ? overrides.codeDiff : promptDiff;
       return { ...seed, artifact: { ...seed.artifact, id: `${args.kind}:${args.path}`, kind: args.kind, path: args.path } };
     }),
-    /** Returns a deterministic context manifest. */
-    getContextManifest: vi.fn(async () => ({ skills: [{ name: "testing", description: "Use when testing", path: ".claude/skills/testing/SKILL.md", loaded: false }], subagents: [] })),
+    /** Returns a deterministic context manifest, rejecting a variant that is not part of the requested run. */
+    getContextManifest: vi.fn(async (args: { runId: string; variant: string }) => {
+      requireVariant(args.runId, args.variant);
+      return { skills: [{ name: "testing", description: "Use when testing", path: ".claude/skills/testing/SKILL.md", loaded: false }], subagents: [] };
+    }),
     /** Returns a deterministic assembled context: the repo side has blocks, the empty side has none. */
-    assembleContext: vi.fn(async (args: { variant: string; skills: string[] }) => args.variant === "repo"
-      ? { blocks: [
-          { kind: "claude-md" as const, source: "CLAUDE.md", text: "root rules" },
-          { kind: "skills-index" as const, source: "skills", text: "testing: Use when testing" },
-          ...(args.skills.includes("testing") ? [{ kind: "skill-body" as const, source: ".claude/skills/testing/SKILL.md", text: "FULL TESTING BODY" }] : [])
-        ], skills: [{ name: "testing", description: "Use when testing", path: ".claude/skills/testing/SKILL.md", loaded: args.skills.includes("testing") }], subagents: [], lazyClaudeMd: [] }
-      : { blocks: [], skills: [], subagents: [], lazyClaudeMd: [] }),
-    /** Returns empty conversations for either side. */
-    getConversations: vi.fn(async (args: { variant: string }) => ({ schema: "eval.conversations.v1" as const, caseId: "task", variantId: args.variant, conversations: [], notes: [] })),
+    assembleContext: vi.fn(async (args: { runId: string; variant: string; skills: string[] }) => {
+      requireVariant(args.runId, args.variant);
+      return args.variant === "repo"
+        ? { blocks: [
+            { kind: "claude-md" as const, source: "CLAUDE.md", text: "root rules" },
+            { kind: "skills-index" as const, source: "skills", text: "testing: Use when testing" },
+            ...(args.skills.includes("testing") ? [{ kind: "skill-body" as const, source: ".claude/skills/testing/SKILL.md", text: "FULL TESTING BODY" }] : [])
+          ], skills: [{ name: "testing", description: "Use when testing", path: ".claude/skills/testing/SKILL.md", loaded: args.skills.includes("testing") }], subagents: [], lazyClaudeMd: [] }
+        : { blocks: [], skills: [], subagents: [], lazyClaudeMd: [] };
+    }),
+    /** Returns empty conversations for either side, rejecting a variant outside the requested run. */
+    getConversations: vi.fn(async (args: { runId: string; variant: string }) => {
+      requireVariant(args.runId, args.variant);
+      return { schema: "eval.conversations.v1" as const, caseId: "task", variantId: args.variant, conversations: [], notes: [] };
+    }),
     /** Returns empty reviews. */
     getReviews: async () => ({ schema: "eval.reviews.v1" as const, variants: {} }),
     /** Echoes persisted reviews. */

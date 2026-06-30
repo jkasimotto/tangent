@@ -289,6 +289,28 @@ describe("eval svelte app", () => {
     expect(screen.queryByText(/Loading run/)).toBeNull();
   });
 
+  it("never fetches context for the new run with the previous run's variant ids when switching runs", async () => {
+    // Two runs share the case id "task" but have different variant ids. Switching between them must not carry
+    // the old run's variant selection onto the new run id, which the server answers with a 404.
+    const client = fakeEvalClient({ secondRunId: "run2" });
+    const getContextManifest = client.getContextManifest as ReturnType<typeof vi.fn>;
+    const { container } = render(App, { props: { client } });
+    await screen.findByText(/ui-compare/);
+    await screen.findByLabelText("Configs compared");
+
+    // Switch to the second run. The run picker is the first select.
+    const runSelect = container.querySelector("select") as HTMLSelectElement;
+    await fireEvent.change(runSelect, { target: { value: "run2" } });
+
+    // The new run's manifest is eventually fetched with its own (alt-) variants.
+    await vi.waitFor(() =>
+      expect(getContextManifest.mock.calls.some((call) => call[0].runId === "run2" && call[0].variant.startsWith("alt-"))).toBe(true)
+    );
+    // No manifest fetch ever pairs the new run id with the previous run's variant ids (the 404 path).
+    const stale = getContextManifest.mock.calls.filter((call) => call[0].runId === "run2" && !call[0].variant.startsWith("alt-"));
+    expect(stale).toEqual([]);
+  });
+
   it("prefetches conversations when the Conversations header is hovered, before it is opened", async () => {
     const client = fakeEvalClient();
     const getConversations = client.getConversations as ReturnType<typeof vi.fn>;

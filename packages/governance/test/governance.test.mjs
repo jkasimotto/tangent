@@ -139,10 +139,10 @@ test("dependency lint flags local-only Tangent dependency specs", async () => {
 test("dependency lint requires standalone app binaries", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
   try {
-    const searchDir = path.join(root, "packages", "search");
-    await mkdir(searchDir, { recursive: true });
-    await writeFile(path.join(searchDir, "package.json"), JSON.stringify({
-      name: "@tangent/search",
+    const rollupDir = path.join(root, "packages", "rollup");
+    await mkdir(rollupDir, { recursive: true });
+    await writeFile(path.join(rollupDir, "package.json"), JSON.stringify({
+      name: "@tangent/rollup",
       version: "0.0.0",
       type: "module",
       dependencies: {
@@ -153,7 +153,7 @@ test("dependency lint requires standalone app binaries", async () => {
     const result = await lintGovernance({ root, groups: ["deps"] });
     assert.equal(result.errors, 1);
     assert.equal(result.findings[0].rule, "deps/standalone-app-bin");
-    assert.equal(result.findings[0].message.includes("@tangent/search must expose tangent-search"), true);
+    assert.equal(result.findings[0].message.includes("@tangent/rollup must expose tangent-rollup"), true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -21,14 +21,11 @@ root CLI
   -> core | tangent-ui | ui-server
 
 installed app packages
-  -> usage SDK/CLI/server | trees CLI/server | rollup SDK/CLI | eval CLI/server | search SDK/CLI | governance CLI
-
-trees -> schema, core, runtime, MCP, server, ui
+  -> usage SDK/CLI/server | rollup SDK/CLI | eval CLI/server | governance CLI
 
 rollup -> usage-index-sqlite, core, repo, agent-runtime
 eval  -> usage-index-sqlite, core, repo, agent-runtime, ui-server, eval-ui
 usage -> usage-core, usage-index-sqlite, usage-providers, core, repo, ui-server, usage-ui, usage-ui-data
-search -> core, repo
 repo -> core
 agent-runtime -> core
 governance -> core, repo
@@ -51,16 +48,14 @@ product-ui -> product-ui-data, ui-* packages
 product-server -> product-core/API routes, product-ui assets, ui-server
 ```
 
-Human-facing root commands are `setup`, `status`, `ui`, `usage`, `trees`, `rollup`, `search`, `eval`, `doctor`, and `completion`. Raw/debug/CI commands such as `governance`, `data export`, and `data archive` remain callable but hidden from default help.
+Human-facing root commands are `setup`, `status`, `ui`, `usage`, `rollup`, `eval`, `doctor`, and `completion`. Raw/debug/CI commands such as `governance`, `data export`, and `data archive` remain callable but hidden from default help.
 
-Standalone package CLIs use collision-resistant binary names: `tangent-usage`, `tangent-search`, `tangent-rollup`, and `tangent-eval`. The root `tangent` CLI keeps the short subcommands, but product code is imported only when that command is selected and the package is installed.
+Standalone package CLIs use collision-resistant binary names: `tangent-usage`, `tangent-rollup`, and `tangent-eval`. The root `tangent` CLI keeps the short subcommands, but product code is imported only when that command is selected and the package is installed.
 
-Usage is split into dependency-light data packages plus the full `@tangent/usage` app. `@tangent/usage-core` owns schemas/query helpers, datasets, reports, projections, and client construction without UI, SQLite, or built-in provider loading. `@tangent/usage-providers` owns native transcript normalization and provider compatibility. `@tangent/usage-index-sqlite` owns repo/native loading, optional SQLite indexing, status, archive, and compatibility SDK APIs. `@tangent/usage` owns the standalone CLI and local `tangent usage ui` server, which lazily serves `@tangent/usage-ui` assets and framework-agnostic `/api/usage/*` routes. Native provider transcripts are the source of truth for new data. Hook installation and hook recording are retired product surfaces; legacy `capture.source: "hook"` events remain readable through usage-jsonl compatibility. Rollup and Eval consume dependency-light Usage data packages, but Usage must not learn about Rollup, Eval, or Search.
+Usage is split into dependency-light data packages plus the full `@tangent/usage` app. `@tangent/usage-core` owns schemas/query helpers, datasets, reports, projections, and client construction without UI, SQLite, or built-in provider loading. `@tangent/usage-providers` owns native transcript normalization and provider compatibility. `@tangent/usage-index-sqlite` owns repo/native loading, optional SQLite indexing, status, archive, and compatibility SDK APIs. `@tangent/usage` owns the standalone CLI and local `tangent usage ui` server, which lazily serves `@tangent/usage-ui` assets and framework-agnostic `/api/usage/*` routes. Native provider transcripts are the source of truth for new data. Hook installation and hook recording are retired product surfaces; legacy `capture.source: "hook"` events remain readable through usage-jsonl compatibility. Rollup and Eval consume dependency-light Usage data packages, but Usage must not learn about Rollup or Eval.
 
 Rollup consumes selected Usage turns and visible user messages under the configured length limit, then owns the summarization workflow: `tangent rollup <selector>` caches one period-level `rollup.input.v1` artifact, includes style examples from explicit examples and prior notes, runs one summary provider roll-up, and writes the generated note block. Assistant messages, tool calls, tool results, token metadata, and oversized pasted user messages are intentionally excluded from rollup input. Selectors support single days and compact inclusive ranges. Rollup does not parse Claude or Codex native schemas and does not preserve a topic or turn-digest architecture.
 
 Eval owns local coding-agent evals: specs, contexts, run manifests, agent runs, metrics, reports, diffs, and the local read-only Eval UI server. Eval may read Usage metrics and git artifacts, but it does not upload eval or usage data. The V1 browser UI inspects prepared runs, compares two variants in one case, and diffs task/phase prompts plus materialized context files without running agents. An eval spec may carry an `evaluator` block with a named judge model and a criteria rubric; `collectEval` calls the judge model once per completed variant (via `runners/judge.ts`) and writes an `evaluation.json` sidecar with binary pass/fail verdicts per criterion. The UI reads the sidecar to show score chips and a per-criterion Scoring section.
 
-Trees owns Tangent Center: semantic work trees, optional Git worktrees, durable terminal runtimes, agent runs, typed work sessions, captures, observations, generated attention, a text command-center summary, and typed MCP tools. Runtime adapters live under `@tangent/trees-runtime` subpaths while schema/core/UI/MCP/CLI/server remain separate packages. The old `pa` repo is only a behavioral reference and migration source; Trees uses event-sourced TypeScript packages and must not preserve `pa` sidecar status or storage models.
-
-Tangent UI is the Svelte `@tangent/tangent-ui` shell plus product-owned embedded UI bundles. The root `tangent ui` command discovers installed product `tangent.uiApp` descriptors, serves the shell, exposes `/api/ui/apps`, and mounts product assets under `/apps/<app>/`. `@tangent/usage-ui`, `@tangent/trees-ui`, and `@tangent/eval-ui` expose embedded bundles for the combined shell. API-only Usage consumers can install `@tangent/usage-schema` and `@tangent/usage-core` without Svelte, Vite, browser assets, or SQLite. Local product servers use `@tangent/ui-server` to serve compiled assets, optional workspace Vite middleware, and framework-agnostic JSON API routes.
+Tangent UI is the Svelte `@tangent/tangent-ui` shell plus product-owned embedded UI bundles. The root `tangent ui` command discovers installed product `tangent.uiApp` descriptors, serves the shell, exposes `/api/ui/apps`, and mounts product assets under `/apps/<app>/`. `@tangent/usage-ui` and `@tangent/eval-ui` expose embedded bundles for the combined shell. API-only Usage consumers can install `@tangent/usage-schema` and `@tangent/usage-core` without Svelte, Vite, browser assets, or SQLite. Local product servers use `@tangent/ui-server` to serve compiled assets, optional workspace Vite middleware, and framework-agnostic JSON API routes.

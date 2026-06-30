@@ -7,10 +7,10 @@ test("groups sessions by project, newest project first, counting conversations",
   const rail = groupSessionsByProject([
     { id: "a", project: "tangent", lastActivityAt: "2026-06-29T10:00:00.000Z" },
     { id: "b", project: "tangent", lastActivityAt: "2026-06-29T09:00:00.000Z" },
-    { id: "c", project: "polez", lastActivityAt: "2026-06-29T11:00:00.000Z" }
+    { id: "c", project: "acme", lastActivityAt: "2026-06-29T11:00:00.000Z" }
   ]);
 
-  assert.deepEqual(rail.map((item) => item.label), ["polez", "tangent"], "most recently active project leads");
+  assert.deepEqual(rail.map((item) => item.label), ["acme", "tangent"], "most recently active project leads");
   const tangent = rail.find((item) => item.label === "tangent");
   assert.equal(tangent.total, 2);
   assert.equal(tangent.lastActivityAt, "2026-06-29T10:00:00.000Z", "project activity is the newest session's");

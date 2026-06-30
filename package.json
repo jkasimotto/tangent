@@ -14,15 +14,6 @@
     "packages/core",
     "packages/launcher",
     "packages/repo",
-    "packages/trees-schema",
-    "packages/trees-core",
-    "packages/trees-runtime",
-    "packages/trees-mcp",
-    "packages/trees-cli",
-    "packages/trees-ui",
-    "packages/trees-server",
-    "packages/pipeline-ui",
-    "packages/pipeline-server",
     "packages/governance",
     "packages/usage-schema",
     "packages/usage-core",
@@ -36,8 +27,7 @@
     "packages/tangent-ui",
     "packages/rollup",
     "packages/eval",
-    "packages/eval-ui",
-    "packages/search"
+    "packages/eval-ui"
   ],
   "scripts": {
     "build": "npm run build --workspaces && tsc -p tsconfig.json && chmod +x dist/cli/index.js",
@@ -61,18 +51,12 @@
     "@tangent/eval": "^0.1.0",
     "@tangent/governance": "^0.1.0",
     "@tangent/rollup": "^0.1.0",
-    "@tangent/search": "^0.1.0",
-    "@tangent/trees-cli": "^0.1.0",
-    "@tangent/trees-server": "^0.1.0",
     "@tangent/usage": "^0.1.0"
   },
   "peerDependenciesMeta": {
     "@tangent/eval": { "optional": true },
     "@tangent/governance": { "optional": true },
     "@tangent/rollup": { "optional": true },
-    "@tangent/search": { "optional": true },
-    "@tangent/trees-cli": { "optional": true },
-    "@tangent/trees-server": { "optional": true },
     "@tangent/usage": { "optional": true }
   },
   "devDependencies": {
@@ -91,6 +75,6 @@
   ],
   "license": "MIT",
   "engines": {
-    "node": ">=24"
+    "node": ">=20"
   }
 }

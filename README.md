@@ -1,98 +1,130 @@
 # tangent
 
-`tangent` is an npm workspace for local coding-agent conversation tools.
+`tangent` is a local toolkit for working with coding-agent conversations: it captures
+your Claude Code and Codex activity, shows it in a local UI, and runs side-by-side
+evals to compare prompts, context, and models on real tasks.
 
-Packages:
+Two surfaces ship in this repo, mounted together by `tangent ui`:
 
-- `@tangent/core`: shared command metadata, help, and shell completion primitives.
-- `@tangent/usage` / `tangent-usage`: local conversation telemetry and human-readable activity views for Claude Code and Codex sessions.
-- `@tangent/search` / `tangent-search`: structural repository search for Dart and TypeScript/JavaScript.
-- `@tangent/rollup` / `tangent-rollup`: private rollup engineering notes generated from Usage conversations.
-- `@tangent/eval` / `tangent-eval`: local coding-agent eval preparation, execution, and reports.
+- **usage** (`tangent usage`): local conversation telemetry and readable activity views for Claude Code and Codex sessions, plus correction-rate metrics.
+- **eval** (`tangent eval`): prepare, run, and report coding-agent evals that compare task variants.
 
-## Quick start
+A third command, **rollup** (`tangent rollup`), turns Usage conversations into private
+daily engineering notes and powers the correction-metrics panel in the Usage UI.
+
+## Setup
+
+Prerequisites:
+
+- **Node 20 or newer.**
+- A **C/C++ toolchain** for the one native dependency (`better-sqlite3`): `build-essential` and `python3` on Linux, or Xcode Command Line Tools on macOS. Only needed if no prebuilt binary matches your platform.
+- For running evals: an authenticated **`claude`** or **`codex`** CLI on your PATH (the eval runner shells out to whichever agent you select).
+
+Install:
 
 ```bash
-npm install
-npm run build
+git clone <repo-url>
+cd tangent
+./install.sh
+```
 
-tangent setup --provider codex --usage --rollup --search --summary-provider codex-cli --model gpt-5.4-mini --yes
-tangent status
-tangent usage today
+`./install.sh` checks your Node version, installs dependencies, builds every package,
+and links the `tangent` command onto your PATH. It is safe to re-run. (Equivalent
+manual steps: `npm install && npm run build && npm link`.)
+
+Then start the combined interface:
+
+```bash
+tangent ui
+```
+
+`usage` and `eval` are workspace packages built by the install step; there is no
+separate "install usage" or "install eval" step.
+
+## Usage
+
+```bash
+tangent ui                 # combined Usage + Eval UI (start here)
+
+tangent usage today        # recent activity, human-readable
 tangent usage transcript codex:019ea3ad
+```
 
-tangent rollup status .
+`usage` reads Claude Code and Codex native transcripts by default and indexes
+normalized activity under `~/.tangent/usage`. It defaults to all projects across every
+Claude profile, bounded to a recent window (`--days`, default 7). Raw provenance and
+event streams live behind `usage export` and `usage events --json`.
+
+## Rollup
+
+```bash
 tangent rollup today
 tangent rollup yesterday
-tangent rollup 2026-06-07
-tangent rollup 20260601-20260610
-
-tangent search index
-tangent search "horizontal tension"
-tangent search symbol calculateHorizontalTension
-tangent eval quick --prompt prompts/task.md --context empty --context repo
+tangent rollup 20260601-20260610   # one combined note for an inclusive range
 ```
 
-`usage` is the human-facing telemetry surface. Raw telemetry API/debug views require explicit JSON/export commands.
-
-`usage` reads Claude Code and Codex native transcripts by default and indexes normalized activity under `~/.tangent/usage`. Human commands default to readable text; raw provenance and event streams live under `usage export` and `usage events --json`. Hook capture is retired, but old hook-sourced JSONL remains readable through explicit legacy source options.
-
-`rollup` stores private generated notes, cached digests, and processing state under `~/.tangent/rollup/repos/<repo-name>` by default. `tangent rollup today` writes `notes/YYYY-MM-DD.md`; compact ranges such as `tangent rollup 20260601-20260610` write one combined note at `notes/YYYY-MM-DD--YYYY-MM-DD.md`. Repo-local output is opt-in:
-
-`search` stores its derived SQLite index under `~/.tangent/search/repos/<repo-name>-<hash>` by default. It is zero-config: run `tangent search index` in a repo, then query with `tangent search "query"`. Private overrides are created with:
+`rollup` reads selected Usage turns and uses one summary-provider call to write a
+private note. Notes and processing state live under `~/.tangent/rollup/repos/<repo>`
+by default; repo-local output is opt-in:
 
 ```bash
-tangent search init .
-tangent search config set search.maxResults 20
+tangent rollup init . --output repo-local-private    # writes to .tangent/rollup/, git-excluded
+tangent rollup init . --base-dir ~/notes/tangent      # or a custom location
 ```
 
-Repo-shared defaults are explicit and should contain only team-safe indexing/search settings:
+## Eval
 
 ```bash
-tangent search init . --scope repo-shared --language typescript
+tangent eval quick \
+  --prompt evals/haiku-poems/prompts/task.md \
+  --context empty --context repo \
+  --agent codex-cli --model gpt-5.4-mini
+
+tangent eval run evals/haiku-poems/eval.json
+tangent eval report latest
+tangent eval ui latest
 ```
 
+Eval specs and prompts live under `evals/<name>/`; run artifacts land under
+`~/.tangent/eval/runs/`. See `evals/haiku-poems/` for a complete worked example, and the
+`setup-tangent-eval` skill (in `.claude/skills/`) for the full workflow. Personal evals
+that hardcode absolute repo paths are git-ignored by default (see `.gitignore`).
+
+## Configure capture
+
 ```bash
-tangent rollup init . --output repo-local-private
+tangent setup --provider codex --usage --rollup --summary-provider codex-cli --model gpt-5.4-mini --yes
+tangent status
 ```
 
-Repo-local `rollup` output is written to `.tangent/rollup/` and excluded through `.git/info/exclude`.
+## Claude skills
 
-Custom locations are supported:
+This repo ships Claude Code skills under `.claude/skills/`:
+
+- `setup-tangent-eval`: create and run a `tangent eval`.
+- `verify-app`: boot the UI read-only and verify a change in a browser.
+
+They load automatically in Claude Code when you open this repo. To use one in another
+project or for yourself globally, copy the skill directory into that project's
+`.claude/skills/` or into `~/.claude/skills/`.
+
+## Shell completion
 
 ```bash
-tangent rollup init . --base-dir ~/rollup-agent-notes/otto-tangent
-tangent rollup config set output.baseDir ~/rollup-agent-notes/otto-tangent
-```
-
-Rollup runner failures are summarized in the terminal and written to `artifacts/failures/<date>/*.log`; use `--verbose` or `--json` when debugging.
-
-Shell completion is generated from the shared command registry:
-
-```bash
-tangent completion zsh > ~/.zsh/completions/_tangent
+tangent completion zsh  > ~/.zsh/completions/_tangent
 tangent completion bash > ~/.tangent-completion.bash
 tangent completion fish > ~/.config/fish/completions/tangent.fish
 ```
 
 ## Standalone installs
 
-The monorepo is the single development home, but each app package is installable on its own:
+Each app package is also publishable on its own, with a collision-resistant binary:
 
 ```bash
-npm install @tangent/usage
-npm install @tangent/search
-npm install @tangent/rollup
-npm install @tangent/eval
+npm install @tangent/usage   # tangent-usage today
+npm install @tangent/rollup  # tangent-rollup today
+npm install @tangent/eval    # tangent-eval ui
 ```
 
-Standalone binaries use collision-resistant names:
-
-```bash
-tangent-usage today
-tangent-search index
-tangent-rollup today
-tangent-eval ui
-```
-
-The full-suite package keeps the shorter root subcommands through `tangent usage`, `tangent search`, `tangent rollup`, and `tangent eval`.
+The full-suite `tangent` binary keeps the shorter `tangent usage`, `tangent rollup`,
+and `tangent eval` subcommands.

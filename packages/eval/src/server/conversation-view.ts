@@ -75,9 +75,9 @@ export async function variantConversationsView(manifest: EvalRunManifest, caseId
 
 /**
  * Projects a normalized conversation to the compact view the compare UI consumes. Tool-call paths and
- * command previews are relativized against the variant's worktree so a Read shows `polez/lib/x.dart`,
- * not the full `/Users/.../runs/.../work/polez/lib/x.dart`, and a `find <worktree>/...` command reads as
- * `find polez/...`. Pass the worktree to relativize; omit it (e.g. unit tests) to leave paths absolute.
+ * command previews are relativized against the variant's worktree so a Read shows `acme/lib/x.dart`,
+ * not the full `/Users/.../runs/.../work/acme/lib/x.dart`, and a `find <worktree>/...` command reads as
+ * `find acme/...`. Pass the worktree to relativize; omit it (e.g. unit tests) to leave paths absolute.
  */
 export function projectConversation(conversation: NormalizedConversation, worktree?: string): ConversationView {
   return {

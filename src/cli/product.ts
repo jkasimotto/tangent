@@ -24,8 +24,6 @@ export const setupCommandSpec: CliCommandSpec = {
     { name: "provider", takesValue: true, values: ["claude", "codex", "all"], description: "Provider to enable" },
     { name: "usage", description: "Enable activity capture" },
     { name: "rollup", description: "Initialize rollup notes" },
-    { name: "search", description: "Initialize structural search" },
-    { name: "index-search", description: "Build the search index during setup" },
     { name: "summary-provider", takesValue: true, values: ["claude-cli", "claude-sdk", "codex-cli"], description: "Rollup summary provider" },
     { name: "model", takesValue: true, description: "Rollup summary model" },
     { name: "output", takesValue: true, values: ["user-global", "repo-local-private"], description: "Private data location" },
@@ -36,7 +34,7 @@ export const setupCommandSpec: CliCommandSpec = {
 
 export const statusCommandSpec: CliCommandSpec = {
   name: "status",
-  description: "Show capture, rollup, search, and provider health",
+  description: "Show capture, rollup, and provider health",
   args: "[repo]",
   options: [
     { name: "repo", takesValue: true, description: "Repository path" },
@@ -59,7 +57,7 @@ export const doctorCommandSpec: CliCommandSpec = {
 export const uiCommandSpec: CliCommandSpec = {
   name: "ui",
   description: "Start the local Tangent UI for installed apps",
-  args: "[usage|trees|eval]",
+  args: "[usage|eval]",
   options: [
     { name: "repo", takesValue: true, description: "Repository path" },
     { name: "scope", takesValue: true, values: ["all", "repo"], description: "Session discovery scope (default: all projects)" },
@@ -144,17 +142,6 @@ export async function runSetupCommand(argv: string[]): Promise<void> {
     actions.push({ rollup });
   }
 
-  if (selected.search) {
-    const { configure: configureSearch, indexRepo } = await requiredProductModule<{ configure(options: unknown): Promise<unknown>; indexRepo(options: unknown): Promise<unknown> }>("@tangent/search", "setup --search");
-    const search = await configureSearch({
-      repo,
-      storage: selected.output,
-      scope: "private"
-    });
-    actions.push({ search });
-    if (selected.indexSearch) actions.push({ searchIndex: await indexRepo({ repo }) });
-  }
-
   if (args.json) {
     console.log(JSON.stringify(results, null, 2));
     return;
@@ -164,8 +151,7 @@ export async function runSetupCommand(argv: string[]): Promise<void> {
   for (const provider of detected) console.log(`${provider.available ? "✓" : "-"} ${provider.label}${provider.version ? ` ${provider.version}` : ""}`);
   if (selected.usage) console.log(`Activity capture: native transcripts (${selected.provider})`);
   if (selected.rollup) console.log(`Rollup notes: initialized (${selected.output})`);
-  if (selected.search) console.log(selected.indexSearch ? "Search: initialized and indexed" : "Search: initialized");
-  if (!selected.usage && !selected.rollup && !selected.search) console.log("No setup actions selected.");
+  if (!selected.usage && !selected.rollup) console.log("No setup actions selected.");
 }
 
 /** Prints the aggregate product health status. */
@@ -173,16 +159,14 @@ export async function runProductStatusCommand(argv: string[], verboseDefault = f
   const args = parseArgs(argv);
   const repo = stringArg(args.repo) || args._[0] || ".";
   const verbose = verboseDefault || booleanArg(args.verbose);
-  const [usage, rollup, search] = await Promise.allSettled([
+  const [usage, rollup] = await Promise.allSettled([
     productStatus("@tangent/usage", { repo }),
-    productStatus("@tangent/rollup", { repo }),
-    productStatus("@tangent/search", { repo })
+    productStatus("@tangent/rollup", { repo })
   ]);
   const value = {
     repo,
     usage: settledValue(usage),
-    rollup: settledValue(rollup),
-    search: settledValue(search)
+    rollup: settledValue(rollup)
   };
   if (args.json) {
     console.log(JSON.stringify(value, null, 2));
@@ -191,7 +175,6 @@ export async function runProductStatusCommand(argv: string[], verboseDefault = f
   console.log(`Repo: ${repo}`);
   printUsageHealth(value.usage);
   printRollupHealth(value.rollup, verbose);
-  printSearchHealth(value.search, verbose);
 }
 
 /** Reads and JSON-parses the body of an incoming HTTP request. */
@@ -570,7 +553,7 @@ export async function runOpenCommand(argv: string[]): Promise<void> {
 }
 
 type LaunchSetup = {
-  driver: "iterm2-tab" | "iterm2-window" | { type: "custom"; template: string };
+  driver: "iterm2-tab" | "iterm2-window" | "linux-terminal" | { type: "custom"; template: string };
   tmux: boolean;
   agentCommand: string;
 };
@@ -585,10 +568,10 @@ async function runOpenSetup(
   const rl = createInterface({ input, output });
   try {
     console.log("Configure terminal launcher.");
-    console.log("Driver options: iterm2-tab, iterm2-window, custom");
+    console.log("Driver options: iterm2-tab, iterm2-window (macOS), linux-terminal (Linux), custom");
     const rawDriver = (await rl.question(`Driver [${JSON.stringify(existing.driver)}]: `)).trim();
     let driver: LaunchSetup["driver"] = existing.driver;
-    if (rawDriver === "iterm2-tab" || rawDriver === "iterm2-window") {
+    if (rawDriver === "iterm2-tab" || rawDriver === "iterm2-window" || rawDriver === "linux-terminal") {
       driver = rawDriver;
     } else if (rawDriver === "custom") {
       const template = (await rl.question("Custom template ({cmd} and {cwd} tokens): ")).trim();
@@ -618,8 +601,6 @@ type SetupSelection = {
   provider: "claude" | "codex" | "all";
   usage: boolean;
   rollup: boolean;
-  search: boolean;
-  indexSearch: boolean;
   output: "user-global" | "repo-local-private";
   summaryProvider?: "claude-cli" | "claude-sdk" | "codex-cli";
   model?: string;
@@ -636,13 +617,11 @@ type DetectedProvider = {
 /** Creates setup selections from non-interactive CLI flags. */
 function setupSelection(args: ReturnType<typeof parseArgs>): SetupSelection {
   const provider = providerArg(args.provider || "codex");
-  const anyExplicit = Boolean(args.usage || args.rollup || args.search);
+  const anyExplicit = Boolean(args.usage || args.rollup);
   return {
     provider,
     usage: anyExplicit ? booleanArg(args.usage) : true,
     rollup: anyExplicit ? booleanArg(args.rollup) : true,
-    search: anyExplicit ? booleanArg(args.search) : true,
-    indexSearch: booleanArg(args["index-search"]),
     output: outputArg(args.output || "user-global"),
     summaryProvider: summaryProviderArg(args["summary-provider"]),
     model: stringArg(args.model)
@@ -662,8 +641,6 @@ async function promptSetup(args: ReturnType<typeof parseArgs>, detected: Detecte
       provider: providerArg(await ask(rl, "Provider to enable [codex/claude/all]", stringArg(args.provider) || defaultProvider)),
       usage: await askYes(rl, "Capture coding-agent activity", args.usage, true),
       rollup: await askYes(rl, "Initialize rollup notes", args.rollup, true),
-      search: await askYes(rl, "Initialize search", args.search, true),
-      indexSearch: await askYes(rl, "Build search index now", args["index-search"], false),
       output: outputArg(await ask(rl, "Private data location [user-global/repo-local-private]", stringArg(args.output) || "user-global")),
       summaryProvider: summaryProviderArg(await ask(rl, "Rollup summary provider [codex-cli/claude-cli/claude-sdk]", stringArg(args["summary-provider"]) || "codex-cli")),
       model: await ask(rl, "Rollup summary model", stringArg(args.model) || "gpt-5.4-mini")
@@ -735,21 +712,6 @@ function printRollupHealth(value: unknown, verbose: boolean): void {
   const status = value as { rollup: { initialized: boolean; outputDir: string; ledgerPath: string } };
   console.log(`Rollup: initialized=${status.rollup.initialized ? "yes" : "no"} output=${status.rollup.outputDir}`);
   if (verbose) console.log(`       ledger=${status.rollup.ledgerPath}`);
-}
-
-/** Prints Search health in a compact human-readable form. */
-function printSearchHealth(value: unknown, verbose: boolean): void {
-  if (isErrorValue(value)) {
-    console.log(`Search: error - ${value.error}`);
-    return;
-  }
-  if (isNotInstalled(value)) {
-    console.log("Search: not installed");
-    return;
-  }
-  const status = value as { exists: boolean; dbPath: string; languages: Array<{ language: string; files: number }> };
-  console.log(`Search: ${status.exists ? "indexed" : "missing"} db=${status.dbPath}`);
-  if (verbose && status.exists) console.log(`        languages=${status.languages.map((row) => `${row.language}:${row.files}`).join(", ")}`);
 }
 
 /** Converts a settled promise result to a printable value. */

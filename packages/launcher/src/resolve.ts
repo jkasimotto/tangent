@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { openIterm2Tab, openIterm2Window } from "./drivers/iterm2.js";
+import { openLinuxTerminal } from "./drivers/linux.js";
 import { openCustom } from "./drivers/custom.js";
 import { recordSession, cwdSessionName } from "./sessions.js";
 import type { LaunchConfig } from "./config.js";
@@ -47,6 +48,8 @@ export async function openTerminalSession(
     iterm2SessionId = await openIterm2Tab(actualCommand, cwd, title);
   } else if (driver === "iterm2-window") {
     iterm2SessionId = await openIterm2Window(actualCommand, cwd, title);
+  } else if (driver === "linux-terminal") {
+    await openLinuxTerminal(actualCommand, cwd, title);
   } else if (driver.type === "custom") {
     await openCustom(driver.template, actualCommand, cwd);
   } else {

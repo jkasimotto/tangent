@@ -4,11 +4,11 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { UsageDataset } from "../dist/core/dataset.js";
+import { UsageDataset } from "@tangent/usage-core/core/dataset";
 import { createUsageClient, eventsToProjections } from "../dist/core/index.js";
-import { eventFileForConversation } from "../dist/core/paths.js";
-import { normalizeClaudeNativeRecord, normalizeClaudeNativeRecords } from "../dist/providers/claude/native/normalize.js";
-import { normalizeCodexNativeRecords } from "../dist/providers/codex/native/normalize.js";
+import { eventFileForConversation } from "@tangent/usage-core/core/paths";
+import { normalizeClaudeNativeRecord, normalizeClaudeNativeRecords } from "@tangent/usage-providers/providers/claude/native/normalize";
+import { normalizeCodexNativeRecords } from "@tangent/usage-providers/providers/codex/native/normalize";
 import { providerCapabilities } from "../dist/providers/index.js";
 import { archiveUsageTelemetry, ensureUsageIndex, loadUsageDatasetFromIndex, pruneUsageIndex, resolveConversationRef } from "../dist/sdk/index.js";
 import { inspectNativeLogFile, listNativeSchemas, nativeSchemaStatus } from "../dist/sdk/index.js";

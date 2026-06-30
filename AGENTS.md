@@ -1,6 +1,6 @@
 # Agent Notes
 
-Purpose: Tangent is a local monorepo for coding-agent tooling: conversation telemetry, rollup notes, eval runs, structural search, and shared infrastructure.
+Purpose: Tangent is a local monorepo for coding-agent tooling: conversation telemetry, rollup notes, eval runs, and shared infrastructure.
 
 Packages:
 - @tangent/core: pure CLI specs, args, JSON/config, hashes, time, and small helpers.
@@ -10,7 +10,6 @@ Packages:
 - @tangent/usage: conversation telemetry domain, native transcript indexing, schemas, datasets, SDK, CLI.
 - @tangent/rollup: private rollup notes from Usage turns.
 - @tangent/eval: coding-agent eval preparation, execution, collection, and reports.
-- @tangent/search: structural repository indexing and search.
 
 Architecture docs:
 - ARCHITECTURE.md
@@ -21,8 +20,8 @@ Architecture docs:
 - docs/agent/validation.md
 
 Primary entry point:
-- ALWAYS think `tangent ui`, never the specific app. `tangent ui` is how the user enters every time. It is the combined launcher in `src/cli/product.ts` (`runTangentUiCommand`), mounting usage + trees + eval together. The standalone per-app commands (`tangent trees`, `tangent usage ui`) are secondary; do not assume the user runs them, and never treat a per-app surface as "the app."
-- Any change a user sees (UI, styling/CSS, layout, backdrop, behavior on launch, scope, default window, mounted routes, app discovery) must be made and verified through `tangent ui`, not just the per-app package. The combined shell (`@tangent/tangent-ui`) renders its own chrome and backdrop and mounts each app as an embedded module, so the file that controls a per-app surface (e.g. `packages/trees-ui/src/app.css`) is often NOT what `tangent ui` renders. Trace which element/CSS the combined shell actually paints (e.g. `.tangent-shell`, the shell `app.css`, the app's `embedded.css` loaded via `/api/ui/apps` stylePaths) and verify the change in a `tangent ui` instance before claiming it works.
+- ALWAYS think `tangent ui`, never the specific app. `tangent ui` is how the user enters every time. It is the combined launcher in `src/cli/product.ts` (`runTangentUiCommand`), mounting usage + eval together. The standalone per-app commands (`tangent usage ui`, `tangent eval ui`) are secondary; do not assume the user runs them, and never treat a per-app surface as "the app."
+- Any change a user sees (UI, styling/CSS, layout, backdrop, behavior on launch, scope, default window, mounted routes, app discovery) must be made and verified through `tangent ui`, not just the per-app package. The combined shell (`@tangent/tangent-ui`) renders its own chrome and backdrop and mounts each app as an embedded module, so the file that controls a per-app surface (e.g. `packages/usage-ui/src/app.css`) is often NOT what `tangent ui` renders. Trace which element/CSS the combined shell actually paints (e.g. `.tangent-shell`, the shell `app.css`, the app's `embedded.css` loaded via `/api/ui/apps` stylePaths) and verify the change in a `tangent ui` instance before claiming it works.
 - The Usage panel defaults to all projects across every Claude profile (`~/.claude*/projects`, unioned by `claudeHomes()`; `scope: "all"`), bounded to a recent view window (`--days`, default 7). Keep it cross-project and cross-profile: never silently scope it back to a single repo or a single `~/.claude`.
 
 Development workflow:

@@ -59,7 +59,7 @@ test("projectConversation flattens turns and tool calls into the compact view", 
 test("projectConversation relativizes tool paths and commands against the worktree", () => {
   // A realistic full worktree, so the strip-before-clip case below is genuine (a long grep pattern
   // pushes the worktree prefix across the 160-char clip boundary, truncating it mid-path).
-  const wt = "/Users/me/.tangent/eval/runs/20260629T031727Z-context/variants/debug-log-haiku-no-ctx/work/polez";
+  const wt = "/Users/me/.tangent/eval/runs/20260629T031727Z-context/variants/debug-log-haiku-no-ctx/work/acme";
   const normalized = {
     schema: "usage.conversation.v1",
     provider: "claude",

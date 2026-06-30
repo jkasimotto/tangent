@@ -12,9 +12,7 @@ const tangentCommandSpec: CliCommandSpec = {
     uiCommandSpec,
     openCommandSpec,
     productCommandSpec("usage", "Inspect coding-agent activity"),
-    productCommandSpec("trees", "Manage Tangent work trees"),
     productCommandSpec("rollup", "Generate private rollup notes"),
-    productCommandSpec("search", "Index and search repository structure"),
     productCommandSpec("eval", "Run and inspect coding-agent evals"),
     doctorCommandSpec,
     { name: "governance", description: "Run architecture governance lints", hidden: true },
@@ -69,12 +67,6 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
     return;
   }
 
-  if (app === "trees") {
-    const { runTreesCli } = await requiredProductModule<{ runTreesCli(argv: string[]): Promise<void> }>("@tangent/trees-cli/cli", "trees");
-    await runTreesCli(rest);
-    return;
-  }
-
   if (app === "rollup") {
     const { runRollupCli } = await requiredProductModule<{ runRollupCli(argv: string[]): Promise<void> }>("@tangent/rollup/cli", "rollup");
     await runRollupCli(rest);
@@ -84,12 +76,6 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
   if (app === "eval") {
     const { runEvalCli } = await requiredProductModule<{ runEvalCli(argv: string[]): Promise<void> }>("@tangent/eval/cli", "eval");
     await runEvalCli(rest);
-    return;
-  }
-
-  if (app === "search") {
-    const { runSearchCli } = await requiredProductModule<{ runSearchCli(argv: string[]): Promise<void> }>("@tangent/search/cli", "search");
-    await runSearchCli(rest);
     return;
   }
 
@@ -147,7 +133,7 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
 function productCommandSpec(name: string, description: string): CliCommandSpec {
   return {
     name,
-    description: `${description}; install @tangent/${name === "trees" ? "trees-cli" : name} if unavailable`
+    description: `${description}; install @tangent/${name} if unavailable`
   };
 }
 
@@ -164,12 +150,9 @@ Examples:
   tangent open agent ~/Projects/my-project
   tangent open project ~/Projects/my-project
   tangent usage today
-  tangent trees list
   tangent usage transcript codex:019ea3ad
   tangent rollup today
   tangent rollup 20260601-20260610
-  tangent search index
-  tangent search "horizontal tension"
   tangent eval run eval.json
   tangent completion zsh
 `);

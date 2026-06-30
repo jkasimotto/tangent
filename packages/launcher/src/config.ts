@@ -2,7 +2,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 
-export type DriverId = "iterm2-tab" | "iterm2-window";
+export type DriverId = "iterm2-tab" | "iterm2-window" | "linux-terminal";
 
 export interface CustomDriver {
   type: "custom";
@@ -19,10 +19,12 @@ export interface LaunchConfig {
   agentCommand: string;
 }
 
-/** Returns the built-in default launcher configuration. */
+/** Returns the built-in default launcher configuration. The terminal driver is
+ * platform-aware: macOS drives iTerm2 via AppleScript, every other platform opens
+ * a generic terminal emulator (iTerm2/osascript does not exist off macOS). */
 export function defaultLaunchConfig(): LaunchConfig {
   return {
-    driver: "iterm2-tab",
+    driver: process.platform === "darwin" ? "iterm2-tab" : "linux-terminal",
     tmux: false,
     agentCommand: "claude"
   };

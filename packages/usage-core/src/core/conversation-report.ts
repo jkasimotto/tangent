@@ -248,6 +248,7 @@ function mergeTokenUsage(values: TokenUsage[], source = "assistant_message.token
 function tokenSource(event: AnnotatedEvent): string {
   if (event.provider === "claude" && event.capture.source === "native-import") return "claude-native.message.usage";
   if (event.provider === "codex" && event.capture.source === "native-import") return "codex-native.token_count";
+  if (event.provider === "gemini" && event.capture.source === "native-import") return "gemini-native.message.tokens";
   if (event.capture.source === "hook") return "hook.token.usage";
   return event.capture.source;
 }

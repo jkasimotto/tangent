@@ -2,7 +2,7 @@ import { readJsonl, listJsonlFiles } from "@tangent/usage-core/core/append-jsonl
 import { UsageDataset } from "@tangent/usage-core/core/dataset";
 import { usageHome, repoEventDir } from "@tangent/usage-core/core/paths";
 import { repoInfo } from "@tangent/repo";
-import type { UsageJsonlLineV1, UsageProvider, UsageWarning } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
+import { usageProviders, type UsageJsonlLineV1, type UsageProvider, type UsageWarning } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
 import { loadNativeSourceFiles } from "@tangent/usage-providers/providers/native/load";
 import { loadUsageDatasetFromIndex, type UsageIndexSource } from "./indexStore.js";
 
@@ -17,7 +17,7 @@ export type ScanRepoOptions = {
 };
 
 export async function scanRepo(options: ScanRepoOptions): Promise<UsageDataset> {
-  const providers = options.providers || ["claude", "codex"];
+  const providers = options.providers || [...usageProviders];
   const sources = options.sources || ["native"];
   const repo = await repoInfo(options.repo);
   const root = repo.root || repo.cwd;

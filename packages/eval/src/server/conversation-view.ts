@@ -37,7 +37,7 @@ export type ConversationMessageView = {
 /** One reconstructed agent conversation for a variant. */
 export type ConversationView = {
   id: string;
-  provider: "claude" | "codex";
+  provider: "claude" | "codex" | "gemini";
   startedAt?: string;
   endedAt?: string;
   messages: ConversationMessageView[];

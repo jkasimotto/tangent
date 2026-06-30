@@ -4,7 +4,7 @@ export type RollupLedgerLineV1 = {
   dateBucket: string;
   rollupKey?: string;
   sourceKey: string;
-  provider: "claude" | "codex";
+  provider: "claude" | "codex" | "gemini";
   conversationId: string;
   turnId: string;
   sourceFingerprint: string;

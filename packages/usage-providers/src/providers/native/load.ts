@@ -5,6 +5,9 @@ import { discoverClaudeNative } from "../claude/native/discover.js";
 import { normalizeClaudeNativeRecords, type ClaudeNativeRecord } from "../claude/native/normalize.js";
 import { discoverCodexNative } from "../codex/native/discover.js";
 import { normalizeCodexNativeRecords, type CodexNativeRecord } from "../codex/native/normalize.js";
+import { buildGeminiProjectMap, discoverGeminiNative, geminiDirOf, resolveGeminiCwd, type GeminiProjectMap } from "../gemini/native/discover.js";
+import { readGeminiNative } from "../gemini/native/read.js";
+import { normalizeGeminiNativeRecords, type GeminiNativeRecord } from "../gemini/native/normalize.js";
 
 export const nativeQuietMs = 15 * 60 * 1000;
 
@@ -38,8 +41,10 @@ export async function loadNativeSourceFiles(options: LoadNativeOptions): Promise
   const warnings: UsageWarning[] = [];
   const now = options.now || new Date();
 
+  const geminiMap: GeminiProjectMap | undefined = options.providers.includes("gemini") ? await buildGeminiProjectMap() : undefined;
+
   for (const provider of options.providers) {
-    const paths = provider === "claude" ? await discoverClaudeNative(options.repoRoot) : await discoverCodexNative(options.repoRoot);
+    const paths = await discoverNative(provider, options.repoRoot);
     for (const filePath of paths) {
       seenPaths.push(filePath);
       try {
@@ -49,10 +54,10 @@ export async function loadNativeSourceFiles(options: LoadNativeOptions): Promise
           skipped.push(source);
           continue;
         }
-        const parsed = await readNativeJsonl(filePath);
+        const parsed = provider === "gemini" ? await readGeminiNative(filePath) : await readNativeJsonl(filePath);
         const eligibility = provider === "codex"
           ? codexEligibility(parsed.records, fileStat.mtimeMs, now)
-          : claudeEligibility(parsed.records, fileStat.mtimeMs, now);
+          : nonMarkerEligibility(parsed.records, fileStat.mtimeMs, now, provider);
         if (!eligibility.eligible) continue;
         const events = provider === "codex"
           ? normalizeCodexNativeRecords(parsed.records as CodexNativeRecord[], {
@@ -60,10 +65,17 @@ export async function loadNativeSourceFiles(options: LoadNativeOptions): Promise
             completed: eligibility.completed,
             inferredComplete: eligibility.inferredComplete
           })
-          : normalizeClaudeNativeRecords(parsed.records as ClaudeNativeRecord[], {
-            sourcePath: filePath,
-            inferredComplete: eligibility.inferredComplete || eligibility.completed
-          });
+          : provider === "gemini"
+            ? normalizeGeminiNativeRecords(parsed.records as GeminiNativeRecord[], {
+              sourcePath: filePath,
+              cwd: geminiCwd(parsed.records, filePath, geminiMap),
+              completed: eligibility.completed,
+              inferredComplete: eligibility.inferredComplete
+            })
+            : normalizeClaudeNativeRecords(parsed.records as ClaudeNativeRecord[], {
+              sourcePath: filePath,
+              inferredComplete: eligibility.inferredComplete || eligibility.completed
+            });
         files.push({
           path: filePath,
           provider,
@@ -79,6 +91,22 @@ export async function loadNativeSourceFiles(options: LoadNativeOptions): Promise
   }
 
   return { files, skipped, seenPaths, warnings };
+}
+
+/** Dispatches native transcript discovery to the right provider walker. */
+async function discoverNative(provider: UsageProvider, repoRoot?: string): Promise<string[]> {
+  if (provider === "claude") return discoverClaudeNative(repoRoot);
+  if (provider === "codex") return discoverCodexNative(repoRoot);
+  return discoverGeminiNative(repoRoot);
+}
+
+/** Resolves a Gemini session's working directory from its header projectHash, falling back to its directory name. */
+function geminiCwd(records: Array<{ record: Record<string, unknown> }>, filePath: string, map?: GeminiProjectMap): string | undefined {
+  if (!map) return undefined;
+  const header = records.find((row) => typeof row.record.sessionId === "string" && typeof row.record.type !== "string");
+  const projectHash = typeof header?.record.projectHash === "string" ? header.record.projectHash : undefined;
+  const dir = geminiDirOf(filePath);
+  return resolveGeminiCwd(dir || "", projectHash, map);
 }
 
 /** Reads a JSONL transcript into object records, collecting warnings for unparseable lines. */
@@ -119,14 +147,14 @@ function codexEligibility(records: Array<{ record: Record<string, unknown> }>, m
   return { eligible: records.length > 0, completed, inferredComplete };
 }
 
-/** Decides whether a Claude transcript should be indexed, and whether it reads as complete. */
-function claudeEligibility(records: Array<{ record: Record<string, unknown> }>, mtimeMs: number, now: Date): {
+/** Decides whether a transcript with no explicit completion marker (Claude, Gemini) should be indexed. */
+function nonMarkerEligibility(records: Array<{ record: Record<string, unknown> }>, mtimeMs: number, now: Date, provider: UsageProvider): {
   eligible: boolean;
   completed: boolean;
   inferredComplete: boolean;
 } {
-  const inferredComplete = isQuiet(records, mtimeMs, now) && !lastRecordIsUser(records, "claude");
-  // Native Claude transcripts have no explicit completion marker, so eligibility used to wait
+  const inferredComplete = isQuiet(records, mtimeMs, now) && !lastRecordIsUser(records, provider);
+  // Native Claude/Gemini transcripts have no explicit completion marker, so eligibility used to wait
   // for a 15-minute quiet window, which hid every active conversation from the live UI. Index
   // as soon as there is content; `inferredComplete` still gates the synthetic end markers.
   return { eligible: records.length > 0, completed: false, inferredComplete };
@@ -152,6 +180,11 @@ function lastRecordIsUser(records: Array<{ record: Record<string, unknown> }>, p
         if (role === "user") return true;
         if (role === "assistant") return false;
       }
+      continue;
+    }
+    if (provider === "gemini") {
+      if (type === "user") return true;
+      if (type === "gemini") return false;
       continue;
     }
     if (type === "user") return true;

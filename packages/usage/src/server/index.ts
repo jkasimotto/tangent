@@ -7,6 +7,7 @@ import type { LocalUiApp, StaticAssetMount, UiModePreference, UiRoute, UiRouteRe
 import { createUsageUiClient, type UsageUiClient } from "@tangent/usage-ui-data";
 import { openUsageUiFromSqlite, ensureUsageIndex, type OpenUsageOptions, type UsageClient } from "@tangent/usage-index-sqlite/sqlite";
 import { nativeWatchRoots } from "@tangent/usage-providers/providers/index";
+import { isUsageProvider, type UsageProvider } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
 import { watchUsageSources, type UsageSourceWatcher } from "./watch.js";
 
 export type StartUsageUiServerOptions = {
@@ -173,8 +174,8 @@ function makeReloader(options: StartUsageUiServerOptions, context: UsageUiReques
 }
 
 /** Maps server options to the index-maintenance options. The index spans all history; the view window is applied at read time. */
-function maintenanceOptions(options: StartUsageUiServerOptions): { repo: string; scope?: "repo" | "all"; providers?: Array<"claude" | "codex">; sources?: Array<"native" | "usage-jsonl"> } {
-  const providers = options.providers?.filter((provider) => provider === "claude" || provider === "codex") as Array<"claude" | "codex"> | undefined;
+function maintenanceOptions(options: StartUsageUiServerOptions): { repo: string; scope?: "repo" | "all"; providers?: UsageProvider[]; sources?: Array<"native" | "usage-jsonl"> } {
+  const providers = options.providers?.filter(isUsageProvider);
   const sources = options.sources?.some((source) => source === "usage-jsonl" || source === "hook") ? ["native", "usage-jsonl"] as const : ["native"] as const;
   return { repo: options.repo || ".", scope: options.scope || "repo", providers, sources: [...sources] };
 }

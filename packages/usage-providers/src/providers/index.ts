@@ -18,6 +18,7 @@ import {
 import { loadNativeSourceFiles } from "./native/load.js";
 import { claudeHomes } from "./claude/native/discover.js";
 import { codexHome } from "./codex/native/discover.js";
+import { geminiHome } from "./gemini/native/discover.js";
 import nodePath from "node:path";
 
 export type LoadedProviderEvents = {
@@ -27,12 +28,18 @@ export type LoadedProviderEvents = {
   capabilities: UsageProviderCapabilities[];
 };
 
-const builtInProviderIds = ["claude", "codex"] as const;
+const builtInProviderIds = ["claude", "codex", "gemini"] as const;
 type BuiltInProviderId = typeof builtInProviderIds[number];
+
+const providerDisplayNames: Record<BuiltInProviderId, string> = {
+  claude: "Claude Code",
+  codex: "Codex",
+  gemini: "Gemini CLI"
+};
 
 export const builtInProviderAdapters: UsageProviderAdapter[] = builtInProviderIds.map((provider) => ({
   id: provider,
-  displayName: provider === "claude" ? "Claude Code" : "Codex",
+  displayName: providerDisplayNames[provider],
   /** Yields one native source file per transcript discovered for this provider, scoped to the context's repo. */
   async *discover(ctx) {
     const repo = ctx.repo ? await repoInfo(ctx.repo) : undefined;
@@ -141,8 +148,8 @@ export async function loadProviderEvents(options: OpenUsageOptions = {}): Promis
 /**
  * Returns the base directories that hold native transcripts for the given providers,
  * so a caller can watch them for live updates. These are the provider homes the
- * discovery walkers scan (`~/.claude/projects`, `~/.codex/sessions`), watched
- * recursively rather than per repo-key so newly created session files and project
+ * discovery walkers scan (`~/.claude/projects`, `~/.codex/sessions`, `~/.gemini/tmp`),
+ * watched recursively rather than per repo-key so newly created session files and project
  * subdirectories are caught without re-resolving the repo on every filesystem event.
  */
 export function nativeWatchRoots(providers?: string[]): string[] {
@@ -151,6 +158,7 @@ export function nativeWatchRoots(providers?: string[]): string[] {
   for (const provider of requested) {
     if (provider === "claude") for (const home of claudeHomes()) roots.push(nodePath.join(home, "projects"));
     if (provider === "codex") roots.push(nodePath.join(codexHome(), "sessions"));
+    if (provider === "gemini") roots.push(nodePath.join(geminiHome(), "tmp"));
   }
   return [...new Set(roots)];
 }

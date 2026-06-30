@@ -2,7 +2,7 @@ import { numberArg, stringArg, stringsArg, type Args } from "@tangent/core/cli";
 
 import { openUsageFromSqlite as openUsage, type UsageClient } from "@tangent/usage-index-sqlite/sqlite";
 import { ensureUsageIndex, type UsageIndexSource } from "@tangent/usage-index-sqlite/sdk/indexStore";
-import type { UsageProvider } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
+import { isUsageProvider, usageProviders, type UsageProvider } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
 import { objectField } from "./human-output.js";
 
 export async function runUsageResourceCommand(args: Args): Promise<boolean> {
@@ -276,8 +276,8 @@ function providerStrings(value: unknown): string[] | undefined {
 
 function legacyProviderList(value: unknown): UsageProvider[] {
   const raw = providerStrings(value);
-  if (!raw) return ["claude", "codex"];
-  return raw.filter((provider): provider is UsageProvider => provider === "claude" || provider === "codex");
+  if (!raw) return [...usageProviders];
+  return raw.filter(isUsageProvider);
 }
 
 function sourceList(value: unknown): UsageIndexSource[] {

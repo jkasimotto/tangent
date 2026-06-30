@@ -15,23 +15,16 @@ export async function inspectNativeLogFile(filePath: string): Promise<NativeLogI
   let logKind: NativeLogKind | undefined;
   let recordCount = 0;
 
-  for (const [index, line] of text.split(/\r?\n/).entries()) {
-    if (!line.trim()) continue;
-    let record: unknown;
-    try {
-      record = JSON.parse(line) as unknown;
-    } catch (error) {
-      parseErrors.push({ line: index + 1, message: (error as Error).message });
-      continue;
-    }
+  const { records } = readInspectableRecords(text, parseErrors);
+  for (const item of records) {
     recordCount += 1;
-    if (!record || typeof record !== "object" || Array.isArray(record)) continue;
-    const item = record as Record<string, unknown>;
     const detected = detectNativeLog(item);
     provider ||= detected.provider;
     logKind ||= detected.logKind;
-    increment(variants, variantKey(item, detected.provider));
-    collectHints(item, detected.provider, versions, models, origins, sources);
+    // Use the file-level provider once known, so records that are ambiguous on their own
+    // (e.g. a Gemini `user` message) still classify under the format the header established.
+    increment(variants, variantKey(item, provider || detected.provider));
+    collectHints(item, provider || detected.provider, versions, models, origins, sources);
   }
 
   return {
@@ -50,10 +43,46 @@ export async function inspectNativeLogFile(filePath: string): Promise<NativeLogI
   };
 }
 
+/**
+ * Reads a native log into object records for inspection, transparently handling the three on-disk
+ * shapes: line-delimited JSONL (Claude, Codex, newer Gemini) and a single pretty-printed JSON
+ * document (older Gemini `session-*.json`). A whole-text parse that yields an object with a
+ * `messages` array is the single-document case; its header and messages become the records.
+ */
+function readInspectableRecords(text: string, parseErrors: NativeLogInspection["parseErrors"]): { records: Record<string, unknown>[] } {
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && Array.isArray((parsed as Record<string, unknown>).messages)) {
+        const { messages, ...header } = parsed as Record<string, unknown>;
+        const records = [header, ...(messages as unknown[]).filter((message): message is Record<string, unknown> => Boolean(message) && typeof message === "object" && !Array.isArray(message))];
+        return { records };
+      }
+    } catch {
+      // Not a single JSON document; fall through to line-delimited parsing.
+    }
+  }
+  const records: Record<string, unknown>[] = [];
+  for (const [index, line] of text.split(/\r?\n/).entries()) {
+    if (!line.trim()) continue;
+    try {
+      const record = JSON.parse(line) as unknown;
+      if (record && typeof record === "object" && !Array.isArray(record)) records.push(record as Record<string, unknown>);
+    } catch (error) {
+      parseErrors.push({ line: index + 1, message: (error as Error).message });
+    }
+  }
+  return { records };
+}
+
 function detectNativeLog(record: Record<string, unknown>): { provider?: UsageProvider; logKind?: NativeLogKind } {
   const type = stringValue(record.type);
   if (type === "session_meta" || type === "turn_context" || type === "response_item" || type === "event_msg" || type === "compacted") {
     return { provider: "codex", logKind: "codex.rollout" };
+  }
+  if (type === "gemini" || record.projectHash !== undefined || record.$set !== undefined || record.thoughts !== undefined || record.toolCalls !== undefined) {
+    return { provider: "gemini", logKind: "gemini.chat" };
   }
   if (record.sessionId || record.uuid || record.message || type === "assistant" || type === "user" || type === "system") {
     return { provider: "claude", logKind: "claude.conversation" };
@@ -63,6 +92,10 @@ function detectNativeLog(record: Record<string, unknown>): { provider?: UsagePro
 
 function variantKey(record: Record<string, unknown>, provider?: UsageProvider): string {
   const type = stringValue(record.type) || "<missing>";
+  if (provider === "gemini") {
+    if (record.$set !== undefined) return "$set";
+    return stringValue(record.type) || "session";
+  }
   if (provider === "codex") {
     const payload = objectValue(record.payload);
     const payloadType = payload ? stringValue(payload.type) : undefined;
@@ -94,6 +127,11 @@ function collectHints(
     const collaboration = objectValue(payload?.collaboration_mode);
     const settings = objectValue(collaboration?.settings);
     addString(models, settings?.model);
+    return;
+  }
+
+  if (provider === "gemini") {
+    addString(models, record.model);
     return;
   }
 

@@ -26,7 +26,7 @@ export type EvalMetrics = {
       confidence: "exact" | "derived" | "partial" | "unknown";
     }>;
     messages: Array<{
-      provider: "claude" | "codex";
+      provider: "claude" | "codex" | "gemini";
       conversationId: string;
       turnId?: string;
       eventId: string;
@@ -47,7 +47,7 @@ export type EvalMetrics = {
     byName: Record<string, number>;
     byCategory: Record<string, number>;
     calls: Array<{
-      provider: "claude" | "codex";
+      provider: "claude" | "codex" | "gemini";
       conversationId: string;
       turnId?: string;
       eventId: string;
@@ -85,7 +85,7 @@ export type EvalMetrics = {
     diffStat?: string;
   };
   conversations: Array<{
-    provider: "claude" | "codex";
+    provider: "claude" | "codex" | "gemini";
     id: string;
   }>;
   warnings: string[];

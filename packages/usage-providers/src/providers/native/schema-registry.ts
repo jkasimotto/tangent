@@ -51,6 +51,23 @@ export const nativeSchemaDescriptors: NativeSchemaDescriptor[] = [
       "Claude Code native JSONL includes assistant message usage fields when provider usage is present.",
       "Some older records expose numeric versions; treat those as unknown and parse permissively."
     ]
+  },
+  {
+    id: "gemini.chat.v1",
+    provider: "gemini",
+    logKind: "gemini.chat",
+    versionRanges: [],
+    observedFrom: "Local inferred Gemini CLI chat session corpus, 2026-06-30.",
+    variants: [
+      "session",
+      "user",
+      "gemini",
+      "$set"
+    ],
+    notes: [
+      "Gemini CLI chat sessions are stored as a single JSON document (session-*.json) or as JSONL (session-*.jsonl); both carry a session header plus user and gemini messages.",
+      "Native Gemini sessions do not record a CLI version, so version compatibility is reported as unknown and parsing is permissive."
+    ]
   }
 ];
 
@@ -148,6 +165,8 @@ function parseVersion(value: string): { major: number; minor: number; patch: num
 }
 
 function providerLabel(provider: UsageProvider): string {
-  return provider === "claude" ? "Claude Code" : "Codex";
+  if (provider === "claude") return "Claude Code";
+  if (provider === "gemini") return "Gemini CLI";
+  return "Codex";
 }
 

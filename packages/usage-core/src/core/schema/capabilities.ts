@@ -30,6 +30,21 @@ export function capabilitiesForProvider(provider: UsageProvider): ProviderCapabi
     };
   }
 
+  if (provider === "gemini") {
+    return {
+      conversations: { status: "supported", source: "native", notes: ["Native Gemini CLI chat session files include a session header and quiet-window completion inference."] },
+      "messages.visible": { status: "supported", source: "native", notes: ["Native Gemini CLI sessions include user and gemini visible message content."] },
+      "messages.internal": { status: "supported", source: "native", notes: ["Native Gemini CLI messages expose reasoning thought summaries (subject and description), folded into the assistant message's thinking."] },
+      "tools.calls": { status: "supported", source: "native", notes: ["Native Gemini CLI messages carry toolCalls with name and args."] },
+      "tools.results": { status: "supported", source: "native", notes: ["Native Gemini CLI toolCalls carry their result inline."] },
+      "tokens.byConversation": { status: "supported", source: "native", notes: ["Native Gemini CLI messages include provider-reported token counts (input, output, thoughts, cached)."] },
+      "tokens.byModel": { status: "supported", source: "native", notes: ["Native Gemini CLI messages record the model alongside provider-reported token counts."] },
+      permissions: { status: "unsupported", source: "native", notes: ["Permission decisions are not present in native Gemini CLI session files."] },
+      subagents: { status: "unsupported", source: "native", notes: ["Subagent activity is not distinguished in native Gemini CLI session files."] },
+      compactions: { status: "unsupported", source: "native", notes: ["Compaction state is not present in native Gemini CLI session files."] }
+    };
+  }
+
   return {
     conversations: { status: "supported", source: "native", notes: ["Native Codex rollout transcripts include session and task lifecycle records."] },
     "messages.visible": { status: "supported", source: "native", notes: ["Native Codex rollout transcripts include user_message and agent_message events."] },

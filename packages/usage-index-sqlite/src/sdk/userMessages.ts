@@ -1,5 +1,5 @@
 import { eventsToProjections } from "@tangent/usage-core/core/projections";
-import type { UsageProvider } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
+import { isUsageProvider, usageProviders, type UsageProvider } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
 import { providerCapabilities } from "@tangent/usage-providers/providers/index";
 
 import { ensureSchema, openDb, usageIndexTarget } from "./indexStore.js";
@@ -33,8 +33,8 @@ export type ReadConversationsUserMessagesOptions = {
  * messages yields an empty `userMessages` array rather than being dropped.
  */
 export async function readConversationsUserMessages(options: ReadConversationsUserMessagesOptions): Promise<ConversationUserMessages[]> {
-  const providers = options.providers?.filter((provider) => provider === "claude" || provider === "codex") as UsageProvider[] | undefined;
-  const capabilities = (providers || ["claude", "codex"]).map(providerCapabilities);
+  const providers = options.providers?.filter(isUsageProvider);
+  const capabilities = (providers || usageProviders).map(providerCapabilities);
   const db = await openDb(await usageIndexTarget({ repo: options.repo || ".", scope: options.scope }));
   try {
     ensureSchema(db);

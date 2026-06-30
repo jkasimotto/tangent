@@ -207,7 +207,7 @@ export type EvalConversationMessage = {
 };
 export type EvalConversation = {
   id: string;
-  provider: "claude" | "codex";
+  provider: "claude" | "codex" | "gemini";
   startedAt?: string;
   endedAt?: string;
   messages: EvalConversationMessage[];

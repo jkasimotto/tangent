@@ -4,6 +4,7 @@ import { pathExists } from "@tangent/repo";
 
 import type { RollupLedgerLineV1 } from "../types/ledger.js";
 
+/** Reads and parses all valid v1 ledger lines from the given JSONL file. */
 export async function readLedger(ledgerPath: string): Promise<RollupLedgerLineV1[]> {
   if (!(await pathExists(ledgerPath))) return [];
   const text = await readFile(ledgerPath, "utf8");
@@ -20,17 +21,20 @@ export async function readLedger(ledgerPath: string): Promise<RollupLedgerLineV1
   return rows;
 }
 
+/** Appends a single ledger line as JSON to the given JSONL file, creating it if needed. */
 export async function appendLedgerLine(ledgerPath: string, line: RollupLedgerLineV1): Promise<void> {
   await mkdir(path.dirname(ledgerPath), { recursive: true });
   await appendFile(ledgerPath, `${JSON.stringify(line)}\n`, "utf8");
 }
 
+/** Returns a map from sourceKey to the most recent ledger line for that source. */
 export function latestLedgerBySource(lines: RollupLedgerLineV1[]): Map<string, RollupLedgerLineV1> {
   const latest = new Map<string, RollupLedgerLineV1>();
   for (const line of lines) latest.set(line.sourceKey, line);
   return latest;
 }
 
+/** Returns the most recent successfully processed rollup ledger line for the given period key. */
 export function latestSuccessfulRollupForKey(lines: RollupLedgerLineV1[], key: string): RollupLedgerLineV1 | undefined {
   return [...lines]
     .filter((line) => (line.rollupKey || line.dateBucket) === key && line.status === "processed" && line.inputVersion === "rollup.input.v1" && Boolean(line.rollupPath))

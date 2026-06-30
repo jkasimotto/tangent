@@ -53,6 +53,7 @@ export class EvalRunCancelledError extends Error {
   }
 }
 
+/** Executes all automatic variants in a prepared eval run concurrently and throws on failure. */
 export async function runPreparedEval(manifest: EvalRunManifest, options: RunPreparedEvalOptions = {}): Promise<EvalRunManifest> {
   const saveManifest = createQueuedManifestSaver(manifest);
   emit(manifest, options, { type: "run.started" });
@@ -73,6 +74,7 @@ export async function runPreparedEval(manifest: EvalRunManifest, options: RunPre
   return manifest;
 }
 
+/** Runs a single variant and normalises any thrown error into a typed outcome object. */
 async function runVariantAndCapture(
   manifest: EvalRunManifest,
   variant: EvalRunVariantState,
@@ -115,6 +117,7 @@ async function runVariantAndCapture(
   }
 }
 
+/** Executes all phases for a single eval variant, committing results after each phase. */
 async function runVariant(manifest: EvalRunManifest, variant: EvalRunVariantState, options: RunPreparedEvalOptions, saveManifest: SaveManifest): Promise<void> {
   throwIfCancelled(options.signal);
   variant.status = "running";
@@ -176,14 +179,17 @@ async function runVariant(manifest: EvalRunManifest, variant: EvalRunVariantStat
           TANGENT_EVAL_PHASE: phase.id
         },
         signal: options.signal,
+        /** Appends an agent event to the telemetry buffer and flushes to disk. */
         onEvent: (event) => {
           telemetryEvents.push(event);
           void writeTelemetry();
         },
+        /** Accumulates token usage and flushes the telemetry sidecar to disk. */
         onUsageTotal: (total) => {
           telemetryTotal = (telemetryTotal || 0) + total;
           void writeTelemetry();
         },
+        /** Forwards an agent output chunk as a phase.output progress event. */
         onOutput: (chunk) => emit(manifest, options, {
           type: "phase.output",
           caseId: variant.caseId,
@@ -262,6 +268,7 @@ async function runVariant(manifest: EvalRunManifest, variant: EvalRunVariantStat
   });
 }
 
+/** Computes the duration in milliseconds between two ISO timestamp strings. */
 function durationMs(startedAt?: string, endedAt?: string): number | undefined {
   if (!startedAt || !endedAt) return undefined;
   const started = new Date(startedAt).getTime();
@@ -270,6 +277,7 @@ function durationMs(startedAt?: string, endedAt?: string): number | undefined {
   return Math.max(0, ended - started);
 }
 
+/** Returns a queued save function that serialises manifest writes to prevent interleaved files. */
 function createQueuedManifestSaver(manifest: EvalRunManifest): SaveManifest {
   let queue = Promise.resolve();
   return () => {
@@ -289,10 +297,12 @@ function createQueuedTelemetryWriter(filePath: string, build: () => EvalAgentTel
   };
 }
 
+/** Returns true if an error represents an eval run cancellation or process abort. */
 export function isEvalRunCancelled(error: unknown): boolean {
   return error instanceof EvalRunCancelledError || isProcessAborted(error);
 }
 
+/** Emits a run progress event with the run id and current timestamp attached. */
 function emit(manifest: EvalRunManifest, options: RunPreparedEvalOptions, event: Omit<EvalRunProgressEvent, "runId" | "at">): void {
   options.onProgress?.({
     runId: manifest.id,
@@ -301,14 +311,17 @@ function emit(manifest: EvalRunManifest, options: RunPreparedEvalOptions, event:
   });
 }
 
+/** Throws an EvalRunCancelledError if the abort signal has been triggered. */
 function throwIfCancelled(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw new EvalRunCancelledError();
 }
 
+/** Returns true if the error is a cancellation or the abort signal is set. */
 function isCancellation(error: unknown, signal: AbortSignal | undefined): boolean {
   return isEvalRunCancelled(error) || Boolean(signal?.aborted);
 }
 
+/** Returns true if the error is a ProcessAbortedError from the agent runtime. */
 function isProcessAborted(error: unknown): boolean {
   return error instanceof Error && error.name === "ProcessAbortedError";
 }

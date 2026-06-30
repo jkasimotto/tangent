@@ -3,6 +3,7 @@ import { gitRaw } from "@tangent/repo/git";
 import { findVariant, loadRunManifest } from "../../core/run-store.js";
 import { resolveRunId } from "./shared.js";
 
+/** Handles the `eval diff` subcommand, showing a git range-diff between two variants. */
 export async function diffCommand(args: Args): Promise<void> {
   const runId = await resolveRunId(requiredString(args._[1], "eval diff requires <run-id>."));
   const variantA = requiredString(args._[2], "eval diff requires <variant-a>.");
@@ -27,6 +28,7 @@ export async function diffCommand(args: Args): Promise<void> {
   process.stdout.write(output);
 }
 
+/** Returns the most advanced commit reached by a variant, falling back through phase commits to baseCommit. */
 function endCommit(variant: { implementationCommit?: string; planCommit?: string; contextCommit?: string; baseCommit: string }): string {
   return variant.implementationCommit || variant.planCommit || variant.contextCommit || variant.baseCommit;
 }

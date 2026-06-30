@@ -1,3 +1,4 @@
+/** Recursively merges override into base, giving precedence to the override. */
 export function deepMerge(base: unknown, override: unknown): unknown {
   if (override === undefined) return base;
   if (Array.isArray(base) || Array.isArray(override)) return override;
@@ -9,6 +10,7 @@ export function deepMerge(base: unknown, override: unknown): unknown {
   return override;
 }
 
+/** Returns a deep clone of config with the dotted-path key set to rawValue. */
 export function setConfigValue<T>(config: T, dottedPath: string, rawValue: string): T {
   const next = structuredClone(config) as T;
   const segments = dottedPath.split(".").filter(Boolean);
@@ -24,6 +26,7 @@ export function setConfigValue<T>(config: T, dottedPath: string, rawValue: strin
   return next;
 }
 
+/** Parses a raw string into a boolean, null, number, or JSON value. */
 export function parseConfigValue(value: string): unknown {
   if (value === "true") return true;
   if (value === "false") return false;
@@ -36,6 +39,7 @@ export function parseConfigValue(value: string): unknown {
   }
 }
 
+/** Returns whether a value is a non-null, non-array plain object. */
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

@@ -19,14 +19,17 @@ export type CliCommandSpec = {
 
 export type CliCompletionShell = "bash" | "zsh" | "fish";
 
+/** Returns whether a CLI token matches a command by name or alias. */
 export function commandMatches(spec: CliCommandSpec, token: string): boolean {
   return spec.name === token || Boolean(spec.aliases?.includes(token));
 }
 
+/** Returns subcommands that are not hidden. */
 export function visibleSubcommands(spec: CliCommandSpec): CliCommandSpec[] {
   return (spec.subcommands || []).filter((command) => !command.hidden);
 }
 
+/** Renders a formatted help string for a CLI command. */
 export function renderCommandHelp(spec: CliCommandSpec, commandPath = spec.name): string {
   const lines: string[] = [commandPath, ""];
   if (spec.description) lines.push(spec.description, "");
@@ -51,6 +54,7 @@ export function renderCommandHelp(spec: CliCommandSpec, commandPath = spec.name)
   return lines.join("\n").trimEnd();
 }
 
+/** Returns completion candidates for the last argv token. */
 export function completeCommand(spec: CliCommandSpec, argv: string[]): string[] {
   const current = argv.at(-1) || "";
   const prior = argv.length ? argv.slice(0, -1) : [];
@@ -60,6 +64,7 @@ export function completeCommand(spec: CliCommandSpec, argv: string[]): string[] 
   return filterPrefix([...commandCompletions(state.command), ...(state.command.values || [])], current);
 }
 
+/** Returns a shell completion script for the named command. */
 export function completionScript(shell: CliCompletionShell, commandName: string): string {
   if (shell === "bash") {
     return `_${commandName}_completion() {
@@ -85,6 +90,7 @@ compdef _${commandName}_completion ${commandName}
 `;
 }
 
+/** Walks the command tree along argv and returns the active command and any pending option. */
 function walkCommand(root: CliCommandSpec, argv: string[]): { command: CliCommandSpec; optionValue?: CliOptionSpec } {
   let command = root;
   for (let index = 0; index < argv.length; index += 1) {
@@ -102,35 +108,43 @@ function walkCommand(root: CliCommandSpec, argv: string[]): { command: CliComman
   return { command };
 }
 
+/** Finds the option in a command that matches the given CLI token. */
 function findOption(command: CliCommandSpec, token: string): CliOptionSpec | undefined {
   return visibleOptions(command).find((option) => optionTokens(option).includes(token));
 }
 
+/** Returns options that are not marked as internal. */
 function visibleOptions(command: CliCommandSpec): CliOptionSpec[] {
   return (command.options || []).filter((option) => !option.name.startsWith("_"));
 }
 
+/** Returns all name and alias tokens for visible subcommands. */
 function commandCompletions(command: CliCommandSpec): string[] {
   return visibleSubcommands(command).flatMap((subcommand) => [subcommand.name, ...(subcommand.aliases || [])]);
 }
 
+/** Returns all option tokens for visible options of a command. */
 function optionCompletions(command: CliCommandSpec): string[] {
   return visibleOptions(command).flatMap(optionTokens);
 }
 
+/** Returns the --name and alias tokens for an option. */
 function optionTokens(option: CliOptionSpec): string[] {
   return [`--${option.name}`, ...(option.aliases || [])];
 }
 
+/** Returns a display label for an option including any value placeholder. */
 function optionLabel(option: CliOptionSpec): string {
   const value = option.takesValue ? ` <value>` : "";
   return optionTokens(option).join(", ") + value;
 }
 
+/** Returns a display name for a command including its args placeholder if present. */
 function commandName(command: CliCommandSpec): string {
   return `${command.name}${command.args ? ` ${command.args}` : ""}`;
 }
 
+/** Returns deduplicated, sorted values that start with the given prefix. */
 function filterPrefix(values: string[], prefix: string): string[] {
   return [...new Set(values)].filter((value) => value.startsWith(prefix)).sort();
 }

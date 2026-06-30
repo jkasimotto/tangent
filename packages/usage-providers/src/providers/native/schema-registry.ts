@@ -71,10 +71,12 @@ export const nativeSchemaDescriptors: NativeSchemaDescriptor[] = [
   }
 ];
 
+/** Returns all known native schema descriptors, optionally filtered by provider. */
 export function listNativeSchemas(provider?: UsageProvider): NativeSchemaDescriptor[] {
   return provider ? nativeSchemaDescriptors.filter((descriptor) => descriptor.provider === provider) : [...nativeSchemaDescriptors];
 }
 
+/** Returns the compatibility assessment for a given provider version against all known schema ranges. */
 export function compatibilityForVersion(provider: UsageProvider, version: string | number): NativeVersionCompatibility {
   const descriptors = listNativeSchemas(provider);
   if (typeof version === "number") {
@@ -131,6 +133,7 @@ export function compatibilityForVersion(provider: UsageProvider, version: string
   };
 }
 
+/** Returns the worst-case compatibility status across a set of per-version compatibility results. */
 export function aggregateCompatibility(values: NativeVersionCompatibility[]): NativeSchemaCompatibilityStatus {
   if (!values.length) return "unknown";
   if (values.some((value) => value.status === "unknown-newer")) return "unknown-newer";
@@ -139,12 +142,14 @@ export function aggregateCompatibility(values: NativeVersionCompatibility[]): Na
   return "compatible";
 }
 
+/** Returns true if the given version string falls within the schema's min/max range. */
 function versionInRange(version: string, range: { min?: string; max?: string }): boolean {
   if (range.min && compareVersions(version, range.min) < 0) return false;
   if (range.max && compareVersions(version, range.max) > 0) return false;
   return true;
 }
 
+/** Compares two version strings numerically by major, minor, and patch component. */
 function compareVersions(left: string, right: string): number {
   const leftParsed = parseVersion(left);
   const rightParsed = parseVersion(right);
@@ -154,6 +159,7 @@ function compareVersions(left: string, right: string): number {
     leftParsed.patch - rightParsed.patch;
 }
 
+/** Parses a semver-like string into its major, minor, and patch components, or returns undefined. */
 function parseVersion(value: string): { major: number; minor: number; patch: number } | undefined {
   const match = /^(\d+)\.(\d+)\.(\d+)/.exec(value);
   if (!match) return undefined;
@@ -164,6 +170,7 @@ function parseVersion(value: string): { major: number; minor: number; patch: num
   };
 }
 
+/** Returns a human-readable label for a provider. */
 function providerLabel(provider: UsageProvider): string {
   if (provider === "claude") return "Claude Code";
   if (provider === "gemini") return "Gemini CLI";

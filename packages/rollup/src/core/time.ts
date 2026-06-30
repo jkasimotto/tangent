@@ -1,5 +1,6 @@
 import type { RollupPeriod } from "../types/period.js";
 
+/** Formats a Date as a YYYY-MM-DD string in the given timezone. */
 export function dateBucket(date: Date, timezone: string): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: timezone,
@@ -11,6 +12,7 @@ export function dateBucket(date: Date, timezone: string): string {
   return `${byType.year}-${byType.month}-${byType.day}`;
 }
 
+/** Formats an ISO timestamp as an HH:MM time string in the given timezone, or undefined if invalid. */
 export function timeLabel(iso: string | undefined, timezone: string): string | undefined {
   if (!iso) return undefined;
   const date = new Date(iso);
@@ -23,6 +25,7 @@ export function timeLabel(iso: string | undefined, timezone: string): string | u
   }).format(date);
 }
 
+/** Formats an ISO timestamp as a human-readable date+time string with timezone abbreviation. */
 export function timestampLabel(iso: string, timezone: string): string {
   const date = new Date(iso);
   return new Intl.DateTimeFormat("en-CA", {
@@ -37,10 +40,12 @@ export function timestampLabel(iso: string, timezone: string): string {
   }).format(date);
 }
 
+/** Returns today's date as a YYYY-MM-DD string in the given timezone. */
 export function todayBucket(timezone: string): string {
   return dateBucket(new Date(), timezone);
 }
 
+/** Converts a date arg string (today, yesterday, YYYYMMDD, etc.) to a YYYY-MM-DD bucket, or undefined if not given. */
 export function dateArgToBucket(value: string | undefined, timezone: string): string | undefined {
   if (!value) return undefined;
   if (value === "today") return offsetBucket(0, timezone);
@@ -55,6 +60,7 @@ export function dateArgToBucket(value: string | undefined, timezone: string): st
   return dateBucket(parsed, timezone);
 }
 
+/** Parses a rollup period selector (date string or compact range) into a RollupPeriod. */
 export function rollupPeriodArg(value: string | undefined, timezone: string): RollupPeriod {
   const selector = value || "today";
   const compactRange = selector.match(/^(\d{8})-(\d{8})$/);
@@ -83,6 +89,7 @@ export function rollupPeriodArg(value: string | undefined, timezone: string): Ro
   };
 }
 
+/** Resolves a RollupPeriod from a selector, explicit date, or from/to range parameters. */
 export function resolveRollupPeriod(params: {
   selector?: string;
   date?: string;
@@ -115,6 +122,7 @@ export function resolveRollupPeriod(params: {
   };
 }
 
+/** Converts a string or Date boundary value to a YYYY-MM-DD bucket string. */
 function resolveBoundaryDate(value: string | Date, timezone: string): string {
   if (typeof value === "string") {
     const bucket = dateArgToBucket(value, timezone);
@@ -124,6 +132,7 @@ function resolveBoundaryDate(value: string | Date, timezone: string): string {
   return dateBucket(value, timezone);
 }
 
+/** Returns true if the value looks like a rollup date or range selector. */
 export function isRollupSelector(value: string | undefined): boolean {
   return Boolean(value && (
     value === "today" ||
@@ -136,6 +145,7 @@ export function isRollupSelector(value: string | undefined): boolean {
   ));
 }
 
+/** Converts an 8-digit compact date string (YYYYMMDD) to a YYYY-MM-DD bucket string. */
 function compactDateToBucket(value: string): string {
   const year = value.slice(0, 4);
   const month = value.slice(4, 6);
@@ -153,6 +163,7 @@ function compactDateToBucket(value: string): string {
   return bucket;
 }
 
+/** Returns the YYYY-MM-DD bucket for a day offset from today in the given timezone. */
 function offsetBucket(offsetDays: number, timezone: string): string {
   const today = todayBucket(timezone);
   const [year, month, day] = today.split("-").map(Number);

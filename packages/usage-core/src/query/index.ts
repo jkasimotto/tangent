@@ -212,6 +212,7 @@ const whereKeys = new Set([
   "not"
 ]);
 
+/** Filters, sorts, and paginates an array of rows according to a UsageListQuery. */
 export function queryRows<T extends Record<string, unknown>>(rows: T[], query: UsageListQuery = {}): QueryPage<T> {
   const strict = query.strict !== false;
   if (strict) validateWhere(query.where);
@@ -229,6 +230,7 @@ export function queryRows<T extends Record<string, unknown>>(rows: T[], query: U
   };
 }
 
+/** Returns true if the row satisfies all conditions in the where clause. */
 export function matchesWhere(row: Record<string, unknown>, where: UsageWhere | undefined): boolean {
   if (!where) return true;
   if (where.and?.some((child) => !matchesWhere(row, child))) return false;
@@ -254,6 +256,7 @@ export function matchesWhere(row: Record<string, unknown>, where: UsageWhere | u
   return true;
 }
 
+/** Groups and aggregates rows according to the given dimensions and metric specs. */
 export function aggregateRows(rows: Array<Record<string, unknown>>, query: AggregateQuery): UsageAggregateTable {
   validateWhere(query.where);
   const scoped = rows.filter((row) => matchesScope(row, query.scope)).filter((row) => matchesWhere(row, query.where));
@@ -278,6 +281,7 @@ export function aggregateRows(rows: Array<Record<string, unknown>>, query: Aggre
   };
 }
 
+/** Wraps data in the standard UsageResult envelope with metadata and provenance. */
 export function resultMeta<T>(
   data: T,
   args: {
@@ -309,6 +313,7 @@ export function resultMeta<T>(
   };
 }
 
+/** Converts a UsageScope into an equivalent UsageWhere clause for filtering rows. */
 export function normalizeScopeWhere(scope: UsageScope | undefined): UsageWhere | undefined {
   if (!scope) return undefined;
   return {
@@ -318,10 +323,12 @@ export function normalizeScopeWhere(scope: UsageScope | undefined): UsageWhere |
   };
 }
 
+/** Returns true if the row satisfies the given scope filter. */
 function matchesScope(row: Record<string, unknown>, scope: UsageScope | undefined): boolean {
   return matchesWhere(row, normalizeScopeWhere(scope));
 }
 
+/** Throws UsageError if the where clause contains any unknown field keys. */
 function validateWhere(where: UsageWhere | undefined): void {
   if (!where) return;
   for (const key of Object.keys(where)) {
@@ -332,6 +339,7 @@ function validateWhere(where: UsageWhere | undefined): void {
   if (where.not) validateWhere(where.not);
 }
 
+/** Sorts rows by the given orderBy fields, defaulting to startedAt/createdAt/id ascending. */
 function sortRows<T extends Record<string, unknown>>(rows: T[], orderBy: UsageOrderBy[] | undefined): T[] {
   const ordering = orderBy?.length ? orderBy : [{ field: "startedAt", direction: "asc" as const }, { field: "createdAt", direction: "asc" as const }, { field: "id", direction: "asc" as const }];
   return [...rows].sort((left, right) => {
@@ -344,6 +352,7 @@ function sortRows<T extends Record<string, unknown>>(rows: T[], orderBy: UsageOr
   });
 }
 
+/** Compares two unknown values for sort ordering, treating null/undefined as smallest. */
 function compareUnknown(left: unknown, right: unknown): number {
   if (left === right) return 0;
   if (left === undefined || left === null) return -1;
@@ -352,12 +361,14 @@ function compareUnknown(left: unknown, right: unknown): number {
   return String(left).localeCompare(String(right));
 }
 
+/** Encodes the cursor fields of a row into a base64url string for pagination. */
 function encodeCursor(row: Record<string, unknown> | undefined, orderBy: UsageOrderBy[] | undefined): string | undefined {
   if (!row) return undefined;
   const fields = [...(orderBy || []), { field: "id", direction: "asc" as const }];
   return Buffer.from(JSON.stringify(fields.map((field) => [field.field, valueAt(row, field.field)])), "utf8").toString("base64url");
 }
 
+/** Decodes a base64url cursor string into field-value pairs, or undefined if absent. */
 function decodeCursor(cursor: string | undefined): Array<[string, unknown]> | undefined {
   if (!cursor) return undefined;
   try {
@@ -368,6 +379,7 @@ function decodeCursor(cursor: string | undefined): Array<[string, unknown]> | un
   }
 }
 
+/** Returns a positive number if the row comes after the cursor, negative if before, zero if equal. */
 function compareCursor(row: Record<string, unknown>, cursor: Array<[string, unknown]>, orderBy: UsageOrderBy[] | undefined): number {
   const fields = [...(orderBy || []), { field: "id", direction: "asc" as const }];
   for (const field of fields) {
@@ -379,12 +391,14 @@ function compareCursor(row: Record<string, unknown>, cursor: Array<[string, unkn
   return 0;
 }
 
+/** Validates and normalizes a query limit, defaulting to 1000 if not provided. */
 function normalizeLimit(limit: number | undefined): number {
   if (limit === undefined) return 1000;
   if (!Number.isInteger(limit) || limit < 0) throw new UsageError("USAGE_INVALID_QUERY", "Query limit must be a non-negative integer.", { details: { limit }, retryable: false });
   return limit;
 }
 
+/** Returns true if the row's field value matches any of the expected string values. */
 function matchValue(row: Record<string, unknown>, field: string, expected: string | string[] | undefined): boolean {
   if (expected === undefined) return true;
   const actual = valueAt(row, field);
@@ -392,6 +406,7 @@ function matchValue(row: Record<string, unknown>, field: string, expected: strin
   return values.includes(String(actual));
 }
 
+/** Returns true if the actual value satisfies all bounds in the range. */
 function matchRange<T extends number | string>(actual: T | undefined, range: Range<T> | undefined): boolean {
   if (!range) return true;
   if (actual === undefined) return false;
@@ -403,11 +418,13 @@ function matchRange<T extends number | string>(actual: T | undefined, range: Ran
   return true;
 }
 
+/** Converts a date Range to a comparable string Range for ISO timestamp comparison. */
 function dateRange(range: Range<string | Date> | undefined): Range<string> | undefined {
   if (!range) return undefined;
   return Object.fromEntries(Object.entries(range).map(([key, value]) => [key, dateComparable(value)])) as Range<string>;
 }
 
+/** Builds a Range from optional from/to dates, returning undefined if both are absent. */
 function rangeFromDates(from: Date | string | undefined, to: Date | string | undefined): Range<string> | undefined {
   if (!from && !to) return undefined;
   return {
@@ -416,12 +433,14 @@ function rangeFromDates(from: Date | string | undefined, to: Date | string | und
   };
 }
 
+/** Converts a Date or ISO string to a comparable ISO string, or undefined for other types. */
 function dateComparable(value: unknown): string | undefined {
   if (value instanceof Date) return value.toISOString();
   if (typeof value === "string") return value;
   return undefined;
 }
 
+/** Reads a nested field value from a row using a dot-separated path, with dimension aliases. */
 function valueAt(row: Record<string, unknown>, path: string): unknown {
   const aliases: Record<string, string> = {
     kind: "kind",
@@ -441,24 +460,29 @@ function valueAt(row: Record<string, unknown>, path: string): unknown {
   return current;
 }
 
+/** Returns the value as a finite number, or undefined. */
 function numberValue(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+/** Returns true if the value is a string containing the needle (case-insensitive). */
 function stringIncludes(value: unknown, needle: string): boolean {
   return typeof value === "string" && value.toLowerCase().includes(needle.toLowerCase());
 }
 
+/** Returns true if value is an array containing at least one string that includes needle. */
 function targetIncludes(value: unknown, needle: string): boolean {
   return Array.isArray(value) && value.some((item) => typeof item === "string" && item.includes(needle));
 }
 
+/** Returns the row value for a group-by dimension, mapping date/hour to ISO prefix strings. */
 function dimensionValue(row: Record<string, unknown>, dimension: UsageDimension): string | number | undefined {
   if (dimension === "date") return stringPrefix(valueAt(row, "startedAt") ?? valueAt(row, "createdAt"), 10);
   if (dimension === "hour") return stringPrefix(valueAt(row, "startedAt") ?? valueAt(row, "createdAt"), 13);
   return valueAt(row, dimension) as string | number | undefined;
 }
 
+/** Returns the numeric metric value for a row given a metric spec string. */
 function metricValue(row: Record<string, unknown>, metric: UsageMetricSpec): number {
   if (metric === "count") return 1;
   if (metric === "messages.count") return valueAt(row, "role") ? 1 : 0;
@@ -475,6 +499,7 @@ function metricValue(row: Record<string, unknown>, metric: UsageMetricSpec): num
   return 0;
 }
 
+/** Returns the first length characters of a string value, or undefined if the value is not a string. */
 function stringPrefix(value: unknown, length: number): string | undefined {
   return typeof value === "string" ? value.slice(0, length) : undefined;
 }

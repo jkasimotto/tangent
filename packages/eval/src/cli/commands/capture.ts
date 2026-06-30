@@ -5,6 +5,7 @@ import { requiredString, stringArg, type Args } from "../args.js";
 import { agentFromArgs, phasesFromArgs, variantsFromArgs } from "./shared.js";
 import type { EvalSpec } from "../../types/spec.js";
 
+/** Handles the `eval capture` subcommand, scaffolding a new eval spec and prompt file. */
 export async function captureCommand(args: Args): Promise<void> {
   const subcommand = args._[1];
   if (subcommand !== "task") throw new Error(`Unknown eval capture command: ${subcommand || ""}`);
@@ -42,6 +43,7 @@ export async function captureCommand(args: Args): Promise<void> {
   console.log(`prompt: ${path.join(dir, promptRel)}`);
 }
 
+/** Reads all of stdin into a string. */
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));

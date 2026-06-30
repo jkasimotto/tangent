@@ -16,16 +16,19 @@ export const defaultRedaction: RedactionOptions = {
   maxToolResponseBytes: 20000
 };
 
+/** Redacts or strips an arbitrary value according to the given content mode and secret-key rules. */
 export function redactUnknown(value: unknown, options: RedactionOptions = defaultRedaction): unknown {
   if (options.contentMode === "metadata-only") return metadataOnly(value);
   return redactValue(value, options, undefined);
 }
 
+/** Truncates a text string to max characters, adding "..." if the string was trimmed. */
 export function previewText(text: string, max = 240): string {
   const compact = text.replace(/\s+/g, " ").trim();
   return compact.length > max ? `${compact.slice(0, max)}...` : compact;
 }
 
+/** Recursively redacts secret-key values and enforces string byte limits on a value. */
 function redactValue(value: unknown, options: RedactionOptions, key: string | undefined): unknown {
   if (options.redactSecrets && key && SECRET_KEY_RE.test(key)) return "[REDACTED]";
   if (typeof value === "string") {
@@ -44,6 +47,7 @@ function redactValue(value: unknown, options: RedactionOptions, key: string | un
   return value;
 }
 
+/** Replaces a value with a structural descriptor (type, length, or keys) for metadata-only mode. */
 function metadataOnly(value: unknown): unknown {
   if (value == null || typeof value === "boolean" || typeof value === "number") return value;
   if (typeof value === "string") return { type: "string", bytes: Buffer.byteLength(value) };

@@ -1,6 +1,7 @@
 import { getCandidates } from "../../sdk/index.js";
 import { booleanArg, dateArg, parseDate, providerArg, type Args } from "../args.js";
 
+/** Lists candidate conversations eligible for rollup processing. */
 export async function candidatesCommand(args: Args): Promise<void> {
   const started = Date.now();
   const rows = await getCandidates({

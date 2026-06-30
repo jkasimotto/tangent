@@ -10,6 +10,7 @@ import {
   type UsageTokenUsage
 } from "../schema/index.js";
 
+/** Converts a legacy UsageJsonlLineV1 event to the canonical UsageEventV3 format. */
 export function toUsageEventV3(event: UsageEventV3 | UsageJsonlLineV1, index = 0, contentMode: UsageContentMode = "metadata-with-excerpts"): UsageEventV3 {
   if ((event as UsageEventV3).schema === "tangent.usage.event.v3") return event as UsageEventV3;
   const legacy = event as UsageJsonlLineV1;
@@ -117,6 +118,7 @@ export function toUsageEventV3(event: UsageEventV3 | UsageJsonlLineV1, index = 0
   };
 }
 
+/** Extracts and normalizes token usage fields from a raw event data value. */
 function normalizeTokenUsage(value: unknown, data: Record<string, unknown>, event: UsageJsonlLineV1): UsageTokenUsage | undefined {
   const usage = objectValue(value);
   if (!usage) return undefined;
@@ -149,6 +151,7 @@ function normalizeTokenUsage(value: unknown, data: Record<string, unknown>, even
   };
 }
 
+/** Normalizes a raw cost object into a typed UsageCost, returning undefined if no cost data is present. */
 function normalizeCost(value: unknown): UsageCost | undefined {
   const cost = objectValue(value);
   if (!cost) return undefined;
@@ -162,6 +165,7 @@ function normalizeCost(value: unknown): UsageCost | undefined {
   };
 }
 
+/** Maps a legacy event kind string to its canonical v3 kind string. */
 function legacyKindToV3(kind: string): string {
   if (kind === "conversation.start") return "session.start";
   if (kind === "conversation.end") return "session.end";
@@ -178,6 +182,7 @@ function legacyKindToV3(kind: string): string {
   return kind;
 }
 
+/** Returns the actor role string for a legacy event kind, or undefined for non-message events. */
 function roleForLegacyEvent(event: UsageJsonlLineV1): string | undefined {
   if (event.kind === "message.user") return "user";
   if (event.kind === "message.assistant.visible" || event.kind === "message.assistant.internal") return "assistant";
@@ -185,6 +190,7 @@ function roleForLegacyEvent(event: UsageJsonlLineV1): string | undefined {
   return event.actor?.role;
 }
 
+/** Builds the file facet for a file.* event, or returns undefined for other event kinds. */
 function fileFacet(event: UsageJsonlLineV1, data: Record<string, unknown>): UsageEventV3["data"]["file"] {
   if (!event.kind.startsWith("file.")) return undefined;
   return {
@@ -194,12 +200,14 @@ function fileFacet(event: UsageJsonlLineV1, data: Record<string, unknown>): Usag
   };
 }
 
+/** Collects all path-like strings from an arbitrary data object by walking known path keys. */
 function pathsForData(data: unknown): string[] {
   const rows: string[] = [];
   collectPaths(data, rows);
   return unique(rows.map((row) => row.trim()).filter(Boolean));
 }
 
+/** Recursively walks a value, pushing strings found under known path keys into rows. */
 function collectPaths(value: unknown, rows: string[]): void {
   if (!value || typeof value !== "object") return;
   if (Array.isArray(value)) {
@@ -215,52 +223,63 @@ function collectPaths(value: unknown, rows: string[]): void {
   }
 }
 
+/** Coerces a legacy confidence string to the canonical UsageEventV3 confidence type. */
 function legacyConfidence(value: unknown): UsageEventV3["availability"]["confidence"] {
   if (value === "exact" || value === "provider-reported" || value === "derived" || value === "estimated" || value === "partial" || value === "unsupported" || value === "unknown") return value;
   if (value === "inferred") return "estimated";
   return "unknown";
 }
 
+/** Returns a single-line preview of a string truncated to length characters, or undefined if not a string. */
 function preview(value: unknown, length = 160): string | undefined {
   if (typeof value !== "string") return undefined;
   const singleLine = value.replace(/\s+/g, " ").trim();
   return singleLine.length > length ? `${singleLine.slice(0, length - 1)}...` : singleLine;
 }
 
+/** Returns a SHA-256 hex digest of a string for use as a stable deterministic ID. */
 function stableId(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+/** Sums all defined finite numbers in the array, returning undefined if none are present. */
 function sum(values: Array<number | undefined>): number | undefined {
   const present = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
   if (!present.length) return undefined;
   return present.reduce((total, value) => total + value, 0);
 }
 
+/** Returns a new array with duplicate and nullish values removed. */
 function unique<T>(values: T[]): T[] {
   return [...new Set(values.filter((value): value is T & {} => value !== undefined && value !== null))];
 }
 
+/** Returns the value as a plain object record, or undefined if it is an array or non-object. */
 function objectValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
+/** Returns a named key from an object-like value, or undefined if value is not an object. */
 function field(value: unknown, key: string): unknown {
   return value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
 }
 
+/** Returns the value as a non-empty string, or undefined. */
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value ? value : undefined;
 }
 
+/** Returns the value as a finite number, or undefined. */
 function numberValue(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+/** Returns an array of strings from the value, or undefined if the value is not an array. */
 function stringArray(value: unknown): string[] | undefined {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined;
 }
 
+/** Returns the value if it is one of the allowed union options, otherwise undefined. */
 function stringUnion<T extends string>(value: unknown, options: readonly T[]): T | undefined {
   return typeof value === "string" && options.includes(value as T) ? value as T : undefined;
 }

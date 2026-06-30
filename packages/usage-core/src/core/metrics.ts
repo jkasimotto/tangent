@@ -1,5 +1,6 @@
 import type { UsageCost, UsageMetrics, UsageTokenUsage } from "../schema/index.js";
 
+/** Sums an array of UsageMetrics records into a single aggregate object. */
 export function aggregateMetrics(values: UsageMetrics[]): UsageMetrics {
   const tokens = aggregateTokenUsage(values.map((value) => value.tokens).filter(isDefined));
   const cost = aggregateCost(values.map((value) => value.cost).filter(isDefined));
@@ -16,6 +17,7 @@ export function aggregateMetrics(values: UsageMetrics[]): UsageMetrics {
   });
 }
 
+/** Sums an array of token usage records into one, taking the max for context window fields. */
 export function aggregateTokenUsage(values: UsageTokenUsage[]): UsageTokenUsage | undefined {
   if (!values.length) return undefined;
   return stripUndefined({
@@ -32,6 +34,7 @@ export function aggregateTokenUsage(values: UsageTokenUsage[]): UsageTokenUsage 
   });
 }
 
+/** Sums an array of cost records into one aggregate cost value. */
 function aggregateCost(values: UsageCost[]): UsageCost | undefined {
   if (!values.length) return undefined;
   const unpriced = unique(values.flatMap((value) => value.unpricedModels || []));
@@ -44,25 +47,30 @@ function aggregateCost(values: UsageCost[]): UsageCost | undefined {
   };
 }
 
+/** Returns a copy of the object with all undefined-valued keys omitted. */
 function stripUndefined<T extends Record<string, unknown>>(value: T): T {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined)) as T;
 }
 
+/** Sums all defined finite numbers in the array, returning undefined if none are present. */
 function sum(values: Array<number | undefined>): number | undefined {
   const present = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
   if (!present.length) return undefined;
   return present.reduce((total, value) => total + value, 0);
 }
 
+/** Returns the maximum of all defined finite numbers in the array, or undefined if the array is empty. */
 function max(values: Array<number | undefined>): number | undefined {
   const present = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
   return present.length ? Math.max(...present) : undefined;
 }
 
+/** Returns a new array with duplicate and nullish values removed. */
 function unique<T>(values: T[]): T[] {
   return [...new Set(values.filter((value): value is T & {} => value !== undefined && value !== null))];
 }
 
+/** Returns true if the value is not undefined. */
 function isDefined<T>(value: T | undefined): value is T {
   return value !== undefined;
 }

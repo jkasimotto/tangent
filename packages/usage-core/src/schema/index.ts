@@ -514,6 +514,7 @@ export const emptyAvailability: UsageAvailability = {
   providerCoverage: {}
 };
 
+/** Constructs a UsageAvailability object with defaults filled in for any missing fields. */
 export function usageAvailability(value: Partial<UsageAvailability> = {}): UsageAvailability {
   return {
     confidence: value.confidence || "unknown",

@@ -3,6 +3,7 @@ import { createSummaryRunner } from "../../runners/summary-runner.js";
 import { sandboxArg, stringArg, summaryProviderArg, type Args } from "../args.js";
 import type { SummaryProviderConfig } from "../../types/provider.js";
 
+/** Tests availability or lists models for the configured summary provider. */
 export async function providerCommand(args: Args): Promise<void> {
   const subcommand = args._[1] || "test";
   const config = await providerConfig(args);
@@ -27,6 +28,7 @@ export async function providerCommand(args: Args): Promise<void> {
   throw new Error(`Unknown provider command: ${subcommand}`);
 }
 
+/** Resolves the summary provider config from CLI args or the repo config. */
 async function providerConfig(args: Args): Promise<SummaryProviderConfig> {
   const kind = summaryProviderArg(args.provider);
   const model = stringArg(args.model);

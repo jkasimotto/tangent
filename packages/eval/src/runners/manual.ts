@@ -1,5 +1,6 @@
 import type { EvalAgentConfig } from "../types/provider.js";
 
+/** Builds a shell command hint for manually running a phase with the configured agent. */
 export function manualCommandHint(args: {
   agent: EvalAgentConfig;
   executionCwd: string;
@@ -16,6 +17,7 @@ export function manualCommandHint(args: {
   return `cd ${shellQuote(args.executionCwd)} # run your agent with ${shellQuote(args.promptPath)}`;
 }
 
+/** Wraps a string in single quotes, escaping any interior single quotes. */
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }

@@ -1,3 +1,4 @@
+/** Builds the system prompt instructing the agent to produce an implementation plan. */
 export function planPrompt(task: string): string {
   return `You are planning an implementation for the following task.
 
@@ -13,6 +14,7 @@ ${task.trim()}
 `;
 }
 
+/** Builds the system prompt instructing the agent to implement the task, optionally incorporating a committed plan. */
 export function implementationPrompt(task: string, plan?: string): string {
   if (!plan?.trim()) {
     return `Implement the task below.

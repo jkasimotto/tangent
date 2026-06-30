@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import type { UsageProvider } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
 import type { NativeLogInspection, NativeLogKind, NativeRecordVariant } from "./types.js";
 
+/** Parses a native provider log file and returns a structural inspection summary. */
 export async function inspectNativeLogFile(filePath: string): Promise<NativeLogInspection> {
   const text = await readFile(filePath, "utf8");
   const parseErrors: NativeLogInspection["parseErrors"] = [];
@@ -76,6 +77,7 @@ function readInspectableRecords(text: string, parseErrors: NativeLogInspection["
   return { records };
 }
 
+/** Heuristically identifies the provider and log kind from a single record's fields. */
 function detectNativeLog(record: Record<string, unknown>): { provider?: UsageProvider; logKind?: NativeLogKind } {
   const type = stringValue(record.type);
   if (type === "session_meta" || type === "turn_context" || type === "response_item" || type === "event_msg" || type === "compacted") {
@@ -90,6 +92,7 @@ function detectNativeLog(record: Record<string, unknown>): { provider?: UsagePro
   return {};
 }
 
+/** Computes a variant key that describes a record's type within its provider format. */
 function variantKey(record: Record<string, unknown>, provider?: UsageProvider): string {
   const type = stringValue(record.type) || "<missing>";
   if (provider === "gemini") {
@@ -110,6 +113,7 @@ function variantKey(record: Record<string, unknown>, provider?: UsageProvider): 
   return type;
 }
 
+/** Collects version, model, origin, and source hints from a single provider record. */
 function collectHints(
   record: Record<string, unknown>,
   provider: UsageProvider | undefined,
@@ -141,29 +145,35 @@ function collectHints(
   addString(models, message?.model);
 }
 
+/** Adds a version string or number to the versions map, keyed by its string representation. */
 function addVersion(values: Map<string, string | number>, value: unknown): void {
   if (typeof value !== "string" && typeof value !== "number") return;
   values.set(String(value), value);
 }
 
+/** Adds a non-empty string value to the given set, ignoring non-strings and empty strings. */
 function addString(values: Set<string>, value: unknown): void {
   if (typeof value === "string" && value) values.add(value);
 }
 
+/** Increments the count for the given map key, initializing it to zero if absent. */
 function increment(map: Map<string, number>, key: string): void {
   map.set(key, (map.get(key) || 0) + 1);
 }
 
+/** Converts a variant count map to a sorted array of NativeRecordVariant objects. */
 function mapVariants(values: Map<string, number>): NativeRecordVariant[] {
   return [...values.entries()]
     .map(([key, count]) => ({ key, count }))
     .sort((left, right) => right.count - left.count || left.key.localeCompare(right.key));
 }
 
+/** Returns the value as a plain object, or undefined if it is an array or non-object. */
 function objectValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
+/** Returns the value as a non-empty string, or undefined. */
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value ? value : undefined;
 }

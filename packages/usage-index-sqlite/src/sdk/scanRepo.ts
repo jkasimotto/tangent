@@ -16,6 +16,7 @@ export type ScanRepoOptions = {
   includeRaw?: boolean;
 };
 
+/** Loads usage events from native transcripts or JSONL files for the given repo and returns a dataset. */
 export async function scanRepo(options: ScanRepoOptions): Promise<UsageDataset> {
   const providers = options.providers || [...usageProviders];
   const sources = options.sources || ["native"];
@@ -59,6 +60,7 @@ export async function scanRepo(options: ScanRepoOptions): Promise<UsageDataset> 
   return new UsageDataset(filtered, warnings, { sourceFiles });
 }
 
+/** Opens usage data from the SQLite index when available, falling back to a native-only scan. */
 export async function openUsage(options: Omit<ScanRepoOptions, "sources">): Promise<UsageDataset> {
   try {
     return await loadUsageDatasetFromIndex(options);

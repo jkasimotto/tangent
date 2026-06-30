@@ -6,6 +6,7 @@ import { CodexCliSummaryRunner } from "./codex-cli.js";
 
 export { type SummaryRunner } from "../types/provider.js";
 
+/** Instantiates the appropriate SummaryRunner implementation for the given provider config. */
 export function createSummaryRunner(config: SummaryProviderConfig): SummaryRunner {
   if (config.kind === "claude-sdk") return new ClaudeSdkSummaryRunner(config);
   if (config.kind === "codex-cli") return new CodexCliSummaryRunner(config);

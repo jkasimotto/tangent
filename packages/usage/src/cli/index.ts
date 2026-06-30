@@ -13,6 +13,7 @@ if (isDirectRun()) {
   });
 }
 
+/** Returns whether this module is being executed directly from the command line rather than imported. */
 function isDirectRun(): boolean {
   return Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1]!).href;
 }

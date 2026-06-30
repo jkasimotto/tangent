@@ -28,6 +28,7 @@ export type PrepareEvalOptions = {
   onProgress?: (event: PrepareEvalProgressEvent) => void;
 };
 
+/** Prepares worktrees for all variants in an eval spec and returns the populated run manifest. */
 export async function prepareEval(loaded: LoadedEvalSpec, options: PrepareEvalOptions = {}): Promise<PrepareEvalResult> {
   const manifest = await createRunManifest({
     name: loaded.spec.name,
@@ -109,6 +110,7 @@ export async function prepareEval(loaded: LoadedEvalSpec, options: PrepareEvalOp
   return { manifest };
 }
 
+/** Emits a prepare progress event with the current timestamp attached. */
 function emit(options: PrepareEvalOptions, event: Omit<PrepareEvalProgressEvent, "at">): void {
   options.onProgress?.({
     at: new Date().toISOString(),
@@ -116,6 +118,7 @@ function emit(options: PrepareEvalOptions, event: Omit<PrepareEvalProgressEvent,
   });
 }
 
+/** Throws if the abort signal has been triggered, cancelling the prepare step. */
 function throwIfCancelled(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw new Error("Eval prepare cancelled.");
 }

@@ -56,6 +56,7 @@ export type StatusOptions = {
   date?: string;
 };
 
+/** Returns a full rollup status report for the given repo and optional date. */
 export async function status(options: StatusOptions): Promise<RollupStatus> {
   const loaded = await loadConfig({ repo: options.repo });
   const usage = await usageStatus({ repo: loaded.repo.root });
@@ -110,6 +111,7 @@ export async function status(options: StatusOptions): Promise<RollupStatus> {
   };
 }
 
+/** Builds the usage provider status row for a single provider from usage data. */
 function providerRow(provider: "claude" | "codex", usage: Awaited<ReturnType<typeof usageStatus>>, conversations: ConversationListItem[], turns: TurnListItem[]): RollupStatus["usage"]["providers"]["claude"] {
   const row = usage.providers.find((entry) => entry.provider === provider);
   const providerTurns = turns.filter((turn) => turn.provider === provider);
@@ -123,6 +125,7 @@ function providerRow(provider: "claude" | "codex", usage: Awaited<ReturnType<typ
   };
 }
 
+/** Returns the ISO timestamp of the most recent activity across a list of conversations, or undefined. */
 function latestConversationAt(conversations: ConversationListItem[]): string | undefined {
   const times = conversations
     .flatMap((conversation) => [conversation.endedAt, conversation.startedAt])
@@ -132,12 +135,14 @@ function latestConversationAt(conversations: ConversationListItem[]): string | u
   return Number.isFinite(latest) ? new Date(latest).toISOString() : undefined;
 }
 
+/** Returns the ISO timestamp of the most recent lastActivityAt across a list of turns, or undefined. */
 function latestTurnAt(turns: TurnListItem[]): string | undefined {
   const times = turns.map((turn) => turn.lastActivityAt.getTime());
   const latest = Math.max(...times);
   return Number.isFinite(latest) ? new Date(latest).toISOString() : undefined;
 }
 
+/** Groups rows by a string key and counts how many fall into each group. */
 function countBy<T>(rows: T[], selector: (row: T) => string): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const row of rows) {

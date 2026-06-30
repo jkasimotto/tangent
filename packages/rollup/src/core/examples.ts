@@ -9,6 +9,7 @@ export type RollupStyleExample = {
   markdown: string;
 };
 
+/** Loads style example files and prior notes to use as rollup prompt context. */
 export async function loadRollupStyleExamples(loaded: LoadedRollupConfig, currentDate: string): Promise<RollupStyleExample[]> {
   const config = loaded.config.examples;
   if (!config.enabled || config.maxExamples <= 0) return [];
@@ -35,10 +36,12 @@ export async function loadRollupStyleExamples(loaded: LoadedRollupConfig, curren
   return examples;
 }
 
+/** Removes tangent HTML comment blocks from markdown before using it as an example. */
 export function stripTangentHtmlComments(markdown: string): string {
   return markdown.replace(/<!--\s*tangent:[\s\S]*?-->/g, "").trim();
 }
 
+/** Returns a sorted list of .md file paths in the given directory. */
 async function markdownFiles(dir: string): Promise<string[]> {
   if (!(await pathExists(dir))) return [];
   const entries = await readdir(dir, { withFileTypes: true });
@@ -48,6 +51,7 @@ async function markdownFiles(dir: string): Promise<string[]> {
     .sort((a, b) => a.localeCompare(b));
 }
 
+/** Extracts the YYYY-MM-DD date from a note filename, or undefined if the name is not a date. */
 function noteDate(filePath: string): string | undefined {
   const name = path.basename(filePath, ".md");
   return /^\d{4}-\d{2}-\d{2}$/.test(name) ? name : undefined;

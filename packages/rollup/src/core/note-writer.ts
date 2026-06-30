@@ -14,6 +14,7 @@ import {
 } from "./paths.js";
 import { readLedger, latestSuccessfulRollupForKey } from "./ledger.js";
 
+/** Writes the rollup input object to an artifact cache file and returns its path. */
 export async function writeRollupInputCache(args: {
   loaded: LoadedRollupConfig;
   input: RollupInput;
@@ -24,6 +25,7 @@ export async function writeRollupInputCache(args: {
   return filePath;
 }
 
+/** Writes the rollup output object to an artifact cache file and returns its path. */
 export async function writeRollupOutputCache(args: {
   loaded: LoadedRollupConfig;
   key: string;
@@ -35,6 +37,7 @@ export async function writeRollupOutputCache(args: {
   return filePath;
 }
 
+/** Writes the raw messages markdown to an artifact cache file and returns its path. */
 export async function writeRollupMessagesCache(args: {
   loaded: LoadedRollupConfig;
   key: string;
@@ -46,6 +49,7 @@ export async function writeRollupMessagesCache(args: {
   return filePath;
 }
 
+/** Writes the rendered prompt text to an artifact cache file and returns its path. */
 export async function writeRollupPromptCache(args: {
   loaded: LoadedRollupConfig;
   key: string;
@@ -57,6 +61,7 @@ export async function writeRollupPromptCache(args: {
   return filePath;
 }
 
+/** Reads the most recent successful rollup output for the given period key from the ledger. */
 export async function readRollupForKey(loaded: LoadedRollupConfig, key: string): Promise<{ output: RollupOutput; path: string } | undefined> {
   const ledger = await readLedger(loaded.paths.ledgerPath);
   const row = latestSuccessfulRollupForKey(ledger, key);
@@ -65,6 +70,7 @@ export async function readRollupForKey(loaded: LoadedRollupConfig, key: string):
   return { output, path: row.rollupPath };
 }
 
+/** Writes generated rollup markdown into the appropriate note file, creating or updating the generated block. */
 export async function writeGeneratedRollupMarkdown(
   loaded: LoadedRollupConfig,
   period: RollupPeriod,
@@ -100,6 +106,7 @@ export async function writeGeneratedRollupMarkdown(
   };
 }
 
+/** Reads the rollup note file for the given period and returns its content and status. */
 export async function readRollupNote(loaded: LoadedRollupConfig, period: RollupPeriod): Promise<{ path: string; markdown: string; exists: boolean; stale: boolean }> {
   const target = notePath(loaded.paths, period.key);
   if (!(await pathExists(target))) return { path: target, markdown: "", exists: false, stale: true };
@@ -107,6 +114,7 @@ export async function readRollupNote(loaded: LoadedRollupConfig, period: RollupP
   return { path: target, markdown, exists: true, stale: false };
 }
 
+/** Resolves the destination file path for a rollup note without writing anything. */
 export async function resolveRollupNotePath(args: {
   loaded: LoadedRollupConfig;
   period: RollupPeriod;
@@ -118,6 +126,7 @@ export async function resolveRollupNotePath(args: {
   return destination.path;
 }
 
+/** Resolves the note destination path and whether to use the generated block format. */
 async function resolveRollupNoteDestination(args: {
   loaded: LoadedRollupConfig;
   period: RollupPeriod;
@@ -146,6 +155,7 @@ async function resolveRollupNoteDestination(args: {
   return { path: fallback, useGeneratedBlock: false };
 }
 
+/** Resolves an explicit --output path to an absolute path, or returns undefined if none given. */
 async function explicitRollupOutputPath(args: {
   loaded: LoadedRollupConfig;
   period?: RollupPeriod;
@@ -165,6 +175,7 @@ async function explicitRollupOutputPath(args: {
   return resolvedFromRepo;
 }
 
+/** Returns the default note shell markdown for a new note file when none exists yet. */
 function defaultNoteShell(loaded: LoadedRollupConfig, period: RollupPeriod): string {
   const title = loaded.config.note.titleTemplate
     .replaceAll("{{repo}}", loaded.config.repo?.displayName || loaded.repo.displayName)
@@ -172,6 +183,7 @@ function defaultNoteShell(loaded: LoadedRollupConfig, period: RollupPeriod): str
   return `# ${title}\n\n## Manual notes\n\nWrite anything here. Tangent will not modify this section.\n\n`;
 }
 
+/** Replaces or appends the generated block section in existing note markdown. */
 function replaceGeneratedBlock(markdown: string, period: RollupPeriod, generated: string): string {
   const start = `<!-- tangent:generated:start period=${period.key} schema=rollup.note.v1 -->`;
   const end = "<!-- tangent:generated:end -->";
@@ -181,22 +193,26 @@ function replaceGeneratedBlock(markdown: string, period: RollupPeriod, generated
   return `${markdown.trim()}\n\n${block}\n`;
 }
 
+/** Returns true if the markdown contains a tangent generated block. */
 function hasGeneratedBlock(markdown: string): boolean {
   const pattern = /<!-- tangent:generated:start[^>]* -->[\s\S]*?<!-- tangent:generated:end -->/;
   return pattern.test(markdown);
 }
 
 
+/** Writes a value as pretty-printed JSON to the given file, creating parent directories as needed. */
 async function writeJsonFile(filePath: string, value: unknown): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+/** Writes a text string to the given file, ensuring a trailing newline and creating parent directories. */
 async function writeTextFile(filePath: string, value: string): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeFile(filePath, value.endsWith("\n") ? value : `${value}\n`, "utf8");
 }
 
+/** Coerces an unknown parsed JSON value into a valid RollupOutput, filling defaults for missing fields. */
 function normalizeRollupOutput(value: unknown): RollupOutput {
   const record = value && typeof value === "object" ? value as Record<string, unknown> : {};
   return {

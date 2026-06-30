@@ -11,6 +11,7 @@ export type UsagePricingPlugin = {
   price(input: UsagePricingInput): UsageCost;
 };
 
+/** Returns a cost record indicating the model could not be priced, with source set to "unknown". */
 export function unpricedCost(model?: string): UsageCost {
   return {
     currency: "USD",

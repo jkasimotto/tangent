@@ -1,6 +1,7 @@
 import { processRollup } from "../../sdk/index.js";
 import { dateArg, providerArg, stringArg, type Args } from "../args.js";
 
+/** Re-runs rollup processing for the given period or source and prints results. */
 export async function reprocessCommand(args: Args): Promise<void> {
   const result = await processRollup({
     repo: args._[1] || ".",

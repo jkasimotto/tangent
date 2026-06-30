@@ -15,6 +15,7 @@ export type CodexNativeNormalizeOptions = {
   inferredComplete: boolean;
 };
 
+/** Converts a sequence of Codex native rollout records into structured usage events. */
 export function normalizeCodexNativeRecords(records: CodexNativeRecord[], options: CodexNativeNormalizeOptions): UsageJsonlLineV1[] {
   const session = sessionInfo(records);
   if (!session.id) return [];
@@ -45,6 +46,7 @@ export function normalizeCodexNativeRecords(records: CodexNativeRecord[], option
   let cumulativeFallbackToken: { source: CodexNativeRecord; payload: Record<string, unknown> } | undefined;
   const toolCallsById = new Map<string, { toolName: string; category: string; input: unknown; targetPaths: string[] }>();
 
+  /** Builds a base event envelope from a source record, kind, and data payload. */
   const base = (source: CodexNativeRecord, kind: UsageEventKind, data: unknown, extra: Partial<UsageJsonlLineV1> = {}): UsageJsonlLineV1 => {
     const timestamp = stringValue(source.record.timestamp) || lastActivityAt || new Date().toISOString();
     return {
@@ -298,6 +300,7 @@ export function normalizeCodexNativeRecords(records: CodexNativeRecord[], option
   return events;
 }
 
+/** Derives a token.usage event from a Codex token_count payload, deduplicating identical snapshots. */
 function codexTokenUsageEvent(
   source: CodexNativeRecord,
   payload: Record<string, unknown>,
@@ -335,6 +338,7 @@ function codexTokenUsageEvent(
   };
 }
 
+/** Extracts session-level metadata from the session_meta and turn_context records. */
 function sessionInfo(records: CodexNativeRecord[]): {
   id?: string;
   cwd?: string;
@@ -365,34 +369,42 @@ function sessionInfo(records: CodexNativeRecord[]): {
   };
 }
 
+/** Computes a deterministic event ID from a source path, line number, event kind, and data payload. */
 function deterministicEventId(sourcePath: string, line: number, kind: UsageEventKind, data: unknown): string {
   return `evt_native_${hash(`${sourcePath}:${line}:${kind}:${JSON.stringify(data)}`)}`;
 }
 
+/** Returns a 24-character hex SHA-256 digest of the given string. */
 function hash(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 24);
 }
 
+/** Returns the value as a plain object, or undefined if it is an array or non-object. */
 function objectValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
+/** Returns the value as a non-empty string, or undefined. */
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value ? value : undefined;
 }
 
+/** Returns the value as a number, or undefined if it is not a number. */
 function numberValue(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
 }
 
+/** Returns a turn object with the given id, or undefined if the id is absent. */
 function turn(id: string | undefined): { id?: string } | undefined {
   return id ? { id } : undefined;
 }
 
+/** Generates a synthetic turn ID from a line number for records without an explicit turn ID. */
 function syntheticTurnId(line: number): string {
   return `turn-line-${line}`;
 }
 
+/** Parses a JSON-encoded arguments string, returning the original value if it cannot be parsed. */
 function parseArguments(value: unknown): unknown {
   if (typeof value !== "string") return value;
   try {
@@ -402,6 +414,7 @@ function parseArguments(value: unknown): unknown {
   }
 }
 
+/** Maps a Codex tool name to a broad category string. */
 function categorizeTool(toolName: string): string {
   const lower = toolName.toLowerCase();
   if (lower === "exec_command" || lower === "bash" || lower.includes("shell")) return "command";
@@ -411,6 +424,7 @@ function categorizeTool(toolName: string): string {
   return "other";
 }
 
+/** Extracts file path strings from a tool input object. */
 function extractPaths(value: unknown): string[] {
   if (!value || typeof value !== "object" || Array.isArray(value)) return [];
   const record = value as Record<string, unknown>;
@@ -419,6 +433,7 @@ function extractPaths(value: unknown): string[] {
     .filter((item): item is string => typeof item === "string" && item.length > 0);
 }
 
+/** Infers whether a tool call succeeded or failed from its output text. */
 function inferToolStatus(output: unknown): "success" | "error" | "unknown" {
   if (typeof output !== "string") return "unknown";
   const match = /Process exited with code (\d+)/.exec(output);
@@ -426,6 +441,7 @@ function inferToolStatus(output: unknown): "success" | "error" | "unknown" {
   return match[1] === "0" ? "success" : "error";
 }
 
+/** Computes character count, byte count, and truncation flag for a tool output value. */
 function toolResultMetadata(output: unknown): Record<string, unknown> {
   const text = typeof output === "string" ? output : output === undefined || output === null ? "" : JSON.stringify(output);
   const bytes = Buffer.byteLength(text, "utf8");
@@ -437,6 +453,7 @@ function toolResultMetadata(output: unknown): Record<string, unknown> {
   };
 }
 
+/** Extracts plain text from a reasoning summary value, which may be a string or an array of blocks. */
 function summaryText(value: unknown): string | undefined {
   if (typeof value === "string") return value;
   if (!Array.isArray(value)) return undefined;

@@ -13,6 +13,7 @@ import type {
   NativeVersionCompatibility
 } from "./types.js";
 
+/** Returns schema compatibility status for each provider's native logs in the given repo. */
 export async function nativeSchemaStatus(options: NativeSchemaStatusOptions): Promise<NativeProviderSchemaStatus[]> {
   const providers = options.providers?.length ? options.providers : ["claude", "codex", "gemini"] as UsageProvider[];
   const info = await repoInfo(options.repo);
@@ -31,6 +32,7 @@ export async function nativeSchemaStatus(options: NativeSchemaStatusOptions): Pr
   return result;
 }
 
+/** Builds a schema status summary for one provider by inspecting its native log files. */
 async function nativeProviderSchemaStatus(provider: UsageProvider, files: string[]): Promise<NativeProviderSchemaStatus> {
   if (!files.length) {
     return {
@@ -68,29 +70,35 @@ async function nativeProviderSchemaStatus(provider: UsageProvider, files: string
   };
 }
 
+/** Inspects multiple native log files and returns their structural summaries. */
 export async function inspectNativeLogFiles(files: string[]): Promise<NativeLogInspection[]> {
   return Promise.all(files.map((file) => inspectNativeLogFile(file)));
 }
 
+/** Returns deduplicated and sorted string-or-number values, preserving the original type. */
 function distinctValues(values: Array<string | number>): Array<string | number> {
   return [...new Map(values.map((value) => [String(value), value])).values()]
     .sort((left, right) => String(left).localeCompare(String(right)));
 }
 
+/** Returns deduplicated and sorted strings from the input array, omitting undefined values. */
 function distinctStrings(values: Array<string | undefined>): string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value)))].sort();
 }
 
+/** Returns the sum of a number array. */
 function sum(values: number[]): number {
   return values.reduce((total, value) => total + value, 0);
 }
 
+/** Returns the native log kind string for the given provider. */
 function nativeLogKind(provider: UsageProvider): NativeProviderSchemaStatus["logKind"] {
   if (provider === "claude") return "claude.conversation";
   if (provider === "gemini") return "gemini.chat";
   return "codex.rollout";
 }
 
+/** Returns a human-readable label for the given provider. */
 function providerLabel(provider: UsageProvider): string {
   if (provider === "claude") return "Claude Code";
   if (provider === "gemini") return "Gemini CLI";

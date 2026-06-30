@@ -14,6 +14,7 @@ export type CapabilityKey =
 
 export type ProviderCapabilities = Record<CapabilityKey, ProviderSupport>;
 
+/** Returns the capability map for a given provider, describing what data each query supports. */
 export function capabilitiesForProvider(provider: UsageProvider): ProviderCapabilities {
   if (provider === "claude") {
     return {

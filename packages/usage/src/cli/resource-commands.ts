@@ -5,6 +5,7 @@ import { ensureUsageIndex, type UsageIndexSource } from "@tangent/usage-index-sq
 import { isUsageProvider, usageProviders, type UsageProvider } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
 import { objectField } from "./human-output.js";
 
+/** Dispatches usage resource CLI subcommands and prints results, returning true when a command matched. */
 export async function runUsageResourceCommand(args: Args): Promise<boolean> {
   const [command, subcommand] = args._;
 
@@ -173,6 +174,7 @@ export async function runUsageResourceCommand(args: Args): Promise<boolean> {
   return false;
 }
 
+/** Opens a UsageClient for the given repo path, applying provider and source filters from CLI args. */
 async function openClient(args: Args, repo: string): Promise<UsageClient> {
   return openUsage({
     repo,
@@ -182,6 +184,7 @@ async function openClient(args: Args, repo: string): Promise<UsageClient> {
   });
 }
 
+/** Prints a query result to stdout in the format requested by args (json, csv, vega-lite, or default). */
 function printResult(result: { data: unknown; meta?: unknown }, args: Args): void {
   const format = stringArg(args.format);
   if (args.json || format === "json") {
@@ -200,11 +203,13 @@ function printResult(result: { data: unknown; meta?: unknown }, args: Args): voi
   console.log(JSON.stringify(result.data, null, 2));
 }
 
+/** Prints arbitrary data as formatted JSON to stdout. */
 function printData(data: unknown, args: Args): void {
   if (args.json || stringArg(args.format) === "json") console.log(JSON.stringify(data, null, 2));
   else console.log(JSON.stringify(data, null, 2));
 }
 
+/** Prints an array of rows as CSV to stdout, flattening nested objects with dotted-path column names. */
 function printCsv(rows: unknown[]): void {
   const flatRows = rows.map((row) => flattenRecord(row));
   const columns = [...new Set(flatRows.flatMap((row) => Object.keys(row)))];
@@ -212,6 +217,7 @@ function printCsv(rows: unknown[]): void {
   for (const row of flatRows) console.log(columns.map((column) => csvCell(row[column])).join(","));
 }
 
+/** Extracts a row array from a data object via rows or items fields, wrapping the whole value as a fallback. */
 function rowsFromData(data: unknown): unknown[] {
   const rows = objectField(data, "rows");
   if (Array.isArray(rows)) return rows;
@@ -220,6 +226,7 @@ function rowsFromData(data: unknown): unknown[] {
   return [data];
 }
 
+/** Flattens a nested object into a flat record using dotted-path keys. */
 function flattenRecord(value: unknown, prefix = ""): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return { [prefix || "value"]: value };
   const result: Record<string, unknown> = {};
@@ -231,12 +238,14 @@ function flattenRecord(value: unknown, prefix = ""): Record<string, unknown> {
   return result;
 }
 
+/** Formats a value as a CSV cell, quoting it when it contains commas, double-quotes, or newlines. */
 function csvCell(value: unknown): string {
   if (value === undefined || value === null) return "";
   const text = String(value);
   return /[,"\n]/.test(text) ? `"${text.replace(/"/g, "\"\"")}"` : text;
 }
 
+/** Converts a CLI --metric flag value to a typed timeline metric identifier. */
 function cliMetric(value: unknown): "durationMs" | "selfDurationMs" | "tokens.total" | "tokens.input" | "tokens.output" | "cost.amount" | undefined {
   const metric = stringArg(value);
   if (!metric) return undefined;
@@ -247,6 +256,7 @@ function cliMetric(value: unknown): "durationMs" | "selfDurationMs" | "tokens.to
   throw new Error(`Unsupported timeline metric: ${metric}`);
 }
 
+/** Converts a CLI --group flag value to a typed timeline bucket identifier. */
 function cliBucket(value: unknown): "kind" | "category" | "provider" | "model" | "toolName" | "status" | undefined {
   const bucket = stringArg(value);
   if (!bucket) return undefined;
@@ -255,6 +265,7 @@ function cliBucket(value: unknown): "kind" | "category" | "provider" | "model" |
   throw new Error(`Unsupported timeline group: ${bucket}`);
 }
 
+/** Converts a CLI --order flag value to a step query sort clause. */
 function cliStepOrder(value: unknown): { field: string; direction: "asc" | "desc" } {
   const order = stringArg(value);
   if (order === "tokens-desc") return { field: "metrics.tokens.total", direction: "desc" };
@@ -262,24 +273,28 @@ function cliStepOrder(value: unknown): { field: string; direction: "asc" | "desc
   return { field: "startedAt", direction: "asc" };
 }
 
+/** Converts a CLI --include-results flag value to a typed result inclusion mode. */
 function includeResultsArg(value: unknown): "preview" | "full" | "none" | undefined {
   const mode = stringArg(value);
   if (mode === "preview" || mode === "full" || mode === "none") return mode;
   return value ? "preview" : undefined;
 }
 
+/** Parses a --provider flag into an array of provider strings, returning undefined for "all". */
 function providerStrings(value: unknown): string[] | undefined {
   const raw = stringArg(value);
   if (!raw || raw === "all") return undefined;
   return raw.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
+/** Parses a --provider flag into a list of valid UsageProvider values, defaulting to all providers. */
 function legacyProviderList(value: unknown): UsageProvider[] {
   const raw = providerStrings(value);
   if (!raw) return [...usageProviders];
   return raw.filter(isUsageProvider);
 }
 
+/** Converts a --source flag value to a list of UsageIndexSource values, defaulting to native. */
 function sourceList(value: unknown): UsageIndexSource[] {
   if (value === undefined || value === "native") return ["native"];
   if (value === "all") return ["native", "usage-jsonl"];
@@ -287,6 +302,7 @@ function sourceList(value: unknown): UsageIndexSource[] {
   throw new Error("--source must be native, usage-jsonl, or all.");
 }
 
+/** Parses a string CLI argument into a Date, throwing if the value is present but not a valid date. */
 function dateArg(value: unknown): Date | undefined {
   if (typeof value !== "string") return undefined;
   const date = new Date(value);
@@ -294,6 +310,7 @@ function dateArg(value: unknown): Date | undefined {
   return date;
 }
 
+/** Asserts that a CLI argument value is present, throwing with the given message if it is missing. */
 function requiredValue(value: string | undefined, message: string): string {
   if (!value) throw new Error(message);
   return value;

@@ -1,6 +1,7 @@
 import { booleanArg, requiredString, stringArg, type Args } from "../args.js";
 import { captureContextSnapshot } from "../../core/context-snapshot.js";
 
+/** Handles the `eval context` subcommand, capturing a context snapshot into a git ref. */
 export async function contextCommand(args: Args): Promise<void> {
   const subcommand = args._[1];
   if (subcommand !== "capture") throw new Error(`Unknown eval context command: ${subcommand || ""}`);

@@ -15,6 +15,7 @@ export type RollupNoteReadResult = {
   stale: boolean;
 };
 
+/** Reads the rollup note for the given repo and period selector, returning its content and metadata. */
 export async function getRollupNote(options: GetRollupNoteOptions): Promise<RollupNoteReadResult> {
   const loaded = await loadConfig({ repo: options.repo });
   const period = rollupPeriodArg(options.selector || options.date, loaded.config.processing.timezone);

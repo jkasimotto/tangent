@@ -2,6 +2,7 @@ import { loadConfig } from "../../core/config.js";
 import { configure } from "../../sdk/index.js";
 import { stringArg, type Args } from "../args.js";
 
+/** Shows or updates the rollup configuration for a repo. */
 export async function configCommand(args: Args): Promise<void> {
   const subcommand = args._[1];
   const repo = stringArg(args.repo) || ".";

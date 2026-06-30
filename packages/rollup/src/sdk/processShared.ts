@@ -10,6 +10,7 @@ export type ProcessLoadedConfig = Awaited<ReturnType<typeof loadConfig>>;
 export type ProcessRows = Awaited<ReturnType<typeof collectCandidates>>;
 export type ProcessRow = ProcessRows[number];
 
+/** Writes a failure log artifact file for a failed rollup turn and returns its path. */
 export async function writeFailureArtifact(args: {
   loaded: ProcessLoadedConfig;
   date: string;
@@ -35,6 +36,7 @@ export async function writeFailureArtifact(args: {
   return filePath;
 }
 
+/** Returns a short human-readable reason string for a summary runner error message. */
 export function summarizeRunnerFailure(message: string): string {
   const lower = message.toLowerCase();
   if (lower.includes("json") || lower.includes("schema")) return "Summary runner returned non-JSON output";
@@ -43,6 +45,7 @@ export function summarizeRunnerFailure(message: string): string {
   return "Summary runner failed";
 }
 
+/** Constructs a RollupLedgerLineV1 record for appending to the ledger after processing a turn. */
 export function ledgerLine(
   loaded: ProcessLoadedConfig,
   row: ProcessRow,

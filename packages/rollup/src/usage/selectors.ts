@@ -25,6 +25,7 @@ export type InternalCandidateConversation = RollupCandidate & {
   turn: TurnListItem;
 };
 
+/** Queries usage turns and returns the list of internal candidate conversations for rollup processing. */
 export async function collectCandidates(loaded: LoadedRollupConfig, query: Omit<CandidateQuery, "repo"> = {}): Promise<InternalCandidateConversation[]> {
   const providers = query.providers || loaded.config.input.providers;
   const startedAt = Date.now();
@@ -55,6 +56,7 @@ export async function collectCandidates(loaded: LoadedRollupConfig, query: Omit<
   return rows;
 }
 
+/** Builds an InternalCandidateConversation from a turn and its prior ledger entry. */
 function candidateForTurn(
   turn: TurnListItem,
   dateBucket: string,
@@ -87,6 +89,7 @@ function candidateForTurn(
   };
 }
 
+/** Returns the date bucket string for a turn based on the configured bucketing strategy. */
 function bucketForTurn(turn: TurnListItem, bucketBy: NonNullable<CandidateQuery["bucketBy"]>, timezone: string): string {
   const date = bucketBy === "turnStartedAt"
     ? turn.startedAt || turn.lastActivityAt

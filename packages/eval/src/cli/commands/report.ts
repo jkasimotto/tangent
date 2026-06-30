@@ -3,6 +3,7 @@ import { collectEval } from "../../core/metrics.js";
 import { renderReport } from "../../core/report-renderer.js";
 import { resolveRunId } from "./shared.js";
 
+/** Handles the `eval report` subcommand, printing a tabular report of run metrics. */
 export async function reportCommand(args: Args): Promise<void> {
   const runId = await resolveRunId(requiredString(args._[1], "eval report requires <run-id>."));
   const result = await collectEval(runId);

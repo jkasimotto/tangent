@@ -10,6 +10,7 @@ export type ParseArgsOptions = {
   allowInlineValues?: boolean;
 };
 
+/** Parses a CLI argv array into a typed Args map. */
 export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Args {
   const args: Args = { _: [] };
   const repeatable = new Set(options.repeatable || []);
@@ -45,10 +46,12 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Args 
   return args;
 }
 
+/** Coerces an Args value to a single string, taking the last element of arrays. */
 export function stringArg(value: unknown): string | undefined {
   return typeof value === "string" ? value : Array.isArray(value) ? value.at(-1) : undefined;
 }
 
+/** Coerces an Args value to a string array. */
 export function stringsArg(value: unknown): string[] {
   if (value === undefined) return [];
   if (Array.isArray(value)) return value.map(String);
@@ -56,10 +59,12 @@ export function stringsArg(value: unknown): string[] {
   return [];
 }
 
+/** Coerces an Args value to a boolean. */
 export function booleanArg(value: unknown): boolean {
   return value === true || value === "true";
 }
 
+/** Coerces an Args value to a finite number, throwing on non-numeric input. */
 export function numberArg(value: unknown): number | undefined {
   const valueString = stringArg(value);
   if (valueString === undefined) return undefined;
@@ -68,16 +73,19 @@ export function numberArg(value: unknown): number | undefined {
   return parsed;
 }
 
+/** Returns the string value or throws with the given message if absent. */
 export function requiredString(value: unknown, message: string): string {
   const valueString = stringArg(value);
   if (!valueString) throw new Error(message);
   return valueString;
 }
 
+/** Returns the raw string value if it is a string, for use as a date argument. */
 export function dateArg(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+/** Parses a string into a Date, throwing on invalid input. */
 export function parseDate(value: unknown): Date | undefined {
   if (typeof value !== "string") return undefined;
   const parsed = new Date(value);

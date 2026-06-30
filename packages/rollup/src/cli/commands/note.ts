@@ -3,6 +3,7 @@ import { getRollupNote } from "../../sdk/index.js";
 import { dateArg, stringArg, type Args } from "../args.js";
 import { isRollupSelector } from "../../core/time.js";
 
+/** Prints, opens, or returns the path to the rollup note for the given period. */
 export async function noteCommand(args: Args): Promise<void> {
   const aliasPathMode = args._[1] === "path";
   const positional = aliasPathMode ? args._[2] : args._[1];
@@ -30,6 +31,7 @@ export async function noteCommand(args: Args): Promise<void> {
   console.log(note.markdown);
 }
 
+/** Opens the given file path in the default app for the current platform. */
 function openPath(filePath: string): void {
   const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
   const args = process.platform === "win32" ? ["/c", "start", "", filePath] : [filePath];

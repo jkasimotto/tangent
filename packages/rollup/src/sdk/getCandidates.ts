@@ -5,6 +5,7 @@ import { collectCandidates, type CandidateConversation, type CandidateQuery } fr
 export type GetCandidatesOptions = CandidateQuery;
 export type { CandidateConversation } from "../usage/selectors.js";
 
+/** Returns the list of candidate conversations for rollup processing matching the given query. */
 export async function getCandidates(options: GetCandidatesOptions): Promise<CandidateConversation[]> {
   const loaded = await loadConfig({ repo: options.repo });
   const date = dateArgToBucket(options.date, loaded.config.processing.timezone);

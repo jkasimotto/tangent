@@ -141,6 +141,7 @@ export interface UsageClient {
   index?: UsageIndexApi;
 }
 
+/** Creates a UsageClient from caller-provided adapter options, loading events from registered adapters. */
 export async function openUsage(options: OpenUsageOptions = {}): Promise<UsageClient> {
   const loaded = await loadAdapterEvents(options);
   return createUsageClient(eventsToProjections({
@@ -183,6 +184,7 @@ async function loadAdapterEvents(options: OpenUsageOptions): Promise<LoadedAdapt
   return { events, warnings, sources, capabilities };
 }
 
+/** Creates a UsageClient backed by in-memory projections derived from the given events or pre-built projections. */
 export function createUsageClient(input: UsageProjections | UsageProjectionInput): UsageClient {
   const projections = isProjections(input) ? input : eventsToProjections(input);
   const context = {
@@ -196,6 +198,7 @@ export function createUsageClient(input: UsageProjections | UsageProjectionInput
     })
   };
 
+  /** Wraps data in a UsageResult envelope with the shared context metadata. */
   const result = <T>(data: T, schema: string, query: unknown, page?: UsageResult<T>["meta"]["page"]): UsageResult<T> => resultMeta(data, {
     schema,
     query,
@@ -208,6 +211,7 @@ export function createUsageClient(input: UsageProjections | UsageProjectionInput
   });
 
   const sessions: UsageSessionApi = {
+    /** Lists sessions matching the given query, applying provider and date-range filters. */
     list: async (query = {}) => {
       const merged = mergeSessionQuery(query);
       const page = queryRows(projections.sessions as unknown as Array<Record<string, unknown>>, merged);
@@ -216,19 +220,23 @@ export function createUsageClient(input: UsageProjections | UsageProjectionInput
         hasMore: page.hasMore
       });
     },
+    /** Returns a single session by ID or short-ref, throwing if not found. */
     get: async (idOrRef) => {
       const session = resolveSession(projections.sessions, idOrRef);
       return result(session, "tangent.usage.sessions.get.v1", { idOrRef });
     },
+    /** Returns the most recently active session matching the query, or undefined if none exist. */
     latest: async (query = {}) => {
       const merged = mergeSessionQuery({ ...query, orderBy: query.orderBy || [{ field: "lastActivityAt", direction: "desc" }] });
       const page = queryRows(projections.sessions as unknown as Array<Record<string, unknown>>, { ...merged, limit: 1 });
       return result(page.rows[0] as UsageSession | undefined, "tangent.usage.sessions.latest.v1", query);
     },
+    /** Returns a structured session report with messages and tool calls for the given session. */
     report: async (idOrRef, options = {}) => {
       const session = resolveSession(projections.sessions, idOrRef);
       return result(sessionReport(projections, session, options), "tangent.usage.sessions.report.v1", { idOrRef, options });
     },
+    /** Returns a timeline of steps for the given session, optionally filtered by kind or sorted by metric. */
     timeline: async (idOrRef, options = {}) => {
       const session = resolveSession(projections.sessions, idOrRef);
       return result(buildTimeline(projections.steps.filter((step) => step.sessionId === session.id), { ...options, sessionId: session.id }), "tangent.usage.sessions.timeline.v1", { idOrRef, options });
@@ -239,6 +247,7 @@ export function createUsageClient(input: UsageProjections | UsageProjectionInput
     sessions,
     conversations: sessions,
     turns: {
+      /** Queries turns with optional filtering, ordering, and pagination. */
       query: async (query = {}) => {
         const page = queryRows(projections.turns as unknown as Array<Record<string, unknown>>, query);
         return result(page.rows as unknown as UsageTurn[], "tangent.usage.turns.query.v1", query, {
@@ -248,6 +257,7 @@ export function createUsageClient(input: UsageProjections | UsageProjectionInput
       }
     },
     steps: {
+      /** Queries steps with optional filtering, ordering, and pagination. */
       query: async (query = {}) => {
         const page = queryRows(projections.steps as unknown as Array<Record<string, unknown>>, query);
         return result(page.rows as unknown as UsageStep[], "tangent.usage.steps.query.v1", query, {
@@ -255,6 +265,7 @@ export function createUsageClient(input: UsageProjections | UsageProjectionInput
           hasMore: page.hasMore
         });
       },
+      /** Returns an ordered timeline of steps matching the query scope and kind filters. */
       timeline: async (query) => {
         const where = query.where || (query.sessionId ? { sessionId: query.sessionId } : undefined);
         const page = queryRows(projections.steps as unknown as Array<Record<string, unknown>>, { where, orderBy: [{ field: "startedAt", direction: "asc" }] });
@@ -262,6 +273,7 @@ export function createUsageClient(input: UsageProjections | UsageProjectionInput
       }
     },
     messages: {
+      /** Queries visible messages with optional filtering, ordering, and pagination. */
       query: async (query = {}) => {
         const page = queryRows(projections.messages as unknown as Array<Record<string, unknown>>, query);
         return result(page.rows as unknown as UsageMessage[], "tangent.usage.messages.query.v1", query, {
@@ -269,6 +281,7 @@ export function createUsageClient(input: UsageProjections | UsageProjectionInput
           hasMore: page.hasMore
         });
       },
+      /** Searches messages by text content and returns ranked hits up to the query limit. */
       search: async (query) => {
         const needle = query.text.toLowerCase();
         const rows = projections.messages
@@ -281,6 +294,7 @@ export function createUsageClient(input: UsageProjections | UsageProjectionInput
       }
     },
     tools: {
+      /** Queries tool calls with optional result inclusion and standard filtering/pagination. */
       query: async (query = {}) => {
         const page = queryRows(projections.toolCalls as unknown as Array<Record<string, unknown>>, query);
         const rows = page.rows as unknown as UsageToolCall[];
@@ -292,12 +306,14 @@ export function createUsageClient(input: UsageProjections | UsageProjectionInput
       }
     },
     tokens: {
+      /** Returns a token usage aggregate table grouped by model by default. */
       summary: async (query = { metrics: ["tokens.total.sum"], groupBy: ["model"] }) => {
         const table = aggregateRows(projections.steps as unknown as Array<Record<string, unknown>>, query);
         return result(table, "tangent.usage.tokens.summary.v1", query);
       }
     },
     analytics: {
+      /** Returns an aggregate table grouped by the query dimensions and metrics. */
       aggregate: async (query) => {
         const table = aggregateRows(projections.steps as unknown as Array<Record<string, unknown>>, {
           ...query,
@@ -305,6 +321,7 @@ export function createUsageClient(input: UsageProjections | UsageProjectionInput
         });
         return result(table, "tangent.usage.analytics.aggregate.v1", query);
       },
+      /** Returns a time-bucketed series aggregate table for the given metrics and bucket size. */
       series: async (query) => {
         const table = aggregateRows(projections.steps as unknown as Array<Record<string, unknown>>, {
           ...query,
@@ -313,16 +330,20 @@ export function createUsageClient(input: UsageProjections | UsageProjectionInput
         });
         return result({ schema: "tangent.usage.series.v1", bucket: query.bucket, rows: table.rows }, "tangent.usage.analytics.series.v1", query);
       },
+      /** Returns a histogram distribution of a metric value across matching steps. */
       histogram: async (query) => {
         const rows = projections.steps.filter((step) => queryRows([step as unknown as Record<string, unknown>], { where: query.where || normalizeScopeWhere(query.scope) }).rows.length > 0);
         return result(histogram(rows, query), "tangent.usage.analytics.histogram.v1", query);
       }
     },
     providers: {
+      /** Lists capabilities for all providers present in the dataset. */
       list: async () => result(projections.capabilities, "tangent.usage.providers.list.v1", {}),
+      /** Returns capability metadata for a single provider, or undefined if not found. */
       inspect: async (provider) => result(projections.capabilities.find((capability) => capability.provider === provider), "tangent.usage.providers.inspect.v1", { provider })
     },
     raw: {
+      /** Queries raw v3 events with optional filtering, ordering, and pagination. */
       events: async (query = {}) => {
         const page = queryRows(projections.rawEvents as unknown as Array<Record<string, unknown>>, query);
         return result(page.rows as unknown as UsageEventV3[], "tangent.usage.raw.events.v1", query, {
@@ -330,6 +351,7 @@ export function createUsageClient(input: UsageProjections | UsageProjectionInput
           hasMore: page.hasMore
         });
       },
+      /** Returns the raw v3 event for a given event ID, throwing if not found. */
       evidence: async (eventId) => {
         const event = projections.rawEvents.find((row) => row.id === eventId);
         if (!event) throw new UsageError("USAGE_NOT_FOUND", `No usage event found for ${eventId}.`, { details: { eventId }, retryable: false });
@@ -340,6 +362,7 @@ export function createUsageClient(input: UsageProjections | UsageProjectionInput
   };
 }
 
+/** Merges top-level SessionQuery fields (provider, from, to) into a UsageListQuery where clause. */
 function mergeSessionQuery(query: SessionQuery): UsageListQuery {
   return {
     ...query,
@@ -351,6 +374,7 @@ function mergeSessionQuery(query: SessionQuery): UsageListQuery {
   };
 }
 
+/** Converts the from/to fields of a SessionQuery into a startedAt range filter, or undefined if absent. */
 function rangeFromSessionQuery(query: SessionQuery): { gte?: string; lte?: string } | undefined {
   if (!query.from && !query.to) return undefined;
   return {
@@ -359,6 +383,7 @@ function rangeFromSessionQuery(query: SessionQuery): { gte?: string; lte?: strin
   };
 }
 
+/** Resolves a session ID or short-ref to a UsageSession, throwing on no match or ambiguous match. */
 function resolveSession(sessions: UsageSession[], idOrRef: string): UsageSession {
   if (idOrRef === "latest") {
     const latest = [...sessions].sort((left, right) => (right.lastActivityAt || right.endedAt || right.startedAt || "").localeCompare(left.lastActivityAt || left.endedAt || left.startedAt || ""))[0];
@@ -383,6 +408,7 @@ function resolveSession(sessions: UsageSession[], idOrRef: string): UsageSession
   });
 }
 
+/** Builds a UsageSessionReport with messages and tool calls for a resolved session. */
 function sessionReport(projections: UsageProjections, session: UsageSession, options: SessionReportOptions): UsageSessionReport {
   const messages = projections.messages.filter((message) => message.sessionId === session.id);
   const callsByMessage = new Map<string, UsageToolCall[]>();
@@ -412,6 +438,7 @@ function sessionReport(projections: UsageProjections, session: UsageSession, opt
   };
 }
 
+/** Builds a UsageTimeline from a set of steps, computing offsets, metric shares, and totals. */
 function buildTimeline(steps: UsageStep[], options: TimelineOptions & { sessionId?: string }): UsageTimeline<UsageStep> {
   const metric = options.metric || "selfDurationMs";
   const included = steps
@@ -462,6 +489,7 @@ function buildTimeline(steps: UsageStep[], options: TimelineOptions & { sessionI
   };
 }
 
+/** Maps a timeline bucketBy option to the corresponding UsageDimension string. */
 function bucketDimension(bucket: NonNullable<TimelineOptions["bucketBy"]>): "step.kind" | "step.category" | "provider" | "model" | "tool.name" | "status" {
   if (bucket === "kind") return "step.kind";
   if (bucket === "category") return "step.category";
@@ -469,10 +497,12 @@ function bucketDimension(bucket: NonNullable<TimelineOptions["bucketBy"]>): "ste
   return bucket;
 }
 
+/** Computes a nesting depth map for all steps by walking their parentStepId chains. */
 function depthMap(steps: UsageStep[]): Map<string, number> {
   const byId = new Map(steps.map((step) => [step.id, step]));
   const depths = new Map<string, number>();
   const visiting = new Set<string>();
+  /** Returns the nesting depth for a step, memoizing the result and guarding against cycles. */
   const depthFor = (step: UsageStep): number => {
     if (depths.has(step.id)) return depths.get(step.id)!;
     if (visiting.has(step.id)) {
@@ -490,6 +520,7 @@ function depthMap(steps: UsageStep[]): Map<string, number> {
   return depths;
 }
 
+/** Returns the numeric metric value for a step given a timeline metric name. */
 function metricValue(step: UsageStep, metric: NonNullable<TimelineOptions["metric"]>): number {
   if (metric === "durationMs") return step.durationMs || step.metrics.durationMs || 0;
   if (metric === "selfDurationMs") return step.selfDurationMs || step.metrics.selfDurationMs || 0;
@@ -500,6 +531,7 @@ function metricValue(step: UsageStep, metric: NonNullable<TimelineOptions["metri
   return 0;
 }
 
+/** Returns the duration in milliseconds between two ISO timestamp strings, or undefined if either is absent. */
 function durationMs(startedAt: string | undefined, endedAt: string | undefined): number | undefined {
   if (!startedAt || !endedAt) return undefined;
   const start = Date.parse(startedAt);
@@ -507,6 +539,7 @@ function durationMs(startedAt: string | undefined, endedAt: string | undefined):
   return Number.isFinite(start) && Number.isFinite(end) ? Math.max(0, end - start) : undefined;
 }
 
+/** Returns the number of times needle appears in a message's text or textPreview. */
 function searchScore(message: UsageMessage, needle: string): number {
   const text = `${message.text || ""}\n${message.textPreview || ""}`.toLowerCase();
   if (!needle) return 0;
@@ -519,6 +552,7 @@ function searchScore(message: UsageMessage, needle: string): number {
   return score;
 }
 
+/** Builds a UsageHistogram by bucketing a set of steps into equal-width metric bins. */
 function histogram(steps: UsageStep[], query: HistogramQuery): UsageHistogram {
   const metric = query.metric.replace(".sum", "");
   const values = steps.map((step) => metric === "durationMs" ? step.durationMs || 0 : metric === "selfDurationMs" ? step.selfDurationMs || 0 : step.metrics.tokens?.total || 0);
@@ -533,6 +567,7 @@ function histogram(steps: UsageStep[], query: HistogramQuery): UsageHistogram {
   return { schema: "tangent.usage.histogram.v1", metric: query.metric, buckets };
 }
 
+/** Returns a Vega-Lite spec for a horizontal bar chart of the given timeline items and metric. */
 function vegaLiteTimeline(items: Array<UsageStep & { metricValue?: number }>, metric: string): unknown {
   return {
     $schema: "https://vega.github.io/schema/vega-lite/v5.json",
@@ -562,10 +597,12 @@ function vegaLiteTimeline(items: Array<UsageStep & { metricValue?: number }>, me
   };
 }
 
+/** Returns true if the value is a UsageProjections object (has schema field) rather than raw input. */
 function isProjections(value: UsageProjections | UsageProjectionInput): value is UsageProjections {
   return (value as UsageProjections).schema === "tangent.usage.projections.v1";
 }
 
+/** Returns true if the error message matches patterns for missing optional better-sqlite3 dependency. */
 function isOptionalSqliteFailure(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /better-sqlite3|Cannot find package|Cannot find module|SQLite unavailable|USAGE_CAPABILITY_UNAVAILABLE/.test(message);

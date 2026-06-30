@@ -11,6 +11,7 @@ import type { PrepareEvalProgressEvent } from "../../core/worktree.js";
 import type { EvalSpec } from "../../types/spec.js";
 import { agentFromArgs, contextsFromArgs, phasesFromArgs, variantIdFromContext } from "./shared.js";
 
+/** Handles the `eval run` subcommand, running an eval spec end-to-end. */
 export async function runCommand(args: Args): Promise<void> {
   const specPath = stringArg(args._[1]);
   const loaded = specPath ? await loadEvalSpec(specPath) : await shortcutLoadedSpec(args);
@@ -32,6 +33,7 @@ export async function runCommand(args: Args): Promise<void> {
   }
 }
 
+/** Builds a LoadedEvalSpec from --prompt/--context shortcut flags without an eval.json file. */
 async function shortcutLoadedSpec(args: Args): Promise<LoadedEvalSpec> {
   const prompts = stringsArg(args.prompt);
   if (prompts.length === 0) throw new Error("eval run shortcut mode requires --prompt <path>; otherwise pass <eval.json>.");
@@ -67,11 +69,13 @@ async function shortcutLoadedSpec(args: Args): Promise<LoadedEvalSpec> {
   };
 }
 
+/** Derives a URL-safe case id from a prompt file path, falling back to a numbered label. */
 function caseIdFromPrompt(promptPath: string, index: number): string {
   const name = path.basename(promptPath, path.extname(promptPath)).toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
   return name || `prompt-${index + 1}`;
 }
 
+/** Creates a progress printer that logs prepare, run, and collect lifecycle events to stdout. */
 function createProgressPrinter(): {
   prepare(event: PrepareEvalProgressEvent): void;
   run(event: EvalRunProgressEvent): void;
@@ -91,6 +95,7 @@ function createProgressPrinter(): {
   heartbeat.unref();
 
   return {
+    /** Logs prepare lifecycle events to stdout. */
     prepare(event) {
       if (event.type === "prepare.started") console.log(`prepare: ${event.runId}`);
       if (event.type === "prepare.variant.started" && event.caseId && event.variantId) {
@@ -103,6 +108,7 @@ function createProgressPrinter(): {
       }
       if (event.type === "prepare.completed") console.log("prepare: done");
     },
+    /** Logs run lifecycle events to stdout. */
     run(event) {
       if (event.type === "run.started") console.log(`run: ${event.runId}`);
       if (event.type === "variant.started" && event.caseId && event.variantId) {
@@ -127,19 +133,23 @@ function createProgressPrinter(): {
       if (event.type === "run.completed") console.log("run: done");
       if (event.type === "run.cancelled") console.log(`run: cancelled${event.message ? ` - ${event.message}` : ""}`);
     },
+    /** Logs collect lifecycle events to stdout. */
     collect(runId, status) {
       console.log(status === "started" ? `collect: ${runId}` : "collect: done");
     },
+    /** Clears the heartbeat timer. */
     stop() {
       clearInterval(heartbeat);
     }
   };
 }
 
+/** Builds a unique map key for an in-flight prepare or phase entry. */
 function activeKey(kind: "prepare" | "phase", caseId: string, variantId: string, phase = ""): string {
   return `${kind}:${caseId}:${variantId}:${phase}`;
 }
 
+/** Removes all active entries for a given case and variant from the in-flight map. */
 function clearVariant(active: Map<string, { label: string; startedAt: number }>, caseId: string, variantId: string): void {
   const marker = `:${caseId}:${variantId}:`;
   for (const key of active.keys()) {
@@ -147,6 +157,7 @@ function clearVariant(active: Map<string, { label: string; startedAt: number }>,
   }
 }
 
+/** Formats elapsed milliseconds as a human-readable duration string. */
 function formatElapsed(ms: number): string {
   const seconds = Math.max(0, Math.round(ms / 1000));
   const minutes = Math.floor(seconds / 60);

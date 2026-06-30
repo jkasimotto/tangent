@@ -38,6 +38,7 @@ export const defaultRepoMarkers = [
 
 export { hashString, isFile, pathExists };
 
+/** Returns the git repository root for the given path, or undefined if not inside a git repo. */
 export async function findGitRoot(inputPath: string): Promise<string | undefined> {
   try {
     const { stdout } = await execFileAsync("git", ["-C", inputPath, "rev-parse", "--show-toplevel"]);
@@ -47,6 +48,7 @@ export async function findGitRoot(inputPath: string): Promise<string | undefined
   }
 }
 
+/** Walks up from inputPath to find a repo root via git or well-known marker files. */
 export async function findRepoRoot(inputPath: string, markers = defaultRepoMarkers): Promise<string> {
   const gitRoot = await findGitRoot(inputPath);
   if (gitRoot) return gitRoot;
@@ -62,6 +64,7 @@ export async function findRepoRoot(inputPath: string, markers = defaultRepoMarke
   }
 }
 
+/** Collects basic git metadata (branch, HEAD SHA, origin URL hash) for the given path. */
 export async function repoInfo(inputPath = process.cwd()): Promise<RepoInfo> {
   const cwd = path.resolve(inputPath);
   const root = await findGitRoot(cwd);
@@ -79,6 +82,7 @@ export async function repoInfo(inputPath = process.cwd()): Promise<RepoInfo> {
   };
 }
 
+/** Resolves a full ResolvedRepoInfo (root, slug, id, display name, git metadata) for the given path. */
 export async function resolveRepo(
   inputPath = process.cwd(),
   options: { markers?: string[] | false } = {}
@@ -102,6 +106,7 @@ export async function resolveRepo(
   };
 }
 
+/** Runs a git command under repoRoot and returns trimmed stdout, or undefined on failure. */
 async function gitValue(repoRoot: string, args: string[]): Promise<string | undefined> {
   try {
     const { stdout } = await execFileAsync("git", ["-C", repoRoot, ...args]);
@@ -111,6 +116,7 @@ async function gitValue(repoRoot: string, args: string[]): Promise<string | unde
   }
 }
 
+/** Converts a string to a lowercase URL-safe slug by replacing non-alphanumeric characters with hyphens. */
 function slugify(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
 }

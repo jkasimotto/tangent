@@ -14,6 +14,7 @@ export type ClaudeNativeNormalizeOptions = {
   inferredComplete: boolean;
 };
 
+/** Converts a sequence of Claude native JSONL records into structured usage events. */
 export function normalizeClaudeNativeRecords(records: ClaudeNativeRecord[], options: ClaudeNativeNormalizeOptions): UsageJsonlLineV1[] {
   const visible = mergeClaudeAssistantChunks(records.filter((row) => !isMetaRecord(row.record)));
   if (!visible.length) return [];
@@ -37,6 +38,7 @@ export function normalizeClaudeNativeRecords(records: ClaudeNativeRecord[], opti
   let currentTurnId: string | undefined;
   let lastTurnEnded = false;
 
+  /** Builds a base event envelope from a source record, kind, and data payload. */
   const base = (source: ClaudeNativeRecord, kind: UsageEventKind, data: unknown, extra: Partial<UsageJsonlLineV1> = {}): UsageJsonlLineV1 => {
     const timestamp = timestampFor(source.record) || new Date().toISOString();
     return {
@@ -202,6 +204,7 @@ export function normalizeClaudeNativeRecords(records: ClaudeNativeRecord[], opti
   return events;
 }
 
+/** Converts a single Claude native JSONL record into one or more usage events. */
 export function normalizeClaudeNativeRecord(record: unknown, sourcePath: string, line: number): UsageJsonlLineV1[] {
   if (!record || typeof record !== "object") return [];
   const item = record as Record<string, unknown>;
@@ -315,21 +318,27 @@ export function normalizeClaudeNativeRecord(record: unknown, sourcePath: string,
   return [];
 }
 
+/** Computes a deterministic event ID from a source path, line, and a raw record. */
 function deterministicEventId(sourcePath: string, line: number, record: unknown): string;
+/** Computes a deterministic event ID from a source path, line, event kind, and data payload. */
 function deterministicEventId(sourcePath: string, line: number, kind: UsageEventKind, data: unknown): string;
+/** Computes a deterministic event ID from a source path and line number. */
 function deterministicEventId(sourcePath: string, line: number, third: unknown, fourth?: unknown): string {
   const value = fourth === undefined ? third : `${String(third)}:${JSON.stringify(fourth)}`;
   return `evt_native_${hash(`${sourcePath}:${line}:${JSON.stringify(value)}`)}`;
 }
 
+/** Computes a deterministic message ID for an assistant record at the given line number. */
 function deterministicMessageId(sourcePath: string, line: number): string {
   return `msg_native_${hash(`${sourcePath}:${line}:assistant-message`)}`;
 }
 
+/** Returns a 24-character hex SHA-256 digest of the given string. */
 function hash(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 24);
 }
 
+/** Extracts the plain-text content from a message object or content array. */
 function extractText(value: unknown, mode: "user" | "assistant" = "assistant"): string | undefined {
   if (typeof value === "string") return value;
   if (!value || typeof value !== "object") return undefined;
@@ -472,6 +481,7 @@ function planText(input: unknown): string | undefined {
   return stringValue((input as Record<string, unknown>).plan);
 }
 
+/** Extracts tool call descriptors from a message's content blocks. */
 function toolCallsFromMessage(message: Record<string, unknown>): Array<{ toolCallId?: string; data: Record<string, unknown> }> {
   const content = Array.isArray(message.content) ? message.content : [];
   return content.flatMap((part) => {
@@ -493,6 +503,7 @@ function toolCallsFromMessage(message: Record<string, unknown>): Array<{ toolCal
   });
 }
 
+/** Extracts tool result descriptors from a message's content blocks. */
 function toolResultsFromMessage(message: Record<string, unknown>): Array<{ toolCallId?: string; data: Record<string, unknown> }> {
   const content = Array.isArray(message.content) ? message.content : [];
   return content.flatMap((part) => {
@@ -511,6 +522,7 @@ function toolResultsFromMessage(message: Record<string, unknown>): Array<{ toolC
   });
 }
 
+/** Computes character count, byte count, and truncation flag for a tool output value. */
 function toolResultMetadata(output: unknown): Record<string, unknown> {
   const text = typeof output === "string" ? output : output === undefined || output === null ? "" : JSON.stringify(output);
   return {
@@ -520,22 +532,27 @@ function toolResultMetadata(output: unknown): Record<string, unknown> {
   };
 }
 
+/** Returns the value as a plain object, or undefined if it is an array or non-object. */
 function objectValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
 
+/** Returns the value as a non-empty string, or undefined. */
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value ? value : undefined;
 }
 
+/** Extracts the session ID from a transcript file path by stripping the .jsonl extension. */
 function pathSessionId(sourcePath: string): string {
   const file = sourcePath.split("/").at(-1) || "unknown";
   return file.replace(/\.jsonl$/, "");
 }
 
+/** Returns the ISO timestamp from a native record's timestamp or created_at field. */
 function timestampFor(record: Record<string, unknown>): string | undefined {
   return stringValue(record.timestamp) || stringValue(record.created_at);
 }
+/** Returns true if the record is a meta/header record that should be excluded from event normalization. */
 function isMetaRecord(item: Record<string, unknown>): boolean {
   return item.isMeta === true || item.is_meta === true;
 }
@@ -584,12 +601,15 @@ function toolCallDurationMs(starts: Map<string, string>, callId: string | undefi
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return undefined;
   return end - start;
 }
+/** Returns a turn object with the given id, or undefined if the id is absent. */
 function turn(id: string | undefined): { id?: string } | undefined {
   return id ? { id } : undefined;
 }
+/** Generates a synthetic turn ID from a line number for records without an explicit turn ID. */
 function syntheticTurnId(line: number): string {
   return `turn-line-${line}`;
 }
+/** Maps a tool name to a broad category string. */
 function categorizeTool(toolName: string): string {
   const lower = toolName.toLowerCase();
   if (lower === "exitplanmode") return "plan";
@@ -600,6 +620,7 @@ function categorizeTool(toolName: string): string {
   return "other";
 }
 
+/** Extracts file path strings from a tool input object. */
 function extractPaths(value: unknown): string[] {
   if (!value || typeof value !== "object" || Array.isArray(value)) return [];
   const record = value as Record<string, unknown>;

@@ -2,10 +2,12 @@ import path from "node:path";
 import { homedir } from "node:os";
 import { readFile, readdir, realpath, stat } from "node:fs/promises";
 
+/** Returns the Codex home directory, defaulting to ~/.codex. */
 export function codexHome(): string {
   return process.env.CODEX_HOME || path.join(homedir(), ".codex");
 }
 
+/** Discovers Codex native rollout JSONL files, optionally filtered to those belonging to the given repo. */
 export async function discoverCodexNative(repoRoot?: string): Promise<string[]> {
   const sessionsDir = path.join(codexHome(), "sessions");
   const files = await listJsonlFiles(sessionsDir);
@@ -18,6 +20,7 @@ export async function discoverCodexNative(repoRoot?: string): Promise<string[]> 
   return matching;
 }
 
+/** Returns true if the Codex transcript's working directory matches the given canonical repo root. */
 async function codexTranscriptBelongsToRepo(filePath: string, canonicalRepoRoot: string): Promise<boolean> {
   try {
     const text = await readFile(filePath, "utf8");
@@ -41,10 +44,12 @@ async function codexTranscriptBelongsToRepo(filePath: string, canonicalRepoRoot:
   return false;
 }
 
+/** Resolves a path to its canonical form, falling back to path.resolve on symlink or access errors. */
 async function canonicalPath(filePath: string): Promise<string> {
   return realpath(filePath).catch(() => path.resolve(filePath));
 }
 
+/** Recursively lists all .jsonl files under the given directory, sorted alphabetically. */
 async function listJsonlFiles(root: string): Promise<string[]> {
   try {
     const rootStat = await stat(root);
@@ -53,6 +58,7 @@ async function listJsonlFiles(root: string): Promise<string[]> {
     return [];
   }
   const result: string[] = [];
+  /** Recursively collects .jsonl file paths from a directory into the result array. */
   async function walk(dir: string): Promise<void> {
     const entries = await readdir(dir, { withFileTypes: true });
     for (const entry of entries) {

@@ -8,6 +8,7 @@ export type ConfigureOptions = InitRollupOptions | {
   };
 };
 
+/** Initializes or updates the rollup config for a repo, returning the config file path. */
 export async function configure(options: ConfigureOptions): Promise<{ path: string }> {
   if ("set" in options) {
     const loaded = await loadConfig({ repo: options.repo });

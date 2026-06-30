@@ -8,6 +8,7 @@ test("runProcess reports stdout and stderr chunks", async () => {
   const result = await runProcess({
     command: process.execPath,
     args: ["-e", "process.stdout.write('out'); process.stderr.write('err');"],
+    /** Collects each output chunk into the chunks array. */
     onOutput: (chunk) => chunks.push(chunk)
   });
 

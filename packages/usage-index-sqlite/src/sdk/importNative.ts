@@ -19,6 +19,7 @@ export type ImportNativeResult = {
   warnings: Array<{ path: string; message: string }>;
 };
 
+/** Imports Claude native transcript JSONL files into the usage event store for the given repo. */
 export async function importNative(options: ImportNativeOptions): Promise<ImportNativeResult> {
   const repo = await repoInfo(options.repo);
   const root = repo.root || repo.cwd;
@@ -55,6 +56,7 @@ export async function importNative(options: ImportNativeOptions): Promise<Import
   return { provider: "claude", files: files.length, imported, skipped, warnings };
 }
 
+/** Returns the set of event IDs already recorded in the given event JSONL file. */
 async function existingEventIds(filePath: string): Promise<Set<string>> {
   if (!(await pathExists(filePath))) return new Set();
   return new Set((await readJsonl<{ event_id?: string }>(filePath)).map((event) => event.event_id).filter((id): id is string => Boolean(id)));

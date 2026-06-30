@@ -55,6 +55,7 @@ export type RepoStatus = {
   providers: ProviderStatus[];
 };
 
+/** Returns a snapshot of the usage tracking status for the given repo across all providers. */
 export async function status(options: StatusOptions): Promise<RepoStatus> {
   const providers = options.providers || [...usageProviders];
   const info = await repoInfo(options.repo);
@@ -111,6 +112,7 @@ export async function status(options: StatusOptions): Promise<RepoStatus> {
   };
 }
 
+/** Returns the ISO timestamp of the most recently modified file in the list, or undefined if empty. */
 async function newestMtime(files: string[]): Promise<string | undefined> {
   let newest = 0;
   for (const file of files) {
@@ -120,6 +122,7 @@ async function newestMtime(files: string[]): Promise<string | undefined> {
   return newest ? new Date(newest).toISOString() : undefined;
 }
 
+/** Returns the SQLite index state for the given repo root, including path, existence, and source-file count. */
 async function indexStatus(root: string): Promise<RepoStatus["index"]> {
   const indexPath = repoIndexPath(root);
   if (!(await pathExists(indexPath))) return { path: indexPath, exists: false, sourceFiles: 0 };
@@ -145,6 +148,7 @@ async function indexStatus(root: string): Promise<RepoStatus["index"]> {
   };
 }
 
+/** Loads the better-sqlite3 module dynamically and throws if it is not installed. */
 function optionalSqlite(): new (path: string, options?: unknown) => unknown {
   try {
     return require("better-sqlite3") as new (path: string, options?: unknown) => unknown;

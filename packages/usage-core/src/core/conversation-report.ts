@@ -25,6 +25,7 @@ type ToolResultEvent = {
   durationMs?: number;
 };
 
+/** Builds a normalized conversation report from annotated usage events for a given conversation ID. */
 export function conversationReport(
   dataset: DatasetLike,
   args: { conversationId: string; turnId?: string }
@@ -138,6 +139,7 @@ export function conversationReport(
   };
 }
 
+/** Indexes tool.result and tool.error events by their tool call ID. */
 function collectToolResults(events: AnnotatedEvent[]): Map<string, ToolResultEvent> {
   const results = new Map<string, ToolResultEvent>();
   for (const event of events) {
@@ -161,6 +163,7 @@ function collectToolResults(events: AnnotatedEvent[]): Map<string, ToolResultEve
   return results;
 }
 
+/** Converts a tool.call event and its optional result into a NormalizedToolCall. */
 function normalizedToolCall(call: AnnotatedEvent, result: ToolResultEvent | undefined): NormalizedToolCall {
   const id = toolCallId(call);
   return {
@@ -185,10 +188,12 @@ function normalizedToolCall(call: AnnotatedEvent, result: ToolResultEvent | unde
   };
 }
 
+/** Returns the tool call ID from an event, falling back to the event ID. */
 function toolCallId(event: AnnotatedEvent): string {
   return event.links?.tool_call_id || event.event_id;
 }
 
+/** Resolves which assistant message a tool call or token event belongs to, using links or turn fallback. */
 function assistantMessageIdFor(
   event: AnnotatedEvent,
   lastAssistantByTurn: Map<string, string>,
@@ -203,6 +208,7 @@ function assistantMessageIdFor(
   return fallback;
 }
 
+/** Extracts and normalizes token usage fields from a token.usage event's data payload. */
 function normalizeTokenUsage(event: AnnotatedEvent): TokenUsage | undefined {
   const data = objectValue(event.data);
   const usage = objectValue(data.usage) || objectValue(data.totals) || data;
@@ -231,6 +237,7 @@ function normalizeTokenUsage(event: AnnotatedEvent): TokenUsage | undefined {
   };
 }
 
+/** Merges multiple TokenUsage records into one by summing their fields. */
 function mergeTokenUsage(values: TokenUsage[], source = "assistant_message.tokens"): TokenUsage | undefined {
   if (!values.length) return undefined;
   if (values.length === 1) return values[0];
@@ -245,6 +252,7 @@ function mergeTokenUsage(values: TokenUsage[], source = "assistant_message.token
   };
 }
 
+/** Returns a descriptive source label for a token usage event based on provider and capture method. */
 function tokenSource(event: AnnotatedEvent): string {
   if (event.provider === "claude" && event.capture.source === "native-import") return "claude-native.message.usage";
   if (event.provider === "codex" && event.capture.source === "native-import") return "codex-native.token_count";
@@ -253,11 +261,13 @@ function tokenSource(event: AnnotatedEvent): string {
   return event.capture.source;
 }
 
+/** Coerces a raw confidence string to a typed TokenUsage confidence value, defaulting to "unknown". */
 function tokenConfidence(value: string | undefined): TokenUsage["confidence"] {
   if (value === "provider-reported" || value === "derived" || value === "estimated") return value;
   return "unknown";
 }
 
+/** Derives a message confidence level from event availability metadata. */
 function messageConfidence(event: AnnotatedEvent): NormalizedConversationMessage["confidence"] {
   const confidence = event.availability?.confidence || event.capture.confidence;
   if (confidence === "exact") return "exact";
@@ -265,43 +275,53 @@ function messageConfidence(event: AnnotatedEvent): NormalizedConversationMessage
   return "best-effort";
 }
 
+/** Returns the text content of an event, checking multiple possible field names. */
 function eventText(event: AnnotatedEvent): string {
   return stringValue(field(event.data, "text")) || stringValue(field(event.data, "delta")) || stringValue(field(event.data, "text_preview")) || "";
 }
 
+/** Returns the best timestamp for an event, preferring observed_at over recorded_at. */
 function eventTime(event: AnnotatedEvent): string | undefined {
   return event.observed_at || event.recorded_at;
 }
 
+/** Returns a compound key uniquely identifying a turn within a conversation. */
 function turnKey(event: AnnotatedEvent): string {
   return `${event.conversation.id}:${event.effectiveTurnId || event.turn?.id || "turn-unknown"}`;
 }
 
+/** Coerces an unknown value to a typed tool result status string, defaulting to "unknown". */
 function statusValue(value: unknown): "success" | "error" | "unknown" {
   return value === "success" || value === "error" || value === "unknown" ? value : "unknown";
 }
 
+/** Returns a named key from an object value, or undefined if the value is not an object. */
 function field(value: unknown, key: string): unknown {
   return value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
 }
 
+/** Returns the value cast to a plain-object record, or an empty object if it is not one. */
 function objectValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 }
 
+/** Returns the value as a non-empty string, or undefined. */
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+/** Returns the value as a finite number, or undefined. */
 function numberValue(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+/** Collects string elements from an array or single value, dropping non-strings. */
 function stringArray(value: unknown): string[] {
   const values = Array.isArray(value) ? value : [value];
   return values.filter((item): item is string => typeof item === "string" && item.length > 0);
 }
 
+/** Serializes an unknown value to a compact single-line preview, truncated to max characters. */
 function previewUnknown(value: unknown, max: number): string | undefined {
   if (value === undefined || value === null) return undefined;
   const text = typeof value === "string" ? value : JSON.stringify(value);
@@ -309,25 +329,30 @@ function previewUnknown(value: unknown, max: number): string | undefined {
   return compact.length > max ? `${compact.slice(0, max - 3)}...` : compact;
 }
 
+/** Sums all defined numbers in the array, returning undefined if all are absent. */
 function sumDefined(values: Array<number | undefined>): number | undefined {
   const present = values.filter((value): value is number => value !== undefined);
   return present.length ? present.reduce((sum, value) => sum + value, 0) : undefined;
 }
 
+/** Sums one numeric token field across an array of TokenUsage records. */
 function sumToken(values: TokenUsage[], key: keyof Pick<TokenUsage, "input" | "output" | "cacheRead" | "cacheCreation" | "total">): number | undefined {
   return sumDefined(values.map((value) => value[key]));
 }
 
+/** Type guard returning true when the value is a defined TokenUsage object. */
 function isTokenUsage(value: TokenUsage | undefined): value is TokenUsage {
   return Boolean(value);
 }
 
+/** Appends a value to the array stored at key in the map, creating the array if absent. */
 function pushMap<K, V>(map: Map<K, V[]>, key: K, value: V): void {
   const rows = map.get(key) || [];
   rows.push(value);
   map.set(key, rows);
 }
 
+/** Returns a new array with duplicate and falsy values removed. */
 function unique<T>(values: T[]): T[] {
   return [...new Set(values.filter(Boolean))];
 }

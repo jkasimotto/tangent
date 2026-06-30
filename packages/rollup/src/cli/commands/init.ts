@@ -1,6 +1,7 @@
 import { configure } from "../../sdk/index.js";
 import { outputArg, sandboxArg, stringArg, summaryProviderArg, type Args } from "../args.js";
 
+/** Initializes the rollup config for a repo with the given options. */
 export async function initCommand(args: Args): Promise<void> {
   const repo = args._[1] || ".";
   const output = args["repo-local"] ? "repo-local-private" : outputArg(args.output);

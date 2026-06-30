@@ -1,6 +1,7 @@
 import { status } from "../../sdk/index.js";
 import type { Args } from "../args.js";
 
+/** Prints the rollup status summary for the current repo. */
 export async function statusCommand(args: Args): Promise<void> {
   const value = await status({ repo: args._[1] || ".", date: typeof args.date === "string" ? args.date : undefined });
   if (args.json) {

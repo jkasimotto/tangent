@@ -3,6 +3,7 @@ import { loadEvalSpec } from "../../core/config.js";
 import { prepareEval } from "../../core/worktree.js";
 import { manualCommandHint } from "../../runners/manual.js";
 
+/** Handles the `eval prepare` subcommand, setting up worktrees for each eval variant. */
 export async function prepareCommand(args: Args): Promise<void> {
   const specPath = requiredString(args._[1], "eval prepare requires <eval.json>.");
   const loaded = await loadEvalSpec(specPath);

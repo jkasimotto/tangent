@@ -5,10 +5,12 @@ import type { EvalRunManifest, EvalRunVariantState } from "../types/run.js";
 import type { EvalSpec } from "../types/spec.js";
 import { isoCompact, runDir, runsDir, sanitizePathSegment } from "./paths.js";
 
+/** Generates a timestamped run id from the eval name and current date. */
 export function createRunId(name: string, date = new Date()): string {
   return `${isoCompact(date)}-${sanitizePathSegment(name)}`;
 }
 
+/** Creates a new run manifest directory and persists the initial manifest to disk. */
 export async function createRunManifest(args: {
   name: string;
   specPath?: string;
@@ -31,6 +33,7 @@ export async function createRunManifest(args: {
   return manifest;
 }
 
+/** Allocates a run id that does not already exist on disk, appending a counter if needed. */
 async function uniqueRunId(name: string): Promise<string> {
   const base = createRunId(name);
   for (let index = 0; index < 100; index += 1) {
@@ -40,10 +43,12 @@ async function uniqueRunId(name: string): Promise<string> {
   throw new Error(`Could not allocate eval run id for ${name}`);
 }
 
+/** Returns true if the file or directory at the given path exists. */
 async function exists(filePath: string): Promise<boolean> {
   return access(filePath).then(() => true).catch(() => false);
 }
 
+/** Loads and parses a run manifest from a run id, directory path, or .json file path. */
 export async function loadRunManifest(idOrPath: string): Promise<EvalRunManifest> {
   const manifestPath = idOrPath.endsWith(".json")
     ? idOrPath
@@ -53,11 +58,13 @@ export async function loadRunManifest(idOrPath: string): Promise<EvalRunManifest
   return manifest;
 }
 
+/** Writes the run manifest to disk as run.json inside the run directory. */
 export async function saveRunManifest(manifest: EvalRunManifest): Promise<void> {
   await mkdir(manifest.runDir, { recursive: true });
   await writeFile(path.join(manifest.runDir, "run.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
 }
 
+/** Lists all eval runs from the runs directory, sorted newest first. */
 export async function listRuns(): Promise<EvalRunManifest[]> {
   const { readdir } = await import("node:fs/promises");
   const entries = await readdir(runsDir(), { withFileTypes: true }).catch(() => []);
@@ -74,10 +81,12 @@ export async function listRuns(): Promise<EvalRunManifest[]> {
   return rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
+/** Returns the directory for a specific case/variant within a run. */
 export function variantDir(manifest: EvalRunManifest, caseId: string, variantId: string): string {
   return path.join(manifest.runDir, "variants", sanitizePathSegment(`${caseId}-${variantId}`));
 }
 
+/** Finds a variant in a run manifest by variant id, disambiguating by case id when needed. */
 export function findVariant(manifest: EvalRunManifest, variantId: string, caseId?: string): EvalRunVariantState {
   const matches = manifest.variants.filter((variant) => variant.variantId === variantId && (!caseId || variant.caseId === caseId));
   if (matches.length === 1) return matches[0]!;

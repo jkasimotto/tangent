@@ -154,28 +154,34 @@ export class UsageDataset {
   }
 
   conversations = {
+    /** Lists conversations matching an optional provider and date range filter. */
     list: (query: { provider?: UsageProvider; from?: Date; to?: Date } = {}): QueryResult<ConversationListItem[]> => {
       const rows = this.conversationRows()
         .filter((row) => !query.provider || row.provider === query.provider)
         .filter((row) => inRange(row.startedAt || row.endedAt, query.from, query.to));
       return this.result(rows, this.providers(), "conversations");
     },
+    /** Lists conversations whose startedAt timestamp falls within the given range. */
     startedBetween: (range: { from?: Date; to?: Date }): QueryResult<ConversationListItem[]> => {
       const rows = this.conversationRows().filter((row) => inRange(row.startedAt, range.from, range.to));
       return this.result(rows, this.providers(), "conversations");
     },
+    /** Lists conversations whose endedAt timestamp falls within the given range. */
     endedBetween: (range: { from?: Date; to?: Date }): QueryResult<ConversationListItem[]> => {
       const rows = this.conversationRows().filter((row) => inRange(row.endedAt, range.from, range.to));
       return this.result(rows, this.providers(), "conversations");
     },
+    /** Returns a normalized conversation report for the given conversation and optional turn ID. */
     report: (query: { conversationId: string; turnId?: string }): QueryResult<NormalizedConversation> => {
       const report = conversationReport(this, query);
       return this.result(report, [report.provider], "conversations");
     },
+    /** Returns all conversations in the dataset. */
     all: (): QueryResult<ConversationListItem[]> => this.result(this.conversationRows(), this.providers(), "conversations")
   };
 
   turns = {
+    /** Lists turns filtered by provider, date range, or bucket date, sorted by the chosen bucket field. */
     list: (query: {
       provider?: UsageProvider;
       from?: Date;
@@ -193,6 +199,7 @@ export class UsageDataset {
         .filter((row) => !query.date || datePart(turnBucketDate(row, bucketBy)) === query.date);
       return this.result(rows, this.providers(), "conversations");
     },
+    /** Returns a single turn by its source key, or undefined if not found. */
     get: (key: string): QueryResult<TurnListItem | undefined> => {
       const row = this.turnRows().find((turn) => turn.sourceKey === key);
       return this.result(row, row ? [row.provider] : this.providers(), "conversations");
@@ -200,6 +207,7 @@ export class UsageDataset {
   };
 
   messages = {
+    /** Lists visible messages matching the given query filters. */
     list: (query: MessageListQuery = {}): QueryResult<MessageListItem[]> => {
       const events = this.scopedEvents(query);
       const data = events
@@ -211,9 +219,11 @@ export class UsageDataset {
         .filter((message) => !query.date || datePart(message.createdAt) === query.date);
       return this.result(data, this.providersForMessageQuery(query, events), "messages.visible");
     },
+    /** Returns all visible messages for a conversation, optionally scoped to a turn. */
     visible: ({ conversationId, turnId }: { conversationId: string; turnId?: string }): QueryResult<VisibleMessage[]> => {
       return this.messages.list({ conversationId, turnId });
     },
+    /** Returns internal assistant messages for a conversation, optionally scoped to a turn. */
     internal: ({ conversationId, turnId }: { conversationId: string; turnId?: string }): QueryResult<unknown[]> => {
       const data = this.scopedEvents({ conversationId, turnId }).filter((event) => event.kind === "message.assistant.internal");
       return this.result(data, [providerForConversation(this.events, conversationId)], "messages.internal");
@@ -221,6 +231,7 @@ export class UsageDataset {
   };
 
   tools = {
+    /** Returns tool calls with optional results, scoped to a conversation or turn. */
     calls: ({ conversationId, turnId, includeResults = true }: {
       conversationId?: string;
       turnId?: string;
@@ -259,6 +270,7 @@ export class UsageDataset {
   };
 
   activity = {
+    /** Returns all events for a conversation or turn as an ordered activity timeline. */
     timeline: ({ conversationId, turnId }: { conversationId?: string; turnId?: string }): QueryResult<ActivityTimelineItem[]> => {
       const events = this.scopedEvents({ conversationId, turnId });
       const data = events.map((event) => ({
@@ -276,10 +288,12 @@ export class UsageDataset {
   };
 
   tokens = {
+    /** Returns raw token usage events grouped by conversation. */
     byConversation: ({ conversationId }: { conversationId: string }): QueryResult<unknown[]> => {
       const rows = aggregateUsage(this.scopedEvents({ conversationId }));
       return this.result(rows, [providerForConversation(this.events, conversationId)], "tokens.byConversation");
     },
+    /** Returns raw token usage events grouped by model within a conversation. */
     byModel: ({ conversationId }: { conversationId: string }): QueryResult<unknown[]> => {
       const rows = aggregateUsage(this.scopedEvents({ conversationId }), "model");
       return this.result(rows, [providerForConversation(this.events, conversationId)], "tokens.byModel");
@@ -287,10 +301,13 @@ export class UsageDataset {
   };
 
   capabilities = {
+    /** Returns provider capability metadata for the given provider. */
     forProvider: (provider: UsageProvider) => capabilitiesForProvider(provider),
+    /** Returns aggregated query support status across all providers in the dataset. */
     forQuery: (query: keyof ReturnType<typeof capabilitiesForProvider>) => supportFor(this.providers(), query)
   };
 
+  /** Writes all events, conversations, and turns to a SQLite index at the repo's index path. */
   writeIndex(repoRoot: string): void {
     const dbPath = repoIndexPath(repoRoot);
     mkdirSync(path.dirname(dbPath), { recursive: true });
@@ -382,6 +399,7 @@ export class UsageDataset {
     db.close();
   }
 
+  /** Wraps data in a QueryResult envelope with support metadata derived from the given providers. */
   private result<T>(data: T, providers: Array<UsageProvider | undefined>, key: keyof ReturnType<typeof capabilitiesForProvider>): QueryResult<T> {
     return {
       data,
@@ -391,15 +409,18 @@ export class UsageDataset {
     };
   }
 
+  /** Returns the deduplicated list of providers represented in the dataset's events. */
   private providers(): UsageProvider[] {
     return [...new Set(this.events.map((event) => event.provider))];
   }
 
+  /** Returns events scoped to an optional conversation and/or turn ID. */
   private scopedEvents(query: { conversationId?: string; turnId?: string }): AnnotatedEvent[] {
     const events = query.conversationId ? this.eventsByConversation.get(query.conversationId) || [] : this.annotatedEvents;
     return query.turnId ? events.filter((event) => event.effectiveTurnId === query.turnId) : events;
   }
 
+  /** Converts an annotated event to a MessageListItem for the messages query surface. */
   private visibleMessage(event: AnnotatedEvent): MessageListItem {
     return {
       id: event.links?.message_id || event.event_id,
@@ -417,12 +438,14 @@ export class UsageDataset {
     };
   }
 
+  /** Returns the providers relevant to a message query, respecting explicit provider or conversation scope. */
   private providersForMessageQuery(query: MessageListQuery, scopedEvents: AnnotatedEvent[]): Array<UsageProvider | undefined> {
     if (query.provider) return [query.provider];
     if (query.conversationId) return [providerForConversation(this.events, query.conversationId)];
     return providersForEvents(scopedEvents);
   }
 
+  /** Builds a ConversationListItem for each conversation ID in the event index. */
   private conversationRows(): ConversationListItem[] {
     return [...this.eventsByConversation.entries()].map(([id, events]) => {
       const start = events.find((event) => event.kind === "conversation.start") || events[0];
@@ -446,6 +469,7 @@ export class UsageDataset {
     });
   }
 
+  /** Builds a TurnListItem for each turn in the event index, sorted by lastActivityAt. */
   private turnRows(): TurnListItem[] {
     return [...this.eventsByTurn.entries()].map(([key, events]) => {
       const start = events.find((event) => event.kind === "turn.start") || events.find((event) => event.kind === "message.user") || events[0]!;
@@ -482,6 +506,7 @@ export class UsageDataset {
   }
 }
 
+/** Dynamically requires better-sqlite3, throwing a descriptive error if it is not installed. */
 function optionalSqlite(): new (path: string, options?: unknown) => unknown {
   try {
     return require("better-sqlite3") as new (path: string, options?: unknown) => unknown;
@@ -490,6 +515,7 @@ function optionalSqlite(): new (path: string, options?: unknown) => unknown {
   }
 }
 
+/** Annotates events with effectiveTurnId and effectiveTurnIndex by tracking turn boundaries per conversation. */
 function annotateTurns(events: UsageJsonlLineV1[]): AnnotatedEvent[] {
   const state = new Map<string, { current?: string; counter: number; indexes: Map<string, number> }>();
   return events.map((event) => {
@@ -520,6 +546,7 @@ function annotateTurns(events: UsageJsonlLineV1[]): AnnotatedEvent[] {
   });
 }
 
+/** Returns the QuerySupport status for a capability key across the given set of providers. */
 function supportFor(providers: Array<UsageProvider | undefined>, key: keyof ReturnType<typeof capabilitiesForProvider>): QuerySupport {
   const present = [...new Set(providers.filter(Boolean) as UsageProvider[])];
   const providerCoverage = Object.fromEntries(
@@ -530,34 +557,41 @@ function supportFor(providers: Array<UsageProvider | undefined>, key: keyof Retu
   return { status, providerCoverage };
 }
 
+/** Compares two events by observed/recorded timestamp for chronological sorting. */
 function compareEvents(a: UsageJsonlLineV1, b: UsageJsonlLineV1): number {
   return (a.observed_at || a.recorded_at).localeCompare(b.observed_at || b.recorded_at) || a.recorded_at.localeCompare(b.recorded_at);
 }
 
+/** Constructs the compound source key used to index a turn in the eventsByTurn map. */
 function sourceKey(provider: UsageProvider, sessionId: string | undefined, conversationId: string, turnId: string): string {
   return `${provider}:${sessionId || conversationId.split(":").slice(1).join(":") || "unknown"}:${turnId}`;
 }
 
+/** Appends a value to the array stored at key in the map, creating the array if absent. */
 function pushMap<K, V>(map: Map<K, V[]>, key: K, value: V): void {
   const rows = map.get(key) || [];
   rows.push(value);
   map.set(key, rows);
 }
 
+/** Returns the observed or recorded timestamp of an event as a Date object. */
 function eventDate(event: UsageJsonlLineV1): Date {
   return new Date(event.observed_at || event.recorded_at);
 }
 
+/** Returns the bucket date for a turn based on the requested bucket field. */
 function turnBucketDate(row: TurnListItem, bucketBy: "turnEndedAt" | "turnStartedAt" | "lastActivityAt"): Date | undefined {
   if (bucketBy === "turnStartedAt") return row.startedAt || row.lastActivityAt || row.endedAt;
   if (bucketBy === "lastActivityAt") return row.lastActivityAt || row.endedAt || row.startedAt;
   return row.endedAt || row.lastActivityAt || row.startedAt;
 }
 
+/** Returns the ISO date string prefix (YYYY-MM-DD) for a Date, or undefined if absent. */
 function datePart(date: Date | undefined): string | undefined {
   return date?.toISOString().slice(0, 10);
 }
 
+/** Returns true if the date is defined and falls within the optional from/to bounds. */
 function inRange(date: Date | undefined, from?: Date, to?: Date): boolean {
   if (!date) return false;
   if (from && date < from) return false;
@@ -565,38 +599,46 @@ function inRange(date: Date | undefined, from?: Date, to?: Date): boolean {
   return true;
 }
 
+/** Returns the provider for the first event matching the given conversation ID. */
 function providerForConversation(events: UsageJsonlLineV1[], conversationId: string): UsageProvider | undefined {
   return events.find((event) => event.conversation.id === conversationId)?.provider;
 }
 
+/** Returns the deduplicated list of providers across a set of events. */
 function providersForEvents(events: UsageJsonlLineV1[]): UsageProvider[] {
   return [...new Set(events.map((event) => event.provider))];
 }
 
+/** Returns a named key from an object-like data value, or undefined if data is not an object. */
 function dataField(data: unknown, key: string): unknown {
   return data && typeof data === "object" ? (data as Record<string, unknown>)[key] : undefined;
 }
 
+/** Returns a string field from a data object, or undefined if the field is absent or not a string. */
 function dataString(data: unknown, key: string): string | undefined {
   const value = dataField(data, key);
   return typeof value === "string" ? value : undefined;
 }
 
+/** Returns a number field from a data object, or undefined if the field is absent or not a number. */
 function dataNumber(data: unknown, key: string): number | undefined {
   const value = dataField(data, key);
   return typeof value === "number" ? value : undefined;
 }
 
+/** Returns an array of strings from an unknown value, filtering out non-string elements. */
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+/** Returns the capture source category for a message event. */
 function sourceOf(event: UsageJsonlLineV1): "native" | "hook" | "best-effort" {
   if (event.capture.source === "hook") return "hook";
   if (event.capture.source === "native-import") return "native";
   return "native";
 }
 
+/** Returns the turn status derived from a turn.end event, or "unknown" if there is no end event. */
 function turnStatus(end: AnnotatedEvent | undefined): TurnListItem["status"] {
   if (!end) return "unknown";
   const status = dataString(end.data, "status");
@@ -604,18 +646,21 @@ function turnStatus(end: AnnotatedEvent | undefined): TurnListItem["status"] {
   return "unknown";
 }
 
+/** Returns a truncated preview of the first user message text in the turn's events. */
 function titlePreview(events: AnnotatedEvent[]): string | undefined {
   const prompt = events.find((event) => event.kind === "message.user");
   const text = prompt ? dataString(prompt.data, "text") || dataString(prompt.data, "text_preview") : undefined;
   return text ? previewUnknown(text, 100) : undefined;
 }
 
+/** Returns the capture confidence level for the turn, based on the weakest event confidence. */
 function captureConfidence(events: AnnotatedEvent[]): TurnListItem["captureConfidence"] {
   if (events.some((event) => event.availability?.confidence === "partial" || event.capture.confidence === "partial")) return "partial";
   if (events.some((event) => event.availability?.confidence === "inferred" || event.capture.confidence === "inferred")) return "best-effort";
   return "exact";
 }
 
+/** Returns a short SHA-256 fingerprint of the turn's event IDs and count for change detection. */
 function fingerprint(events: AnnotatedEvent[]): string {
   return createHash("sha256").update(JSON.stringify({
     ids: events.map((event) => event.event_id),
@@ -625,6 +670,7 @@ function fingerprint(events: AnnotatedEvent[]): string {
   })).digest("hex").slice(0, 16);
 }
 
+/** Returns all file paths referenced by a legacy usage event across known path data fields. */
 function pathsForEvent(event: UsageJsonlLineV1): string[] {
   const values = [
     dataField(event.data, "path"),
@@ -636,6 +682,7 @@ function pathsForEvent(event: UsageJsonlLineV1): string[] {
   return values.flatMap((value) => Array.isArray(value) ? value : [value]).filter((value): value is string => typeof value === "string");
 }
 
+/** Returns a one-line summary string for an event suitable for display in a timeline. */
 function eventSummary(event: UsageJsonlLineV1): string {
   if (event.kind === "message.user" || event.kind === "message.assistant.visible") return previewUnknown(dataString(event.data, "text") || dataString(event.data, "text_preview"), 120);
   if (event.kind === "tool.call" || event.kind === "tool.result") return [dataString(event.data, "tool_name"), dataString(event.data, "status")].filter(Boolean).join(" ");
@@ -643,12 +690,14 @@ function eventSummary(event: UsageJsonlLineV1): string {
   return event.kind;
 }
 
+/** Serializes an unknown value to a compact single-line string, truncated to max characters. */
 function previewUnknown(value: unknown, max = 240): string {
   const text = typeof value === "string" ? value : value == null ? "" : JSON.stringify(value);
   const compact = text.replace(/\s+/g, " ").trim();
   return compact.length > max ? `${compact.slice(0, max)}...` : compact;
 }
 
+/** Returns raw token usage events grouped by conversation or by model within a conversation. */
 function aggregateUsage(events: UsageJsonlLineV1[], by?: "model"): unknown[] {
   const usageEvents = events.filter((event) => event.kind === "token.usage" || Boolean(dataField(event.data, "usage")));
   if (!by) return usageEvents.map((event) => ({ provider: event.provider, conversationId: event.conversation.id, usage: dataField(event.data, "usage"), source: sourceOf(event) }));
@@ -663,10 +712,12 @@ function aggregateUsage(events: UsageJsonlLineV1[], by?: "model"): unknown[] {
   return [...rows.values()];
 }
 
+/** Returns an ISO string for a Date, or undefined if the date is absent. */
 function iso(date: Date | undefined): string | undefined {
   return date?.toISOString();
 }
 
+/** Returns true if the given SQLite table has a column with the specified name. */
 function tableHasColumn(db: DatabaseHandle, table: string, column: string): boolean {
   return (db.prepare(`pragma table_info(${table})`).all() as Array<{ name: string }>).some((row) => row.name === column);
 }

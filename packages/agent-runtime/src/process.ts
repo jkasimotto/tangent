@@ -30,6 +30,7 @@ export class ProcessAbortedError extends Error {
   }
 }
 
+/** Spawns a child process and resolves with its exit code, stdout, and stderr. */
 export async function runProcess(args: RunProcessArgs): Promise<ProcessRunResult> {
   return new Promise((resolve, reject) => {
     if (args.signal?.aborted) {
@@ -56,6 +57,7 @@ export async function runProcess(args: RunProcessArgs): Promise<ProcessRunResult
       settled = true;
       reject(new Error(`Command timed out after ${args.timeoutMs}ms: ${args.command}`));
     }, args.timeoutMs) : undefined;
+    /** Sends SIGTERM to the child and schedules a SIGKILL if it does not exit. */
     const abort = () => {
       if (settled || aborted) return;
       aborted = true;
@@ -101,18 +103,22 @@ export async function runProcess(args: RunProcessArgs): Promise<ProcessRunResult
   });
 }
 
+/** Returns whether an error represents a process abort. */
 export function isProcessAborted(error: unknown): boolean {
   return error instanceof ProcessAbortedError || (error instanceof Error && error.name === "ProcessAbortedError");
 }
 
+/** Builds an Error for a failed process command with output truncated to 1600 chars. */
 export function processFailure(command: string, code: number | null, stderr: string, stdout: string): Error {
   return commandFailure(command, code, stderr, stdout, 1600);
 }
 
+/** Builds an Error for a failed runner command with output truncated to 1200 chars. */
 export function runnerFailure(command: string, code: number | null, stderr: string, stdout: string): Error {
   return commandFailure(command, code, stderr, stdout, 1200);
 }
 
+/** Parses JSON from runner stdout, extracting structured output from event arrays when present. */
 export function parseRunnerJson(stdout: string): unknown {
   const trimmed = stdout.trim();
   if (!trimmed) throw new Error("Summary runner returned empty output.");
@@ -135,6 +141,7 @@ export function parseRunnerJson(stdout: string): unknown {
   return parsed;
 }
 
+/** Extracts structured output from the last event in the array that carries one. */
 function structuredOutputFromEvents(events: unknown[]): unknown {
   for (const event of [...events].reverse()) {
     if (!event || typeof event !== "object") continue;
@@ -153,6 +160,7 @@ function structuredOutputFromEvents(events: unknown[]): unknown {
   return undefined;
 }
 
+/** Extracts a StructuredOutput tool-use input from a message's content array. */
 function structuredOutputFromMessage(message: unknown): unknown {
   if (!message || typeof message !== "object") return undefined;
   const content = (message as Record<string, unknown>).content;
@@ -167,17 +175,20 @@ function structuredOutputFromMessage(message: unknown): unknown {
   return undefined;
 }
 
+/** Strips a leading and trailing markdown code fence from text if present. */
 export function stripMarkdownFence(text: string): string {
   const trimmed = text.trim();
   const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
   return fenced ? fenced[1]!.trim() : trimmed;
 }
 
+/** Builds a truncated Error from a command's exit code and combined output. */
 function commandFailure(command: string, code: number | null, stderr: string, stdout: string, maxChars: number): Error {
   const raw = stderr.trim() || stdout.trim() || `${command} exited with code ${code}`;
   return new Error(truncateProcessOutput(raw, maxChars));
 }
 
+/** Collapses whitespace in text and truncates it to the given character limit. */
 function truncateProcessOutput(text: string, maxChars: number): string {
   const compact = text.replace(/\s+/g, " ").trim();
   return compact.length > maxChars ? `${compact.slice(0, maxChars - 3)}...` : compact;

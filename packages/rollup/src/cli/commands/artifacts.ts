@@ -3,6 +3,7 @@ import { readRollupForKey, writeGeneratedRollupMarkdown } from "../../core/note-
 import { rollupPeriodArg } from "../../core/time.js";
 import { dateArg, type Args } from "../args.js";
 
+/** Renders the rollup artifact for the given period and writes or prints it. */
 export async function renderCommand(args: Args): Promise<void> {
   const loaded = await loadConfig({ repo: args._[1] || "." });
   const period = rollupPeriodArg(dateArg(args.date), loaded.config.processing.timezone);

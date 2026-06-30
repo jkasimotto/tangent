@@ -76,6 +76,35 @@ test("unions transcripts across every CLAUDE_HOME profile dir", async () => {
   }
 });
 
+test("discovers transcripts for a cwd nested under the repo root, not just the root itself", async () => {
+  const home = mkdtempSync(path.join(tmpdir(), "claude-home-"));
+  const previousHome = process.env.CLAUDE_HOME;
+  process.env.CLAUDE_HOME = home;
+  try {
+    // An eval variant can run the agent inside a subdirectory of its worktree (e.g. `cwd: "client/lib"`).
+    // Claude Code keys the transcript dir by that literal cwd, not by the worktree/repo root.
+    const repoRoot = "/Users/me/.tangent/eval/runs/run-1/variants/case-a/work/repo";
+    const nestedCwd = `${repoRoot}/client/lib/src`;
+    const rootDir = path.join(home, "projects", claudeProjectKey(repoRoot));
+    const nestedDir = path.join(home, "projects", claudeProjectKey(nestedCwd));
+    mkdirSync(rootDir, { recursive: true });
+    mkdirSync(nestedDir, { recursive: true });
+    writeFileSync(path.join(rootDir, "root-session.jsonl"), "{}\n");
+    writeFileSync(path.join(nestedDir, "nested-session.jsonl"), "{}\n");
+
+    const found = await discoverClaudeNative(repoRoot);
+    assert.deepEqual(
+      found.map((file) => path.basename(file)).sort(),
+      ["nested-session.jsonl", "root-session.jsonl"],
+      "scoping by repo root should also pick up transcripts from cwds nested inside it"
+    );
+  } finally {
+    if (previousHome === undefined) delete process.env.CLAUDE_HOME;
+    else process.env.CLAUDE_HOME = previousHome;
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("lists built-in providers", () => {
   assert.deepEqual(builtInProviderAdapters.map((provider) => provider.id), ["claude", "codex", "gemini"]);
 });

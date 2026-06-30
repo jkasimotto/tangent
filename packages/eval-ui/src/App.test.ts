@@ -274,6 +274,21 @@ describe("eval svelte app", () => {
     expect(assembleContext.mock.calls.length).toBe(before);
   });
 
+  it("fails gracefully when a selected run cannot be loaded, never sticking on Loading", async () => {
+    const client = fakeEvalClient({ missingRunId: "gone" });
+    const { container } = render(App, { props: { client } });
+    await screen.findByText(/ui-compare/);
+
+    // Switch to a run whose getRun rejects (deleted or corrupt). The run picker is the first select.
+    const runSelect = container.querySelector("select") as HTMLSelectElement;
+    await fireEvent.change(runSelect, { target: { value: "gone" } });
+
+    // A clear, recoverable message replaces the comparison: no endless "Loading run…".
+    expect(await screen.findByText(/could not be loaded/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.queryByText(/Loading run/)).toBeNull();
+  });
+
   it("prefetches conversations when the Conversations header is hovered, before it is opened", async () => {
     const client = fakeEvalClient();
     const getConversations = client.getConversations as ReturnType<typeof vi.fn>;

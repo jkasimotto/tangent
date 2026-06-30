@@ -79,9 +79,12 @@
   let expandedRows = new Set<string>(); // diffCacheKey values currently open
   let loadingRows = new Set<string>();
   let loading = true;
-  let runLoading = false;
   let compareLoading = false;
   let error = "";
+  // A run-load failure is tracked against the run it belongs to, so a deleted or moved run shows a clear
+  // "could not load" message for that run instead of an endless "Loading run…".
+  let runLoadError = "";
+  let runLoadErrorId = "";
   let runLoadKey = "";
   let compareLoadKey = "";
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
@@ -142,6 +145,10 @@
   $: selectedCase = runDetail?.cases.find((item) => item.id === selectedCaseId);
   $: selectedCase && syncVariantSelection(selectedCase);
   $: selectedRunId && void loadRun(selectedRunId);
+  // Loading is derived, never an imperative flag: a run is "loading" whenever the loaded detail does not yet
+  // match the selected run (and that run has not failed). This is self-correcting, so a fast switch can never
+  // leave a stale flag stuck on "Loading run…" forever.
+  $: runLoading = Boolean(runDetail) && runDetail.id !== selectedRunId && runLoadErrorId !== selectedRunId;
   $: selectedCase && leftVariantId && rightVariantId && void loadCompare();
   // The aligned Compare view shows the whole pair: one identity row per artifact, grouped by kind.
   $: alignedSections = buildAlignedSections(compare?.artifacts || []);
@@ -348,7 +355,6 @@
   async function loadRun(runId: string): Promise<void> {
     if (runLoadKey === runId) return;
     runLoadKey = runId;
-    runLoading = Boolean(runDetail);
     try {
       const next = await client.getRun(runId);
       if (runLoadKey !== runId) return;
@@ -356,15 +362,28 @@
       selectedCaseId = next.cases.find((item) => item.id === selectedCaseId)?.id || next.cases[0]?.id || "";
       compare = undefined;
       composer = undefined;
+      runLoadError = "";
+      runLoadErrorId = "";
       void loadReviews(runId);
       error = "";
       if (runActive(next)) schedulePoll(runId);
       else clearTimeout(pollTimer);
     } catch (caught) {
-      error = friendlyError(caught);
-    } finally {
-      if (runLoadKey === runId) runLoading = false;
+      if (runLoadKey !== runId) return;
+      // A run that cannot be loaded (deleted, moved, or corrupt) fails gracefully into its own message,
+      // keyed to the run so switching to a healthy one clears it. loadRunKey stays set so a quick re-select
+      // of the same run does nothing; retryRun resets it to force a fresh fetch.
+      runLoadError = friendlyError(caught);
+      runLoadErrorId = runId;
     }
+  }
+
+  /** Forces a fresh fetch of a run after a load failure (clears the dedup key so loadRun runs again). */
+  function retryRun(runId: string): void {
+    runLoadKey = "";
+    runLoadError = "";
+    runLoadErrorId = "";
+    void loadRun(runId);
   }
 
   async function loadCompare(): Promise<void> {
@@ -637,6 +656,11 @@
     // old run's cards linger on screen for the full getRun fetch (slow for big runs), reading as "nothing
     // happened". loadRun repopulates once the new run resolves.
     compare = undefined;
+    // Drop the previous run's variant selection too. Otherwise the context/assemble/manifest reactives fire
+    // against the new run id with the old variant ids the instant selectedRunId changes (before loadRun
+    // resolves), every one a guaranteed 404. syncVariantSelection repopulates these once runDetail arrives.
+    leftVariantId = "";
+    rightVariantId = "";
     diffCache = new Map(); expandedRows = new Set(); loadingRows = new Set();
   }
 
@@ -996,7 +1020,12 @@
         </div>
       </div>
     {:else if runDetail}
-      {#if runLoading}
+      {#if runLoadErrorId === selectedRunId && runLoadError}
+        <div class="state state-error" role="alert">
+          <p>This run could not be loaded. It may have been deleted or moved.</p>
+          <button type="button" class="ghost-button" on:click={() => retryRun(selectedRunId)}>Retry</button>
+        </div>
+      {:else if runLoading}
         <div class="state">Loading run…</div>
       {:else if compare}
         <div class="compare-stack">

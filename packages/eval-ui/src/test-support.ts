@@ -10,7 +10,7 @@ import type {
 } from "./client.js";
 
 /** Creates a deterministic client for app rendering tests. */
-export function fakeEvalClient(overrides?: { artifacts?: EvalCompareView["artifacts"]; codeDiff?: EvalDiffView }): EvalUiClient {
+export function fakeEvalClient(overrides?: { artifacts?: EvalCompareView["artifacts"]; codeDiff?: EvalDiffView; missingRunId?: string }): EvalUiClient {
   /** Builds a deterministic evaluator score for a variant. */
   const evaluation = (totalPoints: number): EvalEvaluationView => ({
     model: "judge",
@@ -109,8 +109,8 @@ export function fakeEvalClient(overrides?: { artifacts?: EvalCompareView["artifa
   return {
     /** Returns the seeded selected run. */
     getSelection: async () => ({ runId: "run1" }),
-    /** Returns the seeded run list. */
-    listRuns: async () => ({ runs: [run] }),
+    /** Returns the seeded run list, plus an unloadable run when one is configured (for the failure path). */
+    listRuns: async () => ({ runs: overrides?.missingRunId ? [run, { ...run, id: overrides.missingRunId, name: overrides.missingRunId }] : [run] }),
     /** Returns the seeded launchable specs. */
     listSpecs: async () => ({ specs: [{ path: "/evals/compare.json", name: "compare", caseCount: 1, variantCount: 2 }] }),
     /** Returns the seeded editable prompts. */
@@ -119,8 +119,11 @@ export function fakeEvalClient(overrides?: { artifacts?: EvalCompareView["artifa
     saveSpecPrompt: vi.fn(async ({ specPath, promptPath, content }) => ({ specPath, name: "compare", prompts: [{ id: promptPath, label: "Task prompt", path: promptPath, content }] })),
     /** Records launch requests. */
     launchRun: vi.fn(async () => ({ runId: "run1" })),
-    /** Returns the seeded run detail. */
-    getRun: async () => run,
+    /** Returns the seeded run detail, or rejects for the unloadable run (a deleted or corrupt run). */
+    getRun: async (runId) => {
+      if (overrides?.missingRunId && runId === overrides.missingRunId) throw new Error("Run not found.");
+      return run;
+    },
     /** Returns the seeded comparison view. */
     compareRun: async () => compare,
     /** Returns the seeded diff for the requested artifact kind, with an artifact descriptor matching the request. */

@@ -35,6 +35,13 @@ button {
   --add: var(--tangent-color-diff-add, #dcfce7);
   --delete: var(--tangent-color-diff-delete, #fee2e2);
 
+  /* This is a forced-light design with hardcoded light surfaces. Declare the scheme so native controls
+     (buttons, inputs, selects, scrollbars) and UA system colors resolve to their light-mode values. Without
+     this, on a machine in dark mode the browser paints buttons and inputs with dark-mode system colors:
+     most visibly, a diff line is a <button>, so its code text fell back to the white dark-mode ButtonText
+     and became unreadable on the pale-green diff background. */
+  color-scheme: light;
+
   width: 100%;
   height: 100vh;
   height: 100svh;
@@ -348,6 +355,7 @@ button {
 .diff-row code,
 .line-no {
   min-width: 0;
+  color: var(--text);
   padding: 4px 8px;
   font-family: var(--tangent-font-mono, "SFMono-Regular", Consolas, "Liberation Mono", ui-monospace, monospace);
   font-size: 12px;
@@ -412,6 +420,15 @@ button {
   padding: 24px;
   color: var(--muted);
   font-size: 14px;
+}
+.state-error {
+  gap: 12px;
+  color: var(--text);
+}
+.state-error p {
+  margin: 0;
+  max-width: 360px;
+  text-align: center;
 }
 
 @media (max-width: 980px) {
@@ -1460,6 +1477,10 @@ button.review-row {
   border-top: 0;
   background: transparent;
   font: inherit;
+  /* A <button> does not inherit color by default; pin it to the body text so diff code never falls back to
+     the UA ButtonText system color (white in dark mode). color-scheme: light also covers this; both stay so
+     the diff is readable even if one is overridden. */
+  color: var(--text);
   text-align: left;
   cursor: pointer;
 }

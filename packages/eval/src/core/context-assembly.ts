@@ -1,8 +1,9 @@
 /**
  * Reconstructs the repo-contributed context a coding agent would see at a chosen cwd, exactly as Claude
- * Code assembles it: the CLAUDE.md chain (root to cwd) with @imports expanded inline, every discoverable
- * skill's frontmatter (bodies only when loaded), and subagent metadata. Pure: it reads through an injected
- * ContextSource so it is testable without git and reused by the server over a variant's frozen worktree.
+ * Code assembles it: the CLAUDE.md/AGENTS.md chain (root to cwd) with @imports expanded inline, every
+ * discoverable skill's frontmatter (bodies only when loaded), and subagent metadata. Pure: it reads through
+ * an injected ContextSource so it is testable without git and reused by the server over a variant's frozen
+ * worktree.
  */
 
 export type ContextSource = {
@@ -18,7 +19,9 @@ export type AssembledContext = { blocks: AssembledBlock[]; skills: SkillEntry[];
 export type ContextManifest = { skills: SkillEntry[]; subagents: SubagentEntry[] };
 
 const MAX_IMPORT_DEPTH = 4;
-const CLAUDE_MD_NAMES = ["CLAUDE.md", "CLAUDE.local.md"];
+// Claude Code loads these file names in each directory of the chain (root to cwd), in this order.
+// CLAUDE.md and AGENTS.md/AGENT.md are peers; CLAUDE.local.md is always last (local overrides).
+const CLAUDE_MD_NAMES = ["CLAUDE.md", "AGENTS.md", "AGENT.md", "CLAUDE.local.md"];
 
 /** Extracts name and description from a leading --- YAML block. Minimal key/value parsing, no YAML dep. */
 export function parseFrontmatter(text: string): { name: string; description: string } {
@@ -58,16 +61,19 @@ function isBelow(dir: string, cwd: string): boolean {
 }
 
 /**
- * The eager CLAUDE.md chain for a cwd (root to cwd order, CLAUDE.md before CLAUDE.local.md per directory),
- * plus the below-cwd files that would load lazily. Other branches' CLAUDE.md are omitted (never loaded).
+ * The eager context-file chain for a cwd (root to cwd order, canonical file order per directory),
+ * plus the below-cwd files that would load lazily. Other branches' files are omitted (never loaded).
+ *
+ * Within each directory the order matches how Claude Code loads them: CLAUDE.md first, then AGENTS.md,
+ * then AGENT.md, then CLAUDE.local.md (local overrides always last).
  */
 export function claudeMdChain(allPaths: string[], cwd: string): { chain: string[]; lazy: string[] } {
   const normalizedCwd = normalizeCwd(cwd);
   const claudeMd = allPaths.filter((p) => CLAUDE_MD_NAMES.includes(p.split("/").pop() || ""));
   const inChain = claudeMd.filter((p) => isAncestorOrEqual(dirOf(p), normalizedCwd));
   const lazy = claudeMd.filter((p) => isBelow(dirOf(p), normalizedCwd)).sort();
-  /** Sort key: depth * 2 + 1 for CLAUDE.local.md so local always follows its CLAUDE.md sibling. */
-  const rank = (p: string) => dirOf(p).split("/").filter(Boolean).length * 2 + (p.endsWith("CLAUDE.local.md") ? 1 : 0);
+  /** Sort key: depth * 4 + CLAUDE_MD_NAMES index keeps file order within each directory stable across depths. */
+  const rank = (p: string) => dirOf(p).split("/").filter(Boolean).length * 4 + CLAUDE_MD_NAMES.indexOf(p.split("/").pop() || "");
   const chain = inChain.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
   return { chain, lazy };
 }

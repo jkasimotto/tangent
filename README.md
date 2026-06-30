@@ -15,19 +15,31 @@ You need Node 20 or newer and an authenticated `claude`, `codex`, or `gemini` CL
 git clone <repo-url>
 cd tangent
 npm install && npm run build && npm link
-```
-
-That builds every package and puts the `tangent` command on your PATH. Then:
-
-```bash
 tangent ui
 ```
 
+Open the UI to browse your existing sessions. To run your first eval right away:
+
+```bash
+tangent eval run \
+  --prompt evals/haiku-poems/prompts/task.md \
+  --context empty --context repo \
+  --agent claude-cli --model claude-sonnet-4-6
+```
+
+That runs the same task twice — once with no context and once with your repo's guidance files — and lays the results side by side. Open `tangent ui` to compare.
+
+## Create your own eval
+
+Copy `skills/setup-tangent-eval/` into your agent's skills folder, then ask it to create an eval. For example:
+
+> Create an eval comparing [a model / a context / a prompt / a working directory] on [your task].
+
+The skill handles the setup. `evals/haiku-poems/` is a complete worked example you can clone.
+
 ## usage — read your agent activity
 
-`tangent usage` reads the native Claude Code, Codex, and Gemini CLI transcripts already on your disk and indexes them under `~/.tangent/usage`. Nothing leaves your machine. It discovers Claude Code conversations under `~/.claude*/projects`, Codex rollouts under `~/.codex/sessions`, and Gemini CLI chat sessions under `~/.gemini/tmp/<project>/chats`.
-
-Run `tangent ui` to browse sessions, filter by project or agent, and drill into individual conversations.
+`tangent usage` reads the native Claude Code, Codex, and Gemini CLI transcripts already on your disk and indexes them under `~/.tangent/usage`. Nothing leaves your machine. Run `tangent ui` to browse sessions, filter by project or agent, and drill into individual conversations.
 
 ## eval — compare contexts, prompts, and models
 

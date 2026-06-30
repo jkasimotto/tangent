@@ -99,6 +99,15 @@ export function normalizeAgent(value: Partial<EvalAgentConfig> | undefined): Eva
       env: value.env
     };
   }
+  if (value.kind === "gemini-cli") {
+    return {
+      kind: "gemini-cli",
+      command: value.command,
+      model: value.model || "gemini-2.0-flash",
+      timeoutMs: value.timeoutMs,
+      env: value.env
+    };
+  }
   throw new Error(`Unknown agent kind: ${(value as { kind?: string }).kind}`);
 }
 

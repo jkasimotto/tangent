@@ -19,4 +19,11 @@ export type EvalAgentConfig =
       timeoutMs?: number;
       /** Extra environment for the spawned process, e.g. CLAUDE_CONFIG_DIR to select which Claude config home (and auth token) the run uses. Merged over the inherited process env, under the TANGENT_EVAL_* vars. */
       env?: Record<string, string>;
+    }
+  | {
+      kind: "gemini-cli";
+      command?: string;
+      model: string;
+      timeoutMs?: number;
+      env?: Record<string, string>;
     };

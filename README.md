@@ -27,13 +27,7 @@ tangent ui
 
 `tangent usage` reads the native Claude Code, Codex, and Gemini CLI transcripts already on your disk and indexes them under `~/.tangent/usage`. Nothing leaves your machine. It discovers Claude Code conversations under `~/.claude*/projects`, Codex rollouts under `~/.codex/sessions`, and Gemini CLI chat sessions under `~/.gemini/tmp/<project>/chats`.
 
-Most of the time you live in the UI (the Usage panel of `tangent ui`), which defaults to every project and every agent across all your Claude profiles for the last week. From the command line:
-
-```bash
-tangent usage today                      # recent activity, human-readable
-tangent usage transcript codex:019ea3ad  # one full session
-tangent usage events --json              # the normalized event stream, for your own tooling
-```
+Run `tangent ui` to browse sessions, filter by project or agent, and drill into individual conversations.
 
 ## eval — compare contexts, prompts, and models
 
@@ -46,21 +40,13 @@ tangent eval run \
   --agent claude-cli --model claude-sonnet-4-6
 ```
 
-That runs the same task twice under Claude, once with no project context and once with your repo's context. To work from a saved spec:
-
-```bash
-tangent eval run evals/haiku-poems/eval.json   # run a saved spec
-tangent eval report latest                     # compact text report
-tangent eval ui latest                         # the side-by-side UI
-```
-
-Specs and prompts live in `evals/<name>/`; results land in `~/.tangent/eval/runs/`. `evals/haiku-poems/` is a complete worked example.
+That runs the same task twice under Claude, once with no project context and once with your repo's context. Results land in `~/.tangent/eval/runs/`. Run `tangent ui` to open the side-by-side comparison. `evals/haiku-poems/` is a complete worked example.
 
 What you can vary:
 
 - `--prompt` and `--context` are repeatable. Pass each more than once to compare prompts or contexts in a single run.
-- `--agent` picks the runner: `claude-cli` or `codex-cli` (or `manual` to drive it yourself as a human baseline).
-- `--model` picks the model. For `claude-cli`, pass any Claude model ID: `claude-opus-4-8`, `claude-sonnet-4-6`, `claude-haiku-4-5`. For `codex-cli`, pass any OpenAI model: `gpt-4.1`, `gpt-4.1-mini`.
+- `--agent` picks the runner: `claude-cli`, `codex-cli`, or `gemini-cli` (or `manual` to drive it yourself as a human baseline).
+- `--model` picks the model. For `claude-cli`: `claude-opus-4-8`, `claude-sonnet-4-6`, `claude-haiku-4-5`. For `codex-cli`: `gpt-4.1`, `gpt-4.1-mini`. For `gemini-cli`: `gemini-2.5-pro`, `gemini-2.0-flash`.
 - `--cwd` sets the working directory the agent starts from.
 
 ### What "context" means here, and how to capture it
@@ -84,6 +70,9 @@ The classic experiment is `--context empty --context repo`: same task, same mode
 
 ## Let the agent set it up
 
-This repo ships a `setup-tangent-eval` skill in `.claude/skills/`. Most of the time, just open this repo in Claude Code and ask it to build and run an eval for you — the skill loads automatically and handles the setup.
+This repo ships skills in `skills/`. Most of the time, just ask your coding agent to build and run an eval for you — install the skill for your agent and it handles the setup.
 
-To use the skill in another project, copy `.claude/skills/setup-tangent-eval/` into that project's `.claude/skills/` or into your `~/.claude/skills/`.
+- `skills/setup-tangent-eval/` — have the agent build and run an eval for you.
+- `skills/verify-app/` — boot the UI read-only and verify a change in a browser.
+
+To use a skill in another project, copy its directory into that project's agent skill folder.

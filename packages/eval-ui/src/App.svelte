@@ -695,7 +695,7 @@
   }
 
   // Each aligned section (Prompts / Context files / Changed files) collapses to just its header so the
-  // view stays scannable. A section with no differences starts collapsed so sameness stays out of the way.
+  // view stays scannable. Every section starts collapsed so the page opens as a clean list of headers.
   let collapsedSections = new Set<EvalCompareArtifactKind>();
   let collapsedInitFor = "";
 
@@ -705,13 +705,14 @@
     collapsedSections = collapsedSections;
   }
 
-  /** Collapse a section by default when it has no differences. Runs once per compare load (keyed by
-   * compareLoadKey) so a user's manual toggles are never overridden by a re-render of the same comparison. */
+  /** Collapse every section by default so the compare view opens as a scannable list of headers. Runs once
+   * per compare load (keyed by compareLoadKey) so a user's manual toggles are never overridden by a re-render
+   * of the same comparison. */
   function defaultCollapsed(sections: AlignedSection[]): void {
     if (!compareLoadKey || collapsedInitFor === compareLoadKey) return;
     collapsedInitFor = compareLoadKey;
     const next = new Set<EvalCompareArtifactKind>();
-    for (const section of sections) if (!section.differs) next.add(section.kind);
+    for (const section of sections) next.add(section.kind);
     collapsedSections = next;
   }
 

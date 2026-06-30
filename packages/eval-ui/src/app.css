@@ -1175,7 +1175,9 @@ button {
   font-size: 12px;
 }
 
-.aligned-section.collapsed .aligned-rows {
+/* Collapse hides the whole section body, not just the file rows: the Context section's Assembled view and
+   its controls are direct children too, so a kind-agnostic rule keeps "collapsed" meaning collapsed. */
+.aligned-section.collapsed > *:not(.section-toggle) {
   display: none;
 }
 

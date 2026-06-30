@@ -30,6 +30,16 @@
     if (status === "error") return "✕";
     return "·";
   }
+
+  /** Formats an ISO timestamp string as HH:MM:SS in local time. */
+  function formatTime(at: string | undefined): string {
+    if (!at) return "";
+    const d = new Date(at);
+    const h = d.getHours().toString().padStart(2, "0");
+    const m = d.getMinutes().toString().padStart(2, "0");
+    const s = d.getSeconds().toString().padStart(2, "0");
+    return `${h}:${m}:${s}`;
+  }
 </script>
 
 <div class="convo" aria-label="Conversation comparison">
@@ -61,7 +71,7 @@
               {#each conversation.messages as message (message.id)}
                 {@const hit = active && messageMatches(message, filter)}
                 <div class="convo-msg convo-{message.role}" class:dim={active && !hit} class:hit={hit}>
-                  <div class="convo-role">{message.role}{#if message.model} · {message.model}{/if}</div>
+                  <div class="convo-role">{message.role}{#if message.model} · {message.model}{/if}{#if message.at}<span class="convo-time">{formatTime(message.at)}</span>{/if}</div>
                   {#if message.text.trim()}<div class="convo-text">{message.text}</div>{/if}
                   {#if message.thinking && message.thinking.trim()}
                     <details class="convo-thinking"><summary>thinking</summary><pre>{message.thinking}</pre></details>

@@ -287,6 +287,15 @@
 
   // --- Inline comments + scoring for review notes -----------------------------------------------
 
+  /**
+   * Focuses the composer input without scrolling it into view. The browser's default focus (and the
+   * `autofocus` attribute) scrolls the nearest scrollable ancestor to reveal the input, which yanks the
+   * diff panel and makes the line the user just clicked jump away. preventScroll keeps the line in place.
+   */
+  function focusNoScroll(node: HTMLElement): void {
+    node.focus({ preventScroll: true });
+  }
+
   /** Opens the inline comment composer on a diff line in one column. Clicking a line is the whole gesture. */
   function openComposer(variantId: string, artifact: EvalCompareArtifactView, line: number | undefined, snippet: string): void {
     if (line === undefined) return;
@@ -1132,7 +1141,7 @@
                                   {:else}
                                     {@const lineNotes = r.line !== undefined && review ? notesAt(review, row.artifact.id, r.line) : []}
                                     {#if r.line !== undefined}
-                                      <button type="button" class="review-row review-{r.marker} commentable" class:has-notes={lineNotes.length > 0} aria-label={`Comment on line ${r.line}`} on:click={() => openComposer(leftVariantId, row.artifact, r.line, r.text)}><span class="line-no">{r.gutter}</span><code>{r.text}</code></button>
+                                      <button type="button" class="review-row review-{r.marker} commentable" class:has-notes={lineNotes.length > 0} class:active={composerAt(leftVariantId, row.artifact.id, r.line)} aria-label={`Comment on line ${r.line}`} on:click={() => openComposer(leftVariantId, row.artifact, r.line, r.text)}><span class="line-no">{r.gutter}</span><code>{r.text}</code></button>
                                     {:else}<div class="review-row review-{r.marker}"><span class="line-no">{r.gutter}</span><code>{r.text}</code></div>{/if}
                                     {#each lineNotes as note}
                                       <div class="line-note {note.sentiment}">
@@ -1143,8 +1152,7 @@
                                     {/each}
                                     {#if composer && composerAt(leftVariantId, row.artifact.id, r.line)}
                                       <form class="note-composer" on:submit|preventDefault={() => saveComposer("bad")}>
-                                        <!-- svelte-ignore a11y-autofocus -->
-                                        <input class="note-input" placeholder="comment on this line…" bind:value={composerText} autofocus />
+                                        <input class="note-input" placeholder="comment on this line…" bind:value={composerText} use:focusNoScroll />
                                         <button type="button" class="mark good" aria-label="Add positive note" disabled={!composerText.trim()} on:click={() => saveComposer("good")}>👍</button>
                                         <button type="submit" class="mark bad" aria-label="Add note flagging an issue" disabled={!composerText.trim()}>👎</button>
                                         <button type="button" class="ghost" aria-label="Cancel" on:click={closeComposer}>×</button>
@@ -1178,7 +1186,7 @@
                                   {:else}
                                     {@const lineNotes = r.line !== undefined && review ? notesAt(review, row.artifact.id, r.line) : []}
                                     {#if r.line !== undefined}
-                                      <button type="button" class="review-row review-{r.marker} commentable" class:has-notes={lineNotes.length > 0} aria-label={`Comment on line ${r.line}`} on:click={() => openComposer(rightVariantId, row.artifact, r.line, r.text)}><span class="line-no">{r.gutter}</span><code>{r.text}</code></button>
+                                      <button type="button" class="review-row review-{r.marker} commentable" class:has-notes={lineNotes.length > 0} class:active={composerAt(rightVariantId, row.artifact.id, r.line)} aria-label={`Comment on line ${r.line}`} on:click={() => openComposer(rightVariantId, row.artifact, r.line, r.text)}><span class="line-no">{r.gutter}</span><code>{r.text}</code></button>
                                     {:else}<div class="review-row review-{r.marker}"><span class="line-no">{r.gutter}</span><code>{r.text}</code></div>{/if}
                                     {#each lineNotes as note}
                                       <div class="line-note {note.sentiment}">
@@ -1189,8 +1197,7 @@
                                     {/each}
                                     {#if composer && composerAt(rightVariantId, row.artifact.id, r.line)}
                                       <form class="note-composer" on:submit|preventDefault={() => saveComposer("bad")}>
-                                        <!-- svelte-ignore a11y-autofocus -->
-                                        <input class="note-input" placeholder="comment on this line…" bind:value={composerText} autofocus />
+                                        <input class="note-input" placeholder="comment on this line…" bind:value={composerText} use:focusNoScroll />
                                         <button type="button" class="mark good" aria-label="Add positive note" disabled={!composerText.trim()} on:click={() => saveComposer("good")}>👍</button>
                                         <button type="submit" class="mark bad" aria-label="Add note flagging an issue" disabled={!composerText.trim()}>👎</button>
                                         <button type="button" class="ghost" aria-label="Cancel" on:click={closeComposer}>×</button>

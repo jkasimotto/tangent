@@ -110,6 +110,7 @@
 
   onDestroy(() => {
     clearTimeout(pollTimer);
+    clearTimeout(assembleTimer);
     if (nowTimer) clearInterval(nowTimer);
   });
 
@@ -438,9 +439,11 @@
     }
   }
 
-  /** Fetches both variants' assembled context for the current cwd and loaded skills, memoized by key. */
+  /** Fetches both variants' assembled context for the current cwd and loaded skills, memoized by key.
+      Runs whenever the pair or inputs change (not only when the Assembled view is open) so switching to
+      Assembled is an instant cache hit instead of a blank loading flash. */
   async function loadAssembled(): Promise<void> {
-    if (contextView !== "assembled" || !selectedRunId || !selectedCaseId || !leftVariantId || !rightVariantId) return;
+    if (!selectedRunId || !selectedCaseId || !leftVariantId || !rightVariantId) return;
     const skills = [...loadedSkills].sort();
     const key = `${selectedRunId}::${selectedCaseId}::${leftVariantId}::${rightVariantId}::${assembleCwd}::${skills.join(",")}`;
     if (key === assembledKey) return;
@@ -460,18 +463,28 @@
     }
   }
 
-  // Re-assemble when the view opens or any input changes. Svelte only re-runs a reactive block when a
-  // variable it directly reads changes; it does not track reads inside loadAssembled. Referencing the dep
-  // string here is what makes cwd and skill changes refetch.
-  $: assembleDeps = `${contextView}|${selectedRunId}|${selectedCaseId}|${leftVariantId}|${rightVariantId}|${assembleCwd}|${[...loadedSkills].sort().join(",")}`;
-  $: if (contextView === "assembled") { void assembleDeps; void loadAssembled(); }
+  // Re-assemble when the pair or any input changes. Svelte only re-runs a reactive block when a variable it
+  // directly reads changes; it does not track reads inside loadAssembled. Referencing the dep string here is
+  // what makes cwd and skill changes refetch. Not gated on the Assembled view, so the result is prefetched.
+  // Debounced so typing a cwd path resolves once the user pauses, never a fetch (and re-render) per keystroke.
+  let assembleTimer: ReturnType<typeof setTimeout> | undefined;
+  $: assembleDeps = `${selectedRunId}|${selectedCaseId}|${leftVariantId}|${rightVariantId}|${assembleCwd}|${[...loadedSkills].sort().join(",")}`;
+  $: { void assembleDeps; scheduleAssemble(); }
+
+  /** Schedules an assembled-context reload a beat after the last input, so a typed cwd path updates the view
+      in one smooth swap with no per-keystroke loading flash. */
+  function scheduleAssemble(): void {
+    clearTimeout(assembleTimer);
+    assembleTimer = setTimeout(() => void loadAssembled(), 250);
+  }
 
   let contextSkills: import("./client.js").EvalContextSkill[] = [];
   let contextManifestKey = "";
 
-  /** Loads the union of discoverable skills across both variants for the picker. */
+  /** Loads the union of discoverable skills across both variants for the picker. Prefetched alongside the
+      assembled context so the skill picker is populated the moment the Assembled view is opened. */
   async function loadContextManifest(): Promise<void> {
-    if (contextView !== "assembled" || !selectedRunId || !selectedCaseId || !leftVariantId || !rightVariantId) return;
+    if (!selectedRunId || !selectedCaseId || !leftVariantId || !rightVariantId) return;
     const key = `${selectedRunId}::${selectedCaseId}::${leftVariantId}::${rightVariantId}`;
     if (key === contextManifestKey) return;
     contextManifestKey = key;
@@ -488,8 +501,8 @@
     }
   }
 
-  $: manifestDeps = `${contextView}|${selectedRunId}|${selectedCaseId}|${leftVariantId}|${rightVariantId}`;
-  $: if (contextView === "assembled") { void manifestDeps; void loadContextManifest(); }
+  $: manifestDeps = `${selectedRunId}|${selectedCaseId}|${leftVariantId}|${rightVariantId}`;
+  $: { void manifestDeps; void loadContextManifest(); }
 
   /** Toggles whether a skill's body is included, then re-assembles. */
   function toggleSkill(name: string): void {
@@ -515,9 +528,17 @@
     scoringOpen = !scoringOpen;
   }
 
-  /** Reconstructs both sides' conversations once the section is open, memoized by the variant pair. */
+  /** Loads conversations when the section is open (the reactive caller), memoized by the variant pair. */
   async function loadConversations(): Promise<void> {
-    if (!conversationsOpen || !selectedRunId || !selectedCaseId || !leftVariantId || !rightVariantId) return;
+    if (!conversationsOpen) return;
+    await fetchConversations();
+  }
+
+  /** Reconstructs both sides' conversations, memoized by the variant pair. Reconstruction is heavier than a
+      diff, so it is warmed on hover/focus of the section header (see prefetchConversations) rather than
+      eagerly on every comparison, then served instantly when the section opens. */
+  async function fetchConversations(): Promise<void> {
+    if (!selectedRunId || !selectedCaseId || !leftVariantId || !rightVariantId) return;
     const key = `${selectedRunId}::${selectedCaseId}::${leftVariantId}::${rightVariantId}`;
     if (key === conversationsKey) return;
     conversationsKey = key;
@@ -534,6 +555,12 @@
     } finally {
       conversationsLoading = false;
     }
+  }
+
+  /** Warms the conversation reconstruction on intent (hovering or focusing the section header), so opening
+      the section is instant. Swallows errors: a prefetch that misses must never surface as one. */
+  function prefetchConversations(): void {
+    void fetchConversations().catch(() => {});
   }
 
   /** Loads persisted review notes for a run. */
@@ -1162,7 +1189,8 @@
             </section>
           {/each}
           <section class="aligned-section" class:collapsed={!conversationsOpen}>
-            <button type="button" class="section-toggle" aria-expanded={conversationsOpen} on:click={toggleConversations}>
+            <button type="button" class="section-toggle" aria-expanded={conversationsOpen}
+              on:pointerenter={prefetchConversations} on:focus={prefetchConversations} on:click={toggleConversations}>
               <span class="section-caret" aria-hidden="true">{conversationsOpen ? "▾" : "▸"}</span>
               <h3>Conversations</h3>
               <small class="section-summary">what each agent did</small>

@@ -46,12 +46,12 @@
   {:else}
     <div class="assembled-cols">
       {#each [{ key: "a", label: leftLabel, ctx: left }, { key: "b", label: rightLabel, ctx: right }] as side (side.key)}
-        <div class="assembled-col assembled-{side.key}">
+        <div class="assembled-col assembled-{side.key}" aria-busy={loading}>
           <div class="assembled-col-head">
             <span class="assembled-label">{side.label}</span>
             <button type="button" class="assembled-copy" aria-label={`Copy ${side.label} context`} on:click={() => copySide(side.ctx)}>copy</button>
           </div>
-          {#if loading}
+          {#if loading && !side.ctx}
             <div class="state">Assembling…</div>
           {:else if !side.ctx || side.ctx.blocks.length === 0}
             <p class="assembled-empty">No repo context loads at this path.</p>

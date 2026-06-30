@@ -42,12 +42,12 @@
     </div>
     <div class="convo-cols">
       {#each [{ key: "a", label: leftLabel, view: left }, { key: "b", label: rightLabel, view: right }] as side (side.key)}
-        <div class="convo-col convo-{side.key}">
+        <div class="convo-col convo-{side.key}" aria-busy={loading}>
           <div class="convo-col-head">
             <span class="convo-label">{side.label}</span>
             {#if side.view}<span class="convo-totals">{toolTotal(side.view)} tool calls{active ? ` · ${matchTotal(side.view, filter)} match` : ""}</span>{/if}
           </div>
-          {#if loading}
+          {#if loading && !side.view}
             <div class="state">Reconstructing…</div>
           {:else if !side.view || side.view.conversations.length === 0}
             <p class="convo-empty">No conversation captured for this variant.</p>

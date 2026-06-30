@@ -1,0 +1,22 @@
+@import "./theme-light.css";
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --tangent-color-bg: #0b1020;
+    --tangent-color-surface: #111827;
+    --tangent-color-surface-raised: #172033;
+    --tangent-color-surface-inset: #0f172a;
+    --tangent-color-text: #e5e7eb;
+    --tangent-color-text-muted: #94a3b8;
+    --tangent-color-border: #273449;
+    --tangent-color-accent: #60a5fa;
+    --tangent-color-success: #4ade80;
+    --tangent-color-warning: #fbbf24;
+    --tangent-color-danger: #f87171;
+    --tangent-color-info: #38bdf8;
+    --tangent-color-diff-add: #123522;
+    --tangent-color-diff-delete: #3a171b;
+    --tangent-color-code: #f8fafc;
+    --tangent-color-chart: #818cf8;
+  }
+}

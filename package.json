@@ -1,0 +1,80 @@
+{
+  "name": "tangent",
+  "version": "0.1.0",
+  "description": "Workspace for local coding-agent conversation tools.",
+  "type": "module",
+  "tangent": {
+    "packageMode": "thin-shell"
+  },
+  "bin": {
+    "tangent": "./dist/cli/index.js"
+  },
+  "workspaces": [
+    "packages/agent-runtime",
+    "packages/core",
+    "packages/launcher",
+    "packages/repo",
+    "packages/governance",
+    "packages/usage-schema",
+    "packages/usage-core",
+    "packages/usage-index-sqlite",
+    "packages/usage-providers",
+    "packages/usage",
+    "packages/ui-tokens",
+    "packages/ui-server",
+    "packages/usage-ui-data",
+    "packages/usage-ui",
+    "packages/tangent-ui",
+    "packages/rollup",
+    "packages/eval",
+    "packages/eval-ui"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces && tsc -p tsconfig.json && chmod +x dist/cli/index.js",
+    "check": "npm run check --workspaces && tsc -p tsconfig.json --noEmit",
+    "tangent:check-boundaries": "npm run build -w @tangent/governance && node packages/governance/dist/cli/index.js lint deps",
+    "hooks:install": "node scripts/install-githooks.mjs",
+    "lint:function-docstrings": "node scripts/lint-function-docstrings.mjs",
+    "governance": "npm run build -w @tangent/governance && node packages/governance/dist/cli/index.js lint",
+    "test": "npm run test --workspaces --if-present && node --test test/*.test.mjs",
+    "test:install": "node scripts/smoke-install-packages.mjs",
+    "test:install:all-managers": "node scripts/smoke-install-packages.mjs --all-package-managers",
+    "clean": "rm -rf dist packages/*/dist"
+  },
+  "dependencies": {
+    "@tangent/core": "^0.1.0",
+    "@tangent/launcher": "^0.1.0",
+    "@tangent/ui-server": "^0.1.0",
+    "@tangent/tangent-ui": "^0.1.0"
+  },
+  "peerDependencies": {
+    "@tangent/eval": "^0.1.0",
+    "@tangent/governance": "^0.1.0",
+    "@tangent/rollup": "^0.1.0",
+    "@tangent/usage": "^0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@tangent/eval": { "optional": true },
+    "@tangent/governance": { "optional": true },
+    "@tangent/rollup": { "optional": true },
+    "@tangent/usage": { "optional": true }
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^20.14.10",
+    "axe-core": "^4.10.3",
+    "jsdom": "^26.1.0",
+    "typescript": "^5.5.4",
+    "vite": "^6.3.5",
+    "vitest": "^3.2.4"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}

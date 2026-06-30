@@ -1,0 +1,9 @@
+# @tangent/usage-providers Architecture
+
+Provider-native parsing and loading belongs here, not in `usage-schema` or `usage-core`.
+
+Claude native capture is verbatim: tool input and output are stored without redaction or truncation, assistant `thinking` blocks are extracted, and `ExitPlanMode` is categorized as `plan` with its `input.plan` markdown preserved. Codex native capture still redacts. See ADR-0010.
+
+Claude discovery unions every Claude profile. `claudeHomes()` returns all `~/.claude*` data dirs that hold a `projects/` tree (`~/.claude`, `~/.claude-otto`, ...); `discoverClaudeNative()` and `nativeWatchRoots()` scan and watch all of them, so transcripts under extra profiles are not invisible. `CLAUDE_HOME` overrides the glob with an explicit `path.delimiter`-separated list (used by tests). See ADR-0011.
+
+Three providers are built in: `claude`, `codex`, and `gemini` (`builtInProviderIds` in `providers/index.ts`). Gemini CLI chat sessions live under `~/.gemini/tmp/<project>/chats` in two on-disk formats: a single pretty-printed JSON document (`session-*.json`, older) and JSONL (`session-*.jsonl`, newer). `providers/gemini/native/read.ts` flattens both to one record stream (session header, then one message per record) so a single normalizer handles both. Unlike Claude/Codex, a Gemini session carries no per-record `cwd`; the working directory is resolved from the session's `projectHash` (which is `sha256(cwd)`) via `~/.gemini/projects.json`, falling back to the chat directory name. One `gemini` message bundles reasoning (`thoughts`), the visible reply, `toolCalls` (call and result inline), and provider token counts, so the normalizer fans it out into one assistant message (reasoning folded into `thinking`, as Claude does), tool call/result events, and a token-usage event. Gemini reports `output` (visible) and `thoughts` (reasoning) separately; they are folded into `output_tokens`. See ADR-0014.

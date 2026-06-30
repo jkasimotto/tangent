@@ -1,0 +1,14 @@
+node_modules/
+dist/
+packages/*/dist/
+packages/*/storybook-static/
+.DS_Store
+
+# Eval working dirs routinely hardcode absolute repo paths (repo.path, CLAUDE_CONFIG_DIR)
+# for the machine they were captured on, so keep them local by default. Curated,
+# path-clean example evals are allowlisted below; force-add a new one only after
+# confirming it has no personal absolute paths.
+evals/*
+!evals/AGENTS.md
+!evals/CLAUDE.md
+!evals/haiku-poems/

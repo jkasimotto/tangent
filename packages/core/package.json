@@ -1,0 +1,32 @@
+{
+  "name": "@tangent/core",
+  "version": "0.1.0",
+  "description": "Shared command registry, help, and shell completion primitives for tangent apps.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli/index.d.ts",
+      "import": "./dist/cli/index.js"
+    },
+    "./cli/args": {
+      "types": "./dist/cli/args.d.ts",
+      "import": "./dist/cli/args.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}

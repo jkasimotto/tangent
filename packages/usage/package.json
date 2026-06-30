@@ -1,0 +1,93 @@
+{
+  "name": "@tangent/usage",
+  "version": "0.1.0",
+  "description": "Local conversation telemetry and queryability for coding-agent sessions.",
+  "type": "module",
+  "tangent": {
+    "uiApp": {
+      "id": "usage",
+      "label": "Usage",
+      "serverExport": "@tangent/usage/server",
+      "factory": "createUsageUiApp",
+      "order": 10
+    }
+  },
+  "bin": {
+    "tangent-usage": "./dist/cli/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/sdk/index.d.ts",
+      "import": "./dist/sdk/index.js"
+    },
+    "./schema": {
+      "types": "./dist/schema/index.d.ts",
+      "import": "./dist/schema/index.js"
+    },
+    "./core": {
+      "types": "./dist/core/index.d.ts",
+      "import": "./dist/core/index.js"
+    },
+    "./query": {
+      "types": "./dist/query/index.d.ts",
+      "import": "./dist/query/index.js"
+    },
+    "./providers": {
+      "types": "./dist/providers/index.d.ts",
+      "import": "./dist/providers/index.js"
+    },
+    "./sqlite": {
+      "types": "./dist/sqlite/index.d.ts",
+      "import": "./dist/sqlite/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli/index.d.ts",
+      "import": "./dist/cli/index.js"
+    },
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "import": "./dist/server/index.js"
+    },
+    "./pricing": {
+      "types": "./dist/pricing/index.d.ts",
+      "import": "./dist/pricing/index.js"
+    }
+  },
+  "dependencies": {
+    "@tangent/core": "^0.1.0",
+    "@tangent/repo": "^0.1.0",
+    "@tangent/ui-server": "^0.1.0",
+    "@tangent/usage-core": "^0.1.0",
+    "@tangent/usage-index-sqlite": "^0.1.0",
+    "@tangent/usage-providers": "^0.1.0",
+    "@tangent/usage-ui": "^0.1.0",
+    "@tangent/usage-ui-data": "^0.1.0"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^11.10.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && chmod +x dist/cli/index.js",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build -w @tangent/ui-server && npm run build -w @tangent/usage-ui-data && npm run build -w @tangent/usage-ui && npm run build && node --test test/*.test.mjs",
+    "dev": "node --enable-source-maps dist/cli/index.js"
+  },
+  "keywords": [
+    "codex",
+    "claude-code",
+    "telemetry",
+    "jsonl",
+    "cli"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "name": "@tangent/eval",
+  "version": "0.1.0",
+  "description": "Local comparison harness for coding agents.",
+  "type": "module",
+  "tangent": {
+    "uiApp": {
+      "id": "eval",
+      "label": "Eval",
+      "serverExport": "@tangent/eval/server",
+      "factory": "createEvalUiApp",
+      "order": 30
+    }
+  },
+  "bin": {
+    "tangent-eval": "./dist/cli/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/sdk/index.d.ts",
+      "import": "./dist/sdk/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli/index.d.ts",
+      "import": "./dist/cli/index.js"
+    },
+    "./server": {
+      "types": "./dist/server/index.d.ts",
+      "import": "./dist/server/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && chmod +x dist/cli/index.js",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build -w @tangent/agent-runtime && npm run build -w @tangent/ui-server && npm run build -w @tangent/eval-ui && npm run build && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@tangent/core": "^0.1.0",
+    "@tangent/repo": "^0.1.0",
+    "@tangent/agent-runtime": "^0.1.0",
+    "@tangent/usage-index-sqlite": "^0.1.0",
+    "@tangent/ui-server": "^0.1.0",
+    "@tangent/eval-ui": "^0.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

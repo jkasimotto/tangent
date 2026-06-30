@@ -1,0 +1,47 @@
+{
+  "schema": "eval.spec.v1",
+  "name": "haiku-poems",
+  "defaults": {
+    "repo": { "path": ".", "ref": "HEAD" },
+    "cwd": ".",
+    "phases": [{ "id": "implement", "mode": "workspace-write", "commit": true }]
+  },
+  "evaluator": {
+    "model": "claude-opus-4-8",
+    "criteria": [
+      {
+        "id": "poems-md-created",
+        "statement": "Created a file named POEMS.md at the repository root containing the haiku poems",
+        "points": 1
+      },
+      {
+        "id": "three-seasons-covered",
+        "statement": "POEMS.md contains exactly three haiku poems, one each for spring, summer, and winter, each with a title and season label",
+        "points": 1
+      },
+      {
+        "id": "five-seven-five-structure",
+        "statement": "Each haiku follows the 5-7-5 syllable structure (five syllables in the first line, seven in the second, five in the third)",
+        "points": 1
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "seasons",
+      "prompt": "prompts/task.md",
+      "variants": [
+        {
+          "id": "haiku-a",
+          "context": { "mode": "empty" },
+          "agent": { "kind": "claude-cli", "model": "claude-haiku-4-5-20251001", "permissionMode": "bypassPermissions" }
+        },
+        {
+          "id": "haiku-b",
+          "context": { "mode": "empty" },
+          "agent": { "kind": "claude-cli", "model": "claude-haiku-4-5-20251001", "permissionMode": "bypassPermissions" }
+        }
+      ]
+    }
+  ]
+}

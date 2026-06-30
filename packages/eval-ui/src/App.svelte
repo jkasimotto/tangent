@@ -831,13 +831,18 @@
     return Math.max(20, Math.min(100, (self.durationMs / max) * 100));
   }
 
-  /** One-line flame caption: how long the conversation ran, tokens spent, peak context, and how many
-      distinct files the agent read (a comparable signal of how much it explored). */
+  /** One-line flame caption: how long the conversation ran, tokens spent (with the cached share that
+      makes the total look large), the estimated dollar cost, peak context, and how many distinct files
+      the agent read (a comparable signal of how much it explored). */
   function flameCaption(metrics: EvalVariantMetricsView | null | undefined): string {
     if (!metrics) return "";
     const parts: string[] = [];
     if (metrics.durationMs !== undefined) parts.push(formatDurationMs(metrics.durationMs));
-    if (metrics.tokensTotal) parts.push(`${formatTokens(metrics.tokensTotal)} tok`);
+    if (metrics.tokensTotal) {
+      const tok = `${formatTokens(metrics.tokensTotal)} tok`;
+      parts.push(metrics.cachedTokens ? `${tok} (${formatTokens(metrics.cachedTokens)} cached)` : tok);
+    }
+    if (metrics.costUsd !== undefined) parts.push(formatCost(metrics.costUsd));
     if (metrics.peakContextTokens) parts.push(`${formatTokens(metrics.peakContextTokens)} ctx`);
     if (metrics.filesRead) parts.push(`${metrics.filesRead} files read`);
     return parts.join(" · ");
@@ -871,6 +876,12 @@
     if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
     if (value >= 1000) return `${Math.round(value / 1000)}K`;
     return `${Math.round(value)}`;
+  }
+
+  /** Estimated run cost. A run dominated by cheap cache reads can land below a cent, so floor it to "<$0.01" rather than showing "$0.00". */
+  function formatCost(value: number): string {
+    if (value > 0 && value < 0.01) return "<$0.01";
+    return value < 100 ? `$${value.toFixed(2)}` : `$${Math.round(value)}`;
   }
 </script>
 

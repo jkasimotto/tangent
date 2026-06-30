@@ -57,6 +57,10 @@ export type EvalVariantMetricsView = {
   durationMs?: number;
   activeAgentDurationMs?: number;
   tokensTotal?: number;
+  /** Cache-read tokens (the cheap, dominant share of tokensTotal); shown so the big token count reads honestly. */
+  cachedTokens?: number;
+  /** Estimated USD spend, weighting each token bucket by its real price. Undefined when a model has no known rate. */
+  costUsd?: number;
   peakContextTokens?: number;
   filesChanged: number;
   filesRead: number;

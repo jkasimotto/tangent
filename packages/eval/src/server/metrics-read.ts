@@ -6,6 +6,7 @@ import type { EvalRunManifest, EvalRunVariantState } from "../types/run.js";
 import type { EvalAgentTelemetry } from "../types/telemetry.js";
 import { variantDir } from "../core/run-store.js";
 import { collectVariantMetrics } from "../core/metrics.js";
+import { estimateCost } from "../core/cost.js";
 import type { EvalSparkline, EvalSparklineKind, EvalVariantMetricsView } from "./types.js";
 
 const SPARKLINE_BUCKETS = 28;
@@ -26,10 +27,13 @@ export async function readVariantMetricsView(manifest: EvalRunManifest, variant:
   const telemetry = await readAgentTelemetry(manifest, variant);
   if (!metrics && !telemetry) return null;
   const sparkline = (metrics && buildSparkline(metrics)) || (telemetry && sparklineFromTelemetry(telemetry)) || undefined;
+  const cost = metrics ? estimateCost(metrics.tokens) : undefined;
   return {
     durationMs: metrics?.time.durationMs,
     activeAgentDurationMs: metrics?.time.activeAgentDurationMs,
     tokensTotal: metrics?.tokens.total ?? telemetry?.tokensTotal,
+    cachedTokens: cost?.cachedTokens || undefined,
+    costUsd: cost?.costUsd,
     peakContextTokens: metrics ? peakContextTokens(metrics) : undefined,
     filesChanged: metrics?.files.changed.length ?? 0,
     filesRead: metrics?.files.read.length ?? 0,

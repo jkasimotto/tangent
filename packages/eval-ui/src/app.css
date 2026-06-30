@@ -1491,6 +1491,12 @@ button.review-row.commentable:hover .line-no::after {
   content: " ✎";
   color: var(--accent);
 }
+/* The line whose composer is open: highlighted in place so the user keeps their bearing while typing the
+   note. A left accent bar plus tint marks it without shifting layout (inset box-shadow, so the grid stays put). */
+button.review-row.commentable.active {
+  background: #e7f1df;
+  box-shadow: inset 3px 0 0 var(--accent);
+}
 
 /* Conversation comparison: two independent transcript columns with a shared highlight box. */
 .convo {

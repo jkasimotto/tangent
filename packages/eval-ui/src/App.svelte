@@ -21,8 +21,7 @@
     type EvalVariantMetricsView,
     type EvalVariantPhaseView,
     type EvalVariantReview,
-    type EvalVariantSummaryView,
-    type EvalVerdictSentiment
+    type EvalVariantSummaryView
   } from "./client.js";
   import { buildAlignedSections, diffCacheKey, fileNotes, rowsWithNotes, type AlignedSection, type AlignedRow } from "./compare-model.js";
   import AssembledContext from "./AssembledContext.svelte";
@@ -32,8 +31,8 @@
 
   export let client: EvalUiClient = createEvalApiClient();
 
-  // Per-config review state: an overall verdict (sentiment + score + optional note) plus inline good/bad
-  // notes, persisted per run via the reviews API. The aligned Compare view reads and writes these inline.
+  // Per-config review state: inline good/bad notes on diff lines, persisted per run via the reviews API.
+  // The aligned Compare view reads and writes these inline. Scoring is the evaluator rubric, shown separately.
   let notesOnly = false;
   let reviews: EvalReviews = { schema: "eval.reviews.v1", variants: {} };
   let savingReview = false;
@@ -317,15 +316,6 @@
     await persistReviews();
   }
 
-  /** Sets the overall numeric score (0-10) for a given variant, preserving its sentiment and text. */
-  async function setScoreFor(variantId: string, score: number | undefined): Promise<void> {
-    const key = variantKey(selectedCaseId, variantId);
-    const review = ensureReview(key);
-    review.verdict = { sentiment: review.verdict?.sentiment || "mixed", text: review.verdict?.text, score };
-    reviews = reviews;
-    await persistReviews();
-  }
-
   /** Re-fetches the run while any variant is still preparing or running, then refreshes the comparison. */
   function schedulePoll(runId: string): void {
     clearTimeout(pollTimer);
@@ -417,10 +407,28 @@
     await Promise.all(sides.map((variantId) => ensureSideLoaded(variantId, row.artifact)));
   }
 
-  /** Loads (or serves from cache) one side's content for an artifact. */
+  /** Warms the cache for a row's present sides without expanding it, so the diff is ready the instant the
+      user clicks. Errors are swallowed: a prefetch that misses must never surface as an error. */
+  function prefetchRow(row: AlignedRow): void {
+    if (row.a.present) void ensureSideLoaded(leftVariantId, row.artifact).catch(() => {});
+    if (row.b.present) void ensureSideLoaded(rightVariantId, row.artifact).catch(() => {});
+  }
+
+  // Eagerly warm the Changed files diffs as soon as a comparison loads. The agent's changed set is small,
+  // so clicking a changed file is instant (a cache hit) rather than triggering a multi-second git read.
+  $: prefetchChangedCode(alignedSections);
+  function prefetchChangedCode(sections: AlignedSection[]): void {
+    for (const section of sections) {
+      if (section.kind !== "code") continue;
+      for (const row of section.rows) if (!row.identical) prefetchRow(row);
+    }
+  }
+
+  /** Loads (or serves from cache) one side's content for an artifact. In-flight requests (from a prefetch)
+      are deduped so a hover-then-click, or prefetch-then-click, never fires the same diff twice. */
   async function ensureSideLoaded(variantId: string, artifact: EvalCompareArtifactView): Promise<void> {
     const key = diffCacheKey(selectedCaseId, variantId, artifact.id);
-    if (diffCache.has(key)) return;
+    if (diffCache.has(key) || loadingRows.has(key)) return;
     loadingRows.add(key); loadingRows = loadingRows;
     try {
       const view = await client.getDiff({ runId: selectedRunId, caseId: selectedCaseId, left: variantId, right: variantId, kind: artifact.kind, path: artifact.path });
@@ -573,15 +581,6 @@
     await persistReviews();
   }
 
-  /** Sets the overall verdict sentiment for a given variant, preserving its score and text. */
-  async function setVerdictFor(variantId: string, sentiment: EvalVerdictSentiment): Promise<void> {
-    const key = variantKey(selectedCaseId, variantId);
-    const review = ensureReview(key);
-    review.verdict = { sentiment, text: review.verdict?.text, score: review.verdict?.score };
-    reviews = reviews;
-    await persistReviews();
-  }
-
   /** Notes anchored at a line (a note renders once, at its line). */
   function notesAt(review: EvalVariantReview, artifactId: string, line: number): EvalReviewNote[] {
     return review.notes.filter((note) => note.artifactId === artifactId && note.line === line);
@@ -607,6 +606,10 @@
     selectedSpecPath = specPathForRun(runId) ?? selectedSpecPath;
     runLoadKey = "";
     compareLoadKey = "";
+    // Clear the previous run's comparison up front so switching gives instant feedback. Without this the
+    // old run's cards linger on screen for the full getRun fetch (slow for big runs), reading as "nothing
+    // happened". loadRun repopulates once the new run resolves.
+    compare = undefined;
     diffCache = new Map(); expandedRows = new Set(); loadingRows = new Set();
   }
 
@@ -966,11 +969,12 @@
         </div>
       </div>
     {:else if runDetail}
-      {#if compare}
+      {#if runLoading}
+        <div class="state">Loading run…</div>
+      {:else if compare}
         <div class="compare-stack">
           <header class="compare-head" aria-label="Configs compared">
             {#each [{ side: "a", id: leftVariantId, v: compare.left, other: compare.right }, { side: "b", id: rightVariantId, v: compare.right, other: compare.left }] as col}
-              {@const review = reviews.variants[variantKey(selectedCaseId, col.id)]}
               <div class="compare-col-head entity-{col.side}">
                 <label>
                   <span class="entity-tag">{col.side === "a" ? "A" : "B"}</span>
@@ -988,16 +992,6 @@
                   <small class="flame-caption">{flameCaption(col.v.metrics)}</small>
                 {/if}
                 {#if col.v.evaluation}<span class="score-chip">{col.v.evaluation.totalPoints} / {col.v.evaluation.maxPoints} pts</span>{/if}
-                <div class="verdict-inline" aria-label={`Verdict for ${col.id}`}>
-                  <button type="button" aria-label={`Verdict ${col.id} like`} class:active={review?.verdict?.sentiment === "like"} on:click={() => setVerdictFor(col.id, "like")}>👍</button>
-                  <button type="button" aria-label={`Verdict ${col.id} mixed`} class:active={review?.verdict?.sentiment === "mixed"} on:click={() => setVerdictFor(col.id, "mixed")}>🤔</button>
-                  <button type="button" aria-label={`Verdict ${col.id} dislike`} class:active={review?.verdict?.sentiment === "dislike"} on:click={() => setVerdictFor(col.id, "dislike")}>👎</button>
-                  <span class="score" aria-label="Score out of 10">
-                    {#each [0,1,2,3,4,5,6,7,8,9,10] as value}
-                      <button type="button" class="score-pip" aria-label={`Score ${col.id} ${value}`} class:active={review?.verdict?.score === value} on:click={() => setScoreFor(col.id, review?.verdict?.score === value ? undefined : value)}>{value}</button>
-                    {/each}
-                  </span>
-                </div>
               </div>
             {/each}
           </header>
@@ -1067,6 +1061,7 @@
                           {@const rkey = rowExpandKey(row.artifact)}
                           <button type="button" class="row-expand"
                             aria-label={`${expandedRows.has(rkey) ? "Collapse" : "Expand"} ${row.artifact.label}`}
+                            on:pointerenter={() => prefetchRow(row)} on:focus={() => prefetchRow(row)}
                             on:click={() => toggleRow(row)}>
                             <span class="badge badge-{row.a.changed ? 'changed' : 'same'}">{row.artifact.label}</span>
                             {#if row.a.changed && row.artifact.addedLeft !== undefined}<small class="counts">+{row.artifact.addedLeft} -{row.artifact.removedLeft}</small>{/if}
@@ -1112,6 +1107,7 @@
                           {@const rkey = rowExpandKey(row.artifact)}
                           <button type="button" class="row-expand"
                             aria-label={`${expandedRows.has(rkey) ? "Collapse" : "Expand"} ${row.artifact.label}`}
+                            on:pointerenter={() => prefetchRow(row)} on:focus={() => prefetchRow(row)}
                             on:click={() => toggleRow(row)}>
                             <span class="badge badge-{row.b.changed ? 'changed' : 'same'}">{row.artifact.label}</span>
                             {#if row.b.changed && row.artifact.addedRight !== undefined}<small class="counts">+{row.artifact.addedRight} -{row.artifact.removedRight}</small>{/if}

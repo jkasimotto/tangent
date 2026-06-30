@@ -1061,47 +1061,6 @@ button {
   color: var(--text);
 }
 
-/* --- Block selection + scoring --- */
-
-.score {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  margin-left: 8px;
-}
-.score-label {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--muted);
-  text-transform: uppercase;
-  margin-right: 4px;
-}
-.score-pip {
-  min-width: 22px;
-  border: 1px solid var(--line);
-  background: #fff;
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
-  padding: 3px 0;
-  border-radius: 6px;
-  text-align: center;
-}
-.score-pip.active {
-  background: var(--accent);
-  color: #fff;
-  border-color: transparent;
-}
-.score-badge {
-  font-size: 12px;
-  font-weight: 800;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--pane-muted);
-  color: var(--text);
-  font-variant-numeric: tabular-nums;
-}
-
 /* --- Aligned Compare view (stacked, compare-first Results screen) --- */
 .compare-stack {
   display: flex;
@@ -1118,7 +1077,7 @@ button {
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
-  /* Sits in the .compare-stack flex column; without this it shrinks and clips the verdict/score row. */
+  /* Sits in the .compare-stack flex column; without this it shrinks and clips the header rows. */
   flex: 0 0 auto;
 }
 
@@ -1164,41 +1123,6 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.verdict-inline {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 2px;
-}
-
-.verdict-inline button {
-  border: 1px solid var(--line);
-  background: #fff;
-  font-size: 14px;
-  line-height: 1;
-  padding: 4px 8px;
-  border-radius: 8px;
-  cursor: pointer;
-  filter: grayscale(0.5);
-}
-
-.verdict-inline button.active {
-  border-color: var(--accent);
-  background: #eef5f1;
-  filter: none;
-}
-
-.verdict-inline .score {
-  display: flex;
-  gap: 2px;
-  flex-wrap: wrap;
-}
-
-.verdict-inline .score .score-pip {
-  filter: none;
 }
 
 .aligned-section {

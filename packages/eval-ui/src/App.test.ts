@@ -50,13 +50,17 @@ describe("eval svelte app", () => {
     expect(rows.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("scores a specific variant from its column header", async () => {
+  it("prefetches changed code diffs so opening a changed file needs no fetch on click", async () => {
     const client = fakeEvalClient();
     render(App, { props: { client } });
     await screen.findByText(/ui-compare/);
-    await fireEvent.click(await screen.findByRole("button", { name: "Score repo 8" }));
-    const saved = (client.putReviews as ReturnType<typeof vi.fn>).mock.calls.at(-1)?.[1];
-    expect(saved.variants["task/repo"].verdict.score).toBe(8);
+    // The changed code file's diff is fetched for both sides as soon as the comparison loads, with no click.
+    await vi.waitFor(() => expect((client.getDiff as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2));
+    const beforeClick = (client.getDiff as ReturnType<typeof vi.fn>).mock.calls.length;
+    // Opening it serves from the prefetch cache: no new fetch, content is already there.
+    await fireEvent.click((await screen.findAllByRole("button", { name: "Expand src/foo.ts" }))[0]);
+    expect((await screen.findAllByText("Use repo context.")).length).toBe(2);
+    expect((client.getDiff as ReturnType<typeof vi.fn>).mock.calls.length).toBe(beforeClick);
   });
 
   it("expands a changed file on both sides with one click and caches the fetch", async () => {

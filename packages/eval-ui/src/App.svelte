@@ -87,6 +87,9 @@
   let runLoadErrorId = "";
   let runLoadKey = "";
   let compareLoadKey = "";
+  // A comparison-load failure (e.g. the server rejecting a variant pair mid-switch) is held here so the compare
+  // area shows a clear, recoverable error instead of a permanent fake "Loading comparison".
+  let compareError = "";
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
 
   // Primary view: the live run dashboard (a running eval is the focal point) vs the results explorer.
@@ -392,6 +395,8 @@
     runLoadKey = "";
     runLoadError = "";
     runLoadErrorId = "";
+    compareError = "";
+    compareLoadKey = "";
     void loadRun(runId);
   }
 
@@ -413,8 +418,14 @@
       // The aligned view has no single "selected" artifact; per-row expansion drives content loads later.
       diffCache = new Map(); expandedRows = new Set(); loadingRows = new Set();
       error = "";
+      compareError = "";
     } catch (caught) {
-      error = friendlyError(caught);
+      if (compareLoadKey !== key) return;
+      // A failed comparison must never read as an endless "Loading comparison". Surface it as a recoverable
+      // error in the compare area, and drop the dedup key so a reload (or a corrected variant pair) retries
+      // instead of being swallowed as "already loaded".
+      compareError = friendlyError(caught);
+      compareLoadKey = "";
     } finally {
       if (compareLoadKey === key) compareLoading = false;
     }
@@ -661,6 +672,7 @@
     selectedSpecPath = specPathForRun(runId) ?? selectedSpecPath;
     runLoadKey = "";
     compareLoadKey = "";
+    compareError = "";
     // Clear the previous run's comparison up front so switching gives instant feedback. Without this the
     // old run's cards linger on screen for the full getRun fetch (slow for big runs), reading as "nothing
     // happened". loadRun repopulates once the new run resolves.
@@ -678,6 +690,7 @@
     leftVariantId = "";
     rightVariantId = "";
     compareLoadKey = "";
+    compareError = "";
     diffCache = new Map(); expandedRows = new Set(); loadingRows = new Set();
   }
 
@@ -1269,6 +1282,12 @@
               {/if}
             </section>
           {/if}
+        </div>
+      {:else if compareError}
+        <div class="state state-error" role="alert">
+          <p>This comparison could not be loaded.</p>
+          <p class="muted">{compareError}</p>
+          <button type="button" class="ghost-button" on:click={() => retryRun(selectedRunId)}>Reload run</button>
         </div>
       {:else if selectedCase?.variants.length === 1}
         <div class="state">This case has one configuration. Add another variant to compare.</div>

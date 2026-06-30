@@ -289,6 +289,24 @@ describe("eval svelte app", () => {
     expect(screen.queryByText(/Loading run/)).toBeNull();
   });
 
+  it("shows a recoverable error instead of a stuck 'Loading comparison' when the comparison fails to load", async () => {
+    // The server rejecting a variant pair (e.g. a stale pair mid-switch) must never read as an endless
+    // "Loading comparison": the compare area shows the error and a Reload affordance the user can act on.
+    const client = fakeEvalClient();
+    client.compareRun = vi.fn(async () => {
+      throw new Error("Variant pair not found for case debug-log.");
+    });
+    render(App, { props: { client } });
+    await screen.findByText(/ui-compare/);
+
+    expect(await screen.findByText(/comparison could not be loaded/i)).toBeInTheDocument();
+    expect(screen.getByText(/Variant pair not found/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reload run" })).toBeInTheDocument();
+    // The fake loading state is gone, and the run picker stays usable so the user can switch away.
+    expect(screen.queryByText("Loading comparison")).toBeNull();
+    expect((document.querySelector("select") as HTMLSelectElement).disabled).toBe(false);
+  });
+
   it("never fetches context for the new run with the previous run's variant ids when switching runs", async () => {
     // Two runs share the case id "task" but have different variant ids. Switching between them must not carry
     // the old run's variant selection onto the new run id, which the server answers with a 404.

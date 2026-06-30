@@ -1,10 +1,10 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { git, gitText, listFilesAtRef, resolveCommit, resolveGitRoot, showFile, showFileFollowingSymlinks } from "@tangent/repo/git";
 import { createSyntheticCommit } from "@tangent/repo/worktree";
 
 import { contextPatterns, type EvalContextFile, type EvalContextManifest, type EvalContextMode } from "../types/context.js";
-import { discoverContextFiles, pathMatchesContextDiscovery } from "./context-discovery.js";
+import { contextDirNames, contextFileNames, discoverContextFiles, pathMatchesContextDiscovery } from "./context-discovery.js";
 import { sha256, shortHash } from "./hash.js";
 import { contextRef } from "./paths.js";
 
@@ -98,7 +98,7 @@ export async function applyContextMode(args: {
     return { warnings };
   }
 
-  await deleteRepoContextFiles(args.worktree, args.cwd);
+  await deleteRepoContextFiles(args.worktree);
 
   if (args.context.mode === "empty") {
     warnings.push("empty context mode cannot suppress provider-level global configuration.");
@@ -196,16 +196,19 @@ async function snapshotFilesFromRef(args: {
   return rows;
 }
 
-/** Removes the repo-scoped context files discovered in a worktree, leaving ancestor-scoped files untouched. */
-async function deleteRepoContextFiles(worktree: string, cwd: string): Promise<void> {
-  const discovered = await discoverContextFiles({
-    repoRoot: worktree,
-    cwd,
-    includeAncestors: true,
-    includeExternalAncestors: false
-  });
-  for (const file of discovered) {
-    if (file.scope === "repo") await rm(path.join(worktree, file.path), { force: true });
+/** Removes ALL context files (CLAUDE.md, AGENTS.md, .claude/ etc.) from the entire worktree tree. */
+async function deleteRepoContextFiles(worktree: string): Promise<void> {
+  await deleteContextFilesInDir(worktree);
+}
+
+/** Recursively deletes all context files and directories found anywhere under dir, skipping .git. */
+async function deleteContextFilesInDir(dir: string): Promise<void> {
+  for (const name of contextFileNames) await rm(path.join(dir, name), { force: true });
+  for (const name of contextDirNames) await rm(path.join(dir, name), { recursive: true, force: true });
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (!entry.isDirectory() || contextDirNames.has(entry.name) || entry.name === ".git") continue;
+    await deleteContextFilesInDir(path.join(dir, entry.name));
   }
 }
 

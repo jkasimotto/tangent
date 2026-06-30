@@ -4,8 +4,8 @@ import path from "node:path";
 import { contextPatterns, type EvalContextFileScope } from "../types/context.js";
 import { relativeFrom } from "./paths.js";
 
-const contextFileNames = new Set(["CLAUDE.md", "AGENT.md", "AGENTS.md"]);
-const contextDirNames = new Set([".claude", ".agents", ".agnets"]);
+export const contextFileNames = new Set(["CLAUDE.md", "AGENT.md", "AGENTS.md"]);
+export const contextDirNames = new Set([".claude", ".agents", ".agnets"]);
 const ignoredRecursiveEntryNames = new Set([".git"]);
 
 export type DiscoveredContextFile = {
@@ -16,6 +16,7 @@ export type DiscoveredContextFile = {
   snapshotPath: string;
 };
 
+/** Discovers all CLAUDE.md / AGENT.md context files in the repo tree relative to cwd. */
 export async function discoverContextFiles(args: {
   repoRoot: string;
   cwd: string;
@@ -62,6 +63,7 @@ export async function discoverContextFiles(args: {
 
   return rows.sort((a, b) => a.snapshotPath.localeCompare(b.snapshotPath));
 
+  /** Adds a file to the result set, skipping duplicates. */
   function add(file: DiscoveredContextFile): void {
     const key = `${file.scope}:${file.depth || 0}:${file.path}`;
     if (seen.has(key)) return;
@@ -70,15 +72,18 @@ export async function discoverContextFiles(args: {
   }
 }
 
+/** Returns the list of glob patterns that identify context files. */
 export function contextPatternsList(): string[] {
   return [...contextPatterns];
 }
 
+/** Returns true if any segment of the path is a known context file or directory name. */
 export function isContextPath(pathName: string): boolean {
   const parts = pathName.split(/[\\/]+/).filter(Boolean);
   return parts.some((part) => contextFileNames.has(part) || contextDirNames.has(part));
 }
 
+/** Returns true if a repo-relative path would be captured by context discovery for the given cwd. */
 export function pathMatchesContextDiscovery(pathName: string, cwd: string, includeAncestors: boolean): boolean {
   const normalizedPath = pathName.split(/[\\/]+/).filter(Boolean).join("/");
   if (!isContextPath(normalizedPath)) return false;
@@ -94,6 +99,7 @@ export function pathMatchesContextDiscovery(pathName: string, cwd: string, inclu
   return !normalizedPath.includes("/") || normalizedPath.startsWith(".claude/") || normalizedPath.startsWith(".agents/") || normalizedPath.startsWith(".agnets/");
 }
 
+/** Returns the ordered list of directories to scan for context files, from cwd up to repoRoot. */
 function repoDiscoveryDirs(repoRoot: string, executionCwd: string, includeAncestors: boolean): string[] {
   const dirs = [executionCwd];
   if (!includeAncestors) return dirs;
@@ -105,6 +111,7 @@ function repoDiscoveryDirs(repoRoot: string, executionCwd: string, includeAncest
   return dirs;
 }
 
+/** Collects all context files found directly in a directory. */
 async function contextFilesInDirectory(dir: string): Promise<string[]> {
   const rows: string[] = [];
   for (const name of contextFileNames) {
@@ -118,6 +125,7 @@ async function contextFilesInDirectory(dir: string): Promise<string[]> {
   return rows;
 }
 
+/** Recursively lists all files under a directory, skipping .git entries. */
 async function listFilesRecursive(dir: string): Promise<string[]> {
   const rows: string[] = [];
   const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
@@ -130,14 +138,17 @@ async function listFilesRecursive(dir: string): Promise<string[]> {
   return rows;
 }
 
+/** Returns true if the path is a regular file. */
 async function isFile(filePath: string): Promise<boolean> {
   return stat(filePath).then((value) => value.isFile()).catch(() => false);
 }
 
+/** Returns true if the path is a directory. */
 async function isDirectory(filePath: string): Promise<boolean> {
   return stat(filePath).then((value) => value.isDirectory()).catch(() => false);
 }
 
+/** Returns true if target is the same as base or is nested inside it. */
 function isInsideOrEqual(base: string, target: string): boolean {
   const rel = path.relative(base, target);
   return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));

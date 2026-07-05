@@ -10,6 +10,7 @@ root CLI lazy optional products
   -> @tangent/usage/cli
   -> @tangent/usage/server
   -> @tangent/rollup/cli
+  -> @tangent/search/cli
   -> @tangent/eval/cli
   -> @tangent/eval/server
   -> @tangent/governance/cli
@@ -17,6 +18,7 @@ root CLI lazy optional products
 @tangent/rollup -> @tangent/usage-index-sqlite, @tangent/core, @tangent/repo, @tangent/agent-runtime
 @tangent/eval -> @tangent/usage-index-sqlite, @tangent/core, @tangent/repo, @tangent/agent-runtime, @tangent/ui-server, @tangent/eval-ui
 @tangent/usage -> @tangent/core, @tangent/repo, @tangent/ui-server, @tangent/usage-core, @tangent/usage-index-sqlite, @tangent/usage-providers, @tangent/usage-ui, @tangent/usage-ui-data
+@tangent/search -> @tangent/core, @tangent/repo
 @tangent/repo -> @tangent/core
 @tangent/agent-runtime -> @tangent/core
 @tangent/governance -> @tangent/core

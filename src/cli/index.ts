@@ -13,6 +13,7 @@ const tangentCommandSpec: CliCommandSpec = {
     openCommandSpec,
     productCommandSpec("usage", "Inspect coding-agent activity"),
     productCommandSpec("rollup", "Generate private rollup notes"),
+    productCommandSpec("search", "Index and search repository structure"),
     productCommandSpec("eval", "Run and inspect coding-agent evals"),
     { name: "mark", description: "Capture agent behavior marks; install @tangent/eval if unavailable", args: "[note]" },
     doctorCommandSpec,
@@ -71,6 +72,12 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
   if (app === "rollup") {
     const { runRollupCli } = await requiredProductModule<{ runRollupCli(argv: string[]): Promise<void> }>("@tangent/rollup/cli", "rollup");
     await runRollupCli(rest);
+    return;
+  }
+
+  if (app === "search") {
+    const { runSearchCli } = await requiredProductModule<{ runSearchCli(argv: string[]): Promise<void> }>("@tangent/search/cli", "search");
+    await runSearchCli(rest);
     return;
   }
 
@@ -160,6 +167,8 @@ Examples:
   tangent usage transcript codex:019ea3ad
   tangent rollup today
   tangent rollup 20260601-20260610
+  tangent search index
+  tangent search "horizontal tension"
   tangent eval run eval.json
   tangent mark "you should have read the docs index first"
   tangent completion zsh

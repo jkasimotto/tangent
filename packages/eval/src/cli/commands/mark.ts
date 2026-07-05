@@ -5,9 +5,10 @@ import { createMarkRecord, listMarks, readMark, updateMark, writeMark, type Mark
 import { isMarkKind, isMarkStatus, type MarkAnchor, type MarkKind, type MarkRecord, type MarkRepo, type MarkStatus } from "../../marks/types.js";
 import { resolveAnchor } from "../../marks/resolve.js";
 import { toEvalCommand } from "./mark-to-eval.js";
+import { markScanCommand } from "./mark-scan.js";
 
 /**
- * Dispatches `tangent mark` subcommands. `list`/`show`/`update`/`to-eval` are checked first so
+ * Dispatches `tangent mark` subcommands. `list`/`show`/`update`/`to-eval`/`scan` are checked first so
  * `--json` keeps its ordinary meaning there ("print as JSON"); only once none of them match does a
  * bare `--json` mean "read a record from stdin", the /mark skill's capture path.
  */
@@ -17,6 +18,7 @@ export async function markCommand(args: Args): Promise<void> {
   if (subcommand === "show") return showCommand(args);
   if (subcommand === "update") return updateCommand(args);
   if (subcommand === "to-eval") return toEvalCommand(args);
+  if (subcommand === "scan") return markScanCommand(args);
   if (booleanArg(args.json)) return captureFromStdin(args);
   return captureCommand(args);
 }

@@ -59,6 +59,17 @@ export const markCommandSpec: CliCommandSpec = {
         { name: "phases", takesValue: true, description: "Comma-separated phases" },
         ...agentOptions
       ]
+    },
+    {
+      name: "scan",
+      description: "Sweep recent conversations and write suggested marks for review",
+      options: [
+        { name: "days", takesValue: true, description: "Lookback window in days (default 7)" },
+        { name: "repo", takesValue: true, description: "Restrict the scan to one repo; defaults to all projects and profiles" },
+        { name: "model", takesValue: true, description: "Judge model (default haiku)" },
+        { name: "limit", takesValue: true, description: "Max model calls for this scan, largest-cost conversations first (default 20)" },
+        { name: "dry-run", description: "Print would-be marks without writing them" }
+      ]
     }
   ]
 };

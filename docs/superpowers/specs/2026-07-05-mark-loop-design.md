@@ -108,7 +108,7 @@ A finding is `{generator, subject, cost (time and tokens), evidence (session ids
 Four generators ship in v1, all pure aggregation over the index:
 
 1. **Info-finding-heavy sessions**: sessions ranked by read+search time and tokens before the first write. The case miner for the tangent search eval.
-2. **Recurring long commands**: execute-category calls grouped by normalized command head (`dart analyze`, `npm run build`), ranked by total time across the window. Catches "it keeps running dart analyze on the entire client."
+2. **Recurring long commands**: command-category calls (the provider normalizers' constant for shell/exec tools) grouped by normalized command head (`dart analyze`, `npm run build`), ranked by total time across the window. Catches "it keeps running dart analyze on the entire client."
 3. **Re-read churn and hot files**: the same file read repeatedly within one session; most-read files across all sessions (candidates for CLAUDE.md map entries).
 4. **Failure/retry loops**: commands that errored and were re-run repeatedly; the remedy is usually documenting the correct invocation.
 
@@ -192,7 +192,7 @@ The mark record:
 - LLM-judge primitive, twice: `packages/eval/src/runners/judge.ts` and `packages/rollup/src/metrics/runner.ts`, both ~40 lines shelling `claude -p` with a JSON contract. Binary criteria, explicit per-eval judge model, rubric in `eval.json`: all fixed by ADR-0013.
 - N-way variants: `EvalVariantSpec[]` is already a list; contexts are git-ref snapshots; runs are parallel worktrees; `metrics.json` per variant already collects wall time, tokens, and tool calls.
 - Task-to-eval scaffolding: `tangent eval capture task` plus the `setup-tangent-eval` skill.
-- Tool categorization: every tool call is normalized to `read`/`search`/`write`/`execute` with `durationMs` and `targetPaths` per provider (`packages/usage-providers/src/providers/*/native/normalize.ts`); per-turn bottleneck ranking exists in `packages/usage-ui-data/bottlenecks.ts`.
+- Tool categorization: every tool call is normalized to `read`/`search`/`write`/`command` with `durationMs` and `targetPaths` per provider (`packages/usage-providers/src/providers/*/native/normalize.ts`); per-turn bottleneck ranking exists in `packages/usage-ui-data/bottlenecks.ts`.
 - Tangent search: complete package and skill at commit `21dfb14^` (structural TS/Dart indexer, `symbol`/`callers`/`skeleton`/`open-plan` commands).
 
 ### New components
@@ -257,3 +257,4 @@ Validation at every phase: `npm run check`, `npm run test`, `npm run governance`
 - Prompt extraction quality in `to-eval`: real user messages are messy and sometimes span turns. The scaffold leaves `prompts/task.md` editable; if editing turns out to be the norm, add an LLM-assisted cleanup step to the skill.
 - Session resolution edge cases: multiple concurrent sessions in one cwd resolve to "newest transcript", which can mis-anchor. `--session` is the escape hatch; revisit if it bites in practice.
 - Whether capability variants need agent-config support (PATH manipulation per variant) beyond context snapshots. The tangent search eval will answer this; if the binary must differ per variant, extend `EvalAgentConfig` then.
+- Data fidelity of durations: implementation found that read/search tool calls frequently lack `durationMs` in the current index (command calls report exact elapsed time), so the info-finding-heavy generator under-triggers relative to the mockups. Improving duration capture in the providers, or falling back to inter-message timing, is follow-up work in usage.

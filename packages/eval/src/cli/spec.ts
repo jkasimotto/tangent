@@ -48,6 +48,17 @@ export const markCommandSpec: CliCommandSpec = {
         { name: "link-eval", takesValue: true, description: "Linked eval name" },
         { name: "link-fix", takesValue: true, description: "Linked fix reference" }
       ]
+    },
+    {
+      name: "to-eval",
+      description: "Promote a mark into a runnable eval scaffold",
+      args: "<id>",
+      options: [
+        { name: "name", takesValue: true, description: "Eval slug override; defaults to the mark's own slug" },
+        { name: "repo", takesValue: true, description: "Repository path; defaults to the mark's repo" },
+        { name: "phases", takesValue: true, description: "Comma-separated phases" },
+        ...agentOptions
+      ]
     }
   ]
 };
@@ -127,7 +138,16 @@ export const evalCommandSpec: CliCommandSpec = {
       ]
     },
     { name: "collect", description: "Collect git and usage metrics for a run", args: "<run-id>", options: [{ name: "json", description: "Print JSON" }] },
-    { name: "report", description: "Print a compact eval report", args: "<run-id>", options: [{ name: "json", description: "Print JSON" }] },
+    {
+      name: "report",
+      description: "Print a compact eval report, or render report.md / report.html with --format",
+      args: "<run-id>",
+      options: [
+        { name: "json", description: "Print JSON" },
+        { name: "format", takesValue: true, values: ["md", "html"], description: "Render report.md or report.html instead of the terminal report" },
+        { name: "out", takesValue: true, description: "Output file path (default report.md / report.html in the run dir)" }
+      ]
+    },
     {
       name: "diff",
       description: "Compare two variants in a run",

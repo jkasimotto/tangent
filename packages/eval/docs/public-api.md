@@ -15,7 +15,8 @@ CLI notes:
 - `eval ui [run|latest]` starts the local Eval UI for browsing, launching, and comparing runs.
 - `createEvalUiApp(...)` registers Eval for the combined `tangent ui` shell with `/api/eval/*` routes and embedded assets mounted under `/apps/eval/`.
 - Eval specs support `prompt` on a variant; variant prompts override the case prompt, and existing case-level prompt specs remain valid.
-- `runMarkCli(argv)` (also exported from `@tangent/eval/cli`) dispatches `tangent mark ...`, the mark loop's capture CLI. `tangent mark "<note>"` captures against the cwd-resolved current Claude session (`--session`/`--turn` override the anchor, `--observed`/`--expected`/`--hypothesis`/`--kind`/`--repo` fill the record). `tangent mark --json` reads a full or partial `tangent.mark.v1` record from stdin, the `/mark` skill's entry point. `tangent mark list [--status] [--kind] [--repo]`, `tangent mark show <id>`, and `tangent mark update <id> [--status] [--link-eval] [--link-fix]` support triage. The root CLI wires this as a top-level `tangent mark ...` command, not nested under `tangent eval`.
+- `runMarkCli(argv)` (also exported from `@tangent/eval/cli`) dispatches `tangent mark ...`, the mark loop's capture CLI. `tangent mark "<note>"` captures against the cwd-resolved current Claude session (`--session`/`--turn` override the anchor, `--observed`/`--expected`/`--hypothesis`/`--kind`/`--repo` fill the record). `tangent mark --json` reads a full or partial `tangent.mark.v1` record from stdin, the `mark-agent-mistake` skill's entry point. `tangent mark list [--status] [--kind] [--repo]`, `tangent mark show <id>`, and `tangent mark update <id> [--status] [--link-eval] [--link-fix]` support triage. `tangent mark to-eval <id> [--name] [--repo] [--phases] [--agent ...]` promotes a mark into `evals/<slug>/{eval.json,prompts/task.md,README.md}` and sets `status: "eval-created"` with `links.eval`. The root CLI wires this as a top-level `tangent mark ...` command, not nested under `tangent eval`.
+- `eval report <run-id>` prints the terminal report unchanged by default. `--format md|html` instead renders `report/model.ts`'s view-model through the markdown or HTML renderer and writes it to `--out` (default `report.md`/`report.html` in the run directory).
 
 `/api/eval/*` routes:
 - `GET /api/eval/selection` resolves the preferred or latest run id.
@@ -27,6 +28,7 @@ CLI notes:
 - `GET /api/eval/runs/<id>/context/manifest?caseId=<id>&variant=<id>` returns `{ skills, subagents }`: the discoverable skill and subagent roster for the variant's frozen worktree (frontmatter only, `loaded` is always `false`).
 - `GET /api/eval/runs/<id>/context/assemble?caseId=<id>&variant=<id>&cwd=<path>&skills=<a,b>` returns an `AssembledContext`: ordered blocks (CLAUDE.md chain with `@imports` expanded, skills index, requested skill bodies, subagents index), skill and subagent lists, and the lazy-CLAUDE.md roster. `cwd` is repo-relative; `skills` is a comma-separated list of skill names to load.
 - `GET /api/eval/runs/<id>/conversations?caseId=<id>&variant=<id>` returns a `VariantConversationsView`: the variant's agent conversations reconstructed from the usage index (each turn's prose, hidden thinking, and tool calls with target paths and status), plus `notes` for caveats and any conversation that could not be reconstructed. Conversation ids come from the variant's `metrics.json`, so an uncollected variant returns no conversations and a note.
+- `GET /api/eval/runs/<id>/report/markdown` returns `report.md` as `text/markdown`. `GET /api/eval/runs/<id>/report/html` returns the self-contained `report.html` as `text/html`, including the transcript and context-diff drill-down. Both render on demand from the run's current sidecars; neither writes a file.
 
 Context assembly exports (from `@tangent/eval`):
 - `assembleContext(source, cwd, loadedSkills)` assembles the full repo-contributed context for a `cwd` and loaded-skill set.
@@ -35,5 +37,9 @@ Context assembly exports (from `@tangent/eval`):
 - `claudeMdChain(allPaths, cwd)` returns `{ chain, lazy }`: the eager CLAUDE.md chain and the below-cwd lazy list.
 - `discoverSkills(allPaths)`, `discoverSubagents(allPaths)` return sorted paths matching `.claude/skills/*/SKILL.md` and `.claude/agents/*.md`.
 - Types: `AssembledContext`, `AssembledBlock`, `AssembledBlockKind`, `SkillEntry`, `SubagentEntry`, `ContextManifest`, `ContextSource`.
+
+Report renderer exports (from `@tangent/eval`):
+- `loadReportModel(manifest, options?)` builds a `ReportModel` from a run's sidecars; `{ includeTranscripts, includeContextDiff }` also load the HTML report's drill-down data.
+- `renderMarkdownReport(model)` and `renderHtmlReport(model)` render that model to `report.md` and `report.html` respectively.
 
 Agents must import through these public exports, not package src internals.

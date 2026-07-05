@@ -19,6 +19,7 @@ import { readVariantEvaluation } from "./evaluation-read.js";
 import { variantConversationsView } from "./conversation-view.js";
 import { assembleContextView, contextManifestView } from "./variant-views.js";
 import { diffLines } from "./diff.js";
+import { renderReportArtifact } from "./report-export.js";
 import { readReviews, writeReviews, type EvalReviews } from "./reviews.js";
 import { readSpecPrompts, writeSpecPrompt } from "./prompts.js";
 import type {
@@ -189,6 +190,8 @@ async function handleApiRequest(request: http.IncomingMessage, url: URL, context
         const { caseId, variant } = singleVariant(manifest, url);
         return json(200, await variantConversationsView(manifest, caseId, variant));
       }
+      if (parts.length === 6 && parts[4] === "report" && parts[5] === "markdown") return text(200, await renderReportArtifact(manifest, "md"), "text/markdown; charset=utf-8");
+      if (parts.length === 6 && parts[4] === "report" && parts[5] === "html") return text(200, await renderReportArtifact(manifest, "html"), "text/html; charset=utf-8");
     }
 
     return json(404, { error: "Not found." });
@@ -671,6 +674,11 @@ function requiredParam(url: URL, key: string): string {
 /** Creates a JSON route response. */
 function json(status: number, value: unknown): UiRouteResponse {
   return { status, json: value };
+}
+
+/** Creates a plain-text route response with an explicit content type, for the report export endpoints. */
+function text(status: number, body: string, contentType: string): UiRouteResponse {
+  return { status, body, headers: { "content-type": contentType } };
 }
 
 /** Maps handler errors to HTTP status codes. */

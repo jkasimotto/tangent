@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Read docs/index.md before grepping for the entry point.: eval report</title>
+<style>
+:root {
+  --bg: #f8fafc;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-inset: #f1f5f9;
+  --text: #0f172a;
+  --text-muted: #64748b;
+  --border: #d9e2ec;
+  --accent: #2563eb;
+  --success: #15803d;
+  --danger: #b91c1c;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b1020;
+    --surface: #111827;
+    --surface-raised: #172033;
+    --surface-inset: #0f172a;
+    --text: #e5e7eb;
+    --text-muted: #94a3b8;
+    --border: #273449;
+    --accent: #60a5fa;
+    --success: #4ade80;
+    --danger: #f87171;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  padding: 2rem 1.5rem 4rem;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
+}
+main { max-width: 72rem; margin: 0 auto; }
+h1, h2, h3 { line-height: 1.25; }
+h1 { font-size: 1.5rem; margin: 0 0 0.5rem; }
+h2 { font-size: 1.1rem; margin: 2rem 0 0.75rem; }
+h3 { font-size: 0.95rem; margin: 0 0 0.25rem; }
+code, .mono { font-family: var(--font-mono); font-size: 0.9em; }
+a { color: var(--accent); }
+.report-meta { color: var(--text-muted); font-size: 0.9rem; }
+.report-meta div { margin: 0.15rem 0; }
+
+table { border-collapse: collapse; width: 100%; background: var(--surface); }
+th, td { border: 1px solid var(--border); padding: 0.4rem 0.6rem; text-align: left; font-size: 0.9rem; vertical-align: top; }
+th { background: var(--surface-inset); font-weight: 600; }
+.matrix td.verdict { text-align: center; font-weight: 600; }
+.pass { color: var(--success); }
+.fail { color: var(--danger); }
+.absent { color: var(--text-muted); font-weight: 400; }
+.baseline-col { background: var(--surface-inset); }
+.discriminating-badge { font-size: 0.7rem; color: var(--text-muted); font-weight: 400; margin-left: 0.4rem; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 0.75rem; margin-top: 0.5rem; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 0.5rem; padding: 0.75rem 0.9rem; }
+.card.is-baseline { border-color: var(--accent); }
+.card h3 { display: flex; align-items: center; gap: 0.4rem; }
+.card .badge { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--accent); border: 1px solid var(--accent); border-radius: 999px; padding: 0.05rem 0.4rem; }
+.card dl { display: grid; grid-template-columns: auto 1fr; gap: 0.15rem 0.6rem; margin: 0.5rem 0 0; font-size: 0.85rem; }
+.card dt { color: var(--text-muted); }
+.card dd { margin: 0; text-align: right; }
+.card .delta { color: var(--text-muted); font-size: 0.78rem; margin-left: 0.3rem; }
+
+details.report-collapsible { background: var(--surface); border: 1px solid var(--border); border-radius: 0.4rem; margin: 0.4rem 0; padding: 0.1rem 0.75rem; }
+details.report-collapsible > summary { cursor: pointer; padding: 0.5rem 0; font-weight: 500; list-style: none; }
+details.report-collapsible > summary::-webkit-details-marker { display: none; }
+details.report-collapsible > summary::before { content: "▸"; display: inline-block; width: 1rem; color: var(--text-muted); }
+details.report-collapsible[open] > summary::before { content: "▾"; }
+details.report-collapsible .body { padding: 0 0 0.75rem; }
+
+.reasoning-row { display: grid; grid-template-columns: 8rem 1fr; gap: 0.3rem 0.75rem; padding: 0.2rem 0; font-size: 0.85rem; }
+.reasoning-row .label { color: var(--text-muted); }
+
+.diff-line { font-family: var(--font-mono); font-size: 0.8rem; white-space: pre-wrap; padding: 0 0.4rem; }
+.diff-add { background: rgba(74, 222, 128, 0.15); }
+.diff-delete { background: rgba(248, 113, 113, 0.15); }
+
+.transcript-turn { border-left: 2px solid var(--border); padding: 0.25rem 0 0.25rem 0.6rem; margin: 0.35rem 0; }
+.transcript-turn .role { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-muted); }
+.transcript-turn .text { white-space: pre-wrap; font-size: 0.88rem; }
+.tool-call { font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted); margin: 0.15rem 0; }
+
+.toolbar { display: flex; justify-content: flex-end; gap: 0.5rem; margin: 0.5rem 0; }
+.toolbar button {
+  font: inherit; font-size: 0.8rem; padding: 0.25rem 0.7rem; border-radius: 0.3rem;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer;
+}
+.warnings { color: var(--text-muted); font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>Read docs/index.md before grepping for the entry point.</h1>
+  <div class="report-meta">
+    <div>Run <code>20260706t000000-fixture</code> (fixture-eval), created 2026-07-06T00:00:00.000Z.</div>
+    <div>Repo: <code>/Users/example/project</code> (dev/fixture)</div>
+    <div>Mark: <code>20260705t143012-read-docs-first</code></div>
+  </div>
+</header>
+<section>
+  <h2>Verdict matrix</h2>
+  <table class="matrix">
+    <thead><tr><th>Criterion</th><th class="baseline-col">baseline (baseline)</th><th class="">with-search</th></tr></thead>
+    <tbody><tr><td>Read docs/index.md before searching.<span class="discriminating-badge">disagreement</span></td><td class="baseline-col verdict fail">FAIL</td><td class="verdict pass">PASS</td></tr>
+<tr><td>Did not break existing tests.</td><td class="baseline-col verdict pass">PASS</td><td class="verdict pass">PASS</td></tr>
+<tr><td>Kept the diff minimal.</td><td class="baseline-col verdict pass">PASS</td><td class="verdict pass">PASS</td></tr></tbody>
+  </table>
+</section>
+<section>
+  <h2>Variants</h2>
+  <div class="cards"><div class="card is-baseline">
+    <h3>baseline <span class="badge">baseline</span></h3>
+    <dl>
+      <dt>Pass rate</dt><dd>2/3 (67%)</dd>
+      <dt>Wall time</dt><dd>6m 10s</dd>
+      <dt>Tokens</dt><dd>42.0k</dd>
+      <dt>Tool calls</dt><dd>24</dd>
+    </dl>
+  </div>
+<div class="card ">
+    <h3>with-search </h3>
+    <dl>
+      <dt>Pass rate</dt><dd>3/3 (100%)<span class="delta">+1</span></dd>
+      <dt>Wall time</dt><dd>3m 10s<span class="delta">-3m 00s</span></dd>
+      <dt>Tokens</dt><dd>27.5k<span class="delta">-14.5k</span></dd>
+      <dt>Tool calls</dt><dd>14<span class="delta">-10</span></dd>
+    </dl>
+  </div></div>
+</section>
+<div class="toolbar">
+  <button type="button" onclick="document.querySelectorAll('details.report-collapsible').forEach(function(d){d.open=true;})">Expand all</button>
+  <button type="button" onclick="document.querySelectorAll('details.report-collapsible').forEach(function(d){d.open=false;})">Collapse all</button>
+</div>
+<section>
+  <h2>Judge reasoning</h2>
+  <details class="report-collapsible">
+    <summary>Read docs/index.md before searching.</summary>
+    <div class="body"><div class="reasoning-row"><div class="label">baseline <span class="fail">FAIL</span></div><div>Grepped for six minutes before opening docs/index.md.</div></div><div class="reasoning-row"><div class="label">with-search <span class="pass">PASS</span></div><div>Opened docs/index.md first via the search tool.</div></div></div>
+  </details>
+<details class="report-collapsible">
+    <summary>Did not break existing tests.</summary>
+    <div class="body"><div class="reasoning-row"><div class="label">baseline <span class="pass">PASS</span></div><div>Test suite passed.</div></div><div class="reasoning-row"><div class="label">with-search <span class="pass">PASS</span></div><div>Test suite passed.</div></div></div>
+  </details>
+<details class="report-collapsible">
+    <summary>Kept the diff minimal.</summary>
+    <div class="body"><div class="reasoning-row"><div class="label">baseline <span class="pass">PASS</span></div><div>Diff touched only the two relevant files.</div></div><div class="reasoning-row"><div class="label">with-search <span class="pass">PASS</span></div><div>Diff touched only the two relevant files.</div></div></div>
+  </details>
+</section>
+
+</main>
+</body>
+</html>

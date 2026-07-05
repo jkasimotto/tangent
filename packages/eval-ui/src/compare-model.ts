@@ -1,4 +1,4 @@
-import type { EvalCompareArtifactKind, EvalCompareArtifactView, EvalReviews, EvalReviewNote } from "./client.js";
+import type { EvalCompareArtifactKind, EvalCompareArtifactView, EvalReviews, EvalReviewNote, EvalScoringCell, EvalScoringCriterion, EvalScoringVariantColumn } from "./client.js";
 
 export type AlignedSide = { present: boolean; changed: boolean };
 export type AlignedRow = { artifact: EvalCompareArtifactView; a: AlignedSide; b: AlignedSide; identical: boolean };
@@ -50,4 +50,21 @@ export function rowsWithNotes(section: AlignedSection, reviews: EvalReviews, cas
   return section.rows.filter((row) =>
     fileNotes(reviews, caseId, a, row.artifact.id).length > 0 ||
     fileNotes(reviews, caseId, b, row.artifact.id).length > 0);
+}
+
+// --- N-way scoring matrix (Scoring section: every variant in a case as a column) -----------------------
+// The scoring matrix itself (criteria rows, discriminating-first sort, baseline selection) is built
+// server-side by reusing the report model's own logic (packages/eval/src/report/model.ts's
+// buildScoringMatrix), so it can never disagree with the report artifact's verdict matrix. What is left
+// for the UI is purely presentational: looking up one column's cell in a row, and formatting a column's
+// total-points label. Generalizes this file (previously pairwise-only) to N scoring columns.
+
+/** Finds one column's cell in a criterion row. The server always emits one cell per column; this stays defensive rather than assuming the array is index-aligned with the columns list. */
+export function scoringCell(criterion: EvalScoringCriterion, columnKey: string): EvalScoringCell | undefined {
+  return criterion.cells.find((cell) => cell.variantKey === columnKey);
+}
+
+/** Formats a column's total-points label (e.g. "2 / 3 pts"), or undefined when that column has no evaluation. */
+export function scoringTotalLabel(column: EvalScoringVariantColumn): string | undefined {
+  return column.totalPoints !== undefined && column.maxPoints !== undefined ? `${column.totalPoints} / ${column.maxPoints} pts` : undefined;
 }

@@ -5,8 +5,11 @@ import type {
   EvalDiffView,
   EvalEvaluationView,
   EvalRunDetailView,
+  EvalScoringCriterion,
+  EvalScoringView,
   EvalUiClient,
-  EvalVariantMetricsView
+  EvalVariantMetricsView,
+  EvalVariantSummaryView
 } from "./client.js";
 
 /** Creates a deterministic client for app rendering tests. */
@@ -145,6 +148,24 @@ export function fakeEvalClient(overrides?: { artifacts?: EvalCompareView["artifa
     }),
     /** Returns the seeded launchable specs. */
     listSpecs: async () => ({ specs: [{ path: "/evals/compare.json", name: "compare", caseCount: 1, variantCount: 2 }] }),
+    /** Builds the N-way scoring view for a case from its variants' seeded evaluations, mirroring the server's discriminating-first sort so App tests exercise the real rendering path. */
+    getScoring: vi.fn(async (args: { runId: string; caseId: string }): Promise<EvalScoringView> => {
+      const detail = runById(args.runId);
+      const testCase = detail.cases.find((candidate) => candidate.id === args.caseId) ?? detail.cases[0];
+      const variants = testCase.variants;
+      const baseline = variants.find((candidate) => candidate.variantId === "baseline") ?? variants[0];
+      return { caseId: testCase.id, baselineKey: baseline.variantId, variants: scoringColumns(variants, baseline), criteria: scoringCriteria(variants), warnings: [] };
+    }),
+    /** Returns no marks; MarksInbox tests seed their own lightweight fake client instead of this one. */
+    listMarks: async () => ({ marks: [] }),
+    /** Unused by current App tests; throws so a future caller notices it needs a real fixture. */
+    getMark: async (id: string) => {
+      throw new Error(`fakeEvalClient.getMark not seeded for ${id}`);
+    },
+    /** Unused by current App tests; throws so a future caller notices it needs a real fixture. */
+    updateMark: async (id: string) => {
+      throw new Error(`fakeEvalClient.updateMark not seeded for ${id}`);
+    },
     /** Returns the seeded editable prompts. */
     getSpecPrompts: async (specPath) => ({ specPath, name: "compare", prompts: [{ id: "prompts/task.md", label: "Task prompt", path: "prompts/task.md", content: "Do the task." }] }),
     /** Echoes the saved prompt. */
@@ -192,4 +213,32 @@ export function fakeEvalClient(overrides?: { artifacts?: EvalCompareView["artifa
     /** Echoes persisted reviews. */
     putReviews: vi.fn(async (_runId, reviews) => reviews)
   };
+}
+
+/** Builds the N-way scoring columns for a case's variants, flagging the designated baseline. */
+function scoringColumns(variants: EvalVariantSummaryView[], baseline: EvalVariantSummaryView): EvalScoringView["variants"] {
+  return variants.map((variant) => ({
+    key: variant.variantId,
+    variantId: variant.variantId,
+    label: variant.variantId,
+    isBaseline: variant.variantId === baseline.variantId,
+    totalPoints: variant.evaluation?.totalPoints,
+    maxPoints: variant.evaluation?.maxPoints
+  }));
+}
+
+/** Builds the N-way criteria matrix for a case's variants, sorted discriminating-first like the real server logic (report/model.ts's buildScoringMatrix), so App tests exercise the real rendering path against a realistic shape. */
+function scoringCriteria(variants: EvalVariantSummaryView[]): EvalScoringCriterion[] {
+  const ids = [...new Set(variants.flatMap((variant) => variant.evaluation?.criteria.map((criterion) => criterion.id) ?? []))];
+  const rows = ids.map((id) => {
+    const cells = variants.map((variant) => {
+      const verdict = variant.evaluation?.criteria.find((criterion) => criterion.id === id);
+      return { variantKey: variant.variantId, passed: verdict?.passed, reasoning: verdict?.reasoning };
+    });
+    const known = cells.map((cell) => cell.passed).filter((passed): passed is boolean => passed !== undefined);
+    const discriminating = known.length >= 2 && known.some((passed) => passed !== known[0]);
+    const statement = variants.flatMap((variant) => variant.evaluation?.criteria ?? []).find((criterion) => criterion.id === id)?.statement ?? id;
+    return { id, statement, discriminating, cells };
+  });
+  return rows.sort((a, b) => Number(b.discriminating) - Number(a.discriminating));
 }

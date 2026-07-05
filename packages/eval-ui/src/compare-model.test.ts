@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildAlignedSections, diffCacheKey, fileNotes, rowsWithNotes } from "./compare-model.js";
-import type { EvalCompareArtifactView, EvalReviews } from "./client.js";
+import { buildAlignedSections, diffCacheKey, fileNotes, rowsWithNotes, scoringCell, scoringTotalLabel } from "./compare-model.js";
+import type { EvalCompareArtifactView, EvalReviews, EvalScoringCriterion, EvalScoringVariantColumn } from "./client.js";
 
 const artifacts: EvalCompareArtifactView[] = [
   { id: "prompt:task", kind: "prompt", path: "task", label: "Task prompt", status: "same" },
@@ -65,5 +65,36 @@ describe("fileNotes / rowsWithNotes", () => {
     // a section whose rows carry no notes on either side drops to empty.
     const prompts = buildAlignedSections(artifacts)[0];
     expect(rowsWithNotes(prompts, reviews, "task", "empty", "repo")).toHaveLength(0);
+  });
+});
+
+describe("scoringCell / scoringTotalLabel", () => {
+  const criterion: EvalScoringCriterion = {
+    id: "read-docs",
+    statement: "Read docs first",
+    discriminating: true,
+    cells: [
+      { variantKey: "baseline", passed: false, reasoning: "grepped instead" },
+      { variantKey: "v2", passed: true, reasoning: "read docs/index.md" }
+    ]
+  };
+
+  it("finds a column's cell by key, across any number of columns", () => {
+    expect(scoringCell(criterion, "baseline")?.passed).toBe(false);
+    expect(scoringCell(criterion, "v2")?.passed).toBe(true);
+  });
+
+  it("returns undefined for a column key with no cell", () => {
+    expect(scoringCell(criterion, "v3")).toBeUndefined();
+  });
+
+  it("formats a column's total-points label when both totals are known", () => {
+    const column: EvalScoringVariantColumn = { key: "baseline", variantId: "baseline", label: "baseline", isBaseline: true, totalPoints: 2, maxPoints: 3 };
+    expect(scoringTotalLabel(column)).toBe("2 / 3 pts");
+  });
+
+  it("returns undefined when a column has no evaluation totals", () => {
+    const column: EvalScoringVariantColumn = { key: "v4", variantId: "v4", label: "v4", isBaseline: false };
+    expect(scoringTotalLabel(column)).toBeUndefined();
   });
 });

@@ -272,6 +272,30 @@ function numericDelta(value: number | undefined, base: number | undefined): numb
 }
 
 /**
+ * The subset of `EvalEvaluation` the criteria-matrix builders need: any evaluation-shaped object works,
+ * whether it is a raw sidecar (`EvalEvaluation`) or a server-projected view (`EvalEvaluationView`), so a
+ * caller with only the latter (e.g. the scoring endpoint, which already has UI-view evaluations in hand
+ * from `readVariantEvaluation`) can still reuse this matrix logic without reshaping its data.
+ */
+export type EvaluationLike = { criteria: Array<{ id: string; statement: string; passed: boolean; reasoning: string }> };
+
+/** One column's identity and evaluation for `buildScoringMatrix`, keyed the same way as `ReportCriterionCell`. */
+export type ScoringMatrixEntry = { key: string; evaluation?: EvaluationLike };
+
+/**
+ * Builds criteria rows across an arbitrary number of evaluation columns (N variants, not just baseline vs.
+ * one other), sorted discriminating-first. This is the same matrix `buildReportModel` builds for the report
+ * artifact, generalized to take bare `{key, evaluation}` entries instead of full run sidecars, so the eval
+ * server's N-way scoring endpoint (`server/scoring-view.ts`) can reuse it without constructing a fake
+ * `EvalRunManifest`/`EvalRunVariantState` just to satisfy `ReportVariantSidecars`.
+ */
+export function buildScoringMatrix(entries: ScoringMatrixEntry[]): ReportCriterion[] {
+  const criteria = criterionIdsFromEntries(entries).map((id) => criterionRowFromEntries(id, entries));
+  sortDiscriminatingFirst(criteria);
+  return criteria;
+}
+
+/**
  * Lists criterion ids in a stable order: from the spec's evaluator when the manifest still carries one,
  * else the first-seen order across every variant's evaluation.json (a fallback for a run whose manifest
  * was persisted before the spec was embedded, or was loaded from a bare run id).
@@ -279,10 +303,15 @@ function numericDelta(value: number | undefined, base: number | undefined): numb
 function collectCriterionIds(manifest: Pick<EvalRunManifest, "spec">, sidecars: ReportVariantSidecars[]): string[] {
   const fromSpec = manifest.spec?.evaluator?.criteria?.map((criterion) => criterion.id);
   if (fromSpec && fromSpec.length > 0) return fromSpec;
+  return criterionIdsFromEntries(sidecars.map((row) => ({ key: variantKey(row.variant), evaluation: row.evaluation })));
+}
+
+/** First-seen criterion id order across a set of evaluation entries. */
+function criterionIdsFromEntries(entries: ScoringMatrixEntry[]): string[] {
   const seen: string[] = [];
   const known = new Set<string>();
-  for (const row of sidecars) {
-    for (const criterion of row.evaluation?.criteria ?? []) {
+  for (const entry of entries) {
+    for (const criterion of entry.evaluation?.criteria ?? []) {
       if (known.has(criterion.id)) continue;
       known.add(criterion.id);
       seen.push(criterion.id);
@@ -293,12 +322,17 @@ function collectCriterionIds(manifest: Pick<EvalRunManifest, "spec">, sidecars: 
 
 /** Builds one criterion's row: its statement (from whichever variant recorded it) and its per-variant cells. */
 function buildCriterionRow(id: string, sidecars: ReportVariantSidecars[]): ReportCriterion {
-  const cells: ReportCriterionCell[] = sidecars.map((row) => {
-    const verdict = row.evaluation?.criteria.find((criterion) => criterion.id === id);
-    return { variantKey: variantKey(row.variant), passed: verdict?.passed, reasoning: verdict?.reasoning };
+  return criterionRowFromEntries(id, sidecars.map((row) => ({ key: variantKey(row.variant), evaluation: row.evaluation })));
+}
+
+/** Builds one criterion's row from bare `{key, evaluation}` entries, the shared core of `buildCriterionRow` and `buildScoringMatrix`. */
+function criterionRowFromEntries(id: string, entries: ScoringMatrixEntry[]): ReportCriterion {
+  const cells: ReportCriterionCell[] = entries.map((entry) => {
+    const verdict = entry.evaluation?.criteria.find((criterion) => criterion.id === id);
+    return { variantKey: entry.key, passed: verdict?.passed, reasoning: verdict?.reasoning };
   });
-  const statement = sidecars
-    .flatMap((row) => row.evaluation?.criteria ?? [])
+  const statement = entries
+    .flatMap((entry) => entry.evaluation?.criteria ?? [])
     .find((criterion) => criterion.id === id)?.statement ?? id;
   return { id, statement, discriminating: isDiscriminating(cells), cells };
 }

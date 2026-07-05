@@ -14,6 +14,7 @@
     type EvalRunDetailView,
     type EvalRunStatus,
     type EvalRunSummaryView,
+    type EvalScoringView,
     type EvalSparkline,
     type EvalSpecPromptsView,
     type EvalSpecSummaryView,
@@ -27,6 +28,7 @@
   import AssembledContext from "./AssembledContext.svelte";
   import ConversationCompare from "./ConversationCompare.svelte";
   import ScoringCompare from "./ScoringCompare.svelte";
+  import MarksInbox from "./MarksInbox.svelte";
   import type { EvalAssembledContext, EvalConversationsView } from "./client.js";
 
   export let client: EvalUiClient = createEvalApiClient();
@@ -66,13 +68,18 @@
   // Conversations section: a side-by-side reconstruction of what each agent actually did (turns and tool
   // calls), reconstructed lazily when the section is opened, so it never costs a fetch unless asked for.
   let conversationsOpen = false;
-  // Scoring section: shows the evaluator model's rubric judgement for each side, side by side.
+  // Scoring section: the N-way verdict matrix for every variant in the selected case (not just the
+  // A/B pair the other sections compare), reconstructed lazily when the section is opened.
   let scoringOpen = false;
   let conversationsLeft: EvalConversationsView | undefined;
   let conversationsRight: EvalConversationsView | undefined;
   let conversationsLoading = false;
   let conversationsError = "";
   let conversationsKey = "";
+  let scoring: EvalScoringView | undefined;
+  let scoringLoading = false;
+  let scoringError = "";
+  let scoringKey = "";
 
   // Per-side content cache for the aligned view: keyed by diffCacheKey so re-expanding never refetches.
   let diffCache = new Map<string, EvalDiffView>();
@@ -91,6 +98,11 @@
   // area shows a clear, recoverable error instead of a permanent fake "Loading comparison".
   let compareError = "";
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
+
+  // Top-level app section: the run workspace (launch/compare/live dashboard) vs the marks inbox. Independent
+  // of which run is selected, since marks are not scoped to any one run.
+  type AppSection = "runs" | "marks";
+  let section: AppSection = "runs";
 
   // Primary view: the live run dashboard (a running eval is the focal point) vs the results explorer.
   // An active run snaps the view to "live"; finishing snaps it back to "results". The user can switch
@@ -161,6 +173,12 @@
   // refetch; loadConversations itself short-circuits when the section is closed or already loaded.
   $: conversationsDeps = `${conversationsOpen}|${selectedRunId}|${selectedCaseId}|${leftVariantId}|${rightVariantId}`;
   $: { void conversationsDeps; void loadConversations(); }
+  // Scoring covers every variant in the case, so it depends only on the run/case, never the A/B pair.
+  $: scoringDeps = `${scoringOpen}|${selectedRunId}|${selectedCaseId}`;
+  $: { void scoringDeps; void loadScoring(); }
+  // The Scoring section shows whenever any variant in the case has evaluator data, independent of which
+  // pair is currently selected for the pairwise sections above it.
+  $: anyEvaluated = Boolean(selectedCase?.variants.some((variant) => variant.evaluation));
 
   async function loadInitial(): Promise<void> {
     loading = true;
@@ -596,6 +614,39 @@
     }
   }
 
+  /** Loads the N-way scoring matrix when the section is open (the reactive caller), memoized by run+case. */
+  async function loadScoring(): Promise<void> {
+    if (!scoringOpen) return;
+    await fetchScoring();
+  }
+
+  /**
+   * Fetches the scoring matrix for every variant in the selected case. Scoped to run+case rather than the
+   * A/B pair: unlike the pairwise sections above it, Scoring always shows every variant so a run with more
+   * than two configs is not silently truncated to whichever two happen to be picked for diffing.
+   */
+  async function fetchScoring(): Promise<void> {
+    if (!selectedRunId || !selectedCaseId) return;
+    const key = `${selectedRunId}::${selectedCaseId}`;
+    if (key === scoringKey) return;
+    scoringKey = key;
+    scoringLoading = true;
+    scoringError = "";
+    try {
+      scoring = await client.getScoring({ runId: selectedRunId, caseId: selectedCaseId });
+    } catch (loadError) {
+      scoringError = (loadError as Error).message;
+    } finally {
+      scoringLoading = false;
+    }
+  }
+
+  /** Warms the scoring matrix on intent (hovering or focusing the section header), so opening the section
+      is instant. Swallows errors: a prefetch that misses must never surface as an error. */
+  function prefetchScoring(): void {
+    void fetchScoring().catch(() => {});
+  }
+
   /** Warms the conversation reconstruction on intent (hovering or focusing the section header), so opening
       the section is instant. Swallows errors: a prefetch that misses must never surface as one. */
   function prefetchConversations(): void {
@@ -896,57 +947,71 @@
     if (value > 0 && value < 0.01) return "<$0.01";
     return value < 100 ? `$${value.toFixed(2)}` : `$${Math.round(value)}`;
   }
+
+  /** Builds the download URL for a run's rendered report, reusing the same GET endpoints `tangent eval report` reads from. */
+  function reportUrl(runId: string, format: "markdown" | "html"): string {
+    return `/api/eval/runs/${encodeURIComponent(runId)}/report/${format}`;
+  }
 </script>
 
 <main class="eval-workspace" aria-label="Eval viewer">
   <div class="topbar">
     <span class="brand">Tangent Eval</span>
-    <label class="topbar-pick">
-      <!-- One-way value + a single change handler, never bind:value + on:change. With both, a native change
-           writes selectedRunId and flushes the run/manifest reactives with the previous run's variants still
-           set (a 404) before selectRun runs to clear them and reset the load key; selectRun then resets the
-           key mid-flight so getRun's result is discarded and the run sticks on "Loading run…". selectRun is
-           the single source of truth, reading the new id straight off the event. -->
-      <select value={selectedRunId} on:change={(event) => selectRun(event.currentTarget.value)} disabled={runs.length === 0}>
-        {#if runs.length === 0}
-          <option value="">{loading ? "Loading runs…" : "No prepared runs"}</option>
-        {:else}
-          {#each runs as run}
-            <option value={run.id}>{run.name} · {formatDate(run.createdAt)}</option>
-          {/each}
-        {/if}
-      </select>
-    </label>
-    {#if runDetail && runDetail.cases.length > 1}
+    <div class="app-section-tabs" aria-label="Eval section">
+      <button type="button" class:active={section === "runs"} on:click={() => (section = "runs")}>Runs</button>
+      <button type="button" class:active={section === "marks"} on:click={() => (section = "marks")}>Marks</button>
+    </div>
+    {#if section === "runs"}
       <label class="topbar-pick">
-        <select value={selectedCaseId} on:change={(event) => selectCase(event.currentTarget.value)}>
-          {#each runDetail.cases as testCase}
-            <option value={testCase.id}>{testCase.id}</option>
-          {/each}
+        <!-- One-way value + a single change handler, never bind:value + on:change. With both, a native change
+             writes selectedRunId and flushes the run/manifest reactives with the previous run's variants still
+             set (a 404) before selectRun runs to clear them and reset the load key; selectRun then resets the
+             key mid-flight so getRun's result is discarded and the run sticks on "Loading run…". selectRun is
+             the single source of truth, reading the new id straight off the event. -->
+        <select value={selectedRunId} on:change={(event) => selectRun(event.currentTarget.value)} disabled={runs.length === 0}>
+          {#if runs.length === 0}
+            <option value="">{loading ? "Loading runs…" : "No prepared runs"}</option>
+          {:else}
+            {#each runs as run}
+              <option value={run.id}>{run.name} · {formatDate(run.createdAt)}</option>
+            {/each}
+          {/if}
         </select>
       </label>
+      {#if runDetail && runDetail.cases.length > 1}
+        <label class="topbar-pick">
+          <select value={selectedCaseId} on:change={(event) => selectCase(event.currentTarget.value)}>
+            {#each runDetail.cases as testCase}
+              <option value={testCase.id}>{testCase.id}</option>
+            {/each}
+          </select>
+        </label>
+      {/if}
+      <span class="topbar-spacer"></span>
+      {#if launchError}<small class="run-error" role="alert">{launchError}</small>{/if}
+      <label class="topbar-pick" aria-label="Eval to run">
+        <select bind:value={selectedSpecPath} disabled={launching || specs.length === 0}>
+          {#if specs.length === 0}
+            <option value="">No specs</option>
+          {:else}
+            {#each specs as spec}
+              <option value={spec.path}>{spec.name} ({spec.variantCount} configs)</option>
+            {/each}
+          {/if}
+        </select>
+      </label>
+      <button type="button" class="ghost-button" on:click={openPromptEditor} disabled={!selectedSpecPath} title="Edit this eval's task prompt">
+        Edit prompt
+      </button>
+      <button type="button" class="run-button" on:click={launch} disabled={launching || !selectedSpecPath}>
+        {launching ? "Starting…" : "Run"}
+      </button>
     {/if}
-    <span class="topbar-spacer"></span>
-    {#if launchError}<small class="run-error" role="alert">{launchError}</small>{/if}
-    <label class="topbar-pick" aria-label="Eval to run">
-      <select bind:value={selectedSpecPath} disabled={launching || specs.length === 0}>
-        {#if specs.length === 0}
-          <option value="">No specs</option>
-        {:else}
-          {#each specs as spec}
-            <option value={spec.path}>{spec.name} ({spec.variantCount} configs)</option>
-          {/each}
-        {/if}
-      </select>
-    </label>
-    <button type="button" class="ghost-button" on:click={openPromptEditor} disabled={!selectedSpecPath} title="Edit this eval's task prompt">
-      Edit prompt
-    </button>
-    <button type="button" class="run-button" on:click={launch} disabled={launching || !selectedSpecPath}>
-      {launching ? "Starting…" : "Run"}
-    </button>
   </div>
 
+  {#if section === "marks"}
+    <MarksInbox {client} />
+  {:else}
   {#if runDetail}
     <div class="runbar" class:running={anyActive}>
       <div class="run-tabs" aria-label="Workspace view">
@@ -962,6 +1027,10 @@
         {#if runDetail.statuses.done}<span class="pill pill-done">{runDetail.statuses.done} done</span>{/if}
         {#if runDetail.statuses.failed}<span class="pill pill-failed">{runDetail.statuses.failed} failed</span>{/if}
         {#if runDetail.statuses.cancelled}<span class="pill pill-cancelled">{runDetail.statuses.cancelled} cancelled</span>{/if}
+      </span>
+      <span class="report-export" aria-label="Export report">
+        <a class="ghost-button" href={reportUrl(selectedRunId, "markdown")} download={`${selectedRunId}-report.md`}>report.md</a>
+        <a class="ghost-button" href={reportUrl(selectedRunId, "html")} download={`${selectedRunId}-report.html`}>report.html</a>
       </span>
     </div>
   {/if}
@@ -1271,19 +1340,16 @@
                 errorText={conversationsError} />
             {/if}
           </section>
-          {#if compare.left.evaluation || compare.right.evaluation}
+          {#if anyEvaluated}
             <section class="aligned-section" class:collapsed={!scoringOpen}>
-              <button type="button" class="section-toggle" aria-expanded={scoringOpen} on:click={toggleScoring}>
+              <button type="button" class="section-toggle" aria-expanded={scoringOpen}
+                on:pointerenter={prefetchScoring} on:focus={prefetchScoring} on:click={toggleScoring}>
                 <span class="section-caret" aria-hidden="true">{scoringOpen ? "▾" : "▸"}</span>
                 <h3>Scoring</h3>
-                <small class="section-summary">evaluator rubric judgement</small>
+                <small class="section-summary">evaluator rubric judgement · every variant in this case</small>
               </button>
               {#if scoringOpen}
-                <ScoringCompare
-                  left={compare.left.evaluation}
-                  right={compare.right.evaluation}
-                  leftLabel={leftVariantId}
-                  rightLabel={rightVariantId} />
+                <ScoringCompare view={scoring} loading={scoringLoading} errorText={scoringError} />
               {/if}
             </section>
           {/if}
@@ -1305,4 +1371,5 @@
       <div class="state">Select a prepared run.</div>
     {/if}
   </section>
+  {/if}
 </main>

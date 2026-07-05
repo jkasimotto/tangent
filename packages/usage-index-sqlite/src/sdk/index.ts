@@ -10,6 +10,7 @@ export { status } from "./status.js";
 export type { RepoStatus, StatusOptions } from "./status.js";
 export { importNative } from "./importNative.js";
 export type { ImportNativeOptions, ImportNativeResult } from "./importNative.js";
+export { claudeHome, claudeHomes, claudeProjectKey, discoverClaudeNative } from "@tangent/usage-providers/providers/claude/native/discover";
 export { inspectNativeLogFile } from "@tangent/usage-providers/providers/native/inspect";
 export { listNativeSchemas } from "@tangent/usage-providers/providers/native/schema-registry";
 export { nativeSchemaStatus } from "@tangent/usage-providers/providers/native/status";

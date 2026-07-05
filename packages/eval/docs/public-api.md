@@ -15,6 +15,7 @@ CLI notes:
 - `eval ui [run|latest]` starts the local Eval UI for browsing, launching, and comparing runs.
 - `createEvalUiApp(...)` registers Eval for the combined `tangent ui` shell with `/api/eval/*` routes and embedded assets mounted under `/apps/eval/`.
 - Eval specs support `prompt` on a variant; variant prompts override the case prompt, and existing case-level prompt specs remain valid.
+- `runMarkCli(argv)` (also exported from `@tangent/eval/cli`) dispatches `tangent mark ...`, the mark loop's capture CLI. `tangent mark "<note>"` captures against the cwd-resolved current Claude session (`--session`/`--turn` override the anchor, `--observed`/`--expected`/`--hypothesis`/`--kind`/`--repo` fill the record). `tangent mark --json` reads a full or partial `tangent.mark.v1` record from stdin, the `/mark` skill's entry point. `tangent mark list [--status] [--kind] [--repo]`, `tangent mark show <id>`, and `tangent mark update <id> [--status] [--link-eval] [--link-fix]` support triage. The root CLI wires this as a top-level `tangent mark ...` command, not nested under `tangent eval`.
 
 `/api/eval/*` routes:
 - `GET /api/eval/selection` resolves the preferred or latest run id.

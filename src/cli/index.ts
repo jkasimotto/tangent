@@ -14,6 +14,7 @@ const tangentCommandSpec: CliCommandSpec = {
     productCommandSpec("usage", "Inspect coding-agent activity"),
     productCommandSpec("rollup", "Generate private rollup notes"),
     productCommandSpec("eval", "Run and inspect coding-agent evals"),
+    { name: "mark", description: "Capture agent behavior marks; install @tangent/eval if unavailable", args: "[note]" },
     doctorCommandSpec,
     { name: "governance", description: "Run architecture governance lints", hidden: true },
     devCommandSpec,
@@ -76,6 +77,12 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
   if (app === "eval") {
     const { runEvalCli } = await requiredProductModule<{ runEvalCli(argv: string[]): Promise<void> }>("@tangent/eval/cli", "eval");
     await runEvalCli(rest);
+    return;
+  }
+
+  if (app === "mark") {
+    const { runMarkCli } = await requiredProductModule<{ runMarkCli(argv: string[]): Promise<void> }>("@tangent/eval/cli", "mark");
+    await runMarkCli(rest);
     return;
   }
 
@@ -154,6 +161,7 @@ Examples:
   tangent rollup today
   tangent rollup 20260601-20260610
   tangent eval run eval.json
+  tangent mark "you should have read the docs index first"
   tangent completion zsh
 `);
 }

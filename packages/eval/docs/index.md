@@ -31,3 +31,11 @@ An eval spec may carry a top-level `evaluator` block with a `model` string and a
 The judge returns a JSON object with a `criteria` array of `{ id, passed, reasoning }` entries. Each criterion earns its full point allotment (binary scoring: full points or zero). The result is written to an `evaluation.json` sidecar alongside `metrics.json` in the variant's run directory. If the judge call fails, all criteria are recorded as failed with a warning rather than aborting the collection step.
 
 The Eval UI reads `evaluation.json` and shows a score chip on each variant card and a per-criterion Scoring section with A/B verdicts.
+
+## Marks
+
+`marks/types.ts`, `marks/store.ts`, and `marks/resolve.ts` implement the mark loop's capture surface (see `docs/superpowers/specs/2026-07-05-mark-loop-design.md` and ADR-0015). A mark is a `tangent.mark.v1` record: a moment-anchored capture of an agent failure (`kind: "failure"`) or a mined efficiency exemplar (`kind: "candidate"`), stored as one JSON file per mark under `~/.tangent/marks/` (`marksHome()`, overridable via `TANGENT_MARKS_HOME`/`TANGENT_HOME`, and every store function takes the directory as an injectable last argument so tests never touch the real home directory).
+
+`marks/resolve.ts` resolves the anchor: `resolveCurrentSessionAnchor(cwd)` finds the newest Claude transcript keyed to a cwd across every Claude profile, reusing `discoverClaudeNative` re-exported from `@tangent/usage-index-sqlite`; `resolveAnchorForSession(sessionId)` looks up an explicitly named session instead. The Usage index ordinal is left unset at capture time and resolves lazily on first view, so marking never blocks on the session already being indexed.
+
+`tangent mark "<note>"` captures against the cwd-resolved current session; `tangent mark --json` reads a full or partial record from stdin (the `/mark` skill's entry point) and fills in id/at/status/anchor/repo defaults via `createMarkRecord`. `tangent mark list|show|update` support the triage-to-fix workflow. The command is wired as a top-level `tangent mark` root command, not nested under `tangent eval`.

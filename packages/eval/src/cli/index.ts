@@ -8,14 +8,15 @@ import { collectCommand } from "./commands/collect.js";
 import { contextCommand } from "./commands/context.js";
 import { diffCommand } from "./commands/diff.js";
 import { initCommand } from "./commands/init.js";
+import { markCommand } from "./commands/mark.js";
 import { openCommand } from "./commands/open.js";
 import { prepareCommand } from "./commands/prepare.js";
 import { reportCommand } from "./commands/report.js";
 import { runCommand } from "./commands/run.js";
 import { uiCommand } from "./commands/ui.js";
-import { evalCommandSpec } from "./spec.js";
+import { evalCommandSpec, markCommandSpec } from "./spec.js";
 
-export { evalCommandSpec } from "./spec.js";
+export { evalCommandSpec, markCommandSpec } from "./spec.js";
 
 /** Dispatches eval CLI arguments to the matching command. */
 export async function runEvalCli(argv = process.argv.slice(2)): Promise<void> {
@@ -34,6 +35,20 @@ export async function runEvalCli(argv = process.argv.slice(2)): Promise<void> {
   if (command === "open") return openCommand(args);
   if (command === "ui") return uiCommand(args);
   throw new Error(`Unknown eval command: ${command}`);
+}
+
+/**
+ * Dispatches `tangent mark` CLI arguments. Kept separate from `runEvalCli` so a top-level
+ * `tangent mark ...` never requires typing `tangent eval mark`, even though the implementation
+ * lives in this package.
+ */
+export async function runMarkCli(argv = process.argv.slice(2)): Promise<void> {
+  const args = parseArgs(argv);
+  if (args.help && !args._[0]) {
+    console.log(renderCommandHelp(markCommandSpec));
+    return;
+  }
+  await markCommand(args);
 }
 
 /** Prints eval CLI help text. */

@@ -10,6 +10,48 @@ const agentOptions = [
   { name: "timeout-ms", takesValue: true, description: "Agent timeout" }
 ];
 
+const markStatusValues = ["new", "suggested", "triaged", "eval-created", "fixed", "dismissed"];
+const markKindValues = ["failure", "candidate"];
+
+export const markCommandSpec: CliCommandSpec = {
+  name: "mark",
+  description: "Capture and manage agent behavior marks",
+  args: "[note]",
+  options: [
+    { name: "json", description: "Read a full or partial mark record from stdin" },
+    { name: "session", takesValue: true, description: "Session id to anchor the mark to, instead of the cwd-resolved current session" },
+    { name: "turn", takesValue: true, description: "Message ordinal to anchor the mark to" },
+    { name: "observed", takesValue: true, description: "What happened; overrides the bare note" },
+    { name: "expected", takesValue: true, description: "What should have happened" },
+    { name: "hypothesis", takesValue: true, description: "Why the agent did not know better" },
+    { name: "kind", takesValue: true, values: markKindValues, description: "Mark kind" },
+    { name: "repo", takesValue: true, description: "Repository path" }
+  ],
+  subcommands: [
+    {
+      name: "list",
+      description: "List marks, newest first",
+      options: [
+        { name: "status", takesValue: true, values: markStatusValues, description: "Filter by status" },
+        { name: "kind", takesValue: true, values: markKindValues, description: "Filter by kind" },
+        { name: "repo", takesValue: true, description: "Filter by repo root" },
+        { name: "json", description: "Print JSON" }
+      ]
+    },
+    { name: "show", description: "Show a mark", args: "<id>", options: [] },
+    {
+      name: "update",
+      description: "Update a mark's status or links",
+      args: "<id>",
+      options: [
+        { name: "status", takesValue: true, values: markStatusValues, description: "New status" },
+        { name: "link-eval", takesValue: true, description: "Linked eval name" },
+        { name: "link-fix", takesValue: true, description: "Linked fix reference" }
+      ]
+    }
+  ]
+};
+
 export const evalCommandSpec: CliCommandSpec = {
   name: "eval",
   description: "Prepare, run, and compare local coding-agent eval variants",

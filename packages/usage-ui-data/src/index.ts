@@ -5,6 +5,21 @@ export { buildUsageConversationView } from "./conversationView.js";
 export { buildSparkline } from "./flame.js";
 export { buildDiagnosticCards, primaryFinding } from "./diagnostics.js";
 export { groupSessionsByProject, projectSlug, type UsageProjectRailItem } from "./projects.js";
+export {
+  buildInsightsFeedView,
+  createInsightsApiClient,
+  type UsageInsightsApiCategory,
+  type UsageInsightsApiEvidence,
+  type UsageInsightsApiFinding,
+  type UsageInsightsApiResponse,
+  type UsageInsightsCategoryView,
+  type UsageInsightsClient,
+  type UsageInsightsEvidenceRow,
+  type UsageInsightsFeedView,
+  type UsageInsightsFindingRow,
+  type UsageInsightsParkResult,
+  type UsageInsightsQuery
+} from "./insights.js";
 export { buildSessionFinderView, sessionFinderItem } from "./sessionFinder.js";
 export { buildUsageSessionTimelineView } from "./sessionTimeline.js";
 export { buildSessionStoryline } from "./storyline.js";
@@ -16,6 +31,7 @@ import { buildUsageCockpitView, timelineSteps, transcriptMessages } from "./cock
 import { buildUsageConversationView, projectLabel, type UsageConversationToolCall } from "./conversationView.js";
 import { buildSparkline, sparklineFromPrecomputed } from "./flame.js";
 import { peakContextTokens } from "./format.js";
+import type { UsageInsightsApiResponse } from "./insights.js";
 import { buildUsageSessionTimelineView } from "./sessionTimeline.js";
 import type {
   UsageCockpitView,

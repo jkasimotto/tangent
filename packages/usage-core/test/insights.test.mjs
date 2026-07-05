@@ -254,6 +254,8 @@ test("normalizeCommandHead strips leading cd-and-chain wrappers so the real comm
   assert.equal(normalizeCommandHead("cd /repo/polez && dart analyze lib/client"), "dart analyze");
   assert.equal(normalizeCommandHead("cd /a && cd /b && dart analyze"), "dart analyze", "chained cd wrappers all strip");
   assert.equal(normalizeCommandHead("cd /repo/polez"), "cd", "a bare cd with no chained command is not stripped, but its path argument still is");
+  assert.equal(normalizeCommandHead("cd /repo/polez; echo done"), "echo done", "semicolon-chained cd wrappers strip like && ones");
+  assert.equal(normalizeCommandHead('cd "/My Repos/polez" && npm run test'), "npm run test", "quoted cd paths with spaces strip too");
 });
 
 test("extractCommandText reads common provider input shapes", () => {

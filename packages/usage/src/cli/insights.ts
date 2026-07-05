@@ -4,6 +4,8 @@ import { numberArg, requiredString, stringArg, type Args } from "@tangent/core/c
 import { loadUsageDatasetFromIndex } from "@tangent/usage-index-sqlite/sdk/indexStore";
 import type { NormalizedConversation } from "@tangent/usage-core/core/conversation-report";
 import {
+  computeAgentTimeDistribution,
+  FINDING_REMEDY_LABELS as REMEDY_LABELS,
   globalInsightsParkStatePath,
   loadParkState,
   parkFinding,
@@ -12,7 +14,6 @@ import {
   unparkFinding,
   type Finding,
   type FindingGeneratorName,
-  type FindingRemedy,
   type ParkState
 } from "@tangent/usage-core/core/insights/index";
 
@@ -23,14 +24,6 @@ const GENERATOR_NAMES: FindingGeneratorName[] = [
   "re-read-churn-and-hot-files",
   "failure-retry-loops"
 ];
-
-const REMEDY_LABELS: Record<FindingRemedy, string> = {
-  "missing-map": "missing map: add a CLAUDE.md pointer or docs index entry",
-  "split-or-map-file": "context too big to retain in one file: split it, or summarize it in CLAUDE.md",
-  "structural-search": "missing tool: structural search instead of grep/glob chains",
-  "document-command": "document the correct scoped invocation in CLAUDE.md, or cache the result",
-  "document-invocation": "document the correct invocation so the agent stops guessing"
-};
 
 type InsightsScope = {
   /** The repo argument as loadUsageDatasetFromIndex expects it ("." for the cross-project view). */
@@ -154,31 +147,14 @@ function printInsights(findings: Finding[], conversations: NormalizedConversatio
 
 /** Prints the one-line-per-category distribution header: total tool time, then a percentage bar per broad category. */
 function printDistributionHeader(conversations: NormalizedConversation[]): void {
-  const durations = { read: 0, search: 0, write: 0, command: 0, other: 0 };
-  for (const conversation of conversations) {
-    for (const message of conversation.messages) {
-      if (message.role !== "assistant") continue;
-      for (const call of message.toolCalls) {
-        const durationMs = call.result?.durationMs || 0;
-        if (call.category === "read") durations.read += durationMs;
-        else if (call.category === "search") durations.search += durationMs;
-        else if (call.category === "write") durations.write += durationMs;
-        else if (call.category === "command") durations.command += durationMs;
-        else durations.other += durationMs;
-      }
-    }
-  }
-  const total = durations.read + durations.search + durations.write + durations.command + durations.other;
-  console.log(`Agent time ${formatDuration(total)}`);
-  if (!total) return;
-  printCategoryBar("finding info", durations.read + durations.search, total);
-  printCategoryBar("executing", durations.command, total);
-  printCategoryBar("writing", durations.write, total);
+  const distribution = computeAgentTimeDistribution(conversations);
+  console.log(`Agent time ${formatDuration(distribution.totalMs)}`);
+  if (!distribution.totalMs) return;
+  for (const category of distribution.categories) printCategoryBar(category.label, category.fraction);
 }
 
 /** Prints one "label percent bar" line of the distribution header. */
-function printCategoryBar(label: string, value: number, total: number): void {
-  const fraction = total > 0 ? value / total : 0;
+function printCategoryBar(label: string, fraction: number): void {
   console.log(`                 ${label.padEnd(12)} ${Math.round(fraction * 100)}% ${renderBar(fraction)}`);
 }
 

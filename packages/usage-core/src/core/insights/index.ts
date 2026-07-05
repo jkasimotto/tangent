@@ -39,7 +39,9 @@ export function runInsightGenerators(conversations: NormalizedConversation[], op
 
 export type { Finding, FindingEvidenceRef, FindingGeneratorName, FindingRemedy } from "./types.js";
 export { extractCommandText, normalizeCommandHead } from "./command-head.js";
+export { computeAgentTimeDistribution, type AgentTimeCategoryKey, type AgentTimeCategoryShare, type AgentTimeDistribution } from "./distribution.js";
 export { findingFingerprint } from "./fingerprint.js";
+export { FINDING_REMEDY_LABELS } from "./remedies.js";
 export { failureRetryLoops } from "./generators/failure-retry-loops.js";
 export { infoFindingHeavySessions } from "./generators/info-finding-heavy-sessions.js";
 export { recurringLongCommands } from "./generators/recurring-long-commands.js";

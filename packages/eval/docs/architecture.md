@@ -32,4 +32,12 @@ Scope boundary: repo-contributed context only. Base system prompt, `~/.claude` u
 
 The `evaluation.json` sidecar (schema `eval.evaluation.v1`) sits beside `metrics.json` in each variant's run directory. It records the judge model, the evaluation timestamp, each criterion's `passed` verdict and `reasoning`, and aggregate `totalPoints`/`maxPoints`. The Eval UI reads this sidecar to render score chips and the per-criterion Scoring section.
 
+## Marks
+
+`marks/types.ts` defines the `tangent.mark.v1` record and its validators (`assertMarkRecord` and friends). `marks/store.ts` persists one JSON file per mark under `marksHome()` (`~/.tangent/marks/` by default, `TANGENT_MARKS_HOME`/`TANGENT_HOME` overridable, and every function takes the directory as an injectable trailing argument): `writeMark`, `readMark`, `listMarks` (status/kind/repo filters, newest-first), `updateMark` (partial patch), and `createMarkRecord`/`createMarkId` (fills id/at/status/links defaults and derives `<yyyymmddThhmmss>-<slug>` ids from the observed text).
+
+`marks/resolve.ts` resolves a mark's anchor without reimplementing transcript discovery: `resolveCurrentSessionAnchor(cwd)` and `resolveAnchorForSession(sessionId)` both call `discoverClaudeNative`, re-exported from `@tangent/usage-index-sqlite` (backed by `@tangent/usage-providers`, which already handles nested-cwd project-dir discovery and unions every `~/.claude*` profile). The resolved anchor's `ordinal` is left unset; the Usage index fills it lazily on first view rather than making capture depend on the session already being indexed.
+
+`cli/commands/mark.ts` is the CLI surface: bare-note capture, `--json` stdin capture (validating and defaulting a full or partial record), and `list`/`show`/`update`. `cli/index.ts` exports `runMarkCli` separately from `runEvalCli` so the root CLI can wire `tangent mark` as a top-level command while the implementation stays in this package. See ADR-0015 for why marks live in Eval rather than a new package or in Usage.
+
 Refer to ../../../docs/architecture/package-boundaries.md and ../../../docs/architecture/dependency-graph.md for monorepo boundaries.

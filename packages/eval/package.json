@@ -42,6 +42,7 @@
     "@tangent/core": "^0.1.0",
     "@tangent/repo": "^0.1.0",
     "@tangent/agent-runtime": "^0.1.0",
+    "@tangent/usage-core": "^0.1.0",
     "@tangent/usage-index-sqlite": "^0.1.0",
     "@tangent/ui-server": "^0.1.0",
     "@tangent/eval-ui": "^0.1.0"

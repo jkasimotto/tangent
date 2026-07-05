@@ -73,8 +73,9 @@ const allowedPackageDeps: Record<string, string[]> = {
   "@tangent/usage-ui": ["@tangent/usage-ui-data", "@tangent/ui-tokens"],
   "@tangent/eval-ui": ["@tangent/ui-tokens"],
   "@tangent/rollup": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage-index-sqlite"],
-  "@tangent/eval": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage-index-sqlite", "@tangent/ui-server", "@tangent/eval-ui"],
-  "@tangent/launcher": ["@tangent/core"]
+  "@tangent/eval": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage-core", "@tangent/usage-index-sqlite", "@tangent/ui-server", "@tangent/eval-ui"],
+  "@tangent/launcher": ["@tangent/core"],
+  "@tangent/search": ["@tangent/core", "@tangent/repo"]
 };
 
 /** Supports the lint governance helper. */
@@ -379,7 +380,7 @@ async function lintUsageDependencyLightEntrypoints(ctx: LintContext): Promise<Go
 /** Supports the lint ui package boundaries helper. */
 async function lintUiPackageBoundaries(ctx: LintContext): Promise<GovernanceFinding[]> {
   const findings: GovernanceFinding[] = [];
-  const productPackages = new Set(["@tangent/usage", "@tangent/eval", "@tangent/rollup"]);
+  const productPackages = new Set(["@tangent/usage", "@tangent/eval", "@tangent/rollup", "@tangent/search"]);
   const apiOnlyPackages = new Set(["@tangent/usage-schema", "@tangent/usage-core"]);
   for (const file of await sourceFiles(ctx.root)) {
     const owner = ownerPackage(file, ctx.packages);

@@ -392,6 +392,24 @@ button {
   font-weight: 700;
 }
 
+.nav-insights {
+  flex: 0 0 auto;
+  border: 1px solid #d2dacf;
+  border-radius: 7px;
+  background: #ffffff;
+  color: #2b6e59;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.nav-insights:hover,
+.nav-insights:focus-visible {
+  border-color: #2b6e59;
+  outline: none;
+  box-shadow: 0 0 0 3px rgb(43 110 89 / 12%);
+}
+
 .read-back:hover,
 .read-back:focus-visible {
   border-color: #2b6e59;

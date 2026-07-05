@@ -58,6 +58,13 @@ export type EvalSpec = {
   defaults?: EvalDefaults;
   cases: EvalCaseSpec[];
   evaluator?: EvalEvaluatorSpec;
+  /**
+   * The id of the mark (`tangent.mark.v1`, see marks/types.ts) that this eval was scaffolded from,
+   * when it was created via `tangent mark to-eval`. The report renderers print it as the link back
+   * to the originating failure or candidate, so a reviewer can trace the fix to the moment that
+   * motivated it. Absent for evals authored directly, e.g. via `tangent eval capture task`.
+   */
+  markId?: string;
 };
 
 export type ResolvedEvalVariant = {

@@ -73,6 +73,45 @@ button {
   flex: 1 1 auto;
 }
 
+/* Top-level section switcher (Runs / Marks), styled like .run-tabs since it plays the same role one level up. */
+.app-section-tabs {
+  display: inline-flex;
+  gap: 2px;
+  background: var(--pane-muted);
+  border-radius: 8px;
+  padding: 2px;
+}
+.app-section-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 4px 12px;
+  border-radius: 6px;
+}
+.app-section-tabs button.active {
+  background: #fff;
+  color: var(--text);
+  box-shadow: 0 1px 2px rgb(20 35 27 / 12%);
+}
+
+.report-export {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: 10px;
+}
+.report-export .ghost-button {
+  padding: 3px 9px;
+  font-size: 11px;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+
 .topbar-pick select {
   min-height: 30px;
   max-width: 280px;
@@ -1672,9 +1711,9 @@ button.review-row.commentable.active {
   flex-direction: column;
 }
 
+/* Column count is set per-run via an inline grid-template-columns style (N variants, not a fixed two). */
 .scoring-header {
   display: grid;
-  grid-template-columns: 1fr 1fr;
 }
 
 .scoring-col-head {
@@ -1685,13 +1724,27 @@ button.review-row.commentable.active {
   border-bottom: 1px solid var(--line);
 }
 
-.scoring-col-b {
+.scoring-col-head:not(:first-child) {
   border-left: 1px solid var(--line);
 }
 
 .scoring-label {
   font-weight: 700;
   font-size: 13px;
+}
+
+/* Baseline is marked by text, not color: the design rule for this surface is "color means pass/fail and
+   nothing else" (see docs/superpowers/specs/2026-07-05-mark-loop-design.md, "The report artifact"). */
+.scoring-baseline-tag {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--pane-muted);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 
 .scoring-total {
@@ -1711,9 +1764,9 @@ button.review-row.commentable.active {
   font-weight: 600;
 }
 
+/* Column count is set per-run via an inline grid-template-columns style (N variants, not a fixed two). */
 .scoring-sides {
   display: grid;
-  grid-template-columns: 1fr 1fr;
   gap: 12px;
 }
 
@@ -1732,12 +1785,6 @@ button.review-row.commentable.active {
 .scoring-pass { color: #22a06b; }
 .scoring-fail { color: #c0392b; }
 
-.scoring-pts {
-  font-size: 12px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
-
 .scoring-reasoning {
   width: 100%;
   margin: 4px 0 0;
@@ -1753,4 +1800,144 @@ button.review-row.commentable.active {
 
 .scoring-warnings {
   border-top: 1px solid var(--line);
+}
+
+/* --- Marks inbox: status chip color is the only color on the row; everything else stays neutral so the
+   observed text (what actually happened) is what the scanning eye reads. See
+   docs/superpowers/specs/2026-07-05-mark-loop-design.md, "The marks inbox (eval UI)". --- */
+.marks-inbox {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 2px 24px;
+}
+
+.marks-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.marks-count {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.marks-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mark-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.mark-row-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mark-status {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+  background: var(--pane-muted);
+  color: var(--muted);
+}
+.mark-status-new { background: #d8ebff; color: #1c5da8; }
+.mark-status-suggested { background: #ece7d6; color: #7a6a3a; }
+.mark-status-triaged { background: var(--pane-muted); color: var(--muted); }
+.mark-status-eval-created { background: #ece7d6; color: #7a6a3a; }
+.mark-status-fixed { background: var(--add); color: #14231b; }
+.mark-status-dismissed { background: var(--pane-muted); color: var(--muted); }
+
+.mark-kind,
+.mark-repo,
+.mark-age {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.mark-age {
+  margin-left: auto;
+  text-transform: none;
+}
+
+.mark-observed {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.mark-secondary {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.mark-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.mark-usage-link {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+}
+.mark-usage-link:hover {
+  text-decoration: underline;
+}
+
+.mark-session-id {
+  font-family: var(--tangent-font-mono, monospace);
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--pane-muted);
+  border: none;
+  border-radius: 4px;
+  padding: 3px 7px;
+  cursor: pointer;
+}
+.mark-session-id:hover {
+  color: var(--text);
+}
+
+.mark-to-eval {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--pane-muted);
+}
+.mark-to-eval code {
+  font-size: 12px;
+  color: var(--text);
 }

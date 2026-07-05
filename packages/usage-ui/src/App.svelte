@@ -13,13 +13,14 @@
     type UsageSparkline,
     type UsageUiClient
   } from "@tangent/usage-ui-data";
+  import Insights from "./Insights.svelte";
 
   export let client: UsageUiClient = createUsageApiClient();
 
   let sessions: UsageSessionListItem[] = [];
   let view: UsageConversationView | undefined;
   let selectedId: string | undefined;
-  let mode: "browse" | "read" = "browse";
+  let mode: "browse" | "read" | "insights" = "browse";
   let query = "";
   // The browse view leads with a project (the "project of intention"); selectedProject holds its label.
   let selectedProject: string | undefined;
@@ -173,6 +174,16 @@
 
   function backToBrowse(): void {
     mode = "browse";
+  }
+
+  /** Enters the Insights view, the efficiency lens over Usage telemetry. */
+  function openInsights(): void {
+    mode = "insights";
+  }
+
+  /** Opens a conversation from an Insights finding's evidence, reusing the same navigation the session gallery uses. */
+  function openInsightsConversation(conversationId: string): void {
+    openSession(conversationId);
   }
 
   /** Toggles a conversation's membership in the metrics selection. */
@@ -547,6 +558,7 @@
           <span>Search this project</span>
           <input bind:value={query} placeholder="Title, model, provider" />
         </label>
+        <button type="button" class="nav-insights" onclick={openInsights}>Insights</button>
       </div>
     </header>
     <div class="browse-layout">
@@ -657,6 +669,8 @@
       </aside>
     {/if}
   </main>
+{:else if mode === "insights"}
+  <Insights onOpenConversation={openInsightsConversation} onBack={backToBrowse} />
 {:else}
   <main class="usage-shell" data-mode="read">
     <header class="read-bar">
@@ -676,6 +690,7 @@
         {/if}
       </div>
       <div class="read-controls">
+        <button type="button" class="nav-insights" onclick={openInsights}>Insights</button>
         {#if view?.selected.durationLabel}<span class="read-stat">{view.selected.durationLabel}</span>{/if}
         {#if view?.selected.tokenLabel}<span class="read-stat">{view.selected.tokenLabel}</span>{/if}
         <div class="zoom" aria-label="Zoom timeline">

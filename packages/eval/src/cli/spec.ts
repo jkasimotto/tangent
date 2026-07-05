@@ -10,6 +10,70 @@ const agentOptions = [
   { name: "timeout-ms", takesValue: true, description: "Agent timeout" }
 ];
 
+const markStatusValues = ["new", "suggested", "triaged", "eval-created", "fixed", "dismissed"];
+const markKindValues = ["failure", "candidate"];
+
+export const markCommandSpec: CliCommandSpec = {
+  name: "mark",
+  description: "Capture and manage agent behavior marks",
+  args: "[note]",
+  options: [
+    { name: "json", description: "Read a full or partial mark record from stdin" },
+    { name: "session", takesValue: true, description: "Session id to anchor the mark to, instead of the cwd-resolved current session" },
+    { name: "turn", takesValue: true, description: "Message ordinal to anchor the mark to" },
+    { name: "observed", takesValue: true, description: "What happened; overrides the bare note" },
+    { name: "expected", takesValue: true, description: "What should have happened" },
+    { name: "hypothesis", takesValue: true, description: "Why the agent did not know better" },
+    { name: "kind", takesValue: true, values: markKindValues, description: "Mark kind" },
+    { name: "repo", takesValue: true, description: "Repository path" }
+  ],
+  subcommands: [
+    {
+      name: "list",
+      description: "List marks, newest first",
+      options: [
+        { name: "status", takesValue: true, values: markStatusValues, description: "Filter by status" },
+        { name: "kind", takesValue: true, values: markKindValues, description: "Filter by kind" },
+        { name: "repo", takesValue: true, description: "Filter by repo root" },
+        { name: "json", description: "Print JSON" }
+      ]
+    },
+    { name: "show", description: "Show a mark", args: "<id>", options: [] },
+    {
+      name: "update",
+      description: "Update a mark's status or links",
+      args: "<id>",
+      options: [
+        { name: "status", takesValue: true, values: markStatusValues, description: "New status" },
+        { name: "link-eval", takesValue: true, description: "Linked eval name" },
+        { name: "link-fix", takesValue: true, description: "Linked fix reference" }
+      ]
+    },
+    {
+      name: "to-eval",
+      description: "Promote a mark into a runnable eval scaffold",
+      args: "<id>",
+      options: [
+        { name: "name", takesValue: true, description: "Eval slug override; defaults to the mark's own slug" },
+        { name: "repo", takesValue: true, description: "Repository path; defaults to the mark's repo" },
+        { name: "phases", takesValue: true, description: "Comma-separated phases" },
+        ...agentOptions
+      ]
+    },
+    {
+      name: "scan",
+      description: "Sweep recent conversations and write suggested marks for review",
+      options: [
+        { name: "days", takesValue: true, description: "Lookback window in days (default 7)" },
+        { name: "repo", takesValue: true, description: "Restrict the scan to one repo; defaults to all projects and profiles" },
+        { name: "model", takesValue: true, description: "Judge model (default haiku)" },
+        { name: "limit", takesValue: true, description: "Max model calls for this scan, largest-cost conversations first (default 20)" },
+        { name: "dry-run", description: "Print would-be marks without writing them" }
+      ]
+    }
+  ]
+};
+
 export const evalCommandSpec: CliCommandSpec = {
   name: "eval",
   description: "Prepare, run, and compare local coding-agent eval variants",
@@ -85,7 +149,16 @@ export const evalCommandSpec: CliCommandSpec = {
       ]
     },
     { name: "collect", description: "Collect git and usage metrics for a run", args: "<run-id>", options: [{ name: "json", description: "Print JSON" }] },
-    { name: "report", description: "Print a compact eval report", args: "<run-id>", options: [{ name: "json", description: "Print JSON" }] },
+    {
+      name: "report",
+      description: "Print a compact eval report, or render report.md / report.html with --format",
+      args: "<run-id>",
+      options: [
+        { name: "json", description: "Print JSON" },
+        { name: "format", takesValue: true, values: ["md", "html"], description: "Render report.md or report.html instead of the terminal report" },
+        { name: "out", takesValue: true, description: "Output file path (default report.md / report.html in the run dir)" }
+      ]
+    },
     {
       name: "diff",
       description: "Compare two variants in a run",

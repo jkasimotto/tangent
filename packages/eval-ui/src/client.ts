@@ -246,6 +246,31 @@ export type EvalReviews = {
   variants: Record<string, EvalVariantReview>;
 };
 
+// Scoring-matrix and marks-inbox view types live in mark-types.ts (kept out of this already-large
+// grab-bag of view types); re-exported here so every existing `import type {...} from "./client.js"` in
+// this package keeps working unchanged.
+export type {
+  EvalScoringCell,
+  EvalScoringCriterion,
+  EvalScoringVariantColumn,
+  EvalScoringView,
+  MarkAnchor,
+  MarkKind,
+  MarkLinks,
+  MarkListFilter,
+  MarkProvider,
+  MarkRecord,
+  MarkRepo,
+  MarkStatus,
+  MarkUpdatePatch
+} from "./mark-types.js";
+import type {
+  EvalScoringView,
+  MarkListFilter,
+  MarkRecord,
+  MarkUpdatePatch
+} from "./mark-types.js";
+
 export type EvalUiClient = {
   getSelection(): Promise<{ runId?: string }>;
   listRuns(): Promise<{ runs: EvalRunSummaryView[] }>;
@@ -261,6 +286,10 @@ export type EvalUiClient = {
   getConversations(args: { runId: string; caseId: string; variant: string }): Promise<EvalConversationsView>;
   getReviews(runId: string): Promise<EvalReviews>;
   putReviews(runId: string, reviews: EvalReviews): Promise<EvalReviews>;
+  getScoring(args: { runId: string; caseId: string }): Promise<EvalScoringView>;
+  listMarks(filter?: MarkListFilter): Promise<{ marks: MarkRecord[] }>;
+  getMark(id: string): Promise<MarkRecord>;
+  updateMark(id: string, patch: MarkUpdatePatch): Promise<MarkRecord>;
 };
 
 /** Creates an HTTP-backed Eval UI client. */
@@ -303,7 +332,15 @@ export function createEvalApiClient(baseUrl = ""): EvalUiClient {
     /** Fetches the human review notes for a run. */
     getReviews: (runId) => getJson(`${baseUrl}/api/eval/runs/${encodeURIComponent(runId)}/reviews`),
     /** Persists the human review notes for a run. */
-    putReviews: (runId, reviews) => putJson(`${baseUrl}/api/eval/runs/${encodeURIComponent(runId)}/reviews`, reviews)
+    putReviews: (runId, reviews) => putJson(`${baseUrl}/api/eval/runs/${encodeURIComponent(runId)}/reviews`, reviews),
+    /** Fetches the N-way scoring matrix for every variant in a case. */
+    getScoring: (args) => getJson(`${baseUrl}/api/eval/runs/${encodeURIComponent(args.runId)}/scoring?${query({ caseId: args.caseId })}`),
+    /** Lists marks, optionally filtered by status/kind, newest first. */
+    listMarks: (filter) => getJson(`${baseUrl}/api/eval/marks${filter && (filter.status || filter.kind) ? `?${query({ ...(filter.status ? { status: filter.status } : {}), ...(filter.kind ? { kind: filter.kind } : {}) })}` : ""}`),
+    /** Fetches one mark by id. */
+    getMark: (id) => getJson(`${baseUrl}/api/eval/marks/${encodeURIComponent(id)}`),
+    /** Applies a status/links patch to one mark. */
+    updateMark: (id, patch) => postJson(`${baseUrl}/api/eval/marks/${encodeURIComponent(id)}`, patch)
   };
 }
 

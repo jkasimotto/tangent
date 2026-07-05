@@ -13,6 +13,7 @@ type InstallabilityLintContext = {
 
 const standaloneAppBins: Record<string, string> = {
   "@tangent/usage": "tangent-usage",
+  "@tangent/search": "tangent-search",
   "@tangent/rollup": "tangent-rollup",
   "@tangent/eval": "tangent-eval"
 };
@@ -21,7 +22,8 @@ const rootProductPackages = new Set([
   "@tangent/usage",
   "@tangent/governance",
   "@tangent/rollup",
-  "@tangent/eval"
+  "@tangent/eval",
+  "@tangent/search"
 ]);
 
 const uiAppPackages = new Map([

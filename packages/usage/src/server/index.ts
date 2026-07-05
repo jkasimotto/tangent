@@ -8,6 +8,8 @@ import { createUsageUiClient, type UsageUiClient } from "@tangent/usage-ui-data"
 import { openUsageUiFromSqlite, ensureUsageIndex, type OpenUsageOptions, type UsageClient } from "@tangent/usage-index-sqlite/sqlite";
 import { nativeWatchRoots } from "@tangent/usage-providers/providers/index";
 import { isUsageProvider, type UsageProvider } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
+import { json, numberParam, stringParam } from "./http.js";
+import { handleInsightsGet, handleInsightsPark, handleInsightsUnpark } from "./insights.js";
 import { watchUsageSources, type UsageSourceWatcher } from "./watch.js";
 
 export type StartUsageUiServerOptions = {
@@ -213,9 +215,25 @@ function usageApiRoutes(context: UsageUiRequestContext): UiRoute[] {
 /** Handles the local Usage API request. */
 async function handleApiRequest(request: http.IncomingMessage, url: URL, context: UsageUiRequestContext): Promise<UiRouteResponse> {
   try {
-    if (request.method !== "GET") return json(405, { error: "Method not allowed." });
     const parts = url.pathname.split("/").filter(Boolean).map((part) => decodeURIComponent(part));
     if (parts[0] !== "api" || parts[1] !== "usage") return json(404, { error: "Not found." });
+
+    if (request.method === "POST") {
+      if (parts.length === 4 && parts[2] === "insights" && parts[3] === "park") {
+        // Parking writes into the user's real ~/.tangent park-state file, not test data, so the
+        // read-only verify harness (driven against live data) must not persist a curation change.
+        if (process.env.TANGENT_VERIFY_READONLY) return json(403, { error: "Park disabled in verify harness." });
+        return await handleInsightsPark(request);
+      }
+      if (parts.length === 4 && parts[2] === "insights" && parts[3] === "unpark") {
+        if (process.env.TANGENT_VERIFY_READONLY) return json(403, { error: "Unpark disabled in verify harness." });
+        return await handleInsightsUnpark(request);
+      }
+      return json(405, { error: "Method not allowed." });
+    }
+    if (request.method !== "GET") return json(405, { error: "Method not allowed." });
+
+    if (parts.length === 3 && parts[2] === "insights") return await handleInsightsGet(url);
 
     if (parts.length === 3 && parts[2] === "selection") {
       return json(200, { sessionId: context.preferredSessionId });
@@ -303,18 +321,6 @@ function sessionRef(value: string, context: UsageUiRequestContext): string {
   return value === "selected" ? context.preferredSessionId || "latest" : value;
 }
 
-/** Reads an optional string query parameter. */
-function stringParam(url: URL, key: string): string | undefined {
-  return url.searchParams.get(key) || undefined;
-}
-
-/** Reads an optional numeric query parameter. */
-function numberParam(value: string | null): number | undefined {
-  if (!value) return undefined;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
 /** Reads a valid timeline metric. */
 function timelineMetric(value: string | null): "durationMs" | "selfDurationMs" | "tokens.total" | "cost.amount" | undefined {
   if (value === "durationMs" || value === "selfDurationMs" || value === "tokens.total" || value === "cost.amount") return value;
@@ -325,11 +331,6 @@ function timelineMetric(value: string | null): "durationMs" | "selfDurationMs" |
 function roleParam(value: string | null): "user" | "assistant" | "system" | "tool" | undefined {
   if (value === "user" || value === "assistant" || value === "system" || value === "tool") return value;
   return undefined;
-}
-
-/** Sends a JSON route response. */
-function json(status: number, value: unknown): UiRouteResponse {
-  return { status, json: value };
 }
 
 /** Maps thrown errors to HTTP statuses. */

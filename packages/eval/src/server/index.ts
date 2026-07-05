@@ -19,8 +19,12 @@ import { readVariantEvaluation } from "./evaluation-read.js";
 import { variantConversationsView } from "./conversation-view.js";
 import { assembleContextView, contextManifestView } from "./variant-views.js";
 import { diffLines } from "./diff.js";
+import { renderReportArtifact } from "./report-export.js";
 import { readReviews, writeReviews, type EvalReviews } from "./reviews.js";
 import { readSpecPrompts, writeSpecPrompt } from "./prompts.js";
+import { getMarkRoute, listMarksRoute, updateMarkRoute } from "./marks-routes.js";
+import { scoringView } from "./scoring-view.js";
+import { readJsonBody } from "./http-body.js";
 import type {
   EvalCompareArtifactKind,
   EvalCompareArtifactStatus,
@@ -55,6 +59,9 @@ export type {
   EvalVariantPhaseView,
   EvalVariantSummaryView
 } from "./types.js";
+export type { EvalScoringVariantColumn, EvalScoringView } from "./scoring-view.js";
+export type { ReportCriterion } from "../report/model.js";
+export type { MarkKind, MarkRecord, MarkStatus } from "../marks/types.js";
 
 export type StartEvalUiServerOptions = {
   runId?: string;
@@ -143,6 +150,12 @@ async function handleApiRequest(request: http.IncomingMessage, url: URL, context
         if (process.env.TANGENT_VERIFY_READONLY) return json(403, { error: "Launch disabled in verify harness." });
         return json(202, await launchRun(request));
       }
+      if (parts.length === 4 && parts[2] === "marks") {
+        // A dismiss/fixed edit is a cheap local-file write, but the verify harness blocks every mutation
+        // uniformly so a verification run can never leave a trace in real mark data.
+        if (process.env.TANGENT_VERIFY_READONLY) return json(403, { error: "Mark updates disabled in verify harness." });
+        return json(200, await updateMarkRoute(parts[3], request));
+      }
       return json(405, { error: "Method not allowed." });
     }
     if (request.method === "PUT") {
@@ -174,6 +187,11 @@ async function handleApiRequest(request: http.IncomingMessage, url: URL, context
     }
     if (parts.length === 3 && parts[2] === "specs") return json(200, { specs: await listSpecSummaries() });
 
+    if (parts[2] === "marks") {
+      if (parts.length === 3) return json(200, await listMarksRoute(url));
+      if (parts.length === 4) return json(200, await getMarkRoute(parts[3]));
+    }
+
     if (parts[2] === "runs") {
       if (parts.length === 3) return json(200, { runs: (await listRuns()).map(runSummary) });
       const runId = await runRef(parts[3], context);
@@ -181,6 +199,7 @@ async function handleApiRequest(request: http.IncomingMessage, url: URL, context
       const manifest = await loadRunManifest(runId);
       if (parts.length === 4) return json(200, await runDetail(manifest));
       if (parts.length === 5 && parts[4] === "compare") return json(200, await compareView(manifest, url));
+      if (parts.length === 5 && parts[4] === "scoring") return json(200, await scoringView(manifest, requiredParam(url, "caseId")));
       if (parts.length === 5 && parts[4] === "diff") return json(200, await diffView(manifest, url));
       if (parts.length === 5 && parts[4] === "reviews") return json(200, await readReviews(manifest.runDir));
       if (parts.length === 6 && parts[4] === "context" && parts[5] === "manifest") return json(200, await contextManifestView(singleVariant(manifest, url).variant));
@@ -189,6 +208,8 @@ async function handleApiRequest(request: http.IncomingMessage, url: URL, context
         const { caseId, variant } = singleVariant(manifest, url);
         return json(200, await variantConversationsView(manifest, caseId, variant));
       }
+      if (parts.length === 6 && parts[4] === "report" && parts[5] === "markdown") return text(200, await renderReportArtifact(manifest, "md"), "text/markdown; charset=utf-8");
+      if (parts.length === 6 && parts[4] === "report" && parts[5] === "html") return text(200, await renderReportArtifact(manifest, "html"), "text/html; charset=utf-8");
     }
 
     return json(404, { error: "Not found." });
@@ -255,15 +276,6 @@ async function readSpecSummary(specPath: string): Promise<EvalSpecSummaryView | 
   } catch {
     return undefined;
   }
-}
-
-/** Reads and parses a JSON request body. */
-async function readJsonBody(request: http.IncomingMessage): Promise<Record<string, unknown>> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of request) chunks.push(chunk as Buffer);
-  const text = Buffer.concat(chunks).toString("utf8").trim();
-  if (!text) return {};
-  return JSON.parse(text) as Record<string, unknown>;
 }
 
 /** Resolves a requested run id or latest selector to a concrete run id. */
@@ -671,6 +683,11 @@ function requiredParam(url: URL, key: string): string {
 /** Creates a JSON route response. */
 function json(status: number, value: unknown): UiRouteResponse {
   return { status, json: value };
+}
+
+/** Creates a plain-text route response with an explicit content type, for the report export endpoints. */
+function text(status: number, body: string, contentType: string): UiRouteResponse {
+  return { status, body, headers: { "content-type": contentType } };
 }
 
 /** Maps handler errors to HTTP status codes. */

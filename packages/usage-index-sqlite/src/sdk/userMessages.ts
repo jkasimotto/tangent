@@ -6,6 +6,8 @@ import { ensureSchema, openDb, usageIndexTarget } from "./indexStore.js";
 
 export type ConversationUserMessage = {
   at?: string;
+  /** The message's stable per-session position, counted across every role (see the slim usage schema). */
+  ordinal: number;
   text: string;
 };
 
@@ -29,8 +31,10 @@ export type ReadConversationsUserMessagesOptions = {
  * per-conversation path the UI client uses, so a handful of selected conversations resolve without
  * loading the whole window into memory. Assistant and tool messages are intentionally excluded:
  * correction metrics are judged from the user's words alone, and agent transcripts are too large to
- * carry. Returns one entry per requested id in the order requested; a conversation with no user
- * messages yields an empty `userMessages` array rather than being dropped.
+ * carry. Each message keeps its `ordinal`, the session-wide position counted across every role, so
+ * a caller anchored to a specific ordinal (e.g. a `tangent.mark.v1` anchor) can select the user
+ * message at or nearest before it. Returns one entry per requested id in the order requested; a
+ * conversation with no user messages yields an empty `userMessages` array rather than being dropped.
  */
 export async function readConversationsUserMessages(options: ReadConversationsUserMessagesOptions): Promise<ConversationUserMessages[]> {
   const providers = options.providers?.filter(isUsageProvider);
@@ -46,7 +50,7 @@ export async function readConversationsUserMessages(options: ReadConversationsUs
       const userMessages = projections.messages
         .filter((message) => message.role === "user")
         .sort((left, right) => left.ordinal - right.ordinal)
-        .map((message) => ({ at: message.createdAt ?? undefined, text: (message.text ?? message.textPreview ?? "").trim() }))
+        .map((message) => ({ at: message.createdAt ?? undefined, ordinal: message.ordinal, text: (message.text ?? message.textPreview ?? "").trim() }))
         .filter((message) => message.text.length > 0);
       return { conversationId, title: session?.title, provider: session?.provider, userMessages };
     });

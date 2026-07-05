@@ -12,6 +12,7 @@ import { nativeSchemaStatus } from "@tangent/usage-providers/providers/native/st
 import type { NativeLogInspection, NativeProviderSchemaStatus } from "@tangent/usage-providers/providers/native/types";
 import type { UsageDataset, VisibleMessage } from "@tangent/usage-core/core/dataset";
 import { isUsageProvider, usageProviders, type UsageProvider } from "@tangent/usage-core/core/schema/usage-jsonl-v1";
+import { runUsageInsightsCommand } from "./insights.js";
 import { runUsageResourceCommand } from "./resource-commands.js";
 import { usageCommandSpec } from "./spec.js";
 import { usageUiCommand } from "./ui.js";
@@ -82,6 +83,11 @@ export async function runUsageCli(argv = process.argv.slice(2)): Promise<void> {
 
   if (command === "ui") {
     await usageUiCommand(args);
+    return;
+  }
+
+  if (command === "insights") {
+    await runUsageInsightsCommand(args, subcommand);
     return;
   }
 

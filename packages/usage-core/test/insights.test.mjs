@@ -522,3 +522,9 @@ test("projectLabel falls back to the cwd basename when the repo root is unknown 
   assert.equal(noRepo.projectLabel, undefined);
   assert.match(noRepo.title, /^One session spent /, "with no project label the phrase degrades gracefully");
 });
+
+test("normalizeCommandHead drops quoted string arguments from the head so echo banners group as one command", () => {
+  assert.equal(normalizeCommandHead('echo "=== build ==="'), "echo", "a double-quoted argument never becomes part of the head");
+  assert.equal(normalizeCommandHead("echo '=== build ==='"), "echo", "a single-quoted argument never becomes part of the head");
+  assert.equal(normalizeCommandHead('git commit -m "fix the bug"'), "git commit", "quoted arguments after real command words leave the head unchanged");
+});

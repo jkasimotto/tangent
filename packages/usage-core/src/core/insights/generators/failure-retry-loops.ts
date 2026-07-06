@@ -2,7 +2,11 @@ import type { NormalizedConversation, NormalizedToolCall } from "../../conversat
 import { extractCommandText, normalizeCommandHead } from "../command-head.js";
 import { findingFingerprint } from "../fingerprint.js";
 import type { Finding, FindingEvidenceRef } from "../types.js";
-import { estimateTokensFromText, formatFindingDuration, sum } from "../util.js";
+import { estimateTokensFromText, formatFindingDuration, median, projectLabelForRoot, sum } from "../util.js";
+
+// Below this, a "median Xs" clause reads as noise rather than signal (a floor-rounded near-zero
+// median used to render as the confusing "median 0m"); omit the clause entirely instead.
+const MEDIAN_CLAUSE_FLOOR_MS = 1_000;
 
 // A rerun of the same command head this close to the previous attempt counts as the same retry
 // loop rather than an unrelated later run of the same tool.
@@ -38,6 +42,8 @@ type RetryGroup = {
   retries: number;
   totalMs: number;
   tokens: number;
+  /** Cost of each individual retry-loop instance (a run of same-head calls with at least one failure), used to surface a typical-loop-cost median alongside the group total. */
+  runCostsMs: number[];
   sessions: Map<string, string | undefined>;
 };
 
@@ -52,11 +58,12 @@ export function failureRetryLoops(conversations: NormalizedConversation[]): Find
     const repo = conversation.repo?.root;
     for (const run of retryRunsForSession(conversation)) {
       const key = JSON.stringify([repo || "", run.head]);
-      const group: RetryGroup = groups.get(key) || { repo, head: run.head, failures: 0, retries: 0, totalMs: 0, tokens: 0, sessions: new Map() };
+      const group: RetryGroup = groups.get(key) || { repo, head: run.head, failures: 0, retries: 0, totalMs: 0, tokens: 0, runCostsMs: [], sessions: new Map() };
       group.failures += run.failures;
       group.retries += run.retries;
       group.totalMs += run.totalMs;
       group.tokens += run.tokens;
+      group.runCostsMs.push(run.totalMs);
       group.sessions.set(conversation.conversationId, conversation.providerSessionId);
       groups.set(key, group);
     }
@@ -127,12 +134,15 @@ function buildFinding(group: RetryGroup): Finding | undefined {
   if (group.failures < MIN_FAILURES && group.totalMs < MIN_TOTAL_COST_MS) return undefined;
 
   const subject = group.head;
+  const projectLabel = projectLabelForRoot(group.repo);
   const evidence: FindingEvidenceRef[] = [...group.sessions.entries()].map(([conversationId, sessionId]) => ({ conversationId, sessionId }));
+  const medianMs = median(group.runCostsMs);
+  const medianClause = medianMs >= MEDIAN_CLAUSE_FLOOR_MS ? `median ${formatFindingDuration(medianMs)}, ` : "";
 
   return {
     generator: "failure-retry-loops",
     subject,
-    title: `${group.head} failed ${group.failures}x and was retried ${group.retries}x, burning ${formatFindingDuration(group.totalMs)}`,
+    title: `${group.head} failed ${group.failures}x and was retried ${group.retries}x, ${medianClause}burning ${formatFindingDuration(group.totalMs)}`,
     costMs: group.totalMs,
     costTokens: group.tokens,
     costTokensEstimated: true,
@@ -140,6 +150,7 @@ function buildFinding(group: RetryGroup): Finding | undefined {
     remedy: "document-invocation",
     fingerprint: findingFingerprint("failure-retry-loops", subject, group.repo),
     repo: group.repo,
-    detail: { failures: group.failures, retries: group.retries, totalMs: group.totalMs }
+    projectLabel,
+    detail: { failures: group.failures, retries: group.retries, totalMs: group.totalMs, medianMs }
   };
 }

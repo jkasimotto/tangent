@@ -2,7 +2,11 @@ import type { NormalizedConversation } from "../../conversation-report-types.js"
 import { extractCommandText, normalizeCommandHead } from "../command-head.js";
 import { findingFingerprint } from "../fingerprint.js";
 import type { Finding, FindingEvidenceRef } from "../types.js";
-import { estimateTokensFromText, flattenToolCalls, formatFindingDuration, median, sum } from "../util.js";
+import { estimateTokensFromText, flattenToolCalls, formatFindingDuration, median, projectLabelForRoot, sum } from "../util.js";
+
+// Below this, a "median Xs" clause reads as noise rather than signal (a floor-rounded near-zero
+// median used to render as the confusing "median 0m"); omit the clause entirely instead.
+const MEDIAN_CLAUSE_FLOOR_MS = 1_000;
 
 // Noise floor: a command run once or twice, briefly, is normal iteration, not a pattern worth a
 // CLAUDE.md note. Either condition alone is enough to surface (a command run 40 times at a few
@@ -59,12 +63,14 @@ function buildFinding(group: CommandGroup): Finding | undefined {
   const medianMs = median(group.durationsMs);
   const maxMs = Math.max(...group.durationsMs);
   const subject = group.head;
+  const projectLabel = projectLabelForRoot(group.repo);
   const evidence: FindingEvidenceRef[] = [...group.sessions.entries()].map(([conversationId, sessionId]) => ({ conversationId, sessionId }));
+  const medianClause = medianMs >= MEDIAN_CLAUSE_FLOOR_MS ? `median ${formatFindingDuration(medianMs)}, ` : "";
 
   return {
     generator: "recurring-long-commands",
     subject,
-    title: `${group.head} ran ${count}x, median ${formatFindingDuration(medianMs)}, total ${formatFindingDuration(totalMs)}`,
+    title: `${group.head} ran ${count}x, ${medianClause}total ${formatFindingDuration(totalMs)}`,
     costMs: totalMs,
     costTokens: sum(group.tokens),
     costTokensEstimated: true,
@@ -72,6 +78,7 @@ function buildFinding(group: CommandGroup): Finding | undefined {
     remedy: "document-command",
     fingerprint: findingFingerprint("recurring-long-commands", subject, group.repo),
     repo: group.repo,
+    projectLabel,
     detail: { count, medianMs, maxMs, totalMs }
   };
 }

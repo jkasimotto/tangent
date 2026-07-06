@@ -1,8 +1,8 @@
 import type { NormalizedConversation } from "../conversation-report-types.js";
 import { flattenToolCalls } from "./util.js";
 
-/** The three coarse categories the Insights header groups agent tool time into, in fixed display order. */
-export type AgentTimeCategoryKey = "findingInfo" | "executing" | "writing";
+/** The coarse categories the Insights header groups agent tool time into, in fixed display order. */
+export type AgentTimeCategoryKey = "findingInfo" | "executing" | "writing" | "other";
 
 /** One category's share of the window's total agent tool time. */
 export type AgentTimeCategoryShare = {
@@ -12,7 +12,12 @@ export type AgentTimeCategoryShare = {
   fraction: number;
 };
 
-/** The Insights distribution header: total agent tool time plus a fixed-order category breakdown. */
+/**
+ * The Insights distribution header: total agent tool time plus a category breakdown. `categories`
+ * includes every category with nonzero time in the window (zero-ms categories are dropped rather
+ * than shown as an empty slice), so the fractions always sum to 1.0 and the header never silently
+ * hides a chunk of the window's time under an uncounted "other" bucket.
+ */
 export type AgentTimeDistribution = {
   totalMs: number;
   categories: AgentTimeCategoryShare[];
@@ -21,15 +26,17 @@ export type AgentTimeDistribution = {
 const CATEGORY_LABELS: Record<AgentTimeCategoryKey, string> = {
   findingInfo: "finding info",
   executing: "executing",
-  writing: "writing"
+  writing: "writing",
+  other: "other tools"
 };
 
 /**
  * Computes the Insights distribution header shared verbatim by `tangent usage insights` and the
  * Insights view in the Usage UI: total agent tool time in the window, then the share spent finding
- * info (read+search calls), executing (command calls), and writing, in that fixed order. Calls
- * outside these three categories (e.g. "other") count toward totalMs but are not broken out, matching
- * the CLI header this mirrors.
+ * info (read+search calls), executing (command calls), writing, and everything else ("other
+ * tools"), in that fixed order. Every category with nonzero time is included, so the returned shares
+ * always sum to 1.0; a category with no time in this window is omitted entirely rather than shown as
+ * a hidden or zero-width slice.
  */
 export function computeAgentTimeDistribution(conversations: NormalizedConversation[]): AgentTimeDistribution {
   let readMs = 0;
@@ -50,12 +57,11 @@ export function computeAgentTimeDistribution(conversations: NormalizedConversati
   const totalMs = readMs + searchMs + writeMs + commandMs + otherMs;
   /** Returns a category's fraction of the window's total agent tool time, 0 when the window is empty. */
   const share = (ms: number): number => (totalMs > 0 ? ms / totalMs : 0);
-  return {
-    totalMs,
-    categories: [
-      { key: "findingInfo", label: CATEGORY_LABELS.findingInfo, ms: readMs + searchMs, fraction: share(readMs + searchMs) },
-      { key: "executing", label: CATEGORY_LABELS.executing, ms: commandMs, fraction: share(commandMs) },
-      { key: "writing", label: CATEGORY_LABELS.writing, ms: writeMs, fraction: share(writeMs) }
-    ]
-  };
+  const allCategories: AgentTimeCategoryShare[] = [
+    { key: "findingInfo", label: CATEGORY_LABELS.findingInfo, ms: readMs + searchMs, fraction: share(readMs + searchMs) },
+    { key: "executing", label: CATEGORY_LABELS.executing, ms: commandMs, fraction: share(commandMs) },
+    { key: "writing", label: CATEGORY_LABELS.writing, ms: writeMs, fraction: share(writeMs) },
+    { key: "other", label: CATEGORY_LABELS.other, ms: otherMs, fraction: share(otherMs) }
+  ];
+  return { totalMs, categories: allCategories.filter((category) => category.ms > 0) };
 }

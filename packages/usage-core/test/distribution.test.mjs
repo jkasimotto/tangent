@@ -58,17 +58,23 @@ test("computeAgentTimeDistribution groups read+search as finding info, command a
   assert.equal(writing.fraction, 0.2);
 });
 
-test("computeAgentTimeDistribution returns zero fractions with no tool calls", () => {
+test("computeAgentTimeDistribution returns no categories with no tool calls", () => {
   const distribution = computeAgentTimeDistribution([conversation("conv-empty", [assistantMessage("m1", [])])]);
   assert.equal(distribution.totalMs, 0);
-  assert.deepEqual(distribution.categories.map((category) => category.fraction), [0, 0, 0]);
+  assert.deepEqual(distribution.categories, [], "zero-ms categories are dropped, so an empty window has no bars");
 });
 
-test("computeAgentTimeDistribution counts an 'other' category call toward the total but not toward any bar", () => {
+test("computeAgentTimeDistribution surfaces uncategorized call time as an 'other tools' bucket so shares sum to 1", () => {
   const convo = conversation("conv-other", [assistantMessage("m1", [toolCall("other", 10_000), toolCall("read", 10_000)])]);
   const distribution = computeAgentTimeDistribution([convo]);
   assert.equal(distribution.totalMs, 20_000);
   const findingInfo = distribution.categories.find((category) => category.key === "findingInfo");
   assert.equal(findingInfo.ms, 10_000);
   assert.equal(findingInfo.fraction, 0.5);
+  const other = distribution.categories.find((category) => category.key === "other");
+  assert.equal(other.label, "other tools");
+  assert.equal(other.ms, 10_000);
+  assert.equal(other.fraction, 0.5);
+  const fractionSum = distribution.categories.reduce((total, category) => total + category.fraction, 0);
+  assert.equal(fractionSum, 1, "no time is hidden from the breakdown");
 });

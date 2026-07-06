@@ -40,6 +40,13 @@ export type Finding = {
   fingerprint: string;
   /** Repo root the finding was scoped to, if any (findings computed cross-project may leave this unset). */
   repo?: string;
+  /**
+   * Short human project name for display (the basename of `repo`, e.g. "polez-pgande"), so titles
+   * and UI chrome never have to show a raw absolute repo path. Set whenever a finding's evidence
+   * all traces back to one repo root; left undefined for cross-project aggregations that do not
+   * resolve to a single root.
+   */
+  projectLabel?: string;
   /** Generator-specific supporting detail (per-file read counts, retry counts, and similar). Free-form by design: each generator surfaces different evidence and there is no shared shape worth forcing. */
   detail?: Record<string, unknown>;
 };

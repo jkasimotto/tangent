@@ -22,6 +22,8 @@ export type RunInsightGeneratorsOptions = {
   parkState?: ParkState;
   /** Include parked findings in the result even though they are still parked. */
   includeParked?: boolean;
+  /** Let Tangent's own eval sandbox sessions count as findings input, for callers whose user explicitly opted in (for example `--include-eval-runs`). */
+  includeEvalRuns?: boolean;
 };
 
 /**
@@ -29,10 +31,13 @@ export type RunInsightGeneratorsOptions = {
  * returns findings ranked by cost (wall-clock time) descending, applying park-state filtering
  * unless `includeParked` is set or no park state was supplied. Tangent's own eval-run sandbox
  * sessions are dropped from the window before any generator sees it, so eval harness activity never
- * shows up as a "finding" about the user's real workflow.
+ * shows up as a "finding" about the user's real workflow; `includeEvalRuns` opts back in so the
+ * flag-level opt-in on the CLI and server actually reaches the generators.
  */
 export function runInsightGenerators(conversations: NormalizedConversation[], options: RunInsightGeneratorsOptions = {}): Finding[] {
-  const realConversations = conversations.filter((conversation) => !isEvalRunConversation(conversation));
+  const realConversations = options.includeEvalRuns
+    ? conversations
+    : conversations.filter((conversation) => !isEvalRunConversation(conversation));
   const names = options.generators?.length ? options.generators : (Object.keys(INSIGHT_GENERATORS) as FindingGeneratorName[]);
   const findings = names.flatMap((name) => INSIGHT_GENERATORS[name](realConversations));
   const visible = options.includeParked || !options.parkState

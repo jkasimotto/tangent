@@ -13,6 +13,7 @@ import {
   repoInsightsParkStatePath,
   runInsightGenerators,
   unparkFinding,
+  type AgentTimeCategoryShare,
   type Finding,
   type FindingGeneratorName,
   type ParkState
@@ -20,7 +21,9 @@ import {
 import { loadUsageDatasetFromIndex } from "@tangent/usage-index-sqlite/sdk/indexStore";
 import type { UsageInsightsApiFinding, UsageInsightsApiResponse } from "@tangent/usage-ui-data";
 
+import { partitionEvalRunConversations } from "../core/insights-window.js";
 import { json, numberField, numberParam, readJsonBody, requiredBodyString, stringField, stringParam } from "./http.js";
+import { createInsightsComputationCache, insightsComputationCacheKey, type InsightsComputation } from "./insights-cache.js";
 
 const DEFAULT_INSIGHTS_DAYS = 30;
 const GENERATOR_NAMES: FindingGeneratorName[] = [
@@ -39,17 +42,50 @@ type InsightsScope = {
 };
 
 /**
+ * One finding on the wire, extended with the additive projectLabel field. Declared as an
+ * intersection rather than editing UsageInsightsApiFinding directly because that type lives in
+ * @tangent/usage-ui-data (the UI package's mirror of this wire shape); the intersection stays
+ * correct whether or not the mirror has caught up.
+ */
+type InsightsApiFindingPayload = UsageInsightsApiFinding & { projectLabel?: string };
+
+/**
+ * The full Insights response on the wire: everything UsageInsightsApiResponse already promises plus
+ * the additive computedAt and excludedEvalRuns fields, with findings and categories re-declared so
+ * the additive projectLabel and "other tools" category typecheck independently of when
+ * @tangent/usage-ui-data mirrors them.
+ */
+type InsightsApiResponsePayload = Omit<UsageInsightsApiResponse, "findings" | "categories"> & {
+  findings: InsightsApiFindingPayload[];
+  categories: AgentTimeCategoryShare[];
+  /** ISO timestamp of when the served computation ran; older than the request time when served from cache. */
+  computedAt: string;
+  /** How many of Tangent's own eval sandbox sessions were excluded from the window. */
+  excludedEvalRuns: number;
+};
+
+/**
+ * The server keeps one computation per (repo, scope, days, includeEvalRuns) key for two minutes.
+ * Park state is read fresh on every request and applied after cache retrieval, so park and unpark
+ * reflect immediately despite the cache.
+ */
+const computationCache = createInsightsComputationCache();
+
+/**
  * Handles `GET /api/usage/insights`: the distribution header and ranked findings feed for a window.
  * This is the Usage UI's visual twin of `tangent usage insights`, so it mirrors the CLI's scope,
- * window, and generator/park filtering exactly, down to the same default window (30 days).
+ * window, generator/park filtering, and eval-run exclusion exactly, down to the same default window
+ * (30 days). Pass includeEvalRuns=1 to opt eval sandbox sessions back in.
  */
 export async function handleInsightsGet(url: URL): Promise<UiRouteResponse> {
   const scope = await resolveInsightsScope(stringParam(url, "repo"));
   const windowDays = numberParam(url.searchParams.get("days")) ?? DEFAULT_INSIGHTS_DAYS;
   const generator = generatorParam(url);
   const includeParked = url.searchParams.get("includeParked") === "true";
-  const { conversations, parkState } = await loadInsightsWindow(scope, windowDays);
-  return json(200, buildInsightsResponse(conversations, parkState, scope, windowDays, { generator, includeParked }));
+  const includeEvalRuns = includeEvalRunsParam(url);
+  const computation = await cachedInsightsComputation(scope, windowDays, includeEvalRuns);
+  const parkState = await loadParkState(scope.parkStatePath);
+  return json(200, buildInsightsResponse(computation, parkState, scope, windowDays, { generator, includeParked }));
 }
 
 /** Handles `POST /api/usage/insights/park`: parks a finding at its current cost in the given window. */
@@ -58,9 +94,8 @@ export async function handleInsightsPark(request: http.IncomingMessage): Promise
   const fingerprint = requiredBodyString(body, "fingerprint");
   const scope = await resolveInsightsScope(stringField(body, "repo"));
   const windowDays = numberField(body, "days") ?? DEFAULT_INSIGHTS_DAYS;
-  const { conversations, parkState } = await loadInsightsWindow(scope, windowDays);
-  const findings = runInsightGenerators(conversations, { includeParked: true });
-  const finding = findings.find((row) => row.fingerprint === fingerprint);
+  const computation = await cachedInsightsComputation(scope, windowDays, false);
+  const finding = computation.findings.find((row) => row.fingerprint === fingerprint);
   if (!finding) throw notFound(`No finding with fingerprint ${fingerprint} in the current window. Widen the window or check the fingerprint.`);
   const state = await parkFinding(scope.parkStatePath, fingerprint, finding.costMs);
   return json(200, { fingerprint, parked: fingerprint in state });
@@ -89,16 +124,54 @@ async function resolveInsightsScope(repoArg: string | undefined): Promise<Insigh
 }
 
 /**
- * Loads the usage dataset for the resolved window and its park state, building a `NormalizedConversation`
- * per conversation exactly like the CLI feed (`loadUsageDatasetFromIndex`, not the server's own
- * session-projection client, since insight generators need full per-conversation tool-call detail).
+ * Returns the Insights computation for a key from the in-process cache, loading the window and
+ * computing it on a miss. This wraps the expensive part of every Insights request (re-reading and
+ * re-normalizing each conversation in the window, then running every generator); park state stays
+ * outside on purpose so parking is never two minutes stale.
  */
-async function loadInsightsWindow(scope: InsightsScope, windowDays: number): Promise<{ conversations: NormalizedConversation[]; parkState: ParkState }> {
+async function cachedInsightsComputation(scope: InsightsScope, windowDays: number, includeEvalRuns: boolean): Promise<InsightsComputation> {
+  const key = insightsComputationCacheKey({ repo: scope.repo, scope: scope.scope, days: windowDays, includeEvalRuns });
+  const cached = computationCache.get(key);
+  if (cached) return cached;
+  const { conversations, excludedEvalRuns } = await loadInsightsWindow(scope, windowDays, includeEvalRuns);
+  const computation = computeInsights(conversations, excludedEvalRuns, { includeEvalRuns });
+  computationCache.set(key, computation);
+  return computation;
+}
+
+/**
+ * Loads the usage dataset for the resolved window, building a `NormalizedConversation` per
+ * conversation exactly like the CLI feed (`loadUsageDatasetFromIndex`, not the server's own
+ * session-projection client, since insight generators need full per-conversation tool-call detail),
+ * then drops Tangent's own eval sandbox sessions (unless includeEvalRuns) before generators or the
+ * distribution ever see the window.
+ */
+async function loadInsightsWindow(scope: InsightsScope, windowDays: number, includeEvalRuns: boolean): Promise<{ conversations: NormalizedConversation[]; excludedEvalRuns: number }> {
   const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
   const dataset = await loadUsageDatasetFromIndex({ repo: scope.repo, scope: scope.scope, since });
-  const conversations = dataset.conversations.all().data.map((row) => dataset.conversations.report({ conversationId: row.id }).data);
-  const parkState = await loadParkState(scope.parkStatePath);
-  return { conversations, parkState };
+  const loaded = dataset.conversations.all().data.map((row) => dataset.conversations.report({ conversationId: row.id }).data);
+  return partitionEvalRunConversations(loaded, { includeEvalRuns });
+}
+
+/**
+ * Runs the park-independent part of one Insights request over an already-loaded window: every
+ * generator with includeParked true, plus the agent-time distribution. Pure given its inputs (no
+ * IO), so it is unit-testable with fixture conversations; `now` is injectable for deterministic
+ * computedAt assertions. `includeEvalRuns` must mirror how the window was loaded, so the
+ * generators' own eval-run guard does not silently re-drop sessions the request opted back in.
+ */
+export function computeInsights(
+  conversations: NormalizedConversation[],
+  excludedEvalRuns: number,
+  options: { includeEvalRuns?: boolean; now?: Date } = {}
+): InsightsComputation {
+  const now = options.now || new Date();
+  return {
+    findings: runInsightGenerators(conversations, { includeParked: true, includeEvalRuns: options.includeEvalRuns }),
+    distribution: computeAgentTimeDistribution(conversations),
+    computedAt: now.toISOString(),
+    excludedEvalRuns
+  };
 }
 
 type BuildInsightsResponseOptions = {
@@ -108,36 +181,37 @@ type BuildInsightsResponseOptions = {
 };
 
 /**
- * Builds the Insights API response from an already-loaded window: the distribution header plus every
- * qualifying finding ranked by cost, each carrying its own `parked` flag. Pure given its inputs (no
- * IO), so it is unit-testable directly with fixture conversations; `handleInsightsGet` is the only
- * caller that also touches disk.
+ * Shapes a (possibly cached) Insights computation into the API response: the distribution header
+ * plus every qualifying finding ranked by cost, each carrying its own `parked` flag. Generator and
+ * park filtering happen here, per request, so one cached computation serves every combination of
+ * them and park state is never stale. Pure given its inputs (no IO), so it is unit-testable with a
+ * computation built by `computeInsights`.
  */
 export function buildInsightsResponse(
-  conversations: NormalizedConversation[],
+  computation: InsightsComputation,
   parkState: ParkState,
   scope: InsightsScope,
   windowDays: number,
   options: BuildInsightsResponseOptions
-): UsageInsightsApiResponse {
-  const findings = runInsightGenerators(conversations, {
-    generators: options.generator ? [options.generator] : undefined,
-    includeParked: true
-  });
-  const rows = findings.map((finding) => ({ finding, parked: isParked(parkState, finding.fingerprint, finding.costMs) }));
+): InsightsApiResponsePayload {
+  const generatorFiltered = options.generator
+    ? computation.findings.filter((finding) => finding.generator === options.generator)
+    : computation.findings;
+  const rows = generatorFiltered.map((finding) => ({ finding, parked: isParked(parkState, finding.fingerprint, finding.costMs) }));
   const visible = options.includeParked ? rows : rows.filter((row) => !row.parked);
-  const distribution = computeAgentTimeDistribution(conversations);
   return {
     scopeLabel: scope.scope === "all" ? "all projects" : scope.repoLabel || scope.repo,
     windowDays,
-    totalMs: distribution.totalMs,
-    categories: distribution.categories,
-    findings: visible.map(({ finding, parked }) => toApiFinding(finding, parked))
+    totalMs: computation.distribution.totalMs,
+    categories: computation.distribution.categories,
+    findings: visible.map(({ finding, parked }) => toApiFinding(finding, parked)),
+    computedAt: computation.computedAt,
+    excludedEvalRuns: computation.excludedEvalRuns
   };
 }
 
-/** Converts a core `Finding` into its API wire shape, attaching the resolved `parked` flag and the shared remedy label text. */
-function toApiFinding(finding: Finding, parked: boolean): UsageInsightsApiFinding {
+/** Converts a core `Finding` into its API wire shape, attaching the resolved `parked` flag, the shared remedy label text, and the human projectLabel. */
+function toApiFinding(finding: Finding, parked: boolean): InsightsApiFindingPayload {
   return {
     generator: finding.generator,
     subject: finding.subject,
@@ -149,6 +223,7 @@ function toApiFinding(finding: Finding, parked: boolean): UsageInsightsApiFindin
     remedyLabel: FINDING_REMEDY_LABELS[finding.remedy],
     fingerprint: finding.fingerprint,
     repo: finding.repo,
+    projectLabel: finding.projectLabel,
     parked
   };
 }
@@ -161,6 +236,12 @@ function generatorParam(url: URL): FindingGeneratorName | undefined {
   const error = new Error(`generator must be one of: ${GENERATOR_NAMES.join(", ")}.`) as Error & { status?: number };
   error.status = 400;
   throw error;
+}
+
+/** Parses the `includeEvalRuns` query parameter: "1" (or "true") opts Tangent's own eval sandbox sessions back into the window. */
+function includeEvalRunsParam(url: URL): boolean {
+  const value = url.searchParams.get("includeEvalRuns");
+  return value === "1" || value === "true";
 }
 
 /** Builds a 404-mapped error for a not-found finding lookup. */

@@ -5,6 +5,7 @@ import { renderCommandHelp } from "@tangent/core";
 import { parseArgs } from "./args.js";
 import { captureCommand } from "./commands/capture.js";
 import { collectCommand } from "./commands/collect.js";
+import { compareSearchCommand } from "./commands/compare-search.js";
 import { contextCommand } from "./commands/context.js";
 import { diffCommand } from "./commands/diff.js";
 import { initCommand } from "./commands/init.js";
@@ -25,6 +26,7 @@ export async function runEvalCli(argv = process.argv.slice(2)): Promise<void> {
   if (!command || args.help) return help();
 
   if (command === "init") return initCommand();
+  if (command === "compare-search") return compareSearchCommand(args);
   if (command === "context") return contextCommand(args);
   if (command === "capture") return captureCommand(args);
   if (command === "prepare") return prepareCommand(args);

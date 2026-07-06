@@ -1,7 +1,15 @@
 import type { NormalizedConversation, NormalizedToolCall } from "../../conversation-report-types.js";
 import { findingFingerprint } from "../fingerprint.js";
 import type { Finding } from "../types.js";
-import { estimateTokensFromText, flattenToolCalls, formatFindingDuration, lastAssistantText, sum } from "../util.js";
+import {
+  estimateTokensFromText,
+  flattenToolCalls,
+  formatFindingDuration,
+  lastAssistantText,
+  oneSessionInPhrase,
+  projectLabelForConversation,
+  sum
+} from "../util.js";
 
 // A session's read+search time before its first write has to clear this floor to be worth
 // surfacing; a few seconds of orienting reads is normal and not a finding.
@@ -46,13 +54,13 @@ function buildFinding(conversation: NormalizedConversation): Finding | undefined
   const searchMs = sum(infoCalls.filter((call) => call.category === "search").map((call) => call.result?.durationMs || 0));
   const subject = conversation.conversationId;
   const repo = conversation.repo?.root;
-  const label = conversation.providerSessionId || conversation.conversationId;
+  const projectLabel = projectLabelForConversation(conversation);
   const scope = firstWriteIndex === -1 ? "the whole session (no write ever happened)" : "the first write";
 
   return {
     generator: "info-finding-heavy-sessions",
     subject,
-    title: `${label}: ${formatFindingDuration(costMs)} finding info across ${files.length} file${files.length === 1 ? "" : "s"} before ${scope}`,
+    title: `${oneSessionInPhrase(projectLabel)} spent ${formatFindingDuration(costMs)} finding info across ${files.length} file${files.length === 1 ? "" : "s"} before ${scope}`,
     costMs,
     costTokens,
     costTokensEstimated: true,
@@ -60,6 +68,7 @@ function buildFinding(conversation: NormalizedConversation): Finding | undefined
     remedy: costMs > 0 && searchMs / costMs >= SEARCH_HEAVY_SHARE ? "structural-search" : "missing-map",
     fingerprint: findingFingerprint("info-finding-heavy-sessions", subject, repo),
     repo,
+    projectLabel,
     detail: { files, hadWrite: firstWriteIndex !== -1 }
   };
 }

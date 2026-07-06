@@ -65,28 +65,6 @@ button {
   }
 }
 
-.search {
-  display: grid;
-  gap: 5px;
-  color: #66716a;
-  font-size: 11px;
-}
-
-.search input {
-  width: 100%;
-  border: 1px solid #c7d0c8;
-  background: #fff;
-  color: #17201b;
-  border-radius: 6px;
-  padding: 6px 8px;
-  outline: none;
-}
-
-.search input:focus {
-  border-color: #2b6e59;
-  box-shadow: 0 0 0 3px rgb(43 110 89 / 12%);
-}
-
 /* Browse gallery -------------------------------------------------------- */
 
 .usage-browse {
@@ -98,35 +76,76 @@ button {
   background: #f3f5f1;
 }
 
+/* One row: project name, search, and the Conversations/Insights nav. Deliberately minimal height
+   and a single visual weight per element, so the header reads at a glance instead of competing. */
 .browse-header {
   display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 20px 24px 14px;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 24px;
   border-bottom: 1px solid #d8ddd5;
 }
 
-.browse-header p {
-  margin: 0;
-  color: #66716a;
-  font-size: 12px;
-}
-
 .browse-header h1 {
-  margin: 2px 0 0;
-  font-size: 22px;
-  line-height: 1.1;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.2;
 }
 
-.browse-filters {
-  display: flex;
-  align-items: flex-end;
-  gap: 16px;
+.browse-search {
+  flex: 1 1 240px;
+  min-width: 120px;
+  max-width: 360px;
+  border: 1px solid #c7d0c8;
+  background: #fff;
+  color: #17201b;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  outline: none;
 }
 
-.browse-header .search {
-  width: min(320px, 40vw);
+.browse-search:focus {
+  border-color: #2b6e59;
+  box-shadow: 0 0 0 3px rgb(43 110 89 / 12%);
+}
+
+/* Segmented Conversations/Insights nav: Insights is a place in the app, not a modal action. */
+.view-tabs {
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: 2px;
+  border: 1px solid #d2dacf;
+  border-radius: 8px;
+  padding: 2px;
+  background: #eef2ec;
+}
+
+.view-tab {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #53605a;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.view-tab:hover {
+  color: #17201b;
+}
+
+.view-tab.active {
+  background: #ffffff;
+  color: #17201b;
+  box-shadow: 0 1px 3px rgb(23 32 27 / 12%);
 }
 
 /* Browse layout: project rail on the left, the selected project's cards on the right. */
@@ -944,6 +963,11 @@ button {
   color: #26332c;
   font-size: 15px;
   line-height: 1.68;
+}
+
+.message p.message-empty {
+  color: #8a978d;
+  font-style: italic;
 }
 
 .message-expand {

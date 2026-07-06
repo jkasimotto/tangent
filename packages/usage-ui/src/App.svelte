@@ -3,6 +3,8 @@
   import {
     createUsageApiClient,
     groupSessionsByProject,
+    middleTruncatePath,
+    NO_PROJECT_LABEL,
     type UsageBottleneck,
     type UsageConversationChartRow,
     type UsageConversationChartSegment,
@@ -74,9 +76,22 @@
 
   onMount(() => {
     void loadSessions();
+    if (isInsightsPath(window.location.pathname)) mode = "insights";
+    window.addEventListener("popstate", onPopState);
     const timer = setInterval(() => void refreshLive(), LIVE_REFRESH_MS);
-    return () => clearInterval(timer);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("popstate", onPopState);
+    };
   });
+
+  /** Sets the browser tab title to the open conversation's (already-sanitized) title, or the app default otherwise, so a raw command title never reaches document.title either. */
+  function syncDocumentTitle(title: string | undefined): void {
+    if (typeof document === "undefined") return;
+    document.title = title ? `${title} · Tangent Usage` : "Tangent Usage";
+  }
+
+  $: syncDocumentTitle(mode === "read" ? view?.selected.title : undefined);
 
   $: pxPerMs = BASE_PX_PER_MS * zoom;
   $: railItems = groupSessionsByProject(sessions);
@@ -174,11 +189,38 @@
 
   function backToBrowse(): void {
     mode = "browse";
+    pushModeLocation(false);
   }
 
   /** Enters the Insights view, the efficiency lens over Usage telemetry. */
   function openInsights(): void {
     mode = "insights";
+    pushModeLocation(true);
+  }
+
+  /** Returns whether a path addresses the Insights view (e.g. "/usage/insights" or "/insights" when standalone), so a hard reload or deep link opens directly into Insights instead of defaulting to Browse. */
+  function isInsightsPath(pathname: string): boolean {
+    return /\/insights\/?$/.test(pathname);
+  }
+
+  /** Adds or removes the "/insights" path suffix, preserving whatever prefix the shell mounted this app under (e.g. "/usage"), so the URL always reflects the active view and survives a reload. */
+  function withInsightsSuffix(pathname: string, insights: boolean): string {
+    const trimmed = pathname.replace(/\/+$/, "") || "/";
+    const base = isInsightsPath(trimmed) ? trimmed.replace(/\/insights$/, "") || "/" : trimmed;
+    return insights ? `${base === "/" ? "" : base}/insights` : base;
+  }
+
+  /** Pushes the browse/insights URL for the current mode, so back/forward and reloads address the same view. A no-op when the location already matches (e.g. browse's default bare path). */
+  function pushModeLocation(insights: boolean): void {
+    const next = withInsightsSuffix(window.location.pathname, insights);
+    if (next === window.location.pathname) return;
+    window.history.pushState({}, "", `${next}${window.location.search}${window.location.hash}`);
+  }
+
+  /** Syncs browse/insights mode with browser back/forward navigation. Conversation reading has no URL scheme yet, so this is a no-op while a conversation is open. */
+  function onPopState(): void {
+    if (mode === "read") return;
+    mode = isInsightsPath(window.location.pathname) ? "insights" : "browse";
   }
 
   /** Opens a conversation from an Insights finding's evidence, reusing the same navigation the session gallery uses. */
@@ -238,7 +280,7 @@
   function filterSessions(values: UsageSessionListItem[], search: string, project: string | undefined): UsageSessionListItem[] {
     const needle = search.trim().toLowerCase();
     return values.filter((session) => {
-      if (project && (session.project || "Unknown project") !== project) return false;
+      if (project && (session.project || NO_PROJECT_LABEL) !== project) return false;
       if (!needle) return true;
       return `${session.title} ${session.project || ""} ${session.provider || ""} ${session.model || ""}`.toLowerCase().includes(needle);
     });
@@ -470,6 +512,12 @@
     return tool.commandPreview || tool.preview || tool.name;
   }
 
+  /** Returns the tool event's preview, middle-truncated when it is a long absolute path, so a chip never forces horizontal page scroll. The untruncated value belongs in a `title` attribute. */
+  function toolChipPreview(tool: UsageConversationMessage["toolCalls"][number]): string {
+    const preview = toolPreview(tool);
+    return preview.startsWith("/") ? middleTruncatePath(preview) : preview;
+  }
+
   /** Returns a quieter tool label for the event row. */
   function toolKind(tool: UsageConversationMessage["toolCalls"][number]): string {
     return tool.name.replace(/_command(?:_result)?$/i, "").replace(/_/g, " ") || "tool";
@@ -497,15 +545,18 @@
     if (value && typeof navigator !== "undefined" && navigator.clipboard) void navigator.clipboard.writeText(value);
   }
 
-  /** Returns the full readable body for a message, falling back to a placeholder that names the session for raw-transcript lookup. */
+  /** Returns whether a message carries any transcript text, distinct from the empty-body placeholder. */
+  function hasTranscriptText(message: UsageConversationMessage): boolean {
+    return Boolean(message.text || message.textPreview);
+  }
+
+  /** Returns the full readable body for a message. Callers should check `hasTranscriptText` first and render the dim empty-state placeholder themselves rather than treat this as a real message body. */
   function messageBody(message: UsageConversationMessage): string {
-    if (message.text || message.textPreview) return message.text || message.textPreview || "";
-    const sessionId = view?.selected.providerSessionId;
-    return sessionId ? `No transcript text available. Session ${sessionId}` : "No transcript text available.";
+    return message.text || message.textPreview || "";
   }
 
   function isLongMessage(message: UsageConversationMessage): boolean {
-    return messageBody(message).length > messagePreviewLimit;
+    return hasTranscriptText(message) && messageBody(message).length > messagePreviewLimit;
   }
 
   function visibleMessageBody(message: UsageConversationMessage, expanded: boolean): string {
@@ -549,17 +600,17 @@
 {:else if mode === "browse"}
   <main class="usage-browse" data-mode="browse">
     <header class="browse-header">
-      <div>
-        <p>Tangent Usage</p>
-        <h1>{selectedProject || "Conversations"}</h1>
-      </div>
-      <div class="browse-filters">
-        <label class="search">
-          <span>Search this project</span>
-          <input bind:value={query} placeholder="Title, model, provider" />
-        </label>
-        <button type="button" class="nav-insights" onclick={openInsights}>Insights</button>
-      </div>
+      <h1 title={selectedProject || "Conversations"}>{selectedProject || "Conversations"}</h1>
+      <input
+        class="browse-search"
+        bind:value={query}
+        placeholder="Search this project"
+        aria-label="Search this project"
+      />
+      <nav class="view-tabs" aria-label="Usage view">
+        <button type="button" class="view-tab active" aria-current="page">Conversations</button>
+        <button type="button" class="view-tab" onclick={openInsights}>Insights</button>
+      </nav>
     </header>
     <div class="browse-layout">
       <aside class="project-rail" aria-label="Projects">
@@ -677,7 +728,7 @@
       <button type="button" class="read-back" onclick={backToBrowse}>← All conversations</button>
       <div class="read-heading">
         <p>Active work over time</p>
-        <h1>{view ? view.selected.title : "Loading conversation"}</h1>
+        <h1 title={view ? view.selected.title : undefined}>{view ? view.selected.title : "Loading conversation"}</h1>
         {#if view?.selected.providerSessionId}
           <button
             type="button"
@@ -770,7 +821,11 @@
                   {#if message.at}<span class="message-time">{formatDate(message.at)}</span>{/if}
                 </div>
                 <div class="message-main">
-                  <p>{visibleMessageBody(message, expandedMessageIds.includes(message.id))}</p>
+                  {#if hasTranscriptText(message)}
+                    <p>{visibleMessageBody(message, expandedMessageIds.includes(message.id))}</p>
+                  {:else}
+                    <p class="message-empty">(no transcript text)</p>
+                  {/if}
                 </div>
                 {#if message.thinking}
                   <details class="message-thinking">
@@ -798,7 +853,7 @@
                             <span class="tool-event-duration">{tool.durationLabel}</span>
                           {/if}
                         </span>
-                        <code class="tool-event-command">{toolPreview(tool)}</code>
+                        <code class="tool-event-command" title={toolPreview(tool)}>{toolChipPreview(tool)}</code>
                         {#if tool.plan}
                           <details class="tool-event-plan" open>
                             <summary>Proposed plan</summary>

@@ -1,6 +1,6 @@
 ---
 name: tangent-search
-description: "Use Tangent structural repository search to find relevant code, symbols, callers, callees, tests, and file skeletons before editing code in repos that have the `tangent search` CLI available. Use when Codex needs to orient in a codebase, plan an implementation, locate definitions, understand call relationships, debug search index state, or avoid broad manual file reads."
+description: "Use Tangent structural repository search to find relevant code, symbols, callers, callees, tests, and file skeletons before editing code in repos that have the `tangent search` CLI available. Use when the agent needs to orient in a codebase, plan an implementation, locate definitions, understand call relationships, debug search index state, or avoid broad manual file reads."
 ---
 
 # Tangent Search

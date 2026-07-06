@@ -93,42 +93,25 @@ tangent eval quick \
 
 ## Search vs No Search
 
-Index first:
+One command scaffolds the whole comparison:
 
 ```bash
-tangent search index
+tangent eval compare-search
 ```
 
-Use two context snapshots: one without search-specific instructions, one with a short `.agents/` instruction file that tells the agent to try Tangent search before broad file reads.
+This replaces what used to be six manual steps. Under the hood it:
+
+- Picks a task prompt: `--prompt <file|->`, `--task "<text>"`, or `--session <providerSessionId>` if given, otherwise the most recent substantive user message across recent sessions for this repo, pulled from the Usage index. It prints the chosen prompt's first 200 characters so you can confirm it picked the right task.
+- Runs `tangent search index` in the repo.
+- Captures a plain "no-search" context snapshot (equivalent to `tangent eval context capture --include-ancestors`).
+- Writes a short `.agents/eval-search.md` instructing the agent to use `tangent search` before broad file reads, captures a "with-search" snapshot over it, then deletes the file, restoring the working tree.
+- Writes `evals/<name>/{eval.json,prompts/task.md}`: a `claude-cli` agent (`--model`, default `sonnet`), an explicit judge (`--judge-model`, default `haiku`), and one case with `no-search`/`with-search` variants pointing at the two snapshots.
+
+Pass `[name]` to name the eval (defaults to `search-compare-<yyyymmdd>`), and `--repo`/`--cwd` if not running from the repo root. Then:
 
 ```bash
-tangent eval context capture no-search --repo . --cwd . --include-ancestors
-
-mkdir -p .agents
-cat > .agents/eval-search.md <<'EOF'
-For this eval variant, use Tangent search before broad file reads:
-- tangent search open-plan "<task query>"
-- tangent search "<query>"
-- tangent search symbol <symbol>
-Then inspect the recommended files normally.
-EOF
-
-tangent eval context capture with-search --repo . --cwd . --include-ancestors --include-dirty-context
-rm .agents/eval-search.md
-```
-
-Run both variants:
-
-```bash
-tangent eval quick \
-  --prompt evals/my-task/prompts/task.md \
-  --context no-search \
-  --context with-search \
-  --agent codex-cli \
-  --model gpt-5.4-mini
-
+tangent eval run evals/<name>/eval.json
 tangent eval report latest
-tangent eval diff latest no-search with-search --phase impl --case my-task
 tangent eval ui latest
 ```
 

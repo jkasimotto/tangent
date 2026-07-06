@@ -1,4 +1,5 @@
 import type { NormalizedConversation } from "../conversation-report-types.js";
+import { isEvalRunConversation } from "./eval-run-filter.js";
 import { failureRetryLoops } from "./generators/failure-retry-loops.js";
 import { infoFindingHeavySessions } from "./generators/info-finding-heavy-sessions.js";
 import { recurringLongCommands } from "./generators/recurring-long-commands.js";
@@ -21,16 +22,24 @@ export type RunInsightGeneratorsOptions = {
   parkState?: ParkState;
   /** Include parked findings in the result even though they are still parked. */
   includeParked?: boolean;
+  /** Let Tangent's own eval sandbox sessions count as findings input, for callers whose user explicitly opted in (for example `--include-eval-runs`). */
+  includeEvalRuns?: boolean;
 };
 
 /**
  * Runs the requested (or all) deterministic finding generators over a window of conversations and
  * returns findings ranked by cost (wall-clock time) descending, applying park-state filtering
- * unless `includeParked` is set or no park state was supplied.
+ * unless `includeParked` is set or no park state was supplied. Tangent's own eval-run sandbox
+ * sessions are dropped from the window before any generator sees it, so eval harness activity never
+ * shows up as a "finding" about the user's real workflow; `includeEvalRuns` opts back in so the
+ * flag-level opt-in on the CLI and server actually reaches the generators.
  */
 export function runInsightGenerators(conversations: NormalizedConversation[], options: RunInsightGeneratorsOptions = {}): Finding[] {
+  const realConversations = options.includeEvalRuns
+    ? conversations
+    : conversations.filter((conversation) => !isEvalRunConversation(conversation));
   const names = options.generators?.length ? options.generators : (Object.keys(INSIGHT_GENERATORS) as FindingGeneratorName[]);
-  const findings = names.flatMap((name) => INSIGHT_GENERATORS[name](conversations));
+  const findings = names.flatMap((name) => INSIGHT_GENERATORS[name](realConversations));
   const visible = options.includeParked || !options.parkState
     ? findings
     : findings.filter((finding) => !isParked(options.parkState!, finding.fingerprint, finding.costMs));
@@ -40,6 +49,7 @@ export function runInsightGenerators(conversations: NormalizedConversation[], op
 export type { Finding, FindingEvidenceRef, FindingGeneratorName, FindingRemedy } from "./types.js";
 export { extractCommandText, normalizeCommandHead } from "./command-head.js";
 export { computeAgentTimeDistribution, type AgentTimeCategoryKey, type AgentTimeCategoryShare, type AgentTimeDistribution } from "./distribution.js";
+export { isEvalRunConversation } from "./eval-run-filter.js";
 export { findingFingerprint } from "./fingerprint.js";
 export { FINDING_REMEDY_LABELS } from "./remedies.js";
 export { failureRetryLoops } from "./generators/failure-retry-loops.js";

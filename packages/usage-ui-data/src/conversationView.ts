@@ -1,6 +1,7 @@
 import { rankBottlenecks } from "./bottlenecks.js";
-import { cleanTitle, confidenceOrUnknown, finiteNumber, formatContextTokens, formatDateTime, formatDuration, formatMessageTokenUsage, messageTokens, peakContextTokens, stepDuration, stepKindLabel, truncateText } from "./format.js";
+import { cleanTitle, confidenceOrUnknown, finiteNumber, formatContextTokens, formatDateTime, formatDuration, formatMessageTokenUsage, messageTokens, NO_PROJECT_LABEL, peakContextTokens, stepDuration, stepKindLabel, truncateText } from "./format.js";
 import { stepInputPreviews, toolInputPreview, toolWorkdir } from "./toolInput.js";
+import { deriveDisplayTitle } from "./titles.js";
 import type {
   UsageConversationChartRow,
   UsageConversationChartSegment,
@@ -232,7 +233,7 @@ function sessionItem(session: UsageSession): UsageConversationSessionItem {
   const lastActivityAt = session.lastActivityAt || session.endedAt || session.startedAt;
   return {
     id: session.id,
-    title: cleanTitle(session.title || session.firstPrompt || session.id),
+    title: cleanTitle(deriveDisplayTitle([session.title, session.firstPrompt], session.id)),
     provider: session.provider || "unknown",
     providerSessionId: session.providerSessionId,
     transcriptPath: session.transcriptPath,
@@ -273,7 +274,7 @@ function projectGroups(sessions: UsageSession[], selectedSessionId: string): Usa
 
 /** Builds a project label from stable session metadata. Shared with the session list so cards and the rail agree on names. */
 export function projectLabel(session: Pick<UsageSession, "project" | "repo" | "cwd">): string {
-  return cleanTitle(session.project || session.repo?.id || basename(session.repo?.root || session.repo?.cwd || session.cwd) || "Unknown project", "Unknown project");
+  return cleanTitle(session.project || session.repo?.id || basename(session.repo?.root || session.repo?.cwd || session.cwd) || NO_PROJECT_LABEL, NO_PROJECT_LABEL);
 }
 
 /** Converts a message into the conversation pane DTO. */
@@ -398,9 +399,10 @@ function workTurns(conversationMessages: UsageConversationMessage[], rawMessages
     if (message.role === "user" || !current) {
       if (current) turns.push(finalizeWorkTurn(current, message.at));
       const primary = nextNonUserMessage(conversationMessages, index + 1);
+      const fallbackLabel = `Work turn ${turns.length + 1}`;
       current = {
         id: `work-turn:${message.id}`,
-        label: truncateText(message.textPreview || message.text || `Work turn ${turns.length + 1}`, 80) || `Work turn ${turns.length + 1}`,
+        label: truncateText(deriveDisplayTitle([message.textPreview, message.text], fallbackLabel), 80) || fallbackLabel,
         primaryMessageId: primary?.id || message.id,
         messageIds: [message.id],
         startMs: parseTimeMs(message.at),

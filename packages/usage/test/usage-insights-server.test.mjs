@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { createUsageUiApp } from "../dist/server/index.js";
-import { buildInsightsResponse } from "../dist/server/insights.js";
+import { buildInsightsResponse, computeInsights } from "../dist/server/insights.js";
 
 /** Builds a minimal NormalizedToolCall fixture. */
 function toolCall(id, category, durationMs, overrides = {}) {
@@ -33,7 +33,7 @@ function conversation(conversationId, messages, repo = "/repo/polez") {
 
 const scope = { repo: ".", scope: "all", parkStatePath: "/dev/null/unused-in-these-tests" };
 
-test("buildInsightsResponse assembles the distribution header and ranks findings by cost", () => {
+test("buildInsightsResponse assembles the distribution header, ranks findings by cost, and carries the additive fields", () => {
   const convo = conversation("conv-1", [
     assistantMessage("m1", [
       toolCall("r1", "read", 40_000),
@@ -41,10 +41,13 @@ test("buildInsightsResponse assembles the distribution header and ranks findings
       toolCall("c1", "command", 20_000)
     ])
   ]);
-  const response = buildInsightsResponse([convo], {}, scope, 30, { includeParked: false });
+  const computedAt = new Date("2026-07-06T10:00:00.000Z");
+  const response = buildInsightsResponse(computeInsights([convo], 3, { now: computedAt }), {}, scope, 30, { includeParked: false });
   assert.equal(response.scopeLabel, "all projects");
   assert.equal(response.windowDays, 30);
   assert.equal(response.totalMs, 90_000);
+  assert.equal(response.computedAt, computedAt.toISOString());
+  assert.equal(response.excludedEvalRuns, 3);
   const findingInfo = response.categories.find((category) => category.key === "findingInfo");
   assert.equal(findingInfo.ms, 70_000);
 });
@@ -53,28 +56,31 @@ test("buildInsightsResponse hides parked findings by default and includes them w
   const heavy = conversation("conv-heavy", [
     assistantMessage("m1", [toolCall("r1", "read", 5 * 60_000)])
   ]);
-  const findings = buildInsightsResponse([heavy], {}, scope, 30, { includeParked: true }).findings;
+  const computation = computeInsights([heavy], 0);
+  const findings = buildInsightsResponse(computation, {}, scope, 30, { includeParked: true }).findings;
   assert.equal(findings.length, 1, "the fixture must clear the info-finding-heavy generator's cost floor");
   const fingerprint = findings[0].fingerprint;
   const parkState = { [fingerprint]: { parkedAt: new Date().toISOString(), costMsAtPark: findings[0].costMs } };
 
-  const hidden = buildInsightsResponse([heavy], parkState, scope, 30, { includeParked: false });
+  const hidden = buildInsightsResponse(computation, parkState, scope, 30, { includeParked: false });
   assert.equal(hidden.findings.length, 0, "a parked finding is excluded by default");
 
-  const shown = buildInsightsResponse([heavy], parkState, scope, 30, { includeParked: true });
+  const shown = buildInsightsResponse(computation, parkState, scope, 30, { includeParked: true });
   assert.equal(shown.findings.length, 1);
   assert.equal(shown.findings[0].parked, true);
   assert.equal(shown.findings[0].fingerprint, fingerprint);
 });
 
-test("buildInsightsResponse restricts to the requested generator and attaches the shared remedy label", () => {
+test("buildInsightsResponse restricts to the requested generator and attaches the shared remedy label and projectLabel", () => {
   const heavy = conversation("conv-heavy-2", [assistantMessage("m1", [toolCall("r1", "read", 5 * 60_000)])]);
-  const response = buildInsightsResponse([heavy], {}, scope, 30, { generator: "recurring-long-commands", includeParked: true });
+  const computation = computeInsights([heavy], 0);
+  const response = buildInsightsResponse(computation, {}, scope, 30, { generator: "recurring-long-commands", includeParked: true });
   assert.equal(response.findings.length, 0, "the read-only fixture produces no recurring-long-commands finding");
 
-  const infoResponse = buildInsightsResponse([heavy], {}, scope, 30, { generator: "info-finding-heavy-sessions", includeParked: true });
+  const infoResponse = buildInsightsResponse(computation, {}, scope, 30, { generator: "info-finding-heavy-sessions", includeParked: true });
   assert.equal(infoResponse.findings.length, 1);
   assert.equal(infoResponse.findings[0].remedyLabel, "missing map: add a CLAUDE.md pointer or docs index entry");
+  assert.equal(infoResponse.findings[0].projectLabel, "polez", "the wire finding carries the core-provided project label");
 });
 
 test("insights routes: GET returns an empty feed and POST park/unpark are gated and error correctly against an isolated, dataset-free environment", async (t) => {
@@ -108,6 +114,8 @@ test("insights routes: GET returns an empty feed and POST park/unpark are gated 
   assert.equal(feed.json.scopeLabel, "all projects");
   assert.deepEqual(feed.json.findings, []);
   assert.equal(feed.json.totalMs, 0);
+  assert.equal(feed.json.excludedEvalRuns, 0);
+  assert.equal(typeof feed.json.computedAt, "string");
 
   const missingFingerprint = await route.handle(postRequest({}), new URL("http://localhost/api/usage/insights/park"), []);
   assert.equal(missingFingerprint.status, 400);

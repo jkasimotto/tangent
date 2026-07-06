@@ -16,11 +16,20 @@ test("groups sessions by project, newest project first, counting conversations",
   assert.equal(tangent.lastActivityAt, "2026-06-29T10:00:00.000Z", "project activity is the newest session's");
 });
 
-test("falls back to an Unknown project bucket and a stable slug", () => {
+test("falls back to a (no project) bucket and a stable slug", () => {
   const rail = groupSessionsByProject([{ id: "a" }, { id: "b", project: "otto-tangent" }]);
-  const unknown = rail.find((item) => item.label === "Unknown project");
-  assert.ok(unknown, "sessions without a project fall into Unknown project");
-  assert.equal(unknown.id, "unknown-project");
+  const unknown = rail.find((item) => item.label === "(no project)");
+  assert.ok(unknown, "sessions without a project fall into (no project)");
+  assert.equal(unknown.id, "no-project");
   assert.equal(projectSlug("otto-tangent"), "otto-tangent");
   assert.equal(projectSlug("My App!!"), "my-app");
+});
+
+test("sorts the (no project) bucket last regardless of recency", () => {
+  const rail = groupSessionsByProject([
+    { id: "a", lastActivityAt: "2026-06-29T12:00:00.000Z" }, // no project, most recent overall
+    { id: "b", project: "tangent", lastActivityAt: "2026-06-29T09:00:00.000Z" }
+  ]);
+
+  assert.deepEqual(rail.map((item) => item.label), ["tangent", "(no project)"], "(no project) sorts last even though it is the most recently active");
 });

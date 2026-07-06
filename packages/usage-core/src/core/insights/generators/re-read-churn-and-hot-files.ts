@@ -1,7 +1,17 @@
 import type { NormalizedConversation } from "../../conversation-report-types.js";
 import { findingFingerprint } from "../fingerprint.js";
 import type { Finding, FindingEvidenceRef } from "../types.js";
-import { estimateTokensFromText, flattenToolCalls, formatFindingDuration, sum } from "../util.js";
+import {
+  aProjectSessionPhrase,
+  estimateTokensFromText,
+  flattenToolCalls,
+  formatFindingDuration,
+  projectLabelForConversation,
+  projectLabelForRoot,
+  relativizeFilePathAgainstRoot,
+  relativizeFilePathForConversation,
+  sum
+} from "../util.js";
 
 // Churn: a file read this many times in one session is a sign the agent could not retain it and
 // kept going back, not normal orientation.
@@ -40,17 +50,18 @@ function churnFindingsForSession(conversation: NormalizedConversation): Finding[
   for (const read of reads) byPath.set(read.path, [...(byPath.get(read.path) || []), read]);
 
   const repo = conversation.repo?.root;
-  const label = conversation.providerSessionId || conversation.conversationId;
+  const projectLabel = projectLabelForConversation(conversation);
   const findings: Finding[] = [];
   for (const [filePath, events] of byPath) {
     if (events.length < CHURN_MIN_READS) continue;
     const costMs = sum(events.map((event) => event.durationMs));
     const costTokens = sum(events.map((event) => event.tokens));
     const subject = JSON.stringify([conversation.conversationId, filePath]);
+    const relativePath = relativizeFilePathForConversation(filePath, conversation);
     findings.push({
       generator: "re-read-churn-and-hot-files",
       subject,
-      title: `${label} re-read ${filePath} ${events.length}x (${formatFindingDuration(costMs)})`,
+      title: `${aProjectSessionPhrase(projectLabel)} re-read ${relativePath} ${events.length}x (${formatFindingDuration(costMs)})`,
       costMs,
       costTokens,
       costTokensEstimated: true,
@@ -58,6 +69,7 @@ function churnFindingsForSession(conversation: NormalizedConversation): Finding[
       remedy: "split-or-map-file",
       fingerprint: findingFingerprint("re-read-churn-and-hot-files", subject, repo),
       repo,
+      projectLabel,
       detail: { path: filePath, readCount: events.length }
     });
   }
@@ -84,13 +96,15 @@ function hotFileFindings(conversations: NormalizedConversation[]): Finding[] {
     const costMs = sum(events.map((event) => event.durationMs));
     const costTokens = sum(events.map((event) => event.tokens));
     const subject = filePath;
+    const projectLabel = projectLabelForRoot(repo);
+    const relativePath = relativizeFilePathAgainstRoot(filePath, repo);
     const evidence: FindingEvidenceRef[] = [...new Map(events.map((event) => [event.conversationId, event.sessionId])).entries()]
       .map(([conversationId, sessionId]) => ({ conversationId, sessionId }));
 
     findings.push({
       generator: "re-read-churn-and-hot-files",
       subject,
-      title: `${filePath} read ${events.length}x across ${sessionIds.size} sessions (${formatFindingDuration(costMs)})`,
+      title: `${relativePath} read ${events.length}x across ${sessionIds.size} sessions (${formatFindingDuration(costMs)})`,
       costMs,
       costTokens,
       costTokensEstimated: true,
@@ -98,6 +112,7 @@ function hotFileFindings(conversations: NormalizedConversation[]): Finding[] {
       remedy: "missing-map",
       fingerprint: findingFingerprint("re-read-churn-and-hot-files", subject, repo),
       repo,
+      projectLabel,
       detail: { readCount: events.length, sessionCount: sessionIds.size }
     });
   }

@@ -1,5 +1,12 @@
 import type { UsageConfidence, UsageSession, UsageSessionStatus, UsageStep, UsageStepStatus, UsageTokenUsage, UsageUiConfidence } from "./types.js";
 
+/**
+ * Shared label for a session with no derivable project (no `project`, `repo.id`, `repo.root`,
+ * `repo.cwd`, or `cwd`). Parenthesized and lowercase so it reads as an absence rather than a name,
+ * and sorts distinctly from real project labels in the rail (see `groupSessionsByProject`).
+ */
+export const NO_PROJECT_LABEL = "(no project)";
+
 /** Normalizes the confidence. */
 export function normalizeConfidence(value: UsageConfidence | undefined): UsageUiConfidence | undefined {
   if (value === "exact" || value === "derived" || value === "partial" || value === "estimated" || value === "unknown") return value;
@@ -175,6 +182,22 @@ function formatMessageTokenCount(value: number): string {
   if (Math.abs(value) < 1_000) return Intl.NumberFormat("en").format(Math.round(value));
   if (Math.abs(value) < 1_000_000) return `${trimFixed(value / 1_000, 1)}k`;
   return `${trimFixed(value / 1_000_000, 1)}M`;
+}
+
+/**
+ * Middle-truncates a long absolute path to its leading segment plus the last two path segments
+ * (e.g. `/Users/julianotto/Projects/otto-tangent/packages/usage-ui/src/App.svelte` becomes
+ * `/Users/.../usage-ui/src/App.svelte`), so tool chips stay narrow and never force horizontal page
+ * scroll. Callers should keep the untruncated value available via a `title` attribute. A no-op for
+ * short paths or paths with too few segments to usefully abbreviate.
+ */
+export function middleTruncatePath(value: string, maxLength = 60): string {
+  if (value.length <= maxLength) return value;
+  const segments = value.split("/").filter(Boolean);
+  if (segments.length <= 3) return value;
+  const lead = value.startsWith("/") ? `/${segments[0]}` : segments[0];
+  const tail = segments.slice(-2).join("/");
+  return `${lead}/.../${tail}`;
 }
 
 /** Returns unique values. */

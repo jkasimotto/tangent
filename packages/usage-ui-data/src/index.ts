@@ -25,6 +25,8 @@ export { buildUsageSessionTimelineView } from "./sessionTimeline.js";
 export { buildSessionStoryline } from "./storyline.js";
 export { buildTraceWaterfall } from "./trace.js";
 export { buildTranscriptHighlights } from "./transcriptHighlights.js";
+export { middleTruncatePath, NO_PROJECT_LABEL } from "./format.js";
+export { deriveDisplayTitle, extractCommandName, isCommandXml, isTaskNotificationXml, stripCommandMarkup, taskNotificationLabel } from "./titles.js";
 
 import type { UsageDomainMessage, UsageDomainResult, UsageDomainSession, UsageDomainToolCall, UsageDomainTranscript } from "./domainTypes.js";
 import { buildUsageCockpitView, timelineSteps, transcriptMessages } from "./cockpit.js";
@@ -33,6 +35,7 @@ import { buildSparkline, sparklineFromPrecomputed } from "./flame.js";
 import { peakContextTokens } from "./format.js";
 import type { UsageInsightsApiResponse } from "./insights.js";
 import { buildUsageSessionTimelineView } from "./sessionTimeline.js";
+import { deriveDisplayTitle } from "./titles.js";
 import type {
   UsageCockpitView,
   UsageConversationView,
@@ -257,7 +260,7 @@ export function createUsageUiClient(usage: UsageDomainClient): UsageUiClient {
       return {
         sessions: sessions.map((session, index) => ({
           id: session.id,
-          title: session.title || session.firstPrompt || session.id,
+          title: deriveDisplayTitle([session.title, session.firstPrompt], session.id),
           subtitle: [session.provider, session.models?.join(", ")].filter(Boolean).join(" · "),
           provider: session.provider,
           model: session.models?.[0],
@@ -284,7 +287,7 @@ export function createUsageUiClient(usage: UsageDomainClient): UsageUiClient {
       return {
         session: {
           id: session.id,
-          title: session.title || session.firstPrompt || session.id,
+          title: deriveDisplayTitle([session.title, session.firstPrompt], session.id),
           provider: session.provider,
           model: session.models?.[0],
           startedAt: session.startedAt,

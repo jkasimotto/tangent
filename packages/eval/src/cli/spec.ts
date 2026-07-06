@@ -80,6 +80,20 @@ export const evalCommandSpec: CliCommandSpec = {
   subcommands: [
     { name: "init", description: "Create an evals directory", options: [] },
     {
+      name: "compare-search",
+      description: "Scaffold a search-vs-no-search eval comparing the same task with and without tangent search",
+      args: "[name]",
+      options: [
+        { name: "repo", takesValue: true, description: "Repository path" },
+        { name: "cwd", takesValue: true, description: "Execution cwd inside repo" },
+        { name: "prompt", takesValue: true, description: "Prompt path, or -; mutually exclusive with --task/--session" },
+        { name: "task", takesValue: true, description: "Task prompt text; mutually exclusive with --prompt/--session" },
+        { name: "session", takesValue: true, description: "Provider session id to pull the task prompt from; mutually exclusive with --prompt/--task" },
+        { name: "model", takesValue: true, description: "Agent model under test (default sonnet)" },
+        { name: "judge-model", takesValue: true, description: "Evaluator judge model (default haiku)" }
+      ]
+    },
+    {
       name: "context",
       description: "Capture or inspect eval context snapshots",
       subcommands: [

@@ -5,11 +5,13 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  computeAgentTimeDistribution,
   extractCommandText,
   failureRetryLoops,
   findingFingerprint,
   globalInsightsParkStatePath,
   infoFindingHeavySessions,
+  isEvalRunConversation,
   isParked,
   loadParkState,
   normalizeCommandHead,
@@ -55,7 +57,8 @@ function conversation(conversationId, messages, overrides = {}) {
     provider: "claude",
     conversationId,
     providerSessionId: overrides.providerSessionId || conversationId,
-    repo: { root: overrides.repo ?? "/repo/polez" },
+    transcriptPath: overrides.transcriptPath,
+    repo: { root: overrides.repo ?? "/repo/polez", cwd: overrides.cwd },
     messages,
     totals: { userMessages: 0, assistantMessages: messages.length, toolCalls: 0 },
     caveats: []
@@ -89,6 +92,9 @@ test("infoFindingHeavySessions ranks a session by read+search time before its fi
   assert.equal(finding.costTokensEstimated, true);
   assert.equal(finding.remedy, "missing-map", "mostly-read sessions point at a missing map, not a search tool");
   assert.match(finding.title, /before the first write/);
+  assert.equal(finding.projectLabel, "polez", "projectLabel is the basename of the conversation's repo root");
+  assert.match(finding.title, /^One session in polez spent/, "title leads with a project-scoped session phrase, not a raw id");
+  assert.ok(!finding.title.includes("conv-1"), "title must never leak the conversation id");
   assert.equal(finding.evidence.length, 1);
   assert.equal(finding.evidence[0].conversationId, "conv-1");
 
@@ -150,6 +156,30 @@ test("recurringLongCommands groups execute calls by normalized command head and 
   assert.equal(finding.detail.maxMs, 500_000);
   assert.equal(finding.evidence.length, 3);
   assert.equal(finding.remedy, "document-command");
+  assert.equal(finding.projectLabel, "polez", "cross-conversation findings get a projectLabel when every run shares one repo root");
+});
+
+test("recurringLongCommands renders sub-minute medians in seconds and omits a sub-1s median clause entirely", () => {
+  const secondsMedian = conversation("conv-cmd-seconds", [
+    assistantMessage("m1", {
+      toolCalls: [45_000, 46_000, 47_000].map((durationMs, index) =>
+        toolCall({ id: `sec-${index}`, category: "command", input: { command: "dart analyze lib/client" }, result: { status: "success", durationMs } })
+      )
+    })
+  ]);
+  const [secondsFinding] = recurringLongCommands([secondsMedian]);
+  assert.equal(secondsFinding.title, "dart analyze ran 3x, median 46s, total 2m", "a sub-minute median renders in seconds, not a rounded-down 0m");
+
+  const tinyMedian = conversation("conv-cmd-tiny", [
+    assistantMessage("m1", {
+      toolCalls: [200, 200, 5_000].map((durationMs, index) =>
+        toolCall({ id: `tiny-${index}`, category: "command", input: { command: "git status" }, result: { status: "success", durationMs } })
+      )
+    })
+  ]);
+  const [tinyFinding] = recurringLongCommands([tinyMedian]);
+  assert.ok(!tinyFinding.title.includes("median"), "a sub-1s median is omitted entirely rather than shown as a rounded-down 0m");
+  assert.equal(tinyFinding.title, "git status ran 3x, total 5s");
 });
 
 test("reReadChurnAndHotFiles flags same-session re-reads as churn and cross-session reads as hot files", () => {
@@ -175,12 +205,40 @@ test("reReadChurnAndHotFiles flags same-session re-reads as churn and cross-sess
   assert.equal(churn.costMs, 40_000);
   assert.equal(churn.remedy, "split-or-map-file");
   assert.equal(churn.evidence.length, 1);
+  assert.equal(churn.projectLabel, "polez", "projectLabel is the basename of the conversation's repo root");
+  assert.match(churn.title, /^A polez session re-read src\/big\.ts/, "title uses a project-scoped session phrase, not a raw id");
+  assert.ok(!churn.title.includes("conv-churn"), "title must never leak the conversation id");
 
   assert.ok(hot, "docs/index.md read 6x across 3 sessions must produce a hot-file finding");
   assert.equal(hot.detail.readCount, 6);
   assert.equal(hot.detail.sessionCount, 3);
   assert.equal(hot.remedy, "missing-map");
   assert.equal(hot.evidence.length, 3);
+  assert.equal(hot.projectLabel, "polez", "cross-session findings get a projectLabel when all evidence shares one repo root");
+});
+
+test("reReadChurnAndHotFiles relativizes absolute paths against the repo root and ellipsis-truncates paths outside it", () => {
+  const insideRoot = conversation("conv-inside", [
+    assistantMessage("m1", {
+      toolCalls: Array.from({ length: 3 }, (_, index) =>
+        toolCall({ id: `in-${index}`, category: "read", targetPaths: ["/repo/polez/src/deep/nested/util.ts"], result: { status: "success", durationMs: 1_000 } })
+      )
+    })
+  ], { repo: "/repo/polez" });
+  const [insideFinding] = reReadChurnAndHotFiles([insideRoot]);
+  assert.equal(insideFinding.title.includes("/repo/polez"), false, "absolute repo-root prefix must never appear in the title");
+  assert.match(insideFinding.title, /re-read src\/deep\/nested\/util\.ts /, "a path inside the repo root renders relative to it");
+
+  const outsideRoot = conversation("conv-outside", [
+    assistantMessage("m1", {
+      toolCalls: Array.from({ length: 3 }, (_, index) =>
+        toolCall({ id: `out-${index}`, category: "read", targetPaths: ["/Users/other/somewhere/deep/file.ts"], result: { status: "success", durationMs: 1_000 } })
+      )
+    })
+  ], { repo: "/repo/polez" });
+  const [outsideFinding] = reReadChurnAndHotFiles([outsideRoot]);
+  assert.ok(!outsideFinding.title.includes("/Users/other"), "an absolute path outside the repo root must not leak in full");
+  assert.match(outsideFinding.title, /re-read …\/somewhere\/deep\/file\.ts /, "a path outside the repo root shows only its last three segments, ellipsis-prefixed");
 });
 
 test("reReadChurnAndHotFiles does not flag a file read only twice in one session and nowhere else", () => {
@@ -227,6 +285,40 @@ test("failureRetryLoops detects an error-then-retry chain grouped by command hea
   assert.equal(finding.detail.retries, 2);
   assert.equal(finding.costMs, 15_000);
   assert.equal(finding.remedy, "document-invocation");
+  assert.equal(finding.projectLabel, "polez", "cross-conversation findings get a projectLabel when every retry loop shares one repo root");
+});
+
+test("failureRetryLoops omits a sub-1s median burn clause and renders sub-minute medians in seconds otherwise", () => {
+  const tinyBurn = conversation("conv-retry-tiny", [
+    assistantMessage("m1", {
+      at: "2026-07-05T10:00:00.000Z",
+      toolCalls: [toolCall({ id: "t1", category: "command", input: { command: "npm test" }, result: { status: "error", durationMs: 200 } })]
+    }),
+    assistantMessage("m2", {
+      at: "2026-07-05T10:00:05.000Z",
+      toolCalls: [toolCall({ id: "t2", category: "command", input: { command: "npm test" }, result: { status: "error", durationMs: 200 } })]
+    }),
+    assistantMessage("m3", {
+      at: "2026-07-05T10:00:10.000Z",
+      toolCalls: [toolCall({ id: "t3", category: "command", input: { command: "npm test" }, result: { status: "success", durationMs: 300 } })]
+    })
+  ]);
+  const [tinyFinding] = failureRetryLoops([tinyBurn]);
+  assert.ok(!tinyFinding.title.includes("median"), "a sub-1s median burn is omitted rather than shown as a rounded-down 0m");
+  assert.match(tinyFinding.title, /burning <1s$/);
+
+  const secondsBurn = conversation("conv-retry-seconds", [
+    assistantMessage("m1", {
+      at: "2026-07-05T10:00:00.000Z",
+      toolCalls: [toolCall({ id: "s1", category: "command", input: { command: "dart test foo" }, result: { status: "error", durationMs: 20_000 } })]
+    }),
+    assistantMessage("m2", {
+      at: "2026-07-05T10:00:10.000Z",
+      toolCalls: [toolCall({ id: "s2", category: "command", input: { command: "dart test foo" }, result: { status: "success", durationMs: 25_000 } })]
+    })
+  ]);
+  const [secondsFinding] = failureRetryLoops([secondsBurn]);
+  assert.match(secondsFinding.title, /median 45s, burning 45s$/, "a single retry loop's median equals its own cost, rendered in seconds");
 });
 
 test("failureRetryLoops does not chain retries that happen well outside the retry window", () => {
@@ -256,6 +348,14 @@ test("normalizeCommandHead strips leading cd-and-chain wrappers so the real comm
   assert.equal(normalizeCommandHead("cd /repo/polez"), "cd", "a bare cd with no chained command is not stripped, but its path argument still is");
   assert.equal(normalizeCommandHead("cd /repo/polez; echo done"), "echo done", "semicolon-chained cd wrappers strip like && ones");
   assert.equal(normalizeCommandHead('cd "/My Repos/polez" && npm run test'), "npm run test", "quoted cd paths with spaces strip too");
+});
+
+test("normalizeCommandHead strips newline-separated leading cd wrappers so multi-line scripts group correctly", () => {
+  assert.equal(normalizeCommandHead("cd /repo/polez\necho hi"), "echo hi", "a bare newline separates the cd from the real command in multi-line scripts");
+  assert.equal(normalizeCommandHead("cd /repo/polez\r\nnpm run build"), "npm run build", "CRLF newlines strip too");
+  assert.equal(normalizeCommandHead('cd "/My Repos/polez"\ndart analyze lib/client'), "dart analyze", "quoted cd paths followed by a newline strip too");
+  assert.equal(normalizeCommandHead("cd /a\ncd /b && dart test integration"), "dart test", "mixed newline and && cd chains all strip");
+  assert.equal(normalizeCommandHead("cd '/My Repos/polez'\ngit status"), "git status", "single-quoted cd paths followed by a newline strip too");
 });
 
 test("extractCommandText reads common provider input shapes", () => {
@@ -345,4 +445,86 @@ test("park-state paths are scoped correctly and never touch the real usage home"
   assert.equal(globalInsightsParkStatePath(baseDir), path.join(baseDir, "global", "insights", "park.json"));
   const repoPath = repoInsightsParkStatePath("/repo/polez", baseDir);
   assert.match(repoPath, /repos[\\/].+[\\/]insights[\\/]park\.json$/);
+});
+
+test("isEvalRunConversation detects Tangent eval sandbox sessions by cwd, root, or transcript path", () => {
+  const byCwd = conversation("conv-eval-cwd", [], { cwd: "/Users/x/.tangent/eval/runs/r1/worktrees/v1" });
+  const byRoot = conversation("conv-eval-root", [], { repo: "/Users/x/.tangent/eval/runs/r1/worktrees/v1" });
+  const byTranscript = conversation("conv-eval-transcript", [], { transcriptPath: "/Users/x/.tangent/eval/runs/r1/logs/t.jsonl" });
+  const real = conversation("conv-real", [], { repo: "/Users/x/repo/polez", cwd: "/Users/x/repo/polez/packages", transcriptPath: "/Users/x/.claude/projects/p/t.jsonl" });
+
+  assert.equal(isEvalRunConversation(byCwd), true);
+  assert.equal(isEvalRunConversation(byRoot), true);
+  assert.equal(isEvalRunConversation(byTranscript), true);
+  assert.equal(isEvalRunConversation(real), false, "an ordinary repo session is never treated as an eval run");
+});
+
+test("runInsightGenerators drops eval-run sandbox conversations before generators see them", () => {
+  const evalRun = conversation("conv-eval-heavy", [
+    assistantMessage("m1", {
+      toolCalls: [toolCall({ id: "r1", category: "read", targetPaths: ["src/a.ts"], result: { status: "success", durationMs: 900_000 } })]
+    })
+  ], { repo: "/Users/x/.tangent/eval/runs/r1/worktrees/v1" });
+  assert.deepEqual(runInsightGenerators([evalRun]), [], "eval sandbox activity must never surface as a finding about the user's workflow");
+});
+
+test("computeAgentTimeDistribution includes every nonzero bucket so shares sum to 1 and drops zero-ms categories", () => {
+  const mixed = conversation("conv-dist", [
+    assistantMessage("m1", {
+      toolCalls: [
+        toolCall({ id: "d1", category: "read", result: { status: "success", durationMs: 10_000 } }),
+        toolCall({ id: "d2", category: "search", result: { status: "success", durationMs: 5_000 } }),
+        toolCall({ id: "d3", category: "command", result: { status: "success", durationMs: 25_000 } }),
+        toolCall({ id: "d4", category: "task", result: { status: "success", durationMs: 60_000 } })
+      ]
+    })
+  ]);
+
+  const distribution = computeAgentTimeDistribution([mixed]);
+  assert.equal(distribution.totalMs, 100_000);
+
+  const keys = distribution.categories.map((category) => category.key);
+  assert.deepEqual(keys, ["findingInfo", "executing", "other"], "the zero-ms writing bucket is dropped and the hidden bucket surfaces as other");
+  const other = distribution.categories.find((category) => category.key === "other");
+  assert.equal(other.label, "other tools");
+  assert.equal(other.ms, 60_000);
+  const fractionSum = distribution.categories.reduce((total, category) => total + category.fraction, 0);
+  assert.ok(Math.abs(fractionSum - 1) < 1e-9, "visible category shares must sum to 1.0, never a partial percentage");
+});
+
+test("computeAgentTimeDistribution returns no categories for an empty window", () => {
+  const distribution = computeAgentTimeDistribution([]);
+  assert.equal(distribution.totalMs, 0);
+  assert.deepEqual(distribution.categories, []);
+});
+
+test("projectLabel falls back to the cwd basename when the repo root is unknown and stays unset without repo info", () => {
+  /** Builds a heavy read-only session fixture with the given repo shape, so projectLabel resolution can be asserted per shape. */
+  const heavySessionIn = (conversationId, repoShape) => ({
+    schema: "usage.conversation.v1",
+    provider: "claude",
+    conversationId,
+    providerSessionId: conversationId,
+    repo: repoShape,
+    messages: [
+      assistantMessage("m1", {
+        toolCalls: [toolCall({ id: "r1", category: "read", targetPaths: ["src/a.ts"], result: { status: "success", durationMs: 90_000 } })]
+      })
+    ],
+    totals: { userMessages: 0, assistantMessages: 1, toolCalls: 1 },
+    caveats: []
+  });
+
+  const [cwdOnly] = infoFindingHeavySessions([heavySessionIn("conv-cwd-only", { cwd: "/Users/x/repo/polez-pgande" })]);
+  assert.equal(cwdOnly.projectLabel, "polez-pgande", "with no repo root the cwd basename is the project label");
+
+  const [noRepo] = infoFindingHeavySessions([heavySessionIn("conv-no-repo", undefined)]);
+  assert.equal(noRepo.projectLabel, undefined);
+  assert.match(noRepo.title, /^One session spent /, "with no project label the phrase degrades gracefully");
+});
+
+test("normalizeCommandHead drops quoted string arguments from the head so echo banners group as one command", () => {
+  assert.equal(normalizeCommandHead('echo "=== build ==="'), "echo", "a double-quoted argument never becomes part of the head");
+  assert.equal(normalizeCommandHead("echo '=== build ==='"), "echo", "a single-quoted argument never becomes part of the head");
+  assert.equal(normalizeCommandHead('git commit -m "fix the bug"'), "git commit", "quoted arguments after real command words leave the head unchanged");
 });

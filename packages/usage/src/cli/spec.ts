@@ -78,10 +78,11 @@ export const usageCommandSpec: CliCommandSpec = {
     {
       name: "insights",
       description: "Rank deterministic findings of agent effort and waste (the efficiency lens)",
-      options: commonJsonOptions(["repo", "days", "generator", "parked", "json"]),
+      options: commonJsonOptions(["repo", "days", "generator", "parked", "limit", "all", "include-eval-runs", "json"]),
       subcommands: [
-        { name: "park", description: "Park a finding so it drops out of the feed until its cost grows", args: "<fingerprint>", options: commonJsonOptions(["repo", "json"]) },
-        { name: "unpark", description: "Unpark a finding", args: "<fingerprint>", options: commonJsonOptions(["repo", "json"]) }
+        { name: "show", description: "Show one finding in full: remedy, evidence sessions, fingerprint", args: "<n|fingerprint>", options: commonJsonOptions(["repo", "days", "generator", "parked", "include-eval-runs", "json"]) },
+        { name: "park", description: "Park a finding so it drops out of the feed until its cost grows", args: "<n|fingerprint>", options: commonJsonOptions(["repo", "days", "generator", "parked", "include-eval-runs", "json"]) },
+        { name: "unpark", description: "Unpark a finding", args: "<n|fingerprint>", options: commonJsonOptions(["repo", "days", "generator", "parked", "include-eval-runs", "json"]) }
       ]
     },
     {
@@ -128,6 +129,8 @@ function commonJsonOptions(names: string[]) {
     if (name === "before" || name === "date" || name === "since" || name === "until") return { name, takesValue: true, description: `${name} date` };
     if (["format", "metric", "group", "session", "role", "min-chars", "contains", "limit", "kind", "order", "bucket", "name", "include-results"].includes(name)) return { name, takesValue: true, description: `${name} value` };
     if (name === "static-ui") return { name, description: "Serve built UI assets instead of the workspace hot-reload server" };
+    if (name === "all") return { name, description: "Show every finding instead of the top 10" };
+    if (name === "include-eval-runs") return { name, description: "Include Tangent's own eval sandbox sessions in the window" };
     if (name === "days") return { name, takesValue: true, description: "Retention window in days (default 60); default view window for ui (7) and insights (30)" };
     if (name === "internal" || name === "force" || name === "dry-run" || name === "estimate" || name === "ndjson" || name === "no-browser" || name === "vacuum" || name === "parked") return { name, description: "Enable this option" };
     return { name, takesValue: true, description: `${name} value` };

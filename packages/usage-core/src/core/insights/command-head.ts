@@ -2,11 +2,13 @@
 // identify what actually ran; every other command groups on its first one or two tokens.
 const RUNNER_TOKENS = new Set(["npm", "yarn", "pnpm"]);
 
-// Agent shells routinely prefix the real command with "cd <path> &&" or "cd <path>;" to set the
-// working directory first. Left unstripped, that prefix dominates the head ("cd &&", "cd echo")
-// and every real command in the repo collapses into meaningless groups. Strip any number of
-// chained leading cd segments, including quoted paths, before computing the head.
-const LEADING_CD_PATTERN = /^cd\s+("[^"]*"|'[^']*'|\S+)\s*(?:&&|;)\s*/i;
+// Agent shells routinely prefix the real command with "cd <path> &&", "cd <path>;", or "cd <path>"
+// on its own line (agents often emit multi-line scripts where a bare newline separates the cd from
+// the real command) to set the working directory first. Left unstripped, that prefix dominates the
+// head ("cd &&", "cd echo") and every real command in the repo collapses into meaningless groups.
+// Strip any number of chained leading cd segments, including quoted paths and newline-separated
+// chains, before computing the head.
+const LEADING_CD_PATTERN = /^cd\s+("[^"]*"|'[^']*'|\S+)\s*(?:&&|;|\r?\n)\s*/i;
 
 /**
  * Extracts a best-effort shell command string from a tool call's input payload. Provider adapters
@@ -35,9 +37,10 @@ export function extractCommandText(input: unknown): string | undefined {
  */
 export function normalizeCommandHead(commandText: string): string {
   const withoutCdPrefix = stripLeadingCdChain(commandText);
-  const tokens = withoutCdPrefix.trim().split(/\s+/).filter(Boolean);
-  if (!tokens.length) return "";
-  const meaningful = tokens.filter((token) => !isFlag(token) && !looksLikePath(token));
+  const withoutQuotedArguments = stripQuotedSpans(withoutCdPrefix);
+  const tokens = withoutQuotedArguments.trim().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return stripLeadingCdChain(commandText).trim().split(/\s+/)[0] || "";
+  const meaningful = tokens.filter((token) => !isFlag(token) && !looksLikePath(token) && !isQuotedArgument(token));
   const head = meaningful.slice(0, 2);
   if (RUNNER_TOKENS.has(head[0] || "") && head[1] === "run" && meaningful[2]) head.push(meaningful[2]);
   return head.join(" ") || tokens[0]!;
@@ -53,6 +56,21 @@ function stripLeadingCdChain(commandText: string): string {
 /** Returns true if the token is a CLI flag (starts with a dash). */
 function isFlag(token: string): boolean {
   return token.startsWith("-");
+}
+
+/**
+ * Removes quoted spans ("..." and '...') from a command string, including an unterminated trailing
+ * quote. Quoted spans are string arguments, never command words, so keeping any of their tokens in
+ * the head splinters one command into per-argument groups (every distinct `echo "..."` banner used
+ * to become its own finding title like `echo "===`).
+ */
+function stripQuotedSpans(commandText: string): string {
+  return commandText.replace(/"[^"]*("|$)|'[^']*('|$)/g, " ");
+}
+
+/** Returns true if the token still opens a quote after span stripping (defensive backstop for pathological nesting). */
+function isQuotedArgument(token: string): boolean {
+  return token.startsWith('"') || token.startsWith("'");
 }
 
 /** Returns true if the token looks like a filesystem path or filename rather than a command word. */

@@ -1,10 +1,12 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
-import { expect, test } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/svelte";
+import { afterEach, expect, test } from "vitest";
 import App from "./App.svelte";
 
 import "@testing-library/jest-dom/vitest";
 
-test("renders discovered apps and mounts the active app", async () => {
+afterEach(() => cleanup());
+
+test("renders discovered apps as always-visible tabs and mounts the active app", async () => {
   const imports = installFetchAndImporter([{
     id: "usage",
     label: "Usage",
@@ -22,18 +24,43 @@ test("renders discovered apps and mounts the active app", async () => {
 
   render(App);
 
-  const switcher = await screen.findByRole("button", { name: "Switch Tangent app" });
-  expect(switcher).toHaveTextContent("Usage");
-  expect(switcher.closest(".shell-chrome")).toBeInTheDocument();
+  // Both apps are visible at once; the active one is highlighted, no dropdown to open.
+  const usageTab = await screen.findByRole("button", { name: "Usage" });
+  const treesTab = screen.getByRole("button", { name: "Trees" });
+  expect(usageTab).toHaveClass("active");
+  expect(usageTab).toHaveAttribute("aria-current", "page");
+  expect(treesTab).not.toHaveClass("active");
+  expect(usageTab.closest(".shell-chrome")).toBeInTheDocument();
   const mountedUsage = await screen.findByText("Mounted usage");
   expect(mountedUsage.closest(".shell-workspace")).toBeInTheDocument();
-  await fireEvent.click(switcher);
-  expect(screen.getByRole("button", { name: "Usage" })).toHaveClass("active");
-  await fireEvent.click(screen.getByRole("button", { name: "Trees" }));
+  await fireEvent.click(treesTab);
   await waitFor(() => expect(screen.getByText("Mounted trees")).toBeInTheDocument());
+  expect(screen.getByRole("button", { name: "Trees" })).toHaveClass("active");
   expect(imports()).toEqual(["/apps/usage/embedded.js", "/apps/trees/embedded.js"]);
   expect(document.head.querySelector('link[href="/apps/usage/embedded.css"]')).toBeInTheDocument();
   expect(document.head.querySelector('link[href="/apps/trees/embedded.css"]')).toBeInTheDocument();
+});
+
+test("resolves an app sub-path like /usage/insights to the owning app and keeps the URL", async () => {
+  installFetchAndImporter([{
+    id: "usage",
+    label: "Usage",
+    routePath: "/usage",
+    modulePath: "/apps/usage/embedded.js"
+  }, {
+    id: "trees",
+    label: "Trees",
+    routePath: "/trees",
+    modulePath: "/apps/trees/embedded.js"
+  }]);
+  window.history.replaceState({}, "", "/usage/insights");
+
+  render(App);
+
+  // The deep link mounts the usage app and the sub-path is preserved for the app to route on.
+  await screen.findByText("Mounted usage");
+  expect(screen.getByRole("button", { name: "Usage" })).toHaveClass("active");
+  expect(window.location.pathname).toBe("/usage/insights");
 });
 
 /** Installs mocked app discovery and dynamic imports for shell tests. */

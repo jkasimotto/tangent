@@ -16,3 +16,8 @@ Important exports:
 - `UsageSessionTimelineView` and `UsageTimelineStepBar` define the horizontal session timeline DTO.
 - `buildUsageSessionTimelineView` maps Usage domain data into the minimal timeline DTO.
 - Existing cockpit DTOs and pure mappers remain exported for compatibility.
+- `buildInsightsFeedView` maps the Insights API response into `UsageInsightsFeedView` (distribution categories, remedy chips, visible/parked findings, optional eval-run exclusion count).
+- `createInsightsApiClient` is the browser client for the Insights feed and its park/unpark mutations.
+- `groupSessionsByProject` builds the browse view's project rail; sessions without a derivable project group under `NO_PROJECT_LABEL` ("(no project)") and sort last.
+- `deriveDisplayTitle`, `isCommandXml`, `isTaskNotificationXml`, `stripCommandMarkup`, `taskNotificationLabel`, and `extractCommandName` sanitize machine markup (slash-command XML, task notifications) out of conversation titles.
+- `middleTruncatePath` abbreviates long absolute paths for tool chips (first segment plus last two).

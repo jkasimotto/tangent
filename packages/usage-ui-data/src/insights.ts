@@ -7,9 +7,14 @@
  * responsible for translating real `Finding` records into `UsageInsightsApiResponse`.
  */
 
-/** One category's share of the window's total agent tool time, as served by the API. */
+/**
+ * One category's share of the window's total agent tool time, as served by the API. `key` is
+ * intentionally a plain string (not a closed union): the server is moving to emit only nonzero
+ * categories, including new ones like "other tools", and this view model must render whatever
+ * categories arrive without a matching client release.
+ */
 export type UsageInsightsApiCategory = {
-  key: "findingInfo" | "executing" | "writing";
+  key: string;
   label: string;
   ms: number;
   fraction: number;
@@ -33,6 +38,8 @@ export type UsageInsightsApiFinding = {
   remedyLabel: string;
   fingerprint: string;
   repo?: string;
+  /** Short human project name (the basename of `repo`), for the card's project chip. Additive/optional: older servers omit it, in which case the chip is simply not shown. */
+  projectLabel?: string;
   /** Whether this finding is currently parked, per the fingerprint-keyed park state. */
   parked: boolean;
 };
@@ -44,6 +51,8 @@ export type UsageInsightsApiResponse = {
   totalMs: number;
   categories: UsageInsightsApiCategory[];
   findings: UsageInsightsApiFinding[];
+  /** Count of eval-sandbox sessions excluded from this window, for the "N eval sandbox sessions excluded" footnote. Additive/optional: older servers omit it, in which case no footnote renders. */
+  excludedEvalRuns?: number;
 };
 
 /** One category bar in the distribution header, formatted for display. */
@@ -68,7 +77,12 @@ export type UsageInsightsFindingRow = {
   costLabel: string;
   tokenLabel?: string;
   title: string;
+  /** Full remedy sentence; kept as the chip's tooltip so the card itself only needs the short `remedyChip` text. */
   remedyLabel: string;
+  /** Short chip label derived from `remedyLabel` (e.g. "Document/cache command"), so the card shows a tag, not a repeated sentence. */
+  remedyChip: string;
+  /** Short project name when the API row carries one, for the card's dim project chip. */
+  projectLabel?: string;
   evidence: UsageInsightsEvidenceRow[];
   /** The mark command for the finding's top evidence session, for the row's one-click copy action. */
   primaryMarkCommand: string;
@@ -89,6 +103,8 @@ export type UsageInsightsFeedView = {
   /** True when the window has no agent tool time at all: nothing has been indexed yet, distinct from a
    * populated window that simply cleared the noise floor with no findings. */
   isEmpty: boolean;
+  /** Count of eval-sandbox sessions excluded from this window, for a dim footnote; undefined when the API omits the field or the count is zero. */
+  excludedEvalRuns?: number;
 };
 
 /**
@@ -106,17 +122,49 @@ export function buildInsightsFeedView(response: UsageInsightsApiResponse): Usage
     scopeLabel: response.scopeLabel,
     windowDays: response.windowDays,
     totalLabel: formatInsightsDuration(response.totalMs),
-    categories: response.categories.map(buildCategoryView),
+    // Defensive filter: a transitional server may still send zero-fraction categories, which the
+    // single stacked bar + legend has no use for (a zero-width segment with no visible presence).
+    categories: response.categories.filter((category) => category.fraction > 0).sort((left, right) => right.fraction - left.fraction).map(buildCategoryView),
     findings,
     parkedFindings,
     parkedCount: parkedFindings.length,
-    isEmpty: response.totalMs <= 0 && rows.length === 0
+    isEmpty: response.totalMs <= 0 && rows.length === 0,
+    excludedEvalRuns: response.excludedEvalRuns && response.excludedEvalRuns > 0 ? response.excludedEvalRuns : undefined
   };
 }
 
-/** Formats one distribution category for display: a rounded percent label alongside its raw fraction (for bar width). */
+/** Formats one distribution category for display: a rounded percent label alongside its raw fraction (for bar width). A tiny nonzero share reads "<1%" rather than a broken-looking "0%". */
 function buildCategoryView(category: UsageInsightsApiCategory): UsageInsightsCategoryView {
-  return { key: category.key, label: category.label, percentLabel: `${Math.round(category.fraction * 100)}%`, fraction: category.fraction };
+  const rounded = Math.round(category.fraction * 100);
+  const percentLabel = rounded === 0 && category.fraction > 0 ? "<1%" : `${rounded}%`;
+  return { key: category.key, label: category.label, percentLabel, fraction: category.fraction };
+}
+
+/**
+ * Local map from the known remedy sentences (shared verbatim with `tangent usage insights` via
+ * `FINDING_REMEDY_LABELS` in usage-core) to a short chip label. Unrecognized remedy text (e.g. a
+ * newly added remedy category the client hasn't caught up to) falls back to a truncated leading
+ * clause so the chip never shows a blank or the full sentence.
+ */
+const REMEDY_CHIP_LABELS: Record<string, string> = {
+  "missing map: add a CLAUDE.md pointer or docs index entry": "Add doc pointer",
+  "context too big to retain in one file: split it, or summarize it in CLAUDE.md": "Split or map file",
+  "missing tool: structural search instead of grep/glob chains": "Use structural search",
+  "document the correct scoped invocation in CLAUDE.md, or cache the result": "Document/cache command",
+  "document the correct invocation so the agent stops guessing": "Document invocation"
+};
+
+/** Derives a short chip label for a finding's remedy sentence, for display as a tag instead of repeating the full sentence on every card. */
+function remedyChipLabel(remedyLabel: string): string {
+  const known = REMEDY_CHIP_LABELS[remedyLabel];
+  if (known) return known;
+  const leadClause = remedyLabel.split(/[:,]| or /i)[0]?.trim() || remedyLabel;
+  return capitalizeFirst(truncateInsightsText(leadClause, 30));
+}
+
+/** Uppercases the first character of a chip label; a no-op on an empty string. */
+function capitalizeFirst(value: string): string {
+  return value ? `${value[0]!.toUpperCase()}${value.slice(1)}` : value;
 }
 
 /** Formats one finding for display, building its evidence rows and the top-evidence mark command shortcut. */
@@ -128,6 +176,8 @@ function buildFindingRow(finding: UsageInsightsApiFinding): UsageInsightsFinding
     tokenLabel: finding.costTokens > 0 ? `est. ${formatInsightsTokenCount(finding.costTokens)} tokens` : undefined,
     title: finding.title,
     remedyLabel: finding.remedyLabel,
+    remedyChip: remedyChipLabel(finding.remedyLabel),
+    projectLabel: finding.projectLabel,
     evidence,
     primaryMarkCommand: evidence[0]?.markCommand || "",
     parked: finding.parked
@@ -151,9 +201,17 @@ export function formatInsightsDuration(ms: number): string {
   return `${(minutes / 60).toFixed(1)}h`;
 }
 
-/** Formats an estimated token count with thousands separators for the "est. N tokens" label. */
+/** Formats an estimated token count compactly (e.g. 24,205 -> "24k") for the dim "est. N tokens" metadata line. */
 function formatInsightsTokenCount(value: number): string {
-  return Intl.NumberFormat("en").format(Math.round(value));
+  const rounded = Math.round(value);
+  if (Math.abs(rounded) < 1_000) return String(rounded);
+  if (Math.abs(rounded) < 1_000_000) return `${Math.round(rounded / 1_000)}k`;
+  return `${Math.round(rounded / 1_000_000)}M`;
+}
+
+/** Truncates text to a maximum length with an ellipsis, for the remedy chip's derived label. */
+function truncateInsightsText(value: string, length: number): string {
+  return value.length > length ? `${value.slice(0, Math.max(0, length - 1)).trimEnd()}…` : value;
 }
 
 /** Query parameters shared by the Insights fetch and its park/unpark scope resolution. */

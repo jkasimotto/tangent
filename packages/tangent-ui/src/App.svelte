@@ -19,7 +19,6 @@
   let activeId = "";
   let loading = true;
   let error = "";
-  let switcherOpen = false;
   let mountNode: HTMLElement;
   let switcherNode: HTMLElement;
   let switcherHome: HTMLElement | undefined;
@@ -224,7 +223,6 @@
 
   function selectApp(app: UiApp): void {
     activeId = app.id;
-    switcherOpen = false;
     syncLocation(true);
   }
 
@@ -233,16 +231,27 @@
     if (next) activeId = next;
   }
 
+  /** Resolves which app a path addresses, matching the app's bare route (or id) or any sub-path
+      under it (e.g. "/usage/insights" still resolves to the "usage" app), so a mounted app's own
+      sub-views stay addressable through the shell. */
   function appIdFromLocation(values: UiApp[]): string | undefined {
     const path = window.location.pathname.replace(/^\/+|\/+$/g, "");
     if (!path) return undefined;
-    return values.find((app) => app.routePath?.replace(/^\/+|\/+$/g, "") === path || app.id === path)?.id;
+    return values.find((app) => {
+      const routePath = app.routePath?.replace(/^\/+|\/+$/g, "");
+      if (routePath && (path === routePath || path.startsWith(`${routePath}/`))) return true;
+      return path === app.id || path.startsWith(`${app.id}/`);
+    })?.id;
   }
 
+  /** Writes the active app's bare route into the URL, unless the current location already
+      addresses this app (possibly via a sub-path like "/usage/insights" that the mounted app
+      owns), in which case it is left alone so that sub-path survives a switcher no-op call. */
   function syncLocation(push: boolean): void {
+    if (appIdFromLocation(apps) === activeId) return;
     const app = apps.find((value) => value.id === activeId);
     const path = app?.routePath || `/${activeId}`;
-    if (!path || window.location.pathname === path) return;
+    if (!path) return;
     const next = `${path}${window.location.search}${window.location.hash}`;
     if (push) window.history.pushState({}, "", next);
     else window.history.replaceState({}, "", next);
@@ -308,37 +317,34 @@
   <svelte:fragment slot="chrome">
     <div class="app-switcher" bind:this={switcherNode}>
       {#if apps.length}
-        <button class="switcher-trigger" type="button" aria-label="Switch Tangent app" aria-expanded={switcherOpen} on:click={() => switcherOpen = !switcherOpen}>
-          {activeApp?.label || "Apps"}
-        </button>
-        {#if switcherOpen}
-          <nav aria-label="Tangent apps" class="switcher-menu">
-            {#each apps as app}
-              <button class:active={app.id === activeId} type="button" on:click={() => selectApp(app)}>
-                {app.label}
-              </button>
-            {/each}
-          </nav>
+        <nav aria-label="Tangent apps" class="app-tabs">
+          {#each apps as app}
+            <button class="app-tab" class:active={app.id === activeId} aria-current={app.id === activeId ? "page" : undefined} type="button" on:click={() => selectApp(app)}>
+              {app.label}
+            </button>
+          {/each}
+        </nav>
+      {/if}
+      <div class="build-info">
+        {#if buildId}
+          <span
+            class="version-label"
+            aria-label={"Build " + buildShort}
+            title={buildId}
+          >{buildLabel}</span>
         {/if}
-      {/if}
-      {#if buildId}
-        <span
-          class="version-label"
-          aria-label={"Build " + buildShort}
-          title={buildId}
-        >{buildLabel}</span>
-      {/if}
-      {#if buildId && builtAt}
-        <span class="version-sep" aria-hidden="true">·</span>
-      {/if}
-      {#if builtAt}
-        <span
-          class="updated-label"
-          class:just-updated={justUpdated}
-          aria-label={"Last updated: " + updatedLabel}
-          title={formatBuiltAtAbsolute(builtAt)}
-        >{updatedLabel}</span>
-      {/if}
+        {#if buildId && builtAt}
+          <span class="version-sep" aria-hidden="true">·</span>
+        {/if}
+        {#if builtAt}
+          <span
+            class="updated-label"
+            class:just-updated={justUpdated}
+            aria-label={"Last updated: " + updatedLabel}
+            title={formatBuiltAtAbsolute(builtAt)}
+          >{updatedLabel}</span>
+        {/if}
+      </div>
     </div>
   </svelte:fragment>
 
@@ -387,19 +393,15 @@
 {/if}
 
 <style>
-  /* Lowest-weight chrome on every screen: the build-identity cluster (version + freshness), anchored
-     beside the switcher so it rides into /trees where the shell chrome is hidden. Both strings sit at
-     the same muted weight so neither dominates; the token clears WCAG AA on the chrome background. */
+  /* Lowest-weight chrome on every screen: the build-identity cluster (version + freshness),
+     right-aligned in the tab row so it reads as passive metadata, never as a control. Both strings
+     sit at the same muted weight so neither dominates; the token clears WCAG AA on the chrome
+     background. */
   .updated-label, .version-label, .version-sep {
     font-size: 12px;
     line-height: 1;
     color: #5c6962;
     white-space: nowrap;
-  }
-
-  /* The version label leads the cluster, so it carries the gap from the switcher. */
-  .version-label {
-    margin-left: 8px;
   }
 
   /* Decorative join between the two strings; breathes equally on both sides. */

@@ -90,10 +90,59 @@ describe("Insights view", () => {
     expect(screen.getByText("finding info")).toBeInTheDocument();
     expect(screen.getByText("34%")).toBeInTheDocument();
     expect(screen.getByText(/dart analyze ran 41x/)).toBeInTheDocument();
-    expect(screen.getByText("document the correct scoped invocation in CLAUDE.md, or cache the result")).toBeInTheDocument();
+    // The remedy renders as a short chip; the full sentence lives in the chip's tooltip.
+    const remedyChip = screen.getByText("Document/cache command");
+    expect(remedyChip).toHaveAttribute("title", "document the correct scoped invocation in CLAUDE.md, or cache the result");
     // The parked finding is hidden until the toggle is used.
     expect(screen.queryByText(/re-read 6 times/)).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Parked (1)" })).toBeInTheDocument();
+  });
+
+  it("renders one stacked distribution bar with a legend of the categories that arrived", async () => {
+    const client = fakeInsightsClient(fixtureResponse());
+    const { container } = render(Insights, { props: { client } });
+
+    await screen.findByText(/Agent time 10\.0h/);
+    expect(container.querySelectorAll(".insights-bar").length).toBe(1);
+    expect(container.querySelectorAll(".insights-bar-segment").length).toBe(3);
+    expect(container.querySelectorAll(".insights-legend-item").length).toBe(3);
+  });
+
+  it("shows a dim project chip when the API row carries a projectLabel and a compact token estimate", async () => {
+    const response = fixtureResponse();
+    response.findings[0] = { ...response.findings[0]!, projectLabel: "polez-pgande", costTokens: 24_205 };
+    const client = fakeInsightsClient(response);
+    render(Insights, { props: { client } });
+
+    expect(await screen.findByText("polez-pgande")).toBeInTheDocument();
+    expect(screen.getByText("est. 24k tokens")).toBeInTheDocument();
+  });
+
+  it("shows the eval sandbox exclusion footnote when the API reports excludedEvalRuns", async () => {
+    const client = fakeInsightsClient({ ...fixtureResponse(), excludedEvalRuns: 74 });
+    render(Insights, { props: { client } });
+
+    expect(await screen.findByText("74 eval sandbox sessions excluded")).toBeInTheDocument();
+  });
+
+  it("shows a skeleton with the computing line while loading", async () => {
+    let resolveInsights: ((value: UsageInsightsApiResponse) => void) | undefined;
+    const client: UsageInsightsClient = {
+      /** Returns a promise the test resolves manually, to hold the view in its loading state. */
+      getInsights: () => new Promise((resolve) => { resolveInsights = resolve; }),
+      /** Unused in this test. */
+      async park() { throw new Error("not used"); },
+      /** Unused in this test. */
+      async unpark() { throw new Error("not used"); }
+    };
+    const { container } = render(Insights, { props: { client } });
+
+    expect(screen.getByText("Computing insights across all projects, last 30 days")).toBeInTheDocument();
+    expect(container.querySelectorAll(".insight-skeleton-card").length).toBe(5);
+
+    resolveInsights!(fixtureResponse());
+    expect(await screen.findByText(/dart analyze ran 41x/)).toBeInTheDocument();
+    expect(container.querySelector(".insight-skeleton-card")).not.toBeInTheDocument();
   });
 
   it("expands evidence and opens a conversation from a finding's evidence row", async () => {
@@ -101,7 +150,7 @@ describe("Insights view", () => {
     const onOpenConversation = vi.fn();
     render(Insights, { props: { client, onOpenConversation } });
 
-    await fireEvent.click(await screen.findByRole("button", { name: /View sessions/ }));
+    await fireEvent.click(await screen.findByRole("button", { name: /Sessions \(2\)/ }));
     const openButton = await screen.findByRole("button", { name: "s1" });
     await fireEvent.click(openButton);
     expect(onOpenConversation).toHaveBeenCalledWith("claude:c1");

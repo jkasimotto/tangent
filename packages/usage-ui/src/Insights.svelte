@@ -8,8 +8,9 @@
   } from "@tangent/usage-ui-data";
 
   // The efficiency lens: a findings-first feed over Usage telemetry, per the mark-loop design's
-  // "tangent usage insights" surface. Numbers lead, charts are reduced to a one-line header, and every
-  // finding carries its evidence and remedy inline so nothing here requires re-reading a conversation.
+  // "tangent usage insights" surface. Numbers lead, the distribution chart is one stacked bar, and
+  // every finding carries its evidence and remedy inline so nothing here requires re-reading a
+  // conversation.
   export let client: UsageInsightsClient = createInsightsApiClient();
   /** Opens the given conversation id in the existing per-conversation view; owned by the caller (App.svelte) so this component stays decoupled from browse/read navigation state. */
   export let onOpenConversation: (conversationId: string) => void = () => undefined;
@@ -22,6 +23,26 @@
   let expandedFingerprints: string[] = [];
   let pendingFingerprints: string[] = [];
   let actionError = "";
+
+  /**
+   * Fixed category-to-color assignment for the distribution bar, keyed by the API's category key so
+   * a category keeps its hue regardless of which categories arrive or in what order (color follows
+   * the entity, never its position). "other" is the catch-all bucket, so it wears a neutral gray.
+   */
+  const CATEGORY_COLORS: Record<string, string> = {
+    findingInfo: "#2a78d6",
+    executing: "#1baf7a",
+    writing: "#eda100",
+    other: "#8a949d"
+  };
+
+  /** Fallback hues for category keys this client does not know yet, assigned by arrival order so a new server category still gets a stable, distinguishable color. */
+  const FALLBACK_CATEGORY_COLORS = ["#008300", "#4a3aa7", "#e34948", "#e87ba4"];
+
+  /** Resolves the bar/legend color for a category: the fixed per-key hue when known, otherwise a stable fallback by arrival position. */
+  function categoryColor(key: string, index: number): string {
+    return CATEGORY_COLORS[key] || FALLBACK_CATEGORY_COLORS[index % FALLBACK_CATEGORY_COLORS.length]!;
+  }
 
   load();
 
@@ -85,25 +106,42 @@
   }
 </script>
 
+{#snippet findingMeta(row: UsageInsightsFindingRow)}
+  <div class="insight-meta">
+    <span class="insight-remedy-chip" title={row.remedyLabel}>{row.remedyChip}</span>
+    {#if row.projectLabel}<span class="insight-project-chip">{row.projectLabel}</span>{/if}
+    {#if row.tokenLabel}<span class="insight-tokens">{row.tokenLabel}</span>{/if}
+  </div>
+{/snippet}
+
 <main class="usage-insights" data-mode="insights">
   <header class="insights-header">
     <div class="insights-heading">
       <button type="button" class="read-back" onclick={onBack}>← Conversations</button>
-      <p>Tangent Usage</p>
-      <h1>Insights{feed ? ` · ${feed.scopeLabel} · last ${feed.windowDays} days` : ""}</h1>
+      <h1>Insights</h1>
+      {#if feed}<span class="insights-scope">{feed.scopeLabel} · last {feed.windowDays} days</span>{/if}
     </div>
-    {#if feed && !feed.isEmpty}
+    {#if feed && !feed.isEmpty && feed.categories.length}
       <div class="insights-distribution" aria-label="Agent time distribution">
         <span class="insights-total">Agent time {feed.totalLabel}</span>
-        {#each feed.categories as category}
-          <div class="insights-category">
-            <span class="insights-category-label">{category.label}</span>
-            <span class="insights-category-track" role="presentation">
-              <span class="insights-category-fill" style={`width:${category.fraction * 100}%`}></span>
+        <div class="insights-bar" role="img" aria-label={feed.categories.map((category) => `${category.label} ${category.percentLabel}`).join(", ")}>
+          {#each feed.categories as category, index (category.key)}
+            <span
+              class="insights-bar-segment"
+              style={`flex-basis:${category.fraction * 100}%; background:${categoryColor(category.key, index)}`}
+              title={`${category.label} ${category.percentLabel}`}
+            ></span>
+          {/each}
+        </div>
+        <div class="insights-legend">
+          {#each feed.categories as category, index (category.key)}
+            <span class="insights-legend-item">
+              <span class="insights-legend-swatch" style={`background:${categoryColor(category.key, index)}`} aria-hidden="true"></span>
+              <span class="insights-legend-label">{category.label}</span>
+              <span class="insights-legend-percent">{category.percentLabel}</span>
             </span>
-            <span class="insights-category-percent">{category.percentLabel}</span>
-          </div>
-        {/each}
+          {/each}
+        </div>
       </div>
     {/if}
   </header>
@@ -113,7 +151,20 @@
       <p>{error}</p>
     </div>
   {:else if loading}
-    <div class="usage-loading" aria-label="Loading insights"><span class="usage-spinner"></span></div>
+    <div class="insights-body" aria-label="Loading insights" aria-busy="true">
+      <p class="insights-computing">Computing insights across all projects, last 30 days</p>
+      <div class="insights-skeleton" aria-hidden="true">
+        {#each Array.from({ length: 5 }) as _placeholder}
+          <div class="insight-skeleton-card">
+            <span class="insight-skeleton-cost"></span>
+            <span class="insight-skeleton-body">
+              <span class="insight-skeleton-line"></span>
+              <span class="insight-skeleton-line short"></span>
+            </span>
+          </div>
+        {/each}
+      </div>
+    </div>
   {:else if feed?.isEmpty}
     <div class="insights-empty">
       <h2>No indexed conversations in this window</h2>
@@ -130,11 +181,11 @@
             <li class="insight-row">
               <span class="insight-cost">{row.costLabel}</span>
               <div class="insight-body">
-                <p class="insight-title">{row.title}{#if row.tokenLabel}<span class="insight-tokens"> ({row.tokenLabel})</span>{/if}</p>
-                <p class="insight-remedy">{row.remedyLabel}</p>
+                <p class="insight-title" title={row.title}>{row.title}</p>
+                {@render findingMeta(row)}
                 <div class="insight-actions">
                   <button type="button" onclick={() => toggleEvidence(row.fingerprint)}>
-                    {expandedFingerprints.includes(row.fingerprint) ? "Hide sessions" : `View sessions (${row.evidence.length})`}
+                    {expandedFingerprints.includes(row.fingerprint) ? "Hide sessions" : `Sessions (${row.evidence.length})`}
                   </button>
                   <button type="button" title={row.primaryMarkCommand} onclick={() => copyText(row.primaryMarkCommand)}>
                     Copy mark command
@@ -173,8 +224,8 @@
             <li class="insight-row insight-row-parked">
               <span class="insight-cost">{row.costLabel}</span>
               <div class="insight-body">
-                <p class="insight-title">{row.title}</p>
-                <p class="insight-remedy">{row.remedyLabel}</p>
+                <p class="insight-title" title={row.title}>{row.title}</p>
+                {@render findingMeta(row)}
                 <div class="insight-actions">
                   <button type="button" class="insight-unpark" disabled={pendingFingerprints.includes(row.fingerprint)} onclick={() => unpark(row)}>
                     {pendingFingerprints.includes(row.fingerprint) ? "Unparking…" : "Unpark"}
@@ -184,6 +235,10 @@
             </li>
           {/each}
         </ol>
+      {/if}
+
+      {#if feed.excludedEvalRuns}
+        <p class="insights-footnote">{feed.excludedEvalRuns} eval sandbox sessions excluded</p>
       {/if}
     </div>
   {/if}
@@ -204,7 +259,7 @@
   .insights-header {
     display: grid;
     gap: 10px;
-    padding: 18px 24px;
+    padding: 14px 24px;
     border-bottom: 1px solid var(--tangent-color-border, #d9ded7);
     background: var(--tangent-color-surface-raised, #fff);
   }
@@ -215,17 +270,15 @@
     gap: 12px;
   }
 
-  .insights-heading p {
-    margin: 0;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--tangent-color-text-muted, #66716a);
-  }
-
   .insights-heading h1 {
     margin: 0;
-    font-size: 20px;
+    font-size: 17px;
+    line-height: 1.2;
+  }
+
+  .insights-scope {
+    font-size: 12px;
+    color: var(--tangent-color-text-muted, #66716a);
   }
 
   .read-back {
@@ -236,48 +289,58 @@
     padding: 0;
   }
 
+  /* One 100% stacked bar plus a legend: the header answers "where does agent time go" in one
+     glance, replacing the previous per-category mini-bars that read as three broken charts. */
   .insights-distribution {
     display: grid;
-    gap: 4px;
-    font-size: 13px;
+    gap: 6px;
+    max-width: 640px;
   }
 
   .insights-total {
+    font-size: 13px;
     font-weight: 600;
-    margin-bottom: 2px;
   }
 
-  .insights-category {
-    display: grid;
-    grid-template-columns: 88px minmax(120px, 240px) 40px;
-    align-items: center;
-    gap: 8px;
+  .insights-bar {
+    display: flex;
+    gap: 2px;
+    height: 10px;
+    border-radius: var(--tangent-radius-pill, 999px);
+    overflow: hidden;
+    background: var(--tangent-color-surface-inset, #e7ebe4);
+  }
+
+  .insights-bar-segment {
+    display: block;
+    flex: 0 0 auto;
+    min-width: 2px;
+    height: 100%;
+  }
+
+  .insights-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+    font-size: 12px;
     color: var(--tangent-color-text-muted, #66716a);
   }
 
-  .insights-category-track {
-    display: block;
-    height: 6px;
-    border-radius: var(--tangent-radius-pill, 999px);
-    background: var(--tangent-color-surface-inset, #e7ebe4);
-    overflow: hidden;
+  .insights-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
   }
 
-  .insights-category-fill {
-    display: block;
-    height: 100%;
-    background: var(--tangent-color-chart, #4f46e5);
+  .insights-legend-swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
   }
 
-  .insights-category-percent {
-    text-align: right;
+  .insights-legend-percent {
     font-variant-numeric: tabular-nums;
-  }
-
-  .usage-loading {
-    display: grid;
-    place-items: center;
-    height: 100%;
+    color: var(--tangent-color-text, #17201b);
   }
 
   .insights-empty {
@@ -299,6 +362,75 @@
   .insights-body {
     overflow-y: auto;
     padding: 18px 24px 32px;
+  }
+
+  /* Skeleton loading: the shape of the feed appears immediately, so a slow first computation reads
+     as progress rather than a blank page. */
+  .insights-computing {
+    margin: 0 0 14px;
+    font-size: 13px;
+    color: var(--tangent-color-text-muted, #66716a);
+  }
+
+  .insights-skeleton {
+    display: grid;
+    gap: 12px;
+  }
+
+  .insight-skeleton-card {
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr);
+    gap: 16px;
+    padding: 14px 16px;
+    border: 1px solid var(--tangent-color-border, #d9ded7);
+    border-radius: var(--tangent-radius-lg, 8px);
+    background: var(--tangent-color-surface-raised, #fff);
+  }
+
+  .insight-skeleton-cost,
+  .insight-skeleton-line {
+    display: block;
+    border-radius: 4px;
+    background: var(--tangent-color-surface-inset, #e7ebe4);
+    animation: insights-pulse 1.4s ease-in-out infinite;
+  }
+
+  .insight-skeleton-cost {
+    height: 22px;
+    width: 56px;
+  }
+
+  .insight-skeleton-body {
+    display: grid;
+    gap: 8px;
+    align-content: start;
+  }
+
+  .insight-skeleton-line {
+    height: 13px;
+    width: 80%;
+  }
+
+  .insight-skeleton-line.short {
+    width: 45%;
+  }
+
+  @keyframes insights-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+
+    50% {
+      opacity: 0.55;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .insight-skeleton-cost,
+    .insight-skeleton-line {
+      animation: none;
+    }
   }
 
   .insights-action-error {
@@ -336,20 +468,52 @@
     line-height: 1.2;
   }
 
+  /* Title stays scannable: at most two lines, the full text in the tooltip. */
   .insight-title {
-    margin: 0 0 4px;
+    margin: 0 0 6px;
     font-size: 14px;
+    line-height: 1.35;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  /* One quiet metadata line per card: remedy tag, project, token estimate. */
+  .insight-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 8px;
+    margin: 0 0 8px;
+  }
+
+  .insight-remedy-chip {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: var(--tangent-radius-pill, 999px);
+    background: var(--tangent-color-surface-inset, #e7ebe4);
+    color: var(--tangent-color-text, #17201b);
+    font-size: 11px;
+    font-weight: 650;
+    line-height: 1.4;
+    white-space: nowrap;
+  }
+
+  .insight-project-chip {
+    display: inline-block;
+    padding: 2px 8px;
+    border: 1px solid var(--tangent-color-border, #d9ded7);
+    border-radius: var(--tangent-radius-pill, 999px);
+    color: var(--tangent-color-text-muted, #66716a);
+    font-size: 11px;
+    line-height: 1.4;
+    white-space: nowrap;
   }
 
   .insight-tokens {
     color: var(--tangent-color-text-muted, #66716a);
-    font-weight: 400;
-  }
-
-  .insight-remedy {
-    margin: 0 0 8px;
-    color: var(--tangent-color-text-muted, #66716a);
-    font-size: 13px;
+    font-size: 11px;
   }
 
   .insight-actions {
@@ -372,8 +536,18 @@
     cursor: default;
   }
 
-  .insight-park,
-  .insight-unpark {
+  /* Park is curation, not the card's call to action: quiet text-weight secondary. */
+  .insight-actions button.insight-park {
+    border-color: transparent;
+    background: transparent;
+    color: var(--tangent-color-text-muted, #66716a);
+  }
+
+  .insight-actions button.insight-park:hover {
+    color: var(--tangent-color-text, #17201b);
+  }
+
+  .insight-actions button.insight-unpark {
     border-color: var(--tangent-color-accent, #2563eb);
     color: var(--tangent-color-accent, #2563eb);
   }
@@ -428,5 +602,11 @@
 
   .insights-feed-parked {
     margin-top: 12px;
+  }
+
+  .insights-footnote {
+    margin: 16px 0 0;
+    font-size: 11px;
+    color: var(--tangent-color-text-muted, #66716a);
   }
 </style>

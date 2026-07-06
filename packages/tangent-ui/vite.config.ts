@@ -23,7 +23,11 @@ function dropPublicDocs(): Plugin {
 }
 
 export default defineConfig({
-  base: "./",
+  // The shell is always served from the server root and its index.html is the SPA fallback for
+  // every app route, including nested ones like /usage/insights. Asset URLs must therefore be
+  // absolute: with a relative base, "./assets/x.js" resolves against the current route, so any
+  // two-segment deep link fetched index.html instead of the bundle and rendered a blank page.
+  base: "/",
   plugins: [svelte(), dropPublicDocs()],
   resolve: {
     conditions: ["browser"]

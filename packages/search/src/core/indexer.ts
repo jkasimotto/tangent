@@ -107,9 +107,12 @@ type ProgressContext = {
   const oldInclude = db.getMeta("include_generated");
   const oldLanguages = db.getMeta("languages");
   const oldContext = db.getMeta("context_signature");
+  const oldVersion = db.getMeta("version");
   const fullReason = fullIndexReason({
     force: Boolean(options.force),
     existingSize: existing.size,
+    oldVersion,
+    currentVersion: searchIndexVersion,
     oldInclude,
     includeGenerated,
     oldLanguages,

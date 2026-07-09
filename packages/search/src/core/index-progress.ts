@@ -37,6 +37,8 @@ export function emitSlowOperation<T extends ProgressPayloadLike>(progress: Progr
 export function fullIndexReason(options: {
   force: boolean;
   existingSize: number;
+  oldVersion: string | undefined;
+  currentVersion: string;
   oldInclude: string | undefined;
   includeGenerated: boolean;
   oldLanguages: string | undefined;
@@ -46,6 +48,7 @@ export function fullIndexReason(options: {
 }): string | undefined {
   if (options.force) return "forced";
   if (options.existingSize === 0) return "empty-index";
+  if (options.oldVersion !== undefined && options.oldVersion !== options.currentVersion) return "index-version-changed";
   if (options.oldInclude !== undefined && options.oldInclude !== (options.includeGenerated ? "1" : "0")) return "include-generated-changed";
   if (options.oldLanguages !== undefined && options.oldLanguages !== [...options.languages].sort().join(",")) return "languages-changed";
   if (options.oldContext !== undefined && options.oldContext !== options.contextSignature) return "language-context-changed";

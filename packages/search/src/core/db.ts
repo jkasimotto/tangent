@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 
-export const searchIndexVersion = "0.4.0";
+export const searchIndexVersion = "0.5.0";
 
 export type FileRow = {
   id: number;
@@ -91,7 +91,10 @@ export class SearchDB {
 
   /** Supports the init schema helper. */
   initSchema(reset = false): void {
-    if (reset) this.conn.exec("DROP TABLE IF EXISTS meta;DROP TABLE IF EXISTS files;DROP TABLE IF EXISTS symbols;DROP TABLE IF EXISTS edges;DROP TABLE IF EXISTS entities;DROP TABLE IF EXISTS entities_fts;");
+    // Drop child tables before files: symbols.file_id references files(id)
+    // and better-sqlite3 enforces foreign keys, so dropping the parent first
+    // fails on any populated index.
+    if (reset) this.conn.exec("DROP TABLE IF EXISTS symbols;DROP TABLE IF EXISTS edges;DROP TABLE IF EXISTS entities;DROP TABLE IF EXISTS entities_fts;DROP TABLE IF EXISTS files;DROP TABLE IF EXISTS meta;");
     this.conn.exec(`
       PRAGMA journal_mode=WAL;
       PRAGMA synchronous=NORMAL;

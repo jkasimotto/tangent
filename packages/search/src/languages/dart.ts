@@ -3,6 +3,7 @@ import { pathExists } from "@tangent/repo";
 
 import {
   computeLineDepths,
+  computeLineParenDepths,
   depthAtLine,
   findMatchingBrace,
   getDocBefore,
@@ -29,7 +30,11 @@ const importRe = /^[ \t]*(?<kind>import|export|part)\s+['"](?<uri>[^'"]+)['"]/gm
 const libraryRe = /^[ \t]*library\s+([^;]+);/m;
 const callableDeclRe = /^[ \t]*(?:(?:@[A-Za-z_$][A-Za-z0-9_$.]*(?:\([^\n]*?\))?[ \t]*\n[ \t]*)*)(?:(?:external|static|abstract|factory|const|final|late|covariant|override)\s+)*(?:(?:[A-Za-z_$][A-Za-z0-9_$]*|void|dynamic|Future|Stream|List|Map|Set)(?:\s*<[^;{}()\n]*>)?(?:\?|\*)?(?:\s+|\s*\.\s*))?(?<name>[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z_$][A-Za-z0-9_$]*)?)\s*(?:<[^;{}()\n]*>)?\s*\([^;{}]*?\)\s*(?:async\*?|sync\*?)?\s*(?<term>\{|=>|;)/gms;
 const getterRe = /^[ \t]*(?:(?:external|static|abstract|override)\s+)*(?:[A-Za-z_$][\w$<>?,.\[\] ]+\s+)?get\s+(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*(?<term>\{|=>|;)/gm;
-const fieldRe = /^[ \t]*(?:(?:static|late|final|const)\s+)*(?:var|[A-Za-z_$][A-Za-z0-9_$<>?,.\[\] ]+)\s+(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*(?:=|;|,)/gm;
+// Type and name must stay on one line ([ \t]+, not \s+): the type token class
+// includes `,`, so a newline-crossing gap pairs an enum value with the next
+// line's value and emits bogus fields with wrong line attribution.
+const fieldRe = /^[ \t]*(?:(?:static|late|final|const)\s+)*(?:var|[A-Za-z_$][A-Za-z0-9_$<>?,.\[\] ]+)[ \t]+(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*(?:=(?!>)|;|,)/gm;
+const enumValueRe = /^[ \t]*(?<name>[A-Za-z_$][A-Za-z0-9_$]*)(?:\([^\n]*\))?\s*[,;]$/gm;
 const callRe = /(?<![A-Za-z0-9_$])([A-Za-z_$][A-Za-z0-9_$]*)\s*(?:<[^;{}()]*>)?\s*\(/g;
 const typeTokenRe = /\b([A-Z][A-Za-z0-9_$]*)\b/g;
 
@@ -68,7 +73,6 @@ export class DartAdapter extends BaseLanguageAdapter {
     const starts = lineStarts(text);
     const depths = computeLineDepths(clean);
     const lines = text.split(/\r?\n/);
-    const cleanLines = clean.split(/\r?\n/);
     const libMatch = clean.match(libraryRe);
     const parsed: ParsedFile = {
       language: this.id,
@@ -220,18 +224,51 @@ export class DartAdapter extends BaseLanguageAdapter {
       });
     }
 
+    const parenDepths = computeLineParenDepths(clean);
     for (const match of matchAllReset(clean, fieldRe)) {
       const startLine = posToLine(starts, match.index);
       const parent = parentFor(match.index);
       if (!parent || !validDepth(startLine, parent)) continue;
-      if ((cleanLines[startLine - 1] || "").includes("(")) continue;
+      // A line starting inside an unclosed `(` is a constructor/method
+      // parameter or argument continuation, never a field declaration.
+      if (depthAtLine(parenDepths, startLine) > 0) continue;
+      const name = match.groups?.name || "";
+      if (dartKeywords.has(name)) continue;
+      // `int get foo;` matches fieldRe with "int get" as the type; getters
+      // are indexed by getterRe, so skip them here to avoid duplicates.
+      if (new RegExp(`\\bget\\s+${name}\\b`).test(match[0])) continue;
+      parsed.symbols.push({
+        tempId: temp++,
+        name,
+        qualifiedName: `${parent.name}.${name}`,
+        kind: "field",
+        visibility: name.startsWith("_") ? "private" : "public",
+        startLine,
+        endLine: startLine,
+        signature: singleLineSignature(lines[startLine - 1] || name),
+        doc: getDocBefore(lines, startLine),
+        parentTempId: parent.tempId,
+        startPos: match.index,
+        endPos: match.index + match[0].length
+      });
+    }
+
+    // Enum values: bare `name,` / `name(args),` lines directly inside an enum
+    // body. Other member kinds are already claimed by the passes above.
+    const taken = new Set(parsed.symbols.map((symbol) => symbol.startLine));
+    for (const match of matchAllReset(clean, enumValueRe)) {
+      const startLine = posToLine(starts, match.index);
+      if (taken.has(startLine)) continue;
+      if (depthAtLine(parenDepths, startLine) > 0) continue;
+      const parent = parentFor(match.index);
+      if (!parent || parent.kind !== "enum" || !validDepth(startLine, parent)) continue;
       const name = match.groups?.name || "";
       if (dartKeywords.has(name)) continue;
       parsed.symbols.push({
         tempId: temp++,
         name,
         qualifiedName: `${parent.name}.${name}`,
-        kind: "field",
+        kind: "enum_value",
         visibility: name.startsWith("_") ? "private" : "public",
         startLine,
         endLine: startLine,

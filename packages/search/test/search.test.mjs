@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-import { indexRepo, searchRepo, skeleton, status, testsFor } from "../dist/sdk/index.js";
+import { indexRepo, searchRepo, skeleton, status, symbol, testsFor } from "../dist/sdk/index.js";
 import { runSearchCli } from "../dist/cli/index.js";
 import { deleteFileIndexRows, SearchDB } from "../dist/core/db.js";
 
@@ -194,6 +194,77 @@ test("CLI verbose index progress identifies per-file write and edge steps", asyn
   assert.match(stderr, /edges import/);
   assert.match(stderr, /duration=/);
   assert.match(output.stdout.join("\n"), /search incremental: \d+ files, \d+ symbols, \d+ edges/);
+});
+
+test("does not index Dart constructor or method parameters as fields", async () => {
+  process.env.TANGENT_SEARCH_HOME = await mkdtemp(path.join(tmpdir(), "tangent-search-dart-params-"));
+  const repo = await copyFixture("dart");
+  const indexed = await indexRepo({ repo, force: true, languages: ["dart"] });
+  const db = new SearchDB(indexed.dbPath);
+  try {
+    const rows = db.conn.prepare("SELECT qualified_name AS qname, kind FROM symbols WHERE qualified_name LIKE 'CalcToolState%'").all();
+    const byName = new Map(rows.map((row) => [row.qname, row.kind]));
+    assert.equal(byName.get("CalcToolState.sharedCalculator"), undefined);
+    assert.equal(byName.get("CalcToolState.seedEntry"), undefined);
+    assert.equal(byName.get("CalcToolState.left"), undefined);
+    assert.equal(byName.get("CalcToolState.right"), undefined);
+    assert.equal(byName.get("CalcToolState.calculator"), "field");
+    assert.equal(byName.get("CalcToolState.history"), "field");
+    assert.equal(byName.get("CalcToolState.emptyEntry"), "field");
+    assert.equal(byName.get("CalcToolState.lastTotal"), "getter");
+    const enumRows = db.conn.prepare("SELECT qualified_name AS qname, kind, signature FROM symbols WHERE qualified_name LIKE 'CalcMode%'").all();
+    const enumByName = new Map(enumRows.map((row) => [row.qname, row]));
+    assert.equal(enumByName.get("CalcMode.standard")?.kind, "enum_value");
+    assert.equal(enumByName.get("CalcMode.scientific")?.kind, "enum_value");
+    assert.match(enumByName.get("CalcMode.scientific")?.signature || "", /scientific/);
+  } finally {
+    db.close();
+  }
+});
+
+test("ranks distinct declarations above members in fuzzy symbol lookup", async () => {
+  process.env.TANGENT_SEARCH_HOME = await mkdtemp(path.join(tmpdir(), "tangent-search-dart-rank-"));
+  const repo = await copyFixture("dart");
+  await indexRepo({ repo, force: true, languages: ["dart"] });
+
+  const results = await symbol("ToolState", { repo, languages: ["dart"] });
+
+  const classNames = results.filter((row) => row.kind === "class").map((row) => row.qualifiedName);
+  assert.deepEqual(classNames.sort(), ["CalcToolState", "ReplayToolState"]);
+  assert.equal(results[0].kind, "class");
+  assert.equal(results[1].kind, "class");
+  for (const row of results) {
+    const ownName = row.qualifiedName.split(".").pop() || "";
+    assert.ok(ownName.includes("ToolState"), `member matched only via parent: ${row.qualifiedName}`);
+  }
+});
+
+test("force reindex succeeds on a populated index", async () => {
+  process.env.TANGENT_SEARCH_HOME = await mkdtemp(path.join(tmpdir(), "tangent-search-force-repop-"));
+  const repo = await copyFixture("dart");
+  await indexRepo({ repo, force: true, languages: ["dart"] });
+
+  const again = await indexRepo({ repo, force: true, languages: ["dart"] });
+
+  assert.equal(again.action, "full");
+  assert.ok(again.symbols >= 3);
+});
+
+test("rebuilds the index when the stored index version changes", async () => {
+  process.env.TANGENT_SEARCH_HOME = await mkdtemp(path.join(tmpdir(), "tangent-search-version-"));
+  const repo = await copyFixture("typescript");
+  const indexed = await indexRepo({ repo, force: true });
+  const db = new SearchDB(indexed.dbPath);
+  db.setMeta("version", "0.0.1");
+  db.close();
+
+  const events = [];
+  /** Collects indexer progress events for assertions. */
+  const onProgress = (event) => events.push(event);
+  const reindexed = await indexRepo({ repo, onProgress });
+
+  assert.equal(reindexed.action, "full");
+  assert.ok(events.some((event) => event.phase === "plan" && event.reason === "index-version-changed"));
 });
 
 /** Copies a language fixture repo into a temp directory for one test. */

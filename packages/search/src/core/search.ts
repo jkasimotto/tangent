@@ -111,8 +111,12 @@ export function searchDb(dbPath: string, query: string, options: { mode: SearchQ
 /** Looks up db. */
 export function symbolDb(dbPath: string, name: string, languages?: string[]): SymbolDetails[] {
   const db = openDb(dbPath);
-  const rows = findSymbols(db, name, languages).slice(0, 20);
-  const result = rows.map((row) => symbolDetails(db, row));
+  const rows = findSymbols(db, name, languages).slice(0, 25);
+  // Call-graph detail is only useful when the match list is short enough to
+  // read; for long fuzzy lists it multiplies output size without helping
+  // routing, so hydrate the top rows only.
+  const detailed = 5;
+  const result = rows.map((row, index) => (index < detailed ? symbolDetails(db, row) : symbolSummary(row)));
   db.close();
   return result;
 }
@@ -322,8 +326,38 @@ function findSymbols(db: SearchDB, name: string, languages?: string[]): SymbolRo
   const lang = languageClause(languages, "s");
   const exact = db.conn.prepare(`SELECT s.*, f.path FROM symbols s JOIN files f ON f.id=s.file_id WHERE (s.name=? OR s.qualified_name=?) ${lang.sql} ORDER BY s.language,f.path,s.start_line`).all(name, name, ...lang.params) as SymbolRow[];
   if (exact.length) return exact;
+  // Fuzzy tier. Match on the symbol's own name so a query like "ToolState"
+  // surfaces every *ToolState* declaration instead of one class plus all of
+  // its members (each member's qualified name contains the class name).
+  // Dotted queries ("Foo.bar") match qualified names.
   const like = `%${name}%`;
-  return db.conn.prepare(`SELECT s.*, f.path FROM symbols s JOIN files f ON f.id=s.file_id WHERE (s.name LIKE ? OR s.qualified_name LIKE ?) ${lang.sql} ORDER BY s.language,f.path,s.start_line LIMIT 50`).all(like, like, ...lang.params) as SymbolRow[];
+  const nameClause = name.includes(".") ? "(s.name LIKE ? OR s.qualified_name LIKE ?)" : "s.name LIKE ?";
+  const nameParams = name.includes(".") ? [like, like] : [like];
+  const kindRank = `CASE WHEN s.kind IN ('class','interface','mixin','enum','extension','typedef','type') THEN 0
+    WHEN s.kind IN ('function','constructor') THEN 1
+    WHEN s.kind IN ('method','getter','setter','arrow_function') THEN 2
+    ELSE 3 END`;
+  return db.conn.prepare(
+    `SELECT s.*, f.path FROM symbols s JOIN files f ON f.id=s.file_id WHERE ${nameClause} ${lang.sql}
+     ORDER BY CASE WHEN s.visibility='private' THEN 1 ELSE 0 END, ${kindRank},
+       CASE WHEN s.name LIKE ? THEN 0 ELSE 1 END, LENGTH(s.name), s.name, f.path LIMIT 50`
+  ).all(...nameParams, ...lang.params, `${name}%`) as SymbolRow[];
+}
+
+/** Builds details without call-graph hydration for long fuzzy match lists. */
+function symbolSummary(symbol: SymbolRow): SymbolDetails {
+  return {
+    qualifiedName: symbol.qualified_name,
+    language: symbol.language,
+    kind: symbol.kind,
+    path: symbol.path || "",
+    startLine: symbol.start_line,
+    endLine: symbol.end_line,
+    signature: symbol.signature || undefined,
+    calledBy: [],
+    calls: [],
+    tests: []
+  };
 }
 
 /** Looks up details. */

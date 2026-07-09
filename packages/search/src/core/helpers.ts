@@ -125,6 +125,33 @@ export function depthAtLine(depths: readonly number[], line: number): number {
   return depths[line - 1] ?? depths.at(-1) ?? 0;
 }
 
+/**
+ * Computes the parenthesis nesting depth at the start of each line.
+ * A line that begins inside an unclosed `(` is part of a parameter or
+ * argument list, so line-anchored declaration regexes must not treat it
+ * as a standalone declaration (e.g. constructor parameters as fields).
+ */
+export function computeLineParenDepths(clean: string): number[] {
+  const depths: number[] = [];
+  let depth = 0;
+  let lineDepth = 0;
+  let atLine = true;
+  for (const ch of clean) {
+    if (atLine) {
+      lineDepth = depth;
+      atLine = false;
+    }
+    if (ch === "(") depth += 1;
+    else if (ch === ")") depth = Math.max(0, depth - 1);
+    else if (ch === "\n") {
+      depths.push(lineDepth);
+      atLine = true;
+    }
+  }
+  depths.push(atLine ? depth : lineDepth);
+  return depths;
+}
+
 /** Finds matching brace. */
 export function findMatchingBrace(clean: string, openPos: number): number | undefined {
   if (openPos < 0 || openPos >= clean.length || clean[openPos] !== "{") return undefined;

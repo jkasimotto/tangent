@@ -134,7 +134,7 @@ function printSearch(result: Awaited<ReturnType<typeof searchRepo>>): void {
   if (!result.implementationSymbols.length && !result.implementationFiles.length && !result.tests.length) console.log("No index matches. Try: tangent search grep -rn <pattern> <path>");
 }
 
-/** Emits hits. */
+/** Emits hits. The next-step hint prints once per section, not per hit. */
 function emitHits(title: string, hits: Awaited<ReturnType<typeof searchRepo>>["implementationSymbols"]): void {
   if (!hits.length) return;
   console.log(`\n${title}`);
@@ -143,8 +143,10 @@ function emitHits(title: string, hits: Awaited<ReturnType<typeof searchRepo>>["i
     console.log(`   file: ${hit.path}${hit.startLine ? `:${hit.startLine}-${hit.endLine}` : ""}`);
     if (hit.signature) console.log(`   signature: ${hit.signature}`);
     if (hit.reasons.length) console.log(`   why: ${hit.reasons.join("; ")}`);
-    console.log(hit.type === "symbol" ? `   next: tangent search symbol ${JSON.stringify(hit.name)}\n         tangent search skeleton ${hit.path}` : `   next: tangent search skeleton ${hit.path}`);
   }
+  const top = hits[0];
+  if (!top) return;
+  console.log(top.type === "symbol" ? `\nnext: tangent search symbol ${JSON.stringify(top.name)} | tangent search skeleton <path>` : `\nnext: tangent search skeleton ${top.path}`);
 }
 
 /** Prints index result. */
@@ -320,13 +322,18 @@ function printStatus(value: Awaited<ReturnType<typeof statusSdk>>, verbose: bool
   }
 }
 
-/** Prints symbols. */
+/** Prints symbols. Top matches get full detail; the rest print one line each. */
 function printSymbols(name: string, values: Awaited<ReturnType<typeof symbol>>): void {
   if (!values.length) {
     console.log(`No symbol found for ${JSON.stringify(name)}`);
     return;
   }
+  const detailed = 5;
   for (const [index, item] of values.entries()) {
+    if (index >= detailed) {
+      console.log(`${index + 1}. ${item.qualifiedName} [${item.language} ${item.kind}] ${item.path}:${item.startLine}-${item.endLine}`);
+      continue;
+    }
     console.log(`${index + 1}. ${item.qualifiedName} [${item.language} ${item.kind}]`);
     console.log(`   file: ${item.path}:${item.startLine}-${item.endLine}`);
     if (item.signature) console.log(`   signature: ${item.signature}`);
@@ -335,6 +342,8 @@ function printSymbols(name: string, values: Awaited<ReturnType<typeof symbol>>):
     if (item.tests.length) console.log(`   tests: ${item.tests.slice(0, 5).join(", ")}`);
     console.log("");
   }
+  if (values.length > detailed) console.log(`\nRun tangent search symbol "<exact name>" for call graph detail on one match.`);
+  if (values.length >= 25) console.log(`More matches may exist; refine the query.`);
 }
 
 /** Prints call graph. */

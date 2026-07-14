@@ -1,11 +1,12 @@
 # tangent
 
-Tangent gives you a queryable API over Claude Code, Codex, and Gemini CLI sessions, and lets you evaluate under different context, prompts, and models and look at the results next to each other.
+Tangent gives you a queryable API over Claude Code, Codex, and Gemini CLI sessions, lets you evaluate under different context, prompts, and models, and gives coding agents structural code search.
 
-Two things ship here, mounted together by `tangent ui`:
+Three things ship here. The first two are mounted together by `tangent ui`:
 
-- **usage** — read your own agent activity. A local UI and queryable API over every Claude Code, Codex, and Gemini CLI session on your machine.
-- **eval** — compare. Run the same task under different contexts, prompts, or models and look at the results side by side.
+- **usage**: read your own agent activity. A local UI and queryable API over every Claude Code, Codex, and Gemini CLI session on your machine.
+- **eval**: compare. Run the same task under different contexts, prompts, or models and look at the results side by side.
+- **search**: structural code search built for coding agents. A CLI that indexes a repo's source and answers "where is X defined, who calls Y" without reading whole files.
 
 ## Get started
 
@@ -80,11 +81,30 @@ tangent eval context capture my-context   # add --include-ancestors to pull in p
 
 The classic experiment is `--context empty --context repo`: same task, same model, and the only difference is whether the agent can see your guidance files. The report tells you whether they earned their keep.
 
+## search — structural code search for agents
+
+`tangent search` indexes a repo's TypeScript/JavaScript and Dart source into a local SQLite database under `~/.tangent/search/` and answers structural questions about the code. It is syntax-aware but deliberately lightweight: no tsserver, no compiler API, no Dart analyzer, no LSP.
+
+```bash
+tangent search index                  # build or refresh the index (fast when little changed)
+tangent search "query"                # find symbols, files, and tests
+tangent search symbol SymbolName      # where a symbol is defined
+tangent search callers SymbolName     # who calls it (callees works too)
+tangent search tests src/file.ts      # likely tests for a path or symbol
+tangent search skeleton src/file.ts   # file outline, so you read only the ranges you need
+tangent search open-plan "<task>"     # recommended read order for a task
+```
+
+The point is agent efficiency. Grepping and paging through 4k-line files burns most of an agent's context on re-reads. With the index, the agent orients with `open-plan`, outlines big files with `skeleton`, and answers definition and call-graph questions directly, reading only the line ranges it needs.
+
+`tangent search status` shows index state, and `tangent search rg` runs ripgrep with the index's excludes as a fallback for exact-text misses. Install `skills/tangent-search/` into your agent's skills folder to teach it the full workflow.
+
 ## Let the agent set it up
 
 This repo ships skills in `skills/`. Most of the time, just ask your coding agent to build and run an eval for you — install the skill for your agent and it handles the setup.
 
 - `skills/setup-tangent-eval/` — have the agent build and run an eval for you.
+- `skills/tangent-search/` — teach the agent to orient with structural search instead of grepping and paging through files.
 - `skills/verify-app/` — boot the UI read-only and verify a change in a browser.
 
 To use a skill in another project, copy its directory into that project's agent skill folder.

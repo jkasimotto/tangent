@@ -139,7 +139,7 @@ async function walkPackageDirs(root: string): Promise<string[]> {
   return entries.filter((entry) => entry.isDirectory()).map((entry) => path.join(packagesDir, entry.name));
 }
 
-/** Supports the ignored dir helper. */
+/** Skips build output and every dot-directory: those are tool scratch (.git, .superpowers, .obsidian), never governed source. */
 function ignoredDir(name: string): boolean {
-  return name === "node_modules" || name === "dist" || name === ".git";
+  return name === "node_modules" || name === "dist" || name.startsWith(".");
 }

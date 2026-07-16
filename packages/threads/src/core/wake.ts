@@ -25,8 +25,21 @@ export function parseWakeCondition(raw: string): WakeCondition {
   const date = raw.match(datePattern);
   if (date) return { kind: "date", date: date[1]!, raw };
   const merged = raw.match(mergedPattern);
-  if (merged) return { kind: "merged", branch: merged[1]!, target: merged[2]!, repoPath: expandHome(merged[3]!), raw };
+  if (merged) {
+    return {
+      kind: "merged",
+      branch: stripTrailingPunctuation(merged[1]!),
+      target: stripTrailingPunctuation(merged[2]!),
+      repoPath: expandHome(stripTrailingPunctuation(merged[3]!)),
+      raw
+    };
+  }
   return { kind: "opaque", raw };
+}
+
+/** Strips trailing `.`, `,`, `;`, or `:` from a captured token, since wake lines are prose sentences and routinely end (or pause mid-clause) with one. */
+function stripTrailingPunctuation(token: string): string {
+  return token.replace(/[.,;:]+$/, "");
 }
 
 /**

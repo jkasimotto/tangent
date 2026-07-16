@@ -33,6 +33,23 @@ export async function commitAll(repo: string, message: string, options: { allowE
   return currentCommit(repo);
 }
 
+/**
+ * Stages and commits exactly one path, leaving every other change in the working tree untouched.
+ * Unlike `commitAll` (which `git add -A`s the whole tree under a fixed throwaway identity and
+ * `--no-verify`, fine for eval's disposable worktrees), this runs with the repo's own committer
+ * identity and hooks enabled: it exists for writers that touch a durable, human-owned repo (e.g. a
+ * team's `shared/` git checkout) and must never sweep up unrelated in-progress edits or impersonate
+ * a human's commit history. Returns the resulting commit SHA, or the current HEAD unchanged when the
+ * targeted path had nothing to commit.
+ */
+export async function commitPath(repo: string, relativePath: string, message: string): Promise<string> {
+  await git(repo, ["add", "--", relativePath]);
+  const status = await gitText(repo, ["status", "--porcelain", "--", relativePath]);
+  if (!status) return currentCommit(repo);
+  await git(repo, ["commit", "-m", message, "--", relativePath]);
+  return currentCommit(repo);
+}
+
 /** Builds a commit from in-memory file contents via a temporary index and points a ref at it, without touching the worktree. */
 export async function createSyntheticCommit(args: {
   repo: string;

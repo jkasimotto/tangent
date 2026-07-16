@@ -86,8 +86,15 @@ export interface SessionStateReader {
    * Resolves the most recently active session whose working directory matches a registered
    * worktree, for registry entries dispatched before their session id was observable. Returns
    * undefined when no session matches.
+   *
+   * `notBefore`, an ISO timestamp, guards against misattribution: a recur thread's cwd is often a
+   * long-lived, reused repo directory (unlike a fresh eval worktree), so matching on cwd alone can
+   * latch onto a human's own interactive session in that same directory, past or future. Only
+   * sessions whose start (or last activity, when start is unknown) falls at or after `notBefore`
+   * minus a small slack are eligible; the sweep passes the registry entry's `registeredAt` so only
+   * sessions from this dispatch onward can match.
    */
-  resolveSessionIdByCwd(worktree: string, now: Date): Promise<string | undefined>;
+  resolveSessionIdByCwd(worktree: string, now: Date, notBefore?: string): Promise<string | undefined>;
 }
 
 /** One dispatched thread's worktree/tmux/session linkage, as recorded by `tangent threads register`. */
@@ -168,8 +175,8 @@ export type StateOfPlaySpliceResult = "written" | "unchanged" | { status: "malfo
  * Writes a shared node's generated state-of-play section and, when appropriate, commits it locally.
  * Injectable so the sweep's tests can assert which nodes it calls (and with what section) without
  * touching real git or the filesystem; the default implementation splices via
- * `updateSharedStateOfPlay` and commits with `commitAll` only when something changed and the shared
- * directory is its own git repo.
+ * `updateSharedStateOfPlay` and commits just `state-of-play.md` with `commitPath` (never a whole-tree
+ * `git add -A`) only when something changed and the shared directory is its own git repo.
  */
 export interface SharedStateWriter {
   /** Splices `section` into `<nodeDir>/shared/state-of-play.md`, returning what happened. */

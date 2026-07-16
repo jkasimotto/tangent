@@ -68,6 +68,19 @@ test("merged condition delegates to the git probe", async () => {
   assert.equal(await evaluateWakeCondition(parsed, new Date(), probe(false)), false);
 });
 
+test("strips trailing prose punctuation from the branch, target, and repoPath captures", () => {
+  const parsed = parseWakeCondition("Wake when b is merged into main in ~/repo.");
+  assert.equal(parsed.kind, "merged");
+  assert.equal(parsed.branch, "b");
+  assert.equal(parsed.target, "main");
+  assert.ok(parsed.repoPath.endsWith("/repo"), `expected repoPath to end with "/repo", got ${JSON.stringify(parsed.repoPath)}`);
+  assert.ok(!parsed.repoPath.endsWith("."), `expected repoPath to have no trailing period, got ${JSON.stringify(parsed.repoPath)}`);
+});
+
+test("strips trailing comma/semicolon/colon punctuation too", () => {
+  assert.equal(parseWakeCondition("Wake when b, is merged into main; in /tmp/repo:").branch, "b");
+});
+
 test("parses merged wake conditions with case-insensitive \"lands on\" phrasing", () => {
   const parsed = parseWakeCondition("Wake when x LANDS ON main in /tmp/r");
   assert.equal(parsed.kind, "merged");

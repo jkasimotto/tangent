@@ -6,6 +6,7 @@ process.env.TZ = "Australia/Sydney";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { parseRecurFile, isDue, runRecur, scanRecurFiles, TmuxWorkerLauncher } from "../dist/core/recur.js";
@@ -102,6 +103,27 @@ test("runRecur writes the thread file, registers, records lastRun, launches", as
   assert.equal(launches[0].model, "sonnet");
 });
 
+test("a second successful runRecur still updates lastRunAt", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "recur-vault-second-run-"));
+  await mkdir(path.join(root, "proj"), { recursive: true });
+  const sidecarPath = path.join(root, "..", `sidecar-${path.basename(root)}.json`);
+  const def = parseRecurFile("proj", "recur-daily-rebase.md", recurContent);
+  const launcher = {
+    /** Discards launches. */
+    launch: async () => {}
+  };
+  await runRecur(def, { launcher, vaultRoot: root, sidecarPath, now: new Date("2026-07-16T09:00:00+10:00") });
+  const first = await readSidecar(sidecarPath);
+  assert.equal(first.recur["daily-rebase"].lastRunAt, new Date("2026-07-16T09:00:00+10:00").toISOString());
+
+  await runRecur(def, { launcher, vaultRoot: root, sidecarPath, now: new Date("2026-07-17T09:00:00+10:00") });
+  const second = await readSidecar(sidecarPath);
+  assert.equal(second.recur["daily-rebase"].lastRunAt, new Date("2026-07-17T09:00:00+10:00").toISOString());
+  // registeredAt also advances on each run: the session-misattribution guard (resolveSessionIdByCwd)
+  // relies on this to bound which candidate sessions can match a long-lived, reused worktree.
+  assert.equal(second.registry["daily-rebase"].registeredAt, new Date("2026-07-17T09:00:00+10:00").toISOString());
+});
+
 test("runRecur upserts an existing thread file without rewriting its body", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "recur-vault-upsert-"));
   await mkdir(path.join(root, "proj"), { recursive: true });
@@ -129,6 +151,54 @@ test("runRecur upserts an existing thread file without rewriting its body", asyn
   assert.match(thread, /ran: 2026-07-15T23:00:00\.000Z/);
 });
 
+test("runRecur does not record lastRunAt when the launcher throws (recorded only post-launch)", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "recur-vault-launch-fail-"));
+  await mkdir(path.join(root, "proj"), { recursive: true });
+  const sidecarPath = path.join(root, "..", `sidecar-${path.basename(root)}.json`);
+  const def = parseRecurFile("proj", "recur-daily-rebase.md", recurContent);
+  await assert.rejects(
+    runRecur(def, {
+      launcher: {
+        /** Always fails, simulating a launch-time error. */
+        launch: async () => { throw new Error("launch boom"); }
+      },
+      vaultRoot: root,
+      sidecarPath,
+      now: new Date("2026-07-16T09:00:00+10:00")
+    }),
+    /launch boom/
+  );
+  const sidecar = await readSidecar(sidecarPath);
+  assert.equal(sidecar.recur["daily-rebase"], undefined);
+  // The registry entry is still written before launch, so a session dispatched can still be matched.
+  assert.equal(sidecar.registry["daily-rebase"].tmux, "tg-daily-rebase");
+});
+
+test("runRecur reopening a done thread clears its closed date", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "recur-vault-reopen-"));
+  await mkdir(path.join(root, "proj"), { recursive: true });
+  const sidecarPath = path.join(root, "..", `sidecar-${path.basename(root)}.json`);
+  const threadPath = path.join(root, "proj", "thread-daily-rebase.md");
+  await writeFile(
+    threadPath,
+    "---\nstatus: done\nopened: 2026-07-01\nclosed: 2026-07-10\n---\nOwner: sonnet worker (recurring).\n",
+    "utf8"
+  );
+  const def = parseRecurFile("proj", "recur-daily-rebase.md", recurContent);
+  await runRecur(def, {
+    launcher: {
+      /** Discards launches. */
+      launch: async () => {}
+    },
+    vaultRoot: root,
+    sidecarPath,
+    now: new Date("2026-07-16T09:00:00+10:00")
+  });
+  const thread = await readFile(threadPath, "utf8");
+  assert.match(thread, /status: open/);
+  assert.doesNotMatch(thread, /closed:/);
+});
+
 test("scanRecurFiles finds definitions and skips shared", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "recur-scan-"));
   await mkdir(path.join(root, "proj", "shared"), { recursive: true });
@@ -145,4 +215,20 @@ test("TmuxWorkerLauncher refuses to launch when cwd does not exist", async () =>
     () => launcher.launch({ slug: "ghost", cwd: path.join(home, "does-not-exist"), model: "sonnet", prompt: "hi" }),
     /does not exist/
   );
+});
+
+test("TmuxWorkerLauncher refuses to launch into a still-running session (duplicate-dispatch policy)", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "recur-launcher-dup-home-"));
+  const cwd = await mkdtemp(path.join(tmpdir(), "recur-launcher-dup-cwd-"));
+  const slug = "dup-test";
+  execFileSync("tmux", ["new-session", "-d", "-s", `tg-${slug}`, "-c", cwd]);
+  try {
+    const launcher = new TmuxWorkerLauncher({ promptDir: path.join(home, "recur-prompts") });
+    await assert.rejects(
+      () => launcher.launch({ slug, cwd, model: "sonnet", prompt: "hi" }),
+      /session tg-dup-test still running; skipped/
+    );
+  } finally {
+    execFileSync("tmux", ["kill-session", "-t", `tg-${slug}`]);
+  }
 });

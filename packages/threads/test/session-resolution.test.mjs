@@ -14,15 +14,16 @@ const noopNotifier = {
 
 /**
  * Fake SessionStateReader that only resolves a session id when asked to match a specific worktree,
- * mirroring the real SqliteSessionStateReader's cwd-matching contract without touching SQLite.
+ * mirroring the real SqliteSessionStateReader's cwd-matching (and `notBefore`-gating, see
+ * sqlite-session-state.test.mjs for the guard's own unit tests) contract without touching SQLite.
  */
 function fakeCwdReader({ worktree, sessionId, state }) {
   const calls = { resolveSessionIdByCwd: [], read: [] };
   return {
     calls,
-    /** Resolves the fixed sessionId only when asked about the matching worktree, mirroring the real cwd-matching contract. */
-    async resolveSessionIdByCwd(candidateWorktree) {
-      calls.resolveSessionIdByCwd.push(candidateWorktree);
+    /** Resolves the fixed sessionId only when asked about the matching worktree, recording the notBefore it was called with. */
+    async resolveSessionIdByCwd(candidateWorktree, now, notBefore) {
+      calls.resolveSessionIdByCwd.push({ worktree: candidateWorktree, notBefore });
       return candidateWorktree === worktree ? sessionId : undefined;
     },
     /** Returns the fixed fake state only for the matching sessionId. */
@@ -43,7 +44,7 @@ test("a registry entry with only a worktree path gets its session resolved by cw
   await writeFile(path.join(nodeDir, "thread-clearances.md"), "---\noutcome: clearances into structure tab\nstatus: open\nopened: 2026-07-15\n---\nOwner: Chris.\n", "utf8");
 
   // Dispatch could not observe the session id at register time, so it registers with only the worktree.
-  await registerThread({ slug: "clearances", node: "neara/pgande/autodesign", worktree, tmux: "tg-clearances", sidecarPath, now });
+  const registryEntry = await registerThread({ slug: "clearances", node: "neara/pgande/autodesign", worktree, tmux: "tg-clearances", sidecarPath, now });
 
   const reader = fakeCwdReader({
     worktree,
@@ -54,7 +55,8 @@ test("a registry entry with only a worktree path gets its session resolved by cw
   const result = await sweep({ vaultRoot, sidecarPath, now, sessionStateReader: reader, notifier: noopNotifier });
 
   assert.equal(result.derived[0].state, "blocked-on-you");
-  assert.deepEqual(reader.calls.resolveSessionIdByCwd, [worktree]);
+  // The sweep passes the registry entry's own registeredAt as the misattribution guard's notBefore.
+  assert.deepEqual(reader.calls.resolveSessionIdByCwd, [{ worktree, notBefore: registryEntry.registeredAt }]);
   assert.deepEqual(reader.calls.read, ["sess-resolved-by-cwd"]);
 
   // The resolved session id is persisted back into the registry so the next sweep can query by id directly.

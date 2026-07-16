@@ -1,6 +1,6 @@
 import path from "node:path";
 import { pathExists } from "@tangent/core";
-import { commitAll } from "@tangent/repo";
+import { commitPath } from "@tangent/repo";
 import { deriveThreadStates, type ThreadDerivationInput } from "./derive.js";
 import { TerminalNotifier } from "./notifier.js";
 import { sidecarPath as defaultSidecarPath, vaultRoot as defaultVaultRoot } from "./paths.js";
@@ -133,9 +133,10 @@ async function defaultSessionStateReader(): Promise<SessionStateReader> {
 /**
  * Resolves each thread's session state and, for registry entries missing a session id (dispatch
  * cannot always observe it), resolves and stages the id by matching the registered worktree's cwd
- * against recent Usage sessions. Also merges each owned overview item's 📅 deadline into its owning
- * thread's deadline candidates, and evaluates each thread's wake condition (if any) against the
- * current clock and local git state.
+ * against recent Usage sessions, gated by the entry's `registeredAt` so a long-lived, reused worktree
+ * cannot latch onto a session that predates this dispatch (see `resolveSessionIdByCwd`). Also merges
+ * each owned overview item's 📅 deadline into its owning thread's deadline candidates, and evaluates
+ * each thread's wake condition (if any) against the current clock and local git state.
  */
 async function buildDerivationInputs(
   scan: VaultScan,
@@ -158,7 +159,7 @@ async function buildDerivationInputs(
     const registryEntry = sidecar.registry[thread.slug];
     let sessionState: SessionState | undefined;
     if (registryEntry) {
-      const sessionId = registryEntry.sessionId || await reader.resolveSessionIdByCwd(registryEntry.worktree, now);
+      const sessionId = registryEntry.sessionId || await reader.resolveSessionIdByCwd(registryEntry.worktree, now, registryEntry.registeredAt);
       if (sessionId && sessionId !== registryEntry.sessionId) registryUpdates[thread.slug] = { ...registryEntry, sessionId };
       if (sessionId) sessionState = await reader.read(sessionId, now);
     }
@@ -277,16 +278,20 @@ async function updateSharedNodes(root: string, derived: DerivedThread[], whyLine
  * Default `SharedStateWriter`: splices the section into `<nodeDir>/shared/state-of-play.md` via
  * `updateSharedStateOfPlay`, then, only when that actually wrote a change and `<nodeDir>/shared/.git`
  * exists (an fs check, never a git call, so a shared/ that is not its own repo is left alone), commits
- * it locally with `commitAll`. Never pushes. A "malformed" result passes straight through untouched:
- * there is nothing to commit, and it is `updateSharedNodes`'s job (not this writer's) to log it.
+ * it locally. `shared/` is a durable, human-owned team repo (unlike eval's throwaway worktrees), so
+ * this commits only `state-of-play.md` itself via `commitPath`, never `git add -A`: a `commitAll`
+ * would scoop up whatever half-finished edit a human happens to have sitting in that repo. It also
+ * runs with the repo's real committer identity and hooks enabled, not a fixed "Tangent Eval" identity
+ * with `--no-verify`. Never pushes. A "malformed" result passes straight through untouched: there is
+ * nothing to commit, and it is `updateSharedNodes`'s job (not this writer's) to log it.
  */
 class GitSharedStateWriter implements SharedStateWriter {
-  /** Splices `section` into the node's shared state-of-play.md and commits the change locally when the shared directory is its own git repo. */
+  /** Splices `section` into the node's shared state-of-play.md and commits just that file locally when the shared directory is its own git repo. */
   async write(nodeDir: string, section: string): Promise<StateOfPlaySpliceResult> {
     const result = await updateSharedStateOfPlay(nodeDir, section);
     const sharedDir = path.join(nodeDir, "shared");
     if (result === "written" && (await pathExists(path.join(sharedDir, ".git")))) {
-      await commitAll(sharedDir, "update: state-of-play threads section");
+      await commitPath(sharedDir, "state-of-play.md", "update: state-of-play threads section");
     }
     return result;
   }

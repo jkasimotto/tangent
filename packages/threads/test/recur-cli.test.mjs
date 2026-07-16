@@ -61,6 +61,45 @@ test("recur due runs only due definitions and honors dry-run", async () => {
   assert.equal(again.ran.length, 0);
 });
 
+test("runRecurDue isolates one definition's launch failure: the other def still runs and the failing one is not recorded", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "recur-due-isolation-"));
+  await mkdir(path.join(root, "proj"), { recursive: true });
+  await writeFile(path.join(root, "proj", "recur-a.md"),
+    ["---", "schedule: daily 08:30", "cwd: /tmp", "---", "Def A."].join("\n"));
+  await writeFile(path.join(root, "proj", "recur-b.md"),
+    ["---", "schedule: daily 08:30", "cwd: /tmp", "---", "Def B."].join("\n"));
+  const launched = [];
+  const launcher = {
+    /** Def A always fails to launch; def B always succeeds. */
+    launch: async (args) => {
+      if (args.slug === "a") throw new Error("tmux session tg-a still running; skipped");
+      launched.push(args.slug);
+    }
+  };
+  const sidecarPath = path.join(root, "..", `sidecar-${path.basename(root)}.json`);
+  const now = new Date("2026-07-16T09:00:00+10:00");
+
+  const originalError = console.error;
+  const errors = [];
+  console.error = (line) => errors.push(String(line));
+  let result;
+  try {
+    result = await runRecurDue({ launcher, vaultRoot: root, sidecarPath, now });
+  } finally {
+    console.error = originalError;
+  }
+
+  assert.deepEqual(result.due.map((d) => d.slug).sort(), ["a", "b"]);
+  assert.deepEqual(result.ran.map((d) => d.slug), ["b"]);
+  assert.deepEqual(launched, ["b"]);
+  assert.ok(errors.some((line) => line.includes("a") && line.includes("still running; skipped")), `expected a stderr line naming def "a"; got: ${JSON.stringify(errors)}`);
+
+  const { readSidecar } = await import("../dist/core/sidecar.js");
+  const sidecar = await readSidecar(sidecarPath);
+  assert.equal(sidecar.recur?.a, undefined);
+  assert.ok(sidecar.recur?.b?.lastRunAt);
+});
+
 test("CLI: recur due reports nothing due for an empty vault", async () => {
   const home = await mkdtemp(path.join(tmpdir(), "tangent-recur-cli-empty-"));
   const vaultRoot = await mkdtemp(path.join(tmpdir(), "tangent-recur-cli-empty-vault-"));

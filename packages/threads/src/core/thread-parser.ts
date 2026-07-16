@@ -3,11 +3,12 @@ import { parseFrontmatter } from "./frontmatter.js";
 import type { ParsedThread, ThreadStatus } from "./types.js";
 
 // Documented body-prose signals (see the design spec and package docs/architecture.md): owner is a
-// "Owner: X" line; cadence is "Check in every N days"; a wake condition is a line starting "Parked"
-// or "Wake when"; deadlines are dates written as YYYY-MM-DD anywhere in the body, or 📅 YYYY-MM-DD.
+// "Owner: X" line; cadence is "Check in every N days"; a wake condition is a line starting "Parked",
+// "Wake when", or "Wake on"; deadlines are dates written as YYYY-MM-DD anywhere in the body, or 📅
+// YYYY-MM-DD.
 const ownerLine = /^Owner:\s*(.+)$/im;
 const cadenceLine = /check in every\s+(\d+)\s+days?/i;
-const wakeLine = /^(?:Parked|Wake when)[:\s]+(.+)$/im;
+const wakeLine = /^(?:Parked|Wake when|Wake on)\b.*$/im;
 const emojiDeadline = /📅\s*(\d{4}-\d{2}-\d{2})/g;
 const bareDeadline = /\b(\d{4}-\d{2}-\d{2})\b/g;
 const maxExcerptChars = 800;
@@ -35,7 +36,7 @@ export function parseThreadFile(vaultRelativePath: string, content: string): Par
     owner: cleanOwner(body.match(ownerLine)?.[1]),
     cadenceDays: cadenceDaysFrom(body),
     deadline: earliestDeadline(body),
-    wakeCondition: body.match(wakeLine)?.[1]?.trim(),
+    wakeCondition: body.match(wakeLine)?.[0]?.trim(),
     bodyExcerpt: excerpt(body)
   };
 }

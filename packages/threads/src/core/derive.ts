@@ -11,6 +11,8 @@ export type ThreadDerivationInput = {
   latestNoteDateInNode?: string;
   /** Additional deadline dates pulled from owned overview "## On me" items, merged with the thread's own body-prose deadline. */
   extraDeadlines?: string[];
+  /** True when the thread's wake condition was deterministically evaluated as met this sweep. */
+  wakeMet?: boolean;
 };
 
 /**
@@ -21,8 +23,9 @@ export type ThreadDerivationInput = {
  *
  * Precedence, most urgent first, documented here because a thread can in principle satisfy more than
  * one condition at once: done (terminal) > blocked-on-you (an interactive question is waiting right
- * now) > needs-you (a deadline or check-in timer just fired) > ready-for-you (an async deliverable is
- * waiting) > parked (an explicit wake condition) > working (the default).
+ * now) > needs-you (a wake condition just fired, or a deadline or check-in timer just fired) >
+ * ready-for-you (an async deliverable is waiting) > parked (an explicit wake condition not yet met) >
+ * working (the default).
  */
 export function deriveThreadStates(inputs: ThreadDerivationInput[], now: Date): DerivedThread[] {
   return inputs.map((input) => deriveOne(input, now));
@@ -48,6 +51,10 @@ function deriveOne(input: ThreadDerivationInput, now: Date): DerivedThread {
     if (sessionState.status === "active" && waitingSignal && sessionState.idleMs > blockedIdleThresholdMs) {
       return { ...base, state: "blocked-on-you", templateWhy: `idle ${formatMinutes(sessionState.idleMs)}, waiting on you at a ${sessionState.lastStepKind === "permission" ? "permission prompt" : "question"}.` };
     }
+  }
+
+  if (thread.wakeCondition && input.wakeMet) {
+    return { ...base, state: "needs-you", templateWhy: `wake condition met: ${thread.wakeCondition}.` };
   }
 
   const deadline = earliestOf([thread.deadline, ...(extraDeadlines || [])]);

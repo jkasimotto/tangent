@@ -18,7 +18,7 @@ export type ParsedThread = {
   cadenceDays?: number;
   /** Earliest date found in the body: prefers 📅 YYYY-MM-DD markers, falls back to bare YYYY-MM-DD dates. */
   deadline?: string;
-  /** Text of a body line starting "Parked" or "Wake when" (case-insensitive), if present. */
+  /** Full text (including its "Parked"/"Wake when"/"Wake on" prefix) of a body line starting with one of those, case-insensitive, if present. Opaque prose for a human unless parseWakeCondition recognizes a machine-checkable shape. */
   wakeCondition?: string;
   /** Truncated body text, used as haiku prompt context. */
   bodyExcerpt: string;

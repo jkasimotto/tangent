@@ -6,6 +6,7 @@ import { compareByUrgency, renderThreadsMarkdown } from "./render.js";
 import { readSidecar, writeSidecarAtomic } from "./sidecar.js";
 import { writeFileAtomic } from "./atomic-write.js";
 import { scanVault } from "./vault-scan.js";
+import { evaluateWakeCondition, parseWakeCondition, RepoGitProbe, type GitProbe } from "./wake.js";
 import type {
   DerivedThread,
   NeedsYouEntry,
@@ -31,6 +32,8 @@ export type SweepOptions = {
   sessionStateReader?: SessionStateReader;
   whyLineRunner?: WhyLineRunner;
   notifier?: Notifier;
+  /** Evaluates "merged" wake conditions against local git state; defaults to a real RepoGitProbe. Injectable so tests never shell out to git. */
+  gitProbe?: GitProbe;
 };
 
 export type SweepResult = {
@@ -61,11 +64,12 @@ export async function sweep(options: SweepOptions = {}): Promise<SweepResult> {
   const now = options.now || new Date();
   const sessionStateReader = options.sessionStateReader || await defaultSessionStateReader();
   const notifier = options.notifier || new TerminalNotifier();
+  const gitProbe = options.gitProbe || new RepoGitProbe();
 
   const scan = await scanVault(root);
   const sidecar = await readSidecar(sidecarFile);
 
-  const { derivationInputs, registryUpdates } = await buildDerivationInputs(scan, sidecar, sessionStateReader, now);
+  const { derivationInputs, registryUpdates } = await buildDerivationInputs(scan, sidecar, sessionStateReader, gitProbe, now);
   const derived = deriveThreadStates(derivationInputs, now);
 
   const whyResult = await resolveWhyLines(options.whyLineRunner, derived, scan);
@@ -118,12 +122,14 @@ async function defaultSessionStateReader(): Promise<SessionStateReader> {
  * Resolves each thread's session state and, for registry entries missing a session id (dispatch
  * cannot always observe it), resolves and stages the id by matching the registered worktree's cwd
  * against recent Usage sessions. Also merges each owned overview item's 📅 deadline into its owning
- * thread's deadline candidates.
+ * thread's deadline candidates, and evaluates each thread's wake condition (if any) against the
+ * current clock and local git state.
  */
 async function buildDerivationInputs(
   scan: VaultScan,
   sidecar: SidecarState,
   reader: SessionStateReader,
+  gitProbe: GitProbe,
   now: Date
 ): Promise<{ derivationInputs: ThreadDerivationInput[]; registryUpdates: Record<string, RegistryEntry> }> {
   const overviewDeadlinesBySlug = new Map<string, string[]>();
@@ -144,11 +150,15 @@ async function buildDerivationInputs(
       if (sessionId && sessionId !== registryEntry.sessionId) registryUpdates[thread.slug] = { ...registryEntry, sessionId };
       if (sessionId) sessionState = await reader.read(sessionId, now);
     }
+    const wakeMet = thread.wakeCondition
+      ? await evaluateWakeCondition(parseWakeCondition(thread.wakeCondition), now, gitProbe)
+      : undefined;
     derivationInputs.push({
       thread,
       sessionState,
       latestNoteDateInNode: scan.noteRecencyByNode.get(thread.node),
-      extraDeadlines: overviewDeadlinesBySlug.get(thread.slug)
+      extraDeadlines: overviewDeadlinesBySlug.get(thread.slug),
+      wakeMet
     });
   }
   return { derivationInputs, registryUpdates };

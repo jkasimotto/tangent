@@ -12,3 +12,6 @@ evals/*
 !evals/AGENTS.md
 !evals/CLAUDE.md
 !evals/haiku-poems/
+
+# superpowers workflow scratch (progress ledger, task briefs, review diffs)
+.superpowers/

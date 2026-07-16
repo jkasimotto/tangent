@@ -2,7 +2,21 @@
 import { pathToFileURL } from "node:url";
 import { renderCommandHelp } from "@tangent/core";
 
-import { attachCommand, ClaudeCliWhyLineRunner, listThreads, registerThread, sweep, type WhyLineRunner } from "../sdk/index.js";
+import {
+  attachCommand,
+  ClaudeCliWhyLineRunner,
+  listThreads,
+  type RecurDef,
+  registerThread,
+  runRecur,
+  runRecurDue,
+  scanRecurFiles,
+  sidecarPath,
+  sweep,
+  TmuxWorkerLauncher,
+  vaultRoot,
+  type WhyLineRunner
+} from "../sdk/index.js";
 import { booleanArg, parseArgs, stringArg } from "./args.js";
 import { threadsCommandSpec } from "./spec.js";
 
@@ -77,6 +91,30 @@ export async function runThreadsCli(argv = process.argv.slice(2)): Promise<void>
     return;
   }
 
+  if (command === "recur") {
+    const subcommand = required(args._[1], "recur requires a subcommand: due or run <slug>.");
+    const dryRun = booleanArg(args["dry-run"]);
+
+    if (subcommand === "due") {
+      const result = await runRecurDue({ launcher: new TmuxWorkerLauncher(), dryRun });
+      const defs = dryRun ? result.due : result.ran;
+      printRecurRuns(defs, dryRun);
+      return;
+    }
+
+    if (subcommand === "run") {
+      const slug = required(args._[2], "recur run requires <slug>.");
+      const def = await resolveRecurDef(slug);
+      if (!dryRun) {
+        await runRecur(def, { launcher: new TmuxWorkerLauncher(), vaultRoot: vaultRoot(), sidecarPath: sidecarPath(), now: new Date() });
+      }
+      printRecurRuns([def], dryRun);
+      return;
+    }
+
+    throw new Error(`Unknown recur subcommand: ${subcommand}. Expected due or run <slug>.`);
+  }
+
   throw new Error(`Unknown threads command: ${command}`);
 }
 
@@ -84,6 +122,29 @@ export async function runThreadsCli(argv = process.argv.slice(2)): Promise<void>
 function required(value: string | undefined, message: string): string {
   if (!value) throw new Error(message);
   return value;
+}
+
+/** Prints one line per recur definition for `recur due`/`recur run`, wording it as a launch or a would-be launch depending on `dryRun`. Reports "recur: nothing due" when the list is empty, so a due sweep with no work still prints something on success. */
+function printRecurRuns(defs: RecurDef[], dryRun: boolean): void {
+  if (!defs.length) {
+    console.log("recur: nothing due");
+    return;
+  }
+  const verb = dryRun ? "would launch" : "launched";
+  for (const def of defs) {
+    console.log(`recur: ${verb} ${def.slug} (tg-${def.slug})`);
+  }
+}
+
+/** Finds one recur definition by slug among the vault's scanned recur files, for `recur run <slug>`. Throws a clear error listing every known slug when the given slug does not match any definition. */
+async function resolveRecurDef(slug: string): Promise<RecurDef> {
+  const defs = await scanRecurFiles(vaultRoot());
+  const def = defs.find((candidate) => candidate.slug === slug);
+  if (!def) {
+    const known = defs.map((candidate) => candidate.slug).join(", ") || "(none found)";
+    throw new Error(`Unknown recur slug ${JSON.stringify(slug)}. Known recur slugs: ${known}.`);
+  }
+  return def;
 }
 
 /** Prints threads command help. */

@@ -16,6 +16,8 @@ export { SqliteSessionStateReader } from "../core/sqlite-session-state.js";
 export { ClaudeCliWhyLineRunner } from "../core/haiku.js";
 export { TerminalNotifier } from "../core/notifier.js";
 export { vaultRoot, sidecarPath, threadsMarkdownPath } from "../core/paths.js";
+export { runRecur, runRecurDue, scanRecurFiles, TmuxWorkerLauncher } from "../core/recur.js";
+export type { RecurDef, RecurSchedule, RunRecurDeps, RunRecurDueDeps, RunRecurDueResult, TmuxWorkerLauncherConfig } from "../core/recur.js";
 export * from "../core/types.js";
 
 export type ListThreadsOptions = {

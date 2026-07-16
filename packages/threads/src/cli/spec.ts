@@ -33,6 +33,23 @@ export const threadsCommandSpec: CliCommandSpec = {
       name: "attach",
       description: "Print the tmux attach command for a registered thread",
       args: "<slug>"
+    },
+    {
+      name: "recur",
+      description: "Run scheduled recurring dispatch definitions (recur-<slug>.md)",
+      subcommands: [
+        {
+          name: "due",
+          description: "Run every recur definition that is currently due",
+          options: [{ name: "dry-run", description: "Print what would run without launching or recording" }]
+        },
+        {
+          name: "run",
+          description: "Run one recur definition regardless of due-ness",
+          args: "<slug>",
+          options: [{ name: "dry-run", description: "Print what would run without launching or recording" }]
+        }
+      ]
     }
   ]
 };

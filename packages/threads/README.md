@@ -11,6 +11,9 @@ tangent threads list --json
 tangent threads register guy-wires --node neara/pgande --worktree ~/work/otto-guy-wires --tmux tg-guy-wires
 tangent threads register guy-wires --node neara/pgande --worktree ~/work/otto-guy-wires --tmux tg-guy-wires --session <claude-session-id>
 tangent threads attach guy-wires
+tangent threads recur due
+tangent threads recur due --dry-run
+tangent threads recur run daily-rebase
 ```
 
 When installed standalone as `@tangent/threads`, use the `tangent-threads` binary with the same arguments:
@@ -40,6 +43,13 @@ sweep resolves it by matching the most recently active Usage session whose worki
 the registered worktree, and persists the resolved id back into the registry. `attach` prints the
 `tmux -CC attach -t <name>` command for a registered thread; the caller (a skill) decides how to open
 it.
+
+`recur due` scans the vault for `recur-<slug>.md` definitions (frontmatter `schedule`, `cwd`, optional
+`model`; body is the worker prompt), runs every one that is currently due, and records the fire in the
+sidecar so it does not run again this cycle; `--dry-run` prints what would run without launching or
+recording. `recur run <slug>` runs one definition regardless of due-ness, still recording the fire; an
+unknown slug is a clear error listing every known slug. The launchd template for running `recur due` on
+a timer is `assets/com.tangent.threads-recur.plist` in this package.
 
 See the design spec at `docs/superpowers/specs/2026-07-16-delegated-threads-orchestration-design.md`
 in the repo root for the full behavior contract.

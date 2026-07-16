@@ -4,6 +4,7 @@ import { pathExists, tangentHome } from "@tangent/core";
 import { processFailure, runProcess } from "@tangent/agent-runtime/process";
 import { writeFileAtomic } from "./atomic-write.js";
 import { parseFrontmatter } from "./frontmatter.js";
+import { sidecarPath as defaultSidecarPath, vaultRoot as defaultVaultRoot } from "./paths.js";
 import { readSidecar, writeSidecarAtomic } from "./sidecar.js";
 import type { RegistryEntry, SidecarState, WorkerLauncher } from "./types.js";
 import { walkFiles } from "./walk.js";
@@ -196,6 +197,47 @@ export async function scanRecurFiles(vaultRoot: string): Promise<RecurDef[]> {
     defs.push(parseRecurFile(node, path.basename(file), content));
   }
   return defs;
+}
+
+/** Everything runRecurDue needs to scan the vault and dispatch its due definitions: the injectable launcher plus the vault/sidecar locations, clock, and dry-run flag. Mirrors RunRecurDeps with an added `dryRun` since a scheduler sweep, unlike a single runRecur call, decides for itself which definitions are due. */
+export type RunRecurDueDeps = {
+  launcher: WorkerLauncher;
+  vaultRoot?: string;
+  sidecarPath?: string;
+  now?: Date;
+  /** When true, reports which definitions are due without launching any worker or recording a run. */
+  dryRun?: boolean;
+};
+
+/** The outcome of one `runRecurDue` sweep: every definition found due this cycle, and (when not a dry run) the ones actually dispatched. `due` and `ran` are always the same set on a real run; they diverge only for `dryRun: true`, where `ran` is empty. */
+export type RunRecurDueResult = {
+  due: RecurDef[];
+  ran: RecurDef[];
+};
+
+/**
+ * Scans the vault for recur definitions, filters them to the ones due against the sidecar's
+ * recorded `lastRunAt` (see isDue), and, unless `dryRun`, dispatches each due definition via
+ * runRecur. Backs both `tangent threads recur due` (the launchd-scheduled sweep) and its
+ * `--dry-run` preview; `vaultRoot`/`sidecarPath`/`now` default to the real vault, sidecar, and
+ * clock but are injectable so tests never touch either.
+ */
+export async function runRecurDue(deps: RunRecurDueDeps): Promise<RunRecurDueResult> {
+  const vaultRootPath = deps.vaultRoot || defaultVaultRoot();
+  const sidecarFile = deps.sidecarPath || defaultSidecarPath();
+  const now = deps.now || new Date();
+
+  const defs = await scanRecurFiles(vaultRootPath);
+  const sidecar = await readSidecar(sidecarFile);
+  const due = defs.filter((def) => isDue(def, sidecar.recur?.[def.slug]?.lastRunAt, now));
+
+  if (deps.dryRun) return { due, ran: [] };
+
+  const runDeps: RunRecurDeps = { launcher: deps.launcher, vaultRoot: vaultRootPath, sidecarPath: sidecarFile, now };
+  for (const def of due) {
+    await runRecur(def, runDeps);
+  }
+  return { due, ran: due };
 }
 
 /** Config for TmuxWorkerLauncher's real dispatch: where the durable prompt record is written and how long a launch may take before it's considered failed. Both are injectable so tests never touch the real home directory or hang on a slow tmux/claude startup. */

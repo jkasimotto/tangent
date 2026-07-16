@@ -1,0 +1,217 @@
+import path from "node:path";
+import { deriveThreadStates, type ThreadDerivationInput } from "./derive.js";
+import { TerminalNotifier } from "./notifier.js";
+import { sidecarPath as defaultSidecarPath, vaultRoot as defaultVaultRoot } from "./paths.js";
+import { compareByUrgency, renderThreadsMarkdown } from "./render.js";
+import { readSidecar, writeSidecarAtomic } from "./sidecar.js";
+import { writeFileAtomic } from "./atomic-write.js";
+import { scanVault } from "./vault-scan.js";
+import type {
+  DerivedThread,
+  NeedsYouEntry,
+  Notifier,
+  OverviewItem,
+  RegistryEntry,
+  SessionState,
+  SessionStateReader,
+  SidecarCounts,
+  SidecarState,
+  ThreadState,
+  VaultScan,
+  WhyLineRunner,
+  WhyLineRunnerResult
+} from "./types.js";
+
+export type SweepOptions = {
+  vaultRoot?: string;
+  sidecarPath?: string;
+  now?: Date;
+  /** Skips writing threads.md/the sidecar and skips notifying; the result still reports what would happen. */
+  dryRun?: boolean;
+  sessionStateReader?: SessionStateReader;
+  whyLineRunner?: WhyLineRunner;
+  notifier?: Notifier;
+};
+
+export type SweepResult = {
+  vaultRoot: string;
+  sidecarPath: string;
+  sidecar: SidecarState;
+  markdown: string;
+  derived: DerivedThread[];
+  unowned: OverviewItem[];
+  /** Slugs notified (or, in dry-run, that would have been notified) this sweep. */
+  notifiedSlugs: string[];
+  dryRun: boolean;
+};
+
+const notifiableStates = new Set<ThreadState>(["blocked-on-you", "needs-you"]);
+
+/**
+ * Runs one sweep: scans the vault, deterministically derives every thread's state, asks a cheap
+ * model for why-lines and check-in drafts (best-effort), renders threads.md, and fires
+ * notifications for newly-attention-needing threads. A scan or derivation error propagates and
+ * nothing is written: threads.md and the sidecar are only touched once every upstream step has
+ * succeeded, and that final write is atomic. A why-line (haiku) failure never fails the sweep: it
+ * falls back to the templated why-lines computed during derivation.
+ */
+export async function sweep(options: SweepOptions = {}): Promise<SweepResult> {
+  const root = options.vaultRoot || defaultVaultRoot();
+  const sidecarFile = options.sidecarPath || defaultSidecarPath();
+  const now = options.now || new Date();
+  const sessionStateReader = options.sessionStateReader || await defaultSessionStateReader();
+  const notifier = options.notifier || new TerminalNotifier();
+
+  const scan = await scanVault(root);
+  const sidecar = await readSidecar(sidecarFile);
+
+  const { derivationInputs, registryUpdates } = await buildDerivationInputs(scan, sidecar, sessionStateReader, now);
+  const derived = deriveThreadStates(derivationInputs, now);
+
+  const whyResult = await resolveWhyLines(options.whyLineRunner, derived, scan);
+  const unowned = scan.overviewItems.filter((item) => !item.owned);
+  const markdown = renderThreadsMarkdown({ vaultRoot: root, derived, whyLines: whyResult.whyLines, unowned, now });
+
+  const { notified, newlyNotified } = computeNotificationTransition(sidecar.notified, derived);
+  if (!options.dryRun) {
+    for (const slug of newlyNotified) {
+      const thread = derived.find((item) => item.slug === slug);
+      if (!thread) continue;
+      await notifier.notify({ title: `threads: ${slug}`, message: whyResult.whyLines[slug] || thread.templateWhy });
+    }
+  }
+
+  const counts = countByState(derived);
+  counts.unowned = unowned.length;
+  const nextSidecar: SidecarState = {
+    sweptAt: now.toISOString(),
+    counts,
+    needsYou: buildNeedsYouList(derived, whyResult.whyLines),
+    registry: { ...sidecar.registry, ...registryUpdates },
+    notified
+  };
+
+  if (!options.dryRun) {
+    await writeFileAtomic(path.join(root, "threads.md"), markdown);
+    await writeSidecarAtomic(sidecarFile, nextSidecar);
+  }
+
+  return {
+    vaultRoot: root,
+    sidecarPath: sidecarFile,
+    sidecar: nextSidecar,
+    markdown,
+    derived,
+    unowned,
+    notifiedSlugs: newlyNotified,
+    dryRun: Boolean(options.dryRun)
+  };
+}
+
+/** Lazily imports the SQLite-backed default reader so a caller that always injects its own reader (every test) never needs better-sqlite3 available. */
+async function defaultSessionStateReader(): Promise<SessionStateReader> {
+  const { SqliteSessionStateReader } = await import("./sqlite-session-state.js");
+  return new SqliteSessionStateReader();
+}
+
+/**
+ * Resolves each thread's session state and, for registry entries missing a session id (dispatch
+ * cannot always observe it), resolves and stages the id by matching the registered worktree's cwd
+ * against recent Usage sessions. Also merges each owned overview item's 📅 deadline into its owning
+ * thread's deadline candidates.
+ */
+async function buildDerivationInputs(
+  scan: VaultScan,
+  sidecar: SidecarState,
+  reader: SessionStateReader,
+  now: Date
+): Promise<{ derivationInputs: ThreadDerivationInput[]; registryUpdates: Record<string, RegistryEntry> }> {
+  const overviewDeadlinesBySlug = new Map<string, string[]>();
+  for (const item of scan.overviewItems) {
+    if (!item.owned || !item.ownedSlug || !item.deadline) continue;
+    const list = overviewDeadlinesBySlug.get(item.ownedSlug) || [];
+    list.push(item.deadline);
+    overviewDeadlinesBySlug.set(item.ownedSlug, list);
+  }
+
+  const registryUpdates: Record<string, RegistryEntry> = {};
+  const derivationInputs: ThreadDerivationInput[] = [];
+  for (const thread of scan.threads) {
+    const registryEntry = sidecar.registry[thread.slug];
+    let sessionState: SessionState | undefined;
+    if (registryEntry) {
+      const sessionId = registryEntry.sessionId || await reader.resolveSessionIdByCwd(registryEntry.worktree, now);
+      if (sessionId && sessionId !== registryEntry.sessionId) registryUpdates[thread.slug] = { ...registryEntry, sessionId };
+      if (sessionId) sessionState = await reader.read(sessionId, now);
+    }
+    derivationInputs.push({
+      thread,
+      sessionState,
+      latestNoteDateInNode: scan.noteRecencyByNode.get(thread.node),
+      extraDeadlines: overviewDeadlinesBySlug.get(thread.slug)
+    });
+  }
+  return { derivationInputs, registryUpdates };
+}
+
+/** Runs the injected why-line runner, if any; any failure (missing binary, timeout, bad JSON) is swallowed and falls back to the templated why-lines already computed during derivation. */
+async function resolveWhyLines(runner: WhyLineRunner | undefined, derived: DerivedThread[], scan: VaultScan): Promise<WhyLineRunnerResult> {
+  if (!runner) return { whyLines: {}, drafts: {} };
+  try {
+    return await runner.run({
+      derived,
+      threadsBySlug: new Map(scan.threads.map((thread) => [thread.slug, thread])),
+      overviewExcerptsByNode: buildOverviewExcerpts(scan)
+    });
+  } catch {
+    return { whyLines: {}, drafts: {} };
+  }
+}
+
+/** Joins each node's "## On me" item texts into a short bullet list, for haiku prompt context. */
+function buildOverviewExcerpts(scan: VaultScan): Map<string, string> {
+  const byNode = new Map<string, string[]>();
+  for (const item of scan.overviewItems) {
+    const list = byNode.get(item.node) || [];
+    list.push(`- ${item.text}`);
+    byNode.set(item.node, list);
+  }
+  return new Map([...byNode.entries()].map(([node, lines]) => [node, lines.join("\n")]));
+}
+
+/**
+ * Computes the notified-map transition and the slugs newly entering a notifiable state since the
+ * previous sweep: a thread already notified for its current state does not notify again, but leaving
+ * and re-entering a notifiable state (or first entering one) notifies again.
+ */
+function computeNotificationTransition(previousNotified: Record<string, ThreadState>, derived: DerivedThread[]): { notified: Record<string, ThreadState>; newlyNotified: string[] } {
+  const notified: Record<string, ThreadState> = {};
+  const newlyNotified: string[] = [];
+  for (const thread of derived) {
+    if (!notifiableStates.has(thread.state)) continue;
+    notified[thread.slug] = thread.state;
+    if (previousNotified[thread.slug] !== thread.state) newlyNotified.push(thread.slug);
+  }
+  return { notified, newlyNotified };
+}
+
+/** Tallies derived threads per state for the sidecar's statusline counts; "done" threads contribute to no count. */
+function countByState(derived: DerivedThread[]): SidecarCounts {
+  const counts: SidecarCounts = { needsYou: 0, blocked: 0, working: 0, ready: 0, parked: 0, unowned: 0 };
+  for (const thread of derived) {
+    if (thread.state === "needs-you") counts.needsYou += 1;
+    else if (thread.state === "blocked-on-you") counts.blocked += 1;
+    else if (thread.state === "working") counts.working += 1;
+    else if (thread.state === "ready-for-you") counts.ready += 1;
+    else if (thread.state === "parked") counts.parked += 1;
+  }
+  return counts;
+}
+
+/** Builds the sidecar's needsYou list (blocked, needs-you, and ready-for-you threads, most urgent first) for the statusline badge. */
+function buildNeedsYouList(derived: DerivedThread[], whyLines: Record<string, string>): NeedsYouEntry[] {
+  return derived
+    .filter((thread) => notifiableStates.has(thread.state) || thread.state === "ready-for-you")
+    .sort(compareByUrgency)
+    .map((thread) => ({ slug: thread.slug, why: whyLines[thread.slug] || thread.templateWhy }));
+}

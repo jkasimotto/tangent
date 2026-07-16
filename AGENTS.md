@@ -100,6 +100,7 @@ If the CLI/SDK is unavailable, the global index at `~/.tangent/usage/global/inde
 - @tangent/rollup: private rollup notes from Usage turns.
 - @tangent/eval: coding-agent eval preparation, execution, collection, and reports.
 - @tangent/search: structural indexing and search over TypeScript and Dart source (standalone, no Usage/Rollup/Eval dependency).
+- @tangent/threads: delegated-thread sweep over the tangent vault and Usage telemetry; CLI `tangent threads`.
 
 Architecture docs:
 - ARCHITECTURE.md
@@ -134,7 +135,7 @@ Validate work:
 - npm run build
 
 Never:
-- Do not add vertical app dependencies except rollup/eval -> usage.
+- Do not add vertical app dependencies except rollup/eval/threads -> usage.
 - Do not reintroduce provider hook installation, hook recording, or hook allowlist tracking.
 - Do not duplicate parseArgs, runProcess, repo discovery, or git/worktree helpers in vertical apps.
 - Do not import another package's src internals; use public exports.

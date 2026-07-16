@@ -28,7 +28,8 @@
     "packages/rollup",
     "packages/eval",
     "packages/eval-ui",
-    "packages/search"
+    "packages/search",
+    "packages/threads"
   ],
   "scripts": {
     "build": "npm run build --workspaces && tsc -p tsconfig.json && chmod +x dist/cli/index.js",
@@ -53,6 +54,7 @@
     "@tangent/governance": "^0.1.0",
     "@tangent/rollup": "^0.1.0",
     "@tangent/search": "^0.1.0",
+    "@tangent/threads": "^0.1.0",
     "@tangent/usage": "^0.1.0"
   },
   "peerDependenciesMeta": {
@@ -60,6 +62,7 @@
     "@tangent/governance": { "optional": true },
     "@tangent/rollup": { "optional": true },
     "@tangent/search": { "optional": true },
+    "@tangent/threads": { "optional": true },
     "@tangent/usage": { "optional": true }
   },
   "devDependencies": {

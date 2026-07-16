@@ -40,6 +40,15 @@ export const threadsCommandSpec: CliCommandSpec = {
       options: [{ name: "print", description: "Print the manual tmux attach command instead of opening iTerm" }]
     },
     {
+      name: "milestone",
+      description: "Render a node's milestone file: project view (default), Slack update text (--slack), or copy the update to the clipboard rich+plain (--copy)",
+      args: "<node>",
+      options: [
+        { name: "slack", description: "Print the paste-ready Slack update text instead of the project view" },
+        { name: "copy", description: "Put the Slack update on the clipboard with HTML and plain-text flavors" }
+      ]
+    },
+    {
       name: "recur",
       description: "Run scheduled recurring dispatch definitions (recur-<slug>.md)",
       subcommands: [

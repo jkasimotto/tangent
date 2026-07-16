@@ -4,6 +4,11 @@ import { renderCommandHelp } from "@tangent/core";
 
 import {
   attachCommand,
+  loadNodeMilestone,
+  renderMilestoneSlackHtml,
+  renderMilestoneSlackText,
+  renderMilestoneTerminal,
+  setClipboardRich,
   ClaudeCliWhyLineRunner,
   listThreads,
   openAttach,
@@ -103,6 +108,26 @@ export async function runThreadsCli(argv = process.argv.slice(2)): Promise<void>
       console.log(`run it yourself: ${result.manualCommand}`);
       process.exitCode = 1;
     }
+    return;
+  }
+
+  if (command === "milestone") {
+    const node = required(args._[1], "milestone requires <node> (vault node path, e.g. neara/pgande).");
+    const now = new Date();
+    const milestone = await loadNodeMilestone(vaultRoot(), node, now);
+    if (!milestone) {
+      console.log(`No milestone-*.md in ${node}. Create one (frontmatter title + due, tracks, groups, checkbox outcomes) and re-run.`);
+      process.exitCode = 1;
+      return;
+    }
+    const slack = booleanArg(args.slack) || booleanArg(args.copy);
+    const output = slack ? renderMilestoneSlackText(milestone, now) : renderMilestoneTerminal(milestone, now);
+    if (booleanArg(args.copy)) {
+      await setClipboardRich(renderMilestoneSlackHtml(milestone, now), output);
+      console.log(`${milestone.title} update copied to the clipboard (rich + plain, from ${milestone.path}).`);
+      return;
+    }
+    console.log(output.trimEnd());
     return;
   }
 

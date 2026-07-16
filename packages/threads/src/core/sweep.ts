@@ -1,10 +1,13 @@
 import path from "node:path";
+import { pathExists } from "@tangent/core";
+import { commitAll } from "@tangent/repo";
 import { deriveThreadStates, type ThreadDerivationInput } from "./derive.js";
 import { TerminalNotifier } from "./notifier.js";
 import { sidecarPath as defaultSidecarPath, vaultRoot as defaultVaultRoot } from "./paths.js";
 import { compareByUrgency, renderThreadsMarkdown } from "./render.js";
 import { readSidecar, writeSidecarAtomic } from "./sidecar.js";
 import { writeFileAtomic } from "./atomic-write.js";
+import { renderStateOfPlaySection, updateSharedStateOfPlay } from "./state-of-play.js";
 import { scanVault } from "./vault-scan.js";
 import { evaluateWakeCondition, parseWakeCondition, RepoGitProbe, type GitProbe } from "./wake.js";
 import type {
@@ -15,6 +18,7 @@ import type {
   RegistryEntry,
   SessionState,
   SessionStateReader,
+  SharedStateWriter,
   SidecarCounts,
   SidecarState,
   ThreadState,
@@ -34,6 +38,8 @@ export type SweepOptions = {
   notifier?: Notifier;
   /** Evaluates "merged" wake conditions against local git state; defaults to a real RepoGitProbe. Injectable so tests never shell out to git. */
   gitProbe?: GitProbe;
+  /** Writes (and commits) each shared node's generated state-of-play section; defaults to a real filesystem+git writer. Injectable so tests can assert which nodes the sweep updates without touching real git. */
+  sharedWriter?: SharedStateWriter;
 };
 
 export type SweepResult = {
@@ -65,6 +71,7 @@ export async function sweep(options: SweepOptions = {}): Promise<SweepResult> {
   const sessionStateReader = options.sessionStateReader || await defaultSessionStateReader();
   const notifier = options.notifier || new TerminalNotifier();
   const gitProbe = options.gitProbe || new RepoGitProbe();
+  const sharedWriter = options.sharedWriter || new GitSharedStateWriter();
 
   const scan = await scanVault(root);
   const sidecar = await readSidecar(sidecarFile);
@@ -101,6 +108,7 @@ export async function sweep(options: SweepOptions = {}): Promise<SweepResult> {
   if (!options.dryRun) {
     await writeFileAtomic(path.join(root, "threads.md"), markdown);
     await writeSidecarAtomic(sidecarFile, nextSidecar);
+    await updateSharedNodes(root, derived, whyResult.whyLines, now, sharedWriter);
   }
 
   return {
@@ -227,4 +235,49 @@ function buildNeedsYouList(derived: DerivedThread[], whyLines: Record<string, st
     .filter((thread) => notifiableStates.has(thread.state) || thread.state === "ready-for-you")
     .sort(compareByUrgency)
     .map((thread) => ({ slug: thread.slug, why: whyLines[thread.slug] || thread.templateWhy }));
+}
+
+/**
+ * Regenerates the "Delegated threads" section of every shared node's state-of-play.md: groups
+ * non-done derived threads by node, and for every node that both owns a `shared/` directory and has
+ * at least one such thread, renders and hands the section to `writer`. One node's failure (a bad
+ * path, a git error) is logged to stderr and never fails the sweep or any other node's update: this
+ * shared mirror is a courtesy, not the sweep's source of truth.
+ */
+async function updateSharedNodes(root: string, derived: DerivedThread[], whyLines: Record<string, string>, now: Date, writer: SharedStateWriter): Promise<void> {
+  const byNode = new Map<string, DerivedThread[]>();
+  for (const thread of derived) {
+    if (thread.state === "done") continue;
+    const list = byNode.get(thread.node) || [];
+    list.push(thread);
+    byNode.set(thread.node, list);
+  }
+  for (const [node, threads] of byNode) {
+    const nodeDir = path.join(root, node);
+    if (!(await pathExists(path.join(nodeDir, "shared")))) continue;
+    try {
+      const section = renderStateOfPlaySection(threads, whyLines, now);
+      await writer.write(nodeDir, section);
+    } catch (error) {
+      console.error(`threads sweep: failed to update shared state-of-play for node "${node}":`, error);
+    }
+  }
+}
+
+/**
+ * Default `SharedStateWriter`: splices the section into `<nodeDir>/shared/state-of-play.md` via
+ * `updateSharedStateOfPlay`, then, only when that actually wrote a change and `<nodeDir>/shared/.git`
+ * exists (an fs check, never a git call, so a shared/ that is not its own repo is left alone), commits
+ * it locally with `commitAll`. Never pushes.
+ */
+class GitSharedStateWriter implements SharedStateWriter {
+  /** Splices `section` into the node's shared state-of-play.md and commits the change locally when the shared directory is its own git repo. */
+  async write(nodeDir: string, section: string): Promise<"written" | "unchanged"> {
+    const result = await updateSharedStateOfPlay(nodeDir, section);
+    const sharedDir = path.join(nodeDir, "shared");
+    if (result === "written" && (await pathExists(path.join(sharedDir, ".git")))) {
+      await commitAll(sharedDir, "update: state-of-play threads section");
+    }
+    return result;
+  }
 }

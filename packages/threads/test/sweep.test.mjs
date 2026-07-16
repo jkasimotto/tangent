@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -136,4 +137,98 @@ test("sweep carries forward recurring-dispatch bookkeeping already in the sideca
   assert.deepEqual(result.sidecar.recur, seededRecur);
   const written = await readSidecar(sidecarPath);
   assert.deepEqual(written.recur, seededRecur);
+});
+
+/** Runs a git command synchronously in a fixture directory, discarding its output. */
+function runGit(dir, args) {
+  execFileSync("git", args, { cwd: dir, stdio: "pipe" });
+}
+
+test("sweep updates shared state-of-play only for nodes with a shared/ dir and a non-done thread", async () => {
+  const vaultRoot = await buildVault();
+  // n-blocked has a non-done ("blocked-on-you") thread and a shared/ dir: qualifies.
+  await mkdir(path.join(vaultRoot, "n-blocked", "shared"), { recursive: true });
+  // n-done's only thread is done: its shared/ dir must be skipped even though it exists.
+  await mkdir(path.join(vaultRoot, "n-done", "shared"), { recursive: true });
+  // n-working has a qualifying thread but no shared/ dir: must be skipped.
+  const sidecarPath = path.join(vaultRoot, "..", "sidecar-" + path.basename(vaultRoot) + ".json");
+
+  const calls = [];
+  const sharedWriter = {
+    /** Records every call instead of touching the filesystem or git. */
+    async write(nodeDir, section) {
+      calls.push({ nodeDir, section });
+      return "written";
+    }
+  };
+
+  await sweep({ vaultRoot, sidecarPath, now, notifier: noopNotifier, sharedWriter });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].nodeDir, path.join(vaultRoot, "n-blocked"));
+  assert.match(calls[0].section, /blocked/);
+});
+
+test("sweep --dry-run never calls the shared state-of-play writer", async () => {
+  const vaultRoot = await buildVault();
+  await mkdir(path.join(vaultRoot, "n-blocked", "shared"), { recursive: true });
+  const sidecarPath = path.join(vaultRoot, "..", "sidecar-" + path.basename(vaultRoot) + ".json");
+
+  let called = false;
+  const sharedWriter = {
+    /** Marks itself called; dry-run must never reach this. */
+    async write() {
+      called = true;
+      return "written";
+    }
+  };
+
+  await sweep({ vaultRoot, sidecarPath, now, dryRun: true, notifier: noopNotifier, sharedWriter });
+
+  assert.equal(called, false);
+});
+
+test("sweep commits the shared state-of-play update when shared/ is its own git repo", async () => {
+  const vaultRoot = await buildVault();
+  const sharedDir = path.join(vaultRoot, "n-blocked", "shared");
+  await mkdir(sharedDir, { recursive: true });
+  runGit(sharedDir, ["init", "-q", "-b", "main"]);
+  runGit(sharedDir, ["config", "user.email", "shared-test@example.com"]);
+  runGit(sharedDir, ["config", "user.name", "Shared Test"]);
+  await writeFile(path.join(sharedDir, "keep.txt"), "hi\n");
+  runGit(sharedDir, ["add", "."]);
+  runGit(sharedDir, ["commit", "-q", "-m", "initial"]);
+  const before = execFileSync("git", ["-C", sharedDir, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+
+  const sidecarPath = path.join(vaultRoot, "..", "sidecar-" + path.basename(vaultRoot) + ".json");
+  await sweep({ vaultRoot, sidecarPath, now, notifier: noopNotifier });
+
+  const after = execFileSync("git", ["-C", sharedDir, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  assert.notEqual(after, before);
+  const message = execFileSync("git", ["-C", sharedDir, "log", "-1", "--pretty=%s"], { encoding: "utf8" }).trim();
+  assert.equal(message, "update: state-of-play threads section");
+
+  const content = await readFile(path.join(sharedDir, "state-of-play.md"), "utf8");
+  assert.match(content, /blocked/);
+});
+
+test("sweep writes shared state-of-play without attempting a commit when shared/ has no .git", async () => {
+  const vaultRoot = await buildVault();
+  const sharedDir = path.join(vaultRoot, "n-blocked", "shared");
+  await mkdir(sharedDir, { recursive: true });
+  const sidecarPath = path.join(vaultRoot, "..", "sidecar-" + path.basename(vaultRoot) + ".json");
+
+  const originalError = console.error;
+  const loggedErrors = [];
+  console.error = (...args) => loggedErrors.push(args);
+  try {
+    await sweep({ vaultRoot, sidecarPath, now, notifier: noopNotifier });
+  } finally {
+    console.error = originalError;
+  }
+
+  // No .git means the writer must skip the commit outright, never attempt (and swallow) a failing one.
+  assert.deepEqual(loggedErrors, []);
+  const content = await readFile(path.join(sharedDir, "state-of-play.md"), "utf8");
+  assert.match(content, /blocked/);
 });

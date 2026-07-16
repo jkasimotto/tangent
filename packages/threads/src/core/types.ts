@@ -153,3 +153,15 @@ export interface Notifier {
 export interface WorkerLauncher {
   launch(args: { slug: string; cwd: string; model: string; prompt: string }): Promise<void>;
 }
+
+/**
+ * Writes a shared node's generated state-of-play section and, when appropriate, commits it locally.
+ * Injectable so the sweep's tests can assert which nodes it calls (and with what section) without
+ * touching real git or the filesystem; the default implementation splices via
+ * `updateSharedStateOfPlay` and commits with `commitAll` only when something changed and the shared
+ * directory is its own git repo.
+ */
+export interface SharedStateWriter {
+  /** Splices `section` into `<nodeDir>/shared/state-of-play.md`, returning whether anything changed. */
+  write(nodeDir: string, section: string): Promise<"written" | "unchanged">;
+}

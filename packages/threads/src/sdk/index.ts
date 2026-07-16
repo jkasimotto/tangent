@@ -12,6 +12,7 @@ export { deriveThreadStates } from "../core/derive.js";
 export type { ThreadDerivationInput } from "../core/derive.js";
 export { scanVault } from "../core/vault-scan.js";
 export { renderThreadsMarkdown } from "../core/render.js";
+export { renderStateOfPlaySection, updateSharedStateOfPlay } from "../core/state-of-play.js";
 export { SqliteSessionStateReader } from "../core/sqlite-session-state.js";
 export { ClaudeCliWhyLineRunner } from "../core/haiku.js";
 export { TerminalNotifier } from "../core/notifier.js";

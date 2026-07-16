@@ -9,7 +9,8 @@ export function emptySidecar(): SidecarState {
     counts: { needsYou: 0, blocked: 0, working: 0, ready: 0, parked: 0, unowned: 0 },
     needsYou: [],
     registry: {},
-    notified: {}
+    notified: {},
+    recur: {}
   };
 }
 
@@ -33,7 +34,8 @@ function normalizeSidecar(value: unknown): SidecarState {
     counts: { ...empty.counts, ...record.counts },
     needsYou: Array.isArray(record.needsYou) ? record.needsYou : [],
     registry: record.registry && typeof record.registry === "object" ? record.registry : {},
-    notified: record.notified && typeof record.notified === "object" ? record.notified : {}
+    notified: record.notified && typeof record.notified === "object" ? record.notified : {},
+    recur: record.recur && typeof record.recur === "object" ? record.recur : {}
   };
 }
 

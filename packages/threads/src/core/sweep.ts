@@ -92,7 +92,10 @@ export async function sweep(options: SweepOptions = {}): Promise<SweepResult> {
     counts,
     needsYou: buildNeedsYouList(derived, whyResult.whyLines),
     registry: { ...sidecar.registry, ...registryUpdates },
-    notified
+    notified,
+    // Sweep never touches recurring-dispatch state (runRecur owns it); carry it forward unchanged
+    // so a sweep between two dispatches can never wipe out isDue's last-fired bookkeeping.
+    recur: sidecar.recur ?? {}
   };
 
   if (!options.dryRun) {

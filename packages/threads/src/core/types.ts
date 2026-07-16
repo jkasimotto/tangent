@@ -119,6 +119,8 @@ export type SidecarState = {
   registry: Record<string, RegistryEntry>;
   /** Last-notified state per slug, for dedup: a thread notifies again only after leaving and re-entering a notifiable state. */
   notified: Record<string, ThreadState>;
+  /** Last-fired-instant per recur definition slug, keyed by RecurDef.slug. isDue compares this against each schedule's most recent scheduled instant to decide whether a dispatch has already fired. Optional so older on-disk sidecars without recurring dispatch still parse; readSidecar defaults it to {}. */
+  recur?: Record<string, { lastRunAt: string }>;
 };
 
 /** Input given to the haiku pass: already-derived states plus enough prose context to describe them. */
@@ -145,4 +147,9 @@ export interface WhyLineRunner {
 /** Fires one push notification. Injectable so tests never spawn a real notifier process. */
 export interface Notifier {
   notify(input: { title: string; message: string }): Promise<void>;
+}
+
+/** Starts the actual work for one due recurring dispatch (a coding-agent session running a recur definition's prompt). Injectable so runRecur's tests never start a real tmux session or coding-agent process. */
+export interface WorkerLauncher {
+  launch(args: { slug: string; cwd: string; model: string; prompt: string }): Promise<void>;
 }

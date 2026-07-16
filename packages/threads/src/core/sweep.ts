@@ -21,6 +21,7 @@ import type {
   SharedStateWriter,
   SidecarCounts,
   SidecarState,
+  StateOfPlaySpliceResult,
   ThreadState,
   VaultScan,
   WhyLineRunner,
@@ -242,7 +243,11 @@ function buildNeedsYouList(derived: DerivedThread[], whyLines: Record<string, st
  * non-done derived threads by node, and for every node that both owns a `shared/` directory and has
  * at least one such thread, renders and hands the section to `writer`. One node's failure (a bad
  * path, a git error) is logged to stderr and never fails the sweep or any other node's update: this
- * shared mirror is a courtesy, not the sweep's source of truth.
+ * shared mirror is a courtesy, not the sweep's source of truth. A "malformed" result (the node's
+ * state-of-play.md has an orphaned or otherwise ambiguous marker pair; see `updateSharedStateOfPlay`)
+ * is not an error the writer throws, so it is handled here rather than in the catch: logged with the
+ * file path and marker counts so a human can fix the markers by hand, and otherwise skipped exactly
+ * like a caught error.
  */
 async function updateSharedNodes(root: string, derived: DerivedThread[], whyLines: Record<string, string>, now: Date, writer: SharedStateWriter): Promise<void> {
   const byNode = new Map<string, DerivedThread[]>();
@@ -257,7 +262,11 @@ async function updateSharedNodes(root: string, derived: DerivedThread[], whyLine
     if (!(await pathExists(path.join(nodeDir, "shared")))) continue;
     try {
       const section = renderStateOfPlaySection(threads, whyLines, now);
-      await writer.write(nodeDir, section);
+      const result = await writer.write(nodeDir, section);
+      if (typeof result === "object" && result.status === "malformed") {
+        const filePath = path.join(nodeDir, "shared", "state-of-play.md");
+        console.error(`threads sweep: state-of-play markers malformed in ${filePath}: found ${result.beginCount} begin / ${result.endCount} end; fix by hand`);
+      }
     } catch (error) {
       console.error(`threads sweep: failed to update shared state-of-play for node "${node}":`, error);
     }
@@ -268,11 +277,12 @@ async function updateSharedNodes(root: string, derived: DerivedThread[], whyLine
  * Default `SharedStateWriter`: splices the section into `<nodeDir>/shared/state-of-play.md` via
  * `updateSharedStateOfPlay`, then, only when that actually wrote a change and `<nodeDir>/shared/.git`
  * exists (an fs check, never a git call, so a shared/ that is not its own repo is left alone), commits
- * it locally with `commitAll`. Never pushes.
+ * it locally with `commitAll`. Never pushes. A "malformed" result passes straight through untouched:
+ * there is nothing to commit, and it is `updateSharedNodes`'s job (not this writer's) to log it.
  */
 class GitSharedStateWriter implements SharedStateWriter {
   /** Splices `section` into the node's shared state-of-play.md and commits the change locally when the shared directory is its own git repo. */
-  async write(nodeDir: string, section: string): Promise<"written" | "unchanged"> {
+  async write(nodeDir: string, section: string): Promise<StateOfPlaySpliceResult> {
     const result = await updateSharedStateOfPlay(nodeDir, section);
     const sharedDir = path.join(nodeDir, "shared");
     if (result === "written" && (await pathExists(path.join(sharedDir, ".git")))) {

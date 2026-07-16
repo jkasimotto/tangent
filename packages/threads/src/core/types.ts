@@ -155,6 +155,16 @@ export interface WorkerLauncher {
 }
 
 /**
+ * Outcome of splicing a shared node's generated section into its state-of-play.md. "written" and
+ * "unchanged" mean the file's marker state was unambiguous (or absent) and handled normally.
+ * "malformed" means `updateSharedStateOfPlay` found the begin/end markers in a state it refuses to
+ * touch (an orphaned single marker, more than one of either marker, or an end marker before its
+ * begin) and left the file exactly as it was; `beginCount`/`endCount` are the raw marker counts it
+ * found, for a caller to log a precise diagnostic rather than guessing which pair is real.
+ */
+export type StateOfPlaySpliceResult = "written" | "unchanged" | { status: "malformed"; beginCount: number; endCount: number };
+
+/**
  * Writes a shared node's generated state-of-play section and, when appropriate, commits it locally.
  * Injectable so the sweep's tests can assert which nodes it calls (and with what section) without
  * touching real git or the filesystem; the default implementation splices via
@@ -162,6 +172,6 @@ export interface WorkerLauncher {
  * directory is its own git repo.
  */
 export interface SharedStateWriter {
-  /** Splices `section` into `<nodeDir>/shared/state-of-play.md`, returning whether anything changed. */
-  write(nodeDir: string, section: string): Promise<"written" | "unchanged">;
+  /** Splices `section` into `<nodeDir>/shared/state-of-play.md`, returning what happened. */
+  write(nodeDir: string, section: string): Promise<StateOfPlaySpliceResult>;
 }

@@ -232,3 +232,59 @@ test("sweep writes shared state-of-play without attempting a commit when shared/
   const content = await readFile(path.join(sharedDir, "state-of-play.md"), "utf8");
   assert.match(content, /blocked/);
 });
+
+test("a throwing shared writer for one node is logged and isolated: the other node still gets written", async () => {
+  const vaultRoot = await buildVault();
+  // n-blocked's writer call throws; n-ready's must still succeed regardless.
+  await mkdir(path.join(vaultRoot, "n-blocked", "shared"), { recursive: true });
+  await mkdir(path.join(vaultRoot, "n-ready", "shared"), { recursive: true });
+  const sidecarPath = path.join(vaultRoot, "..", "sidecar-" + path.basename(vaultRoot) + ".json");
+
+  const calls = [];
+  const sharedWriter = {
+    /** Throws for n-blocked only, to prove one node's failure never blocks another's write. */
+    async write(nodeDir, section) {
+      if (nodeDir.endsWith("n-blocked")) throw new Error("simulated shared-write failure");
+      calls.push({ nodeDir, section });
+      return "written";
+    }
+  };
+
+  const originalError = console.error;
+  const loggedErrors = [];
+  console.error = (...args) => loggedErrors.push(args.join(" "));
+  let result;
+  try {
+    result = await sweep({ vaultRoot, sidecarPath, now, notifier: noopNotifier, sharedWriter });
+  } finally {
+    console.error = originalError;
+  }
+
+  // The sweep itself resolves normally despite the throw.
+  assert.ok(result.markdown.length > 0);
+  assert.ok(loggedErrors.some((line) => line.includes("n-blocked") && line.includes("simulated shared-write failure")));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].nodeDir, path.join(vaultRoot, "n-ready"));
+});
+
+test("sweep logs a precise diagnostic (path and marker counts) and never writes when a node's markers are malformed", async () => {
+  const vaultRoot = await buildVault();
+  const sharedDir = path.join(vaultRoot, "n-blocked", "shared");
+  await mkdir(sharedDir, { recursive: true });
+  const file = path.join(sharedDir, "state-of-play.md");
+  const malformedContent = "# Notes\n\n<!-- tangent-threads:begin -->\nHuman content that must survive.\n";
+  await writeFile(file, malformedContent);
+  const sidecarPath = path.join(vaultRoot, "..", "sidecar-" + path.basename(vaultRoot) + ".json");
+
+  const originalError = console.error;
+  const loggedErrors = [];
+  console.error = (...args) => loggedErrors.push(args.join(" "));
+  try {
+    await sweep({ vaultRoot, sidecarPath, now, notifier: noopNotifier });
+  } finally {
+    console.error = originalError;
+  }
+
+  assert.ok(loggedErrors.some((line) => line.includes(file) && line.includes("found 1 begin / 0 end") && line.includes("fix by hand")));
+  assert.equal(await readFile(file, "utf8"), malformedContent);
+});

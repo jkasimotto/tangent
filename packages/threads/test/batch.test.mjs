@@ -15,12 +15,11 @@ test("parses the Batch body line", () => {
 test("working threads group by batch with a bracketed prefix", () => {
   const markdown = renderThreadsMarkdown({
     vaultRoot: "/tmp/trees",
-    derived: [
-      { slug: "fix-b", node: "proj", owner: "sonnet", state: "working", templateWhy: "in progress.", batch: "dim-fixups" },
-      { slug: "solo", node: "proj", owner: "you", state: "working", templateWhy: "in progress." },
-      { slug: "fix-a", node: "proj", owner: "sonnet", state: "working", templateWhy: "in progress.", batch: "dim-fixups" }
+    threads: [
+      { slug: "fix-b", node: "proj", owner: "sonnet", state: "working", why: "in progress.", batch: "dim-fixups" },
+      { slug: "solo", node: "proj", owner: "you", state: "working", why: "in progress." },
+      { slug: "fix-a", node: "proj", owner: "sonnet", state: "working", why: "in progress.", batch: "dim-fixups" }
     ],
-    whyLines: {},
     unowned: [],
     now: new Date("2026-07-16T08:00:00Z")
   });

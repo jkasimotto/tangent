@@ -6,6 +6,7 @@ import {
   attachCommand,
   ClaudeCliWhyLineRunner,
   listThreads,
+  openAttach,
   type RecurDef,
   registerThread,
   runRecur,
@@ -59,13 +60,18 @@ export async function runThreadsCli(argv = process.argv.slice(2)): Promise<void>
   }
 
   if (command === "list") {
-    const result = await listThreads({});
+    const subtree = args._[1] || stringArg(args.node);
+    const result = await listThreads({ subtree });
     if (!result.exists) {
       console.log("No sweep has run yet. Run: tangent threads sweep");
       return;
     }
     if (args.json) {
       console.log(JSON.stringify(result.sidecar, null, 2));
+      return;
+    }
+    if (result.filterUnavailable) {
+      console.log("The last sweep predates subtree views. Run: tangent threads sweep");
       return;
     }
     console.log(result.markdown!.trimEnd());
@@ -87,7 +93,16 @@ export async function runThreadsCli(argv = process.argv.slice(2)): Promise<void>
 
   if (command === "attach") {
     const slug = required(args._[1], "attach requires <slug>.");
-    console.log(await attachCommand({ slug }));
+    if (booleanArg(args.print)) {
+      console.log(await attachCommand({ slug }));
+      return;
+    }
+    const result = await openAttach({ slug });
+    for (const line of result.lines) console.log(line);
+    if (!result.ok) {
+      console.log(`run it yourself: ${result.manualCommand}`);
+      process.exitCode = 1;
+    }
     return;
   }
 

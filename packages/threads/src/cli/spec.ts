@@ -15,8 +15,12 @@ export const threadsCommandSpec: CliCommandSpec = {
     },
     {
       name: "list",
-      description: "Print the generated threads.md (or sidecar JSON with --json)",
-      options: [{ name: "json", description: "Print the sidecar JSON" }]
+      description: "Print the generated threads.md, optionally filtered to a vault subtree (or sidecar JSON with --json)",
+      args: "[subtree]",
+      options: [
+        { name: "json", description: "Print the sidecar JSON" },
+        { name: "node", takesValue: true, description: "Subtree filter (same as the positional arg, e.g. neara or neara/pgande)" }
+      ]
     },
     {
       name: "register",
@@ -31,8 +35,9 @@ export const threadsCommandSpec: CliCommandSpec = {
     },
     {
       name: "attach",
-      description: "Print the tmux attach command for a registered thread",
-      args: "<slug>"
+      description: "Open a registered thread's tmux session in a new full-screen iTerm window (worker left, nvim right)",
+      args: "<slug>",
+      options: [{ name: "print", description: "Print the manual tmux attach command instead of opening iTerm" }]
     },
     {
       name: "recur",

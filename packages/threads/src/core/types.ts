@@ -118,6 +118,23 @@ export type SidecarCounts = {
 
 export type NeedsYouEntry = { slug: string; why: string };
 
+/** One open thread as rendered: state derived, why-line already resolved (haiku or templated). Persisted in the sidecar so `tangent threads list <subtree>` can re-render a filtered tree without re-sweeping. */
+export type ViewThread = {
+  slug: string;
+  node: string;
+  owner: string;
+  state: ThreadState;
+  why: string;
+  openedAt?: string;
+  batch?: string;
+};
+
+/** One unowned backlog item as rendered (wiki-links already stripped), keyed by its owning node. */
+export type ViewItem = { node: string; text: string };
+
+/** The render inputs of the last sweep, persisted so a filtered `list` re-renders without re-sweeping. */
+export type ThreadsView = { threads: ViewThread[]; unowned: ViewItem[] };
+
 /** The full on-disk shape of ~/.tangent/threads-status.json: statusline counts, registry, and notification dedup state. */
 export type SidecarState = {
   sweptAt?: string;
@@ -128,6 +145,8 @@ export type SidecarState = {
   notified: Record<string, ThreadState>;
   /** Last-fired-instant per recur definition slug, keyed by RecurDef.slug. isDue compares this against each schedule's most recent scheduled instant to decide whether a dispatch has already fired. Optional so older on-disk sidecars without recurring dispatch still parse; readSidecar defaults it to {}. */
   recur?: Record<string, { lastRunAt: string }>;
+  /** The last sweep's render inputs, for filtered `list <subtree>` views. Optional so older on-disk sidecars still parse; a missing view just means subtree filtering needs one sweep first. */
+  view?: ThreadsView;
 };
 
 /** Input given to the haiku pass: already-derived states plus enough prose context to describe them. */

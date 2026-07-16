@@ -4,7 +4,7 @@ import { commitPath } from "@tangent/repo";
 import { deriveThreadStates, type ThreadDerivationInput } from "./derive.js";
 import { TerminalNotifier } from "./notifier.js";
 import { sidecarPath as defaultSidecarPath, vaultRoot as defaultVaultRoot } from "./paths.js";
-import { compareByUrgency, renderThreadsMarkdown } from "./render.js";
+import { buildThreadsView, compareByUrgency, renderThreadsMarkdown } from "./render.js";
 import { readSidecar, writeSidecarAtomic } from "./sidecar.js";
 import { writeFileAtomic } from "./atomic-write.js";
 import { renderStateOfPlaySection, updateSharedStateOfPlay } from "./state-of-play.js";
@@ -82,7 +82,8 @@ export async function sweep(options: SweepOptions = {}): Promise<SweepResult> {
 
   const whyResult = await resolveWhyLines(options.whyLineRunner, derived, scan);
   const unowned = scan.overviewItems.filter((item) => !item.owned);
-  const markdown = renderThreadsMarkdown({ vaultRoot: root, derived, whyLines: whyResult.whyLines, unowned, now });
+  const view = buildThreadsView(derived, whyResult.whyLines, unowned);
+  const markdown = renderThreadsMarkdown({ vaultRoot: root, threads: view.threads, unowned: view.unowned, now });
 
   const { notified, newlyNotified } = computeNotificationTransition(sidecar.notified, derived);
   if (!options.dryRun) {
@@ -103,7 +104,8 @@ export async function sweep(options: SweepOptions = {}): Promise<SweepResult> {
     notified,
     // Sweep never touches recurring-dispatch state (runRecur owns it); carry it forward unchanged
     // so a sweep between two dispatches can never wipe out isDue's last-fired bookkeeping.
-    recur: sidecar.recur ?? {}
+    recur: sidecar.recur ?? {},
+    view
   };
 
   if (!options.dryRun) {

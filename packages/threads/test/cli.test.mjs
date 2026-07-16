@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -41,8 +41,8 @@ test("register then attach roundtrips through the sidecar registry", async () =>
   assert.ok(registerLines.some((line) => line.includes("registered guy-wires")));
   assert.ok(registerLines.some((line) => line.includes("tg-guy-wires")));
 
-  const attachLines = await runCapturing(["attach", "guy-wires"], home);
-  assert.deepEqual(attachLines, ["tmux -CC attach -t tg-guy-wires"]);
+  const attachLines = await runCapturing(["attach", "guy-wires", "--print"], home);
+  assert.deepEqual(attachLines, ["tmux attach -t tg-guy-wires"]);
 });
 
 test("register without --session leaves the registry entry session-less until a sweep resolves it", async () => {
@@ -57,8 +57,8 @@ test("register without --session leaves the registry entry session-less until a 
   assert.ok(registerLines.some((line) => line.includes("registered clearances")));
   assert.ok(!registerLines.some((line) => line.includes("session=")));
 
-  const attachLines = await runCapturing(["attach", "clearances"], home);
-  assert.deepEqual(attachLines, ["tmux -CC attach -t tg-clearances"]);
+  const attachLines = await runCapturing(["attach", "clearances", "--print"], home);
+  assert.deepEqual(attachLines, ["tmux attach -t tg-clearances"]);
 });
 
 test("attach on an unknown slug errors clearly", async () => {
@@ -82,6 +82,40 @@ test("list reports no sweep has run yet when threads.md is missing", async () =>
   const home = await mkdtemp(path.join(tmpdir(), "tangent-threads-cli-list-"));
   const lines = await runCapturing(["list"], home);
   assert.deepEqual(lines, ["No sweep has run yet. Run: tangent threads sweep"]);
+});
+
+test("list <subtree> re-renders the sidecar view filtered to matching nodes", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "tangent-threads-cli-filter-"));
+  const treesDir = path.join(home, ".tangent", "trees");
+  await mkdir(treesDir, { recursive: true });
+  await writeFile(path.join(treesDir, "threads.md"), "full view\n");
+  await writeFile(path.join(home, ".tangent", "threads-status.json"), JSON.stringify({
+    sweptAt: "2026-07-16T08:00:00.000Z",
+    view: {
+      threads: [
+        { slug: "keep", node: "neara/pgande", owner: "sonnet", state: "working", why: "in progress." },
+        { slug: "drop", node: "otto/tangent", owner: "sonnet", state: "working", why: "in progress." }
+      ],
+      unowned: []
+    }
+  }));
+
+  const lines = await runCapturing(["list", "neara"], home);
+  const output = lines.join("\n");
+  assert.match(output, /keep/);
+  assert.doesNotMatch(output, /drop/);
+  assert.doesNotMatch(output, /full view/);
+});
+
+test("list <subtree> against a sidecar without a persisted view asks for a sweep", async () => {
+  const home = await mkdtemp(path.join(tmpdir(), "tangent-threads-cli-noview-"));
+  const treesDir = path.join(home, ".tangent", "trees");
+  await mkdir(treesDir, { recursive: true });
+  await writeFile(path.join(treesDir, "threads.md"), "full view\n");
+  await writeFile(path.join(home, ".tangent", "threads-status.json"), JSON.stringify({ sweptAt: "2026-07-16T08:00:00.000Z" }));
+
+  const lines = await runCapturing(["list", "neara"], home);
+  assert.deepEqual(lines, ["The last sweep predates subtree views. Run: tangent threads sweep"]);
 });
 
 test("sweep wires the haiku why-line runner by default, but never for --dry-run or --no-model", () => {

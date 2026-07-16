@@ -35,8 +35,17 @@ function normalizeSidecar(value: unknown): SidecarState {
     needsYou: Array.isArray(record.needsYou) ? record.needsYou : [],
     registry: record.registry && typeof record.registry === "object" ? record.registry : {},
     notified: record.notified && typeof record.notified === "object" ? record.notified : {},
-    recur: record.recur && typeof record.recur === "object" ? record.recur : {}
+    recur: record.recur && typeof record.recur === "object" ? record.recur : {},
+    view: normalizeView(record.view)
   };
+}
+
+/** Validates a persisted view's shape; anything unexpected reads as "no view yet" (filtered list then asks for a sweep) rather than crashing. */
+function normalizeView(value: unknown): SidecarState["view"] {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as { threads?: unknown; unowned?: unknown };
+  if (!Array.isArray(record.threads) || !Array.isArray(record.unowned)) return undefined;
+  return { threads: record.threads, unowned: record.unowned } as SidecarState["view"];
 }
 
 /** Writes the sidecar JSON atomically (tmp file + rename) so a crash mid-write never corrupts the previous, valid sidecar. */

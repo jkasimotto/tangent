@@ -107,12 +107,17 @@ test("one synthetic vault derives every state in the design's state table", asyn
 
   assert.doesNotMatch(result.markdown, /\bdone\b/);
   assert.match(result.markdown, /NEEDS YOU/);
-  assert.match(result.markdown, /WORKING/);
-  assert.match(result.markdown, /PARKED/);
-  assert.match(result.markdown, /UNOWNED/);
+  assert.match(result.markdown, /◐ working/);
+  assert.match(result.markdown, /◌ parked/);
+  assert.match(result.markdown, /⚠ /);
 
   const writtenMarkdown = await readFile(path.join(vaultRoot, "threads.md"), "utf8");
   assert.equal(writtenMarkdown, result.markdown);
+
+  // The sidecar persists the render view (minus done threads) so `list <subtree>` can filter later.
+  assert.ok(result.sidecar.view, "expected the sidecar to carry the render view");
+  assert.ok(!result.sidecar.view.threads.some((thread) => thread.state === "done"));
+  assert.equal(result.sidecar.view.unowned.length, 1);
 });
 
 test("sweep --dry-run reports the result without writing threads.md or the sidecar", async () => {

@@ -22,6 +22,16 @@ export function compareByUrgency(a: DerivedThread, b: DerivedThread): number {
   return (attentionPriority[a.state] ?? 9) - (attentionPriority[b.state] ?? 9);
 }
 
+/** Sentinel batch key sorting after every real batch name, so unbatched threads settle at the bottom of the WORKING section instead of splitting up batch groups. */
+const noBatchSortKey = "￿";
+
+/** Sorts the WORKING section by `(batch, slug)`, so threads sharing a `Batch:` name group together (ordered by slug within a batch) ahead of unbatched threads, which keep their own slug order at the end. */
+function compareForWorking(a: DerivedThread, b: DerivedThread): number {
+  const aKey = a.batch ?? noBatchSortKey;
+  const bKey = b.batch ?? noBatchSortKey;
+  return aKey.localeCompare(bKey) || a.slug.localeCompare(b.slug);
+}
+
 /**
  * Renders the generated threads.md view: one section per attention state (the design's combined
  * "NEEDS YOU" section covers blocked-on-you, needs-you, and ready-for-you; WORKING and PARKED get
@@ -36,22 +46,29 @@ export function renderThreadsMarkdown(input: RenderInput): string {
   const parked = open.filter((thread) => thread.state === "parked");
 
   const lines: string[] = [doNotEditComment, "", `${vaultLabel(input.vaultRoot)}  ${headerTimestamp(now)}`];
-  lines.push(...renderSection("● NEEDS YOU", attention, whyLines, now));
-  lines.push(...renderSection("◐ WORKING", working, whyLines, now));
-  lines.push(...renderSection("◌ PARKED", parked, whyLines, now));
+  lines.push(...renderSection("● NEEDS YOU", attention, whyLines, now, compareByUrgency, false));
+  lines.push(...renderSection("◐ WORKING", working, whyLines, now, compareForWorking, true));
+  lines.push(...renderSection("◌ PARKED", parked, whyLines, now, compareByUrgency, false));
   lines.push(...renderUnownedSection(unowned));
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
-/** Renders one attention/working/parked section as a header line plus one line per thread, most-urgent-first; returns no lines at all when the section is empty. */
-function renderSection(title: string, threads: DerivedThread[], whyLines: Record<string, string>, now: Date): string[] {
+/**
+ * Renders one attention/working/parked section as a header line plus one line per thread, sorted by
+ * `compare`; returns no lines at all when the section is empty. When `prefixBatch` is set (WORKING
+ * only; see `compareForWorking`), a thread carrying a `batch` gets its why-line prefixed with
+ * `[<batch>]`, so fanned-out dispatch threads read as a group wherever the section's sort has already
+ * placed them together.
+ */
+function renderSection(title: string, threads: DerivedThread[], whyLines: Record<string, string>, now: Date, compare: (a: DerivedThread, b: DerivedThread) => number, prefixBatch: boolean): string[] {
   if (!threads.length) return [];
-  const sorted = [...threads].sort(compareByUrgency);
+  const sorted = [...threads].sort(compare);
   const lines = ["", `${title} (${threads.length})`];
   for (const thread of sorted) {
     const why = whyLines[thread.slug] || thread.templateWhy;
+    const prefixedWhy = prefixBatch && thread.batch ? `[${thread.batch}] ${why}` : why;
     const age = formatAge(daysSince(thread.openedAt, now));
-    lines.push(`  ${thread.slug}  ${thread.owner}  ${why}  (${age})`);
+    lines.push(`  ${thread.slug}  ${thread.owner}  ${prefixedWhy}  (${age})`);
   }
   return lines;
 }

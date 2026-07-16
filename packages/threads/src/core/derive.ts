@@ -39,7 +39,8 @@ function deriveOne(input: ThreadDerivationInput, now: Date): DerivedThread {
     node: thread.node,
     owner: thread.owner || "you",
     outcome: thread.outcome,
-    openedAt: thread.opened
+    openedAt: thread.opened,
+    batch: thread.batch
   };
 
   if (thread.status === "done" || thread.status === "dropped") {

@@ -20,6 +20,8 @@ export type ParsedThread = {
   deadline?: string;
   /** Full text (including its "Parked"/"Wake when"/"Wake on" prefix) of a body line starting with one of those, case-insensitive, if present. Opaque prose for a human unless parseWakeCondition recognizes a machine-checkable shape. */
   wakeCondition?: string;
+  /** Parsed from a body line "Batch: <name>". Groups fanned-out dispatch threads together in the WORKING section. */
+  batch?: string;
   /** Truncated body text, used as haiku prompt context. */
   bodyExcerpt: string;
 };
@@ -58,6 +60,8 @@ export type DerivedThread = {
   state: ThreadState;
   /** Deterministic, templated one-line why, built from owner/deadline/cadence/session facts. Used verbatim when the haiku pass is unavailable or fails, and as haiku prompt context otherwise. */
   templateWhy: string;
+  /** Carried from ParsedThread.batch. Groups fanned-out dispatch threads together in the WORKING section. */
+  batch?: string;
 };
 
 /** The kind of the most recent step recorded for a session, used to detect a pending question or permission prompt (the design's "idle at a question or unresolved permission step" signal). */

@@ -5,8 +5,10 @@ import type { ParsedThread, ThreadStatus } from "./types.js";
 // Documented body-prose signals (see the design spec and package docs/architecture.md): owner is a
 // "Owner: X" line; cadence is "Check in every N days"; a wake condition is a line starting "Parked",
 // "Wake when", or "Wake on"; deadlines are dates written as YYYY-MM-DD anywhere in the body, or 📅
-// YYYY-MM-DD.
+// YYYY-MM-DD; a batch is a "Batch: <name>" line, grouping fanned-out dispatch threads together in
+// the rendered view.
 const ownerLine = /^Owner:\s*(.+)$/im;
+const batchLine = /^Batch:\s*(\S+)\s*$/im;
 const cadenceLine = /check in every\s+(\d+)\s+days?/i;
 const wakeLine = /^(?:Parked|Wake when|Wake on)\b.*$/im;
 const emojiDeadline = /📅\s*(\d{4}-\d{2}-\d{2})/g;
@@ -37,6 +39,7 @@ export function parseThreadFile(vaultRelativePath: string, content: string): Par
     cadenceDays: cadenceDaysFrom(body),
     deadline: earliestDeadline(body),
     wakeCondition: body.match(wakeLine)?.[0]?.trim(),
+    batch: body.match(batchLine)?.[1],
     bodyExcerpt: excerpt(body)
   };
 }

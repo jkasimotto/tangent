@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseWakeCondition, evaluateWakeCondition } from "../dist/core/wake.js";
+import { execFileSync } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { parseWakeCondition, evaluateWakeCondition, RepoGitProbe } from "../dist/core/wake.js";
 
 /** Fake git probe returning a canned ancestor answer. */
 function probe(answer) {
@@ -8,6 +12,28 @@ function probe(answer) {
     /** Simulates git merge-base --is-ancestor with a fixed result. */
     isAncestor: async () => answer
   };
+}
+
+/** Runs a git command synchronously in a fixture directory, discarding its output. */
+function runGit(dir, args) {
+  execFileSync("git", args, { cwd: dir, stdio: "pipe" });
+}
+
+/**
+ * Builds a throwaway git repository with one commit on `main` and a branch `b` pointing at the
+ * same commit, for exercising RepoGitProbe against a real `git merge-base --is-ancestor` call
+ * instead of a fake. Caller is responsible for removing the returned directory.
+ */
+async function tempGitRepoWithBranch() {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "wake-test-"));
+  runGit(dir, ["init", "-q", "-b", "main"]);
+  runGit(dir, ["config", "user.email", "wake-test@example.com"]);
+  runGit(dir, ["config", "user.name", "Wake Test"]);
+  await writeFile(path.join(dir, "file.txt"), "hello\n");
+  runGit(dir, ["add", "."]);
+  runGit(dir, ["commit", "-q", "-m", "initial"]);
+  runGit(dir, ["branch", "b"]);
+  return dir;
 }
 
 test("parses date wake conditions", () => {
@@ -40,4 +66,24 @@ test("merged condition delegates to the git probe", async () => {
   const parsed = parseWakeCondition("Wake when b is merged into main in /tmp/repo");
   assert.equal(await evaluateWakeCondition(parsed, new Date(), probe(true)), true);
   assert.equal(await evaluateWakeCondition(parsed, new Date(), probe(false)), false);
+});
+
+test("parses merged wake conditions with case-insensitive \"lands on\" phrasing", () => {
+  const parsed = parseWakeCondition("Wake when x LANDS ON main in /tmp/r");
+  assert.equal(parsed.kind, "merged");
+});
+
+test("RepoGitProbe reports true when a branch's tip is contained in the target", async () => {
+  const repo = await tempGitRepoWithBranch();
+  try {
+    const result = await new RepoGitProbe().isAncestor(repo, "b", "main");
+    assert.equal(result, true);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("RepoGitProbe resolves false, never throws, for a nonexistent repo path", async () => {
+  const result = await new RepoGitProbe().isAncestor("/nonexistent/path", "a", "b");
+  assert.equal(result, false);
 });

@@ -20,6 +20,7 @@ Decisions:
 - decisions/ADR-0004-retire-hook-capture.md
 - decisions/ADR-0005-usage-v2-telemetry-kernel.md
 - decisions/ADR-0015-marks-in-eval.md
+- decisions/ADR-0016-threads-vertical-app.md
 - ui/adr/0001-ui-package-split.md
 - ui/adr/0002-react-vite-ui-stack.md
 - ui/adr/0006-svelte-usage-ui.md

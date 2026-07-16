@@ -75,7 +75,8 @@ const allowedPackageDeps: Record<string, string[]> = {
   "@tangent/rollup": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage-index-sqlite"],
   "@tangent/eval": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage-core", "@tangent/usage-index-sqlite", "@tangent/ui-server", "@tangent/eval-ui"],
   "@tangent/launcher": ["@tangent/core"],
-  "@tangent/search": ["@tangent/core", "@tangent/repo"]
+  "@tangent/search": ["@tangent/core", "@tangent/repo"],
+  "@tangent/threads": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage-index-sqlite"]
 };
 
 /** Supports the lint governance helper. */
@@ -329,7 +330,7 @@ async function lintImports(ctx: LintContext): Promise<GovernanceFinding[]> {
           message: `${owner.name} imports ${importedPackage}, which violates package boundaries.`,
           fix: [
             "Move shared behavior to core, repo, or agent-runtime.",
-            "Keep vertical apps independent except rollup/eval -> usage.",
+            "Keep vertical apps independent except rollup/eval/threads -> usage.",
             "Update docs/architecture/dependency-graph.md only with an intentional graph change."
           ]
         });

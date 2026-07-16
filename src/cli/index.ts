@@ -15,6 +15,7 @@ const tangentCommandSpec: CliCommandSpec = {
     productCommandSpec("rollup", "Generate private rollup notes"),
     productCommandSpec("search", "Index and search repository structure"),
     productCommandSpec("eval", "Run and inspect coding-agent evals"),
+    productCommandSpec("threads", "Delegated-thread sweep, registry, and attach"),
     { name: "mark", description: "Capture agent behavior marks; install @tangent/eval if unavailable", args: "[note]" },
     doctorCommandSpec,
     { name: "governance", description: "Run architecture governance lints", hidden: true },
@@ -84,6 +85,12 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
   if (app === "eval") {
     const { runEvalCli } = await requiredProductModule<{ runEvalCli(argv: string[]): Promise<void> }>("@tangent/eval/cli", "eval");
     await runEvalCli(rest);
+    return;
+  }
+
+  if (app === "threads") {
+    const { runThreadsCli } = await requiredProductModule<{ runThreadsCli(argv: string[]): Promise<void> }>("@tangent/threads/cli", "threads");
+    await runThreadsCli(rest);
     return;
   }
 
@@ -171,6 +178,7 @@ Examples:
   tangent search "horizontal tension"
   tangent eval run eval.json
   tangent mark "you should have read the docs index first"
+  tangent threads sweep
   tangent completion zsh
 `);
 }

@@ -37,6 +37,20 @@ nonzero and leaves the previous `threads.md` and sidecar completely untouched; a
 never a sweep failure, it just falls back to templated why-lines built from the owner/deadline/cadence
 facts already extracted deterministically.
 
+A parked thread's body can carry a `Wake on <YYYY-MM-DD>` or `Wake when <branch> is merged into
+<target> in <repo>` line; each sweep evaluates it deterministically against the clock and local git
+state (local refs only, no fetch) and wakes the thread on its own once the condition is met. Any other
+prose after `Parked` stays opaque and still needs a human to unpark it. Fanned-out dispatch threads
+that share a `Batch: <name>` body line group together in the WORKING section of `threads.md`, sorted by
+batch then slug, with why-lines prefixed `[<name>]`, so a batch reads as one unit.
+
+Every sweep also regenerates a "Delegated threads" section in each shared node's
+`shared/state-of-play.md`, when that directory exists, listing every non-done thread's owner, state,
+and outcome or why-line for teammates who only see the shared repo. The splice is conservative: it
+writes only when the file's `tangent-threads:begin`/`:end` markers are unambiguous, and refuses
+(logging the marker counts) otherwise so a human fixes them by hand instead of losing content. When the
+shared directory is its own git repo the change is committed locally; it is never pushed.
+
 `register` records a dispatched thread's worktree, tmux session name, and (optionally) its Claude
 session id in the sidecar registry; when the session id is not yet known at dispatch time, the next
 sweep resolves it by matching the most recently active Usage session whose working directory equals

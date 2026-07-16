@@ -2,14 +2,104 @@
 
 Purpose: Tangent is a local monorepo for coding-agent tooling: conversation telemetry, rollup notes, eval runs, and shared infrastructure.
 
-Packages:
+## On-disk layout (`~/.tangent/`)
+
+All Tangent state lives under `~/.tangent/`. Know these paths:
+
+| Path | Contents |
+|---|---|
+| `usage/global/index/usage.sqlite` | Global SQLite index across all sessions on the machine (tables: sessions, turns, messages, events, conversations, source_files, provider_capabilities, meta). Rebuildable projection — native transcripts are the source of truth. |
+| `usage/repos/<hash>/index/usage.sqlite` | Per-repo SQLite index |
+| `usage/repos/<hash>/` | One directory per repo, keyed by a hash of the repo path |
+| `usage/global/insights/` | Aggregated deterministic insights (e.g. `park.json`) |
+| `trees/` | Git-managed knowledge vault (Obsidian-compatible); nodes, overviews, dated notes, threads, plate.md rollups. README.md has the vault rules. |
+| `marks/` | Captured agent-failure marks (`tangent.mark.v1` JSON), owned by @tangent/eval |
+| `eval/runs/` | Eval run manifests, variant work dirs, metrics, reports, diffs |
+| `loops/` | Agent loop logs (plan, scope, implement, review, deploy, ux, watch, feedback) |
+| `worklog.jsonl` | Time-tracking worklog entries (entity, cwd, name, estimate, actual minutes) |
+| `feedback.jsonl` / `feedback-triage.jsonl` | User feedback capture |
+
+## Querying conversations — use the Usage API, never grep raw transcripts
+
+When asked to find, filter, or inspect conversations (by project, model, date, role, content, etc.), **always use the `tangent usage` CLI or the `@tangent/usage/core` SDK**. Do not grep raw `~/.claude/projects/**/*.jsonl` files — the Usage index is faster, structured, and already normalizes provider schemas.
+
+### CLI quick reference
+
+```bash
+# What sessions exist for a repo
+ tangent usage status .
+
+# List / get / report sessions
+tangent usage sessions list .
+tangent usage sessions get <id>
+tangent usage sessions report latest --provider claude --json
+tangent usage sessions report <session-id> --json
+
+# Timeline for a session
+tangent usage sessions timeline latest --metric duration --group kind --format json
+
+# Query messages across sessions (filter by role, date, char count, etc.)
+tangent usage messages query --role user --min-chars 500 --json
+tangent usage messages query --json --since 2026-07-10
+
+# Query steps and tools
+tangent usage steps query --session latest --json
+tangent usage tools query --session latest --json
+
+# Analytics aggregation
+tangent usage analytics aggregate --session latest --metric durationMs.sum --metric tokens.total.sum --group step.kind --json
+
+# Raw telemetry events
+tangent usage raw events --session latest --json
+
+# Launch the local web UI
+ tangent usage ui
+```
+
+All `--json` commands emit a `UsageResult<T>` envelope. `--scope all` discovers sessions across all supported local agent roots (all `~/.claude*` profiles, Codex, Gemini).
+
+### SDK quick reference
+
+```ts
+import { openUsage } from "@tangent/usage/core";
+
+const usage = await openUsage({ repo: ".", index: "auto" });
+
+// Query messages
+usage.messages.query({
+  where: { role: "user", textChars: { gte: 500 } },
+  orderBy: [{ field: "createdAt", direction: "desc" }]
+});
+
+// Session timeline
+usage.sessions.timeline("latest", {
+  metric: "selfDurationMs",
+  bucketBy: "kind",
+  nesting: "tree"
+});
+
+// Analytics
+usage.analytics.aggregate({
+  scope: { sessionId: "latest" },
+  groupBy: ["step.kind"],
+  metrics: ["tokens.total.sum", "durationMs.sum", "count"]
+});
+```
+
+### SQLite direct query (fallback)
+
+If the CLI/SDK is unavailable, the global index at `~/.tangent/usage/global/index/usage.sqlite` has tables `sessions`, `messages`, `turns`, `events`, `conversations`. The `messages` table has columns including `session_id`, `role`, `model`, `created_at`, `text_preview`, `text_full`, `token_usage_json`. Query it with `sqlite3` to find sessions by model, date, or content, then use the CLI for full reports.
+
+## Packages
+
 - @tangent/core: pure CLI specs, args, JSON/config, hashes, time, and small helpers.
 - @tangent/repo: repo discovery, git, worktree, and path helpers.
 - @tangent/agent-runtime: shared process execution and agent runner primitives.
 - @tangent/governance: architecture, docs, dependency, and duplication lints.
-- @tangent/usage: conversation telemetry domain, native transcript indexing, schemas, datasets, SDK, CLI.
+- @tangent/usage: conversation telemetry domain, native transcript indexing, schemas, datasets, SDK, CLI. Sub-packages: `usage-schema` (types only), `usage-core` (schemas, query, projections, client — no SQLite/UI), `usage-providers` (native transcript normalization), `usage-index-sqlite` (optional SQLite indexing, repo loading, archive), `usage` (full CLI + local UI server + `usage-ui` assets).
 - @tangent/rollup: private rollup notes from Usage turns.
 - @tangent/eval: coding-agent eval preparation, execution, collection, and reports.
+- @tangent/search: structural indexing and search over TypeScript and Dart source (standalone, no Usage/Rollup/Eval dependency).
 
 Architecture docs:
 - ARCHITECTURE.md

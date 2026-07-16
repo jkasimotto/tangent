@@ -1,12 +1,16 @@
-import { readFile, readdir } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { parseOverviewOnMe } from "./overview-parser.js";
 import { parseThreadFile } from "./thread-parser.js";
 import type { OverviewItem, ParsedThread, VaultScan } from "./types.js";
+import { walkFiles } from "./walk.js";
 
 const threadFilePattern = /(^|\/)thread-[^/]+\.md$/;
 const overviewFilePattern = /(^|\/)overview\.md$/;
 const notePattern = /^(\d{4}-\d{2}-\d{2})-.*\.md$/;
+
+/** Matches any markdown file, for the vault-wide walk (thread files, overview files, and dated notes are all filtered from this one list afterward). */
+const isMarkdownFile = (fileName: string): boolean => fileName.endsWith(".md");
 
 /**
  * Walks the vault once, collecting thread files, overview "## On me" backlog items, and per-node
@@ -15,7 +19,7 @@ const notePattern = /^(\d{4}-\d{2}-\d{2})-.*\.md$/;
  * sweep treats as a scan failure: nothing downstream is written.
  */
 export async function scanVault(root: string): Promise<VaultScan> {
-  const files = await walkMarkdownFiles(root);
+  const files = await walkFiles(root, isMarkdownFile);
   const threadFiles = files.filter((file) => threadFilePattern.test(file));
   const overviewFiles = files.filter((file) => overviewFilePattern.test(file));
 
@@ -52,22 +56,4 @@ export async function scanVault(root: string): Promise<VaultScan> {
   }
 
   return { threads, overviewItems, noteRecencyByNode };
-}
-
-/** Recursively lists vault-relative markdown file paths, excluding any `shared/` subtree and dotfiles. */
-async function walkMarkdownFiles(root: string, relativeDir = ""): Promise<string[]> {
-  const absoluteDir = relativeDir ? path.join(root, relativeDir) : root;
-  const entries = await readdir(absoluteDir, { withFileTypes: true });
-  const files: string[] = [];
-  for (const entry of entries) {
-    if (entry.name.startsWith(".")) continue;
-    const relativePath = relativeDir ? path.posix.join(relativeDir, entry.name) : entry.name;
-    if (entry.isDirectory()) {
-      if (entry.name === "shared") continue;
-      files.push(...await walkMarkdownFiles(root, relativePath));
-      continue;
-    }
-    if (entry.isFile() && entry.name.endsWith(".md")) files.push(relativePath);
-  }
-  return files;
 }

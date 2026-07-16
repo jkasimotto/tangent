@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { registerThread, sweep } from "../dist/sdk/index.js";
+import { readSidecar, writeSidecarAtomic } from "../dist/core/sidecar.js";
 
 const now = new Date("2026-07-16T12:00:00Z");
 
@@ -122,4 +123,17 @@ test("sweep --dry-run reports the result without writing threads.md or the sidec
   assert.ok(result.markdown.length > 0);
   await assert.rejects(readFile(path.join(vaultRoot, "threads.md"), "utf8"));
   await assert.rejects(readFile(sidecarPath, "utf8"));
+});
+
+test("sweep carries forward recurring-dispatch bookkeeping already in the sidecar", async () => {
+  const vaultRoot = await buildVault();
+  const sidecarPath = path.join(vaultRoot, "..", "sidecar-" + path.basename(vaultRoot) + ".json");
+  const seededRecur = { "some-slug": { lastRunAt: "2026-07-15T09:00:00.000Z" } };
+  await writeSidecarAtomic(sidecarPath, { ...(await readSidecar(sidecarPath)), recur: seededRecur });
+
+  const result = await sweep({ vaultRoot, sidecarPath, now, notifier: noopNotifier });
+
+  assert.deepEqual(result.sidecar.recur, seededRecur);
+  const written = await readSidecar(sidecarPath);
+  assert.deepEqual(written.recur, seededRecur);
 });

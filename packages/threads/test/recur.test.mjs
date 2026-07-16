@@ -1,3 +1,8 @@
+// isDue reads local calendar fields (see recur.ts), and the fixtures below are written as +10:00
+// wall-clock times (Sydney). Pin the process timezone before any Date is constructed so this file
+// passes regardless of the machine/CI's actual local timezone.
+process.env.TZ = "Australia/Sydney";
+
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";

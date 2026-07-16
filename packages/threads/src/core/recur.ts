@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { pathExists, tangentHome } from "@tangent/core";
 import { processFailure, runProcess } from "@tangent/agent-runtime/process";
@@ -6,6 +6,7 @@ import { writeFileAtomic } from "./atomic-write.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { readSidecar, writeSidecarAtomic } from "./sidecar.js";
 import type { RegistryEntry, SidecarState, WorkerLauncher } from "./types.js";
+import { walkFiles } from "./walk.js";
 
 /** A recur definition's fire schedule: a daily time-of-day, or a weekly weekday+time-of-day. Both times are local wall-clock time (see isDue). */
 export type RecurSchedule = { kind: "daily"; time: string } | { kind: "weekly"; weekday: number; time: string };
@@ -108,6 +109,7 @@ function localCalendarDate(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+/** Everything runRecur needs beyond the def itself: the injectable launcher plus the vault/sidecar locations and clock, all explicit so runRecur stays deterministic and testable without touching real paths or the real clock. */
 export type RunRecurDeps = {
   launcher: WorkerLauncher;
   vaultRoot: string;
@@ -180,11 +182,12 @@ function renderFrontmatter(fields: Record<string, string | undefined>): string {
   return ["---", ...lines, "---"].join("\n");
 }
 
-const recurFilePattern = /(^|\/)recur-[^/]+\.md$/;
+/** Matches a recur definition's filename, e.g. "recur-daily-rebase.md". */
+const isRecurFile = (fileName: string): boolean => /^recur-[^/]+\.md$/.test(fileName);
 
 /** Walks the vault for `recur-*.md` definitions, skipping any `shared/` subtree (team-facing git repos, not private automation), and parses each one. Throws if any definition is malformed (see parseRecurFile): a bad recur file should fail the scan loudly rather than silently drop a schedule. */
 export async function scanRecurFiles(vaultRoot: string): Promise<RecurDef[]> {
-  const files = await walkRecurFiles(vaultRoot);
+  const files = await walkFiles(vaultRoot, isRecurFile);
   const defs: RecurDef[] = [];
   for (const file of files) {
     const content = await readFile(path.join(vaultRoot, file), "utf8");
@@ -195,27 +198,11 @@ export async function scanRecurFiles(vaultRoot: string): Promise<RecurDef[]> {
   return defs;
 }
 
-/** Recursively lists vault-relative `recur-*.md` file paths, excluding any `shared/` subtree and dotfiles. Mirrors vault-scan.ts's walkMarkdownFiles, scoped to recur definitions. */
-async function walkRecurFiles(root: string, relativeDir = ""): Promise<string[]> {
-  const absoluteDir = relativeDir ? path.join(root, relativeDir) : root;
-  const entries = await readdir(absoluteDir, { withFileTypes: true });
-  const files: string[] = [];
-  for (const entry of entries) {
-    if (entry.name.startsWith(".")) continue;
-    const relativePath = relativeDir ? path.posix.join(relativeDir, entry.name) : entry.name;
-    if (entry.isDirectory()) {
-      if (entry.name === "shared") continue;
-      files.push(...await walkRecurFiles(root, relativePath));
-      continue;
-    }
-    if (entry.isFile() && recurFilePattern.test(entry.name)) files.push(relativePath);
-  }
-  return files;
-}
-
+/** Config for TmuxWorkerLauncher's real dispatch: where the durable prompt record is written and how long a launch may take before it's considered failed. Both are injectable so tests never touch the real home directory or hang on a slow tmux/claude startup. */
 export type TmuxWorkerLauncherConfig = {
   /** Directory the dispatch prompt is written under, one `<slug>.md` file per launch. Defaults to `<tangentHome>/.tangent/recur-prompts`; injectable so tests never write under the real home. */
   promptDir?: string;
+  /** Max time the `tmux new-session` process itself may run before runProcess kills it and reports failure. Defaults to 30000ms. This bounds only starting the detached session, not the worker's own lifetime inside it. */
   timeoutMs?: number;
 };
 

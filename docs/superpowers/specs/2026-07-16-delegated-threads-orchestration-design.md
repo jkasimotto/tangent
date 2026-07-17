@@ -7,7 +7,7 @@ Related: [[2026-07-05-mark-loop-design]] (shares the vault, the usage index, and
 
 ## TL;DR
 
-Julian coordinates a parallel portfolio of delegated threads: people (Will on guy wires, Chris and Troy on autodesign), branches, and coding agents. All of that state lives in his head, so every act of coordination passes through his working memory, and the overhead (re-deriving state, ten-step dispatch rituals, polling delegates, answering "how's it going" for everyone else) is what exhausts him, not the work. This design externalizes the portfolio into the tangent vault and routes his attention instead of relying on his memory. It is deliberately not an app: state is markdown maintained by a deterministic daemon, the verbs are global skills in the proven /tangent pattern, and the only push surfaces are macOS notifications and a statusline badge. A new small package `@tangent/threads` provides the daemon (`tangent threads sweep`) because it needs live agent-session state from the usage index. Five skills (`/dispatch`, `/threads`, `/attach`, `/land`, `/cleanup`) cover every interaction. Nothing auto-sends, auto-pushes, or auto-merges. A dispatched thread's endpoint is validate-ready (the validation surface open in front of Julian with a verdict question), not worker-done. v1 is the sweep plus single dispatch, dogfooded on the live PG&E node.
+Julian coordinates a parallel portfolio of delegated threads: people (Will on guy wires, Chris and Troy on autodesign), branches, and coding agents. All of that state lives in his head, so every act of coordination passes through his working memory, and the overhead (re-deriving state, ten-step dispatch rituals, polling delegates, answering "how's it going" for everyone else) is what exhausts him, not the work. This design externalizes the portfolio into the tangent vault and routes his attention instead of relying on his memory. It is deliberately not an app: state is markdown maintained by a deterministic daemon, the verbs are global skills in the proven /tangent pattern, and the only push surfaces are macOS notifications and a statusline badge. A new small package `@tangent/threads` provides the daemon (`tangent threads sweep`) because it needs live agent-session state from the usage index. Three verbs match the three moments a thread touches Julian: **/dispatch** (prose in), **validate** (verdict out; normally arrives as a staged summons rather than being typed), and **/cleanup** (one command, done). Shipping (PR, merge, or just a filed note) is a situational route named by the ritual, not a universal verb; /attach and /threads exist but are conveniences, not load-bearing. Nothing auto-sends, auto-pushes, or auto-merges. A dispatched thread's endpoint is validate-ready (the validation surface open in front of Julian with a verdict question), not worker-done. v1 is the sweep plus single dispatch, dogfooded on the live PG&E node.
 
 ## The problem
 
@@ -37,6 +37,8 @@ Three invariants define the working system. Every design decision below should b
 1. **Attention is spent only on judgment.** The only things that genuinely need Julian are decisions: specs, verdicts on staged work, calls on what ships, relationships with people. Every mechanical step (worktrees, cdev instances, URLs and their query params, module pushes, tmux naming, status bookkeeping, cleanup) belongs to the system. Concretely: a dispatched thread's endpoint is validate-ready, not worker-done. "The diff exists" is a system-internal event, not a Julian-facing one.
 2. **Attention is summoned, never spent searching.** He never polls, never scans tmux, never remembers to check. A summons carries identity (which thread), reason (why now), and verb (what resolves it). A signal missing any of the three converts a push interrupt back into a pull investigation, which is the failure mode the system exists to kill.
 3. **Signals are true.** State transitions are observed by the system at the moment they happen (worker finishes, branch merges, deadline resolves), never maintained by anyone's memory, his or an agent's. An ambient layer that lies once teaches him to ignore it, and then he is back to polling with extra steps. Trust in the glance is the foundation the other two invariants stand on.
+
+The invariants compress into a three-moment mental model (Julian's own, 2026-07-17): a thread touches him exactly three times. **Dispatch** (prose in), **validate** (verdict out, arriving pre-staged), **cleanup** (one command). Any additional touch is either a violation to fix or a situational extra (shipping route, a mid-flight question) that must justify itself.
 
 ## What two days of dogfooding showed (2026-07-17)
 
@@ -111,9 +113,9 @@ A sweep does, in order:
 
 Failure behavior: a failed sweep exits nonzero, leaves the previous `threads.md` and sidecar untouched, and the statusline shows sweep age, so staleness is visible rather than silent. The daemon writes only `threads.md`, the sidecar, and notifications. It never edits notes, overviews, or thread files.
 
-## The verbs: four global skills
+## The verbs: three moments, plus conveniences
 
-Skills live in `~/.claude/skills/` (global, like /tangent), are short prose in the /tangent style, never interrogate, and shell out to `tangent threads` for the deterministic parts.
+Skills live in `~/.claude/skills/` (global, like /tangent), are short prose in the /tangent style, never interrogate, and shell out to `tangent threads` for the deterministic parts. The core verbs are /dispatch, /validate, and /cleanup, matching the three moments a thread touches Julian; /attach and /threads are kept as conveniences but nothing depends on him using them (2026-07-17 verb-model decision).
 
 **/dispatch `<prose task>`**
 
@@ -134,13 +136,16 @@ What dispatch knows without being told, and where that knowledge lives: repo rit
 4. Open the tab with the full URL: instance plus `org=<org>` (derivable from the customer folder) and `cli=<tag>` (defaults to the thread slug). The `cli` tag and the push tag are one mechanism; the system remembers this so Julian never has to.
 5. Draft the verdict question ("check the clearances panel matches Neil's items 1/3/4; anything off?") into the thread file, flip to ready-for-you, and notify with the summons triple.
 
-**/threads**: run `tangent threads list` and render it in the current session. This is the summonable glance; the same content as `threads.md`, which is also readable directly in NeoVim or Obsidian.
+**/validate `<slug>`**: normally never typed, because staging runs automatically on worker-done and validation arrives as a summons. The verb exists for re-entry: it re-runs the stage-for-validation checklist and reopens the tab, for when a tab was closed, work was revised after a correction, or a thread predates the automation.
 
-**/attach `<slug>`**: resolve the tmux session from the registry and open it (see runtime). If the worker was blocked, the question is on screen; answer and detach, it keeps running.
+**/cleanup `<slug>`** (added 2026-07-17): tear down a finished thread's runtime; standalone, never gated on how the thread shipped. Four steps, in order, reporting found/did/skipped at each: kill the tmux session (`tg-<slug>`), tear down cdev instance registrations the thread created (`plz cdev rm` leaves worktrees untouched), remove worktrees the thread created, and delete branches the thread created only if merged into their base (skip with a warning otherwise). "Created" comes from the dispatch registry's created-vs-reused record; anything the thread merely reused is never touched.
 
-**/land `<slug>`**: with a cheap model, merge the thread's worktree branch into Julian's current branch, run the ritual's validation commands, flip the thread file to `status: done` with a closing log line, and offer /cleanup. Never pushes anywhere.
+**Shipping is a route, not a verb** (revised 2026-07-17: /land demoted from the core lifecycle). How approved work ships depends on the situation: a GitHub PR from the worktree (how the clearances panel actually shipped), a merge into Julian's current branch, or nothing at all (analysis threads end as a filed note). `rituals.md` names the project's route(s), and the verdict summons offers the applicable one. /land survives as the skill for the merge-into-current-branch route only: cheap model, merge, run the ritual's validation commands, close the thread file. It never pushes anywhere.
 
-**/cleanup `<slug>`** (added 2026-07-17): tear down a finished thread's runtime, standalone rather than gated on /land, because threads also close via GitHub PRs. Four steps, in order, reporting found/did/skipped at each: kill the tmux session (`tg-<slug>`), tear down cdev instance registrations the thread created (`plz cdev rm` leaves worktrees untouched), remove worktrees the thread created, and delete branches the thread created only if merged into their base (skip with a warning otherwise). "Created" comes from the dispatch registry's created-vs-reused record; anything the thread merely reused is never touched.
+**Conveniences, not load-bearing:**
+
+- **/threads**: run `tangent threads list` and render it in the current session; same content as `threads.md`, readable in NeoVim or Obsidian. Day-two reality: unused, and that is fine. Likely earns its keep at higher thread counts; nothing in the core loop requires it.
+- **/attach `<slug>`**: resolve the tmux session from the registry and open it. Day-two reality: tmux's native session switcher (`ctrl-b s`) covers this well given the naming conventions, which is why session naming (`tg-<slug>` workers, `<slug>-orchestrator` dispatchers) matters more than the skill itself. Kept for the blocked-question case where the summons names the verb.
 
 **Check-in is not a verb.** Due check-ins are daemon output: they arrive in `threads.md` and as a notification with the message already drafted. Julian sends, edits, or ignores; the reply gets captured with /tangent as usual, which resets the cadence. Nothing is ever sent on his behalf.
 

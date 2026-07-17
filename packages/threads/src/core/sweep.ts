@@ -16,6 +16,7 @@ import type {
   Notifier,
   OverviewItem,
   RegistryEntry,
+  RuntimeStateReader,
   SessionState,
   SessionStateReader,
   SharedStateWriter,
@@ -35,6 +36,7 @@ export type SweepOptions = {
   /** Skips writing threads.md/the sidecar and skips notifying; the result still reports what would happen. */
   dryRun?: boolean;
   sessionStateReader?: SessionStateReader;
+  runtimeStateReader?: RuntimeStateReader;
   whyLineRunner?: WhyLineRunner;
   notifier?: Notifier;
   /** Evaluates "merged" wake conditions against local git state; defaults to a real RepoGitProbe. Injectable so tests never shell out to git. */
@@ -55,7 +57,7 @@ export type SweepResult = {
   dryRun: boolean;
 };
 
-const notifiableStates = new Set<ThreadState>(["blocked-on-you", "needs-you"]);
+const notifiableStates = new Set<ThreadState>(["blocked-on-you", "needs-you", "ready-for-you"]);
 
 /**
  * Runs one sweep: scans the vault, deterministically derives every thread's state, asks a cheap
@@ -70,6 +72,7 @@ export async function sweep(options: SweepOptions = {}): Promise<SweepResult> {
   const sidecarFile = options.sidecarPath || defaultSidecarPath();
   const now = options.now || new Date();
   const sessionStateReader = options.sessionStateReader || await defaultSessionStateReader();
+  const runtimeStateReader = options.runtimeStateReader || await defaultRuntimeStateReader();
   const notifier = options.notifier || new TerminalNotifier();
   const gitProbe = options.gitProbe || new RepoGitProbe();
   const sharedWriter = options.sharedWriter || new GitSharedStateWriter();
@@ -77,7 +80,7 @@ export async function sweep(options: SweepOptions = {}): Promise<SweepResult> {
   const scan = await scanVault(root);
   const sidecar = await readSidecar(sidecarFile);
 
-  const { derivationInputs, registryUpdates } = await buildDerivationInputs(scan, sidecar, sessionStateReader, gitProbe, now);
+  const { derivationInputs, registryUpdates } = await buildDerivationInputs(scan, sidecar, sessionStateReader, runtimeStateReader, gitProbe, now);
   const derived = deriveThreadStates(derivationInputs, now);
 
   const whyResult = await resolveWhyLines(options.whyLineRunner, derived, scan);
@@ -90,7 +93,8 @@ export async function sweep(options: SweepOptions = {}): Promise<SweepResult> {
     for (const slug of newlyNotified) {
       const thread = derived.find((item) => item.slug === slug);
       if (!thread) continue;
-      await notifier.notify({ title: `threads: ${slug}`, message: whyResult.whyLines[slug] || thread.templateWhy });
+      const why = whyResult.whyLines[slug] || thread.templateWhy;
+      await notifier.notify({ title: `threads: ${slug}`, message: `${why} ${resolutionVerb(thread)}` });
     }
   }
 
@@ -132,6 +136,12 @@ async function defaultSessionStateReader(): Promise<SessionStateReader> {
   return new SqliteSessionStateReader();
 }
 
+/** Lazily constructs the tmux-backed reader used for non-Usage runtimes. */
+async function defaultRuntimeStateReader(): Promise<RuntimeStateReader> {
+  const { TmuxSessionStateReader } = await import("./tmux-session-state.js");
+  return new TmuxSessionStateReader();
+}
+
 /**
  * Resolves each thread's session state and, for registry entries missing a session id (dispatch
  * cannot always observe it), resolves and stages the id by matching the registered worktree's cwd
@@ -144,6 +154,7 @@ async function buildDerivationInputs(
   scan: VaultScan,
   sidecar: SidecarState,
   reader: SessionStateReader,
+  runtimeReader: RuntimeStateReader,
   gitProbe: GitProbe,
   now: Date
 ): Promise<{ derivationInputs: ThreadDerivationInput[]; registryUpdates: Record<string, RegistryEntry> }> {
@@ -161,10 +172,17 @@ async function buildDerivationInputs(
     const registryEntry = sidecar.registry[thread.slug];
     let sessionState: SessionState | undefined;
     if (registryEntry) {
-      const sessionId = registryEntry.sessionId || await reader.resolveSessionIdByCwd(registryEntry.worktree, now, registryEntry.registeredAt);
-      if (sessionId && sessionId !== registryEntry.sessionId) registryUpdates[thread.slug] = { ...registryEntry, sessionId };
-      if (sessionId) sessionState = await reader.read(sessionId, now);
+      if (registryEntry.runtime === "pi") {
+        sessionState = await runtimeReader.read(registryEntry, now);
+      } else {
+        const sessionId = registryEntry.sessionId || await reader.resolveSessionIdByCwd(registryEntry.worktree, now, registryEntry.registeredAt);
+        if (sessionId && sessionId !== registryEntry.sessionId) registryUpdates[thread.slug] = { ...registryEntry, sessionId };
+        if (sessionId) sessionState = await reader.read(sessionId, now);
+      }
     }
+    const landed = registryEntry?.baseBranch
+      ? await (gitProbe.isMerged || gitProbe.isAncestor).call(gitProbe, registryEntry.worktree, registryEntry.branch || "HEAD", registryEntry.baseBranch)
+      : false;
     const wakeMet = thread.wakeCondition
       ? await evaluateWakeCondition(parseWakeCondition(thread.wakeCondition), now, gitProbe)
       : undefined;
@@ -173,7 +191,9 @@ async function buildDerivationInputs(
       sessionState,
       latestNoteDateInNode: scan.noteRecencyByNode.get(thread.node),
       extraDeadlines: overviewDeadlinesBySlug.get(thread.slug),
-      wakeMet
+      wakeMet,
+      landed,
+      validationReady: Boolean(registryEntry?.validation)
     });
   }
   return { derivationInputs, registryUpdates };
@@ -222,11 +242,12 @@ function computeNotificationTransition(previousNotified: Record<string, ThreadSt
 
 /** Tallies derived threads per state for the sidecar's statusline counts; "done" threads contribute to no count. */
 function countByState(derived: DerivedThread[]): SidecarCounts {
-  const counts: SidecarCounts = { needsYou: 0, blocked: 0, working: 0, ready: 0, parked: 0, unowned: 0 };
+  const counts: SidecarCounts = { needsYou: 0, blocked: 0, working: 0, finishing: 0, ready: 0, parked: 0, unowned: 0 };
   for (const thread of derived) {
     if (thread.state === "needs-you") counts.needsYou += 1;
     else if (thread.state === "blocked-on-you") counts.blocked += 1;
     else if (thread.state === "working") counts.working += 1;
+    else if (thread.state === "finishing") counts.finishing += 1;
     else if (thread.state === "ready-for-you") counts.ready += 1;
     else if (thread.state === "parked") counts.parked += 1;
   }
@@ -238,7 +259,28 @@ function buildNeedsYouList(derived: DerivedThread[], whyLines: Record<string, st
   return derived
     .filter((thread) => notifiableStates.has(thread.state) || thread.state === "ready-for-you")
     .sort(compareByUrgency)
-    .map((thread) => ({ slug: thread.slug, why: whyLines[thread.slug] || thread.templateWhy }));
+    .map((thread) => ({
+      slug: thread.slug,
+      why: whyLines[thread.slug] || thread.templateWhy,
+      reason: reasonClass(thread),
+      verb: resolutionVerb(thread)
+    }));
+}
+
+/** Returns the human verb that resolves an attention-worthy state. */
+function resolutionVerb(thread: DerivedThread): string {
+  return thread.state === "blocked-on-you" ? `/attach ${thread.slug}` : thread.state === "ready-for-you" ? `/validate ${thread.slug}` : "/threads";
+}
+
+/** Classifies a deterministic why-line for compact statusline display. */
+function reasonClass(thread: DerivedThread): import("./types.js").AttentionReason {
+  if (thread.state === "blocked-on-you") return "blocked";
+  if (thread.state === "ready-for-you") return "ready";
+  if (thread.templateWhy.includes("landed")) return "landed";
+  if (thread.templateWhy.includes("deadline")) return "deadline";
+  if (thread.templateWhy.includes("check-in")) return "check-in";
+  if (thread.templateWhy.includes("wake condition")) return "wake";
+  return "attention";
 }
 
 /**

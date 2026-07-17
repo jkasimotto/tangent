@@ -136,7 +136,7 @@ function buildNodeTree(threads: ViewThread[], unowned: ViewItem[]): NodeTreeNode
 }
 
 /** Sort order for a node's own thread lines: attention first (by urgency), then working, then parked. */
-const stateOrder: Record<string, number> = { "blocked-on-you": 0, "needs-you": 1, "ready-for-you": 2, working: 3, parked: 4 };
+const stateOrder: Record<string, number> = { "blocked-on-you": 0, "needs-you": 1, "ready-for-you": 2, finishing: 3, working: 4, parked: 5 };
 
 /** Sentinel batch key sorting after every real batch name, so unbatched working threads settle after batch groups instead of splitting them up. */
 const noBatchSortKey = "￿";
@@ -154,6 +154,7 @@ const stateIcon: Record<string, string> = {
   "blocked-on-you": "●",
   "needs-you": "●",
   "ready-for-you": "●",
+  finishing: "◑",
   working: "◐",
   parked: "◌"
 };

@@ -48,7 +48,7 @@ export type VaultScan = {
 };
 
 /** The small, closed set of states a delegated thread can be in. Derived deterministically; see derive.ts. */
-export type ThreadState = "working" | "blocked-on-you" | "ready-for-you" | "needs-you" | "parked" | "done";
+export type ThreadState = "working" | "blocked-on-you" | "finishing" | "ready-for-you" | "needs-you" | "parked" | "done";
 
 /** One thread after state derivation: enough to render a threads.md line and to seed the haiku prompt. */
 export type DerivedThread = {
@@ -97,6 +97,11 @@ export interface SessionStateReader {
   resolveSessionIdByCwd(worktree: string, now: Date, notBefore?: string): Promise<string | undefined>;
 }
 
+/** Observes a registered runtime directly when it is not represented in Usage. */
+export interface RuntimeStateReader {
+  read(entry: RegistryEntry, now: Date): Promise<SessionState | undefined>;
+}
+
 /** One dispatched thread's worktree/tmux/session linkage, as recorded by `tangent threads register`. */
 export type RegistryEntry = {
   node: string;
@@ -105,18 +110,46 @@ export type RegistryEntry = {
   /** Optional: dispatch cannot always observe a Claude session id at register time. The sweep resolves and backfills it by matching the worktree's cwd against recent Usage sessions. */
   sessionId?: string;
   registeredAt: string;
+  /** Pi is observed through tmux because Pi is not yet a Usage provider. */
+  runtime?: "claude" | "pi";
+  /** Branch the dispatched work is expected to land into. Enables deterministic landed detection. */
+  baseBranch?: string;
+  /** Branch containing the dispatched work. Defaults to the registered worktree's current branch when omitted. */
+  branch?: string;
+  /** Resources dispatch created and therefore cleanup may remove. Older registrations default to none. */
+  created?: ThreadResources;
+  /** Resources dispatch merely borrowed. Cleanup reports these and never modifies them. */
+  reused?: ThreadResources;
+  /** Evidence that the mechanical staging checklist completed. Only this makes an ended session ready-for-you. */
+  validation?: ValidationStage;
+};
+
+export type ThreadResources = {
+  worktrees?: string[];
+  branches?: string[];
+  tmuxSessions?: string[];
+  cdevInstances?: string[];
+};
+
+export type ValidationStage = {
+  stagedAt: string;
+  /** Human-facing surface, usually the fully parameterized app URL. */
+  url?: string;
+  verdict: string;
 };
 
 export type SidecarCounts = {
   needsYou: number;
   blocked: number;
   working: number;
+  finishing: number;
   ready: number;
   parked: number;
   unowned: number;
 };
 
-export type NeedsYouEntry = { slug: string; why: string };
+export type AttentionReason = "blocked" | "deadline" | "check-in" | "ready" | "landed" | "wake" | "attention";
+export type NeedsYouEntry = { slug: string; why: string; reason: AttentionReason; verb: string };
 
 /** One open thread as rendered: state derived, why-line already resolved (haiku or templated). Persisted in the sidecar so `tangent threads list <subtree>` can re-render a filtered tree without re-sweeping. */
 export type ViewThread = {

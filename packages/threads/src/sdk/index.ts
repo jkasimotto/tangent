@@ -5,6 +5,7 @@ import { resolveUserPath } from "@tangent/repo";
 import { sidecarPath as defaultSidecarPath, threadsMarkdownPath, vaultRoot as defaultVaultRoot } from "../core/paths.js";
 import { filterViewBySubtree, renderThreadsMarkdown } from "../core/render.js";
 import { readSidecar, writeSidecarAtomic } from "../core/sidecar.js";
+export { readSidecar } from "../core/sidecar.js";
 import type { RegistryEntry, SidecarState } from "../core/types.js";
 
 export { sweep } from "../core/sweep.js";
@@ -20,8 +21,12 @@ export { setClipboardRich } from "../core/clipboard.js";
 export type { AttachProcessResult, AttachProcessRunner, OpenAttachOptions, OpenAttachResult } from "../core/attach.js";
 export { renderStateOfPlaySection, updateSharedStateOfPlay } from "../core/state-of-play.js";
 export { SqliteSessionStateReader } from "../core/sqlite-session-state.js";
+export { TmuxSessionStateReader } from "../core/tmux-session-state.js";
 export { ClaudeCliWhyLineRunner } from "../core/haiku.js";
 export { TerminalNotifier } from "../core/notifier.js";
+export { renderThreadsStatusBadge } from "../core/statusline.js";
+export { cleanupThread, markValidationReady } from "../core/lifecycle.js";
+export type { CleanupStep, LifecycleProcessResult, LifecycleRunner } from "../core/lifecycle.js";
 export { vaultRoot, sidecarPath, threadsMarkdownPath } from "../core/paths.js";
 export { runRecur, runRecurDue, scanRecurFiles, TmuxWorkerLauncher } from "../core/recur.js";
 export type { RecurDef, RecurSchedule, RunRecurDeps, RunRecurDueDeps, RunRecurDueResult, TmuxWorkerLauncherConfig } from "../core/recur.js";
@@ -73,6 +78,11 @@ export type RegisterThreadOptions = {
   sessionId?: string;
   sidecarPath?: string;
   now?: Date;
+  baseBranch?: string;
+  branch?: string;
+  created?: import("../core/types.js").ThreadResources;
+  reused?: import("../core/types.js").ThreadResources;
+  runtime?: "claude" | "pi";
 };
 
 /** Upserts a dispatched thread's worktree/tmux/session linkage into the sidecar registry, for `tangent threads register`. */
@@ -84,7 +94,12 @@ export async function registerThread(options: RegisterThreadOptions): Promise<Re
     worktree: resolveUserPath(options.worktree),
     tmux: options.tmux,
     sessionId: options.sessionId,
-    registeredAt: (options.now || new Date()).toISOString()
+    registeredAt: (options.now || new Date()).toISOString(),
+    baseBranch: options.baseBranch,
+    branch: options.branch,
+    created: options.created,
+    reused: options.reused,
+    runtime: options.runtime
   };
   await writeSidecarAtomic(sidecarFile, { ...sidecar, registry: { ...sidecar.registry, [options.slug]: entry } });
   return entry;

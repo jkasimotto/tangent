@@ -11,6 +11,8 @@ export type WakeCondition =
 /** Narrow git interface so wake evaluation is testable without a real repository. */
 export type GitProbe = {
   isAncestor(repoPath: string, branch: string, target: string): Promise<boolean>;
+  /** Alias with lifecycle terminology: true when branch is contained by its base. */
+  isMerged?(repoPath: string, branch: string, base: string): Promise<boolean>;
 };
 
 const datePattern = /^wake on (\d{4}-\d{2}-\d{2})\b/i;
@@ -67,6 +69,11 @@ export class RepoGitProbe implements GitProbe {
     } catch {
       return false;
     }
+  }
+
+  /** Lifecycle-named alias for the same local ancestor check. */
+  async isMerged(repoPath: string, branch: string, base: string): Promise<boolean> {
+    return this.isAncestor(repoPath, branch, base);
   }
 }
 

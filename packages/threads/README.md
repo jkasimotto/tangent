@@ -9,8 +9,12 @@ tangent threads sweep --json
 tangent threads list
 tangent threads list --json
 tangent threads register guy-wires --node neara/pgande --worktree ~/work/otto-guy-wires --tmux tg-guy-wires
+tangent threads register guy-wires --runtime pi --node neara/pgande --worktree ~/work/otto-guy-wires --tmux tg-guy-wires --base main --branch dev/guy-wires --created-worktrees ~/work/otto-guy-wires --created-branches dev/guy-wires --created-tmux tg-guy-wires
 tangent threads register guy-wires --node neara/pgande --worktree ~/work/otto-guy-wires --tmux tg-guy-wires --session <claude-session-id>
 tangent threads attach guy-wires
+tangent threads validate guy-wires --url 'http://app/?org=pge&cli=guy-wires' --verdict 'Do the guys match the approved examples?'
+tangent threads cleanup guy-wires
+tangent threads status
 tangent threads recur due
 tangent threads recur due --dry-run
 tangent threads recur run daily-rebase
@@ -27,10 +31,10 @@ tangent-threads list
 tangent vault (`~/.tangent/trees`), so the state that used to live only in his head lives instead in
 plain markdown and a small JSON sidecar (`~/.tangent/threads-status.json`). A sweep scans open
 `thread-<slug>.md` files and `overview.md` "## On me" backlog items across the whole vault,
-deterministically derives each thread's state (working, blocked-on-you, ready-for-you, needs-you,
+deterministically derives each thread's state (working, blocked-on-you, finishing, ready-for-you, needs-you,
 parked, or done), asks a cheap model (haiku by default) for a one-line "why" and any due check-in
 drafts, and rewrites the generated `threads.md` glance view. It fires a `terminal-notifier`
-notification once per thread newly needing attention, deduped across sweeps.
+notification once per thread newly needing attention, including newly staged deliverables, deduped across sweeps. Notifications include the slug, reason, and resolving verb.
 
 A sweep never edits vault notes, overviews, or thread files, and a scan or derivation failure exits
 nonzero and leaves the previous `threads.md` and sidecar completely untouched; a failed haiku call is
@@ -51,12 +55,14 @@ writes only when the file's `tangent-threads:begin`/`:end` markers are unambiguo
 (logging the marker counts) otherwise so a human fixes them by hand instead of losing content. When the
 shared directory is its own git repo the change is committed locally; it is never pushed.
 
-`register` records a dispatched thread's worktree, tmux session name, and (optionally) its Claude
+`register` records a dispatched thread's worktree, tmux session name, branch/base pair, created and reused resources, and (optionally) its Claude
 session id in the sidecar registry; when the session id is not yet known at dispatch time, the next
 sweep resolves it by matching the most recently active Usage session whose working directory equals
 the registered worktree, and persists the resolved id back into the registry. `attach` prints the
 `tmux -CC attach -t <name>` command for a registered thread; the caller (a skill) decides how to open
-it.
+it. An ended session enters `finishing`; it becomes `ready-for-you` only after `validate` records the reviewed validation URL and verdict question. `cleanup` kills/removes only resources explicitly registered as created and deletes a created branch only after proving it merged into its base. Reused resources are always skipped. `status` emits the compact statusline summons and marks data stale after one hour.
+
+Pi Code dispatches register `--runtime pi`. They run non-interactively in tmux with `remain-on-exit`; the sweep reads tmux's `pane_dead` state, so live Pi is working and an exited Pi process is finishing even though Pi is not yet a Usage provider. This v1 mode deliberately has no mid-flight question state.
 
 `recur due` scans the vault for `recur-<slug>.md` definitions (frontmatter `schedule`, `cwd`, optional
 `model`; body is the worker prompt), runs every one that is currently due, and records the fire in the

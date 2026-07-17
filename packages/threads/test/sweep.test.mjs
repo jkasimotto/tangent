@@ -86,7 +86,7 @@ test("one synthetic vault derives every state in the design's state table", asyn
 
   assert.equal(byState.working, "working");
   assert.equal(byState.blocked, "blocked-on-you");
-  assert.equal(byState.ready, "ready-for-you");
+  assert.equal(byState.ready, "finishing");
   assert.equal(byState.deadline, "needs-you");
   assert.equal(byState.cadence, "needs-you");
   assert.equal(byState.parked, "parked");
@@ -99,9 +99,10 @@ test("one synthetic vault derives every state in the design's state table", asyn
   assert.match(result.unowned[0].text, /DIM fixups/);
 
   assert.equal(result.sidecar.counts.blocked, 1);
-  assert.equal(result.sidecar.counts.ready, 1);
+  assert.equal(result.sidecar.counts.ready, 0);
   assert.equal(result.sidecar.counts.needsYou, 3);
   assert.equal(result.sidecar.counts.working, 1);
+  assert.equal(result.sidecar.counts.finishing, 1);
   assert.equal(result.sidecar.counts.parked, 1);
   assert.equal(result.sidecar.counts.unowned, 1);
 

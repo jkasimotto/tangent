@@ -4,6 +4,7 @@ import { renderCommandHelp } from "@tangent/core";
 
 import {
   attachCommand,
+  cleanupThread,
   loadNodeMilestone,
   renderMilestoneSlackHtml,
   renderMilestoneSlackText,
@@ -11,9 +12,11 @@ import {
   setClipboardRich,
   ClaudeCliWhyLineRunner,
   listThreads,
+  markValidationReady,
   openAttach,
   type RecurDef,
   registerThread,
+  renderThreadsStatusBadge,
   runRecur,
   runRecurDue,
   scanRecurFiles,
@@ -83,6 +86,13 @@ export async function runThreadsCli(argv = process.argv.slice(2)): Promise<void>
     return;
   }
 
+  if (command === "status") {
+    const result = await listThreads();
+    if (!result.sidecar) return;
+    console.log(renderThreadsStatusBadge(result.sidecar));
+    return;
+  }
+
   if (command === "register") {
     const slug = required(args._[1], "register requires <slug>.");
     const entry = await registerThread({
@@ -90,7 +100,12 @@ export async function runThreadsCli(argv = process.argv.slice(2)): Promise<void>
       node: required(stringArg(args.node), "register requires --node <vault-node-path>."),
       worktree: required(stringArg(args.worktree), "register requires --worktree <abs-path>."),
       tmux: required(stringArg(args.tmux), "register requires --tmux <session-name>."),
-      sessionId: stringArg(args.session)
+      sessionId: stringArg(args.session),
+      runtime: runtimeArg(stringArg(args.runtime)),
+      baseBranch: stringArg(args.base),
+      branch: stringArg(args.branch),
+      created: resourcesFromArgs(args, "created"),
+      reused: resourcesFromArgs(args, "reused")
     });
     console.log(`registered ${slug}: node=${entry.node} worktree=${entry.worktree} tmux=${entry.tmux}${entry.sessionId ? ` session=${entry.sessionId}` : ""}`);
     return;
@@ -108,6 +123,26 @@ export async function runThreadsCli(argv = process.argv.slice(2)): Promise<void>
       console.log(`run it yourself: ${result.manualCommand}`);
       process.exitCode = 1;
     }
+    return;
+  }
+
+  if (command === "validate") {
+    const slug = required(args._[1], "validate requires <slug>.");
+    const stage = await markValidationReady({
+      slug,
+      verdict: required(stringArg(args.verdict), "validate requires --verdict <question> after review and staging."),
+      url: stringArg(args.url)
+    });
+    console.log(`validation ready for ${slug}${stage.url ? `: ${stage.url}` : ""}`);
+    console.log(stage.verdict);
+    return;
+  }
+
+  if (command === "cleanup") {
+    const slug = required(args._[1], "cleanup requires <slug>.");
+    const steps = await cleanupThread({ slug });
+    if (!steps.length) console.log(`cleanup ${slug}: no created resources registered; nothing changed.`);
+    for (const step of steps) console.log(`${step.result} ${step.resource} ${step.target}: ${step.detail}`);
     return;
   }
 
@@ -162,6 +197,28 @@ export async function runThreadsCli(argv = process.argv.slice(2)): Promise<void>
 function required(value: string | undefined, message: string): string {
   if (!value) throw new Error(message);
   return value;
+}
+
+/** Parses and validates the optional worker runtime flag. */
+function runtimeArg(value: string | undefined): "claude" | "pi" | undefined {
+  if (value === undefined || value === "claude" || value === "pi") return value;
+  throw new Error(`Invalid --runtime ${JSON.stringify(value)}. Expected claude or pi.`);
+}
+
+/** Builds one created/reused resource inventory from comma-separated CLI flags. */
+function resourcesFromArgs(args: ReturnType<typeof parseArgs>, prefix: "created" | "reused"): import("../sdk/index.js").ThreadResources | undefined {
+  /** Splits one optional comma-separated resource flag. */
+  const split = (name: string): string[] | undefined => {
+    const value = stringArg(args[`${prefix}-${name}`]);
+    return value ? value.split(",").map((item) => item.trim()).filter(Boolean) : undefined;
+  };
+  const resources = {
+    worktrees: split("worktrees"),
+    branches: split("branches"),
+    tmuxSessions: split("tmux"),
+    cdevInstances: split("cdev")
+  };
+  return Object.values(resources).some(Boolean) ? resources : undefined;
 }
 
 /** Prints one line per recur definition for `recur due`/`recur run`, wording it as a launch or a would-be launch depending on `dryRun`. Reports "recur: nothing due" when the list is empty, so a due sweep with no work still prints something on success. */

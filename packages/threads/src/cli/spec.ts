@@ -23,6 +23,10 @@ export const threadsCommandSpec: CliCommandSpec = {
       ]
     },
     {
+      name: "status",
+      description: "Print the compact statusline badge (slug, reason class, overflow, and staleness)"
+    },
+    {
       name: "register",
       description: "Upsert a dispatched thread's worktree/tmux/session linkage into the registry",
       args: "<slug>",
@@ -30,8 +34,33 @@ export const threadsCommandSpec: CliCommandSpec = {
         { name: "node", takesValue: true, description: "Vault node path (e.g. neara/pgande)" },
         { name: "worktree", takesValue: true, description: "Absolute worktree path" },
         { name: "tmux", takesValue: true, description: "tmux session name" },
-        { name: "session", takesValue: true, description: "Claude session id (optional; resolved by worktree cwd on the next sweep if omitted)" }
+        { name: "session", takesValue: true, description: "Claude session id (optional; resolved by worktree cwd on the next sweep if omitted)" },
+        { name: "runtime", takesValue: true, description: "Worker runtime: claude (default) or pi" },
+        { name: "base", takesValue: true, description: "Base branch used for landed detection and safe branch cleanup" },
+        { name: "branch", takesValue: true, description: "Thread branch used for landed detection" },
+        { name: "created-worktrees", takesValue: true, description: "Comma-separated worktrees dispatch created" },
+        { name: "created-branches", takesValue: true, description: "Comma-separated branches dispatch created" },
+        { name: "created-tmux", takesValue: true, description: "Comma-separated tmux sessions dispatch created" },
+        { name: "created-cdev", takesValue: true, description: "Comma-separated cdev instances dispatch created" },
+        { name: "reused-worktrees", takesValue: true, description: "Comma-separated reused worktrees cleanup must preserve" },
+        { name: "reused-branches", takesValue: true, description: "Comma-separated reused branches cleanup must preserve" },
+        { name: "reused-tmux", takesValue: true, description: "Comma-separated reused tmux sessions cleanup must preserve" },
+        { name: "reused-cdev", takesValue: true, description: "Comma-separated reused cdev instances cleanup must preserve" }
       ]
+    },
+    {
+      name: "validate",
+      description: "Record that review and validation staging completed, making a finished thread ready-for-you",
+      args: "<slug>",
+      options: [
+        { name: "verdict", takesValue: true, description: "The precise verdict question for the human" },
+        { name: "url", takesValue: true, description: "Fully parameterized validation surface URL" }
+      ]
+    },
+    {
+      name: "cleanup",
+      description: "Remove only resources registered as created; preserve all reused resources",
+      args: "<slug>"
     },
     {
       name: "attach",

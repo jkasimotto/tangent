@@ -6,7 +6,7 @@ import type { SidecarState } from "./types.js";
 export function emptySidecar(): SidecarState {
   return {
     sweptAt: undefined,
-    counts: { needsYou: 0, blocked: 0, working: 0, ready: 0, parked: 0, unowned: 0 },
+    counts: { needsYou: 0, blocked: 0, working: 0, finishing: 0, ready: 0, parked: 0, unowned: 0 },
     needsYou: [],
     registry: {},
     notified: {},

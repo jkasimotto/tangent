@@ -4,6 +4,8 @@ Purpose: Delegated-thread sweep, registry, and attach. Externalizes Julian's par
 people, branches, and coding agents into the tangent vault, so `threads.md` and a JSON sidecar
 carry the state instead of his working memory.
 
+The lifecycle endpoint is validate-ready: ended workers are `finishing` until reviewed staging evidence is recorded. Registry ownership distinguishes created resources cleanup may remove from reused resources it must preserve.
+
 Read next:
 - architecture.md
 - public-api.md

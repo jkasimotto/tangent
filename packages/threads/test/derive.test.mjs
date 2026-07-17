@@ -58,12 +58,30 @@ test("not blocked: session idle at a question for under 5 minutes stays working"
   assert.equal(derived.state, "working");
 });
 
-test("ready-for-you: registered session ended, thread still open", () => {
+test("finishing: registered session ended but validation is not staged", () => {
   const [derived] = deriveThreadStates([{
     thread: thread({ slug: "snap-points" }),
     sessionState: { status: "ended", idleMs: 0 }
   }], now);
+  assert.equal(derived.state, "finishing");
+});
+
+test("ready-for-you: validation staging evidence exists", () => {
+  const [derived] = deriveThreadStates([{
+    thread: thread({ slug: "snap-points" }),
+    sessionState: { status: "ended", idleMs: 0 },
+    validationReady: true
+  }], now);
   assert.equal(derived.state, "ready-for-you");
+});
+
+test("landed suppresses a stale deadline and asks for closure", () => {
+  const [derived] = deriveThreadStates([{
+    thread: thread({ slug: "shipped", deadline: "2026-07-01" }),
+    landed: true
+  }], now);
+  assert.equal(derived.state, "needs-you");
+  assert.match(derived.templateWhy, /landed/);
 });
 
 test("needs-you: hard deadline is today", () => {

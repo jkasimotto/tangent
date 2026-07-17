@@ -13,6 +13,10 @@ export type ThreadDerivationInput = {
   extraDeadlines?: string[];
   /** True when the thread's wake condition was deterministically evaluated as met this sweep. */
   wakeMet?: boolean;
+  /** Registered branch has already merged into its base. Suppresses stale timers and asks for closure. */
+  landed?: boolean;
+  /** Stage-for-validation evidence recorded by `threads validate`. */
+  validationReady?: boolean;
 };
 
 /**
@@ -54,6 +58,10 @@ function deriveOne(input: ThreadDerivationInput, now: Date): DerivedThread {
     }
   }
 
+  if (input.landed) {
+    return { ...base, state: "needs-you", templateWhy: "branch looks landed; close this thread?" };
+  }
+
   if (thread.wakeCondition && input.wakeMet) {
     return { ...base, state: "needs-you", templateWhy: `wake condition met: ${thread.wakeCondition}.` };
   }
@@ -69,8 +77,12 @@ function deriveOne(input: ThreadDerivationInput, now: Date): DerivedThread {
     return { ...base, state: "needs-you", templateWhy: `check-in overdue; nothing captured since ${referenceDate}.` };
   }
 
+  if (input.validationReady) {
+    return { ...base, state: "ready-for-you", templateWhy: "reviewed deliverable staged; verdict needed." };
+  }
+
   if (sessionState?.status === "ended") {
-    return { ...base, state: "ready-for-you", templateWhy: "session ended; thread still open." };
+    return { ...base, state: "finishing", templateWhy: "worker ended; validation staging in progress." };
   }
 
   if (thread.wakeCondition) {

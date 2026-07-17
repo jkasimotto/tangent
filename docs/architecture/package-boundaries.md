@@ -18,7 +18,7 @@ Vertical apps:
 - @tangent/rollup owns rollup note schemas, period-level user-message rollup inputs, examples, rendering, ledgers, and summarization workflows.
 - @tangent/eval owns eval specs, contexts, run manifests, metrics, reports, diffs, and the local read-only Eval UI server.
 - @tangent/search owns structural indexing and search.
-- @tangent/threads owns delegated-thread sweep over the tangent vault and Usage telemetry; CLI `tangent threads`.
+- @tangent/threads owns delegated-thread sweep, validation readiness, status summons, and ownership-safe runtime cleanup over the tangent vault and Usage telemetry; CLI `tangent threads`.
 
 Split Usage packages:
 - @tangent/usage-schema has no UI, SQLite, or provider parser dependencies.

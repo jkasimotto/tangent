@@ -42,11 +42,21 @@
   }
   #sidebar.open { width: 280px; border-right-color: var(--border); }
   #sidebar-head {
-    display: flex; align-items: center; justify-content: space-between;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
     padding: 8px 12px; border-bottom: 1px solid var(--border); flex: none;
     white-space: nowrap;
   }
-  #sidebar-head .title { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
+  /* rtl outer + ltr inner keeps the tail of a long path visible; the
+     ellipsis lands on the left, and the focused node always shows. */
+  #crumbs { overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+  #crumb-line { direction: ltr; unicode-bidi: isolate; }
+  .crumb {
+    background: none; border: none; padding: 0;
+    color: var(--dim); font-size: 12px;
+  }
+  .crumb:hover { color: var(--accent2); }
+  .crumb.here { color: var(--text); }
+  .crumb-sep { color: var(--dim); font-size: 12px; margin: 0 1px; }
   #filter-btn { font-size: 11px; padding: 3px 8px; }
   #tree { flex: 1; overflow: auto; padding: 6px 4px; white-space: nowrap; }
   .node-row {
@@ -92,7 +102,7 @@
   <div id="main">
     <div id="sidebar">
       <div id="sidebar-head">
-        <span class="title">projects</span>
+        <span id="crumbs"></span>
         <button id="filter-btn" class="hbtn" title="show only nodes with running sessions">● sessions</button>
       </div>
       <div id="tree"></div>
@@ -115,6 +125,7 @@ const sidebarEl = document.getElementById("sidebar");
 const treeEl = document.getElementById("tree");
 const unfiledEl = document.getElementById("unfiled");
 const filterBtn = document.getElementById("filter-btn");
+const crumbsEl = document.getElementById("crumbs");
 const activeLabel = document.getElementById("active-label");
 
 function connect(session) {
@@ -199,7 +210,25 @@ sidebarEl.addEventListener("transitionend", refitActive);
 let treeNodes = [];      // nested {name, path, children} from /api/tree
 let lastSessions = [];
 let filterOn = false;    // show only nodes with running sessions (plus ancestors)
+let focusPath = null;    // node shown as the tree root; null = whole vault
 const expanded = new Set();
+
+function findNode(path) {
+  let nodes = treeNodes;
+  let found = null;
+  for (const part of (path ?? "").split("/")) {
+    found = nodes.find((n) => n.name === part);
+    if (!found) return null;
+    nodes = found.children;
+  }
+  return found;
+}
+
+function focusNode(path) {
+  focusPath = path;
+  if (path) expanded.add(path);
+  renderSidebar();
+}
 
 async function refreshTree() {
   try {
@@ -266,7 +295,8 @@ function renderNode(node, container) {
   const name = document.createElement("button");
   name.className = "node-name";
   name.textContent = node.name;
-  name.onclick = caret.onclick;
+  name.title = "focus " + node.path;
+  name.onclick = () => focusNode(node.path);
   row.appendChild(name);
 
   for (const s of sessionsForNode(node.path)) {
@@ -286,12 +316,41 @@ function renderNode(node, container) {
   }
 }
 
+function renderCrumbs() {
+  crumbsEl.innerHTML = "";
+  const line = document.createElement("span");
+  line.id = "crumb-line";
+  crumbsEl.appendChild(line);
+  const crumbsTarget = line;
+  const root = document.createElement("button");
+  root.className = "crumb" + (focusPath ? "" : " here");
+  root.textContent = focusPath ? "⌂" : "projects";
+  root.title = "all projects";
+  root.onclick = () => focusNode(null);
+  crumbsTarget.appendChild(root);
+  if (!focusPath) return;
+  const parts = focusPath.split("/");
+  parts.forEach((part, i) => {
+    const sep = document.createElement("span");
+    sep.className = "crumb-sep";
+    sep.textContent = "/";
+    crumbsTarget.appendChild(sep);
+    const seg = document.createElement("button");
+    const segPath = parts.slice(0, i + 1).join("/");
+    seg.className = "crumb" + (segPath === focusPath ? " here" : "");
+    seg.textContent = part;
+    seg.onclick = () => focusNode(segPath);
+    crumbsTarget.appendChild(seg);
+  });
+}
+
 let sidebarKey = "";
 function renderSidebar() {
   // Rebuild only on real state change so buttons stay stable between polls.
   const key = JSON.stringify([
     active,
     filterOn,
+    focusPath,
     [...expanded].sort(),
     lastSessions.map((s) => [s.name, s.node]),
     treeNodes,
@@ -299,8 +358,13 @@ function renderSidebar() {
   if (key === sidebarKey) return;
   sidebarKey = key;
 
+  // A focused node that disappeared from the vault falls back to the root.
+  if (focusPath && !findNode(focusPath)) focusPath = null;
+  renderCrumbs();
+
   treeEl.innerHTML = "";
-  for (const node of treeNodes) renderNode(node, treeEl);
+  const roots = focusPath ? [findNode(focusPath)] : treeNodes;
+  for (const node of roots) renderNode(node, treeEl);
 
   unfiledEl.innerHTML = "";
   const unfiled = lastSessions.filter((s) => !s.isChat && !s.node);

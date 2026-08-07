@@ -16,7 +16,7 @@
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; background: var(--bg); color: var(--text); font: 13px/1.4 -apple-system, "SF Mono", Menlo, monospace; }
-  #app { display: flex; flex-direction: column; height: 100%; }
+  #app { display: flex; flex-direction: column; height: 100%; position: relative; }
   header {
     display: flex; align-items: center; gap: 10px;
     padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--border);
@@ -32,7 +32,8 @@
   }
   .hbtn:hover { color: var(--text); border-color: var(--dim); }
   .hbtn.on { color: var(--accent); border-color: var(--accent); }
-  #close-btn { margin-left: auto; display: none; }
+  #keys-btn { margin-left: auto; }
+  #close-btn { display: none; }
   #main { flex: 1; display: flex; min-height: 0; }
   #sidebar {
     width: 0; flex: none; overflow: hidden;
@@ -85,6 +86,31 @@
   #unfiled:empty { display: none; }
   #unfiled .title { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
   #unfiled .sess-chip { margin: 2px 4px 2px 0; }
+  #settings {
+    position: absolute; top: 44px; right: 10px; z-index: 10;
+    width: 380px; padding: 10px 14px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  }
+  #settings[hidden] { display: none; }
+  .s-title {
+    display: flex; justify-content: space-between; align-items: center;
+    color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+    margin-bottom: 6px;
+  }
+  #s-reset { background: none; border: none; color: var(--dim); font-size: 11px; text-transform: none; letter-spacing: 0; }
+  #s-reset:hover { color: var(--accent2); }
+  .s-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+  .s-label { flex: 1; }
+  .s-when { color: var(--dim); font-size: 11px; width: 52px; }
+  .s-chord {
+    min-width: 92px; text-align: center; padding: 3px 8px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--text);
+  }
+  .s-chord.recording { border-color: var(--accent2); color: var(--accent2); }
+  .s-chord.unbound { color: var(--dim); }
+  .s-note { font-size: 10px; color: var(--dim); width: 84px; text-align: right; }
+  .s-hint { color: var(--dim); font-size: 11px; margin-top: 8px; }
   #terms { flex: 1; position: relative; min-height: 0; }
   .term-host { position: absolute; inset: 0; padding: 8px; display: none; }
   .term-host.visible { display: block; }
@@ -97,8 +123,14 @@
     <button id="tree-btn" class="hbtn" title="project tree">☰</button>
     <span class="brand"><span class="dot">●</span> agent shell</span>
     <span id="active-label"></span>
+    <button id="keys-btn" class="hbtn" title="keyboard shortcuts">⌘</button>
     <button id="close-btn" class="hbtn">✕ back to chat</button>
   </header>
+  <div id="settings" hidden>
+    <div class="s-title">keyboard shortcuts <button id="s-reset">reset defaults</button></div>
+    <div id="s-rows"></div>
+    <div class="s-hint">click a chord, then press the new keys. esc cancels, backspace unbinds.</div>
+  </div>
   <div id="main">
     <div id="sidebar">
       <div id="sidebar-head">
@@ -386,16 +418,57 @@ function renderSidebar() {
 }
 
 // ---- keyboard shortcuts ----
-// Bindings live in /keymap.js (window.KEYMAP) so the user edits one small
-// file and reloads. Every binding names a context ("when"), because the same
-// chord means different things in different states: cmd+w in a session view
+// The shortcut editor (⌘ button) is the primary surface: click a chord, press
+// the new keys, saved to localStorage. /keymap.js only supplies factory
+// defaults. Every action names a context ("when"), because the same chord
+// means different things in different states: cmd+w in a session view
 // detaches back to chat, while cmd+w in chat keeps its browser meaning.
+
+async function killActiveSession() {
+  if (active === CHAT) return;
+  const name = active;
+  if (!confirm(`Kill tmux session "${name}"? Processes inside it will stop.`)) return;
+  const res = await fetch(`/api/kill/${encodeURIComponent(name)}`, { method: "POST" });
+  if (!res.ok) alert(`kill failed: ${(await res.json()).error ?? res.status}`);
+  // On success tmux drops our client, the socket closes, and ws.onclose
+  // already falls back to chat.
+}
+
+const ACTION_META = [
+  { action: "close-session", label: "close session view (detach)", when: "session" },
+  { action: "kill-session", label: "kill tmux session", when: "session" },
+  { action: "toggle-sidebar", label: "toggle project tree", when: "any" },
+  { action: "toggle-filter", label: "toggle sessions filter", when: "any" },
+];
 
 const ACTIONS = {
   "close-session": closeSessionView,
+  "kill-session": killActiveSession,
   "toggle-sidebar": () => treeBtn.onclick(),
   "toggle-filter": () => filterBtn.onclick(),
 };
+
+const KEYMAP_STORE = "agentshell.keymap";
+
+// The live keymap: one entry per action, keys possibly null (unbound).
+// localStorage overrides win over the factory defaults in /keymap.js.
+function loadKeymap() {
+  let stored = {};
+  try { stored = JSON.parse(localStorage.getItem(KEYMAP_STORE)) ?? {}; } catch {}
+  return ACTION_META.map((m) => {
+    const fallback = (window.KEYMAP ?? []).find((b) => b.action === m.action)?.keys ?? null;
+    return { ...m, keys: m.action in stored ? stored[m.action] : fallback };
+  });
+}
+let keymap = loadKeymap();
+
+function saveKeymap() {
+  const out = {};
+  for (const b of keymap) out[b.action] = b.keys;
+  localStorage.setItem(KEYMAP_STORE, JSON.stringify(out));
+  lockKeymapKeys();
+  renderSettings();
+}
 
 function shellContext() {
   return active === CHAT ? "chat" : "session";
@@ -423,13 +496,107 @@ function chordMatches(chord, e) {
   );
 }
 
-// Capture phase on window runs before xterm's own key handling, so a matched
-// binding never leaks into the terminal.
+// ---- shortcut editor ----
+
+const keysBtn = document.getElementById("keys-btn");
+const settingsEl = document.getElementById("settings");
+const settingsRows = document.getElementById("s-rows");
+let recordingAction = null;
+
+keysBtn.onclick = () => {
+  settingsEl.hidden = !settingsEl.hidden;
+  keysBtn.classList.toggle("on", !settingsEl.hidden);
+  recordingAction = null;
+  renderSettings();
+};
+
+document.getElementById("s-reset").onclick = () => {
+  localStorage.removeItem(KEYMAP_STORE);
+  keymap = loadKeymap();
+  lockKeymapKeys();
+  renderSettings();
+};
+
+// Chords the browser or OS keeps to itself; shown as a warning in the editor.
+function chordNote(keys) {
+  if (!keys) return "";
+  const c = parseChord(keys);
+  if (c.meta && c.key === "q") return "never reaches the app";
+  if (c.meta && ["w", "t", "n"].includes(c.key)) return "fullscreen only";
+  return "";
+}
+
+function renderSettings() {
+  if (settingsEl.hidden) return;
+  settingsRows.innerHTML = "";
+  for (const b of keymap) {
+    const row = document.createElement("div");
+    row.className = "s-row";
+    const label = document.createElement("span");
+    label.className = "s-label";
+    label.textContent = b.label;
+    const when = document.createElement("span");
+    when.className = "s-when";
+    when.textContent = b.when;
+    const chord = document.createElement("button");
+    const recording = recordingAction === b.action;
+    chord.className = "s-chord" + (recording ? " recording" : b.keys ? "" : " unbound");
+    chord.textContent = recording ? "press keys…" : b.keys ?? "unbound";
+    chord.onclick = () => {
+      recordingAction = recording ? null : b.action;
+      renderSettings();
+    };
+    const note = document.createElement("span");
+    note.className = "s-note";
+    note.textContent = recording ? "" : chordNote(b.keys);
+    row.append(label, when, chord, note);
+    settingsRows.appendChild(row);
+  }
+}
+
+// Recorder: while a chord button is armed, the next keydown becomes the
+// binding. Registered before the engine listener; stopImmediatePropagation
+// keeps the recorded chord from also firing its old or new action.
 window.addEventListener(
   "keydown",
   (e) => {
+    if (!recordingAction) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (e.key === "Escape") {
+      recordingAction = null;
+      renderSettings();
+      return;
+    }
+    if (["Meta", "Control", "Alt", "Shift"].includes(e.key)) return; // still holding modifiers
+    const b = keymap.find((x) => x.action === recordingAction);
+    recordingAction = null;
+    if (e.key === "Backspace") {
+      b.keys = null;
+    } else {
+      const parts = [];
+      if (e.metaKey) parts.push("cmd");
+      if (e.ctrlKey) parts.push("ctrl");
+      if (e.altKey) parts.push("alt");
+      if (e.shiftKey) parts.push("shift");
+      parts.push(e.key.toLowerCase());
+      b.keys = parts.join("+");
+    }
+    saveKeymap();
+  },
+  { capture: true }
+);
+
+// Engine: capture phase on window runs before xterm's own key handling, so a
+// matched binding never leaks into the terminal. Dormant while the editor is
+// open so trying out chords cannot fire actions.
+window.addEventListener(
+  "keydown",
+  (e) => {
+    if (!settingsEl.hidden) return;
     const ctx = shellContext();
-    for (const b of window.KEYMAP ?? []) {
+    for (const b of keymap) {
+      if (!b.keys) continue;
       if (b.when !== "any" && b.when !== ctx) continue;
       if (!chordMatches(parseChord(b.keys), e)) continue;
       e.preventDefault();
@@ -442,11 +609,12 @@ window.addEventListener(
 );
 
 // Chrome only delivers reserved chords (cmd+w, cmd+t) to the page while it is
-// fullscreen with the Keyboard Lock API engaged. Lock the keymap's keys once;
-// the lock sits dormant until the page goes fullscreen.
+// fullscreen with the Keyboard Lock API engaged. Lock the keymap's keys; the
+// lock sits dormant until the page goes fullscreen.
 function lockKeymapKeys() {
   if (!navigator.keyboard?.lock) return;
-  const codes = (window.KEYMAP ?? [])
+  const codes = keymap
+    .filter((b) => b.keys)
     .map((b) => parseChord(b.keys).key)
     .map((k) =>
       /^[a-z]$/.test(k) ? "Key" + k.toUpperCase() : /^[0-9]$/.test(k) ? "Digit" + k : null

@@ -107,6 +107,26 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ root: TREES_ROOT, nodes: await readTree(TREES_ROOT) }));
       return;
     }
+    // Kills a tmux session (the kill-session shortcut in the frontend). The
+    // "=" target prefix forces an exact name match; without it tmux treats the
+    // target as a prefix and "vault" could kill "vaulttest".
+    if (url.pathname.startsWith("/api/kill/") && req.method === "POST") {
+      const name = decodeURIComponent(url.pathname.slice("/api/kill/".length));
+      if (!name || name === CHAT_SESSION) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "refusing to kill this session" }));
+        return;
+      }
+      try {
+        await execFileAsync("tmux", ["kill-session", "-t", "=" + name]);
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (err) {
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
+      }
+      return;
+    }
     let filePath;
     if (url.pathname === "/" || url.pathname === "/index.html") {
       filePath = path.join(here, "public", "index.html");

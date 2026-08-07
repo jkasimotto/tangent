@@ -1,20 +1,19 @@
-// Keyboard shortcuts for agent shell. Edit this file and reload the page.
+// Factory-default keyboard shortcuts for agent shell.
+//
+// Edit shortcuts in the app: the ⌘ button in the header opens the editor.
+// Changes save to localStorage and override these defaults per browser.
+// This file only sets what a fresh browser starts with.
 //
 // keys:   modifiers and a key joined with "+". Modifiers: cmd, ctrl, alt, shift.
-// when:   "session" = a tmux session fills the view
-//         "chat"    = the chat view is active
-//         "any"     = both states
-// action: a name from the ACTIONS table in index.html:
-//         close-session   leave the session view, back to chat (detach, the
-//                         tmux session keeps running)
-//         toggle-sidebar  open or close the project tree
-//         toggle-filter   toggle the running-sessions filter
+// when:   "session" = a tmux session fills the view, "chat" = the chat view,
+//         "any" = both.
+// action: a name from the ACTION_META table in index.html.
 //
 // Browser-reserved chords (cmd+w, cmd+t, cmd+n) only reach the page in
-// fullscreen, where the Keyboard Lock API captures them. Outside fullscreen,
-// cmd+w in a session triggers the browser leave-page prompt as a guard; in
-// chat it closes the tab as normal.
+// fullscreen, where the Keyboard Lock API captures them. The editor marks
+// such chords "fullscreen only".
 window.KEYMAP = [
   { keys: "cmd+w", when: "session", action: "close-session" },
+  { keys: "cmd+d", when: "session", action: "kill-session" },
   { keys: "cmd+b", when: "any", action: "toggle-sidebar" },
 ];

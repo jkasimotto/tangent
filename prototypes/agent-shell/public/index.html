@@ -113,6 +113,7 @@
 </div>
 <script src="/vendor/xterm/xterm.js"></script>
 <script src="/vendor/xterm/addon-fit.js"></script>
+<script src="/keymap.js"></script>
 <script>
 const CHAT = "chat";
 const terms = new Map(); // session name -> {term, fit, ws, host}
@@ -187,12 +188,13 @@ function show(session) {
   renderSidebar();
 }
 
-closeBtn.onclick = () => {
-  // Detach only: close our client connection, keep the tmux session alive.
-  const leaving = active;
-  dispose(leaving);
+// Detach only: close our client connection, keep the tmux session alive.
+function closeSessionView() {
+  if (active === CHAT) return;
+  dispose(active);
   show(CHAT);
-};
+}
+closeBtn.onclick = closeSessionView;
 
 function refitActive() {
   const e = active && terms.get(active);
@@ -382,6 +384,84 @@ function renderSidebar() {
     }
   }
 }
+
+// ---- keyboard shortcuts ----
+// Bindings live in /keymap.js (window.KEYMAP) so the user edits one small
+// file and reloads. Every binding names a context ("when"), because the same
+// chord means different things in different states: cmd+w in a session view
+// detaches back to chat, while cmd+w in chat keeps its browser meaning.
+
+const ACTIONS = {
+  "close-session": closeSessionView,
+  "toggle-sidebar": () => treeBtn.onclick(),
+  "toggle-filter": () => filterBtn.onclick(),
+};
+
+function shellContext() {
+  return active === CHAT ? "chat" : "session";
+}
+
+function parseChord(keys) {
+  const parts = keys.toLowerCase().split("+");
+  const key = parts.pop();
+  return {
+    key,
+    meta: parts.includes("cmd") || parts.includes("meta"),
+    ctrl: parts.includes("ctrl"),
+    alt: parts.includes("alt") || parts.includes("option"),
+    shift: parts.includes("shift"),
+  };
+}
+
+function chordMatches(chord, e) {
+  return (
+    e.key.toLowerCase() === chord.key &&
+    e.metaKey === chord.meta &&
+    e.ctrlKey === chord.ctrl &&
+    e.altKey === chord.alt &&
+    e.shiftKey === chord.shift
+  );
+}
+
+// Capture phase on window runs before xterm's own key handling, so a matched
+// binding never leaks into the terminal.
+window.addEventListener(
+  "keydown",
+  (e) => {
+    const ctx = shellContext();
+    for (const b of window.KEYMAP ?? []) {
+      if (b.when !== "any" && b.when !== ctx) continue;
+      if (!chordMatches(parseChord(b.keys), e)) continue;
+      e.preventDefault();
+      e.stopPropagation();
+      ACTIONS[b.action]?.();
+      return;
+    }
+  },
+  { capture: true }
+);
+
+// Chrome only delivers reserved chords (cmd+w, cmd+t) to the page while it is
+// fullscreen with the Keyboard Lock API engaged. Lock the keymap's keys once;
+// the lock sits dormant until the page goes fullscreen.
+function lockKeymapKeys() {
+  if (!navigator.keyboard?.lock) return;
+  const codes = (window.KEYMAP ?? [])
+    .map((b) => parseChord(b.keys).key)
+    .map((k) =>
+      /^[a-z]$/.test(k) ? "Key" + k.toUpperCase() : /^[0-9]$/.test(k) ? "Digit" + k : null
+    )
+    .filter(Boolean);
+  if (codes.length) navigator.keyboard.lock(codes).catch(() => {});
+}
+lockKeymapKeys();
+
+// Outside fullscreen the browser still owns cmd+w. In a session that would
+// silently close the whole app, so ask first; in chat, closing the tab is the
+// intended meaning and stays silent.
+window.addEventListener("beforeunload", (e) => {
+  if (active !== CHAT) e.preventDefault();
+});
 
 window.addEventListener("resize", refitActive);
 

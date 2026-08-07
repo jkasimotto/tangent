@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Agent Shell</title>
+<link rel="stylesheet" href="/vendor/xterm/xterm.css" />
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --dim: #8b949e;
+    --accent: #3fb950;
+    --accent2: #58a6ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--text); font: 13px/1.4 -apple-system, "SF Mono", Menlo, monospace; }
+  #app { display: flex; flex-direction: column; height: 100%; }
+  header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--border);
+    flex: none;
+  }
+  header .brand { font-weight: 700; letter-spacing: 0.4px; }
+  header .brand .dot { color: var(--accent); }
+  #tabs { display: flex; gap: 6px; margin-left: 16px; }
+  .tab {
+    padding: 4px 12px; border-radius: 6px; border: 1px solid var(--border);
+    background: transparent; color: var(--dim); cursor: pointer; font: inherit;
+  }
+  .tab:hover { color: var(--text); border-color: var(--dim); }
+  .tab.active { background: var(--accent2); border-color: var(--accent2); color: #04121f; font-weight: 600; }
+  .tab.chat.active { background: var(--accent); border-color: var(--accent); }
+  .tab .cwd { opacity: 0.7; margin-left: 6px; font-size: 11px; }
+  #close-btn {
+    margin-left: auto; padding: 4px 12px; border-radius: 6px; font: inherit;
+    background: transparent; color: var(--dim); border: 1px solid var(--border); cursor: pointer;
+    display: none;
+  }
+  #close-btn:hover { color: var(--text); border-color: var(--dim); }
+  #terms { flex: 1; position: relative; min-height: 0; }
+  .term-host { position: absolute; inset: 0; padding: 8px; display: none; }
+  .term-host.visible { display: block; }
+  .xterm { height: 100%; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <span class="brand"><span class="dot">●</span> agent shell</span>
+    <div id="tabs"></div>
+    <button id="close-btn">✕ back to chat</button>
+  </header>
+  <div id="terms"></div>
+</div>
+<script src="/vendor/xterm/xterm.js"></script>
+<script src="/vendor/xterm/addon-fit.js"></script>
+<script>
+const CHAT = "chat";
+const terms = new Map(); // session name -> {term, fit, ws, host}
+let active = null;
+
+const tabsEl = document.getElementById("tabs");
+const termsEl = document.getElementById("terms");
+const closeBtn = document.getElementById("close-btn");
+
+function connect(session) {
+  if (terms.has(session)) return terms.get(session);
+  const host = document.createElement("div");
+  host.className = "term-host";
+  termsEl.appendChild(host);
+
+  const term = new Terminal({
+    fontFamily: '"SF Mono", Menlo, monospace',
+    fontSize: 13,
+    theme: { background: "#0d1117", foreground: "#e6edf3", cursor: "#3fb950" },
+    cursorBlink: true,
+    scrollback: 5000,
+  });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open(host);
+  fit.fit();
+
+  const ws = new WebSocket(
+    `ws://${location.host}/term?session=${encodeURIComponent(session)}&cols=${term.cols}&rows=${term.rows}`
+  );
+  ws.onopen = () => ws.send("\x00resize:" + term.cols + "x" + term.rows);
+  ws.onmessage = (e) => term.write(e.data);
+  ws.onclose = () => {
+    // Session client ended (e.g. session was killed): drop the terminal and
+    // fall back to chat.
+    dispose(session);
+    if (active === session) show(CHAT);
+    refreshTabs();
+  };
+  term.onData((d) => { if (ws.readyState === 1) ws.send(d); });
+  term.onResize(({ cols, rows }) => {
+    if (ws.readyState === 1) ws.send("\x00resize:" + cols + "x" + rows);
+  });
+
+  const entry = { term, fit, ws, host };
+  terms.set(session, entry);
+  return entry;
+}
+
+function dispose(session) {
+  const e = terms.get(session);
+  if (!e) return;
+  terms.delete(session);
+  try { e.ws.onclose = null; e.ws.close(); } catch {}
+  e.term.dispose();
+  e.host.remove();
+}
+
+function show(session) {
+  const entry = connect(session);
+  active = session;
+  for (const [name, e] of terms) e.host.classList.toggle("visible", name === session);
+  closeBtn.style.display = session === CHAT ? "none" : "block";
+  requestAnimationFrame(() => { entry.fit.fit(); entry.term.focus(); });
+  refreshTabs();
+}
+
+closeBtn.onclick = () => {
+  // Detach only: close our client connection, keep the tmux session alive.
+  const leaving = active;
+  dispose(leaving);
+  show(CHAT);
+};
+
+let lastSessions = [];
+async function refreshSessions() {
+  try {
+    const res = await fetch("/api/sessions");
+    const { sessions } = await res.json();
+    lastSessions = sessions;
+    refreshTabs();
+  } catch {}
+}
+
+let tabsKey = "";
+function refreshTabs() {
+  // Rebuild only when the session list or the active tab changed, so the
+  // buttons stay stable between polls.
+  const key = JSON.stringify([active, lastSessions.map((s) => s.name)]);
+  if (key === tabsKey) return;
+  tabsKey = key;
+  tabsEl.innerHTML = "";
+  const chatTab = document.createElement("button");
+  chatTab.className = "tab chat" + (active === CHAT ? " active" : "");
+  chatTab.textContent = "chat";
+  chatTab.onclick = () => show(CHAT);
+  tabsEl.appendChild(chatTab);
+
+  for (const s of lastSessions) {
+    if (s.isChat) continue;
+    const b = document.createElement("button");
+    b.className = "tab" + (active === s.name ? " active" : "");
+    b.textContent = s.name;
+    const cwd = document.createElement("span");
+    cwd.className = "cwd";
+    cwd.textContent = (s.cwd || "").split("/").slice(-1)[0];
+    b.appendChild(cwd);
+    b.onclick = () => show(s.name);
+    tabsEl.appendChild(b);
+  }
+}
+
+window.addEventListener("resize", () => {
+  const e = active && terms.get(active);
+  if (e) e.fit.fit();
+});
+
+show(CHAT);
+refreshSessions();
+setInterval(refreshSessions, 2000);
+</script>
+</body>
+</html>

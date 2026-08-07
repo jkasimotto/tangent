@@ -9,6 +9,7 @@ The user asks you to open directories in new tmux sessions. Each session appears
 - A "vertical panes" request means panes side by side. Use `split-window -h`.
 - A "horizontal panes" request means panes stacked. Use `split-window -v`.
 - A "session name" contains only lowercase letters, digits, and hyphens. It does not contain dots or colons.
+- A "tree node" is a directory path in the project tree at `~/.tangent/trees/`. Examples: `neara/pgande`, `otto/tangent/shell`. The path is relative to the tree root.
 
 ## Open a directory in a new session
 
@@ -29,6 +30,23 @@ The user asks you to open directories in new tmux sessions. Each session appears
 
 5. If the session has three or more panes, balance them: `tmux select-layout -t <name> even-horizontal` (or `even-vertical`, or `tiled`).
 6. Always quote the directory path. Paths can contain spaces and special characters, for example `PG&E`.
+7. Attach the session to a tree node (see the next section).
+
+## Attach a session to a tree node
+
+The app shows sessions on a project tree in the sidebar. Each session must point to one tree node.
+
+1. Select the tree node for the work. If the user names a node, use it. If not, select the node that matches the directory or the task.
+2. If no node matches, list the candidates with `ls ~/.tangent/trees/<parent>` and give the user your best guess.
+3. Set the node on the session:
+
+   ```sh
+   tmux set-option -t <name> @tangent_node '<node-path>'
+   ```
+
+4. Confirm the node in the same line as the session confirmation.
+
+A session without a node appears under "unfiled sessions" in the sidebar. Do not leave a session unfiled.
 
 ### Example
 
@@ -37,9 +55,10 @@ The user says: "open /Users/julianotto/Projects/delivery/Customers/PG&E with two
 ```sh
 tmux new-session -d -s feature-x -c '/Users/julianotto/Projects/delivery/Customers/PG&E'
 tmux split-window -h -t feature-x -c '/Users/julianotto/Projects/delivery/Customers/PG&E'
+tmux set-option -t feature-x @tangent_node 'neara/pgande'
 ```
 
-Then confirm: `opened feature-x (2 vertical panes) in .../Customers/PG&E`.
+Then confirm: `opened feature-x (2 vertical panes) in .../Customers/PG&E, node neara/pgande`.
 
 ## Inspect sessions
 

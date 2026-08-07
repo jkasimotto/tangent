@@ -24,21 +24,57 @@
   }
   header .brand { font-weight: 700; letter-spacing: 0.4px; }
   header .brand .dot { color: var(--accent); }
-  #tabs { display: flex; gap: 6px; margin-left: 16px; }
-  .tab {
-    padding: 4px 12px; border-radius: 6px; border: 1px solid var(--border);
-    background: transparent; color: var(--dim); cursor: pointer; font: inherit;
+  #active-label { color: var(--dim); margin-left: 8px; }
+  button { font: inherit; cursor: pointer; }
+  .hbtn {
+    padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border);
+    background: transparent; color: var(--dim);
   }
-  .tab:hover { color: var(--text); border-color: var(--dim); }
-  .tab.active { background: var(--accent2); border-color: var(--accent2); color: #04121f; font-weight: 600; }
-  .tab.chat.active { background: var(--accent); border-color: var(--accent); }
-  .tab .cwd { opacity: 0.7; margin-left: 6px; font-size: 11px; }
-  #close-btn {
-    margin-left: auto; padding: 4px 12px; border-radius: 6px; font: inherit;
-    background: transparent; color: var(--dim); border: 1px solid var(--border); cursor: pointer;
-    display: none;
+  .hbtn:hover { color: var(--text); border-color: var(--dim); }
+  .hbtn.on { color: var(--accent); border-color: var(--accent); }
+  #close-btn { margin-left: auto; display: none; }
+  #main { flex: 1; display: flex; min-height: 0; }
+  #sidebar {
+    width: 0; flex: none; overflow: hidden;
+    background: var(--panel); border-right: 1px solid transparent;
+    display: flex; flex-direction: column;
+    transition: width 0.15s ease;
   }
-  #close-btn:hover { color: var(--text); border-color: var(--dim); }
+  #sidebar.open { width: 280px; border-right-color: var(--border); }
+  #sidebar-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 12px; border-bottom: 1px solid var(--border); flex: none;
+    white-space: nowrap;
+  }
+  #sidebar-head .title { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; }
+  #filter-btn { font-size: 11px; padding: 3px 8px; }
+  #tree { flex: 1; overflow: auto; padding: 6px 4px; white-space: nowrap; }
+  .node-row {
+    display: flex; align-items: center; gap: 4px;
+    padding: 2px 4px; border-radius: 5px; color: var(--text);
+  }
+  .node-row:hover { background: rgba(255,255,255,0.04); }
+  .caret {
+    width: 16px; flex: none; text-align: center; color: var(--dim);
+    background: none; border: none; padding: 0;
+  }
+  .caret.leaf { visibility: hidden; }
+  .node-name { background: none; border: none; color: inherit; padding: 1px 2px; }
+  .node-name:hover { color: var(--accent2); }
+  .node-children { margin-left: 14px; }
+  .sess-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    margin-left: 6px; padding: 1px 8px; border-radius: 10px;
+    border: 1px solid var(--border); background: transparent; color: var(--dim); font-size: 11px;
+  }
+  .sess-chip::before { content: "●"; color: var(--accent); font-size: 9px; }
+  .sess-chip:hover { color: var(--text); border-color: var(--dim); }
+  .sess-chip.active { background: var(--accent2); border-color: var(--accent2); color: #04121f; font-weight: 600; }
+  .sess-chip.active::before { color: #04121f; }
+  #unfiled { flex: none; border-top: 1px solid var(--border); padding: 8px 12px; }
+  #unfiled:empty { display: none; }
+  #unfiled .title { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+  #unfiled .sess-chip { margin: 2px 4px 2px 0; }
   #terms { flex: 1; position: relative; min-height: 0; }
   .term-host { position: absolute; inset: 0; padding: 8px; display: none; }
   .term-host.visible { display: block; }
@@ -48,11 +84,22 @@
 <body>
 <div id="app">
   <header>
+    <button id="tree-btn" class="hbtn" title="project tree">☰</button>
     <span class="brand"><span class="dot">●</span> agent shell</span>
-    <div id="tabs"></div>
-    <button id="close-btn">✕ back to chat</button>
+    <span id="active-label"></span>
+    <button id="close-btn" class="hbtn">✕ back to chat</button>
   </header>
-  <div id="terms"></div>
+  <div id="main">
+    <div id="sidebar">
+      <div id="sidebar-head">
+        <span class="title">projects</span>
+        <button id="filter-btn" class="hbtn" title="show only nodes with running sessions">● sessions</button>
+      </div>
+      <div id="tree"></div>
+      <div id="unfiled"></div>
+    </div>
+    <div id="terms"></div>
+  </div>
 </div>
 <script src="/vendor/xterm/xterm.js"></script>
 <script src="/vendor/xterm/addon-fit.js"></script>
@@ -61,9 +108,14 @@ const CHAT = "chat";
 const terms = new Map(); // session name -> {term, fit, ws, host}
 let active = null;
 
-const tabsEl = document.getElementById("tabs");
 const termsEl = document.getElementById("terms");
 const closeBtn = document.getElementById("close-btn");
+const treeBtn = document.getElementById("tree-btn");
+const sidebarEl = document.getElementById("sidebar");
+const treeEl = document.getElementById("tree");
+const unfiledEl = document.getElementById("unfiled");
+const filterBtn = document.getElementById("filter-btn");
+const activeLabel = document.getElementById("active-label");
 
 function connect(session) {
   if (terms.has(session)) return terms.get(session);
@@ -93,7 +145,7 @@ function connect(session) {
     // fall back to chat.
     dispose(session);
     if (active === session) show(CHAT);
-    refreshTabs();
+    renderSidebar();
   };
   term.onData((d) => { if (ws.readyState === 1) ws.send(d); });
   term.onResize(({ cols, rows }) => {
@@ -119,8 +171,9 @@ function show(session) {
   active = session;
   for (const [name, e] of terms) e.host.classList.toggle("visible", name === session);
   closeBtn.style.display = session === CHAT ? "none" : "block";
+  activeLabel.textContent = session === CHAT ? "" : session;
   requestAnimationFrame(() => { entry.fit.fit(); entry.term.focus(); });
-  refreshTabs();
+  renderSidebar();
 }
 
 closeBtn.onclick = () => {
@@ -130,52 +183,149 @@ closeBtn.onclick = () => {
   show(CHAT);
 };
 
+function refitActive() {
+  const e = active && terms.get(active);
+  if (e) { e.fit.fit(); e.term.focus(); }
+}
+
+treeBtn.onclick = () => {
+  sidebarEl.classList.toggle("open");
+  treeBtn.classList.toggle("on", sidebarEl.classList.contains("open"));
+};
+sidebarEl.addEventListener("transitionend", refitActive);
+
+// ---- project tree sidebar ----
+
+let treeNodes = [];      // nested {name, path, children} from /api/tree
 let lastSessions = [];
+let filterOn = false;    // show only nodes with running sessions (plus ancestors)
+const expanded = new Set();
+
+async function refreshTree() {
+  try {
+    const res = await fetch("/api/tree");
+    const { nodes } = await res.json();
+    treeNodes = nodes;
+    renderSidebar();
+  } catch {}
+}
+
 async function refreshSessions() {
   try {
     const res = await fetch("/api/sessions");
     const { sessions } = await res.json();
     lastSessions = sessions;
-    refreshTabs();
+    renderSidebar();
   } catch {}
 }
 
-let tabsKey = "";
-function refreshTabs() {
-  // Rebuild only when the session list or the active tab changed, so the
-  // buttons stay stable between polls.
-  const key = JSON.stringify([active, lastSessions.map((s) => s.name)]);
-  if (key === tabsKey) return;
-  tabsKey = key;
-  tabsEl.innerHTML = "";
-  const chatTab = document.createElement("button");
-  chatTab.className = "tab chat" + (active === CHAT ? " active" : "");
-  chatTab.textContent = "chat";
-  chatTab.onclick = () => show(CHAT);
-  tabsEl.appendChild(chatTab);
+function sessionsForNode(path) {
+  return lastSessions.filter((s) => !s.isChat && s.node === path);
+}
 
-  for (const s of lastSessions) {
-    if (s.isChat) continue;
-    const b = document.createElement("button");
-    b.className = "tab" + (active === s.name ? " active" : "");
-    b.textContent = s.name;
-    const cwd = document.createElement("span");
-    cwd.className = "cwd";
-    cwd.textContent = (s.cwd || "").split("/").slice(-1)[0];
-    b.appendChild(cwd);
-    b.onclick = () => show(s.name);
-    tabsEl.appendChild(b);
+// A node passes the session filter when a session sits on it or anywhere in
+// its subtree, so ancestors of session nodes always stay visible.
+function subtreeHasSession(path) {
+  return lastSessions.some(
+    (s) => !s.isChat && s.node && (s.node === path || s.node.startsWith(path + "/"))
+  );
+}
+
+function expandToSessions(nodes) {
+  for (const n of nodes) {
+    if (subtreeHasSession(n.path)) {
+      expanded.add(n.path);
+      expandToSessions(n.children);
+    }
   }
 }
 
-window.addEventListener("resize", () => {
-  const e = active && terms.get(active);
-  if (e) e.fit.fit();
-});
+filterBtn.onclick = () => {
+  filterOn = !filterOn;
+  filterBtn.classList.toggle("on", filterOn);
+  if (filterOn) expandToSessions(treeNodes);
+  renderSidebar();
+};
+
+function renderNode(node, container) {
+  if (filterOn && !subtreeHasSession(node.path)) return;
+  const row = document.createElement("div");
+  row.className = "node-row";
+
+  const caret = document.createElement("button");
+  const hasKids = node.children.length > 0;
+  caret.className = "caret" + (hasKids ? "" : " leaf");
+  caret.textContent = expanded.has(node.path) ? "▾" : "▸";
+  caret.onclick = () => {
+    if (expanded.has(node.path)) expanded.delete(node.path);
+    else expanded.add(node.path);
+    renderSidebar();
+  };
+  row.appendChild(caret);
+
+  const name = document.createElement("button");
+  name.className = "node-name";
+  name.textContent = node.name;
+  name.onclick = caret.onclick;
+  row.appendChild(name);
+
+  for (const s of sessionsForNode(node.path)) {
+    const chip = document.createElement("button");
+    chip.className = "sess-chip" + (active === s.name ? " active" : "");
+    chip.textContent = s.name;
+    chip.onclick = () => show(s.name);
+    row.appendChild(chip);
+  }
+  container.appendChild(row);
+
+  if (hasKids && expanded.has(node.path)) {
+    const kids = document.createElement("div");
+    kids.className = "node-children";
+    for (const child of node.children) renderNode(child, kids);
+    container.appendChild(kids);
+  }
+}
+
+let sidebarKey = "";
+function renderSidebar() {
+  // Rebuild only on real state change so buttons stay stable between polls.
+  const key = JSON.stringify([
+    active,
+    filterOn,
+    [...expanded].sort(),
+    lastSessions.map((s) => [s.name, s.node]),
+    treeNodes,
+  ]);
+  if (key === sidebarKey) return;
+  sidebarKey = key;
+
+  treeEl.innerHTML = "";
+  for (const node of treeNodes) renderNode(node, treeEl);
+
+  unfiledEl.innerHTML = "";
+  const unfiled = lastSessions.filter((s) => !s.isChat && !s.node);
+  if (unfiled.length) {
+    const title = document.createElement("div");
+    title.className = "title";
+    title.textContent = "unfiled sessions";
+    unfiledEl.appendChild(title);
+    for (const s of unfiled) {
+      const chip = document.createElement("button");
+      chip.className = "sess-chip" + (active === s.name ? " active" : "");
+      chip.textContent = s.name;
+      chip.onclick = () => show(s.name);
+      unfiledEl.appendChild(chip);
+    }
+  }
+}
+
+window.addEventListener("resize", refitActive);
 
 show(CHAT);
+refreshTree();
 refreshSessions();
 setInterval(refreshSessions, 2000);
+setInterval(refreshTree, 10000);
 </script>
 </body>
 </html>

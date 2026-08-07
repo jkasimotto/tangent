@@ -3,7 +3,8 @@
 // sessions via node-pty. The "chat" session is the always-on agent shell;
 // every other tmux session is a workspace the agent (or user) created.
 import http from "node:http";
-import { readFile } from "node:fs/promises";
+import os from "node:os";
+import { readFile, readdir } from "node:fs/promises";
 import { existsSync, mkdirSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -19,6 +20,7 @@ const PORT = Number(process.env.PORT ?? 4321);
 const AGENT_CMD = process.env.AGENT_CMD ?? "claude";
 const CHAT_SESSION = process.env.CHAT_SESSION ?? "chat";
 const WORKSPACE = process.env.WORKSPACE ?? path.join(here, "workspace");
+const TREES_ROOT = process.env.TREES_ROOT ?? path.join(os.homedir(), ".tangent", "trees");
 
 if (!existsSync(WORKSPACE)) mkdirSync(WORKSPACE, { recursive: true });
 
@@ -31,28 +33,31 @@ const MIME = {
 };
 
 /**
- * Lists live tmux sessions for the tab bar in the frontend, which polls
- * /api/sessions to discover sessions the chat agent created.
+ * Lists live tmux sessions for the sidebar in the frontend, which polls
+ * /api/sessions to discover sessions the chat agent created. The `node`
+ * field is the tangent tree node the session belongs to, read from the
+ * tmux user option `@tangent_node` that the agent sets at creation time.
  */
 async function listSessions() {
   try {
     const { stdout } = await execFileAsync("tmux", [
       "list-sessions",
       "-F",
-      "#{session_name}\t#{session_path}\t#{session_windows}\t#{session_attached}\t#{session_created}",
+      "#{session_name}\t#{session_path}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{@tangent_node}",
     ]);
     return stdout
       .trim()
       .split("\n")
       .filter(Boolean)
       .map((line) => {
-        const [name, cwd, windows, attached, created] = line.split("\t");
+        const [name, cwd, windows, attached, created, node] = line.split("\t");
         return {
           name,
           cwd,
           windows: Number(windows),
           attached: Number(attached) > 0,
           created: Number(created) * 1000,
+          node: node || null,
           isChat: name === CHAT_SESSION,
         };
       });
@@ -61,12 +66,45 @@ async function listSessions() {
   }
 }
 
+const TREE_SKIP = new Set([".git", ".obsidian", "shared", "node_modules"]);
+
+/**
+ * Walks the tangent trees vault and returns project nodes as a nested tree
+ * for the sidebar. Directories are nodes; files (notes) are ignored, as are
+ * vault internals (.git, .obsidian) and shared/ team repos.
+ */
+async function readTree(dir, rel = "") {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const nodes = [];
+  for (const e of entries) {
+    if (!e.isDirectory() || TREE_SKIP.has(e.name) || e.name.startsWith(".")) continue;
+    const childRel = rel ? `${rel}/${e.name}` : e.name;
+    nodes.push({
+      name: e.name,
+      path: childRel,
+      children: await readTree(path.join(dir, e.name), childRel),
+    });
+  }
+  nodes.sort((a, b) => a.name.localeCompare(b.name));
+  return nodes;
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   try {
     if (url.pathname === "/api/sessions") {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ sessions: await listSessions() }));
+      return;
+    }
+    if (url.pathname === "/api/tree") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ root: TREES_ROOT, nodes: await readTree(TREES_ROOT) }));
       return;
     }
     let filePath;

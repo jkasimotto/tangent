@@ -170,6 +170,7 @@
     <span class="brand"><span class="dot">●</span> agent shell</span>
     <span id="active-label"></span>
     <button id="agent-btn" class="hbtn" title="orchestrator agent, click to switch"></button>
+    <button id="caffeine-btn" class="hbtn" title="keep mac awake (caffeinate -di)">☕</button>
     <button id="keys-btn" class="hbtn" title="keyboard shortcuts">⌘</button>
     <button id="close-btn" class="hbtn">✕ back to chat</button>
   </header>
@@ -348,8 +349,9 @@ async function refreshTree() {
 async function refreshSessions() {
   try {
     const res = await fetch("/api/sessions");
-    const { agent, sessions } = await res.json();
+    const { agent, caffeinate, sessions } = await res.json();
     if (agent) setAgentCmd(agent);
+    setCaffeineState(caffeinate);
     lastSessions = sessions;
     renderSidebar();
   } catch {}
@@ -818,6 +820,31 @@ window.addEventListener(
   },
   { capture: true }
 );
+
+// ---- caffeinate toggle ----
+// Server-side `caffeinate -di` tied to the shell's lifetime. The server owns
+// the state; the button reflects it via the /api/sessions poll, so a second
+// window stays in sync.
+
+const caffeineBtn = document.getElementById("caffeine-btn");
+let caffeineOn = false;
+
+function setCaffeineState(on) {
+  caffeineOn = Boolean(on);
+  caffeineBtn.classList.toggle("on", caffeineOn);
+  caffeineBtn.title = caffeineOn
+    ? "mac kept awake (caffeinate -di), click to release"
+    : "keep mac awake (caffeinate -di)";
+}
+
+caffeineBtn.onclick = async () => {
+  const res = await fetch("/api/caffeinate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ on: !caffeineOn }),
+  });
+  if (res.ok) setCaffeineState((await res.json()).caffeinate);
+};
 
 // ---- orchestrator agent picker ----
 // The chat session's command comes from the server (`agent` on /api/sessions),

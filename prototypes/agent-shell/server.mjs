@@ -7,7 +7,7 @@ import os from "node:os";
 import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { existsSync, mkdirSync } from "node:fs";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -159,6 +159,23 @@ async function nodeDirectory(node) {
   return path.isAbsolute(dir) && existsSync(dir) ? dir : null;
 }
 
+let caffeinateProc = null; // running `caffeinate -di` child, or null
+
+/**
+ * Starts or stops a `caffeinate -di` child, the header's keep-awake toggle
+ * for long agent runs. `-w` ties the assertion to this server's lifetime, so
+ * quitting the shell can never leave the machine stuck awake.
+ */
+function setCaffeinate(on) {
+  if (on && !caffeinateProc) {
+    caffeinateProc = spawn("caffeinate", ["-di", "-w", String(process.pid)], { stdio: "ignore" });
+    caffeinateProc.on("exit", () => (caffeinateProc = null));
+  } else if (!on && caffeinateProc) {
+    caffeinateProc.kill();
+    caffeinateProc = null;
+  }
+}
+
 /** Collects a request body as a string for the JSON POST endpoints. */
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -223,7 +240,9 @@ const server = http.createServer(async (req, res) => {
   try {
     if (url.pathname === "/api/sessions") {
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ agent: agentCmd, sessions: await listSessions() }));
+      res.end(
+        JSON.stringify({ agent: agentCmd, caffeinate: caffeinateProc !== null, sessions: await listSessions() })
+      );
       return;
     }
     // The frontend must target the same chat session the server special-cases,
@@ -249,6 +268,14 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(500, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
       }
+      return;
+    }
+    if (url.pathname === "/api/caffeinate" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      setCaffeinate(Boolean(body.on));
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, caffeinate: caffeinateProc !== null }));
       return;
     }
     // Switches the orchestrator agent for the chat session. The command is

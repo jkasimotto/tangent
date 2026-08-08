@@ -12,7 +12,7 @@ All Tangent state lives under `~/.tangent/`. Know these paths:
 | `usage/repos/<hash>/index/usage.sqlite` | Per-repo SQLite index |
 | `usage/repos/<hash>/` | One directory per repo, keyed by a hash of the repo path |
 | `usage/global/insights/` | Aggregated deterministic insights (e.g. `park.json`) |
-| `trees/` | Git-managed knowledge vault (Obsidian-compatible); nodes, overviews, dated notes, threads, plate.md rollups. README.md has the vault rules. |
+| `trees/` | Git-managed project tree; node directories only, no content files. README.md has the vault rules. |
 | `marks/` | Captured agent-failure marks (`tangent.mark.v1` JSON), owned by @tangent/eval |
 | `eval/runs/` | Eval run manifests, variant work dirs, metrics, reports, diffs |
 | `loops/` | Agent loop logs (plan, scope, implement, review, deploy, ux, watch, feedback) |

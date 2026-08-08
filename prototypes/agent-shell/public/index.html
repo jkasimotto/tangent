@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <title>Agent Shell</title>
+<link rel="apple-touch-icon" href="/icon.png" />
 <link rel="stylesheet" href="/vendor/xterm/xterm.css" />
 <style>
   :root {
@@ -32,7 +33,7 @@
   }
   .hbtn:hover { color: var(--text); border-color: var(--dim); }
   .hbtn.on { color: var(--accent); border-color: var(--accent); }
-  #keys-btn { margin-left: auto; }
+  #agent-btn { margin-left: auto; }
   #close-btn { display: none; }
   #main { flex: 1; display: flex; min-height: 0; }
   #sidebar {
@@ -73,33 +74,71 @@
   .node-name { background: none; border: none; color: inherit; padding: 1px 2px; }
   .node-name:hover { color: var(--accent2); }
   .node-children { margin-left: 14px; }
-  .sess-chip {
-    display: inline-flex; align-items: center; gap: 5px;
-    margin-left: 6px; padding: 1px 8px; border-radius: 10px;
-    border: 1px solid var(--border); background: transparent; color: var(--dim); font-size: 11px;
+  /* Sessions are the living rows of the tree: nodes are dim structure, a
+     session row is a piece of work with a state dot. Agent state from screen
+     diff: pulsing green = working (motion means activity), steady amber =
+     waiting for you, dim hollow = plain shell / agent exited. Services
+     (@tangent_kind=service, e.g. a dev server) skip the diff: steady blue =
+     running, red hollow = the command exited. */
+  .sess-row {
+    display: flex; align-items: center; gap: 6px;
+    padding: 2px 4px 2px 18px; border-radius: 5px; color: var(--text);
+    cursor: pointer;
   }
-  .sess-chip::before { content: "●"; color: var(--accent); font-size: 9px; }
-  .sess-chip:hover { color: var(--text); border-color: var(--dim); }
-  .sess-chip.active { background: var(--accent2); border-color: var(--accent2); color: #04121f; font-weight: 600; }
-  .sess-chip.active::before { color: #04121f; }
-  /* Agent state from screen diff: green = working (no attention needed),
-     pulsing amber = waiting for you, dim = plain shell / agent exited.
-     These sit after .active so the dot keeps its meaning on the active chip. */
-  .sess-chip.working::before { color: var(--accent); }
-  .sess-chip.waiting::before { color: #e3b341; animation: chip-pulse 1.1s ease-in-out infinite; }
-  .sess-chip.shell::before { color: var(--dim); }
+  .sess-row:hover { background: rgba(255,255,255,0.04); }
+  .sess-dot { flex: none; width: 10px; text-align: center; font-size: 9px; color: var(--dim); }
+  .sess-row.working .sess-dot { color: var(--accent); animation: chip-pulse 1.1s ease-in-out infinite; }
+  .sess-row.waiting .sess-dot { color: #e3b341; }
+  .sess-row.service .sess-dot { color: var(--accent2); }
+  .sess-row.stopped .sess-dot { color: #f85149; }
+  .sess-row.active { background: var(--accent2); color: #04121f; font-weight: 600; }
+  .sess-row.active .sess-dot { color: #04121f; animation: none; }
   @keyframes chip-pulse { 50% { opacity: 0.2; } }
+  /* Collapsed subtree rollup: one dot on the node row in the most urgent
+     state below it, so a waiting agent shows through any collapsed parent. */
+  .rollup { margin-left: 6px; font-size: 9px; color: var(--dim); }
+  .rollup.working { color: var(--accent); animation: chip-pulse 1.1s ease-in-out infinite; }
+  .rollup.waiting { color: #e3b341; }
+  .rollup.service { color: var(--accent2); }
+  .rollup.stopped { color: #f85149; }
+  .add-btn {
+    visibility: hidden; margin-left: 4px; padding: 0 5px; border-radius: 4px;
+    background: none; border: none; color: var(--dim); font-size: 13px;
+  }
+  .node-row:hover .add-btn { visibility: visible; }
+  .add-btn:hover { color: var(--accent); }
+  .sess-row.spawn { cursor: default; flex-wrap: wrap; }
+  .sess-row.spawn input {
+    font: inherit; width: 130px; padding: 1px 6px; border-radius: 4px;
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  }
+  .sess-row.spawn input:focus { outline: none; border-color: var(--accent2); }
+  .spawn-hint { color: #e3b341; font-size: 11px; }
   #unfiled { flex: none; border-top: 1px solid var(--border); padding: 8px 12px; }
   #unfiled:empty { display: none; }
   #unfiled .title { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
-  #unfiled .sess-chip { margin: 2px 4px 2px 0; }
-  #settings {
+  #unfiled .sess-row { padding-left: 4px; }
+  #settings, #agent-panel {
     position: absolute; top: 44px; right: 10px; z-index: 10;
     width: 380px; padding: 10px 14px;
     background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   }
-  #settings[hidden] { display: none; }
+  #settings[hidden], #agent-panel[hidden] { display: none; }
+  #agent-input {
+    width: 100%; margin-bottom: 6px; padding: 4px 8px; border-radius: 6px;
+    background: var(--bg); border: 1px solid var(--border); color: var(--text); font: inherit;
+  }
+  #agent-input:focus { outline: none; border-color: var(--accent2); }
+  .agent-row { display: flex; align-items: center; gap: 8px; }
+  .agent-cmd {
+    flex: 1; text-align: left; background: none; border: none;
+    color: var(--text); padding: 3px 4px; border-radius: 5px;
+  }
+  .agent-cmd:hover { color: var(--accent2); }
+  .agent-row.current .agent-cmd { color: var(--accent); }
+  .agent-del { background: none; border: none; color: var(--dim); padding: 0 4px; }
+  .agent-del:hover { color: var(--text); }
   .s-title {
     display: flex; justify-content: space-between; align-items: center;
     color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
@@ -130,6 +169,7 @@
     <button id="tree-btn" class="hbtn" title="project tree">☰</button>
     <span class="brand"><span class="dot">●</span> agent shell</span>
     <span id="active-label"></span>
+    <button id="agent-btn" class="hbtn" title="orchestrator agent, click to switch"></button>
     <button id="keys-btn" class="hbtn" title="keyboard shortcuts">⌘</button>
     <button id="close-btn" class="hbtn">✕ back to chat</button>
   </header>
@@ -137,6 +177,12 @@
     <div class="s-title">keyboard shortcuts <button id="s-reset">reset defaults</button></div>
     <div id="s-rows"></div>
     <div class="s-hint">click a chord, then press the new keys. esc cancels, backspace unbinds.</div>
+  </div>
+  <div id="agent-panel" hidden>
+    <div class="s-title">orchestrator agent</div>
+    <input id="agent-input" placeholder="command, e.g. claude-otto or pi" spellcheck="false" />
+    <div id="agent-rows"></div>
+    <div class="s-hint">any command, alias, or flags your shell understands. switching kills the running chat agent and respawns chat with the new command.</div>
   </div>
   <div id="main">
     <div id="sidebar">
@@ -153,8 +199,9 @@
 <script src="/vendor/xterm/xterm.js"></script>
 <script src="/vendor/xterm/addon-fit.js"></script>
 <script src="/keymap.js"></script>
+<script src="/config.js"></script>
 <script>
-const CHAT = "chat";
+const CHAT = window.CHAT_SESSION ?? "chat";
 const terms = new Map(); // session name -> {term, fit, ws, host}
 let active = null;
 
@@ -191,11 +238,12 @@ function connect(session) {
   );
   ws.onopen = () => ws.send("\x00resize:" + term.cols + "x" + term.rows);
   ws.onmessage = (e) => term.write(e.data);
+  const connectedAt = Date.now();
   ws.onclose = () => {
     // Session client ended (e.g. session was killed): drop the terminal and
     // fall back to chat.
     dispose(session);
-    if (active === session) show(CHAT);
+    if (active === session && !(session === CHAT && chatDiedFast(connectedAt))) show(CHAT);
     renderSidebar();
   };
   term.onData((d) => { if (ws.readyState === 1) ws.send(d); });
@@ -206,6 +254,23 @@ function connect(session) {
   const entry = { term, fit, ws, host };
   terms.set(session, entry);
   return entry;
+}
+
+// A broken agent command makes the chat session die the moment it spawns,
+// and blind reconnection would spin in a spawn/die loop. Three fast deaths
+// in a row stop the auto-reconnect and open the agent picker instead;
+// switching (or re-picking the current agent) reconnects.
+let chatDeaths = 0;
+function chatDiedFast(connectedAt) {
+  if (Date.now() - connectedAt > 1500) {
+    chatDeaths = 0;
+    return false;
+  }
+  if (++chatDeaths < 3) return false;
+  chatDeaths = 0;
+  alert(`chat agent "${agentCmd}" keeps dying right after start. pick another command.`);
+  if (agentPanel.hidden) agentBtn.onclick();
+  return true;
 }
 
 function dispose(session) {
@@ -283,7 +348,8 @@ async function refreshTree() {
 async function refreshSessions() {
   try {
     const res = await fetch("/api/sessions");
-    const { sessions } = await res.json();
+    const { agent, sessions } = await res.json();
+    if (agent) setAgentCmd(agent);
     lastSessions = sessions;
     renderSidebar();
   } catch {}
@@ -297,16 +363,109 @@ const STATE_HINT = {
   working: "agent working",
   waiting: "agent waiting for you",
   shell: "shell (no agent running)",
+  service: "service running",
+  stopped: "service stopped (open to restart)",
 };
 
-function sessionChip(s) {
-  const chip = document.createElement("button");
-  chip.className =
-    "sess-chip" + (active === s.name ? " active" : "") + (s.state ? " " + s.state : "");
-  chip.textContent = s.name;
-  chip.title = STATE_HINT[s.state] ?? "";
-  chip.onclick = () => show(s.name);
-  return chip;
+function sessionRow(s) {
+  const row = document.createElement("div");
+  row.className =
+    "sess-row" + (active === s.name ? " active" : "") + (s.state ? " " + s.state : "");
+  row.title = STATE_HINT[s.state] ?? "";
+  const dot = document.createElement("span");
+  dot.className = "sess-dot";
+  dot.textContent = ["working", "waiting", "service"].includes(s.state) ? "●" : "○";
+  const name = document.createElement("span");
+  name.textContent = s.name;
+  row.append(dot, name);
+  row.onclick = () => show(s.name);
+  return row;
+}
+
+// ---- spawn a session from the tree (the + on a node row) ----
+
+let spawningNode = null; // node path with the name input open, or null
+let spawnError = null;
+
+function openSpawn(path) {
+  spawningNode = path;
+  spawnError = null;
+  expanded.add(path);
+  renderSidebar();
+  treeEl.querySelector(".sess-row.spawn input")?.focus();
+}
+
+function closeSpawn() {
+  spawningNode = null;
+  spawnError = null;
+  renderSidebar();
+}
+
+async function doSpawn(node, name) {
+  const res = await fetch("/api/spawn", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ node, name }),
+  });
+  if (!res.ok) {
+    spawnError = (await res.json()).error ?? "spawn failed " + res.status;
+    renderSidebar(true);
+    treeEl.querySelector(".sess-row.spawn input")?.focus();
+    return;
+  }
+  closeSpawn();
+  await refreshSessions();
+  show(name);
+}
+
+function spawnInputRow(node) {
+  const row = document.createElement("div");
+  row.className = "sess-row spawn";
+  const dot = document.createElement("span");
+  dot.className = "sess-dot";
+  dot.textContent = "○";
+  const input = document.createElement("input");
+  input.placeholder = "work name…";
+  input.onkeydown = (e) => {
+    e.stopPropagation();
+    if (e.key === "Escape") closeSpawn();
+    if (e.key === "Enter" && input.value.trim()) {
+      doSpawn(node.path, input.value.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-"));
+    }
+  };
+  // A stale error hint stops meaning anything once the user edits the name;
+  // drop it in place rather than re-rendering, so the input keeps focus.
+  input.oninput = () => {
+    if (!spawnError) return;
+    spawnError = null;
+    row.querySelector(".spawn-hint")?.remove();
+  };
+  input.onblur = () => { if (!spawnError) closeSpawn(); };
+  row.append(dot, input);
+  if (spawnError) {
+    const hint = document.createElement("span");
+    hint.className = "spawn-hint";
+    hint.textContent = spawnError;
+    row.appendChild(hint);
+  }
+  return row;
+}
+
+// Most urgent agent state in a node's subtree, for the collapsed rollup dot.
+// Urgency: waiting for you beats a dead service beats working beats a live
+// service beats a plain shell.
+const STATE_RANK = { waiting: 5, stopped: 4, working: 3, service: 2, shell: 1 };
+function subtreeSessions(path) {
+  return lastSessions.filter(
+    (s) => !s.isChat && s.node && (s.node === path || s.node.startsWith(path + "/"))
+  );
+}
+function subtreeState(path) {
+  let best = null;
+  for (const s of subtreeSessions(path)) {
+    if ((STATE_RANK[s.state] ?? 0) > (STATE_RANK[best] ?? 0)) best = s.state;
+  }
+  return best;
 }
 
 // A node passes the session filter when a session sits on it or anywhere in
@@ -356,15 +515,39 @@ function renderNode(node, container) {
   name.onclick = () => focusNode(node.path);
   row.appendChild(name);
 
-  for (const s of sessionsForNode(node.path)) {
-    row.appendChild(sessionChip(s));
+  // A collapsed node hides its subtree's sessions, so it wears one rollup
+  // dot in the most urgent state below it.
+  const collapsed = hasKids && !expanded.has(node.path);
+  if (collapsed) {
+    const inside = subtreeSessions(node.path);
+    if (inside.length) {
+      const dot = document.createElement("span");
+      const state = subtreeState(node.path);
+      dot.className = "rollup" + (state ? " " + state : "");
+      dot.textContent = "●";
+      dot.title = inside.length + (inside.length === 1 ? " session" : " sessions") + " inside";
+      row.appendChild(dot);
+    }
   }
+
+  const add = document.createElement("button");
+  add.className = "add-btn";
+  add.textContent = "+";
+  add.title = "new session on " + node.path;
+  add.onclick = () => openSpawn(node.path);
+  row.appendChild(add);
+
   container.appendChild(row);
 
-  if (hasKids && expanded.has(node.path)) {
+  const own = collapsed ? [] : sessionsForNode(node.path);
+  const showSpawn = spawningNode === node.path;
+  const showChildren = hasKids && expanded.has(node.path);
+  if (own.length || showSpawn || showChildren) {
     const kids = document.createElement("div");
     kids.className = "node-children";
-    for (const child of node.children) renderNode(child, kids);
+    for (const s of own) kids.appendChild(sessionRow(s));
+    if (showSpawn) kids.appendChild(spawnInputRow(node));
+    if (showChildren) for (const child of node.children) renderNode(child, kids);
     container.appendChild(kids);
   }
 }
@@ -398,12 +581,23 @@ function renderCrumbs() {
 }
 
 let sidebarKey = "";
-function renderSidebar() {
+function renderSidebar(force = false) {
+  // While the spawn name input has focus, background polls must not rebuild
+  // the tree out from under the user's typing. Explicit spawn-flow renders
+  // pass force.
+  if (
+    !force &&
+    spawningNode &&
+    document.activeElement === treeEl.querySelector(".sess-row.spawn input")
+  )
+    return;
   // Rebuild only on real state change so buttons stay stable between polls.
   const key = JSON.stringify([
     active,
     filterOn,
     focusPath,
+    spawningNode,
+    spawnError,
     [...expanded].sort(),
     lastSessions.map((s) => [s.name, s.node, s.state]),
     treeNodes,
@@ -427,7 +621,7 @@ function renderSidebar() {
     title.textContent = "unfiled sessions";
     unfiledEl.appendChild(title);
     for (const s of unfiled) {
-      unfiledEl.appendChild(sessionChip(s));
+      unfiledEl.appendChild(sessionRow(s));
     }
   }
 }
@@ -521,6 +715,7 @@ let recordingAction = null;
 keysBtn.onclick = () => {
   settingsEl.hidden = !settingsEl.hidden;
   keysBtn.classList.toggle("on", !settingsEl.hidden);
+  if (!settingsEl.hidden) closeAgentPanel(); // panels share the same corner
   recordingAction = null;
   renderSettings();
 };
@@ -609,6 +804,7 @@ window.addEventListener(
   "keydown",
   (e) => {
     if (!settingsEl.hidden) return;
+    if (e.target instanceof HTMLInputElement) return; // typing a spawn name
     const ctx = shellContext();
     for (const b of keymap) {
       if (!b.keys) continue;
@@ -622,6 +818,111 @@ window.addEventListener(
   },
   { capture: true }
 );
+
+// ---- orchestrator agent picker ----
+// The chat session's command comes from the server (`agent` on /api/sessions),
+// so the header always names the agent actually driving chat. Switching POSTs
+// /api/agent: the server kills the chat tmux session and our reconnect
+// respawns it with the new command. Previously used commands are remembered
+// in localStorage as a one-click list.
+
+const AGENT_STORE = "agentshell.agents";
+const agentBtn = document.getElementById("agent-btn");
+const agentPanel = document.getElementById("agent-panel");
+const agentRows = document.getElementById("agent-rows");
+const agentInput = document.getElementById("agent-input");
+let agentCmd = null;
+
+function loadAgents() {
+  try { return JSON.parse(localStorage.getItem(AGENT_STORE)) ?? []; } catch { return []; }
+}
+function saveAgents(list) {
+  localStorage.setItem(AGENT_STORE, JSON.stringify(list.slice(0, 8)));
+}
+
+function setAgentCmd(cmd) {
+  if (cmd === agentCmd) return;
+  agentCmd = cmd;
+  agentBtn.textContent = "⌁ " + cmd;
+  renderAgents();
+}
+
+function closeAgentPanel() {
+  agentPanel.hidden = true;
+  agentBtn.classList.remove("on");
+}
+
+agentBtn.onclick = () => {
+  agentPanel.hidden = !agentPanel.hidden;
+  agentBtn.classList.toggle("on", !agentPanel.hidden);
+  if (!agentPanel.hidden) {
+    settingsEl.hidden = true; // panels share the same corner
+    keysBtn.classList.remove("on");
+    renderAgents();
+    agentInput.focus();
+  }
+};
+
+agentInput.onkeydown = (e) => {
+  e.stopPropagation();
+  if (e.key === "Escape") closeAgentPanel();
+  if (e.key === "Enter" && agentInput.value.trim()) switchAgent(agentInput.value.trim());
+};
+
+function renderAgents() {
+  if (agentPanel.hidden) return;
+  agentRows.innerHTML = "";
+  const list = [...new Set([agentCmd, ...loadAgents()])].filter(Boolean);
+  for (const cmd of list) {
+    const row = document.createElement("div");
+    row.className = "agent-row" + (cmd === agentCmd ? " current" : "");
+    const pick = document.createElement("button");
+    pick.className = "agent-cmd";
+    pick.textContent = cmd;
+    pick.title = cmd === agentCmd ? "current agent" : "switch chat to " + cmd;
+    pick.onclick = () => switchAgent(cmd);
+    row.appendChild(pick);
+    if (cmd !== agentCmd) {
+      const del = document.createElement("button");
+      del.className = "agent-del";
+      del.textContent = "×";
+      del.title = "remove from list";
+      del.onclick = () => {
+        saveAgents(loadAgents().filter((c) => c !== cmd));
+        renderAgents();
+      };
+      row.appendChild(del);
+    }
+    agentRows.appendChild(row);
+  }
+}
+
+async function switchAgent(cmd) {
+  if (cmd === agentCmd) {
+    closeAgentPanel();
+    if (!terms.has(CHAT)) show(CHAT); // retry after the fast-death guard tripped
+    return;
+  }
+  if (!confirm(`Restart chat as "${cmd}"? The running chat agent is killed.`)) return;
+  const res = await fetch("/api/agent", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ cmd }),
+  });
+  if (!res.ok) {
+    alert(`switch failed: ${(await res.json()).error ?? res.status}`);
+    return;
+  }
+  saveAgents([cmd, ...loadAgents().filter((c) => c !== cmd)]);
+  agentInput.value = "";
+  closeAgentPanel();
+  setAgentCmd(cmd);
+  chatDeaths = 0;
+  // The server killed the chat session; drop the stale terminal and reconnect,
+  // which recreates chat running the new command.
+  dispose(CHAT);
+  show(CHAT);
+}
 
 // Chrome only delivers reserved chords (cmd+w, cmd+t) to the page while it is
 // fullscreen with the Keyboard Lock API engaged. Lock the keymap's keys; the

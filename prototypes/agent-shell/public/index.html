@@ -157,6 +157,23 @@
   .s-chord.unbound { color: var(--dim); }
   .s-note { font-size: 10px; color: var(--dim); width: 84px; text-align: right; }
   .s-hint { color: var(--dim); font-size: 11px; margin-top: 8px; }
+  #mic-btn.rec { color: #f85149; border-color: #f85149; animation: chip-pulse 1.1s ease-in-out infinite; }
+  /* Voice HUD: one pill, bottom center. listening (red) -> transcribing
+     (blue) -> what happened (green) or what went wrong (amber). */
+  #voice-hud {
+    position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%);
+    z-index: 30; display: none; align-items: center; gap: 8px;
+    max-width: min(680px, 85%); padding: 7px 16px; border-radius: 999px;
+    background: var(--panel); border: 1px solid var(--border);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); font-size: 12px;
+  }
+  #voice-hud.show { display: flex; }
+  #voice-hud .vh-dot { flex: none; font-size: 10px; color: var(--dim); }
+  #voice-hud.listening .vh-dot { color: #f85149; animation: chip-pulse 1.1s ease-in-out infinite; }
+  #voice-hud.busy .vh-dot { color: var(--accent2); animation: chip-pulse 1.1s ease-in-out infinite; }
+  #voice-hud.done .vh-dot { color: var(--accent); }
+  #voice-hud.error .vh-dot { color: #e3b341; }
+  #voice-hud .vh-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #terms { flex: 1; position: relative; min-height: 0; }
   .term-host { position: absolute; inset: 0; padding: 8px; display: none; }
   .term-host.visible { display: block; }
@@ -170,6 +187,7 @@
     <span class="brand"><span class="dot">●</span> agent shell</span>
     <span id="active-label"></span>
     <button id="agent-btn" class="hbtn" title="orchestrator agent, click to switch"></button>
+    <button id="mic-btn" class="hbtn" title="voice control — click, or hold ⌥ and speak">🎙</button>
     <button id="caffeine-btn" class="hbtn" title="keep mac awake (caffeinate -di)">☕</button>
     <button id="keys-btn" class="hbtn" title="keyboard shortcuts">⌘</button>
     <button id="close-btn" class="hbtn">✕ back to chat</button>
@@ -196,6 +214,7 @@
     </div>
     <div id="terms"></div>
   </div>
+  <div id="voice-hud"><span class="vh-dot">●</span><span class="vh-text"></span></div>
 </div>
 <script src="/vendor/xterm/xterm.js"></script>
 <script src="/vendor/xterm/addon-fit.js"></script>
@@ -349,9 +368,10 @@ async function refreshTree() {
 async function refreshSessions() {
   try {
     const res = await fetch("/api/sessions");
-    const { agent, caffeinate, sessions } = await res.json();
+    const { agent, caffeinate, voice, sessions } = await res.json();
     if (agent) setAgentCmd(agent);
     setCaffeineState(caffeinate);
+    micBtn.style.display = voice === false ? "none" : "";
     lastSessions = sessions;
     renderSidebar();
   } catch {}
@@ -973,6 +993,146 @@ lockKeymapKeys();
 window.addEventListener("beforeunload", (e) => {
   if (active !== CHAT) e.preventDefault();
 });
+
+// ---- voice control ----
+// Push-to-talk: hold ⌥ (option) and speak, release to send; or click the mic
+// to toggle. The recording goes to /api/voice, which transcribes it and routes
+// the utterance onto shell actions server-side (typing into sessions, spawn,
+// kill, caffeinate, agent switch, spoken answers). Actions only this page can
+// perform (view, close_view, sidebar) come back in the response. The HUD pill
+// narrates: listening -> transcribing -> what happened.
+
+const micBtn = document.getElementById("mic-btn");
+const hudEl = document.getElementById("voice-hud");
+const hudTextEl = hudEl.querySelector(".vh-text");
+let recorder = null;
+let recChunks = [];
+let recCancelled = false;
+let pttHold = false;   // recording came from the held ⌥, not the mic button
+let pttTimer = null;   // pending hold-to-arm timeout
+let hudTimer = null;
+
+function hud(state, text) {
+  clearTimeout(hudTimer);
+  hudEl.className = "show " + state;
+  hudTextEl.textContent = text;
+  if (state === "done" || state === "error") hudTimer = setTimeout(() => (hudEl.className = ""), 6000);
+}
+
+async function startVoice(hold) {
+  if (recorder) return;
+  pttHold = hold;
+  let stream;
+  try {
+    // Acquired per utterance, not held open: the OS mic indicator then tells
+    // the truth about when the shell is actually listening.
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    hud("error", "microphone blocked — allow it for this site in Safari settings");
+    return;
+  }
+  const mime = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"].find((t) => MediaRecorder.isTypeSupported(t));
+  recChunks = [];
+  recCancelled = false;
+  recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+  recorder.ondataavailable = (e) => { if (e.data.size) recChunks.push(e.data); };
+  recorder.onstop = () => {
+    stream.getTracks().forEach((t) => t.stop());
+    const type = recorder.mimeType || mime || "audio/mp4";
+    const cancelled = recCancelled;
+    recorder = null;
+    micBtn.classList.remove("rec");
+    if (cancelled) {
+      hudEl.className = "";
+      return;
+    }
+    const blob = new Blob(recChunks, { type });
+    if (blob.size < 1500) {
+      hud("error", "heard nothing");
+      return;
+    }
+    sendVoice(blob);
+  };
+  recorder.start();
+  micBtn.classList.add("rec");
+  hud("listening", hold ? "listening — release ⌥ to send" : "listening — click 🎙 to send, esc cancels");
+}
+
+function stopVoice() {
+  if (recorder && recorder.state === "recording") recorder.stop();
+}
+
+function cancelVoice() {
+  if (!recorder) return;
+  recCancelled = true;
+  stopVoice();
+}
+
+async function sendVoice(blob) {
+  hud("busy", "transcribing…");
+  try {
+    const res = await fetch("/api/voice?focused=" + encodeURIComponent(active ?? CHAT), {
+      method: "POST",
+      headers: { "content-type": blob.type || "application/octet-stream" },
+      body: blob,
+    });
+    const out = await res.json();
+    if (!res.ok) throw new Error(out.error ?? "voice failed " + res.status);
+    for (const a of out.clientActions ?? []) {
+      if (a.type === "view" && a.session) show(a.session);
+      else if (a.type === "close_view") closeSessionView();
+      else if (a.type === "sidebar") treeBtn.onclick();
+    }
+    refreshSessions();
+    hud("done", `“${out.transcript}” — ${out.summary?.length ? out.summary.join("; ") : "no action"}`);
+  } catch (err) {
+    hud("error", String(err.message ?? err));
+  }
+}
+
+micBtn.onclick = () => (recorder ? stopVoice() : startVoice(false));
+
+// Hold ⌥ 200ms to talk. A real chord (⌥ plus another key) never trips it: the
+// second key cancels the arm timer, or discards an in-flight hold recording,
+// so option-arrow word jumps keep working inside the terminal.
+window.addEventListener(
+  "keydown",
+  (e) => {
+    if (e.target instanceof HTMLInputElement || !settingsEl.hidden || recordingAction) return;
+    if (e.key === "Alt" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.repeat && !recorder && !pttTimer) {
+      pttTimer = setTimeout(() => {
+        pttTimer = null;
+        startVoice(true);
+      }, 200);
+      return;
+    }
+    if (pttTimer) {
+      clearTimeout(pttTimer);
+      pttTimer = null;
+    }
+    if (recorder && pttHold && e.key !== "Alt") cancelVoice();
+    if (recorder && !pttHold && e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      cancelVoice();
+    }
+  },
+  { capture: true }
+);
+window.addEventListener(
+  "keyup",
+  (e) => {
+    if (e.key !== "Alt") return;
+    if (pttTimer) {
+      clearTimeout(pttTimer);
+      pttTimer = null;
+    }
+    if (recorder && pttHold) stopVoice();
+  },
+  { capture: true }
+);
+// A lost window (cmd+tab away) can never leave the mic hot.
+window.addEventListener("blur", cancelVoice);
 
 window.addEventListener("resize", refitActive);
 

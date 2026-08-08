@@ -6,7 +6,7 @@ import http from "node:http";
 import os from "node:os";
 import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
@@ -235,13 +235,270 @@ async function readTree(dir, rel = "") {
   return nodes;
 }
 
+// ---- voice control ----
+// POST /api/voice: an utterance in, actions out. The browser records push-to-
+// talk audio; this server transcribes it (Groq whisper) and hands the
+// transcript plus live shell state (sessions, states, pane tails, tree nodes)
+// to a fast LLM router that maps it onto a small closed set of actions.
+// Server-side actions (typing into sessions, spawn, kill, caffeinate, agent
+// switch, spoken answers) execute here; view/sidebar actions return to the
+// browser. On any router failure the fallback is inert: the raw transcript is
+// typed into the focused session, unsubmitted, and nothing else happens — a
+// misheard or misrouted utterance can never fire an action on its own.
+
+const GROQ_KEY =
+  process.env.GROQ_API_KEY ??
+  (() => {
+    // The otto-launcher project keeps a Groq key in its .env; reuse it so the
+    // shell needs no separate setup on this machine.
+    try {
+      const env = readFileSync(path.join(os.homedir(), "Projects", "otto-launcher", ".env"), "utf8");
+      return env.match(/^GROQ_API_KEY=(.+)$/m)?.[1]?.trim() ?? null;
+    } catch {
+      return null;
+    }
+  })();
+const ROUTER_MODEL = process.env.VOICE_ROUTER_MODEL ?? "llama-3.3-70b-versatile";
+
+const ROUTER_SYSTEM = `You route voice commands for "agent shell", a terminal app whose tabs are tmux sessions running coding agents. The session named in chatSession runs the orchestrator agent ("chat"): a full agent that can open sessions with panes, start and stop services, and read or write project memory when asked in plain language.
+
+You get a JSON payload: the spoken transcript, the focused session, all sessions (state: working = agent busy, waiting = agent finished or needs input, shell = plain shell, service/stopped = background command), the visible pane tail of relevant sessions, and the project tree node paths.
+
+Reply with JSON only: {"actions":[...]}, at most 5 actions, executed in order. Action types:
+- {"type":"dictate","session":"<name>","text":"...","submit":true} — type text into a session and press Enter. Use for prompts, instructions, and answers addressed to an agent, and for shell commands ("run npm test" means dictate "npm test"). submit:false types without Enter; use it only when the user clearly wants to keep composing.
+- {"type":"keys","session":"<name>","keys":["Enter"]} — press special keys. Allowed: Enter, Escape, Tab, Up, Down, Left, Right, BSpace, Space, C-c, and single letters or digits like "y" or "2". Use for answering menus and permission prompts visible in the pane tail (send the matching option key) and for "stop" or "interrupt" (Escape, or C-c in a shell).
+- {"type":"view","session":"<name>"} — show that session in the app.
+- {"type":"close_view"} — leave the current session view, back to chat.
+- {"type":"sidebar"} — toggle the project tree sidebar.
+- {"type":"spawn","node":"<tree node path>","name":"<lowercase-hyphen-name>"} — create a work session on a project node. Name it after the piece of work; invent a short name if none was given.
+- {"type":"kill","session":"<name>"} — destroy a session and everything in it. Only on an explicit kill or destroy request.
+- {"type":"caffeinate","on":true} — keep the mac awake (or release it).
+- {"type":"agent","cmd":"<command>"} — switch the chat orchestrator command (for example "claude-otto" or "pi"). Only on an explicit request; it restarts chat.
+- {"type":"speak","text":"one short sentence"} — answer out loud. Use for status questions ("who's waiting on me?" — summarize the waiting and working sessions from the payload) and to say why you did nothing.
+
+Rules:
+- The default target is the focused session. Spoken names are fuzzy: "retry loop" means session "retry-loop". Only reference sessions and nodes that exist in the payload.
+- The transcript is speech-to-text: fix its capitalization and punctuation for the target. Shell commands go exactly as typed at a prompt ("npm test", "git status", never "NPM Test."); prose for an agent keeps normal sentence form without a trailing comma.
+- A bare confirmation ("yes", "go ahead", "option two") while the focused pane shows a question or menu: answer with keys matching the visible choices; otherwise dictate it.
+- To act on a prompt in a session that is not focused, put a view action first so the user sees what happens.
+- A plain request to create or open a session on a project node, with no extras: use spawn directly. Use chat only when the request needs more than spawn can do (panes, a goal, a specific directory).
+- Anything about project plans, memory, "what were we doing", opening a directory with panes, or starting, stopping, or restarting a named service: dictate it to the chat session with submit:true. Chat is the smart path; you are the fast path.
+- Unclear or nothing matches: return one speak action asking a single short question. Never guess kill, agent, or spawn.`;
+
+/** Collects a request body as a Buffer (readBody would corrupt audio bytes). */
+function readBinaryBody(req) {
+  return new Promise((resolve, reject) => {
+    const bufs = [];
+    req.on("data", (c) => bufs.push(c));
+    req.on("end", () => resolve(Buffer.concat(bufs)));
+    req.on("error", reject);
+  });
+}
+
+/**
+ * Transcribes one recorded utterance via Groq whisper-large-v3-turbo. Session
+ * names ride along as the whisper prompt so spoken hyphen-names ("retry loop")
+ * come back recognizable. An empty transcript is an error, not a result.
+ */
+async function transcribe(audio, contentType, sessionNames) {
+  const type = contentType?.split(";")[0] || "audio/mp4";
+  const ext = type.includes("webm") ? "webm" : type.includes("ogg") ? "ogg" : type.includes("wav") ? "wav" : "m4a";
+  const fd = new FormData();
+  fd.append("file", new Blob([audio], { type }), "utterance." + ext);
+  fd.append("model", "whisper-large-v3-turbo");
+  fd.append("prompt", `Voice commands for a terminal app. Sessions: ${sessionNames.join(", ")}.`.slice(0, 500));
+  const res = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { authorization: `Bearer ${GROQ_KEY}` },
+    body: fd,
+  });
+  if (!res.ok) throw new Error(`transcription ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const text = ((await res.json()).text ?? "").trim();
+  if (text.length < 2) throw new Error("heard nothing");
+  return text;
+}
+
+/** One JSON-mode chat call to the router model, parsed leniently ({ to }). */
+async function routerCall(userPayload) {
+  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: { authorization: `Bearer ${GROQ_KEY}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      model: ROUTER_MODEL,
+      temperature: 0,
+      response_format: { type: "json_object" },
+      messages: [
+        { role: "system", content: ROUTER_SYSTEM },
+        { role: "user", content: JSON.stringify(userPayload) },
+      ],
+    }),
+  });
+  if (!res.ok) throw new Error(`router ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const content = (await res.json()).choices?.[0]?.message?.content ?? "";
+  const m = content.match(/\{[\s\S]*\}/);
+  return JSON.parse(m ? m[0] : content);
+}
+
+/**
+ * Live state the router decides against: every session with its agent state,
+ * pane tails for the focused, chat, and waiting sessions (what a "yes" or an
+ * option number would answer), and the vault node paths spawn can target.
+ */
+async function voiceContext(focused) {
+  const sessions = await listSessions();
+  const paneTails = {};
+  for (const s of sessions) {
+    if (s.name !== focused && s.state !== "waiting" && !s.isChat) continue;
+    try {
+      const { stdout } = await execFileAsync("tmux", ["capture-pane", "-p", "-t", "=" + s.name + ":"]);
+      paneTails[s.name] = stdout.replace(/\s+$/, "").split("\n").slice(-14).join("\n");
+    } catch {}
+  }
+  return { sessions, paneTails, projectNodes: flattenNodePaths(await readTree(TREES_ROOT)) };
+}
+
+/** Flattens the nested tree into the plain node-path list the router reads. */
+function flattenNodePaths(nodes, out = []) {
+  for (const n of nodes) {
+    out.push(n.path);
+    flattenNodePaths(n.children, out);
+  }
+  return out;
+}
+
+const NAMED_KEYS = new Set(["Enter", "Escape", "Tab", "Up", "Down", "Left", "Right", "BSpace", "Space", "C-c", "C-d", "C-u", "Home", "End", "PPage", "NPage"]);
+/** Awaitable pause, used to let a TUI ingest typed text before Enter. */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** Session-name slug of any spoken phrase: "Voice Smoke" -> "voice-smoke". */
+const normName = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+
+/** Maps a spoken (fuzzy) session name onto a real one, or null. */
+function resolveSession(name, sessions) {
+  if (!name) return null;
+  const hit = sessions.find((s) => s.name === name) ?? sessions.find((s) => normName(s.name) === normName(name));
+  return hit?.name ?? null;
+}
+
+/**
+ * Types literal text into a session's active pane. The pause before Enter
+ * lets an agent TUI finish ingesting the text before the submit arrives.
+ */
+async function typeInto(session, text, submit) {
+  // "=name:" exact session, active pane — send-keys rejects bare "=name".
+  await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "-l", "--", text]);
+  if (submit) {
+    await sleep(150);
+    await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "Enter"]);
+  }
+}
+
+/**
+ * Executes the router's plan. Server-owned actions run here in order; actions
+ * only the page can perform (view, close_view, sidebar) are returned to it.
+ * Every action degrades to a summary line, never an exception: one failed
+ * step must not hide what the rest of the plan did.
+ */
+async function executeVoiceActions(actions, sessions, focused) {
+  const summary = [];
+  const clientActions = [];
+  for (const a of (Array.isArray(actions) ? actions : []).slice(0, 5)) {
+    try {
+      switch (a.type) {
+        case "dictate": {
+          const target = resolveSession(a.session, sessions) ?? focused;
+          const text = String(a.text ?? "").slice(0, 4000);
+          if (!text) break;
+          await typeInto(target, text, a.submit !== false);
+          summary.push(`typed into ${target}`);
+          break;
+        }
+        case "keys": {
+          const target = resolveSession(a.session, sessions) ?? focused;
+          const keys = (Array.isArray(a.keys) ? a.keys : [])
+            .filter((k) => NAMED_KEYS.has(k) || /^[0-9a-zA-Z]$/.test(k))
+            .slice(0, 8);
+          if (!keys.length) break;
+          await execFileAsync("tmux", ["send-keys", "-t", "=" + target + ":", ...keys]);
+          summary.push(`pressed ${keys.join(" ")} in ${target}`);
+          break;
+        }
+        case "view": {
+          const target = resolveSession(a.session, sessions);
+          if (!target) {
+            summary.push(`no session "${a.session}"`);
+            break;
+          }
+          clientActions.push({ type: "view", session: target });
+          summary.push(`viewing ${target}`);
+          break;
+        }
+        case "close_view":
+          clientActions.push({ type: "close_view" });
+          summary.push("closed view");
+          break;
+        case "sidebar":
+          clientActions.push({ type: "sidebar" });
+          summary.push("toggled sidebar");
+          break;
+        case "spawn": {
+          const name = normName(a.name ?? "");
+          const result = await spawnSession(String(a.node ?? ""), name);
+          if (result.status !== 200) {
+            summary.push(`spawn failed: ${result.error}`);
+            break;
+          }
+          clientActions.push({ type: "view", session: name });
+          summary.push(`spawned ${name} on ${a.node}`);
+          break;
+        }
+        case "kill": {
+          const target = resolveSession(a.session, sessions);
+          if (!target || target === CHAT_SESSION) {
+            summary.push("refusing to kill that");
+            break;
+          }
+          await execFileAsync("tmux", ["kill-session", "-t", "=" + target]);
+          summary.push(`killed ${target}`);
+          break;
+        }
+        case "caffeinate":
+          setCaffeinate(Boolean(a.on));
+          summary.push(`caffeinate ${a.on ? "on" : "off"}`);
+          break;
+        case "agent": {
+          const cmd = String(a.cmd ?? "").trim();
+          if (!cmd) break;
+          agentCmd = cmd;
+          try {
+            await execFileAsync("tmux", ["kill-session", "-t", "=" + CHAT_SESSION]);
+          } catch {} // no chat session running: reconnect spawns it fresh
+          summary.push(`chat agent → ${cmd}`);
+          break;
+        }
+        case "speak": {
+          const text = String(a.text ?? "").slice(0, 400);
+          if (!text) break;
+          execFile("say", [text], () => {});
+          summary.push(`“${text}”`);
+          break;
+        }
+        default:
+          summary.push(`unknown action ${String(a.type).slice(0, 40)}`);
+      }
+    } catch (err) {
+      summary.push(`${a.type} failed: ${String(err.stderr ?? err.message ?? err).slice(0, 120)}`);
+    }
+  }
+  return { summary, clientActions };
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   try {
     if (url.pathname === "/api/sessions") {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(
-        JSON.stringify({ agent: agentCmd, caffeinate: caffeinateProc !== null, sessions: await listSessions() })
+        JSON.stringify({ agent: agentCmd, caffeinate: caffeinateProc !== null, voice: Boolean(GROQ_KEY), sessions: await listSessions() })
       );
       return;
     }
@@ -316,6 +573,48 @@ const server = http.createServer(async (req, res) => {
       } catch (err) {
         res.writeHead(500, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
+      }
+      return;
+    }
+    if (url.pathname === "/api/voice" && req.method === "POST") {
+      if (!GROQ_KEY) {
+        res.writeHead(503, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "no Groq key: set GROQ_API_KEY or keep one in otto-launcher/.env" }));
+        return;
+      }
+      const focused = url.searchParams.get("focused") || CHAT_SESSION;
+      try {
+        const audio = await readBinaryBody(req);
+        if (audio.length < 200) {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "no audio" }));
+          return;
+        }
+        const ctx = await voiceContext(focused);
+        const transcript = await transcribe(audio, req.headers["content-type"], ctx.sessions.map((s) => s.name));
+        let out;
+        try {
+          const plan = await routerCall({
+            transcript,
+            chatSession: CHAT_SESSION,
+            focusedSession: focused,
+            sessions: ctx.sessions.map(({ name, state, node, kind }) => ({ name, state, node, kind })),
+            paneTails: ctx.paneTails,
+            projectNodes: ctx.projectNodes,
+          });
+          out = await executeVoiceActions(plan.actions, ctx.sessions, focused);
+        } catch (err) {
+          console.error("voice router:", err.message ?? err);
+          try {
+            await typeInto(focused, transcript, false);
+          } catch {}
+          out = { summary: ["router failed — typed the transcript, not submitted"], clientActions: [] };
+        }
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ transcript, ...out }));
+      } catch (err) {
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: String(err.message ?? err) }));
       }
       return;
     }

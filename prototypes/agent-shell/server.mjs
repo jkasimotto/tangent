@@ -277,6 +277,7 @@ Reply with JSON only: {"actions":[...]}, at most 5 actions, executed in order. A
 - {"type":"speak","text":"one short sentence"} — answer out loud. Use for status questions ("who's waiting on me?" — summarize the waiting and working sessions from the payload) and to say why you did nothing.
 
 Rules:
+- The user mostly talks straight to the focused agent. If the utterance reads as a message, instruction, question, or answer addressed to an agent — rather than a command about managing the shell itself — dictate it to the focused session with submit:true, changing nothing but capitalization and punctuation. When torn between dictate and any non-destructive action, dictate.
 - The default target is the focused session. Spoken names are fuzzy: "retry loop" means session "retry-loop". Only reference sessions and nodes that exist in the payload.
 - The transcript is speech-to-text: fix its capitalization and punctuation for the target. Shell commands go exactly as typed at a prompt ("npm test", "git status", never "NPM Test."); prose for an agent keeps normal sentence form without a trailing comma.
 - A bare confirmation ("yes", "go ahead", "option two") while the focused pane shows a question or menu: answer with keys matching the visible choices; otherwise dictate it.
@@ -588,6 +589,18 @@ const server = http.createServer(async (req, res) => {
         if (audio.length < 200) {
           res.writeHead(400, { "content-type": "application/json" });
           res.end(JSON.stringify({ error: "no audio" }));
+          return;
+        }
+        // raw=1 is the dictation lane (⇧⌥ in the page): the transcript goes
+        // verbatim into the focused session and submits. The router never
+        // sees it, so speech meant for an agent can never be reinterpreted
+        // as a shell command.
+        if (url.searchParams.get("raw") === "1") {
+          const names = (await listSessions()).map((s) => s.name);
+          const transcript = await transcribe(audio, req.headers["content-type"], names);
+          await typeInto(focused, transcript, true);
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ transcript, summary: [`dictated to ${focused}`], clientActions: [] }));
           return;
         }
         const ctx = await voiceContext(focused);

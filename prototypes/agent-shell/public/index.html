@@ -187,7 +187,7 @@
     <span class="brand"><span class="dot">●</span> agent shell</span>
     <span id="active-label"></span>
     <button id="agent-btn" class="hbtn" title="orchestrator agent, click to switch"></button>
-    <button id="mic-btn" class="hbtn" title="voice control — click, or hold ⌥ and speak">🎙</button>
+    <button id="mic-btn" class="hbtn" title="voice — hold ⌥: command the shell; hold ⇧⌥: dictate to the focused agent (click / shift-click likewise)">🎙</button>
     <button id="caffeine-btn" class="hbtn" title="keep mac awake (caffeinate -di)">☕</button>
     <button id="keys-btn" class="hbtn" title="keyboard shortcuts">⌘</button>
     <button id="close-btn" class="hbtn">✕ back to chat</button>
@@ -1010,6 +1010,7 @@ let recChunks = [];
 let recCancelled = false;
 let pttHold = false;   // recording came from the held ⌥, not the mic button
 let pttTimer = null;   // pending hold-to-arm timeout
+let rawMode = false;   // dictation lane (⇧⌥ / shift-click): verbatim, no router
 let hudTimer = null;
 
 function hud(state, text) {
@@ -1019,9 +1020,10 @@ function hud(state, text) {
   if (state === "done" || state === "error") hudTimer = setTimeout(() => (hudEl.className = ""), 6000);
 }
 
-async function startVoice(hold) {
+async function startVoice(hold, raw) {
   if (recorder) return;
   pttHold = hold;
+  rawMode = Boolean(raw);
   let stream;
   try {
     // Acquired per utterance, not held open: the OS mic indicator then tells
@@ -1055,7 +1057,14 @@ async function startVoice(hold) {
   };
   recorder.start();
   micBtn.classList.add("rec");
-  hud("listening", hold ? "listening — release ⌥ to send" : "listening — click 🎙 to send, esc cancels");
+  hud(
+    "listening",
+    rawMode
+      ? `dictating to ${active ?? CHAT} — ${hold ? "release to send" : "click 🎙 to send"}`
+      : hold
+        ? "listening — release ⌥ to send"
+        : "listening — click 🎙 to send, esc cancels"
+  );
 }
 
 function stopVoice() {
@@ -1071,7 +1080,7 @@ function cancelVoice() {
 async function sendVoice(blob) {
   hud("busy", "transcribing…");
   try {
-    const res = await fetch("/api/voice?focused=" + encodeURIComponent(active ?? CHAT), {
+    const res = await fetch("/api/voice?focused=" + encodeURIComponent(active ?? CHAT) + (rawMode ? "&raw=1" : ""), {
       method: "POST",
       headers: { "content-type": blob.type || "application/octet-stream" },
       body: blob,
@@ -1090,27 +1099,29 @@ async function sendVoice(blob) {
   }
 }
 
-micBtn.onclick = () => (recorder ? stopVoice() : startVoice(false));
+micBtn.onclick = (e) => (recorder ? stopVoice() : startVoice(false, e.shiftKey));
 
-// Hold ⌥ 200ms to talk. A real chord (⌥ plus another key) never trips it: the
+// Hold ⌥ 200ms to talk (routed as a command); hold ⇧⌥ to dictate verbatim to
+// the focused session. A real chord (⌥ plus another key) never trips it: the
 // second key cancels the arm timer, or discards an in-flight hold recording,
 // so option-arrow word jumps keep working inside the terminal.
 window.addEventListener(
   "keydown",
   (e) => {
     if (e.target instanceof HTMLInputElement || !settingsEl.hidden || recordingAction) return;
-    if (e.key === "Alt" && !e.metaKey && !e.ctrlKey && !e.shiftKey && !e.repeat && !recorder && !pttTimer) {
+    if (e.key === "Alt" && !e.metaKey && !e.ctrlKey && !e.repeat && !recorder && !pttTimer) {
+      const raw = e.shiftKey;
       pttTimer = setTimeout(() => {
         pttTimer = null;
-        startVoice(true);
+        startVoice(true, raw);
       }, 200);
       return;
     }
-    if (pttTimer) {
+    if (pttTimer && e.key !== "Shift") {
       clearTimeout(pttTimer);
       pttTimer = null;
     }
-    if (recorder && pttHold && e.key !== "Alt") cancelVoice();
+    if (recorder && pttHold && e.key !== "Alt" && e.key !== "Shift") cancelVoice();
     if (recorder && !pttHold && e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();

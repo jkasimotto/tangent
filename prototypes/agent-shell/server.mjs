@@ -4,6 +4,7 @@
 // every other tmux session is a workspace the agent (or user) created.
 import http from "node:http";
 import os from "node:os";
+import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { existsSync, mkdirSync } from "node:fs";
 import { execFile } from "node:child_process";
@@ -43,14 +44,14 @@ async function listSessions() {
     const { stdout } = await execFileAsync("tmux", [
       "list-sessions",
       "-F",
-      "#{session_name}\t#{session_path}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{@tangent_node}",
+      "#{session_name}\t#{session_path}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{@tangent_node}\t#{pane_current_command}",
     ]);
-    return stdout
+    const sessions = stdout
       .trim()
       .split("\n")
       .filter(Boolean)
       .map((line) => {
-        const [name, cwd, windows, attached, created, node] = line.split("\t");
+        const [name, cwd, windows, attached, created, node, command] = line.split("\t");
         return {
           name,
           cwd,
@@ -58,12 +59,74 @@ async function listSessions() {
           attached: Number(attached) > 0,
           created: Number(created) * 1000,
           node: node || null,
+          command,
           isChat: name === CHAT_SESSION,
         };
       });
+    return await withAgentStates(sessions);
   } catch {
     return []; // no tmux server running yet
   }
+}
+
+// ---- agent state via screen diff ----
+// An agent TUI repaints at least once a second while working (spinner and
+// elapsed-seconds timer) and goes fully static when it waits for input, so
+// hashing the visible pane between polls separates "working" from "waiting".
+// A plain shell as the pane command means no agent is running at all. This
+// covers every harness without hooks; a later refinement can split "waiting"
+// into idle-at-prompt vs blocked-on-question with a cheap LLM call.
+const SHELL_CMDS = new Set(["zsh", "bash", "fish", "sh", "dash", "tcsh", "nu"]);
+const MIN_SAMPLE_MS = 1200; // a repaint window; closer polls can't show a diff
+const paneSamples = new Map(); // session name -> { hash, at, state }
+
+/**
+ * Hashes the visible pane content of a session's active pane, the raw signal
+ * for the working/waiting screen diff.
+ */
+async function screenHash(name) {
+  // "=name:" is an exact session match; capture-pane rejects bare "=name".
+  const { stdout } = await execFileAsync("tmux", ["capture-pane", "-p", "-t", "=" + name + ":"]);
+  return createHash("sha1").update(stdout).digest("hex");
+}
+
+/**
+ * Classifies one session as working, waiting, or shell by comparing the pane
+ * hash against the previous poll's sample in `paneSamples`. Polls closer than
+ * MIN_SAMPLE_MS return the cached state, so extra clients cannot mask repaints.
+ */
+function classifyState(name, command, hash, now) {
+  if (SHELL_CMDS.has(command)) {
+    paneSamples.set(name, { hash, at: now, state: "shell" });
+    return "shell";
+  }
+  const prev = paneSamples.get(name);
+  if (prev && now - prev.at < MIN_SAMPLE_MS) return prev.state;
+  const state = !prev || prev.state === "shell" || hash !== prev.hash ? "working" : "waiting";
+  paneSamples.set(name, { hash, at: now, state });
+  return state;
+}
+
+/**
+ * Attaches a `state` field to each session for the sidebar chips and drops
+ * samples of sessions that no longer exist. Capture failures degrade to
+ * state null rather than hiding the session.
+ */
+async function withAgentStates(sessions) {
+  const now = Date.now();
+  const out = await Promise.all(
+    sessions.map(async (s) => {
+      try {
+        return { ...s, state: classifyState(s.name, s.command, await screenHash(s.name), now) };
+      } catch {
+        return { ...s, state: null };
+      }
+    })
+  );
+  for (const name of paneSamples.keys()) {
+    if (!sessions.some((s) => s.name === name)) paneSamples.delete(name);
+  }
+  return out;
 }
 
 const TREE_SKIP = new Set([".git", ".obsidian", "shared", "node_modules"]);

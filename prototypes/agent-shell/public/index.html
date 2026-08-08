@@ -82,6 +82,13 @@
   .sess-chip:hover { color: var(--text); border-color: var(--dim); }
   .sess-chip.active { background: var(--accent2); border-color: var(--accent2); color: #04121f; font-weight: 600; }
   .sess-chip.active::before { color: #04121f; }
+  /* Agent state from screen diff: green = working (no attention needed),
+     pulsing amber = waiting for you, dim = plain shell / agent exited.
+     These sit after .active so the dot keeps its meaning on the active chip. */
+  .sess-chip.working::before { color: var(--accent); }
+  .sess-chip.waiting::before { color: #e3b341; animation: chip-pulse 1.1s ease-in-out infinite; }
+  .sess-chip.shell::before { color: var(--dim); }
+  @keyframes chip-pulse { 50% { opacity: 0.2; } }
   #unfiled { flex: none; border-top: 1px solid var(--border); padding: 8px 12px; }
   #unfiled:empty { display: none; }
   #unfiled .title { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
@@ -286,6 +293,22 @@ function sessionsForNode(path) {
   return lastSessions.filter((s) => !s.isChat && s.node === path);
 }
 
+const STATE_HINT = {
+  working: "agent working",
+  waiting: "agent waiting for you",
+  shell: "shell (no agent running)",
+};
+
+function sessionChip(s) {
+  const chip = document.createElement("button");
+  chip.className =
+    "sess-chip" + (active === s.name ? " active" : "") + (s.state ? " " + s.state : "");
+  chip.textContent = s.name;
+  chip.title = STATE_HINT[s.state] ?? "";
+  chip.onclick = () => show(s.name);
+  return chip;
+}
+
 // A node passes the session filter when a session sits on it or anywhere in
 // its subtree, so ancestors of session nodes always stay visible.
 function subtreeHasSession(path) {
@@ -334,11 +357,7 @@ function renderNode(node, container) {
   row.appendChild(name);
 
   for (const s of sessionsForNode(node.path)) {
-    const chip = document.createElement("button");
-    chip.className = "sess-chip" + (active === s.name ? " active" : "");
-    chip.textContent = s.name;
-    chip.onclick = () => show(s.name);
-    row.appendChild(chip);
+    row.appendChild(sessionChip(s));
   }
   container.appendChild(row);
 
@@ -386,7 +405,7 @@ function renderSidebar() {
     filterOn,
     focusPath,
     [...expanded].sort(),
-    lastSessions.map((s) => [s.name, s.node]),
+    lastSessions.map((s) => [s.name, s.node, s.state]),
     treeNodes,
   ]);
   if (key === sidebarKey) return;
@@ -408,11 +427,7 @@ function renderSidebar() {
     title.textContent = "unfiled sessions";
     unfiledEl.appendChild(title);
     for (const s of unfiled) {
-      const chip = document.createElement("button");
-      chip.className = "sess-chip" + (active === s.name ? " active" : "");
-      chip.textContent = s.name;
-      chip.onclick = () => show(s.name);
-      unfiledEl.appendChild(chip);
+      unfiledEl.appendChild(sessionChip(s));
     }
   }
 }

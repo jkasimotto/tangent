@@ -34,7 +34,6 @@
   .hbtn:hover { color: var(--text); border-color: var(--dim); }
   .hbtn.on { color: var(--accent); border-color: var(--accent); }
   #agent-btn { margin-left: auto; }
-  #close-btn { display: none; }
   #main { flex: 1; display: flex; min-height: 0; }
   #sidebar {
     width: 0; flex: none; overflow: hidden;
@@ -221,7 +220,6 @@
     <button id="mic-btn" class="hbtn" title="voice — hold ⌥ and speak (release to send), or tap ⌥ to latch (tap again to send). ⇧ or ↑ while holding locks the recording.">🎙</button>
     <button id="caffeine-btn" class="hbtn" title="keep mac awake (caffeinate -di)">☕</button>
     <button id="keys-btn" class="hbtn" title="keyboard shortcuts">⌘</button>
-    <button id="close-btn" class="hbtn">✕ back to chat</button>
   </header>
   <div id="settings" hidden>
     <div class="s-title">keyboard shortcuts <button id="s-reset">reset defaults</button></div>
@@ -258,7 +256,6 @@ const terms = new Map(); // session name -> {term, fit, ws, host}
 let active = null;
 
 const termsEl = document.getElementById("terms");
-const closeBtn = document.getElementById("close-btn");
 const treeBtn = document.getElementById("tree-btn");
 const sidebarEl = document.getElementById("sidebar");
 const treeEl = document.getElementById("tree");
@@ -348,19 +345,19 @@ function show(session) {
   const entry = connect(session);
   active = session;
   for (const [name, e] of terms) e.host.classList.toggle("visible", name === session);
-  closeBtn.style.display = session === CHAT ? "none" : "block";
-  activeLabel.textContent = session === CHAT ? "" : session;
+  activeLabel.textContent = session;
   requestAnimationFrame(() => { entry.fit.fit(); entry.term.focus(); });
   renderSidebar();
 }
 
 // Detach only: close our client connection, keep the tmux session alive.
+// Reached via the close-session shortcut and the voice close_view action;
+// "back to chat" is otherwise just clicking the root node's home in the tree.
 function closeSessionView() {
   if (active === CHAT) return;
   dispose(active);
   show(CHAT);
 }
-closeBtn.onclick = closeSessionView;
 
 function refitActive() {
   const e = active && terms.get(active);
@@ -641,6 +638,64 @@ function renderNode(node, container) {
   }
 }
 
+// The vault root is a row in the tree, not app chrome. Its home agent is the
+// orchestrator chat session: always present, never deletable (the server
+// refuses to kill it), shown with the same ⌂ dot as any other node's home.
+let rootCollapsed = false;
+function renderRootNode(container) {
+  const row = document.createElement("div");
+  row.className = "node-row";
+
+  const caret = document.createElement("button");
+  caret.className = "caret";
+  caret.textContent = rootCollapsed ? "▸" : "▾";
+  caret.onclick = () => {
+    rootCollapsed = !rootCollapsed;
+    renderSidebar();
+  };
+  row.appendChild(caret);
+
+  const name = document.createElement("button");
+  name.className = "node-name";
+  name.textContent = "projects";
+  name.title = "all projects";
+  name.onclick = () => focusNode(null);
+  row.appendChild(name);
+
+  const chat = lastSessions.find((s) => s.isChat);
+  const dot = document.createElement("button");
+  dot.className =
+    "home-dot" + (chat?.state ? " " + chat.state : "") + (active === CHAT ? " active" : "");
+  dot.textContent = "⌂";
+  dot.title = "orchestrator chat" + (chat?.state ? " — " + (STATE_HINT[chat.state] ?? "") : "");
+  dot.onclick = () => show(CHAT);
+  row.appendChild(dot);
+
+  if (rootCollapsed) {
+    const inside = lastSessions.filter((s) => !s.isChat && s.node);
+    if (inside.length) {
+      let best = null;
+      for (const s of inside) {
+        if ((STATE_RANK[s.state] ?? 0) > (STATE_RANK[best] ?? 0)) best = s.state;
+      }
+      const roll = document.createElement("span");
+      roll.className = "rollup" + (best ? " " + best : "");
+      roll.textContent = "●";
+      roll.title = inside.length + (inside.length === 1 ? " session" : " sessions") + " inside";
+      row.appendChild(roll);
+    }
+  }
+
+  container.appendChild(row);
+
+  if (!rootCollapsed) {
+    const kids = document.createElement("div");
+    kids.className = "node-children";
+    for (const node of treeNodes) renderNode(node, kids);
+    container.appendChild(kids);
+  }
+}
+
 function renderCrumbs() {
   crumbsEl.innerHTML = "";
   const line = document.createElement("span");
@@ -685,6 +740,7 @@ function renderSidebar(force = false) {
     active,
     filterOn,
     focusPath,
+    rootCollapsed,
     spawningNode,
     spawnError,
     [...expanded].sort(),
@@ -699,8 +755,8 @@ function renderSidebar(force = false) {
   renderCrumbs();
 
   treeEl.innerHTML = "";
-  const roots = focusPath ? [findNode(focusPath)] : treeNodes;
-  for (const node of roots) renderNode(node, treeEl);
+  if (focusPath) renderNode(findNode(focusPath), treeEl);
+  else renderRootNode(treeEl);
 
   unfiledEl.innerHTML = "";
   const unfiled = lastSessions.filter((s) => !s.isChat && !s.node);
@@ -1111,7 +1167,7 @@ function visibleNodePaths() {
       if (expanded.has(n.path)) walk(n.children);
     }
   };
-  walk(focusPath ? [findNode(focusPath)].filter(Boolean) : treeNodes);
+  walk(focusPath ? [findNode(focusPath)].filter(Boolean) : rootCollapsed ? [] : treeNodes);
   return out;
 }
 

@@ -1063,7 +1063,7 @@ const server = http.createServer(async (req, res) => {
     // The frontend must target the same chat session the server special-cases,
     // so the name ships as a tiny script instead of being hardcoded twice.
     if (url.pathname === "/config.js") {
-      res.writeHead(200, { "content-type": "text/javascript" });
+      res.writeHead(200, { "content-type": "text/javascript", "cache-control": "no-cache" });
       res.end(`window.CHAT_SESSION = ${JSON.stringify(CHAT_SESSION)};\n`);
       return;
     }
@@ -1250,7 +1250,13 @@ const server = http.createServer(async (req, res) => {
       filePath = path.join(here, "public", path.normalize(url.pathname).replace(/^([.][.][/\\])+/, ""));
     }
     const body = await readFile(filePath);
-    res.writeHead(200, { "content-type": MIME[path.extname(filePath)] ?? "application/octet-stream" });
+    // no-cache (revalidate, and with no validators: refetch): Safari's
+    // heuristic caching once served a stale keymap.js against a fresh
+    // index.html, silently unbinding a renamed action's chord.
+    res.writeHead(200, {
+      "content-type": MIME[path.extname(filePath)] ?? "application/octet-stream",
+      "cache-control": "no-cache",
+    });
     res.end(body);
   } catch {
     res.writeHead(404).end("not found");

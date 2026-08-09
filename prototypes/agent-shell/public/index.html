@@ -637,7 +637,10 @@ function renderSidebar(force = false) {
     };
     row.onmousedown = (e) => {
       e.preventDefault();
-      if (browsing) setSideSel(idx, false);
+      // Clicking the tree is the mouse way into browsing: the pane you
+      // clicked becomes the pane the arrow keys drive.
+      if (!browsing) findInput.focus();
+      setSideSel(idx, false);
       activateTreeItem(item);
     };
     panelEl.appendChild(row);
@@ -928,11 +931,15 @@ function renderKillBtn() {
 // drives: ⌘D on the header's kill button and in the tree legend, and on every
 // kill button in the tree's detail pane. Switching agents stays a visible
 // button with no chord.
+// defaultKeys is the built-in factory chord: /keymap.js may override it, but
+// a missing or stale-cached /keymap.js can never silently unbind an action.
+// `was` names an action's previous name, so a binding stored under the old
+// name keeps working after a rename ("map" became "find").
 const ACTION_META = [
-  { action: "close-session", label: "close session view (detach)", when: "session" },
-  { action: "kill-session", label: "kill the session in front of you", when: "any" },
-  { action: "find", label: "find in the tree", when: "any" },
-  { action: "talk", label: "typed command (voice grammar)", when: "any" },
+  { action: "close-session", label: "close session view (detach)", when: "session", defaultKeys: "cmd+w" },
+  { action: "kill-session", label: "kill the session in front of you", when: "any", defaultKeys: "cmd+d" },
+  { action: "find", label: "find in the tree", when: "any", defaultKeys: "cmd+/", was: "map" },
+  { action: "talk", label: "typed command (voice grammar)", when: "any", defaultKeys: "cmd+k" },
 ];
 
 const ACTIONS = {
@@ -945,13 +952,19 @@ const ACTIONS = {
 const KEYMAP_STORE = "agentshell.keymap";
 
 // The live keymap: one entry per action, keys possibly null (unbound).
-// localStorage overrides win over the factory defaults in /keymap.js.
+// Precedence: localStorage (the editor's saves, old action name accepted)
+// over /keymap.js over the built-in defaults.
 function loadKeymap() {
   let stored = {};
   try { stored = JSON.parse(localStorage.getItem(KEYMAP_STORE)) ?? {}; } catch {}
   return ACTION_META.map((m) => {
-    const fallback = (window.KEYMAP ?? []).find((b) => b.action === m.action)?.keys ?? null;
-    return { ...m, keys: m.action in stored ? stored[m.action] : fallback };
+    const fromFile = (window.KEYMAP ?? []).find((b) => b.action === m.action)?.keys;
+    const keys =
+      m.action in stored ? stored[m.action]
+      : m.was && m.was in stored ? stored[m.was]
+      : fromFile !== undefined ? fromFile
+      : m.defaultKeys;
+    return { ...m, keys };
   });
 }
 let keymap = loadKeymap();
@@ -1692,15 +1705,24 @@ findInput.onfocus = () => {
   browsing = true;
   sidebarEl.classList.add("browsing");
   renderSidebar(true);
-  // Land the selection on what the work pane already shows.
+  // Land the selection on what the work pane already shows. No scroll: a
+  // click that entered browsing must not yank the pane elsewhere.
   const idx = sideItems.findIndex((it) =>
     stageOn ? it.kind === "outcome" && it.t.file === stageFile : Boolean(active) && itemSession(it) === active
   );
   sideSel = idx >= 0 ? idx : 0;
-  paintSideSel(true);
+  paintSideSel(false);
   renderOutcomeStrip();
   renderKillBtn();
   fetchVault(true).then(() => renderSidebar(true));
+};
+
+// Clicking the tree's empty space also enters browsing, without touching any
+// row's meaning.
+panelEl.onmousedown = (e) => {
+  if (e.target !== panelEl) return;
+  e.preventDefault();
+  findInput.focus();
 };
 
 findInput.onblur = () => {

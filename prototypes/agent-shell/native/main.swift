@@ -118,6 +118,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     decisionHandler(.grant)
   }
 
+  // WKWebView has no built-in JS dialogs: without these delegate methods
+  // alert() is silently dropped and confirm() returns false, which made the
+  // kill-session confirmation cancel itself every time.
+  func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
+               initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
+    let a = NSAlert()
+    a.messageText = message
+    a.addButton(withTitle: "OK")
+    a.beginSheetModal(for: window) { _ in completionHandler() }
+  }
+
+  func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+               initiatedByFrame frame: WKFrameInfo,
+               completionHandler: @escaping (Bool) -> Void) {
+    let a = NSAlert()
+    a.messageText = message
+    a.addButton(withTitle: "OK")
+    a.addButton(withTitle: "Cancel")
+    a.beginSheetModal(for: window) { resp in
+      completionHandler(resp == .alertFirstButtonReturn)
+    }
+  }
+
   // Links out of localhost open in the default browser, not in this window.
   func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {

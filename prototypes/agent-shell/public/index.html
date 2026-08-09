@@ -118,6 +118,13 @@
   }
   .node-row:hover .add-btn { visibility: visible; }
   .add-btn:hover { color: var(--accent); }
+  .kill-btn {
+    visibility: hidden; margin-left: auto; padding: 0 5px; border-radius: 4px;
+    background: none; border: none; color: var(--dim); font-size: 11px;
+  }
+  .sess-row:hover .kill-btn { visibility: visible; }
+  .kill-btn:hover { color: #f85149; }
+  .sess-row.active .kill-btn { color: #04121f; }
   .sess-row.spawn { cursor: default; flex-wrap: wrap; }
   .sess-row.spawn input {
     font: inherit; width: 130px; padding: 1px 6px; border-radius: 4px;
@@ -439,7 +446,15 @@ function sessionRow(s) {
   dot.textContent = ["working", "waiting", "service"].includes(s.state) ? "●" : "○";
   const name = document.createElement("span");
   name.textContent = s.name;
-  row.append(dot, name);
+  const kill = document.createElement("button");
+  kill.className = "kill-btn";
+  kill.textContent = "✕";
+  kill.title = "kill tmux session";
+  kill.onclick = (e) => {
+    e.stopPropagation();
+    killSession(s.name);
+  };
+  row.append(dot, name, kill);
   row.onclick = () => show(s.name);
   return row;
 }
@@ -707,14 +722,22 @@ function renderSidebar(force = false) {
 // means different things in different states: cmd+w in a session view
 // detaches back to chat, while cmd+w in chat keeps its browser meaning.
 
-async function killActiveSession() {
-  if (active === CHAT) return;
-  const name = active;
+async function killSession(name) {
+  if (!name || name === CHAT) return;
   if (!confirm(`Kill tmux session "${name}"? Processes inside it will stop.`)) return;
   const res = await fetch(`/api/kill/${encodeURIComponent(name)}`, { method: "POST" });
-  if (!res.ok) alert(`kill failed: ${(await res.json()).error ?? res.status}`);
-  // On success tmux drops our client, the socket closes, and ws.onclose
-  // already falls back to chat.
+  if (!res.ok) {
+    alert(`kill failed: ${(await res.json()).error ?? res.status}`);
+    return;
+  }
+  // Killing the viewed session: tmux drops our client, the socket closes, and
+  // ws.onclose falls back to chat. Killing from the sidebar only needs the
+  // list refreshed.
+  if (name !== active) refreshSessions();
+}
+
+function killActiveSession() {
+  if (active !== CHAT) killSession(active);
 }
 
 const ACTION_META = [

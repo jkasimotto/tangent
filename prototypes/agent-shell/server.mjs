@@ -822,6 +822,7 @@ Reply with JSON only: {"actions":[...]}, at most 5 actions, executed in order. A
 - {"type":"view","target":"<session or node name>"} — show that session in the app (a node name shows its home agent). For "show me X", "open X", "go to X", "switch to X".
 - {"type":"close_view"} — leave the current session view, back to chat.
 - {"type":"next_outcome"} — advance the focus queue: the current outcome keeps its agent running and relegates to the waiting shelf, the next queued outcome takes focus. For "next outcome", "I'm waiting on this — next", "next please".
+- {"type":"focus_outcomes","names":["<exact outcome title from the payload>", ...]} — the user names outcomes to work on: "focus on X", "work on X then Y", "today it's X and Y". The first name becomes the focus, the rest queue in order. Map the user's spoken words onto exact titles from the payload's outcomes list (they describe the outcome loosely — by person, topic, or node); output only titles that appear there. If nothing matches confidently, speak one short question instead.
 - {"type":"sidebar"} — toggle the project tree sidebar.
 - {"type":"spawn","node":"<tree node path>","name":"<lowercase-hyphen-name>"} — create a plain work session on a project node. Only for a bare "new/open a session on X (called Y)" with nothing else attached. If the user states a goal, task, or any context in the same utterance, do NOT spawn: say the whole thing to that node's home agent instead, which does the richer setup.
 - {"type":"kill","session":"<name>"} — destroy a session and everything in it. Only on an explicit kill or destroy request.
@@ -908,7 +909,12 @@ async function voiceContext(focused, visibleNodes = []) {
     } catch {}
   }
   const projectNodes = flattenNodePaths(await readTree(TREES_ROOT));
-  return { sessions, paneTails, projectNodes, visibleNodes: visibleNodes.filter((p) => projectNodes.includes(p)) };
+  // Workable outcomes ride along so "focus on X and Y" can resolve spoken
+  // names onto real outcome titles.
+  const outcomes = [...(await outcomesByFile()).values()]
+    .filter((o) => !FOCUS_GONE.has(o.status))
+    .map((o) => ({ title: o.title, node: o.node }));
+  return { sessions, paneTails, projectNodes, visibleNodes: visibleNodes.filter((p) => projectNodes.includes(p)), outcomes };
 }
 
 /** Flattens the nested tree into the plain node-path list the router reads. */
@@ -1089,6 +1095,41 @@ async function executeVoiceActions(actions, ctx, focused, utterance) {
           }
           break;
         }
+        case "focus_outcomes": {
+          const names = (Array.isArray(a.names) ? a.names : []).slice(0, 8);
+          const candidates = [...(await outcomesByFile()).values()].filter((o) => !FOCUS_GONE.has(o.status));
+          /** Router outputs exact titles; fuzzy match is the safety net. */
+          const resolveOutcome = (spoken) => {
+            const n = normName(spoken);
+            return (
+              candidates.find((o) => normName(o.title) === n) ??
+              candidates.find((o) => normName(o.title).includes(n) || n.includes(normName(o.title))) ??
+              candidates.find((o) => o.slug.includes(n) || n.includes(o.slug))
+            );
+          };
+          let first = true;
+          for (const name of names) {
+            const o = resolveOutcome(name);
+            if (!o) {
+              summary.push(`no outcome matching "${name}"`);
+              continue;
+            }
+            if (first) {
+              const r = await focusSet(o.file);
+              if (r.status === 200) {
+                clientActions.push({ type: "focus", session: r.session });
+                summary.push(`focused ${o.title}`);
+                first = false;
+              } else {
+                summary.push(`focus failed: ${r.error}`);
+              }
+            } else {
+              await focusQueue(o.file, false);
+              summary.push(`queued ${o.title}`);
+            }
+          }
+          break;
+        }
         case "sidebar":
           clientActions.push({ type: "sidebar" });
           summary.push("toggled sidebar");
@@ -1173,6 +1214,7 @@ async function routeAndExecute(utterance, focused, ctx) {
       paneTails: ctx.paneTails,
       visibleNodes: ctx.visibleNodes,
       allNodes: ctx.projectNodes,
+      outcomes: ctx.outcomes,
     });
     const out = await executeVoiceActions(plan.actions, ctx, focused, utterance);
     logVoice({ utterance, focused, plan, summary: out.summary });

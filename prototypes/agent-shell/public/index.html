@@ -234,15 +234,20 @@
   .bt-row.next .bt-glyph { color: var(--accent); }
   .bt-next-tag { margin-left: auto; color: var(--accent); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; flex: none; }
   #board-empty { padding: 14px; color: var(--dim); font-size: 12px; }
-  /* Launcher results: /-prefixed Cmd+K navigates nodes and outcomes. The panel
-     sits above the command pill; arrows move, enter opens. */
+  /* The map: the launcher's results panel is a takeover, not a popup. It IS
+     the planning surface — it opens on launch when nothing is focused, on
+     cmd+/, and whenever the queue drains. Arrows move, enter focuses, tab
+     queues, esc drops to chat. */
   #cmd-results {
-    position: absolute; left: 50%; bottom: 62px; transform: translateX(-50%);
-    z-index: 31; width: min(680px, 85%); max-height: 55%; overflow: auto;
+    position: absolute; left: 50%; top: 72px; bottom: 64px; transform: translateX(-50%);
+    z-index: 31; width: min(1100px, 94%); overflow: auto;
     background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); padding: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); padding: 12px 16px 8px;
+    font-size: 14px;
   }
   #cmd-results[hidden] { display: none; }
+  #cr-head { padding: 2px 8px 12px; font-size: 18px; font-weight: 700; }
+  #cr-head .sub { color: var(--dim); font-weight: 400; font-size: 12px; margin-left: 12px; }
   .cr-node { display: flex; align-items: baseline; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
   .cr-path { color: var(--accent2); flex: none; }
   .cr-purpose { color: var(--dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -675,18 +680,24 @@ function renderSidebar(force = false) {
     railEl.appendChild(el);
   };
 
-  sec("focus");
-  if (focusData?.focus) railEl.appendChild(focusCardEl(focusData.focus));
-  else if (focusData?.queue?.length) empty("nothing focused — ⌘. focuses the next queued outcome");
-  else empty("nothing focused — ⌘/ opens the map");
-
-  sec("up next");
-  if (focusData?.queue?.length) for (const t of focusData.queue) railEl.appendChild(railRowEl(t, "queue"));
-  else empty("empty — tab on an outcome in the map (⌘/) queues it");
-
+  // State machine: render only what exists. Empty sections are noise — the
+  // planning state's question lives on the map takeover, not here.
+  if (focusData?.focus) {
+    sec("focus");
+    railEl.appendChild(focusCardEl(focusData.focus));
+  }
+  if (focusData?.queue?.length) {
+    sec("up next");
+    for (const t of focusData.queue) railEl.appendChild(railRowEl(t, "queue"));
+  } else if (focusData?.focus) {
+    empty("queue is empty — ⌘/ to line up what's next");
+  }
   if (focusData?.shelf?.length) {
     sec("waiting");
     for (const t of focusData.shelf) railEl.appendChild(railRowEl(t, "shelf"));
+  }
+  if (!focusData?.focus && !focusData?.queue?.length && !focusData?.shelf?.length) {
+    empty("⌘/ — what are we working on?");
   }
 
   const others = lastSessions.filter((s) => !s.isChat && !s.outcome);
@@ -732,7 +743,9 @@ async function nextOutcome() {
   try {
     const out = await postFocus("next");
     if (!out.session) {
-      hud("done", "queue is empty — ⌘/ to pick outcomes");
+      // Drained queue: back to the planning state — the map asks the question.
+      hud("done", "queue is empty — what's next?");
+      openLauncher();
       return;
     }
     show(out.session);
@@ -1525,11 +1538,13 @@ function rankNodes(q) {
 }
 
 let crItems = []; // flat launcher rows: {kind:"node",n} | {kind:"outcome",n,t}
+let crRows = [];  // the DOM row for each item (the panel also holds a head and tray)
 let crSel = 0;
 
 function hideResults() {
   cmdResults.hidden = true;
   crItems = [];
+  crRows = [];
   crSel = 0;
 }
 
@@ -1539,10 +1554,9 @@ function moveCrSel(delta) {
   paintCrSel();
 }
 
-// Row i of crItems is child i of the results panel, so selection is index math.
 function paintCrSel() {
   cmdResults.querySelectorAll(".cr-sel").forEach((el) => el.classList.remove("cr-sel"));
-  const el = cmdResults.children[crSel];
+  const el = crRows[crSel];
   if (el) {
     el.classList.add("cr-sel");
     el.scrollIntoView({ block: "nearest" });
@@ -1605,6 +1619,7 @@ function addLauncherGroup(n, outcomes) {
   row.onmousedown = (e) => { e.preventDefault(); activateItem(crItems[idx]); };
   cmdResults.appendChild(row);
   crItems.push({ kind: "node", n });
+  crRows.push(row);
   const next = deriveNext(outcomes);
   for (const t of outcomes) {
     const tr = outcomeRowEl(t, next, "cr-outcome");
@@ -1612,6 +1627,7 @@ function addLauncherGroup(n, outcomes) {
     tr.onmousedown = (e) => { e.preventDefault(); activateItem(crItems[tIdx]); };
     cmdResults.appendChild(tr);
     crItems.push({ kind: "outcome", n, t });
+    crRows.push(tr);
   }
 }
 
@@ -1640,7 +1656,18 @@ async function renderResults() {
   await fetchVault();
   const q = cmdInput.value.slice(1).trim();
   crItems = [];
+  crRows = [];
   cmdResults.innerHTML = "";
+  // The head asks the state machine's question: planning ("what are we
+  // working on?") or consulting the map mid-flow.
+  const head = document.createElement("div");
+  head.id = "cr-head";
+  head.textContent = focusData?.focus ? "the map" : "what are we working on?";
+  const sub = document.createElement("span");
+  sub.className = "sub";
+  sub.textContent = "enter focuses · tab queues · type to filter · esc for chat";
+  head.appendChild(sub);
+  cmdResults.appendChild(head);
   if (!q) {
     for (const g of vaultMap) {
       const outcomes = g.outcomes.filter((t) => t.status !== "deferred" && t.status !== "dropped");
@@ -1791,8 +1818,13 @@ function trackOutcomeBoundaries() {
     if (!s.outcome) continue;
     const prev = prevOutcomeStatus.get(s.name);
     if (prev && prev !== s.outcomeStatus && s.outcomeStatus === "done" && s.name === active && s.node) {
-      showBoard(s.node);
-      refreshFocus(); // the finished outcome leaves the rail; the queue is next
+      // The finished outcome leaves the rail. With a queue the pre-paid next
+      // action is ⌘. over the board; with nothing queued, back to planning.
+      const node = s.node;
+      refreshFocus().then(() => {
+        if (!focusData?.focus && !focusData?.queue?.length) openLauncher();
+        else showBoard(node);
+      });
     }
     prevOutcomeStatus.set(s.name, s.outcomeStatus);
   }
@@ -1802,7 +1834,11 @@ window.addEventListener("resize", refitActive);
 
 show(CHAT);
 refreshSessions();
-refreshFocus();
+// Opening state: with a focus the terminal is the answer; with an empty day
+// the first question is "what are we working on?", so the map opens itself.
+refreshFocus().then(() => {
+  if (!focusData?.focus && !focusData?.queue?.length && !focusData?.shelf?.length) openLauncher();
+});
 setInterval(refreshSessions, 2000);
 setInterval(refreshFocus, 3000);
 </script>

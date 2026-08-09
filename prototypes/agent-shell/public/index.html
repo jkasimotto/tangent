@@ -204,20 +204,21 @@
     width: 100%; background: none; border: none; outline: none;
     color: var(--text); font: inherit;
   }
-  /* Task strip: the focused session wears its purpose — one line, nothing
+  /* Outcome strip: the focused session wears its purpose — one line, nothing
      else, so a session can never again be a mystery. Click opens the board. */
-  #task-strip {
+  #outcome-strip {
     display: none; align-items: baseline; gap: 8px; overflow: hidden;
     padding: 4px 14px; background: var(--panel); border-bottom: 1px solid var(--border);
     flex: none; font-size: 12px; cursor: pointer; white-space: nowrap;
   }
-  #task-strip.show { display: flex; }
-  #task-strip .ts-node { color: var(--accent2); flex: none; }
-  #task-strip .ts-title { font-weight: 600; flex: none; }
-  #task-strip .ts-outcome { color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
-  /* Board: one node's outcome and task breakdown. Done greyed, waiting tagged
-     with who, the next open task highlighted. Appears at boundaries (launcher,
-     node open, task completion), toggled with the toggle-board chord. */
+  #outcome-strip.show { display: flex; }
+  #outcome-strip .ts-node { color: var(--accent2); flex: none; }
+  #outcome-strip .ts-title { font-weight: 600; flex: none; }
+  #outcome-strip .ts-outcome { color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
+  /* Board: one node's outcomes, breakdown children indented. Done greyed,
+     waiting tagged with who, the next open outcome highlighted. Appears at
+     boundaries (launcher, node open, outcome completion), toggled with the
+     toggle-board chord. */
   #board {
     width: 340px; flex: none; background: var(--panel);
     border-left: 1px solid var(--border);
@@ -230,7 +231,7 @@
   #board-close { margin-left: auto; background: none; border: none; color: var(--dim); flex: none; }
   #board-close:hover { color: var(--text); }
   #board-purpose { color: var(--dim); font-size: 12px; margin-top: 4px; }
-  #board-tasks { flex: 1; overflow: auto; padding: 8px; }
+  #board-outcomes { flex: 1; overflow: auto; padding: 8px; }
   .bt-row {
     display: flex; align-items: baseline; gap: 8px;
     padding: 6px 8px; border-radius: 6px; border: 1px solid transparent; cursor: pointer;
@@ -248,7 +249,7 @@
   .bt-row.next .bt-glyph { color: var(--accent); }
   .bt-next-tag { margin-left: auto; color: var(--accent); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; flex: none; }
   #board-empty { padding: 14px; color: var(--dim); font-size: 12px; }
-  /* Launcher results: /-prefixed Cmd+K navigates nodes and tasks. The panel
+  /* Launcher results: /-prefixed Cmd+K navigates nodes and outcomes. The panel
      sits above the command pill; arrows move, enter opens. */
   #cmd-results {
     position: absolute; left: 50%; bottom: 62px; transform: translateX(-50%);
@@ -260,7 +261,7 @@
   .cr-node { display: flex; align-items: baseline; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
   .cr-path { color: var(--accent2); flex: none; }
   .cr-purpose { color: var(--dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .cr-task { display: flex; align-items: baseline; gap: 8px; padding: 4px 8px 4px 26px; border-radius: 6px; cursor: pointer; }
+  .cr-outcome { display: flex; align-items: baseline; gap: 8px; padding: 4px 8px 4px 26px; border-radius: 6px; cursor: pointer; }
   .cr-sel { background: rgba(88, 166, 255, 0.15); outline: 1px solid var(--accent2); }
   #terms { flex: 1; position: relative; min-height: 0; }
   .term-host { position: absolute; inset: 0; padding: 8px; display: none; }
@@ -290,7 +291,7 @@
     <div id="agent-rows"></div>
     <div class="s-hint">any command, alias, or flags your shell understands. switching kills the running chat agent and respawns chat with the new command.</div>
   </div>
-  <div id="task-strip" title="task board (or the toggle-board chord)">
+  <div id="outcome-strip" title="outcome board (or the toggle-board chord)">
     <span class="ts-node"></span><span class="ts-title"></span><span class="ts-outcome"></span>
   </div>
   <div id="main">
@@ -308,12 +309,12 @@
         <div class="bh-top"><span id="board-node"></span><button id="board-close" title="close board">✕</button></div>
         <div id="board-purpose"></div>
       </div>
-      <div id="board-tasks"></div>
+      <div id="board-outcomes"></div>
     </div>
   </div>
   <div id="voice-hud"><span class="vh-dot">●</span><span class="vh-text"></span></div>
   <div id="cmd-results" hidden></div>
-  <div id="cmd-bar" hidden><input id="cmd-input" placeholder="type what you'd say — “/” navigates nodes and tasks" spellcheck="false" /></div>
+  <div id="cmd-bar" hidden><input id="cmd-input" placeholder="type what you'd say — “/” navigates nodes and outcomes" spellcheck="false" /></div>
 </div>
 <script src="/vendor/xterm/xterm.js"></script>
 <script src="/vendor/xterm/addon-fit.js"></script>
@@ -417,7 +418,7 @@ function show(session) {
   activeLabel.textContent = session;
   requestAnimationFrame(() => { entry.fit.fit(); entry.term.focus(); });
   renderSidebar();
-  renderTaskStrip();
+  renderOutcomeStrip();
 }
 
 // Detach only: close our client connection, keep the tmux session alive.
@@ -483,8 +484,8 @@ async function refreshSessions() {
     micBtn.style.display = voice === false ? "none" : "";
     lastSessions = sessions;
     renderSidebar();
-    renderTaskStrip();
-    trackTaskBoundaries();
+    renderOutcomeStrip();
+    trackOutcomeBoundaries();
   } catch {}
 }
 
@@ -509,13 +510,13 @@ function sessionRow(s) {
   const row = document.createElement("div");
   row.className =
     "sess-row" + (active === s.name ? " active" : "") + (s.state ? " " + s.state : "");
-  row.title = (s.taskTitle ? s.name + " — " : "") + (STATE_HINT[s.state] ?? "");
+  row.title = (s.outcomeTitle ? s.name + " — " : "") + (STATE_HINT[s.state] ?? "");
   const dot = document.createElement("span");
   dot.className = "sess-dot";
   dot.textContent = ["working", "waiting", "service"].includes(s.state) ? "●" : "○";
   const name = document.createElement("span");
-  // A task session's row reads as the work, not the tmux slug.
-  name.textContent = s.taskTitle ?? s.name;
+  // An outcome session's row reads as the work, not the tmux slug.
+  name.textContent = s.outcomeTitle ?? s.name;
   const kill = document.createElement("button");
   kill.className = "kill-btn";
   kill.textContent = "✕";
@@ -875,8 +876,8 @@ const ACTION_META = [
   { action: "toggle-sidebar", label: "toggle project tree", when: "any" },
   { action: "toggle-filter", label: "toggle sessions filter", when: "any" },
   { action: "command-bar", label: "type a command (voice grammar)", when: "any" },
-  { action: "launcher", label: "node/task launcher", when: "any" },
-  { action: "toggle-board", label: "toggle task board", when: "any" },
+  { action: "launcher", label: "node/outcome launcher", when: "any" },
+  { action: "toggle-board", label: "toggle outcome board", when: "any" },
 ];
 
 const ACTIONS = {
@@ -1418,7 +1419,7 @@ function openCmdBar() {
   fetchVault(true); // warm the launcher index while the user types
 }
 
-// "/" switches the bar from the voice grammar to node/task navigation.
+// "/" switches the bar from the voice grammar to node/outcome navigation.
 const navMode = () => cmdInput.value.startsWith("/");
 
 // The launcher chord: the same bar, opened straight into navigation.
@@ -1474,11 +1475,13 @@ async function sendCommand(text) {
   }
 }
 
-// ---- tasks: launcher navigation, board, task strip ----
-// Nodes are what we talk about, tasks are what we work on, sessions execute
-// one task. Task state lives in the vault (task-<slug>.md beside node notes,
-// schema in ~/.tangent/trees/README.md); the server serves it on /api/vault
-// and only ever writes the mechanical active/session binding.
+// ---- outcomes: launcher navigation, board, outcome strip ----
+// Nodes are what we talk about, outcomes are what we achieve, sessions
+// execute one outcome; a task is just an outcome small enough to work
+// directly. Outcome state lives in the vault (outcome-<slug>.md beside node
+// notes, a Breakdown section of links orders an outcome's children, schema in
+// ~/.tangent/trees/README.md); the server serves it on /api/vault and only
+// ever writes the mechanical active/session binding.
 
 let vaultNodes = [];
 let vaultAt = 0;
@@ -1493,11 +1496,23 @@ async function fetchVault(force = false) {
 }
 
 // Deferred work stays out of every surface until asked for by name; dropped
-// tasks are already deleted, this just guards a stale index.
-const visibleTasks = (n) => n.tasks.filter((t) => t.status !== "deferred" && t.status !== "dropped");
-const TASK_GLYPH = { done: "✓", active: "▶", waiting: "◔", open: "○" };
+// outcomes are already deleted, this just guards a stale index.
+const visibleOutcomes = (n) => n.outcomes.filter((t) => t.status !== "deferred" && t.status !== "dropped");
+const OUTCOME_GLYPH = { done: "✓", active: "▶", waiting: "◔", open: "○" };
 
-// Rank nodes for "/query": name beats path beats people beats task text beats
+// Next is derived, never stored: walking the flattened depth-first list, the
+// first open outcome whose breakdown children are all finished. A parent with
+// unfinished children is worked through its children first.
+function deriveNext(list) {
+  const bySlug = new Map(list.map((t) => [t.slug, t]));
+  const unfinished = (slug) => {
+    const c = bySlug.get(slug);
+    return c && c.status !== "done" && c.status !== "dropped";
+  };
+  return list.find((t) => t.status === "open" && !(t.breakdown ?? []).some(unfinished)) ?? null;
+}
+
+// Rank nodes for "/query": name beats path beats people beats outcome text beats
 // note body — "/sami" finds viz-input through its people or note content.
 // Bare "/" lists nodes that still have something to do.
 function rankNodes(q) {
@@ -1506,20 +1521,20 @@ function rankNodes(q) {
   for (const n of vaultNodes) {
     let s = 0;
     const name = n.name.toLowerCase();
-    if (!query) s = visibleTasks(n).some((t) => t.status !== "done") ? 10 : 0;
+    if (!query) s = visibleOutcomes(n).some((t) => t.status !== "done") ? 10 : 0;
     else if (name.startsWith(query)) s = 100;
     else if (name.includes(query)) s = 85;
     else if (n.path.toLowerCase().includes(query)) s = 70;
     else if ((n.people ?? "").toLowerCase().includes(query)) s = 55;
-    else if (n.tasks.some((t) => (t.title + " " + t.outcome).toLowerCase().includes(query))) s = 40;
+    else if (n.outcomes.some((t) => (t.title + " " + t.outcome).toLowerCase().includes(query))) s = 40;
     else if ((n.body ?? "").includes(query)) s = 25;
-    if (s) scored.push({ n, s: s + Math.min(n.tasks.length, 5) });
+    if (s) scored.push({ n, s: s + Math.min(n.outcomes.length, 5) });
   }
   scored.sort((a, b) => b.s - a.s || a.n.path.localeCompare(b.n.path));
   return scored.slice(0, 5).map((x) => x.n);
 }
 
-let crItems = []; // flat launcher rows: {kind:"node",n} | {kind:"task",n,t}
+let crItems = []; // flat launcher rows: {kind:"node",n} | {kind:"outcome",n,t}
 let crSel = 0;
 
 function hideResults() {
@@ -1544,12 +1559,13 @@ function paintCrSel() {
   }
 }
 
-function taskRowEl(t, next, extraClass) {
+function outcomeRowEl(t, next, extraClass) {
   const row = document.createElement("div");
   row.className = extraClass + " bt-row " + t.status + (t === next ? " next" : "");
+  if (t.depth) row.style.paddingLeft = (extraClass ? 26 : 8) + t.depth * 14 + "px";
   const glyph = document.createElement("span");
   glyph.className = "bt-glyph";
-  glyph.textContent = TASK_GLYPH[t.status] ?? "○";
+  glyph.textContent = OUTCOME_GLYPH[t.status] ?? "○";
   const title = document.createElement("span");
   title.className = "bt-title";
   title.textContent = t.title;
@@ -1591,14 +1607,14 @@ async function renderResults() {
     row.onmousedown = (e) => { e.preventDefault(); activateItem(crItems[idx]); };
     cmdResults.appendChild(row);
     crItems.push({ kind: "node", n });
-    const tasks = visibleTasks(n);
-    const next = tasks.find((t) => t.status === "open") ?? null;
-    for (const t of tasks) {
-      const tr = taskRowEl(t, next, "cr-task");
+    const outcomes = visibleOutcomes(n);
+    const next = deriveNext(outcomes);
+    for (const t of outcomes) {
+      const tr = outcomeRowEl(t, next, "cr-outcome");
       const tIdx = crItems.length;
       tr.onmousedown = (e) => { e.preventDefault(); activateItem(crItems[tIdx]); };
       cmdResults.appendChild(tr);
-      crItems.push({ kind: "task", n, t });
+      crItems.push({ kind: "outcome", n, t });
     }
   }
   cmdResults.hidden = crItems.length === 0;
@@ -1606,22 +1622,22 @@ async function renderResults() {
   paintCrSel();
 }
 
-// Enter on a node opens its home agent; enter on a task spawns (or reattaches)
-// the task's work session. Both land with the node's board showing — the
+// Enter on a node opens its home agent; enter on an outcome spawns (or
+// reattaches) its work session. Both land with the node's board showing — the
 // start of work is a boundary, and boundaries get the map.
 async function activateItem(item) {
   closeCmdBar();
-  hud("busy", item.kind === "task" ? "starting task…" : "opening node…");
+  hud("busy", item.kind === "outcome" ? "starting outcome…" : "opening node…");
   try {
-    const url = item.kind === "task" ? "/api/task/spawn" : "/api/node/open";
-    const body = item.kind === "task" ? { node: item.t.node, slug: item.t.slug } : { node: item.n.path };
+    const url = item.kind === "outcome" ? "/api/outcome/spawn" : "/api/node/open";
+    const body = item.kind === "outcome" ? { node: item.t.node, slug: item.t.slug } : { node: item.n.path };
     const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     const out = await res.json();
     if (!res.ok) throw new Error(out.error ?? "failed " + res.status);
     await refreshSessions();
     show(out.session);
     showBoard(item.n.path);
-    hud("done", item.kind === "task" ? `working: ${item.t.title}` : `opened ${item.n.path}`);
+    hud("done", item.kind === "outcome" ? `working: ${item.t.title}` : `opened ${item.n.path}`);
   } catch (err) {
     hud("error", String(err.message ?? err));
   }
@@ -1632,7 +1648,7 @@ async function activateItem(item) {
 const boardEl = document.getElementById("board");
 const boardNodeEl = document.getElementById("board-node");
 const boardPurposeEl = document.getElementById("board-purpose");
-const boardTasksEl = document.getElementById("board-tasks");
+const boardOutcomesEl = document.getElementById("board-outcomes");
 let boardPath = null;
 let boardTimer = null;
 
@@ -1668,21 +1684,24 @@ async function renderBoard(force = false) {
   if (!own) return hideBoard();
   boardNodeEl.textContent = own.path;
   boardPurposeEl.textContent = own.purpose;
-  boardTasksEl.innerHTML = "";
-  // Rollup: the node's own tasks first, then descendants' — you talk at the
+  boardOutcomesEl.innerHTML = "";
+  // Rollup: the node's own outcomes first, then descendants' — you talk at the
   // concept level, state lives at the deepest node that covers it.
   const groups = [own, ...vaultNodes.filter((n) => n.path.startsWith(boardPath + "/"))];
-  const all = groups.flatMap((n) => visibleTasks(n).map((t) => ({ ...t, own: n === own, nodeName: n.name })));
+  const seenFiles = new Set();
+  const all = groups
+    .flatMap((n) => visibleOutcomes(n).map((t) => ({ ...t, own: n === own, nodeName: n.name })))
+    .filter((t) => !seenFiles.has(t.file) && seenFiles.add(t.file));
   if (!all.length) {
     const empty = document.createElement("div");
     empty.id = "board-empty";
-    empty.textContent = "no tasks on this node yet — ask its agent to add task files (task-<slug>.md, linked from Road to done)";
-    boardTasksEl.appendChild(empty);
+    empty.textContent = "no outcomes on this node yet — ask its agent to add outcome files (outcome-<slug>.md, linked from Road to done)";
+    boardOutcomesEl.appendChild(empty);
     return;
   }
-  const next = all.find((t) => t.status === "open") ?? null;
+  const next = deriveNext(all);
   for (const t of all) {
-    const row = taskRowEl(t, next, "");
+    const row = outcomeRowEl(t, next, "");
     if (!t.own && t !== next) {
       const m = document.createElement("span");
       m.className = "bt-meta";
@@ -1692,31 +1711,31 @@ async function renderBoard(force = false) {
     row.onclick = () => {
       if (t.status === "done") return;
       if (t.status === "active" && t.session) return show(t.session);
-      activateItem({ kind: "task", n: own, t });
+      activateItem({ kind: "outcome", n: own, t });
     };
-    boardTasksEl.appendChild(row);
+    boardOutcomesEl.appendChild(row);
   }
 }
 
 document.getElementById("board-close").onclick = hideBoard;
 
-// ---- task strip ----
+// ---- outcome strip ----
 // During flow you need almost nothing on screen: just what this session is
 // for. The full map lives on the board and appears at boundaries.
 
-const stripEl = document.getElementById("task-strip");
+const stripEl = document.getElementById("outcome-strip");
 const stripNodeEl = stripEl.querySelector(".ts-node");
 const stripTitleEl = stripEl.querySelector(".ts-title");
 const stripOutcomeEl = stripEl.querySelector(".ts-outcome");
 let stripShown = false;
 
-function renderTaskStrip() {
+function renderOutcomeStrip() {
   const s = lastSessions.find((x) => x.name === active);
-  const on = Boolean(s && !s.isChat && (s.task || s.goal));
+  const on = Boolean(s && !s.isChat && (s.outcome || s.goal));
   if (on) {
     stripNodeEl.textContent = "[" + ((s.node ?? "").split("/").pop() || "?") + "]";
-    stripTitleEl.textContent = s.taskTitle ?? "";
-    stripOutcomeEl.textContent = s.task ? (s.taskOutcome ? "outcome: " + s.taskOutcome : "") : s.goal;
+    stripTitleEl.textContent = s.outcomeTitle ?? "";
+    stripOutcomeEl.textContent = s.outcome ? (s.outcomeText ? "outcome: " + s.outcomeText : "") : s.goal;
   }
   stripEl.classList.toggle("show", on);
   if (on !== stripShown) {
@@ -1727,16 +1746,16 @@ function renderTaskStrip() {
 stripEl.onclick = () => toggleBoard();
 
 // The board appears uninvited at exactly one other boundary: the focused
-// session's task flips to done — the moment "what's next" matters most.
-const prevTaskStatus = new Map();
-function trackTaskBoundaries() {
+// session's outcome flips to done — the moment "what's next" matters most.
+const prevOutcomeStatus = new Map();
+function trackOutcomeBoundaries() {
   for (const s of lastSessions) {
-    if (!s.task) continue;
-    const prev = prevTaskStatus.get(s.name);
-    if (prev && prev !== s.taskStatus && s.taskStatus === "done" && s.name === active && s.node) {
+    if (!s.outcome) continue;
+    const prev = prevOutcomeStatus.get(s.name);
+    if (prev && prev !== s.outcomeStatus && s.outcomeStatus === "done" && s.name === active && s.node) {
       showBoard(s.node);
     }
-    prevTaskStatus.set(s.name, s.taskStatus);
+    prevOutcomeStatus.set(s.name, s.outcomeStatus);
   }
 }
 

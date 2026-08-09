@@ -69,14 +69,14 @@ async function listSessions() {
     const { stdout } = await execFileAsync("tmux", [
       "list-sessions",
       "-F",
-      "#{session_name}\t#{session_path}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{@tangent_node}\t#{@tangent_kind}\t#{@tangent_task}\t#{@tangent_goal}\t#{pane_current_command}",
+      "#{session_name}\t#{session_path}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{@tangent_node}\t#{@tangent_kind}\t#{@tangent_outcome}\t#{@tangent_goal}\t#{pane_current_command}",
     ]);
     const sessions = stdout
       .trim()
       .split("\n")
       .filter(Boolean)
       .map((line) => {
-        const [name, cwd, windows, attached, created, node, kind, task, goal, command] = line.split("\t");
+        const [name, cwd, windows, attached, created, node, kind, outcome, goal, command] = line.split("\t");
         return {
           name,
           cwd,
@@ -85,13 +85,13 @@ async function listSessions() {
           created: Number(created) * 1000,
           node: node || null,
           kind: kind || null,
-          task: task || null,
+          outcome: outcome || null,
           goal: goal || null,
           command,
           isChat: name === CHAT_SESSION,
         };
       });
-    return await withAgentStates(await withTaskInfo(sessions));
+    return await withAgentStates(await withOutcomeInfo(sessions));
   } catch {
     return []; // no tmux server running yet
   }
@@ -261,15 +261,19 @@ async function readTree(dir, rel = "") {
   return nodes;
 }
 
-// ---- tasks ----
-// Tasks are task-<slug>.md files beside node notes; the schema lives in the
-// vault README. Nodes are what the user talks about, tasks are what they work
-// on, sessions execute one task. The server's vault writes are strictly
-// mechanical: status open->active plus the session name when it spawns a task
-// session, and the reverse when that session is gone. Every judgment write
-// (waiting, done, outcomes, steps) belongs to agents acting on the user's word.
+// ---- outcomes ----
+// Outcomes are outcome-<slug>.md files beside node notes; the schema lives in
+// the vault README. Nodes are what the user talks about, outcomes are what
+// they achieve, sessions execute one outcome at a time. There is no separate
+// task concept: a task is just an outcome small enough to work directly.
+// Outcomes nest: a Breakdown section of [[outcome-...]] links orders an
+// outcome's children, so a big outcome completes as the sum of its smallest
+// achievable parts. The server's vault writes are strictly mechanical: status
+// open->active plus the session name when it spawns an outcome's session, and
+// the reverse when that session is gone. Every judgment write (waiting, done,
+// steps, state) belongs to agents acting on the user's word.
 
-/** Parses the note/task frontmatter block into a flat {key: value} object. */
+/** Parses the note/outcome frontmatter block into a flat {key: value} object. */
 function parseFrontmatter(text) {
   const m = text.match(/^---\n([\s\S]*?)\n---/);
   const fm = {};
@@ -296,25 +300,30 @@ async function nodeNote(node) {
   }
 }
 
-/** Task slugs in the order the node note's Road to done links them. */
+/** Outcome slugs in the order the node note's Road to done links them. */
 function roadToDoneOrder(noteText) {
-  return [...noteSection(noteText, "Road to done").matchAll(/\[\[task-([a-z0-9-]+)\]\]/g)].map((m) => m[1]);
+  return [...noteSection(noteText, "Road to done").matchAll(/\[\[outcome-([a-z0-9-]+)\]\]/g)].map((m) => m[1]);
+}
+
+/** Child outcome slugs in the order an outcome file's Breakdown links them. */
+function breakdownOrder(text) {
+  return [...noteSection(text, "Breakdown").matchAll(/\[\[outcome-([a-z0-9-]+)\]\]/g)].map((m) => m[1]);
 }
 
 /**
- * Reads a node's task files in Road-to-done order (unlinked tasks trail,
- * alphabetically). "Next" is derived by callers as the first open task,
- * never stored.
+ * Reads the outcome files homed in one node's directory, unordered. Ordering
+ * is hierarchical and can cross nodes, so vaultIndex derives it; spawn and
+ * reconcile only need lookup by slug within the home node.
  */
-async function readNodeTasks(node, noteText = null) {
+async function readNodeOutcomes(node) {
   let entries;
   try {
     entries = await readdir(path.join(TREES_ROOT, node));
   } catch {
     return [];
   }
-  const tasks = [];
-  for (const f of entries.filter((f) => /^task-[a-z0-9-]+\.md$/.test(f))) {
+  const outcomes = [];
+  for (const f of entries.filter((f) => /^outcome-[a-z0-9-]+\.md$/.test(f))) {
     let text;
     try {
       text = await readFile(path.join(TREES_ROOT, node, f), "utf8");
@@ -322,9 +331,9 @@ async function readNodeTasks(node, noteText = null) {
       continue;
     }
     const fm = parseFrontmatter(text);
-    if (fm.type !== "task") continue;
-    const slug = f.slice("task-".length, -".md".length);
-    tasks.push({
+    if (fm.type !== "outcome") continue;
+    const slug = f.slice("outcome-".length, -".md".length);
+    outcomes.push({
       node,
       slug,
       file: `${node}/${f}`,
@@ -334,56 +343,80 @@ async function readNodeTasks(node, noteText = null) {
       waitingOn: fm.waiting_on || null,
       due: fm.due || null,
       session: fm.session || null,
+      breakdown: breakdownOrder(text),
     });
   }
-  const order = roadToDoneOrder(noteText ?? (await nodeNote(node)));
-  tasks.sort((a, b) => {
-    const ia = order.indexOf(a.slug);
-    const ib = order.indexOf(b.slug);
-    return (ia < 0 ? order.length : ia) - (ib < 0 ? order.length : ib) || a.slug.localeCompare(b.slug);
-  });
-  return tasks;
+  return outcomes;
 }
 
 /**
  * The launcher's search index: every node with its note's purpose line, the
- * people on it (owners/waiting_on, including its tasks'), a lowercased body
- * excerpt for content matches ("sami" finds the node whose note mentions
- * Sami), and its tasks in order. Small vault, read fresh per request.
+ * people on it (owners/waiting_on, including its outcomes'), a lowercased
+ * body excerpt for content matches ("sami" finds the node whose note mentions
+ * Sami), and its outcomes. Each node's outcome list is the depth-first
+ * flatten of its Road to done roots through Breakdown links (children may be
+ * homed in other nodes), with `depth` for indentation; outcome files nothing
+ * links trail at the top level, alphabetically. "Next" stays derived by
+ * callers: the first open outcome whose breakdown children are all finished.
+ * Small vault, read fresh per request.
  */
 async function vaultIndex() {
-  const out = [];
-  /** Depth-first over the node tree, pushing one index entry per node. */
+  const flat = [];
+  /** Depth-first over the node tree, collecting every node. */
   const walk = async (nodes) => {
     for (const n of nodes) {
-      const note = await nodeNote(n.path);
-      const fm = parseFrontmatter(note);
-      const tasks = await readNodeTasks(n.path, note);
-      out.push({
-        path: n.path,
-        name: n.name,
-        purpose: noteSection(note, "Purpose").split("\n")[0] ?? "",
-        people: [fm.owners, fm.waiting_on, ...tasks.map((t) => t.waitingOn)].filter(Boolean).join(" "),
-        body: note.slice(0, 4000).toLowerCase(),
-        tasks,
-      });
+      flat.push(n);
       await walk(n.children);
     }
   };
   await walk(await readTree(TREES_ROOT));
+  const entries = [];
+  const bySlug = new Map();
+  for (const n of flat) {
+    const note = await nodeNote(n.path);
+    const own = await readNodeOutcomes(n.path);
+    entries.push({ n, note, own });
+    for (const o of own) if (!bySlug.has(o.slug)) bySlug.set(o.slug, o);
+  }
+  const linked = new Set([...bySlug.values()].flatMap((o) => o.breakdown));
+  const out = [];
+  for (const { n, note, own } of entries) {
+    const roots = roadToDoneOrder(note).filter((s) => bySlug.has(s));
+    const unlinked = own.map((o) => o.slug).filter((s) => !roots.includes(s) && !linked.has(s)).sort();
+    const seen = new Set();
+    const outcomes = [];
+    /** Flattens one outcome and its breakdown descendants, depth-first. */
+    const dive = (slug, depth) => {
+      const o = bySlug.get(slug);
+      if (!o || seen.has(slug)) return;
+      seen.add(slug);
+      outcomes.push({ ...o, depth });
+      for (const c of o.breakdown) dive(c, depth + 1);
+    };
+    for (const s of [...roots, ...unlinked]) dive(s, 0);
+    const fm = parseFrontmatter(note);
+    out.push({
+      path: n.path,
+      name: n.name,
+      purpose: noteSection(note, "Purpose").split("\n")[0] ?? "",
+      people: [fm.owners, fm.waiting_on, ...own.map((o) => o.waitingOn)].filter(Boolean).join(" "),
+      body: note.slice(0, 4000).toLowerCase(),
+      outcomes,
+    });
+  }
   return out;
 }
 
 /**
- * Rewrites only the status and session frontmatter lines of a task file —
+ * Rewrites only the status and session frontmatter lines of an outcome file —
  * the two mechanical fields the server owns. Everything else in the file is
  * agent- or user-spoken text and must pass through untouched.
  */
-async function writeTaskBinding(file, { status, session }) {
+async function writeOutcomeBinding(file, { status, session }) {
   const abs = path.join(TREES_ROOT, file);
   let text = await readFile(abs, "utf8");
   const fmMatch = text.match(/^---\n[\s\S]*?\n---/);
-  if (!fmMatch) throw new Error("task file has no frontmatter: " + file);
+  if (!fmMatch) throw new Error("outcome file has no frontmatter: " + file);
   let fm = fmMatch[0];
   /** Replaces (or appends) one `key: value` line inside the frontmatter. */
   const setLine = (key, value) => {
@@ -412,11 +445,12 @@ async function vaultCommit(relPaths, message, node, tmuxSession) {
 }
 
 /**
- * The opening prompt typed (never submitted) into a fresh task session's
- * agent: the task file plus the node-note chain up to the root, by path, so
- * the agent reads its own context and the user can add words before sending.
+ * The opening prompt typed (never submitted) into a fresh outcome session's
+ * agent: the outcome file plus the node-note chain up to the root, by path,
+ * so the agent reads its own context and the user can add words before
+ * sending.
  */
-function taskPrompt(node, task) {
+function outcomePrompt(node, o) {
   const parts = node.split("/");
   const notes = [];
   for (let i = parts.length; i >= 1; i--) {
@@ -425,23 +459,25 @@ function taskPrompt(node, task) {
     if (existsSync(abs)) notes.push(abs);
   }
   return (
-    `Work this task: ${path.join(TREES_ROOT, task.file)} — read it first, then the node notes for context (nearest first): ${notes.join(", ")}. ` +
-    `Keep the task file's State section current as you work; when the outcome is met, propose marking it done — never mark it done yourself without confirmation.`
+    `Work this outcome: ${path.join(TREES_ROOT, o.file)} — read it first, then the node notes for context (nearest first): ${notes.join(", ")}. ` +
+    (o.breakdown.length ? `Its Breakdown section lists the child outcome files it decomposes into; work them in order. ` : "") +
+    `Keep the outcome file's State section current as you work; when the outcome is met, propose marking it done — never mark it done yourself without confirmation.`
   );
 }
 
 /**
- * Spawns (or reattaches) the work session for one task: agent in the node's
- * repo, bound via @tangent_node + @tangent_task, task mechanically flipped to
- * active. The opening prompt follows the type-but-never-submit rule.
+ * Spawns (or reattaches) the work session for one outcome: agent in the
+ * node's repo, bound via @tangent_node + @tangent_outcome, outcome
+ * mechanically flipped to active. The opening prompt follows the
+ * type-but-never-submit rule.
  */
-async function spawnTaskSession(node, slug) {
-  const task = (await readNodeTasks(node)).find((t) => t.slug === slug);
-  if (!task) return { status: 404, error: `no task "${slug}" on ${node}` };
-  if (["done", "dropped"].includes(task.status)) return { status: 409, error: `task is ${task.status}` };
+async function spawnOutcomeSession(node, slug) {
+  const o = (await readNodeOutcomes(node)).find((t) => t.slug === slug);
+  if (!o) return { status: 404, error: `no outcome "${slug}" on ${node}` };
+  if (["done", "dropped"].includes(o.status)) return { status: 409, error: `outcome is ${o.status}` };
   const sessions = await listSessions();
-  if (task.session && sessions.some((s) => s.name === task.session)) {
-    return { status: 200, session: task.session, reattached: true };
+  if (o.session && sessions.some((s) => s.name === o.session)) {
+    return { status: 200, session: o.session, reattached: true };
   }
   const name = normName(`${node.split("/").pop()}--${slug}`).slice(0, 60);
   if (sessions.some((s) => s.name === name)) return { status: 200, session: name, reattached: true };
@@ -450,21 +486,21 @@ async function spawnTaskSession(node, slug) {
   const cmd = withDefaultModel(agentCmdForNode(node));
   await execFileAsync("tmux", ["new-session", "-d", "-s", name, "-c", dir, `exec ${shell} -ic '${cmd.replace(/'/g, "'\\''")}'`]);
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_node", node]);
-  await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_task", task.file]);
-  await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_kind", "task"]);
-  if (task.outcome) await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_goal", task.outcome]);
+  await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_outcome", o.file]);
+  await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_kind", "outcome"]);
+  if (o.outcome) await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_goal", o.outcome]);
   try {
-    await writeTaskBinding(task.file, { status: "active", session: name });
-    await vaultCommit([task.file], `update: ${node} task ${slug} active`, node, name);
+    await writeOutcomeBinding(o.file, { status: "active", session: name });
+    await vaultCommit([o.file], `update: ${node} outcome ${slug} active`, node, name);
   } catch (err) {
-    console.error("task binding:", err.message ?? err);
+    console.error("outcome binding:", err.message ?? err);
   }
   (async () => {
     // ponytail: same fixed boot pause as home sessions; raise it if the TUI
     // keeps eating the first words of the prompt.
     await sleep(2500);
     try {
-      await typeInto(name, taskPrompt(node, task), false);
+      await typeInto(name, outcomePrompt(node, o), false);
     } catch {}
   })();
   return { status: 200, session: name };
@@ -473,58 +509,58 @@ async function spawnTaskSession(node, slug) {
 let lastReconcile = 0;
 let reconciling = false;
 /**
- * Reverts tasks whose owning session is gone: active -> open, session
+ * Reverts outcomes whose owning session is gone: active -> open, session
  * cleared. Runs off the sessions poll, throttled; also covers sessions that
  * died while this server was down. Only `active` reverts — waiting/done are
  * judgment states and stay.
  */
-async function reconcileTasks(sessions) {
+async function reconcileOutcomes(sessions) {
   if (reconciling || Date.now() - lastReconcile < 10_000) return;
   reconciling = true;
   lastReconcile = Date.now();
   try {
     const live = new Set(sessions.map((s) => s.name));
     for (const node of flattenNodePaths(await readTree(TREES_ROOT))) {
-      for (const t of await readNodeTasks(node)) {
+      for (const t of await readNodeOutcomes(node)) {
         if (t.status !== "active" || !t.session || live.has(t.session)) continue;
-        await writeTaskBinding(t.file, { status: "open", session: null });
-        await vaultCommit([t.file], `update: ${t.node} task ${t.slug} back to open, session ended`, t.node, null);
+        await writeOutcomeBinding(t.file, { status: "open", session: null });
+        await vaultCommit([t.file], `update: ${t.node} outcome ${t.slug} back to open, session ended`, t.node, null);
       }
     }
   } catch (err) {
-    console.error("task reconcile:", err.message ?? err);
+    console.error("outcome reconcile:", err.message ?? err);
   } finally {
     reconciling = false;
   }
 }
 
-const taskInfoCache = new Map(); // file -> { at, info }
+const outcomeInfoCache = new Map(); // file -> { at, info }
 /**
- * Attaches task title/outcome/status to each session that carries
- * @tangent_task, for the frontend strip and sidebar labels. Tiny TTL cache:
- * the sessions poll runs every 2s and task files rarely change.
+ * Attaches outcome title/statement/status to each session that carries
+ * @tangent_outcome, for the frontend strip and sidebar labels. Tiny TTL
+ * cache: the sessions poll runs every 2s and outcome files rarely change.
  */
-async function withTaskInfo(sessions) {
+async function withOutcomeInfo(sessions) {
   return Promise.all(
     sessions.map(async (s) => {
-      if (!s.task) return s;
-      let hit = taskInfoCache.get(s.task);
+      if (!s.outcome) return s;
+      let hit = outcomeInfoCache.get(s.outcome);
       if (!hit || Date.now() - hit.at > 3000) {
         try {
-          const text = await readFile(path.join(TREES_ROOT, s.task), "utf8");
+          const text = await readFile(path.join(TREES_ROOT, s.outcome), "utf8");
           const fm = parseFrontmatter(text);
           hit = {
             at: Date.now(),
             info: {
-              taskTitle: text.match(/^# (.+)$/m)?.[1]?.trim() ?? null,
-              taskOutcome: fm.outcome || null,
-              taskStatus: fm.status || null,
+              outcomeTitle: text.match(/^# (.+)$/m)?.[1]?.trim() ?? null,
+              outcomeText: fm.outcome || null,
+              outcomeStatus: fm.status || null,
             },
           };
         } catch {
           hit = { at: Date.now(), info: {} };
         }
-        taskInfoCache.set(s.task, hit);
+        outcomeInfoCache.set(s.outcome, hit);
       }
       return { ...s, ...hit.info };
     })
@@ -941,7 +977,7 @@ const server = http.createServer(async (req, res) => {
   try {
     if (url.pathname === "/api/sessions") {
       const sessions = await listSessions();
-      reconcileTasks(sessions); // throttled fire-and-forget
+      reconcileOutcomes(sessions); // throttled fire-and-forget
       res.writeHead(200, { "content-type": "application/json" });
       res.end(
         JSON.stringify({ agent: agentCmd, caffeinate: caffeinateProc !== null, voice: Boolean(GROQ_KEY), sessions })
@@ -960,18 +996,18 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ root: TREES_ROOT, nodes: await readTree(TREES_ROOT) }));
       return;
     }
-    // The launcher's search index: nodes, purposes, people, tasks in order.
+    // The launcher's search index: nodes, purposes, people, outcomes in order.
     if (url.pathname === "/api/vault") {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ nodes: await vaultIndex() }));
       return;
     }
-    // Enter on a task in the launcher: spawn (or reattach) its work session.
-    if (url.pathname === "/api/task/spawn" && req.method === "POST") {
+    // Enter on an outcome in the launcher: spawn (or reattach) its work session.
+    if (url.pathname === "/api/outcome/spawn" && req.method === "POST") {
       let body = {};
       try { body = JSON.parse(await readBody(req)); } catch {}
       try {
-        const result = await spawnTaskSession(String(body.node ?? ""), String(body.slug ?? ""));
+        const result = await spawnOutcomeSession(String(body.node ?? ""), String(body.slug ?? ""));
         res.writeHead(result.status, { "content-type": "application/json" });
         res.end(JSON.stringify(result.status === 200 ? { session: result.session, reattached: Boolean(result.reattached) } : { error: result.error }));
       } catch (err) {

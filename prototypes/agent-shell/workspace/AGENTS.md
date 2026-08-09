@@ -147,14 +147,14 @@ tmux kill-session -t <name>
 
 The tree at `~/.tangent/trees/` is also the user's memory vault. Each active node directory has one note named after the directory, for example `neara/pgande/pgande.md`. The note describes the present state of that work: Purpose, Current, Road to done, Knowledge, Ideas and open questions, Resources. The vault rules are in `~/.tangent/trees/README.md`.
 
-## Tasks
+## Outcomes
 
-Nodes are what the user talks about; tasks are what they work on. A task is one file `task-<slug>.md` in its owning node's directory, with a mandatory one-line `outcome` and a `status` (`open | active | waiting | deferred | done | dropped`). The node note's `## Road to done` lists `[[task-...]]` wikilinks in priority order; the first `open` task is "next". Full schema: `~/.tangent/trees/README.md`, section Tasks.
+Nodes are what the user talks about; outcomes are what they achieve. There is no separate task concept: a task is just an outcome small enough to work directly. An outcome is one file `outcome-<slug>.md` in its owning node's directory, with a mandatory one-line `outcome` (the done condition) and a `status` (`open | active | waiting | deferred | done | dropped`). Outcomes nest: an optional `## Breakdown` section lists `[[outcome-...]]` wikilinks to child outcomes in priority order, so a big outcome completes as the sum of its smallest achievable parts. The node note's `## Road to done` links the node's top-level outcomes; "next" is derived depth-first as the first `open` outcome whose breakdown children are all finished. Full schema: `~/.tangent/trees/README.md`, section Outcomes.
 
-- The shell's launcher (Cmd+K, then `/`) spawns task sessions itself: agent in the node's repo, bound with `@tangent_node` and `@tangent_task`, task flipped to `active`. You do not need to replicate that; when the user asks you for a session on a specific task, you may create it the same way (set both options, flip the status, commit).
-- When the user asks to add a task, create the task file and add its wikilink to Road to done, per the `remember` skill's Tasks section.
-- Task state changes are spoken: "mark it done", "that's waiting on Sami", "defer that". Apply them to the task file with the `remember` skill rules. On done: harvest durable results to the node's `## Knowledge` first, keep the file until the node lands.
-- Only the shell flips `open <-> active`; never fight it. If a session died mid-task, the shell reverts the task to `open` on its own.
+- The shell's launcher (Cmd+K, then `/`) spawns outcome sessions itself: agent in the node's repo, bound with `@tangent_node` and `@tangent_outcome`, outcome flipped to `active`. You do not need to replicate that; when the user asks you for a session on a specific outcome, you may create it the same way (set both options, flip the status, commit).
+- When the user states an outcome they want to achieve ("I want X"), record it: create the outcome file and link it from Road to done, or from a parent outcome's Breakdown when it is part of a bigger one, per the `remember` skill's Outcomes section. If the done condition cannot be stated yet, it is not an outcome; save it as an idea on the node instead.
+- Outcome state changes are spoken: "mark it done", "that's waiting on Sami", "defer that". Apply them to the outcome file with the `remember` skill rules. On done: harvest durable results to the node's `## Knowledge` first, keep the file until the node lands.
+- Only the shell flips `open <-> active`; never fight it. If a session died mid-outcome, the shell reverts the outcome to `open` on its own.
 
 ### Start focus
 
@@ -162,19 +162,19 @@ When the user says "I am working on <X>", "let's work on <X>", or "open up <X>":
 
 1. Resolve <X> to its vault node.
 2. Read the node note and the nearest project note above it.
-3. Brief the user: the current state, the open tasks, the blockers, and the resources (branches, worktrees, reviews).
+3. Brief the user: the current state, the open outcomes, the blockers, and the resources (branches, worktrees, reviews).
 4. Do not create a file. Do not write to the vault.
 
 ### End focus
 
 When the user says "I am done with <X>" or "done for now":
 
-1. If the user gives an outcome, use the `remember` skill to update the note: `## Current`, task checkboxes, `status`.
-2. If the user gives no outcome, write nothing. Do not invent an outcome.
+1. If the user gives a result, use the `remember` skill to update the note: `## Current`, outcome state, `status`.
+2. If the user gives no result, write nothing. Do not invent one.
 
 ### Saves and questions
 
-- When the user says "remember", "save", "note this", or "add a task", use the `remember` skill.
+- When the user says "remember", "save", "note this", "add a task", or "I want to achieve X", use the `remember` skill.
 - When the user asks what is recorded, what remains, or what the state is, use the `recall` skill.
 - The bound `@tangent_node` of a tmux session is the authoritative save target for agents in that session. Do not infer the node from a directory or branch.
 

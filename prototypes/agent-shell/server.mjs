@@ -359,8 +359,7 @@ async function readNodeOutcomes(node) {
  * Sami), and its outcomes. Each node's outcome list is the depth-first
  * flatten of its Road to done roots through Breakdown links (children may be
  * homed in other nodes), with `depth` for indentation; outcome files nothing
- * links trail at the top level, alphabetically. "Next" stays derived by
- * callers: the first open outcome whose breakdown children are all finished.
+ * links trail at the top level, alphabetically.
  * Small vault, read fresh per request. Returns { nodes, map }: the per-node
  * entries for typed search, plus the unified deduplicated map (built below)
  * that the launcher's browse view renders.
@@ -450,6 +449,18 @@ async function vaultIndex() {
   return { nodes: out, map: groups };
 }
 
+/** Replaces (or appends) one `key: value` line inside a note's frontmatter. */
+function withFrontmatterLine(text, key, value) {
+  const fmMatch = text.match(/^---\n[\s\S]*?\n---/);
+  if (!fmMatch) throw new Error("note has no frontmatter");
+  const line = new RegExp(`^${key}:.*$`, "m");
+  const next = value ? `${key}: ${value}` : `${key}:`;
+  const fm = line.test(fmMatch[0])
+    ? fmMatch[0].replace(line, () => next)
+    : fmMatch[0].replace(/\n---$/, () => `\n${next}\n---`);
+  return text.replace(fmMatch[0], () => fm);
+}
+
 /**
  * Rewrites only the status and session frontmatter lines of an outcome file —
  * the two mechanical fields the server owns. Everything else in the file is
@@ -458,18 +469,37 @@ async function vaultIndex() {
 async function writeOutcomeBinding(file, { status, session }) {
   const abs = path.join(TREES_ROOT, file);
   let text = await readFile(abs, "utf8");
-  const fmMatch = text.match(/^---\n[\s\S]*?\n---/);
-  if (!fmMatch) throw new Error("outcome file has no frontmatter: " + file);
-  let fm = fmMatch[0];
-  /** Replaces (or appends) one `key: value` line inside the frontmatter. */
-  const setLine = (key, value) => {
-    const line = new RegExp(`^${key}:.*$`, "m");
-    const next = value ? `${key}: ${value}` : `${key}:`;
-    fm = line.test(fm) ? fm.replace(line, next) : fm.replace(/\n---$/, `\n${next}\n---`);
-  };
-  setLine("status", status);
-  setLine("session", session);
-  await writeFile(abs, text.replace(fmMatch[0], fm));
+  text = withFrontmatterLine(text, "status", status);
+  text = withFrontmatterLine(text, "session", session);
+  await writeFile(abs, text);
+}
+
+/**
+ * Applies a user edit from the tree's card to an outcome file: a status flip
+ * (mark done / reopen) or the outcome's own text (title, done condition, the
+ * State section). Direct edits are the user's own word, so the vault rule
+ * that judgment state is written on Julian's word is satisfied by the click
+ * itself — no agent in the loop, status never waits on one.
+ */
+async function editOutcomeFile(file, { status, title, outcome, state }) {
+  const abs = path.join(TREES_ROOT, file);
+  let text = await readFile(abs, "utf8");
+  if (status !== undefined) text = withFrontmatterLine(text, "status", status);
+  if (outcome !== undefined) {
+    text = withFrontmatterLine(text, "outcome", outcome.replace(/\s*\n\s*/g, " ").trim());
+  }
+  if (title !== undefined && title.trim()) {
+    const t = title.replace(/\s*\n\s*/g, " ").trim();
+    text = /^# .*$/m.test(text) ? text.replace(/^# .*$/m, () => "# " + t) : text + `\n# ${t}\n`;
+  }
+  if (state !== undefined) {
+    const body = state.trim();
+    const section = /(^## State[^\n]*\n)[\s\S]*?(?=^## |(?![\s\S]))/m;
+    text = section.test(text)
+      ? text.replace(section, (m, heading) => heading + "\n" + body + "\n\n")
+      : text.replace(/\s*$/, "") + "\n\n## State\n\n" + body + "\n";
+  }
+  await writeFile(abs, text);
 }
 
 /**
@@ -1086,6 +1116,47 @@ const server = http.createServer(async (req, res) => {
         const result = await startOutcome(String(body.file ?? ""));
         res.writeHead(result.status, { "content-type": "application/json" });
         res.end(JSON.stringify(result.status === 200 ? { session: result.session, reattached: Boolean(result.reattached) } : { error: result.error }));
+      } catch (err) {
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
+      }
+      return;
+    }
+    // The card's edit lane: a status flip (mark done / reopen) or the
+    // outcome's own text, written on the user's click with a provenance
+    // commit. Direct edits are the user's word; no agent is in the loop.
+    if (url.pathname === "/api/outcome/edit" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      const file = String(body.file ?? "");
+      const o = (await outcomesByFile()).get(file);
+      if (!o) {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: `no outcome file ${file}` }));
+        return;
+      }
+      const fields = {};
+      if (body.status !== undefined) {
+        if (!["open", "done"].includes(body.status)) {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: `status must be open or done, got "${body.status}"` }));
+          return;
+        }
+        fields.status = body.status;
+      }
+      for (const k of ["title", "outcome", "state"]) if (typeof body[k] === "string") fields[k] = body[k];
+      if (!Object.keys(fields).length) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "nothing to edit" }));
+        return;
+      }
+      try {
+        await editOutcomeFile(file, fields);
+        const what =
+          fields.status === "done" ? "done" : fields.status === "open" ? "reopened" : "edited";
+        await vaultCommit([file], `update: ${o.node} outcome ${o.slug} ${what} in tree`, o.node, null);
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
       } catch (err) {
         res.writeHead(500, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));

@@ -180,9 +180,6 @@
   .bt-row.done .bt-glyph { color: var(--accent); }
   .bt-row.active .bt-glyph { color: var(--accent2); }
   .bt-row.waiting .bt-glyph { color: #e3b341; }
-  .bt-row.next { border-color: var(--accent); }
-  .bt-row.next .bt-glyph { color: var(--accent); }
-  .bt-next-tag { margin-left: auto; color: var(--accent); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; flex: none; }
   /* The kill ✕ every tree row wears while its session is live, because the
      rail is what actually gets watched. Always drawn, never hover-only: a
      way to stop a runaway agent must not be a hidden feature. Dim until the
@@ -192,7 +189,7 @@
     color: var(--dim); font: inherit; font-size: 11px; line-height: 1; opacity: 0.5;
   }
   .row-kill:hover { color: #f85149; opacity: 1; }
-  .bt-meta + .row-kill, .bt-next-tag + .row-kill, .bt-node + .row-kill, .cr-meta + .row-kill { margin-left: 6px; }
+  .bt-meta + .row-kill, .bt-node + .row-kill, .cr-meta + .row-kill { margin-left: 6px; }
   /* Node rows: a node's header row IS its main agent (dot only while live),
      outcomes nested by breakdown, process sessions underneath. Nodes fold
      (chevron / arrow keys); a folded node prints what it hides, so hiding
@@ -220,6 +217,14 @@
   .md-btn.primary { color: var(--accent); border-color: var(--accent); }
   .md-btn.danger:hover { color: #f85149; border-color: #f85149; }
   .md-btn .key { color: var(--dim); margin-left: 6px; }
+  /* Card edit mode: the outcome's own text as plain fields, visibly writable. */
+  .md-edit {
+    display: block; width: 100%; margin: 0; padding: 6px 8px; border-radius: 6px;
+    border: 1px solid var(--accent2); background: rgba(88, 166, 255, 0.06);
+    color: var(--text); font: inherit; font-size: 12px; resize: vertical;
+  }
+  .md-edit:focus { outline: none; border-color: var(--accent); }
+  .md-edit.md-edit-title { font-size: 17px; font-weight: 700; }
   /* The card: a tree row's detail, shown in the terminal area. Browsing
      (find focused) previews the selected row's card live; opening an outcome
      with no agent pins its card (the stage). Viewing a card never starts
@@ -557,10 +562,10 @@ function killBtnEl(name) {
 }
 
 /** One breakdown child row: status glyph, title, live agent dot; a live child's row opens its session. */
-function childRowEl(c, isNext) {
+function childRowEl(c) {
   const s = sessionFor(c.session);
   const row = document.createElement("div");
-  row.className = "bt-row " + c.status + (isNext ? " next" : "");
+  row.className = "bt-row " + c.status;
   const glyph = document.createElement("span");
   glyph.className = "bt-glyph" + (s?.state === "working" ? " working" : s?.state === "waiting" ? " ready" : "");
   glyph.textContent = s ? "●" : OUTCOME_GLYPH[c.status] ?? "○";
@@ -568,12 +573,6 @@ function childRowEl(c, isNext) {
   title.className = "bt-title";
   title.textContent = c.title;
   row.append(glyph, title);
-  if (isNext) {
-    const tag = document.createElement("span");
-    tag.className = "bt-next-tag";
-    tag.textContent = "next";
-    row.appendChild(tag);
-  }
   if (s) {
     row.title = "agent session live — click to view";
     row.style.cursor = "pointer";
@@ -599,7 +598,7 @@ function treeStateKey(items) {
     liveOnly,
     [...folded],
     items.map((it) =>
-      it.kind === "outcome" ? ["o", it.t.file, it.t.status, it.next]
+      it.kind === "outcome" ? ["o", it.t.file, it.t.status]
       : it.kind === "main" ? ["n", it.g.path, it.s?.state ?? null, it.fold.folded, it.fold.hiddenCount, it.fold.hiddenLive]
       : it.kind === "process" ? ["p", it.s.name, it.s.state]
       : ["up", it.to]),
@@ -707,6 +706,27 @@ async function startAgent(file) {
   }
 }
 
+/**
+ * Writes an outcome edit (status flip or text fields) through the shell,
+ * which commits it with provenance, then refreshes every surface. A click
+ * in the tree is the user's own word, so no agent is in the loop.
+ */
+async function editOutcome(t, fields, label) {
+  try {
+    const res = await fetch("/api/outcome/edit", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file: t.file, ...fields }),
+    });
+    const out = await res.json();
+    if (!res.ok) throw new Error(out.error ?? "edit failed " + res.status);
+    hud("done", label);
+    await refreshVault();
+  } catch (err) {
+    hud("error", String(err.message ?? err));
+  }
+}
+
 // ---- the card ----
 // The work pane's second face: a tree row's detail, rendered where the
 // terminal goes. Two ways in: browsing (find focused) previews the selected
@@ -756,13 +776,18 @@ function cardKeyOf(item) {
 }
 
 let cardKey = "";
+let cardEditing = null; // outcome file whose card is in edit mode
 function renderCard(force = false) {
   const item = cardItem();
   if (!item) {
     cardKey = "";
+    cardEditing = null;
     stageEl.classList.remove("show");
     return;
   }
+  // Never rebuild the card out from under an in-progress edit; save or
+  // cancel clears cardEditing and forces the rerender.
+  if (item.kind === "outcome" && item.t.file === cardEditing && stageEl.querySelector(".md-edit")) return;
   const key = cardKeyOf(item);
   if (!force && key === cardKey && stageEl.classList.contains("show")) return;
   cardKey = key;
@@ -813,6 +838,49 @@ function renderCard(force = false) {
     el("div", "md-text", "Widen the view " + (item.to ? "to " + item.to : "to the whole tree") + ".");
     const a = el("div", "md-actions");
     btn(a, "go up", "⌫", () => setScope(item.to), "primary");
+  } else if (item.kind === "outcome" && item.t.file === cardEditing) {
+    // Edit mode: the outcome's own text as visible fields. Save writes the
+    // file through the shell with a provenance commit; esc cancels.
+    const t = item.t;
+    el("div", "md-node", t.node);
+    const title = document.createElement("input");
+    title.className = "md-edit md-edit-title";
+    title.value = t.title;
+    box.appendChild(title);
+    /** One labeled textarea field. */
+    const field = (label, value, rows) => {
+      el("span", "md-label", label);
+      const ta = document.createElement("textarea");
+      ta.className = "md-edit";
+      ta.value = value ?? "";
+      ta.rows = rows;
+      box.appendChild(ta);
+      return ta;
+    };
+    const outcome = field("done looks like", t.outcome, 2);
+    const state = field("where it stands", t.stateText, 8);
+    const close = () => {
+      cardEditing = null;
+      renderCard(true);
+    };
+    const save = () => {
+      const fields = { title: title.value.trim(), outcome: outcome.value.trim(), state: state.value.trim() };
+      editOutcome(t, fields, "saved: " + (fields.title || t.title)).finally(close);
+    };
+    for (const f of [title, outcome, state]) {
+      f.onkeydown = (e) => {
+        e.stopPropagation();
+        if (e.key === "Escape") close();
+        else if (e.key === "Enter" && (e.metaKey || f === title)) {
+          e.preventDefault();
+          save();
+        }
+      };
+    }
+    const a = el("div", "md-actions");
+    btn(a, "save", "⌘⏎", save, "primary");
+    btn(a, "cancel", "esc", close);
+    requestAnimationFrame(() => title.focus());
   } else if (item.kind === "outcome") {
     const t = item.t;
     el("div", "md-node", t.node);
@@ -822,8 +890,7 @@ function renderCard(force = false) {
     const kids = (t.breakdown ?? []).map((slug) => outcomeBySlug.get(slug)).filter(Boolean);
     if (kids.length) {
       el("span", "md-label", "breakdown");
-      const nextChild = kids.find((c) => c.status !== "done" && c.status !== "dropped");
-      for (const c of kids) box.appendChild(childRowEl(c, c === nextChild));
+      for (const c of kids) box.appendChild(childRowEl(c));
     }
     const s = sessionFor(t.session);
     sessLine(s);
@@ -833,6 +900,20 @@ function renderCard(force = false) {
       btn(a, "kill ✕", chordFor("kill-session"), () => killSession(s.name), "danger");
     } else if (!["done", "dropped"].includes(t.status)) {
       btn(a, "▸ start agent", "", () => startAgent(t.file), "primary");
+    }
+    // Editing is the user's own word: the shell writes it directly, with a
+    // provenance commit. Status must never wait on an agent.
+    if (t.status === "done") {
+      btn(a, "↺ reopen", "", () => editOutcome(t, { status: "open" }, "reopened: " + t.title));
+    } else if (t.status !== "dropped") {
+      btn(a, "✓ mark done", "", () => editOutcome(t, { status: "done" }, "done: " + t.title));
+    }
+    if (t.status !== "dropped") {
+      btn(a, "✎ edit", "", () => {
+        openOutcomeView(t.file);
+        cardEditing = t.file;
+        renderCard(true);
+      });
     }
     if (!a.children.length) a.remove();
   } else if (item.kind === "main") {
@@ -1602,22 +1683,14 @@ async function fetchVault(force = false) {
   return vaultNodes;
 }
 
-// Deferred work stays out of every surface until asked for by name; dropped
-// outcomes are already deleted, this just guards a stale index.
-const visibleOutcomes = (n) => n.outcomes.filter((t) => t.status !== "deferred" && t.status !== "dropped");
+// The tree shows only what's left to do. Done outcomes leave it (they stay
+// visible as ✓ rows in their parent outcome's card breakdown, where progress
+// matters); deferred work stays out of every surface until asked for by
+// name; dropped outcomes are already deleted, that filter just guards a
+// stale index.
+const visibleOutcomes = (n) =>
+  n.outcomes.filter((t) => t.status !== "done" && t.status !== "deferred" && t.status !== "dropped");
 const OUTCOME_GLYPH = { done: "✓", active: "▶", waiting: "◔", open: "○" };
-
-// Next is derived, never stored: walking the flattened depth-first list, the
-// first open outcome whose breakdown children are all finished. A parent with
-// unfinished children is worked through its children first.
-function deriveNext(list) {
-  const bySlug = new Map(list.map((t) => [t.slug, t]));
-  const unfinished = (slug) => {
-    const c = bySlug.get(slug);
-    return c && c.status !== "done" && c.status !== "dropped";
-  };
-  return list.find((t) => t.status === "open" && !(t.breakdown ?? []).some(unfinished)) ?? null;
-}
 
 // Rank nodes for "/query": name beats path beats people beats outcome text beats
 // note body — "/sami" finds viz-input through its people or note content.
@@ -1628,7 +1701,7 @@ function rankNodes(q) {
   for (const n of vaultNodes) {
     let s = 0;
     const name = n.name.toLowerCase();
-    if (!query) s = visibleOutcomes(n).some((t) => t.status !== "done") ? 10 : 0;
+    if (!query) s = visibleOutcomes(n).length ? 10 : 0;
     else if (name.startsWith(query)) s = 100;
     else if (name.includes(query)) s = 85;
     else if (n.path.toLowerCase().includes(query)) s = 70;
@@ -1808,9 +1881,9 @@ function treeSections(q) {
 }
 
 /** One outcome row in the tree: glyph, title, live dot. */
-function outcomeRowEl(t, isNext, indent) {
+function outcomeRowEl(t, indent) {
   const row = document.createElement("div");
-  row.className = "bt-row " + t.status + (isNext ? " next" : "");
+  row.className = "bt-row " + t.status;
   row.style.paddingLeft = indent + (t.depth ?? 0) * 16 + "px";
   const s = sessionFor(t.session);
   const glyph = document.createElement("span");
@@ -1828,19 +1901,12 @@ function outcomeRowEl(t, isNext, indent) {
     chip.title = "lives on " + t.node;
     row.appendChild(chip);
   }
-  if (isNext) {
-    const tag = document.createElement("span");
-    tag.className = "bt-next-tag";
-    tag.textContent = "next";
-    row.appendChild(tag);
-  } else {
-    const meta = t.status === "waiting" && t.waitingOn ? "waiting on " + t.waitingOn : t.due ?? "";
-    if (meta) {
-      const m = document.createElement("span");
-      m.className = "bt-meta";
-      m.textContent = meta;
-      row.appendChild(m);
-    }
+  const meta = t.status === "waiting" && t.waitingOn ? "waiting on " + t.waitingOn : t.due ?? "";
+  if (meta) {
+    const m = document.createElement("span");
+    m.className = "bt-meta";
+    m.textContent = meta;
+    row.appendChild(m);
   }
   if (s) row.appendChild(killBtnEl(s.name));
   return row;
@@ -1970,9 +2036,8 @@ function buildTreeItems(q) {
         return under && ["working", "waiting", "service"].includes(s.state);
       });
     }
-    const next = deriveNext(g.outcomes);
     const rows = [
-      ...g.outcomes.map((t) => ({ kind: "outcome", t, g, next: t === next, pad: rowPad })),
+      ...g.outcomes.map((t) => ({ kind: "outcome", t, g, pad: rowPad })),
       ...procs.map((s) => ({ kind: "process", s, g, pad: rowPad })),
     ];
     if (flat) {
@@ -1998,7 +2063,7 @@ function buildTreeItems(q) {
 function treeRowEl(item) {
   if (item.kind === "up") return upRowEl(item.to);
   if (item.kind === "main") return nodeRowEl(item.g, item.s, item.fold);
-  if (item.kind === "outcome") return outcomeRowEl(item.t, item.next, item.pad);
+  if (item.kind === "outcome") return outcomeRowEl(item.t, item.pad);
   return processRowEl(item.s, item.pad);
 }
 

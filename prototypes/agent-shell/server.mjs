@@ -5,7 +5,7 @@
 import http from "node:http";
 import os from "node:os";
 import { createHash } from "node:crypto";
-import { readFile, readdir } from "node:fs/promises";
+import { appendFile, readFile, readdir } from "node:fs/promises";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
@@ -275,7 +275,7 @@ You get a JSON payload: the utterance (speech-to-text or typed), the focused ses
 THE RULE ABOVE ALL OTHERS: you never write, rewrite, trim, or fix the user's words. Words meant for an agent travel verbatim through "say"; you only pick the destination and identify which leading words were the address. The server strips the address itself.
 
 Reply with JSON only: {"actions":[...]}, at most 5 actions, executed in order. Action types:
-- {"type":"say","target":"<session or node name as spoken, or \\"\\" for the focused session>","address":"<the exact leading words of the utterance that name the target, \\"\\" if none>"} — deliver the utterance (minus the address) to an agent. THE DEFAULT: anything that is not clearly a shell verb below is a say. An utterance opening with a session or node name and then instructing it ("megabranch, run the client build" / "PG&E run the daily speedrun") is addressed; everything else has target "" (the focused session).
+- {"type":"say","target":"<session or node name as spoken, or \\"\\" for the focused session>","address":"<the exact leading words of the utterance that name the target, \\"\\" if none>"} — deliver the utterance (minus the address) to an agent. THE DEFAULT: anything that is not clearly a shell verb below is a say. An utterance opening with a session or node name and then instructing it ("megabranch, run the client build" / "PG&E run the daily speedrun") is addressed; everything else has target "" (the focused session). Target must be "" unless the utterance's own words name the target. NEVER infer a target from topic or content: a complaint or question about sessions, the shell, killing, or an agent goes to the focused session like anything else unless a name was actually said. The server enforces this — a say without address words always lands in the focused session.
 - {"type":"keys","session":"<name>","keys":["Enter"]} — press special keys. Allowed: Enter, Escape, Tab, Up, Down, Left, Right, BSpace, Space, C-c, and single letters or digits like "y" or "2". Use for answering menus and permission prompts visible in the pane tail (send the matching option key) and for "stop" or "interrupt" (Escape, or C-c in a shell).
 - {"type":"view","target":"<session or node name>"} — show that session in the app (a node name shows its home agent). For "show me X", "open X", "go to X", "switch to X".
 - {"type":"close_view"} — leave the current session view, back to chat.
@@ -469,8 +469,12 @@ async function executeVoiceActions(actions, ctx, focused, utterance) {
     try {
       switch (a.type) {
         case "say": {
-          const text = stripAddress(utterance, a.address).slice(0, 4000);
-          let resolved = a.target ? resolveTarget(a.target, ctx) : { session: focused };
+          // The invariant that stops topic-guessing: the router may redirect
+          // only when the user actually spoke address words. No address means
+          // the focused session, whatever the router claims the target is.
+          const address = String(a.address ?? "").trim();
+          const text = stripAddress(utterance, address).slice(0, 4000);
+          let resolved = address && a.target ? resolveTarget(a.target, ctx) : { session: focused };
           if (!resolved) {
             await typeInto(focused, utterance, false);
             summary.push(`no "${a.target}" — typed here, not sent`);
@@ -493,7 +497,10 @@ async function executeVoiceActions(actions, ctx, focused, utterance) {
           // Never auto-run prose at a bare shell prompt; agents get Enter.
           const submit = sessions.find((s) => s.name === target)?.state !== "shell";
           await typeInto(target, text, submit);
-          summary.push(submit ? `→ ${target}` : `typed into ${target}, not sent`);
+          // The HUD line says WHY it went there: which spoken words redirected
+          // it, or that it followed focus.
+          const why = address ? ` (you said “${address}”)` : "";
+          summary.push((submit ? `→ ${target}` : `typed into ${target}, not sent`) + why);
           break;
         }
         case "keys": {
@@ -583,14 +590,27 @@ async function executeVoiceActions(actions, ctx, focused, utterance) {
   return { summary, clientActions };
 }
 
+const VOICE_LOG = path.join(os.homedir(), ".tangent", "agent-shell-voice.jsonl");
+
+/**
+ * Appends one routing decision to ~/.tangent/agent-shell-voice.jsonl: the
+ * utterance, the router's raw plan, and what actually executed. The audit
+ * trail for "why did that go there?" — without it a misroute is unexplainable
+ * after the fact. Best effort, never throws.
+ */
+function logVoice(entry) {
+  appendFile(VOICE_LOG, JSON.stringify({ at: new Date().toISOString(), ...entry }) + "\n").catch(() => {});
+}
+
 /**
  * Routes one utterance (spoken or typed, same grammar) and executes the plan.
  * The failure fallback is inert: the utterance is typed into the focused
  * session, unsubmitted, and nothing else happens.
  */
 async function routeAndExecute(utterance, focused, ctx) {
+  let plan = null;
   try {
-    const plan = await routerCall({
+    plan = await routerCall({
       utterance,
       chatSession: CHAT_SESSION,
       focusedSession: focused,
@@ -599,9 +619,12 @@ async function routeAndExecute(utterance, focused, ctx) {
       visibleNodes: ctx.visibleNodes,
       allNodes: ctx.projectNodes,
     });
-    return await executeVoiceActions(plan.actions, ctx, focused, utterance);
+    const out = await executeVoiceActions(plan.actions, ctx, focused, utterance);
+    logVoice({ utterance, focused, plan, summary: out.summary });
+    return out;
   } catch (err) {
     console.error("voice router:", err.message ?? err);
+    logVoice({ utterance, focused, plan, error: String(err.message ?? err) });
     try {
       await typeInto(focused, utterance, false);
     } catch {}

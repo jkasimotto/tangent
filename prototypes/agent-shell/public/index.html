@@ -101,6 +101,17 @@
   .rollup.waiting { color: #e3b341; }
   .rollup.service { color: var(--accent2); }
   .rollup.stopped { color: #f85149; }
+  /* A node's home agent lives on the node row itself: the node is the unit
+     you talk to, its home session is an implementation detail. Same state
+     colors as session dots. */
+  .home-dot {
+    margin-left: 4px; padding: 0 4px; border-radius: 4px;
+    background: none; border: none; color: var(--dim); font-size: 11px;
+  }
+  .home-dot:hover { color: var(--text); }
+  .home-dot.working { color: var(--accent); animation: chip-pulse 1.1s ease-in-out infinite; }
+  .home-dot.waiting { color: #e3b341; }
+  .home-dot.active { background: var(--accent2); color: #04121f; }
   .add-btn {
     visibility: hidden; margin-left: 4px; padding: 0 5px; border-radius: 4px;
     background: none; border: none; color: var(--dim); font-size: 13px;
@@ -174,6 +185,19 @@
   #voice-hud.done .vh-dot { color: var(--accent); }
   #voice-hud.error .vh-dot { color: #e3b341; }
   #voice-hud .vh-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Typed command bar: the voice grammar over a keyboard. Same spot as the
+     HUD so both lanes read as one surface. */
+  #cmd-bar {
+    position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%);
+    z-index: 31; width: min(680px, 85%); padding: 7px 12px; border-radius: 999px;
+    background: var(--panel); border: 1px solid var(--accent2);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  }
+  #cmd-bar[hidden] { display: none; }
+  #cmd-bar input {
+    width: 100%; background: none; border: none; outline: none;
+    color: var(--text); font: inherit;
+  }
   #terms { flex: 1; position: relative; min-height: 0; }
   .term-host { position: absolute; inset: 0; padding: 8px; display: none; }
   .term-host.visible { display: block; }
@@ -187,7 +211,7 @@
     <span class="brand"><span class="dot">●</span> agent shell</span>
     <span id="active-label"></span>
     <button id="agent-btn" class="hbtn" title="orchestrator agent, click to switch"></button>
-    <button id="mic-btn" class="hbtn" title="voice — hold ⌥: command the shell; hold ⇧⌥: dictate to the focused agent (click / shift-click likewise)">🎙</button>
+    <button id="mic-btn" class="hbtn" title="voice — hold ⌥ and speak (release to send), or tap ⌥ to latch (tap again to send). ⇧ or ↑ while holding locks the recording.">🎙</button>
     <button id="caffeine-btn" class="hbtn" title="keep mac awake (caffeinate -di)">☕</button>
     <button id="keys-btn" class="hbtn" title="keyboard shortcuts">⌘</button>
     <button id="close-btn" class="hbtn">✕ back to chat</button>
@@ -215,6 +239,7 @@
     <div id="terms"></div>
   </div>
   <div id="voice-hud"><span class="vh-dot">●</span><span class="vh-text"></span></div>
+  <div id="cmd-bar" hidden><input id="cmd-input" placeholder="type what you'd say — e.g. “megabranch, run the client build”" spellcheck="false" /></div>
 </div>
 <script src="/vendor/xterm/xterm.js"></script>
 <script src="/vendor/xterm/addon-fit.js"></script>
@@ -387,8 +412,13 @@ async function refreshSessions() {
   } catch {}
 }
 
+// Home sessions render on the node row itself, not as work-session chips.
 function sessionsForNode(path) {
-  return lastSessions.filter((s) => !s.isChat && s.node === path);
+  return lastSessions.filter((s) => !s.isChat && s.node === path && s.kind !== "home");
+}
+
+function homeFor(path) {
+  return lastSessions.find((s) => s.kind === "home" && s.node === path);
 }
 
 const STATE_HINT = {
@@ -547,6 +577,18 @@ function renderNode(node, container) {
   name.onclick = () => focusNode(node.path);
   row.appendChild(name);
 
+  // The node's home agent, if one is live: the node's own presence, distinct
+  // from the work sessions beneath it.
+  const home = homeFor(node.path);
+  if (home) {
+    const dot = document.createElement("button");
+    dot.className = "home-dot" + (home.state ? " " + home.state : "") + (active === home.name ? " active" : "");
+    dot.textContent = "⌂";
+    dot.title = "home agent — " + (STATE_HINT[home.state] ?? "");
+    dot.onclick = () => show(home.name);
+    row.appendChild(dot);
+  }
+
   // A collapsed node hides its subtree's sessions, so it wears one rollup
   // dot in the most urgent state below it.
   const collapsed = hasKids && !expanded.has(node.path);
@@ -680,6 +722,7 @@ const ACTION_META = [
   { action: "kill-session", label: "kill tmux session", when: "session" },
   { action: "toggle-sidebar", label: "toggle project tree", when: "any" },
   { action: "toggle-filter", label: "toggle sessions filter", when: "any" },
+  { action: "command-bar", label: "type a command (voice grammar)", when: "any" },
 ];
 
 const ACTIONS = {
@@ -687,6 +730,7 @@ const ACTIONS = {
   "kill-session": killActiveSession,
   "toggle-sidebar": () => treeBtn.onclick(),
   "toggle-filter": () => filterBtn.onclick(),
+  "command-bar": () => openCmdBar(),
 };
 
 const KEYMAP_STORE = "agentshell.keymap";
@@ -1005,12 +1049,15 @@ window.addEventListener("beforeunload", (e) => {
 });
 
 // ---- voice control ----
-// Push-to-talk: hold ⌥ (option) and speak, release to send; or click the mic
-// to toggle. The recording goes to /api/voice, which transcribes it and routes
-// the utterance onto shell actions server-side (typing into sessions, spawn,
-// kill, caffeinate, agent switch, spoken answers). Actions only this page can
-// perform (view, close_view, sidebar) come back in the response. The HUD pill
-// narrates: listening -> transcribing -> what happened.
+// One key, spoken addressing. Hold ⌥ and speak, release to send; tap ⌥ to
+// latch a longer recording, tap again to send; tap ⇧ while holding to promote
+// the hold to a latch mid-utterance. The recording goes to /api/voice with the
+// nodes the sidebar currently shows; the server transcribes it and routes the
+// utterance: words for an agent travel verbatim (addressed by session or node
+// name, focused session when unaddressed), shell verbs (view, spawn, kill,
+// sidebar, caffeinate, agent switch, spoken answers) execute server-side.
+// Actions only this page can perform (view, close_view, sidebar) come back in
+// the response. The HUD pill narrates: listening -> transcribing -> result.
 
 const micBtn = document.getElementById("mic-btn");
 const hudEl = document.getElementById("voice-hud");
@@ -1018,9 +1065,9 @@ const hudTextEl = hudEl.querySelector(".vh-text");
 let recorder = null;
 let recChunks = [];
 let recCancelled = false;
-let pttHold = false;   // recording came from the held ⌥, not the mic button
+let pttHold = false;   // recording is held ⌥ push-to-talk (release sends)
 let pttTimer = null;   // pending hold-to-arm timeout
-let rawMode = false;   // dictation lane (⇧⌥ / shift-click): verbatim, no router
+let altClean = false;  // ⌥ is down with no other key pressed since
 let hudTimer = null;
 
 function hud(state, text) {
@@ -1030,10 +1077,24 @@ function hud(state, text) {
   if (state === "done" || state === "error") hudTimer = setTimeout(() => (hudEl.className = ""), 6000);
 }
 
-async function startVoice(hold, raw) {
+// The node paths the sidebar currently renders — the user's mental model,
+// shipped with every utterance so names resolve the way the tree spells them.
+function visibleNodePaths() {
+  const out = [];
+  const walk = (nodes) => {
+    for (const n of nodes) {
+      if (filterOn && !subtreeHasSession(n.path)) continue;
+      out.push(n.path);
+      if (expanded.has(n.path)) walk(n.children);
+    }
+  };
+  walk(focusPath ? [findNode(focusPath)].filter(Boolean) : treeNodes);
+  return out;
+}
+
+async function startVoice(hold) {
   if (recorder) return;
   pttHold = hold;
-  rawMode = Boolean(raw);
   let stream;
   try {
     // Acquired per utterance, not held open: the OS mic indicator then tells
@@ -1055,7 +1116,9 @@ async function startVoice(hold, raw) {
     recorder = null;
     micBtn.classList.remove("rec");
     if (cancelled) {
-      hudEl.className = "";
+      // A cancel explained in the HUD (chord cancel) must survive this stop
+      // event; a plain cancel (esc, blur) just clears the pill.
+      if (!hudEl.className.includes("error")) hudEl.className = "";
       return;
     }
     const blob = new Blob(recChunks, { type });
@@ -1069,11 +1132,7 @@ async function startVoice(hold, raw) {
   micBtn.classList.add("rec");
   hud(
     "listening",
-    rawMode
-      ? `dictating to ${active ?? CHAT} — ${hold ? "release to send" : "click 🎙 to send"}`
-      : hold
-        ? "listening — release ⌥ to send"
-        : "listening — click 🎙 to send, esc cancels"
+    hold ? "listening — release ⌥ to send, ⇧ or ↑ locks" : "listening — tap ⌥ or click 🎙 to send, esc cancels"
   );
 }
 
@@ -1087,51 +1146,79 @@ function cancelVoice() {
   stopVoice();
 }
 
+function applyRouteResult(out) {
+  for (const a of out.clientActions ?? []) {
+    if (a.type === "view" && a.session) show(a.session);
+    else if (a.type === "close_view") closeSessionView();
+    else if (a.type === "sidebar") treeBtn.onclick();
+  }
+  refreshSessions();
+  hud("done", `“${out.transcript}” — ${out.summary?.length ? out.summary.join("; ") : "no action"}`);
+}
+
 async function sendVoice(blob) {
   hud("busy", "transcribing…");
   try {
-    const res = await fetch("/api/voice?focused=" + encodeURIComponent(active ?? CHAT) + (rawMode ? "&raw=1" : ""), {
+    const res = await fetch("/api/voice?focused=" + encodeURIComponent(active ?? CHAT), {
       method: "POST",
-      headers: { "content-type": blob.type || "application/octet-stream" },
+      headers: {
+        "content-type": blob.type || "application/octet-stream",
+        "x-visible-nodes": visibleNodePaths().join(",").slice(0, 4000),
+      },
       body: blob,
     });
     const out = await res.json();
     if (!res.ok) throw new Error(out.error ?? "voice failed " + res.status);
-    for (const a of out.clientActions ?? []) {
-      if (a.type === "view" && a.session) show(a.session);
-      else if (a.type === "close_view") closeSessionView();
-      else if (a.type === "sidebar") treeBtn.onclick();
-    }
-    refreshSessions();
-    hud("done", `“${out.transcript}” — ${out.summary?.length ? out.summary.join("; ") : "no action"}`);
+    applyRouteResult(out);
   } catch (err) {
     hud("error", String(err.message ?? err));
   }
 }
 
-micBtn.onclick = (e) => (recorder ? stopVoice() : startVoice(false, e.shiftKey));
+micBtn.onclick = () => (recorder ? stopVoice() : startVoice(false));
 
-// Hold ⌥ 200ms to talk (routed as a command); hold ⇧⌥ to dictate verbatim to
-// the focused session. A real chord (⌥ plus another key) never trips it: the
-// second key cancels the arm timer, or discards an in-flight hold recording,
-// so option-arrow word jumps keep working inside the terminal.
+// One key, three gestures. Hold ⌥ 200ms: push-to-talk, release sends. Tap ⌥
+// (up before the arm timer fires): latched recording, tap ⌥ again to send.
+// Tap ⇧ while holding: promote the hold to a latch mid-utterance, so a talk
+// that turns out long needs no restart. A real chord (⌥ plus another key)
+// never trips any of it: the second key cancels the arm timer or discards an
+// in-flight hold recording, and marks the ⌥ press dirty so its release cannot
+// read as a tap — option-arrow word jumps keep working inside the terminal.
 window.addEventListener(
   "keydown",
   (e) => {
     if (e.target instanceof HTMLInputElement || !settingsEl.hidden || recordingAction) return;
-    if (e.key === "Alt" && !e.metaKey && !e.ctrlKey && !e.repeat && !recorder && !pttTimer) {
-      const raw = e.shiftKey;
-      pttTimer = setTimeout(() => {
-        pttTimer = null;
-        startVoice(true, raw);
-      }, 200);
+    if (e.key === "Alt" && !e.metaKey && !e.ctrlKey && !e.repeat) {
+      altClean = true;
+      if (!recorder && !pttTimer) {
+        pttTimer = setTimeout(() => {
+          pttTimer = null;
+          startVoice(true);
+        }, 200);
+      }
       return;
     }
+    if (e.repeat) return;
+    altClean = false;
     if (pttTimer && e.key !== "Shift") {
       clearTimeout(pttTimer);
       pttTimer = null;
     }
-    if (recorder && pttHold && e.key !== "Alt" && e.key !== "Shift") cancelVoice();
+    if (recorder && pttHold && e.key !== "Alt") {
+      // ⇧ or ↑ (the "slide up to lock" reflex) locks the hold into a latch.
+      // Any other key means a real ⌥ chord: cancel, and say so — a silent
+      // vanish reads as a bug.
+      if (e.key === "Shift" || e.key === "ArrowUp") {
+        e.preventDefault();
+        e.stopPropagation();
+        pttHold = false;
+        hud("listening", "locked on — tap ⌥ or click 🎙 to send, esc cancels");
+      } else {
+        cancelVoice();
+        hud("error", "cancelled (⌥ chord) — ⇧ or ↑ locks the recording");
+      }
+      return;
+    }
     if (recorder && !pttHold && e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
@@ -1144,16 +1231,67 @@ window.addEventListener(
   "keyup",
   (e) => {
     if (e.key !== "Alt") return;
+    const wasTap = Boolean(pttTimer);
     if (pttTimer) {
       clearTimeout(pttTimer);
       pttTimer = null;
     }
-    if (recorder && pttHold) stopVoice();
+    if (recorder && pttHold) stopVoice(); // hold release: send
+    else if (wasTap && !recorder) startVoice(false); // tap: start latched
+    else if (recorder && !pttHold && altClean) stopVoice(); // tap during latch: send
+    altClean = false;
   },
   { capture: true }
 );
 // A lost window (cmd+tab away) can never leave the mic hot.
 window.addEventListener("blur", cancelVoice);
+
+// ---- typed command lane ----
+// The same grammar as voice, over a keyboard (default cmd+k): type what you
+// would have said ("megabranch, run the client build", "show me PG&E") and it
+// routes identically through /api/command. For when speaking is not an option.
+
+const cmdBar = document.getElementById("cmd-bar");
+const cmdInput = document.getElementById("cmd-input");
+
+function openCmdBar() {
+  cmdBar.hidden = false;
+  cmdInput.value = "";
+  cmdInput.focus();
+}
+
+cmdInput.onkeydown = (e) => {
+  e.stopPropagation();
+  if (e.key === "Escape") closeCmdBar();
+  if (e.key === "Enter" && cmdInput.value.trim()) {
+    const text = cmdInput.value.trim();
+    closeCmdBar();
+    sendCommand(text);
+  }
+};
+cmdInput.onblur = () => closeCmdBar();
+
+function closeCmdBar() {
+  cmdBar.hidden = true;
+  const e = active && terms.get(active);
+  if (e) e.term.focus();
+}
+
+async function sendCommand(text) {
+  hud("busy", "routing…");
+  try {
+    const res = await fetch("/api/command", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text, focused: active ?? CHAT, visibleNodes: visibleNodePaths() }),
+    });
+    const out = await res.json();
+    if (!res.ok) throw new Error(out.error ?? "command failed " + res.status);
+    applyRouteResult(out);
+  } catch (err) {
+    hud("error", String(err.message ?? err));
+  }
+}
 
 window.addEventListener("resize", refitActive);
 

@@ -1,6 +1,8 @@
 # How to manage tmux sessions and the project vault
 
-You run inside a tmux session named `chat`. This session is the user's chat window. Do not detach it. Do not kill it.
+You run inside a tmux session named `chat`. This session is the user's chat window and the home agent of the project tree's root. Do not detach it. Do not kill it.
+
+Tree nodes can have their own home agent session: named after the node, marked `@tangent_kind 'home'`, running the same orchestrator command. The shell spawns these when the user addresses a node by voice or typed command. A home session organizes its node; work sessions do the individual pieces of work.
 
 In this file, "session" always means a tmux session. The vault has no sessions.
 
@@ -178,8 +180,18 @@ Goal: <goal>
 /recall reads memory for this node. /remember writes to this node unless another node is explicitly named.
 ```
 
+### Start work with a context dump
+
+When the user asks for a new session and states the goal or context in the same request ("start a new tangent session, the goal is that cmd+D no longer kills the tmux session"):
+
+1. Create the work session on the node and start the agent as above, first message included.
+2. Then type the user's own words about the goal into the agent with `send-keys` WITHOUT a trailing Enter. The user wants to add more before sending; never submit it for them.
+3. Confirm in one line and name the session so the user can switch to it.
+
 ## Rules
 
 - One session per named piece of work.
 - Many sessions on one node or one directory are normal. Different work in the same repository gets different sessions.
+- Anything long-running you are asked to run (a build, a server, a test watch) gets its own node-bound session the user can open and inspect. Never bury it in your own pane.
 - Do not touch the `chat` session with `kill-session`, `detach-client`, or `send-keys`.
+- Do not kill a home session (`@tangent_kind 'home'`) unless the user names it explicitly.

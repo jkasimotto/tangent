@@ -205,13 +205,14 @@
   .bt-row.next { border-color: var(--accent); }
   .bt-row.next .bt-glyph { color: var(--accent); }
   .bt-next-tag { margin-left: auto; color: var(--accent); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; flex: none; }
-  /* The map: the one surface everything lives on — nodes with their main
-     agents and processes, outcomes nested by breakdown, live session dots.
-     A full-screen STATE, never a popup: nothing bleeds through from behind,
-     and the entire tree is visible (spatial memory needs all of it). Left
-     the tree, right the detail card of the selected row, bottom a legend
-     printing every key that works here. Opens on launch when nothing is
-     focused, and from the map button. */
+  /* The map: the one surface everything lives on. A node's header row IS its
+     main agent (dot only while live), outcomes nested by breakdown, process
+     sessions underneath. Nodes fold (chevron / arrow keys); a folded node
+     prints what it hides, so hiding stays deliberate and activity never
+     vanishes. A full-screen STATE, never a popup: nothing bleeds through
+     from behind. Left the tree, right the detail card of the selected row,
+     bottom a legend printing every key that works here. Opens on launch when
+     nothing is focused, and from the map button. */
   #map {
     position: absolute; inset: 0; z-index: 31;
     display: none; flex-direction: column;
@@ -227,9 +228,14 @@
   #map-body { flex: 1; display: flex; min-height: 0; border-top: 1px solid var(--border); }
   #map-tree { flex: 1.4; overflow: auto; padding: 10px 16px 24px; min-width: 0; user-select: none; }
   #map-detail { flex: 1; overflow: auto; padding: 16px 20px; border-left: 1px solid var(--border); min-width: 0; }
-  .cr-node { display: flex; align-items: baseline; gap: 8px; padding: 10px 8px 4px; }
+  .cr-node { display: flex; align-items: baseline; gap: 8px; padding: 10px 8px 4px; border-radius: 6px; }
+  .cr-node:hover { background: rgba(255,255,255,0.04); }
   .cr-path { color: var(--accent2); flex: none; }
   .cr-purpose { color: var(--dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cr-fold { flex: none; width: 12px; text-align: center; color: var(--dim); font-size: 10px; }
+  .cr-fold:hover { color: var(--text); }
+  .cr-meta { margin-left: auto; color: var(--dim); font-size: 11px; flex: none; }
+  .cr-meta.live { color: var(--accent); }
   .cr-sel { background: rgba(88, 166, 255, 0.15); outline: 1px solid var(--accent2); }
   .focus-mark { color: var(--accent2); font-size: 10px; flex: none; text-transform: uppercase; letter-spacing: 1px; }
   #map-legend {
@@ -298,7 +304,7 @@
     <span id="active-label"></span>
     <button id="map-btn" class="hbtn" title="the map — every node, outcome, and session">map ⌘/</button>
     <button id="talk-btn" class="hbtn" title="type a command — routed exactly like voice">talk ⌘K</button>
-    <button id="chat-btn" class="hbtn" title="the root chat agent">⌂ chat</button>
+    <button id="chat-btn" class="hbtn" title="root main — everything not addressed to a node lands here">⌂ root</button>
     <button id="agent-btn" class="hbtn" title="orchestrator agent, click to switch"></button>
     <button id="mic-btn" class="hbtn" title="voice — hold ⌥ and speak (release to send), or tap ⌥ to latch (tap again to send). ⇧ or ↑ while holding locks the recording.">🎙</button>
     <button id="caffeine-btn" class="hbtn" title="keep mac awake (caffeinate -di)">☕</button>
@@ -313,7 +319,7 @@
     <div class="s-title">orchestrator agent</div>
     <input id="agent-input" placeholder="command, e.g. claude-otto or pi" spellcheck="false" />
     <div id="agent-rows"></div>
-    <div class="s-hint">any command, alias, or flags your shell understands. switching kills the running chat agent and respawns chat with the new command.</div>
+    <div class="s-hint">any command, alias, or flags your shell understands. switching kills the running root agent and respawns it with the new command.</div>
   </div>
   <div id="outcome-strip">
     <span class="ts-node"></span><span class="ts-title"></span><span class="ts-outcome"></span>
@@ -343,7 +349,7 @@
       <div id="map-tree"></div>
       <div id="map-detail"></div>
     </div>
-    <div id="map-legend"><span><b>↑↓</b> move</span><span><b>⏎</b> work on it / open</span><span><b>⇥</b> focus it too</span><span><b>⌥ hold</b> talk to a node</span><span><b>⌘K</b> type a command</span><span><b>esc</b> back</span></div>
+    <div id="map-legend"><span><b>↑↓</b> move</span><span><b>←→</b> fold a node</span><span><b>⏎</b> work on it / open</span><span><b>⇥</b> focus it too</span><span><b>⌥ hold</b> talk to a node</span><span><b>⌘K</b> type a command</span><span><b>esc</b> back</span></div>
   </div>
   <div id="cmd-bar" hidden><input id="cmd-input" placeholder="type what you'd say — routed exactly like voice" spellcheck="false" /></div>
 </div>
@@ -396,12 +402,20 @@ function connect(session) {
   // Shift+Enter inserts a newline instead of submitting: xterm would send a
   // plain \r, so send ESC+\r (what Claude Code's /terminal-setup binding
   // emits) which the agent treats as a literal newline.
+  //
+  // The event has to be blocked twice. Blocking keydown alone still submits:
+  // xterm returns early without preventDefault, the browser then fires
+  // keypress for Enter, and xterm's keypress path writes the plain \r. So
+  // cancel the keydown (which suppresses keypress) AND refuse the keypress
+  // if the browser fires it anyway. keyup passes through so xterm keeps its
+  // own key bookkeeping.
   term.attachCustomKeyEventHandler((e) => {
-    if (e.type === "keydown" && e.key === "Enter" && e.shiftKey) {
+    if (e.key !== "Enter" || !e.shiftKey) return true;
+    if (e.type === "keydown") {
+      e.preventDefault();
       if (ws.readyState === 1) ws.send("\x1b\r");
-      return false;
     }
-    return true;
+    return e.type === "keyup";
   });
   term.onData((d) => { if (ws.readyState === 1) ws.send(d); });
   term.onResize(({ cols, rows }) => {
@@ -425,7 +439,7 @@ function chatDiedFast(connectedAt) {
   }
   if (++chatDeaths < 3) return false;
   chatDeaths = 0;
-  alert(`chat agent "${agentCmd}" keeps dying right after start. pick another command.`);
+  alert(`root agent "${agentCmd}" keeps dying right after start. pick another command.`);
   if (agentPanel.hidden) agentBtn.onclick();
   return true;
 }
@@ -445,7 +459,7 @@ function show(session) {
   stageOn = false;
   stageEl.classList.remove("show");
   for (const [name, e] of terms) e.host.classList.toggle("visible", name === session);
-  activeLabel.textContent = session;
+  activeLabel.textContent = session === CHAT ? "root" : session;
   requestAnimationFrame(() => { entry.fit.fit(); entry.term.focus(); });
   renderPanel();
   renderOutcomeStrip();
@@ -453,7 +467,7 @@ function show(session) {
 
 // Detach only: close our client connection, keep the tmux session alive.
 // Reached via the close-session shortcut and the voice close_view action;
-// "back to chat" is otherwise just clicking the root node's home in the tree.
+// "back to root" is otherwise just clicking the root node in the tree.
 function closeSessionView() {
   if (active === CHAT) return;
   dispose(active);
@@ -1295,7 +1309,7 @@ function renderAgents() {
     const pick = document.createElement("button");
     pick.className = "agent-cmd";
     pick.textContent = cmd;
-    pick.title = cmd === agentCmd ? "current agent" : "switch chat to " + cmd;
+    pick.title = cmd === agentCmd ? "current agent" : "switch the root agent to " + cmd;
     pick.onclick = () => switchAgent(cmd);
     row.appendChild(pick);
     if (cmd !== agentCmd) {
@@ -1319,7 +1333,7 @@ async function switchAgent(cmd) {
     if (!terms.has(CHAT)) show(CHAT); // retry after the fast-death guard tripped
     return;
   }
-  if (!confirm(`Restart chat as "${cmd}"? The running chat agent is killed.`)) return;
+  if (!confirm(`Restart root main as "${cmd}"? The running root agent is killed.`)) return;
   const res = await fetch("/api/agent", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -1696,6 +1710,19 @@ let mapRows = [];  // the DOM row per item (group headers are labels, not items)
 let mapSel = 0;
 let mapKey = "";
 
+// Folded node paths. Folding is the map's one deliberate way to hide, so it
+// persists across reloads; a folded node still shows what it hides (count +
+// live glow) because activity must never silently disappear.
+const FOLD_STORE = "agent-shell-map-folds";
+const folded = new Set(JSON.parse(localStorage.getItem(FOLD_STORE) ?? "[]"));
+
+function toggleFold(path) {
+  if (folded.has(path)) folded.delete(path);
+  else folded.add(path);
+  localStorage.setItem(FOLD_STORE, JSON.stringify([...folded]));
+  renderMap(true);
+}
+
 function openMap() {
   if (mapOpen) {
     mapInput.focus();
@@ -1736,6 +1763,16 @@ mapInput.onkeydown = (e) => {
     moveMapSel(e.key === "ArrowDown" ? 1 : -1);
     return;
   }
+  if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+    // Fold or unfold the selected node. Only while the input is empty, so
+    // the arrows keep their cursor meaning while filtering.
+    const item = mapItems[mapSel];
+    if (!mapInput.value && item?.kind === "main" && item.foldable) {
+      e.preventDefault();
+      if (folded.has(item.g.path) !== (e.key === "ArrowLeft")) toggleFold(item.g.path);
+    }
+    return;
+  }
   if (e.key === "Tab") {
     // "focus it too": the day is planned by walking the tree and tabbing
     // outcomes into the focus set.
@@ -1772,7 +1809,7 @@ function mapSections() {
   }
   const groupByPath = new Map(vaultMap.map((g) => [g.path, g]));
   return [
-    { path: "", name: "root", purpose: "the whole tree — chat organizes it", depth: 0, outcomes: [] },
+    { path: "", name: "root", purpose: "the whole tree — root main organizes it", depth: 0, outcomes: [] },
     ...vaultNodes.map((n) => ({
       path: n.path,
       name: n.path.split("/").pop(),
@@ -1827,21 +1864,46 @@ function mapOutcomeRow(t, next, focusedFiles, indent) {
   return row;
 }
 
-/** The node's main-agent row: always listed first, hollow when not running. */
-function mainRowEl(s, indent) {
+/**
+ * A node's header row IS its main-agent row: fold chevron, a state dot only
+ * while the main agent is live, the name, purpose text, and — when folded —
+ * a dim count of the hidden rows, glowing if any hidden agent is live so
+ * nothing active ever disappears from view.
+ */
+function nodeRowEl(g, s, fold) {
   const row = document.createElement("div");
-  row.className = "bt-row";
-  row.style.paddingLeft = indent + "px";
-  const glyph = document.createElement("span");
-  glyph.className = "bt-glyph" + (s?.state === "working" ? " working" : s?.state === "waiting" ? " ready" : "");
-  glyph.textContent = s ? "●" : "○";
-  const title = document.createElement("span");
-  title.className = "bt-title";
-  title.textContent = "main";
+  row.className = "cr-node";
+  row.style.paddingLeft = 8 + g.depth * 16 + "px";
+  row.title = g.path || "root";
+  const chev = document.createElement("span");
+  chev.className = "cr-fold";
+  if (fold.foldable) {
+    chev.textContent = fold.folded ? "▸" : "▾";
+    chev.onmousedown = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleFold(g.path);
+    };
+  }
+  row.appendChild(chev);
+  if (s) {
+    const glyph = document.createElement("span");
+    glyph.className = "bt-glyph" + (s.state === "working" ? " working" : s.state === "waiting" ? " ready" : "");
+    glyph.textContent = "●";
+    row.appendChild(glyph);
+  }
+  const name = document.createElement("span");
+  name.className = "cr-path";
+  name.textContent = g.name;
+  const purpose = document.createElement("span");
+  purpose.className = "cr-purpose";
+  purpose.textContent = g.purpose ?? "";
   const meta = document.createElement("span");
-  meta.className = "bt-meta";
-  meta.textContent = s ? STATE_HINT[s.state] ?? "" : "node agent";
-  row.append(glyph, title, meta);
+  meta.className = "cr-meta" + (fold.folded && fold.hiddenLive ? " live" : "");
+  meta.textContent = fold.folded
+    ? fold.hiddenCount + " hidden" + (fold.hiddenLive ? " · live" : "")
+    : s ? STATE_HINT[s.state] ?? "" : "";
+  row.append(name, purpose, meta);
   return row;
 }
 
@@ -1874,6 +1936,7 @@ function renderMap(force = false) {
     mapInput.value,
     sections.map((g) => [g.path, g.outcomes.map((t) => [t.file, t.status])]),
     [...focusedFiles],
+    [...folded],
     focusData?.active,
     lastSessions.map((s) => [s.name, s.state, s.node, s.kind]),
   ]);
@@ -1897,31 +1960,40 @@ function renderMap(force = false) {
     mapItems.push(item);
     mapRows.push(row);
   };
+  const q = mapInput.value.trim();
+  /** True when a folded ancestor hides this path entirely. */
+  const foldedAway = (path) => [...folded].some((f) => f && path.startsWith(f + "/"));
   for (const g of sections) {
+    if (!q && g.path && foldedAway(g.path)) continue;
     const pad = 8 + g.depth * 16;
-    const header = document.createElement("div");
-    header.className = "cr-node";
-    header.style.paddingLeft = pad + "px";
-    header.title = g.path || "root";
-    const p = document.createElement("span");
-    p.className = "cr-path";
-    p.textContent = g.name;
-    const purpose = document.createElement("span");
-    purpose.className = "cr-purpose";
-    purpose.textContent = g.purpose ?? "";
-    header.append(p, purpose);
-    mapTreeEl.appendChild(header);
-    const rowPad = pad + 16;
+    const rowPad = pad + 20; // children start under the header's name
     const home = g.path
       ? lastSessions.find((x) => x.kind === "home" && x.node === g.path)
       : lastSessions.find((x) => x.isChat);
-    addItem(mainRowEl(home, rowPad), { kind: "main", g, s: home ?? null });
+    const procs = lastSessions.filter(
+      (s) => (s.node ?? "") === g.path && !s.isChat && !s.outcome && s.kind !== "home"
+    );
+    const kids = q ? [] : sections.filter((o) => o.path && o.path !== g.path && o.path.startsWith(g.path + "/"));
+    const foldable = !q && Boolean(g.path) && Boolean(g.outcomes.length || procs.length || kids.length);
+    const fold = { foldable, folded: foldable && folded.has(g.path), hiddenCount: 0, hiddenLive: false };
+    if (fold.folded) {
+      const descProcs = lastSessions.filter(
+        (s) => (s.node ?? "").startsWith(g.path + "/") && !s.isChat && !s.outcome && s.kind !== "home"
+      ).length;
+      fold.hiddenCount =
+        g.outcomes.length + procs.length + descProcs +
+        kids.length + kids.reduce((n, k) => n + k.outcomes.length, 0);
+      fold.hiddenLive = lastSessions.some((s) => {
+        const n = s.node ?? "";
+        const under = n === g.path ? !(s.kind === "home" || s.isChat) : n.startsWith(g.path + "/");
+        return under && ["working", "waiting", "service"].includes(s.state);
+      });
+    }
+    addItem(nodeRowEl(g, home, fold), { kind: "main", g, s: home ?? null, foldable });
+    if (fold.folded) continue;
     const next = deriveNext(g.outcomes);
     for (const t of g.outcomes) addItem(mapOutcomeRow(t, next, focusedFiles, rowPad), { kind: "outcome", t, g });
-    for (const s of lastSessions) {
-      if ((s.node ?? "") !== g.path || s.isChat || s.outcome || s.kind === "home") continue;
-      addItem(processRowEl(s, rowPad), { kind: "process", s, g });
-    }
+    for (const s of procs) addItem(processRowEl(s, rowPad), { kind: "process", s, g });
   }
   // Keep the selection on the same item across rebuilds.
   const same = (a, b) =>
@@ -2017,18 +2089,22 @@ function renderMapDetail() {
     }
   } else if (item.kind === "main") {
     el("div", "md-node", item.g.path || "root");
-    el("div", "md-title", "main");
+    el("div", "md-title", item.g.name || "root");
     el(
       "div",
       "md-text",
       (item.g.purpose ? item.g.purpose + "\n\n" : "") +
         (item.g.path
-          ? "The node's own agent. Node-level commands — run a routine, reorganize the tree, open sessions — route here. Speak or type (⌥ / ⌘K) starting with the node's name to instruct it from here: \"" + item.g.name + ", turn this into outcome breakdowns: …\""
-          : "The root chat agent. Anything not addressed to a specific node lands here — creating nodes, capturing outcomes, organizing the whole tree.")
+          ? "The node's main agent. Node-level commands — run a routine, reorganize the tree, open sessions — route here. Speak or type (⌥ / ⌘K) starting with the node's name to instruct it from here: \"" + item.g.name + ", turn this into outcome breakdowns: …\""
+          : "Root main. Anything not addressed to a specific node lands here — creating nodes, capturing outcomes, organizing the whole tree.")
     );
     sessLine(item.s);
     const a = el("div", "md-actions");
     btn(a, item.s ? "open main" : "start main", "⏎", () => activateMapItem(item), "primary");
+    if (item.foldable) {
+      const isFolded = folded.has(item.g.path);
+      btn(a, isFolded ? "unfold" : "fold", isFolded ? "→" : "←", () => toggleFold(item.g.path));
+    }
     if (item.s) btn(a, "kill ✕", "", () => killSession(item.s.name), "danger");
   } else {
     el("div", "md-node", item.s.node ?? "");
@@ -2050,7 +2126,7 @@ function activateMapItem(item) {
     closeMap();
     activateFocusFile(item.t.file);
   } else if (item.kind === "main") {
-    // Root's main is the chat session itself.
+    // Root's main is the shell's root session itself (tmux session "chat").
     if (!item.g.path) {
       closeMap();
       show(CHAT);

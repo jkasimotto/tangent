@@ -17,4 +17,5 @@ window.KEYMAP = [
   { keys: "cmd+d", when: "session", action: "kill-session" },
   { keys: "cmd+b", when: "any", action: "toggle-sidebar" },
   { keys: "cmd+k", when: "any", action: "command-bar" },
+  { keys: "cmd+j", when: "any", action: "toggle-board" },
 ];

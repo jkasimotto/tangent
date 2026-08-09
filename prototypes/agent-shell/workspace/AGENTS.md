@@ -147,6 +147,15 @@ tmux kill-session -t <name>
 
 The tree at `~/.tangent/trees/` is also the user's memory vault. Each active node directory has one note named after the directory, for example `neara/pgande/pgande.md`. The note describes the present state of that work: Purpose, Current, Road to done, Knowledge, Ideas and open questions, Resources. The vault rules are in `~/.tangent/trees/README.md`.
 
+## Tasks
+
+Nodes are what the user talks about; tasks are what they work on. A task is one file `task-<slug>.md` in its owning node's directory, with a mandatory one-line `outcome` and a `status` (`open | active | waiting | deferred | done | dropped`). The node note's `## Road to done` lists `[[task-...]]` wikilinks in priority order; the first `open` task is "next". Full schema: `~/.tangent/trees/README.md`, section Tasks.
+
+- The shell's launcher (Cmd+K, then `/`) spawns task sessions itself: agent in the node's repo, bound with `@tangent_node` and `@tangent_task`, task flipped to `active`. You do not need to replicate that; when the user asks you for a session on a specific task, you may create it the same way (set both options, flip the status, commit).
+- When the user asks to add a task, create the task file and add its wikilink to Road to done, per the `remember` skill's Tasks section.
+- Task state changes are spoken: "mark it done", "that's waiting on Sami", "defer that". Apply them to the task file with the `remember` skill rules. On done: harvest durable results to the node's `## Knowledge` first, keep the file until the node lands.
+- Only the shell flips `open <-> active`; never fight it. If a session died mid-task, the shell reverts the task to `open` on its own.
+
 ### Start focus
 
 When the user says "I am working on <X>", "let's work on <X>", or "open up <X>":

@@ -1,8 +1,12 @@
 // Factory-default keyboard shortcuts for agent shell.
 //
+// The vocabulary stays deliberately tiny, and every chord here is printed on
+// the control it drives (header buttons, map legend, focus rows) — a shortcut
+// that only this file knows about is a bug. cmd+1..9 (switch focus) is
+// hardcoded in the engine and printed on the focus rows themselves.
+//
 // Edit shortcuts in the app: the ⌘ button in the header opens the editor.
 // Changes save to localStorage and override these defaults per browser.
-// This file only sets what a fresh browser starts with.
 //
 // keys:   modifiers and a key joined with "+". Modifiers: cmd, ctrl, alt, shift.
 // when:   "session" = a tmux session fills the view, "chat" = the chat view,
@@ -14,10 +18,6 @@
 // such chords "fullscreen only".
 window.KEYMAP = [
   { keys: "cmd+w", when: "session", action: "close-session" },
-  { keys: "cmd+d", when: "session", action: "kill-session" },
-  { keys: "cmd+b", when: "any", action: "toggle-sidebar" },
-  { keys: "cmd+k", when: "any", action: "command-bar" },
-  { keys: "cmd+/", when: "any", action: "launcher" },
-  { keys: "cmd+j", when: "any", action: "toggle-board" },
-  { keys: "cmd+.", when: "any", action: "next-outcome" },
+  { keys: "cmd+/", when: "any", action: "map" },
+  { keys: "cmd+k", when: "any", action: "talk" },
 ];

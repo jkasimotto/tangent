@@ -41,60 +41,47 @@
     display: flex; flex-direction: column;
     transition: width 0.15s ease;
   }
-  #sidebar.open { width: 300px; border-right-color: var(--border); }
-  #sidebar-head {
-    display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    padding: 8px 12px; border-bottom: 1px solid var(--border); flex: none;
-    white-space: nowrap;
-  }
-  #rail-title { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 1.2px; }
-  #rail { flex: 1; overflow: auto; padding: 2px 0 10px; }
-  .rail-sec {
-    padding: 12px 12px 4px; color: var(--dim); font-size: 10px;
+  #sidebar.open { width: 320px; border-right-color: var(--border); }
+  /* The work panel: the focused subtree, nothing else. The active outcome as
+     a card, its breakdown as live rows, the other focused outcomes as compact
+     switch rows, the active node's processes. The whole tree is the map. */
+  #panel { flex: 1; overflow: auto; padding: 8px 0 12px; }
+  .panel-sec {
+    padding: 14px 12px 4px; color: var(--dim); font-size: 10px;
     text-transform: uppercase; letter-spacing: 1.4px;
   }
-  .rail-empty { margin: 2px 12px; color: var(--dim); font-size: 11px; }
-  /* The focus card: the one loud thing in the rail. Everything the brain
-     needs to reload the outcome — done condition, present-tense state,
-     breakdown position, session state — in one glance. */
+  .panel-hint { margin: 10px 12px; color: var(--dim); font-size: 11px; }
   .focus-card {
     margin: 2px 8px; padding: 10px 12px; border: 1px solid var(--accent2);
-    border-radius: 8px; background: rgba(88, 166, 255, 0.06); cursor: pointer;
+    border-radius: 8px; background: rgba(88, 166, 255, 0.06);
   }
-  .focus-card:hover { background: rgba(88, 166, 255, 0.1); }
   .fc-node { color: var(--accent2); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
-  .fc-title { font-weight: 700; margin-top: 2px; }
+  .fc-title { font-weight: 700; margin-top: 2px; font-size: 14px; }
   .fc-outcome { font-size: 12px; margin-top: 6px; }
   .fc-outcome .fc-label { color: var(--dim); }
   .fc-state { color: var(--dim); font-size: 11px; margin-top: 6px; max-height: 4.5em; overflow: hidden; white-space: pre-wrap; }
-  .fc-progress { color: var(--dim); font-size: 11px; margin-top: 6px; }
   .fc-sess { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 11px; color: var(--dim); }
   .fc-sess .sess-dot { width: auto; }
-  .fc-next-btn {
-    margin-top: 10px; width: 100%; padding: 4px 8px; border-radius: 6px;
-    border: 1px solid var(--border); background: transparent; color: var(--dim); font-size: 12px;
+  .fc-actions { display: flex; gap: 6px; margin-top: 10px; }
+  .fc-btn {
+    flex: 1; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border);
+    background: transparent; color: var(--dim); font-size: 12px; white-space: nowrap;
   }
-  .fc-next-btn:hover { color: var(--text); border-color: var(--dim); }
-  /* Queue and shelf rows reuse the outcome-row grammar (.bt-row) with a home
-     node chip; a shelf row goes "ready" (amber) when its agent finished or
-     died — it brightens, it never yanks. */
-  #rail .bt-row { margin: 0 8px; }
+  .fc-btn:hover { color: var(--text); border-color: var(--dim); }
+  .fc-btn.primary { color: var(--accent); border-color: var(--accent); }
+  #panel .bt-row { margin: 0 8px; }
   .bt-node { color: var(--dim); font-size: 10px; flex: none; }
-  .bt-row.ready { border-color: rgba(227, 179, 65, 0.6); background: rgba(227, 179, 65, 0.07); }
   .bt-row .bt-glyph.working { color: var(--accent); animation: chip-pulse 1.1s ease-in-out infinite; }
   .bt-row .bt-glyph.ready { color: #e3b341; }
+  /* Switch rows for the other focused outcomes: the printed ⌘n IS the
+     shortcut's documentation; ✕ unfocuses. */
+  .switch-key { margin-left: auto; color: var(--dim); font-size: 10px; flex: none; }
   .row-x {
     visibility: hidden; margin-left: 2px; padding: 0 4px; border-radius: 4px;
     background: none; border: none; color: var(--dim); font-size: 11px; flex: none;
   }
   .bt-row:hover .row-x { visibility: visible; }
   .row-x:hover { color: #f85149; }
-  .row-up {
-    visibility: hidden; padding: 0 4px; border-radius: 4px; margin-left: auto;
-    background: none; border: none; color: var(--dim); font-size: 11px; flex: none;
-  }
-  .bt-row:hover .row-up { visibility: visible; }
-  .row-up:hover { color: var(--accent2); }
   /* Live sessions not owned by an outcome (home agents, services, plain
      shells). Agent state from screen diff: pulsing green = working, steady
      amber = waiting for you, dim hollow = plain shell; services: steady blue
@@ -189,34 +176,19 @@
     width: 100%; background: none; border: none; outline: none;
     color: var(--text); font: inherit;
   }
-  /* Outcome strip: the focused session wears its purpose — one line, nothing
-     else, so a session can never again be a mystery. Click opens the board. */
+  /* Outcome strip: any session being viewed wears its purpose — one line,
+     nothing else, so a session can never again be a mystery. */
   #outcome-strip {
     display: none; align-items: baseline; gap: 8px; overflow: hidden;
     padding: 4px 14px; background: var(--panel); border-bottom: 1px solid var(--border);
-    flex: none; font-size: 12px; cursor: pointer; white-space: nowrap;
+    flex: none; font-size: 12px; white-space: nowrap;
   }
   #outcome-strip.show { display: flex; }
   #outcome-strip .ts-node { color: var(--accent2); flex: none; }
   #outcome-strip .ts-title { font-weight: 600; flex: none; }
   #outcome-strip .ts-outcome { color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
-  /* Board: one node's outcomes, breakdown children indented. Done greyed,
-     waiting tagged with who, the next open outcome highlighted. Appears at
-     boundaries (launcher, node open, outcome completion), toggled with the
-     toggle-board chord. */
-  #board {
-    width: 340px; flex: none; background: var(--panel);
-    border-left: 1px solid var(--border);
-    display: none; flex-direction: column; min-height: 0;
-  }
-  #board.show { display: flex; }
-  #board-head { padding: 10px 14px; border-bottom: 1px solid var(--border); }
-  #board-head .bh-top { display: flex; align-items: baseline; gap: 8px; }
-  #board-node { color: var(--accent2); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
-  #board-close { margin-left: auto; background: none; border: none; color: var(--dim); flex: none; }
-  #board-close:hover { color: var(--text); }
-  #board-purpose { color: var(--dim); font-size: 12px; margin-top: 4px; }
-  #board-outcomes { flex: 1; overflow: auto; padding: 8px; }
+  /* The outcome-row grammar, identical everywhere it appears (panel rows,
+     map rows, reload-card children): status glyph, title, live-state dots. */
   .bt-row {
     display: flex; align-items: baseline; gap: 8px;
     padding: 6px 8px; border-radius: 6px; border: 1px solid transparent; cursor: pointer;
@@ -233,31 +205,63 @@
   .bt-row.next { border-color: var(--accent); }
   .bt-row.next .bt-glyph { color: var(--accent); }
   .bt-next-tag { margin-left: auto; color: var(--accent); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; flex: none; }
-  #board-empty { padding: 14px; color: var(--dim); font-size: 12px; }
-  /* The map: the launcher's results panel is a takeover, not a popup. It IS
-     the planning surface — it opens on launch when nothing is focused, on
-     cmd+/, and whenever the queue drains. Arrows move, enter focuses, tab
-     queues, esc drops to chat. */
-  #cmd-results {
-    position: absolute; left: 50%; top: 72px; bottom: 64px; transform: translateX(-50%);
-    z-index: 31; width: min(1100px, 94%); overflow: auto;
+  /* The map: the one surface everything lives on — nodes with their main
+     agents and processes, outcomes nested by breakdown, live session dots —
+     as a full-screen takeover. Left the tree, right the detail card of the
+     selected row, bottom a legend printing every key that works here. Opens
+     on launch when nothing is focused, and from the map button. */
+  #map {
+    position: absolute; inset: 24px; z-index: 31; margin: 0 auto;
+    max-width: 1200px; display: none; flex-direction: column;
     background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); padding: 12px 16px 8px;
-    font-size: 14px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); font-size: 14px;
   }
-  #cmd-results[hidden] { display: none; }
-  #cr-head { padding: 2px 8px 12px; font-size: 18px; font-weight: 700; }
-  #cr-head .sub { color: var(--dim); font-weight: 400; font-size: 12px; margin-left: 12px; }
-  .cr-node { display: flex; align-items: baseline; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+  #map.show { display: flex; }
+  #map-head { padding: 16px 20px 8px; font-size: 18px; font-weight: 700; flex: none; }
+  #map-input {
+    margin: 0 20px 12px; padding: 6px 10px; border-radius: 8px; flex: none;
+    background: var(--bg); border: 1px solid var(--border); color: var(--text); font: inherit;
+  }
+  #map-input:focus { outline: none; border-color: var(--accent2); }
+  #map-body { flex: 1; display: flex; min-height: 0; border-top: 1px solid var(--border); }
+  #map-tree { flex: 1.4; overflow: auto; padding: 10px 12px; min-width: 0; }
+  #map-detail { flex: 1; overflow: auto; padding: 16px 20px; border-left: 1px solid var(--border); min-width: 0; }
+  .cr-node { display: flex; align-items: baseline; gap: 8px; padding: 10px 8px 4px; }
   .cr-path { color: var(--accent2); flex: none; }
   .cr-purpose { color: var(--dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .cr-outcome { display: flex; align-items: baseline; gap: 8px; padding: 4px 8px 4px 26px; border-radius: 6px; cursor: pointer; }
   .cr-sel { background: rgba(88, 166, 255, 0.15); outline: 1px solid var(--accent2); }
-  #cr-tray {
-    border-top: 1px solid var(--border); margin-top: 6px; padding: 7px 10px 3px;
-    color: var(--dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  .focus-mark { color: var(--accent2); font-size: 10px; flex: none; text-transform: uppercase; letter-spacing: 1px; }
+  #map-legend {
+    flex: none; display: flex; gap: 18px; padding: 8px 20px;
+    border-top: 1px solid var(--border); color: var(--dim); font-size: 11px;
   }
-  #cr-tray b { color: var(--text); font-weight: 600; }
+  #map-legend b { color: var(--text); font-weight: 600; }
+  .md-node { color: var(--accent2); font-size: 12px; }
+  .md-title { font-size: 17px; font-weight: 700; margin-top: 4px; }
+  .md-label { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; display: block; margin: 14px 0 2px; }
+  .md-text { font-size: 12px; white-space: pre-wrap; }
+  .md-sess { display: flex; align-items: center; gap: 6px; margin-top: 14px; font-size: 12px; color: var(--dim); }
+  .md-actions { display: flex; gap: 8px; margin-top: 18px; flex-wrap: wrap; }
+  .md-btn {
+    padding: 5px 12px; border-radius: 6px; border: 1px solid var(--border);
+    background: transparent; color: var(--text); font-size: 12px;
+  }
+  .md-btn:hover { border-color: var(--dim); }
+  .md-btn.primary { color: var(--accent); border-color: var(--accent); }
+  .md-btn.danger:hover { color: #f85149; border-color: #f85149; }
+  .md-btn .key { color: var(--dim); margin-left: 6px; }
+  /* The stage: the active focus has no agent yet, so the terminal area holds
+     the outcome itself and the shell's single spawn affordance. */
+  #stage {
+    position: absolute; inset: 0; z-index: 5; display: none;
+    align-items: center; justify-content: center; overflow: auto; background: var(--bg);
+  }
+  #stage.show { display: flex; }
+  .stage-box {
+    width: min(560px, 90%); max-height: 90%; overflow: auto; padding: 24px 28px;
+    border: 1px solid var(--border); border-radius: 12px; background: var(--panel);
+  }
+  .stage-box .md-actions { margin-top: 22px; }
   /* Reload card: the boundary surface. Appears on every focus switch with
      everything needed to reload the outcome into the brain; any key or click
      dismisses it into the session. */
@@ -288,9 +292,12 @@
 <body>
 <div id="app">
   <header>
-    <button id="tree-btn" class="hbtn" title="project tree">☰</button>
+    <button id="tree-btn" class="hbtn" title="show or hide the work panel">☰</button>
     <span class="brand"><span class="dot">●</span> agent shell</span>
     <span id="active-label"></span>
+    <button id="map-btn" class="hbtn" title="the map — every node, outcome, and session">map ⌘/</button>
+    <button id="talk-btn" class="hbtn" title="type a command — routed exactly like voice">talk ⌘K</button>
+    <button id="chat-btn" class="hbtn" title="the root chat agent">⌂ chat</button>
     <button id="agent-btn" class="hbtn" title="orchestrator agent, click to switch"></button>
     <button id="mic-btn" class="hbtn" title="voice — hold ⌥ and speak (release to send), or tap ⌥ to latch (tap again to send). ⇧ or ↑ while holding locks the recording.">🎙</button>
     <button id="caffeine-btn" class="hbtn" title="keep mac awake (caffeinate -di)">☕</button>
@@ -307,25 +314,14 @@
     <div id="agent-rows"></div>
     <div class="s-hint">any command, alias, or flags your shell understands. switching kills the running chat agent and respawns chat with the new command.</div>
   </div>
-  <div id="outcome-strip" title="outcome board (or the toggle-board chord)">
+  <div id="outcome-strip">
     <span class="ts-node"></span><span class="ts-title"></span><span class="ts-outcome"></span>
   </div>
   <div id="main">
     <div id="sidebar" class="open">
-      <div id="sidebar-head">
-        <span id="rail-title">today</span>
-        <button id="chat-btn" class="hbtn" title="orchestrator chat">⌂ chat</button>
-      </div>
-      <div id="rail"></div>
+      <div id="panel"></div>
     </div>
-    <div id="terms"></div>
-    <div id="board">
-      <div id="board-head">
-        <div class="bh-top"><span id="board-node"></span><button id="board-close" title="close board">✕</button></div>
-        <div id="board-purpose"></div>
-      </div>
-      <div id="board-outcomes"></div>
-    </div>
+    <div id="terms"><div id="stage"></div></div>
   </div>
   <div id="reload-card">
     <div class="rc-box">
@@ -335,12 +331,20 @@
       <div class="rc-state"><span class="rc-label">where it stands</span><span class="rc-text"></span></div>
       <div class="rc-children"></div>
       <div class="rc-sess"><span class="sess-dot">●</span><span class="rc-sess-text"></span></div>
-      <div class="rc-hint">any key to dive in · ⌘. next outcome</div>
+      <div class="rc-hint">any key to dive in</div>
     </div>
   </div>
   <div id="voice-hud"><span class="vh-dot">●</span><span class="vh-text"></span></div>
-  <div id="cmd-results" hidden></div>
-  <div id="cmd-bar" hidden><input id="cmd-input" placeholder="type what you'd say — “/” navigates nodes and outcomes" spellcheck="false" /></div>
+  <div id="map">
+    <div id="map-head">what are we working on?</div>
+    <input id="map-input" placeholder="type to filter — name, path, person, or outcome" spellcheck="false" />
+    <div id="map-body">
+      <div id="map-tree"></div>
+      <div id="map-detail"></div>
+    </div>
+    <div id="map-legend"><span><b>↑↓</b> move</span><span><b>⏎</b> work on it / open</span><span><b>⇥</b> focus it too</span><span><b>esc</b> back</span></div>
+  </div>
+  <div id="cmd-bar" hidden><input id="cmd-input" placeholder="type what you'd say — routed exactly like voice" spellcheck="false" /></div>
 </div>
 <script src="/vendor/xterm/xterm.js"></script>
 <script src="/vendor/xterm/addon-fit.js"></script>
@@ -354,8 +358,8 @@ let active = null;
 const termsEl = document.getElementById("terms");
 const treeBtn = document.getElementById("tree-btn");
 const sidebarEl = document.getElementById("sidebar");
-const railEl = document.getElementById("rail");
 const activeLabel = document.getElementById("active-label");
+const stageEl = document.getElementById("stage");
 
 function connect(session) {
   if (terms.has(session)) return terms.get(session);
@@ -386,7 +390,7 @@ function connect(session) {
     // fall back to chat.
     dispose(session);
     if (active === session && !(session === CHAT && chatDiedFast(connectedAt))) show(CHAT);
-    renderSidebar();
+    renderPanel();
   };
   // Shift+Enter inserts a newline instead of submitting: xterm would send a
   // plain \r, so send ESC+\r (what Claude Code's /terminal-setup binding
@@ -437,10 +441,12 @@ function dispose(session) {
 function show(session) {
   const entry = connect(session);
   active = session;
+  stageOn = false;
+  stageEl.classList.remove("show");
   for (const [name, e] of terms) e.host.classList.toggle("visible", name === session);
   activeLabel.textContent = session;
   requestAnimationFrame(() => { entry.fit.fit(); entry.term.focus(); });
-  renderSidebar();
+  renderPanel();
   renderOutcomeStrip();
 }
 
@@ -465,25 +471,33 @@ treeBtn.onclick = () => {
 treeBtn.classList.add("on"); // the rail starts open
 sidebarEl.addEventListener("transitionend", refitActive);
 
-// ---- focus rail ----
-// The sidebar is the focus rail, not a map: FOCUS (the outcome being worked,
-// as a card), UP NEXT (the day's ordered queue), WAITING (outcomes relegated
-// while their agent cooks — they brighten when the agent finishes, they never
-// yank), SESSIONS (live sessions no outcome owns). Nodes have no persistent
-// surface; the map lives in the launcher (cmd+/) and the board (cmd+j). The
-// queue is shell state on the server (~/.tangent/agent-shell-focus.json),
-// never vault truth.
+// ---- the work panel ----
+// The sidebar is the focused subtree, nothing else: the active outcome as a
+// card (done condition, present state, agent state, its visible actions), its
+// breakdown as live rows, the other focused outcomes as compact switch rows,
+// and the active node's own processes. The whole tree lives on the map;
+// focusing is just looking at this subset of it. The focus set is shell state
+// on the server (~/.tangent/agent-shell-focus.json), never vault truth.
 
 let lastSessions = [];
-let focusData = null; // /api/focus: { focus: card|null, queue: [], shelf: [] }
+let focusData = null; // /api/focus: { focused: [card...], active: file|null }
+let stageOn = false;  // the stage (start-agent view) fills the terminal area
+
+const panelEl = document.getElementById("panel");
 
 document.getElementById("chat-btn").onclick = () => show(CHAT);
+
+/** The active focus card, or null. */
+const activeFocus = () => focusData?.focused?.find((f) => f.file === focusData.active) ?? null;
 
 async function refreshFocus() {
   try {
     const res = await fetch("/api/focus");
     focusData = await res.json();
-    renderSidebar();
+    trackFocusBoundaries();
+    renderPanel();
+    renderStage();
+    if (mapOpen) renderMap();
   } catch {}
 }
 
@@ -495,9 +509,9 @@ async function refreshSessions() {
     setCaffeineState(caffeinate);
     micBtn.style.display = voice === false ? "none" : "";
     lastSessions = sessions;
-    renderSidebar();
+    renderPanel();
     renderOutcomeStrip();
-    trackOutcomeBoundaries();
+    if (mapOpen) renderMap();
   } catch {}
 }
 
@@ -541,9 +555,6 @@ const SESSION_LABEL = {
   stopped: "service stopped",
 };
 
-/** True when a shelved outcome deserves attention: agent finished or died. */
-const shelfReady = (t) => !t.sessionLive || t.sessionState === "waiting" || t.sessionState === "shell";
-
 /**
  * A live session's one-line label. A just-spawned session's pane still runs
  * the shell while the agent boots, which must not read as "agent exited".
@@ -554,59 +565,32 @@ function sessionLabel(t) {
   return SESSION_LABEL[t.sessionState] ?? "session live";
 }
 
-/**
- * A queue or shelf row: the outcome-row atom plus rail affordances. Queue
- * rows focus on click (jumping the queue); shelf rows peek at their session
- * without moving focus, with ⤴ as the deliberate refocus.
- */
-function railRowEl(t, where) {
-  const row = document.createElement("div");
-  const ready = where === "shelf" && shelfReady(t);
-  row.className = "bt-row " + t.status + (ready ? " ready" : "");
-  const glyph = document.createElement("span");
-  glyph.className =
-    "bt-glyph" + (where === "shelf" ? (ready ? " ready" : t.sessionState === "working" ? " working" : "") : "");
-  glyph.textContent = where === "shelf" ? (ready ? "◔" : "●") : "○";
-  const title = document.createElement("span");
-  title.className = "bt-title";
-  title.textContent = t.title;
-  if (t.outcome) title.title = "outcome: " + t.outcome;
-  const nodeChip = document.createElement("span");
-  nodeChip.className = "bt-node";
-  nodeChip.textContent = t.node.split("/").pop();
-  row.append(glyph, title, nodeChip);
-  if (where === "queue") {
-    const x = document.createElement("button");
-    x.className = "row-x";
-    x.textContent = "✕";
-    x.title = "remove from queue";
-    x.onclick = (e) => { e.stopPropagation(); unqueueOutcome(t.file); };
-    row.appendChild(x);
-    row.title = "click to focus now (jumps the queue)";
-    row.onclick = () => focusSetFile(t.file);
-  } else {
-    const up = document.createElement("button");
-    up.className = "row-up";
-    up.textContent = "⤴";
-    up.title = "bring back to focus";
-    up.onclick = (e) => { e.stopPropagation(); focusSetFile(t.file); };
-    row.appendChild(up);
-    row.title = ready ? "agent finished or needs you — click to peek, ⤴ to refocus" : "agent working — click to peek";
-    // Peek: look without moving focus. A dead session has nothing to peek
-    // at, so the click refocuses (which respawns) instead.
-    row.onclick = () => (t.sessionLive ? show(t.session) : focusSetFile(t.file));
-  }
-  return row;
+/** A colored status glyph for an outcome's live session (or lack of one). */
+function sessionGlyph(t) {
+  const dot = document.createElement("span");
+  dot.className = "bt-glyph" + (t.sessionState === "working" ? " working" : t.sessionState === "waiting" ? " ready" : "");
+  dot.textContent = t.sessionLive ? "●" : "○";
+  return dot;
+}
+
+/** One .fc-btn action button, the panel card's visible verb. */
+function fcBtn(label, title, fn, primary) {
+  const btn = document.createElement("button");
+  btn.className = "fc-btn" + (primary ? " primary" : "");
+  btn.textContent = label;
+  btn.title = title;
+  btn.onclick = (e) => { e.stopPropagation(); fn(); };
+  return btn;
 }
 
 /**
- * The focus card: the one loud thing in the rail. Done condition, present
- * state, breakdown position, session state — the whole reload in one glance.
+ * The active outcome's card: done condition, present state, agent state, and
+ * every action it supports as a visible button — open/start the agent,
+ * unfocus, next. Nothing on the card is click-magic.
  */
 function focusCardEl(f) {
   const card = document.createElement("div");
   card.className = "focus-card";
-  card.title = f.sessionLive ? "open the session" : "start the session";
   const node = document.createElement("div");
   node.className = "fc-node";
   node.textContent = f.node;
@@ -629,85 +613,150 @@ function focusCardEl(f) {
     stEl.textContent = f.stateText;
     card.appendChild(stEl);
   }
-  if (f.children?.length) {
-    const doneCount = f.children.filter((c) => c.status === "done").length;
-    const nextChild = f.children.find((c) => c.status !== "done" && c.status !== "dropped");
-    const prog = document.createElement("div");
-    prog.className = "fc-progress";
-    prog.textContent = `breakdown ${doneCount}/${f.children.length}` + (nextChild ? ` · next: ${nextChild.title}` : "");
-    card.appendChild(prog);
-  }
   const sess = document.createElement("div");
   sess.className = "fc-sess";
-  const dot = document.createElement("span");
-  dot.className = "bt-glyph" + (f.sessionState === "working" ? " working" : f.sessionState === "waiting" ? " ready" : "");
-  dot.textContent = f.sessionLive ? "●" : "○";
   const sessText = document.createElement("span");
-  sessText.textContent = sessionLabel(f) ?? "no session — click to start";
-  sess.append(dot, sessText);
-  const btn = document.createElement("button");
-  btn.className = "fc-next-btn";
-  btn.textContent = "waiting → next outcome (⌘.)";
-  btn.title = "relegate to the waiting shelf, focus the next queued outcome";
-  btn.onclick = (e) => { e.stopPropagation(); nextOutcome(); };
-  card.append(sess, btn);
-  card.onclick = () => (f.sessionLive ? show(f.session) : focusSetFile(f.file));
+  sessText.textContent = sessionLabel(f) ?? "no agent yet";
+  sess.append(sessionGlyph(f), sessText);
+  card.appendChild(sess);
+  const actions = document.createElement("div");
+  actions.className = "fc-actions";
+  if (f.sessionLive) actions.appendChild(fcBtn("open agent", "view the outcome's agent session", () => show(f.session), true));
+  else actions.appendChild(fcBtn("▸ start agent", "start the outcome's agent session", () => startAgent(f.file), true));
+  actions.appendChild(fcBtn("unfocus ✕", "drop from today's focus — the agent keeps running", () => unfocusFile(f.file)));
+  if ((focusData?.focused?.length ?? 0) > 1) {
+    actions.appendChild(fcBtn("next ▸", "switch to the next focused outcome", () => nextOutcome()));
+  }
+  card.appendChild(actions);
   return card;
 }
 
-let sidebarKey = "";
-function renderSidebar(force = false) {
+/** One breakdown child row under the focus card, with its live agent dot. */
+function childRowEl(c, isNext) {
+  const row = document.createElement("div");
+  row.className = "bt-row " + c.status + (isNext ? " next" : "");
+  const glyph = document.createElement("span");
+  glyph.className = "bt-glyph" + (c.sessionState === "working" ? " working" : c.sessionState === "waiting" ? " ready" : "");
+  glyph.textContent = OUTCOME_GLYPH[c.status] ?? "○";
+  const title = document.createElement("span");
+  title.className = "bt-title";
+  title.textContent = c.title;
+  row.append(glyph, title);
+  if (isNext) {
+    const tag = document.createElement("span");
+    tag.className = "bt-next-tag";
+    tag.textContent = "next";
+    row.appendChild(tag);
+  }
+  if (c.sessionLive) {
+    row.title = "agent session live — click to view";
+    row.style.cursor = "pointer";
+    row.onclick = () => show(c.session);
+  }
+  return row;
+}
+
+/**
+ * A compact row for another focused outcome: session-state dot, title, the
+ * printed ⌘n that switches to it (click does too), ✕ to unfocus.
+ */
+function switchRowEl(f, index) {
+  const row = document.createElement("div");
+  row.className = "bt-row " + f.status;
+  row.title = (sessionLabel(f) ?? "no agent yet") + " — click to switch here";
+  const title = document.createElement("span");
+  title.className = "bt-title";
+  title.textContent = f.title;
+  const key = document.createElement("span");
+  key.className = "switch-key";
+  key.textContent = index < 9 ? "⌘" + (index + 1) : "";
+  const x = document.createElement("button");
+  x.className = "row-x";
+  x.textContent = "✕";
+  x.title = "unfocus — the agent keeps running";
+  x.onclick = (e) => { e.stopPropagation(); unfocusFile(f.file); };
+  row.append(sessionGlyph(f), title, key, x);
+  row.onclick = () => activateFocusFile(f.file);
+  return row;
+}
+
+let panelKey = "";
+function renderPanel(force = false) {
   // Rebuild only on real state change so hover targets stay stable.
   const key = JSON.stringify([
     active,
+    stageOn,
     focusData,
     lastSessions.map((s) => [s.name, s.node, s.state, s.outcome]),
   ]);
-  if (!force && key === sidebarKey) return;
-  sidebarKey = key;
-  railEl.innerHTML = "";
+  if (!force && key === panelKey) return;
+  panelKey = key;
+  panelEl.innerHTML = "";
 
   const sec = (label) => {
     const el = document.createElement("div");
-    el.className = "rail-sec";
+    el.className = "panel-sec";
     el.textContent = label;
-    railEl.appendChild(el);
+    panelEl.appendChild(el);
   };
-  const empty = (text) => {
+
+  const act = activeFocus();
+  if (!act) {
     const el = document.createElement("div");
-    el.className = "rail-empty";
-    el.textContent = text;
-    railEl.appendChild(el);
-  };
-
-  // State machine: render only what exists. Empty sections are noise — the
-  // planning state's question lives on the map takeover, not here.
-  if (focusData?.focus) {
-    sec("focus");
-    railEl.appendChild(focusCardEl(focusData.focus));
+    el.className = "panel-hint";
+    el.textContent = "nothing focused — the map has everything (map ⌘/)";
+    panelEl.appendChild(el);
+    return;
   }
-  if (focusData?.queue?.length) {
-    sec("up next");
-    for (const t of focusData.queue) railEl.appendChild(railRowEl(t, "queue"));
-  } else if (focusData?.focus) {
-    empty("queue is empty — ⌘/ to line up what's next");
+  sec("focus");
+  panelEl.appendChild(focusCardEl(act));
+  if (act.children?.length) {
+    const nextChild = act.children.find((c) => c.status !== "done" && c.status !== "dropped");
+    for (const c of act.children) panelEl.appendChild(childRowEl(c, c === nextChild));
   }
-  if (focusData?.shelf?.length) {
-    sec("waiting");
-    for (const t of focusData.shelf) railEl.appendChild(railRowEl(t, "shelf"));
-  }
-  if (!focusData?.focus && !focusData?.queue?.length && !focusData?.shelf?.length) {
-    empty("⌘/ — what are we working on?");
-  }
-
-  const others = lastSessions.filter((s) => !s.isChat && !s.outcome);
+  const others = focusData.focused.filter((f) => f.file !== act.file);
   if (others.length) {
-    sec("sessions");
-    for (const s of others) railEl.appendChild(sessionRow(s));
+    sec("also focused");
+    for (const f of others) panelEl.appendChild(switchRowEl(f, focusData.focused.indexOf(f)));
+  }
+  const procs = lastSessions.filter((s) => !s.isChat && !s.outcome && s.node === act.node);
+  if (procs.length) {
+    sec("processes · " + act.node.split("/").pop());
+    for (const s of procs) panelEl.appendChild(sessionRow(s));
+  }
+}
+
+// The two transitions the shell makes on its own: the active outcome finished
+// (the server pruned it and the next focused outcome inherited the stage) and
+// the whole focus set drained (back to the map's question). User-initiated
+// switches go through postFocus, which records state silently first, so a
+// poll never re-announces them.
+let prevActiveFile = null;
+let prevHadFocus = false;
+function trackFocusBoundaries(silent = false) {
+  const act = activeFocus();
+  const had = prevHadFocus;
+  const prev = prevActiveFile;
+  prevHadFocus = Boolean(focusData?.focused?.length);
+  prevActiveFile = act?.file ?? null;
+  if (silent) return;
+  if (had && !prevHadFocus && !mapOpen) {
+    hud("done", "all focused outcomes finished — what's next?");
+    openMap();
+  } else if (prev && act && act.file !== prev) {
+    hud("done", "focus → " + act.title);
+    landOnActive(true);
+  } else if (!had && act) {
+    // Focus arrived from outside this view (spoken, or app launch with a
+    // stored focus): land on it.
+    closeMap();
+    landOnActive(true);
   }
 }
 
 // ---- focus motions ----
+// All of them are pure intent: they reorder the lens, never spawn, kill, or
+// write vault state. The single spawn affordance is startAgent below.
 
 async function postFocus(op, body) {
   const res = await fetch("/api/focus/" + op, {
@@ -719,57 +768,173 @@ async function postFocus(op, body) {
   if (!res.ok) throw new Error(out.error ?? op + " failed " + res.status);
   if (out.view) {
     focusData = out.view;
-    renderSidebar(true);
+    trackFocusBoundaries(true); // user-initiated: record, do not re-announce
+    renderPanel(true);
+    renderStage();
   }
   return out;
 }
 
-/** Focus an outcome now: spawn or reattach its session, land on the reload card. */
-async function focusSetFile(file) {
-  hud("busy", "focusing…");
+/**
+ * Lands the view on the active focus: its live session (with the reload card
+ * when asked) or the stage when no agent runs yet. The one way the work state
+ * is entered; with nothing focused it falls back to the map's question.
+ */
+function landOnActive(withCard) {
+  const act = activeFocus();
+  if (!act) {
+    openMap();
+    return;
+  }
+  if (act.sessionLive) {
+    show(act.session);
+    if (withCard) showReloadCard(act);
+  } else {
+    showStage();
+  }
+}
+
+/** Focus an outcome and make it the active one. */
+async function activateFocusFile(file) {
   try {
-    const out = await postFocus("set", { file });
-    show(out.session);
-    if (out.view?.focus) showReloadCard(out.view.focus);
-    hud("done", "focused: " + (out.view?.focus?.title ?? file));
+    await postFocus("activate", { file });
+    landOnActive(true);
   } catch (err) {
     hud("error", String(err.message ?? err));
   }
 }
 
-/** The switch motion: relegate the focused outcome, focus the next queued one. */
-async function nextOutcome() {
-  hud("busy", "next outcome…");
+/** Focus an outcome without switching to it ("focus it too"). */
+async function focusAlsoFile(file) {
   try {
-    const out = await postFocus("next");
-    if (!out.session) {
-      // Drained queue: back to the planning state — the map asks the question.
-      hud("done", "queue is empty — what's next?");
-      openLauncher();
+    await postFocus("add", { files: [file] });
+  } catch (err) {
+    hud("error", String(err.message ?? err));
+  }
+}
+
+/** Unfocus: drop the lens; agents and vault files are untouched. */
+async function unfocusFile(file) {
+  try {
+    const wasActive = focusData?.active === file;
+    await postFocus("remove", { file });
+    // From inside the map, stay in the map; the work state relands only when
+    // its own active outcome was the one dropped.
+    if (!focusData?.focused?.length) openMap();
+    else if (wasActive && !mapOpen) landOnActive(true);
+  } catch (err) {
+    hud("error", String(err.message ?? err));
+  }
+}
+
+/** The switch motion: the next focused outcome takes the stage. */
+async function nextOutcome() {
+  try {
+    if ((focusData?.focused?.length ?? 0) < 2) {
+      hud("done", "nothing else is focused — the map has more (⌘/)");
       return;
     }
+    await postFocus("next");
+    landOnActive(true);
+  } catch (err) {
+    hud("error", String(err.message ?? err));
+  }
+}
+
+/** The one spawn affordance: start (or reattach) an outcome's agent session. */
+async function startAgent(file) {
+  hud("busy", "starting agent…");
+  try {
+    const res = await fetch("/api/outcome/start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ file }),
+    });
+    const out = await res.json();
+    if (!res.ok) throw new Error(out.error ?? "start failed " + res.status);
     show(out.session);
-    if (out.view?.focus) showReloadCard(out.view.focus);
-    hud("done", "focused: " + (out.view?.focus?.title ?? out.session));
+    hud("done", (out.reattached ? "reattached " : "agent started: ") + out.session);
+    refreshFocus();
   } catch (err) {
     hud("error", String(err.message ?? err));
   }
 }
 
-async function queueOutcomeFile(file) {
-  try {
-    await postFocus("queue", { file });
-  } catch (err) {
-    hud("error", String(err.message ?? err));
-  }
+// ---- the stage ----
+// Work state with no agent yet: the terminal area holds the outcome itself —
+// done condition, state, breakdown — and the single primary action. Chat and
+// the map stay one visible click away in the header.
+
+function showStage() {
+  stageOn = true;
+  for (const [, e] of terms) e.host.classList.remove("visible");
+  activeLabel.textContent = "";
+  renderStage(true);
+  renderPanel();
+  renderOutcomeStrip();
 }
 
-async function unqueueOutcome(file) {
-  try {
-    await postFocus("queue", { file, remove: true });
-  } catch (err) {
-    hud("error", String(err.message ?? err));
+let stageKey = "";
+function renderStage(force = false) {
+  if (!stageOn) {
+    stageEl.classList.remove("show");
+    return;
   }
+  const act = activeFocus();
+  if (!act) {
+    stageOn = false;
+    stageEl.classList.remove("show");
+    return;
+  }
+  const key = JSON.stringify([act.file, act.status, act.stateText, act.children, act.sessionLive]);
+  if (!force && key === stageKey && stageEl.classList.contains("show")) return;
+  stageKey = key;
+  stageEl.innerHTML = "";
+  const box = document.createElement("div");
+  box.className = "stage-box";
+  const node = document.createElement("div");
+  node.className = "md-node";
+  node.textContent = act.node;
+  const title = document.createElement("div");
+  title.className = "md-title";
+  title.textContent = act.title;
+  box.append(node, title);
+  /** One labeled text block on the stage. */
+  const block = (label, text) => {
+    if (!text) return;
+    const l = document.createElement("span");
+    l.className = "md-label";
+    l.textContent = label;
+    const t = document.createElement("div");
+    t.className = "md-text";
+    t.textContent = text;
+    box.append(l, t);
+  };
+  block("done looks like", act.outcome);
+  block("where it stands", act.stateText);
+  if (act.children?.length) {
+    const l = document.createElement("span");
+    l.className = "md-label";
+    l.textContent = "breakdown";
+    box.appendChild(l);
+    const nextChild = act.children.find((c) => c.status !== "done" && c.status !== "dropped");
+    for (const c of act.children) box.appendChild(childRowEl(c, c === nextChild));
+  }
+  const actions = document.createElement("div");
+  actions.className = "md-actions";
+  const start = document.createElement("button");
+  start.className = "md-btn primary";
+  start.textContent = act.sessionLive ? "open agent" : "▸ start agent";
+  start.onclick = () => (act.sessionLive ? show(act.session) : startAgent(act.file));
+  const unfocus = document.createElement("button");
+  unfocus.className = "md-btn danger";
+  unfocus.textContent = "unfocus ✕";
+  unfocus.title = "drop from today's focus — nothing is killed";
+  unfocus.onclick = () => unfocusFile(act.file);
+  actions.append(start, unfocus);
+  box.appendChild(actions);
+  stageEl.appendChild(box);
+  stageEl.classList.add("show");
 }
 
 // ---- reload card ----
@@ -805,7 +970,7 @@ function showReloadCard(f) {
   }
   reloadEl.querySelector(".rc-sess-text").textContent = f.sessionLive
     ? sessionLabel(f) + " — " + f.session
-    : "session starting…";
+    : "no agent yet — start it from the panel";
   reloadEl.classList.add("show");
 }
 
@@ -817,7 +982,7 @@ reloadEl.onclick = hideReloadCard;
 
 // Any key dismisses the card and is consumed — nothing leaks into the
 // terminal underneath. Bound chords still fire (their engine listener sits on
-// the same window), so ⌘. with the card up advances the queue again.
+// the same window), so ⌘1..9 with the card up keeps switching focus.
 window.addEventListener(
   "keydown",
   (e) => {
@@ -850,28 +1015,19 @@ async function killSession(name) {
   if (name !== active) refreshSessions();
 }
 
-function killActiveSession() {
-  if (active !== CHAT) killSession(active);
-}
-
+// The chord vocabulary stays tiny and every chord is printed on the control
+// it drives (header buttons, map legend, focus rows). Killing sessions,
+// unfocusing, switching agents: visible buttons, not chords.
 const ACTION_META = [
   { action: "close-session", label: "close session view (detach)", when: "session" },
-  { action: "kill-session", label: "kill tmux session", when: "session" },
-  { action: "toggle-sidebar", label: "toggle focus rail", when: "any" },
-  { action: "command-bar", label: "type a command (voice grammar)", when: "any" },
-  { action: "launcher", label: "outcome map / launcher", when: "any" },
-  { action: "toggle-board", label: "toggle outcome board", when: "any" },
-  { action: "next-outcome", label: "waiting — next outcome", when: "any" },
+  { action: "map", label: "the map", when: "any" },
+  { action: "talk", label: "typed command (voice grammar)", when: "any" },
 ];
 
 const ACTIONS = {
   "close-session": closeSessionView,
-  "kill-session": killActiveSession,
-  "toggle-sidebar": () => treeBtn.onclick(),
-  "command-bar": () => openCmdBar(),
-  "launcher": () => openLauncher(),
-  "toggle-board": () => toggleBoard(),
-  "next-outcome": () => nextOutcome(),
+  "map": () => toggleMap(),
+  "talk": () => openCmdBar(),
 };
 
 const KEYMAP_STORE = "agentshell.keymap";
@@ -1021,7 +1177,18 @@ window.addEventListener(
   "keydown",
   (e) => {
     if (!settingsEl.hidden) return;
-    if (e.target instanceof HTMLInputElement) return; // typing a spawn name
+    if (e.target instanceof HTMLInputElement) return; // typing in a bar or the map filter
+    // ⌘1..9 switches between focused outcomes. The chord is printed on the
+    // focus rows themselves, so it needs no keymap entry.
+    if (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && /^[1-9]$/.test(e.key)) {
+      const f = focusData?.focused?.[Number(e.key) - 1];
+      if (f) {
+        e.preventDefault();
+        e.stopPropagation();
+        activateFocusFile(f.file);
+        return;
+      }
+    }
     const ctx = shellContext();
     for (const b of keymap) {
       if (!b.keys) continue;
@@ -1218,14 +1385,12 @@ function hud(state, text) {
   if (state === "done" || state === "error") hudTimer = setTimeout(() => (hudEl.className = ""), 6000);
 }
 
-// The node paths the rail currently implies (focus, queue, shelf, live
+// The node paths the shell currently implies (focused outcomes, live
 // sessions) — the user's mental model, shipped with every utterance so
 // spoken names resolve to what they can see.
 function visibleNodePaths() {
   const out = new Set();
-  for (const t of [focusData?.focus, ...(focusData?.queue ?? []), ...(focusData?.shelf ?? [])]) {
-    if (t?.node) out.add(t.node);
-  }
+  for (const f of focusData?.focused ?? []) if (f.node) out.add(f.node);
   for (const s of lastSessions) if (s.node) out.add(s.node);
   return [...out];
 }
@@ -1289,13 +1454,11 @@ function applyRouteResult(out) {
     if (a.type === "view" && a.session) show(a.session);
     else if (a.type === "close_view") closeSessionView();
     else if (a.type === "sidebar") treeBtn.onclick();
-    else if (a.type === "focus" && a.session) {
-      // Spoken "next outcome": the server already advanced the queue; land
-      // on the session and the reload card like the keyboard motion does.
-      show(a.session);
-      refreshFocus().then(() => {
-        if (focusData?.focus) showReloadCard(focusData.focus);
-      });
+    else if (a.type === "focus") {
+      // The server changed the focus set (spoken focus/unfocus/next).
+      // trackFocusBoundaries inside refreshFocus lands on the new active
+      // outcome exactly like the buttons do.
+      refreshFocus();
     }
   }
   refreshSessions();
@@ -1393,70 +1556,35 @@ window.addEventListener(
 window.addEventListener("blur", cancelVoice);
 
 // ---- typed command lane ----
-// The same grammar as voice, over a keyboard (default cmd+k): type what you
-// would have said ("megabranch, run the client build", "show me PG&E") and it
+// The same grammar as voice, over a keyboard (talk ⌘K): type what you would
+// have said ("megabranch, run the client build", "show me PG&E") and it
 // routes identically through /api/command. For when speaking is not an option.
 
 const cmdBar = document.getElementById("cmd-bar");
 const cmdInput = document.getElementById("cmd-input");
-const cmdResults = document.getElementById("cmd-results");
 
 function openCmdBar() {
+  closeMap();
   cmdBar.hidden = false;
   cmdInput.value = "";
   cmdInput.focus();
-  fetchVault(true); // warm the launcher index while the user types
-}
-
-// "/" switches the bar from the voice grammar to node/outcome navigation.
-const navMode = () => cmdInput.value.startsWith("/");
-
-// The launcher chord: the same bar, opened straight into navigation.
-function openLauncher() {
-  openCmdBar();
-  cmdInput.value = "/";
-  renderResults();
 }
 
 cmdInput.onkeydown = (e) => {
   e.stopPropagation();
   if (e.key === "Escape") return closeCmdBar();
-  if (navMode() && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
-    e.preventDefault();
-    moveCrSel(e.key === "ArrowDown" ? 1 : -1);
-    return;
-  }
-  // Tab queues the selected outcome and keeps the map open: planning the day
-  // is open launcher, walk the tree, tab-tab-tab in order, esc.
-  if (navMode() && e.key === "Tab") {
-    e.preventDefault();
-    const item = crItems[crSel];
-    if (item?.kind === "outcome") {
-      queueOutcomeFile(item.t.file).then(() => renderQueueTray());
-      moveCrSel(1);
-    }
-    return;
-  }
-  if (e.key === "Enter") {
-    if (navMode()) {
-      if (crItems[crSel]) activateItem(crItems[crSel]);
-      return;
-    }
-    if (cmdInput.value.trim()) {
-      const text = cmdInput.value.trim();
-      closeCmdBar();
-      sendCommand(text);
-    }
+  if (e.key === "Enter" && cmdInput.value.trim()) {
+    const text = cmdInput.value.trim();
+    closeCmdBar();
+    sendCommand(text);
   }
 };
-cmdInput.oninput = () => (navMode() ? renderResults() : hideResults());
 cmdInput.onblur = () => closeCmdBar();
 
 function closeCmdBar() {
   cmdBar.hidden = true;
-  hideResults();
   const e = active && terms.get(active);
-  if (e) e.term.focus();
+  if (e && !stageOn) e.term.focus();
 }
 
 async function sendCommand(text) {
@@ -1475,13 +1603,17 @@ async function sendCommand(text) {
   }
 }
 
-// ---- outcomes: launcher navigation, board, outcome strip ----
-// Nodes are what we talk about, outcomes are what we achieve, sessions
-// execute one outcome; a task is just an outcome small enough to work
-// directly. Outcome state lives in the vault (outcome-<slug>.md beside node
-// notes, a Breakdown section of links orders an outcome's children, schema in
-// ~/.tangent/trees/README.md); the server serves it on /api/vault and only
-// ever writes the mechanical active/session binding.
+// ---- the map ----
+// Nodes are what we talk about, outcomes are what we achieve, processes are
+// what runs without a done condition (each node's "main" agent, builds).
+// Sessions are never listed on their own: a session is the live state of the
+// outcome or process it executes, worn as a dot on that row. The map renders
+// all of it as one tree — outcome state from the vault (/api/vault, each
+// outcome exactly once under its topmost root, schema in
+// ~/.tangent/trees/README.md), sessions joined in live. Selection previews in
+// the detail pane and has no side effects; enter is the one primary verb per
+// row kind (work on an outcome, open a main or process) and the legend prints
+// every key that works here.
 
 let vaultNodes = [];
 let vaultMap = []; // the unified map: each outcome once, grouped by root's home node
@@ -1537,43 +1669,114 @@ function rankNodes(q) {
   return scored.slice(0, 5).map((x) => x.n);
 }
 
-let crItems = []; // flat launcher rows: {kind:"node",n} | {kind:"outcome",n,t}
-let crRows = [];  // the DOM row for each item (the panel also holds a head and tray)
-let crSel = 0;
+const mapEl = document.getElementById("map");
+const mapHeadEl = document.getElementById("map-head");
+const mapInput = document.getElementById("map-input");
+const mapTreeEl = document.getElementById("map-tree");
+const mapDetailEl = document.getElementById("map-detail");
+let mapOpen = false;
+let mapItems = []; // selectable rows: {kind:"main"|"outcome"|"process", ...}
+let mapRows = [];  // the DOM row per item (group headers are labels, not items)
+let mapSel = 0;
+let mapKey = "";
 
-function hideResults() {
-  cmdResults.hidden = true;
-  crItems = [];
-  crRows = [];
-  crSel = 0;
-}
-
-function moveCrSel(delta) {
-  if (!crItems.length) return;
-  crSel = (crSel + delta + crItems.length) % crItems.length;
-  paintCrSel();
-}
-
-function paintCrSel() {
-  cmdResults.querySelectorAll(".cr-sel").forEach((el) => el.classList.remove("cr-sel"));
-  const el = crRows[crSel];
-  if (el) {
-    el.classList.add("cr-sel");
-    el.scrollIntoView({ block: "nearest" });
+function openMap() {
+  if (mapOpen) {
+    mapInput.focus();
+    return;
   }
+  mapOpen = true;
+  mapEl.classList.add("show");
+  mapHeadEl.textContent = activeFocus() ? "the map" : "what are we working on?";
+  mapInput.value = "";
+  mapKey = "";
+  mapSel = 0;
+  mapInput.focus();
+  fetchVault(true).then(() => renderMap(true));
 }
 
-function outcomeRowEl(t, next, extraClass) {
+function closeMap() {
+  if (!mapOpen) return;
+  mapOpen = false;
+  mapEl.classList.remove("show");
+  const e = active && terms.get(active);
+  if (e && !stageOn) e.term.focus();
+}
+
+/** The map button and its chord: one toggle. */
+function toggleMap() {
+  if (mapOpen) closeMap();
+  else openMap();
+}
+
+document.getElementById("map-btn").onclick = () => toggleMap();
+document.getElementById("talk-btn").onclick = () => openCmdBar();
+
+mapInput.onkeydown = (e) => {
+  e.stopPropagation();
+  if (e.key === "Escape") return closeMap();
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    moveMapSel(e.key === "ArrowDown" ? 1 : -1);
+    return;
+  }
+  if (e.key === "Tab") {
+    // "focus it too": the day is planned by walking the tree and tabbing
+    // outcomes into the focus set.
+    e.preventDefault();
+    const item = mapItems[mapSel];
+    if (item?.kind === "outcome") {
+      focusAlsoFile(item.t.file).then(() => renderMap(true));
+      moveMapSel(1);
+    }
+    return;
+  }
+  if (e.key === "Enter") {
+    const item = mapItems[mapSel];
+    if (item) activateMapItem(item);
+  }
+};
+mapInput.oninput = () => renderMap(true);
+
+/** The live session executing an outcome, joined by tmux session name. */
+const sessionFor = (name) => (name ? lastSessions.find((s) => s.name === name) ?? null : null);
+
+/**
+ * The groups the map shows. Bare: the vault map (each outcome once under its
+ * topmost root) for nodes with work left or a live session, plus synthetic
+ * groups for sessions on nodes outside the vault map. Typed: ranked node
+ * matches — name beats path beats people beats outcome text beats note body.
+ */
+function mapGroups() {
+  const q = mapInput.value.trim();
+  if (q) return rankNodes(q);
+  const groups = vaultMap.filter((g) => {
+    const hasWork = visibleOutcomes(g).some((t) => t.status !== "done");
+    const hasLive = lastSessions.some((s) => !s.isChat && s.node === g.path);
+    return hasWork || hasLive;
+  });
+  const known = new Set(groups.map((g) => g.path));
+  const extra = new Map();
+  for (const s of lastSessions) {
+    if (s.isChat || !s.node || known.has(s.node) || extra.has(s.node)) continue;
+    extra.set(s.node, { path: s.node, name: s.node.split("/").pop(), purpose: "", outcomes: [] });
+  }
+  return [...groups, ...extra.values()];
+}
+
+/** One outcome row in the map tree: glyph, title, live dot, focus mark. */
+function mapOutcomeRow(t, next, focusedFiles) {
   const row = document.createElement("div");
-  row.className = extraClass + " bt-row " + t.status + (t === next ? " next" : "");
-  if (t.depth) row.style.paddingLeft = (extraClass ? 26 : 8) + t.depth * 14 + "px";
+  row.className = "bt-row " + t.status + (t === next ? " next" : "");
+  row.style.paddingLeft = 24 + (t.depth ?? 0) * 16 + "px";
+  const s = sessionFor(t.session);
   const glyph = document.createElement("span");
-  glyph.className = "bt-glyph";
-  glyph.textContent = OUTCOME_GLYPH[t.status] ?? "○";
+  glyph.className = "bt-glyph" + (s?.state === "working" ? " working" : s?.state === "waiting" ? " ready" : "");
+  glyph.textContent = s ? "●" : OUTCOME_GLYPH[t.status] ?? "○";
   const title = document.createElement("span");
   title.className = "bt-title";
   title.textContent = t.title;
-  if (t.outcome) title.title = "outcome: " + t.outcome;
+  if (t.outcome) title.title = "done = " + t.outcome;
   row.append(glyph, title);
   if (t.foreign) {
     const chip = document.createElement("span");
@@ -1582,18 +1785,19 @@ function outcomeRowEl(t, next, extraClass) {
     chip.title = "lives on " + t.node;
     row.appendChild(chip);
   }
+  if (focusedFiles.has(t.file)) {
+    const mark = document.createElement("span");
+    mark.className = "focus-mark";
+    mark.textContent = t.file === focusData?.active ? "◉ active" : "◉ focused";
+    row.appendChild(mark);
+  }
   if (t === next) {
     const tag = document.createElement("span");
     tag.className = "bt-next-tag";
     tag.textContent = "next";
     row.appendChild(tag);
   } else {
-    const queued = focusData?.queue?.some((q) => q.file === t.file);
-    const meta = queued
-      ? "queued"
-      : t.status === "waiting" && t.waitingOn
-        ? "waiting on " + t.waitingOn
-        : t.due ?? "";
+    const meta = t.status === "waiting" && t.waitingOn ? "waiting on " + t.waitingOn : t.due ?? "";
     if (meta) {
       const m = document.createElement("span");
       m.className = "bt-meta";
@@ -1604,189 +1808,252 @@ function outcomeRowEl(t, next, extraClass) {
   return row;
 }
 
-/** One launcher row pair: a node header plus its outcome rows, as items. */
-function addLauncherGroup(n, outcomes) {
+/** The node's main-agent row: always listed first, hollow when not running. */
+function mainRowEl(s) {
   const row = document.createElement("div");
-  row.className = "cr-node";
-  const p = document.createElement("span");
-  p.className = "cr-path";
-  p.textContent = n.path;
-  const purpose = document.createElement("span");
-  purpose.className = "cr-purpose";
-  purpose.textContent = n.purpose;
-  row.append(p, purpose);
-  const idx = crItems.length;
-  row.onmousedown = (e) => { e.preventDefault(); activateItem(crItems[idx]); };
-  cmdResults.appendChild(row);
-  crItems.push({ kind: "node", n });
-  crRows.push(row);
-  const next = deriveNext(outcomes);
-  for (const t of outcomes) {
-    const tr = outcomeRowEl(t, next, "cr-outcome");
-    const tIdx = crItems.length;
-    tr.onmousedown = (e) => { e.preventDefault(); activateItem(crItems[tIdx]); };
-    cmdResults.appendChild(tr);
-    crItems.push({ kind: "outcome", n, t });
-    crRows.push(tr);
-  }
+  row.className = "bt-row";
+  row.style.paddingLeft = "24px";
+  const glyph = document.createElement("span");
+  glyph.className = "bt-glyph" + (s?.state === "working" ? " working" : s?.state === "waiting" ? " ready" : "");
+  glyph.textContent = s ? "●" : "○";
+  const title = document.createElement("span");
+  title.className = "bt-title";
+  title.textContent = "main";
+  const meta = document.createElement("span");
+  meta.className = "bt-meta";
+  meta.textContent = s ? STATE_HINT[s.state] ?? "" : "node agent";
+  row.append(glyph, title, meta);
+  return row;
 }
 
-// The queue tray: while planning in the map, the day being built stays
-// visible at the bottom of the panel.
-function renderQueueTray() {
-  cmdResults.querySelector("#cr-tray")?.remove();
-  const q = focusData?.queue ?? [];
-  if (!q.length || cmdResults.hidden) return;
-  const tray = document.createElement("div");
-  tray.id = "cr-tray";
-  tray.textContent = "up next: ";
-  const b = document.createElement("b");
-  b.textContent = q.map((t) => t.title).join("  ·  ");
-  tray.appendChild(b);
-  cmdResults.appendChild(tray);
+/** A process session row (service, plain shell) under its node. */
+function processRowEl(s) {
+  const row = document.createElement("div");
+  row.className = "bt-row";
+  row.style.paddingLeft = "24px";
+  const glyph = document.createElement("span");
+  glyph.className =
+    "bt-glyph" + (["working", "service"].includes(s.state) ? " working" : s.state === "waiting" ? " ready" : "");
+  glyph.textContent = ["working", "waiting", "service"].includes(s.state) ? "●" : "○";
+  const title = document.createElement("span");
+  title.className = "bt-title";
+  title.textContent = s.name;
+  const meta = document.createElement("span");
+  meta.className = "bt-meta";
+  meta.textContent = STATE_HINT[s.state] ?? "";
+  row.append(glyph, title, meta);
+  return row;
+}
+
+function renderMap(force = false) {
+  if (!mapOpen) return;
+  const groups = mapGroups();
+  const focusedFiles = new Set((focusData?.focused ?? []).map((f) => f.file));
+  // Rebuild only on real change so selection and hover targets stay stable
+  // under the 2s session poll.
+  const key = JSON.stringify([
+    mapInput.value,
+    groups.map((g) => [g.path, visibleOutcomes(g).map((t) => [t.file, t.status])]),
+    [...focusedFiles],
+    focusData?.active,
+    lastSessions.map((s) => [s.name, s.state, s.node, s.kind]),
+  ]);
+  if (!force && key === mapKey) return;
+  mapKey = key;
+  const prevItem = mapItems[mapSel];
+  mapItems = [];
+  mapRows = [];
+  mapTreeEl.innerHTML = "";
+  /** Registers one selectable row: hover selects, click activates. */
+  const addItem = (row, item) => {
+    const idx = mapItems.length;
+    row.style.cursor = "pointer";
+    row.onmouseenter = () => setMapSel(idx, false);
+    row.onmousedown = (e) => {
+      e.preventDefault();
+      setMapSel(idx, false);
+      activateMapItem(item);
+    };
+    mapTreeEl.appendChild(row);
+    mapItems.push(item);
+    mapRows.push(row);
+  };
+  for (const g of groups) {
+    const header = document.createElement("div");
+    header.className = "cr-node";
+    const p = document.createElement("span");
+    p.className = "cr-path";
+    p.textContent = g.path;
+    const purpose = document.createElement("span");
+    purpose.className = "cr-purpose";
+    purpose.textContent = g.purpose ?? "";
+    header.append(p, purpose);
+    mapTreeEl.appendChild(header);
+    const home = lastSessions.find((x) => x.kind === "home" && x.node === g.path);
+    addItem(mainRowEl(home), { kind: "main", g, s: home ?? null });
+    const outcomes = visibleOutcomes(g);
+    const next = deriveNext(outcomes);
+    for (const t of outcomes) addItem(mapOutcomeRow(t, next, focusedFiles), { kind: "outcome", t, g });
+    for (const s of lastSessions) {
+      if (s.node !== g.path || s.isChat || s.outcome || s.kind === "home") continue;
+      addItem(processRowEl(s), { kind: "process", s, g });
+    }
+  }
+  // Keep the selection on the same item across rebuilds.
+  const same = (a, b) =>
+    a && b && a.kind === b.kind &&
+    (a.kind === "outcome" ? a.t.file === b.t.file : a.kind === "main" ? a.g.path === b.g.path : a.s.name === b.s.name);
+  const idx = mapItems.findIndex((it) => same(it, prevItem));
+  mapSel = idx >= 0 ? idx : 0;
+  paintMapSel(false);
+}
+
+function setMapSel(idx, scroll = true) {
+  mapSel = idx;
+  paintMapSel(scroll);
+}
+
+function moveMapSel(delta) {
+  if (!mapItems.length) return;
+  setMapSel((mapSel + delta + mapItems.length) % mapItems.length);
+}
+
+function paintMapSel(scroll = true) {
+  mapTreeEl.querySelectorAll(".cr-sel").forEach((el) => el.classList.remove("cr-sel"));
+  const el = mapRows[mapSel];
+  if (el) {
+    el.classList.add("cr-sel");
+    if (scroll) el.scrollIntoView({ block: "nearest" });
+  }
+  renderMapDetail();
 }
 
 /**
- * The launcher's two moods on one surface. Empty query: the whole map —
- * every root outcome once, under its home node, heat-sorted, nothing typed.
- * Typed query: ranked node matches with their own subtrees. Enter focuses an
- * outcome (or opens a node's home agent); tab queues the outcome instead.
+ * The detail pane: everything about the selected row, always visible, with
+ * every action as a button wearing its printed key. Buttons keep the map
+ * input focused (mousedown preventDefault) so the keyboard flow survives.
  */
-async function renderResults() {
-  await fetchVault();
-  const q = cmdInput.value.slice(1).trim();
-  crItems = [];
-  crRows = [];
-  cmdResults.innerHTML = "";
-  // The head asks the state machine's question: planning ("what are we
-  // working on?") or consulting the map mid-flow.
-  const head = document.createElement("div");
-  head.id = "cr-head";
-  head.textContent = focusData?.focus ? "the map" : "what are we working on?";
-  const sub = document.createElement("span");
-  sub.className = "sub";
-  sub.textContent = "enter focuses · tab queues · type to filter · esc for chat";
-  head.appendChild(sub);
-  cmdResults.appendChild(head);
-  if (!q) {
-    for (const g of vaultMap) {
-      const outcomes = g.outcomes.filter((t) => t.status !== "deferred" && t.status !== "dropped");
-      if (!outcomes.some((t) => t.status !== "done")) continue; // nothing left to do here
-      addLauncherGroup(g, outcomes);
+function renderMapDetail() {
+  mapDetailEl.innerHTML = "";
+  const item = mapItems[mapSel];
+  if (!item) return;
+  /** Appends one element with a class and text; returns it. */
+  const el = (tag, cls, text) => {
+    const x = document.createElement(tag);
+    x.className = cls;
+    if (text != null) x.textContent = text;
+    mapDetailEl.appendChild(x);
+    return x;
+  };
+  /** One action button with its printed key, appended to `parent`. */
+  const btn = (parent, label, keyHint, fn, cls) => {
+    const b = document.createElement("button");
+    b.className = "md-btn" + (cls ? " " + cls : "");
+    b.textContent = label;
+    if (keyHint) {
+      const k = document.createElement("span");
+      k.className = "key";
+      k.textContent = keyHint;
+      b.appendChild(k);
     }
+    b.onmousedown = (e) => e.preventDefault();
+    b.onclick = fn;
+    parent.appendChild(b);
+  };
+  /** A session-state line for the pane. */
+  const sessLine = (s) => {
+    const info = { sessionLive: Boolean(s), sessionState: s?.state ?? null, sessionCreated: s?.created ?? null };
+    const line = el("div", "md-sess");
+    line.append(sessionGlyph(info), document.createTextNode(sessionLabel(info) ?? "no agent yet"));
+  };
+  if (item.kind === "outcome") {
+    const t = item.t;
+    el("div", "md-node", t.node);
+    el("div", "md-title", t.title);
+    if (t.outcome) {
+      el("span", "md-label", "done looks like");
+      el("div", "md-text", t.outcome);
+    }
+    if (t.stateText) {
+      el("span", "md-label", "where it stands");
+      el("div", "md-text", t.stateText);
+    }
+    const s = sessionFor(t.session);
+    sessLine(s);
+    const a = el("div", "md-actions");
+    const focused = focusData?.focused?.some((f) => f.file === t.file);
+    btn(a, "work on it", "⏎", () => activateMapItem(item), "primary");
+    if (focused) btn(a, "unfocus ✕", "", () => unfocusFile(t.file).then(() => renderMap(true)), "danger");
+    else btn(a, "focus it too", "⇥", () => focusAlsoFile(t.file).then(() => renderMap(true)));
+    if (s) {
+      btn(a, "view agent", "", () => {
+        closeMap();
+        show(s.name);
+      });
+    }
+  } else if (item.kind === "main") {
+    el("div", "md-node", item.g.path);
+    el("div", "md-title", "main");
+    el(
+      "div",
+      "md-text",
+      (item.g.purpose ? item.g.purpose + "\n\n" : "") +
+        "The node's own agent. Node-level commands — run a routine, reorganize the tree, open sessions — route here."
+    );
+    sessLine(item.s);
+    const a = el("div", "md-actions");
+    btn(a, item.s ? "open main" : "start main", "⏎", () => activateMapItem(item), "primary");
+    if (item.s) btn(a, "kill ✕", "", () => killSession(item.s.name), "danger");
   } else {
-    for (const n of rankNodes(q)) addLauncherGroup(n, visibleOutcomes(n));
+    el("div", "md-node", item.s.node ?? "");
+    el("div", "md-title", item.s.name);
+    el("div", "md-text", STATE_HINT[item.s.state] ?? "");
+    const a = el("div", "md-actions");
+    btn(a, "view", "⏎", () => activateMapItem(item), "primary");
+    btn(a, "kill ✕", "", () => killSession(item.s.name), "danger");
   }
-  cmdResults.hidden = crItems.length === 0;
-  renderQueueTray();
-  crSel = 0;
-  paintCrSel();
 }
 
-// Enter on an outcome focuses it now: the focus flow spawns (or reattaches)
-// its session and lands on the reload card. Enter on a node opens its home
-// agent with the node's board showing — the start of work is a boundary, and
-// boundaries get the map.
-async function activateItem(item) {
-  closeCmdBar();
-  if (item.kind === "outcome") return focusSetFile(item.t.file);
-  hud("busy", "opening node…");
+/**
+ * Enter's one meaning per row kind: an outcome becomes the active focus (the
+ * work state then offers the start-agent stage if no agent runs); a main or
+ * process row opens its session.
+ */
+function activateMapItem(item) {
+  if (item.kind === "outcome") {
+    closeMap();
+    activateFocusFile(item.t.file);
+  } else if (item.kind === "main") {
+    openNodeMain(item.g.path);
+  } else {
+    closeMap();
+    show(item.s.name);
+  }
+}
+
+/** Opens (spawning if needed) a node's main agent and views it. */
+async function openNodeMain(nodePath) {
+  hud("busy", "opening main…");
   try {
     const res = await fetch("/api/node/open", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ node: item.n.path }),
+      body: JSON.stringify({ node: nodePath }),
     });
     const out = await res.json();
     if (!res.ok) throw new Error(out.error ?? "failed " + res.status);
+    closeMap();
     await refreshSessions();
     show(out.session);
-    showBoard(item.n.path);
-    hud("done", `opened ${item.n.path}`);
+    hud("done", "main · " + nodePath);
   } catch (err) {
     hud("error", String(err.message ?? err));
   }
 }
 
-// ---- board ----
-
-const boardEl = document.getElementById("board");
-const boardNodeEl = document.getElementById("board-node");
-const boardPurposeEl = document.getElementById("board-purpose");
-const boardOutcomesEl = document.getElementById("board-outcomes");
-let boardPath = null;
-let boardTimer = null;
-
-async function showBoard(nodePath) {
-  if (!nodePath) return;
-  boardPath = nodePath;
-  boardEl.classList.add("show");
-  clearInterval(boardTimer);
-  boardTimer = setInterval(() => renderBoard(true), 5000);
-  refitActive();
-  await renderBoard(true);
-}
-
-function hideBoard() {
-  boardEl.classList.remove("show");
-  boardPath = null;
-  clearInterval(boardTimer);
-  refitActive();
-}
-
-function toggleBoard() {
-  if (boardEl.classList.contains("show")) return hideBoard();
-  const s = lastSessions.find((x) => x.name === active);
-  const node = s?.node ?? focusData?.focus?.node;
-  if (node) showBoard(node);
-  else hud("error", "no node here — focus an outcome first");
-}
-
-async function renderBoard(force = false) {
-  if (!boardPath) return;
-  await fetchVault(force);
-  const own = vaultNodes.find((n) => n.path === boardPath);
-  if (!own) return hideBoard();
-  boardNodeEl.textContent = own.path;
-  boardPurposeEl.textContent = own.purpose;
-  boardOutcomesEl.innerHTML = "";
-  // Rollup: the node's own outcomes first, then descendants' — you talk at the
-  // concept level, state lives at the deepest node that covers it.
-  const groups = [own, ...vaultNodes.filter((n) => n.path.startsWith(boardPath + "/"))];
-  const seenFiles = new Set();
-  const all = groups
-    .flatMap((n) => visibleOutcomes(n).map((t) => ({ ...t, own: n === own, nodeName: n.name })))
-    .filter((t) => !seenFiles.has(t.file) && seenFiles.add(t.file));
-  if (!all.length) {
-    const empty = document.createElement("div");
-    empty.id = "board-empty";
-    empty.textContent = "no outcomes on this node yet — ask its agent to add outcome files (outcome-<slug>.md, linked from Road to done)";
-    boardOutcomesEl.appendChild(empty);
-    return;
-  }
-  const next = deriveNext(all);
-  for (const t of all) {
-    const row = outcomeRowEl(t, next, "");
-    if (!t.own && t !== next) {
-      const m = document.createElement("span");
-      m.className = "bt-meta";
-      m.textContent = t.nodeName;
-      row.appendChild(m);
-    }
-    row.onclick = () => {
-      if (t.status === "done") return;
-      if (t.status === "active" && t.session) return show(t.session);
-      activateItem({ kind: "outcome", n: own, t });
-    };
-    boardOutcomesEl.appendChild(row);
-  }
-}
-
-document.getElementById("board-close").onclick = hideBoard;
-
 // ---- outcome strip ----
-// During flow you need almost nothing on screen: just what this session is
-// for. The full map lives on the board and appears at boundaries.
+// During flow you need almost nothing on screen: just what the viewed
+// session is for. Full context lives on the work panel and the map.
 
 const stripEl = document.getElementById("outcome-strip");
 const stripNodeEl = stripEl.querySelector(".ts-node");
@@ -1796,7 +2063,7 @@ let stripShown = false;
 
 function renderOutcomeStrip() {
   const s = lastSessions.find((x) => x.name === active);
-  const on = Boolean(s && !s.isChat && (s.outcome || s.goal));
+  const on = Boolean(!stageOn && s && !s.isChat && (s.outcome || s.goal));
   if (on) {
     stripNodeEl.textContent = "[" + ((s.node ?? "").split("/").pop() || "?") + "]";
     stripTitleEl.textContent = s.outcomeTitle ?? "";
@@ -1808,36 +2075,16 @@ function renderOutcomeStrip() {
     refitActive();
   }
 }
-stripEl.onclick = () => toggleBoard();
-
-// The board appears uninvited at exactly one other boundary: the focused
-// session's outcome flips to done — the moment "what's next" matters most.
-const prevOutcomeStatus = new Map();
-function trackOutcomeBoundaries() {
-  for (const s of lastSessions) {
-    if (!s.outcome) continue;
-    const prev = prevOutcomeStatus.get(s.name);
-    if (prev && prev !== s.outcomeStatus && s.outcomeStatus === "done" && s.name === active && s.node) {
-      // The finished outcome leaves the rail. With a queue the pre-paid next
-      // action is ⌘. over the board; with nothing queued, back to planning.
-      const node = s.node;
-      refreshFocus().then(() => {
-        if (!focusData?.focus && !focusData?.queue?.length) openLauncher();
-        else showBoard(node);
-      });
-    }
-    prevOutcomeStatus.set(s.name, s.outcomeStatus);
-  }
-}
 
 window.addEventListener("resize", refitActive);
 
 show(CHAT);
 refreshSessions();
-// Opening state: with a focus the terminal is the answer; with an empty day
+// Opening state: with a stored focus, trackFocusBoundaries inside the first
+// refresh lands on it (session or stage, reload card up). With an empty day
 // the first question is "what are we working on?", so the map opens itself.
 refreshFocus().then(() => {
-  if (!focusData?.focus && !focusData?.queue?.length && !focusData?.shelf?.length) openLauncher();
+  if (!focusData?.focused?.length) openMap();
 });
 setInterval(refreshSessions, 2000);
 setInterval(refreshFocus, 3000);

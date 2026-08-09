@@ -5,7 +5,7 @@
 import http from "node:http";
 import os from "node:os";
 import { createHash } from "node:crypto";
-import { appendFile, readFile, readdir, writeFile } from "node:fs/promises";
+import { appendFile, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
@@ -333,7 +333,9 @@ async function readNodeOutcomes(node) {
     const fm = parseFrontmatter(text);
     if (fm.type !== "outcome") continue;
     const slug = f.slice("outcome-".length, -".md".length);
+    const mtime = await stat(path.join(TREES_ROOT, node, f)).then((s) => s.mtimeMs, () => 0);
     outcomes.push({
+      mtime,
       node,
       slug,
       file: `${node}/${f}`,
@@ -358,7 +360,9 @@ async function readNodeOutcomes(node) {
  * homed in other nodes), with `depth` for indentation; outcome files nothing
  * links trail at the top level, alphabetically. "Next" stays derived by
  * callers: the first open outcome whose breakdown children are all finished.
- * Small vault, read fresh per request.
+ * Small vault, read fresh per request. Returns { nodes, map }: the per-node
+ * entries for typed search, plus the unified deduplicated map (built below)
+ * that the launcher's browse view renders.
  */
 async function vaultIndex() {
   const flat = [];
@@ -404,7 +408,45 @@ async function vaultIndex() {
       outcomes,
     });
   }
-  return out;
+  // The unified map: every outcome exactly once, at its topmost position.
+  // A root is an outcome no other outcome's Breakdown links; it groups under
+  // its home node and its whole subtree indents beneath it, wherever the
+  // children are homed (`foreign` names a child's home node when it differs).
+  // This is what kills the launcher's duplicate subtrees: viz-input's tree
+  // renders once, under the megabranch root that contains it.
+  const groups = [];
+  const groupByNode = new Map();
+  const placed = new Set();
+  for (const { n, note, own } of entries) {
+    const road = roadToDoneOrder(note).filter((s) => bySlug.has(s));
+    const ordered = [...road, ...own.map((o) => o.slug).filter((s) => !road.includes(s)).sort()];
+    for (const s of ordered) {
+      if (linked.has(s) || placed.has(s)) continue;
+      let g = groupByNode.get(n.path);
+      if (!g) {
+        g = { path: n.path, name: n.name, purpose: noteSection(note, "Purpose").split("\n")[0] ?? "", outcomes: [] };
+        groupByNode.set(n.path, g);
+        groups.push(g);
+      }
+      /** Places one root and its breakdown descendants into the group. */
+      const place = (slug, depth) => {
+        const o = bySlug.get(slug);
+        if (!o || placed.has(slug)) return;
+        placed.add(slug);
+        g.outcomes.push({ ...o, depth, foreign: o.node === n.path ? null : o.node.split("/").pop() });
+        for (const c of o.breakdown) place(c, depth + 1);
+      };
+      place(s, 0);
+    }
+  }
+  // Heat: groups with a live (active) outcome first, then most recently
+  // touched, so the outcome you came for is in the top rows before you type.
+  for (const g of groups) {
+    g.active = g.outcomes.some((o) => o.status === "active");
+    g.mtime = Math.max(0, ...g.outcomes.map((o) => o.mtime ?? 0));
+  }
+  groups.sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0) || b.mtime - a.mtime);
+  return { nodes: out, map: groups };
 }
 
 /**
@@ -567,6 +609,174 @@ async function withOutcomeInfo(sessions) {
   );
 }
 
+// ---- focus queue (shell state, never vault) ----
+// The day's ordered intent: which outcome is focused, which come up next,
+// which are relegated to the waiting shelf while their agent cooks. This is
+// ephemeral ordering, not judgment, so it lives in a shell-owned JSON file
+// under ~/.tangent/ and never in outcome frontmatter. Losing it loses today's
+// ordering, never truth. The vault write discipline is untouched: advancing
+// the queue writes no outcome status — a shelved outcome keeps its active
+// binding because its session really is still running.
+
+const FOCUS_FILE = path.join(os.homedir(), ".tangent", "agent-shell-focus.json");
+const FOCUS_GONE = new Set(["done", "dropped", "deferred"]);
+
+/** Reads the stored focus state; a missing or corrupt file is an empty day. */
+async function readFocusFile() {
+  try {
+    const st = JSON.parse(await readFile(FOCUS_FILE, "utf8"));
+    return { focus: st.focus ?? null, queue: st.queue ?? [], shelf: st.shelf ?? [] };
+  } catch {
+    return { focus: null, queue: [], shelf: [] };
+  }
+}
+/** Persists the focus state file. */
+const writeFocusFile = (st) => writeFile(FOCUS_FILE, JSON.stringify(st, null, 2) + "\n");
+
+/** Every outcome in the vault keyed by its vault-relative file path. */
+async function outcomesByFile() {
+  const map = new Map();
+  for (const node of flattenNodePaths(await readTree(TREES_ROOT))) {
+    for (const o of await readNodeOutcomes(node)) map.set(o.file, o);
+  }
+  return map;
+}
+
+/** Drops finished or vanished outcomes from the stored state, in place. */
+function pruneFocusState(st, byFile) {
+  /** An entry stays only while its outcome file exists and is still workable. */
+  const live = (f) => {
+    const o = byFile.get(f);
+    return Boolean(o) && !FOCUS_GONE.has(o.status);
+  };
+  const before = JSON.stringify(st);
+  st.queue = st.queue.filter(live);
+  st.shelf = st.shelf.filter(live);
+  if (st.focus && !live(st.focus)) st.focus = null;
+  return JSON.stringify(st) !== before;
+}
+
+/**
+ * Everything a brain needs to reload one outcome in a glance: the done
+ * condition, the present-tense State section, the breakdown children with
+ * their statuses, and the session that executes it.
+ */
+async function reloadCard(o, byFile, sessions) {
+  let stateText = "";
+  try {
+    stateText = noteSection(await readFile(path.join(TREES_ROOT, o.file), "utf8"), "State");
+  } catch {}
+  const bySlug = new Map([...byFile.values()].map((x) => [x.slug, x]));
+  const children = o.breakdown
+    .map((s) => bySlug.get(s))
+    .filter(Boolean)
+    .map((c) => ({ slug: c.slug, title: c.title, status: c.status }));
+  const sess = o.session ? sessions.find((s) => s.name === o.session) : null;
+  return { ...o, stateText, children, sessionState: sess?.state ?? null, sessionLive: Boolean(sess), sessionCreated: sess?.created ?? null };
+}
+
+/**
+ * The rail's whole world: the focused outcome as a reload card, the ordered
+ * queue, and the shelf of outcomes waiting on their agents (each with live
+ * session state). Read fresh per poll — the vault is small.
+ */
+async function focusView() {
+  const st = await readFocusFile();
+  const byFile = await outcomesByFile();
+  if (pruneFocusState(st, byFile)) await writeFocusFile(st);
+  const sessions = await listSessions();
+  /** One queue/shelf row: the outcome plus its session's live state. */
+  const row = (f) => {
+    const o = byFile.get(f);
+    const sess = o.session ? sessions.find((s) => s.name === o.session) : null;
+    return { ...o, sessionState: sess?.state ?? null, sessionLive: Boolean(sess), sessionCreated: sess?.created ?? null };
+  };
+  return {
+    focus: st.focus ? await reloadCard(byFile.get(st.focus), byFile, sessions) : null,
+    queue: st.queue.map(row),
+    shelf: st.shelf.map(row),
+  };
+}
+
+/**
+ * Focuses one outcome now: spawns (or reattaches) its session and files the
+ * previous focus where it belongs — the shelf when its agent is still alive,
+ * the head of the queue otherwise — so an interrupted outcome is never lost.
+ */
+async function focusSet(file) {
+  const byFile = await outcomesByFile();
+  const o = byFile.get(file);
+  if (!o) return { status: 404, error: `no outcome file ${file}` };
+  if (FOCUS_GONE.has(o.status)) return { status: 409, error: `outcome is ${o.status}` };
+  const st = await readFocusFile();
+  pruneFocusState(st, byFile);
+  const sessions = await listSessions();
+  if (st.focus && st.focus !== file) {
+    const prev = byFile.get(st.focus);
+    const live = prev?.session && sessions.some((s) => s.name === prev.session);
+    if (live) st.shelf = [st.focus, ...st.shelf.filter((f) => f !== st.focus)];
+    else if (prev) st.queue = [st.focus, ...st.queue.filter((f) => f !== st.focus)];
+  }
+  st.focus = file;
+  st.queue = st.queue.filter((f) => f !== file);
+  st.shelf = st.shelf.filter((f) => f !== file);
+  await writeFocusFile(st);
+  const spawned = await spawnOutcomeSession(o.node, o.slug);
+  if (spawned.status !== 200) return spawned;
+  return { status: 200, session: spawned.session, view: await focusView() };
+}
+
+/**
+ * The switch motion: "I'm waiting on this — next outcome." The focused
+ * outcome relegates to the shelf when its agent is still running (else to the
+ * queue's tail), the first queued outcome takes focus, and its session
+ * spawns. A drained queue leaves nothing focused rather than guessing.
+ */
+async function focusNext() {
+  const byFile = await outcomesByFile();
+  const st = await readFocusFile();
+  pruneFocusState(st, byFile);
+  const sessions = await listSessions();
+  if (st.focus) {
+    const prev = byFile.get(st.focus);
+    const live = prev?.session && sessions.some((s) => s.name === prev.session);
+    if (live) st.shelf = [st.focus, ...st.shelf.filter((f) => f !== st.focus)];
+    else st.queue = [...st.queue.filter((f) => f !== st.focus), st.focus];
+    st.focus = null;
+  }
+  const nextFile = st.queue[0] ?? null;
+  if (nextFile) {
+    st.focus = nextFile;
+    st.queue = st.queue.slice(1);
+  }
+  await writeFocusFile(st);
+  let session = null;
+  if (nextFile) {
+    const o = byFile.get(nextFile);
+    const spawned = await spawnOutcomeSession(o.node, o.slug);
+    if (spawned.status === 200) session = spawned.session;
+  }
+  return { status: 200, session, view: await focusView() };
+}
+
+/** Appends an outcome to the queue (or removes it), leaving focus untouched. */
+async function focusQueue(file, remove) {
+  const byFile = await outcomesByFile();
+  const st = await readFocusFile();
+  pruneFocusState(st, byFile);
+  if (remove) {
+    st.queue = st.queue.filter((f) => f !== file);
+    st.shelf = st.shelf.filter((f) => f !== file);
+  } else {
+    const o = byFile.get(file);
+    if (!o) return { status: 404, error: `no outcome file ${file}` };
+    if (FOCUS_GONE.has(o.status)) return { status: 409, error: `outcome is ${o.status}` };
+    if (st.focus !== file && !st.queue.includes(file) && !st.shelf.includes(file)) st.queue.push(file);
+  }
+  await writeFocusFile(st);
+  return { status: 200, view: await focusView() };
+}
+
 // ---- voice + typed command control ----
 // POST /api/voice: an utterance in, actions out. The browser records push-to-
 // talk audio; this server transcribes it (Groq whisper) and hands the
@@ -611,6 +821,7 @@ Reply with JSON only: {"actions":[...]}, at most 5 actions, executed in order. A
 - {"type":"keys","session":"<name>","keys":["Enter"]} — press special keys. Allowed: Enter, Escape, Tab, Up, Down, Left, Right, BSpace, Space, C-c, and single letters or digits like "y" or "2". Use for answering menus and permission prompts visible in the pane tail (send the matching option key) and for "stop" or "interrupt" (Escape, or C-c in a shell).
 - {"type":"view","target":"<session or node name>"} — show that session in the app (a node name shows its home agent). For "show me X", "open X", "go to X", "switch to X".
 - {"type":"close_view"} — leave the current session view, back to chat.
+- {"type":"next_outcome"} — advance the focus queue: the current outcome keeps its agent running and relegates to the waiting shelf, the next queued outcome takes focus. For "next outcome", "I'm waiting on this — next", "next please".
 - {"type":"sidebar"} — toggle the project tree sidebar.
 - {"type":"spawn","node":"<tree node path>","name":"<lowercase-hyphen-name>"} — create a plain work session on a project node. Only for a bare "new/open a session on X (called Y)" with nothing else attached. If the user states a goal, task, or any context in the same utterance, do NOT spawn: say the whole thing to that node's home agent instead, which does the richer setup.
 - {"type":"kill","session":"<name>"} — destroy a session and everything in it. Only on an explicit kill or destroy request.
@@ -868,6 +1079,16 @@ async function executeVoiceActions(actions, ctx, focused, utterance) {
           clientActions.push({ type: "close_view" });
           summary.push("closed view");
           break;
+        case "next_outcome": {
+          const r = await focusNext();
+          if (r.session) {
+            clientActions.push({ type: "focus", session: r.session });
+            summary.push(`focus → ${r.view.focus?.title ?? r.session}`);
+          } else {
+            summary.push("queue is empty — nothing to focus");
+          }
+          break;
+        }
         case "sidebar":
           clientActions.push({ type: "sidebar" });
           summary.push("toggled sidebar");
@@ -996,10 +1217,36 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ root: TREES_ROOT, nodes: await readTree(TREES_ROOT) }));
       return;
     }
-    // The launcher's search index: nodes, purposes, people, outcomes in order.
+    // The launcher's index: per-node entries for search plus the unified map.
     if (url.pathname === "/api/vault") {
       res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ nodes: await vaultIndex() }));
+      res.end(JSON.stringify(await vaultIndex()));
+      return;
+    }
+    // The focus rail: focused outcome (reload card), ordered queue, shelf.
+    if (url.pathname === "/api/focus") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(await focusView()));
+      return;
+    }
+    // Focus mutations: set (focus an outcome now), next (the switch motion),
+    // queue (append or remove). All return the fresh view.
+    if (url.pathname.startsWith("/api/focus/") && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      const op = url.pathname.slice("/api/focus/".length);
+      try {
+        const result =
+          op === "set" ? await focusSet(String(body.file ?? ""))
+          : op === "next" ? await focusNext()
+          : op === "queue" ? await focusQueue(String(body.file ?? ""), Boolean(body.remove))
+          : { status: 404, error: `unknown focus op "${op}"` };
+        res.writeHead(result.status, { "content-type": "application/json" });
+        res.end(JSON.stringify(result.status === 200 ? result : { error: result.error }));
+      } catch (err) {
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
+      }
       return;
     }
     // Enter on an outcome in the launcher: spawn (or reattach) its work session.

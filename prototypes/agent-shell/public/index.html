@@ -41,47 +41,67 @@
     display: flex; flex-direction: column;
     transition: width 0.15s ease;
   }
-  #sidebar.open { width: 280px; border-right-color: var(--border); }
+  #sidebar.open { width: 300px; border-right-color: var(--border); }
   #sidebar-head {
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
     padding: 8px 12px; border-bottom: 1px solid var(--border); flex: none;
     white-space: nowrap;
   }
-  /* rtl outer + ltr inner keeps the tail of a long path visible; the
-     ellipsis lands on the left, and the focused node always shows. */
-  #crumbs { overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
-  #crumb-line { direction: ltr; unicode-bidi: isolate; }
-  .crumb {
-    background: none; border: none; padding: 0;
-    color: var(--dim); font-size: 12px;
+  #rail-title { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 1.2px; }
+  #rail { flex: 1; overflow: auto; padding: 2px 0 10px; }
+  .rail-sec {
+    padding: 12px 12px 4px; color: var(--dim); font-size: 10px;
+    text-transform: uppercase; letter-spacing: 1.4px;
   }
-  .crumb:hover { color: var(--accent2); }
-  .crumb.here { color: var(--text); }
-  .crumb-sep { color: var(--dim); font-size: 12px; margin: 0 1px; }
-  #filter-btn { font-size: 11px; padding: 3px 8px; }
-  #tree { flex: 1; overflow: auto; padding: 6px 4px; white-space: nowrap; }
-  .node-row {
-    display: flex; align-items: center; gap: 4px;
-    padding: 2px 4px; border-radius: 5px; color: var(--text);
+  .rail-empty { margin: 2px 12px; color: var(--dim); font-size: 11px; }
+  /* The focus card: the one loud thing in the rail. Everything the brain
+     needs to reload the outcome — done condition, present-tense state,
+     breakdown position, session state — in one glance. */
+  .focus-card {
+    margin: 2px 8px; padding: 10px 12px; border: 1px solid var(--accent2);
+    border-radius: 8px; background: rgba(88, 166, 255, 0.06); cursor: pointer;
   }
-  .node-row:hover { background: rgba(255,255,255,0.04); }
-  .caret {
-    width: 16px; flex: none; text-align: center; color: var(--dim);
-    background: none; border: none; padding: 0;
+  .focus-card:hover { background: rgba(88, 166, 255, 0.1); }
+  .fc-node { color: var(--accent2); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+  .fc-title { font-weight: 700; margin-top: 2px; }
+  .fc-outcome { font-size: 12px; margin-top: 6px; }
+  .fc-outcome .fc-label { color: var(--dim); }
+  .fc-state { color: var(--dim); font-size: 11px; margin-top: 6px; max-height: 4.5em; overflow: hidden; white-space: pre-wrap; }
+  .fc-progress { color: var(--dim); font-size: 11px; margin-top: 6px; }
+  .fc-sess { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 11px; color: var(--dim); }
+  .fc-sess .sess-dot { width: auto; }
+  .fc-next-btn {
+    margin-top: 10px; width: 100%; padding: 4px 8px; border-radius: 6px;
+    border: 1px solid var(--border); background: transparent; color: var(--dim); font-size: 12px;
   }
-  .caret.leaf { visibility: hidden; }
-  .node-name { background: none; border: none; color: inherit; padding: 1px 2px; }
-  .node-name:hover { color: var(--accent2); }
-  .node-children { margin-left: 14px; }
-  /* Sessions are the living rows of the tree: nodes are dim structure, a
-     session row is a piece of work with a state dot. Agent state from screen
-     diff: pulsing green = working (motion means activity), steady amber =
-     waiting for you, dim hollow = plain shell / agent exited. Services
-     (@tangent_kind=service, e.g. a dev server) skip the diff: steady blue =
-     running, red hollow = the command exited. */
+  .fc-next-btn:hover { color: var(--text); border-color: var(--dim); }
+  /* Queue and shelf rows reuse the outcome-row grammar (.bt-row) with a home
+     node chip; a shelf row goes "ready" (amber) when its agent finished or
+     died — it brightens, it never yanks. */
+  #rail .bt-row { margin: 0 8px; }
+  .bt-node { color: var(--dim); font-size: 10px; flex: none; }
+  .bt-row.ready { border-color: rgba(227, 179, 65, 0.6); background: rgba(227, 179, 65, 0.07); }
+  .bt-row .bt-glyph.working { color: var(--accent); animation: chip-pulse 1.1s ease-in-out infinite; }
+  .bt-row .bt-glyph.ready { color: #e3b341; }
+  .row-x {
+    visibility: hidden; margin-left: 2px; padding: 0 4px; border-radius: 4px;
+    background: none; border: none; color: var(--dim); font-size: 11px; flex: none;
+  }
+  .bt-row:hover .row-x { visibility: visible; }
+  .row-x:hover { color: #f85149; }
+  .row-up {
+    visibility: hidden; padding: 0 4px; border-radius: 4px; margin-left: auto;
+    background: none; border: none; color: var(--dim); font-size: 11px; flex: none;
+  }
+  .bt-row:hover .row-up { visibility: visible; }
+  .row-up:hover { color: var(--accent2); }
+  /* Live sessions not owned by an outcome (home agents, services, plain
+     shells). Agent state from screen diff: pulsing green = working, steady
+     amber = waiting for you, dim hollow = plain shell; services: steady blue
+     = running, red hollow = command exited. */
   .sess-row {
     display: flex; align-items: center; gap: 6px;
-    padding: 2px 4px 2px 18px; border-radius: 5px; color: var(--text);
+    padding: 2px 4px 2px 14px; border-radius: 5px; color: var(--text);
     cursor: pointer;
   }
   .sess-row:hover { background: rgba(255,255,255,0.04); }
@@ -93,30 +113,6 @@
   .sess-row.active { background: var(--accent2); color: #04121f; font-weight: 600; }
   .sess-row.active .sess-dot { color: #04121f; animation: none; }
   @keyframes chip-pulse { 50% { opacity: 0.2; } }
-  /* Collapsed subtree rollup: one dot on the node row in the most urgent
-     state below it, so a waiting agent shows through any collapsed parent. */
-  .rollup { margin-left: 6px; font-size: 9px; color: var(--dim); }
-  .rollup.working { color: var(--accent); animation: chip-pulse 1.1s ease-in-out infinite; }
-  .rollup.waiting { color: #e3b341; }
-  .rollup.service { color: var(--accent2); }
-  .rollup.stopped { color: #f85149; }
-  /* A node's home agent lives on the node row itself: the node is the unit
-     you talk to, its home session is an implementation detail. Same state
-     colors as session dots. */
-  .home-dot {
-    margin-left: 4px; padding: 0 4px; border-radius: 4px;
-    background: none; border: none; color: var(--dim); font-size: 11px;
-  }
-  .home-dot:hover { color: var(--text); }
-  .home-dot.working { color: var(--accent); animation: chip-pulse 1.1s ease-in-out infinite; }
-  .home-dot.waiting { color: #e3b341; }
-  .home-dot.active { background: var(--accent2); color: #04121f; }
-  .add-btn {
-    visibility: hidden; margin-left: 4px; padding: 0 5px; border-radius: 4px;
-    background: none; border: none; color: var(--dim); font-size: 13px;
-  }
-  .node-row:hover .add-btn { visibility: visible; }
-  .add-btn:hover { color: var(--accent); }
   .kill-btn {
     visibility: hidden; margin-left: auto; padding: 0 5px; border-radius: 4px;
     background: none; border: none; color: var(--dim); font-size: 11px;
@@ -124,17 +120,6 @@
   .sess-row:hover .kill-btn { visibility: visible; }
   .kill-btn:hover { color: #f85149; }
   .sess-row.active .kill-btn { color: #04121f; }
-  .sess-row.spawn { cursor: default; flex-wrap: wrap; }
-  .sess-row.spawn input {
-    font: inherit; width: 130px; padding: 1px 6px; border-radius: 4px;
-    background: var(--bg); border: 1px solid var(--border); color: var(--text);
-  }
-  .sess-row.spawn input:focus { outline: none; border-color: var(--accent2); }
-  .spawn-hint { color: #e3b341; font-size: 11px; }
-  #unfiled { flex: none; border-top: 1px solid var(--border); padding: 8px 12px; }
-  #unfiled:empty { display: none; }
-  #unfiled .title { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
-  #unfiled .sess-row { padding-left: 4px; }
   #settings, #agent-panel {
     position: absolute; top: 44px; right: 10px; z-index: 10;
     width: 380px; padding: 10px 14px;
@@ -263,6 +248,32 @@
   .cr-purpose { color: var(--dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .cr-outcome { display: flex; align-items: baseline; gap: 8px; padding: 4px 8px 4px 26px; border-radius: 6px; cursor: pointer; }
   .cr-sel { background: rgba(88, 166, 255, 0.15); outline: 1px solid var(--accent2); }
+  #cr-tray {
+    border-top: 1px solid var(--border); margin-top: 6px; padding: 7px 10px 3px;
+    color: var(--dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  #cr-tray b { color: var(--text); font-weight: 600; }
+  /* Reload card: the boundary surface. Appears on every focus switch with
+     everything needed to reload the outcome into the brain; any key or click
+     dismisses it into the session. */
+  #reload-card {
+    position: absolute; inset: 0; z-index: 40; display: none;
+    align-items: center; justify-content: center; background: rgba(2, 6, 12, 0.55);
+  }
+  #reload-card.show { display: flex; }
+  .rc-box {
+    width: min(560px, 90%); max-height: 80%; overflow: auto;
+    background: var(--panel); border: 1px solid var(--accent); border-radius: 12px;
+    padding: 20px 24px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  }
+  .rc-node { color: var(--accent2); font-size: 12px; }
+  .rc-title { font-size: 20px; font-weight: 700; margin-top: 4px; }
+  .rc-outcome { margin-top: 10px; }
+  .rc-outcome .rc-label, .rc-state .rc-label { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; display: block; margin-bottom: 2px; }
+  .rc-state { margin-top: 10px; color: var(--text); white-space: pre-wrap; font-size: 12px; }
+  .rc-children { margin-top: 10px; }
+  .rc-sess { display: flex; align-items: center; gap: 6px; margin-top: 12px; font-size: 12px; color: var(--dim); }
+  .rc-hint { margin-top: 14px; color: var(--dim); font-size: 11px; text-align: center; }
   #terms { flex: 1; position: relative; min-height: 0; }
   .term-host { position: absolute; inset: 0; padding: 8px; display: none; }
   .term-host.visible { display: block; }
@@ -295,13 +306,12 @@
     <span class="ts-node"></span><span class="ts-title"></span><span class="ts-outcome"></span>
   </div>
   <div id="main">
-    <div id="sidebar">
+    <div id="sidebar" class="open">
       <div id="sidebar-head">
-        <span id="crumbs"></span>
-        <button id="filter-btn" class="hbtn" title="show only nodes with running sessions">● sessions</button>
+        <span id="rail-title">today</span>
+        <button id="chat-btn" class="hbtn" title="orchestrator chat">⌂ chat</button>
       </div>
-      <div id="tree"></div>
-      <div id="unfiled"></div>
+      <div id="rail"></div>
     </div>
     <div id="terms"></div>
     <div id="board">
@@ -310,6 +320,17 @@
         <div id="board-purpose"></div>
       </div>
       <div id="board-outcomes"></div>
+    </div>
+  </div>
+  <div id="reload-card">
+    <div class="rc-box">
+      <div class="rc-node"></div>
+      <div class="rc-title"></div>
+      <div class="rc-outcome"><span class="rc-label">done looks like</span><span class="rc-text"></span></div>
+      <div class="rc-state"><span class="rc-label">where it stands</span><span class="rc-text"></span></div>
+      <div class="rc-children"></div>
+      <div class="rc-sess"><span class="sess-dot">●</span><span class="rc-sess-text"></span></div>
+      <div class="rc-hint">any key to dive in · ⌘. next outcome</div>
     </div>
   </div>
   <div id="voice-hud"><span class="vh-dot">●</span><span class="vh-text"></span></div>
@@ -328,10 +349,7 @@ let active = null;
 const termsEl = document.getElementById("terms");
 const treeBtn = document.getElementById("tree-btn");
 const sidebarEl = document.getElementById("sidebar");
-const treeEl = document.getElementById("tree");
-const unfiledEl = document.getElementById("unfiled");
-const filterBtn = document.getElementById("filter-btn");
-const crumbsEl = document.getElementById("crumbs");
+const railEl = document.getElementById("rail");
 const activeLabel = document.getElementById("active-label");
 
 function connect(session) {
@@ -439,38 +457,27 @@ treeBtn.onclick = () => {
   sidebarEl.classList.toggle("open");
   treeBtn.classList.toggle("on", sidebarEl.classList.contains("open"));
 };
+treeBtn.classList.add("on"); // the rail starts open
 sidebarEl.addEventListener("transitionend", refitActive);
 
-// ---- project tree sidebar ----
+// ---- focus rail ----
+// The sidebar is the focus rail, not a map: FOCUS (the outcome being worked,
+// as a card), UP NEXT (the day's ordered queue), WAITING (outcomes relegated
+// while their agent cooks — they brighten when the agent finishes, they never
+// yank), SESSIONS (live sessions no outcome owns). Nodes have no persistent
+// surface; the map lives in the launcher (cmd+/) and the board (cmd+j). The
+// queue is shell state on the server (~/.tangent/agent-shell-focus.json),
+// never vault truth.
 
-let treeNodes = [];      // nested {name, path, children} from /api/tree
 let lastSessions = [];
-let filterOn = false;    // show only nodes with running sessions (plus ancestors)
-let focusPath = null;    // node shown as the tree root; null = whole vault
-const expanded = new Set();
+let focusData = null; // /api/focus: { focus: card|null, queue: [], shelf: [] }
 
-function findNode(path) {
-  let nodes = treeNodes;
-  let found = null;
-  for (const part of (path ?? "").split("/")) {
-    found = nodes.find((n) => n.name === part);
-    if (!found) return null;
-    nodes = found.children;
-  }
-  return found;
-}
+document.getElementById("chat-btn").onclick = () => show(CHAT);
 
-function focusNode(path) {
-  focusPath = path;
-  if (path) expanded.add(path);
-  renderSidebar();
-}
-
-async function refreshTree() {
+async function refreshFocus() {
   try {
-    const res = await fetch("/api/tree");
-    const { nodes } = await res.json();
-    treeNodes = nodes;
+    const res = await fetch("/api/focus");
+    focusData = await res.json();
     renderSidebar();
   } catch {}
 }
@@ -487,15 +494,6 @@ async function refreshSessions() {
     renderOutcomeStrip();
     trackOutcomeBoundaries();
   } catch {}
-}
-
-// Home sessions render on the node row itself, not as work-session chips.
-function sessionsForNode(path) {
-  return lastSessions.filter((s) => !s.isChat && s.node === path && s.kind !== "home");
-}
-
-function homeFor(path) {
-  return lastSessions.find((s) => s.kind === "home" && s.node === path);
 }
 
 const STATE_HINT = {
@@ -530,320 +528,293 @@ function sessionRow(s) {
   return row;
 }
 
-// ---- spawn a session from the tree (the + on a node row) ----
+const SESSION_LABEL = {
+  working: "agent working",
+  waiting: "agent ready for you",
+  shell: "shell (agent exited)",
+  service: "service running",
+  stopped: "service stopped",
+};
 
-let spawningNode = null; // node path with the name input open, or null
-let spawnError = null;
+/** True when a shelved outcome deserves attention: agent finished or died. */
+const shelfReady = (t) => !t.sessionLive || t.sessionState === "waiting" || t.sessionState === "shell";
 
-function openSpawn(path) {
-  spawningNode = path;
-  spawnError = null;
-  expanded.add(path);
-  renderSidebar();
-  treeEl.querySelector(".sess-row.spawn input")?.focus();
+/**
+ * A live session's one-line label. A just-spawned session's pane still runs
+ * the shell while the agent boots, which must not read as "agent exited".
+ */
+function sessionLabel(t) {
+  if (!t.sessionLive) return null;
+  if (t.sessionState === "shell" && t.sessionCreated && Date.now() - t.sessionCreated < 10000) return "agent starting…";
+  return SESSION_LABEL[t.sessionState] ?? "session live";
 }
 
-function closeSpawn() {
-  spawningNode = null;
-  spawnError = null;
-  renderSidebar();
-}
-
-async function doSpawn(node, name) {
-  const res = await fetch("/api/spawn", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ node, name }),
-  });
-  if (!res.ok) {
-    spawnError = (await res.json()).error ?? "spawn failed " + res.status;
-    renderSidebar(true);
-    treeEl.querySelector(".sess-row.spawn input")?.focus();
-    return;
-  }
-  closeSpawn();
-  await refreshSessions();
-  show(name);
-}
-
-function spawnInputRow(node) {
+/**
+ * A queue or shelf row: the outcome-row atom plus rail affordances. Queue
+ * rows focus on click (jumping the queue); shelf rows peek at their session
+ * without moving focus, with ⤴ as the deliberate refocus.
+ */
+function railRowEl(t, where) {
   const row = document.createElement("div");
-  row.className = "sess-row spawn";
-  const dot = document.createElement("span");
-  dot.className = "sess-dot";
-  dot.textContent = "○";
-  const input = document.createElement("input");
-  input.placeholder = "work name…";
-  input.onkeydown = (e) => {
-    e.stopPropagation();
-    if (e.key === "Escape") closeSpawn();
-    if (e.key === "Enter" && input.value.trim()) {
-      doSpawn(node.path, input.value.trim().toLowerCase().replace(/[^a-z0-9-]+/g, "-"));
-    }
-  };
-  // A stale error hint stops meaning anything once the user edits the name;
-  // drop it in place rather than re-rendering, so the input keeps focus.
-  input.oninput = () => {
-    if (!spawnError) return;
-    spawnError = null;
-    row.querySelector(".spawn-hint")?.remove();
-  };
-  input.onblur = () => { if (!spawnError) closeSpawn(); };
-  row.append(dot, input);
-  if (spawnError) {
-    const hint = document.createElement("span");
-    hint.className = "spawn-hint";
-    hint.textContent = spawnError;
-    row.appendChild(hint);
+  const ready = where === "shelf" && shelfReady(t);
+  row.className = "bt-row " + t.status + (ready ? " ready" : "");
+  const glyph = document.createElement("span");
+  glyph.className =
+    "bt-glyph" + (where === "shelf" ? (ready ? " ready" : t.sessionState === "working" ? " working" : "") : "");
+  glyph.textContent = where === "shelf" ? (ready ? "◔" : "●") : "○";
+  const title = document.createElement("span");
+  title.className = "bt-title";
+  title.textContent = t.title;
+  if (t.outcome) title.title = "outcome: " + t.outcome;
+  const nodeChip = document.createElement("span");
+  nodeChip.className = "bt-node";
+  nodeChip.textContent = t.node.split("/").pop();
+  row.append(glyph, title, nodeChip);
+  if (where === "queue") {
+    const x = document.createElement("button");
+    x.className = "row-x";
+    x.textContent = "✕";
+    x.title = "remove from queue";
+    x.onclick = (e) => { e.stopPropagation(); unqueueOutcome(t.file); };
+    row.appendChild(x);
+    row.title = "click to focus now (jumps the queue)";
+    row.onclick = () => focusSetFile(t.file);
+  } else {
+    const up = document.createElement("button");
+    up.className = "row-up";
+    up.textContent = "⤴";
+    up.title = "bring back to focus";
+    up.onclick = (e) => { e.stopPropagation(); focusSetFile(t.file); };
+    row.appendChild(up);
+    row.title = ready ? "agent finished or needs you — click to peek, ⤴ to refocus" : "agent working — click to peek";
+    // Peek: look without moving focus. A dead session has nothing to peek
+    // at, so the click refocuses (which respawns) instead.
+    row.onclick = () => (t.sessionLive ? show(t.session) : focusSetFile(t.file));
   }
   return row;
 }
 
-// Most urgent agent state in a node's subtree, for the collapsed rollup dot.
-// Urgency: waiting for you beats a dead service beats working beats a live
-// service beats a plain shell.
-const STATE_RANK = { waiting: 5, stopped: 4, working: 3, service: 2, shell: 1 };
-function subtreeSessions(path) {
-  return lastSessions.filter(
-    (s) => !s.isChat && s.node && (s.node === path || s.node.startsWith(path + "/"))
-  );
-}
-function subtreeState(path) {
-  let best = null;
-  for (const s of subtreeSessions(path)) {
-    if ((STATE_RANK[s.state] ?? 0) > (STATE_RANK[best] ?? 0)) best = s.state;
+/**
+ * The focus card: the one loud thing in the rail. Done condition, present
+ * state, breakdown position, session state — the whole reload in one glance.
+ */
+function focusCardEl(f) {
+  const card = document.createElement("div");
+  card.className = "focus-card";
+  card.title = f.sessionLive ? "open the session" : "start the session";
+  const node = document.createElement("div");
+  node.className = "fc-node";
+  node.textContent = f.node;
+  const title = document.createElement("div");
+  title.className = "fc-title";
+  title.textContent = f.title;
+  card.append(node, title);
+  if (f.outcome) {
+    const oc = document.createElement("div");
+    oc.className = "fc-outcome";
+    const label = document.createElement("span");
+    label.className = "fc-label";
+    label.textContent = "done = ";
+    oc.append(label, document.createTextNode(f.outcome));
+    card.appendChild(oc);
   }
-  return best;
-}
-
-// A node passes the session filter when a session sits on it or anywhere in
-// its subtree, so ancestors of session nodes always stay visible.
-function subtreeHasSession(path) {
-  return lastSessions.some(
-    (s) => !s.isChat && s.node && (s.node === path || s.node.startsWith(path + "/"))
-  );
-}
-
-function expandToSessions(nodes) {
-  for (const n of nodes) {
-    if (subtreeHasSession(n.path)) {
-      expanded.add(n.path);
-      expandToSessions(n.children);
-    }
+  if (f.stateText) {
+    const stEl = document.createElement("div");
+    stEl.className = "fc-state";
+    stEl.textContent = f.stateText;
+    card.appendChild(stEl);
   }
-}
-
-filterBtn.onclick = () => {
-  filterOn = !filterOn;
-  filterBtn.classList.toggle("on", filterOn);
-  if (filterOn) expandToSessions(treeNodes);
-  renderSidebar();
-};
-
-function renderNode(node, container) {
-  if (filterOn && !subtreeHasSession(node.path)) return;
-  const row = document.createElement("div");
-  row.className = "node-row";
-
-  const caret = document.createElement("button");
-  const hasKids = node.children.length > 0;
-  caret.className = "caret" + (hasKids ? "" : " leaf");
-  caret.textContent = expanded.has(node.path) ? "▾" : "▸";
-  caret.onclick = () => {
-    if (expanded.has(node.path)) expanded.delete(node.path);
-    else expanded.add(node.path);
-    renderSidebar();
-  };
-  row.appendChild(caret);
-
-  const name = document.createElement("button");
-  name.className = "node-name";
-  name.textContent = node.name;
-  name.title = "focus " + node.path;
-  name.onclick = () => focusNode(node.path);
-  row.appendChild(name);
-
-  // The node's home agent, if one is live: the node's own presence, distinct
-  // from the work sessions beneath it.
-  const home = homeFor(node.path);
-  if (home) {
-    const dot = document.createElement("button");
-    dot.className = "home-dot" + (home.state ? " " + home.state : "") + (active === home.name ? " active" : "");
-    dot.textContent = "⌂";
-    dot.title = "home agent — " + (STATE_HINT[home.state] ?? "");
-    dot.onclick = () => show(home.name);
-    row.appendChild(dot);
+  if (f.children?.length) {
+    const doneCount = f.children.filter((c) => c.status === "done").length;
+    const nextChild = f.children.find((c) => c.status !== "done" && c.status !== "dropped");
+    const prog = document.createElement("div");
+    prog.className = "fc-progress";
+    prog.textContent = `breakdown ${doneCount}/${f.children.length}` + (nextChild ? ` · next: ${nextChild.title}` : "");
+    card.appendChild(prog);
   }
-
-  // A collapsed node hides its subtree's sessions, so it wears one rollup
-  // dot in the most urgent state below it.
-  const collapsed = hasKids && !expanded.has(node.path);
-  if (collapsed) {
-    const inside = subtreeSessions(node.path);
-    if (inside.length) {
-      const dot = document.createElement("span");
-      const state = subtreeState(node.path);
-      dot.className = "rollup" + (state ? " " + state : "");
-      dot.textContent = "●";
-      dot.title = inside.length + (inside.length === 1 ? " session" : " sessions") + " inside";
-      row.appendChild(dot);
-    }
-  }
-
-  const add = document.createElement("button");
-  add.className = "add-btn";
-  add.textContent = "+";
-  add.title = "new session on " + node.path;
-  add.onclick = () => openSpawn(node.path);
-  row.appendChild(add);
-
-  container.appendChild(row);
-
-  const own = collapsed ? [] : sessionsForNode(node.path);
-  const showSpawn = spawningNode === node.path;
-  const showChildren = hasKids && expanded.has(node.path);
-  if (own.length || showSpawn || showChildren) {
-    const kids = document.createElement("div");
-    kids.className = "node-children";
-    for (const s of own) kids.appendChild(sessionRow(s));
-    if (showSpawn) kids.appendChild(spawnInputRow(node));
-    if (showChildren) for (const child of node.children) renderNode(child, kids);
-    container.appendChild(kids);
-  }
-}
-
-// The vault root is a row in the tree, not app chrome. Its home agent is the
-// orchestrator chat session: always present, never deletable (the server
-// refuses to kill it), shown with the same ⌂ dot as any other node's home.
-let rootCollapsed = false;
-function renderRootNode(container) {
-  const row = document.createElement("div");
-  row.className = "node-row";
-
-  const caret = document.createElement("button");
-  caret.className = "caret";
-  caret.textContent = rootCollapsed ? "▸" : "▾";
-  caret.onclick = () => {
-    rootCollapsed = !rootCollapsed;
-    renderSidebar();
-  };
-  row.appendChild(caret);
-
-  const name = document.createElement("button");
-  name.className = "node-name";
-  name.textContent = "projects";
-  name.title = "all projects";
-  name.onclick = () => focusNode(null);
-  row.appendChild(name);
-
-  const chat = lastSessions.find((s) => s.isChat);
-  const dot = document.createElement("button");
-  dot.className =
-    "home-dot" + (chat?.state ? " " + chat.state : "") + (active === CHAT ? " active" : "");
-  dot.textContent = "⌂";
-  dot.title = "orchestrator chat" + (chat?.state ? " — " + (STATE_HINT[chat.state] ?? "") : "");
-  dot.onclick = () => show(CHAT);
-  row.appendChild(dot);
-
-  if (rootCollapsed) {
-    const inside = lastSessions.filter((s) => !s.isChat && s.node);
-    if (inside.length) {
-      let best = null;
-      for (const s of inside) {
-        if ((STATE_RANK[s.state] ?? 0) > (STATE_RANK[best] ?? 0)) best = s.state;
-      }
-      const roll = document.createElement("span");
-      roll.className = "rollup" + (best ? " " + best : "");
-      roll.textContent = "●";
-      roll.title = inside.length + (inside.length === 1 ? " session" : " sessions") + " inside";
-      row.appendChild(roll);
-    }
-  }
-
-  container.appendChild(row);
-
-  if (!rootCollapsed) {
-    const kids = document.createElement("div");
-    kids.className = "node-children";
-    for (const node of treeNodes) renderNode(node, kids);
-    container.appendChild(kids);
-  }
-}
-
-function renderCrumbs() {
-  crumbsEl.innerHTML = "";
-  const line = document.createElement("span");
-  line.id = "crumb-line";
-  crumbsEl.appendChild(line);
-  const crumbsTarget = line;
-  const root = document.createElement("button");
-  root.className = "crumb" + (focusPath ? "" : " here");
-  root.textContent = focusPath ? "⌂" : "projects";
-  root.title = "all projects";
-  root.onclick = () => focusNode(null);
-  crumbsTarget.appendChild(root);
-  if (!focusPath) return;
-  const parts = focusPath.split("/");
-  parts.forEach((part, i) => {
-    const sep = document.createElement("span");
-    sep.className = "crumb-sep";
-    sep.textContent = "/";
-    crumbsTarget.appendChild(sep);
-    const seg = document.createElement("button");
-    const segPath = parts.slice(0, i + 1).join("/");
-    seg.className = "crumb" + (segPath === focusPath ? " here" : "");
-    seg.textContent = part;
-    seg.onclick = () => focusNode(segPath);
-    crumbsTarget.appendChild(seg);
-  });
+  const sess = document.createElement("div");
+  sess.className = "fc-sess";
+  const dot = document.createElement("span");
+  dot.className = "bt-glyph" + (f.sessionState === "working" ? " working" : f.sessionState === "waiting" ? " ready" : "");
+  dot.textContent = f.sessionLive ? "●" : "○";
+  const sessText = document.createElement("span");
+  sessText.textContent = sessionLabel(f) ?? "no session — click to start";
+  sess.append(dot, sessText);
+  const btn = document.createElement("button");
+  btn.className = "fc-next-btn";
+  btn.textContent = "waiting → next outcome (⌘.)";
+  btn.title = "relegate to the waiting shelf, focus the next queued outcome";
+  btn.onclick = (e) => { e.stopPropagation(); nextOutcome(); };
+  card.append(sess, btn);
+  card.onclick = () => (f.sessionLive ? show(f.session) : focusSetFile(f.file));
+  return card;
 }
 
 let sidebarKey = "";
 function renderSidebar(force = false) {
-  // While the spawn name input has focus, background polls must not rebuild
-  // the tree out from under the user's typing. Explicit spawn-flow renders
-  // pass force.
-  if (
-    !force &&
-    spawningNode &&
-    document.activeElement === treeEl.querySelector(".sess-row.spawn input")
-  )
-    return;
-  // Rebuild only on real state change so buttons stay stable between polls.
+  // Rebuild only on real state change so hover targets stay stable.
   const key = JSON.stringify([
     active,
-    filterOn,
-    focusPath,
-    rootCollapsed,
-    spawningNode,
-    spawnError,
-    [...expanded].sort(),
-    lastSessions.map((s) => [s.name, s.node, s.state]),
-    treeNodes,
+    focusData,
+    lastSessions.map((s) => [s.name, s.node, s.state, s.outcome]),
   ]);
-  if (key === sidebarKey) return;
+  if (!force && key === sidebarKey) return;
   sidebarKey = key;
+  railEl.innerHTML = "";
 
-  // A focused node that disappeared from the vault falls back to the root.
-  if (focusPath && !findNode(focusPath)) focusPath = null;
-  renderCrumbs();
+  const sec = (label) => {
+    const el = document.createElement("div");
+    el.className = "rail-sec";
+    el.textContent = label;
+    railEl.appendChild(el);
+  };
+  const empty = (text) => {
+    const el = document.createElement("div");
+    el.className = "rail-empty";
+    el.textContent = text;
+    railEl.appendChild(el);
+  };
 
-  treeEl.innerHTML = "";
-  if (focusPath) renderNode(findNode(focusPath), treeEl);
-  else renderRootNode(treeEl);
+  sec("focus");
+  if (focusData?.focus) railEl.appendChild(focusCardEl(focusData.focus));
+  else if (focusData?.queue?.length) empty("nothing focused — ⌘. focuses the next queued outcome");
+  else empty("nothing focused — ⌘/ opens the map");
 
-  unfiledEl.innerHTML = "";
-  const unfiled = lastSessions.filter((s) => !s.isChat && !s.node);
-  if (unfiled.length) {
-    const title = document.createElement("div");
-    title.className = "title";
-    title.textContent = "unfiled sessions";
-    unfiledEl.appendChild(title);
-    for (const s of unfiled) {
-      unfiledEl.appendChild(sessionRow(s));
-    }
+  sec("up next");
+  if (focusData?.queue?.length) for (const t of focusData.queue) railEl.appendChild(railRowEl(t, "queue"));
+  else empty("empty — tab on an outcome in the map (⌘/) queues it");
+
+  if (focusData?.shelf?.length) {
+    sec("waiting");
+    for (const t of focusData.shelf) railEl.appendChild(railRowEl(t, "shelf"));
+  }
+
+  const others = lastSessions.filter((s) => !s.isChat && !s.outcome);
+  if (others.length) {
+    sec("sessions");
+    for (const s of others) railEl.appendChild(sessionRow(s));
   }
 }
+
+// ---- focus motions ----
+
+async function postFocus(op, body) {
+  const res = await fetch("/api/focus/" + op, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+  });
+  const out = await res.json();
+  if (!res.ok) throw new Error(out.error ?? op + " failed " + res.status);
+  if (out.view) {
+    focusData = out.view;
+    renderSidebar(true);
+  }
+  return out;
+}
+
+/** Focus an outcome now: spawn or reattach its session, land on the reload card. */
+async function focusSetFile(file) {
+  hud("busy", "focusing…");
+  try {
+    const out = await postFocus("set", { file });
+    show(out.session);
+    if (out.view?.focus) showReloadCard(out.view.focus);
+    hud("done", "focused: " + (out.view?.focus?.title ?? file));
+  } catch (err) {
+    hud("error", String(err.message ?? err));
+  }
+}
+
+/** The switch motion: relegate the focused outcome, focus the next queued one. */
+async function nextOutcome() {
+  hud("busy", "next outcome…");
+  try {
+    const out = await postFocus("next");
+    if (!out.session) {
+      hud("done", "queue is empty — ⌘/ to pick outcomes");
+      return;
+    }
+    show(out.session);
+    if (out.view?.focus) showReloadCard(out.view.focus);
+    hud("done", "focused: " + (out.view?.focus?.title ?? out.session));
+  } catch (err) {
+    hud("error", String(err.message ?? err));
+  }
+}
+
+async function queueOutcomeFile(file) {
+  try {
+    await postFocus("queue", { file });
+  } catch (err) {
+    hud("error", String(err.message ?? err));
+  }
+}
+
+async function unqueueOutcome(file) {
+  try {
+    await postFocus("queue", { file, remove: true });
+  } catch (err) {
+    hud("error", String(err.message ?? err));
+  }
+}
+
+// ---- reload card ----
+// The boundary surface: every focus switch lands here, so the brain reloads
+// the outcome (what done looks like, where it stands, what's next in the
+// breakdown) before the terminal gets a single keystroke.
+
+const reloadEl = document.getElementById("reload-card");
+const RC_GLYPH = { done: "✓", active: "▶", waiting: "◔", open: "○", deferred: "·", dropped: "✕" };
+
+function showReloadCard(f) {
+  reloadEl.querySelector(".rc-node").textContent = f.node;
+  reloadEl.querySelector(".rc-title").textContent = f.title;
+  const oc = reloadEl.querySelector(".rc-outcome");
+  oc.style.display = f.outcome ? "" : "none";
+  oc.querySelector(".rc-text").textContent = f.outcome ?? "";
+  const stEl = reloadEl.querySelector(".rc-state");
+  stEl.style.display = f.stateText ? "" : "none";
+  stEl.querySelector(".rc-text").textContent = f.stateText ?? "";
+  const kids = reloadEl.querySelector(".rc-children");
+  kids.innerHTML = "";
+  for (const c of f.children ?? []) {
+    const row = document.createElement("div");
+    row.className = "bt-row " + c.status;
+    const glyph = document.createElement("span");
+    glyph.className = "bt-glyph";
+    glyph.textContent = RC_GLYPH[c.status] ?? "○";
+    const title = document.createElement("span");
+    title.className = "bt-title";
+    title.textContent = c.title;
+    row.append(glyph, title);
+    kids.appendChild(row);
+  }
+  reloadEl.querySelector(".rc-sess-text").textContent = f.sessionLive
+    ? sessionLabel(f) + " — " + f.session
+    : "session starting…";
+  reloadEl.classList.add("show");
+}
+
+function hideReloadCard() {
+  reloadEl.classList.remove("show");
+  refitActive();
+}
+reloadEl.onclick = hideReloadCard;
+
+// Any key dismisses the card and is consumed — nothing leaks into the
+// terminal underneath. Bound chords still fire (their engine listener sits on
+// the same window), so ⌘. with the card up advances the queue again.
+window.addEventListener(
+  "keydown",
+  (e) => {
+    if (!reloadEl.classList.contains("show")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    hideReloadCard();
+  },
+  { capture: true }
+);
 
 // ---- keyboard shortcuts ----
 // The shortcut editor (⌘ button) is the primary surface: click a chord, press
@@ -873,21 +844,21 @@ function killActiveSession() {
 const ACTION_META = [
   { action: "close-session", label: "close session view (detach)", when: "session" },
   { action: "kill-session", label: "kill tmux session", when: "session" },
-  { action: "toggle-sidebar", label: "toggle project tree", when: "any" },
-  { action: "toggle-filter", label: "toggle sessions filter", when: "any" },
+  { action: "toggle-sidebar", label: "toggle focus rail", when: "any" },
   { action: "command-bar", label: "type a command (voice grammar)", when: "any" },
-  { action: "launcher", label: "node/outcome launcher", when: "any" },
+  { action: "launcher", label: "outcome map / launcher", when: "any" },
   { action: "toggle-board", label: "toggle outcome board", when: "any" },
+  { action: "next-outcome", label: "waiting — next outcome", when: "any" },
 ];
 
 const ACTIONS = {
   "close-session": closeSessionView,
   "kill-session": killActiveSession,
   "toggle-sidebar": () => treeBtn.onclick(),
-  "toggle-filter": () => filterBtn.onclick(),
   "command-bar": () => openCmdBar(),
   "launcher": () => openLauncher(),
   "toggle-board": () => toggleBoard(),
+  "next-outcome": () => nextOutcome(),
 };
 
 const KEYMAP_STORE = "agentshell.keymap";
@@ -1234,19 +1205,16 @@ function hud(state, text) {
   if (state === "done" || state === "error") hudTimer = setTimeout(() => (hudEl.className = ""), 6000);
 }
 
-// The node paths the sidebar currently renders — the user's mental model,
-// shipped with every utterance so names resolve the way the tree spells them.
+// The node paths the rail currently implies (focus, queue, shelf, live
+// sessions) — the user's mental model, shipped with every utterance so
+// spoken names resolve to what they can see.
 function visibleNodePaths() {
-  const out = [];
-  const walk = (nodes) => {
-    for (const n of nodes) {
-      if (filterOn && !subtreeHasSession(n.path)) continue;
-      out.push(n.path);
-      if (expanded.has(n.path)) walk(n.children);
-    }
-  };
-  walk(focusPath ? [findNode(focusPath)].filter(Boolean) : rootCollapsed ? [] : treeNodes);
-  return out;
+  const out = new Set();
+  for (const t of [focusData?.focus, ...(focusData?.queue ?? []), ...(focusData?.shelf ?? [])]) {
+    if (t?.node) out.add(t.node);
+  }
+  for (const s of lastSessions) if (s.node) out.add(s.node);
+  return [...out];
 }
 
 async function startVoice(hold) {
@@ -1308,6 +1276,14 @@ function applyRouteResult(out) {
     if (a.type === "view" && a.session) show(a.session);
     else if (a.type === "close_view") closeSessionView();
     else if (a.type === "sidebar") treeBtn.onclick();
+    else if (a.type === "focus" && a.session) {
+      // Spoken "next outcome": the server already advanced the queue; land
+      // on the session and the reload card like the keyboard motion does.
+      show(a.session);
+      refreshFocus().then(() => {
+        if (focusData?.focus) showReloadCard(focusData.focus);
+      });
+    }
   }
   refreshSessions();
   hud("done", `“${out.transcript}” — ${out.summary?.length ? out.summary.join("; ") : "no action"}`);
@@ -1437,6 +1413,17 @@ cmdInput.onkeydown = (e) => {
     moveCrSel(e.key === "ArrowDown" ? 1 : -1);
     return;
   }
+  // Tab queues the selected outcome and keeps the map open: planning the day
+  // is open launcher, walk the tree, tab-tab-tab in order, esc.
+  if (navMode() && e.key === "Tab") {
+    e.preventDefault();
+    const item = crItems[crSel];
+    if (item?.kind === "outcome") {
+      queueOutcomeFile(item.t.file).then(() => renderQueueTray());
+      moveCrSel(1);
+    }
+    return;
+  }
   if (e.key === "Enter") {
     if (navMode()) {
       if (crItems[crSel]) activateItem(crItems[crSel]);
@@ -1484,12 +1471,15 @@ async function sendCommand(text) {
 // ever writes the mechanical active/session binding.
 
 let vaultNodes = [];
+let vaultMap = []; // the unified map: each outcome once, grouped by root's home node
 let vaultAt = 0;
 async function fetchVault(force = false) {
   if (!force && vaultNodes.length && Date.now() - vaultAt < 5000) return vaultNodes;
   try {
     const res = await fetch("/api/vault");
-    vaultNodes = (await res.json()).nodes ?? [];
+    const data = await res.json();
+    vaultNodes = data.nodes ?? [];
+    vaultMap = data.map ?? [];
     vaultAt = Date.now();
   } catch {}
   return vaultNodes;
@@ -1571,13 +1561,25 @@ function outcomeRowEl(t, next, extraClass) {
   title.textContent = t.title;
   if (t.outcome) title.title = "outcome: " + t.outcome;
   row.append(glyph, title);
+  if (t.foreign) {
+    const chip = document.createElement("span");
+    chip.className = "bt-node";
+    chip.textContent = t.foreign;
+    chip.title = "lives on " + t.node;
+    row.appendChild(chip);
+  }
   if (t === next) {
     const tag = document.createElement("span");
     tag.className = "bt-next-tag";
     tag.textContent = "next";
     row.appendChild(tag);
   } else {
-    const meta = t.status === "waiting" && t.waitingOn ? "waiting on " + t.waitingOn : t.due ?? "";
+    const queued = focusData?.queue?.some((q) => q.file === t.file);
+    const meta = queued
+      ? "queued"
+      : t.status === "waiting" && t.waitingOn
+        ? "waiting on " + t.waitingOn
+        : t.due ?? "";
     if (meta) {
       const m = document.createElement("span");
       m.className = "bt-meta";
@@ -1588,56 +1590,92 @@ function outcomeRowEl(t, next, extraClass) {
   return row;
 }
 
+/** One launcher row pair: a node header plus its outcome rows, as items. */
+function addLauncherGroup(n, outcomes) {
+  const row = document.createElement("div");
+  row.className = "cr-node";
+  const p = document.createElement("span");
+  p.className = "cr-path";
+  p.textContent = n.path;
+  const purpose = document.createElement("span");
+  purpose.className = "cr-purpose";
+  purpose.textContent = n.purpose;
+  row.append(p, purpose);
+  const idx = crItems.length;
+  row.onmousedown = (e) => { e.preventDefault(); activateItem(crItems[idx]); };
+  cmdResults.appendChild(row);
+  crItems.push({ kind: "node", n });
+  const next = deriveNext(outcomes);
+  for (const t of outcomes) {
+    const tr = outcomeRowEl(t, next, "cr-outcome");
+    const tIdx = crItems.length;
+    tr.onmousedown = (e) => { e.preventDefault(); activateItem(crItems[tIdx]); };
+    cmdResults.appendChild(tr);
+    crItems.push({ kind: "outcome", n, t });
+  }
+}
+
+// The queue tray: while planning in the map, the day being built stays
+// visible at the bottom of the panel.
+function renderQueueTray() {
+  cmdResults.querySelector("#cr-tray")?.remove();
+  const q = focusData?.queue ?? [];
+  if (!q.length || cmdResults.hidden) return;
+  const tray = document.createElement("div");
+  tray.id = "cr-tray";
+  tray.textContent = "up next: ";
+  const b = document.createElement("b");
+  b.textContent = q.map((t) => t.title).join("  ·  ");
+  tray.appendChild(b);
+  cmdResults.appendChild(tray);
+}
+
+/**
+ * The launcher's two moods on one surface. Empty query: the whole map —
+ * every root outcome once, under its home node, heat-sorted, nothing typed.
+ * Typed query: ranked node matches with their own subtrees. Enter focuses an
+ * outcome (or opens a node's home agent); tab queues the outcome instead.
+ */
 async function renderResults() {
   await fetchVault();
-  const nodes = rankNodes(cmdInput.value.slice(1));
+  const q = cmdInput.value.slice(1).trim();
   crItems = [];
   cmdResults.innerHTML = "";
-  for (const n of nodes) {
-    const row = document.createElement("div");
-    row.className = "cr-node";
-    const p = document.createElement("span");
-    p.className = "cr-path";
-    p.textContent = n.path;
-    const purpose = document.createElement("span");
-    purpose.className = "cr-purpose";
-    purpose.textContent = n.purpose;
-    row.append(p, purpose);
-    const idx = crItems.length;
-    row.onmousedown = (e) => { e.preventDefault(); activateItem(crItems[idx]); };
-    cmdResults.appendChild(row);
-    crItems.push({ kind: "node", n });
-    const outcomes = visibleOutcomes(n);
-    const next = deriveNext(outcomes);
-    for (const t of outcomes) {
-      const tr = outcomeRowEl(t, next, "cr-outcome");
-      const tIdx = crItems.length;
-      tr.onmousedown = (e) => { e.preventDefault(); activateItem(crItems[tIdx]); };
-      cmdResults.appendChild(tr);
-      crItems.push({ kind: "outcome", n, t });
+  if (!q) {
+    for (const g of vaultMap) {
+      const outcomes = g.outcomes.filter((t) => t.status !== "deferred" && t.status !== "dropped");
+      if (!outcomes.some((t) => t.status !== "done")) continue; // nothing left to do here
+      addLauncherGroup(g, outcomes);
     }
+  } else {
+    for (const n of rankNodes(q)) addLauncherGroup(n, visibleOutcomes(n));
   }
   cmdResults.hidden = crItems.length === 0;
+  renderQueueTray();
   crSel = 0;
   paintCrSel();
 }
 
-// Enter on a node opens its home agent; enter on an outcome spawns (or
-// reattaches) its work session. Both land with the node's board showing — the
-// start of work is a boundary, and boundaries get the map.
+// Enter on an outcome focuses it now: the focus flow spawns (or reattaches)
+// its session and lands on the reload card. Enter on a node opens its home
+// agent with the node's board showing — the start of work is a boundary, and
+// boundaries get the map.
 async function activateItem(item) {
   closeCmdBar();
-  hud("busy", item.kind === "outcome" ? "starting outcome…" : "opening node…");
+  if (item.kind === "outcome") return focusSetFile(item.t.file);
+  hud("busy", "opening node…");
   try {
-    const url = item.kind === "outcome" ? "/api/outcome/spawn" : "/api/node/open";
-    const body = item.kind === "outcome" ? { node: item.t.node, slug: item.t.slug } : { node: item.n.path };
-    const res = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    const res = await fetch("/api/node/open", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ node: item.n.path }),
+    });
     const out = await res.json();
     if (!res.ok) throw new Error(out.error ?? "failed " + res.status);
     await refreshSessions();
     show(out.session);
     showBoard(item.n.path);
-    hud("done", item.kind === "outcome" ? `working: ${item.t.title}` : `opened ${item.n.path}`);
+    hud("done", `opened ${item.n.path}`);
   } catch (err) {
     hud("error", String(err.message ?? err));
   }
@@ -1672,9 +1710,9 @@ function hideBoard() {
 function toggleBoard() {
   if (boardEl.classList.contains("show")) return hideBoard();
   const s = lastSessions.find((x) => x.name === active);
-  const node = s?.node ?? focusPath;
+  const node = s?.node ?? focusData?.focus?.node;
   if (node) showBoard(node);
-  else hud("error", "no node here — focus a node's session first");
+  else hud("error", "no node here — focus an outcome first");
 }
 
 async function renderBoard(force = false) {
@@ -1754,6 +1792,7 @@ function trackOutcomeBoundaries() {
     const prev = prevOutcomeStatus.get(s.name);
     if (prev && prev !== s.outcomeStatus && s.outcomeStatus === "done" && s.name === active && s.node) {
       showBoard(s.node);
+      refreshFocus(); // the finished outcome leaves the rail; the queue is next
     }
     prevOutcomeStatus.set(s.name, s.outcomeStatus);
   }
@@ -1762,10 +1801,10 @@ function trackOutcomeBoundaries() {
 window.addEventListener("resize", refitActive);
 
 show(CHAT);
-refreshTree();
 refreshSessions();
+refreshFocus();
 setInterval(refreshSessions, 2000);
-setInterval(refreshTree, 10000);
+setInterval(refreshFocus, 3000);
 </script>
 </body>
 </html>

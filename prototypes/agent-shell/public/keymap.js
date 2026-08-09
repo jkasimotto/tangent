@@ -19,4 +19,5 @@ window.KEYMAP = [
   { keys: "cmd+k", when: "any", action: "command-bar" },
   { keys: "cmd+/", when: "any", action: "launcher" },
   { keys: "cmd+j", when: "any", action: "toggle-board" },
+  { keys: "cmd+.", when: "any", action: "next-outcome" },
 ];

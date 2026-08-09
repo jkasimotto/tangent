@@ -875,6 +875,7 @@ const ACTION_META = [
   { action: "toggle-sidebar", label: "toggle project tree", when: "any" },
   { action: "toggle-filter", label: "toggle sessions filter", when: "any" },
   { action: "command-bar", label: "type a command (voice grammar)", when: "any" },
+  { action: "launcher", label: "node/task launcher", when: "any" },
   { action: "toggle-board", label: "toggle task board", when: "any" },
 ];
 
@@ -884,6 +885,7 @@ const ACTIONS = {
   "toggle-sidebar": () => treeBtn.onclick(),
   "toggle-filter": () => filterBtn.onclick(),
   "command-bar": () => openCmdBar(),
+  "launcher": () => openLauncher(),
   "toggle-board": () => toggleBoard(),
 };
 
@@ -1418,6 +1420,13 @@ function openCmdBar() {
 
 // "/" switches the bar from the voice grammar to node/task navigation.
 const navMode = () => cmdInput.value.startsWith("/");
+
+// The launcher chord: the same bar, opened straight into navigation.
+function openLauncher() {
+  openCmdBar();
+  cmdInput.value = "/";
+  renderResults();
+}
 
 cmdInput.onkeydown = (e) => {
   e.stopPropagation();

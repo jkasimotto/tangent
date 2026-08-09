@@ -151,7 +151,7 @@
      (blue) -> what happened (green) or what went wrong (amber). */
   #voice-hud {
     position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%);
-    z-index: 30; display: none; align-items: center; gap: 8px;
+    z-index: 33; display: none; align-items: center; gap: 8px;
     max-width: min(680px, 85%); padding: 7px 16px; border-radius: 999px;
     background: var(--panel); border: 1px solid var(--border);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); font-size: 12px;
@@ -167,7 +167,7 @@
      HUD so both lanes read as one surface. */
   #cmd-bar {
     position: absolute; left: 50%; bottom: 20px; transform: translateX(-50%);
-    z-index: 31; width: min(680px, 85%); padding: 7px 12px; border-radius: 999px;
+    z-index: 32; width: min(680px, 85%); padding: 7px 12px; border-radius: 999px;
     background: var(--panel); border: 1px solid var(--accent2);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   }
@@ -206,25 +206,26 @@
   .bt-row.next .bt-glyph { color: var(--accent); }
   .bt-next-tag { margin-left: auto; color: var(--accent); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; flex: none; }
   /* The map: the one surface everything lives on — nodes with their main
-     agents and processes, outcomes nested by breakdown, live session dots —
-     as a full-screen takeover. Left the tree, right the detail card of the
-     selected row, bottom a legend printing every key that works here. Opens
-     on launch when nothing is focused, and from the map button. */
+     agents and processes, outcomes nested by breakdown, live session dots.
+     A full-screen STATE, never a popup: nothing bleeds through from behind,
+     and the entire tree is visible (spatial memory needs all of it). Left
+     the tree, right the detail card of the selected row, bottom a legend
+     printing every key that works here. Opens on launch when nothing is
+     focused, and from the map button. */
   #map {
-    position: absolute; inset: 24px; z-index: 31; margin: 0 auto;
-    max-width: 1200px; display: none; flex-direction: column;
-    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); font-size: 14px;
+    position: absolute; inset: 0; z-index: 31;
+    display: none; flex-direction: column;
+    background: var(--bg); font-size: 14px;
   }
   #map.show { display: flex; }
-  #map-head { padding: 16px 20px 8px; font-size: 18px; font-weight: 700; flex: none; }
+  #map-head { padding: 18px 24px 8px; font-size: 18px; font-weight: 700; flex: none; }
   #map-input {
-    margin: 0 20px 12px; padding: 6px 10px; border-radius: 8px; flex: none;
-    background: var(--bg); border: 1px solid var(--border); color: var(--text); font: inherit;
+    margin: 0 24px 12px; padding: 6px 10px; border-radius: 8px; flex: none;
+    background: var(--panel); border: 1px solid var(--border); color: var(--text); font: inherit;
   }
   #map-input:focus { outline: none; border-color: var(--accent2); }
   #map-body { flex: 1; display: flex; min-height: 0; border-top: 1px solid var(--border); }
-  #map-tree { flex: 1.4; overflow: auto; padding: 10px 12px; min-width: 0; }
+  #map-tree { flex: 1.4; overflow: auto; padding: 10px 16px 24px; min-width: 0; user-select: none; }
   #map-detail { flex: 1; overflow: auto; padding: 16px 20px; border-left: 1px solid var(--border); min-width: 0; }
   .cr-node { display: flex; align-items: baseline; gap: 8px; padding: 10px 8px 4px; }
   .cr-path { color: var(--accent2); flex: none; }
@@ -342,7 +343,7 @@
       <div id="map-tree"></div>
       <div id="map-detail"></div>
     </div>
-    <div id="map-legend"><span><b>↑↓</b> move</span><span><b>⏎</b> work on it / open</span><span><b>⇥</b> focus it too</span><span><b>esc</b> back</span></div>
+    <div id="map-legend"><span><b>↑↓</b> move</span><span><b>⏎</b> work on it / open</span><span><b>⇥</b> focus it too</span><span><b>⌥ hold</b> talk to a node</span><span><b>⌘K</b> type a command</span><span><b>esc</b> back</span></div>
   </div>
   <div id="cmd-bar" hidden><input id="cmd-input" placeholder="type what you'd say — routed exactly like voice" spellcheck="false" /></div>
 </div>
@@ -497,7 +498,10 @@ async function refreshFocus() {
     trackFocusBoundaries();
     renderPanel();
     renderStage();
-    if (mapOpen) renderMap();
+    // While the map is up it must stay truthful: an agent may be writing
+    // outcome files right now (the "turn my words into breakdowns" story),
+    // so re-read the vault and re-render in place.
+    if (mapOpen) fetchVault(true).then(() => renderMap());
   } catch {}
 }
 
@@ -794,10 +798,11 @@ function landOnActive(withCard) {
   }
 }
 
-/** Focus an outcome and make it the active one. */
+/** Focus an outcome and make it the active one, landing in the work state. */
 async function activateFocusFile(file) {
   try {
     await postFocus("activate", { file });
+    closeMap();
     landOnActive(true);
   } catch (err) {
     hud("error", String(err.message ?? err));
@@ -1177,7 +1182,9 @@ window.addEventListener(
   "keydown",
   (e) => {
     if (!settingsEl.hidden) return;
-    if (e.target instanceof HTMLInputElement) return; // typing in a bar or the map filter
+    // Inputs swallow chords, except the map filter: the chords printed in the
+    // map legend (⌘K, ⌘/, ⌘1..9) must fire while it holds focus.
+    if (e.target instanceof HTMLInputElement && e.target !== mapInput) return;
     // ⌘1..9 switches between focused outcomes. The chord is printed on the
     // focus rows themselves, so it needs no keymap entry.
     if (e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && /^[1-9]$/.test(e.key)) {
@@ -1462,6 +1469,7 @@ function applyRouteResult(out) {
     }
   }
   refreshSessions();
+  if (mapOpen) fetchVault(true).then(() => renderMap(true));
   hud("done", `“${out.transcript}” — ${out.summary?.length ? out.summary.join("; ") : "no action"}`);
 }
 
@@ -1496,7 +1504,9 @@ micBtn.onclick = () => (recorder ? stopVoice() : startVoice(false));
 window.addEventListener(
   "keydown",
   (e) => {
-    if (e.target instanceof HTMLInputElement || !settingsEl.hidden || recordingAction) return;
+    // The map's filter input is exempt: ⌥ push-to-talk must work while
+    // looking at the tree (the "instruct a node from the map" story).
+    if ((e.target instanceof HTMLInputElement && e.target !== mapInput) || !settingsEl.hidden || recordingAction) return;
     if (e.key === "Alt" && !e.metaKey && !e.ctrlKey && !e.repeat) {
       altClean = true;
       if (!recorder && !pttTimer) {
@@ -1563,8 +1573,10 @@ window.addEventListener("blur", cancelVoice);
 const cmdBar = document.getElementById("cmd-bar");
 const cmdInput = document.getElementById("cmd-input");
 
+// The bar opens OVER the map (it does not close it): instructing a node while
+// looking at the whole tree is the planning workflow, and the tree updates in
+// place as the agent writes outcomes.
 function openCmdBar() {
-  closeMap();
   cmdBar.hidden = false;
   cmdInput.value = "";
   cmdInput.focus();
@@ -1583,6 +1595,10 @@ cmdInput.onblur = () => closeCmdBar();
 
 function closeCmdBar() {
   cmdBar.hidden = true;
+  if (mapOpen) {
+    mapInput.focus();
+    return;
+  }
   const e = active && terms.get(active);
   if (e && !stageOn) e.term.focus();
 }
@@ -1742,33 +1758,36 @@ mapInput.oninput = () => renderMap(true);
 const sessionFor = (name) => (name ? lastSessions.find((s) => s.name === name) ?? null : null);
 
 /**
- * The groups the map shows. Bare: the vault map (each outcome once under its
- * topmost root) for nodes with work left or a live session, plus synthetic
- * groups for sessions on nodes outside the vault map. Typed: ranked node
- * matches — name beats path beats people beats outcome text beats note body.
+ * The sections the map shows, in order. Bare: the ENTIRE tree — root first,
+ * then every vault node in tree order, indented by depth, each with its
+ * outcomes (from the deduplicated vault map, so an outcome renders once under
+ * its topmost root). Nothing is silently hidden: seeing the whole tree is how
+ * spatial memory works. Typed: ranked node matches — name beats path beats
+ * people beats outcome text beats note body.
  */
-function mapGroups() {
+function mapSections() {
   const q = mapInput.value.trim();
-  if (q) return rankNodes(q);
-  const groups = vaultMap.filter((g) => {
-    const hasWork = visibleOutcomes(g).some((t) => t.status !== "done");
-    const hasLive = lastSessions.some((s) => !s.isChat && s.node === g.path);
-    return hasWork || hasLive;
-  });
-  const known = new Set(groups.map((g) => g.path));
-  const extra = new Map();
-  for (const s of lastSessions) {
-    if (s.isChat || !s.node || known.has(s.node) || extra.has(s.node)) continue;
-    extra.set(s.node, { path: s.node, name: s.node.split("/").pop(), purpose: "", outcomes: [] });
+  if (q) {
+    return rankNodes(q).map((n) => ({ path: n.path, name: n.path, purpose: n.purpose, depth: 0, outcomes: visibleOutcomes(n) }));
   }
-  return [...groups, ...extra.values()];
+  const groupByPath = new Map(vaultMap.map((g) => [g.path, g]));
+  return [
+    { path: "", name: "root", purpose: "the whole tree — chat organizes it", depth: 0, outcomes: [] },
+    ...vaultNodes.map((n) => ({
+      path: n.path,
+      name: n.path.split("/").pop(),
+      purpose: n.purpose,
+      depth: n.path.split("/").length - 1,
+      outcomes: visibleOutcomes(groupByPath.get(n.path) ?? { outcomes: [] }),
+    })),
+  ];
 }
 
 /** One outcome row in the map tree: glyph, title, live dot, focus mark. */
-function mapOutcomeRow(t, next, focusedFiles) {
+function mapOutcomeRow(t, next, focusedFiles, indent) {
   const row = document.createElement("div");
   row.className = "bt-row " + t.status + (t === next ? " next" : "");
-  row.style.paddingLeft = 24 + (t.depth ?? 0) * 16 + "px";
+  row.style.paddingLeft = indent + (t.depth ?? 0) * 16 + "px";
   const s = sessionFor(t.session);
   const glyph = document.createElement("span");
   glyph.className = "bt-glyph" + (s?.state === "working" ? " working" : s?.state === "waiting" ? " ready" : "");
@@ -1809,10 +1828,10 @@ function mapOutcomeRow(t, next, focusedFiles) {
 }
 
 /** The node's main-agent row: always listed first, hollow when not running. */
-function mainRowEl(s) {
+function mainRowEl(s, indent) {
   const row = document.createElement("div");
   row.className = "bt-row";
-  row.style.paddingLeft = "24px";
+  row.style.paddingLeft = indent + "px";
   const glyph = document.createElement("span");
   glyph.className = "bt-glyph" + (s?.state === "working" ? " working" : s?.state === "waiting" ? " ready" : "");
   glyph.textContent = s ? "●" : "○";
@@ -1827,10 +1846,10 @@ function mainRowEl(s) {
 }
 
 /** A process session row (service, plain shell) under its node. */
-function processRowEl(s) {
+function processRowEl(s, indent) {
   const row = document.createElement("div");
   row.className = "bt-row";
-  row.style.paddingLeft = "24px";
+  row.style.paddingLeft = indent + "px";
   const glyph = document.createElement("span");
   glyph.className =
     "bt-glyph" + (["working", "service"].includes(s.state) ? " working" : s.state === "waiting" ? " ready" : "");
@@ -1847,13 +1866,13 @@ function processRowEl(s) {
 
 function renderMap(force = false) {
   if (!mapOpen) return;
-  const groups = mapGroups();
+  const sections = mapSections();
   const focusedFiles = new Set((focusData?.focused ?? []).map((f) => f.file));
   // Rebuild only on real change so selection and hover targets stay stable
   // under the 2s session poll.
   const key = JSON.stringify([
     mapInput.value,
-    groups.map((g) => [g.path, visibleOutcomes(g).map((t) => [t.file, t.status])]),
+    sections.map((g) => [g.path, g.outcomes.map((t) => [t.file, t.status])]),
     [...focusedFiles],
     focusData?.active,
     lastSessions.map((s) => [s.name, s.state, s.node, s.kind]),
@@ -1878,25 +1897,30 @@ function renderMap(force = false) {
     mapItems.push(item);
     mapRows.push(row);
   };
-  for (const g of groups) {
+  for (const g of sections) {
+    const pad = 8 + g.depth * 16;
     const header = document.createElement("div");
     header.className = "cr-node";
+    header.style.paddingLeft = pad + "px";
+    header.title = g.path || "root";
     const p = document.createElement("span");
     p.className = "cr-path";
-    p.textContent = g.path;
+    p.textContent = g.name;
     const purpose = document.createElement("span");
     purpose.className = "cr-purpose";
     purpose.textContent = g.purpose ?? "";
     header.append(p, purpose);
     mapTreeEl.appendChild(header);
-    const home = lastSessions.find((x) => x.kind === "home" && x.node === g.path);
-    addItem(mainRowEl(home), { kind: "main", g, s: home ?? null });
-    const outcomes = visibleOutcomes(g);
-    const next = deriveNext(outcomes);
-    for (const t of outcomes) addItem(mapOutcomeRow(t, next, focusedFiles), { kind: "outcome", t, g });
+    const rowPad = pad + 16;
+    const home = g.path
+      ? lastSessions.find((x) => x.kind === "home" && x.node === g.path)
+      : lastSessions.find((x) => x.isChat);
+    addItem(mainRowEl(home, rowPad), { kind: "main", g, s: home ?? null });
+    const next = deriveNext(g.outcomes);
+    for (const t of g.outcomes) addItem(mapOutcomeRow(t, next, focusedFiles, rowPad), { kind: "outcome", t, g });
     for (const s of lastSessions) {
-      if (s.node !== g.path || s.isChat || s.outcome || s.kind === "home") continue;
-      addItem(processRowEl(s), { kind: "process", s, g });
+      if ((s.node ?? "") !== g.path || s.isChat || s.outcome || s.kind === "home") continue;
+      addItem(processRowEl(s, rowPad), { kind: "process", s, g });
     }
   }
   // Keep the selection on the same item across rebuilds.
@@ -1992,13 +2016,15 @@ function renderMapDetail() {
       });
     }
   } else if (item.kind === "main") {
-    el("div", "md-node", item.g.path);
+    el("div", "md-node", item.g.path || "root");
     el("div", "md-title", "main");
     el(
       "div",
       "md-text",
       (item.g.purpose ? item.g.purpose + "\n\n" : "") +
-        "The node's own agent. Node-level commands — run a routine, reorganize the tree, open sessions — route here."
+        (item.g.path
+          ? "The node's own agent. Node-level commands — run a routine, reorganize the tree, open sessions — route here. Speak or type (⌥ / ⌘K) starting with the node's name to instruct it from here: \"" + item.g.name + ", turn this into outcome breakdowns: …\""
+          : "The root chat agent. Anything not addressed to a specific node lands here — creating nodes, capturing outcomes, organizing the whole tree.")
     );
     sessLine(item.s);
     const a = el("div", "md-actions");
@@ -2024,7 +2050,13 @@ function activateMapItem(item) {
     closeMap();
     activateFocusFile(item.t.file);
   } else if (item.kind === "main") {
-    openNodeMain(item.g.path);
+    // Root's main is the chat session itself.
+    if (!item.g.path) {
+      closeMap();
+      show(CHAT);
+    } else {
+      openNodeMain(item.g.path);
+    }
   } else {
     closeMap();
     show(item.s.name);

@@ -709,18 +709,15 @@ server.listen(PORT, () => {
 });
 
 /**
- * Opens (or focuses) the "Agent Shell" Safari web app so the UI lives in its
- * own window with a dock icon instead of a Chrome tab. The app is created
- * once by the user: open http://localhost:PORT in Safari, then
- * File > Add to Dock, named "Agent Shell". Until then, print that hint
- * instead of opening any browser.
+ * Opens (or focuses) the native "Agent Shell" app (a WKWebView wrapper built
+ * from native/, installed in ~/Applications). The app also starts this server
+ * itself when launched directly, setting AGENT_SHELL_NO_OPEN=1 to avoid a loop.
  */
 function openStandaloneWindow() {
   execFile("open", ["-a", "Agent Shell"], (err) => {
     if (err) {
-      console.log(`  no "Agent Shell" app yet: open http://localhost:${PORT} in Safari,`);
-      console.log(`  then File > Add to Dock and name it "Agent Shell".`);
-      console.log(`  After that, npm start opens the app window automatically. (Set AGENT_SHELL_NO_OPEN=1 to skip.)`);
+      console.log(`  no "Agent Shell" app installed: build it with npm run app,`);
+      console.log(`  or open http://localhost:${PORT} in a browser. (Set AGENT_SHELL_NO_OPEN=1 to skip.)`);
     }
   });
 }

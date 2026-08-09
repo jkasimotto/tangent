@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
+    "app": "bash native/build-app.sh",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper || true"
   },
   "dependencies": {

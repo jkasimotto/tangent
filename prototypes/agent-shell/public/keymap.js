@@ -16,8 +16,13 @@
 // Browser-reserved chords (cmd+w, cmd+t, cmd+n) only reach the page in
 // fullscreen, where the Keyboard Lock API captures them. The editor marks
 // such chords "fullscreen only".
+//
+// cmd+d (kill) is "any", not "session", on purpose: an unbound chord in root
+// main would fall through to the browser (Safari's Add Bookmark) and give no
+// answer at all. The action refuses root main out loud instead.
 window.KEYMAP = [
   { keys: "cmd+w", when: "session", action: "close-session" },
+  { keys: "cmd+d", when: "any", action: "kill-session" },
   { keys: "cmd+/", when: "any", action: "map" },
   { keys: "cmd+k", when: "any", action: "talk" },
 ];

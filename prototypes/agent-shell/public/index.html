@@ -33,15 +33,20 @@
   }
   .hbtn:hover { color: var(--text); border-color: var(--dim); }
   .hbtn.on { color: var(--accent); border-color: var(--accent); }
+  .hbtn.danger:hover { color: #f85149; border-color: #f85149; }
+  .hbtn[hidden] { display: none; }
   #agent-btn { margin-left: auto; }
   #main { flex: 1; display: flex; min-height: 0; }
   #sidebar {
     width: 0; flex: none; overflow: hidden;
     background: var(--panel); border-right: 1px solid transparent;
-    display: flex; flex-direction: column;
+    display: flex; flex-direction: column; position: relative;
     transition: width 0.15s ease;
   }
-  #sidebar.open { width: 320px; border-right-color: var(--border); }
+  #sidebar.open { width: var(--rail-w, 320px); border-right-color: var(--border); }
+  #sidebar.resizing { transition: none; }
+  #side-resize { position: absolute; top: 0; right: 0; bottom: 0; width: 5px; cursor: col-resize; z-index: 5; }
+  #side-resize:hover, #sidebar.resizing #side-resize { background: var(--border); }
   /* The sidebar is THE tree — the exact same rows the full-screen tree (⌘/)
      renders, at rail width, always in sync. Scope (click a node to view only
      its subtree), folds, and the active-only filter are one shared state.
@@ -158,6 +163,16 @@
   .bt-row.next { border-color: var(--accent); }
   .bt-row.next .bt-glyph { color: var(--accent); }
   .bt-next-tag { margin-left: auto; color: var(--accent); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; flex: none; }
+  /* The kill ✕ every tree row wears while its session is live — on both tree
+     surfaces, because the rail is what actually gets watched. Always drawn,
+     never hover-only: a way to stop a runaway agent must not be a hidden
+     feature. Dim until the pointer is on it, red when it is. */
+  .row-kill {
+    flex: none; margin-left: auto; padding: 0 4px; border: none; background: none;
+    color: var(--dim); font: inherit; font-size: 11px; line-height: 1; opacity: 0.5;
+  }
+  .row-kill:hover { color: #f85149; opacity: 1; }
+  .bt-meta + .row-kill, .bt-next-tag + .row-kill, .bt-node + .row-kill, .cr-meta + .row-kill { margin-left: 6px; }
   /* The full-screen tree (⌘/): the SAME tree the sidebar shows, larger, with
      a detail pane. A node's header row IS its main agent (dot only while
      live), outcomes nested by breakdown, process sessions underneath. Nodes
@@ -235,6 +250,7 @@
     <button id="tree-btn" class="hbtn" title="show or hide the tree rail">☰</button>
     <span class="brand"><span class="dot">●</span> agent shell</span>
     <span id="active-label"></span>
+    <button id="kill-btn" class="hbtn danger" hidden title="kill the session on screen — everything running inside it stops">✕ kill</button>
     <button id="map-btn" class="hbtn" title="the tree, full screen — every node, outcome, and session">tree ⌘/</button>
     <button id="talk-btn" class="hbtn" title="type a command — routed exactly like voice">talk ⌘K</button>
     <button id="chat-btn" class="hbtn" title="root main — everything not addressed to a node lands here">⌂ root</button>
@@ -263,6 +279,7 @@
         <button id="side-live" class="hbtn" title="show only active work — live agents, running services, active outcomes">◉ active</button>
       </div>
       <div id="panel"></div>
+      <div id="side-resize" title="drag to resize"></div>
     </div>
     <div id="terms"><div id="stage"></div></div>
   </div>
@@ -277,7 +294,7 @@
       <div id="map-tree"></div>
       <div id="map-detail"></div>
     </div>
-    <div id="map-legend"><span><b>↑↓</b> move</span><span><b>←→</b> fold a node</span><span><b>⏎</b> open the row</span><span><b>⌫</b> up a level</span><span><b>⌥ hold</b> talk to a node</span><span><b>⌘K</b> type a command</span><span><b>esc</b> back</span></div>
+    <div id="map-legend"><span><b>↑↓</b> move</span><span><b>←→</b> fold a node</span><span><b>⏎</b> open the row</span><span><b>⌫</b> up a level</span><span id="legend-kill"><b>⌘D</b> kill the row's session</span><span><b>⌥ hold</b> talk to a node</span><span><b>⌘K</b> type a command</span><span><b>esc</b> back</span></div>
   </div>
   <div id="cmd-bar" hidden><input id="cmd-input" placeholder="type what you'd say — routed exactly like voice" spellcheck="false" /></div>
 </div>
@@ -392,6 +409,7 @@ function show(session) {
   requestAnimationFrame(() => { entry.fit.fit(); entry.term.focus(); });
   renderSidebar();
   renderOutcomeStrip();
+  renderKillBtn();
 }
 
 // Detach only: close our client connection, keep the tmux session alive.
@@ -414,6 +432,34 @@ treeBtn.onclick = () => {
 };
 treeBtn.classList.add("on"); // the rail starts open
 sidebarEl.addEventListener("transitionend", refitActive);
+
+// The rail's width is draggable at its right edge, persisted like folds and
+// scope so a reload keeps the layout.
+const RAIL_STORE = "agent-shell-rail-width";
+const railStored = Number(localStorage.getItem(RAIL_STORE));
+if (railStored) sidebarEl.style.setProperty("--rail-w", railStored + "px");
+const railHandle = document.getElementById("side-resize");
+railHandle.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  railHandle.setPointerCapture(e.pointerId);
+  sidebarEl.classList.add("resizing");
+  const left = sidebarEl.getBoundingClientRect().left;
+  let w = 0, raf = 0;
+  const move = (ev) => {
+    w = Math.max(200, Math.min(ev.clientX - left, window.innerWidth * 0.6));
+    sidebarEl.style.setProperty("--rail-w", w + "px");
+    if (!raf) raf = requestAnimationFrame(() => { raf = 0; refitActive(); });
+  };
+  const up = () => {
+    railHandle.removeEventListener("pointermove", move);
+    railHandle.removeEventListener("pointerup", up);
+    sidebarEl.classList.remove("resizing");
+    if (w) localStorage.setItem(RAIL_STORE, String(Math.round(w)));
+    refitActive();
+  };
+  railHandle.addEventListener("pointermove", move);
+  railHandle.addEventListener("pointerup", up);
+});
 
 // ---- the sidebar ----
 // The sidebar shows THE tree — the exact same rows the full-screen tree (⌘/)
@@ -442,6 +488,7 @@ async function refreshSessions() {
     renderSidebar();
     renderStage();
     renderOutcomeStrip();
+    renderKillBtn();
     if (mapOpen) renderMap();
   } catch {}
 }
@@ -490,6 +537,29 @@ function sessionGlyph(t) {
   return dot;
 }
 
+/**
+ * The kill ✕ a tree row wears while its session is live. Every row that has
+ * something running carries one, on both tree surfaces, because stopping a
+ * runaway agent has to be reachable from the rail the user actually watches.
+ * The event stops here so the ✕ never doubles as "open this row".
+ */
+function killBtnEl(name) {
+  const b = document.createElement("button");
+  b.className = "row-kill";
+  b.textContent = "✕";
+  const chord = chordFor("kill-session");
+  b.title = "kill " + name + " — everything running inside it stops" + (chord ? " (" + chord + " kills what is in front of you)" : "");
+  b.onmousedown = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+  b.onclick = (e) => {
+    e.stopPropagation();
+    killSession(name);
+  };
+  return b;
+}
+
 /** One breakdown child row: status glyph, title, live agent dot; a live child's row opens its session. */
 function childRowEl(c, isNext) {
   const s = sessionFor(c.session);
@@ -512,6 +582,7 @@ function childRowEl(c, isNext) {
     row.title = "agent session live — click to view";
     row.style.cursor = "pointer";
     row.onclick = () => show(s.name);
+    row.appendChild(killBtnEl(s.name));
   }
   return row;
 }
@@ -599,6 +670,7 @@ function openOutcomeView(file) {
   renderStage(true);
   renderSidebar(true);
   renderOutcomeStrip();
+  renderKillBtn();
 }
 
 let stageKey = "";
@@ -686,26 +758,60 @@ async function killSession(name) {
   if (!confirm(`Kill tmux session "${name}"? Processes inside it will stop.`)) return;
   const res = await fetch(`/api/kill/${encodeURIComponent(name)}`, { method: "POST" });
   if (!res.ok) {
-    alert(`kill failed: ${(await res.json()).error ?? res.status}`);
+    hud("error", `kill failed: ${(await res.json()).error ?? res.status}`);
     return;
   }
+  hud("done", "killed " + name);
   // Killing the viewed session: tmux drops our client, the socket closes, and
-  // ws.onclose falls back to chat. Killing from the sidebar only needs the
-  // list refreshed.
-  if (name !== active) refreshSessions();
+  // ws.onclose falls back to chat. Every surface still needs the session list
+  // refreshed, and the vault too — the server's reconciler flips an outcome
+  // whose session died back from active.
+  refreshSessions();
+  refreshVault();
 }
 
-// The chord vocabulary stays tiny and every chord is printed on the control
-// it drives (header buttons, tree legend). Killing sessions and switching
-// agents: visible buttons, not chords.
+/**
+ * Kill what is in front of you (⌘D). The full-screen tree IS the screen while
+ * it is open, so there the chord kills the selected row's session; otherwise
+ * it kills the session filling the terminal area. Root main is the shell's
+ * home and is never killed — the chord says so rather than failing silently.
+ */
+function killVisibleSession() {
+  if (mapOpen) {
+    const name = itemSession(mapItems[mapSel]);
+    if (!name) return hud("error", "that row has no session to kill");
+    if (name === CHAT) return hud("error", "root main can't be killed — it is the shell's home");
+    return killSession(name);
+  }
+  if (stageOn) return hud("error", "no session on screen — this outcome has no agent yet");
+  if (!active || active === CHAT) return hud("error", "root main can't be killed — it is the shell's home");
+  killSession(active);
+}
+
+// The chord's printed home: whenever a killable session fills the view, the
+// header carries the same action as a button wearing ⌘D. Root main and the
+// outcome stage have nothing to kill, so the button is not there.
+const killBtn = document.getElementById("kill-btn");
+killBtn.onclick = () => killVisibleSession();
+
+function renderKillBtn() {
+  killBtn.hidden = stageOn || !active || active === CHAT;
+}
+
+// The chord vocabulary stays tiny and every chord is printed on the control it
+// drives: ⌘D on the header's kill button and in the tree legend, and on every
+// kill button in the tree's detail pane. Switching agents stays a visible
+// button with no chord.
 const ACTION_META = [
   { action: "close-session", label: "close session view (detach)", when: "session" },
+  { action: "kill-session", label: "kill the session in front of you", when: "any" },
   { action: "map", label: "the tree, full screen", when: "any" },
   { action: "talk", label: "typed command (voice grammar)", when: "any" },
 ];
 
 const ACTIONS = {
   "close-session": closeSessionView,
+  "kill-session": () => killVisibleSession(),
   "map": () => toggleMap(),
   "talk": () => openCmdBar(),
 };
@@ -729,7 +835,40 @@ function saveKeymap() {
   for (const b of keymap) out[b.action] = b.keys;
   localStorage.setItem(KEYMAP_STORE, JSON.stringify(out));
   lockKeymapKeys();
+  paintChordHints();
   renderSettings();
+}
+
+/** A chord in printed form: "cmd+shift+d" -> "⌘⇧D". */
+function prettyChord(keys) {
+  if (!keys) return "";
+  const c = parseChord(keys);
+  const glyph = { "/": "/", escape: "esc", enter: "⏎", backspace: "⌫" }[c.key] ?? c.key.toUpperCase();
+  return (c.ctrl ? "⌃" : "") + (c.alt ? "⌥" : "") + (c.shift ? "⇧" : "") + (c.meta ? "⌘" : "") + glyph;
+}
+
+/** The printed chord for an action, "" when it is unbound. */
+function chordFor(action) {
+  return prettyChord(keymap.find((b) => b.action === action)?.keys ?? null);
+}
+
+/**
+ * Every chord is printed on the control it drives, so the printed text is read
+ * from the live keymap: rebinding in the editor must move the label with it,
+ * or the shell teaches a shortcut that no longer works.
+ */
+function paintChordHints() {
+  const set = (id, text) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+  };
+  set("map-btn", ("tree " + chordFor("map")).trim());
+  set("talk-btn", ("talk " + chordFor("talk")).trim());
+  set("kill-btn", ("✕ kill " + chordFor("kill-session")).trim());
+  const legend = document.querySelector("#legend-kill b");
+  if (legend) legend.textContent = chordFor("kill-session") || "the ✕";
+  renderSidebar(true);
+  renderMap(true);
 }
 
 function shellContext() {
@@ -1552,6 +1691,7 @@ function mapOutcomeRow(t, isNext, indent) {
       row.appendChild(m);
     }
   }
+  if (s) row.appendChild(killBtnEl(s.name));
   return row;
 }
 
@@ -1612,6 +1752,8 @@ function nodeRowEl(g, s, fold) {
     ? fold.hiddenCount + " hidden" + (fold.hiddenLive ? " · live" : "")
     : s ? STATE_HINT[s.state] ?? "" : "";
   row.append(name, purpose, meta);
+  // Root main is the shell's home: it has no kill, here or anywhere.
+  if (s && !s.isChat && s.name !== CHAT) row.appendChild(killBtnEl(s.name));
   return row;
 }
 
@@ -1631,6 +1773,7 @@ function processRowEl(s, indent) {
   meta.className = "bt-meta";
   meta.textContent = STATE_HINT[s.state] ?? "";
   row.append(glyph, title, meta);
+  row.appendChild(killBtnEl(s.name));
   return row;
 }
 
@@ -1862,6 +2005,7 @@ function renderMapDetail() {
         startAgent(t.file);
       });
     }
+    if (s) btn(a, "kill ✕", chordFor("kill-session"), () => killSession(s.name), "danger");
   } else if (item.kind === "main") {
     el("div", "md-node", item.g.path || "root");
     el("div", "md-title", item.g.name || "root");
@@ -1894,14 +2038,16 @@ function renderMapDetail() {
       const isFolded = folded.has(item.g.path);
       btn(a, isFolded ? "unfold" : "fold", isFolded ? "→" : "←", () => toggleFold(item.g.path));
     }
-    if (item.s) btn(a, "kill ✕", "", () => killSession(item.s.name), "danger");
+    if (item.s && !item.s.isChat && item.s.name !== CHAT) {
+      btn(a, "kill ✕", chordFor("kill-session"), () => killSession(item.s.name), "danger");
+    }
   } else {
     el("div", "md-node", item.s.node ?? "");
     el("div", "md-title", item.s.name);
     el("div", "md-text", STATE_HINT[item.s.state] ?? "");
     const a = el("div", "md-actions");
     btn(a, "view", "⏎", () => activateTreeItem(item, true), "primary");
-    btn(a, "kill ✕", "", () => killSession(item.s.name), "danger");
+    btn(a, "kill ✕", chordFor("kill-session"), () => killSession(item.s.name), "danger");
   }
 }
 
@@ -1954,6 +2100,7 @@ window.addEventListener("resize", refitActive);
 
 // Opening state: root main with the tree beside it, exactly as it will look
 // all day. The full-screen tree is one ⌘/ away.
+paintChordHints();
 show(CHAT);
 refreshSessions();
 refreshVault();

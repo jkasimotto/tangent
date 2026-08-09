@@ -414,7 +414,13 @@ function closeSessionView() {
 
 function refitActive() {
   const e = active && terms.get(active);
-  if (e) { e.fit.fit(); e.term.focus(); }
+  if (!e) return;
+  e.fit.fit();
+  // Refit is a layout concern only. It runs on strip show/hide, rail resize,
+  // and window resize, and entering browse hides the strip: focusing the
+  // terminal here would instantly steal focus back from the find input and
+  // bounce the user straight out of browsing.
+  if (!browsing && !(document.activeElement instanceof HTMLInputElement)) e.term.focus();
 }
 
 treeBtn.onclick = () => {

@@ -481,10 +481,11 @@ async function writeOutcomeBinding(file, { status, session }) {
  * that judgment state is written on Julian's word is satisfied by the click
  * itself — no agent in the loop, status never waits on one.
  */
-async function editOutcomeFile(file, { status, title, outcome, state }) {
+async function editOutcomeFile(file, { status, session, title, outcome, state }) {
   const abs = path.join(TREES_ROOT, file);
   let text = await readFile(abs, "utf8");
   if (status !== undefined) text = withFrontmatterLine(text, "status", status);
+  if (session !== undefined) text = withFrontmatterLine(text, "session", session);
   if (outcome !== undefined) {
     text = withFrontmatterLine(text, "outcome", outcome.replace(/\s*\n\s*/g, " ").trim());
   }
@@ -582,10 +583,14 @@ async function spawnOutcomeSession(node, slug) {
 let lastReconcile = 0;
 let reconciling = false;
 /**
- * Reverts outcomes whose owning session is gone: active -> open, session
- * cleared. Runs off the sessions poll, throttled; also covers sessions that
- * died while this server was down. Only `active` reverts — waiting/done are
- * judgment states and stay.
+ * Reconciles outcome files and tmux sessions both ways, off the sessions
+ * poll, throttled; also covers drift that happened while this server was
+ * down. File side: an `active` outcome whose owning session is gone reverts
+ * to open, session cleared — only `active` reverts, waiting/done are
+ * judgment states and stay. Session side: a finished outcome leaves no
+ * session behind, so any live session whose @tangent_outcome points at a
+ * done, dropped, or deleted outcome is an orphan and is killed. That sweep
+ * is what covers agent-written done flips and orphans from before the rule.
  */
 async function reconcileOutcomes(sessions) {
   if (reconciling || Date.now() - lastReconcile < 10_000) return;
@@ -593,11 +598,24 @@ async function reconcileOutcomes(sessions) {
   lastReconcile = Date.now();
   try {
     const live = new Set(sessions.map((s) => s.name));
+    const byFile = new Map();
     for (const node of flattenNodePaths(await readTree(TREES_ROOT))) {
-      for (const t of await readNodeOutcomes(node)) {
-        if (t.status !== "active" || !t.session || live.has(t.session)) continue;
-        await writeOutcomeBinding(t.file, { status: "open", session: null });
-        await vaultCommit([t.file], `update: ${t.node} outcome ${t.slug} back to open, session ended`, t.node, null);
+      for (const t of await readNodeOutcomes(node)) byFile.set(t.file, t);
+    }
+    for (const t of byFile.values()) {
+      if (t.status !== "active" || !t.session || live.has(t.session)) continue;
+      await writeOutcomeBinding(t.file, { status: "open", session: null });
+      await vaultCommit([t.file], `update: ${t.node} outcome ${t.slug} back to open, session ended`, t.node, null);
+    }
+    for (const s of sessions) {
+      if (!s.outcome) continue;
+      const t = byFile.get(s.outcome);
+      if (t && !["done", "dropped"].includes(t.status)) continue;
+      await execFileAsync("tmux", ["kill-session", "-t", "=" + s.name]).catch(() => {});
+      console.log(`reaped session ${s.name}: outcome ${s.outcome} is ${t ? t.status : "deleted"}`);
+      if (t && t.session === s.name) {
+        await writeOutcomeBinding(t.file, { status: t.status, session: null });
+        await vaultCommit([t.file], `update: ${t.node} outcome ${t.slug} session reaped`, t.node, null);
       }
     }
   } catch (err) {
@@ -1151,7 +1169,13 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       try {
+        // A finished outcome leaves no session behind: the status flip to
+        // done clears the binding and kills the outcome's live session.
+        if (fields.status === "done") fields.session = null;
         await editOutcomeFile(file, fields);
+        if (fields.status === "done" && o.session) {
+          await execFileAsync("tmux", ["kill-session", "-t", "=" + o.session]).catch(() => {});
+        }
         const what =
           fields.status === "done" ? "done" : fields.status === "open" ? "reopened" : "edited";
         await vaultCommit([file], `update: ${o.node} outcome ${o.slug} ${what} in tree`, o.node, null);

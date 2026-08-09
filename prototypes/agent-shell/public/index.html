@@ -266,6 +266,16 @@ function connect(session) {
     if (active === session && !(session === CHAT && chatDiedFast(connectedAt))) show(CHAT);
     renderSidebar();
   };
+  // Shift+Enter inserts a newline instead of submitting: xterm would send a
+  // plain \r, so send ESC+\r (what Claude Code's /terminal-setup binding
+  // emits) which the agent treats as a literal newline.
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.type === "keydown" && e.key === "Enter" && e.shiftKey) {
+      if (ws.readyState === 1) ws.send("\x1b\r");
+      return false;
+    }
+    return true;
+  });
   term.onData((d) => { if (ws.readyState === 1) ws.send(d); });
   term.onResize(({ cols, rows }) => {
     if (ws.readyState === 1) ws.send("\x00resize:" + cols + "x" + rows);

@@ -19,6 +19,30 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 
 const PORT = Number(process.env.PORT ?? 4321);
 let agentCmd = process.env.AGENT_CMD ?? "claude";
+
+/**
+ * The orchestrator command for a node's home agent. Agent identity is a
+ * property of the node, not a global toggle: personal projects (otto/**)
+ * run on the otto profile via the claude-otto alias, work nodes (neara,
+ * pgande, ...) run the plain work-account claude. The switchable agentCmd
+ * only ever applies to the chat session.
+ */
+function agentCmdForNode(node) {
+  const top = String(node ?? "").split("/")[0];
+  return top === "otto" ? "claude-otto" : "claude";
+}
+
+/**
+ * claude persists the last /model choice across sessions, so a fresh
+ * session silently reopens on whatever model was used last (fable, say).
+ * Pin claude launches to the default model unless the command already
+ * picks one explicitly.
+ */
+function withDefaultModel(cmd) {
+  const launchesClaude = cmd.split(/\s+/)[0].includes("claude");
+  if (!launchesClaude || cmd.includes("--model")) return cmd;
+  return `${cmd} --model default`;
+}
 const CHAT_SESSION = process.env.CHAT_SESSION ?? "chat";
 const WORKSPACE = process.env.WORKSPACE ?? path.join(here, "workspace");
 const TREES_ROOT = process.env.TREES_ROOT ?? path.join(os.homedir(), ".tangent", "trees");
@@ -283,7 +307,7 @@ Reply with JSON only: {"actions":[...]}, at most 5 actions, executed in order. A
 - {"type":"spawn","node":"<tree node path>","name":"<lowercase-hyphen-name>"} — create a plain work session on a project node. Only for a bare "new/open a session on X (called Y)" with nothing else attached. If the user states a goal, task, or any context in the same utterance, do NOT spawn: say the whole thing to that node's home agent instead, which does the richer setup.
 - {"type":"kill","session":"<name>"} — destroy a session and everything in it. Only on an explicit kill or destroy request.
 - {"type":"caffeinate","on":true} — keep the mac awake (or release it).
-- {"type":"agent","cmd":"<command>"} — switch the orchestrator agent command (for example "claude-otto" or "pi"). Only on an explicit request; it restarts chat.
+- {"type":"agent","cmd":"<command>"} — switch the chat session's agent command (for example "claude-otto" or "pi"). Only on an explicit request; it restarts chat. Node home sessions are unaffected: they always run their node's own agent.
 - {"type":"speak","text":"one short sentence"} — answer out loud. Use for status questions ("who's waiting on me?" — summarize the waiting and working sessions from the payload) and to say why you did nothing.
 
 Rules:
@@ -411,8 +435,9 @@ function resolveTarget(spoken, ctx) {
 
 /**
  * Finds or spawns a node's home agent session: named after the node, running
- * the orchestrator agent command in the node's repo (or its vault directory),
- * marked @tangent_kind=home. Talking to a node means talking to this session.
+ * the node's own orchestrator command (agentCmdForNode) in the node's repo
+ * (or its vault directory), marked @tangent_kind=home. Talking to a node
+ * means talking to this session.
  */
 async function ensureHomeSession(node, sessions) {
   // ponytail: home name = node basename; two nodes sharing a basename collide
@@ -421,7 +446,8 @@ async function ensureHomeSession(node, sessions) {
   if (sessions.some((s) => s.name === name)) return { name, fresh: false };
   const dir = (await nodeDirectory(node)) ?? path.join(TREES_ROOT, node);
   const shell = process.env.SHELL ?? "/bin/zsh";
-  await execFileAsync("tmux", ["new-session", "-d", "-s", name, "-c", dir, `exec ${shell} -ic '${agentCmd.replace(/'/g, "'\\''")}'`]);
+  const cmd = withDefaultModel(agentCmdForNode(node));
+  await execFileAsync("tmux", ["new-session", "-d", "-s", name, "-c", dir, `exec ${shell} -ic '${cmd.replace(/'/g, "'\\''")}'`]);
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_node", node]);
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_kind", "home"]);
   return { name, fresh: true };
@@ -681,8 +707,9 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ ok: true, caffeinate: caffeinateProc !== null }));
       return;
     }
-    // Switches the orchestrator agent for the chat session. The command is
-    // whatever the user typed (claude, claude-otto, agy, pi, flags allowed);
+    // Switches the orchestrator agent for the chat session only; node home
+    // sessions always use their node-owned command (agentCmdForNode). The
+    // command is whatever the user typed (claude, claude-otto, agy, pi, flags allowed);
     // tmux runs a single trailing string through the shell. Kills the running
     // chat session so the frontend's reconnect respawns it with the new command.
     if (url.pathname === "/api/agent" && req.method === "POST") {
@@ -819,7 +846,8 @@ wss.on("connection", (ws, req) => {
   // commands via a non-interactive shell where aliases do not exist.
   if (session === CHAT_SESSION) {
     const shell = process.env.SHELL ?? "/bin/zsh";
-    args.push(`exec ${shell} -ic '${agentCmd.replace(/'/g, "'\\''")}'`);
+    const cmd = withDefaultModel(agentCmd);
+    args.push(`exec ${shell} -ic '${cmd.replace(/'/g, "'\\''")}'`);
   }
 
   const term = pty.spawn("tmux", args, {

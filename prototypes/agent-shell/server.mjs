@@ -13,11 +13,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import pty from "node-pty";
+import { createReloadController } from "./reload-controller.mjs";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 const PORT = Number(process.env.PORT ?? 4321);
+const HOST = process.env.HOST ?? "127.0.0.1";
 let agentCmd = process.env.AGENT_CMD ?? "claude";
 
 /**
@@ -57,6 +59,10 @@ const MIME = {
   ".map": "application/json",
   ".png": "image/png",
 };
+
+// The native WKWebView is intentionally long-lived. Public asset saves notify
+// it in place; POST /api/reload gives agents an explicit force-refresh hook.
+const reloadController = createReloadController({ watchDir: path.join(here, "public") });
 
 /**
  * Lists live tmux sessions for the sidebar in the frontend, which polls
@@ -1098,6 +1104,7 @@ function voiceNameHints(ctx) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   try {
+    if (reloadController.handle(req, res, url)) return;
     if (url.pathname === "/api/sessions") {
       const sessions = await listSessions();
       reconcileOutcomes(sessions); // throttled fire-and-forget
@@ -1410,8 +1417,8 @@ wss.on("connection", (ws, req) => {
   ws.on("close", () => term.kill()); // kills the tmux *client* (detach); the session survives
 });
 
-server.listen(PORT, () => {
-  console.log(`agent-shell: http://localhost:${PORT}`);
+server.listen(PORT, HOST, () => {
+  console.log(`agent-shell: http://${HOST}:${PORT}`);
   console.log(`  orchestrator session "${CHAT_SESSION}" runs: ${agentCmd}`);
   console.log(`  workspace: ${WORKSPACE}`);
   if (!process.env.AGENT_SHELL_NO_OPEN) openStandaloneWindow();

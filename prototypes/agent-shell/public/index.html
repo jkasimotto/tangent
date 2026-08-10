@@ -323,6 +323,7 @@
 const CHAT = window.CHAT_SESSION ?? "orchestrator";
 const terms = new Map(); // session name -> {term, fit, ws, host}
 let active = null;
+let controlledReload = false;
 
 const termsEl = document.getElementById("terms");
 const treeBtn = document.getElementById("tree-btn");
@@ -527,7 +528,10 @@ async function refreshSessions() {
     renderSidebar();
     renderOutcomeStrip();
     renderKillBtn();
-  } catch {}
+    return sessions;
+  } catch {
+    return [];
+  }
 }
 
 // The vault poll: agents write outcome files while the user watches (the
@@ -838,6 +842,7 @@ function closeEditor() {
     const e = active && terms.get(active);
     if (e) e.term.focus();
   }
+  applyPendingAutoReload();
 }
 
 /** POSTs a brand-new outcome; the server writes and commits the file. */
@@ -1405,7 +1410,7 @@ lockKeymapKeys();
 // silently close the whole app, so ask first; in chat, closing the tab is the
 // intended meaning and stays silent.
 window.addEventListener("beforeunload", (e) => {
-  if (active !== CHAT) e.preventDefault();
+  if (active !== CHAT && !controlledReload) e.preventDefault();
 });
 
 // ---- voice control ----
@@ -1642,7 +1647,38 @@ function closeCmdBar() {
   cmdBar.hidden = true;
   const e = active && terms.get(active);
   if (e && !editorState) e.term.focus();
+  applyPendingAutoReload();
 }
+
+// ---- live reload ----
+// Source saves are polite around in-progress text. The explicit reload command
+// is intentionally stronger: it refreshes immediately and suppresses the
+// non-chat beforeunload guard. tmux owns the processes, so this only replaces
+// and reconnects the browser clients.
+const RELOAD_SESSION_STORE = "agent-shell-reload-session";
+let pendingAutoReload = false;
+
+function editingText() {
+  return Boolean(editorState || !cmdBar.hidden);
+}
+
+function reloadNow() {
+  controlledReload = true;
+  sessionStorage.setItem(RELOAD_SESSION_STORE, active ?? CHAT);
+  location.reload();
+}
+
+function applyPendingAutoReload() {
+  if (pendingAutoReload && !editingText()) reloadNow();
+}
+
+const reloadEvents = new EventSource("/api/reload/events");
+reloadEvents.addEventListener("reload", (event) => {
+  let force = false;
+  try { force = Boolean(JSON.parse(event.data).force); } catch {}
+  if (force || !editingText()) reloadNow();
+  else pendingAutoReload = true;
+});
 
 async function sendCommand(text) {
   hud("busy", "routing…");
@@ -2186,12 +2222,19 @@ function renderOutcomeStrip() {
 
 window.addEventListener("resize", refitActive);
 
-// Opening state: the orchestrator with the tree beside it, exactly as it
-// will look all day. Find is one ⌘/ away.
+// Opening state: ordinarily the orchestrator with the tree beside it. A
+// controlled reload restores the previous session only after /api/sessions
+// proves it is still live, so a stale name can never create a tmux session.
+async function boot() {
+  const restore = sessionStorage.getItem(RELOAD_SESSION_STORE);
+  sessionStorage.removeItem(RELOAD_SESSION_STORE);
+  const sessions = await refreshSessions();
+  show(restore && sessions.some((session) => session.name === restore) ? restore : CHAT);
+  refreshVault();
+}
+
 paintChordHints();
-show(CHAT);
-refreshSessions();
-refreshVault();
+void boot();
 setInterval(refreshSessions, 2000);
 setInterval(refreshVault, 3000);
 </script>

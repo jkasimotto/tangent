@@ -1454,7 +1454,7 @@ function visibleNodePaths() {
   const inScope = (p) => !treeScope || p === treeScope || p.startsWith(treeScope + "/");
   for (const n of vaultNodes) {
     if (!inScope(n.path)) continue;
-    if ([...folded].some((f) => f && inScope(f) && n.path.startsWith(f + "/"))) continue;
+    if ([...folded].some((f) => inScope(f) && isDescendantPath(f, n.path))) continue;
     out.add(n.path);
   }
   return [...out];
@@ -1786,6 +1786,16 @@ function rankNodes(q) {
 const FOLD_STORE = "agent-shell-map-folds";
 const folded = new Set(JSON.parse(localStorage.getItem(FOLD_STORE) ?? "[]"));
 
+/** True when `path` belongs below `parent`; the empty root owns every node. */
+function isDescendantPath(parent, path) {
+  return parent ? path.startsWith(parent + "/") : Boolean(path);
+}
+
+/** True when `path` is `parent` itself or belongs anywhere below it. */
+function isAtOrUnder(parent, path) {
+  return path === parent || isDescendantPath(parent, path);
+}
+
 function toggleFold(path) {
   if (folded.has(path)) folded.delete(path);
   else folded.add(path);
@@ -1970,7 +1980,9 @@ function treeSections(q) {
     return rankNodes(q).map((n) => ({ path: n.path, name: n.path, purpose: n.purpose, depth: 0, outcomes: visibleOutcomes(n) }));
   }
   const groupByPath = new Map(vaultMap.map((g) => [g.path, g]));
-  const baseDepth = treeScope ? treeScope.split("/").length - 1 : 0;
+  // When unscoped, root occupies depth 0 and every vault path belongs below
+  // it. A scoped node becomes the temporary depth-0 root of its own view.
+  const baseDepth = treeScope ? treeScope.split("/").length - 1 : -1;
   const sections = [];
   if (!treeScope) {
     sections.push({ path: "", name: "root", purpose: "the whole tree", depth: 0, outcomes: [] });
@@ -2109,7 +2121,7 @@ function buildTreeItems(q) {
   const sections = treeSections(q);
   const inScope = (p) => !treeScope || p === treeScope || p.startsWith(treeScope + "/");
   /** True when a folded ancestor (inside the scope) hides this path entirely. */
-  const foldedAway = (path) => [...folded].some((f) => f && inScope(f) && path.startsWith(f + "/"));
+  const foldedAway = (path) => [...folded].some((f) => inScope(f) && isDescendantPath(f, path));
   const flat = !q && liveOnly;
   const items = [];
   if (!q && treeScope) items.push({ kind: "up", to: treeScope.split("/").slice(0, -1).join("/") });
@@ -2122,19 +2134,19 @@ function buildTreeItems(q) {
     const procs = lastSessions
       .filter((s) => (s.node ?? "") === g.path && !s.outcome)
       .sort((a, b) => (b.isChat ? 1 : 0) - (a.isChat ? 1 : 0));
-    const kids = q ? [] : sections.filter((o) => o.path && o.path !== g.path && o.path.startsWith(g.path + "/"));
-    const foldable = !q && !flat && Boolean(g.path) && Boolean(g.outcomes.length || procs.length || kids.length);
+    const kids = q ? [] : sections.filter((o) => isDescendantPath(g.path, o.path));
+    const foldable = !q && !flat && Boolean(g.outcomes.length || procs.length || kids.length);
     const fold = { foldable, folded: foldable && folded.has(g.path), hiddenCount: 0, hiddenLive: false };
     if (fold.folded) {
       const descProcs = lastSessions.filter(
-        (s) => (s.node ?? "").startsWith(g.path + "/") && !s.outcome
+        (s) => isDescendantPath(g.path, s.node ?? "") && !s.outcome
       ).length;
       fold.hiddenCount =
         g.outcomes.length + procs.length + descProcs +
         kids.length + kids.reduce((n, k) => n + k.outcomes.length, 0);
       fold.hiddenLive = lastSessions.some((s) => {
         const n = s.node ?? "";
-        const under = n === g.path || n.startsWith(g.path + "/");
+        const under = isAtOrUnder(g.path, n);
         return under && ["working", "waiting", "service"].includes(s.state);
       });
     }

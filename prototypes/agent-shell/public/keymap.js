@@ -16,12 +16,12 @@
 // fullscreen, where the Keyboard Lock API captures them. The editor marks
 // such chords "fullscreen only".
 //
-// cmd+d (kill) is "any", not "session", on purpose: an unbound chord in root
-// main would fall through to the browser (Safari's Add Bookmark) and give no
-// answer at all. The action refuses root main out loud instead.
+// The Mac Delete key reports itself to the browser as Backspace. Kill is
+// "any", not "session", so the shell can explain when there is no killable
+// session in front of the user instead of silently doing nothing.
 window.KEYMAP = [
   { keys: "cmd+w", when: "session", action: "close-session" },
-  { keys: "cmd+d", when: "any", action: "kill-session" },
+  { keys: "backspace", when: "any", action: "kill-session" },
   { keys: "cmd+/", when: "any", action: "find" },
   { keys: "cmd+k", when: "any", action: "talk" },
 ];

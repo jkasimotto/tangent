@@ -281,7 +281,7 @@
         <button id="side-live" class="hbtn" title="show only active work — live agents, running services, active outcomes">◉ active</button>
       </div>
       <div id="panel"></div>
-      <div id="side-legend"><span><b>↑↓</b> move</span><span><b>←→</b> fold</span><span><b>⏎</b> open</span><span><b>⌫</b> up</span><span id="legend-kill"><b>⌘D</b> kill</span><span><b>esc</b> back</span></div>
+      <div id="side-legend"><span><b>↑↓</b> move</span><span><b>←→</b> fold</span><span><b>⏎</b> open</span><span id="legend-kill"><b>⌫</b> kill</span><span><b>esc</b> back</span></div>
       <div id="side-resize" title="drag to resize"></div>
     </div>
     <div id="work">
@@ -987,7 +987,7 @@ async function killSession(name) {
 }
 
 /**
- * Kill what is in front of you (⌘D). While browsing, the selected row's card
+ * Kill what is in front of you (Delete). While browsing, the selected row's card
  * fills the work pane, so the chord kills that row's session; otherwise it
  * kills the session filling the terminal area. Root main is the shell's
  * home and is never killed — the chord says so rather than failing silently.
@@ -1005,7 +1005,7 @@ function killVisibleSession() {
 }
 
 // The chord's printed home: whenever a killable session fills the view, the
-// header carries the same action as a button wearing ⌘D. Root main and the
+// header carries the same action as a button wearing ⌫. Root main and the
 // outcome stage have nothing to kill, so the button is not there.
 const killBtn = document.getElementById("kill-btn");
 killBtn.onclick = () => killVisibleSession();
@@ -1015,7 +1015,7 @@ function renderKillBtn() {
 }
 
 // The chord vocabulary stays tiny and every chord is printed on the control it
-// drives: ⌘D on the header's kill button and in the tree legend, and on every
+// drives: ⌫ on the header's kill button and in the tree legend, and on every
 // kill button in the tree's detail pane. Switching agents stays a visible
 // button with no chord.
 // defaultKeys is the built-in factory chord: /keymap.js may override it, but
@@ -1024,7 +1024,7 @@ function renderKillBtn() {
 // name keeps working after a rename ("map" became "find").
 const ACTION_META = [
   { action: "close-session", label: "close session view (detach)", when: "session", defaultKeys: "cmd+w" },
-  { action: "kill-session", label: "kill the session in front of you", when: "any", defaultKeys: "cmd+d" },
+  { action: "kill-session", label: "kill the session in front of you", when: "any", defaultKeys: "backspace" },
   { action: "find", label: "find in the tree", when: "any", defaultKeys: "cmd+/", was: "map" },
   { action: "talk", label: "typed command (voice grammar)", when: "any", defaultKeys: "cmd+k" },
 ];
@@ -1044,6 +1044,9 @@ const KEYMAP_STORE = "agentshell.keymap";
 function loadKeymap() {
   let stored = {};
   try { stored = JSON.parse(localStorage.getItem(KEYMAP_STORE)) ?? {}; } catch {}
+  // Move browsers that saved the old factory default to the new Delete
+  // binding. Other user-selected kill bindings remain untouched.
+  if (stored["kill-session"] === "cmd+d") stored["kill-session"] = "backspace";
   return ACTION_META.map((m) => {
     const fromFile = (window.KEYMAP ?? []).find((b) => b.action === m.action)?.keys;
     const keys =
@@ -1199,7 +1202,7 @@ window.addEventListener(
     if (["Meta", "Control", "Alt", "Shift"].includes(e.key)) return; // still holding modifiers
     const b = keymap.find((x) => x.action === recordingAction);
     recordingAction = null;
-    if (e.key === "Backspace") {
+    if (e.key === "Delete") {
       b.keys = null;
     } else {
       const parts = [];
@@ -1223,7 +1226,7 @@ window.addEventListener(
   (e) => {
     if (!settingsEl.hidden) return;
     // Inputs swallow chords, except the find input: the chords printed in
-    // the legend (⌘D, ⌘K, ⌘/) must fire while browsing.
+    // the legend (⌫, ⌘K, ⌘/) must fire while browsing.
     if (e.target instanceof HTMLInputElement && e.target !== findInput) return;
     const ctx = shellContext();
     for (const b of keymap) {

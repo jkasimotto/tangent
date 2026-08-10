@@ -78,6 +78,7 @@
   #sidebar.browsing #side-legend { display: flex; }
   #side-legend b { color: var(--text); font-weight: 600; }
   #panel { flex: 1; overflow: auto; padding: 8px 0 12px; }
+  #panel .tree-hidden { opacity: 0.42; }
   .panel-hint { margin: 10px 12px; color: var(--dim); font-size: 11px; }
   #panel .bt-row { margin: 0 4px; }
   .bt-node { color: var(--dim); font-size: 10px; flex: none; }
@@ -299,9 +300,10 @@
           <span id="find-chord"></span>
         </div>
         <button id="side-live" class="hbtn" title="show only active work — live agents, running services, active outcomes">◉ active</button>
+        <button id="side-hidden" class="hbtn" title="show nodes hidden for this Agent Shell window" hidden>hidden (0)</button>
       </div>
       <div id="panel"></div>
-      <div id="side-legend"><span><b>↑↓</b> move</span><span><b>←→</b> fold · up</span><span id="legend-enter"><b>⏎</b> open</span><span id="legend-kill"><b>⌫</b> kill</span><span id="legend-work"><b>⌘→</b> work pane</span><span><b>esc</b> back</span></div>
+      <div id="side-legend"><span><b>↑↓</b> move</span><span><b>←→</b> fold · up</span><span id="legend-hide"><b>h</b> hide</span><span id="legend-enter"><b>⏎</b> open</span><span id="legend-kill"><b>⌫</b> kill</span><span id="legend-work"><b>⌘→</b> work pane</span><span><b>esc</b> back</span></div>
       <div id="side-resize" title="drag to resize"></div>
     </div>
     <div id="work">
@@ -629,6 +631,8 @@ function treeStateKey(items) {
     active,
     treeScope,
     liveOnly,
+    showHidden,
+    [...hiddenNodes],
     [...folded],
     [...freshOutcomes],
     items.map((it) =>
@@ -666,6 +670,7 @@ function renderSidebar(force = false) {
     el.textContent = q ? "nothing matches" : liveOnly ? "nothing is active right now" : "the vault has no nodes yet";
     panelEl.appendChild(el);
     updatePreview(null);
+    paintHiddenControl();
     return;
   }
   items.forEach((item, idx) => {
@@ -696,6 +701,7 @@ function renderSidebar(force = false) {
     sideSel = idx >= 0 ? idx : 0;
     paintSideSel(false);
   }
+  paintHiddenControl();
 }
 
 function setSideSel(idx, scroll = true) {
@@ -717,6 +723,7 @@ function paintSideSel(scroll = true) {
     if (scroll) el.scrollIntoView({ block: "nearest" });
   }
   paintLegendEnter(sideItems[sideSel]);
+  paintHiddenControl();
   updatePreview(sideItems[sideSel] ?? null);
 }
 
@@ -1445,16 +1452,21 @@ function hud(state, text) {
   if (state === "done" || state === "error") hudTimer = setTimeout(() => (hudEl.className = ""), 6000);
 }
 
-// The node paths the shell currently shows (the tree's scope minus folds,
-// plus every live session's node) — the user's mental model, shipped with
-// every utterance so spoken names resolve to what they can see.
+// The node paths the shell currently shows — the user's mental model, shipped
+// with every utterance so spoken names resolve to what they can see. Manual
+// hiding wins even over live sessions; reveal mode makes those nodes visible
+// to the router again.
 function visibleNodePaths() {
   const out = new Set();
-  for (const s of lastSessions) if (s.node) out.add(s.node);
-  const inScope = (p) => !treeScope || p === treeScope || p.startsWith(treeScope + "/");
+  for (const s of lastSessions) {
+    if (s.node && (showHidden || !hiddenRootFor(s.node))) out.add(s.node);
+  }
+  const effectiveScope = showHidden ? "" : treeScope;
+  const inScope = (p) => !effectiveScope || p === effectiveScope || p.startsWith(effectiveScope + "/");
   for (const n of vaultNodes) {
     if (!inScope(n.path)) continue;
-    if ([...folded].some((f) => inScope(f) && isDescendantPath(f, n.path))) continue;
+    if (!showHidden && hiddenRootFor(n.path)) continue;
+    if (!showHidden && [...folded].some((f) => inScope(f) && isDescendantPath(f, n.path))) continue;
     out.add(n.path);
   }
   return [...out];
@@ -1724,6 +1736,15 @@ async function fetchVault(force = false) {
     const data = await res.json();
     vaultNodes = data.nodes ?? [];
     vaultMap = data.map ?? [];
+    const paths = new Set(vaultNodes.map((n) => n.path));
+    let hiddenChanged = false;
+    for (const path of [...hiddenNodes]) {
+      if (paths.has(path)) continue;
+      hiddenNodes.delete(path);
+      hiddenChanged = true;
+    }
+    if (hiddenChanged) sessionStorage.setItem(HIDDEN_STORE, JSON.stringify([...hiddenNodes]));
+    if (!hiddenNodes.size) showHidden = false;
     outcomeByFile = new Map();
     outcomeBySlug = new Map();
     for (const g of vaultMap) {
@@ -1765,6 +1786,7 @@ function rankNodes(q) {
   const query = q.toLowerCase().trim();
   const scored = [];
   for (const n of vaultNodes) {
+    if (!showHidden && hiddenRootFor(n.path)) continue;
     let s = 0;
     const name = n.name.toLowerCase();
     if (!query) s = visibleOutcomes(n).length ? 10 : 0;
@@ -1802,6 +1824,65 @@ function toggleFold(path) {
   localStorage.setItem(FOLD_STORE, JSON.stringify([...folded]));
   renderSidebar(true);
 }
+
+// Explicitly hidden node roots last for this native window: a reload keeps
+// them, while quitting Agent Shell destroys the page session and resets the
+// tree. Roots are normalized so hiding a parent subsumes hidden descendants.
+const HIDDEN_STORE = "agent-shell-hidden-nodes";
+let hiddenNodes;
+try {
+  hiddenNodes = new Set(JSON.parse(sessionStorage.getItem(HIDDEN_STORE) ?? "[]"));
+} catch {
+  hiddenNodes = new Set();
+}
+let showHidden = false;
+const hiddenBtn = document.getElementById("side-hidden");
+
+/** The nearest explicit hidden root containing path, or null. */
+function hiddenRootFor(path) {
+  const roots = [...hiddenNodes].filter((root) => path === root || path.startsWith(root + "/"));
+  return roots.sort((a, b) => b.length - a.length)[0] ?? null;
+}
+
+function paintHiddenControl() {
+  const count = hiddenNodes.size;
+  hiddenBtn.hidden = count === 0;
+  hiddenBtn.textContent = `hidden (${count})`;
+  hiddenBtn.classList.toggle("on", showHidden && count > 0);
+  const item = sideItems[sideSel];
+  const hidden = item?.kind === "main" && hiddenRootFor(item.g.path);
+  const legend = document.getElementById("legend-hide");
+  if (legend) legend.lastChild.textContent = hidden ? " unhide" : " hide";
+}
+
+/** Hides a visible node, or unhides the containing hidden root in reveal mode. */
+function toggleHiddenNode(path) {
+  if (!path) return;
+  const oldIndex = sideSel;
+  const root = hiddenRootFor(path);
+  if (root) {
+    hiddenNodes.delete(root);
+    hud("done", "unhidden " + root);
+  } else {
+    for (const hidden of [...hiddenNodes]) {
+      if (hidden.startsWith(path + "/")) hiddenNodes.delete(hidden);
+    }
+    hiddenNodes.add(path);
+    if (treeScope === path) setScope(path.split("/").slice(0, -1).join("/"));
+    hud("done", "hidden " + path);
+  }
+  sessionStorage.setItem(HIDDEN_STORE, JSON.stringify([...hiddenNodes]));
+  if (!hiddenNodes.size) showHidden = false;
+  renderSidebar(true);
+  if (browsing && sideItems.length) setSideSel(Math.min(oldIndex, sideItems.length - 1));
+  paintHiddenControl();
+}
+
+hiddenBtn.onclick = () => {
+  showHidden = !showHidden;
+  renderSidebar(true);
+  paintHiddenControl();
+};
 
 // The tree's scope: clicking a node views only that subtree — the user's own
 // hands on what used to be "focus". Persisted so a reload lands where the
@@ -1951,6 +2032,13 @@ findInput.onkeydown = (e) => {
     moveSideSel(e.key === "ArrowDown" ? 1 : -1);
     return;
   }
+  if (e.key === "h" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && !findInput.value) {
+    const item = sideItems[sideSel];
+    if (item?.kind !== "main" || !item.g.path) return;
+    e.preventDefault();
+    toggleHiddenNode(item.g.path);
+    return;
+  }
   if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
     // The file-tree idiom, only while the input is empty so the arrows keep
     // their cursor meaning while filtering. → unfolds, then steps into the
@@ -2001,13 +2089,15 @@ function treeSections(q) {
   const groupByPath = new Map(vaultMap.map((g) => [g.path, g]));
   // When unscoped, root occupies depth 0 and every vault path belongs below
   // it. A scoped node becomes the temporary depth-0 root of its own view.
-  const baseDepth = treeScope ? treeScope.split("/").length - 1 : -1;
+  const effectiveScope = showHidden ? "" : treeScope;
+  const baseDepth = effectiveScope ? effectiveScope.split("/").length - 1 : -1;
   const sections = [];
-  if (!treeScope) {
+  if (!effectiveScope) {
     sections.push({ path: "", name: "root", purpose: "the whole tree", depth: 0, outcomes: [] });
   }
   for (const n of vaultNodes) {
-    if (treeScope && !(n.path === treeScope || n.path.startsWith(treeScope + "/"))) continue;
+    if (effectiveScope && !(n.path === effectiveScope || n.path.startsWith(effectiveScope + "/"))) continue;
+    if (!showHidden && hiddenRootFor(n.path)) continue;
     sections.push({
       path: n.path,
       name: n.path.split("/").pop(),
@@ -2138,14 +2228,15 @@ function processRowEl(s, indent) {
  */
 function buildTreeItems(q) {
   const sections = treeSections(q);
-  const inScope = (p) => !treeScope || p === treeScope || p.startsWith(treeScope + "/");
+  const effectiveScope = showHidden ? "" : treeScope;
+  const inScope = (p) => !effectiveScope || p === effectiveScope || p.startsWith(effectiveScope + "/");
   /** True when a folded ancestor (inside the scope) hides this path entirely. */
   const foldedAway = (path) => [...folded].some((f) => inScope(f) && isDescendantPath(f, path));
-  const flat = !q && liveOnly;
+  const flat = !showHidden && !q && liveOnly;
   const items = [];
-  if (!q && treeScope) items.push({ kind: "up", to: treeScope.split("/").slice(0, -1).join("/") });
+  if (!q && effectiveScope) items.push({ kind: "up", to: effectiveScope.split("/").slice(0, -1).join("/") });
   for (const g of sections) {
-    if (!q && !flat && g.path && foldedAway(g.path)) continue;
+    if (!showHidden && !q && !flat && g.path && foldedAway(g.path)) continue;
     const pad = 8 + g.depth * 16;
     const rowPad = pad + 20; // children start under the header's name
     // Every session on this node that is not an outcome's: the orchestrator
@@ -2154,8 +2245,8 @@ function buildTreeItems(q) {
       .filter((s) => (s.node ?? "") === g.path && !s.outcome)
       .sort((a, b) => (b.isChat ? 1 : 0) - (a.isChat ? 1 : 0));
     const kids = q ? [] : sections.filter((o) => isDescendantPath(g.path, o.path));
-    const foldable = !q && !flat && Boolean(g.outcomes.length || procs.length || kids.length);
-    const fold = { foldable, folded: foldable && folded.has(g.path), hiddenCount: 0, hiddenLive: false };
+    const foldable = !showHidden && !q && !flat && Boolean(g.outcomes.length || procs.length || kids.length);
+    const fold = { foldable, folded: !showHidden && foldable && folded.has(g.path), hiddenCount: 0, hiddenLive: false };
     if (fold.folded) {
       const descProcs = lastSessions.filter(
         (s) => isDescendantPath(g.path, s.node ?? "") && !s.outcome
@@ -2180,23 +2271,26 @@ function buildTreeItems(q) {
           : ["working", "waiting", "service"].includes(it.s.state)
       );
       if (!live.length) continue;
-      items.push({ kind: "main", g, foldable: false, fold: { foldable: false, folded: false, hiddenCount: 0, hiddenLive: false } });
-      items.push(...live);
+      items.push({ kind: "main", g, foldable: false, fold: { foldable: false, folded: false, hiddenCount: 0, hiddenLive: false }, hidden: false });
+      items.push(...live.map((item) => ({ ...item, hidden: false })));
       continue;
     }
-    items.push({ kind: "main", g, foldable, fold });
+    const hidden = Boolean(hiddenRootFor(g.path));
+    items.push({ kind: "main", g, foldable, fold, hidden });
     if (fold.folded) continue;
-    items.push(...rows);
+    items.push(...rows.map((item) => ({ ...item, hidden })));
   }
   return items;
 }
 
 /** The DOM row for one tree item. */
 function treeRowEl(item) {
-  if (item.kind === "up") return upRowEl(item.to);
-  if (item.kind === "main") return nodeRowEl(item.g, item.fold);
-  if (item.kind === "outcome") return outcomeRowEl(item.t, item.pad);
-  return processRowEl(item.s, item.pad);
+  const row = item.kind === "up" ? upRowEl(item.to)
+    : item.kind === "main" ? nodeRowEl(item.g, item.fold)
+    : item.kind === "outcome" ? outcomeRowEl(item.t, item.pad)
+    : processRowEl(item.s, item.pad);
+  if (item.hidden) row.classList.add("tree-hidden");
+  return row;
 }
 
 /**

@@ -44,6 +44,10 @@ function withDefaultModel(cmd) {
   return `${cmd} --model default`;
 }
 const CHAT_SESSION = process.env.CHAT_SESSION ?? "orchestrator";
+// `chat` was the original name of the home session. Once the home session was
+// renamed to `orchestrator`, an old tmux session could survive and appear as a
+// second root process even though both names mean the same thing to Tangent.
+const LEGACY_CHAT_SESSION = "chat";
 const WORKSPACE = process.env.WORKSPACE ?? path.join(here, "workspace");
 const TREES_ROOT = process.env.TREES_ROOT ?? path.join(os.homedir(), ".tangent", "trees");
 
@@ -90,7 +94,8 @@ async function listSessions() {
           command,
           isChat: name === CHAT_SESSION,
         };
-      });
+      })
+      .filter((session) => session.name !== LEGACY_CHAT_SESSION || CHAT_SESSION === LEGACY_CHAT_SESSION);
     return await withAgentStates(await withOutcomeInfo(sessions));
   } catch {
     return []; // no tmux server running yet

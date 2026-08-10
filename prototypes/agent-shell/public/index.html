@@ -2032,7 +2032,7 @@ findInput.onkeydown = (e) => {
     moveSideSel(e.key === "ArrowDown" ? 1 : -1);
     return;
   }
-  if (e.key === "h" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && !findInput.value) {
+  if (treeCursor && e.key === "h" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && !findInput.value) {
     e.preventDefault();
     const item = sideItems[sideSel];
     if (item?.kind !== "main" || !item.g.path) {

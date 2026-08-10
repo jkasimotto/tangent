@@ -21,18 +21,6 @@ const PORT = Number(process.env.PORT ?? 4321);
 let agentCmd = process.env.AGENT_CMD ?? "claude";
 
 /**
- * The agent command for sessions spawned on a node (outcome sessions).
- * Agent identity is a property of the node, not a global toggle: personal
- * projects (otto/**) run on the otto profile via the claude-otto alias,
- * work nodes (neara, pgande, ...) run the plain work-account claude. The
- * switchable agentCmd only ever applies to the orchestrator session.
- */
-function agentCmdForNode(node) {
-  const top = String(node ?? "").split("/")[0];
-  return top === "otto" ? "claude-otto" : "claude";
-}
-
-/**
  * claude persists the last /model choice across sessions, so a fresh
  * session silently reopens on whatever model was used last (fable, say).
  * Pin claude launches to the default model unless the command already
@@ -546,31 +534,10 @@ async function vaultCommit(relPaths, message, node, tmuxSession) {
 }
 
 /**
- * The opening prompt typed (never submitted) into a fresh outcome session's
- * agent: the outcome file plus the node-note chain up to the root, by path,
- * so the agent reads its own context and the user can add words before
- * sending.
- */
-function outcomePrompt(node, o) {
-  const parts = node.split("/");
-  const notes = [];
-  for (let i = parts.length; i >= 1; i--) {
-    const p = parts.slice(0, i).join("/");
-    const abs = path.join(TREES_ROOT, p, parts[i - 1] + ".md");
-    if (existsSync(abs)) notes.push(abs);
-  }
-  return (
-    `Work this outcome: ${path.join(TREES_ROOT, o.file)} — read it first, then the node notes for context (nearest first): ${notes.join(", ")}. ` +
-    (o.breakdown.length ? `Its Breakdown section lists the child outcome files it decomposes into; work them in order. ` : "") +
-    `Keep the outcome file's State section current as you work; when the outcome is met, propose marking it done — never mark it done yourself without confirmation.`
-  );
-}
-
-/**
- * Spawns (or reattaches) the work session for one outcome: agent in the
- * node's repo, bound via @tangent_node + @tangent_outcome, outcome
- * mechanically flipped to active. The opening prompt follows the
- * type-but-never-submit rule.
+ * Spawns (or reattaches) a plain tmux shell for one outcome in the node's
+ * repo, bound via @tangent_node + @tangent_outcome, with the outcome
+ * mechanically flipped to active. Starting an outcome does not choose or
+ * launch an agent and does not type outcome context into the shell.
  */
 async function spawnOutcomeSession(node, slug) {
   const o = (await readNodeOutcomes(node)).find((t) => t.slug === slug);
@@ -583,9 +550,7 @@ async function spawnOutcomeSession(node, slug) {
   const name = normName(`${node.split("/").pop()}--${slug}`).slice(0, 60);
   if (sessions.some((s) => s.name === name)) return { status: 200, session: name, reattached: true };
   const dir = (await nodeDirectory(node)) ?? path.join(TREES_ROOT, node);
-  const shell = process.env.SHELL ?? "/bin/zsh";
-  const cmd = withDefaultModel(agentCmdForNode(node));
-  await execFileAsync("tmux", ["new-session", "-d", "-s", name, "-c", dir, `exec ${shell} -ic '${cmd.replace(/'/g, "'\\''")}'`]);
+  await execFileAsync("tmux", ["new-session", "-d", "-s", name, "-c", dir]);
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_node", node]);
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_outcome", o.file]);
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_kind", "outcome"]);
@@ -596,14 +561,6 @@ async function spawnOutcomeSession(node, slug) {
   } catch (err) {
     console.error("outcome binding:", err.message ?? err);
   }
-  (async () => {
-    // ponytail: fixed boot pause while the agent TUI starts; raise it if it
-    // keeps eating the first words of the prompt.
-    await sleep(2500);
-    try {
-      await typeInto(name, outcomePrompt(node, o), false);
-    } catch {}
-  })();
   return { status: 200, session: name };
 }
 
@@ -703,8 +660,9 @@ async function outcomesByFile() {
 }
 
 /**
- * The one spawn path in the shell: starts (or reattaches) the agent session
- * for an outcome, by file. An agent starts only when this is explicitly asked.
+ * The one spawn path in the shell: starts (or reattaches) the tmux session
+ * for an outcome, by file. The session starts as a plain shell; the user can
+ * choose whether and how to start an agent from there.
  */
 async function startOutcome(file) {
   const o = (await outcomesByFile()).get(file);
@@ -1126,7 +1084,7 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify(await vaultIndex()));
       return;
     }
-    // The one spawn path: the visible "start agent" action on an outcome.
+    // The one spawn path: the visible "start shell" action on an outcome.
     if (url.pathname === "/api/outcome/start" && req.method === "POST") {
       let body = {};
       try { body = JSON.parse(await readBody(req)); } catch {}
@@ -1236,8 +1194,8 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ ok: true, caffeinate: caffeinateProc !== null }));
       return;
     }
-    // Switches the orchestrator's agent command only; outcome sessions
-    // always use their node-owned command (agentCmdForNode). The command is
+    // Switches the orchestrator's agent command only; outcome sessions start
+    // as plain shells and are unaffected. The command is
     // whatever the user typed (claude, claude-otto, agy, pi, flags allowed);
     // tmux runs a single trailing string through the shell. Kills the running
     // orchestrator so the frontend's reconnect respawns it with the new command.

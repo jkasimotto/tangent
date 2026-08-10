@@ -751,7 +751,7 @@ function previewHintText(item) {
   if (item.kind === "up") return "⏎ widens the view";
   if (item.kind === "main") return "no session here — ⏎ views the subtree";
   if (item.kind === "outcome") {
-    return ["done", "dropped"].includes(item.t.status) ? item.t.title : "no agent yet — ⏎ starts one";
+    return ["done", "dropped"].includes(item.t.status) ? item.t.title : "no session yet — ⏎ starts a shell";
   }
   return "session ended";
 }
@@ -768,14 +768,14 @@ function paintLegendEnter(item) {
     !item ? "open"
     : item.kind === "up" ? "up"
     : item.kind === "main" ? (item.g.path ? "subtree" : "tree")
-    : item.kind === "outcome" ? (live ? "agent" : "start agent")
+    : item.kind === "outcome" ? (live ? "session" : "start shell")
     : "session";
   enterEl.lastChild.textContent = " " + word;
 }
 
-/** The one spawn affordance: start (or reattach) an outcome's agent session. */
-async function startAgent(file) {
-  hud("busy", "starting agent…");
+/** The one spawn affordance: start (or reattach) an outcome's tmux shell. */
+async function startOutcomeShell(file) {
+  hud("busy", "starting shell…");
   try {
     const res = await fetch("/api/outcome/start", {
       method: "POST",
@@ -785,7 +785,7 @@ async function startAgent(file) {
     const out = await res.json();
     if (!res.ok) throw new Error(out.error ?? "start failed " + res.status);
     show(out.session);
-    hud("done", (out.reattached ? "reattached " : "agent started: ") + out.session);
+    hud("done", (out.reattached ? "reattached " : "shell started: ") + out.session);
     refreshVault();
   } catch (err) {
     hud("error", String(err.message ?? err));
@@ -1670,7 +1670,7 @@ async function sendCommand(text) {
 // live. The tree is the ONE surface, rendered once, in the sidebar; ⌘/
 // focuses its filter input and the work pane becomes the selected row's
 // detail card. Selection never has side effects; opening a node's main agent
-// or starting an outcome's agent is always its own visible action.
+// or starting an outcome's shell is always its own visible action.
 
 let vaultNodes = [];
 let vaultMap = []; // the unified tree: each outcome once, grouped by root's home node
@@ -2152,7 +2152,7 @@ function activateTreeItem(item) {
   if (item.kind === "outcome") {
     const s = sessionFor(item.t.session);
     if (s) show(s.name);
-    else if (!["done", "dropped"].includes(item.t.status)) startAgent(item.t.file);
+    else if (!["done", "dropped"].includes(item.t.status)) startOutcomeShell(item.t.file);
     return;
   }
   show(item.s.name);

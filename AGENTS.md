@@ -124,9 +124,9 @@ Product direction: the mark loop (design contract: docs/superpowers/specs/2026-0
 - Nothing auto-edits context files and nothing auto-creates evals; humans confirm every step. Marks live in ~/.tangent/marks/ owned by @tangent/eval; usage links to eval by URL only, never by import.
 
 Development workflow:
-- Do substantive code changes in a dedicated git worktree, never on the `main` checkout the user runs live. The user keeps `tangent ui` running on `main` while you work; develop in the worktree and let the user (or you) verify the change from the worktree's own app instance.
-- Create one with `node scripts/dev-worktree.mjs create [name]` (branches `dev/<name>` off main). From the worktree, `node scripts/verify-app.mjs ui` boots a read-only instance on its own port, so the live main app and the worktree instance coexist with no port or `~/.tangent` collision.
-- IMPORTANT: when working in a worktree, target it with absolute paths or run from its directory. Editing the main `otto-tangent/` checkout instead silently changes the app the user is running live.
+- Do not create or use a git worktree unless the user explicitly asks for one. By default, make requested changes in the current checkout and branch.
+- When the user explicitly requests a worktree, create one with `node scripts/dev-worktree.mjs create [name]` (branches `dev/<name>` off main). From the worktree, `node scripts/verify-app.mjs ui` boots a read-only instance on its own port, so the live main app and the worktree instance coexist with no port or `~/.tangent` collision.
+- IMPORTANT: when working in an explicitly requested worktree, target it with absolute paths or run from its directory.
 
 Validate work:
 - npm run check
@@ -140,7 +140,7 @@ Never:
 - Do not duplicate parseArgs, runProcess, repo discovery, or git/worktree helpers in vertical apps.
 - Do not import another package's src internals; use public exports.
 - Do not let @tangent/core shell out, write provider config, or learn product schemas.
-- Do not create unrelated git branches. The dev worktree branch (`dev/<name>`, see Development workflow) is the expected exception and needs no separate per-task permission; otherwise commit on the current branch.
+- Do not create unrelated git branches. A user-requested dev worktree branch (`dev/<name>`, see Development workflow) is the expected exception; otherwise commit on the current branch.
 
 When architecture changes:
 - Update ARCHITECTURE.md and the relevant docs/architecture/*.md file.

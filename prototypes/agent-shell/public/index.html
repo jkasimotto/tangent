@@ -643,6 +643,7 @@ function treeStateKey(items) {
 // Find and browse state. The input's focus IS the mode: focused = browsing.
 const findInput = document.getElementById("find-input");
 let browsing = false;
+let treeCursor = false; // true once navigation or pointing makes a tree row the keyboard target
 let sideItems = []; // selectable rows: {kind:"main"|"outcome"|"process"|"up", ...}
 let sideRows = [];  // the DOM row per item
 let sideSel = 0;
@@ -671,9 +672,7 @@ function renderSidebar(force = false) {
     const row = treeRowEl(item);
     row.style.cursor = "pointer";
     if (!browsing && itemSession(item) === active && active) row.classList.add("cr-sel");
-    row.onmouseenter = () => {
-      if (browsing) setSideSel(idx, false);
-    };
+    row.onmouseenter = () => { if (browsing) setSideSel(idx, false); };
     row.onmousedown = (e) => {
       e.preventDefault();
       // Clicking the tree is the mouse way into browsing: the pane you
@@ -685,7 +684,7 @@ function renderSidebar(force = false) {
     panelEl.appendChild(row);
     sideRows.push(row);
   });
-  if (browsing) {
+  if (browsing && treeCursor) {
     // Keep the selection on the same item across rebuilds.
     const same = (a, b) =>
       a && b && a.kind === b.kind &&
@@ -700,6 +699,7 @@ function renderSidebar(force = false) {
 }
 
 function setSideSel(idx, scroll = true) {
+  treeCursor = true;
   sideSel = idx;
   paintSideSel(scroll);
 }
@@ -1837,16 +1837,17 @@ liveBtn.onclick = () => setLiveOnly(!liveOnly);
 document.getElementById("talk-btn").onclick = () => openCmdBar();
 
 // ---- find and browse ----
-// The find input's focus IS browse mode. Entering: ⌘/ or clicking the input.
-// While browsing, the tree carries a selection (arrows and hover), the work
-// pane previews the selected row's live session, and the legend prints every
-// key. Leaving: esc, ⌘/ again, or anything that moves focus (opening a
-// session, clicking the terminal).
+// The find input's focus owns browse mode, with two keyboard targets inside
+// it: Find accepts text; arrows, hover, or a row click put a cursor in the
+// tree, where typing is ignored and navigation/Enter drive the selected row.
+// Leaving: esc, ⌘/ again, or anything that moves focus (opening a session,
+// clicking the terminal).
 
 /** ⌘/: into browsing, or back out of it. Opens the rail if it is closed. */
 function toggleFind() {
   if (browsing) return exitBrowse();
   if (!sidebarEl.classList.contains("open")) treeBtn.onclick();
+  treeCursor = false;
   findInput.focus();
 }
 
@@ -1863,6 +1864,7 @@ function exitBrowse() {
  */
 function focusTree() {
   if (!sidebarEl.classList.contains("open")) treeBtn.onclick();
+  treeCursor = true;
   // Entering browsing lands the selection in findInput.onfocus. Already
   // browsing, the chord still means "take me to the work": re-land it.
   if (!browsing) {
@@ -1899,7 +1901,8 @@ findInput.onfocus = () => {
   // Land the selection on the work in flight. No scroll: a click that
   // entered browsing must not yank the pane elsewhere.
   sideSel = landingIndex();
-  paintSideSel(false);
+  if (treeCursor) paintSideSel(false);
+  else clearPreview();
   renderOutcomeStrip();
   renderKillBtn();
   fetchVault(true).then(() => renderSidebar(true));
@@ -1910,18 +1913,34 @@ findInput.onfocus = () => {
 panelEl.onmousedown = (e) => {
   if (e.target !== panelEl) return;
   e.preventDefault();
+  treeCursor = true;
   findInput.focus();
+};
+
+// Find and tree navigation share one DOM focus target, but not one keyboard
+// target. Clicking the field returns typing to Find and removes the row
+// cursor; arrows, hover, or clicking a row restore the tree cursor.
+findInput.onmousedown = () => {
+  if (!browsing || !treeCursor) return;
+  treeCursor = false;
+  panelEl.querySelectorAll(".cr-sel").forEach((el) => el.classList.remove("cr-sel"));
+  clearPreview();
 };
 
 findInput.onblur = () => {
   if (!browsing) return;
   browsing = false;
+  treeCursor = false;
   sidebarEl.classList.remove("browsing");
   findInput.value = "";
   clearPreview();
   renderSidebar(true);
   renderOutcomeStrip();
   renderKillBtn();
+};
+
+findInput.onbeforeinput = (e) => {
+  if (treeCursor) e.preventDefault();
 };
 
 findInput.onkeydown = (e) => {

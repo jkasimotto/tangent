@@ -51,16 +51,16 @@
      sessions. Scope (click a node to view only its subtree), folds, and the
      active-only filter live here. Find (⌘/) focuses the filter input at the
      top; while it holds focus ("browsing") the tree gains a selection and
-     the work pane previews the selected row's detail card. Agent state from
-     screen diff: pulsing green = working, steady amber = waiting for you;
-     services: steady blue = running. */
+     the work pane previews the selected row's live tmux session. Agent state
+     from screen diff: pulsing green = working, steady amber = waiting for
+     you; services: steady blue = running. */
   #side-top {
     flex: none; display: flex; align-items: center; gap: 8px;
     padding: 8px 10px; border-bottom: 1px solid var(--border);
   }
   #find-wrap { position: relative; flex: 1; min-width: 0; }
   #find-input {
-    width: 100%; padding: 5px 34px 5px 8px; border-radius: 6px;
+    width: 100%; padding: 5px 60px 5px 8px; border-radius: 6px;
     background: var(--bg); border: 1px solid var(--border); color: var(--text); font: inherit;
   }
   #find-input:focus { outline: none; border-color: var(--accent2); }
@@ -81,8 +81,6 @@
   .panel-hint { margin: 10px 12px; color: var(--dim); font-size: 11px; }
   #panel .bt-row { margin: 0 4px; }
   .bt-node { color: var(--dim); font-size: 10px; flex: none; }
-  .bt-row .bt-glyph.working { color: var(--accent); animation: chip-pulse 1.1s ease-in-out infinite; }
-  .bt-row .bt-glyph.ready { color: #e3b341; }
   .up-row { color: var(--dim); }
   @keyframes chip-pulse { 50% { opacity: 0.2; } }
   #settings, #agent-panel {
@@ -180,18 +178,34 @@
   .bt-row.done .bt-glyph { color: var(--accent); }
   .bt-row.active .bt-glyph { color: var(--accent2); }
   .bt-row.waiting .bt-glyph { color: #e3b341; }
+  /* The dot rule, everywhere a dot appears (tree rows, node headers, cards):
+     a bright ● is a live tmux session and ⏎ goes into it. Color is state —
+     pulsing green = agent working, amber = waiting for you, blue = service
+     running, plain bright = idle shell. Declared after the status colors so
+     a live session always outranks its outcome's status tint. */
+  .bt-glyph.live { color: var(--text); }
+  .bt-glyph.working { color: var(--accent); animation: chip-pulse 1.1s ease-in-out infinite; }
+  .bt-glyph.ready { color: #e3b341; }
+  .bt-glyph.svc { color: var(--accent2); }
   /* The kill ✕ every tree row wears while its session is live, because the
      rail is what actually gets watched. Always drawn, never hover-only: a
      way to stop a runaway agent must not be a hidden feature. Dim until the
-     pointer is on it, red when it is. */
-  .row-kill {
+     pointer is on it, red when it is. The + (new outcome, node rows) and ✎
+     (edit, outcome rows) follow the same rule: always drawn, dim until
+     pointed at. */
+  .row-kill, .row-add, .row-edit {
     flex: none; margin-left: auto; padding: 0 4px; border: none; background: none;
     color: var(--dim); font: inherit; font-size: 11px; line-height: 1; opacity: 0.5;
   }
   .row-kill:hover { color: #f85149; opacity: 1; }
+  .row-add:hover { color: var(--accent); opacity: 1; }
+  .row-edit:hover { color: var(--accent2); opacity: 1; }
+  .bt-meta + .row-add, .bt-node + .row-add, .cr-meta + .row-add,
+  .bt-meta + .row-edit, .bt-node + .row-edit, .cr-meta + .row-edit,
+  .row-add + .row-kill, .row-edit + .row-kill { margin-left: 6px; }
   .bt-meta + .row-kill, .bt-node + .row-kill, .cr-meta + .row-kill { margin-left: 6px; }
-  /* Node rows: a node's header row IS its main agent (dot only while live),
-     outcomes nested by breakdown, process sessions underneath. Nodes fold
+  /* Node rows: plain headers. Outcomes nest by breakdown, sessions sit
+     underneath (the orchestrator is a session row under root). Nodes fold
      (chevron / arrow keys); a folded node prints what it hides, so hiding
      stays deliberate and activity never vanishes. */
   .cr-node { display: flex; align-items: baseline; gap: 8px; padding: 10px 8px 4px; border-radius: 6px; }
@@ -217,7 +231,7 @@
   .md-btn.primary { color: var(--accent); border-color: var(--accent); }
   .md-btn.danger:hover { color: #f85149; border-color: #f85149; }
   .md-btn .key { color: var(--dim); margin-left: 6px; }
-  /* Card edit mode: the outcome's own text as plain fields, visibly writable. */
+  /* Editor fields: the outcome's own text as plain fields, visibly writable. */
   .md-edit {
     display: block; width: 100%; margin: 0; padding: 6px 8px; border-radius: 6px;
     border: 1px solid var(--accent2); background: rgba(88, 166, 255, 0.06);
@@ -225,20 +239,27 @@
   }
   .md-edit:focus { outline: none; border-color: var(--accent); }
   .md-edit.md-edit-title { font-size: 17px; font-weight: 700; }
-  /* The card: a tree row's detail, shown in the terminal area. Browsing
-     (find focused) previews the selected row's card live; opening an outcome
-     with no agent pins its card (the stage). Viewing a card never starts
-     anything. */
-  #stage {
+  /* The outcome editor: create (+ on a node row) and modify (✎ on an outcome
+     row) live in the tree; this overlay holds the fields. It is the only
+     non-terminal face the work pane has. */
+  #editor {
     position: absolute; inset: 0; z-index: 5; display: none;
     align-items: center; justify-content: center; overflow: auto; background: var(--bg);
   }
-  #stage.show { display: flex; }
+  #editor.show { display: flex; }
   .stage-box {
     width: min(560px, 90%); max-height: 90%; overflow: auto; padding: 24px 28px;
     border: 1px solid var(--border); border-radius: 12px; background: var(--panel);
   }
   .stage-box .md-actions { margin-top: 22px; }
+  /* What the work pane says while browse selection sits on a row with no
+     session behind it: one dim line naming what ⏎ would do. */
+  #preview-hint {
+    position: absolute; inset: 0; z-index: 4; display: none;
+    align-items: center; justify-content: center; background: var(--bg);
+    color: var(--dim); font-size: 12px;
+  }
+  #preview-hint.show { display: flex; }
   #work { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   #terms { flex: 1; position: relative; min-height: 0; }
   .term-host { position: absolute; inset: 0; padding: 8px; display: none; }
@@ -254,7 +275,7 @@
     <span id="active-label"></span>
     <button id="kill-btn" class="hbtn danger" hidden title="kill the session on screen — everything running inside it stops">✕ kill</button>
     <button id="talk-btn" class="hbtn" title="type a command — routed exactly like voice">talk ⌘K</button>
-    <button id="chat-btn" class="hbtn" title="root main — everything not addressed to a node lands here">⌂ root</button>
+    <button id="chat-btn" class="hbtn" title="the orchestrator: everything not addressed to a node lands here">⌂ orchestrator</button>
     <button id="agent-btn" class="hbtn" title="orchestrator agent, click to switch"></button>
     <button id="mic-btn" class="hbtn" title="voice — hold ⌥ and speak (release to send), or tap ⌥ to latch (tap again to send). ⇧ or ↑ while holding locks the recording.">🎙</button>
     <button id="caffeine-btn" class="hbtn" title="keep mac awake (caffeinate -di)">☕</button>
@@ -281,14 +302,14 @@
         <button id="side-live" class="hbtn" title="show only active work — live agents, running services, active outcomes">◉ active</button>
       </div>
       <div id="panel"></div>
-      <div id="side-legend"><span><b>↑↓</b> move</span><span><b>←→</b> fold</span><span><b>⏎</b> open</span><span><b>⌫</b> up</span><span id="legend-kill"><b>⌘D</b> kill</span><span><b>esc</b> back</span></div>
+      <div id="side-legend"><span><b>↑↓</b> move</span><span><b>←→</b> fold · up</span><span id="legend-enter"><b>⏎</b> open</span><span id="legend-kill"><b>⌘D</b> kill</span><span id="legend-work"><b>⌘→</b> work pane</span><span><b>esc</b> back</span></div>
       <div id="side-resize" title="drag to resize"></div>
     </div>
     <div id="work">
       <div id="outcome-strip">
         <span class="ts-node"></span><span class="ts-title"></span><span class="ts-outcome"></span>
       </div>
-      <div id="terms"><div id="stage"></div></div>
+      <div id="terms"><div id="preview-hint"></div><div id="editor"></div></div>
     </div>
   </div>
   <div id="voice-hud"><span class="vh-dot">●</span><span class="vh-text"></span></div>
@@ -299,7 +320,7 @@
 <script src="/keymap.js"></script>
 <script src="/config.js"></script>
 <script>
-const CHAT = window.CHAT_SESSION ?? "chat";
+const CHAT = window.CHAT_SESSION ?? "orchestrator";
 const terms = new Map(); // session name -> {term, fit, ws, host}
 let active = null;
 
@@ -307,7 +328,8 @@ const termsEl = document.getElementById("terms");
 const treeBtn = document.getElementById("tree-btn");
 const sidebarEl = document.getElementById("sidebar");
 const activeLabel = document.getElementById("active-label");
-const stageEl = document.getElementById("stage");
+const editorEl = document.getElementById("editor");
+const previewHintEl = document.getElementById("preview-hint");
 
 function connect(session) {
   if (terms.has(session)) return terms.get(session);
@@ -380,7 +402,7 @@ function chatDiedFast(connectedAt) {
   }
   if (++chatDeaths < 3) return false;
   chatDeaths = 0;
-  alert(`root agent "${agentCmd}" keeps dying right after start. pick another command.`);
+  alert(`orchestrator "${agentCmd}" keeps dying right after start. pick another command.`);
   if (agentPanel.hidden) agentBtn.onclick();
   return true;
 }
@@ -397,20 +419,28 @@ function dispose(session) {
 function show(session) {
   const entry = connect(session);
   active = session;
-  stageOn = false;
-  stageFile = null;
-  stageEl.classList.remove("show");
-  for (const [name, e] of terms) e.host.classList.toggle("visible", name === session);
-  activeLabel.textContent = session === CHAT ? "root" : session;
+  previewName = null;
+  previewHintEl.classList.remove("show");
+  editorState = null;
+  editorEl.classList.remove("show");
+  editorEl.innerHTML = "";
+  paintVisibleTerm();
+  activeLabel.textContent = session;
   requestAnimationFrame(() => { entry.fit.fit(); entry.term.focus(); });
   renderSidebar();
   renderOutcomeStrip();
   renderKillBtn();
 }
 
+/** The one terminal the pane shows: the browse preview when there is one, else the active session. */
+function paintVisibleTerm() {
+  const name = previewName ?? active;
+  for (const [n, e] of terms) e.host.classList.toggle("visible", n === name);
+}
+
 // Detach only: close our client connection, keep the tmux session alive.
 // Reached via the close-session shortcut and the voice close_view action;
-// "back to root" is otherwise just clicking the root node in the tree.
+// "back home" is otherwise just clicking the orchestrator row in the tree.
 function closeSessionView() {
   if (active === CHAT) return;
   dispose(active);
@@ -470,11 +500,17 @@ railHandle.addEventListener("pointerdown", (e) => {
 // subtree themselves, starts outcomes going, and attends to whatever the
 // tree shows needs attention. Find (⌘/) focuses the filter input; while it
 // holds focus ("browsing") the tree gains a selection (arrows and hover) and
-// the work pane previews the selected row's card in place of the terminal.
+// the work pane previews the selected row's live tmux session — hovering IS
+// seeing the work. Rows with no session behind them show a one-line hint.
 
 let lastSessions = [];
-let stageOn = false;   // the terminal area shows an outcome (stage), not a session
-let stageFile = null;  // which outcome file the stage shows
+let previewName = null; // the session the work pane previews while browsing, or null
+// Outcomes that newly appeared while the active-only filter was on. They stay
+// visible under the filter (worn as "new") until they genuinely become
+// active, so a just-created outcome can be started without hunting for it
+// behind the filter. Toggling the filter re-asserts "active only" and clears.
+const freshOutcomes = new Set();
+let knownOutcomeFiles = null; // every outcome file seen in the last vault read
 
 const panelEl = document.getElementById("panel");
 
@@ -489,7 +525,6 @@ async function refreshSessions() {
     micBtn.style.display = voice === false ? "none" : "";
     lastSessions = sessions;
     renderSidebar();
-    renderCard();
     renderOutcomeStrip();
     renderKillBtn();
   } catch {}
@@ -501,7 +536,6 @@ async function refreshSessions() {
 async function refreshVault() {
   await fetchVault(true);
   renderSidebar();
-  renderCard();
 }
 
 const STATE_HINT = {
@@ -512,30 +546,13 @@ const STATE_HINT = {
   stopped: "service stopped (open to restart)",
 };
 
-const SESSION_LABEL = {
-  working: "agent working",
-  waiting: "agent ready for you",
-  shell: "shell (agent exited)",
-  service: "service running",
-  stopped: "service stopped",
-};
-
 /**
- * A live session's one-line label. A just-spawned session's pane still runs
- * the shell while the agent boots, which must not read as "agent exited".
+ * The classes a live session's dot wears, shared by every surface that draws
+ * one: bright always (the dot rule — ● means a tmux session you can enter),
+ * colored by state on top.
  */
-function sessionLabel(t) {
-  if (!t.sessionLive) return null;
-  if (t.sessionState === "shell" && t.sessionCreated && Date.now() - t.sessionCreated < 10000) return "agent starting…";
-  return SESSION_LABEL[t.sessionState] ?? "session live";
-}
-
-/** A colored status glyph for an outcome's live session (or lack of one). */
-function sessionGlyph(t) {
-  const dot = document.createElement("span");
-  dot.className = "bt-glyph" + (t.sessionState === "working" ? " working" : t.sessionState === "waiting" ? " ready" : "");
-  dot.textContent = t.sessionLive ? "●" : "○";
-  return dot;
+function liveGlyphClass(state) {
+  return " live" + (state === "working" ? " working" : state === "waiting" ? " ready" : state === "service" ? " svc" : "");
 }
 
 /**
@@ -561,31 +578,43 @@ function killBtnEl(name) {
   return b;
 }
 
-/** One breakdown child row: status glyph, title, live agent dot; a live child's row opens its session. */
-function childRowEl(c) {
-  const s = sessionFor(c.session);
-  const row = document.createElement("div");
-  row.className = "bt-row " + c.status;
-  const glyph = document.createElement("span");
-  glyph.className = "bt-glyph" + (s?.state === "working" ? " working" : s?.state === "waiting" ? " ready" : "");
-  glyph.textContent = s ? "●" : OUTCOME_GLYPH[c.status] ?? "○";
-  const title = document.createElement("span");
-  title.className = "bt-title";
-  title.textContent = c.title;
-  row.append(glyph, title);
-  if (s) {
-    row.title = "agent session live — click to view";
-    row.style.cursor = "pointer";
-    row.onclick = () => show(s.name);
-    row.appendChild(killBtnEl(s.name));
-  }
-  return row;
+/** The + a node row wears: a new outcome typed straight onto that node. */
+function addBtnEl(nodePath) {
+  const b = document.createElement("button");
+  b.className = "row-add";
+  b.textContent = "+";
+  b.title = "new outcome on " + nodePath;
+  b.onmousedown = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+  b.onclick = (e) => {
+    e.stopPropagation();
+    openEditor({ mode: "create", node: nodePath });
+  };
+  return b;
+}
+
+/** The ✎ an outcome row wears: its own text, editable in the work pane. */
+function editBtnEl(t) {
+  const b = document.createElement("button");
+  b.className = "row-edit";
+  b.textContent = "✎";
+  b.title = "edit " + t.title;
+  b.onmousedown = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+  b.onclick = (e) => {
+    e.stopPropagation();
+    openEditor({ mode: "edit", file: t.file });
+  };
+  return b;
 }
 
 /** The tmux session name a tree item's row represents, or null. */
 function itemSession(item) {
   if (item.kind === "outcome") return sessionFor(item.t.session)?.name ?? null;
-  if (item.kind === "main") return item.s?.name ?? null;
   if (item.kind === "process") return item.s.name;
   return null;
 }
@@ -597,9 +626,10 @@ function treeStateKey(items) {
     treeScope,
     liveOnly,
     [...folded],
+    [...freshOutcomes],
     items.map((it) =>
       it.kind === "outcome" ? ["o", it.t.file, it.t.status]
-      : it.kind === "main" ? ["n", it.g.path, it.s?.state ?? null, it.fold.folded, it.fold.hiddenCount, it.fold.hiddenLive]
+      : it.kind === "main" ? ["n", it.g.path, it.fold.folded, it.fold.hiddenCount, it.fold.hiddenLive]
       : it.kind === "process" ? ["p", it.s.name, it.s.state]
       : ["up", it.to]),
     lastSessions.map((s) => [s.name, s.state]),
@@ -630,7 +660,7 @@ function renderSidebar(force = false) {
     el.className = "panel-hint";
     el.textContent = q ? "nothing matches" : liveOnly ? "nothing is active right now" : "the vault has no nodes yet";
     panelEl.appendChild(el);
-    renderCard(true);
+    updatePreview(null);
     return;
   }
   items.forEach((item, idx) => {
@@ -662,8 +692,6 @@ function renderSidebar(force = false) {
     const idx = sideItems.findIndex((it) => same(it, prevItem));
     sideSel = idx >= 0 ? idx : 0;
     paintSideSel(false);
-  } else {
-    renderCard();
   }
 }
 
@@ -684,7 +712,65 @@ function paintSideSel(scroll = true) {
     el.classList.add("cr-sel");
     if (scroll) el.scrollIntoView({ block: "nearest" });
   }
-  renderCard();
+  paintLegendEnter(sideItems[sideSel]);
+  updatePreview(sideItems[sideSel] ?? null);
+}
+
+// ---- the session preview ----
+// While browsing, the work pane shows the selected row's live tmux session —
+// hovering a row IS seeing its work. Nothing is spawned and focus stays in
+// the find input; ⏎ commits (show + focus). A row with no session behind it
+// shows a one-line hint naming what ⏎ would do there instead.
+
+function updatePreview(item) {
+  if (!browsing || editorState) return clearPreview();
+  const name = item ? itemSession(item) : null;
+  if (name) {
+    previewName = name;
+    const e = connect(name);
+    previewHintEl.classList.remove("show");
+    paintVisibleTerm();
+    requestAnimationFrame(() => e.fit.fit());
+  } else {
+    previewName = null;
+    for (const [, e] of terms) e.host.classList.remove("visible");
+    previewHintEl.textContent = previewHintText(item);
+    previewHintEl.classList.add("show");
+  }
+}
+
+function clearPreview() {
+  previewName = null;
+  previewHintEl.classList.remove("show");
+  paintVisibleTerm();
+}
+
+/** The hint line for a selected row with no session behind it. */
+function previewHintText(item) {
+  if (!item) return "nothing selected";
+  if (item.kind === "up") return "⏎ widens the view";
+  if (item.kind === "main") return "no session here — ⏎ views the subtree";
+  if (item.kind === "outcome") {
+    return ["done", "dropped"].includes(item.t.status) ? item.t.title : "no agent yet — ⏎ starts one";
+  }
+  return "session ended";
+}
+
+/**
+ * The legend's ⏎ entry names what Enter does on the selected row, so the key
+ * is learned at the moment it matters.
+ */
+function paintLegendEnter(item) {
+  const enterEl = document.getElementById("legend-enter");
+  if (!enterEl) return;
+  const live = item ? Boolean(itemSession(item)) : false;
+  const word =
+    !item ? "open"
+    : item.kind === "up" ? "up"
+    : item.kind === "main" ? (item.g.path ? "subtree" : "tree")
+    : item.kind === "outcome" ? (live ? "agent" : "start agent")
+    : "session";
+  enterEl.lastChild.textContent = " " + word;
 }
 
 /** The one spawn affordance: start (or reattach) an outcome's agent session. */
@@ -727,71 +813,51 @@ async function editOutcome(t, fields, label) {
   }
 }
 
-// ---- the card ----
-// The work pane's second face: a tree row's detail, rendered where the
-// terminal goes. Two ways in: browsing (find focused) previews the selected
-// row live, and opening an outcome with no agent pins its card (the stage).
-// Viewing a card never starts anything; "start agent" is the explicit action.
+// ---- the outcome editor ----
+// The work pane's only non-terminal face. Create (+ on a node row) and
+// modify (✎ on an outcome row) live in the tree; this overlay holds the
+// outcome's own text — title, done condition, state — as visible fields.
+// Save writes through the shell with a provenance commit: the user's click
+// is the user's word, no agent in the loop. Status flips live here too.
 
-function openOutcomeView(file) {
-  stageFile = file;
-  stageOn = true;
-  for (const [, e] of terms) e.host.classList.remove("visible");
-  activeLabel.textContent = "";
-  renderCard(true);
-  renderSidebar(true);
-  renderOutcomeStrip();
-  renderKillBtn();
+let editorState = null; // {mode:"create", node} | {mode:"edit", file}
+let editorWasBrowsing = false;
+
+function openEditor(state) {
+  editorWasBrowsing = browsing;
+  editorState = state;
+  renderEditor();
 }
 
-/** The tree item the card should show right now, or null (terminal shows). */
-function cardItem() {
-  if (browsing) return sideItems[sideSel] ?? null;
-  if (stageOn && stageFile) {
-    const t = outcomeByFile.get(stageFile);
-    if (t) return { kind: "outcome", t };
-    // The outcome vanished (dropped, deferred, or deleted): nothing to pin.
-    stageOn = false;
-    stageFile = null;
+function closeEditor() {
+  editorState = null;
+  editorEl.classList.remove("show");
+  editorEl.innerHTML = "";
+  if (editorWasBrowsing) findInput.focus();
+  else {
+    const e = active && terms.get(active);
+    if (e) e.term.focus();
   }
-  return null;
 }
 
-/** A cheap signature of everything the card render depends on. */
-function cardKeyOf(item) {
-  const skey = (s) => (s ? [s.name, s.state] : null);
-  if (item.kind === "outcome") {
-    const t = item.t;
-    const kids = (t.breakdown ?? []).map((slug) => outcomeBySlug.get(slug)).filter(Boolean);
-    return JSON.stringify([
-      "o", browsing, t.file, t.status, t.stateText, skey(sessionFor(t.session)),
-      kids.map((c) => [c.status, skey(sessionFor(c.session))]),
-    ]);
-  }
-  if (item.kind === "main") {
-    return JSON.stringify(["n", item.g.path, item.g.purpose, skey(item.s), item.foldable && folded.has(item.g.path)]);
-  }
-  if (item.kind === "process") return JSON.stringify(["p", item.s.name, item.s.state]);
-  return JSON.stringify(["up", item.to]);
+/** POSTs a brand-new outcome; the server writes and commits the file. */
+async function createOutcome(node, fields) {
+  const res = await fetch("/api/outcome/new", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ node, ...fields }),
+  });
+  const out = await res.json();
+  if (!res.ok) throw new Error(out.error ?? "create failed " + res.status);
+  return out.file;
 }
 
-let cardKey = "";
-let cardEditing = null; // outcome file whose card is in edit mode
-function renderCard(force = false) {
-  const item = cardItem();
-  if (!item) {
-    cardKey = "";
-    cardEditing = null;
-    stageEl.classList.remove("show");
-    return;
-  }
-  // Never rebuild the card out from under an in-progress edit; save or
-  // cancel clears cardEditing and forces the rerender.
-  if (item.kind === "outcome" && item.t.file === cardEditing && stageEl.querySelector(".md-edit")) return;
-  const key = cardKeyOf(item);
-  if (!force && key === cardKey && stageEl.classList.contains("show")) return;
-  cardKey = key;
-  stageEl.innerHTML = "";
+function renderEditor() {
+  const st = editorState;
+  if (!st) return;
+  const t = st.mode === "edit" ? outcomeByFile.get(st.file) : null;
+  if (st.mode === "edit" && !t) return closeEditor(); // the outcome vanished
+  editorEl.innerHTML = "";
   const box = document.createElement("div");
   box.className = "stage-box";
   /** Appends one element with a class and text; returns it. */
@@ -802,17 +868,7 @@ function renderCard(force = false) {
     box.appendChild(x);
     return x;
   };
-  /** One labeled text block. */
-  const block = (label, text) => {
-    if (!text) return;
-    el("span", "md-label", label);
-    el("div", "md-text", text);
-  };
-  /**
-   * One action button with its printed key. mousedown preventDefault keeps
-   * the find input focused, so clicking a card button never exits browsing
-   * by accident.
-   */
+  /** One action button with its printed key. */
   const btn = (parent, label, keyHint, fn, cls) => {
     const b = document.createElement("button");
     b.className = "md-btn" + (cls ? " " + cls : "");
@@ -827,133 +883,77 @@ function renderCard(force = false) {
     b.onclick = fn;
     parent.appendChild(b);
   };
-  /** A session-state line. */
-  const sessLine = (s) => {
-    const info = { sessionLive: Boolean(s), sessionState: s?.state ?? null, sessionCreated: s?.created ?? null };
-    const line = el("div", "md-sess");
-    line.append(sessionGlyph(info), document.createTextNode(sessionLabel(info) ?? "no agent yet"));
+  el("div", "md-node", (st.mode === "create" ? "new outcome · " : "") + (t ? t.node : st.node));
+  const title = document.createElement("input");
+  title.className = "md-edit md-edit-title";
+  title.value = t ? t.title : "";
+  title.placeholder = "what are we achieving?";
+  box.appendChild(title);
+  /** One labeled textarea field. */
+  const field = (label, value, rows, placeholder) => {
+    el("span", "md-label", label);
+    const ta = document.createElement("textarea");
+    ta.className = "md-edit";
+    ta.value = value ?? "";
+    ta.rows = rows;
+    if (placeholder) ta.placeholder = placeholder;
+    box.appendChild(ta);
+    return ta;
   };
-  if (item.kind === "up") {
-    el("div", "md-title", "back up");
-    el("div", "md-text", "Widen the view " + (item.to ? "to " + item.to : "to the whole tree") + ".");
-    const a = el("div", "md-actions");
-    btn(a, "go up", "⌫", () => setScope(item.to), "primary");
-  } else if (item.kind === "outcome" && item.t.file === cardEditing) {
-    // Edit mode: the outcome's own text as visible fields. Save writes the
-    // file through the shell with a provenance commit; esc cancels.
-    const t = item.t;
-    el("div", "md-node", t.node);
-    const title = document.createElement("input");
-    title.className = "md-edit md-edit-title";
-    title.value = t.title;
-    box.appendChild(title);
-    /** One labeled textarea field. */
-    const field = (label, value, rows) => {
-      el("span", "md-label", label);
-      const ta = document.createElement("textarea");
-      ta.className = "md-edit";
-      ta.value = value ?? "";
-      ta.rows = rows;
-      box.appendChild(ta);
-      return ta;
-    };
-    const outcome = field("done looks like", t.outcome, 2);
-    const state = field("where it stands", t.stateText, 8);
-    const close = () => {
-      cardEditing = null;
-      renderCard(true);
-    };
-    const save = () => {
+  const outcome = field("done looks like", t?.outcome, 2, "one line: the statable done condition");
+  const state = field("where it stands", t?.stateText, st.mode === "create" ? 3 : 8);
+  let saving = false;
+  const save = async () => {
+    if (saving) return;
+    saving = true;
+    try {
       const fields = { title: title.value.trim(), outcome: outcome.value.trim(), state: state.value.trim() };
-      editOutcome(t, fields, "saved: " + (fields.title || t.title)).finally(close);
-    };
-    for (const f of [title, outcome, state]) {
-      f.onkeydown = (e) => {
-        e.stopPropagation();
-        if (e.key === "Escape") close();
-        else if (e.key === "Enter" && (e.metaKey || f === title)) {
-          e.preventDefault();
-          save();
+      if (st.mode === "create") {
+        const file = await createOutcome(st.node, fields);
+        freshOutcomes.add(file); // stays visible under the active filter until it truly is
+        hud("done", "outcome: " + fields.title);
+        closeEditor();
+        await refreshVault();
+        // Land the browse selection on what was just created.
+        if (browsing) {
+          const idx = sideItems.findIndex((it) => it.kind === "outcome" && it.t.file === file);
+          if (idx >= 0) setSideSel(idx);
         }
-      };
+      } else {
+        await editOutcome(t, fields, "saved: " + (fields.title || t.title));
+        closeEditor();
+      }
+    } catch (err) {
+      hud("error", String(err.message ?? err));
+    } finally {
+      saving = false;
     }
-    const a = el("div", "md-actions");
-    btn(a, "save", "⌘⏎", save, "primary");
-    btn(a, "cancel", "esc", close);
-    requestAnimationFrame(() => title.focus());
-  } else if (item.kind === "outcome") {
-    const t = item.t;
-    el("div", "md-node", t.node);
-    el("div", "md-title", t.title);
-    block("done looks like", t.outcome);
-    block("where it stands", t.stateText);
-    const kids = (t.breakdown ?? []).map((slug) => outcomeBySlug.get(slug)).filter(Boolean);
-    if (kids.length) {
-      el("span", "md-label", "breakdown");
-      for (const c of kids) box.appendChild(childRowEl(c));
-    }
-    const s = sessionFor(t.session);
-    sessLine(s);
-    const a = el("div", "md-actions");
-    if (s) {
-      btn(a, "open agent", browsing ? "⏎" : "", () => show(s.name), "primary");
-      btn(a, "kill ✕", chordFor("kill-session"), () => killSession(s.name), "danger");
-    } else if (!["done", "dropped"].includes(t.status)) {
-      btn(a, "▸ start agent", "", () => startAgent(t.file), "primary");
-    }
-    // Editing is the user's own word: the shell writes it directly, with a
-    // provenance commit. Status must never wait on an agent.
-    if (t.status === "done") {
-      btn(a, "↺ reopen", "", () => editOutcome(t, { status: "open" }, "reopened: " + t.title));
-    } else if (t.status !== "dropped") {
-      btn(a, "✓ mark done", "", () => editOutcome(t, { status: "done" }, "done: " + t.title));
-    }
-    if (t.status !== "dropped") {
-      btn(a, "✎ edit", "", () => {
-        openOutcomeView(t.file);
-        cardEditing = t.file;
-        renderCard(true);
-      });
-    }
-    if (!a.children.length) a.remove();
-  } else if (item.kind === "main") {
-    el("div", "md-node", item.g.path || "root");
-    el("div", "md-title", item.g.name || "root");
-    el(
-      "div",
-      "md-text",
-      (item.g.purpose ? item.g.purpose + "\n\n" : "") +
-        (item.g.path
-          ? "The node's main agent. Node-level commands — run a routine, reorganize the tree, open sessions — route here. Speak or type (⌥ / ⌘K) starting with the node's name to instruct it from here: \"" + item.g.name + ", turn this into outcome breakdowns: …\""
-          : "Root main. Anything not addressed to a specific node lands here — creating nodes, capturing outcomes, organizing the whole tree.")
-    );
-    sessLine(item.s);
-    const a = el("div", "md-actions");
-    if (item.g.path) btn(a, "view subtree", "⏎", () => setScope(item.g.path), "primary");
-    btn(
-      a,
-      item.s ? "open main" : "start main",
-      item.g.path ? "" : "⏎",
-      () => (item.g.path ? openNodeMain(item.g.path) : show(CHAT)),
-      item.g.path ? "" : "primary"
-    );
-    if (item.foldable) {
-      const isFolded = folded.has(item.g.path);
-      btn(a, isFolded ? "unfold" : "fold", isFolded ? "→" : "←", () => toggleFold(item.g.path));
-    }
-    if (item.s && !item.s.isChat && item.s.name !== CHAT) {
-      btn(a, "kill ✕", chordFor("kill-session"), () => killSession(item.s.name), "danger");
-    }
-  } else {
-    el("div", "md-node", item.s.node ?? "");
-    el("div", "md-title", item.s.name);
-    el("div", "md-text", STATE_HINT[item.s.state] ?? "");
-    const a = el("div", "md-actions");
-    btn(a, "view", "⏎", () => show(item.s.name), "primary");
-    btn(a, "kill ✕", chordFor("kill-session"), () => killSession(item.s.name), "danger");
+  };
+  for (const f of [title, outcome, state]) {
+    f.onkeydown = (e) => {
+      e.stopPropagation();
+      if (e.key === "Escape") closeEditor();
+      else if (e.key === "Enter" && (e.metaKey || f === title)) {
+        e.preventDefault();
+        save();
+      }
+    };
   }
-  stageEl.appendChild(box);
-  stageEl.classList.add("show");
+  const a = el("div", "md-actions");
+  btn(a, "save", "⌘⏎", save, "primary");
+  btn(a, "cancel", "esc", closeEditor);
+  if (t) {
+    // Status is the user's own word and never waits on an agent.
+    if (t.status === "done") {
+      btn(a, "↺ reopen", "", () => editOutcome(t, { status: "open" }, "reopened: " + t.title).then(closeEditor));
+    } else if (t.status !== "dropped") {
+      btn(a, "✓ mark done", "", () => editOutcome(t, { status: "done" }, "done: " + t.title).then(closeEditor));
+    }
+  }
+  editorEl.appendChild(box);
+  editorEl.classList.add("show");
+  previewHintEl.classList.remove("show");
+  requestAnimationFrame(() => title.focus());
 }
 
 // ---- keyboard shortcuts ----
@@ -987,37 +987,37 @@ async function killSession(name) {
 }
 
 /**
- * Kill what is in front of you (⌘D). While browsing, the selected row's card
- * fills the work pane, so the chord kills that row's session; otherwise it
- * kills the session filling the terminal area. Root main is the shell's
- * home and is never killed — the chord says so rather than failing silently.
+ * Kill what is in front of you (⌘D). While browsing, the selected row's
+ * session fills the work pane, so the chord kills that row's session;
+ * otherwise it kills the session filling the terminal area. The orchestrator
+ * is the shell's home and is never killed — the chord says so rather than
+ * failing silently.
  */
 function killVisibleSession() {
   if (browsing) {
     const name = sideItems[sideSel] ? itemSession(sideItems[sideSel]) : null;
     if (!name) return hud("error", "that row has no session to kill");
-    if (name === CHAT) return hud("error", "root main can't be killed — it is the shell's home");
+    if (name === CHAT) return hud("error", "the orchestrator can't be killed — it is the shell's home");
     return killSession(name);
   }
-  if (stageOn) return hud("error", "no session on screen — this outcome has no agent yet");
-  if (!active || active === CHAT) return hud("error", "root main can't be killed — it is the shell's home");
+  if (!active || active === CHAT) return hud("error", "the orchestrator can't be killed — it is the shell's home");
   killSession(active);
 }
 
 // The chord's printed home: whenever a killable session fills the view, the
-// header carries the same action as a button wearing ⌘D. Root main and the
-// outcome stage have nothing to kill, so the button is not there.
+// header carries the same action as a button wearing ⌘D. The orchestrator
+// has nothing to kill, so the button is not there.
 const killBtn = document.getElementById("kill-btn");
 killBtn.onclick = () => killVisibleSession();
 
 function renderKillBtn() {
-  killBtn.hidden = browsing || stageOn || !active || active === CHAT;
+  killBtn.hidden = browsing || !active || active === CHAT;
 }
 
 // The chord vocabulary stays tiny and every chord is printed on the control it
-// drives: ⌘D on the header's kill button and in the tree legend, and on every
-// kill button in the tree's detail pane. Switching agents stays a visible
-// button with no chord.
+// drives: ⌘D on the header's kill button and in the tree legend, ⌘. on the
+// tree's active filter, and on every kill button in the tree's detail pane.
+// Switching agents stays a visible button with no chord.
 // defaultKeys is the built-in factory chord: /keymap.js may override it, but
 // a missing or stale-cached /keymap.js can never silently unbind an action.
 // `was` names an action's previous name, so a binding stored under the old
@@ -1026,6 +1026,9 @@ const ACTION_META = [
   { action: "close-session", label: "close session view (detach)", when: "session", defaultKeys: "cmd+w" },
   { action: "kill-session", label: "kill the session in front of you", when: "any", defaultKeys: "cmd+d" },
   { action: "find", label: "find in the tree", when: "any", defaultKeys: "cmd+/", was: "map" },
+  { action: "focus-tree", label: "focus the tree, on the work in flight", when: "any", defaultKeys: "cmd+arrowleft" },
+  { action: "focus-work", label: "focus the work pane", when: "any", defaultKeys: "cmd+arrowright" },
+  { action: "active-only", label: "show only active work", when: "any", defaultKeys: "cmd+." },
   { action: "talk", label: "typed command (voice grammar)", when: "any", defaultKeys: "cmd+k" },
 ];
 
@@ -1033,6 +1036,9 @@ const ACTIONS = {
   "close-session": closeSessionView,
   "kill-session": () => killVisibleSession(),
   "find": () => toggleFind(),
+  "focus-tree": () => focusTree(),
+  "focus-work": () => exitBrowse(),
+  "active-only": () => setLiveOnly(!liveOnly),
   "talk": () => openCmdBar(),
 };
 
@@ -1069,7 +1075,10 @@ function saveKeymap() {
 function prettyChord(keys) {
   if (!keys) return "";
   const c = parseChord(keys);
-  const glyph = { "/": "/", escape: "esc", enter: "⏎", backspace: "⌫" }[c.key] ?? c.key.toUpperCase();
+  const glyph = {
+    "/": "/", escape: "esc", enter: "⏎", backspace: "⌫",
+    arrowleft: "←", arrowright: "→", arrowup: "↑", arrowdown: "↓",
+  }[c.key] ?? c.key.toUpperCase();
   return (c.ctrl ? "⌃" : "") + (c.alt ? "⌥" : "") + (c.shift ? "⇧" : "") + (c.meta ? "⌘" : "") + glyph;
 }
 
@@ -1088,13 +1097,20 @@ function paintChordHints() {
     const el = document.getElementById(id);
     if (el) el.textContent = text;
   };
-  set("find-chord", chordFor("find"));
+  // The find input is where both tree chords land you: ⌘← from the work
+  // pane, ⌘/ from anywhere.
+  set("find-chord", [chordFor("focus-tree"), chordFor("find")].filter(Boolean).join(" "));
+  set("side-live", ("◉ active " + chordFor("active-only")).trim());
   set("talk-btn", ("talk " + chordFor("talk")).trim());
   set("kill-btn", ("✕ kill " + chordFor("kill-session")).trim());
   const legend = document.querySelector("#legend-kill b");
   if (legend) legend.textContent = chordFor("kill-session") || "the ✕";
+  const work = document.getElementById("legend-work");
+  if (work) {
+    work.hidden = !chordFor("focus-work");
+    work.querySelector("b").textContent = chordFor("focus-work");
+  }
   renderSidebar(true);
-  renderCard(true);
 }
 
 function shellContext() {
@@ -1348,7 +1364,7 @@ async function switchAgent(cmd) {
     if (!terms.has(CHAT)) show(CHAT); // retry after the fast-death guard tripped
     return;
   }
-  if (!confirm(`Restart root main as "${cmd}"? The running root agent is killed.`)) return;
+  if (!confirm(`Restart the orchestrator as "${cmd}"? The running orchestrator is killed.`)) return;
   const res = await fetch("/api/agent", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -1493,6 +1509,7 @@ function cancelVoice() {
 function applyRouteResult(out) {
   for (const a of out.clientActions ?? []) {
     if (a.type === "view" && a.session) show(a.session);
+    else if (a.type === "scope") setScope(a.node ?? "");
     else if (a.type === "close_view") closeSessionView();
     else if (a.type === "sidebar") treeBtn.onclick();
   }
@@ -1624,7 +1641,7 @@ cmdInput.onblur = () => closeCmdBar();
 function closeCmdBar() {
   cmdBar.hidden = true;
   const e = active && terms.get(active);
-  if (e && !stageOn) e.term.focus();
+  if (e && !editorState) e.term.focus();
 }
 
 async function sendCommand(text) {
@@ -1645,7 +1662,7 @@ async function sendCommand(text) {
 
 // ---- the tree ----
 // Nodes are what we talk about, outcomes are what we achieve, processes are
-// what runs without a done condition (each node's "main" agent, builds).
+// what runs without a done condition (the orchestrator, services, builds).
 // Sessions are never listed on their own: a session is the live state of the
 // outcome or process it executes, worn as a dot on that row. Outcome state
 // comes from the vault (/api/vault, each outcome exactly once under its
@@ -1675,6 +1692,16 @@ async function fetchVault(force = false) {
         outcomeByFile.set(t.file, t);
         if (!outcomeBySlug.has(t.slug)) outcomeBySlug.set(t.slug, t);
       }
+    }
+    // The active filter must not swallow arriving work: an outcome that
+    // appears while the filter is on (spoken to the orchestrator, typed in
+    // the tree) stays visible as "new" until it genuinely becomes active.
+    if (knownOutcomeFiles && liveOnly) {
+      for (const f of outcomeByFile.keys()) if (!knownOutcomeFiles.has(f)) freshOutcomes.add(f);
+    }
+    knownOutcomeFiles = new Set(outcomeByFile.keys());
+    for (const f of [...freshOutcomes]) {
+      if (outcomeByFile.get(f)?.status !== "open") freshOutcomes.delete(f);
     }
     // A scope whose node vanished falls back to the whole tree.
     if (treeScope && !vaultNodes.some((n) => n.path === treeScope)) setScope("");
@@ -1752,6 +1779,7 @@ function setLiveOnly(on) {
   liveOnly = on;
   localStorage.setItem(LIVE_STORE, on ? "1" : "0");
   liveBtn.classList.toggle("on", on);
+  freshOutcomes.clear(); // the toggle re-asserts "active only"
   renderSidebar(true);
 }
 liveBtn.classList.toggle("on", liveOnly);
@@ -1762,9 +1790,9 @@ document.getElementById("talk-btn").onclick = () => openCmdBar();
 // ---- find and browse ----
 // The find input's focus IS browse mode. Entering: ⌘/ or clicking the input.
 // While browsing, the tree carries a selection (arrows and hover), the work
-// pane previews the selected row's card, and the legend prints every key.
-// Leaving: esc, ⌘/ again, or anything that moves focus (opening a session,
-// clicking the terminal).
+// pane previews the selected row's live session, and the legend prints every
+// key. Leaving: esc, ⌘/ again, or anything that moves focus (opening a
+// session, clicking the terminal).
 
 /** ⌘/: into browsing, or back out of it. Opens the rail if it is closed. */
 function toggleFind() {
@@ -1776,7 +1804,42 @@ function toggleFind() {
 function exitBrowse() {
   findInput.blur();
   const e = active && terms.get(active);
-  if (e && !stageOn) e.term.focus();
+  if (e) e.term.focus();
+}
+
+/**
+ * ⌘←: put the keyboard in the tree, on the work in flight. The pair ⌘←/⌘→
+ * moves focus between the two panes without deciding anything: ⌘→ (exitBrowse)
+ * hands focus back to the session or card the tree sits next to.
+ */
+function focusTree() {
+  if (!sidebarEl.classList.contains("open")) treeBtn.onclick();
+  // Entering browsing lands the selection in findInput.onfocus. Already
+  // browsing, the chord still means "take me to the work": re-land it.
+  if (!browsing) {
+    findInput.focus(); // onfocus lands the selection, without scrolling
+    return paintSideSel(true); // the chord asked for it: bring the row on screen
+  }
+  setSideSel(landingIndex());
+}
+
+/**
+ * The row browsing should start on: the outcome being worked on right now.
+ * "Worked on" is the tree's own rule for active work (buildTreeItems' live
+ * filter) — an outcome with a live agent, or one marked active — with the
+ * outcome already on screen first, so the selection never yanks away from
+ * what the eyes are on. With no outcome in flight it falls back to whatever
+ * the work pane shows (the orchestrator, a session), then the first row.
+ */
+function landingIndex() {
+  const onScreen = (it) => Boolean(active) && itemSession(it) === active;
+  const tests = [onScreen, (it) => Boolean(sessionFor(it.t.session)), (it) => it.t.status === "active"];
+  for (const test of tests) {
+    const idx = sideItems.findIndex((it) => it.kind === "outcome" && test(it));
+    if (idx >= 0) return idx;
+  }
+  const pane = sideItems.findIndex((it) => Boolean(active) && itemSession(it) === active);
+  return pane >= 0 ? pane : 0;
 }
 
 findInput.onfocus = () => {
@@ -1784,12 +1847,9 @@ findInput.onfocus = () => {
   browsing = true;
   sidebarEl.classList.add("browsing");
   renderSidebar(true);
-  // Land the selection on what the work pane already shows. No scroll: a
-  // click that entered browsing must not yank the pane elsewhere.
-  const idx = sideItems.findIndex((it) =>
-    stageOn ? it.kind === "outcome" && it.t.file === stageFile : Boolean(active) && itemSession(it) === active
-  );
-  sideSel = idx >= 0 ? idx : 0;
+  // Land the selection on the work in flight. No scroll: a click that
+  // entered browsing must not yank the pane elsewhere.
+  sideSel = landingIndex();
   paintSideSel(false);
   renderOutcomeStrip();
   renderKillBtn();
@@ -1809,8 +1869,8 @@ findInput.onblur = () => {
   browsing = false;
   sidebarEl.classList.remove("browsing");
   findInput.value = "";
+  clearPreview();
   renderSidebar(true);
-  renderCard(true);
   renderOutcomeStrip();
   renderKillBtn();
 };
@@ -1824,24 +1884,33 @@ findInput.onkeydown = (e) => {
     return;
   }
   if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-    // Fold or unfold the selected node. Only while the input is empty, so
-    // the arrows keep their cursor meaning while filtering.
+    // The file-tree idiom, only while the input is empty so the arrows keep
+    // their cursor meaning while filtering. → unfolds, then steps into the
+    // first child. ← folds, then jumps to the parent row, and finally
+    // scopes out of the subtree once there is nothing above.
+    if (findInput.value) return;
     const item = sideItems[sideSel];
-    if (!findInput.value && item?.kind === "main" && item.foldable) {
-      e.preventDefault();
-      if (folded.has(item.g.path) !== (e.key === "ArrowLeft")) toggleFold(item.g.path);
-    }
-    return;
-  }
-  if (e.key === "Backspace" && !findInput.value && treeScope) {
-    // Up a level, out of the scoped subtree.
+    if (!item) return;
     e.preventDefault();
-    setScope(treeScope.split("/").slice(0, -1).join("/"));
+    if (e.key === "ArrowRight") {
+      if (item.kind !== "main" || !item.foldable) return;
+      if (folded.has(item.g.path)) toggleFold(item.g.path);
+      else moveSideSel(1);
+      return;
+    }
+    if (item.kind === "main" && item.foldable && !folded.has(item.g.path)) return toggleFold(item.g.path);
+    const parent = item.kind === "up" ? null
+      : item.kind === "main" ? item.g.path.split("/").slice(0, -1).join("/")
+      : item.g.path;
+    const idx = parent === null ? -1 : sideItems.findIndex((it) => it.kind === "main" && it.g.path === parent);
+    if (idx >= 0 && idx !== sideSel) return setSideSel(idx);
+    if (treeScope) setScope(treeScope.split("/").slice(0, -1).join("/"));
     return;
   }
   if (e.key === "Enter") {
     const item = sideItems[sideSel];
-    if (item) activateTreeItem(item);
+    if (!item) return;
+    activateTreeItem(item);
   }
 };
 findInput.oninput = () => renderSidebar(true);
@@ -1865,7 +1934,7 @@ function treeSections(q) {
   const baseDepth = treeScope ? treeScope.split("/").length - 1 : 0;
   const sections = [];
   if (!treeScope) {
-    sections.push({ path: "", name: "root", purpose: "the whole tree — root main organizes it", depth: 0, outcomes: [] });
+    sections.push({ path: "", name: "root", purpose: "the whole tree", depth: 0, outcomes: [] });
   }
   for (const n of vaultNodes) {
     if (treeScope && !(n.path === treeScope || n.path.startsWith(treeScope + "/"))) continue;
@@ -1887,7 +1956,7 @@ function outcomeRowEl(t, indent) {
   row.style.paddingLeft = indent + (t.depth ?? 0) * 16 + "px";
   const s = sessionFor(t.session);
   const glyph = document.createElement("span");
-  glyph.className = "bt-glyph" + (s?.state === "working" ? " working" : s?.state === "waiting" ? " ready" : "");
+  glyph.className = "bt-glyph" + (s ? liveGlyphClass(s.state) : "");
   glyph.textContent = s ? "●" : OUTCOME_GLYPH[t.status] ?? "○";
   const title = document.createElement("span");
   title.className = "bt-title";
@@ -1901,13 +1970,17 @@ function outcomeRowEl(t, indent) {
     chip.title = "lives on " + t.node;
     row.appendChild(chip);
   }
-  const meta = t.status === "waiting" && t.waitingOn ? "waiting on " + t.waitingOn : t.due ?? "";
+  const meta =
+    t.status === "waiting" && t.waitingOn ? "waiting on " + t.waitingOn
+    : liveOnly && !s && freshOutcomes.has(t.file) ? "new"
+    : t.due ?? "";
   if (meta) {
     const m = document.createElement("span");
     m.className = "bt-meta";
     m.textContent = meta;
     row.appendChild(m);
   }
+  row.appendChild(editBtnEl(t));
   if (s) row.appendChild(killBtnEl(s.name));
   return row;
 }
@@ -1924,18 +1997,19 @@ function upRowEl(to) {
   title.textContent = "up to " + (to ? to.split("/").pop() : "the whole tree");
   const meta = document.createElement("span");
   meta.className = "bt-meta";
-  meta.textContent = "⌫";
+  meta.textContent = "←";
   row.append(glyph, title, meta);
   return row;
 }
 
 /**
- * A node's header row IS its main-agent row: fold chevron, a state dot only
- * while the main agent is live, the name, purpose text, and — when folded —
- * a dim count of the hidden rows, glowing if any hidden agent is live so
- * nothing active ever disappears from view.
+ * A node's header row: fold chevron, the name, purpose text, and, when
+ * folded, a dim count of the hidden rows, glowing if any hidden agent is
+ * live so nothing active ever disappears from view. Nodes are places, not
+ * agents: any session on a node, the orchestrator under root included, is
+ * its own row underneath.
  */
-function nodeRowEl(g, s, fold) {
+function nodeRowEl(g, fold) {
   const row = document.createElement("div");
   row.className = "cr-node";
   row.style.paddingLeft = 8 + g.depth * 16 + "px";
@@ -1951,12 +2025,6 @@ function nodeRowEl(g, s, fold) {
     };
   }
   row.appendChild(chev);
-  if (s) {
-    const glyph = document.createElement("span");
-    glyph.className = "bt-glyph" + (s.state === "working" ? " working" : s.state === "waiting" ? " ready" : "");
-    glyph.textContent = "●";
-    row.appendChild(glyph);
-  }
   const name = document.createElement("span");
   name.className = "cr-path";
   name.textContent = g.name;
@@ -1965,24 +2033,21 @@ function nodeRowEl(g, s, fold) {
   purpose.textContent = g.purpose ?? "";
   const meta = document.createElement("span");
   meta.className = "cr-meta" + (fold.folded && fold.hiddenLive ? " live" : "");
-  meta.textContent = fold.folded
-    ? fold.hiddenCount + " hidden" + (fold.hiddenLive ? " · live" : "")
-    : s ? STATE_HINT[s.state] ?? "" : "";
+  meta.textContent = fold.folded ? fold.hiddenCount + " hidden" + (fold.hiddenLive ? " · live" : "") : "";
   row.append(name, purpose, meta);
-  // Root main is the shell's home: it has no kill, here or anywhere.
-  if (s && !s.isChat && s.name !== CHAT) row.appendChild(killBtnEl(s.name));
+  if (g.path) row.appendChild(addBtnEl(g.path));
   return row;
 }
 
-/** A process session row (service, plain shell) under its node. */
+/** A session row (the orchestrator, a service, a plain shell) under its node. */
 function processRowEl(s, indent) {
   const row = document.createElement("div");
   row.className = "bt-row";
   row.style.paddingLeft = indent + "px";
   const glyph = document.createElement("span");
-  glyph.className =
-    "bt-glyph" + (["working", "service"].includes(s.state) ? " working" : s.state === "waiting" ? " ready" : "");
-  glyph.textContent = ["working", "waiting", "service"].includes(s.state) ? "●" : "○";
+  const live = s.state !== "stopped";
+  glyph.className = "bt-glyph" + (live ? liveGlyphClass(s.state) : "");
+  glyph.textContent = live ? "●" : "○";
   const title = document.createElement("span");
   title.className = "bt-title";
   title.textContent = s.name;
@@ -1990,17 +2055,19 @@ function processRowEl(s, indent) {
   meta.className = "bt-meta";
   meta.textContent = STATE_HINT[s.state] ?? "";
   row.append(glyph, title, meta);
-  row.appendChild(killBtnEl(s.name));
+  // The orchestrator is the shell's home: it has no kill, here or anywhere.
+  if (!s.isChat) row.appendChild(killBtnEl(s.name));
   return row;
 }
 
 /**
- * THE tree, as data rows. The sidebar renders exactly this list: node
- * headers wearing their main agent's dot, outcomes nested by breakdown,
- * process sessions underneath. `treeScope` narrows it to one node's subtree
- * (clicking a node row scopes; the up row leads back); `liveOnly` keeps only
- * rows with something running or active (flattened, like search: folds are
- * ignored); a typed query replaces it with ranked node matches.
+ * THE tree, as data rows. The sidebar renders exactly this list: plain node
+ * headers, outcomes nested by breakdown, sessions underneath (the
+ * orchestrator is the first session row under root). `treeScope` narrows it
+ * to one node's subtree (clicking a node row scopes; the up row leads back);
+ * `liveOnly` keeps only rows with something running or active (flattened,
+ * like search: folds are ignored); a typed query replaces it with ranked
+ * node matches.
  */
 function buildTreeItems(q) {
   const sections = treeSections(q);
@@ -2014,25 +2081,24 @@ function buildTreeItems(q) {
     if (!q && !flat && g.path && foldedAway(g.path)) continue;
     const pad = 8 + g.depth * 16;
     const rowPad = pad + 20; // children start under the header's name
-    const home = g.path
-      ? lastSessions.find((x) => x.kind === "home" && x.node === g.path)
-      : lastSessions.find((x) => x.isChat);
-    const procs = lastSessions.filter(
-      (s) => (s.node ?? "") === g.path && !s.isChat && !s.outcome && s.kind !== "home"
-    );
+    // Every session on this node that is not an outcome's: the orchestrator
+    // (node "", under root), services, plain shells.
+    const procs = lastSessions
+      .filter((s) => (s.node ?? "") === g.path && !s.outcome)
+      .sort((a, b) => (b.isChat ? 1 : 0) - (a.isChat ? 1 : 0));
     const kids = q ? [] : sections.filter((o) => o.path && o.path !== g.path && o.path.startsWith(g.path + "/"));
     const foldable = !q && !flat && Boolean(g.path) && Boolean(g.outcomes.length || procs.length || kids.length);
     const fold = { foldable, folded: foldable && folded.has(g.path), hiddenCount: 0, hiddenLive: false };
     if (fold.folded) {
       const descProcs = lastSessions.filter(
-        (s) => (s.node ?? "").startsWith(g.path + "/") && !s.isChat && !s.outcome && s.kind !== "home"
+        (s) => (s.node ?? "").startsWith(g.path + "/") && !s.outcome
       ).length;
       fold.hiddenCount =
         g.outcomes.length + procs.length + descProcs +
         kids.length + kids.reduce((n, k) => n + k.outcomes.length, 0);
       fold.hiddenLive = lastSessions.some((s) => {
         const n = s.node ?? "";
-        const under = n === g.path ? !(s.kind === "home" || s.isChat) : n.startsWith(g.path + "/");
+        const under = n === g.path || n.startsWith(g.path + "/");
         return under && ["working", "waiting", "service"].includes(s.state);
       });
     }
@@ -2043,16 +2109,15 @@ function buildTreeItems(q) {
     if (flat) {
       const live = rows.filter((it) =>
         it.kind === "outcome"
-          ? Boolean(sessionFor(it.t.session)) || it.t.status === "active"
+          ? Boolean(sessionFor(it.t.session)) || it.t.status === "active" || freshOutcomes.has(it.t.file)
           : ["working", "waiting", "service"].includes(it.s.state)
       );
-      const homeLive = home && ["working", "waiting", "service"].includes(home.state);
-      if (!live.length && !homeLive) continue;
-      items.push({ kind: "main", g, s: home ?? null, foldable: false, fold: { foldable: false, folded: false, hiddenCount: 0, hiddenLive: false } });
+      if (!live.length) continue;
+      items.push({ kind: "main", g, foldable: false, fold: { foldable: false, folded: false, hiddenCount: 0, hiddenLive: false } });
       items.push(...live);
       continue;
     }
-    items.push({ kind: "main", g, s: home ?? null, foldable, fold });
+    items.push({ kind: "main", g, foldable, fold });
     if (fold.folded) continue;
     items.push(...rows);
   }
@@ -2062,16 +2127,18 @@ function buildTreeItems(q) {
 /** The DOM row for one tree item. */
 function treeRowEl(item) {
   if (item.kind === "up") return upRowEl(item.to);
-  if (item.kind === "main") return nodeRowEl(item.g, item.s, item.fold);
+  if (item.kind === "main") return nodeRowEl(item.g, item.fold);
   if (item.kind === "outcome") return outcomeRowEl(item.t, item.pad);
   return processRowEl(item.s, item.pad);
 }
 
 /**
- * One meaning per row, and none of them spawns: a node row scopes the tree to
- * its subtree (opening its main agent is an explicit detail-pane action), an
- * outcome row shows the work (its live session, else the stage), a process
- * row shows its session, the up row goes back up.
+ * One meaning per row — the dot rule: a row wearing a live dot opens its
+ * session. A node scopes to its subtree (root's subtree is the whole tree);
+ * an outcome lands in its agent session, starting one when none is live (the
+ * one spawn a row activation performs — explicit, loud in the HUD, and ⌘D
+ * away from undone); a session row, the orchestrator included, shows its
+ * session; the up row goes back up.
  */
 function activateTreeItem(item) {
   if (item.kind === "up") {
@@ -2079,46 +2146,21 @@ function activateTreeItem(item) {
     return;
   }
   if (item.kind === "main") {
-    // Root's subtree IS the whole tree; its one meaning is root main.
-    if (!item.g.path) show(CHAT);
-    else setScope(item.g.path);
+    setScope(item.g.path);
     return;
   }
   if (item.kind === "outcome") {
     const s = sessionFor(item.t.session);
     if (s) show(s.name);
-    else {
-      // Pin the outcome's card: it survives leaving browse mode.
-      findInput.blur();
-      openOutcomeView(item.t.file);
-    }
+    else if (!["done", "dropped"].includes(item.t.status)) startAgent(item.t.file);
     return;
   }
   show(item.s.name);
 }
 
-/** Opens (spawning if needed) a node's main agent and views it. */
-async function openNodeMain(nodePath) {
-  hud("busy", "opening main…");
-  try {
-    const res = await fetch("/api/node/open", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ node: nodePath }),
-    });
-    const out = await res.json();
-    if (!res.ok) throw new Error(out.error ?? "failed " + res.status);
-    await refreshSessions();
-    show(out.session);
-    hud("done", "main · " + nodePath);
-  } catch (err) {
-    hud("error", String(err.message ?? err));
-  }
-}
-
 // ---- outcome strip ----
 // During flow you need almost nothing on screen: just what the viewed
-// session is for. Full context lives on the tree and the card.
+// session is for. Full context lives on the tree and the outcome's ✎ editor.
 
 const stripEl = document.getElementById("outcome-strip");
 const stripNodeEl = stripEl.querySelector(".ts-node");
@@ -2128,9 +2170,8 @@ let stripShown = false;
 
 function renderOutcomeStrip() {
   const s = lastSessions.find((x) => x.name === active);
-  // The strip describes only what the work pane shows: hidden while a card
-  // (browse preview or pinned outcome) covers the terminal.
-  const on = Boolean(!stageOn && !browsing && s && !s.isChat && (s.outcome || s.goal));
+  // The strip describes only the committed view, not the browse preview.
+  const on = Boolean(!browsing && s && !s.isChat && (s.outcome || s.goal));
   if (on) {
     stripNodeEl.textContent = "[" + ((s.node ?? "").split("/").pop() || "?") + "]";
     stripTitleEl.textContent = s.outcomeTitle ?? "";
@@ -2145,8 +2186,8 @@ function renderOutcomeStrip() {
 
 window.addEventListener("resize", refitActive);
 
-// Opening state: root main with the tree beside it, exactly as it will look
-// all day. Find is one ⌘/ away.
+// Opening state: the orchestrator with the tree beside it, exactly as it
+// will look all day. Find is one ⌘/ away.
 paintChordHints();
 show(CHAT);
 refreshSessions();

@@ -8,7 +8,7 @@
 // Changes save to localStorage and override these defaults per browser.
 //
 // keys:   modifiers and a key joined with "+". Modifiers: cmd, ctrl, alt, shift.
-// when:   "session" = a tmux session fills the view, "chat" = the chat view,
+// when:   "session" = a tmux session fills the view, "chat" = the orchestrator view,
 //         "any" = both.
 // action: a name from the ACTION_META table in index.html.
 //
@@ -16,12 +16,16 @@
 // fullscreen, where the Keyboard Lock API captures them. The editor marks
 // such chords "fullscreen only".
 //
-// cmd+d (kill) is "any", not "session", on purpose: an unbound chord in root
-// main would fall through to the browser (Safari's Add Bookmark) and give no
-// answer at all. The action refuses root main out loud instead.
+// cmd+d (kill) is "any", not "session", on purpose: an unbound chord in the
+// orchestrator view would fall through to the browser (Safari's Add Bookmark)
+// and give no answer at all. The action refuses the orchestrator out loud
+// instead.
 window.KEYMAP = [
   { keys: "cmd+w", when: "session", action: "close-session" },
   { keys: "cmd+d", when: "any", action: "kill-session" },
   { keys: "cmd+/", when: "any", action: "find" },
+  { keys: "cmd+arrowleft", when: "any", action: "focus-tree" },
+  { keys: "cmd+arrowright", when: "any", action: "focus-work" },
+  { keys: "cmd+.", when: "any", action: "active-only" },
   { keys: "cmd+k", when: "any", action: "talk" },
 ];

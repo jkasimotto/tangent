@@ -21,11 +21,11 @@ const PORT = Number(process.env.PORT ?? 4321);
 let agentCmd = process.env.AGENT_CMD ?? "claude";
 
 /**
- * The orchestrator command for a node's home agent. Agent identity is a
- * property of the node, not a global toggle: personal projects (otto/**)
- * run on the otto profile via the claude-otto alias, work nodes (neara,
- * pgande, ...) run the plain work-account claude. The switchable agentCmd
- * only ever applies to the chat session.
+ * The agent command for sessions spawned on a node (outcome sessions).
+ * Agent identity is a property of the node, not a global toggle: personal
+ * projects (otto/**) run on the otto profile via the claude-otto alias,
+ * work nodes (neara, pgande, ...) run the plain work-account claude. The
+ * switchable agentCmd only ever applies to the orchestrator session.
  */
 function agentCmdForNode(node) {
   const top = String(node ?? "").split("/")[0];
@@ -43,7 +43,7 @@ function withDefaultModel(cmd) {
   if (!launchesClaude || cmd.includes("--model")) return cmd;
   return `${cmd} --model default`;
 }
-const CHAT_SESSION = process.env.CHAT_SESSION ?? "chat";
+const CHAT_SESSION = process.env.CHAT_SESSION ?? "orchestrator";
 const WORKSPACE = process.env.WORKSPACE ?? path.join(here, "workspace");
 const TREES_ROOT = process.env.TREES_ROOT ?? path.join(os.homedir(), ".tangent", "trees");
 
@@ -504,6 +504,33 @@ async function editOutcomeFile(file, { status, session, title, outcome, state })
 }
 
 /**
+ * Creates a new outcome file on a node, from the tree's editor. The slug
+ * comes from the title and is suffixed until vault-unique (wikilinks resolve
+ * by file name). The vault schema makes `outcome:` mandatory — the caller
+ * validates it. Returns the vault-relative file path.
+ */
+async function createOutcomeFile(node, { title, outcome, state }) {
+  /** Collapses user-entered multiline text into a YAML-safe single line. */
+  const oneline = (s) => s.replace(/\s*\n\s*/g, " ").trim();
+  const base = normName(title).slice(0, 48).replace(/-+$/, "") || "outcome";
+  const taken = new Set([...(await outcomesByFile()).values()].map((o) => o.slug));
+  let slug = base;
+  for (let i = 2; taken.has(slug) || existsSync(path.join(TREES_ROOT, node, `outcome-${slug}.md`)); i++) {
+    slug = `${base}-${i}`;
+  }
+  const file = `${node}/outcome-${slug}.md`;
+  const text =
+    `---\ntype: outcome\nstatus: open\noutcome: ${oneline(outcome)}\nsession:\n---\n\n` +
+    `# ${oneline(title)}\n\n## State\n\n${(state ?? "").trim() || "Not started."}\n`;
+  await writeFile(path.join(TREES_ROOT, file), text);
+  // A brand-new file is invisible to vaultCommit's pathspec commit until it
+  // is tracked; adding exactly this path stages nothing else.
+  await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", file]).catch(() => {});
+  await vaultCommit([file], `add: ${node} outcome ${slug} from tree`, node, null);
+  return file;
+}
+
+/**
  * Commits exactly the given vault paths with the provenance trailers the
  * vault rules require. Pathspec commit, no staging: another agent's staged
  * edits can never ride along. Best effort — a failed commit logs and moves
@@ -570,7 +597,7 @@ async function spawnOutcomeSession(node, slug) {
     console.error("outcome binding:", err.message ?? err);
   }
   (async () => {
-    // ponytail: same fixed boot pause as home sessions; raise it if the TUI
+    // ponytail: fixed boot pause while the agent TUI starts; raise it if it
     // keeps eating the first words of the prompt.
     await sleep(2500);
     try {
@@ -698,11 +725,12 @@ async function startOutcome(file) {
 // picks the destination and names the leading address words, which the server
 // strips itself. Shell verbs (view, spawn, kill, sidebar, caffeinate, agent
 // switch, spoken answers) are a small closed set and fire only on clear
-// matches. Addressing a tree node reaches that node's "home" agent session
-// (spawned on demand, named after the node, @tangent_kind=home); the chat
-// session is the root node's home. On any router failure the fallback is
-// inert: the utterance is typed into the focused session, unsubmitted — a
-// misheard or misrouted utterance can never fire an action on its own.
+// matches. Nodes have no agents of their own: addressing a tree node
+// delivers the utterance to the orchestrator (the chat session) with the
+// node name kept in the words, so the orchestrator knows which node is
+// meant. On any router failure the fallback is inert: the utterance is
+// typed into the focused session, unsubmitted — a misheard or misrouted
+// utterance can never fire an action on its own.
 
 const GROQ_KEY =
   process.env.GROQ_API_KEY ??
@@ -718,22 +746,22 @@ const GROQ_KEY =
   })();
 const ROUTER_MODEL = process.env.VOICE_ROUTER_MODEL ?? "llama-3.3-70b-versatile";
 
-const ROUTER_SYSTEM = `You route commands for "agent shell", a terminal app whose tabs are tmux sessions running coding agents. Every project tree node can have a "home" agent session that organizes that node; the root node's home is the session named in chatSession. The user addresses agents by session name or by node name — a node name means that node's home agent, which the server spawns on demand, so you may target any node in the payload.
+const ROUTER_SYSTEM = `You route commands for "agent shell", a terminal app whose tabs are tmux sessions running coding agents. The session named in chatSession is the orchestrator: the root agent that organizes the whole project tree (creating nodes, capturing outcomes, opening sessions). The user addresses agents by session name or by node name — nodes have no agents of their own, so a node name means the orchestrator acting on that node, and you may target any node in the payload.
 
-You get a JSON payload: the utterance (speech-to-text or typed), the focused session, all sessions (state: working = agent busy, waiting = agent finished or needs input, shell = plain shell, service/stopped = background command; kind: home = a node's home agent), the visible pane tail of relevant sessions, visibleNodes (the tree nodes the user can currently see in the sidebar — their mental model; prefer them when resolving names), and allNodes.
+You get a JSON payload: the utterance (speech-to-text or typed), the focused session, all sessions (state: working = agent busy, waiting = agent finished or needs input, shell = plain shell, service/stopped = background command), the visible pane tail of relevant sessions, visibleNodes (the tree nodes the user can currently see in the sidebar — their mental model; prefer them when resolving names), and allNodes.
 
 THE RULE ABOVE ALL OTHERS: you never write, rewrite, trim, or fix the user's words. Words meant for an agent travel verbatim through "say"; you only pick the destination and identify which leading words were the address. The server strips the address itself.
 
 Reply with JSON only: {"actions":[...]}, at most 5 actions, executed in order. Action types:
-- {"type":"say","target":"<session or node name as spoken, or \\"\\" for the focused session>","address":"<the exact leading words of the utterance that name the target, \\"\\" if none>"} — deliver the utterance (minus the address) to an agent. THE DEFAULT: anything that is not clearly a shell verb below is a say. An utterance opening with a session or node name and then instructing it ("megabranch, run the client build" / "PG&E run the daily speedrun") is addressed; everything else has target "" (the focused session). Target must be "" unless the utterance's own words name the target. NEVER infer a target from topic or content: a complaint or question about sessions, the shell, killing, or an agent goes to the focused session like anything else unless a name was actually said. The server enforces this — a say without address words always lands in the focused session.
+- {"type":"say","target":"<session or node name as spoken, or \\"\\" for the focused session>","address":"<the exact leading words of the utterance that name the target, \\"\\" if none>"} — deliver the utterance (minus the address) to an agent. THE DEFAULT: anything that is not clearly a shell verb below is a say. An utterance opening with a session or node name and then instructing it ("megabranch, run the client build" / "PG&E run the daily speedrun") is addressed; everything else has target "" (the focused session). A node target is delivered to the orchestrator with the utterance intact, node name included. Target must be "" unless the utterance's own words name the target. NEVER infer a target from topic or content: a complaint or question about sessions, the shell, killing, or an agent goes to the focused session like anything else unless a name was actually said. The server enforces this — a say without address words always lands in the focused session.
 - {"type":"keys","session":"<name>","keys":["Enter"]} — press special keys. Allowed: Enter, Escape, Tab, Up, Down, Left, Right, BSpace, Space, C-c, and single letters or digits like "y" or "2". Use for answering menus and permission prompts visible in the pane tail (send the matching option key) and for "stop" or "interrupt" (Escape, or C-c in a shell).
-- {"type":"view","target":"<session or node name>"} — show that session in the app (a node name shows its home agent). For "show me X", "open X", "go to X", "switch to X".
-- {"type":"close_view"} — leave the current session view, back to chat.
+- {"type":"view","target":"<session or node name>"} — show that session in the app (a node name scopes the sidebar tree to that node instead). For "show me X", "open X", "go to X", "switch to X".
+- {"type":"close_view"} — leave the current session view, back to the orchestrator.
 - {"type":"sidebar"} — toggle the project tree sidebar.
-- {"type":"spawn","node":"<tree node path>","name":"<lowercase-hyphen-name>"} — create a plain work session on a project node. Only for a bare "new/open a session on X (called Y)" with nothing else attached. If the user states a goal, task, or any context in the same utterance, do NOT spawn: say the whole thing to that node's home agent instead, which does the richer setup.
+- {"type":"spawn","node":"<tree node path>","name":"<lowercase-hyphen-name>"} — create a plain work session on a project node. Only for a bare "new/open a session on X (called Y)" with nothing else attached. If the user states a goal, task, or any context in the same utterance, do NOT spawn: say the whole thing to the node instead (it reaches the orchestrator, which does the richer setup).
 - {"type":"kill","session":"<name>"} — destroy a session and everything in it. Only on an explicit kill or destroy request.
 - {"type":"caffeinate","on":true} — keep the mac awake (or release it).
-- {"type":"agent","cmd":"<command>"} — switch the chat session's agent command (for example "claude-otto" or "pi"). Only on an explicit request; it restarts chat. Node home sessions are unaffected: they always run their node's own agent.
+- {"type":"agent","cmd":"<command>"} — switch the orchestrator's agent command (for example "claude-otto" or "pi"). Only on an explicit request; it restarts the orchestrator. Outcome sessions are unaffected: they always run their node's own agent.
 - {"type":"speak","text":"one short sentence"} — answer out loud. Use for status questions ("who's waiting on me?" — summarize the waiting and working sessions from the payload) and to say why you did nothing.
 
 Rules:
@@ -848,13 +876,13 @@ function resolveSession(name, sessions) {
 /**
  * Resolves a spoken target onto a session or a tree node: sessions first,
  * then node base names (visible nodes before the whole vault), then full
- * node paths. "root" and "chat" are the root node's home, the chat session.
- * Returns {session} or {node} or null.
+ * node paths. "root", "orchestrator", and "chat" all mean the orchestrator
+ * session. Returns {session} or {node} or null.
  */
 function resolveTarget(spoken, ctx) {
   const n = normName(spoken ?? "");
   if (!n) return null;
-  if (n === "root" || n === "chat") return { session: CHAT_SESSION };
+  if (n === "root" || n === "orchestrator" || n === "chat") return { session: CHAT_SESSION };
   const sess = resolveSession(spoken, ctx.sessions);
   if (sess) return { session: sess };
   /** First path whose base name (else full path) matches the spoken name. */
@@ -862,26 +890,6 @@ function resolveTarget(spoken, ctx) {
     paths.find((p) => normName(p.split("/").pop()) === n) ?? paths.find((p) => normName(p) === n);
   const node = byName(ctx.visibleNodes) ?? byName(ctx.projectNodes);
   return node ? { node } : null;
-}
-
-/**
- * Finds or spawns a node's home agent session: named after the node, running
- * the node's own orchestrator command (agentCmdForNode) in the node's repo
- * (or its vault directory), marked @tangent_kind=home. Talking to a node
- * means talking to this session.
- */
-async function ensureHomeSession(node, sessions) {
-  // ponytail: home name = node basename; two nodes sharing a basename collide
-  // on the first one's session — qualify with the parent if that ever bites.
-  const name = normName(node.split("/").pop());
-  if (sessions.some((s) => s.name === name)) return { name, fresh: false };
-  const dir = (await nodeDirectory(node)) ?? path.join(TREES_ROOT, node);
-  const shell = process.env.SHELL ?? "/bin/zsh";
-  const cmd = withDefaultModel(agentCmdForNode(node));
-  await execFileAsync("tmux", ["new-session", "-d", "-s", name, "-c", dir, `exec ${shell} -ic '${cmd.replace(/'/g, "'\\''")}'`]);
-  await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_node", node]);
-  await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_kind", "home"]);
-  return { name, fresh: true };
 }
 
 /**
@@ -914,7 +922,7 @@ async function typeInto(session, text, submit) {
 
 /**
  * Executes the router's plan. Server-owned actions run here in order; actions
- * only the page can perform (view, close_view, sidebar) are returned to it.
+ * only the page can perform (view, scope, close_view, sidebar) are returned to it.
  * Every action degrades to a summary line, never an exception: one failed
  * step must not hide what the rest of the plan did.
  */
@@ -930,33 +938,23 @@ async function executeVoiceActions(actions, ctx, focused, utterance) {
           // only when the user actually spoke address words. No address means
           // the focused session, whatever the router claims the target is.
           const address = String(a.address ?? "").trim();
-          const text = stripAddress(utterance, address).slice(0, 4000);
-          let resolved = address && a.target ? resolveTarget(a.target, ctx) : { session: focused };
+          const resolved = address && a.target ? resolveTarget(a.target, ctx) : { session: focused };
           if (!resolved) {
             await typeInto(focused, utterance, false);
             summary.push(`no "${a.target}" — typed here, not sent`);
             break;
           }
-          let target = resolved.session;
-          if (resolved.node) {
-            const home = await ensureHomeSession(resolved.node, sessions);
-            target = home.name;
-            if (home.fresh) {
-              clientActions.push({ type: "view", session: target });
-              // ponytail: fixed boot pause before typing into a fresh agent;
-              // raise it if the TUI keeps eating the first words.
-              await sleep(2500);
-              await typeInto(target, text, false);
-              summary.push(`started ${target} home — typed, not sent`);
-              break;
-            }
-          }
+          // A node has no agent of its own: node-addressed words go to the
+          // orchestrator with the address kept, so it knows which node is
+          // meant. Session-addressed words are stripped of the address.
+          const target = resolved.node ? CHAT_SESSION : resolved.session;
+          const text = (resolved.node ? utterance : stripAddress(utterance, address)).slice(0, 4000);
           // Never auto-run prose at a bare shell prompt; agents get Enter.
           const submit = sessions.find((s) => s.name === target)?.state !== "shell";
           await typeInto(target, text, submit);
           // The HUD line says WHY it went there: which spoken words redirected
           // it, or that it followed the viewed session.
-          const why = address ? ` (you said “${address}”)` : "";
+          const why = resolved.node ? ` (for ${resolved.node})` : address ? ` (you said “${address}”)` : "";
           summary.push((submit ? `→ ${target}` : `typed into ${target}, not sent`) + why);
           break;
         }
@@ -977,14 +975,15 @@ async function executeVoiceActions(actions, ctx, focused, utterance) {
             summary.push(`no session or node "${spoken}"`);
             break;
           }
-          let target = resolved.session;
           if (resolved.node) {
-            const home = await ensureHomeSession(resolved.node, sessions);
-            target = home.name;
-            if (home.fresh) summary.push(`started ${target} home`);
+            // A node is a place in the tree, not a session: viewing it
+            // scopes the sidebar to that subtree.
+            clientActions.push({ type: "scope", node: resolved.node });
+            summary.push(`scoped the tree to ${resolved.node}`);
+            break;
           }
-          clientActions.push({ type: "view", session: target });
-          summary.push(`viewing ${target}`);
+          clientActions.push({ type: "view", session: resolved.session });
+          summary.push(`viewing ${resolved.session}`);
           break;
         }
         case "close_view":
@@ -1108,8 +1107,9 @@ const server = http.createServer(async (req, res) => {
       );
       return;
     }
-    // The frontend must target the same chat session the server special-cases,
-    // so the name ships as a tiny script instead of being hardcoded twice.
+    // The frontend must target the same orchestrator session the server
+    // special-cases, so the name ships as a tiny script instead of being
+    // hardcoded twice.
     if (url.pathname === "/config.js") {
       res.writeHead(200, { "content-type": "text/javascript", "cache-control": "no-cache" });
       res.end(`window.CHAT_SESSION = ${JSON.stringify(CHAT_SESSION)};\n`);
@@ -1140,7 +1140,35 @@ const server = http.createServer(async (req, res) => {
       }
       return;
     }
-    // The card's edit lane: a status flip (mark done / reopen) or the
+    // The tree's create lane: a new outcome typed straight onto a node,
+    // written on the user's word with a provenance commit, same as edits.
+    if (url.pathname === "/api/outcome/new" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      const node = String(body.node ?? "");
+      const title = String(body.title ?? "").trim();
+      const outcome = String(body.outcome ?? "").trim();
+      if (!node || !flattenNodePaths(await readTree(TREES_ROOT)).includes(node)) {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: `no node "${node}"` }));
+        return;
+      }
+      if (!title || !outcome) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: !title ? "a title is required" : "say what done looks like — an outcome without a done condition is not an outcome" }));
+        return;
+      }
+      try {
+        const file = await createOutcomeFile(node, { title, outcome, state: typeof body.state === "string" ? body.state : "" });
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ file }));
+      } catch (err) {
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
+      }
+      return;
+    }
+    // The tree's edit lane: a status flip (mark done / reopen) or the
     // outcome's own text, written on the user's click with a provenance
     // commit. Direct edits are the user's word; no agent is in the loop.
     if (url.pathname === "/api/outcome/edit" && req.method === "POST") {
@@ -1187,27 +1215,6 @@ const server = http.createServer(async (req, res) => {
       }
       return;
     }
-    // Enter on a node's main row in the map: open (spawning if needed) its home agent.
-    if (url.pathname === "/api/node/open" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const node = String(body.node ?? "");
-      const all = flattenNodePaths(await readTree(TREES_ROOT));
-      if (!all.includes(node)) {
-        res.writeHead(404, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: `no node "${node}"` }));
-        return;
-      }
-      try {
-        const home = node === "" ? { name: CHAT_SESSION } : await ensureHomeSession(node, await listSessions());
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ session: home.name }));
-      } catch (err) {
-        res.writeHead(500, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
-      }
-      return;
-    }
     if (url.pathname === "/api/spawn" && req.method === "POST") {
       let body = {};
       try { body = JSON.parse(await readBody(req)); } catch {}
@@ -1229,11 +1236,11 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ ok: true, caffeinate: caffeinateProc !== null }));
       return;
     }
-    // Switches the orchestrator agent for the chat session only; node home
-    // sessions always use their node-owned command (agentCmdForNode). The
-    // command is whatever the user typed (claude, claude-otto, agy, pi, flags allowed);
+    // Switches the orchestrator's agent command only; outcome sessions
+    // always use their node-owned command (agentCmdForNode). The command is
+    // whatever the user typed (claude, claude-otto, agy, pi, flags allowed);
     // tmux runs a single trailing string through the shell. Kills the running
-    // chat session so the frontend's reconnect respawns it with the new command.
+    // orchestrator so the frontend's reconnect respawns it with the new command.
     if (url.pathname === "/api/agent" && req.method === "POST") {
       let body = {};
       try { body = JSON.parse(await readBody(req)); } catch {}
@@ -1405,7 +1412,7 @@ wss.on("connection", (ws, req) => {
 
 server.listen(PORT, () => {
   console.log(`agent-shell: http://localhost:${PORT}`);
-  console.log(`  chat session "${CHAT_SESSION}" runs: ${agentCmd}`);
+  console.log(`  orchestrator session "${CHAT_SESSION}" runs: ${agentCmd}`);
   console.log(`  workspace: ${WORKSPACE}`);
   if (!process.env.AGENT_SHELL_NO_OPEN) openStandaloneWindow();
 });

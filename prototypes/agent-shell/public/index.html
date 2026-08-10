@@ -1965,9 +1965,12 @@ findInput.onkeydown = (e) => {
     return;
   }
   if (e.key === "h" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && !findInput.value) {
-    const item = sideItems[sideSel];
-    if (item?.kind !== "main" || !item.g.path) return;
     e.preventDefault();
+    const item = sideItems[sideSel];
+    if (item?.kind !== "main" || !item.g.path) {
+      hud("error", "select a node row to hide it");
+      return;
+    }
     toggleHiddenNode(item.g.path);
     return;
   }

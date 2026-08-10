@@ -211,7 +211,6 @@
   .cr-node { display: flex; align-items: baseline; gap: 8px; padding: 10px 8px 4px; border-radius: 6px; }
   .cr-node:hover { background: rgba(255,255,255,0.04); }
   .cr-path { color: var(--accent2); flex: none; }
-  .cr-purpose { color: var(--dim); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .cr-fold { flex: none; width: 12px; text-align: center; color: var(--dim); font-size: 10px; }
   .cr-fold:hover { color: var(--text); }
   .cr-meta { margin-left: auto; color: var(--dim); font-size: 11px; flex: none; }
@@ -2003,8 +2002,8 @@ function upRowEl(to) {
 }
 
 /**
- * A node's header row: fold chevron, the name, purpose text, and, when
- * folded, a dim count of the hidden rows, glowing if any hidden agent is
+ * A node's header row: fold chevron, the name, and, when folded, a dim
+ * count of the hidden rows, glowing if any hidden agent is
  * live so nothing active ever disappears from view. Nodes are places, not
  * agents: any session on a node, the orchestrator under root included, is
  * its own row underneath.
@@ -2028,13 +2027,10 @@ function nodeRowEl(g, fold) {
   const name = document.createElement("span");
   name.className = "cr-path";
   name.textContent = g.name;
-  const purpose = document.createElement("span");
-  purpose.className = "cr-purpose";
-  purpose.textContent = g.purpose ?? "";
   const meta = document.createElement("span");
   meta.className = "cr-meta" + (fold.folded && fold.hiddenLive ? " live" : "");
   meta.textContent = fold.folded ? fold.hiddenCount + " hidden" + (fold.hiddenLive ? " · live" : "") : "";
-  row.append(name, purpose, meta);
+  row.append(name, meta);
   if (g.path) row.appendChild(addBtnEl(g.path));
   return row;
 }

@@ -16,13 +16,11 @@
 // fullscreen, where the Keyboard Lock API captures them. The editor marks
 // such chords "fullscreen only".
 //
-// cmd+d (kill) is "any", not "session", on purpose: an unbound chord in the
-// orchestrator view would fall through to the browser (Safari's Add Bookmark)
-// and give no answer at all. The action refuses the orchestrator out loud
-// instead.
+// backspace (kill) is "any", not "session", so the same visible action works
+// while browsing the tree. The action refuses the orchestrator out loud.
 window.KEYMAP = [
   { keys: "cmd+w", when: "session", action: "close-session" },
-  { keys: "cmd+d", when: "any", action: "kill-session" },
+  { keys: "backspace", when: "any", action: "kill-session" },
   { keys: "cmd+/", when: "any", action: "find" },
   { keys: "cmd+arrowleft", when: "any", action: "focus-tree" },
   { keys: "cmd+arrowright", when: "any", action: "focus-work" },

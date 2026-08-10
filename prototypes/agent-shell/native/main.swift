@@ -8,7 +8,7 @@
 // Why native instead of a Safari web app or Chrome app window: the browser
 // owned chords like cmd+w and needed Shortcuts/AppleScript glue to focus the
 // window. Here the app owns the window, the dock icon, cmd-tab, and the menu
-// bar, and deliberately leaves cmd+w / cmd+d / cmd+b unbound so the page
+// bar, and deliberately leaves cmd+w / cmd+b unbound so the page
 // keymap (public/keymap.js) receives them.
 //
 // Build and install: bash native/build-app.sh (or npm run app).
@@ -164,7 +164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
   @objc func reloadPage(_ sender: Any?) { ensureServerAndLoad() }
 
   // MARK: menu
-  // No cmd+w, cmd+d, cmd+b, cmd+t, cmd+n here: the page keymap owns those.
+  // No cmd+w, cmd+b, cmd+t, cmd+n here: the page keymap owns those.
 
   func buildMenu() {
     let main = NSMenu()

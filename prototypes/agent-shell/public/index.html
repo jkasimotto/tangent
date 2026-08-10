@@ -284,7 +284,7 @@
   <div id="settings" hidden>
     <div class="s-title">keyboard shortcuts <button id="s-reset">reset defaults</button></div>
     <div id="s-rows"></div>
-    <div class="s-hint">click a chord, then press the new keys. esc cancels, backspace unbinds.</div>
+    <div class="s-hint">click a chord, then press the new keys. esc cancels, forward delete (fn+⌫) unbinds.</div>
   </div>
   <div id="agent-panel" hidden>
     <div class="s-title">orchestrator agent</div>
@@ -302,7 +302,7 @@
         <button id="side-live" class="hbtn" title="show only active work — live agents, running services, active outcomes">◉ active</button>
       </div>
       <div id="panel"></div>
-      <div id="side-legend"><span><b>↑↓</b> move</span><span><b>←→</b> fold · up</span><span id="legend-enter"><b>⏎</b> open</span><span id="legend-kill"><b>⌘D</b> kill</span><span id="legend-work"><b>⌘→</b> work pane</span><span><b>esc</b> back</span></div>
+      <div id="side-legend"><span><b>↑↓</b> move</span><span><b>←→</b> fold · up</span><span id="legend-enter"><b>⏎</b> open</span><span id="legend-kill"><b>⌫</b> kill</span><span id="legend-work"><b>⌘→</b> work pane</span><span><b>esc</b> back</span></div>
       <div id="side-resize" title="drag to resize"></div>
     </div>
     <div id="work">
@@ -987,7 +987,7 @@ async function killSession(name) {
 }
 
 /**
- * Kill what is in front of you (⌘D). While browsing, the selected row's
+ * Kill what is in front of you (Backspace). While browsing, the selected row's
  * session fills the work pane, so the chord kills that row's session;
  * otherwise it kills the session filling the terminal area. The orchestrator
  * is the shell's home and is never killed — the chord says so rather than
@@ -1005,7 +1005,7 @@ function killVisibleSession() {
 }
 
 // The chord's printed home: whenever a killable session fills the view, the
-// header carries the same action as a button wearing ⌘D. The orchestrator
+// header carries the same action as a button wearing ⌫. The orchestrator
 // has nothing to kill, so the button is not there.
 const killBtn = document.getElementById("kill-btn");
 killBtn.onclick = () => killVisibleSession();
@@ -1015,7 +1015,7 @@ function renderKillBtn() {
 }
 
 // The chord vocabulary stays tiny and every chord is printed on the control it
-// drives: ⌘D on the header's kill button and in the tree legend, ⌘. on the
+// drives: ⌫ on the header's kill button and in the tree legend, ⌘. on the
 // tree's active filter, and on every kill button in the tree's detail pane.
 // Switching agents stays a visible button with no chord.
 // defaultKeys is the built-in factory chord: /keymap.js may override it, but
@@ -1024,7 +1024,7 @@ function renderKillBtn() {
 // name keeps working after a rename ("map" became "find").
 const ACTION_META = [
   { action: "close-session", label: "close session view (detach)", when: "session", defaultKeys: "cmd+w" },
-  { action: "kill-session", label: "kill the session in front of you", when: "any", defaultKeys: "cmd+d" },
+  { action: "kill-session", label: "kill the session in front of you", when: "any", defaultKeys: "backspace" },
   { action: "find", label: "find in the tree", when: "any", defaultKeys: "cmd+/", was: "map" },
   { action: "focus-tree", label: "focus the tree, on the work in flight", when: "any", defaultKeys: "cmd+arrowleft" },
   { action: "focus-work", label: "focus the work pane", when: "any", defaultKeys: "cmd+arrowright" },
@@ -1050,6 +1050,8 @@ const KEYMAP_STORE = "agentshell.keymap";
 function loadKeymap() {
   let stored = {};
   try { stored = JSON.parse(localStorage.getItem(KEYMAP_STORE)) ?? {}; } catch {}
+  // Move the former factory binding forward without overwriting a custom key.
+  if (stored["kill-session"] === "cmd+d") stored["kill-session"] = "backspace";
   return ACTION_META.map((m) => {
     const fromFile = (window.KEYMAP ?? []).find((b) => b.action === m.action)?.keys;
     const keys =
@@ -1215,7 +1217,7 @@ window.addEventListener(
     if (["Meta", "Control", "Alt", "Shift"].includes(e.key)) return; // still holding modifiers
     const b = keymap.find((x) => x.action === recordingAction);
     recordingAction = null;
-    if (e.key === "Backspace") {
+    if (e.key === "Delete") {
       b.keys = null;
     } else {
       const parts = [];
@@ -1239,7 +1241,7 @@ window.addEventListener(
   (e) => {
     if (!settingsEl.hidden) return;
     // Inputs swallow chords, except the find input: the chords printed in
-    // the legend (⌘D, ⌘K, ⌘/) must fire while browsing.
+    // the legend (⌫, ⌘K, ⌘/) must fire while browsing.
     if (e.target instanceof HTMLInputElement && e.target !== findInput) return;
     const ctx = shellContext();
     for (const b of keymap) {
@@ -2136,7 +2138,7 @@ function treeRowEl(item) {
  * One meaning per row — the dot rule: a row wearing a live dot opens its
  * session. A node scopes to its subtree (root's subtree is the whole tree);
  * an outcome lands in its agent session, starting one when none is live (the
- * one spawn a row activation performs — explicit, loud in the HUD, and ⌘D
+ * one spawn a row activation performs — explicit, loud in the HUD, and ⌫
  * away from undone); a session row, the orchestrator included, shows its
  * session; the up row goes back up.
  */

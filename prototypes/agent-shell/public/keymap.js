@@ -16,7 +16,7 @@
 // fullscreen, where the Keyboard Lock API captures them. The editor marks
 // such chords "fullscreen only".
 //
-// A chord with no modifier (⌫ below) fires only while the tree owns the
+// A chord with no modifier (⌫ and n below) fires only while the tree owns the
 // keyboard. Everywhere else the key is text: Mac Delete, which reports itself
 // to the browser as Backspace, deletes a character in a Claude Code session
 // and in the find query. Kill stays "any" rather than "session" so a tree row
@@ -28,6 +28,7 @@
 window.KEYMAP = [
   { keys: "cmd+w", when: "session", action: "close-session" },
   { keys: "backspace", when: "any", action: "kill-session" },
+  { keys: "n", when: "any", action: "new-outcome" },
   { keys: "cmd+/", when: "any", action: "find" },
   { keys: "cmd+arrowleft", when: "any", action: "focus-tree" },
   { keys: "cmd+arrowright", when: "any", action: "focus-work" },

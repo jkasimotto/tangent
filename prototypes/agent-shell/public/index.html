@@ -303,7 +303,7 @@
         <button id="side-hidden" class="hbtn" title="show nodes hidden for this Agent Shell window" hidden>hidden (0)</button>
       </div>
       <div id="panel"></div>
-      <div id="side-legend"><span><b>↑↓</b> move</span><span><b>←→</b> fold · up</span><span id="legend-hide"><b>h</b> hide</span><span id="legend-enter"><b>⏎</b> open</span><span id="legend-kill"><b>⌫</b> kill</span><span id="legend-work"><b>⌘→</b> work pane</span><span><b>esc</b> back</span></div>
+      <div id="side-legend"><span><b>↑↓</b> move</span><span><b>←→</b> fold · up</span><span id="legend-hide"><b>h</b> hide</span><span id="legend-add"><b>n</b> new outcome</span><span id="legend-enter"><b>⏎</b> open</span><span id="legend-kill"><b>⌫</b> kill</span><span id="legend-work"><b>⌘→</b> work pane</span><span><b>esc</b> back</span></div>
       <div id="side-resize" title="drag to resize"></div>
     </div>
     <div id="work">
@@ -458,7 +458,12 @@ function refitActive() {
   // and window resize, and entering browse hides the strip: focusing the
   // terminal here would instantly steal focus back from the find input and
   // bounce the user straight out of browsing.
-  if (!browsing && !(document.activeElement instanceof HTMLInputElement)) e.term.focus();
+  // editingText() is what keeps the outcome editor usable at all. Opening it
+  // blurs the find input, that blur flips the strip, and this refit runs while
+  // the browser is mid focus transition — document.activeElement is <body> for
+  // that instant, so the input test alone lets the terminal steal the keyboard
+  // out of the card the user just opened.
+  if (!browsing && !editingText() && !(document.activeElement instanceof HTMLInputElement)) e.term.focus();
 }
 
 treeBtn.onclick = () => {
@@ -584,12 +589,17 @@ function killBtnEl(name) {
   return b;
 }
 
-/** The + a node row wears: a new outcome typed straight onto that node. */
+/**
+ * The + a node row wears: a new outcome typed straight onto that node. The
+ * title prints the chord that does the same from the keyboard, read from the
+ * live keymap so rebinding moves the label with it.
+ */
 function addBtnEl(nodePath) {
   const b = document.createElement("button");
   b.className = "row-add";
   b.textContent = "+";
-  b.title = "new outcome on " + nodePath;
+  const chord = chordFor("new-outcome");
+  b.title = "new outcome on " + nodePath + (chord ? " · " + chord : "");
   b.onmousedown = (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -825,30 +835,62 @@ async function editOutcome(t, fields, label) {
 }
 
 // ---- the outcome editor ----
-// The work pane's only non-terminal face. Create (+ on a node row) and
-// modify (✎ on an outcome row) live in the tree; this overlay holds the
-// outcome's own text — title, done condition, state — as visible fields.
+// The work pane's only non-terminal face. Create (+ on a node row, n on a
+// tree row) and modify (✎ on an outcome row) live in the tree; this overlay
+// holds the outcome's own text — title, done condition, state — as fields.
+// Tab walks the fields; esc and ⌘← close it, back on the row it came from.
 // Save writes through the shell with a provenance commit: the user's click
 // is the user's word, no agent in the loop. Status flips live here too.
 
 let editorState = null; // {mode:"create", node} | {mode:"edit", file}
 let editorWasBrowsing = false;
+let editorReturnRow = null; // the row the editor was opened from
+
+/** A tree row's identity, stable across the re-render an edit causes. */
+function rowKey(item) {
+  if (!item) return null;
+  if (item.kind === "outcome") return "outcome:" + item.t.file;
+  if (item.kind === "main") return "node:" + item.g.path;
+  if (item.kind === "process") return "session:" + item.s.name;
+  return null;
+}
 
 function openEditor(state) {
   editorWasBrowsing = browsing;
+  editorReturnRow = browsing ? rowKey(sideItems[sideSel]) : null;
   editorState = state;
   renderEditor();
+}
+
+/**
+ * The keyboard twin of the + on a node row: a new outcome on the node the tree
+ * cursor sits in. An outcome or session row creates on the node it hangs
+ * under, so the key means the same thing anywhere inside a node's block and
+ * never asks the cursor to climb back to the header first. Root owns no
+ * outcomes and refuses out loud, as its + is not drawn either.
+ */
+function newOutcomeOnSelection() {
+  const node = sideItems[sideSel]?.g?.path;
+  if (!node) return hud("error", "select a node to add an outcome");
+  openEditor({ mode: "create", node });
 }
 
 function closeEditor() {
   editorState = null;
   editorEl.classList.remove("show");
   editorEl.innerHTML = "";
-  if (editorWasBrowsing) findInput.focus();
-  else {
+  if (editorWasBrowsing) {
+    // Re-entering browsing lands the cursor on the work in flight, which is
+    // not where the editor was opened from. Walking back out of an outcome's
+    // text must return to that outcome, so put the cursor back on its row.
+    findInput.focus();
+    const back = editorReturnRow ? sideItems.findIndex((it) => rowKey(it) === editorReturnRow) : -1;
+    if (back >= 0) setSideSel(back);
+  } else {
     const e = active && terms.get(active);
     if (e) e.term.focus();
   }
+  editorReturnRow = null;
   applyPendingAutoReload();
 }
 
@@ -953,7 +995,7 @@ function renderEditor() {
   }
   const a = el("div", "md-actions");
   btn(a, "save", "⌘⏎", save, "primary");
-  btn(a, "cancel", "esc", closeEditor);
+  btn(a, "cancel", ["esc", chordFor("focus-tree")].filter(Boolean).join(" "), closeEditor);
   if (t) {
     // Status is the user's own word and never waits on an agent.
     if (t.status === "done") {
@@ -1031,9 +1073,10 @@ function renderKillBtn() {
 
 // The chord vocabulary stays tiny and every chord is printed on the control it
 // drives: ⌫ in the tree legend, ⌘. on the tree's active filter, and on every
-// kill button in the tree's detail pane.
-// ⌫ is unmodified, so it fires only while the tree owns the keyboard; the
-// header's kill button therefore prints no chord and stays a mouse target.
+// kill button in the tree's detail pane; n in the legend and on the + of every
+// node row.
+// ⌫ and n are unmodified, so they fire only while the tree owns the keyboard;
+// the header's kill button therefore prints no chord and stays a mouse target.
 // Switching agents stays a visible button with no chord.
 // defaultKeys is the built-in factory chord: /keymap.js may override it, but
 // a missing or stale-cached /keymap.js can never silently unbind an action.
@@ -1042,6 +1085,7 @@ function renderKillBtn() {
 const ACTION_META = [
   { action: "close-session", label: "close session view (detach)", when: "session", defaultKeys: "cmd+w" },
   { action: "kill-session", label: "kill the session in front of you", when: "any", defaultKeys: "backspace" },
+  { action: "new-outcome", label: "new outcome on the node under the cursor", when: "any", defaultKeys: "n" },
   { action: "find", label: "find in the tree", when: "any", defaultKeys: "cmd+/", was: "map" },
   { action: "focus-tree", label: "focus the tree, on the work in flight", when: "any", defaultKeys: "cmd+arrowleft" },
   { action: "focus-work", label: "focus the work pane", when: "any", defaultKeys: "cmd+arrowright" },
@@ -1052,6 +1096,7 @@ const ACTION_META = [
 const ACTIONS = {
   "close-session": closeSessionView,
   "kill-session": () => killVisibleSession(),
+  "new-outcome": () => newOutcomeOnSelection(),
   "find": () => toggleFind(),
   "focus-tree": () => focusTree(),
   "focus-work": () => exitBrowse(),
@@ -1097,14 +1142,17 @@ function saveKeymap() {
   renderSettings();
 }
 
-/** A chord in printed form: "cmd+shift+d" -> "⌘⇧D". */
+/** A chord in printed form: "cmd+shift+d" -> "⌘⇧D", "n" -> "n". */
 function prettyChord(keys) {
   if (!keys) return "";
   const c = parseChord(keys);
+  // A key with no modifier at all prints as it is typed: "N" reads as ⇧N, and
+  // shift+n does not fire a binding stored as "n".
+  const plain = !c.meta && !c.ctrl && !c.alt && !c.shift;
   const glyph = {
     "/": "/", escape: "esc", enter: "⏎", backspace: "⌫",
     arrowleft: "←", arrowright: "→", arrowup: "↑", arrowdown: "↓",
-  }[c.key] ?? c.key.toUpperCase();
+  }[c.key] ?? (plain ? c.key : c.key.toUpperCase());
   return (c.ctrl ? "⌃" : "") + (c.alt ? "⌥" : "") + (c.shift ? "⇧" : "") + (c.meta ? "⌘" : "") + glyph;
 }
 
@@ -1151,6 +1199,11 @@ function paintChordHints() {
   set("kill-btn", ("✕ kill " + chordOutsideTreeFor("kill-session")).trim());
   const legend = document.querySelector("#legend-kill b");
   if (legend) legend.textContent = chordFor("kill-session") || "the ✕";
+  const add = document.getElementById("legend-add");
+  if (add) {
+    add.hidden = !chordFor("new-outcome");
+    add.querySelector("b").textContent = chordFor("new-outcome");
+  }
   const work = document.getElementById("legend-work");
   if (work) {
     work.hidden = !chordFor("focus-work");
@@ -1300,6 +1353,18 @@ window.addEventListener(
   "keydown",
   (e) => {
     if (!settingsEl.hidden) return;
+    // The outcome editor is a mode, not an overlay the chords shoot through:
+    // while it holds the work pane, every shell chord is inert except the one
+    // that walks back to the tree, which closes it the way esc does.
+    if (editorState) {
+      const back = keymap.find((b) => b.action === "focus-tree")?.keys;
+      if (back && chordMatches(parseChord(back), e)) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeEditor();
+      }
+      return;
+    }
     // Inputs swallow chords, except the find input: the chords printed in
     // the legend (⌫, ⌘K, ⌘/) must fire while browsing. The command bar is
     // the second exception, for talk alone: its second tap is how you switch

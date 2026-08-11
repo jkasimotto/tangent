@@ -277,7 +277,7 @@
     <button id="talk-btn" class="hbtn" title="type a command — routed exactly like voice">talk ⌘K</button>
     <button id="chat-btn" class="hbtn" title="the orchestrator: everything not addressed to a node lands here">⌂ orchestrator</button>
     <button id="agent-btn" class="hbtn" title="orchestrator agent, click to switch"></button>
-    <button id="mic-btn" class="hbtn" title="voice — hold ⌥ and speak (release to send), or tap ⌥ to latch (tap again to send). ⇧ or ↑ while holding locks the recording.">🎙</button>
+    <button id="mic-btn" class="hbtn" title="voice — double-tap the talk chord, speak, then tap it once more (or click here) to send. esc cancels.">🎙</button>
     <button id="caffeine-btn" class="hbtn" title="keep mac awake (caffeinate -di)">☕</button>
     <button id="keys-btn" class="hbtn" title="keyboard shortcuts">⌘</button>
   </header>
@@ -1046,7 +1046,7 @@ const ACTION_META = [
   { action: "focus-tree", label: "focus the tree, on the work in flight", when: "any", defaultKeys: "cmd+arrowleft" },
   { action: "focus-work", label: "focus the work pane", when: "any", defaultKeys: "cmd+arrowright" },
   { action: "active-only", label: "show only active work", when: "any", defaultKeys: "cmd+." },
-  { action: "talk", label: "typed command (voice grammar)", when: "any", defaultKeys: "cmd+k" },
+  { action: "talk", label: "typed command; double-tap to speak it instead", when: "any", defaultKeys: "cmd+k" },
 ];
 
 const ACTIONS = {
@@ -1056,8 +1056,14 @@ const ACTIONS = {
   "focus-tree": () => focusTree(),
   "focus-work": () => exitBrowse(),
   "active-only": () => setLiveOnly(!liveOnly),
-  "talk": () => openCmdBar(),
+  "talk": () => talkChord(),
 };
+
+/** True when this keydown is the talk chord as currently bound. */
+function isTalkChord(e) {
+  const keys = keymap.find((b) => b.action === "talk")?.keys;
+  return Boolean(keys) && chordMatches(parseChord(keys), e);
+}
 
 const KEYMAP_STORE = "agentshell.keymap";
 
@@ -1132,6 +1138,16 @@ function paintChordHints() {
   set("find-chord", [chordFor("focus-tree"), chordFor("find")].filter(Boolean).join(" "));
   set("side-live", ("◉ active " + chordFor("active-only")).trim());
   set("talk-btn", ("talk " + chordFor("talk")).trim());
+  // Voice has no chord of its own: it is the talk chord, twice. Printing it
+  // doubled on the mic is the only place that gesture is taught.
+  const talk = chordOutsideTreeFor("talk");
+  set("mic-btn", ("🎙 " + (talk ? talk + talk : "")).trim());
+  const mic = document.getElementById("mic-btn");
+  if (mic) {
+    mic.title = talk
+      ? `voice — double-tap ${talk}, speak, then tap ${talk} once more (or click here) to send. esc cancels.`
+      : "voice — click to start, click again to send. esc cancels.";
+  }
   set("kill-btn", ("✕ kill " + chordOutsideTreeFor("kill-session")).trim());
   const legend = document.querySelector("#legend-kill b");
   if (legend) legend.textContent = chordFor("kill-session") || "the ✕";
@@ -1285,8 +1301,12 @@ window.addEventListener(
   (e) => {
     if (!settingsEl.hidden) return;
     // Inputs swallow chords, except the find input: the chords printed in
-    // the legend (⌫, ⌘K, ⌘/) must fire while browsing.
-    if (e.target instanceof HTMLInputElement && e.target !== findInput) return;
+    // the legend (⌫, ⌘K, ⌘/) must fire while browsing. The command bar is
+    // the second exception, for talk alone: its second tap is how you switch
+    // from typing to speaking, so it has to reach the action.
+    if (e.target instanceof HTMLInputElement && e.target !== findInput) {
+      if (e.target !== cmdInput || !isTalkChord(e)) return;
+    }
     const ctx = shellContext();
     const onTree = treeOwnsKeyboard();
     for (const b of keymap) {
@@ -1461,9 +1481,13 @@ window.addEventListener("beforeunload", (e) => {
 });
 
 // ---- voice control ----
-// One key, spoken addressing. Hold ⌥ and speak, release to send; tap ⌥ to
-// latch a longer recording, tap again to send; tap ⇧ while holding to promote
-// the hold to a latch mid-utterance. The recording goes to /api/voice with the
+// Two lanes, one chord: the talk chord (⌘K by default) opens the typed command
+// bar, and double-tapping it speaks the same grammar instead. The recording is
+// always latched — speak as long as you like, then tap the chord once more, or
+// click 🎙, to send; esc cancels. A deliberate double-tap replaces the old bare
+// ⌥ push-to-talk, which fired on the ⌥ presses that delete words and jump the
+// cursor: a trigger that records while you edit text is worse than no trigger.
+// The recording goes to /api/voice with the
 // nodes the sidebar currently shows; the server transcribes it and routes the
 // utterance: words for an agent travel verbatim (addressed by session or node
 // name, focused session when unaddressed), shell verbs (view, spawn, kill,
@@ -1477,10 +1501,9 @@ const hudTextEl = hudEl.querySelector(".vh-text");
 let recorder = null;
 let recChunks = [];
 let recCancelled = false;
-let pttHold = false;   // recording is held ⌥ push-to-talk (release sends)
-let pttTimer = null;   // pending hold-to-arm timeout
-let altClean = false;  // ⌥ is down with no other key pressed since
 let hudTimer = null;
+let lastTalkAt = 0;    // timestamp of the previous talk chord, for double-tap
+const DOUBLE_TAP_MS = 400;
 
 function hud(state, text) {
   clearTimeout(hudTimer);
@@ -1509,9 +1532,8 @@ function visibleNodePaths() {
   return [...out];
 }
 
-async function startVoice(hold) {
+async function startVoice() {
   if (recorder) return;
-  pttHold = hold;
   let stream;
   try {
     // Acquired per utterance, not held open: the OS mic indicator then tells
@@ -1533,9 +1555,7 @@ async function startVoice(hold) {
     recorder = null;
     micBtn.classList.remove("rec");
     if (cancelled) {
-      // A cancel explained in the HUD (chord cancel) must survive this stop
-      // event; a plain cancel (esc, blur) just clears the pill.
-      if (!hudEl.className.includes("error")) hudEl.className = "";
+      hudEl.className = "";
       return;
     }
     const blob = new Blob(recChunks, { type });
@@ -1547,10 +1567,9 @@ async function startVoice(hold) {
   };
   recorder.start();
   micBtn.classList.add("rec");
-  hud(
-    "listening",
-    hold ? "listening — release ⌥ to send, ⇧ or ↑ locks" : "listening — tap ⌥ or click 🎙 to send, esc cancels"
-  );
+  // The chord is read from the live keymap, so rebinding talk moves this
+  // instruction with it.
+  hud("listening", `listening — tap ${chordFor("talk") || "🎙"} or click 🎙 to send, esc cancels`);
 }
 
 function stopVoice() {
@@ -1594,73 +1613,40 @@ async function sendVoice(blob) {
   }
 }
 
-micBtn.onclick = () => (recorder ? stopVoice() : startVoice(false));
+micBtn.onclick = () => (recorder ? stopVoice() : startVoice());
 
-// One key, three gestures. Hold ⌥ 200ms: push-to-talk, release sends. Tap ⌥
-// (up before the arm timer fires): latched recording, tap ⌥ again to send.
-// Tap ⇧ while holding: promote the hold to a latch mid-utterance, so a talk
-// that turns out long needs no restart. A real chord (⌥ plus another key)
-// never trips any of it: the second key cancels the arm timer or discards an
-// in-flight hold recording, and marks the ⌥ press dirty so its release cannot
-// read as a tap — option-arrow word jumps keep working inside the terminal.
+/**
+ * The talk chord's single handler, for every state it can be pressed in.
+ *
+ * One press opens the typed bar; pressing it again within DOUBLE_TAP_MS, while
+ * nothing has been typed, means the user wanted to speak instead: the bar
+ * closes and a latched recording starts. Any press while listening sends the
+ * recording. Typing in the bar makes the chord a no-op, so a stray press can
+ * never wipe a half-typed command.
+ */
+function talkChord() {
+  if (recorder) return stopVoice();
+  const doubled = performance.now() - lastTalkAt < DOUBLE_TAP_MS;
+  lastTalkAt = performance.now();
+  if (!cmdBar.hidden) {
+    if (doubled && !cmdInput.value) {
+      closeCmdBar();
+      startVoice();
+    }
+    return;
+  }
+  openCmdBar();
+}
+
+// Esc cancels a recording in flight. It is claimed only while the mic is hot,
+// so esc keeps its terminal meaning (interrupt the agent) the rest of the time.
 window.addEventListener(
   "keydown",
   (e) => {
-    // The find input is exempt: ⌥ push-to-talk must work while browsing the
-    // tree (the "instruct a node while looking at the tree" story).
-    if ((e.target instanceof HTMLInputElement && e.target !== findInput) || !settingsEl.hidden || recordingAction) return;
-    if (e.key === "Alt" && !e.metaKey && !e.ctrlKey && !e.repeat) {
-      altClean = true;
-      if (!recorder && !pttTimer) {
-        pttTimer = setTimeout(() => {
-          pttTimer = null;
-          startVoice(true);
-        }, 200);
-      }
-      return;
-    }
-    if (e.repeat) return;
-    altClean = false;
-    if (pttTimer && e.key !== "Shift") {
-      clearTimeout(pttTimer);
-      pttTimer = null;
-    }
-    if (recorder && pttHold && e.key !== "Alt") {
-      // ⇧ or ↑ (the "slide up to lock" reflex) locks the hold into a latch.
-      // Any other key means a real ⌥ chord: cancel, and say so — a silent
-      // vanish reads as a bug.
-      if (e.key === "Shift" || e.key === "ArrowUp") {
-        e.preventDefault();
-        e.stopPropagation();
-        pttHold = false;
-        hud("listening", "locked on — tap ⌥ or click 🎙 to send, esc cancels");
-      } else {
-        cancelVoice();
-        hud("error", "cancelled (⌥ chord) — ⇧ or ↑ locks the recording");
-      }
-      return;
-    }
-    if (recorder && !pttHold && e.key === "Escape") {
-      e.preventDefault();
-      e.stopPropagation();
-      cancelVoice();
-    }
-  },
-  { capture: true }
-);
-window.addEventListener(
-  "keyup",
-  (e) => {
-    if (e.key !== "Alt") return;
-    const wasTap = Boolean(pttTimer);
-    if (pttTimer) {
-      clearTimeout(pttTimer);
-      pttTimer = null;
-    }
-    if (recorder && pttHold) stopVoice(); // hold release: send
-    else if (wasTap && !recorder) startVoice(false); // tap: start latched
-    else if (recorder && !pttHold && altClean) stopVoice(); // tap during latch: send
-    altClean = false;
+    if (!recorder || e.key !== "Escape" || !settingsEl.hidden) return;
+    e.preventDefault();
+    e.stopPropagation();
+    cancelVoice();
   },
   { capture: true }
 );

@@ -21,6 +21,10 @@
 // to the browser as Backspace, deletes a character in a Claude Code session
 // and in the find query. Kill stays "any" rather than "session" so a tree row
 // can be killed while the orchestrator fills the work pane.
+//
+// Voice has no binding of its own: double-tapping the talk chord records, so
+// rebinding talk moves speaking with it. Voice deliberately costs a deliberate
+// gesture, because a bare modifier (⌥ once did this) records while you edit.
 window.KEYMAP = [
   { keys: "cmd+w", when: "session", action: "close-session" },
   { keys: "backspace", when: "any", action: "kill-session" },

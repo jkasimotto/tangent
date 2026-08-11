@@ -16,9 +16,11 @@
 // fullscreen, where the Keyboard Lock API captures them. The editor marks
 // such chords "fullscreen only".
 //
-// The Mac Delete key reports itself to the browser as Backspace. Kill is
-// "any", not "session", so the shell can explain when there is no killable
-// session in front of the user instead of silently doing nothing.
+// A chord with no modifier (⌫ below) fires only while the tree owns the
+// keyboard. Everywhere else the key is text: Mac Delete, which reports itself
+// to the browser as Backspace, deletes a character in a Claude Code session
+// and in the find query. Kill stays "any" rather than "session" so a tree row
+// can be killed while the orchestrator fills the work pane.
 window.KEYMAP = [
   { keys: "cmd+w", when: "session", action: "close-session" },
   { keys: "backspace", when: "any", action: "kill-session" },

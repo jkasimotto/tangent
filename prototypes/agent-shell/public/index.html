@@ -999,11 +999,13 @@ async function killSession(name) {
 }
 
 /**
- * Kill what is in front of you (Delete). While browsing, the selected row's
- * session fills the work pane, so the chord kills that row's session;
- * otherwise it kills the session filling the terminal area. The orchestrator
- * is the shell's home and is never killed — the chord says so rather than
- * failing silently.
+ * Kill what is in front of you. While browsing, the selected row's session
+ * fills the work pane, so this kills that row's session; otherwise it kills
+ * the session filling the terminal area. Reached by Delete from a tree row
+ * (an unmodified chord never fires while a terminal or the find query has the
+ * keyboard) and by the ✕ buttons everywhere else. The orchestrator is the
+ * shell's home and is never killed — the action says so rather than failing
+ * silently.
  */
 function killVisibleSession() {
   if (browsing) {
@@ -1016,8 +1018,9 @@ function killVisibleSession() {
   killSession(active);
 }
 
-// The chord's printed home: whenever a killable session fills the view, the
-// header carries the same action as a button wearing ⌫. The orchestrator has
+// Whenever a killable session fills the view, the header carries the same
+// action as a button. It prints no chord while kill is bound to an unmodified
+// key, because there the key belongs to the terminal. The orchestrator has
 // nothing to kill, so the button is not there.
 const killBtn = document.getElementById("kill-btn");
 killBtn.onclick = () => killVisibleSession();
@@ -1027,8 +1030,10 @@ function renderKillBtn() {
 }
 
 // The chord vocabulary stays tiny and every chord is printed on the control it
-// drives: ⌫ on the header's kill button and in the tree legend, ⌘. on the
-// tree's active filter, and on every kill button in the tree's detail pane.
+// drives: ⌫ in the tree legend, ⌘. on the tree's active filter, and on every
+// kill button in the tree's detail pane.
+// ⌫ is unmodified, so it fires only while the tree owns the keyboard; the
+// header's kill button therefore prints no chord and stays a mouse target.
 // Switching agents stays a visible button with no chord.
 // defaultKeys is the built-in factory chord: /keymap.js may override it, but
 // a missing or stale-cached /keymap.js can never silently unbind an action.
@@ -1103,6 +1108,16 @@ function chordFor(action) {
 }
 
 /**
+ * The printed chord for a control that lives outside the tree. An unmodified
+ * chord only fires on a tree row, so printing it on the header would teach a
+ * shortcut that does nothing where it is printed.
+ */
+function chordOutsideTreeFor(action) {
+  const keys = keymap.find((b) => b.action === action)?.keys ?? null;
+  return keys && isBareChord(keys) ? "" : prettyChord(keys);
+}
+
+/**
  * Every chord is printed on the control it drives, so the printed text is read
  * from the live keymap: rebinding in the editor must move the label with it,
  * or the shell teaches a shortcut that no longer works.
@@ -1117,7 +1132,7 @@ function paintChordHints() {
   set("find-chord", [chordFor("focus-tree"), chordFor("find")].filter(Boolean).join(" "));
   set("side-live", ("◉ active " + chordFor("active-only")).trim());
   set("talk-btn", ("talk " + chordFor("talk")).trim());
-  set("kill-btn", ("✕ kill " + chordFor("kill-session")).trim());
+  set("kill-btn", ("✕ kill " + chordOutsideTreeFor("kill-session")).trim());
   const legend = document.querySelector("#legend-kill b");
   if (legend) legend.textContent = chordFor("kill-session") || "the ✕";
   const work = document.getElementById("legend-work");
@@ -1142,6 +1157,21 @@ function parseChord(keys) {
     alt: parts.includes("alt") || parts.includes("option"),
     shift: parts.includes("shift"),
   };
+}
+
+/** True when the tree, not a terminal or a text field, is the keyboard target. */
+function treeOwnsKeyboard() {
+  return browsing && treeCursor;
+}
+
+/**
+ * True for a chord the user could also mean as text (no ⌘, ⌃, or ⌥). Such a
+ * chord fires only while the tree owns the keyboard, so no binding can eat a
+ * keystroke meant for a Claude Code session or the find query.
+ */
+function isBareChord(keys) {
+  const c = parseChord(keys);
+  return !c.meta && !c.ctrl && !c.alt;
 }
 
 function chordMatches(chord, e) {
@@ -1182,6 +1212,7 @@ function chordNote(keys) {
   const c = parseChord(keys);
   if (c.meta && c.key === "q") return "never reaches the app";
   if (c.meta && ["w", "t", "n"].includes(c.key)) return "fullscreen only";
+  if (isBareChord(keys)) return "tree rows only — elsewhere it is text";
   return "";
 }
 
@@ -1257,9 +1288,15 @@ window.addEventListener(
     // the legend (⌫, ⌘K, ⌘/) must fire while browsing.
     if (e.target instanceof HTMLInputElement && e.target !== findInput) return;
     const ctx = shellContext();
+    const onTree = treeOwnsKeyboard();
     for (const b of keymap) {
       if (!b.keys) continue;
       if (b.when !== "any" && b.when !== ctx) continue;
+      // A key with no modifier is text unless the tree owns the keyboard.
+      // Anywhere else the target is a terminal or the find query, and typing
+      // must win: Mac Delete (reported as Backspace) deletes a character in a
+      // Claude Code session and only kills a session from a tree row.
+      if (isBareChord(b.keys) && !onTree) continue;
       if (!chordMatches(parseChord(b.keys), e)) continue;
       e.preventDefault();
       e.stopPropagation();

@@ -263,6 +263,18 @@
   .document-box { width: min(820px, 92%); max-height: 94%; padding: 30px 38px; overflow: auto; }
   .document-head { display: flex; align-items: center; gap: 10px; color: var(--dim); font-size: 11px; margin-bottom: 24px; }
   .document-head .document-path { flex: 1; }
+  .document-kind { color: var(--accent2); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+  .document-index-title { margin: 0; font-size: 25px; }
+  .document-index-note { margin: 7px 0 24px; color: var(--dim); font-size: 12px; }
+  .document-cards { display: grid; gap: 10px; }
+  .document-card {
+    width: 100%; padding: 16px 18px; border: 1px solid var(--border); border-radius: 9px;
+    background: var(--bg); color: var(--text); text-align: left; cursor: pointer;
+  }
+  .document-card:hover { border-color: var(--accent2); background: rgba(88, 166, 255, 0.06); }
+  .document-card-title { display: block; font-size: 16px; font-weight: 700; }
+  .document-card-summary { display: block; margin-top: 6px; color: var(--text); font-size: 12px; line-height: 1.45; }
+  .document-card-path { display: block; margin-top: 8px; color: var(--dim); font: 10px "SF Mono", Menlo, monospace; }
   .document-body { line-height: 1.6; font-size: 13px; }
   .document-body h1 { font-size: 25px; margin: 0 0 18px; }
   .document-body h2 { font-size: 18px; margin: 28px 0 10px; }
@@ -648,8 +660,7 @@ function documentsBtnEl(g) {
   b.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); };
   b.onclick = (e) => {
     e.stopPropagation();
-    const file = g.documents.length === 1 ? g.documents[0].file : g.note?.file;
-    if (file) showDocument(file);
+    showDocumentBrowser(g.path);
   };
   return b;
 }
@@ -771,6 +782,7 @@ function renderSidebar(force = false) {
 
 function setSideSel(idx, scroll = true) {
   setTreeCursor(true);
+  if (viewerState?.pinned) viewerState.pinned = false;
   sideSel = idx;
   paintSideSel(scroll);
 }
@@ -800,6 +812,10 @@ function paintSideSel(scroll = true) {
 
 function updatePreview(item) {
   if (!browsing || editorState) return clearPreview();
+  // A document opened through the node's ◇ control belongs to the user, not
+  // the row hover preview. Keep it in place across vault refreshes until the
+  // user moves the tree cursor or leaves browse mode.
+  if (viewerState?.pinned) return;
   const name = item ? itemSession(item) : null;
   if (name) {
     closeDocument();
@@ -828,7 +844,7 @@ function clearPreview() {
   paintVisibleTerm();
 }
 
-let viewerState = null; // {file, document, editing}; document detail occupies the work pane
+let viewerState = null; // document detail or node document browser in the work pane
 let documentRequest = 0;
 
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -868,11 +884,61 @@ function markdownHtml(markdown) {
 
 async function showDocument(file) {
   if (viewerState?.file === file && !viewerState.editing) return;
+  const pinned = Boolean(viewerState?.pinned);
   const request = ++documentRequest;
   const res = await fetch("/api/document?file=" + encodeURIComponent(file));
   if (request !== documentRequest || !res.ok) return;
-  viewerState = { file, document: await res.json(), editing: false };
+  viewerState = { kind: "document", file, document: await res.json(), editing: false, pinned };
   renderDocument();
+}
+
+/** Returns the first prose paragraph as a short browser description. */
+function documentSummary(markdown) {
+  const prose = markdown
+    .replace(/^---\n[\s\S]*?\n---\n?/, "")
+    .replace(/```[\s\S]*?```/g, "")
+    .split(/\n\s*\n/)
+    .map((part) => part.replace(/^#+\s+.*$/gm, "").replace(/^\s*[-*>]\s*/gm, "").replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_, target, label) => label || target).replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1").replace(/[`*_]/g, "").trim())
+    .find((part) => part && !part.startsWith("|"));
+  return prose ? prose.replace(/\s+/g, " ").slice(0, 220) : "Design guidance for this node.";
+}
+
+/** Opens a real chooser for every ordinary document owned by one noun node. */
+async function showDocumentBrowser(node) {
+  const indexed = vaultNodes.find((entry) => entry.path === node);
+  if (!indexed?.documents?.length) return hud("error", "this node has no documents");
+  const request = ++documentRequest;
+  viewerState = { kind: "index", node, documents: indexed.documents.map((d) => ({ ...d, summary: "loading…" })), pinned: true };
+  renderDocumentBrowser();
+  const documents = await Promise.all(indexed.documents.map(async (metadata) => {
+    try {
+      const res = await fetch("/api/document?file=" + encodeURIComponent(metadata.file));
+      const full = res.ok ? await res.json() : null;
+      return { ...metadata, summary: full ? documentSummary(full.text) : "This document is not available." };
+    } catch {
+      return { ...metadata, summary: "This document is not available." };
+    }
+  }));
+  if (request !== documentRequest) return;
+  viewerState = { kind: "index", node, documents, pinned: true };
+  renderDocumentBrowser();
+}
+
+/** Paints a node's document titles as distinct, selectable cards. */
+function renderDocumentBrowser() {
+  if (viewerState?.kind !== "index") return;
+  const { node, documents } = viewerState;
+  editorEl.innerHTML = `<div class="stage-box document-box"><div class="document-head"><span class="document-kind">document browser</span><span class="document-path">${escapeHtml(node)}</span></div><h1 class="document-index-title">${escapeHtml(node.split("/").pop())} documents</h1><p class="document-index-note">Choose one of ${documents.length} documents.</p><div class="document-cards"></div></div>`;
+  const cards = editorEl.querySelector(".document-cards");
+  for (const d of documents) {
+    const card = document.createElement("button");
+    card.className = "document-card";
+    card.innerHTML = `<span class="document-card-title">${escapeHtml(d.title)}</span><span class="document-card-summary">${escapeHtml(d.summary)}</span><span class="document-card-path">${escapeHtml(d.file)}</span>`;
+    card.onclick = () => showDocument(d.file);
+    cards.appendChild(card);
+  }
+  editorEl.classList.add("show");
+  previewHintEl.classList.remove("show");
 }
 
 function closeDocument() {
@@ -883,16 +949,20 @@ function closeDocument() {
 }
 
 function renderDocument() {
-  if (!viewerState) return;
+  if (viewerState?.kind !== "document") return;
   const d = viewerState.document;
-  editorEl.innerHTML = `<div class="stage-box document-box"><div class="document-head"><span>${escapeHtml(d.kind)}</span><span class="document-path">${escapeHtml(d.file)}</span><button class="md-btn document-edit">edit</button></div><div class="document-body">${markdownHtml(d.text)}</div><div class="document-links"></div></div>`;
+  const nodeDocuments = vaultNodes.find((n) => n.path === d.node)?.documents ?? [];
+  const isDesign = d.file.split("/").pop().startsWith("design-");
+  const typeLabel = d.kind === "note" ? "node note" : isDesign ? "design document" : "document";
+  const browserButton = nodeDocuments.length ? `<button class="md-btn document-all">all documents (${nodeDocuments.length})</button>` : "";
+  editorEl.innerHTML = `<div class="stage-box document-box"><div class="document-head"><span class="document-kind">${escapeHtml(typeLabel)}</span><span class="document-path">${escapeHtml(d.file)}</span>${browserButton}<button class="md-btn document-edit">edit</button></div><div class="document-body">${markdownHtml(d.text)}</div><div class="document-links"></div></div>`;
   editorEl.classList.add("show"); previewHintEl.classList.remove("show");
   editorEl.querySelector(".document-edit").onclick = editDocument;
+  editorEl.querySelector(".document-all")?.addEventListener("click", () => showDocumentBrowser(d.node));
   editorEl.querySelectorAll("[data-wiki]").forEach((el) => el.onclick = () => openWiki(el.dataset.wiki));
   const links = editorEl.querySelector(".document-links");
-  const nodeDocuments = d.kind === "note" ? (vaultNodes.find((n) => n.path === d.node)?.documents ?? []).map((x) => x.file) : [];
-  const related = [...new Set([...nodeDocuments, ...(d.links ?? []), ...(d.backlinks ?? [])])];
-  if (related.length) { links.textContent = d.kind === "note" && nodeDocuments.length ? `documents (${nodeDocuments.length}) · linked context` : "linked context"; for (const ref of related) { const b = document.createElement("button"); b.textContent = ref; b.onclick = () => openWiki(ref); links.appendChild(b); } }
+  const related = [...new Set([...(d.links ?? []), ...(d.backlinks ?? [])])];
+  if (related.length) { links.textContent = "linked context"; for (const ref of related) { const b = document.createElement("button"); b.textContent = ref; b.onclick = () => openWiki(ref); links.appendChild(b); } }
 }
 
 function openWiki(target) {
@@ -913,7 +983,7 @@ function editDocument() {
     const out = await res.json();
     if (res.status === 409) return hud("error", "not saved — this document changed elsewhere; reopen it to merge");
     if (!res.ok) return hud("error", out.error || "save failed");
-    viewerState = { file: d.file, document: out, editing: false }; hud("done", "saved: " + out.title); await refreshVault(); renderDocument();
+    viewerState = { kind: "document", file: d.file, document: out, editing: false, pinned: viewerState.pinned }; hud("done", "saved: " + out.title); await refreshVault(); renderDocument();
   };
 }
 

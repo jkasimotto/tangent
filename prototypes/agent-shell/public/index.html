@@ -64,6 +64,10 @@
     background: var(--bg); border: 1px solid var(--border); color: var(--text); font: inherit;
   }
   #find-input:focus { outline: none; border-color: var(--accent2); }
+  #sidebar.tree-target #find-input:focus {
+    border-color: var(--border);
+    caret-color: transparent;
+  }
   #find-chord {
     position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
     color: var(--dim); font-size: 10px; pointer-events: none;
@@ -252,6 +256,25 @@
     border: 1px solid var(--border); border-radius: 12px; background: var(--panel);
   }
   .stage-box .md-actions { margin-top: 22px; }
+  .document-box { width: min(820px, 92%); max-height: 94%; padding: 30px 38px; overflow: auto; }
+  .document-head { display: flex; align-items: center; gap: 10px; color: var(--dim); font-size: 11px; margin-bottom: 24px; }
+  .document-head .document-path { flex: 1; }
+  .document-body { line-height: 1.6; font-size: 13px; }
+  .document-body h1 { font-size: 25px; margin: 0 0 18px; }
+  .document-body h2 { font-size: 18px; margin: 28px 0 10px; }
+  .document-body h3 { font-size: 15px; margin: 22px 0 8px; }
+  .document-body p { margin: 8px 0; }
+  .document-body ul, .document-body ol { padding-left: 24px; }
+  .document-body pre { padding: 12px; overflow: auto; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); }
+  .document-body code { font-family: "SF Mono", Menlo, monospace; font-size: 12px; background: rgba(110,118,129,.18); padding: 1px 4px; border-radius: 3px; }
+  .document-body pre code { background: none; padding: 0; }
+  .document-body table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+  .document-body th, .document-body td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; }
+  .document-body a, .wiki-link { color: var(--accent); cursor: pointer; text-decoration: none; }
+  .document-body img { max-width: 100%; border-radius: 6px; }
+  .document-links { border-top: 1px solid var(--border); margin-top: 28px; padding-top: 14px; color: var(--dim); font-size: 11px; }
+  .document-links button { display: block; border: 0; background: none; color: var(--accent); padding: 3px 0; cursor: pointer; }
+  .document-source { width: 100%; min-height: 65vh; resize: vertical; }
   /* What the work pane says while browse selection sits on a row with no
      session behind it: one dim line naming what ⏎ would do. */
   #preview-hint {
@@ -299,11 +322,11 @@
           <input id="find-input" placeholder="find a node, person, or outcome" spellcheck="false" />
           <span id="find-chord"></span>
         </div>
-        <button id="side-live" class="hbtn" title="show only active work — live agents, running services, active outcomes">◉ active</button>
+        <button id="side-live" class="hbtn" title="tree mode — Tab cycles visible, active, and all">visible ⇥</button>
         <button id="side-hidden" class="hbtn" title="show nodes hidden for this Agent Shell window" hidden>hidden (0)</button>
       </div>
       <div id="panel"></div>
-      <div id="side-legend"><span><b>↑↓</b> move</span><span><b>←→</b> fold · up</span><span id="legend-hide"><b>h</b> hide</span><span id="legend-add"><b>n</b> new outcome</span><span id="legend-enter"><b>⏎</b> open</span><span id="legend-kill"><b>⌫</b> kill</span><span id="legend-work"><b>⌘→</b> work pane</span><span><b>esc</b> back</span></div>
+      <div id="side-legend"><span><b>↑↓</b> move</span><span><b>⇥</b> mode</span><span><b>←→</b> fold · up</span><span id="legend-hide"><b>h</b> hide</span><span id="legend-add"><b>n</b> new outcome</span><span id="legend-enter"><b>⏎</b> open</span><span id="legend-kill"><b>⌫</b> kill</span><span id="legend-work"><b>⌘→</b> work pane</span><span><b>esc</b> back</span></div>
       <div id="side-resize" title="drag to resize"></div>
     </div>
     <div id="work">
@@ -425,6 +448,7 @@ function show(session) {
   previewName = null;
   previewHintEl.classList.remove("show");
   editorState = null;
+  viewerState = null;
   editorEl.classList.remove("show");
   editorEl.innerHTML = "";
   paintVisibleTerm();
@@ -553,8 +577,8 @@ const STATE_HINT = {
   working: "agent working",
   waiting: "agent waiting for you",
   shell: "shell (no agent running)",
-  service: "service running",
-  stopped: "service stopped (open to restart)",
+  service: "process running",
+  stopped: "process stopped (open for output; restart with tangent process start)",
 };
 
 /**
@@ -644,9 +668,10 @@ function treeStateKey(items) {
     showHidden,
     [...hiddenNodes],
     [...folded],
+    [...foldedOutcomes],
     [...freshOutcomes],
     items.map((it) =>
-      it.kind === "outcome" ? ["o", it.t.file, it.t.status]
+      it.kind === "outcome" ? ["o", it.t.file, it.t.status, it.fold.folded, it.fold.hiddenCount, it.fold.hiddenLive]
       : it.kind === "main" ? ["n", it.g.path, it.fold.folded, it.fold.hiddenCount, it.fold.hiddenLive]
       : it.kind === "process" ? ["p", it.s.name, it.s.state]
       : ["up", it.to]),
@@ -661,6 +686,17 @@ let treeCursor = false; // true once navigation or pointing makes a tree row the
 let sideItems = []; // selectable rows: {kind:"main"|"outcome"|"process"|"up", ...}
 let sideRows = [];  // the DOM row per item
 let sideSel = 0;
+
+function setTreeCursor(on) {
+  treeCursor = on;
+  sidebarEl.classList.toggle("tree-target", on);
+}
+
+function focusFindInput() {
+  setTreeCursor(false);
+  panelEl.querySelectorAll(".cr-sel").forEach((el) => el.classList.remove("cr-sel"));
+  clearPreview();
+}
 
 let panelKey = "";
 function renderSidebar(force = false) {
@@ -715,7 +751,7 @@ function renderSidebar(force = false) {
 }
 
 function setSideSel(idx, scroll = true) {
-  treeCursor = true;
+  setTreeCursor(true);
   sideSel = idx;
   paintSideSel(scroll);
 }
@@ -747,6 +783,7 @@ function updatePreview(item) {
   if (!browsing || editorState) return clearPreview();
   const name = item ? itemSession(item) : null;
   if (name) {
+    closeDocument();
     previewName = name;
     const e = connect(name);
     previewHintEl.classList.remove("show");
@@ -755,15 +792,110 @@ function updatePreview(item) {
   } else {
     previewName = null;
     for (const [, e] of terms) e.host.classList.remove("visible");
-    previewHintEl.textContent = previewHintText(item);
-    previewHintEl.classList.add("show");
+    const file = item?.kind === "main" ? item.g.note?.file : item?.kind === "outcome" ? item.t.file : item?.kind === "document" ? item.d.file : null;
+    if (file) showDocument(file);
+    else {
+      closeDocument();
+      previewHintEl.textContent = previewHintText(item);
+      previewHintEl.classList.add("show");
+    }
   }
 }
 
 function clearPreview() {
   previewName = null;
+  closeDocument();
   previewHintEl.classList.remove("show");
   paintVisibleTerm();
+}
+
+let viewerState = null; // {file, document, editing}; document detail occupies the work pane
+let documentRequest = 0;
+
+const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+function inlineMarkdown(text) {
+  let out = escapeHtml(text);
+  out = out.replace(/!\[([^\]]*)\]\((https?:\/\/[^ )]+)\)/g, '<img alt="$1" src="$2">');
+  out = out.replace(/\[([^\]]+)\]\((https?:\/\/[^ )]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
+  out = out.replace(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|([^\]]+))?\]\]/g, (_, target, label) => `<span class="wiki-link" data-wiki="${escapeHtml(target.trim())}">${label || target}</span>`);
+  out = out.replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/(?<!\*)\*([^*]+)\*/g, "<em>$1</em>");
+  return out;
+}
+
+/** Small safe renderer for the vault dialect; raw HTML remains escaped. */
+function markdownHtml(markdown) {
+  const lines = markdown.replace(/^---\n[\s\S]*?\n---\n?/, "").split("\n");
+  let html = "", list = null, fenced = false, code = [];
+  const closeList = () => { if (list) { html += `</${list}>`; list = null; } };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^```/.test(line)) { closeList(); if (fenced) { html += `<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`; code = []; } fenced = !fenced; continue; }
+    if (fenced) { code.push(line); continue; }
+    const heading = line.match(/^(#{1,3})\s+(.+)/);
+    if (heading) { closeList(); const n = heading[1].length; html += `<h${n}>${inlineMarkdown(heading[2])}</h${n}>`; continue; }
+    if (line.includes("|") && /^\s*\|?\s*:?-+/.test(lines[i + 1] ?? "")) {
+      closeList(); const rows = [line]; i += 2; while (i < lines.length && lines[i].includes("|")) rows.push(lines[i++]); i--;
+      const cells = (row) => row.replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+      html += "<table><thead><tr>" + cells(rows[0]).map((c) => `<th>${inlineMarkdown(c)}</th>`).join("") + "</tr></thead><tbody>";
+      html += rows.slice(1).map((r) => "<tr>" + cells(r).map((c) => `<td>${inlineMarkdown(c)}</td>`).join("") + "</tr>").join("") + "</tbody></table>"; continue;
+    }
+    const bullet = line.match(/^\s*[-*]\s+(.*)/), ordered = line.match(/^\s*\d+\.\s+(.*)/);
+    if (bullet || ordered) { const type = ordered ? "ol" : "ul"; if (list !== type) { closeList(); html += `<${type}>`; list = type; } let body = (bullet || ordered)[1]; const check = body.match(/^\[([ xX])\]\s*(.*)/); html += `<li>${check ? `<input type="checkbox" disabled ${check[1] === " " ? "" : "checked"}> ` + inlineMarkdown(check[2]) : inlineMarkdown(body)}</li>`; continue; }
+    closeList(); if (line.trim()) html += `<p>${inlineMarkdown(line)}</p>`;
+  }
+  closeList(); if (fenced) html += `<pre><code>${escapeHtml(code.join("\n"))}</code></pre>`;
+  return html;
+}
+
+async function showDocument(file) {
+  if (viewerState?.file === file && !viewerState.editing) return;
+  const request = ++documentRequest;
+  const res = await fetch("/api/document?file=" + encodeURIComponent(file));
+  if (request !== documentRequest || !res.ok) return;
+  viewerState = { file, document: await res.json(), editing: false };
+  renderDocument();
+}
+
+function closeDocument() {
+  if (!viewerState) return;
+  documentRequest++;
+  viewerState = null;
+  if (!editorState) { editorEl.classList.remove("show"); editorEl.innerHTML = ""; }
+}
+
+function renderDocument() {
+  if (!viewerState) return;
+  const d = viewerState.document;
+  editorEl.innerHTML = `<div class="stage-box document-box"><div class="document-head"><span>${escapeHtml(d.kind)}</span><span class="document-path">${escapeHtml(d.file)}</span><button class="md-btn document-edit">edit</button></div><div class="document-body">${markdownHtml(d.text)}</div><div class="document-links"></div></div>`;
+  editorEl.classList.add("show"); previewHintEl.classList.remove("show");
+  editorEl.querySelector(".document-edit").onclick = editDocument;
+  editorEl.querySelectorAll("[data-wiki]").forEach((el) => el.onclick = () => openWiki(el.dataset.wiki));
+  const links = editorEl.querySelector(".document-links");
+  const nodeDocuments = d.kind === "note" ? (vaultNodes.find((n) => n.path === d.node)?.documents ?? []).map((x) => x.file) : [];
+  const related = [...new Set([...nodeDocuments, ...(d.links ?? []), ...(d.backlinks ?? [])])];
+  if (related.length) { links.textContent = d.kind === "note" && nodeDocuments.length ? `documents (${nodeDocuments.length}) · linked context` : "linked context"; for (const ref of related) { const b = document.createElement("button"); b.textContent = ref; b.onclick = () => openWiki(ref); links.appendChild(b); } }
+}
+
+function openWiki(target) {
+  const stem = target.split("/").pop().replace(/\.md$/, "");
+  const hit = vaultDocuments.find((d) => d.file.split("/").pop().replace(/\.md$/, "") === stem);
+  if (hit) showDocument(hit.file); else hud("error", "no vault document [[" + target + "]] ");
+}
+
+function editDocument() {
+  const d = viewerState.document;
+  viewerState.editing = true;
+  const box = editorEl.querySelector(".document-box");
+  box.innerHTML = `<div class="document-head"><span class="document-path">${escapeHtml(d.file)}</span></div><textarea class="md-edit document-source"></textarea><div class="md-actions"><button class="md-btn primary save-document">save</button><button class="md-btn cancel-document">cancel</button></div>`;
+  const source = box.querySelector("textarea"); source.value = d.text; source.focus();
+  box.querySelector(".cancel-document").onclick = () => { viewerState.editing = false; renderDocument(); };
+  box.querySelector(".save-document").onclick = async () => {
+    const res = await fetch("/api/document", { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify({ file: d.file, text: source.value, baseHash: d.hash }) });
+    const out = await res.json();
+    if (res.status === 409) return hud("error", "not saved — this document changed elsewhere; reopen it to merge");
+    if (!res.ok) return hud("error", out.error || "save failed");
+    viewerState = { file: d.file, document: out, editing: false }; hud("done", "saved: " + out.title); await refreshVault(); renderDocument();
+  };
 }
 
 /** The hint line for a selected row with no session behind it. */
@@ -772,7 +904,7 @@ function previewHintText(item) {
   if (item.kind === "up") return "⏎ widens the view";
   if (item.kind === "main") return "no session here — ⏎ views the subtree";
   if (item.kind === "outcome") {
-    return ["done", "dropped"].includes(item.t.status) ? item.t.title : "no agent yet — ⏎ starts one";
+    return ["done", "dropped"].includes(item.t.status) ? item.t.title : "no agent yet — ⏎ opens a shell with the agent line ready";
   }
   return "session ended";
 }
@@ -806,7 +938,10 @@ async function startAgent(file) {
     const out = await res.json();
     if (!res.ok) throw new Error(out.error ?? "start failed " + res.status);
     show(out.session);
-    hud("done", (out.reattached ? "reattached " : "agent started: ") + out.session);
+    // Three outcomes to tell apart: a fresh session, an idle one re-primed
+    // with the launch line, and one still running its agent.
+    const what = !out.reattached ? "agent line ready: " : out.primed ? "agent line ready again: " : "reattached ";
+    hud("done", what + out.session);
     refreshVault();
   } catch (err) {
     hud("error", String(err.message ?? err));
@@ -1072,9 +1207,9 @@ function renderKillBtn() {
 }
 
 // The chord vocabulary stays tiny and every chord is printed on the control it
-// drives: ⌫ in the tree legend, ⌘. on the tree's active filter, and on every
-// kill button in the tree's detail pane; n in the legend and on the + of every
-// node row.
+// drives: ⌫ in the tree legend, and on every kill button in the tree's detail
+// pane; n in the legend and on the + of every node row. Tree modes use Tab
+// while browsing, so they do not occupy a configurable global chord.
 // ⌫ and n are unmodified, so they fire only while the tree owns the keyboard;
 // the header's kill button therefore prints no chord and stays a mouse target.
 // Switching agents stays a visible button with no chord.
@@ -1089,7 +1224,6 @@ const ACTION_META = [
   { action: "find", label: "find in the tree", when: "any", defaultKeys: "cmd+/", was: "map" },
   { action: "focus-tree", label: "focus the tree, on the work in flight", when: "any", defaultKeys: "cmd+arrowleft" },
   { action: "focus-work", label: "focus the work pane", when: "any", defaultKeys: "cmd+arrowright" },
-  { action: "active-only", label: "show only active work", when: "any", defaultKeys: "cmd+." },
   { action: "talk", label: "typed command; double-tap to speak it instead", when: "any", defaultKeys: "cmd+k" },
 ];
 
@@ -1099,8 +1233,7 @@ const ACTIONS = {
   "new-outcome": () => newOutcomeOnSelection(),
   "find": () => toggleFind(),
   "focus-tree": () => focusTree(),
-  "focus-work": () => exitBrowse(),
-  "active-only": () => setLiveOnly(!liveOnly),
+  "focus-work": () => focusWork(),
   "talk": () => talkChord(),
 };
 
@@ -1184,7 +1317,7 @@ function paintChordHints() {
   // The find input is where both tree chords land you: ⌘← from the work
   // pane, ⌘/ from anywhere.
   set("find-chord", [chordFor("focus-tree"), chordFor("find")].filter(Boolean).join(" "));
-  set("side-live", ("◉ active " + chordFor("active-only")).trim());
+  paintTreeModeControl();
   set("talk-btn", ("talk " + chordFor("talk")).trim());
   // Voice has no chord of its own: it is the talk chord, twice. Printing it
   // doubled on the mic is the only place that gesture is taught.
@@ -1365,12 +1498,15 @@ window.addEventListener(
       }
       return;
     }
-    // Inputs swallow chords, except the find input: the chords printed in
-    // the legend (⌫, ⌘K, ⌘/) must fire while browsing. The command bar is
-    // the second exception, for talk alone: its second tap is how you switch
-    // from typing to speaking, so it has to reach the action.
-    if (e.target instanceof HTMLInputElement && e.target !== findInput) {
-      if (e.target !== cmdInput || !isTalkChord(e)) return;
+    // Inputs swallow chords. The find input still allows modified shell
+    // chords while editing and all shell chords when the tree owns its shared
+    // DOM focus.
+    if (e.target instanceof HTMLInputElement) {
+      // The command bar swallows every chord but talk: its second tap is how
+      // you switch from typing to speaking, so it has to reach the action.
+      if (e.target === cmdInput) {
+        if (!isTalkChord(e)) return;
+      } else if (e.target !== findInput || (!treeCursor && !e.metaKey && !e.ctrlKey && !e.altKey)) return;
     }
     const ctx = shellContext();
     const onTree = treeOwnsKeyboard();
@@ -1813,9 +1949,11 @@ async function sendCommand(text) {
 
 let vaultNodes = [];
 let vaultMap = []; // the unified tree: each outcome once, grouped by root's home node
+let vaultDocuments = []; // notes, outcomes, and ordinary Markdown documents
 let vaultAt = 0;
 let outcomeByFile = new Map(); // every outcome in the vault, by file path
 let outcomeBySlug = new Map(); // and by slug, for breakdown children
+let outcomeParentByFile = new Map(); // child file -> parent file, across node boundaries
 
 async function fetchVault(force = false) {
   if (!force && vaultNodes.length && Date.now() - vaultAt < 5000) return vaultNodes;
@@ -1824,6 +1962,7 @@ async function fetchVault(force = false) {
     const data = await res.json();
     vaultNodes = data.nodes ?? [];
     vaultMap = data.map ?? [];
+    vaultDocuments = data.documents ?? [];
     const paths = new Set(vaultNodes.map((n) => n.path));
     let hiddenChanged = false;
     for (const path of [...hiddenNodes]) {
@@ -1835,10 +1974,17 @@ async function fetchVault(force = false) {
     if (!hiddenNodes.size) showHidden = false;
     outcomeByFile = new Map();
     outcomeBySlug = new Map();
+    outcomeParentByFile = new Map();
     for (const g of vaultMap) {
       for (const t of g.outcomes) {
         outcomeByFile.set(t.file, t);
         if (!outcomeBySlug.has(t.slug)) outcomeBySlug.set(t.slug, t);
+      }
+    }
+    for (const t of outcomeByFile.values()) {
+      for (const slug of t.breakdown ?? []) {
+        const child = outcomeBySlug.get(slug);
+        if (child) outcomeParentByFile.set(child.file, t.file);
       }
     }
     // The active filter must not swallow arriving work: an outcome that
@@ -1867,8 +2013,9 @@ const visibleOutcomes = (n) =>
   n.outcomes.filter((t) => t.status !== "done" && t.status !== "deferred" && t.status !== "dropped");
 const OUTCOME_GLYPH = { done: "✓", active: "▶", waiting: "◔", open: "○" };
 
-// Rank nodes for "/query": name beats path beats people beats outcome text beats
-// note body — "/sami" finds viz-input through its people or note content.
+// Rank nodes for "/query": name beats path beats people beats outcome text.
+// Search only concepts the field promises and the results can explain; private
+// note prose must not make an otherwise unrelated node appear to match.
 // Bare "/" lists nodes that still have something to do.
 function rankNodes(q) {
   const query = q.toLowerCase().trim();
@@ -1883,7 +2030,7 @@ function rankNodes(q) {
     else if (n.path.toLowerCase().includes(query)) s = 70;
     else if ((n.people ?? "").toLowerCase().includes(query)) s = 55;
     else if (n.outcomes.some((t) => (t.title + " " + t.outcome).toLowerCase().includes(query))) s = 40;
-    else if ((n.body ?? "").includes(query)) s = 25;
+    else if ((n.documents ?? []).some((d) => (d.title + " " + d.file).toLowerCase().includes(query))) s = 45;
     if (s) scored.push({ n, s: s + Math.min(n.outcomes.length, 5) });
   }
   scored.sort((a, b) => b.s - a.s || a.n.path.localeCompare(b.n.path));
@@ -1895,6 +2042,13 @@ function rankNodes(q) {
 // live glow) because activity must never silently disappear.
 const FOLD_STORE = "agent-shell-map-folds";
 const folded = new Set(JSON.parse(localStorage.getItem(FOLD_STORE) ?? "[]"));
+const OUTCOME_FOLD_STORE = "agent-shell-outcome-folds";
+let foldedOutcomes;
+try {
+  foldedOutcomes = new Set(JSON.parse(localStorage.getItem(OUTCOME_FOLD_STORE) ?? "[]"));
+} catch {
+  foldedOutcomes = new Set();
+}
 
 /** True when `path` belongs below `parent`; the empty root owns every node. */
 function isDescendantPath(parent, path) {
@@ -1913,6 +2067,14 @@ function toggleFold(path) {
   renderSidebar(true);
 }
 
+/** Folds one outcome's visible descendants; outcome files are vault-unique. */
+function toggleOutcomeFold(file) {
+  if (foldedOutcomes.has(file)) foldedOutcomes.delete(file);
+  else foldedOutcomes.add(file);
+  localStorage.setItem(OUTCOME_FOLD_STORE, JSON.stringify([...foldedOutcomes]));
+  renderSidebar(true);
+}
+
 // Explicitly hidden node roots last for this native window: a reload keeps
 // them, while quitting Agent Shell destroys the page session and resets the
 // tree. Roots are normalized so hiding a parent subsumes hidden descendants.
@@ -1923,7 +2085,13 @@ try {
 } catch {
   hiddenNodes = new Set();
 }
-let showHidden = false;
+const TREE_MODE_STORE = "agent-shell-tree-mode";
+const TREE_MODES = ["visible", "active", "all"];
+const savedTreeMode = localStorage.getItem(TREE_MODE_STORE);
+let treeMode = TREE_MODES.includes(savedTreeMode)
+  ? savedTreeMode
+  : localStorage.getItem("agent-shell-live-only") === "1" ? "active" : "visible";
+let showHidden = treeMode === "all";
 const hiddenBtn = document.getElementById("side-hidden");
 
 /** The nearest explicit hidden root containing path, or null. */
@@ -1960,16 +2128,13 @@ function toggleHiddenNode(path) {
     hud("done", "hidden " + path);
   }
   sessionStorage.setItem(HIDDEN_STORE, JSON.stringify([...hiddenNodes]));
-  if (!hiddenNodes.size) showHidden = false;
   renderSidebar(true);
   if (browsing && sideItems.length) setSideSel(Math.min(oldIndex, sideItems.length - 1));
   paintHiddenControl();
 }
 
 hiddenBtn.onclick = () => {
-  showHidden = !showHidden;
-  renderSidebar(true);
-  paintHiddenControl();
+  setTreeMode(treeMode === "all" ? "visible" : "all");
 };
 
 // The tree's scope: clicking a node views only that subtree — the user's own
@@ -1987,21 +2152,40 @@ function setScope(path) {
   renderSidebar(true);
 }
 
-// The active-only filter: the tree shrinks to rows that need eyes — live
-// agents, running services, active outcomes.
+// One tree mode, cycled by the left hand while arrows stay under the right:
+// visible excludes hidden nodes, active keeps only work needing eyes, and all
+// reveals hidden nodes. The old active-only store is read once above so an
+// existing window keeps its view when upgrading.
 const LIVE_STORE = "agent-shell-live-only";
-let liveOnly = localStorage.getItem(LIVE_STORE) === "1";
+let liveOnly = treeMode === "active";
 const liveBtn = document.getElementById("side-live");
 
-function setLiveOnly(on) {
-  liveOnly = on;
-  localStorage.setItem(LIVE_STORE, on ? "1" : "0");
-  liveBtn.classList.toggle("on", on);
-  freshOutcomes.clear(); // the toggle re-asserts "active only"
+function paintTreeModeControl() {
+  if (!liveBtn) return;
+  liveBtn.textContent = treeMode + " ⇥";
+  liveBtn.classList.toggle("on", treeMode !== "visible");
+  liveBtn.title = `tree mode: ${treeMode} — Tab cycles visible, active, and all; Shift+Tab reverses`;
+}
+
+function setTreeMode(mode) {
+  if (!TREE_MODES.includes(mode)) return;
+  treeMode = mode;
+  liveOnly = mode === "active";
+  showHidden = mode === "all";
+  localStorage.setItem(TREE_MODE_STORE, mode);
+  localStorage.setItem(LIVE_STORE, liveOnly ? "1" : "0");
+  freshOutcomes.clear();
+  paintTreeModeControl();
   renderSidebar(true);
 }
-liveBtn.classList.toggle("on", liveOnly);
-liveBtn.onclick = () => setLiveOnly(!liveOnly);
+
+function cycleTreeMode(direction) {
+  const index = TREE_MODES.indexOf(treeMode);
+  setTreeMode(TREE_MODES[(index + direction + TREE_MODES.length) % TREE_MODES.length]);
+}
+
+paintTreeModeControl();
+liveBtn.onclick = () => cycleTreeMode(1);
 
 document.getElementById("talk-btn").onclick = () => openCmdBar();
 
@@ -2016,7 +2200,7 @@ document.getElementById("talk-btn").onclick = () => openCmdBar();
 function toggleFind() {
   if (browsing) return exitBrowse();
   if (!sidebarEl.classList.contains("open")) treeBtn.onclick();
-  treeCursor = false;
+  setTreeCursor(false);
   findInput.focus();
 }
 
@@ -2027,13 +2211,28 @@ function exitBrowse() {
 }
 
 /**
+ * ⌘→ gives the keyboard to exactly what the work pane is showing. While
+ * browsing that may be a preview of a different session, so commit the preview
+ * before leaving browse mode; otherwise clearing the preview would reveal and
+ * focus the previously active session instead. It never opens the outcome
+ * editor: ⌘←/⌘→ is pane movement and nothing else, so it always lands the
+ * keyboard in the work pane.
+ */
+function focusWork() {
+  const preview = browsing ? previewName : null;
+  if (preview && preview !== active) return show(preview);
+  exitBrowse();
+}
+
+/**
  * ⌘←: put the keyboard in the tree, on the work in flight. The pair ⌘←/⌘→
- * moves focus between the two panes without deciding anything: ⌘→ (exitBrowse)
- * hands focus back to the session or card the tree sits next to.
+ * moves focus between the two panes and decides nothing else: ⌘→ (focusWork)
+ * hands focus to the session the work pane shows, and ⌘← brings it back to
+ * the tree, closing the outcome editor if that is what the work pane holds.
  */
 function focusTree() {
   if (!sidebarEl.classList.contains("open")) treeBtn.onclick();
-  treeCursor = true;
+  setTreeCursor(true);
   // Entering browsing lands the selection in findInput.onfocus. Already
   // browsing, the chord still means "take me to the work": re-land it.
   if (!browsing) {
@@ -2082,7 +2281,7 @@ findInput.onfocus = () => {
 panelEl.onmousedown = (e) => {
   if (e.target !== panelEl) return;
   e.preventDefault();
-  treeCursor = true;
+  setTreeCursor(true);
   findInput.focus();
 };
 
@@ -2091,15 +2290,13 @@ panelEl.onmousedown = (e) => {
 // cursor; arrows, hover, or clicking a row restore the tree cursor.
 findInput.onmousedown = () => {
   if (!browsing || !treeCursor) return;
-  treeCursor = false;
-  panelEl.querySelectorAll(".cr-sel").forEach((el) => el.classList.remove("cr-sel"));
-  clearPreview();
+  focusFindInput();
 };
 
 findInput.onblur = () => {
   if (!browsing) return;
   browsing = false;
-  treeCursor = false;
+  setTreeCursor(false);
   sidebarEl.classList.remove("browsing");
   findInput.value = "";
   clearPreview();
@@ -2115,8 +2312,21 @@ findInput.onbeforeinput = (e) => {
 findInput.onkeydown = (e) => {
   e.stopPropagation();
   if (e.key === "Escape") return exitBrowse();
+  if (e.key === "Tab" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    e.preventDefault();
+    cycleTreeMode(e.shiftKey ? -1 : 1);
+    return;
+  }
   if (e.key === "ArrowDown" || e.key === "ArrowUp") {
     e.preventDefault();
+    if (!treeCursor) {
+      if (e.key === "ArrowDown" && sideItems.length) setSideSel(0);
+      return;
+    }
+    if (sideSel === 0 && e.key === "ArrowUp") {
+      focusFindInput();
+      return;
+    }
     moveSideSel(e.key === "ArrowDown" ? 1 : -1);
     return;
   }
@@ -2140,16 +2350,23 @@ findInput.onkeydown = (e) => {
     if (!item) return;
     e.preventDefault();
     if (e.key === "ArrowRight") {
-      if (item.kind !== "main" || !item.foldable) return;
-      if (folded.has(item.g.path)) toggleFold(item.g.path);
+      if (!item.foldable) return;
+      if (item.kind === "main" && folded.has(item.g.path)) toggleFold(item.g.path);
+      else if (item.kind === "outcome" && foldedOutcomes.has(item.t.file)) toggleOutcomeFold(item.t.file);
       else moveSideSel(1);
       return;
     }
     if (item.kind === "main" && item.foldable && !folded.has(item.g.path)) return toggleFold(item.g.path);
+    if (item.kind === "outcome" && item.foldable && !foldedOutcomes.has(item.t.file)) return toggleOutcomeFold(item.t.file);
     const parent = item.kind === "up" ? null
       : item.kind === "main" ? item.g.path.split("/").slice(0, -1).join("/")
+      : item.kind === "outcome" ? item.parentFile ?? item.g.path
       : item.g.path;
-    const idx = parent === null ? -1 : sideItems.findIndex((it) => it.kind === "main" && it.g.path === parent);
+    const idx = parent === null ? -1 : sideItems.findIndex((it) =>
+      item.kind === "outcome" && item.parentFile
+        ? it.kind === "outcome" && it.t.file === parent
+        : it.kind === "main" && it.g.path === parent
+    );
     if (idx >= 0 && idx !== sideSel) return setSideSel(idx);
     if (treeScope) setScope(treeScope.split("/").slice(0, -1).join("/"));
     return;
@@ -2171,11 +2388,13 @@ const sessionFor = (name) => (name ? lastSessions.find((s) => s.name === name) ?
  * the deduplicated vault map, so an outcome renders once under its topmost
  * root). Scoped: only the scoped node and its descendants, re-based to depth
  * 0. Typed: ranked node matches — name beats path beats people beats outcome
- * text beats note body.
+ * text.
  */
 function treeSections(q) {
   if (q) {
-    return rankNodes(q).map((n) => ({ path: n.path, name: n.path, purpose: n.purpose, depth: 0, outcomes: visibleOutcomes(n) }));
+    return rankNodes(q)
+      .filter((n) => showHidden || !hiddenRootFor(n.path))
+      .map((n) => ({ ...n, name: n.path, depth: 0, outcomes: visibleOutcomes(n), documents: (n.documents ?? []).filter((d) => (d.title + " " + d.file).toLowerCase().includes(q.toLowerCase())) }));
   }
   const groupByPath = new Map(vaultMap.map((g) => [g.path, g]));
   // When unscoped, root occupies depth 0 and every vault path belongs below
@@ -2184,28 +2403,41 @@ function treeSections(q) {
   const baseDepth = effectiveScope ? effectiveScope.split("/").length - 1 : -1;
   const sections = [];
   if (!effectiveScope) {
-    sections.push({ path: "", name: "root", purpose: "the whole tree", depth: 0, outcomes: [] });
+    sections.push({ path: "", name: "root", purpose: "the whole tree", depth: 0, outcomes: [], documents: [] });
   }
   for (const n of vaultNodes) {
     if (effectiveScope && !(n.path === effectiveScope || n.path.startsWith(effectiveScope + "/"))) continue;
     if (!showHidden && hiddenRootFor(n.path)) continue;
+    const indexed = vaultNodes.find((entry) => entry.path === n.path);
     sections.push({
       path: n.path,
       name: n.path.split("/").pop(),
       purpose: n.purpose,
       depth: n.path.split("/").length - 1 - baseDepth,
       outcomes: visibleOutcomes(groupByPath.get(n.path) ?? { outcomes: [] }),
+      note: indexed?.note,
+      documents: indexed?.documents ?? [],
     });
   }
   return sections;
 }
 
-/** One outcome row in the tree: glyph, title, live dot. */
-function outcomeRowEl(t, indent) {
+/** One outcome row in the tree: fold chevron, glyph, title, live dot. */
+function outcomeRowEl(t, indent, fold) {
   const row = document.createElement("div");
   row.className = "bt-row " + t.status;
   row.style.paddingLeft = indent + (t.depth ?? 0) * 16 + "px";
   const s = sessionFor(t.session);
+  const chev = document.createElement("span");
+  chev.className = "cr-fold";
+  if (fold.foldable) {
+    chev.textContent = fold.folded ? "▸" : "▾";
+    chev.onmousedown = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleOutcomeFold(t.file);
+    };
+  }
   const glyph = document.createElement("span");
   glyph.className = "bt-glyph" + (s ? liveGlyphClass(s.state) : "");
   glyph.textContent = s ? "●" : OUTCOME_GLYPH[t.status] ?? "○";
@@ -2213,7 +2445,7 @@ function outcomeRowEl(t, indent) {
   title.className = "bt-title";
   title.textContent = t.title;
   if (t.outcome) title.title = "done = " + t.outcome;
-  row.append(glyph, title);
+  row.append(chev, glyph, title);
   if (t.foreign) {
     const chip = document.createElement("span");
     chip.className = "bt-node";
@@ -2221,8 +2453,9 @@ function outcomeRowEl(t, indent) {
     chip.title = "lives on " + t.node;
     row.appendChild(chip);
   }
-  const meta =
-    t.status === "waiting" && t.waitingOn ? "waiting on " + t.waitingOn
+  const meta = fold.folded
+    ? fold.hiddenCount + " hidden" + (fold.hiddenLive ? " · live" : "")
+    : t.status === "waiting" && t.waitingOn ? "waiting on " + t.waitingOn
     : liveOnly && !s && freshOutcomes.has(t.file) ? "new"
     : t.due ?? "";
   if (meta) {
@@ -2298,7 +2531,7 @@ function processRowEl(s, indent) {
   glyph.textContent = live ? "●" : "○";
   const title = document.createElement("span");
   title.className = "bt-title";
-  title.textContent = s.name;
+  title.textContent = s.process ?? s.name;
   const meta = document.createElement("span");
   meta.className = "bt-meta";
   meta.textContent = STATE_HINT[s.state] ?? "";
@@ -2308,14 +2541,78 @@ function processRowEl(s, indent) {
   return row;
 }
 
+/** True when an outcome itself currently counts as active work. */
+function outcomeIsActive(t) {
+  return Boolean(sessionFor(t.session)) || t.status === "active" || freshOutcomes.has(t.file);
+}
+
+/**
+ * Turns one group's depth-first outcome list into regular tree items. Parent
+ * links come from Breakdown rather than depth, so a done/hidden intermediate
+ * outcome or a child homed on another node cannot corrupt the hierarchy.
+ * Active mode keeps the ancestors of active descendants; search reveals the
+ * matching group's eligible outcomes regardless of persisted folds.
+ */
+function buildOutcomeItems(outcomes, g, pad, { activeOnly, searching }) {
+  const files = new Set(outcomes.map((t) => t.file));
+  const nearestVisibleParent = (file) => {
+    const seen = new Set();
+    let parent = outcomeParentByFile.get(file) ?? null;
+    while (parent && !files.has(parent) && !seen.has(parent)) {
+      seen.add(parent);
+      parent = outcomeParentByFile.get(parent) ?? null;
+    }
+    return parent && files.has(parent) ? parent : null;
+  };
+  const records = outcomes.map((t) => ({ t, parentFile: nearestVisibleParent(t.file) }));
+  const byFile = new Map(records.map((record) => [record.t.file, record]));
+  const included = new Set(activeOnly ? records.filter((record) => outcomeIsActive(record.t)).map((record) => record.t.file) : files);
+  if (activeOnly) {
+    for (const file of [...included]) {
+      let parent = byFile.get(file)?.parentFile ?? null;
+      while (parent && !included.has(parent)) {
+        included.add(parent);
+        parent = byFile.get(parent)?.parentFile ?? null;
+      }
+    }
+  }
+  const isBelow = (ancestor, file) => {
+    const seen = new Set();
+    let parent = byFile.get(file)?.parentFile ?? null;
+    while (parent && !seen.has(parent)) {
+      if (parent === ancestor) return true;
+      seen.add(parent);
+      parent = byFile.get(parent)?.parentFile ?? null;
+    }
+    return false;
+  };
+  const visible = [];
+  for (const record of records) {
+    const file = record.t.file;
+    if (!included.has(file)) continue;
+    const descendants = records.filter((candidate) => included.has(candidate.t.file) && isBelow(file, candidate.t.file));
+    const foldable = !searching && descendants.length > 0;
+    const fold = {
+      foldable,
+      folded: foldable && foldedOutcomes.has(file),
+      hiddenCount: descendants.length,
+      hiddenLive: descendants.some((candidate) => outcomeIsActive(candidate.t)),
+    };
+    if (!searching && [...foldedOutcomes].some((ancestor) => included.has(ancestor) && isBelow(ancestor, file))) continue;
+    visible.push({ kind: "outcome", t: record.t, g, pad, parentFile: record.parentFile, foldable, fold });
+  }
+  return visible;
+}
+
 /**
  * THE tree, as data rows. The sidebar renders exactly this list: plain node
  * headers, outcomes nested by breakdown, sessions underneath (the
  * orchestrator is the first session row under root). `treeScope` narrows it
  * to one node's subtree (clicking a node row scopes; the up row leads back);
- * `liveOnly` keeps only rows with something running or active (flattened,
- * like search: folds are ignored); a typed query replaces it with ranked
- * node matches.
+ * The mode filter always defines eligibility: active keeps only rows with
+ * something running or active, visible excludes hidden nodes, and all includes
+ * them. A typed query ranks matches inside that eligible set; it never replaces
+ * the mode filter.
  */
 function buildTreeItems(q) {
   const sections = treeSections(q);
@@ -2323,11 +2620,27 @@ function buildTreeItems(q) {
   const inScope = (p) => !effectiveScope || p === effectiveScope || p.startsWith(effectiveScope + "/");
   /** True when a folded ancestor (inside the scope) hides this path entirely. */
   const foldedAway = (path) => [...folded].some((f) => inScope(f) && isDescendantPath(f, path));
-  const flat = !showHidden && !q && liveOnly;
+  const activeOnly = liveOnly;
+  const activeCounts = new Map();
+  if (activeOnly) {
+    for (const g of sections) {
+      const outcomes = g.outcomes.filter((t) =>
+        Boolean(sessionFor(t.session)) || t.status === "active" || freshOutcomes.has(t.file)
+      ).length;
+      const processes = lastSessions.filter((s) =>
+        (s.node ?? "") === g.path && !s.outcome && ["working", "waiting", "service"].includes(s.state)
+      ).length;
+      if (outcomes + processes) activeCounts.set(g.path, outcomes + processes);
+    }
+  }
+  const activeAtOrBelow = (path) => [...activeCounts].reduce(
+    (count, [activePath, direct]) => count + (isAtOrUnder(path, activePath) ? direct : 0), 0
+  );
   const items = [];
   if (!q && effectiveScope) items.push({ kind: "up", to: effectiveScope.split("/").slice(0, -1).join("/") });
   for (const g of sections) {
-    if (!showHidden && !q && !flat && g.path && foldedAway(g.path)) continue;
+    if (activeOnly && !activeAtOrBelow(g.path)) continue;
+    if (!q && g.path && foldedAway(g.path)) continue;
     const pad = 8 + g.depth * 16;
     const rowPad = pad + 20; // children start under the header's name
     // Every session on this node that is not an outcome's: the orchestrator
@@ -2336,8 +2649,8 @@ function buildTreeItems(q) {
       .filter((s) => (s.node ?? "") === g.path && !s.outcome)
       .sort((a, b) => (b.isChat ? 1 : 0) - (a.isChat ? 1 : 0));
     const kids = q ? [] : sections.filter((o) => isDescendantPath(g.path, o.path));
-    const foldable = !showHidden && !q && !flat && Boolean(g.outcomes.length || procs.length || kids.length);
-    const fold = { foldable, folded: !showHidden && foldable && folded.has(g.path), hiddenCount: 0, hiddenLive: false };
+    const foldable = !q && Boolean(g.outcomes.length || procs.length || kids.length);
+    const fold = { foldable, folded: foldable && folded.has(g.path), hiddenCount: 0, hiddenLive: false };
     if (fold.folded) {
       const descProcs = lastSessions.filter(
         (s) => isDescendantPath(g.path, s.node ?? "") && !s.outcome
@@ -2351,19 +2664,24 @@ function buildTreeItems(q) {
         return under && ["working", "waiting", "service"].includes(s.state);
       });
     }
-    const rows = [
-      ...g.outcomes.map((t) => ({ kind: "outcome", t, g, pad: rowPad })),
-      ...procs.map((s) => ({ kind: "process", s, g, pad: rowPad })),
-    ];
-    if (flat) {
+    const outcomeRows = buildOutcomeItems(g.outcomes, g, rowPad, { activeOnly, searching: Boolean(q) });
+    const documentRows = q ? (g.documents ?? []).map((d) => ({ kind: "document", d, g, pad: rowPad })) : [];
+    const rows = [...documentRows, ...outcomeRows, ...procs.map((s) => ({ kind: "process", s, g, pad: rowPad }))];
+    if (activeOnly) {
       const live = rows.filter((it) =>
         it.kind === "outcome"
-          ? Boolean(sessionFor(it.t.session)) || it.t.status === "active" || freshOutcomes.has(it.t.file)
+          ? true // buildOutcomeItems already retained active outcomes plus their structural ancestors
           : ["working", "waiting", "service"].includes(it.s.state)
       );
-      if (!live.length) continue;
-      items.push({ kind: "main", g, foldable: false, fold: { foldable: false, folded: false, hiddenCount: 0, hiddenLive: false }, hidden: false });
-      items.push(...live.map((item) => ({ ...item, hidden: false })));
+      const activeCount = activeAtOrBelow(g.path);
+      const activeFold = {
+        foldable: !q,
+        folded: !q && folded.has(g.path),
+        hiddenCount: activeCount,
+        hiddenLive: true,
+      };
+      items.push({ kind: "main", g, foldable: activeFold.foldable, fold: activeFold, hidden: false });
+      if (!activeFold.folded) items.push(...live.map((item) => ({ ...item, hidden: false })));
       continue;
     }
     const hidden = Boolean(hiddenRootFor(g.path));
@@ -2378,10 +2696,19 @@ function buildTreeItems(q) {
 function treeRowEl(item) {
   const row = item.kind === "up" ? upRowEl(item.to)
     : item.kind === "main" ? nodeRowEl(item.g, item.fold)
-    : item.kind === "outcome" ? outcomeRowEl(item.t, item.pad)
+    : item.kind === "outcome" ? outcomeRowEl(item.t, item.pad, item.fold)
+    : item.kind === "document" ? documentRowEl(item.d, item.pad)
     : processRowEl(item.s, item.pad);
   if (item.hidden) row.classList.add("tree-hidden");
   return row;
+}
+
+function documentRowEl(d, indent) {
+  const row = document.createElement("div"); row.className = "bt-row"; row.style.paddingLeft = indent + "px";
+  const glyph = document.createElement("span"); glyph.className = "bt-glyph"; glyph.textContent = "◇";
+  const title = document.createElement("span"); title.className = "bt-title"; title.textContent = d.title;
+  const meta = document.createElement("span"); meta.className = "bt-meta"; meta.textContent = "document";
+  row.append(glyph, title, meta); return row;
 }
 
 /**
@@ -2407,6 +2734,7 @@ function activateTreeItem(item) {
     else if (!["done", "dropped"].includes(item.t.status)) startAgent(item.t.file);
     return;
   }
+  if (item.kind === "document") { showDocument(item.d.file); return; }
   show(item.s.name);
 }
 

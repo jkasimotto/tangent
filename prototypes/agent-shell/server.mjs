@@ -5,15 +5,18 @@
 import http from "node:http";
 import os from "node:os";
 import { createHash } from "node:crypto";
-import { appendFile, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { appendFile, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
+import { doneCascade } from "./outcome-cascade.mjs";
+import { inheritedAgentCommand, noteResource } from "./node-agent-command.mjs";
 import pty from "node-pty";
 import { createReloadController } from "./reload-controller.mjs";
+import { documentHash, markdownTitle, safeMarkdownPath, wikiLinks } from "./vault-documents.mjs";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -23,15 +26,16 @@ const HOST = process.env.HOST ?? "127.0.0.1";
 let agentCmd = process.env.AGENT_CMD ?? "claude";
 
 /**
- * The agent command for sessions spawned on a node (outcome sessions).
- * Agent identity is a property of the node, not a global toggle: personal
- * projects (otto/**) run on the otto profile via the claude-otto alias,
- * work nodes (neara, pgande, ...) run the plain work-account claude. The
+ * The launch command an outcome session pre-types for the user to accept or
+ * edit. It is a suggestion, not a policy: a node note can name its own command
+ * (`- Agent: claude`), otherwise the profile default follows the node path
+ * (personal projects under otto/** run on the otto profile via the claude-otto
+ * alias, work nodes run the plain work-account claude), and editing the line
+ * is how an outcome runs on any other harness (codex, agy) or model. The
  * switchable agentCmd only ever applies to the orchestrator session.
  */
-function agentCmdForNode(node) {
-  const top = String(node ?? "").split("/")[0];
-  return top === "otto" ? "claude-otto" : "claude";
+async function agentCmdForNode(node) {
+  return inheritedAgentCommand(node, nodeNote);
 }
 
 /**
@@ -79,14 +83,14 @@ async function listSessions() {
     const { stdout } = await execFileAsync("tmux", [
       "list-sessions",
       "-F",
-      "#{session_name}\t#{session_path}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{@tangent_node}\t#{@tangent_kind}\t#{@tangent_outcome}\t#{@tangent_goal}\t#{pane_current_command}",
+      "#{session_name}\t#{session_path}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{@tangent_node}\t#{@tangent_kind}\t#{@tangent_outcome}\t#{@tangent_goal}\t#{@tangent_process}\t#{pane_current_command}",
     ]);
     const sessions = stdout
       .trim()
       .split("\n")
       .filter(Boolean)
       .map((line) => {
-        const [name, cwd, windows, attached, created, node, kind, outcome, goal, command] = line.split("\t");
+        const [name, cwd, windows, attached, created, node, kind, outcome, goal, processName, command] = line.split("\t");
         return {
           name,
           cwd,
@@ -97,6 +101,7 @@ async function listSessions() {
           kind: kind || null,
           outcome: outcome || null,
           goal: goal || null,
+          process: processName || null,
           command,
           isChat: name === CHAT_SESSION,
         };
@@ -151,7 +156,7 @@ function classifyState(name, command, hash, now) {
  * samples of sessions that no longer exist. Capture failures degrade to
  * state null rather than hiding the session.
  *
- * Sessions marked @tangent_kind=service (routine commands like a dev server)
+ * Sessions marked @tangent_kind=process (or legacy service sessions)
  * skip the screen diff: a quiet server would read as a waiting agent. The
  * pane command is signal enough — a shell means the command exited.
  */
@@ -159,7 +164,7 @@ async function withAgentStates(sessions) {
   const now = Date.now();
   const out = await Promise.all(
     sessions.map(async (s) => {
-      if (s.kind === "service") {
+      if (s.kind === "process" || s.kind === "service") {
         return { ...s, state: SHELL_CMDS.has(s.command) ? "stopped" : "service" };
       }
       try {
@@ -176,23 +181,32 @@ async function withAgentStates(sessions) {
 }
 
 /**
- * Resolves the working directory for a tree node from its node note's
- * `## Resources` section (a `Repository:` or `Worktree:` line), the same
- * lookup the chat agent performs when it opens sessions. Returns null when
- * the note records no usable directory.
+ * Reads one labelled line out of a node note's `## Resources` section, the
+ * vault's home for per-node settings the shell honours when it opens a
+ * session (`- Repository: ~/Projects/x`, `- Agent: claude`). Returns null
+ * when the note, the section, or the label is missing.
  */
-async function nodeDirectory(node) {
-  const base = node.split("/").pop();
+async function nodeResource(node, label) {
+  const base = String(node ?? "").split("/").pop();
   let text;
   try {
     text = await readFile(path.join(TREES_ROOT, node, base + ".md"), "utf8");
   } catch {
     return null;
   }
-  const resources = text.split(/^## /m).find((s) => s.startsWith("Resources"));
-  const m = resources?.match(/(?:Repository|Worktree)[^:\n]*:\s*`?([^`\n]+?)`?\s*$/im);
-  if (!m) return null;
-  const dir = m[1].trim().replace(/^~(?=\/|$)/, os.homedir());
+  return noteResource(text, label);
+}
+
+/**
+ * Resolves the working directory for a tree node from its node note's
+ * `## Resources` section (a `Repository:` or `Worktree:` line), the same
+ * lookup the chat agent performs when it opens sessions. Returns null when
+ * the note records no usable directory.
+ */
+async function nodeDirectory(node) {
+  const recorded = await nodeResource(node, "Repository|Worktree");
+  if (!recorded) return null;
+  const dir = recorded.replace(/^~(?=\/|$)/, os.homedir());
   return path.isAbsolute(dir) && existsSync(dir) ? dir : null;
 }
 
@@ -311,6 +325,53 @@ async function nodeNote(node) {
   }
 }
 
+/** Direct-child Markdown documents on a node, excluding its note/outcomes. */
+async function readNodeDocuments(node) {
+  const dir = path.join(TREES_ROOT, node);
+  const noteName = node.split("/").pop() + ".md";
+  let files;
+  try { files = await readdir(dir); } catch { return []; }
+  const documents = [];
+  for (const name of files.filter((f) => f.endsWith(".md") && f !== noteName && !f.startsWith("outcome-"))) {
+    const file = `${node}/${name}`;
+    const absolute = path.join(dir, name);
+    try {
+      const [text, info] = await Promise.all([readFile(absolute, "utf8"), stat(absolute)]);
+      documents.push({
+        file, node, kind: "document", title: markdownTitle(text, name.slice(0, -3)),
+        mtime: info.mtimeMs, hash: documentHash(text), links: wikiLinks(text),
+      });
+    } catch {}
+  }
+  return documents.sort((a, b) => a.title.localeCompare(b.title));
+}
+
+/** Reads one indexed vault Markdown file, including its derived link context. */
+async function readVaultDocument(file) {
+  const safe = safeMarkdownPath(TREES_ROOT, file);
+  if (!safe) return null;
+  const index = await vaultIndex();
+  const metadata = index.documents.find((d) => d.file === safe.relative);
+  if (!metadata) return null;
+  const text = await readFile(safe.absolute, "utf8").catch(() => null);
+  return text == null ? null : { ...metadata, text, hash: documentHash(text) };
+}
+
+/** Conflict-safe, atomic replacement of an existing indexed Markdown file. */
+async function saveVaultDocument(file, text, baseHash) {
+  const current = await readVaultDocument(file);
+  if (!current) return { status: 404, error: `no document ${file}` };
+  if (!baseHash || baseHash !== current.hash) {
+    return { status: 409, error: "document changed since it was opened", current };
+  }
+  const safe = safeMarkdownPath(TREES_ROOT, file);
+  const temp = `${safe.absolute}.tangent-${process.pid}-${Date.now()}.tmp`;
+  await writeFile(temp, text, "utf8");
+  await rename(temp, safe.absolute);
+  await vaultCommit([safe.relative], `update: ${current.node} ${current.kind} ${path.basename(file, ".md")} edited in tree`, current.node, null);
+  return { status: 200, document: { ...current, text, hash: documentHash(text) } };
+}
+
 /** Outcome slugs in the order the node note's Road to done links them. */
 function roadToDoneOrder(noteText) {
   return [...noteSection(noteText, "Road to done").matchAll(/\[\[outcome-([a-z0-9-]+)\]\]/g)].map((m) => m[1]);
@@ -390,12 +451,31 @@ async function vaultIndex() {
   for (const n of flat) {
     const note = await nodeNote(n.path);
     const own = await readNodeOutcomes(n.path);
-    entries.push({ n, note, own });
+    const documents = await readNodeDocuments(n.path);
+    entries.push({ n, note, own, documents });
     for (const o of own) if (!bySlug.has(o.slug)) bySlug.set(o.slug, o);
   }
   const linked = new Set([...bySlug.values()].flatMap((o) => o.breakdown));
   const out = [];
-  for (const { n, note, own } of entries) {
+  const records = [];
+  for (const { n, note, own, documents } of entries) {
+    const noteFile = `${n.path}/${n.name}.md`;
+    records.push({ file: noteFile, node: n.path, kind: "note", title: markdownTitle(note, n.name), links: wikiLinks(note) });
+    for (const o of own) {
+      const text = await readFile(path.join(TREES_ROOT, o.file), "utf8").catch(() => "");
+      records.push({ file: o.file, node: o.node, kind: "outcome", title: o.title, links: wikiLinks(text) });
+    }
+    records.push(...documents);
+  }
+  const byStem = new Map(records.map((r) => [path.basename(r.file, ".md"), r]));
+  const backlinks = new Map(records.map((r) => [r.file, []]));
+  for (const source of records) for (const target of source.links) {
+    const hit = byStem.get(path.basename(target));
+    if (hit && hit.file !== source.file) backlinks.get(hit.file).push(source.file);
+  }
+  for (const record of records) record.backlinks = backlinks.get(record.file) ?? [];
+
+  for (const { n, note, own, documents } of entries) {
     const roots = roadToDoneOrder(note).filter((s) => bySlug.has(s));
     const unlinked = own.map((o) => o.slug).filter((s) => !roots.includes(s) && !linked.has(s)).sort();
     const seen = new Set();
@@ -416,6 +496,8 @@ async function vaultIndex() {
       purpose: noteSection(note, "Purpose").split("\n")[0] ?? "",
       people: [fm.owners, fm.waiting_on, ...own.map((o) => o.waitingOn)].filter(Boolean).join(" "),
       body: note.slice(0, 4000).toLowerCase(),
+      note: records.find((r) => r.kind === "note" && r.node === n.path),
+      documents: documents.map((d) => ({ ...d, backlinks: backlinks.get(d.file) ?? [] })),
       outcomes,
     });
   }
@@ -457,7 +539,7 @@ async function vaultIndex() {
     g.mtime = Math.max(0, ...g.outcomes.map((o) => o.mtime ?? 0));
   }
   groups.sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0) || b.mtime - a.mtime);
-  return { nodes: out, map: groups };
+  return { nodes: out, map: groups, documents: records };
 }
 
 /** Replaces (or appends) one `key: value` line inside a note's frontmatter. */
@@ -557,12 +639,34 @@ async function vaultCommit(relPaths, message, node, tmuxSession) {
 }
 
 /**
+ * Marks one outcome and every Breakdown descendant done, clearing bindings
+ * and stopping their sessions. This is the shared mutation for both direct
+ * tree-card flips and agent-authored done states found by reconciliation.
+ * Returns only files changed by this pass, suitable for one atomic commit.
+ */
+async function cascadeOutcomeDone(rootFile, byFile) {
+  const changed = [];
+  for (const outcome of doneCascade(rootFile, byFile)) {
+    if (outcome.status !== "done" || outcome.session) {
+      await writeOutcomeBinding(outcome.file, { status: "done", session: null });
+      changed.push(outcome.file);
+    }
+    if (outcome.session) {
+      await execFileAsync("tmux", ["kill-session", "-t", "=" + outcome.session]).catch(() => {});
+    }
+    outcome.status = "done";
+    outcome.session = null;
+  }
+  return changed;
+}
+
+/**
  * The opening prompt typed (never submitted) into a fresh outcome session's
  * agent: the outcome file plus the node-note chain up to the root, by path,
  * so the agent reads its own context and the user can add words before
  * sending.
  */
-function outcomePrompt(node, o) {
+async function outcomePrompt(node, o) {
   const parts = node.split("/");
   const notes = [];
   for (let i = parts.length; i >= 1; i--) {
@@ -570,33 +674,226 @@ function outcomePrompt(node, o) {
     const abs = path.join(TREES_ROOT, p, parts[i - 1] + ".md");
     if (existsSync(abs)) notes.push(abs);
   }
+  const index = await vaultIndex();
+  const linked = index.documents.filter((d) => d.kind === "document" && (
+    d.backlinks.includes(o.file) || index.documents.find((r) => r.file === o.file)?.links.includes(path.basename(d.file, ".md"))
+  ));
   return (
     `Work this outcome: ${path.join(TREES_ROOT, o.file)} — read it first, then the node notes for context (nearest first): ${notes.join(", ")}. ` +
+    (linked.length ? `Read the linked design documents too: ${linked.map((d) => path.join(TREES_ROOT, d.file)).join(", ")}. ` : "") +
     (o.breakdown.length ? `Its Breakdown section lists the child outcome files it decomposes into; work them in order. ` : "") +
+    `Before starting a long-running server, watcher, or similar command, run tangent process list; use tangent process start for a matching managed process, and run unmatched commands normally. ` +
     `Keep the outcome file's State section current as you work; when the outcome is met, propose marking it done — never mark it done yourself without confirmation.`
   );
 }
 
+// ---- outcome prompt arming ----
+// The shell does not launch the harness. Starting an outcome primes its
+// session instead: a plain shell in the node's repo with the launch command
+// pre-typed and unsubmitted, so any harness and any model is one edit away,
+// and stopping the agent leaves an ordinary tmux session to work in rather
+// than killing it. The opening prompt still has to reach whatever the user
+// starts, so a primed session is "armed" and the prompt is typed (never
+// submitted) once a command takes the pane.
+//
+// Arming is only ever set by the start-agent action, never inferred from what
+// the user runs. A session that has been used for a while sits unarmed, so
+// ordinary work in the pane (an editor, a test run, a pager) is never typed
+// into; starting the outcome again re-primes it, which is how a second harness
+// on the same outcome gets the same context.
+
+const ARM_POLL_MS = 1000;
+const SETTLE_MS = 500; // repaint window between readiness samples
+const STILL_SAMPLES = 3; // consecutive identical samples that count as booted
+const READY_MAX_MS = 30_000; // stop waiting for a quiet screen and type anyway
+const ECHO_MS = 1200; // time for a TUI to draw what was typed into it
+const RETRY_MS = 2500; // extra boot time before typing the prompt again
+const TYPE_ATTEMPTS = 3;
+const PROBE_CHARS = 24; // opening words, short enough to stay visible in a composer
+const armedSessions = new Set(); // primed outcome sessions, waiting for a harness
+let armTimer = null;
+
+/** The pane's foreground command, "" when the session is gone. */
+async function paneCommand(session) {
+  try {
+    const { stdout } = await execFileAsync("tmux", ["display-message", "-p", "-t", "=" + session + ":", "#{pane_current_command}"]);
+    return stdout.trim();
+  } catch {
+    return "";
+  }
+}
+
+/** The visible pane with all whitespace removed, so line wrapping cannot hide a match. */
+async function paneText(session) {
+  const { stdout } = await execFileAsync("tmux", ["capture-pane", "-p", "-t", "=" + session + ":"]);
+  return stdout.replace(/\s+/g, "");
+}
+
 /**
- * Spawns (or reattaches) the work session for one outcome: agent in the
- * node's repo, bound via @tangent_node + @tangent_outcome, outcome
- * mechanically flipped to active. The opening prompt follows the
- * type-but-never-submit rule.
+ * Waits for a just-started harness to finish booting. How long a TUI takes to
+ * come up is not knowable — codex is slower than claude, and one that clears
+ * the screen on start swallows anything typed before it does — so readiness is
+ * observed rather than timed: the pane is sampled until it stops repainting,
+ * which is the same signal the sidebar uses to tell working from waiting.
+ * False means the harness is already gone (a typo, a quick quit); the next
+ * priming covers whatever starts after it.
+ */
+async function waitForHarnessReady(session) {
+  const deadline = Date.now() + READY_MAX_MS;
+  let previous = null;
+  let still = 1;
+  while (Date.now() < deadline) {
+    await sleep(SETTLE_MS);
+    if (SHELL_CMDS.has(await paneCommand(session))) return false;
+    let hash;
+    try {
+      hash = await screenHash(session);
+    } catch {
+      return false; // session gone
+    }
+    still = hash === previous ? still + 1 : 1;
+    previous = hash;
+    if (still >= STILL_SAMPLES) return true;
+  }
+  return true; // never settles (an animated TUI): type anyway
+}
+
+/**
+ * Types an outcome's opening prompt into the harness the user just started,
+ * once that harness is up, and checks that it arrived whole.
+ *
+ * A still screen is not proof a TUI is listening: codex goes quiet while its
+ * MCP servers start, then redraws and eats whatever was typed into the gap,
+ * which cost the prompt its first line and left the agent a path it could not
+ * read. So the opening words go in alone as a probe and have to appear on
+ * screen before the rest follows. Only the probe can be checked that way — a
+ * composer holding the whole prompt has scrolled its first line out of sight,
+ * so the far end is what proves the remainder arrived.
+ */
+async function typeOutcomePromptWhenReady(session, node, file) {
+  try {
+    const o = (await readNodeOutcomes(node)).find((t) => t.file === file);
+    if (!o) return;
+    const prompt = await outcomePrompt(node, o);
+    /** Whitespace-free comparison form, so wrapping cannot hide a match. */
+    const squash = (s) => s.replace(/\s+/g, "");
+    const probe = prompt.slice(0, PROBE_CHARS);
+    const tail = squash(prompt.slice(-40));
+    for (let attempt = 1; attempt <= TYPE_ATTEMPTS; attempt++) {
+      if (!(await waitForHarnessReady(session))) return;
+      await typeInto(session, probe, false);
+      await sleep(ECHO_MS);
+      if ((await paneText(session)).includes(squash(probe))) {
+        await typeInto(session, prompt.slice(PROBE_CHARS), false);
+        await sleep(ECHO_MS);
+        if ((await paneText(session)).includes(tail)) return;
+      }
+      console.error(`outcome prompt: ${session} took it partially (attempt ${attempt}), clearing and retyping`);
+      // C-u is "clear the input line" in every composer the shell meets, and
+      // an unrecognised C-u costs a stray keystroke, not the prompt.
+      await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "C-u"]).catch(() => {});
+      await sleep(RETRY_MS);
+    }
+    console.error(`outcome prompt: ${session} never showed the whole prompt`);
+  } catch (err) {
+    console.error("outcome prompt:", err.message ?? err);
+  }
+}
+
+/**
+ * One arming pass: fires the prompt for every armed session whose pane has
+ * left the shell, and forgets sessions that died. Armed sessions are the only
+ * ones looked at, so an outcome session in ordinary use costs nothing.
+ */
+async function tickArmedSessions() {
+  let stdout;
+  try {
+    ({ stdout } = await execFileAsync("tmux", [
+      "list-sessions",
+      "-F",
+      "#{session_name}\t#{@tangent_node}\t#{@tangent_outcome}\t#{pane_current_command}",
+    ]));
+  } catch {
+    armedSessions.clear(); // no tmux server: nothing to watch
+    return;
+  }
+  const live = new Set();
+  for (const line of stdout.trim().split("\n").filter(Boolean)) {
+    const [name, node, file, command] = line.split("\t");
+    live.add(name);
+    if (!armedSessions.has(name) || SHELL_CMDS.has(command)) continue;
+    armedSessions.delete(name);
+    if (node && file) typeOutcomePromptWhenReady(name, node, file);
+  }
+  for (const name of armedSessions) if (!live.has(name)) armedSessions.delete(name);
+}
+
+/**
+ * Arms one primed session and keeps the watch timer running while anything is
+ * armed: one tmux query a second, never overlapping, stopped once every primed
+ * session has its harness.
+ */
+function armSession(name) {
+  armedSessions.add(name);
+  if (armTimer) return;
+  let running = false;
+  armTimer = setInterval(async () => {
+    if (running) return;
+    running = true;
+    try {
+      await tickArmedSessions();
+    } catch (err) {
+      console.error("arm watch:", err.message ?? err);
+    } finally {
+      running = false;
+      if (!armedSessions.size) {
+        clearInterval(armTimer);
+        armTimer = null;
+      }
+    }
+  }, ARM_POLL_MS);
+  armTimer.unref();
+}
+
+/**
+ * Primes a session sitting at its shell: the node's suggested launch command
+ * typed but not submitted, and the outcome prompt armed to follow whatever
+ * harness the user starts. A pane that is already running something is left
+ * alone — priming must never type over an agent mid-conversation.
+ */
+async function primeOutcomeSession(session, node) {
+  const { stdout } = await execFileAsync("tmux", ["display-message", "-p", "-t", "=" + session + ":", "#{pane_current_command}"]);
+  if (!SHELL_CMDS.has(stdout.trim())) return false;
+  armSession(session);
+  await typeInto(session, withDefaultModel(await agentCmdForNode(node)), false);
+  return true;
+}
+
+/**
+ * Spawns (or reattaches) the work session for one outcome: a plain shell in
+ * the node's repo with the suggested agent command pre-typed, bound via
+ * @tangent_node + @tangent_outcome, outcome mechanically flipped to active.
+ * Both the launch line and the opening prompt follow the type-but-never-submit
+ * rule, so the harness, the model, and the words all stay the user's call.
  */
 async function spawnOutcomeSession(node, slug) {
   const o = (await readNodeOutcomes(node)).find((t) => t.slug === slug);
   if (!o) return { status: 404, error: `no outcome "${slug}" on ${node}` };
   if (["done", "dropped"].includes(o.status)) return { status: 409, error: `outcome is ${o.status}` };
   const sessions = await listSessions();
-  if (o.session && sessions.some((s) => s.name === o.session)) {
-    return { status: 200, session: o.session, reattached: true };
-  }
   const name = normName(`${node.split("/").pop()}--${slug}`).slice(0, 60);
-  if (sessions.some((s) => s.name === name)) return { status: 200, session: name, reattached: true };
+  // Starting an outcome that already has a session re-primes it: a pane left
+  // at a shell (the agent was stopped to do ordinary work) gets the launch
+  // line and the prompt again, a pane still running one is only reattached.
+  const existing = [o.session, name].find((n) => n && sessions.some((s) => s.name === n));
+  if (existing) {
+    const primed = await primeOutcomeSession(existing, node).catch(() => false);
+    return { status: 200, session: existing, reattached: true, primed };
+  }
   const dir = (await nodeDirectory(node)) ?? path.join(TREES_ROOT, node);
-  const shell = process.env.SHELL ?? "/bin/zsh";
-  const cmd = withDefaultModel(agentCmdForNode(node));
-  await execFileAsync("tmux", ["new-session", "-d", "-s", name, "-c", dir, `exec ${shell} -ic '${cmd.replace(/'/g, "'\\''")}'`]);
+  // No command: tmux runs the login shell, so aliases (claude-otto) resolve
+  // and the session outlives whatever agent is started in it.
+  await execFileAsync("tmux", ["new-session", "-d", "-s", name, "-c", dir]);
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_node", node]);
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_outcome", o.file]);
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_kind", "outcome"]);
@@ -608,12 +905,14 @@ async function spawnOutcomeSession(node, slug) {
     console.error("outcome binding:", err.message ?? err);
   }
   (async () => {
-    // ponytail: fixed boot pause while the agent TUI starts; raise it if it
-    // keeps eating the first words of the prompt.
-    await sleep(2500);
+    // Let the login shell finish drawing its prompt: a line typed earlier can
+    // be wiped by the redraw.
+    await sleep(700);
     try {
-      await typeInto(name, outcomePrompt(node, o), false);
-    } catch {}
+      await primeOutcomeSession(name, node);
+    } catch (err) {
+      console.error("prime session:", err.message ?? err);
+    }
   })();
   return { status: 200, session: name };
 }
@@ -639,6 +938,16 @@ async function reconcileOutcomes(sessions) {
     const byFile = new Map();
     for (const node of flattenNodePaths(await readTree(TREES_ROOT))) {
       for (const t of await readNodeOutcomes(node)) byFile.set(t.file, t);
+    }
+    // A done status may have been written by any agent while the server was
+    // running or stopped. Cascade before active-session cleanup so a live
+    // child is completed, rather than incorrectly reopened, with its parent.
+    for (const t of byFile.values()) {
+      if (t.status !== "done") continue;
+      const changed = await cascadeOutcomeDone(t.file, byFile);
+      if (changed.length) {
+        await vaultCommit(changed, `update: ${t.node} outcome ${t.slug} done cascaded to children`, t.node, null);
+      }
     }
     for (const t of byFile.values()) {
       if (t.status !== "active" || !t.session || live.has(t.session)) continue;
@@ -714,8 +1023,9 @@ async function outcomesByFile() {
 }
 
 /**
- * The one spawn path in the shell: starts (or reattaches) the agent session
- * for an outcome, by file. An agent starts only when this is explicitly asked.
+ * The one spawn path in the shell: opens (or re-primes) the session for an
+ * outcome, by file. A session is only ever primed when this is explicitly
+ * asked, and the harness itself is always started by the user.
  */
 async function startOutcome(file) {
   const o = (await outcomesByFile()).get(file);
@@ -1161,6 +1471,25 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify(await vaultIndex()));
       return;
     }
+    if (url.pathname === "/api/document" && req.method === "GET") {
+      const document = await readVaultDocument(url.searchParams.get("file") ?? "");
+      res.writeHead(document ? 200 : 404, { "content-type": "application/json" });
+      res.end(JSON.stringify(document ?? { error: "document not found" }));
+      return;
+    }
+    if (url.pathname === "/api/document" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      if (typeof body.text !== "string") {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "text is required" }));
+        return;
+      }
+      const result = await saveVaultDocument(String(body.file ?? ""), body.text, String(body.baseHash ?? ""));
+      res.writeHead(result.status, { "content-type": "application/json" });
+      res.end(JSON.stringify(result.status === 200 ? result.document : { error: result.error, current: result.current }));
+      return;
+    }
     // The one spawn path: the visible "start agent" action on an outcome.
     if (url.pathname === "/api/outcome/start" && req.method === "POST") {
       let body = {};
@@ -1168,7 +1497,13 @@ const server = http.createServer(async (req, res) => {
       try {
         const result = await startOutcome(String(body.file ?? ""));
         res.writeHead(result.status, { "content-type": "application/json" });
-        res.end(JSON.stringify(result.status === 200 ? { session: result.session, reattached: Boolean(result.reattached) } : { error: result.error }));
+        res.end(
+          JSON.stringify(
+            result.status === 200
+              ? { session: result.session, reattached: Boolean(result.reattached), primed: Boolean(result.primed) }
+              : { error: result.error }
+          )
+        );
       } catch (err) {
         res.writeHead(500, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
@@ -1232,16 +1567,16 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       try {
-        // A finished outcome leaves no session behind: the status flip to
-        // done clears the binding and kills the outcome's live session.
-        if (fields.status === "done") fields.session = null;
         await editOutcomeFile(file, fields);
-        if (fields.status === "done" && o.session) {
-          await execFileAsync("tmux", ["kill-session", "-t", "=" + o.session]).catch(() => {});
-        }
+        const changed = fields.status === "done"
+          ? await cascadeOutcomeDone(file, await outcomesByFile())
+          : [file];
+        // The requested file may also carry title/outcome/state edits, or may
+        // already have been done; it still belongs in this user-edit commit.
+        if (!changed.includes(file)) changed.unshift(file);
         const what =
           fields.status === "done" ? "done" : fields.status === "open" ? "reopened" : "edited";
-        await vaultCommit([file], `update: ${o.node} outcome ${o.slug} ${what} in tree`, o.node, null);
+        await vaultCommit(changed, `update: ${o.node} outcome ${o.slug} ${what} in tree`, o.node, null);
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({ ok: true }));
       } catch (err) {

@@ -32,6 +32,5 @@ window.KEYMAP = [
   { keys: "cmd+/", when: "any", action: "find" },
   { keys: "cmd+arrowleft", when: "any", action: "focus-tree" },
   { keys: "cmd+arrowright", when: "any", action: "focus-work" },
-  { keys: "cmd+.", when: "any", action: "active-only" },
   { keys: "cmd+k", when: "any", action: "talk" },
 ];

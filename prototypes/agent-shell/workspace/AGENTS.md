@@ -93,47 +93,24 @@ tmux send-keys -t <name>.<pane-index> '<command>' Enter
 
 Pane indexes start at 0. Make sure that the target pane is correct before you send keys.
 
-## Start a routine command (service)
+## Start a named process
 
-A node can record routine commands, for example a dev server. They live in the node note, section `## Resources`, one line each:
+Specific long-running commands Julian cares about are declared locally on noun nodes in ignored `.processes.json` files:
 
-```markdown
-- Command `hmr`: `npm run dev:hmr` — dev server with hot reload
+```json
+{ "scripts": { "hmr": "npm run dev:hmr" } }
 ```
 
-When the user asks to start one ("start hmr server", "run the dev server"):
+Definitions inherit into descendant nodes; the nearest definition wins. A process always belongs to and runs from the noun node that defined it.
 
-1. Resolve the node: the node the user names, or the node of the current work.
-2. Read `## Resources` in the node note. Match the request to one `Command` line.
-3. If no line matches, ask for the command in one short question. After it starts, save it as a `Command` line with the `remember` skill, so the next start needs no question.
-4. Create a detached session in the node's repository, named after the command (`hmr`). If the name is taken, prefix the node basename (`dnd-hmr`).
-5. Mark it as a service and bind the node:
+Before starting any long-running server, watcher, or similar command:
 
-   ```sh
-   tmux set-option -t <name> @tangent_kind 'service'
-   tmux set-option -t <name> @tangent_node '<node-path>'
-   ```
+1. Resolve the current tree node from `@tangent_node`.
+2. Run `tangent process list`.
+3. If the requested command matches a declared name, always use `tangent process start <name>`. This wrapper creates the durable tmux session, binds it to the defining node, and makes it visible in the tree.
+4. If it is not declared, run it normally. Only the named processes on the list need special visibility; do not add definitions or ask to add one unless Julian requests it.
 
-6. Start the command with `send-keys`, not as the session command. Then the pane and its output survive a crash, and the sidebar shows the service as stopped instead of the session vanishing.
-
-### Example
-
-The user says "start hmr server" while working on `otto/dnd`:
-
-```sh
-tmux new-session -d -s hmr -c ~/Projects/otto-dnd
-tmux set-option -t hmr @tangent_kind 'service'
-tmux set-option -t hmr @tangent_node 'otto/dnd'
-tmux send-keys -t hmr 'npm run dev:hmr' Enter
-```
-
-Then confirm: `started hmr (npm run dev:hmr) on otto/dnd`.
-
-### Stop or restart a service
-
-- "stop the hmr server": send `C-c` to the pane. The session stays, the sidebar shows it stopped.
-- "restart it": send `C-c`, then send the command again.
-- "close the hmr session": `kill-session`. The user named it, so do not ask.
+Use `tangent process stop <name>` to interrupt a process while retaining its tree row and scrollback, `restart` to rerun it, and `close` to kill the process session and remove its row. Do not reproduce the tmux mechanics by hand.
 
 ## Close a session
 

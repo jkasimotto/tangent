@@ -198,15 +198,19 @@
      pointer is on it, red when it is. The + (new outcome, node rows) and ✎
      (edit, outcome rows) follow the same rule: always drawn, dim until
      pointed at. */
-  .row-kill, .row-add, .row-edit {
+  .row-kill, .row-add, .row-edit, .row-docs {
     flex: none; margin-left: auto; padding: 0 4px; border: none; background: none;
     color: var(--dim); font: inherit; font-size: 11px; line-height: 1; opacity: 0.5;
   }
   .row-kill:hover { color: #f85149; opacity: 1; }
   .row-add:hover { color: var(--accent); opacity: 1; }
   .row-edit:hover { color: var(--accent2); opacity: 1; }
+  .row-docs { color: var(--accent2); opacity: 0.75; }
+  .row-docs:hover { color: var(--text); opacity: 1; }
   .bt-meta + .row-add, .bt-node + .row-add, .cr-meta + .row-add,
   .bt-meta + .row-edit, .bt-node + .row-edit, .cr-meta + .row-edit,
+  .bt-meta + .row-docs, .bt-node + .row-docs, .cr-meta + .row-docs,
+  .row-docs + .row-add,
   .row-add + .row-kill, .row-edit + .row-kill { margin-left: 6px; }
   .bt-meta + .row-kill, .bt-node + .row-kill, .cr-meta + .row-kill { margin-left: 6px; }
   /* Node rows: plain headers. Outcomes nest by breakdown, sessions sit
@@ -319,7 +323,7 @@
     <div id="sidebar" class="open">
       <div id="side-top">
         <div id="find-wrap">
-          <input id="find-input" placeholder="find a node, person, or outcome" spellcheck="false" />
+          <input id="find-input" placeholder="find a node, person, outcome, or document" spellcheck="false" />
           <span id="find-chord"></span>
         </div>
         <button id="side-live" class="hbtn" title="tree mode — Tab cycles visible, active, and all">visible ⇥</button>
@@ -631,6 +635,21 @@ function addBtnEl(nodePath) {
   b.onclick = (e) => {
     e.stopPropagation();
     openEditor({ mode: "create", node: nodePath });
+  };
+  return b;
+}
+
+/** A persistent node-level doorway to its ordinary Markdown documents. */
+function documentsBtnEl(g) {
+  const b = document.createElement("button");
+  b.className = "row-docs";
+  b.textContent = "◇ " + g.documents.length;
+  b.title = `${g.documents.length} document${g.documents.length === 1 ? "" : "s"} on ${g.path}`;
+  b.onmousedown = (e) => { e.preventDefault(); e.stopPropagation(); };
+  b.onclick = (e) => {
+    e.stopPropagation();
+    const file = g.documents.length === 1 ? g.documents[0].file : g.note?.file;
+    if (file) showDocument(file);
   };
   return b;
 }
@@ -2516,6 +2535,7 @@ function nodeRowEl(g, fold) {
   meta.className = "cr-meta" + (fold.folded && fold.hiddenLive ? " live" : "");
   meta.textContent = fold.folded ? fold.hiddenCount + " hidden" + (fold.hiddenLive ? " · live" : "") : "";
   row.append(name, meta);
+  if (g.documents?.length) row.appendChild(documentsBtnEl(g));
   if (g.path) row.appendChild(addBtnEl(g.path));
   return row;
 }

@@ -6,7 +6,7 @@ import http from "node:http";
 import os from "node:os";
 import { createHash } from "node:crypto";
 import { appendFile, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, watch } from "node:fs";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
@@ -71,6 +71,31 @@ const MIME = {
 // The native WKWebView is intentionally long-lived. Public asset saves notify
 // it in place; POST /api/reload gives agents an explicit force-refresh hook.
 const reloadController = createReloadController({ watchDir: path.join(here, "public") });
+let sourceRestartTimer = null;
+
+/**
+ * Backend modules cannot hot-reload in place. Tell the page a restart is
+ * coming, then exit cleanly; the native wrapper supervises and relaunches the
+ * server while tmux keeps every agent/process alive.
+ */
+function scheduleServerRestart() {
+  clearTimeout(sourceRestartTimer);
+  sourceRestartTimer = setTimeout(() => {
+    console.log("agent-shell: server source changed; restarting");
+    reloadController.announceRestart();
+    setTimeout(() => {
+      reloadController.close();
+      server.close(() => process.exit(0));
+      setTimeout(() => process.exit(0), 1000).unref();
+    }, 100).unref();
+  }, 150);
+}
+
+const serverSourceWatcher = watch(here, { recursive: true }, (_event, filename) => {
+  const file = String(filename ?? "");
+  if (!file.endsWith(".mjs") || file.startsWith("node_modules/") || file.startsWith("native/build/")) return;
+  scheduleServerRestart();
+});
 
 /**
  * Lists live tmux sessions for the sidebar in the frontend, which polls

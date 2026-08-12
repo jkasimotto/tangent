@@ -24,6 +24,7 @@ let serverLog = ("~/.tangent/agent-shell.log" as NSString).expandingTildeInPath
 final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate {
   var window: NSWindow!
   var webView: WKWebView!
+  var serverProcess: Process?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     buildMenu()
@@ -77,11 +78,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
   // AGENT_SHELL_NO_OPEN stops the server from running `open -a "Agent Shell"`
   // back at this app. The login shell picks up nvm's node.
   func startServer() {
+    if serverProcess?.isRunning == true { return }
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/bin/zsh")
     p.arguments = ["-lc",
       "cd '\(serverDir)' && AGENT_SHELL_NO_OPEN=1 exec node server.mjs >> '\(serverLog)' 2>&1"]
-    try? p.run()
+    p.terminationHandler = { [weak self] process in
+      DispatchQueue.main.async {
+        guard let self = self, self.serverProcess === process else { return }
+        self.serverProcess = nil
+        // Source edits deliberately exit the backend. Supervise it while the
+        // app is alive; tmux sessions are independent and remain untouched.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+          self.startServer()
+        }
+      }
+    }
+    do {
+      try p.run()
+      serverProcess = p
+    } catch {
+      serverProcess = nil
+    }
   }
 
   func pollUntilUp(deadline: Date) {

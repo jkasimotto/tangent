@@ -1932,11 +1932,27 @@ function applyPendingAutoReload() {
 
 const reloadEvents = new EventSource("/api/reload/events");
 reloadEvents.addEventListener("reload", (event) => {
-  let force = false;
-  try { force = Boolean(JSON.parse(event.data).force); } catch {}
+  let force = false, reason = "";
+  try { const data = JSON.parse(event.data); force = Boolean(data.force); reason = data.reason ?? ""; } catch {}
+  if (reason === "server-restart") return reloadAfterServerRestart();
   if (force || !editingText()) reloadNow();
   else pendingAutoReload = true;
 });
+
+/** Waits through a supervised backend restart, then reloads exactly once. */
+async function reloadAfterServerRestart() {
+  reloadEvents.close();
+  controlledReload = true;
+  sessionStorage.setItem(RELOAD_SESSION_STORE, active ?? CHAT);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  for (;;) {
+    try {
+      const response = await fetch("/config.js?restart=" + Date.now(), { cache: "no-store" });
+      if (response.ok) return location.reload();
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+}
 
 async function sendCommand(text) {
   hud("busy", "routing…");

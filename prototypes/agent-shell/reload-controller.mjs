@@ -51,6 +51,8 @@ export function createReloadController({ watchDir, debounceMs = 120, watchFiles 
 
   return {
     broadcast,
+    /** Announces a backend restart before its HTTP connection disappears. */
+    announceRestart() { return broadcast("server-restart", true); },
     handle,
     /** Number of browsers currently listening for reloads. */
     get clientCount() { return clients.size; },

@@ -764,7 +764,7 @@ You get a JSON payload: the utterance (speech-to-text or typed), the focused ses
 THE RULE ABOVE ALL OTHERS: you never write, rewrite, trim, or fix the user's words. Words meant for an agent travel verbatim through "say"; you only pick the destination and identify which leading words were the address. The server strips the address itself.
 
 Reply with JSON only: {"actions":[...]}, at most 5 actions, executed in order. Action types:
-- {"type":"say","target":"<session or node name as spoken, or \\"\\" for the focused session>","address":"<the exact leading words of the utterance that name the target, \\"\\" if none>"} — deliver the utterance (minus the address) to an agent. THE DEFAULT: anything that is not clearly a shell verb below is a say. An utterance opening with a session or node name and then instructing it ("megabranch, run the client build" / "PG&E run the daily speedrun") is addressed; everything else has target "" (the focused session). A node target is delivered to the orchestrator with the utterance intact, node name included. Target must be "" unless the utterance's own words name the target. NEVER infer a target from topic or content: a complaint or question about sessions, the shell, killing, or an agent goes to the focused session like anything else unless a name was actually said. The server enforces this — a say without address words always lands in the focused session.
+- {"type":"say","target":"<the payload's exact session name or node path, or \\"\\" for the focused session>","address":"<the exact leading words of the utterance that name the target, \\"\\" if none>"} — deliver the utterance (minus the address) to an agent. THE DEFAULT: anything that is not clearly a shell verb below is a say. An utterance opening with a session or node name and then instructing it ("megabranch, run the client build" / "PG&E run the daily speedrun") is addressed; everything else has target "" (the focused session). Stating a goal, an ambition, or a breakdown request at a node ("tangent, I want X") is one say to that node, the whole utterance in one piece. A node target is delivered to the orchestrator with the utterance intact, node name included. Target must be "" unless the utterance's own words name the target, and a non-empty target always carries the address words that named it — never one without the other. NEVER infer a target from topic or content: a complaint or question about sessions, the shell, killing, or an agent goes to the focused session like anything else unless a name was actually said. The server enforces this — a say without address words always lands in the focused session.
 - {"type":"keys","session":"<name>","keys":["Enter"]} — press special keys. Allowed: Enter, Escape, Tab, Up, Down, Left, Right, BSpace, Space, C-c, and single letters or digits like "y" or "2". Use for answering menus and permission prompts visible in the pane tail (send the matching option key) and for "stop" or "interrupt" (Escape, or C-c in a shell).
 - {"type":"view","target":"<session or node name>"} — show that session in the app (a node name scopes the sidebar tree to that node instead). For "show me X", "open X", "go to X", "switch to X".
 - {"type":"close_view"} — leave the current session view, back to the orchestrator.
@@ -777,7 +777,7 @@ Reply with JSON only: {"actions":[...]}, at most 5 actions, executed in order. A
 
 Rules:
 - Shell verbs fire only on a clear match. When torn between say and any non-destructive action, say. Never guess kill, agent, or spawn.
-- Spoken names are fuzzy: "retry loop" means session "retry-loop", "PG&E" means the pgande node. Resolve against sessions first, then visibleNodes, then allNodes. Only reference sessions and nodes that exist in the payload.
+- Spoken names are fuzzy, but targets are literal: resolve the spoken name against the payload and copy its exact spelling into the action — a session's name ("retry loop" → "retry-loop") or a node's full path ("PG&E" → "neara/pgande"). A whole-name session match wins; otherwise a name matching a node's base name means the node, even when session names merely contain it ("tangent" beside session "tangent-fix-voice" means the tangent node). Resolve against sessions, then visibleNodes, then allNodes. Only reference sessions and nodes that exist in the payload.
 - A bare confirmation ("yes", "go ahead", "option two") while the focused pane shows a question or menu: answer with keys matching the visible choices; otherwise say it.
 - To act on a prompt in a session that is not focused, put a view action first so the user sees what happens.
 - Unclear or nothing matches: return one speak action asking a single short question.`;
@@ -904,6 +904,25 @@ function resolveTarget(spoken, ctx) {
 }
 
 /**
+ * The utterance's own leading words when they name the resolved target, null
+ * otherwise. The router is supposed to report which spoken words addressed
+ * its target; when it forgets, this recovers the obvious cases ("Tangent,
+ * here's a big one...") so the no-address invariant judges the utterance,
+ * not the router's bookkeeping. Matching is deliberately exact: a fuzzy
+ * spoken form the server cannot verify stays unaddressed.
+ */
+function leadingAddress(utterance, resolved) {
+  const names = resolved.node ? [resolved.node, resolved.node.split("/").pop()] : [resolved.session];
+  const norms = new Set(names.map(normName));
+  const words = String(utterance).trim().split(/\s+/).slice(0, 4);
+  for (let n = words.length; n >= 1; n--) {
+    const lead = words.slice(0, n).join(" ");
+    if (norms.has(normName(lead))) return lead;
+  }
+  return null;
+}
+
+/**
  * Removes the router-identified address words from the front of the utterance,
  * but only when they really are its first words — the verbatim guarantee is
  * that nothing else ever changes. On any mismatch the full utterance survives.
@@ -947,9 +966,13 @@ async function executeVoiceActions(actions, ctx, focused, utterance) {
         case "say": {
           // The invariant that stops topic-guessing: the router may redirect
           // only when the user actually spoke address words. No address means
-          // the focused session, whatever the router claims the target is.
-          const address = String(a.address ?? "").trim();
-          const resolved = address && a.target ? resolveTarget(a.target, ctx) : { session: focused };
+          // the focused session, whatever the router claims the target is. A
+          // missing address is first re-derived from the utterance itself, so
+          // the invariant judges the user's words, not the router's paperwork.
+          let address = String(a.address ?? "").trim();
+          const named = a.target ? resolveTarget(a.target, ctx) : null;
+          if (!address && named) address = leadingAddress(utterance, named) ?? "";
+          const resolved = address && a.target ? named : { session: focused };
           if (!resolved) {
             await typeInto(focused, utterance, false);
             summary.push(`no "${a.target}" — typed here, not sent`);

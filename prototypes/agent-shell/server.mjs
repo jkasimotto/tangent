@@ -705,7 +705,7 @@ async function outcomePrompt(node, o) {
   ));
   return (
     `Work this outcome: ${path.join(TREES_ROOT, o.file)} — read it first, then the node notes for context (nearest first): ${notes.join(", ")}. ` +
-    (linked.length ? `Read the linked design documents too: ${linked.map((d) => path.join(TREES_ROOT, d.file)).join(", ")}. ` : "") +
+    (linked.length ? `Read the linked design documents too: ${linked.map((d) => path.join(TREES_ROOT, d.file)).join(", ")}. Before you write or propose a change to a design document, read ${path.join(os.homedir(), ".agents", "skills", "simple-english", "SKILL.md")}, use pragmatic mode, and do its mandatory self-check. ` : "") +
     (o.breakdown.length ? `Its Breakdown section lists the child outcome files it decomposes into; work them in order. ` : "") +
     `Before starting a long-running server, watcher, or similar command, run tangent process list; use tangent process start for a matching managed process, and run unmatched commands normally. ` +
     `Keep the outcome file's State section current as you work; when the outcome is met, propose marking it done — never mark it done yourself without confirmation.`

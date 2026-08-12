@@ -124,6 +124,10 @@ tmux kill-session -t <name>
 
 The tree at `~/.tangent/trees/` is also the user's memory vault. Each active node directory has one note named after the directory, for example `neara/pgande/pgande.md`. The note describes the present state of that work: Purpose, Current, Road to done, Knowledge, Ideas and open questions, Resources. The vault rules are in `~/.tangent/trees/README.md`.
 
+### Design documents
+
+Before you create or revise a design document, read `~/.agents/skills/simple-english/SKILL.md`. Use its pragmatic mode. Do its mandatory self-check before you save the document. This rule applies to new prose and proposed edits. Do not change code, identifiers, commands, file paths, or quoted errors during the language pass.
+
 ## Outcomes
 
 Nodes are what the user talks about; outcomes are what they achieve. There is no separate task concept: a task is just an outcome small enough to work directly. An outcome is one file `outcome-<slug>.md` in its owning node's directory, with a mandatory one-line `outcome` (the done condition) and a `status` (`open | active | waiting | deferred | done | dropped`). Outcomes nest: an optional `## Breakdown` section lists `[[outcome-...]]` wikilinks to child outcomes in priority order, so a big outcome completes as the sum of its smallest achievable parts. The node note's `## Road to done` links the node's top-level outcomes in order. There is no derived "next": the user picks what to work on. Full schema: `~/.tangent/trees/README.md`, section Outcomes.

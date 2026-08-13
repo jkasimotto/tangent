@@ -2,7 +2,10 @@
 
 Start here when changing architecture, package boundaries, or agent workflow.
 
-Human CLI defaults are `setup`, `status`, `ui`, `usage`, `rollup`, `search`, `eval`, `mark`, `doctor`, and `completion`.
+Agent Shell is the daily product for work with coding agents. Its current local implementation lives in `prototypes/agent-shell/`. The first rejected interaction notebook remains in `prototypes/agent-shell-vision/`.
+
+Human CLI defaults are `setup`, `status`, `ui`, `process`, `usage`, `rollup`, `search`, `eval`, `mark`, `doctor`, and `completion`.
+`tangent process` runs personally configured named processes from inherited, ignored `.processes.json` files on Tangent noun nodes. Managed processes use node-bound tmux sessions so they remain visible and inspectable in the tree.
 Raw/debug/CI surfaces such as `governance`, `data export`, and `data archive` stay callable but hidden from default help.
 
 Architecture:
@@ -21,6 +24,7 @@ Decisions:
 - decisions/ADR-0005-usage-v2-telemetry-kernel.md
 - decisions/ADR-0015-marks-in-eval.md
 - decisions/ADR-0016-threads-vertical-app.md
+- decisions/ADR-0017-agent-shell-daily-product.md
 - ui/adr/0001-ui-package-split.md
 - ui/adr/0002-react-vite-ui-stack.md
 - ui/adr/0006-svelte-usage-ui.md

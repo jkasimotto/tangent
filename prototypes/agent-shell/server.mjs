@@ -1,7 +1,7 @@
 // Agent Shell prototype server.
-// Serves the xterm.js frontend and bridges WebSocket connections to tmux
-// sessions via node-pty. The "chat" session is the always-on agent shell;
-// every other tmux session is a workspace the agent (or user) created.
+// Serves the focus-and-return frontend and bridges WebSocket connections to
+// tmux sessions through node-pty. The legacy tree UI remains at /legacy while
+// the new product loop takes over the default entry.
 import http from "node:http";
 import os from "node:os";
 import { createHash } from "node:crypto";
@@ -108,14 +108,14 @@ async function listSessions() {
     const { stdout } = await execFileAsync("tmux", [
       "list-sessions",
       "-F",
-      "#{session_name}\t#{session_path}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{@tangent_node}\t#{@tangent_kind}\t#{@tangent_outcome}\t#{@tangent_goal}\t#{@tangent_process}\t#{pane_current_command}",
+      "#{session_name}\t#{session_path}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{@tangent_node}\t#{@tangent_kind}\t#{@tangent_outcome}\t#{@tangent_goal}\t#{@tangent_process}\t#{pane_current_command}\t#{@tangent_phase}",
     ]);
     const sessions = stdout
       .trim()
       .split("\n")
       .filter(Boolean)
       .map((line) => {
-        const [name, cwd, windows, attached, created, node, kind, outcome, goal, processName, command] = line.split("\t");
+        const [name, cwd, windows, attached, created, node, kind, outcome, goal, processName, command, phase] = line.split("\t");
         return {
           name,
           cwd,
@@ -128,6 +128,7 @@ async function listSessions() {
           goal: goal || null,
           process: processName || null,
           command,
+          phase: phase || null,
           isChat: name === CHAT_SESSION,
         };
       })
@@ -440,6 +441,7 @@ async function readNodeOutcomes(node) {
       status: fm.status || "open",
       outcome: fm.outcome || "",
       stateText: noteSection(text, "State"),
+      myUnderstanding: noteSection(text, "My understanding"),
       waitingOn: fm.waiting_on || null,
       due: fm.due || null,
       session: fm.session || null,
@@ -599,7 +601,20 @@ async function writeOutcomeBinding(file, { status, session }) {
  * that judgment state is written on Julian's word is satisfied by the click
  * itself — no agent in the loop, status never waits on one.
  */
-async function editOutcomeFile(file, { status, session, title, outcome, state }) {
+function replaceNoteSection(text, name, value) {
+  const heading = `## ${name}`;
+  const headingPattern = new RegExp(`^${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^\\n]*$`, "m");
+  const match = headingPattern.exec(text);
+  const body = value.trim();
+  if (!match) return `${text.replace(/\s*$/, "")}\n\n${heading}\n\n${body}\n`;
+  const contentStart = match.index + match[0].length;
+  const rest = text.slice(contentStart).replace(/^\n/, "");
+  const nextHeading = rest.search(/^## /m);
+  const suffix = nextHeading >= 0 ? rest.slice(nextHeading) : "";
+  return `${text.slice(0, contentStart)}\n\n${body}\n\n${suffix}`.replace(/\n{3,}(?=## )/g, "\n\n");
+}
+
+async function editOutcomeFile(file, { status, session, title, outcome, state, understanding }) {
   const abs = path.join(TREES_ROOT, file);
   let text = await readFile(abs, "utf8");
   if (status !== undefined) text = withFrontmatterLine(text, "status", status);
@@ -611,13 +626,8 @@ async function editOutcomeFile(file, { status, session, title, outcome, state })
     const t = title.replace(/\s*\n\s*/g, " ").trim();
     text = /^# .*$/m.test(text) ? text.replace(/^# .*$/m, () => "# " + t) : text + `\n# ${t}\n`;
   }
-  if (state !== undefined) {
-    const body = state.trim();
-    const section = /(^## State[^\n]*\n)[\s\S]*?(?=^## |(?![\s\S]))/m;
-    text = section.test(text)
-      ? text.replace(section, (m, heading) => heading + "\n" + body + "\n\n")
-      : text.replace(/\s*$/, "") + "\n\n## State\n\n" + body + "\n";
-  }
+  if (state !== undefined) text = replaceNoteSection(text, "State", state);
+  if (understanding !== undefined) text = replaceNoteSection(text, "My understanding", understanding);
   await writeFile(abs, text);
 }
 
@@ -685,13 +695,8 @@ async function cascadeOutcomeDone(rootFile, byFile) {
   return changed;
 }
 
-/**
- * The opening prompt typed (never submitted) into a fresh outcome session's
- * agent: the outcome file plus the node-note chain up to the root, by path,
- * so the agent reads its own context and the user can add words before
- * sending.
- */
-async function outcomePrompt(node, o) {
+/** The deterministic source set that one outcome supplies to an agent. */
+async function outcomeContext(node, o) {
   const parts = node.split("/");
   const notes = [];
   for (let i = parts.length; i >= 1; i--) {
@@ -703,23 +708,60 @@ async function outcomePrompt(node, o) {
   const linked = index.documents.filter((d) => d.kind === "document" && (
     d.backlinks.includes(o.file) || index.documents.find((r) => r.file === o.file)?.links.includes(path.basename(d.file, ".md"))
   ));
+  return {
+    outcome: path.join(TREES_ROOT, o.file),
+    notes,
+    designs: linked.map((d) => path.join(TREES_ROOT, d.file)),
+  };
+}
+
+/**
+ * The exact assignment shown before execution and typed into the selected
+ * harness. Markdown keeps the contract readable in both the shell and the
+ * agent composer.
+ */
+async function outcomePrompt(node, o) {
+  const context = await outcomeContext(node, o);
+  const sources = [
+    `- Outcome: ${context.outcome}`,
+    ...context.notes.map((note, index) => `- Node note ${index + 1}: ${note}`),
+    ...context.designs.map((design) => `- Design: ${design}`),
+  ];
   return (
-    `Work this outcome: ${path.join(TREES_ROOT, o.file)} — read it first, then the node notes for context (nearest first): ${notes.join(", ")}. ` +
-    (linked.length ? `Read the linked design documents too: ${linked.map((d) => path.join(TREES_ROOT, d.file)).join(", ")}. If you write or propose a design change, read ${path.join(os.homedir(), ".agents", "skills", "simple-english", "SKILL.md")} first. Use pragmatic mode. Do its mandatory self-check before you save design prose. ` : "") +
-    (o.breakdown.length ? `Its Breakdown section lists the child outcome files it decomposes into; work them in order. ` : "") +
-    `Before starting a long-running server, watcher, or similar command, run tangent process list; use tangent process start for a matching managed process, and run unmatched commands normally. ` +
-    `Keep the outcome file's State section current as you work; when the outcome is met, propose marking it done — never mark it done yourself without confirmation.`
+    `# Assignment: ${o.title}\n\n` +
+    `## Result\n\n${o.outcome || "Read the outcome file for the required result."}\n\n` +
+    (o.myUnderstanding ? `## Julian's understanding\n\n${o.myUnderstanding}\n\n` : "") +
+    `## Sources\n\n${sources.join("\n")}\n\n` +
+    `## Working contract\n\n` +
+    `- Read the outcome first. Then read the node notes from nearest to farthest.\n` +
+    (context.designs.length
+      ? `- Read each linked design as the current solution contract. Before you write design prose, read ${path.join(os.homedir(), ".agents", "skills", "simple-english", "SKILL.md")}. Use pragmatic mode and do its mandatory self-check.\n`
+      : "") +
+    (o.breakdown.length ? `- Work the child outcomes in Breakdown order.\n` : "") +
+    `- Before you start a long-running server or watcher, run \`tangent process list\`. Use \`tangent process start\` for a matching managed process.\n` +
+    `- Keep the outcome State section current.\n` +
+    `- When the result is met, propose marking it done. Never mark it done without confirmation.`
+  );
+}
+
+/** The contract for a discussion that must not become hidden execution. */
+async function understandingPrompt(node, o) {
+  const assignment = await outcomePrompt(node, o);
+  return (
+    `# Understand before execution\n\n` +
+    `Discuss this outcome with Julian. Do not edit code or start implementation.\n\n` +
+    `Research facts yourself. Present one product decision at a time. Julian owns decisions that change meaning, scope, trade-offs, or proof.\n\n` +
+    `Keep the outcome State section current with these headings when they are useful: Outcome, Settled decisions, Deferred, Proof, and Unresolved decisions.\n\n` +
+    `When no important decision remains, show the complete shared understanding. Then propose one exact assignment. Wait for approval before execution.\n\n` +
+    `## Source context\n\n${assignment}`
   );
 }
 
 // ---- outcome prompt arming ----
-// The shell does not launch the harness. Starting an outcome primes its
-// session instead: a plain shell in the node's repo with the launch command
-// pre-typed and unsubmitted, so any harness and any model is one edit away,
-// and stopping the agent leaves an ordinary tmux session to work in rather
-// than killing it. The opening prompt still has to reach whatever the user
-// starts, so a primed session is "armed" and the prompt is typed (never
-// submitted) once a command takes the pane.
+// Legacy calls prime a plain shell and leave both the harness command and the
+// opening prompt for the user to submit. The context-first shell can request
+// direct launch after it has shown the human-readable plan. In that path, the
+// harness command and the verified opening prompt are both submitted.
 //
 // Arming is only ever set by the start-agent action, never inferred from what
 // the user runs. A session that has been used for a while sits unarmed, so
@@ -735,7 +777,7 @@ const ECHO_MS = 1200; // time for a TUI to draw what was typed into it
 const RETRY_MS = 2500; // extra boot time before typing the prompt again
 const TYPE_ATTEMPTS = 3;
 const PROBE_CHARS = 24; // opening words, short enough to stay visible in a composer
-const armedSessions = new Set(); // primed outcome sessions, waiting for a harness
+const armedSessions = new Map(); // session -> { phase, submit }
 let armTimer = null;
 
 /** The pane's foreground command, "" when the session is gone. */
@@ -795,11 +837,11 @@ async function waitForHarnessReady(session) {
  * composer holding the whole prompt has scrolled its first line out of sight,
  * so the far end is what proves the remainder arrived.
  */
-async function typeOutcomePromptWhenReady(session, node, file) {
+async function typeOutcomePromptWhenReady(session, node, file, phase = "execute", submit = false) {
   try {
     const o = (await readNodeOutcomes(node)).find((t) => t.file === file);
     if (!o) return;
-    const prompt = await outcomePrompt(node, o);
+    const prompt = phase === "understand" ? await understandingPrompt(node, o) : await outcomePrompt(node, o);
     /** Whitespace-free comparison form, so wrapping cannot hide a match. */
     const squash = (s) => s.replace(/\s+/g, "");
     const probe = prompt.slice(0, PROBE_CHARS);
@@ -811,7 +853,10 @@ async function typeOutcomePromptWhenReady(session, node, file) {
       if ((await paneText(session)).includes(squash(probe))) {
         await typeInto(session, prompt.slice(PROBE_CHARS), false);
         await sleep(ECHO_MS);
-        if ((await paneText(session)).includes(tail)) return;
+        if ((await paneText(session)).includes(tail)) {
+          if (submit) await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "Enter"]);
+          return;
+        }
       }
       console.error(`outcome prompt: ${session} took it partially (attempt ${attempt}), clearing and retyping`);
       // C-u is "clear the input line" in every composer the shell meets, and
@@ -847,10 +892,11 @@ async function tickArmedSessions() {
     const [name, node, file, command] = line.split("\t");
     live.add(name);
     if (!armedSessions.has(name) || SHELL_CMDS.has(command)) continue;
+    const armed = armedSessions.get(name);
     armedSessions.delete(name);
-    if (node && file) typeOutcomePromptWhenReady(name, node, file);
+    if (node && file) typeOutcomePromptWhenReady(name, node, file, armed.phase, armed.submit);
   }
-  for (const name of armedSessions) if (!live.has(name)) armedSessions.delete(name);
+  for (const name of armedSessions.keys()) if (!live.has(name)) armedSessions.delete(name);
 }
 
 /**
@@ -858,8 +904,8 @@ async function tickArmedSessions() {
  * armed: one tmux query a second, never overlapping, stopped once every primed
  * session has its harness.
  */
-function armSession(name) {
-  armedSessions.add(name);
+function armSession(name, phase = "execute", submit = false) {
+  armedSessions.set(name, { phase, submit });
   if (armTimer) return;
   let running = false;
   armTimer = setInterval(async () => {
@@ -886,11 +932,15 @@ function armSession(name) {
  * harness the user starts. A pane that is already running something is left
  * alone — priming must never type over an agent mid-conversation.
  */
-async function primeOutcomeSession(session, node) {
+async function primeOutcomeSession(session, node, phase = "execute", { launch = false } = {}) {
   const { stdout } = await execFileAsync("tmux", ["display-message", "-p", "-t", "=" + session + ":", "#{pane_current_command}"]);
   if (!SHELL_CMDS.has(stdout.trim())) return false;
-  armSession(session);
+  armSession(session, phase, launch);
   await typeInto(session, withDefaultModel(await agentCmdForNode(node)), false);
+  if (launch) {
+    await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "Enter"]);
+    await sleep(250);
+  }
   return true;
 }
 
@@ -901,45 +951,61 @@ async function primeOutcomeSession(session, node) {
  * Both the launch line and the opening prompt follow the type-but-never-submit
  * rule, so the harness, the model, and the words all stay the user's call.
  */
-async function spawnOutcomeSession(node, slug) {
+async function spawnOutcomeSession(node, slug, { phase = "execute", approved = false, launch = false } = {}) {
   const o = (await readNodeOutcomes(node)).find((t) => t.slug === slug);
   if (!o) return { status: 404, error: `no outcome "${slug}" on ${node}` };
   if (["done", "dropped"].includes(o.status)) return { status: 409, error: `outcome is ${o.status}` };
   const sessions = await listSessions();
-  const name = normName(`${node.split("/").pop()}--${slug}`).slice(0, 60);
+  const baseName = normName(`${node.split("/").pop()}--${slug}`).slice(0, 60);
+  const phaseName = phase === "understand" ? normName(`${baseName}--understand`).slice(0, 60) : baseName;
   // Starting an outcome that already has a session re-primes it: a pane left
   // at a shell (the agent was stopped to do ordinary work) gets the launch
   // line and the prompt again, a pane still running one is only reattached.
-  const existing = [o.session, name].find((n) => n && sessions.some((s) => s.name === n));
+  const existing = [o.session, phaseName, baseName].find((n) => n && sessions.some((s) => s.name === n));
   if (existing) {
-    const primed = await primeOutcomeSession(existing, node).catch(() => false);
+    await execFileAsync("tmux", ["set-option", "-t", existing, "@tangent_phase", phase]);
+    const live = sessions.find((s) => s.name === existing);
+    let primed = false;
+    if (approved && phase === "execute" && live && !SHELL_CMDS.has(live.command)) {
+      if (live.state === "working") return { status: 409, error: "the agent is still working; wait before you approve another assignment" };
+      await typeInto(existing, await outcomePrompt(node, o), true);
+    } else {
+      primed = await primeOutcomeSession(existing, node, phase, { launch }).catch(() => false);
+    }
+    if (o.status !== "active" || o.session !== existing) {
+      await writeOutcomeBinding(o.file, { status: "active", session: existing });
+      await vaultCommit([o.file], `update: ${node} outcome ${slug} active`, node, existing);
+    }
     return { status: 200, session: existing, reattached: true, primed };
   }
   const dir = (await nodeDirectory(node)) ?? path.join(TREES_ROOT, node);
   // No command: tmux runs the login shell, so aliases (claude-otto) resolve
   // and the session outlives whatever agent is started in it.
-  await execFileAsync("tmux", ["new-session", "-d", "-s", name, "-c", dir]);
-  await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_node", node]);
-  await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_outcome", o.file]);
-  await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_kind", "outcome"]);
-  if (o.outcome) await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_goal", o.outcome]);
+  await execFileAsync("tmux", ["new-session", "-d", "-s", phaseName, "-c", dir]);
+  await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_node", node]);
+  await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_outcome", o.file]);
+  await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_kind", "outcome"]);
+  await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_phase", phase]);
+  if (o.outcome) await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_goal", o.outcome]);
   try {
-    await writeOutcomeBinding(o.file, { status: "active", session: name });
-    await vaultCommit([o.file], `update: ${node} outcome ${slug} active`, node, name);
+    await writeOutcomeBinding(o.file, { status: "active", session: phaseName });
+    await vaultCommit([o.file], `update: ${node} outcome ${slug} active`, node, phaseName);
   } catch (err) {
     console.error("outcome binding:", err.message ?? err);
   }
-  (async () => {
+  const primeNewSession = async () => {
     // Let the login shell finish drawing its prompt: a line typed earlier can
     // be wiped by the redraw.
     await sleep(700);
     try {
-      await primeOutcomeSession(name, node);
+      await primeOutcomeSession(phaseName, node, phase, { launch });
     } catch (err) {
       console.error("prime session:", err.message ?? err);
     }
-  })();
-  return { status: 200, session: name };
+  };
+  if (launch) await primeNewSession();
+  else primeNewSession();
+  return { status: 200, session: phaseName };
 }
 
 let lastReconcile = 0;
@@ -1052,10 +1118,20 @@ async function outcomesByFile() {
  * outcome, by file. A session is only ever primed when this is explicitly
  * asked, and the harness itself is always started by the user.
  */
-async function startOutcome(file) {
+async function startOutcome(file, options = {}) {
   const o = (await outcomesByFile()).get(file);
   if (!o) return { status: 404, error: `no outcome file ${file}` };
-  return spawnOutcomeSession(o.node, o.slug);
+  return spawnOutcomeSession(o.node, o.slug, options);
+}
+
+/** Stops one accepted assignment without claiming that its outcome is done. */
+async function acceptOutcomeAssignment(file) {
+  const o = (await outcomesByFile()).get(file);
+  if (!o) return { status: 404, error: `no outcome file ${file}` };
+  if (o.session) await execFileAsync("tmux", ["kill-session", "-t", "=" + o.session]).catch(() => {});
+  await writeOutcomeBinding(o.file, { status: "open", session: null });
+  await vaultCommit([o.file], `update: ${o.node} outcome ${o.slug} assignment accepted`, o.node, null);
+  return { status: 200 };
 }
 
 // ---- voice + typed command control ----
@@ -1515,12 +1591,50 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify(result.status === 200 ? result.document : { error: result.error, current: result.current }));
       return;
     }
+    if (url.pathname === "/api/outcome/brief" && req.method === "GET") {
+      const file = url.searchParams.get("file") ?? "";
+      const outcome = (await outcomesByFile()).get(file);
+      if (!outcome) {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: `no outcome file ${file}` }));
+        return;
+      }
+      const context = await outcomeContext(outcome.node, outcome);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        outcome,
+        markdown: await outcomePrompt(outcome.node, outcome),
+        agent: withDefaultModel(await agentCmdForNode(outcome.node)),
+        context,
+      }));
+      return;
+    }
+    if (url.pathname === "/api/outcome/discuss" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      try {
+        const result = await startOutcome(String(body.file ?? ""), {
+          phase: "understand",
+          launch: body.launch === true,
+        });
+        res.writeHead(result.status, { "content-type": "application/json" });
+        res.end(JSON.stringify(result.status === 200 ? result : { error: result.error }));
+      } catch (err) {
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
+      }
+      return;
+    }
     // The one spawn path: the visible "start agent" action on an outcome.
     if (url.pathname === "/api/outcome/start" && req.method === "POST") {
       let body = {};
       try { body = JSON.parse(await readBody(req)); } catch {}
       try {
-        const result = await startOutcome(String(body.file ?? ""));
+        const result = await startOutcome(String(body.file ?? ""), {
+          phase: "execute",
+          approved: body.approved === true,
+          launch: body.launch === true,
+        });
         res.writeHead(result.status, { "content-type": "application/json" });
         res.end(
           JSON.stringify(
@@ -1529,6 +1643,51 @@ const server = http.createServer(async (req, res) => {
               : { error: result.error }
           )
         );
+      } catch (err) {
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
+      }
+      return;
+    }
+    if (url.pathname === "/api/outcome/understanding" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      const file = String(body.file ?? "");
+      const understanding = typeof body.understanding === "string" ? body.understanding.trim() : "";
+      const outcome = (await outcomesByFile()).get(file);
+      if (!outcome) {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: `no outcome file ${file}` }));
+        return;
+      }
+      if (!understanding) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Write what you think this work means." }));
+        return;
+      }
+      try {
+        await editOutcomeFile(file, { understanding });
+        await vaultCommit(
+          [file],
+          `update: ${outcome.node} outcome ${outcome.slug} records Julian's understanding`,
+          outcome.node,
+          null
+        );
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true, understanding }));
+      } catch (err) {
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
+      }
+      return;
+    }
+    if (url.pathname === "/api/outcome/accept" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      try {
+        const result = await acceptOutcomeAssignment(String(body.file ?? ""));
+        res.writeHead(result.status, { "content-type": "application/json" });
+        res.end(JSON.stringify(result.status === 200 ? { ok: true } : { error: result.error }));
       } catch (err) {
         res.writeHead(500, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
@@ -1730,6 +1889,10 @@ const server = http.createServer(async (req, res) => {
     }
     let filePath;
     if (url.pathname === "/" || url.pathname === "/index.html") {
+      filePath = path.join(here, "public", "shell.html");
+    } else if (url.pathname === "/vision" || url.pathname === "/vision/") {
+      filePath = path.join(here, "public", "vision.html");
+    } else if (url.pathname === "/legacy" || url.pathname === "/legacy/") {
       filePath = path.join(here, "public", "index.html");
     } else if (url.pathname.startsWith("/vendor/xterm/")) {
       const rel = url.pathname.slice("/vendor/xterm/".length);

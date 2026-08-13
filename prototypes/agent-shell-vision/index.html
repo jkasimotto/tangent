@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>Agent Shell — product vision notebook</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="notebook">
+    <header class="notebook-bar">
+      <div class="notebook-brand">
+        <span class="brand-mark" aria-hidden="true">⌁</span>
+        <span>Agent Shell</span>
+        <span class="brand-divider">/</span>
+        <span class="brand-subtitle">product vision notebook</span>
+      </div>
+
+      <div class="notebook-actions">
+        <span id="step-count" class="step-count"></span>
+        <button id="explain-toggle" class="quiet-button" type="button" aria-pressed="true">
+          <span class="toggle-dot"></span>
+          Explanations on
+        </button>
+        <button id="restart-button" class="quiet-button" type="button">Restart</button>
+      </div>
+    </header>
+
+    <div class="notebook-layout">
+      <aside class="notebook-notes" aria-label="Product vision notes">
+        <div class="notes-scroll">
+          <p id="chapter-kicker" class="chapter-kicker"></p>
+          <h1 id="chapter-title"></h1>
+          <p id="chapter-story" class="chapter-story"></p>
+
+          <section class="note-section">
+            <h2>The product move</h2>
+            <p id="chapter-move"></p>
+          </section>
+
+          <section class="note-section">
+            <h2>Why the UI works this way</h2>
+            <ol id="chapter-reasons" class="reason-list"></ol>
+          </section>
+
+          <section class="note-section principle-section">
+            <h2>Principles</h2>
+            <div id="chapter-principles" class="principle-list"></div>
+          </section>
+        </div>
+
+        <nav class="chapter-nav" aria-label="Notebook chapters">
+          <ol id="chapter-list"></ol>
+        </nav>
+      </aside>
+
+      <main class="demo-column">
+        <div class="demo-label">
+          <div>
+            <span class="live-dot" aria-hidden="true"></span>
+            Interactive UI concept
+          </div>
+          <span id="demo-hint">Use the controls inside the shell.</span>
+        </div>
+
+        <section id="shell-frame" class="shell-frame" aria-label="Agent Shell product concept">
+          <div id="shell" class="shell"></div>
+        </section>
+
+        <footer class="notebook-footer">
+          <button id="previous-button" class="footer-button" type="button">← Previous</button>
+          <p id="footer-summary"></p>
+          <button id="next-button" class="footer-button primary" type="button">Next →</button>
+        </footer>
+      </main>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="./app.js"></script>
+</body>
+</html>

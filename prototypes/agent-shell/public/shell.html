@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>Agent Shell</title>
+  <link rel="icon" href="/icon.png" />
+  <link rel="apple-touch-icon" href="/icon.png" />
+  <link rel="stylesheet" href="/vendor/xterm/xterm.css" />
+  <link rel="stylesheet" href="/shell.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="app-bar">
+      <button id="back-button" class="bar-button back-button" type="button">Agent Shell</button>
+      <div id="bar-context" class="bar-context" aria-live="polite"></div>
+      <div class="bar-actions">
+        <button id="secondary-action" class="bar-button danger-bar-button" type="button" hidden>Stop agent…</button>
+        <button id="find-button" class="bar-button find-button" type="button">Find work <kbd>⌘/</kbd></button>
+      </div>
+    </header>
+
+    <main id="screen" class="screen" aria-live="polite"></main>
+
+    <div id="modal-layer" class="modal-layer" hidden>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <p id="modal-kicker" class="kicker"></p>
+        <h2 id="modal-title"></h2>
+        <p id="modal-copy" class="modal-copy"></p>
+        <div id="modal-actions" class="modal-actions"></div>
+      </section>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </div>
+
+  <script src="/vendor/xterm/xterm.js"></script>
+  <script src="/vendor/xterm/addon-fit.js"></script>
+  <script src="/config.js"></script>
+  <script src="/shell.js"></script>
+</body>
+</html>

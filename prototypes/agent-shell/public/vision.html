@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>Agent Shell — product vision</title>
+  <link rel="stylesheet" href="/vision.css" />
+</head>
+<body>
+  <div class="vision-app">
+    <header class="vision-bar">
+      <div class="vision-brand">
+        <span class="vision-mark" aria-hidden="true">⌁</span>
+        <strong>Agent Shell</strong>
+        <span>/</span>
+        <span>product vision</span>
+      </div>
+      <div class="vision-tools">
+        <span id="scene-count" class="scene-count"></span>
+        <button id="rationale-toggle" class="quiet-control" type="button" aria-pressed="true">Why this works</button>
+        <button id="restart-vision" class="quiet-control" type="button">Restart</button>
+        <a class="quiet-control" href="/">Back to Agent Shell</a>
+      </div>
+    </header>
+
+    <main class="vision-main">
+      <section id="rationale" class="rationale" aria-live="polite">
+        <div class="rationale-title">
+          <p id="scene-kicker"></p>
+          <h1 id="scene-title"></h1>
+          <p id="scene-summary"></p>
+        </div>
+        <div class="rationale-grid">
+          <article>
+            <span>Human limit</span>
+            <p id="human-limit"></p>
+          </article>
+          <article>
+            <span>Model limit</span>
+            <p id="model-limit"></p>
+          </article>
+          <article>
+            <span>Product response</span>
+            <p id="product-response"></p>
+          </article>
+        </div>
+      </section>
+
+      <section class="demo-stage" aria-label="Interactive Agent Shell concept">
+        <div id="demo-shell" class="demo-shell"></div>
+      </section>
+
+      <footer class="vision-nav">
+        <button id="previous-scene" class="nav-button" type="button">← Previous</button>
+        <div id="scene-dots" class="scene-dots" aria-label="Product vision scenes"></div>
+        <button id="next-scene" class="nav-button primary" type="button">Next →</button>
+      </footer>
+    </main>
+  </div>
+
+  <div id="vision-toast" class="vision-toast" role="status" aria-live="polite"></div>
+  <script src="/vision.js"></script>
+</body>
+</html>

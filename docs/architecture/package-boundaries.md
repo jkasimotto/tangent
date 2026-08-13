@@ -29,7 +29,8 @@ Split Usage packages:
 - @tangent/usage remains the compatibility meta-package during migration.
 
 Root CLI:
-- Owns human command taxonomy (`setup`, `status`, `ui`, `usage`, `rollup`, `search`, `eval`, `doctor`) and may compose installed product commands and UI app descriptors through lazy imports.
+- Owns human command taxonomy (`setup`, `status`, `ui`, `process`, `usage`, `rollup`, `search`, `eval`, `doctor`) and may compose installed product commands and UI app descriptors through lazy imports.
+- Owns the personal `process` runtime: inherited node-local manifest resolution and tmux lifecycle for named processes. This stays in the root product because it composes the personal Tangent tree rather than defining a reusable vertical app.
 - Must keep raw/debug/CI surfaces hidden from default help when they are not human product commands.
 
 Install contract:

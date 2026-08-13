@@ -2,6 +2,7 @@
 import { completeCommand, completionScript, renderCommandHelp, type CliCommandSpec, type CliCompletionShell } from "@tangent/core";
 import { dataCommandSpec, devCommandSpec, doctorCommandSpec, openCommandSpec, runOpenCommand, runProductStatusCommand, runSetupCommand, runTangentUiCommand, setupCommandSpec, statusCommandSpec, uiCommandSpec } from "./product.js";
 import { requiredProductModule } from "./module-loader.js";
+import { runProcessCommand } from "./processes.js";
 
 const tangentCommandSpec: CliCommandSpec = {
   name: "tangent",
@@ -11,6 +12,17 @@ const tangentCommandSpec: CliCommandSpec = {
     statusCommandSpec,
     uiCommandSpec,
     openCommandSpec,
+    {
+      name: "process",
+      description: "Run named local processes visibly in the Tangent tree",
+      subcommands: [
+        { name: "list", description: "List inherited process definitions", options: [{ name: "node", takesValue: true, description: "Tangent noun node" }] },
+        { name: "start", description: "Start or reopen a named process", args: "<name>", options: [{ name: "node", takesValue: true, description: "Tangent noun node" }] },
+        { name: "stop", description: "Stop a process but keep its visible session", args: "<name>", options: [{ name: "node", takesValue: true, description: "Tangent noun node" }] },
+        { name: "restart", description: "Restart a named process", args: "<name>", options: [{ name: "node", takesValue: true, description: "Tangent noun node" }] },
+        { name: "close", description: "Close a process session and remove its row", args: "<name>", options: [{ name: "node", takesValue: true, description: "Tangent noun node" }] }
+      ]
+    },
     productCommandSpec("usage", "Inspect coding-agent activity"),
     productCommandSpec("rollup", "Generate private rollup notes"),
     productCommandSpec("search", "Index and search repository structure"),
@@ -61,6 +73,11 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
 
   if (app === "open") {
     await runOpenCommand(rest);
+    return;
+  }
+
+  if (app === "process") {
+    await runProcessCommand(rest);
     return;
   }
 
@@ -170,6 +187,8 @@ Examples:
   tangent open agent
   tangent open agent ~/Projects/my-project
   tangent open project ~/Projects/my-project
+  tangent process list
+  tangent process start dev
   tangent usage today
   tangent usage transcript codex:019ea3ad
   tangent rollup today

@@ -25,6 +25,9 @@
   }
   header .brand { font-weight: 700; letter-spacing: 0.4px; }
   header .brand .dot { color: var(--accent); }
+  .legacy-tag { color: #e3b341; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+  .current-shell-link { padding: 4px 9px; border: 1px solid #58a6ff; border-radius: 6px; color: #9ccaff; text-decoration: none; }
+  .current-shell-link:hover { background: rgba(88, 166, 255, .12); color: #d9ecff; }
   #active-label { color: var(--dim); margin-left: 8px; }
   button { font: inherit; cursor: pointer; }
   .hbtn {
@@ -58,6 +61,24 @@
     flex: none; display: flex; align-items: center; gap: 8px;
     padding: 8px 10px; border-bottom: 1px solid var(--border);
   }
+  /* In inactive mode, Away is the quiet memory of what the filter removed.
+     Collapsed is deliberately text-only: names can be trusted without a live
+     feed tugging at attention. Expanding is the user's explicit request to
+     inspect state, and even there the working dot never pulses. */
+  #side-away { flex: none; border-bottom: 1px solid var(--border); }
+  #side-away[hidden], #away-rows[hidden] { display: none; }
+  #away-toggle {
+    width: 100%; display: flex; align-items: baseline; gap: 8px;
+    padding: 7px 12px; border: none; background: transparent; color: var(--dim);
+    text-align: left;
+  }
+  #away-toggle:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+  #away-label { color: var(--text); font-weight: 600; flex: none; }
+  #away-names { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #away-chevron { margin-left: auto; flex: none; }
+  #away-rows { padding: 2px 4px 6px; }
+  #away-rows .bt-row { padding-top: 4px; padding-bottom: 4px; }
+  #away-rows .bt-glyph.working { animation: none; }
   #find-wrap { position: relative; flex: 1; min-width: 0; }
   #find-input {
     width: 100%; padding: 5px 60px 5px 8px; border-radius: 6px;
@@ -311,6 +332,8 @@
   <header>
     <button id="tree-btn" class="hbtn" title="show or hide the tree rail">☰</button>
     <span class="brand"><span class="dot">●</span> agent shell</span>
+    <span class="legacy-tag">Legacy</span>
+    <a class="current-shell-link" href="/">Open current Agent Shell</a>
     <span id="active-label"></span>
     <button id="kill-btn" class="hbtn danger" hidden title="kill the session on screen — everything running inside it stops">✕ kill</button>
     <button id="talk-btn" class="hbtn" title="type a command — routed exactly like voice">talk ⌘K</button>
@@ -338,8 +361,14 @@
           <input id="find-input" placeholder="find a node, person, outcome, or document" spellcheck="false" />
           <span id="find-chord"></span>
         </div>
-        <button id="side-live" class="hbtn" title="tree mode — Tab cycles visible, active, and all">visible ⇥</button>
+        <button id="side-live" class="hbtn" title="tree mode — Tab cycles visible, active, inactive, and all">visible ⇥</button>
         <button id="side-hidden" class="hbtn" title="show nodes hidden for this Agent Shell window" hidden>hidden (0)</button>
+      </div>
+      <div id="side-away" hidden>
+        <button id="away-toggle" aria-expanded="false">
+          <span id="away-label"></span><span id="away-names"></span><span id="away-chevron">▸</span>
+        </button>
+        <div id="away-rows" hidden></div>
       </div>
       <div id="panel"></div>
       <div id="side-legend"><span><b>↑↓</b> move</span><span><b>⇥</b> mode</span><span><b>←→</b> fold · up</span><span id="legend-hide"><b>h</b> hide</span><span id="legend-add"><b>n</b> new outcome</span><span id="legend-enter"><b>⏎</b> open</span><span id="legend-kill"><b>⌫</b> kill</span><span id="legend-work"><b>⌘→</b> work pane</span><span><b>esc</b> back</span></div>
@@ -357,11 +386,18 @@
 </div>
 <script src="/vendor/xterm/xterm.js"></script>
 <script src="/vendor/xterm/addon-fit.js"></script>
+<script src="/tree-modes.js"></script>
 <script src="/keymap.js"></script>
 <script src="/config.js"></script>
 <script>
 
 const CHAT = window.CHAT_SESSION ?? "orchestrator";
+const {
+  TREE_MODES,
+  outcomeInFlight: outcomeInFlightFacts,
+  modeIncludesOutcome,
+  nearestIncludedParent,
+} = window.AgentShellTreeModes;
 const terms = new Map(); // session name -> {term, fit, ws, host}
 let active = null;
 let controlledReload = false;
@@ -561,6 +597,17 @@ const freshOutcomes = new Set();
 let knownOutcomeFiles = null; // every outcome file seen in the last vault read
 
 const panelEl = document.getElementById("panel");
+const awayEl = document.getElementById("side-away");
+const awayToggle = document.getElementById("away-toggle");
+const awayLabel = document.getElementById("away-label");
+const awayNames = document.getElementById("away-names");
+const awayChevron = document.getElementById("away-chevron");
+const awayRows = document.getElementById("away-rows");
+let awayExpanded = false;
+awayToggle.onclick = () => {
+  awayExpanded = !awayExpanded;
+  renderSidebar(true);
+};
 
 document.getElementById("chat-btn").onclick = () => show(CHAT);
 
@@ -694,17 +741,19 @@ function treeStateKey(items) {
   return JSON.stringify([
     active,
     treeScope,
-    liveOnly,
+    treeMode,
     showHidden,
+    awayExpanded,
     [...hiddenNodes],
     [...folded],
     [...foldedOutcomes],
     [...freshOutcomes],
     items.map((it) =>
-      it.kind === "outcome" ? ["o", it.t.file, it.t.status, it.fold.folded, it.fold.hiddenCount, it.fold.hiddenLive]
+      it.kind === "outcome" ? ["o", it.t.file, it.t.title, it.t.status, it.fold.folded, it.fold.hiddenCount, it.fold.hiddenLive]
       : it.kind === "main" ? ["n", it.g.path, it.fold.folded, it.fold.hiddenCount, it.fold.hiddenLive]
       : it.kind === "process" ? ["p", it.s.name, it.s.state]
       : ["up", it.to]),
+    awayOutcomeItems().map(({ t }) => [t.file, t.title, t.status, t.session]),
     lastSessions.map((s) => [s.name, s.state]),
   ]);
 }
@@ -740,10 +789,14 @@ function renderSidebar(force = false) {
   sideItems = items;
   sideRows = [];
   panelEl.innerHTML = "";
+  renderAway();
   if (!items.length) {
     const el = document.createElement("div");
     el.className = "panel-hint";
-    el.textContent = q ? "nothing matches" : liveOnly ? "nothing is active right now" : "the vault has no nodes yet";
+    el.textContent = q ? "nothing matches"
+      : treeMode === "active" ? "nothing is active right now"
+      : treeMode === "inactive" ? "nothing is inactive right now"
+      : "the vault has no nodes yet";
     panelEl.appendChild(el);
     updatePreview(null);
     paintHiddenControl();
@@ -2191,7 +2244,6 @@ try {
   hiddenNodes = new Set();
 }
 const TREE_MODE_STORE = "agent-shell-tree-mode";
-const TREE_MODES = ["visible", "active", "all"];
 const savedTreeMode = localStorage.getItem(TREE_MODE_STORE);
 let treeMode = TREE_MODES.includes(savedTreeMode)
   ? savedTreeMode
@@ -2258,9 +2310,9 @@ function setScope(path) {
 }
 
 // One tree mode, cycled by the left hand while arrows stay under the right:
-// visible excludes hidden nodes, active keeps only work needing eyes, and all
-// reveals hidden nodes. The old active-only store is read once above so an
-// existing window keeps its view when upgrading.
+// visible excludes hidden nodes, active keeps work in flight, inactive keeps
+// work available to start, and all reveals hidden nodes. The old active-only
+// store is read once above so an existing window keeps its view when upgrading.
 const LIVE_STORE = "agent-shell-live-only";
 let liveOnly = treeMode === "active";
 const liveBtn = document.getElementById("side-live");
@@ -2269,11 +2321,12 @@ function paintTreeModeControl() {
   if (!liveBtn) return;
   liveBtn.textContent = treeMode + " ⇥";
   liveBtn.classList.toggle("on", treeMode !== "visible");
-  liveBtn.title = `tree mode: ${treeMode} — Tab cycles visible, active, and all; Shift+Tab reverses`;
+  liveBtn.title = `tree mode: ${treeMode} — Tab cycles visible, active, inactive, and all; Shift+Tab reverses`;
 }
 
 function setTreeMode(mode) {
   if (!TREE_MODES.includes(mode)) return;
+  if (mode !== "inactive") awayExpanded = false;
   treeMode = mode;
   liveOnly = mode === "active";
   showHidden = mode === "all";
@@ -2487,6 +2540,69 @@ findInput.oninput = () => renderSidebar(true);
 /** The live session executing an outcome, joined by tmux session name. */
 const sessionFor = (name) => (name ? lastSessions.find((s) => s.name === name) ?? null : null);
 
+/** Facts shared by every mode so active and inactive cannot drift apart. */
+function outcomeModeFacts(t) {
+  return {
+    hasSession: Boolean(sessionFor(t.session)),
+    status: t.status,
+    fresh: freshOutcomes.has(t.file),
+  };
+}
+
+/** True only for work already handed off, not active-mode's fresh escape hatch. */
+function outcomeIsInFlight(t) {
+  return outcomeInFlightFacts(outcomeModeFacts(t));
+}
+
+/** The outcomes removed from inactive mode, in stable scope-aware order. */
+function awayOutcomeItems() {
+  if (treeMode !== "inactive") return [];
+  const effectiveScope = treeScope;
+  const records = [];
+  for (const g of vaultMap) {
+    if (effectiveScope && !isAtOrUnder(effectiveScope, g.path)) continue;
+    if (hiddenRootFor(g.path)) continue;
+    for (const t of g.outcomes) {
+      if (outcomeIsInFlight(t)) records.push({ kind: "outcome", t, g });
+    }
+  }
+  return records.sort((a, b) =>
+    a.g.path.localeCompare(b.g.path) || a.t.title.localeCompare(b.t.title) || a.t.file.localeCompare(b.t.file)
+  );
+}
+
+/** Paints inactive mode's quiet receipt for outcomes filtered out of the queue. */
+function renderAway() {
+  const records = awayOutcomeItems();
+  awayEl.hidden = treeMode !== "inactive" || records.length === 0;
+  if (awayEl.hidden) return;
+  const titles = records.map(({ t }) => t.title);
+  awayLabel.textContent = `Away ${records.length}`;
+  awayNames.textContent = titles.join(" · ");
+  awayToggle.title = titles.join("\n");
+  awayToggle.setAttribute("aria-expanded", String(awayExpanded));
+  awayChevron.textContent = awayExpanded ? "▾" : "▸";
+  awayRows.hidden = !awayExpanded;
+  awayRows.innerHTML = "";
+  if (!awayExpanded) return;
+  for (const item of records) {
+    const row = outcomeRowEl({ ...item.t, depth: 0 }, 8, {
+      foldable: false,
+      folded: false,
+      hiddenCount: 0,
+      hiddenLive: false,
+    });
+    row.style.cursor = "pointer";
+    row.onmousedown = (event) => {
+      event.preventDefault();
+      const session = sessionFor(item.t.session);
+      if (session) show(session.name);
+      else setTreeMode("active");
+    };
+    awayRows.appendChild(row);
+  }
+}
+
 /**
  * The sections the tree shows, in order. Bare: every vault node in tree order
  * (root first when unscoped), indented by depth, each with its outcomes (from
@@ -2647,19 +2763,20 @@ function processRowEl(s, indent) {
   return row;
 }
 
-/** True when an outcome itself currently counts as active work. */
+/** True when an outcome itself currently counts as active-mode work. */
 function outcomeIsActive(t) {
-  return Boolean(sessionFor(t.session)) || t.status === "active" || freshOutcomes.has(t.file);
+  return modeIncludesOutcome("active", outcomeModeFacts(t));
 }
 
 /**
  * Turns one group's depth-first outcome list into regular tree items. Parent
  * links come from Breakdown rather than depth, so a done/hidden intermediate
  * outcome or a child homed on another node cannot corrupt the hierarchy.
- * Active mode keeps the ancestors of active descendants; search reveals the
+ * Active mode keeps the ancestors of active descendants. Inactive mode omits
+ * active ancestors and re-roots their eligible children. Search reveals the
  * matching group's eligible outcomes regardless of persisted folds.
  */
-function buildOutcomeItems(outcomes, g, pad, { activeOnly, searching }) {
+function buildOutcomeItems(outcomes, g, pad, { mode, searching }) {
   const files = new Set(outcomes.map((t) => t.file));
   const nearestVisibleParent = (file) => {
     const seen = new Set();
@@ -2670,18 +2787,25 @@ function buildOutcomeItems(outcomes, g, pad, { activeOnly, searching }) {
     }
     return parent && files.has(parent) ? parent : null;
   };
-  const records = outcomes.map((t) => ({ t, parentFile: nearestVisibleParent(t.file) }));
-  const byFile = new Map(records.map((record) => [record.t.file, record]));
-  const included = new Set(activeOnly ? records.filter((record) => outcomeIsActive(record.t)).map((record) => record.t.file) : files);
-  if (activeOnly) {
+  const baseRecords = outcomes.map((t) => ({ t, parentFile: nearestVisibleParent(t.file) }));
+  const baseByFile = new Map(baseRecords.map((record) => [record.t.file, record]));
+  const included = new Set(baseRecords
+    .filter((record) => modeIncludesOutcome(mode, outcomeModeFacts(record.t)))
+    .map((record) => record.t.file));
+  if (mode === "active") {
     for (const file of [...included]) {
-      let parent = byFile.get(file)?.parentFile ?? null;
+      let parent = baseByFile.get(file)?.parentFile ?? null;
       while (parent && !included.has(parent)) {
         included.add(parent);
-        parent = byFile.get(parent)?.parentFile ?? null;
+        parent = baseByFile.get(parent)?.parentFile ?? null;
       }
     }
   }
+  const parentByFile = new Map(baseRecords.map((record) => [record.t.file, record.parentFile]));
+  const records = baseRecords
+    .filter((record) => included.has(record.t.file))
+    .map((record) => ({ ...record, parentFile: nearestIncludedParent(record.t.file, parentByFile, included) }));
+  const byFile = new Map(records.map((record) => [record.t.file, record]));
   const isBelow = (ancestor, file) => {
     const seen = new Set();
     let parent = byFile.get(file)?.parentFile ?? null;
@@ -2692,11 +2816,21 @@ function buildOutcomeItems(outcomes, g, pad, { activeOnly, searching }) {
     }
     return false;
   };
+  const displayDepth = (file) => {
+    let depth = 0;
+    const seen = new Set();
+    let parent = byFile.get(file)?.parentFile ?? null;
+    while (parent && !seen.has(parent)) {
+      seen.add(parent);
+      depth += 1;
+      parent = byFile.get(parent)?.parentFile ?? null;
+    }
+    return depth;
+  };
   const visible = [];
   for (const record of records) {
     const file = record.t.file;
-    if (!included.has(file)) continue;
-    const descendants = records.filter((candidate) => included.has(candidate.t.file) && isBelow(file, candidate.t.file));
+    const descendants = records.filter((candidate) => isBelow(file, candidate.t.file));
     const foldable = !searching && descendants.length > 0;
     const fold = {
       foldable,
@@ -2705,7 +2839,8 @@ function buildOutcomeItems(outcomes, g, pad, { activeOnly, searching }) {
       hiddenLive: descendants.some((candidate) => outcomeIsActive(candidate.t)),
     };
     if (!searching && [...foldedOutcomes].some((ancestor) => included.has(ancestor) && isBelow(ancestor, file))) continue;
-    visible.push({ kind: "outcome", t: record.t, g, pad, parentFile: record.parentFile, foldable, fold });
+    const t = mode === "inactive" ? { ...record.t, depth: displayDepth(file) } : record.t;
+    visible.push({ kind: "outcome", t, g, pad, parentFile: record.parentFile, foldable, fold });
   }
   return visible;
 }
@@ -2715,10 +2850,10 @@ function buildOutcomeItems(outcomes, g, pad, { activeOnly, searching }) {
  * headers, outcomes nested by breakdown, sessions underneath (the
  * orchestrator is the first session row under root). `treeScope` narrows it
  * to one node's subtree (clicking a node row scopes; the up row leads back);
- * The mode filter always defines eligibility: active keeps only rows with
- * something running or active, visible excludes hidden nodes, and all includes
- * them. A typed query ranks matches inside that eligible set; it never replaces
- * the mode filter.
+ * The mode filter always defines eligibility: active keeps work in flight,
+ * inactive keeps outcomes available to start, visible excludes hidden nodes,
+ * and all includes them. A typed query ranks matches inside that eligible set;
+ * it never replaces the mode filter.
  */
 function buildTreeItems(q) {
   const sections = treeSections(q);
@@ -2726,32 +2861,34 @@ function buildTreeItems(q) {
   const inScope = (p) => !effectiveScope || p === effectiveScope || p.startsWith(effectiveScope + "/");
   /** True when a folded ancestor (inside the scope) hides this path entirely. */
   const foldedAway = (path) => [...folded].some((f) => inScope(f) && isDescendantPath(f, path));
-  const activeOnly = liveOnly;
-  const activeCounts = new Map();
-  if (activeOnly) {
+  const activeOnly = treeMode === "active";
+  const inactiveOnly = treeMode === "inactive";
+  const restrictive = activeOnly || inactiveOnly;
+  const eligibleCounts = new Map();
+  if (restrictive) {
     for (const g of sections) {
-      const outcomes = g.outcomes.filter((t) =>
-        Boolean(sessionFor(t.session)) || t.status === "active" || freshOutcomes.has(t.file)
-      ).length;
-      const processes = lastSessions.filter((s) =>
-        (s.node ?? "") === g.path && !s.outcome && ["working", "waiting", "service"].includes(s.state)
-      ).length;
-      if (outcomes + processes) activeCounts.set(g.path, outcomes + processes);
+      const outcomes = g.outcomes.filter((t) => modeIncludesOutcome(treeMode, outcomeModeFacts(t))).length;
+      const processes = activeOnly
+        ? lastSessions.filter((s) =>
+            (s.node ?? "") === g.path && !s.outcome && ["working", "waiting", "service"].includes(s.state)
+          ).length
+        : 0;
+      if (outcomes + processes) eligibleCounts.set(g.path, outcomes + processes);
     }
   }
-  const activeAtOrBelow = (path) => [...activeCounts].reduce(
-    (count, [activePath, direct]) => count + (isAtOrUnder(path, activePath) ? direct : 0), 0
+  const eligibleAtOrBelow = (path) => [...eligibleCounts].reduce(
+    (count, [eligiblePath, direct]) => count + (isAtOrUnder(path, eligiblePath) ? direct : 0), 0
   );
   const items = [];
   if (!q && effectiveScope) items.push({ kind: "up", to: effectiveScope.split("/").slice(0, -1).join("/") });
   for (const g of sections) {
-    if (activeOnly && !activeAtOrBelow(g.path)) continue;
+    if (restrictive && !eligibleAtOrBelow(g.path)) continue;
     if (!q && g.path && foldedAway(g.path)) continue;
     const pad = 8 + g.depth * 16;
     const rowPad = pad + 20; // children start under the header's name
     // Every session on this node that is not an outcome's: the orchestrator
     // (node "", under root), services, plain shells.
-    const procs = lastSessions
+    const procs = inactiveOnly ? [] : lastSessions
       .filter((s) => (s.node ?? "") === g.path && !s.outcome)
       .sort((a, b) => (b.isChat ? 1 : 0) - (a.isChat ? 1 : 0));
     const kids = q ? [] : sections.filter((o) => isDescendantPath(g.path, o.path));
@@ -2770,24 +2907,28 @@ function buildTreeItems(q) {
         return under && ["working", "waiting", "service"].includes(s.state);
       });
     }
-    const outcomeRows = buildOutcomeItems(g.outcomes, g, rowPad, { activeOnly, searching: Boolean(q) });
-    const documentRows = q ? (g.documents ?? []).map((d) => ({ kind: "document", d, g, pad: rowPad })) : [];
+    const outcomeRows = buildOutcomeItems(g.outcomes, g, rowPad, { mode: treeMode, searching: Boolean(q) });
+    const documentRows = q && !restrictive
+      ? (g.documents ?? []).map((d) => ({ kind: "document", d, g, pad: rowPad }))
+      : [];
     const rows = [...documentRows, ...outcomeRows, ...procs.map((s) => ({ kind: "process", s, g, pad: rowPad }))];
-    if (activeOnly) {
-      const live = rows.filter((it) =>
-        it.kind === "outcome"
-          ? true // buildOutcomeItems already retained active outcomes plus their structural ancestors
-          : ["working", "waiting", "service"].includes(it.s.state)
-      );
-      const activeCount = activeAtOrBelow(g.path);
-      const activeFold = {
+    if (restrictive) {
+      const eligible = activeOnly
+        ? rows.filter((it) =>
+            it.kind === "outcome"
+              ? true // active outcomes plus the structural ancestors that locate them
+              : ["working", "waiting", "service"].includes(it.s.state)
+          )
+        : outcomeRows;
+      const eligibleCount = eligibleAtOrBelow(g.path);
+      const restrictedFold = {
         foldable: !q,
         folded: !q && folded.has(g.path),
-        hiddenCount: activeCount,
-        hiddenLive: true,
+        hiddenCount: eligibleCount,
+        hiddenLive: activeOnly,
       };
-      items.push({ kind: "main", g, foldable: activeFold.foldable, fold: activeFold, hidden: false });
-      if (!activeFold.folded) items.push(...live.map((item) => ({ ...item, hidden: false })));
+      items.push({ kind: "main", g, foldable: restrictedFold.foldable, fold: restrictedFold, hidden: false });
+      if (!restrictedFold.folded) items.push(...eligible.map((item) => ({ ...item, hidden: false })));
       continue;
     }
     const hidden = Boolean(hiddenRootFor(g.path));

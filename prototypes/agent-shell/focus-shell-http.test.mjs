@@ -125,6 +125,10 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.match(visionScript, /Keep the native agent chat whole/);
   assert.match(visionScript, /Native agent surface/);
   assert.match(visionScript, /Shape this work/);
+  assert.match(visionScript, /Give noun nodes one temporary home/);
+  assert.match(visionScript, /Keep operational programs near their nouns/);
+  assert.match(visionScript, /Daily remediation run/);
+  assert.match(visionScript, /Path preview/);
   assert.match(visionScript, /Keep Mac awake/);
   assert.match(visionScript, /Two-minute context/);
 

@@ -442,6 +442,8 @@ async function readNodeOutcomes(node) {
       outcome: fm.outcome || "",
       stateText: noteSection(text, "State"),
       myUnderstanding: noteSection(text, "My understanding"),
+      currentBrief: noteSection(text, "Current brief"),
+      storyText: noteSection(text, "Story so far"),
       waitingOn: fm.waiting_on || null,
       due: fm.due || null,
       session: fm.session || null,
@@ -501,6 +503,14 @@ async function vaultIndex() {
     if (hit && hit.file !== source.file) backlinks.get(hit.file).push(source.file);
   }
   for (const record of records) record.backlinks = backlinks.get(record.file) ?? [];
+  for (const outcome of bySlug.values()) {
+    const outcomeRecord = records.find((record) => record.file === outcome.file);
+    const directLinks = new Set(outcomeRecord?.links ?? []);
+    outcome.documents = records
+      .filter((record) => record.kind === "document")
+      .filter((record) => directLinks.has(path.basename(record.file, ".md")) || record.backlinks.includes(outcome.file))
+      .map((record) => ({ file: record.file, title: record.title }));
+  }
 
   for (const { n, note, own, documents } of entries) {
     const roots = roadToDoneOrder(note).filter((s) => bySlug.has(s));
@@ -614,7 +624,8 @@ function replaceNoteSection(text, name, value) {
   return `${text.slice(0, contentStart)}\n\n${body}\n\n${suffix}`.replace(/\n{3,}(?=## )/g, "\n\n");
 }
 
-async function editOutcomeFile(file, { status, session, title, outcome, state, understanding }) {
+/** Applies the allowed direct-edit fields to one outcome Markdown file. */
+async function editOutcomeFile(file, { status, session, title, outcome, state, understanding, currentBrief, story }) {
   const abs = path.join(TREES_ROOT, file);
   let text = await readFile(abs, "utf8");
   if (status !== undefined) text = withFrontmatterLine(text, "status", status);
@@ -628,33 +639,120 @@ async function editOutcomeFile(file, { status, session, title, outcome, state, u
   }
   if (state !== undefined) text = replaceNoteSection(text, "State", state);
   if (understanding !== undefined) text = replaceNoteSection(text, "My understanding", understanding);
+  if (currentBrief !== undefined) text = replaceNoteSection(text, "Current brief", currentBrief);
+  if (story !== undefined) text = replaceNoteSection(text, "Story so far", story);
   await writeFile(abs, text);
 }
 
-/**
- * Creates a new outcome file on a node, from the tree's editor. The slug
- * comes from the title and is suffixed until vault-unique (wikilinks resolve
- * by file name). The vault schema makes `outcome:` mandatory — the caller
- * validates it. Returns the vault-relative file path.
- */
-async function createOutcomeFile(node, { title, outcome, state }) {
-  /** Collapses user-entered multiline text into a YAML-safe single line. */
-  const oneline = (s) => s.replace(/\s*\n\s*/g, " ").trim();
+/** Collapses user-entered multiline text into one readable line. */
+function oneLine(value) {
+  return String(value ?? "").replace(/\s*\n\s*/g, " ").replace(/\s+/g, " ").trim();
+}
+
+/** Allocates one vault-unique outcome slug and records it as taken. */
+function allocateOutcomeSlug(node, title, taken) {
   const base = normName(title).slice(0, 48).replace(/-+$/, "") || "outcome";
-  const taken = new Set([...(await outcomesByFile()).values()].map((o) => o.slug));
   let slug = base;
-  for (let i = 2; taken.has(slug) || existsSync(path.join(TREES_ROOT, node, `outcome-${slug}.md`)); i++) {
-    slug = `${base}-${i}`;
+  for (let index = 2; taken.has(slug) || existsSync(path.join(TREES_ROOT, node, `outcome-${slug}.md`)); index += 1) {
+    slug = `${base}-${index}`;
   }
-  const file = `${node}/outcome-${slug}.md`;
-  const text =
-    `---\ntype: outcome\nstatus: open\noutcome: ${oneline(outcome)}\nsession:\n---\n\n` +
-    `# ${oneline(title)}\n\n## State\n\n${(state ?? "").trim() || "Not started."}\n`;
-  await writeFile(path.join(TREES_ROOT, file), text);
-  // A brand-new file is invisible to vaultCommit's pathspec commit until it
-  // is tracked; adding exactly this path stages nothing else.
+  taken.add(slug);
+  return slug;
+}
+
+/** Renders a new outcome with compact return context from its first save. */
+function renderNewOutcome({ title, outcome, state, context, breakdown = [] }) {
+  const result = oneLine(outcome);
+  const breakdownSection = breakdown.length
+    ? `\n\n## Breakdown\n\n${breakdown.map((slug, index) => `${index + 1}. [[outcome-${slug}]]`).join("\n")}`
+    : "";
+  const contextParagraph = oneLine(context) ? `\n\n${oneLine(context)}` : "";
+  return (
+    `---\ntype: outcome\nstatus: open\noutcome: ${result}\nsession:\n---\n\n` +
+    `# ${oneLine(title)}${contextParagraph}${breakdownSection}\n\n` +
+    `## State\n\n${String(state ?? "").trim() || "Not started."}\n\n` +
+    `## Current brief\n\n` +
+    `- You wanted: ${result}\n` +
+    `- What changed: This outcome is now defined.\n` +
+    `- Now: Choose whether to talk it through or read the start plan.\n\n` +
+    `## Story so far\n\n` +
+    `### Outcome defined\n\nThe result was saved. No agent has started.\n`
+  );
+}
+
+/** Returns the relative path for a node's canonical note. */
+function nodeNoteFile(node) {
+  return `${node}/${node.split("/").pop()}.md`;
+}
+
+/** Creates the minimal canonical note text for a node that has no note yet. */
+function emptyNodeNote(node) {
+  const title = node.split("/").pop().replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+  return (
+    `---\ntype: work\nstatus:\n---\n\n# ${title}\n\n` +
+    `## Purpose\n\n\n\n## Current\n\n\n\n## Road to done\n\n\n\n` +
+    `## Knowledge\n\n\n\n## Ideas and open questions\n\n\n\n## Resources\n`
+  );
+}
+
+/** Adds one top-level outcome to the node's ordered Road to done. */
+async function addOutcomeToRoad(node, slug) {
+  const file = nodeNoteFile(node);
+  const absolute = path.join(TREES_ROOT, file);
+  let text = await readFile(absolute, "utf8").catch(() => emptyNodeNote(node));
+  const current = noteSection(text, "Road to done");
+  if (!current.includes(`[[outcome-${slug}]]`)) {
+    const count = [...current.matchAll(/\[\[outcome-[^\]]+\]\]/g)].length;
+    const next = [current, `${count + 1}. [[outcome-${slug}]]`].filter(Boolean).join("\n");
+    text = replaceNoteSection(text, "Road to done", next);
+    await writeFile(absolute, text);
+  }
+  return file;
+}
+
+/**
+ * Creates one parent outcome and optional children in one confirmed save.
+ * Only the parent enters Road to done. Its Breakdown orders the children.
+ */
+async function createOutcomeSet(node, { parent, children = [], description = "" }) {
+  const taken = new Set([...(await outcomesByFile()).values()].map((item) => item.slug));
+  const parentSlug = allocateOutcomeSlug(node, parent.title, taken);
+  const childRecords = children.map((child) => ({
+    ...child,
+    slug: allocateOutcomeSlug(node, child.title, taken),
+  }));
+  const records = [
+    { ...parent, slug: parentSlug, breakdown: childRecords.map((child) => child.slug), context: description },
+    ...childRecords.map((child) => ({ ...child, breakdown: [], context: `Part of [[outcome-${parentSlug}]].` })),
+  ].map((record) => ({ ...record, file: `${node}/outcome-${record.slug}.md` }));
+
+  for (const record of records) {
+    await writeFile(path.join(TREES_ROOT, record.file), renderNewOutcome(record));
+  }
+  const noteFile = await addOutcomeToRoad(node, parentSlug);
+  const changed = [...records.map((record) => record.file), noteFile];
+  await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", ...changed]).catch(() => {});
+  await vaultCommit(changed, `add: ${node} outcome ${parentSlug} from Agent Shell`, node, null);
+  return { file: records[0].file, files: records.map((record) => record.file) };
+}
+
+/** Creates one ordinary outcome through the shared parent-and-children path. */
+async function createOutcomeFile(node, { title, outcome, state }) {
+  const created = await createOutcomeSet(node, { parent: { title, outcome, state } });
+  return created.file;
+}
+
+/** Saves a natural work description as an idea without creating outcomes. */
+async function saveWorkIdea(node, description) {
+  const file = nodeNoteFile(node);
+  const absolute = path.join(TREES_ROOT, file);
+  let text = await readFile(absolute, "utf8").catch(() => emptyNodeNote(node));
+  const current = noteSection(text, "Ideas and open questions");
+  const next = [current, `- Idea: ${oneLine(description)}`].filter(Boolean).join("\n");
+  text = replaceNoteSection(text, "Ideas and open questions", next);
+  await writeFile(absolute, text);
   await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", file]).catch(() => {});
-  await vaultCommit([file], `add: ${node} outcome ${slug} from tree`, node, null);
+  await vaultCommit([file], `note: ${node} captures an idea from Agent Shell`, node, null);
   return file;
 }
 
@@ -740,6 +838,8 @@ async function outcomePrompt(node, o) {
     (o.breakdown.length ? `- Work the child outcomes in Breakdown order.\n` : "") +
     `- Before you start a long-running server or watcher, run \`tangent process list\`. Use \`tangent process start\` for a matching managed process.\n` +
     `- Keep the outcome State section current.\n` +
+    `- When shared understanding changes, update Current brief. Keep exactly three bullets: You wanted, What changed, and Now.\n` +
+    `- Add to Story so far only after meaningful feedback, an accepted or rejected direction, or a result that changes the plan. Use one short heading and no more than two sentences. Keep at most five moments. Do not copy the chat.\n` +
     `- When the result is met, propose marking it done. Never mark it done without confirmation.`
   );
 }
@@ -993,6 +1093,7 @@ async function spawnOutcomeSession(node, slug, { phase = "execute", approved = f
   } catch (err) {
     console.error("outcome binding:", err.message ?? err);
   }
+  /** Primes the new pane after its login shell finishes drawing. */
   const primeNewSession = async () => {
     // Let the login shell finish drawing its prompt: a line typed earlier can
     // be wiped by the redraw.
@@ -1167,6 +1268,86 @@ const GROQ_KEY =
     }
   })();
 const ROUTER_MODEL = process.env.VOICE_ROUTER_MODEL ?? "llama-3.3-70b-versatile";
+
+const WORK_SHAPE_SYSTEM = `You turn one natural description into an editable outcome structure for a human.
+
+Return JSON only:
+{"parent":{"title":"short result name","outcome":"one sentence that is true when the complete result is done"},"children":[{"title":"short result name","outcome":"one sentence that is true when this independently useful result is done"}]}
+
+Rules:
+- Preserve the user's whole intent. Do not add features, constraints, or proof they did not state.
+- Create zero to five children. Use a child only when the result is useful to select and complete alone.
+- The parent must remain a coherent end-to-end result. Children do not replace the parent.
+- State outcomes as finished results, not activities or implementation steps.
+- Keep each field concise. Do not include commentary outside the JSON.`;
+
+/** Produces a transparent local draft when no shaping model is available. */
+function localWorkShape(description) {
+  const sentences = String(description)
+    .replace(/\r/g, "")
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((sentence) => oneLine(sentence))
+    .filter(Boolean);
+  /** Derives a short editable label from one natural sentence. */
+  const title = (value) => {
+    const source = oneLine(value)
+      .replace(/^(?:I|we)\s+(?:really\s+)?(?:want|need|would like)\s+to\s+/i, "")
+      .replace(/^(?:I|we)\s+(?:really\s+)?(?:want|need)\s+/i, "")
+      .replace(/[.!?]+$/, "");
+    const candidate = source || "New body of work";
+    const firstCut = candidate.slice(0, 72);
+    const clipped = candidate.length > 72 ? firstCut.replace(/\s+\S*$/, "").trim() : firstCut;
+    return clipped.charAt(0).toUpperCase() + clipped.slice(1);
+  };
+  const first = sentences[0] || oneLine(description);
+  return {
+    parent: { title: title(first), outcome: first },
+    children: sentences.slice(1, 6).map((sentence) => ({ title: title(sentence), outcome: sentence })),
+    shapedBy: "local",
+  };
+}
+
+/** Normalizes one model proposal and falls back when required fields are absent. */
+function normalizeWorkShape(value, description) {
+  const fallback = localWorkShape(description);
+  const parent = value?.parent && typeof value.parent === "object" ? value.parent : {};
+  const title = oneLine(parent.title);
+  const outcome = oneLine(parent.outcome);
+  if (!title || !outcome) return fallback;
+  const children = (Array.isArray(value.children) ? value.children : [])
+    .slice(0, 5)
+    .map((child) => ({ title: oneLine(child?.title), outcome: oneLine(child?.outcome) }))
+    .filter((child) => child.title && child.outcome);
+  return { parent: { title, outcome }, children, shapedBy: "model" };
+}
+
+/** Uses the optional fast model to shape work, with a local editable fallback. */
+async function shapeWork(description) {
+  if (!GROQ_KEY) return localWorkShape(description);
+  try {
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: { authorization: `Bearer ${GROQ_KEY}`, "content-type": "application/json" },
+      signal: AbortSignal.timeout(8_000),
+      body: JSON.stringify({
+        model: ROUTER_MODEL,
+        temperature: 0,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: WORK_SHAPE_SYSTEM },
+          { role: "user", content: description },
+        ],
+      }),
+    });
+    if (!response.ok) throw new Error(`shape ${response.status}`);
+    const content = (await response.json()).choices?.[0]?.message?.content ?? "";
+    const match = content.match(/\{[\s\S]*\}/);
+    return normalizeWorkShape(JSON.parse(match ? match[0] : content), description);
+  } catch (error) {
+    console.error("work shape:", String(error.message ?? error).slice(0, 160));
+    return localWorkShape(description);
+  }
+}
 
 const ROUTER_SYSTEM = `You route commands for "agent shell", a terminal app whose tabs are tmux sessions running coding agents. The session named in chatSession is the orchestrator: the root agent that organizes the whole project tree (creating nodes, capturing outcomes, opening sessions). The user addresses agents by session name or by node name — nodes have no agents of their own, so a node name means the orchestrator acting on that node, and you may target any node in the payload.
 
@@ -1609,6 +1790,20 @@ const server = http.createServer(async (req, res) => {
       }));
       return;
     }
+    if (url.pathname === "/api/work/shape" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      const description = String(body.description ?? "").trim().slice(0, 12_000);
+      if (!description) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "describe the work before you shape it" }));
+        return;
+      }
+      const proposal = await shapeWork(description);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(proposal));
+      return;
+    }
     if (url.pathname === "/api/outcome/discuss" && req.method === "POST") {
       let body = {};
       try { body = JSON.parse(await readBody(req)); } catch {}
@@ -1716,6 +1911,73 @@ const server = http.createServer(async (req, res) => {
         const file = await createOutcomeFile(node, { title, outcome, state: typeof body.state === "string" ? body.state : "" });
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({ file }));
+      } catch (err) {
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
+      }
+      return;
+    }
+    if (url.pathname === "/api/outcome/batch" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      const node = String(body.node ?? "");
+      const parent = body.parent && typeof body.parent === "object" ? body.parent : {};
+      const children = Array.isArray(body.children) ? body.children.slice(0, 8) : [];
+      if (!node || !flattenNodePaths(await readTree(TREES_ROOT)).includes(node)) {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: `no node "${node}"` }));
+        return;
+      }
+      if (!String(parent.title ?? "").trim() || !String(parent.outcome ?? "").trim()) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "the parent needs a name and a done condition" }));
+        return;
+      }
+      const normalizedChildren = children
+        .map((child) => ({ title: String(child?.title ?? "").trim(), outcome: String(child?.outcome ?? "").trim(), state: "Not started." }))
+        .filter((child) => child.title || child.outcome);
+      if (normalizedChildren.some((child) => !child.title || !child.outcome)) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "each child needs a name and a done condition" }));
+        return;
+      }
+      try {
+        const created = await createOutcomeSet(node, {
+          parent: {
+            title: String(parent.title).trim(),
+            outcome: String(parent.outcome).trim(),
+            state: String(parent.state ?? "Not started.").trim(),
+          },
+          children: normalizedChildren,
+          description: String(body.description ?? "").trim(),
+        });
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(created));
+      } catch (err) {
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
+      }
+      return;
+    }
+    if (url.pathname === "/api/idea/new" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      const node = String(body.node ?? "");
+      const description = String(body.description ?? "").trim();
+      if (!node || !flattenNodePaths(await readTree(TREES_ROOT)).includes(node)) {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: `no node "${node}"` }));
+        return;
+      }
+      if (!description) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "describe the idea before you save it" }));
+        return;
+      }
+      try {
+        const file = await saveWorkIdea(node, description);
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true, file }));
       } catch (err) {
         res.writeHead(500, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));

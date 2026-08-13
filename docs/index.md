@@ -2,7 +2,7 @@
 
 Start here when changing architecture, package boundaries, or agent workflow.
 
-Agent Shell is the daily product for work with coding agents. Its current local implementation lives in `prototypes/agent-shell/`. The first rejected interaction notebook remains in `prototypes/agent-shell-vision/`.
+Agent Shell is the daily product for work with coding agents. Its current local implementation lives in `prototypes/agent-shell/`. It keeps native chat complete and adds compact return context, work shaping, and handoff around it. The first rejected interaction notebook remains in `prototypes/agent-shell-vision/`.
 
 Human CLI defaults are `setup`, `status`, `ui`, `process`, `usage`, `rollup`, `search`, `eval`, `mark`, `doctor`, and `completion`.
 `tangent process` runs personally configured named processes from inherited, ignored `.processes.json` files on Tangent noun nodes. Managed processes use node-bound tmux sessions so they remain visible and inspectable in the tree.

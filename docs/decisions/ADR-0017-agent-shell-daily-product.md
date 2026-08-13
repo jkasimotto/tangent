@@ -56,3 +56,21 @@ Julian completed a second unscripted test on the same day. The context-first mod
 The second amendment groups each status list by project and outcome hierarchy. It also adds visible outcome creation and completion actions.
 
 `Command+Enter` submits forms that contain substantial text. Recent activity can order project groups, but it cannot define human priority.
+
+## Product vision amendment
+
+The native agent interface remains the only chat surface. Agent Shell adds outcome context, Summary, and Stop agent around it.
+
+The outcome summary now has two compact memories. Current brief states the present direction. Story so far records no more than five meaningful changes.
+
+Agents update these memories at natural work boundaries. They do not copy the full conversation into the outcome.
+
+The summary can derive two-minute context from the outcome, these memories, open questions, and linked documents.
+
+Describe work preserves the user's natural description. A model can propose one parent outcome and optional children.
+
+The proposal remains editable. Nothing enters the vault until the user confirms it.
+
+After creation, every parent and child is an ordinary outcome. The user selects the parent for the complete body or a child for one result.
+
+Keep Mac awake appears only beside live work. The assertion ends when the user turns it off or Agent Shell exits.

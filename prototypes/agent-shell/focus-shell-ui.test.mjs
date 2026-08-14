@@ -161,8 +161,41 @@ test("the live shell restores context, defines work with an agent, and organizes
     ],
   };
   const posts = [];
+  const dockBadges = [];
+  let dockBadgeClears = 0;
+  let notificationPermission = "default";
   let reviewAgentStarted = false;
   const describeSessions = [];
+  const reviewedSteps = [
+    "Create the design",
+    "Review the design",
+    "Respond and plan",
+    "Review the implementation plan",
+    "Respond to the plan review",
+    "Implement",
+    "Review the implementation",
+    "Respond and fix",
+  ].map((label, index) => ({
+    id: `step-${index + 1}`,
+    order: index + 1,
+    label,
+    instruction: `Do step ${index + 1}.`,
+    status: "pending",
+    defaultBinding: index % 2 ? "codex" : "claude",
+    binding: index % 2
+      ? { id: "codex-max", label: "Codex Max", provider: "codex", command: "codex", effort: "max" }
+      : { id: "claude-fable", label: "Claude Fable", provider: "claude", command: "claude", model: "fable" },
+    session: { mode: "fresh" },
+    attempts: [],
+  }));
+  const reviewedProgram = {
+    id: "reviewed-build",
+    description: "Design, review, implement, review, and finish.",
+    steps: reviewedSteps,
+    bindings: Object.fromEntries(reviewedSteps.map((step) => [step.id, step.binding])),
+    sessions: Object.fromEntries(reviewedSteps.map((step) => [step.id, step.session])),
+  };
+  const reviewedRuns = [];
 
   window.localStorage.setItem("agent-shell.current-goal", goalFile);
   window.setInterval = () => 0;
@@ -172,11 +205,41 @@ test("the live shell restores context, defines work with an agent, and organizes
       async writeText(text) { posts.push({ path: "clipboard", body: text }); },
     },
   });
+  Object.defineProperties(window.navigator, {
+    setAppBadge: {
+      /** Records the numeric Dock badge requested by Agent Shell. */
+      value: async (count) => { dockBadges.push(count); },
+    },
+    clearAppBadge: {
+      /** Records that Agent Shell explicitly cleared its Dock badge. */
+      value: async () => { dockBadgeClears += 1; },
+    },
+  });
+  Object.defineProperty(window, "Notification", {
+    value: {
+      get permission() { return notificationPermission; },
+      /** Grants the permission that WebKit requires before displaying a Dock badge. */
+      async requestPermission() { notificationPermission = "granted"; return notificationPermission; },
+    },
+  });
   window.fetch = async (url, options = {}) => {
     const pathname = new URL(url, window.location.href).pathname;
     if (options.method === "POST") {
       const body = JSON.parse(options.body);
       posts.push({ path: pathname, body });
+      if (pathname === "/api/reviewed-build/runs") {
+        const run = {
+          id: "reviewed-run-1",
+          status: "queued",
+          goalPath: body.goalPath,
+          goalTitle: goal.title,
+          areaPath: goal.area,
+          steps: structuredClone(reviewedSteps),
+          decisions: [],
+        };
+        reviewedRuns.unshift(run);
+        return jsonResponse({ run });
+      }
       if (pathname === "/api/goals/agent") reviewAgentStarted = true;
       if (pathname === "/api/work/describe") {
         const first = describeSessions.length === 0;
@@ -215,6 +278,9 @@ test("the live shell restores context, defines work with an agent, and organizes
         scheduler: { installed: true, intervalMinutes: 30, lastExitCode: 0 },
       });
     }
+    if (pathname === "/api/reviewed-build/runs") return jsonResponse({ runs: reviewedRuns });
+    if (pathname === "/api/reviewed-build/program") return jsonResponse(reviewedProgram);
+    if (pathname === "/api/reviewed-build/runs/reviewed-run-1") return jsonResponse({ run: reviewedRuns[0], latestOutput: "" });
     if (pathname === "/api/document") {
       const file = new URL(url, window.location.href).searchParams.get("file");
       if (file === liveEditDocument.file) {
@@ -249,6 +315,32 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.match(window.document.querySelector("#screen").textContent, /Work by Area/);
   assert.equal(window.document.querySelectorAll(".area-desk-panel").length, 2);
   assert.match(window.document.querySelector(".attention-queue").textContent, /Needs you now/);
+  assert.deepEqual(dockBadges, []);
+  click(window, "[data-enable-dock-badge]");
+  await settle(window);
+  assert.deepEqual(dockBadges, [2]);
+  assert.equal(window.document.querySelector("[data-enable-dock-badge]"), null);
+  reviewedRuns.push({
+    id: "reviewed-run-needs-you",
+    status: "needs_attention",
+    areaPath: "otto/dnd",
+    goalPath: "otto/dnd/goal-review-build.md",
+    goalTitle: "Review the build",
+  });
+  await window.refresh();
+  await settle(window);
+  assert.deepEqual(dockBadges, [2, 3]);
+  reviewedRuns.pop();
+  await window.refresh();
+  await settle(window);
+  assert.deepEqual(dockBadges, [2, 3, 2]);
+
+  window.__agentShellNativeDockBadge = true;
+  notificationPermission = "denied";
+  dockBadges.length = 0;
+  await window.enableDockBadge();
+  await settle(window);
+  assert.deepEqual(dockBadges, [2]);
   assert.match(window.document.querySelector(".area-desk-panel:nth-child(2)").textContent, /Tangent/);
   assert.match(window.document.querySelector(".area-desk-panel:nth-child(2) .desk-documents").textContent, /Tangent product design/);
   assert.equal(window.document.querySelectorAll(".desk-goal.subgoal").length, 1);
@@ -268,6 +360,13 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.equal(window.document.querySelector(".goal-history").open, false);
   assert.match(window.document.querySelector("#screen").textContent, /Tangent product design/);
   assert.doesNotMatch(window.document.querySelector("#screen").textContent, /Review execution plan|Read what will happen/);
+  assert.match(window.document.querySelector("[data-start-reviewed]").textContent, /Run reviewed build/);
+  click(window, "[data-start-reviewed]");
+  await settle(window);
+  assert.equal(window.document.querySelectorAll(".reviewed-run-step").length, 8);
+  assert.match(window.document.querySelector("#screen").textContent, /0 of 8 steps complete/);
+  assert.ok(posts.some((entry) => entry.path === "/api/reviewed-build/runs" && entry.body.goalPath === goalFile));
+  click(window, "#back-button");
 
   click(window, "[data-open-document]");
   await settle(window);
@@ -336,23 +435,19 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.match(window.document.querySelector("#screen").textContent, /Make the scene flow reliable/);
   assert.match(window.document.querySelector("#screen").textContent, /Define ladder authoring/);
   assert.match(window.document.querySelector("#screen").textContent, /Agent working/);
-  click(window, "#areas-tab");
-  click(window, "[data-toggle-area='neara']");
-  assert.match(window.document.querySelector("#screen").textContent, /Hackathon/);
-  click(window, "[data-toggle-area='neara/hackathon']");
-  assert.match(window.document.querySelector("#screen").textContent, /Live Edit/);
-  click(window, "[data-select-area='neara/hackathon/live-edit']");
-  assert.match(window.document.querySelector("#screen").textContent, /3 Documents/);
-  assert.match(window.document.querySelector("#screen").textContent, /1 Goal/);
-  assert.equal(window.document.querySelector("[data-new-goal]").textContent.trim(), "Create Goal");
-  click(window, "[data-new-goal]");
+  click(window, "[data-describe-work]");
+  const manualArea = window.document.querySelector("#describe-area");
+  manualArea.value = "neara/hackathon/live-edit";
+  manualArea.dispatchEvent(new window.Event("input", { bubbles: true }));
+  assert.equal(window.document.querySelector("[data-create-manually]").textContent.trim(), "Create Goal manually");
+  click(window, "[data-create-manually]");
   await settle(window);
   assert.equal(window.document.querySelector("#new-goal-area").value, "neara/hackathon/live-edit");
   assert.equal(window.document.querySelector("#new-goal-title"), window.document.activeElement);
   click(window, "[data-cancel-create]");
-  assert.match(window.document.querySelector("#screen").textContent, /3 Documents/);
-  assert.equal(window.document.querySelector("[data-new-goal]").textContent.trim(), "Create Goal");
-  click(window, "[data-new-goal]");
+  assert.ok(window.document.querySelector("[data-describe-work-form]"));
+  assert.equal(window.document.querySelector("#describe-area").value, "neara/hackathon/live-edit");
+  click(window, "[data-create-manually]");
   window.document.querySelector("#new-goal-title").value = "Share a scene safely";
   window.document.querySelector("#new-goal-result").value = "A collaborator can join without losing scene edits.";
   submit(window, "[data-create-form]");
@@ -367,6 +462,8 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.equal(posts.some((entry) => entry.path === "/api/goals/agent" && entry.body.file === goalFile), false);
   click(window, "#back-button");
   click(window, "#areas-tab");
+  click(window, "[data-toggle-area='neara']");
+  click(window, "[data-toggle-area='neara/hackathon']");
   click(window, "[data-select-area='neara/hackathon/live-edit']");
   assert.match(window.document.querySelector("#screen").textContent, /Live Edit use cases/);
   assert.match(window.document.querySelector(".area-goal-brief").textContent, /A clear design for Live Edit collaboration/);
@@ -431,9 +528,15 @@ test("the live shell restores context, defines work with an agent, and organizes
   click(window, "#back-button");
   click(window, "#programs-button");
   assert.match(window.document.querySelector("#screen").textContent, /Things that run/);
+  assert.match(window.document.querySelector(".reviewed-program-card").textContent, /Reviewed build/);
   assert.equal(window.document.querySelector("#programs-button").getAttribute("aria-current"), "page");
   assert.equal(window.document.querySelector("#work-tab").hidden, false);
   assert.equal(window.document.querySelector("#areas-tab").hidden, false);
+  click(window, "[data-open-reviewed-program]");
+  await settle(window);
+  assert.equal(window.document.querySelectorAll(".reviewed-editor-step").length, 8);
+  assert.match(window.document.querySelector("#screen").textContent, /Fresh session/);
+  click(window, "#back-button");
   click(window, "[data-toggle-area='otto/dnd']");
   click(window, "[data-select-program]");
   assert.match(window.document.querySelector("#screen").textContent, /npm run dev:hmr/);
@@ -446,6 +549,14 @@ test("the live shell restores context, defines work with an agent, and organizes
   await settle(window);
   assert.ok(posts.some((entry) => entry.path === "/api/goals/edit" && entry.body.file === subgoal.file && entry.body.status === "done"));
   assert.match(window.document.querySelector("#screen").textContent, /Work by Area/);
+
+  goal.status = "done";
+  subgoal.status = "done";
+  liveEditGoal.status = "done";
+  for (const session of describeSessions) session.state = "working";
+  await window.refresh();
+  await settle(window);
+  assert.equal(dockBadgeClears, 1);
 
   dom.window.close();
 });

@@ -5,7 +5,7 @@ Conversation telemetry domain: schemas, native-log schema compatibility, legacy 
 Product split:
 - `usage` is the human-readable activity CLI: sessions, messages, steps, tools, tokens, analytics, raw events, status, and export.
 - `usage ui` starts the local Usage UI server, serving `/api/usage/*` routes over public Usage core APIs. In a workspace checkout it uses Vite middleware for Svelte hot reload when `@tangent/usage-ui` source files and Vite are available; otherwise it serves compiled `@tangent/usage-ui` assets.
-- `createUsageUiApp` registers the same Usage routes and embedded assets for the combined root `tangent ui` shell.
+- `createUsageUiApp` builds the Usage app registration (routes, assets, watcher) that `startUsageUiServer` mounts.
 - `tangent-usage` is the standalone install binary; `tangent usage` is the full-suite root command.
 - `@tangent/usage/schema`, `/core`, and `/query` are dependency-light and must not import SQLite, pricing tables, server/UI code, or provider-specific native parser dependencies at module load time.
 - `@tangent/usage/core` projects normalized events into `tangent.usage.session.v1`, `turn.v1`, `step.v1`, `message.v1`, timeline, and aggregate resources.

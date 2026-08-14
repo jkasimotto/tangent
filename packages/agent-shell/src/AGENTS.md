@@ -1,8 +1,8 @@
 # Agent Notes
 
-Purpose: `@tangent/agent-shell` source.
+Purpose: `@tangent/agent-shell` Reviewed build engine.
 
-Local rules: Follow the package rules. Keep browser code in `@tangent/agent-shell-ui`.
+Local rules: Keep this package independent of browser code. The native Agent Shell owns its HTTP bridge and browser interface in `prototypes/agent-shell/`.
 
 Read next:
 - ../docs/index.md

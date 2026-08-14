@@ -9,7 +9,7 @@ export type EmbeddedAppContext = {
   appId: string;
 };
 
-/** Mounts the Eval UI into a combined Tangent UI host. */
+/** Mounts the Eval UI into an embedding host page. */
 export function mountApp(target: HTMLElement, _context?: EmbeddedAppContext): () => void {
   target.classList.add("eval-embedded-host");
   const app = mount(App, { target });

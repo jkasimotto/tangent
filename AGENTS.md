@@ -111,9 +111,11 @@ Architecture docs:
 - docs/agent/validation.md
 
 Primary entry point:
-- ALWAYS think `tangent ui`, never the specific app. `tangent ui` is how the user enters every time. It is the combined launcher in `src/cli/product.ts` (`runTangentUiCommand`), mounting usage + eval together. The standalone per-app commands (`tangent usage ui`, `tangent eval ui`) are secondary; do not assume the user runs them, and never treat a per-app surface as "the app."
-- Any change a user sees (UI, styling/CSS, layout, backdrop, behavior on launch, scope, default window, mounted routes, app discovery) must be made and verified through `tangent ui`, not just the per-app package. The combined shell (`@tangent/tangent-ui`) renders its own chrome and backdrop and mounts each app as an embedded module, so the file that controls a per-app surface (e.g. `packages/usage-ui/src/app.css`) is often NOT what `tangent ui` renders. Trace which element/CSS the combined shell actually paints (e.g. `.tangent-shell`, the shell `app.css`, the app's `embedded.css` loaded via `/api/ui/apps` stylePaths) and verify the change in a `tangent ui` instance before claiming it works.
-- The Usage panel defaults to all projects across every Claude profile (`~/.claude*/projects`, unioned by `claudeHomes()`; `scope: "all"`), bounded to a recent view window (`--days`, default 7). Keep it cross-project and cross-profile: never silently scope it back to a single repo or a single `~/.claude`.
+- The daily product is Agent Shell: `prototypes/agent-shell/server.mjs` on port 4321. The `@tangent/agent-shell` engine supports it. Verify visible changes against this server.
+- The combined launcher and shell were deleted on 2026-08-14. See docs/decisions/ADR-0019-delete-combined-tangent-ui.md. Never restore the shell, command, or manifest discovery.
+- Usage and Eval keep their standalone servers as secondary analysis surfaces: `tangent usage ui` and `tangent eval ui`.
+- The Usage UI defaults to all projects across every Claude profile (`~/.claude*/projects`, unioned by `claudeHomes()`, with `scope: "all"`).
+- The recent view uses `--days` and defaults to 7. Keep the view cross-project and cross-profile.
 
 Product direction: the mark loop (design contract: docs/superpowers/specs/2026-07-05-mark-loop-design.md):
 - Tangent is a feedback loop for coding agents, not a standalone eval tool: notice -> mark -> diagnose -> fix -> prove -> ship. Evals are a byproduct of noticing, never a project you set up.
@@ -125,7 +127,8 @@ Product direction: the mark loop (design contract: docs/superpowers/specs/2026-0
 
 Development workflow:
 - Do not create or use a git worktree unless the user explicitly asks for one. By default, make requested changes in the current checkout and branch.
-- When the user explicitly requests a worktree, create one with `node scripts/dev-worktree.mjs create [name]` (branches `dev/<name>` off main). From the worktree, `node scripts/verify-app.mjs ui` boots a read-only instance on its own port, so the live main app and the worktree instance coexist with no port or `~/.tangent` collision.
+- When the user explicitly requests a worktree, create one with `node scripts/dev-worktree.mjs create [name]`. This creates `dev/<name>` from main.
+- In that worktree, `node scripts/verify-app.mjs [usage|eval]` starts a read-only instance on a separate port. It does not conflict with the live app.
 - IMPORTANT: when working in an explicitly requested worktree, target it with absolute paths or run from its directory.
 
 Validate work:

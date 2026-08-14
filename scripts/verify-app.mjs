@@ -11,21 +11,17 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Default target is the combined `tangent ui` (usage + trees + eval mounted together); usage|eval boot a
-// single app in isolation. The read-only flag covers all three: eval blocks launch, usage drops its watcher,
-// trees rejects every mutation (create/delete entity).
-const app = process.argv[2] || "ui";
-if (!["ui", "usage", "eval"].includes(app)) {
-  console.error("usage: node scripts/verify-app.mjs [ui|usage|eval]  (default: ui)");
+// Boots one app in isolation. The read-only flag covers both: eval blocks launch, usage drops its watcher.
+const app = process.argv[2] || "usage";
+if (!["usage", "eval"].includes(app)) {
+  console.error("usage: node scripts/verify-app.mjs [usage|eval]  (default: usage)");
   process.exit(2);
 }
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-// For ui, run the root CLI directly; for a single app, resolve its .bin symlink to the real path (the CLI's
-// isMain check compares import.meta.url (realpath) to argv[1], so launching via the symlink would silently no-op).
-const entry = app === "ui"
-  ? path.join(repoRoot, "dist", "cli", "index.js")
-  : realpathSync(path.join(repoRoot, "node_modules", ".bin", `tangent-${app}`));
+// Resolve the app's .bin symlink to the real path (the CLI's isMain check compares import.meta.url
+// (realpath) to argv[1], so launching via the symlink would silently no-op).
+const entry = realpathSync(path.join(repoRoot, "node_modules", ".bin", `tangent-${app}`));
 const workdir = mkdtempSync(path.join(tmpdir(), "tangent-verify-"));
 
 // usage defaults to a Vite dev server; --static-ui serves prebuilt assets (faster, no hot reload needed).

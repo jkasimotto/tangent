@@ -1,6 +1,6 @@
 # @tangent/ui-tokens Architecture
 
-This package has no React or product runtime. It owns token values and CSS custom properties consumed by all Tangent UI packages.
+This package has no React or product runtime. It owns token values and CSS custom properties consumed by all Tangent UI-facing packages.
 
 Rules:
 - Use semantic token names such as `color.accent`, `color.danger`, and `color.diffAdd`.

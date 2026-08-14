@@ -1,6 +1,6 @@
 # Tangent Architecture
 
-Tangent is a monorepo for local coding-agent applications. The root CLI owns the human command taxonomy and composes installed vertical apps through lazy command imports and UI descriptors.
+Tangent is a monorepo for local coding-agent applications. The root CLI owns the human command taxonomy and composes installed vertical apps through lazy command imports.
 
 Read next:
 - docs/index.md
@@ -18,12 +18,12 @@ Allowed dependency shape:
 
 ```text
 root CLI
-  -> core | tangent-ui | ui-server
+  -> core | launcher
 
 installed app packages
   -> agent-shell/server | usage SDK/CLI/server | rollup SDK/CLI | eval CLI/server | mark CLI (in eval) | search SDK/CLI | governance CLI
 
-agent-shell -> agent-runtime, repo, ui-server, agent-shell-ui
+agent-shell -> agent-runtime, repo
 rollup -> usage-index-sqlite, core, repo, agent-runtime
 eval  -> usage-index-sqlite, core, repo, agent-runtime, ui-server, eval-ui
 usage -> usage-core, usage-index-sqlite, usage-providers, core, repo, ui-server, usage-ui, usage-ui-data
@@ -40,8 +40,6 @@ UI platform packages are layered separately from product kernels:
 ```text
 ui-tokens -> none
 ui-server -> core
-tangent-ui -> ui-tokens
-agent-shell-ui -> ui-tokens
 ui-primitives -> ui-tokens
 ui-components -> ui-primitives
 ui-patterns -> ui-components, ui-primitives
@@ -52,7 +50,11 @@ product-ui -> product-ui-data, ui-* packages
 product-server -> product-core/API routes, product-ui assets, ui-server
 ```
 
-Human-facing root commands are `setup`, `status`, `ui`, `process`, `usage`, `rollup`, `search`, `eval`, `mark`, `doctor`, and `completion`. The root-owned `process` command resolves inherited `.processes.json` definitions from Tangent Areas and manages Area-bound tmux sessions. It composes the personal tree and is not a reusable vertical app. Raw, debug, and CI commands remain callable but hidden from default help.
+Human-facing root commands include `setup`, `status`, `process`, `usage`, `rollup`, `search`, `eval`, `mark`, `doctor`, and `completion`.
+
+The root-owned `process` command resolves inherited `.processes.json` definitions. It manages Area-bound tmux sessions and composes the personal tree. It is not reusable.
+
+Raw, debug, and CI commands remain callable but hidden from default help.
 
 Standalone package CLIs use collision-resistant binary names: `tangent-usage`, `tangent-search`, `tangent-rollup`, and `tangent-eval`. The root `tangent` CLI keeps the short subcommands, but product code is imported only when that command is selected and the package is installed.
 
@@ -70,6 +72,10 @@ Threads owns delegated-thread sweep over the tangent vault and Usage telemetry: 
 
 `@tangent/agent-shell` owns Goal-bound Programs and durable Runs. Reviewed build stores state under `~/.tangent/loops/` and keeps canonical artifacts in the project repository. It uses `@tangent/agent-runtime` for fresh or resumed provider sessions. It validates each artifact before the next step starts. See ADR-0018.
 
-Agent Shell is the daily work product. The local prototype in `prototypes/agent-shell/` connects Areas, Goals, Documents, tmux sessions, and attention signals. Its main loop is Work, Summary, Agent, and Next step. The native agent interface remains the only chat surface. Work-definition conversations are first-class agent Runs in the normal attention groups, and several can run independently. Confirmed Goal structures go through a deterministic command backed by the server's validated writer. Agents do not hand-author Goal schema. Legacy Outcome records remain readable during migration. The Document reader shows one centered Document without a permanent left rail. History controls and a compact picker connect nearby Documents. A quiet page outline gives section navigation. Open agent replaces the reader, and Back restores the same Document. Areas provide a durable subject hierarchy. Goals record desired changes at any useful level. A Goal can link to Subgoals that answer “To do that.” Documents link to Goals and remain in their Area. Search indexes each Document with its linked Goal history. The server writes a proposed Goal structure only after user confirmation. The Work app in `tangent ui` adds Reviewed build to each Goal and shows its durable Run.
+Agent Shell is the daily work product. The local prototype in `prototypes/agent-shell/` connects Areas, Goals, Documents, tmux sessions, and attention signals. Its main loop is Work, Summary, Agent, and Next step. The native agent interface remains the only chat surface. Work-definition conversations are first-class agent Runs in the normal attention groups, and several can run independently. Confirmed Goal structures go through a deterministic command backed by the server's validated writer. Agents do not hand-author Goal schema. Legacy Outcome records remain readable during migration. The Document reader shows one centered Document without a permanent left rail. History controls and a compact picker connect nearby Documents. A quiet page outline gives section navigation. Open agent replaces the reader, and Back restores the same Document. Areas provide a durable subject hierarchy. Goals record desired changes at any useful level. A Goal can link to Subgoals that answer “To do that.” Documents link to Goals and remain in their Area. Search indexes each Document with its linked Goal history. The server writes a proposed Goal structure only after user confirmation. The prototype adds Reviewed build to each Goal and shows its durable Run.
 
-Tangent UI is the Svelte `@tangent/tangent-ui` shell plus product-owned embedded UI bundles. It remains an analysis package surface, not the daily work product. The root `tangent ui` command discovers installed product `tangent.uiApp` descriptors, serves the shell, exposes `/api/ui/apps`, and mounts product assets under `/apps/<app>/`. `@tangent/agent-shell-ui`, `@tangent/usage-ui`, and `@tangent/eval-ui` expose embedded bundles for the combined shell. API-only Usage consumers can install `@tangent/usage-schema` and `@tangent/usage-core` without Svelte, Vite, browser assets, or SQLite. Local product servers use `@tangent/ui-server` to serve compiled assets, optional workspace Vite middleware, and framework-agnostic JSON API routes.
+There is no combined browser shell. ADR-0019 deleted the former launcher, shell package, and manifest discovery. Do not restore them.
+
+Usage and Eval keep standalone local UI servers: `tangent usage ui` and `tangent eval ui`. These servers use `@tangent/ui-server`.
+
+API-only Usage consumers can install `@tangent/usage-schema` and `@tangent/usage-core`. These packages do not require Svelte, Vite, browser assets, or SQLite.

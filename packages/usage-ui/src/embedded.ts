@@ -8,7 +8,7 @@ export type EmbeddedAppContext = {
   appId: string;
 };
 
-/** Mounts Usage into an existing Tangent shell host. */
+/** Mounts Usage into an embedding host page. */
 export function mountApp(target: HTMLElement, _context?: EmbeddedAppContext): () => void {
   return mountUsageApp(target, { embedded: true });
 }

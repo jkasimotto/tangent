@@ -53,15 +53,12 @@ export const governanceCommandSpec: CliCommandSpec = {
 const allowedPackageDeps: Record<string, string[]> = {
   "tangent": [
     "@tangent/core",
-    "@tangent/launcher",
-    "@tangent/ui-server",
-    "@tangent/tangent-ui"
+    "@tangent/launcher"
   ],
   "@tangent/core": [],
   "@tangent/repo": ["@tangent/core"],
   "@tangent/agent-runtime": ["@tangent/core"],
-  "@tangent/agent-shell": ["@tangent/agent-runtime", "@tangent/agent-shell-ui", "@tangent/repo", "@tangent/ui-server"],
-  "@tangent/agent-shell-ui": ["@tangent/ui-tokens"],
+  "@tangent/agent-shell": ["@tangent/agent-runtime", "@tangent/repo"],
   "@tangent/governance": ["@tangent/core", "@tangent/repo"],
   "@tangent/usage-schema": [],
   "@tangent/usage-core": ["@tangent/core", "@tangent/repo", "@tangent/usage-schema"],
@@ -70,7 +67,6 @@ const allowedPackageDeps: Record<string, string[]> = {
   "@tangent/usage": ["@tangent/core", "@tangent/repo", "@tangent/ui-server", "@tangent/usage-core", "@tangent/usage-index-sqlite", "@tangent/usage-providers", "@tangent/usage-ui", "@tangent/usage-ui-data"],
   "@tangent/ui-tokens": [],
   "@tangent/ui-server": ["@tangent/core"],
-  "@tangent/tangent-ui": ["@tangent/ui-tokens"],
   "@tangent/usage-ui-data": [],
   "@tangent/usage-ui": ["@tangent/usage-ui-data", "@tangent/ui-tokens"],
   "@tangent/eval-ui": ["@tangent/ui-tokens"],

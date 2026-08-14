@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { completeCommand, completionScript, renderCommandHelp, type CliCommandSpec, type CliCompletionShell } from "@tangent/core";
-import { dataCommandSpec, devCommandSpec, doctorCommandSpec, openCommandSpec, runOpenCommand, runProductStatusCommand, runSetupCommand, runTangentUiCommand, setupCommandSpec, statusCommandSpec, uiCommandSpec } from "./product.js";
+import { dataCommandSpec, devCommandSpec, doctorCommandSpec, openCommandSpec, runOpenCommand, runProductStatusCommand, runSetupCommand, setupCommandSpec, statusCommandSpec } from "./product.js";
 import { requiredProductModule } from "./module-loader.js";
 import { runProcessCommand } from "./processes.js";
 
@@ -10,7 +10,6 @@ const tangentCommandSpec: CliCommandSpec = {
   subcommands: [
     setupCommandSpec,
     statusCommandSpec,
-    uiCommandSpec,
     openCommandSpec,
     {
       name: "process",
@@ -63,11 +62,6 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
 
   if (app === "status") {
     await runProductStatusCommand(rest);
-    return;
-  }
-
-  if (app === "ui") {
-    await runTangentUiCommand(rest);
     return;
   }
 
@@ -182,7 +176,8 @@ function help(): void {
 Examples:
   tangent setup
   tangent status
-  tangent ui
+  tangent usage ui
+  tangent eval ui
   tangent open setup
   tangent open agent
   tangent open agent ~/Projects/my-project

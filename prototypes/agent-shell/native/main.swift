@@ -19,9 +19,12 @@ import WebKit
 let serverPort = 4321
 let serverURL = URL(string: "http://localhost:\(serverPort)/")!
 let serverDir = ("~/Projects/otto-tangent/prototypes/agent-shell" as NSString).expandingTildeInPath
+let prototypesDir = (serverDir as NSString).deletingLastPathComponent
+let repoDir = (prototypesDir as NSString).deletingLastPathComponent
+let reviewedRuntime = (repoDir as NSString).appendingPathComponent("packages/agent-shell/dist/index.js")
 let serverLog = ("~/.tangent/agent-shell.log" as NSString).expandingTildeInPath
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler {
   var window: NSWindow!
   var webView: WKWebView!
   var serverProcess: Process?
@@ -32,6 +35,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     let config = WKWebViewConfiguration()
     config.mediaTypesRequiringUserActionForPlayback = []
     config.preferences.setValue(true, forKey: "developerExtrasEnabled")
+    config.userContentController.add(self, name: "dockBadge")
+    config.userContentController.addUserScript(WKUserScript(
+      source: """
+        window.__agentShellNativeDockBadge = true;
+        Object.defineProperty(navigator, "setAppBadge", { configurable: true, value: async (count = 0) => {
+          window.webkit.messageHandlers.dockBadge.postMessage(Number(count));
+        }});
+        Object.defineProperty(navigator, "clearAppBadge", { configurable: true, value: async () => {
+          window.webkit.messageHandlers.dockBadge.postMessage(0);
+        }});
+        """,
+      injectionTime: .atDocumentStart,
+      forMainFrameOnly: true))
 
     webView = WKWebView(frame: .zero, configuration: config)
     webView.uiDelegate = self
@@ -61,7 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         self.webView.load(URLRequest(url: serverURL))
       } else {
         self.startServer()
-        self.pollUntilUp(deadline: Date().addingTimeInterval(20))
+        self.pollUntilUp(deadline: Date().addingTimeInterval(60))
       }
     }
   }
@@ -82,7 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/bin/zsh")
     p.arguments = ["-lc",
-      "cd '\(serverDir)' && AGENT_SHELL_NO_OPEN=1 exec node server.mjs >> '\(serverLog)' 2>&1"]
+      "if [ ! -f '\(reviewedRuntime)' ]; then cd '\(repoDir)' && npm run build -w @tangent/agent-runtime && npm run build -w @tangent/repo && npm run build -w @tangent/agent-shell; fi; cd '\(serverDir)' && AGENT_SHELL_NO_OPEN=1 exec node server.mjs >> '\(serverLog)' 2>&1"]
     p.terminationHandler = { [weak self] process in
       DispatchQueue.main.async {
         guard let self = self, self.serverProcess === process else { return }
@@ -127,6 +143,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
   }
 
   // MARK: page integration
+
+  // WKWebView does not expose the web Badging API. The document-start shim above
+  // keeps browser code portable while this handler owns the actual macOS Dock tile.
+  func userContentController(_ userContentController: WKUserContentController,
+                             didReceive message: WKScriptMessage) {
+    guard message.name == "dockBadge" else { return }
+    let count = max(0, (message.body as? NSNumber)?.intValue ?? 0)
+    DispatchQueue.main.async {
+      NSApp.dockTile.badgeLabel = count > 0 ? String(count) : nil
+    }
+  }
 
   // Voice control records the mic; grant without a per-visit prompt. The
   // system-level microphone consent (TCC) still gates actual access.

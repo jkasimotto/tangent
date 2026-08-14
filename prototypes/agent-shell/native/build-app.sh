@@ -8,6 +8,11 @@ APP_NAME="Agent Shell"
 BUILD=build
 APP="$BUILD/$APP_NAME.app"
 
+echo "building Reviewed build runtime..."
+npm run build -w @tangent/agent-runtime --prefix ../../..
+npm run build -w @tangent/repo --prefix ../../..
+npm run build -w @tangent/agent-shell --prefix ../../..
+
 rm -rf "$BUILD"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 

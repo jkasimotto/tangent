@@ -1,6 +1,6 @@
 # @tangent/ui-tokens
 
-Purpose: framework-free semantic design tokens and theme CSS for Tangent UI.
+Purpose: framework-free semantic design tokens and theme CSS for Tangent app UIs.
 
 Read next:
 - docs/index.md

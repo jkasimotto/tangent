@@ -87,7 +87,7 @@ export async function startUsageUiServer(options: StartUsageUiServerOptions = {}
   };
 }
 
-/** Creates a Usage app registration for the combined Tangent UI. */
+/** Creates the Usage app registration (routes, assets, watcher) the standalone Usage UI server mounts. */
 export async function createUsageUiApp(options: StartUsageUiServerOptions = {}): Promise<UsageUiApp> {
   // The SQLite UI client serves the list with indexed reads and projects one session's detail on
   // demand, so it opens instantly with no in-memory projection of the window. The watcher keeps the

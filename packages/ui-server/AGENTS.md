@@ -1,6 +1,6 @@
 # @tangent/ui-server
 
-Purpose: reusable local-only HTTP server for Tangent UI assets and API routes.
+Purpose: reusable local-only HTTP server for Tangent app UI assets and API routes.
 
 Read next:
 - docs/index.md

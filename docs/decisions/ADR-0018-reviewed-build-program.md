@@ -20,7 +20,7 @@ Each step returns a structured completion object. The engine checks required pat
 
 `@tangent/agent-runtime` owns provider command adapters and provider session resume. Agent Shell does not import private Eval runners.
 
-The Work app registers as the `trees` app in `tangent ui`. Its default Goal action starts Reviewed build without a setup form.
+The native Agent Shell shows Reviewed build on each Goal. Its default action starts the Program without a setup form.
 
 ## Consequences
 
@@ -29,4 +29,4 @@ The Work app registers as the `trees` app in `tangent ui`. Its default Goal acti
 - A product question pauses the Run with its artifact links.
 - Ordinary review changes continue to the planned response step.
 - Pending agent, model, effort, and session choices can change during a Run.
-- Governance enforces the new package edges and the UI-only boundary.
+- Governance enforces the new package edges.

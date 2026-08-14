@@ -11,20 +11,16 @@ const packages = {
   core: "packages/core",
   repo: "packages/repo",
   "agent-runtime": "packages/agent-runtime",
+  "agent-shell": "packages/agent-shell",
+  launcher: "packages/launcher",
   "ui-tokens": "packages/ui-tokens",
   "ui-server": "packages/ui-server",
-  "tangent-ui": "packages/tangent-ui",
   "usage-schema": "packages/usage-schema",
   "usage-core": "packages/usage-core",
   "usage-providers": "packages/usage-providers",
   "usage-index-sqlite": "packages/usage-index-sqlite",
   "usage-ui-data": "packages/usage-ui-data",
   "usage-ui": "packages/usage-ui",
-  "trees-schema": "packages/trees-schema",
-  "trees-core": "packages/trees-core",
-  "trees-runtime": "packages/trees-runtime",
-  "trees-ui": "packages/trees-ui",
-  "trees-server": "packages/trees-server",
   "eval-ui": "packages/eval-ui",
   governance: "packages/governance",
   usage: "packages/usage",
@@ -39,20 +35,16 @@ const packageNames = {
   core: "@tangent/core",
   repo: "@tangent/repo",
   "agent-runtime": "@tangent/agent-runtime",
+  "agent-shell": "@tangent/agent-shell",
+  launcher: "@tangent/launcher",
   "ui-tokens": "@tangent/ui-tokens",
   "ui-server": "@tangent/ui-server",
-  "tangent-ui": "@tangent/tangent-ui",
   "usage-schema": "@tangent/usage-schema",
   "usage-core": "@tangent/usage-core",
   "usage-providers": "@tangent/usage-providers",
   "usage-index-sqlite": "@tangent/usage-index-sqlite",
   "usage-ui-data": "@tangent/usage-ui-data",
   "usage-ui": "@tangent/usage-ui",
-  "trees-schema": "@tangent/trees-schema",
-  "trees-core": "@tangent/trees-core",
-  "trees-runtime": "@tangent/trees-runtime",
-  "trees-ui": "@tangent/trees-ui",
-  "trees-server": "@tangent/trees-server",
   "eval-ui": "@tangent/eval-ui",
   governance: "@tangent/governance",
   usage: "@tangent/usage",
@@ -64,6 +56,12 @@ const packageNames = {
 };
 
 const smokeTargets = [
+  {
+    name: "@tangent/agent-shell",
+    tarballs: ["core", "repo", "agent-runtime", "agent-shell"],
+    importName: "@tangent/agent-shell",
+    absentPackages: ["ui-server", "ui-tokens", "usage", "eval"]
+  },
   {
     name: "@tangent/usage",
     tarballs: ["core", "repo", "usage-schema", "usage-core", "usage-providers", "usage-index-sqlite", "ui-tokens", "ui-server", "usage-ui-data", "usage-ui", "usage"],
@@ -101,43 +99,11 @@ const smokeTargets = [
   },
   {
     name: "tangent",
-    tarballs: ["core", "ui-tokens", "ui-server", "tangent-ui", "tangent"],
+    tarballs: ["core", "launcher", "tangent"],
     bin: "tangent",
-    smokeArgs: ["ui", "--list-apps", "--json"],
-    expectedStdout: "\"apps\": []",
-    absentPackages: ["usage", "search", "rollup", "eval", "trees-cli"]
-  },
-  {
-    name: "tangent + @tangent/usage",
-    tarballs: ["core", "repo", "usage-schema", "usage-core", "usage-providers", "usage-index-sqlite", "ui-tokens", "ui-server", "tangent-ui", "usage-ui-data", "usage-ui", "usage", "tangent"],
-    bin: "tangent",
-    smokeArgs: ["ui", "--list-apps", "--json"],
-    expectedStdout: "\"id\": \"usage\"",
-    absentPackages: ["search", "rollup", "eval", "trees-cli", "trees-server"]
-  },
-  {
-    name: "tangent + @tangent/trees-server",
-    tarballs: ["core", "repo", "agent-runtime", "ui-tokens", "ui-server", "tangent-ui", "trees-schema", "trees-core", "trees-runtime", "trees-ui", "trees-server", "tangent"],
-    bin: "tangent",
-    smokeArgs: ["ui", "--list-apps", "--json"],
-    expectedStdout: "\"id\": \"trees\"",
-    absentPackages: ["usage", "search", "rollup", "eval", "trees-cli"]
-  },
-  {
-    name: "tangent + @tangent/eval",
-    tarballs: ["core", "repo", "agent-runtime", "usage-schema", "usage-core", "usage-providers", "usage-index-sqlite", "ui-tokens", "ui-server", "tangent-ui", "eval-ui", "eval", "tangent"],
-    bin: "tangent",
-    smokeArgs: ["ui", "--list-apps", "--json"],
-    expectedStdout: "\"id\": \"eval\"",
-    absentPackages: ["usage", "usage-ui", "usage-ui-data", "search", "rollup", "trees-cli", "trees-server"]
-  },
-  {
-    name: "tangent + usage + trees-server + eval",
-    tarballs: ["core", "repo", "agent-runtime", "usage-schema", "usage-core", "usage-providers", "usage-index-sqlite", "ui-tokens", "ui-server", "tangent-ui", "usage-ui-data", "usage-ui", "usage", "trees-schema", "trees-core", "trees-runtime", "trees-ui", "trees-server", "eval-ui", "eval", "tangent"],
-    bin: "tangent",
-    smokeArgs: ["ui", "--list-apps", "--json"],
-    expectedStdout: "\"id\": \"trees\"",
-    absentPackages: ["search", "rollup", "trees-cli"]
+    smokeArgs: ["--help"],
+    expectedStdout: "tangent",
+    absentPackages: ["usage", "search", "rollup", "eval"]
   }
 ];
 
@@ -189,12 +155,14 @@ function smokeWithManager(manager, tarballs, targets) {
         stdio: "inherit"
       });
     }
-    const smokeArgs = target.smokeArgs || ["--help"];
-    const output = execFileSync(path.join(projectDir, "node_modules", ".bin", target.bin), smokeArgs, {
-      cwd: projectDir,
-      encoding: "utf8"
-    });
-    if (target.expectedStdout && !output.includes(target.expectedStdout)) throw new Error(`${target.name} smoke output did not include ${target.expectedStdout}`);
+    if (target.bin) {
+      const smokeArgs = target.smokeArgs || ["--help"];
+      const output = execFileSync(path.join(projectDir, "node_modules", ".bin", target.bin), smokeArgs, {
+        cwd: projectDir,
+        encoding: "utf8"
+      });
+      if (target.expectedStdout && !output.includes(target.expectedStdout)) throw new Error(`${target.name} smoke output did not include ${target.expectedStdout}`);
+    }
     for (const packageName of target.absentPackages) {
       const installed = path.join(projectDir, "node_modules", "@tangent", packageName);
       if (existsSync(installed)) {

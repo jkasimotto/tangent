@@ -1,7 +1,7 @@
 {
   "name": "@tangent/ui-tokens",
   "version": "0.1.0",
-  "description": "Design tokens and theme CSS for Tangent UI.",
+  "description": "Design tokens and theme CSS for Tangent app UIs.",
   "type": "module",
   "exports": {
     ".": {

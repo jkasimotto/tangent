@@ -12,7 +12,6 @@
   "workspaces": [
     "packages/agent-runtime",
     "packages/agent-shell",
-    "packages/agent-shell-ui",
     "packages/core",
     "packages/launcher",
     "packages/repo",
@@ -26,7 +25,6 @@
     "packages/ui-server",
     "packages/usage-ui-data",
     "packages/usage-ui",
-    "packages/tangent-ui",
     "packages/rollup",
     "packages/eval",
     "packages/eval-ui",
@@ -47,9 +45,7 @@
   },
   "dependencies": {
     "@tangent/core": "^0.1.0",
-    "@tangent/launcher": "^0.1.0",
-    "@tangent/ui-server": "^0.1.0",
-    "@tangent/tangent-ui": "^0.1.0"
+    "@tangent/launcher": "^0.1.0"
   },
   "peerDependencies": {
     "@tangent/agent-shell": "^0.1.0",

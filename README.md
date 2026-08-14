@@ -1,9 +1,10 @@
 # tangent
 
-Tangent gives you a queryable API over Claude Code, Codex, and Gemini CLI sessions, lets you evaluate under different context, prompts, and models, and gives coding agents structural code search.
+Tangent provides a native work shell, conversation telemetry, evals, and structural code search for coding agents.
 
-Three things ship here. The first two are mounted together by `tangent ui`:
+Four main products ship here:
 
+- **Agent Shell**: organize work by Area and Goal. Run native agent sessions or start a durable Reviewed build with automatic agent handoffs.
 - **usage**: read your own agent activity. A local UI and queryable API over every Claude Code, Codex, and Gemini CLI session on your machine.
 - **eval**: compare. Run the same task under different contexts, prompts, or models and look at the results side by side.
 - **search**: structural code search built for coding agents. A CLI that indexes a repo's source and answers "where is X defined, who calls Y" without reading whole files.
@@ -16,10 +17,10 @@ You need Node 20 or newer and an authenticated `claude`, `codex`, or `gemini` CL
 git clone <repo-url>
 cd tangent
 npm install && npm run build && npm link
-tangent ui
+tangent usage ui
 ```
 
-Open the UI to browse your existing sessions. To run your first eval right away:
+Open the Usage UI to browse your existing sessions. To run your first eval right away:
 
 ```bash
 tangent eval run \
@@ -28,7 +29,16 @@ tangent eval run \
   --agent claude-cli --model claude-sonnet-4-6
 ```
 
-That runs the same task twice — once with no context and once with your repo's guidance files — and lays the results side by side. Open `tangent ui` to compare.
+That runs the same task twice, once with no context and once with your repo's guidance files, and lays the results side by side. Open `tangent eval ui` to compare.
+
+To build and open the native Agent Shell:
+
+```bash
+npm --prefix prototypes/agent-shell install
+npm --prefix prototypes/agent-shell run app
+```
+
+Open a Goal and select **Run reviewed build**. The Program designs, reviews, implements, reviews the implementation, and applies one final fix pass.
 
 ## Create your own eval
 
@@ -40,7 +50,7 @@ The skill handles the setup. `evals/haiku-poems/` is a complete worked example y
 
 ## usage — read your agent activity
 
-`tangent usage` reads the native Claude Code, Codex, and Gemini CLI transcripts already on your disk and indexes them under `~/.tangent/usage`. Nothing leaves your machine. Run `tangent ui` to browse sessions, filter by project or agent, and drill into individual conversations.
+`tangent usage` reads the native Claude Code, Codex, and Gemini CLI transcripts already on your disk and indexes them under `~/.tangent/usage`. Nothing leaves your machine. Run `tangent usage ui` to browse sessions, filter by project or agent, and drill into individual conversations.
 
 ## eval — compare contexts, prompts, and models
 
@@ -53,7 +63,7 @@ tangent eval run \
   --agent claude-cli --model claude-sonnet-4-6
 ```
 
-That runs the same task twice under Claude, once with no project context and once with your repo's context. Results land in `~/.tangent/eval/runs/`. Run `tangent ui` to open the side-by-side comparison. `evals/haiku-poems/` is a complete worked example.
+That runs the same task twice under Claude, once with no project context and once with your repo's context. Results land in `~/.tangent/eval/runs/`. Run `tangent eval ui` to open the side-by-side comparison. `evals/haiku-poems/` is a complete worked example.
 
 What you can vary:
 

@@ -10,11 +10,11 @@ Platform packages:
 UI platform packages:
 - @tangent/ui-tokens contains framework-free semantic tokens and theme CSS.
 - @tangent/ui-server contains framework-agnostic local HTTP static serving, optional Vite middleware for workspace dev, mounted app assets, and API route dispatch.
-- @tangent/tangent-ui contains the Svelte combined-app shell and must not import product packages.
-- Product UI packages such as @tangent/agent-shell-ui, @tangent/usage-ui, and @tangent/eval-ui own embedded browser modules for the combined shell.
+- Product UI packages such as @tangent/usage-ui and @tangent/eval-ui own the browser modules their app servers mount. There is no combined shell package (ADR-0019).
 
 Vertical apps:
-- @tangent/agent-shell owns Goals, Program definitions, durable Run records, handoff validation, and the local Work UI server.
+- @tangent/agent-shell owns Goals, Program definitions, durable Run records, and handoff validation.
+- The standalone prototype server in `prototypes/agent-shell/` serves the Agent Shell UI.
 - @tangent/usage owns the full Usage app surface: compatibility SDK exports, standalone CLI, and local Usage UI server.
 - @tangent/rollup owns rollup note schemas, period-level user-message rollup inputs, examples, rendering, ledgers, and summarization workflows.
 - @tangent/eval owns eval specs, contexts, run manifests, metrics, reports, diffs, and the local read-only Eval UI server.
@@ -30,7 +30,7 @@ Split Usage packages:
 - @tangent/usage remains the compatibility meta-package during migration.
 
 Root CLI:
-- Owns human command taxonomy (`setup`, `status`, `ui`, `process`, `usage`, `rollup`, `search`, `eval`, `doctor`) and may compose installed product commands and UI app descriptors through lazy imports.
+- Owns human command taxonomy (`setup`, `status`, `process`, `usage`, `rollup`, `search`, `eval`, `doctor`) and may compose installed product commands through lazy imports.
 - Owns the personal `process` runtime: inherited node-local manifest resolution and tmux lifecycle for named processes. This stays in the root product because it composes the personal Tangent tree rather than defining a reusable vertical app.
 - Must keep raw/debug/CI surfaces hidden from default help when they are not human product commands.
 
@@ -38,8 +38,7 @@ Install contract:
 - This remains one git monorepo and one workspace for development.
 - `@tangent/agent-shell`, `@tangent/usage`, `@tangent/rollup`, `@tangent/search`, `@tangent/eval`, and `@tangent/threads` must be publishable independently.
 - Standalone app packages may depend on platform packages. Rollup, Eval, and Threads may depend on dependency-light Usage data packages, but must not pull the full Usage app or Usage UI packages. Product UI bundles may be dependencies of their owning app package. No standalone app may pull an unrelated vertical app.
-- The root `tangent ui` command may compose installed vertical UI descriptors. Standalone app CLIs keep their own UI entrypoints when provided.
-- UI-capable product packages declare `tangent.uiApp` metadata in `package.json`; the root shell discovers manifests and imports only selected installed app factories.
+- Standalone app CLIs keep their own UI entrypoints when provided. There is no root UI command and no `tangent.uiApp` discovery (ADR-0019).
 - Publishable manifests must use semver `@tangent/*` dependencies, not `file:`, `link:`, or `workspace:` protocols.
 - Standalone CLIs use `tangent-usage`, `tangent-search`, `tangent-rollup`, and `tangent-eval`; the root `tangent` package keeps short subcommands.
 
@@ -55,6 +54,5 @@ Hard rules:
 - UI platform packages must not import Usage, Eval, Rollup, or Search product packages.
 - The root `tangent` package must not depend on product packages or statically import product source; products are optional peers or separate installs.
 - agent-runtime must not import Rollup or Eval schemas.
-- agent-shell-ui must not import agent-shell domain code.
 - agent-shell must not import Eval, Usage, Rollup, Search, or Threads.
 - Cross-package imports must use public package exports.

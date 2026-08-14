@@ -29,4 +29,4 @@ The Context section's `Files | Assembled` toggle mounts `AssembledContext.svelte
 Rules:
 - Keep domain artifact discovery and filesystem/git access in `@tangent/eval/server`.
 - The UI may launch runs through `POST /api/eval/runs` and poll status, but holds no run mechanics itself; preparation, execution, and collection stay in `@tangent/eval/server`.
-- Support both standalone serving and embedded mounting inside the combined Tangent UI shell.
+- Support both standalone serving and embedded mounting in a host page.

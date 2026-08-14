@@ -4,7 +4,7 @@ Start here when changing architecture, package boundaries, or agent workflow.
 
 Agent Shell is the daily product for work with coding agents. Its current local implementation lives in `prototypes/agent-shell/`. It keeps native chat complete and adds compact return context, work shaping, and handoff around it. Work-definition agents appear in the normal attention groups, several can run at once, and confirmed Goals go through a deterministic schema writer. The Document reader shows one Document with history controls, a compact picker, and a quiet page outline. Open agent replaces the reader, and Back restores it. The first rejected interaction notebook remains in `prototypes/agent-shell-vision/`.
 
-Human CLI defaults are `setup`, `status`, `ui`, `process`, `usage`, `rollup`, `search`, `eval`, `mark`, `doctor`, and `completion`.
+Human CLI defaults are `setup`, `status`, `process`, `usage`, `rollup`, `search`, `eval`, `mark`, `doctor`, and `completion`.
 `tangent process` runs configured processes from inherited, ignored `.processes.json` files in Tangent Areas. Managed processes use Area-bound tmux sessions so they remain visible and inspectable in the hierarchy.
 Raw/debug/CI surfaces such as `governance`, `data export`, and `data archive` stay callable but hidden from default help.
 
@@ -25,6 +25,8 @@ Decisions:
 - decisions/ADR-0015-marks-in-eval.md
 - decisions/ADR-0016-threads-vertical-app.md
 - decisions/ADR-0017-agent-shell-daily-product.md
+- decisions/ADR-0018-reviewed-build-program.md
+- decisions/ADR-0019-delete-combined-tangent-ui.md
 - ui/adr/0001-ui-package-split.md
 - ui/adr/0002-react-vite-ui-stack.md
 - ui/adr/0006-svelte-usage-ui.md
@@ -40,12 +42,10 @@ Agent workflow:
 
 Product design:
 - design/agent-shell-area-desk.md
-- design/command-center-access.md
 - design/task-outcomes.md
 
 Agent Shell packages:
 - ../packages/agent-shell/docs/index.md
-- ../packages/agent-shell-ui/docs/index.md
 
 Quality:
 - quality/scorecard.md

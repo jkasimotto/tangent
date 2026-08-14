@@ -2,6 +2,8 @@
 
 Date: 2026-06-16
 
+Status: superseded by ADR-0019
+
 ## Decision
 
 The `tangent` package is a thin universal CLI and local UI shell. It depends only on platform packages needed to render the shell and parse root commands. Vertical products such as Usage, Trees, Rollup, Eval, Search, and Governance are installed separately or represented as optional peers.

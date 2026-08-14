@@ -113,7 +113,7 @@ async function validateReviewResults(artifacts: ReviewedArtifactIdentity[], enve
   const review = artifacts.find((artifact) => /review$/.test(artifact.purpose) || artifact.purpose === "implementation-review");
   if (!review) throw new Error("The review step did not return a review artifact.");
   const text = await readFile(review.absolutePath, "utf8");
-  const match = text.match(/^\s*(?:#\s*)?Result:\s*(pass|changes_requested|needs_judgment)\s*$/im);
+  const match = text.match(/^\s*(?:#\s*)?Result:\s*(pass|changes_requested|needs_judgment)\s*(?:\r?\n|$)/i);
   if (!match) throw new Error(`${review.path} must start with Result: pass, changes_requested, or needs_judgment.`);
   if (match[1] === "needs_judgment" && envelope.status !== "needs_judgment") {
     throw new Error("A needs_judgment review result must pause with a question.");

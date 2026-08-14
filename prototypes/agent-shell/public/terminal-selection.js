@@ -1,0 +1,86 @@
+(function (root) {
+  "use strict";
+
+  /** Keeps a completed xterm selection stable across terminal repaints. */
+  function preserveTerminalSelection({ terminal, host, clipboard, defer = (callback) => setTimeout(callback, 0) }) {
+    let selecting = false;
+    let restoring = false;
+    let saved = null;
+    let restorePending = false;
+
+    /** Records the exact selected text and its buffer coordinates. */
+    function rememberSelection() {
+      const text = terminal.getSelection();
+      const range = terminal.getSelectionPosition();
+      if (!text || !range) return;
+      saved = { text, range };
+    }
+
+    /** Restores a repaint-cleared highlight without replacing the saved text. */
+    function restoreSelection() {
+      restorePending = false;
+      if (selecting || restoring || !saved || terminal.hasSelection()) return;
+      const { start, end } = saved.range;
+      const length = Math.max(0, (end.y - start.y) * terminal.cols + end.x - start.x);
+      if (!length) return;
+      restoring = true;
+      terminal.select(start.x, start.y, length);
+      restoring = false;
+    }
+
+    const selectionDisposable = terminal.onSelectionChange(() => {
+      if (restoring) return;
+      if (terminal.hasSelection()) {
+        rememberSelection();
+        return;
+      }
+      if (!selecting && saved && !restorePending) {
+        restorePending = true;
+        defer(restoreSelection);
+      }
+    });
+
+    const beginSelection = (event) => {
+      selecting = true;
+      saved = null;
+      // Full-screen agent TUIs enable terminal mouse reporting, which makes
+      // xterm require Option for selection on macOS. Agent Shell owns drag as
+      // selection, so present an ordinary primary-button drag to xterm as the
+      // force-selection gesture before xterm's target listener sees it.
+      if (event.button === 0 && !event.altKey) {
+        try { Object.defineProperty(event, "altKey", { configurable: true, value: true }); } catch {}
+      }
+    };
+    const finishSelection = () => {
+      if (!selecting) return;
+      selecting = false;
+      rememberSelection();
+    };
+    host.addEventListener("mousedown", beginSelection, true);
+    root.document.addEventListener("mouseup", finishSelection, true);
+
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type !== "keydown" || !event.metaKey || event.key.toLowerCase() !== "c") return true;
+      const text = saved?.text || (terminal.hasSelection() ? terminal.getSelection() : "");
+      if (text) void clipboard?.writeText(text);
+      event.preventDefault();
+      return false;
+    });
+
+    return {
+      /** Clears the durable selection when the user intentionally types into the agent. */
+      noteInput() {
+        if (!saved) return;
+        saved = null;
+        terminal.clearSelection();
+      },
+      dispose() {
+        selectionDisposable?.dispose();
+        host.removeEventListener("mousedown", beginSelection, true);
+        root.document.removeEventListener("mouseup", finishSelection, true);
+      },
+    };
+  }
+
+  root.AgentShellTerminalSelection = { preserveTerminalSelection };
+})(window);

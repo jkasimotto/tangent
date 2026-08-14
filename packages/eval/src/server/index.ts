@@ -110,7 +110,7 @@ export async function startEvalUiServer(options: StartEvalUiServerOptions = {}):
   };
 }
 
-/** Creates an Eval app registration for the combined Tangent UI. */
+/** Creates the Eval app registration (routes, assets) the standalone Eval UI server mounts. */
 export async function createEvalUiApp(options: StartEvalUiServerOptions = {}): Promise<EvalUiApp> {
   const [{ evalUiEmbeddedAssets }] = await Promise.all([
     import("@tangent/eval-ui/assets")

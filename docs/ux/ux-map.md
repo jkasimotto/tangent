@@ -6,38 +6,27 @@ Source of truth: this is reverse-engineered from the code. File:line references 
 
 ---
 
-## 0. The shell that ties them together
+## 0. Entry points
 
-Two front ends, one shell. Each surface ships a CLI, and both Usage and Eval ship an embedded web UI mounted inside one combined browser shell.
-
-### Entry points
+Each surface ships a CLI and its own standalone web UI server. There is no combined shell (ADR-0019).
 
 | You type | What starts | Source |
 |---|---|---|
-| `tangent <surface> …` | the surface's CLI | `src/cli/index.ts:66-94` |
+| `tangent <surface> …` | the surface's CLI | `src/cli/index.ts` |
 | `tangent-usage` / `tangent-eval` | the standalone per-surface CLI bin | each package `package.json` `bin` |
-| `tangent ui [usage\|eval]` | combined browser shell (app switcher) | `src/cli/index.ts:56`, `src/cli/product.ts:208` |
 | `tangent usage ui` / `tangent eval ui` | that surface's UI server, standalone | `usage/src/cli/ui.ts`, `eval/src/cli/commands/ui.ts` |
-| `tangent open {agent\|project\|setup}` | a terminal/agent session | `src/cli/product.ts:76-97` |
+| `tangent open {agent\|project\|setup}` | a terminal/agent session | `src/cli/product.ts` |
 | `tangent setup` / `status` / `doctor` / `completion` | cross-surface config & health | `src/cli/product.ts`, `src/cli/index.ts` |
 
-### Shell internals
-
-- **App switcher** (`tangent-ui/src/App.svelte:121-136`): a `Switch Tangent app` button → menu listing installed apps. Click an app → `selectApp()` → URL pushState → mounts that app's `mountApp` bundle.
-- **Discovery**: apps self-register via `tangent.uiApp` in their `package.json` (`src/cli/ui-discovery.ts:136`). Usage = order 10, Eval = order 30.
-- **Server** (`ui-server/src/index.ts`): `/healthz`, `/api/ui/apps` (the app list), `/api/*` route dispatch, static + Vite-dev asset mounts.
+The shared server (`ui-server/src/index.ts`) provides `/healthz`, `/api/*` route dispatch, and static + Vite-dev asset mounts for each app server.
 
 ```mermaid
 graph TD
   user([User])
-  user -->|tangent ui| shell[Combined UI shell<br/>app switcher]
-  user -->|tangent usage ui| usageUI
-  user -->|tangent eval ui| evalUI
+  user -->|tangent usage ui| usageUI[Usage UI]
+  user -->|tangent eval ui| evalUI[Eval UI]
   user -->|tangent usage …| usageCLI[Usage CLI]
   user -->|tangent eval …| evalCLI[Eval CLI]
-
-  shell -->|/api/ui/apps| usageUI[Usage UI<br/>order 10]
-  shell -->|/api/ui/apps| evalUI[Eval UI<br/>order 30]
 
   evalUI -.->|Open flamegraph<br/>/usage?conversation=| usageUI
 
@@ -303,4 +292,4 @@ No menus, tabs, modals, hover-expand, or sortable columns. No keyboard shortcuts
 
 ---
 
-*Generated from source. Key files: `src/cli/{index,product,ui-discovery}.ts`, `ui-server/src/index.ts`, `tangent-ui/src/App.svelte`; per surface: `{usage,eval}/src/cli/spec.ts`, `{usage,eval}/src/server/index.ts`, `{usage-ui,eval-ui}/src/App.svelte`.*
+*Generated from source. Key files include `src/cli/{index,product}.ts` and `ui-server/src/index.ts`. Surface files live under `{usage,eval}` and `{usage-ui,eval-ui}`.*

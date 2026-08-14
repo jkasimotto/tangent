@@ -1,9 +1,9 @@
 # @tangent/agent-shell Public API
 
 Public import paths:
+
 - `@tangent/agent-shell`
-- `@tangent/agent-shell/server`
 
-The main export provides `createReviewedBuildEngine`, the built-in Program definition, Run types, repository handoff helpers, and vault readers.
+The export provides `createReviewedBuildEngine`, the built-in Program definition, Run types, repository handoff helpers, and vault readers.
 
-The server export provides `createAgentShellUiApp` for `tangent ui`. It also provides `reviewedBuildRoutes` for tests and other local hosts.
+`ReviewedBuildEngine` lists Goals and Runs. It starts, stops, resumes, and retries Runs. It also reads Run output, diffs, and validated artifacts.

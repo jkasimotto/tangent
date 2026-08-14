@@ -199,6 +199,30 @@ test("an invalid artifact handoff blocks the next step and retry preserves the f
   }
 });
 
+test("a review result must be the first line of its artifact", async () => {
+  const fixture = await createFixture();
+  const calls = [];
+  const base = completeRunner(fixture.repo, calls);
+  /** Returns one review whose result appears after a preface. */
+  const runner = async (args) => {
+    if (stepLabel(args.prompt) !== "Review the design") return base(args);
+    calls.push(callRecord("Review the design", args));
+    await writeArtifact(fixture.repo, "docs/design-review.md", "Design review\n\nResult: pass\n");
+    return result(args, complete("Design reviewed.", [{ path: "docs/design-review.md", purpose: "design-review" }]), calls.length);
+  };
+  const engine = createReviewedBuildEngine({ treesRoot: fixture.trees, loopsRoot: fixture.loops, runner });
+  try {
+    const started = await engine.start({ goalPath: fixture.goalPath });
+    await engine.waitForIdle(started.id);
+    const failed = await engine.getRun(started.id);
+    assert.equal(failed.status, "needs_attention");
+    assert.match(failed.attention.message, /must start with Result/);
+    assert.equal(failed.steps[2].attempts.length, 0);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 /** Creates an isolated Git repository and Tangent tree. */
 async function createFixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), "tangent-reviewed-build-"));

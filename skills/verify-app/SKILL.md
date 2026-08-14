@@ -5,17 +5,17 @@ description: Verify a UI change works in the live Tangent app by booting it read
 
 # Verify a change in the live app
 
-Boot the real app read-only against your live `~/.tangent` data, then drive it with the `chrome-devtools` MCP. The script sets `TANGENT_VERIFY_READONLY`, which makes every app non-writing: eval's "launch run" is disabled (it spawns real agents and spends tokens), usage's transcript watcher (its only writer) is off, and trees rejects every mutation (create/delete entity). Everything else is read-only, so live data is never modified. No copy, instant boot.
+Boot the real app read-only against your live `~/.tangent` data, then drive it with the `chrome-devtools` MCP. The script sets `TANGENT_VERIFY_READONLY`, which makes every app non-writing: eval's "launch run" is disabled (it spawns real agents and spends tokens), and usage's transcript watcher (its only writer) is off. Everything else is read-only, so live data is never modified. No copy, instant boot.
 
 Target:
-- (default) `ui` boots the combined `tangent ui`, usage + trees + eval mounted together, the same app you normally run.
-- `usage` or `eval` boots that single app in isolation when you only changed one.
+- `usage` (default) or `eval` boots that app's standalone UI server in isolation.
+- For Agent Shell changes, verify against the prototype server (`prototypes/agent-shell/server.mjs`, port 4321). This script does not start it.
 
 ## Steps
 
 1. **Boot it** (background, so you keep working):
    ```
-   node scripts/verify-app.mjs [ui|usage|eval]   # default: ui
+   node scripts/verify-app.mjs [usage|eval]   # default: usage
    ```
    It prints one JSON line: `{ "url": "http://127.0.0.1:PORT/", "log": "/tmp/tangent-verify-…/server.log" }`. Read the `url`.
 

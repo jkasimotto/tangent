@@ -90,6 +90,7 @@ test("the context-first shell is default and keeps the user's understanding with
       PORT: String(port),
       HOST: "127.0.0.1",
       TREES_ROOT: trees,
+      TANGENT_LOOPS_ROOT: path.join(root, "loops"),
       WORKSPACE: workspace,
       AGENT_SHELL_NO_OPEN: "1",
       GROQ_API_KEY: "",
@@ -148,6 +149,13 @@ test("the context-first shell is default and keeps the user's understanding with
 
   const programs = await fetch(`${base}/api/programs`).then((response) => response.json());
   assert.equal(programs.programs.find((program) => program.name === "dev").type, "process");
+
+  const reviewedProgram = await fetch(`${base}/api/reviewed-build/program?area=otto%2Ftest`).then((response) => response.json());
+  assert.equal(reviewedProgram.id, "reviewed-build");
+  assert.equal(reviewedProgram.steps.length, 8);
+  assert.equal(reviewedProgram.sessions["design"].mode, "fresh");
+  const reviewedRuns = await fetch(`${base}/api/reviewed-build/runs`).then((response) => response.json());
+  assert.deepEqual(reviewedRuns.runs, []);
 
   const command = await fetch(`${base}/api/programs/new`, {
     method: "POST",

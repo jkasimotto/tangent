@@ -27,12 +27,6 @@ const rootProductPackages = new Set([
   "@tangent/search"
 ]);
 
-const uiAppPackages = new Map([
-  ["@tangent/agent-shell", "trees"],
-  ["@tangent/usage", "usage"],
-  ["@tangent/eval", "eval"]
-]);
-
 /** Lints publishable package installability and optional root product composition. */
 export async function lintPackageInstallability(ctx: InstallabilityLintContext): Promise<GovernanceFinding[]> {
   const findings: GovernanceFinding[] = [];
@@ -44,20 +38,6 @@ export async function lintPackageInstallability(ctx: InstallabilityLintContext):
       findings.push(...lintRootOptionalProducts(ctx.root, pkg));
       findings.push(...await lintRootStaticProductImports(ctx.root));
     }
-    const expectedUiApp = uiAppPackages.get(pkg.name);
-    if (expectedUiApp && uiAppMetadataError(pkg.manifest, expectedUiApp)) {
-      findings.push({
-        rule: "deps/ui-apps-declare-manifest",
-        severity: "error",
-        file: relative(ctx.root, pkg.packageJsonPath),
-        message: `${pkg.name} must declare tangent.uiApp metadata for root UI discovery.`,
-        fix: [
-          "Add tangent.uiApp with id, label, serverExport, factory, and order.",
-          "Keep root UI discovery driven by package metadata instead of hard-coded imports."
-        ]
-      });
-    }
-
     for (const [section, deps] of dependencySections(pkg.manifest)) {
       for (const [dep, version] of Object.entries(deps)) {
         if (!isTangentPackage(dep)) continue;
@@ -210,20 +190,6 @@ async function rootSourceFiles(dir: string): Promise<string[]> {
     else if (entry.isFile() && /\.tsx?$/.test(entry.name)) files.push(full);
   }
   return files;
-}
-
-/** Validates Tangent UI app metadata in a package manifest. */
-function uiAppMetadataError(manifest: PackageInfo["manifest"], expectedId: string): boolean {
-  const tangent = manifest.tangent;
-  if (!tangent || typeof tangent !== "object") return true;
-  const uiApp = (tangent as { uiApp?: unknown }).uiApp;
-  if (!uiApp || typeof uiApp !== "object") return true;
-  const raw = uiApp as { id?: unknown; label?: unknown; serverExport?: unknown; factory?: unknown; order?: unknown };
-  return raw.id !== expectedId ||
-    typeof raw.label !== "string" ||
-    typeof raw.serverExport !== "string" ||
-    typeof raw.factory !== "string" ||
-    typeof raw.order !== "number";
 }
 
 /** Returns root and workspace package manifests for dependency linting. */

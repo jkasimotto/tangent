@@ -15,6 +15,7 @@ import { doneCascade } from "./goal-cascade.mjs";
 import { inheritedAgentCommand, noteResource } from "./area-agent-command.mjs";
 import { createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
 import { commandSession, programsSnapshot, saveLocalProgram, saveRoutine, setRoutinePaused } from "./programs.mjs";
+import { createReviewedBuildBridge } from "./reviewed-build.mjs";
 import pty from "node-pty";
 import { documentHash, markdownTitle, safeMarkdownPath, wikiLinks } from "./vault-documents.mjs";
 
@@ -53,6 +54,10 @@ function withDefaultModel(cmd) {
 const CHAT_SESSION = process.env.CHAT_SESSION ?? "orchestrator";
 const WORKSPACE = process.env.WORKSPACE ?? path.join(here, "workspace");
 const TREES_ROOT = process.env.TREES_ROOT ?? path.join(os.homedir(), ".tangent", "trees");
+const reviewedBuild = createReviewedBuildBridge({
+  treesRoot: TREES_ROOT,
+  loopsRoot: process.env.TANGENT_LOOPS_ROOT,
+});
 
 if (!existsSync(WORKSPACE)) mkdirSync(WORKSPACE, { recursive: true });
 
@@ -1912,6 +1917,7 @@ function voiceNameHints(ctx) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   try {
+    if (await reviewedBuild.handle(req, res, url)) return;
     if (url.pathname === "/api/sessions") {
       const sessions = await listSessions();
       reconcileGoals(sessions); // throttled fire-and-forget

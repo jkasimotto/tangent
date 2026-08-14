@@ -75,15 +75,6 @@ test("dependency lint flags disallowed vertical package dependencies", async () 
       name: "@tangent/usage",
       version: "0.0.0",
       type: "module",
-      tangent: {
-        uiApp: {
-          id: "usage",
-          label: "Usage",
-          serverExport: "@tangent/usage/server",
-          factory: "createUsageUiApp",
-          order: 10
-        }
-      },
       bin: {
         "tangent-usage": "./dist/cli/index.js"
       },
@@ -110,15 +101,6 @@ test("dependency lint flags local-only Tangent dependency specs", async () => {
       name: "@tangent/usage",
       version: "0.0.0",
       type: "module",
-      tangent: {
-        uiApp: {
-          id: "usage",
-          label: "Usage",
-          serverExport: "@tangent/usage/server",
-          factory: "createUsageUiApp",
-          order: 10
-        }
-      },
       bin: {
         "tangent-usage": "./dist/cli/index.js"
       },
@@ -211,30 +193,6 @@ test("dependency lint requires root package mode", async () => {
   }
 });
 
-test("dependency lint requires UI app manifest metadata", async () => {
-  const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
-  try {
-    const usageDir = path.join(root, "packages", "usage");
-    await mkdir(usageDir, { recursive: true });
-    await writeFile(path.join(usageDir, "package.json"), JSON.stringify({
-      name: "@tangent/usage",
-      version: "0.0.0",
-      type: "module",
-      bin: {
-        "tangent-usage": "./dist/cli/index.js"
-      },
-      dependencies: {
-        "@tangent/core": "^0.1.0"
-      }
-    }), "utf8");
-
-    const result = await lintGovernance({ root, groups: ["deps"] });
-    assert.ok(result.findings.some((finding) => finding.rule === "deps/ui-apps-declare-manifest"));
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
 test("dependency lint prevents Rollup and Eval from pulling Usage UI transitively", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
   try {
@@ -254,15 +212,6 @@ test("dependency lint prevents Rollup and Eval from pulling Usage UI transitivel
       name: "@tangent/usage",
       version: "0.0.0",
       type: "module",
-      tangent: {
-        uiApp: {
-          id: "usage",
-          label: "Usage",
-          serverExport: "@tangent/usage/server",
-          factory: "createUsageUiApp",
-          order: 10
-        }
-      },
       bin: {
         "tangent-usage": "./dist/cli/index.js"
       },

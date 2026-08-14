@@ -38,6 +38,20 @@ const state = {
   areaEdit: null,
   programId: "",
   programDraft: { type: "process", area: "", name: "", command: "", time: "07:30", cwd: "", model: "sonnet", prompt: "" },
+  reviewed: {
+    runs: [],
+    runId: localStorage.getItem("agent-shell.reviewed-run") || "",
+    run: null,
+    latestOutput: "",
+    program: null,
+    draftBindings: {},
+    draftSessions: {},
+    area: "",
+    returnView: "overview",
+    decision: "",
+    error: "",
+    notice: "",
+  },
   query: "",
   editingWords: false,
   caffeinate: false,
@@ -68,6 +82,7 @@ let terminalFit = null;
 let terminalSocket = null;
 let terminalResizeObserver = null;
 let terminalSession = "";
+let terminalSelection = null;
 let toastTimer = null;
 let modalConfirm = null;
 
@@ -433,6 +448,151 @@ function currentGoal() {
   return goalByFile(state.currentFile);
 }
 
+/** Returns the newest Reviewed build for one Goal. */
+function latestReviewedRun(goalOrFile) {
+  const file = typeof goalOrFile === "string" ? goalOrFile : goalOrFile?.file;
+  return state.reviewed.runs.find((run) => run.goalPath === file) ?? null;
+}
+
+/** Returns the selected Reviewed build Run. */
+function currentReviewedRun() {
+  if (state.reviewed.run?.id === state.reviewed.runId) return state.reviewed.run;
+  return state.reviewed.runs.find((run) => run.id === state.reviewed.runId) ?? null;
+}
+
+/** Formats one durable Reviewed build status. */
+function reviewedStatusLabel(status) {
+  return humanName(String(status ?? "unknown").replaceAll("_", "-"));
+}
+
+/** Returns the number of active Reviewed build Runs. */
+function activeReviewedCount() {
+  return state.reviewed.runs.filter((run) => ["queued", "running"].includes(run.status)).length;
+}
+
+/** Copies one API value before it becomes an editable draft. */
+function cloneValue(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+/** Returns the current Reviewed build step definitions. */
+function reviewedSteps() {
+  return state.reviewed.program?.steps || currentReviewedRun()?.steps || [];
+}
+
+/** Converts one session choice into an HTML select value. */
+function reviewedSessionValue(session) {
+  return session?.mode === "continue" ? `continue:${session.fromStepId}` : "fresh";
+}
+
+/** Converts one HTML select value into a durable session choice. */
+function reviewedSessionChoice(value) {
+  return String(value).startsWith("continue:")
+    ? { mode: "continue", fromStepId: String(value).slice("continue:".length) }
+    : { mode: "fresh" };
+}
+
+/** Creates a complete provider binding from the compact editor fields. */
+function reviewedBinding(provider, model, effort, previous = {}) {
+  if (provider === "claude") {
+    const selectedModel = model || "fable";
+    return { id: `claude-${selectedModel}`, label: `Claude ${humanName(selectedModel)}`, provider, command: "claude", model: selectedModel, permissionMode: previous.permissionMode || "bypassPermissions" };
+  }
+  if (provider === "gemini") {
+    const selectedModel = model || "gemini-2.5-pro";
+    return { id: `gemini-${selectedModel}`, label: `Gemini ${selectedModel}`, provider, command: "gemini", model: selectedModel };
+  }
+  const selectedEffort = effort || "max";
+  return { id: `codex-${selectedEffort}`, label: `Codex ${humanName(selectedEffort)}`, provider: "codex", command: "codex", ...(model ? { model } : {}), effort: selectedEffort };
+}
+
+/** Loads the Reviewed build Program for one Area into the local editor. */
+async function loadReviewedProgram(area) {
+  const program = await api(`/api/reviewed-build/program${area ? `?area=${encodeURIComponent(area)}` : ""}`);
+  state.reviewed.program = program;
+  state.reviewed.area = area || "";
+  state.reviewed.draftBindings = cloneValue(program.bindings || {});
+  state.reviewed.draftSessions = cloneValue(program.sessions || {});
+  state.reviewed.error = "";
+  return program;
+}
+
+/** Opens launch choices for one Goal without starting the Program. */
+async function openReviewedSetup(file) {
+  const goal = rememberGoal(file);
+  if (!goal) return;
+  try {
+    await loadReviewedProgram(goal.area);
+    state.reviewed.returnView = "overview";
+    state.view = "reviewed-setup";
+    paint(true);
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+/** Opens the reusable Reviewed build Program editor. */
+async function openReviewedProgram(area = preferredArea()) {
+  try {
+    await loadReviewedProgram(area);
+    state.reviewed.returnView = "programs";
+    state.view = "reviewed-program";
+    paint(true);
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+/** Opens one durable Reviewed build Run. */
+async function openReviewedRun(id, returnView = "work") {
+  try {
+    const payload = await api(`/api/reviewed-build/runs/${encodeURIComponent(id)}`);
+    state.reviewed.runId = id;
+    state.reviewed.run = payload.run;
+    state.reviewed.latestOutput = payload.latestOutput || "";
+    state.reviewed.returnView = returnView;
+    state.reviewed.decision = "";
+    localStorage.setItem("agent-shell.reviewed-run", id);
+    if (payload.run?.goalPath) rememberGoal(payload.run.goalPath);
+    state.view = "reviewed-run";
+    paint(true);
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+/** Starts a Reviewed build with defaults or with the open editor choices. */
+async function startReviewedRun(goal, useDraft = false) {
+  if (!goal) return;
+  try {
+    const payload = await post("/api/reviewed-build/runs", {
+      goalPath: goal.file,
+      ...(useDraft ? { bindings: state.reviewed.draftBindings, sessions: state.reviewed.draftSessions } : {}),
+    });
+    state.reviewed.runs = [payload.run, ...state.reviewed.runs.filter((run) => run.id !== payload.run.id)];
+    await openReviewedRun(payload.run.id, "overview");
+    showToast("Reviewed build started. Agent Shell will continue without supervision.");
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+/** Stops, resumes, or retries the selected Reviewed build. */
+async function controlReviewedRun(action, decision = "") {
+  const run = currentReviewedRun();
+  if (!run) return;
+  try {
+    const payload = await post(`/api/reviewed-build/runs/${encodeURIComponent(run.id)}/control`, { action, ...(decision ? { decision } : {}) });
+    state.reviewed.run = payload.run;
+    state.reviewed.runs = state.reviewed.runs.map((item) => item.id === payload.run.id ? payload.run : item);
+    state.reviewed.decision = "";
+    paint(true);
+    showToast(action === "stop" ? "Reviewed build stopped." : "Reviewed build resumed with a new attempt.");
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
 /** Finds the live session bound to one goal. */
 function sessionForGoal(goal) {
   if (!goal || ["done", "dropped", "deferred"].includes(goal.status)) return null;
@@ -742,9 +902,12 @@ function searchResults(query) {
 function deskAreaState(path, trees, descriptions) {
   const goals = trees.flatMap((tree) => tree.goals).filter((goal) => !["done", "dropped", "deferred"].includes(goal.status));
   const sessions = [...goals.map(sessionForGoal).filter(Boolean), ...descriptions];
+  const reviewed = state.reviewed.runs.filter((run) => run.areaPath === path);
   const waiting = sessions.filter((session) => ["waiting", "shell"].includes(session.state)).length
-    + goals.filter((goal) => !sessionForGoal(goal) && goalNeedsYou(goal)).length;
-  const working = sessions.filter((session) => session.state === "working").length;
+    + goals.filter((goal) => !sessionForGoal(goal) && goalNeedsYou(goal)).length
+    + reviewed.filter((run) => run.status === "needs_attention").length;
+  const working = sessions.filter((session) => session.state === "working").length
+    + reviewed.filter((run) => ["queued", "running"].includes(run.status)).length;
   if (waiting) return { kind: "waiting", label: `${waiting} ${waiting === 1 ? "item needs" : "items need"} you` };
   if (working) return { kind: "working", label: `${working} ${working === 1 ? "agent" : "agents"} working` };
   const ready = goals.filter((goal) => !sessionForGoal(goal)).length;
@@ -782,24 +945,79 @@ function deskAttentionItems() {
   const definitionItems = describeWorkSessions()
     .filter((session) => describeWorkAttention(session) === "waiting")
     .map((session) => ({ kind: "definition", session, area: session.area, title: session.workTitle || "Define new work" }));
-  return [...goalItems, ...definitionItems].sort((left, right) => left.area.localeCompare(right.area) || left.title.localeCompare(right.title));
+  const reviewedItems = state.reviewed.runs
+    .filter((run) => run.status === "needs_attention")
+    .map((run) => ({ kind: "reviewed", run, area: run.areaPath, title: run.goalTitle }));
+  return [...goalItems, ...definitionItems, ...reviewedItems].sort((left, right) => left.area.localeCompare(right.area) || left.title.localeCompare(right.title));
+}
+
+let dockBadgeCount = null;
+
+/** Keeps the installed Safari web app's Dock badge equal to the Needs you now projection. */
+async function syncDockBadge() {
+  const count = deskAttentionItems().length;
+  if (count === dockBadgeCount) return;
+  const nativeBridge = window.__agentShellNativeDockBadge === true;
+  if (!nativeBridge && (typeof Notification === "undefined" || Notification.permission !== "granted")) return;
+  try {
+    if (count > 0) {
+      if (typeof navigator.setAppBadge !== "function") return;
+      await navigator.setAppBadge(count);
+    } else if (typeof navigator.clearAppBadge === "function") {
+      await navigator.clearAppBadge();
+    } else if (typeof navigator.setAppBadge === "function") {
+      await navigator.setAppBadge(0);
+    } else {
+      return;
+    }
+    dockBadgeCount = count;
+  } catch {
+    // Badge support and permission are browser-owned; retry on the next refresh.
+  }
+}
+
+/** Requests the notification permission WebKit requires before it displays app-icon badges. */
+async function enableDockBadge() {
+  if (window.__agentShellNativeDockBadge === true) {
+    dockBadgeCount = null;
+    await syncDockBadge();
+    return;
+  }
+  if (typeof Notification === "undefined" || typeof Notification.requestPermission !== "function") {
+    return showToast("This browser cannot enable Dock badges for Agent Shell.");
+  }
+  const permission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
+  if (permission !== "granted") {
+    return showToast("Allow Agent Shell notifications in System Settings to show its Dock badge.");
+  }
+  dockBadgeCount = null;
+  await syncDockBadge();
+  paint(true);
+  showToast("The Dock badge now follows Needs you now. No notification banners are sent.");
 }
 
 /** Renders the small action index above the stable Area map. */
 function deskAttentionQueue() {
   const items = deskAttentionItems();
   if (!items.length) return "";
+  const enableBadge = typeof navigator.setAppBadge === "function"
+    && window.__agentShellNativeDockBadge !== true
+    && typeof Notification !== "undefined"
+    && Notification.permission !== "granted";
   return `
     <section class="attention-queue" aria-labelledby="attention-heading">
-      <header><p class="kicker">Attention</p><h2 id="attention-heading">Needs you now</h2><span>${items.length}</span></header>
+      <header><p class="kicker">Attention</p><h2 id="attention-heading">Needs you now</h2>${enableBadge ? `<button class="attention-badge-button" type="button" data-enable-dock-badge>Show in Dock</button>` : ""}<span>${items.length}</span></header>
       <div class="attention-items">${items.map((item) => {
         const name = item.session ? agentName(item.session) : "Handoff";
-        const action = item.kind === "definition"
+        const action = item.kind === "reviewed"
+          ? `data-open-reviewed-run="${escapeHtml(item.run.id)}"`
+          : item.kind === "definition"
           ? `data-select-work-definition="${escapeHtml(item.session.name)}"`
           : item.kind === "handoff"
             ? `data-view-goal="${escapeHtml(item.goal.file)}"`
             : `data-open-goal-run="${escapeHtml(item.goal.file)}"`;
-        return `<button type="button" ${action}><span><small>${escapeHtml(areaLabel(item.area))}</small><strong>${escapeHtml(item.title)}</strong></span><span>${escapeHtml(item.kind === "handoff" ? "Review handoff" : `Open ${name}`)} <b aria-hidden="true">→</b></span></button>`;
+        const label = item.kind === "reviewed" ? "Review agent question" : item.kind === "handoff" ? "Review handoff" : `Open ${name}`;
+        return `<button type="button" ${action}><span><small>${escapeHtml(areaLabel(item.area))}</small><strong>${escapeHtml(item.title)}</strong></span><span>${escapeHtml(label)} <b aria-hidden="true">→</b></span></button>`;
       }).join("")}</div>
     </section>`;
 }
@@ -809,6 +1027,11 @@ function deskGoalAction(goal) {
   if (["done", "dropped", "deferred"].includes(goal.status)) {
     return { state: goal.status === "done" ? "Complete" : humanName(goal.status), action: "View details", kind: "complete", route: "details" };
   }
+  const reviewed = latestReviewedRun(goal);
+  if (reviewed?.status === "needs_attention") return { state: "Waiting for you", action: "Open reviewed build", kind: "waiting", route: "reviewed", runId: reviewed.id };
+  if (["queued", "running"].includes(reviewed?.status)) return { state: "Agents working", action: "Open reviewed build", kind: "working", route: "reviewed", runId: reviewed.id };
+  if (reviewed?.status === "complete") return { state: "Reviewed build complete", action: "View result", kind: "complete", route: "reviewed", runId: reviewed.id };
+  if (reviewed?.status === "stopped") return { state: "Reviewed build stopped", action: "Open reviewed build", kind: "ready", route: "reviewed", runId: reviewed.id };
   const session = sessionForGoal(goal);
   if (!session) return { state: goalNeedsYou(goal) ? "Waiting for you" : "Ready", action: goalNeedsYou(goal) ? "Review handoff" : "Start agent", kind: goalNeedsYou(goal) ? "waiting" : "ready", route: goalNeedsYou(goal) ? "details" : "run" };
   if (session.state === "working") return { state: "Agent working", action: `Open ${agentName(session)}`, kind: "working", route: "run" };
@@ -821,7 +1044,9 @@ function deskGoalAction(goal) {
 function deskGoalRow(goal, { subgoal = false } = {}) {
   const action = deskGoalAction(goal);
   const complete = !["done", "dropped", "deferred"].includes(goal.status);
-  const route = action.route === "run"
+  const route = action.route === "reviewed"
+    ? `data-open-reviewed-run="${escapeHtml(action.runId)}"`
+    : action.route === "run"
     ? `data-open-goal-run="${escapeHtml(goal.file)}"`
     : `data-view-goal="${escapeHtml(goal.file)}"`;
   return `
@@ -834,7 +1059,7 @@ function deskGoalRow(goal, { subgoal = false } = {}) {
       <div class="desk-goal-controls">
         <span class="desk-state ${action.kind}">${escapeHtml(action.state)}</span>
         <button class="desk-action" type="button" ${route}>${escapeHtml(action.action)}</button>
-        ${action.route === "run" ? `<button class="desk-icon-action" type="button" data-view-goal="${escapeHtml(goal.file)}" aria-label="View details for ${escapeHtml(goal.title)}">Details</button>` : ""}
+        ${["run", "reviewed"].includes(action.route) ? `<button class="desk-icon-action" type="button" data-view-goal="${escapeHtml(goal.file)}" aria-label="View details for ${escapeHtml(goal.title)}">Details</button>` : ""}
         ${complete ? `<button class="desk-icon-action complete" type="button" data-complete-goal="${escapeHtml(goal.file)}" aria-label="Mark ${escapeHtml(goal.title)} complete">Done</button>` : ""}
       </div>
     </article>`;
@@ -1024,7 +1249,6 @@ function areaContents(area) {
       <header class="area-contents-heading">
         <div><p class="kicker">Selected Area</p><h2>${escapeHtml(humanName(area.name))}</h2><small>${escapeHtml(area.path)}</small></div>
         <div class="area-contents-actions">
-          <button class="primary-button" type="button" data-new-goal>Create Goal</button>
           <button class="quiet-button" type="button" data-new-area>Add nested Area</button>
           ${area.path.split("/").length > 1 ? `<button class="quiet-button" type="button" data-rename-area>Rename or move</button>` : ""}
         </div>
@@ -1127,6 +1351,155 @@ function programRow(program) {
     </button>`;
 }
 
+/** Returns completed and total steps for one Reviewed build Run. */
+function reviewedProgress(run) {
+  const complete = run?.steps?.filter((step) => step.status === "complete").length || 0;
+  return { complete, total: run?.steps?.length || 8 };
+}
+
+/** Renders the built-in multi-agent Program above operational programs. */
+function reviewedProgramCard() {
+  const active = activeReviewedCount();
+  const attention = state.reviewed.runs.filter((run) => run.status === "needs_attention").length;
+  const latest = state.reviewed.runs[0];
+  const recent = state.reviewed.runs.slice(0, 4);
+  return `
+    <section class="reviewed-program-card">
+      <div>
+        <p class="kicker">Built-in agent workflow</p>
+        <h2>Reviewed build</h2>
+        <p>Design, independent reviews, implementation, and one final response-and-fix pass. Each step uses a fresh session by default.</p>
+        <ol><li>Design</li><li>Review</li><li>Revise and plan</li><li>Plan review</li><li>Respond</li><li>Implement</li><li>Implementation review</li><li>Fix</li></ol>
+      </div>
+      <div class="reviewed-program-actions">
+        <span>${attention ? `${attention} need you` : active ? `${active} active` : latest ? `Latest: ${reviewedStatusLabel(latest.status)}` : "Ready"}</span>
+        <button class="primary-button" type="button" data-open-reviewed-program>Open program</button>
+      </div>
+      ${recent.length ? `<div class="reviewed-recent-runs">${recent.map((run) => {
+        const progress = reviewedProgress(run);
+        return `<button type="button" data-open-reviewed-run="${escapeHtml(run.id)}"><span><small>${escapeHtml(areaLabel(run.areaPath))}</small><strong>${escapeHtml(run.goalTitle)}</strong></span><span>${progress.complete}/${progress.total} · ${escapeHtml(reviewedStatusLabel(run.status))} →</span></button>`;
+      }).join("")}</div>` : ""}
+    </section>`;
+}
+
+/** Lists valid fresh and continuation choices for one draft step. */
+function reviewedSessionOptions(step, index) {
+  const binding = state.reviewed.draftBindings[step.id] || {};
+  const selected = reviewedSessionValue(state.reviewed.draftSessions[step.id]);
+  const earlier = reviewedSteps().slice(0, index).filter((item) => state.reviewed.draftBindings[item.id]?.provider === binding.provider);
+  return [
+    `<option value="fresh" ${selected === "fresh" ? "selected" : ""}>Fresh session</option>`,
+    ...(binding.provider === "gemini" ? [] : earlier.map((item) => {
+      const value = `continue:${item.id}`;
+      return `<option value="${escapeHtml(value)}" ${selected === value ? "selected" : ""}>Continue step ${item.order}: ${escapeHtml(item.label)}</option>`;
+    })),
+  ].join("");
+}
+
+/** Renders one editable agent and session assignment. */
+function reviewedStepEditor(step, index, { pending = false } = {}) {
+  const binding = pending ? step.binding : state.reviewed.draftBindings[step.id] || {};
+  const session = pending ? step.session : state.reviewed.draftSessions[step.id] || { mode: "fresh" };
+  const provider = binding.provider || "codex";
+  const prefix = pending ? "pending" : "draft";
+  const sessionOptions = pending
+    ? (() => {
+        const earlier = currentReviewedRun().steps.slice(0, index).filter((item) => item.binding.provider === provider);
+        const selected = reviewedSessionValue(session);
+        return [`<option value="fresh" ${selected === "fresh" ? "selected" : ""}>Fresh session</option>`, ...(provider === "gemini" ? [] : earlier.map((item) => `<option value="continue:${escapeHtml(item.id)}" ${selected === `continue:${item.id}` ? "selected" : ""}>Continue step ${item.order}: ${escapeHtml(item.label)}</option>`))].join("");
+      })()
+    : reviewedSessionOptions(step, index);
+  return `
+    <div class="reviewed-editor-step" data-reviewed-step="${escapeHtml(step.id)}">
+      <header><span>${step.order}</span><div><strong>${escapeHtml(step.label)}</strong><small>${escapeHtml(step.instruction)}</small></div></header>
+      <div class="reviewed-agent-fields">
+        <label><span>Agent</span><select name="provider" data-reviewed-${prefix}-field="provider" data-step-id="${escapeHtml(step.id)}">
+          <option value="claude" ${provider === "claude" ? "selected" : ""}>Claude</option>
+          <option value="codex" ${provider === "codex" ? "selected" : ""}>Codex</option>
+          <option value="gemini" ${provider === "gemini" ? "selected" : ""}>Gemini</option>
+        </select></label>
+        <label><span>Model</span><input name="model" data-reviewed-${prefix}-field="model" data-step-id="${escapeHtml(step.id)}" value="${escapeHtml(binding.model || "")}" placeholder="Provider default" /></label>
+        <label><span>Effort</span><select name="effort" data-reviewed-${prefix}-field="effort" data-step-id="${escapeHtml(step.id)}" ${provider === "codex" ? "" : "disabled"}>
+          ${["low", "medium", "high", "xhigh", "max"].map((value) => `<option value="${value}" ${binding.effort === value || (!binding.effort && value === "max") ? "selected" : ""}>${humanName(value)}</option>`).join("")}
+        </select></label>
+        <label class="reviewed-session-field"><span>Session</span><select name="session" data-reviewed-${prefix}-field="session" data-step-id="${escapeHtml(step.id)}">${sessionOptions}</select></label>
+      </div>
+      ${pending ? `<button class="quiet-button" type="submit">Update pending step</button>` : ""}
+    </div>`;
+}
+
+/** Renders Area defaults or one Goal's launch-time overrides. */
+function renderReviewedEditor(mode) {
+  const goal = currentGoal();
+  const program = state.reviewed.program;
+  if (!program) return `<div class="loading">Loading Reviewed build…</div>`;
+  const setup = mode === "setup";
+  return `
+    <article class="reviewed-editor-page">
+      <p class="kicker">${setup ? "Goal program" : "Built-in program"}</p>
+      <h1>${setup ? `Run “${escapeHtml(goal?.title || "Goal") }”` : "Reviewed build"}</h1>
+      <p class="reviewed-lede">${escapeHtml(program.description)}</p>
+      ${setup ? `<p class="reviewed-default-note">These choices apply only to this Run. Area defaults stay unchanged.</p>` : `<label class="reviewed-area-picker"><span>Defaults for Area</span><select data-reviewed-area>${areaOptions(state.reviewed.area)}</select></label>`}
+      <div class="reviewed-editor-list">${program.steps.map((step, index) => reviewedStepEditor(step, index)).join("")}</div>
+      <div class="reviewed-sticky-actions">
+        ${setup
+          ? `<button class="primary-button" type="button" data-launch-reviewed-custom>Run reviewed build</button><button class="quiet-button" type="button" data-launch-reviewed-default>Use Area defaults</button>`
+          : `<button class="primary-button" type="button" data-save-reviewed-defaults>Save Area defaults</button>`}
+      </div>
+    </article>`;
+}
+
+/** Returns the newest attempt for one step. */
+function latestReviewedAttempt(step) {
+  return step.attempts?.at(-1) || null;
+}
+
+/** Renders recorded handoffs and proof for one attempt. */
+function reviewedAttemptDetails(run, step, attempt) {
+  if (!attempt) return "";
+  const artifacts = attempt.artifacts || [];
+  const proof = attempt.proof || [];
+  return `
+    ${attempt.envelope?.summary ? `<p class="reviewed-step-summary">${escapeHtml(attempt.envelope.summary)}</p>` : ""}
+    ${artifacts.length ? `<div class="reviewed-artifacts"><strong>Artifacts</strong>${artifacts.map((artifact, index) => `<a href="/api/reviewed-build/runs/${encodeURIComponent(run.id)}/artifacts/${encodeURIComponent(step.id)}/${attempt.number}/${index}" target="_blank" rel="noreferrer"><span>${escapeHtml(artifact.purpose)}</span>${escapeHtml(artifact.path)}</a>`).join("")}</div>` : ""}
+    ${proof.length ? `<details class="reviewed-proof"><summary>Proof · ${proof.length}</summary>${proof.map((item) => `<div><code>${escapeHtml(item.command)}</code><p>${escapeHtml(item.result)}</p></div>`).join("")}</details>` : ""}
+    ${attempt.error ? `<p class="reviewed-step-error">${escapeHtml(attempt.error)}</p>` : ""}`;
+}
+
+/** Renders one durable Reviewed build with progress and controls. */
+function renderReviewedRun() {
+  const run = currentReviewedRun();
+  if (!run) return `<div class="error-card">This Reviewed build Run is not available.</div>`;
+  const progress = reviewedProgress(run);
+  const attention = run.attention;
+  const active = ["queued", "running"].includes(run.status);
+  const resumable = ["needs_attention", "stopped"].includes(run.status);
+  return `
+    <article class="reviewed-run-page">
+      ${areaPath(run.areaPath)}
+      <header class="reviewed-run-heading">
+        <div><p class="kicker">Reviewed build · ${escapeHtml(reviewedStatusLabel(run.status))}</p><h1>${escapeHtml(run.goalTitle)}</h1><p>${progress.complete} of ${progress.total} steps complete</p></div>
+        <div class="reviewed-run-actions">
+          ${active ? `<button class="danger-button" type="button" data-reviewed-control="stop">Stop</button>` : ""}
+          ${resumable && attention?.kind !== "judgment" ? `<button class="primary-button" type="button" data-reviewed-control="resume">Resume</button>` : ""}
+          ${run.status === "complete" ? `<button class="secondary-button" type="button" data-start-reviewed-again="${escapeHtml(run.goalPath)}">Run again</button>` : ""}
+          <a class="quiet-link" href="/api/reviewed-build/runs/${encodeURIComponent(run.id)}/diff" target="_blank" rel="noreferrer">Open current diff</a>
+        </div>
+      </header>
+      ${attention ? `<section class="reviewed-attention"><p class="kicker">Needs you</p><h2>${escapeHtml(attention.question || attention.message)}</h2>${attention.question ? `<form data-reviewed-decision><label><span>Your decision</span><textarea name="decision" required>${escapeHtml(state.reviewed.decision)}</textarea></label><button class="primary-button" type="submit">Answer and resume</button></form>` : `<p>${escapeHtml(attention.message)}</p>`}</section>` : ""}
+      <section class="reviewed-run-steps">${run.steps.map((step, index) => {
+        const attempt = latestReviewedAttempt(step);
+        return `<article class="reviewed-run-step ${escapeHtml(step.status)}">
+          <header><span>${step.order}</span><div><strong>${escapeHtml(step.label)}</strong><small>${escapeHtml(step.binding.label)} · ${step.session.mode === "fresh" ? "Fresh session" : `Continues ${step.session.fromStepId}`}</small></div><em>${escapeHtml(reviewedStatusLabel(step.status))}</em></header>
+          ${reviewedAttemptDetails(run, step, attempt)}
+          ${step.status === "pending" ? `<details class="reviewed-pending-editor"><summary>Change agent or session</summary><form data-reviewed-pending-form="${escapeHtml(step.id)}">${reviewedStepEditor(step, index, { pending: true })}</form></details>` : ""}
+        </article>`;
+      }).join("")}</section>
+      ${state.reviewed.latestOutput ? `<section class="reviewed-output"><p class="kicker">Latest agent output</p><pre>${escapeHtml(state.reviewed.latestOutput)}</pre></section>` : ""}
+      ${run.final ? `<section class="reviewed-final"><p class="kicker">Final result</p><h2>${run.final.changedPaths.length} changed ${run.final.changedPaths.length === 1 ? "file" : "files"}</h2><ul>${run.final.changedPaths.map((file) => `<li><code>${escapeHtml(file)}</code></li>`).join("") || "<li>No repository path changed.</li>"}</ul>${run.final.proof.length ? `<div class="reviewed-final-proof">${run.final.proof.map((item) => `<p><code>${escapeHtml(item.command)}</code><span>${escapeHtml(item.result)}</span></p>`).join("")}</div>` : ""}</section>` : ""}
+    </article>`;
+}
+
 /** Renders the area-grouped operational surface. */
 function renderPrograms() {
   const groups = new Map();
@@ -1137,9 +1510,10 @@ function renderPrograms() {
   return `
     <section class="programs-page">
       <header class="surface-heading">
-        <div><p class="kicker">Programs</p><h1>Things that run</h1><p>Servers, useful commands, and scheduled agents stay with their areas.</p></div>
+        <div><p class="kicker">Programs</p><h1>Things that run</h1><p>Agent workflows, servers, useful commands, and scheduled agents stay with their areas.</p></div>
         <button class="primary-button" type="button" data-new-program>New program</button>
       </header>
+      ${reviewedProgramCard()}
       <div class="program-groups area-tree">
         ${groups.size ? areaTreeRows({ mode: "programs", programsByArea: groups }) : `<div class="empty-state">No programs exist yet.</div>`}
       </div>
@@ -1309,6 +1683,7 @@ function renderDescribeCapture() {
         </label>
         <div class="create-actions">
           <button class="primary-button" type="submit">Open agent <kbd>⌘↵</kbd></button>
+          <button class="quiet-button" type="button" data-create-manually>Create Goal manually</button>
           <button class="quiet-button" type="button" data-save-idea>Save as an idea</button>
           <button class="quiet-button" type="button" data-cancel-describe>Cancel</button>
         </div>
@@ -1487,6 +1862,37 @@ function runCard(goal, session) {
   `;
 }
 
+/** Renders the one-click autonomous workflow for an open Goal. */
+function reviewedBuildBlock(goal) {
+  if (["done", "dropped", "deferred"].includes(goal.status)) return "";
+  const run = latestReviewedRun(goal);
+  if (!run) {
+    return `
+      <section class="summary-section reviewed-goal-launch">
+        <p class="kicker">Multi-agent program</p>
+        <h2>Reviewed build</h2>
+        <p class="next-action-copy">Claude designs. Codex reviews and implements. The agents revise, review, and finish without you coordinating every handoff.</p>
+        <div class="action-row start-actions">
+          <button class="primary-button" type="button" data-start-reviewed="${escapeHtml(goal.file)}">Run reviewed build</button>
+          <button class="quiet-button" type="button" data-configure-reviewed="${escapeHtml(goal.file)}">Change agents or sessions</button>
+        </div>
+        <p class="form-note">Eight steps. Fresh provider session for each step by default. Stops only for a required judgment, an error, or your command.</p>
+      </section>`;
+  }
+  const progress = reviewedProgress(run);
+  return `
+    <section class="summary-section reviewed-goal-launch">
+      <p class="kicker">Multi-agent program</p>
+      <h2>Reviewed build · ${escapeHtml(reviewedStatusLabel(run.status))}</h2>
+      <p class="next-action-copy">${progress.complete} of ${progress.total} steps complete${run.attention ? ` · ${escapeHtml(run.attention.question || run.attention.message)}` : ""}</p>
+      <div class="action-row start-actions">
+        <button class="${run.status === "needs_attention" ? "primary-button" : "secondary-button"}" type="button" data-open-reviewed-run="${escapeHtml(run.id)}">Open reviewed build</button>
+        ${run.status === "complete" ? `<button class="quiet-button" type="button" data-start-reviewed-again="${escapeHtml(goal.file)}">Run again</button>` : ""}
+        <button class="quiet-button" type="button" data-configure-reviewed="${escapeHtml(goal.file)}">Change agents for a new Run</button>
+      </div>
+    </section>`;
+}
+
 /** Renders the next actions for a Goal without a live Run. */
 function startBlock(goal) {
   if (["done", "dropped", "deferred"].includes(goal.status)) {
@@ -1521,6 +1927,7 @@ function renderOverview(goal, session) {
 
       ${currentBriefBlock(goal)}
       ${livingDocumentsBlock(goal)}
+      ${reviewedBuildBlock(goal)}
       ${session ? runCard(goal, session) : startBlock(goal)}
       ${whyBlock(goal)}
       ${subgoalsBlock(goal)}
@@ -1695,6 +2102,8 @@ function renderDocument() {
 
 /** Releases the terminal, socket, and resize observer. */
 function disposeTerminal() {
+  terminalSelection?.dispose();
+  terminalSelection = null;
   terminalResizeObserver?.disconnect();
   terminalResizeObserver = null;
   if (terminalSocket) {
@@ -1723,6 +2132,7 @@ function mountTerminal(host, sessionName) {
     fontFamily: '"SFMono-Regular", Menlo, Consolas, monospace',
     fontSize: 14,
     lineHeight: 1.32,
+    macOptionClickForcesSelection: true,
     scrollback: 8000,
     theme: {
       background: "#080a0d",
@@ -1734,6 +2144,11 @@ function mountTerminal(host, sessionName) {
   terminalFit = new FitAddon.FitAddon();
   terminal.loadAddon(terminalFit);
   terminal.open(host);
+  terminalSelection = window.AgentShellTerminalSelection?.preserveTerminalSelection({
+    terminal,
+    host,
+    clipboard: navigator.clipboard,
+  });
   /** Fits xterm and reports its current dimensions to tmux. */
   const fit = () => {
     try {
@@ -1751,6 +2166,7 @@ function mountTerminal(host, sessionName) {
   terminalSocket.onopen = fit;
   terminalSocket.onclose = () => terminal?.write("\r\n\x1b[90m[session ended]\x1b[0m\r\n");
   terminal.onData((data) => {
+    terminalSelection?.noteInput();
     if (terminalSocket?.readyState === WebSocket.OPEN) terminalSocket.send(data);
   });
   terminal.focus();
@@ -1797,6 +2213,15 @@ function renderKey() {
     state.programId,
     state.programDraft,
     state.programs.programs.map((item) => [item.id, item.paused, item.lastRunAt, item.nextRunAt, item.session?.state]),
+    state.reviewed.runs.map((item) => [item.id, item.goalPath, item.status, item.updatedAt, item.currentStepId, item.attention?.message]),
+    state.reviewed.run,
+    state.reviewed.latestOutput,
+    state.reviewed.program,
+    state.reviewed.draftBindings,
+    state.reviewed.draftSessions,
+    state.reviewed.area,
+    state.reviewed.decision,
+    state.reviewed.error,
     vaultRenderProjection(),
     goal ? [goal.file, goal.status, goal.mtime, goal.stateText, goal.currentBrief, goal.storyText, goal.why, goal.subgoalItems, goal.documents] : null,
     state.sessions.map((item) => [item.name, item.goal, item.kind, item.area, item.state, item.phase, item.command, item.created, item.workTitle]),
@@ -1819,6 +2244,10 @@ function updateHeader() {
   const isProgramDetail = state.view === "program-detail";
   const isProgramCreate = state.view === "program-create";
   const isProgramSession = state.view === "program-session";
+  const isReviewedProgram = state.view === "reviewed-program";
+  const isReviewedSetup = state.view === "reviewed-setup";
+  const isReviewedRun = state.view === "reviewed-run";
+  const reviewedRun = currentReviewedRun();
   const program = currentProgram();
   const isTopLevel = isWork || isAreas || isPrograms;
   backButton.classList.toggle("has-back", !isTopLevel);
@@ -1830,10 +2259,14 @@ function updateHeader() {
       ? state.describeReturnView === "document" && state.document ? "Document" : "Work"
     : isAreaEdit
       ? "Areas"
-    : isProgramDetail || isProgramCreate
+    : isProgramDetail || isProgramCreate || isReviewedProgram
       ? "Programs"
     : isProgramSession
       ? "Program"
+    : isReviewedSetup
+      ? "Goal details"
+    : isReviewedRun
+      ? state.reviewed.returnView === "programs" ? "Programs" : state.reviewed.returnView === "overview" ? "Goal details" : "Work"
     : isWork
         ? "Agent Shell"
         : state.view === "overview"
@@ -1863,6 +2296,12 @@ function updateHeader() {
           ? `${areaLabel(program.area)} · ${program.label} · ${programState(program)}`
         : isProgramCreate
           ? "Add a program to one area"
+          : isReviewedProgram
+            ? "Reviewed build defaults"
+          : isReviewedSetup
+            ? "Choose agents and sessions"
+          : isReviewedRun && reviewedRun
+            ? `${areaLabel(reviewedRun.areaPath)} · Reviewed build · ${reviewedStatusLabel(reviewedRun.status)}`
           : state.view === "document" && state.document
             ? ""
             : goal
@@ -1873,9 +2312,9 @@ function updateHeader() {
     ? "work"
     : isAreas || isAreaEdit || (isCreate && state.createReturnView === "areas")
       ? "areas"
-      : isPrograms || isProgramDetail || isProgramCreate || isProgramSession
+      : isPrograms || isProgramDetail || isProgramCreate || isProgramSession || isReviewedProgram
         ? "programs"
-        : "";
+        : isReviewedRun || isReviewedSetup ? "work" : "";
   const attentionCount = deskAttentionItems().length;
   workTab.textContent = attentionCount ? `Work · ${attentionCount}` : "Work";
   workTab.classList.toggle("active", topLevel === "work");
@@ -1887,14 +2326,14 @@ function updateHeader() {
     else button.removeAttribute("aria-current");
   }
 
-  secondaryAction.hidden = !session || ["work", "create", "describe", "areas", "area-edit", "programs", "program-detail", "program-create", "program-session", "document"].includes(state.view);
+  secondaryAction.hidden = !session || ["work", "create", "describe", "areas", "area-edit", "programs", "program-detail", "program-create", "program-session", "reviewed-program", "reviewed-setup", "reviewed-run", "document"].includes(state.view);
   secondaryAction.textContent = session?.state === "shell" ? "Close session…" : "Stop agent…";
 
   if (state.view === "agent" && session?.state === "waiting") {
     findButton.hidden = false;
     findButton.textContent = "Next step";
     findButton.dataset.action = "next-step";
-  } else if (["work", "create", "describe", "describe-agent", "areas", "area-edit", "programs", "program-detail", "program-create", "program-session", "agent", "decision"].includes(state.view)) {
+  } else if (["work", "create", "describe", "describe-agent", "areas", "area-edit", "programs", "program-detail", "program-create", "program-session", "reviewed-program", "reviewed-setup", "reviewed-run", "agent", "decision"].includes(state.view)) {
     findButton.hidden = true;
     findButton.textContent = "Find work";
     findButton.dataset.action = "find";
@@ -1903,7 +2342,8 @@ function updateHeader() {
     findButton.innerHTML = `Find work <kbd>⌘/</kbd>`;
     findButton.dataset.action = "find";
   }
-  programsButton.textContent = state.programs.liveCount ? `Programs · ${state.programs.liveCount}` : "Programs";
+  const livePrograms = state.programs.liveCount + activeReviewedCount();
+  programsButton.textContent = livePrograms ? `Programs · ${livePrograms}` : "Programs";
 }
 
 /** Refreshes live agent state without replacing the terminal. */
@@ -1913,7 +2353,8 @@ function updateLiveHeader() {
     if (!session) return;
     barContext.textContent = `${areaLabel(session.area)} · Defining work · ${describeWorkStateLabel(session)}`;
     findButton.hidden = true;
-    programsButton.textContent = state.programs.liveCount ? `Programs · ${state.programs.liveCount}` : "Programs";
+    const livePrograms = state.programs.liveCount + activeReviewedCount();
+    programsButton.textContent = livePrograms ? `Programs · ${livePrograms}` : "Programs";
     return;
   }
   if (state.view !== "agent") return;
@@ -1930,13 +2371,14 @@ function updateLiveHeader() {
   } else {
     findButton.hidden = true;
   }
-  programsButton.textContent = state.programs.liveCount ? `Programs · ${state.programs.liveCount}` : "Programs";
+  const livePrograms = state.programs.liveCount + activeReviewedCount();
+  programsButton.textContent = livePrograms ? `Programs · ${livePrograms}` : "Programs";
 }
 
 /** Selects and renders the current full-screen view. */
 function renderScreen() {
   const goal = currentGoal();
-  const goalFreeViews = ["work", "create", "describe", "describe-agent", "areas", "area-edit", "programs", "program-detail", "program-create", "program-session", "document"];
+  const goalFreeViews = ["work", "create", "describe", "describe-agent", "areas", "area-edit", "programs", "program-detail", "program-create", "program-session", "reviewed-program", "reviewed-run", "document"];
   if (!goal && !goalFreeViews.includes(state.view)) state.view = "work";
   const session = sessionForGoal(goal);
   const describeSession = describeWorkSession();
@@ -1964,6 +2406,9 @@ function renderScreen() {
   else if (state.view === "program-detail") screen.innerHTML = renderProgramDetail(currentProgram());
   else if (state.view === "program-create") screen.innerHTML = renderProgramCreate();
   else if (state.view === "program-session") screen.innerHTML = renderProgramSession(currentProgram());
+  else if (state.view === "reviewed-program") screen.innerHTML = renderReviewedEditor("program");
+  else if (state.view === "reviewed-setup") screen.innerHTML = renderReviewedEditor("setup");
+  else if (state.view === "reviewed-run") screen.innerHTML = renderReviewedRun();
   else if (state.view === "agent") screen.innerHTML = renderAgent(goal, session);
   else if (state.view === "decision" && session) screen.innerHTML = renderDecision(goal, session);
   else if (state.view === "document") screen.innerHTML = renderDocument();
@@ -1987,7 +2432,7 @@ function paint(force = false) {
   }
   const key = renderKey();
   const active = document.activeElement;
-  if (!force && active && (["work-search", "my-understanding"].includes(active.id) || active.closest?.("[data-create-form], [data-describe-work-form], [data-area-form], [data-program-form]"))) {
+  if (!force && active && (["work-search", "my-understanding"].includes(active.id) || active.closest?.("[data-create-form], [data-describe-work-form], [data-area-form], [data-program-form], [data-reviewed-decision], [data-reviewed-pending-form], .reviewed-editor-page"))) {
     updateHeader();
     return;
   }
@@ -2002,7 +2447,11 @@ function paint(force = false) {
 /** Refreshes the vault, program, and session projections from the server. */
 async function refresh({ initial = false } = {}) {
   try {
-    const [vault, sessionPayload, programs] = await Promise.all([api("/api/vault"), api("/api/sessions"), api("/api/programs")]);
+    const reviewedList = api("/api/reviewed-build/runs").catch((error) => ({ runs: [], error: error.message }));
+    const reviewedDetail = state.reviewed.runId
+      ? api(`/api/reviewed-build/runs/${encodeURIComponent(state.reviewed.runId)}`).catch(() => null)
+      : Promise.resolve(null);
+    const [vault, sessionPayload, programs, reviewed, detail] = await Promise.all([api("/api/vault"), api("/api/sessions"), api("/api/programs"), reviewedList, reviewedDetail]);
     state.vault = vault;
     state.sessions = sessionPayload.sessions || [];
     state.programs = {
@@ -2013,6 +2462,12 @@ async function refresh({ initial = false } = {}) {
       timezone: programs.timezone || "",
       scheduler: programs.scheduler || { installed: false, intervalMinutes: 30 },
     };
+    state.reviewed.runs = reviewed.runs || [];
+    state.reviewed.error = reviewed.error || "";
+    if (detail?.run) {
+      state.reviewed.run = detail.run;
+      state.reviewed.latestOutput = detail.latestOutput || "";
+    }
     state.caffeinate = Boolean(sessionPayload.caffeinate);
     state.loading = false;
     state.error = "";
@@ -2030,6 +2485,7 @@ async function refresh({ initial = false } = {}) {
       if (!areas().some((area) => area.path === state.areaSelection)) state.areaSelection = preferredArea();
       revealArea(state.areaSelection);
     }
+    void syncDockBadge();
     paint(initial);
   } catch (error) {
     state.loading = false;
@@ -2224,8 +2680,8 @@ function showOverview() {
 }
 
 /** Opens the fast new-goal form. */
-function showCreate(area = "") {
-  state.createReturnView = state.view === "areas" ? "areas" : "work";
+function showCreate(area = "", returnView = state.view) {
+  state.createReturnView = ["areas", "describe"].includes(returnView) ? returnView : "work";
   state.createArea = area || (state.createReturnView === "areas" ? selectedArea()?.path : "") || preferredArea();
   state.view = "create";
   state.document = null;
@@ -2240,6 +2696,7 @@ function showCreate(area = "") {
 function cancelCreate() {
   state.createArea = "";
   if (state.createReturnView === "areas") return showAreas();
+  if (state.createReturnView === "describe") return showDescribe();
   return showWork();
 }
 
@@ -2601,6 +3058,40 @@ async function toggleAwake() {
 
 document.addEventListener("click", async (event) => {
   const target = event.target;
+  if (target.closest("[data-enable-dock-badge]")) return enableDockBadge();
+  const reviewedRun = target.closest("[data-open-reviewed-run]");
+  if (reviewedRun) {
+    const returnView = state.view === "programs" ? "programs" : state.view === "overview" ? "overview" : "work";
+    return openReviewedRun(reviewedRun.dataset.openReviewedRun, returnView);
+  }
+  const startReviewed = target.closest("[data-start-reviewed], [data-start-reviewed-again]");
+  if (startReviewed) {
+    const file = startReviewed.dataset.startReviewed || startReviewed.dataset.startReviewedAgain;
+    return startReviewedRun(rememberGoal(file));
+  }
+  const configureReviewed = target.closest("[data-configure-reviewed]");
+  if (configureReviewed) return openReviewedSetup(configureReviewed.dataset.configureReviewed);
+  if (target.closest("[data-open-reviewed-program]")) return openReviewedProgram();
+  if (target.closest("[data-launch-reviewed-custom]")) return startReviewedRun(currentGoal(), true);
+  if (target.closest("[data-launch-reviewed-default]")) return startReviewedRun(currentGoal());
+  if (target.closest("[data-save-reviewed-defaults]")) {
+    if (!state.reviewed.area) return showToast("Choose an Area for these defaults.");
+    try {
+      await api(`/api/reviewed-build/defaults/${encodeURIComponent(state.reviewed.area)}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ bindings: state.reviewed.draftBindings, sessions: state.reviewed.draftSessions }),
+      });
+      await loadReviewedProgram(state.reviewed.area);
+      paint(true);
+      showToast("Reviewed build defaults saved for this Area.");
+    } catch (error) {
+      showToast(error.message);
+    }
+    return;
+  }
+  const reviewedControl = target.closest("[data-reviewed-control]");
+  if (reviewedControl) return controlReviewedRun(reviewedControl.dataset.reviewedControl);
   const goalRun = target.closest("[data-open-goal-run]");
   if (goalRun) return openGoalRun(goalRun.dataset.openGoalRun);
   const goalDetails = target.closest("[data-view-goal]");
@@ -2651,12 +3142,12 @@ document.addEventListener("click", async (event) => {
   }
   const programAction = target.closest("[data-program-action]");
   if (programAction) return controlProgram(programAction.dataset.programAction);
-  if (target.closest("[data-new-goal]")) return showCreate(selectedArea()?.path || "");
   const workDefinition = target.closest("[data-select-work-definition]");
   if (workDefinition) return openDescribeSession(workDefinition.dataset.selectWorkDefinition);
   const describeArea = target.closest("[data-describe-area]");
   if (describeArea) return showDescribe({ area: describeArea.dataset.describeArea });
   if (target.closest("[data-describe-work]")) return showDescribe();
+  if (target.closest("[data-create-manually]")) return showCreate(document.querySelector("#describe-area")?.value || preferredArea(), "describe");
   if (target.closest("[data-open-vision]")) return window.location.assign("/vision");
   if (target.closest("[data-cancel-create]")) return cancelCreate();
   if (target.closest("[data-cancel-describe]")) return cancelDescribe();
@@ -2747,6 +3238,37 @@ document.addEventListener("click", async (event) => {
 });
 
 document.addEventListener("submit", async (event) => {
+  if (event.target.matches("[data-reviewed-decision]")) {
+    event.preventDefault();
+    const decision = new FormData(event.target).get("decision")?.toString().trim() || "";
+    if (!decision) return showToast("Answer the agent question before the Run resumes.");
+    return controlReviewedRun("resume", decision);
+  }
+  if (event.target.matches("[data-reviewed-pending-form]")) {
+    event.preventDefault();
+    const run = currentReviewedRun();
+    const stepId = event.target.dataset.reviewedPendingForm;
+    const step = run?.steps.find((item) => item.id === stepId);
+    if (!run || !step) return;
+    const fields = new FormData(event.target);
+    const provider = fields.get("provider")?.toString() || step.binding.provider;
+    const binding = reviewedBinding(provider, fields.get("model")?.toString().trim() || "", fields.get("effort")?.toString() || "max", step.binding);
+    const session = reviewedSessionChoice(fields.get("session")?.toString() || "fresh");
+    try {
+      const payload = await api(`/api/reviewed-build/runs/${encodeURIComponent(run.id)}/steps/${encodeURIComponent(stepId)}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ binding, session }),
+      });
+      state.reviewed.run = payload.run;
+      state.reviewed.runs = state.reviewed.runs.map((item) => item.id === payload.run.id ? payload.run : item);
+      paint(true);
+      showToast("The pending step will use the new agent choice.");
+    } catch (error) {
+      showToast(error.message);
+    }
+    return;
+  }
   if (event.target.matches("[data-area-form]")) {
     event.preventDefault();
     const edit = state.areaEdit;
@@ -2881,6 +3403,24 @@ document.addEventListener("submit", async (event) => {
 });
 
 document.addEventListener("input", (event) => {
+  if (event.target.matches?.("[data-reviewed-draft-field]")) {
+    const stepId = event.target.dataset.stepId;
+    const field = event.target.dataset.reviewedDraftField;
+    const previous = state.reviewed.draftBindings[stepId] || {};
+    if (field === "session") {
+      state.reviewed.draftSessions[stepId] = reviewedSessionChoice(event.target.value);
+      return;
+    }
+    const provider = field === "provider" ? event.target.value : previous.provider || "codex";
+    const model = field === "model" ? event.target.value.trim() : previous.model || "";
+    const effort = field === "effort" ? event.target.value : previous.effort || "max";
+    state.reviewed.draftBindings[stepId] = reviewedBinding(provider, field === "provider" ? "" : model, effort, previous);
+    if (field === "provider") {
+      state.reviewed.draftSessions[stepId] = { mode: "fresh" };
+      return paint(true);
+    }
+    return;
+  }
   if (event.target.closest?.("[data-area-form]") && state.areaEdit) {
     if (event.target.name === "parent" || event.target.name === "name") state.areaEdit[event.target.name] = event.target.value;
     state.areaEdit.preview = null;
@@ -2912,11 +3452,43 @@ document.addEventListener("input", (event) => {
   input?.setSelectionRange(cursor, cursor);
 });
 
+document.addEventListener("change", async (event) => {
+  if (event.target.matches?.("[data-reviewed-area]")) {
+    try {
+      await loadReviewedProgram(event.target.value);
+      paint(true);
+    } catch (error) {
+      showToast(error.message);
+    }
+    return;
+  }
+  if (!event.target.matches?.("[data-reviewed-pending-field='provider']")) return;
+  const form = event.target.closest("[data-reviewed-pending-form]");
+  const run = currentReviewedRun();
+  const stepId = form?.dataset.reviewedPendingForm;
+  const index = run?.steps.findIndex((step) => step.id === stepId) ?? -1;
+  if (!form || !run || index < 0) return;
+  const provider = event.target.value;
+  const effort = form.querySelector("[name='effort']");
+  if (effort) effort.disabled = provider !== "codex";
+  const session = form.querySelector("[name='session']");
+  if (!session) return;
+  const earlier = run.steps.slice(0, index).filter((step) => step.binding.provider === provider);
+  session.innerHTML = `<option value="fresh">Fresh session</option>${provider === "gemini" ? "" : earlier.map((step) => `<option value="continue:${escapeHtml(step.id)}">Continue step ${step.order}: ${escapeHtml(step.label)}</option>`).join("")}`;
+});
+
 backButton.addEventListener("click", async () => {
   if (state.view === "work") return;
   if (state.view === "areas" || state.view === "programs") return showWork();
   if (state.view === "area-edit") return showAreas();
   if (state.view === "program-detail" || state.view === "program-create") return showPrograms();
+  if (state.view === "reviewed-program") return showPrograms();
+  if (state.view === "reviewed-setup") return showOverview();
+  if (state.view === "reviewed-run") {
+    if (state.reviewed.returnView === "programs") return showPrograms();
+    if (state.reviewed.returnView === "overview" && currentGoal()) return showOverview();
+    return showWork();
+  }
   if (state.view === "program-session") {
     state.view = "program-detail";
     return paint(true);

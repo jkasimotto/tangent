@@ -14,6 +14,7 @@ import { executeReviewedStepAttempt } from "./attempt.js";
 import { validateAllReviewedSessions, validateReviewedSession } from "./prompt.js";
 import {
   changedSnapshotPaths,
+  readRecordedArtifact,
   repositoryDiff,
   repositoryRevision,
   repositorySnapshot,
@@ -242,6 +243,16 @@ export class ReviewedBuildEngine {
   async diff(runId: string): Promise<string> {
     const run = await this.store.loadRun(runId);
     return repositoryDiff(run.repository.root);
+  }
+
+  /** Reads one validated artifact from a durable Run. */
+  async artifact(runId: string, stepId: string, attemptNumber: number, artifactIndex: number): Promise<{ path: string; content: string }> {
+    const run = await this.store.loadRun(runId);
+    const step = requiredStep(run, stepId);
+    const attempt = step.attempts.find((item) => item.number === attemptNumber);
+    const artifact = attempt?.artifacts[artifactIndex];
+    if (!artifact) throw new Error("Artifact not found.");
+    return { path: artifact.path, content: await readRecordedArtifact(artifact) };
   }
 
   /** Starts one background state-machine task unless it is already active. */

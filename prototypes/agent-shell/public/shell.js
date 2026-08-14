@@ -52,7 +52,9 @@ const state = {
     error: "",
     notice: "",
   },
+  launch: { area: "", options: null, loading: false, choice: null, command: "", editing: false, open: false },
   query: "",
+  workFilter: localStorage.getItem("agent-shell.work-filter") || "all",
   editingWords: false,
   caffeinate: false,
   decisionReturnView: "agent",
@@ -424,6 +426,18 @@ function goalTreeState(tree) {
   if (sessions.length) return "open";
   if (openGoals.some(goalNeedsYou)) return "waiting";
   return "ready";
+}
+
+/** True when any open Goal in one complete Goal tree owns a live session. */
+function goalTreeIsActive(tree) {
+  return tree.goals.some((goal) => !["done", "dropped", "deferred"].includes(goal.status) && Boolean(sessionForGoal(goal)));
+}
+
+/** Applies the selected session-presence filter without splitting Goal trees. */
+function filteredGoalTrees(trees) {
+  if (state.workFilter === "active") return trees.filter(goalTreeIsActive);
+  if (state.workFilter === "inactive") return trees.filter((tree) => !goalTreeIsActive(tree));
+  return trees;
 }
 
 /** Stores the one shared expansion state used by Areas and Programs. */
@@ -917,8 +931,8 @@ function deskAreaState(path, trees, descriptions) {
 
 /** Returns the Areas that have direct work, Documents, or definition Runs. */
 function deskAreas() {
-  const trees = goalTrees().filter((tree) => goalTreeState(tree) !== "closed");
-  const descriptions = describeWorkSessions();
+  const trees = filteredGoalTrees(goalTrees().filter((tree) => goalTreeState(tree) !== "closed"));
+  const descriptions = state.workFilter === "inactive" ? [] : describeWorkSessions();
   return areas().flatMap((area, index) => {
     const areaTrees = trees.filter((tree) => tree.path === area.path);
     const areaDescriptions = descriptions.filter((session) => session.area === area.path);
@@ -926,6 +940,7 @@ function deskAreas() {
       ...(area.documents ?? []),
       ...areaTrees.flatMap((tree) => tree.goals.flatMap((goal) => goal.documents ?? [])),
     ].filter((document) => document.kind === "document" || !document.kind).map((document) => [document.file, document])).values()];
+    if (state.workFilter !== "all" && !areaTrees.length && !areaDescriptions.length) return [];
     if (!areaTrees.length && !areaDescriptions.length && !documents.length) return [];
     return [{ area, trees: areaTrees, descriptions: areaDescriptions, documents, index }];
   });
@@ -1103,6 +1118,7 @@ function deskAreaPanel(record, position) {
   const status = deskAreaState(area.path, trees, descriptions);
   const parent = areaParts(area.path).slice(0, -1).join(" / ") || "Top level";
   const openGoalCount = trees.reduce((count, tree) => count + tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status)).length, 0);
+  const goalSectionTitle = state.workFilter === "all" ? "Goal work" : `${humanName(state.workFilter)} work`;
   return `
     <article class="area-desk-panel ${status.kind}" style="--desk-order:${position}">
       <header class="area-desk-header">
@@ -1113,7 +1129,7 @@ function deskAreaPanel(record, position) {
       <div class="area-desk-body">
         ${descriptions.length ? `<section class="area-desk-section definitions"><div class="area-desk-section-heading"><h3>Dispatches</h3><span>${descriptions.length}</span></div>${descriptions.map(deskDefinitionRow).join("")}</section>` : ""}
         <section class="area-desk-section goals">
-          <div class="area-desk-section-heading"><h3>Active work</h3><span>${openGoalCount}</span></div>
+          <div class="area-desk-section-heading"><h3>${goalSectionTitle}</h3><span>${openGoalCount}</span></div>
           ${trees.length ? trees.map(deskGoalGroup).join("") : `<p class="desk-empty">No active Goals.</p>`}
         </section>
         <section class="area-desk-section documents">
@@ -1136,9 +1152,9 @@ function renderWork() {
     content = searchResults(query);
   } else {
     const records = deskAreas();
-    content = `${deskAttentionQueue()}${records.length
+    content = `${state.workFilter === "all" ? deskAttentionQueue() : ""}${records.length
       ? `<section class="area-desk-grid" aria-label="Work by Area">${records.map(deskAreaPanel).join("")}</section>`
-      : `<div class="empty-state">No active Areas contain Goals or Documents.</div>`}`;
+      : `<div class="empty-state">No ${state.workFilter === "all" ? "active Areas contain Goals or Documents" : `${state.workFilter} work`}.</div>`}`;
   }
 
   return `
@@ -1153,11 +1169,16 @@ function renderWork() {
           <button class="primary-button work-intro-button" type="button" data-describe-work>Describe work</button>
         </div>
       </header>
-      <label class="search-field">
-        <span class="search-icon" aria-hidden="true">⌕</span>
-        <input id="work-search" type="search" value="${escapeHtml(state.query)}" placeholder="Find a Goal, Document, or Area" autocomplete="off" />
-        <kbd>⌘/</kbd>
-      </label>
+      <div class="work-tools">
+        <label class="search-field">
+          <span class="search-icon" aria-hidden="true">⌕</span>
+          <input id="work-search" type="search" value="${escapeHtml(state.query)}" placeholder="Find a Goal, Document, or Area" autocomplete="off" />
+          <kbd>⌘/</kbd>
+        </label>
+        <div class="work-filter" role="group" aria-label="Filter work by live session">
+          ${["all", "active", "inactive"].map((filter) => `<button type="button" data-work-filter="${filter}" aria-pressed="${state.workFilter === filter}">${humanName(filter)}</button>`).join("")}
+        </div>
+      </div>
       ${content}
     </section>
   `;
@@ -1799,13 +1820,14 @@ function awakeControl({ useful = false } = {}) {
 /** Renders the current live-agent state and its available actions. */
 function runCard(goal, session) {
   const name = agentName(session);
+  const title = session.launchLabel || name;
   if (session.state === "waiting") {
     return `
       <section class="summary-section">
         <div class="run-card waiting">
           <div class="run-status">
             <span class="status-mark" aria-hidden="true"></span>
-            <div><h2>${escapeHtml(name)} is waiting for you.</h2><p>Read the message. Then continue, end this run, or complete the work.</p></div>
+            <div><h2>${escapeHtml(title)} is waiting for you.</h2><p>Read the message. Then continue, end this run, or complete the work.</p></div>
           </div>
           ${awakeControl()}
           <div class="action-row">
@@ -1823,7 +1845,7 @@ function runCard(goal, session) {
         <div class="run-card working">
           <div class="run-status">
             <span class="status-mark" aria-hidden="true"></span>
-            <div><h2>${escapeHtml(name)} is working.</h2><p>${escapeHtml(ageText(session.created))}. You do not need to watch it.</p></div>
+            <div><h2>${escapeHtml(title)} is working.</h2><p>${escapeHtml(ageText(session.created))}. You do not need to watch it.</p></div>
           </div>
           ${awakeControl({ useful: true })}
           <div class="action-row">
@@ -1893,6 +1915,132 @@ function reviewedBuildBlock(goal) {
     </section>`;
 }
 
+/**
+ * Fetches the launch choices for one Area once and repaints when they land.
+ * Selecting a different Goal in the same Area keeps the loaded options.
+ */
+function launchOptionsFor(area) {
+  if (state.launch.area !== area) {
+    state.launch = { area, options: null, loading: false, choice: null, command: "", editing: false, open: false };
+  }
+  if (!state.launch.options && !state.launch.loading) {
+    state.launch.loading = true;
+    api(`/api/launch/options?area=${encodeURIComponent(area)}`)
+      .then((options) => { state.launch.options = options; })
+      .catch((error) => { state.launch.options = { harnesses: [], default: { error: error.message } }; })
+      .finally(() => { state.launch.loading = false; paint(); });
+  }
+  return state.launch.options;
+}
+
+/**
+ * The picker's current selection, seeded from the Area default. Recognition
+ * over recall: labels carry the choice, the composed command stays exact.
+ */
+function launchSelection() {
+  const options = state.launch.options;
+  if (!options) return null;
+  const preset = options.default && !options.default.error ? options.default : null;
+  const choice = state.launch.choice ?? (preset?.harness ? { harness: preset.harness, model: preset.model } : null);
+  const harness = choice ? (options.harnesses ?? []).find((entry) => entry.id === choice.harness) : null;
+  if (!harness) {
+    return preset ? { harness: null, model: null, command: preset.command, label: preset.label || "", edited: false } : null;
+  }
+  const model = (harness.models ?? []).find((entry) => entry.id === choice.model) ?? null;
+  const edited = Boolean(state.launch.command.trim());
+  const command = edited ? state.launch.command.trim() : model ? `${harness.command} ${model.args}` : harness.command;
+  const label = edited ? "Edited command" : model ? `${harness.label} · ${model.label}` : harness.label;
+  return { harness, model, command, label, edited };
+}
+
+/** Explicit per-run launch fields for a start request, or nothing. */
+function launchRequestFields() {
+  const selection = launchSelection();
+  if (!selection) return {};
+  if (selection.edited) return { command: selection.command };
+  if (state.launch.choice && selection.harness) {
+    return { choice: { harness: selection.harness.id, ...(selection.model ? { model: selection.model.id } : {}) } };
+  }
+  return {};
+}
+
+/** One quiet line naming what "Open agent" will start, with the way to change it. */
+function launchQuietLine(goal) {
+  const options = launchOptionsFor(goal.area);
+  if (!options) return `<p class="launch-line">…</p>`;
+  if (options.default?.error) {
+    return `<p class="launch-line launch-error">${escapeHtml(options.default.error)} <button class="quiet-button launch-change" type="button" data-launch-change>Change</button></p>`;
+  }
+  const selection = launchSelection();
+  const what = selection ? (selection.label ? escapeHtml(selection.label) : `<code>${escapeHtml(selection.command)}</code>`) : "";
+  return `<p class="launch-line">Starts ${what}<button class="quiet-button launch-change" type="button" data-launch-change>Change</button></p>`;
+}
+
+/**
+ * The launch picker: harness and model by display label, the exact composed
+ * command one line below, and a start action that states its exact effect.
+ * Selection never starts work; only the labeled start action does.
+ */
+function launchPickerBlock() {
+  const options = state.launch.options;
+  if (!options) return "";
+  const selection = launchSelection();
+  const preset = options.default && !options.default.error ? options.default : {};
+  const currentHarness = selection?.harness ?? null;
+  const harnessButtons = (options.harnesses ?? []).map((harness) => `
+    <button type="button" class="launch-option${currentHarness?.id === harness.id ? " selected" : ""}" data-launch-harness="${escapeHtml(harness.id)}">
+      <span>${escapeHtml(harness.label)}</span>${preset.harness === harness.id ? `<span class="launch-default-tag">default</span>` : ""}
+    </button>`).join("");
+  const models = currentHarness?.models ?? [];
+  const modelButtons = models.length
+    ? models.map((model) => `
+      <button type="button" class="launch-option${selection?.model?.id === model.id ? " selected" : ""}" data-launch-model="${escapeHtml(model.id)}">
+        <span>${escapeHtml(model.label)}</span>${preset.harness === currentHarness?.id && preset.model === model.id ? `<span class="launch-default-tag">default</span>` : ""}
+      </button>`).join("")
+    : `<p class="launch-none">${currentHarness ? "No model choice. The command is complete." : "Pick a harness first."}</p>`;
+  const command = selection?.command ?? "";
+  const commandZone = state.launch.editing
+    ? `<div class="launch-command"><input id="launch-command-input" type="text" spellcheck="false" value="${escapeHtml(state.launch.command || command)}"><button class="quiet-button" type="button" data-launch-reset>Reset</button></div>
+       <p class="form-note">The edited command applies to this run only.</p>`
+    : `<div class="launch-command"><code>${escapeHtml(command)}</code>${selection?.edited ? `<span class="launch-default-tag">edited</span>` : ""}<button class="quiet-button" type="button" data-launch-edit>Edit command</button></div>`;
+  const startLabel = selection ? (selection.label || "agent") : "agent";
+  const canSave = Boolean(state.launch.choice && selection?.harness && !selection?.edited);
+  return `
+    <div class="launch-picker">
+      ${(options.harnesses ?? []).length ? `
+      <div class="launch-columns">
+        <div class="launch-col"><p class="launch-col-title">Harness</p>${harnessButtons}</div>
+        <div class="launch-col"><p class="launch-col-title">Model</p>${modelButtons}</div>
+      </div>` : `<p class="launch-none">No harness registry. Add one at <code>~/.tangent/trees/harnesses.md</code>.</p>`}
+      ${commandZone}
+      <div class="action-row start-actions">
+        <button class="primary-button" type="button" data-launch-start>Start ${escapeHtml(startLabel)}</button>
+        ${canSave ? `<button class="quiet-button" type="button" data-launch-save>Save as Area default</button>` : ""}
+        <button class="quiet-button" type="button" data-launch-close>Back</button>
+      </div>
+    </div>
+  `;
+}
+
+/** Saves the current picker selection as the Area's durable default. */
+async function saveLaunchDefault() {
+  const goal = currentGoal();
+  const selection = launchSelection();
+  if (!goal || !selection?.harness || selection.edited) return;
+  try {
+    const saved = await post("/api/launch/default", {
+      area: goal.area,
+      launch: { harness: selection.harness.id, ...(selection.model ? { model: selection.model.id } : {}) },
+    });
+    state.launch.options = null;
+    launchOptionsFor(goal.area);
+    showToast(`${saved.label} is now the default for ${areaLabel(goal.area)}.`);
+    paint(true);
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
 /** Renders the next actions for a Goal without a live Run. */
 function startBlock(goal) {
   if (["done", "dropped", "deferred"].includes(goal.status)) {
@@ -1905,13 +2053,16 @@ function startBlock(goal) {
       </section>
     `;
   }
+  const picker = state.launch.open && state.launch.area === goal.area;
   return `
     <section class="summary-section">
       <h2>Continue with an agent</h2>
       <p class="next-action-copy">Open the native agent to discuss the Goal, give feedback, or ask for work.</p>
+      ${picker ? launchPickerBlock() : `
       <div class="action-row start-actions">
         <button class="primary-button" type="button" data-open-goal-agent>Open agent</button>
       </div>
+      ${launchQuietLine(goal)}`}
       <button class="quiet-button complete-without-run" type="button" data-mark-complete>Already finished? Mark this work complete…</button>
     </section>
   `;
@@ -2224,7 +2375,8 @@ function renderKey() {
     state.reviewed.error,
     vaultRenderProjection(),
     goal ? [goal.file, goal.status, goal.mtime, goal.stateText, goal.currentBrief, goal.storyText, goal.why, goal.subgoalItems, goal.documents] : null,
-    state.sessions.map((item) => [item.name, item.goal, item.kind, item.area, item.state, item.phase, item.command, item.created, item.workTitle]),
+    [state.launch.area, state.launch.open, state.launch.editing, state.launch.command, state.launch.choice, state.launch.loading, Boolean(state.launch.options), state.launch.options?.default?.label ?? null, state.launch.options?.default?.command ?? null],
+    state.sessions.map((item) => [item.name, item.goal, item.kind, item.area, item.state, item.phase, item.command, item.created, item.workTitle, item.launchLabel]),
   ]);
 }
 
@@ -2432,7 +2584,7 @@ function paint(force = false) {
   }
   const key = renderKey();
   const active = document.activeElement;
-  if (!force && active && (["work-search", "my-understanding"].includes(active.id) || active.closest?.("[data-create-form], [data-describe-work-form], [data-area-form], [data-program-form], [data-reviewed-decision], [data-reviewed-pending-form], .reviewed-editor-page"))) {
+  if (!force && active && (["work-search", "my-understanding", "launch-command-input"].includes(active.id) || active.closest?.("[data-create-form], [data-describe-work-form], [data-area-form], [data-program-form], [data-reviewed-decision], [data-reviewed-pending-form], .reviewed-editor-page"))) {
     updateHeader();
     return;
   }
@@ -2910,7 +3062,7 @@ async function openGoalAgent({ returnView = "work" } = {}) {
   const goal = currentGoal();
   if (!goal) return;
   try {
-    await post("/api/goals/agent", { file: goal.file, launch: true });
+    await post("/api/goals/agent", { file: goal.file, launch: true, ...launchRequestFields() });
     await refresh();
     state.agentReturnView = returnView;
     state.view = "agent";
@@ -2954,8 +3106,8 @@ async function launchOpenSession() {
   try {
     const endpoint = session.phase === "collaborate" ? "/api/goals/agent" : "/api/goals/start";
     const body = session.phase === "collaborate"
-      ? { file: goal.file, launch: true }
-      : { file: goal.file, approved: true, launch: true };
+      ? { file: goal.file, launch: true, ...launchRequestFields() }
+      : { file: goal.file, approved: true, launch: true, ...launchRequestFields() };
     await post(endpoint, body);
     await refresh();
     state.agentReturnView = "work";
@@ -3058,6 +3210,12 @@ async function toggleAwake() {
 
 document.addEventListener("click", async (event) => {
   const target = event.target;
+  const workFilter = target.closest("[data-work-filter]");
+  if (workFilter) {
+    state.workFilter = workFilter.dataset.workFilter;
+    localStorage.setItem("agent-shell.work-filter", state.workFilter);
+    return paint(true);
+  }
   if (target.closest("[data-enable-dock-badge]")) return enableDockBadge();
   const reviewedRun = target.closest("[data-open-reviewed-run]");
   if (reviewedRun) {
@@ -3172,6 +3330,49 @@ document.addEventListener("click", async (event) => {
   if (target.closest("[data-open-reader-agent]")) return openReaderAgent();
   if (target.closest("[data-back-overview]")) return showOverview();
   if (target.closest("[data-open-goal-agent]")) return openGoalAgent({ returnView: "work" });
+  if (target.closest("[data-launch-change]")) {
+    state.launch.open = true;
+    return paint(true);
+  }
+  if (target.closest("[data-launch-close]")) {
+    state.launch.open = false;
+    state.launch.editing = false;
+    return paint(true);
+  }
+  const launchHarness = target.closest("[data-launch-harness]");
+  if (launchHarness) {
+    const harness = (state.launch.options?.harnesses ?? []).find((entry) => entry.id === launchHarness.dataset.launchHarness);
+    if (harness) state.launch.choice = { harness: harness.id, model: harness.models?.[0]?.id ?? null };
+    state.launch.command = "";
+    state.launch.editing = false;
+    return paint(true);
+  }
+  const launchModel = target.closest("[data-launch-model]");
+  if (launchModel) {
+    const selection = launchSelection();
+    if (selection?.harness) state.launch.choice = { harness: selection.harness.id, model: launchModel.dataset.launchModel };
+    state.launch.command = "";
+    state.launch.editing = false;
+    return paint(true);
+  }
+  if (target.closest("[data-launch-edit]")) {
+    const selection = launchSelection();
+    state.launch.editing = true;
+    if (!state.launch.command) state.launch.command = selection?.command ?? "";
+    paint(true);
+    return window.setTimeout(() => document.querySelector("#launch-command-input")?.focus(), 0);
+  }
+  if (target.closest("[data-launch-reset]")) {
+    state.launch.command = "";
+    state.launch.editing = false;
+    return paint(true);
+  }
+  if (target.closest("[data-launch-start]")) {
+    state.launch.command = document.querySelector("#launch-command-input")?.value ?? state.launch.command;
+    state.launch.open = false;
+    return openGoalAgent({ returnView: "work" });
+  }
+  if (target.closest("[data-launch-save]")) return saveLaunchDefault();
   if (target.closest("[data-launch-open-session]")) return launchOpenSession();
   if (target.closest("[data-open-agent]")) {
     state.agentReturnView = "work";
@@ -3403,6 +3604,10 @@ document.addEventListener("submit", async (event) => {
 });
 
 document.addEventListener("input", (event) => {
+  if (event.target.id === "launch-command-input") {
+    state.launch.command = event.target.value;
+    return;
+  }
   if (event.target.matches?.("[data-reviewed-draft-field]")) {
     const stepId = event.target.dataset.stepId;
     const field = event.target.dataset.reviewedDraftField;

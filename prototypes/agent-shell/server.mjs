@@ -12,7 +12,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { doneCascade } from "./goal-cascade.mjs";
-import { inheritedAgentCommand, noteResource } from "./area-agent-command.mjs";
+import { noteResource } from "./area-agent-command.mjs";
+import { harnessModels, inheritedLaunch, parseHarnessRegistry, resolveLaunch, upsertEnvironmentLaunch } from "./launch-environment.mjs";
 import { createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
 import { commandSession, programsSnapshot, saveLocalProgram, saveRoutine, setRoutinePaused } from "./programs.mjs";
 import { createReviewedBuildBridge } from "./reviewed-build.mjs";
@@ -28,16 +29,57 @@ const GOAL_COMMAND = path.join(here, "goal-command.mjs");
 let agentCmd = process.env.AGENT_CMD ?? "claude";
 
 /**
+ * Reads the machine-wide harness registry from the vault root Document
+ * (~/.tangent/trees/harnesses.md). An empty registry is valid: launches
+ * then rely on legacy `- Agent:` lines and the profile fallback.
+ */
+async function harnessRegistry() {
+  const text = await readFile(path.join(TREES_ROOT, "harnesses.md"), "utf8").catch(() => "");
+  return parseHarnessRegistry(text) ?? { modelSets: {}, harnesses: [] };
+}
+
+/**
+ * The default launch for one Area, resolved through the harness registry
+ * (design contract: design-goal-launch-environments). The nearest Area
+ * environment default wins, then a legacy `- Agent:` line, then the profile
+ * fallback (otto/** runs claude-otto, other Areas plain claude). Returns
+ * { command, label, harness, model, source } or { error } — a broken
+ * declaration blocks the launch instead of substituting another command.
+ */
+async function launchForArea(area) {
+  const registry = await harnessRegistry();
+  if (registry.error) return { error: registry.error };
+  return inheritedLaunch(area, areaNote, registry);
+}
+
+/**
  * The launch command a Goal session pre-types for the user to accept or
- * edit. It is a suggestion, not a policy: an Area note can name its own command
- * (`- Agent: claude`), otherwise the profile default follows the Area path.
- * Personal Areas under otto/** run on the otto profile through claude-otto.
- * Other Areas run the plain work-account claude. Editing the line
- * is how a Goal runs on any other harness (codex, agy) or model. The
- * switchable agentCmd only ever applies to the orchestrator session.
+ * edit. It is a suggestion, not a policy: editing the line is how one Run
+ * uses any other harness or model. The switchable agentCmd only ever
+ * applies to the orchestrator session.
  */
 async function agentCmdForArea(area) {
-  return inheritedAgentCommand(area, areaNote);
+  const launch = await launchForArea(area);
+  if (launch.error) throw new Error(launch.error);
+  return launch.command;
+}
+
+/**
+ * Resolves an explicit per-run launch choice from a request body: an exact
+ * edited `command` wins, then a `choice: { harness, model }` registry
+ * reference. (`launch` stays the existing press-Enter boolean.) Empty
+ * fields mean "use the Area default". Errors name the id that failed.
+ */
+async function requestedLaunch(body) {
+  if (typeof body.command === "string" && body.command.trim()) {
+    return { command: body.command.trim(), label: "Edited command" };
+  }
+  if (body.choice && typeof body.choice === "object") {
+    const registry = await harnessRegistry();
+    if (registry.error) return { error: registry.error };
+    return resolveLaunch(registry, body.choice);
+  }
+  return { command: "", label: "" };
 }
 
 /**
@@ -81,14 +123,14 @@ async function listSessions() {
     const { stdout } = await execFileAsync("tmux", [
       "list-sessions",
       "-F",
-      "#{session_name}\t#{session_path}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{@tangent_area}\t#{@tangent_kind}\t#{@tangent_goal}\t#{@tangent_process}\t#{pane_current_command}\t#{@tangent_phase}\t#{@tangent_work_title}",
+      "#{session_name}\t#{session_path}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{@tangent_area}\t#{@tangent_kind}\t#{@tangent_goal}\t#{@tangent_process}\t#{pane_current_command}\t#{@tangent_phase}\t#{@tangent_work_title}\t#{@tangent_launch}",
     ]);
     const sessions = stdout
       .trim()
       .split("\n")
       .filter(Boolean)
       .map((line) => {
-        const [name, cwd, windows, attached, created, area, kind, goal, processName, command, phase, workTitle] = line.split("\t");
+        const [name, cwd, windows, attached, created, area, kind, goal, processName, command, phase, workTitle, launchLabel] = line.split("\t");
         return {
           name,
           cwd,
@@ -102,6 +144,7 @@ async function listSessions() {
           command,
           phase: phase || null,
           workTitle: workTitle || null,
+          launchLabel: launchLabel || null,
           isChat: name === CHAT_SESSION,
         };
       });
@@ -1259,11 +1302,11 @@ function armSession(name, phase = "execute", submit = false, document = "", prom
  * harness the user starts. A pane that is already running something is left
  * alone — priming must never type over an agent mid-conversation.
  */
-async function primeGoalSession(session, area, phase = "execute", { launch = false, document = "" } = {}) {
+async function primeGoalSession(session, area, phase = "execute", { launch = false, document = "", command = "" } = {}) {
   const { stdout } = await execFileAsync("tmux", ["display-message", "-p", "-t", "=" + session + ":", "#{pane_current_command}"]);
   if (!SHELL_CMDS.has(stdout.trim())) return false;
   armSession(session, phase, launch, document);
-  await typeInto(session, withDefaultModel(await agentCmdForArea(area)), false);
+  await typeInto(session, withDefaultModel(command || (await agentCmdForArea(area))), false);
   if (launch) {
     await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "Enter"]);
     await sleep(250);
@@ -1337,10 +1380,18 @@ async function spawnDescribeWorkSession(area, description, sources, { session: r
  * Both the launch line and the opening prompt follow the type-but-never-submit
  * rule, so the harness, the model, and the words all stay the user's call.
  */
-async function spawnGoalSession(area, slug, { phase = "execute", approved = false, launch = false, document = "" } = {}) {
+async function spawnGoalSession(area, slug, { phase = "execute", approved = false, launch = false, document = "", command = "", label = "" } = {}) {
   const o = (await readAreaGoals(area)).find((t) => t.slug === slug);
   if (!o) return { status: 404, error: `no goal "${slug}" on ${area}` };
   if (["done", "dropped"].includes(o.status)) return { status: 409, error: `goal is ${o.status}` };
+  // Resolve the launch before any tmux action: a declaration that does not
+  // resolve blocks the start and names itself, it never gets substituted.
+  if (!command) {
+    const inherited = await launchForArea(area);
+    if (inherited.error) return { status: 409, error: inherited.error };
+    command = inherited.command;
+    if (!label && inherited.label) label = inherited.label;
+  }
   const sessions = await listSessions();
   const baseName = normName(`${area.split("/").pop()}--${slug}`).slice(0, 60);
   const phaseName = phase === "collaborate" ? normName(`${baseName}--collaborate`).slice(0, 60) : baseName;
@@ -1351,13 +1402,14 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
   if (existing) {
     await execFileAsync("tmux", ["set-option", "-t", existing, "@tangent_phase", phase]);
     if (document) await execFileAsync("tmux", ["set-option", "-t", existing, "@tangent_document", document]);
+    if (label) await execFileAsync("tmux", ["set-option", "-t", existing, "@tangent_launch", label]);
     const live = sessions.find((s) => s.name === existing);
     let primed = false;
     if (approved && phase === "execute" && live && !SHELL_CMDS.has(live.command)) {
       if (live.state === "working") return { status: 409, error: "the agent is still working; wait before you approve another assignment" };
       await typeInto(existing, await goalPrompt(area, o), true);
     } else {
-      primed = await primeGoalSession(existing, area, phase, { launch, document }).catch(() => false);
+      primed = await primeGoalSession(existing, area, phase, { launch, document, command }).catch(() => false);
     }
     if (o.status !== "active" || o.session !== existing) {
       await writeGoalBinding(o.file, { status: "active", session: existing });
@@ -1374,6 +1426,7 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
   await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_kind", "goal"]);
   await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_phase", phase]);
   if (document) await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_document", document]);
+  if (label) await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_launch", label]);
   try {
     await writeGoalBinding(o.file, { status: "active", session: phaseName });
     await vaultCommit([o.file], `update: ${area} goal ${slug} active`, area, phaseName);
@@ -1386,7 +1439,7 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
     // be wiped by the redraw.
     await sleep(700);
     try {
-      await primeGoalSession(phaseName, area, phase, { launch, document });
+      await primeGoalSession(phaseName, area, phase, { launch, document, command });
     } catch (err) {
       console.error("prime session:", err.message ?? err);
     }
@@ -2103,7 +2156,7 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({
         goal,
         markdown: await goalPrompt(goal.area, goal),
-        agent: withDefaultModel(await agentCmdForArea(goal.area)),
+        agent: await agentCmdForArea(goal.area).then(withDefaultModel).catch(() => ""),
         context,
       }));
       return;
@@ -2137,15 +2190,69 @@ const server = http.createServer(async (req, res) => {
       }
       return;
     }
+    // Launch choices for the Start work surface: the registry's named
+    // harnesses and models, and the Area's resolved default launch.
+    if (url.pathname === "/api/launch/options" && req.method === "GET") {
+      const area = url.searchParams.get("area") ?? "";
+      const registry = await harnessRegistry();
+      if (registry.error) {
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: registry.error }));
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        harnesses: registry.harnesses.map((harness) => ({
+          id: harness.id,
+          label: harness.label || harness.id,
+          command: harness.command,
+          models: harnessModels(registry, harness).map((model) => ({ id: model.id, label: model.label || model.id, args: model.args })),
+        })),
+        default: await launchForArea(area),
+      }));
+      return;
+    }
+    // Saves one picker selection as the Area's durable default launch.
+    // Only this explicit action writes a declaration; picking never does.
+    if (url.pathname === "/api/launch/default" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      const area = String(body.area ?? "");
+      const registry = await harnessRegistry();
+      const resolved = registry.error ? registry : resolveLaunch(registry, body.launch ?? {});
+      if (resolved.error || !area) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: resolved.error || "an area is required" }));
+        return;
+      }
+      const file = areaNoteFile(area);
+      const absolute = path.join(TREES_ROOT, file);
+      const text = await readFile(absolute, "utf8").catch(() => emptyAreaNote(area));
+      const ref = { harness: resolved.harness, ...(resolved.model ? { model: resolved.model } : {}) };
+      await writeFile(absolute, upsertEnvironmentLaunch(text, ref));
+      await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", file]).catch(() => {});
+      await vaultCommit([file], `update: ${area} default launch ${resolved.label}`, area, null);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ label: resolved.label, command: resolved.command }));
+      return;
+    }
     if (url.pathname === "/api/goals/agent" && req.method === "POST") {
       let body = {};
       try { body = JSON.parse(await readBody(req)); } catch {}
+      const chosen = await requestedLaunch(body);
+      if (chosen.error) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: chosen.error }));
+        return;
+      }
       try {
         const [focus] = await sourceDocuments(body.document ? [body.document] : []);
         const result = await startGoal(String(body.file ?? ""), {
           phase: "collaborate",
           launch: body.launch === true,
           document: focus?.file ?? "",
+          command: chosen.command,
+          label: chosen.label,
         });
         res.writeHead(result.status, { "content-type": "application/json" });
         res.end(JSON.stringify(result.status === 200 ? result : { error: result.error }));
@@ -2159,11 +2266,19 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/goals/start" && req.method === "POST") {
       let body = {};
       try { body = JSON.parse(await readBody(req)); } catch {}
+      const chosen = await requestedLaunch(body);
+      if (chosen.error) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: chosen.error }));
+        return;
+      }
       try {
         const result = await startGoal(String(body.file ?? ""), {
           phase: "execute",
           approved: body.approved === true,
           launch: body.launch === true,
+          command: chosen.command,
+          label: chosen.label,
         });
         res.writeHead(result.status, { "content-type": "application/json" });
         res.end(

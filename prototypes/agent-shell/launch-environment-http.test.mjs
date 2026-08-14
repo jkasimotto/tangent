@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -53,13 +53,20 @@ const REGISTRY = `# Harnesses
 test("launch options resolve the registry, and saving writes an Area default", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-launch-"));
   const trees = path.join(root, "trees");
+  const workspace = path.join(root, "workspace");
   const areaDirectory = path.join(trees, "otto", "test");
   await mkdir(areaDirectory, { recursive: true });
+  await mkdir(workspace, { recursive: true });
   await writeFile(path.join(trees, "harnesses.md"), REGISTRY, "utf8");
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
   await writeFile(
     path.join(areaDirectory, "test.md"),
-    '---\ntype: area\n---\n\n# Test\n\n## Development environment\n\n```tangent.environment.v1\n{"defaults": {"launch": {"harness": "claude-otto", "model": "opus-4-6"}}}\n```\n',
+    `---\ntype: area\n---\n\n# Test\n\n## Goals\n\n1. [[goal-prove-launch]]\n\n## Development environment\n\n\`\`\`tangent.environment.v1\n{"defaults": {"launch": {"harness": "claude-otto", "model": "opus-4-6"}}}\n\`\`\`\n\n## Resources\n\n- Repository: ${workspace}\n`,
+    "utf8"
+  );
+  await writeFile(
+    path.join(areaDirectory, "goal-prove-launch.md"),
+    "---\ntype: goal\nstatus: open\ndone_when: The launch is proven\nsession:\n---\n\n# Prove launch\n\n## State\n\nNot started.\n",
     "utf8"
   );
 
@@ -73,6 +80,7 @@ test("launch options resolve the registry, and saving writes an Area default", a
     }
     throw error;
   }
+  const openedSessions = [];
   const child = spawn(process.execPath, ["server.mjs"], {
     cwd: here,
     env: {
@@ -89,6 +97,9 @@ test("launch options resolve the registry, and saving writes an Area default", a
     stdio: ["ignore", "pipe", "pipe"],
   });
   context.after(async () => {
+    await Promise.all(openedSessions.map((session) => new Promise((resolve) => {
+      execFile("tmux", ["kill-session", "-t", `=${session}`], () => resolve());
+    })));
     child.kill("SIGTERM");
     await Promise.race([once(child, "exit"), new Promise((resolve) => setTimeout(resolve, 1000))]);
     await rm(root, { recursive: true, force: true });
@@ -133,4 +144,42 @@ test("launch options resolve the registry, and saving writes an Area default", a
   const after = await fetch(`${base}/api/launch/options?area=otto`).then((response) => response.json());
   assert.equal(after.default.command, "pi-code");
   assert.equal(after.default.label, "Pi Code");
+
+  // Starting a Goal with an explicit choice types the exact composed
+  // command into the shell pane without submitting it, and records the
+  // display label on the session.
+  const started = await fetch(`${base}/api/goals/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file: "otto/test/goal-prove-launch.md", choice: { harness: "claude-otto", model: "opus-4-6" } }),
+  });
+  assert.equal(started.status, 200);
+  const session = (await started.json()).session;
+  openedSessions.push(session);
+  const typed = await new Promise((resolve) => {
+    let attempts = 0;
+    /** Polls the pane until the primed command line appears. */
+    const poll = () => {
+      execFile("tmux", ["capture-pane", "-p", "-t", `=${session}:`], (error, stdout) => {
+        if (!error && /CLAUDE_CONFIG_DIR/.test(stdout)) return resolve(stdout);
+        if (attempts += 1, attempts > 40) return resolve(stdout ?? "");
+        setTimeout(poll, 250);
+      });
+    };
+    poll();
+  });
+  assert.match(typed, /CLAUDE_CONFIG_DIR=~\/\.claude-otto claude --model claude-opus-4-6/);
+  const label = await new Promise((resolve) => {
+    execFile("tmux", ["show-options", "-t", session, "-v", "@tangent_launch"], (error, stdout) => resolve((stdout ?? "").trim()));
+  });
+  assert.equal(label, "Claude · Otto · Opus 4.6");
+
+  // Reopening the Goal resumes the same session instead of rebuilding one.
+  const reopened = await fetch(`${base}/api/goals/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file: "otto/test/goal-prove-launch.md" }),
+  }).then((response) => response.json());
+  assert.equal(reopened.session, session);
+  assert.equal(reopened.reattached, true);
 });

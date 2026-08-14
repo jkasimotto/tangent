@@ -15,13 +15,19 @@ const SHELL_COMMANDS = new Set(["zsh", "bash", "fish", "sh", "dash", "tcsh", "nu
 export interface ProcessDefinition {
   name: string;
   command: string;
-  node: string;
+  area: string;
   cwd: string;
   manifest: string;
 }
 
 export interface ProcessManifest {
-  scripts: Record<string, string>;
+  scripts: Record<string, ProcessManifestEntry>;
+  commands: Record<string, ProcessManifestEntry>;
+}
+
+export interface ProcessManifestEntry {
+  command: string;
+  cwd?: string;
 }
 
 export interface ProcessRunner {
@@ -29,6 +35,7 @@ export interface ProcessRunner {
 }
 
 const defaultRunner: ProcessRunner = {
+  /** Runs one process-management command. */
   async run(command, args) {
     const result = await execFileAsync(command, args);
     return { stdout: result.stdout };
@@ -37,10 +44,10 @@ const defaultRunner: ProcessRunner = {
 
 /** Returns the local Tangent tree root. */
 export function tangentTreesRoot(home = os.homedir()): string {
-  return path.join(home, ".tangent", "trees");
+  return process.env.TANGENT_TREES_DIR || path.join(home, ".tangent", "trees");
 }
 
-/** Parses and validates one node-local process manifest. */
+/** Parses and validates one area-local process manifest. */
 export function parseProcessManifest(text: string, manifestPath: string): ProcessManifest {
   let value: unknown;
   try {
@@ -50,40 +57,61 @@ export function parseProcessManifest(text: string, manifestPath: string): Proces
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${manifestPath}: expected an object`);
   const keys = Object.keys(value);
-  if (keys.some((key) => key !== "scripts")) throw new Error(`${manifestPath}: only "scripts" is supported`);
-  const scripts = (value as { scripts?: unknown }).scripts;
-  if (!scripts || typeof scripts !== "object" || Array.isArray(scripts)) throw new Error(`${manifestPath}: "scripts" must be an object`);
-  const out: Record<string, string> = {};
-  for (const [name, command] of Object.entries(scripts)) {
-    if (!PROCESS_NAME.test(name)) throw new Error(`${manifestPath}: invalid process name ${JSON.stringify(name)}`);
-    if (typeof command !== "string" || !command.trim()) throw new Error(`${manifestPath}: script ${JSON.stringify(name)} must be a non-empty string`);
-    out[name] = command;
+  if (keys.some((key) => !["scripts", "commands"].includes(key))) {
+    throw new Error(`${manifestPath}: only "scripts" and "commands" are supported`);
   }
-  return { scripts: out };
+  /** Parses one optional name-to-command field. */
+  const parseCommands = (field: "scripts" | "commands"): Record<string, ProcessManifestEntry> => {
+    const entries = (value as Record<string, unknown>)[field];
+    if (entries === undefined) return {};
+    if (!entries || typeof entries !== "object" || Array.isArray(entries)) {
+      throw new Error(`${manifestPath}: "${field}" must be an object`);
+    }
+    const out: Record<string, ProcessManifestEntry> = {};
+    for (const [name, raw] of Object.entries(entries)) {
+      if (!PROCESS_NAME.test(name)) throw new Error(`${manifestPath}: invalid program name ${JSON.stringify(name)}`);
+      const command = typeof raw === "string" ? raw : raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as { command?: unknown }).command : undefined;
+      const cwd = typeof raw === "object" && raw && !Array.isArray(raw) ? (raw as { cwd?: unknown }).cwd : undefined;
+      if (typeof command !== "string" || !command.trim()) {
+        throw new Error(`${manifestPath}: ${field.slice(0, -1)} ${JSON.stringify(name)} must be a non-empty string`);
+      }
+      if (cwd !== undefined && (typeof cwd !== "string" || !cwd.trim())) {
+        throw new Error(`${manifestPath}: ${field.slice(0, -1)} ${JSON.stringify(name)} cwd must be a non-empty string`);
+      }
+      out[name] = { command: command.trim(), ...(typeof cwd === "string" ? { cwd: cwd.trim() } : {}) };
+    }
+    return out;
+  };
+  const scripts = parseCommands("scripts");
+  const commands = parseCommands("commands");
+  if (!Object.keys(scripts).length && !Object.keys(commands).length) {
+    throw new Error(`${manifestPath}: declare at least one script or command`);
+  }
+  return { scripts, commands };
 }
 
-/** Reads a node note's Repository/Worktree resource and resolves it to an existing directory. */
-async function nodeDirectory(treesRoot: string, node: string): Promise<string> {
-  const base = node.split("/").pop();
-  const note = path.join(treesRoot, node, `${base}.md`);
+/** Reads an Area note's Repository/Worktree resource and resolves it to an existing directory. */
+async function areaDirectory(treesRoot: string, area: string): Promise<string> {
+  const base = area.split("/").pop();
+  const note = path.join(treesRoot, area, `${base}.md`);
   let text: string;
   try {
     text = await readFile(note, "utf8");
   } catch {
-    throw new Error(`node ${node} has no readable note at ${note}`);
+    throw new Error(`Area ${area} has no readable note at ${note}`);
   }
   const resources = text.split(/^## /m).find((section) => section.startsWith("Resources")) ?? "";
   const match = resources.match(/^\s*-\s*(?:Repository|Worktree):\s*(.+?)\s*$/mi);
-  if (!match) throw new Error(`node ${node} has no Repository or Worktree in ${note}`);
+  if (!match) throw new Error(`Area ${area} has no Repository or Worktree in ${note}`);
   const cwd = match[1]!.replace(/^~(?=\/|$)/, os.homedir());
-  if (!path.isAbsolute(cwd) || !existsSync(cwd)) throw new Error(`node ${node} records an unavailable directory: ${cwd}`);
+  if (!path.isAbsolute(cwd) || !existsSync(cwd)) throw new Error(`Area ${area} records an unavailable directory: ${cwd}`);
   return cwd;
 }
 
-/** Resolves inherited definitions from root to node; the nearest declaration wins. */
-export async function resolveProcessDefinitions(node: string, treesRoot = tangentTreesRoot()): Promise<Map<string, ProcessDefinition>> {
-  const clean = node.replace(/^\/+|\/+$/g, "");
-  if (!clean || clean.split("/").some((part) => part === "." || part === "..")) throw new Error(`invalid Tangent node ${JSON.stringify(node)}`);
+/** Resolves inherited definitions from root to area; the nearest declaration wins. */
+export async function resolveProcessDefinitions(area: string, treesRoot = tangentTreesRoot()): Promise<Map<string, ProcessDefinition>> {
+  const clean = area.replace(/^\/+|\/+$/g, "");
+  if (!clean || clean.split("/").some((part) => part === "." || part === "..")) throw new Error(`invalid Tangent area ${JSON.stringify(area)}`);
   const parts = clean.split("/");
   const definitions = new Map<string, ProcessDefinition>();
   for (let depth = 1; depth <= parts.length; depth++) {
@@ -91,29 +119,35 @@ export async function resolveProcessDefinitions(node: string, treesRoot = tangen
     const manifest = path.join(treesRoot, owner, PROCESS_FILE);
     if (!existsSync(manifest)) continue;
     const parsed = parseProcessManifest(await readFile(manifest, "utf8"), manifest);
-    const cwd = await nodeDirectory(treesRoot, owner);
-    for (const [name, command] of Object.entries(parsed.scripts)) {
-      definitions.set(name, { name, command, node: owner, cwd, manifest });
+    let inheritedCwd: string | null = null;
+    for (const [name, entry] of Object.entries(parsed.scripts)) {
+      let cwd = entry.cwd?.replace(/^~(?=\/|$)/, os.homedir()) ?? null;
+      if (!cwd) {
+        inheritedCwd ??= await areaDirectory(treesRoot, owner);
+        cwd = inheritedCwd;
+      }
+      if (!path.isAbsolute(cwd) || !existsSync(cwd)) throw new Error(`${manifest}: ${name} records an unavailable directory: ${cwd}`);
+      definitions.set(name, { name, command: entry.command, area: owner, cwd, manifest });
     }
   }
   return definitions;
 }
 
-/** Deterministic tmux identity, namespaced by defining node and script. */
-export function processSessionName(definition: Pick<ProcessDefinition, "node" | "name">): string {
-  const base = `${definition.node.split("/").pop()}--${definition.name}`.replace(/[^a-z0-9-]/g, "-").slice(0, 42);
-  const hash = createHash("sha1").update(`${definition.node}\0${definition.name}`).digest("hex").slice(0, 8);
+/** Deterministic tmux identity, namespaced by defining area and script. */
+export function processSessionName(definition: Pick<ProcessDefinition, "area" | "name">): string {
+  const base = `${definition.area.split("/").pop()}--${definition.name}`.replace(/[^a-z0-9-]/g, "-").slice(0, 42);
+  const hash = createHash("sha1").update(`${definition.area}\0${definition.name}`).digest("hex").slice(0, 8);
   return `process-${base}-${hash}`;
 }
 
-/** Resolves the node override or the authoritative node bound to the current tmux session. */
-export async function resolveProcessNode(explicit: string | undefined, runner: ProcessRunner = defaultRunner): Promise<string> {
+/** Resolves the area override or the authoritative area bound to the current tmux session. */
+export async function resolveProcessArea(explicit: string | undefined, runner: ProcessRunner = defaultRunner): Promise<string> {
   if (explicit) return explicit;
-  if (!process.env.TMUX) throw new Error("no --node given and this shell is not inside a Tangent-bound tmux session");
-  const result = await runner.run("tmux", ["show-option", "-qv", "@tangent_node"]);
-  const node = result.stdout.trim();
-  if (!node) throw new Error("the current tmux session has no @tangent_node; pass --node <path>");
-  return node;
+  if (!process.env.TMUX) throw new Error("no --area given and this shell is not inside a Tangent-bound tmux session");
+  const result = await runner.run("tmux", ["show-option", "-qv", "@tangent_area"]);
+  const area = result.stdout.trim();
+  if (!area) throw new Error("the current tmux session has no @tangent_area; pass --area <path>");
+  return area;
 }
 
 /** Lists live tmux session names and their foreground commands. */
@@ -139,27 +173,27 @@ export async function controlProcess(action: "start" | "stop" | "restart" | "clo
   if (action === "close") {
     if (!exists) return `${definition.name} has no process session`;
     await runner.run("tmux", ["kill-session", "-t", `=${session}`]);
-    return `closed ${definition.name} on ${definition.node}`;
+    return `closed ${definition.name} on ${definition.area}`;
   }
   if (action === "stop") {
     if (!exists) return `${definition.name} has no process session`;
-    if (stopped) return `${definition.name} is already stopped on ${definition.node}`;
+    if (stopped) return `${definition.name} is already stopped on ${definition.area}`;
     await runner.run("tmux", ["send-keys", "-t", `=${session}:`, "C-c"]);
-    return `stopped ${definition.name} on ${definition.node}`;
+    return `stopped ${definition.name} on ${definition.area}`;
   }
   if (action === "restart" && exists && !stopped) {
     await runner.run("tmux", ["send-keys", "-t", `=${session}:`, "C-c"]);
   }
-  if (action === "start" && exists && !stopped) return `${definition.name} is already running on ${definition.node} (${session})`;
+  if (action === "start" && exists && !stopped) return `${definition.name} is already running on ${definition.area} (${session})`;
   if (!exists) {
     await runner.run("tmux", ["new-session", "-d", "-s", session, "-c", definition.cwd]);
     await runner.run("tmux", ["set-option", "-t", session, "@tangent_kind", "process"]);
-    await runner.run("tmux", ["set-option", "-t", session, "@tangent_node", definition.node]);
+    await runner.run("tmux", ["set-option", "-t", session, "@tangent_area", definition.area]);
     await runner.run("tmux", ["set-option", "-t", session, "@tangent_process", definition.name]);
   }
   await runner.run("tmux", ["send-keys", "-t", `=${session}:`, "-l", "--", definition.command]);
   await runner.run("tmux", ["send-keys", "-t", `=${session}:`, "Enter"]);
-  return `${action === "restart" ? "restarted" : "started"} ${definition.name} on ${definition.node} (${session})`;
+  return `${action === "restart" ? "restarted" : "started"} ${definition.name} on ${definition.area} (${session})`;
 }
 
 /** Runs the `tangent process` command family. */
@@ -167,16 +201,16 @@ export async function runProcessCommand(argv: string[], runner: ProcessRunner = 
   const args = parseArgs(argv);
   const action = args._[0];
   if (!action || !["list", "start", "stop", "restart", "close"].includes(action)) {
-    throw new Error("usage: tangent process <list|start|stop|restart|close> [name] [--node <path>]");
+    throw new Error("usage: tangent process <list|start|stop|restart|close> [name] [--area <path>]");
   }
-  const node = await resolveProcessNode(stringArg(args.node), runner);
-  const definitions = await resolveProcessDefinitions(node, treesRoot);
+  const area = await resolveProcessArea(stringArg(args.area), runner);
+  const definitions = await resolveProcessDefinitions(area, treesRoot);
   if (action === "list") {
     if (!definitions.size) {
-      console.log(`no managed processes declared for ${node}`);
+      console.log(`no managed processes declared for ${area}`);
       return;
     }
-    for (const definition of definitions.values()) console.log(`${definition.name}\t${definition.node}\t${definition.command}`);
+    for (const definition of definitions.values()) console.log(`${definition.name}\t${definition.area}\t${definition.command}`);
     return;
   }
   const name = args._[1];
@@ -184,7 +218,7 @@ export async function runProcessCommand(argv: string[], runner: ProcessRunner = 
   const definition = definitions.get(name);
   if (!definition) {
     const names = [...definitions.keys()].join(", ") || "none";
-    throw new Error(`${JSON.stringify(name)} is not a managed process for ${node}; declared: ${names}. Run it normally if it does not need tree visibility.`);
+    throw new Error(`${JSON.stringify(name)} is not a managed process for ${area}; declared: ${names}. Run it normally if it does not need tree visibility.`);
   }
   console.log(await controlProcess(action as "start" | "stop" | "restart" | "close", definition, runner));
 }

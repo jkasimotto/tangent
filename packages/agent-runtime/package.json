@@ -15,6 +15,10 @@
     "./notify": {
       "types": "./dist/notify.d.ts",
       "import": "./dist/notify.js"
+    },
+    "./agent": {
+      "types": "./dist/agent.d.ts",
+      "import": "./dist/agent.js"
     }
   },
   "files": [

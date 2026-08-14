@@ -1,5 +1,5 @@
 import type { EvalAgentConfig } from "../types/provider.js";
-import { processFailure, runProcess } from "@tangent/agent-runtime/process";
+import { runAgentCli } from "@tangent/agent-runtime/agent";
 
 type GeminiConfig = Extract<EvalAgentConfig, { kind: "gemini-cli" }>;
 type ProcessOutputChunk = { stream: "stdout" | "stderr"; chunk: string };
@@ -13,20 +13,18 @@ export async function runGeminiCli(args: {
   signal?: AbortSignal;
   onOutput?: (chunk: ProcessOutputChunk) => void;
 }): Promise<string> {
-  const command = args.config.command || "gemini";
-  const cliArgs: string[] = [];
-  if (args.config.model) cliArgs.push("--model", args.config.model);
-
-  const result = await runProcess({
-    command,
-    args: cliArgs,
-    stdin: args.prompt,
+  const result = await runAgentCli({
+    agent: {
+      provider: "gemini",
+      command: args.config.command,
+      model: args.config.model,
+      timeoutMs: args.config.timeoutMs,
+      env: args.env
+    },
+    prompt: args.prompt,
     cwd: args.cwd,
-    timeoutMs: args.config.timeoutMs || 1800000,
-    env: args.env,
     signal: args.signal,
     onOutput: args.onOutput
   });
-  if (result.code !== 0) throw processFailure(command, result.code, result.stderr, result.stdout);
-  return result.stdout;
+  return result.text;
 }

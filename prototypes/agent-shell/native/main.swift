@@ -9,7 +9,7 @@
 // owned chords like cmd+w and needed Shortcuts/AppleScript glue to focus the
 // window. Here the app owns the window, the dock icon, cmd-tab, and the menu
 // bar, and deliberately leaves cmd+w / cmd+d / cmd+b unbound so the page
-// keymap (public/keymap.js) receives them.
+// browser interface receives them.
 //
 // Build and install: bash native/build-app.sh (or npm run app).
 
@@ -87,8 +87,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
       DispatchQueue.main.async {
         guard let self = self, self.serverProcess === process else { return }
         self.serverProcess = nil
-        // Source edits deliberately exit the backend. Supervise it while the
-        // app is alive; tmux sessions are independent and remain untouched.
+        // Keep the server available after an unexpected exit while the app is
+        // alive; tmux sessions are independent and remain untouched.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
           self.startServer()
         }
@@ -114,7 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
         self.webView.loadHTMLString(
           "<body style='background:#111;color:#ddd;font:14px -apple-system'>" +
           "<h2>agent-shell server did not start</h2>" +
-          "<p>See <code>~/.tangent/agent-shell.log</code>, then press cmd+R.</p></body>",
+          "<p>See <code>~/.tangent/agent-shell.log</code>, then press cmd+shift+R.</p></body>",
           baseURL: nil)
       }
     }
@@ -179,10 +179,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     return nil
   }
 
-  @objc func reloadPage(_ sender: Any?) { ensureServerAndLoad() }
+  @objc func reloadPage(_ sender: Any?) { webView.reloadFromOrigin() }
 
   // MARK: menu
-  // No cmd+w, cmd+d, cmd+b, cmd+t, cmd+n here: the page keymap owns those.
+  // No cmd+w, cmd+d, cmd+b, cmd+t, cmd+n here: the browser interface owns those.
 
   func buildMenu() {
     let main = NSMenu()
@@ -217,6 +217,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
     let view = NSMenu(title: "View")
     let reload = NSMenuItem(title: "Reload", action: #selector(reloadPage(_:)), keyEquivalent: "r")
     reload.target = self
+    reload.keyEquivalentModifierMask = [.command, .shift]
     view.addItem(reload)
     view.addItem(.separator())
     let fullscreen = NSMenuItem(title: "Enter Full Screen",

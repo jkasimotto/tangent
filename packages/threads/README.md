@@ -58,8 +58,9 @@ the registered worktree, and persists the resolved id back into the registry. `a
 `tmux -CC attach -t <name>` command for a registered thread; the caller (a skill) decides how to open
 it.
 
-`recur due` scans the vault for `recur-<slug>.md` definitions (frontmatter `schedule`, `cwd`, optional
-`model`; body is the worker prompt), runs every one that is currently due, and records the fire in the
+`recur due` scans the vault for `recur-<slug>.md` definitions. Frontmatter contains `schedule`, `cwd`,
+optional `model`, and optional `paused`. The body is the worker prompt. A paused definition stays visible
+but is not due. The command runs every definition that is currently due and records the fire in the
 sidecar so it does not run again this cycle; `--dry-run` prints what would run without launching or
 recording. `recur run <slug>` runs one definition regardless of due-ness, still recording the fire; an
 unknown slug is a clear error listing every known slug. The launchd template for running `recur due` on

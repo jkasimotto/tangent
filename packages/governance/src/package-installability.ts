@@ -19,6 +19,7 @@ const standaloneAppBins: Record<string, string> = {
 };
 
 const rootProductPackages = new Set([
+  "@tangent/agent-shell",
   "@tangent/usage",
   "@tangent/governance",
   "@tangent/rollup",
@@ -27,6 +28,7 @@ const rootProductPackages = new Set([
 ]);
 
 const uiAppPackages = new Map([
+  ["@tangent/agent-shell", "trees"],
   ["@tangent/usage", "usage"],
   ["@tangent/eval", "eval"]
 ]);

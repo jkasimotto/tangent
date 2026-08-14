@@ -21,6 +21,8 @@ export type RecurDef = {
   /** Working directory the worker session runs in. */
   cwd: string;
   model: string;
+  /** A paused definition remains visible but is never selected by the scheduler. */
+  paused: boolean;
   /** The recur file's body, verbatim: the prompt handed to the dispatched worker. */
   prompt: string;
 };
@@ -49,6 +51,7 @@ export function parseRecurFile(node: string, fileName: string, content: string):
     schedule,
     cwd,
     model: frontmatter.model?.trim() || defaultModel,
+    paused: frontmatter.paused?.trim().toLowerCase() === "true",
     prompt: body.trim()
   };
 }
@@ -84,7 +87,8 @@ function parseSchedule(value: string | undefined, fileName: string): RecurSchedu
  * further back), so a schedule that was never due this cycle reports false even with no lastRunAt: a
  * dispatcher polling faster than the schedule period should not "catch up" on missed cycles.
  */
-export function isDue(def: { schedule: RecurSchedule }, lastRunAt: string | undefined, now: Date): boolean {
+export function isDue(def: { schedule: RecurSchedule; paused?: boolean }, lastRunAt: string | undefined, now: Date): boolean {
+  if (def.paused) return false;
   const scheduledInstant = mostRecentScheduledInstant(def.schedule, now);
   if (scheduledInstant.getTime() > now.getTime()) return false;
   if (!lastRunAt) return true;

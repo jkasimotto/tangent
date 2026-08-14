@@ -9,20 +9,35 @@ import {
   parseProcessManifest,
   processSessionName,
   resolveProcessDefinitions,
-  resolveProcessNode
+  resolveProcessArea
 } from "../dist/cli/processes.js";
 
 test("process manifests validate their deliberately small schema", () => {
-  assert.deepEqual(parseProcessManifest('{"scripts":{"dev":"npm run dev"}}', "/node/.processes.json"), {
-    scripts: { dev: "npm run dev" }
+  assert.deepEqual(parseProcessManifest('{"scripts":{"dev":"npm run dev"}}', "/area/.processes.json"), {
+    scripts: { dev: { command: "npm run dev" } },
+    commands: {}
   });
   assert.throws(() => parseProcessManifest("{", "/bad"), /invalid JSON/);
-  assert.throws(() => parseProcessManifest('{"scripts":{"Bad name":"x"}}', "/bad"), /invalid process name/);
+  assert.throws(() => parseProcessManifest('{"scripts":{"Bad name":"x"}}', "/bad"), /invalid program name/);
   assert.throws(() => parseProcessManifest('{"scripts":{"dev":""}}', "/bad"), /non-empty string/);
-  assert.throws(() => parseProcessManifest('{"scripts":{},"cwd":"x"}', "/bad"), /only "scripts"/);
+  assert.throws(() => parseProcessManifest('{"scripts":{},"cwd":"x"}', "/bad"), /only "scripts" and "commands"/);
 });
 
-test("descendants inherit definitions and the nearest noun node wins", async () => {
+test("process manifests can hold on-demand commands beside managed processes", () => {
+  assert.deepEqual(parseProcessManifest('{"commands":{"release":"npm run release"}}', "/area/.processes.json"), {
+    scripts: {},
+    commands: { release: { command: "npm run release" } }
+  });
+});
+
+test("a managed process may record its own working directory", () => {
+  assert.deepEqual(parseProcessManifest('{"scripts":{"dev":{"command":"npm run dev","cwd":"/tmp"}}}', "/area/.processes.json"), {
+    scripts: { dev: { command: "npm run dev", cwd: "/tmp" } },
+    commands: {}
+  });
+});
+
+test("descendants inherit definitions and the nearest Area wins", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "tangent-processes-"));
   const repoA = path.join(root, "repo-a");
   const repoB = path.join(root, "repo-b");
@@ -30,29 +45,29 @@ test("descendants inherit definitions and the nearest noun node wins", async () 
     await mkdir(path.join(root, "otto", "tangent", "shell"), { recursive: true });
     await mkdir(repoA);
     await mkdir(repoB);
-    await writeNode(root, "otto", repoA, { dev: "root-dev", shared: "root-shared" });
-    await writeNode(root, "otto/tangent", repoB, { dev: "tangent-dev" });
+    await writeArea(root, "otto", repoA, { dev: "root-dev", shared: "root-shared" });
+    await writeArea(root, "otto/tangent", repoB, { dev: "tangent-dev" });
 
     const definitions = await resolveProcessDefinitions("otto/tangent/shell", root);
     assert.deepEqual([...definitions.keys()], ["dev", "shared"]);
     assert.deepEqual(definitions.get("dev"), {
       name: "dev",
       command: "tangent-dev",
-      node: "otto/tangent",
+      area: "otto/tangent",
       cwd: repoB,
       manifest: path.join(root, "otto", "tangent", ".processes.json")
     });
-    assert.equal(definitions.get("shared").node, "otto");
+    assert.equal(definitions.get("shared").area, "otto");
     assert.equal(definitions.get("shared").cwd, repoA);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("process sessions are stable and namespaced by defining node", () => {
-  const a = processSessionName({ node: "otto/tangent", name: "dev" });
-  assert.equal(a, processSessionName({ node: "otto/tangent", name: "dev" }));
-  assert.notEqual(a, processSessionName({ node: "neara/tangent", name: "dev" }));
+test("process sessions are stable and namespaced by defining area", () => {
+  const a = processSessionName({ area: "otto/tangent", name: "dev" });
+  assert.equal(a, processSessionName({ area: "otto/tangent", name: "dev" }));
+  assert.notEqual(a, processSessionName({ area: "neara/tangent", name: "dev" }));
   assert.match(a, /^process-tangent--dev-[a-f0-9]{8}$/);
 });
 
@@ -66,7 +81,7 @@ test("start creates a metadata-bound tmux shell and submits the literal command"
     ["tmux", ["list-sessions", "-F", "#{session_name}\t#{pane_current_command}"]],
     ["tmux", ["new-session", "-d", "-s", session, "-c", "/repo"]],
     ["tmux", ["set-option", "-t", session, "@tangent_kind", "process"]],
-    ["tmux", ["set-option", "-t", session, "@tangent_node", "otto/tangent"]],
+    ["tmux", ["set-option", "-t", session, "@tangent_area", "otto/tangent"]],
     ["tmux", ["set-option", "-t", session, "@tangent_process", "dev"]],
     ["tmux", ["send-keys", "-t", `=${session}:`, "-l", "--", "npm run dev && echo '$HOME'"]],
     ["tmux", ["send-keys", "-t", `=${session}:`, "Enter"]]
@@ -100,13 +115,13 @@ test("stop and close target only the exact managed session", async () => {
   assert.deepEqual(close.calls.at(-1), ["tmux", ["kill-session", "-t", `=${session}`]]);
 });
 
-test("the bound tmux node is authoritative unless --node is explicit", async () => {
+test("the bound tmux area is authoritative unless --area is explicit", async () => {
   const runner = recordingRunner(["otto/tangent\n"]);
   const previous = process.env.TMUX;
   process.env.TMUX = "/tmp/tmux";
   try {
-    assert.equal(await resolveProcessNode(undefined, runner), "otto/tangent");
-    assert.equal(await resolveProcessNode("neara/pgande", runner), "neara/pgande");
+    assert.equal(await resolveProcessArea(undefined, runner), "otto/tangent");
+    assert.equal(await resolveProcessArea("neara/pgande", runner), "neara/pgande");
     assert.equal(runner.calls.length, 1);
   } finally {
     if (previous === undefined) delete process.env.TMUX;
@@ -114,28 +129,32 @@ test("the bound tmux node is authoritative unless --node is explicit", async () 
   }
 });
 
-async function writeNode(root, node, repo, scripts) {
-  const dir = path.join(root, node);
+/** Writes one Area and its process manifest. */
+async function writeArea(root, area, repo, scripts) {
+  const dir = path.join(root, area);
   await mkdir(dir, { recursive: true });
-  const base = node.split("/").pop();
-  await writeFile(path.join(dir, `${base}.md`), `---\ntype: work\nstatus: active\n---\n\n# ${base}\n\n## Resources\n\n- Repository: ${repo}\n`);
+  const base = area.split("/").pop();
+  await writeFile(path.join(dir, `${base}.md`), `---\ntype: area\nstatus: active\n---\n\n# ${base}\n\n## Resources\n\n- Repository: ${repo}\n`);
   await writeFile(path.join(dir, ".processes.json"), JSON.stringify({ scripts }));
 }
 
+/** Returns the standard managed-process fixture. */
 function def() {
   return {
     name: "dev",
     command: "npm run dev && echo '$HOME'",
-    node: "otto/tangent",
+    area: "otto/tangent",
     cwd: "/repo",
     manifest: "/trees/otto/tangent/.processes.json"
   };
 }
 
+/** Returns a runner that records commands and yields fixture output. */
 function recordingRunner(outputs) {
   let index = 0;
   return {
     calls: [],
+    /** Records one command and returns its next fixture output. */
     async run(command, args) {
       this.calls.push([command, args]);
       return { stdout: outputs[index++] ?? "" };

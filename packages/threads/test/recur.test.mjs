@@ -28,7 +28,15 @@ test("parses a daily recur definition", () => {
   assert.deepEqual(def.schedule, { kind: "daily", time: "08:30" });
   assert.equal(def.cwd, "/tmp");
   assert.equal(def.model, "sonnet");
+  assert.equal(def.paused, false);
   assert.match(def.prompt, /SOP note/);
+});
+
+test("paused definitions are visible but not due", () => {
+  const content = ["---", "schedule: daily 08:30", "cwd: /tmp", "paused: true", "---", "Wait."].join("\n");
+  const def = parseRecurFile("proj", "recur-paused.md", content);
+  assert.equal(def.paused, true);
+  assert.equal(isDue(def, undefined, new Date("2026-07-16T09:00:00+10:00")), false);
 });
 
 test("parses a weekly recur definition with an explicit model", () => {

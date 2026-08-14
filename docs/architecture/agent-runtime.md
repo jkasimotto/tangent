@@ -6,5 +6,10 @@
 - environment merging
 - process failure formatting
 - runner JSON parsing helpers
+- Claude, Codex, and Gemini command adapters
+- fresh provider sessions and supported session resume operations
+- structured completion and provider session identifiers
 
-Rollup and Eval keep their domain prompts, schemas, manifests, and output normalization. Shared timeout/env behavior belongs in agent-runtime so agents do not copy runner wrappers into vertical apps.
+Rollup, Eval, and Agent Shell keep their domain prompts, schemas, manifests, and output validation. Shared provider command behavior belongs in agent-runtime.
+
+A saved agent preset can request a login shell. This option supports local aliases without teaching a vertical app how to start a provider.

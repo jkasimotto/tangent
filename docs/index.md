@@ -2,10 +2,10 @@
 
 Start here when changing architecture, package boundaries, or agent workflow.
 
-Agent Shell is the daily product for work with coding agents. Its current local implementation lives in `prototypes/agent-shell/`. It keeps native chat complete and adds compact return context, work shaping, and handoff around it. The first rejected interaction notebook remains in `prototypes/agent-shell-vision/`.
+Agent Shell is the daily product for work with coding agents. Its current local implementation lives in `prototypes/agent-shell/`. It keeps native chat complete and adds compact return context, work shaping, and handoff around it. Work-definition agents appear in the normal attention groups, several can run at once, and confirmed Goals go through a deterministic schema writer. The Document reader shows one Document with history controls, a compact picker, and a quiet page outline. Open agent replaces the reader, and Back restores it. The first rejected interaction notebook remains in `prototypes/agent-shell-vision/`.
 
 Human CLI defaults are `setup`, `status`, `ui`, `process`, `usage`, `rollup`, `search`, `eval`, `mark`, `doctor`, and `completion`.
-`tangent process` runs personally configured named processes from inherited, ignored `.processes.json` files on Tangent noun nodes. Managed processes use node-bound tmux sessions so they remain visible and inspectable in the tree.
+`tangent process` runs configured processes from inherited, ignored `.processes.json` files in Tangent Areas. Managed processes use Area-bound tmux sessions so they remain visible and inspectable in the hierarchy.
 Raw/debug/CI surfaces such as `governance`, `data export`, and `data archive` stay callable but hidden from default help.
 
 Architecture:
@@ -37,6 +37,15 @@ Agent workflow:
 - agent/review-rules.md
 - agent/validation.md
 - agent/doc-gardening.md
+
+Product design:
+- design/agent-shell-area-desk.md
+- design/command-center-access.md
+- design/task-outcomes.md
+
+Agent Shell packages:
+- ../packages/agent-shell/docs/index.md
+- ../packages/agent-shell-ui/docs/index.md
 
 Quality:
 - quality/scorecard.md

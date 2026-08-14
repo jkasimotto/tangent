@@ -7,6 +7,7 @@ root CLI
   -> @tangent/ui-server
 
 root CLI lazy optional products
+  -> @tangent/agent-shell/server
   -> @tangent/usage/cli
   -> @tangent/usage/server
   -> @tangent/rollup/cli
@@ -17,6 +18,7 @@ root CLI lazy optional products
   -> @tangent/governance/cli
 
 @tangent/rollup -> @tangent/usage-index-sqlite, @tangent/core, @tangent/repo, @tangent/agent-runtime
+@tangent/agent-shell -> @tangent/agent-runtime, @tangent/agent-shell-ui, @tangent/repo, @tangent/ui-server
 @tangent/eval -> @tangent/usage-index-sqlite, @tangent/core, @tangent/repo, @tangent/agent-runtime, @tangent/ui-server, @tangent/eval-ui
 @tangent/usage -> @tangent/core, @tangent/repo, @tangent/ui-server, @tangent/usage-core, @tangent/usage-index-sqlite, @tangent/usage-providers, @tangent/usage-ui, @tangent/usage-ui-data
 @tangent/search -> @tangent/core, @tangent/repo
@@ -41,6 +43,7 @@ UI graph:
 @tangent/usage-ui-data -> no React
 @tangent/usage-ui -> @tangent/usage-ui-data, @tangent/ui-tokens, Svelte
 @tangent/eval-ui -> @tangent/ui-tokens, Svelte
+@tangent/agent-shell-ui -> @tangent/ui-tokens, Svelte
 ```
 
 The graph is enforced by @tangent/governance. If a package dependency changes, update this file and the lint allowlist in the same change. Usage subpaths `/schema`, `/core`, and `/query` are dependency-light entrypoints and must not load optional SQLite, server, or UI code. The Usage package-level UI dependencies are for `tangent usage ui` and the `@tangent/usage/server` subpath.

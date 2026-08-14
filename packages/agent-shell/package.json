@@ -1,0 +1,44 @@
+{
+  "name": "@tangent/agent-shell",
+  "version": "0.1.0",
+  "description": "Goal-bound programs and durable multi-agent runs for Tangent.",
+  "type": "module",
+  "tangent": {
+    "uiApp": {
+      "id": "trees",
+      "label": "Work",
+      "serverExport": "@tangent/agent-shell/server",
+      "factory": "createAgentShellUiApp",
+      "order": 20
+    }
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build -w @tangent/agent-runtime && npm run build -w @tangent/repo && npm run build -w @tangent/ui-server && npm run build -w @tangent/agent-shell-ui && npm run build && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@tangent/agent-runtime": "^0.1.0",
+    "@tangent/agent-shell-ui": "^0.1.0",
+    "@tangent/repo": "^0.1.0",
+    "@tangent/ui-server": "^0.1.0"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}

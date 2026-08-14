@@ -7,7 +7,6 @@
   "scripts": {
     "start": "node server.mjs",
     "app": "bash native/build-app.sh",
-    "reload": "node force-reload.mjs",
     "test": "node --test *.test.mjs",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper || true"
   },

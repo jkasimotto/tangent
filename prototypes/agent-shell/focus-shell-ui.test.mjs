@@ -37,42 +37,135 @@ function jsonResponse(payload) {
   };
 }
 
-test("the live shell restores context, shapes work, and prepares a handoff", async () => {
+test("the live shell restores context, defines work with an agent, and organizes areas", async () => {
   const [html, script] = await Promise.all([
     readFile(path.join(here, "public", "shell.html"), "utf8"),
     readFile(path.join(here, "public", "shell.js"), "utf8"),
   ]);
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
   const { window } = dom;
-  const outcomeFile = "otto/tangent/outcome-ux-product-vision.md";
-  const outcome = {
+  const goalFile = "otto/tangent/goal-ux-product-vision.md";
+  const goal = {
     mtime: 1,
-    node: "otto/tangent",
+    area: "otto/tangent",
     slug: "ux-product-vision",
-    file: outcomeFile,
+    file: goalFile,
     title: "UX Product Vision",
     status: "active",
-    outcome: "Agent Shell is calm to understand, direct, and resume.",
+    doneWhen: "Agent Shell is calm to understand, direct, and resume.",
     stateText: "The context-first shell works.\n\n### Open questions\n\n- Which moments need a checkpoint?",
     myUnderstanding: "Keep native chat central and prepare context around it.",
-    currentBrief: "- You wanted: One calm surface.\n- What changed: Native chat remains complete.\n- Now: Build context around the chat.",
+    currentBrief: "- You wanted: One calm surface.",
     storyText: "### The first shell failed\n\nIt showed controls before context.\n\n### Native chat stayed\n\nThe shell now augments the complete chat.",
-    documents: [{ file: "otto/tangent/design-tangent.md", title: "Tangent product design" }],
-    breakdown: [],
+    documents: [{ file: "otto/tangent/design-tangent.md", title: "Tangent product design", kind: "document" }],
+    why: [],
+    subgoalItems: [{ file: "otto/tangent/goal-use-cases.md", title: "Use cases", doneWhen: "The important use cases are documented.", status: "open" }],
+    subgoals: ["use-cases"],
     depth: 0,
   };
+  const subgoal = {
+    ...goal,
+    mtime: 2,
+    slug: "use-cases",
+    file: "otto/tangent/goal-use-cases.md",
+    title: "Use cases",
+    doneWhen: "The important use cases are documented.",
+    currentBrief: "- You wanted: The important use cases are documented.",
+    storyText: "",
+    documents: [],
+    why: [{ file: goalFile, title: "UX Product Vision", doneWhen: goal.doneWhen, status: "active" }],
+    subgoalItems: [],
+    subgoals: [],
+    session: null,
+    depth: 1,
+  };
+  const liveEditDocument = {
+    file: "neara/hackathon/live-edit/use-case-documentation.md",
+    area: "neara/hackathon/live-edit",
+    kind: "document",
+    title: "Live Edit use cases",
+    searchText: "live edit collaboration use cases",
+    goalHistory: [{ file: "neara/hackathon/live-edit/goal-define-live-edit-collaboration.md", title: "Define Live Edit collaboration", doneWhen: "The Live Edit design is ready to review." }],
+  };
+  const liveEditPrinciples = {
+    ...liveEditDocument,
+    file: "neara/hackathon/live-edit/principles-of-a-good-solution.md",
+    title: "Principles of a good solution",
+    searchText: "live edit collaboration principles shared boundaries",
+  };
+  const liveEditDesign = {
+    ...liveEditDocument,
+    file: "neara/hackathon/live-edit/design-live-edit-collaboration.md",
+    title: "Live Edit collaboration design",
+    searchText: "live edit collaboration complete design operations",
+  };
+  const liveEditGoal = {
+    mtime: 3,
+    area: "neara/hackathon/live-edit",
+    slug: "define-live-edit-collaboration",
+    file: "neara/hackathon/live-edit/goal-define-live-edit-collaboration.md",
+    title: "Define Live Edit collaboration",
+    status: "open",
+    doneWhen: "The Live Edit design is ready to review.",
+    stateText: "Five Documents are ready for review.",
+    currentBrief: "- You wanted: A clear design for Live Edit collaboration.",
+    storyText: "### Documents became the review surface\n\nFive linked Documents now carry the complete design.\n\n### Review found the next question\n\nThe operation serializer needs a separate explanation.",
+    documents: [liveEditDocument, liveEditPrinciples, liveEditDesign],
+    waitingOn: "Julian",
+    why: [],
+    subgoalItems: [],
+    subgoals: [],
+    depth: 0,
+  };
+  const staleCompletedGoal = {
+    ...liveEditGoal,
+    area: "otto/closed",
+    slug: "already-complete",
+    file: "otto/closed/goal-already-complete.md",
+    title: "Already complete",
+    status: "done",
+    session: "stale-completed-run",
+    waitingOn: "Julian",
+    documents: [],
+  };
   const vault = {
-    nodes: [{ path: "otto/tangent", name: "tangent", outcomes: [outcome] }],
-    map: [{ path: "otto/tangent", name: "tangent", outcomes: [outcome] }],
+    areas: [
+      { path: "neara", name: "neara", goals: [] },
+      { path: "neara/hackathon", name: "hackathon", goals: [] },
+      { path: "neara/hackathon/live-edit", name: "live-edit", goals: [liveEditGoal], documents: [liveEditDocument, liveEditPrinciples, liveEditDesign] },
+      { path: "otto", name: "otto", goals: [] },
+      { path: "otto/closed", name: "closed", goals: [staleCompletedGoal] },
+      { path: "otto/dnd", name: "dnd", goals: [] },
+      { path: "otto/tangent", name: "tangent", goals: [goal, subgoal] },
+    ],
+    map: [
+      { path: "neara/hackathon/live-edit", name: "live-edit", goals: [liveEditGoal] },
+      { path: "otto/closed", name: "closed", goals: [staleCompletedGoal] },
+      { path: "otto/tangent", name: "tangent", goals: [goal, subgoal] },
+    ],
+    documents: [
+      liveEditDocument,
+      liveEditPrinciples,
+      liveEditDesign,
+      {
+        file: "otto/tangent/design-tangent.md",
+        area: "otto/tangent",
+        kind: "document",
+        title: "Tangent product design",
+        searchText: "tangent product design neara pgande land the pgande megabranch land viz input",
+        goalHistory: [
+          { file: "neara/pgande/goal-land-megabranch.md", title: "Land the PG&E megabranch", doneWhen: "The megabranch is landed." },
+          { file: "neara/pgande/goal-land-viz-input.md", title: "Land Viz Input", doneWhen: "Viz Input is landed." },
+        ],
+      },
+    ],
   };
   const posts = [];
+  let reviewAgentStarted = false;
+  const describeSessions = [];
 
-  window.localStorage.setItem("agent-shell.current-outcome", outcomeFile);
+  window.localStorage.setItem("agent-shell.current-goal", goalFile);
   window.setInterval = () => 0;
-  window.EventSource = class EventSource {
-    /** Accepts an event listener without opening a real connection. */
-    addEventListener() {}
-  };
   Object.defineProperty(window.navigator, "clipboard", {
     value: {
       /** Records copied context without using the host clipboard. */
@@ -84,23 +177,68 @@ test("the live shell restores context, shapes work, and prepares a handoff", asy
     if (options.method === "POST") {
       const body = JSON.parse(options.body);
       posts.push({ path: pathname, body });
-      if (pathname === "/api/work/shape") {
-        return jsonResponse({
-            parent: { title: "Make the scene flow reliable", outcome: "The scene flow is reliable." },
-            children: [
-              { title: "Terrain generation fits the view", outcome: "Terrain generation fits the view." },
-              { title: "Sprite cutouts keep the asset", outcome: "Sprite cutouts keep the asset." },
-            ],
-            shapedBy: "model",
-        });
+      if (pathname === "/api/goals/agent") reviewAgentStarted = true;
+      if (pathname === "/api/work/describe") {
+        const first = describeSessions.length === 0;
+        const session = {
+          name: first ? "dnd--describe-scene-flow" : "dnd--describe-ladder-authoring",
+          area: "otto/dnd",
+          kind: "work-definition",
+          state: first ? "waiting" : "working",
+          phase: "define",
+          command: "codex",
+          workTitle: first ? "Make the scene flow reliable" : "Define ladder authoring",
+        };
+        describeSessions.push(session);
+        return jsonResponse({ session: session.name });
       }
-      return jsonResponse({ file: outcomeFile, files: [outcomeFile] });
+      return jsonResponse({ file: goalFile, files: [goalFile] });
     }
     if (pathname === "/api/sessions") {
-      return jsonResponse({ caffeinate: false, sessions: [{ name: "tangent-vision", outcome: outcomeFile, state: "waiting", command: "codex" }] });
+      return jsonResponse({
+        caffeinate: false,
+        sessions: [
+          { name: "tangent-vision", goal: goalFile, state: "waiting", command: "codex" },
+          { name: "stale-completed-run", goal: staleCompletedGoal.file, state: "waiting", command: "codex" },
+          ...describeSessions,
+          ...(reviewAgentStarted ? [{ name: "live-edit-collaboration", goal: liveEditGoal.file, state: "waiting", phase: "collaborate", command: "codex" }] : []),
+        ],
+      });
+    }
+    if (pathname === "/api/programs") {
+      return jsonResponse({
+        programs: [{ id: "process:otto/dnd:hmr", type: "process", area: "otto/dnd", name: "hmr", label: "HMR", command: "npm run dev:hmr", cwd: "/tmp", sessionName: "process-dnd--hmr-test", session: null, available: true }],
+        errors: [],
+        areas: [{ path: "otto/dnd", cwd: "/tmp" }],
+        liveCount: 0,
+        timezone: "Europe/Athens",
+        scheduler: { installed: true, intervalMinutes: 30, lastExitCode: 0 },
+      });
     }
     if (pathname === "/api/document") {
-      return jsonResponse({ file: "otto/tangent/design-tangent.md", node: "otto/tangent", title: "Tangent product design", text: "# Tangent product design\n\nNative chat stays complete.", hash: "abc" });
+      const file = new URL(url, window.location.href).searchParams.get("file");
+      if (file === liveEditDocument.file) {
+        return jsonResponse({
+          ...liveEditDocument,
+          text: "---\ntype: document\nstatus: draft\n---\n\n# Live Edit use cases\n\nPeople can work together in one design. Read [[principles-of-a-good-solution]] or [open the design](design-live-edit-collaboration.md#Operations).\n\n## Collaboration shapes\n\nThe session has three shapes.\n\n### Observe\n\nOne participant can observe another.\n\n| State | Scope | Note |\n|---|:---:|---:|\n| Cursor | Presence | Never saved |",
+          hash: "live-edit",
+        });
+      }
+      if (file === liveEditPrinciples.file) {
+        return jsonResponse({
+          ...liveEditPrinciples,
+          text: "# Principles of a good solution\n\n## Shared boundaries stay explicit\n\nThe shared state stays small. Return to [[use-case-documentation|the use cases]].",
+          hash: "principles",
+        });
+      }
+      if (file === liveEditDesign.file) {
+        return jsonResponse({
+          ...liveEditDesign,
+          text: "# Live Edit collaboration design\n\n## Operations\n\nOperations serialize shared edits.",
+          hash: "design-live-edit",
+        });
+      }
+      return jsonResponse({ file, area: "otto/tangent", kind: "document", title: "Tangent product design", text: "# Tangent product design\n\nNative chat stays complete.", hash: "design" });
     }
     return jsonResponse(vault);
   };
@@ -108,41 +246,206 @@ test("the live shell restores context, shapes work, and prepares a handoff", asy
   window.eval(script);
   await settle(window);
 
-  assert.match(window.document.querySelector("#screen").textContent, /Current brief/);
-  assert.match(window.document.querySelector("#screen").textContent, /Native chat remains complete/);
-  assert.match(window.document.querySelector("#screen").textContent, /2 meaningful moments/);
-  assert.match(window.document.querySelector("#screen").textContent, /Open Codex/);
+  assert.match(window.document.querySelector("#screen").textContent, /Work by Area/);
+  assert.equal(window.document.querySelectorAll(".area-desk-panel").length, 2);
+  assert.match(window.document.querySelector(".attention-queue").textContent, /Needs you now/);
+  assert.match(window.document.querySelector(".area-desk-panel:nth-child(2)").textContent, /Tangent/);
+  assert.match(window.document.querySelector(".area-desk-panel:nth-child(2) .desk-documents").textContent, /Tangent product design/);
+  assert.equal(window.document.querySelectorAll(".desk-goal.subgoal").length, 1);
+  assert.equal(window.document.querySelector("#work-tab").getAttribute("aria-current"), "page");
+  assert.equal(window.document.querySelector("#areas-tab").hidden, false);
+  assert.equal(window.document.querySelector("#programs-button").hidden, false);
 
-  click(window, "[data-share-context]");
-  assert.match(window.document.querySelector("#screen").textContent, /Two-minute context/);
-  assert.match(window.document.querySelector("#screen").textContent, /Which moments need a checkpoint/);
-  click(window, "[data-copy-context]");
-  await settle(window);
-  assert.match(posts.find((entry) => entry.path === "clipboard").body, /## Current direction/);
-
+  click(window, `[data-open-goal-run='${goalFile}']`);
+  assert.ok(window.document.querySelector(".agent-page"));
+  assert.equal(window.document.querySelector("#back-button").textContent, "Work");
   click(window, "#back-button");
+  assert.match(window.document.querySelector("#screen").textContent, /Work by Area/);
+
+  click(window, `[data-view-goal='${goalFile}']`);
+  assert.match(window.document.querySelector("#screen").textContent, /Goal details/);
+  assert.match(window.document.querySelector("#screen").textContent, /Current brief/);
+  assert.equal(window.document.querySelector(".goal-history").open, false);
+  assert.match(window.document.querySelector("#screen").textContent, /Tangent product design/);
+  assert.doesNotMatch(window.document.querySelector("#screen").textContent, /Review execution plan|Read what will happen/);
+
   click(window, "[data-open-document]");
   await settle(window);
+  assert.match(window.document.querySelector("#screen").textContent, /Document/);
   assert.match(window.document.querySelector("#screen").textContent, /Native chat stays complete/);
 
   click(window, "#back-button");
   click(window, "#back-button");
+  assert.equal(window.document.querySelector("[data-new-goal]"), null);
+  assert.equal(window.document.querySelectorAll(".area-desk-panel").length, 2);
+  assert.match(window.document.querySelector("#screen").textContent, /Define Live Edit collaboration/);
+  assert.match(window.document.querySelector("#screen").textContent, /Waiting for you/);
+  assert.doesNotMatch(window.document.querySelector("#screen").textContent, /Already complete/);
+  assert.match(window.document.querySelector(".desk-subgoal-disclosure > summary").textContent, /To do that1 Subgoal/);
+
+  const search = window.document.querySelector("#work-search");
+  search.value = "when we landed the pgande megabranch we built the viz input thing";
+  search.dispatchEvent(new window.Event("input", { bubbles: true }));
+  assert.match(window.document.querySelector("#screen").textContent, /Tangent product design/);
+  assert.match(window.document.querySelector("#screen").textContent, /Land the PG&E megabranch → Land Viz Input/);
+  const clearedSearch = window.document.querySelector("#work-search");
+  clearedSearch.value = "";
+  clearedSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
+
   click(window, "[data-describe-work]");
-  const description = window.document.querySelector("#shape-description");
+  const describeArea = window.document.querySelector("#describe-area");
+  describeArea.value = "otto/dnd";
+  describeArea.dispatchEvent(new window.Event("input", { bubbles: true }));
+  const description = window.document.querySelector("#describe-work");
   description.value = "Make the scene flow reliable. Terrain generation fits the view. Sprite cutouts keep the asset.";
   description.dispatchEvent(new window.Event("input", { bubbles: true }));
-  submit(window, "[data-shape-capture-form]");
+  submit(window, "[data-describe-work-form]");
   await settle(window);
-  assert.match(window.document.querySelector("#screen").textContent, /Keep the whole/);
-  assert.equal(window.document.querySelectorAll("[data-child-index]").length, 2);
-  assert.match(window.document.querySelector("[data-parent-field='title']").value, /Make the scene flow reliable/);
+  const described = posts.find((entry) => entry.path === "/api/work/describe");
+  assert.equal(described.body.area, "otto/dnd");
+  assert.equal(described.body.description, description.value);
+  assert.equal(described.body.launch, true);
+  assert.equal(described.body.session, undefined);
+  assert.ok(window.document.querySelector(".agent-page"));
+  assert.match(window.document.querySelector("#bar-context").textContent, /D&D · Defining work · Waiting for you/);
+  assert.equal(window.localStorage.getItem("agent-shell.describe-draft"), null);
+  assert.equal(window.localStorage.getItem("agent-shell.describe-session"), "dnd--describe-scene-flow");
 
-  submit(window, "[data-shape-review-form]");
+  click(window, "#back-button");
+  assert.equal(window.document.querySelector("[data-describe-work]").textContent.trim(), "Describe work");
+  const workDefinition = window.document.querySelector(".desk-definition");
+  assert.ok(workDefinition, window.document.querySelector("#screen").textContent);
+  assert.match(workDefinition.closest(".area-desk-panel").textContent, /D&D/);
+  assert.match(workDefinition.textContent, /Defining work/);
+  assert.match(workDefinition.textContent, /Make the scene flow reliable/);
+  assert.match(workDefinition.textContent, /Waiting for you/);
+  click(window, "[data-select-work-definition='dnd--describe-scene-flow']");
+  assert.ok(window.document.querySelector(".agent-page"));
+  click(window, "#back-button");
+  click(window, "[data-describe-work]");
+  assert.ok(window.document.querySelector("[data-describe-work-form]"));
+  assert.equal(window.document.querySelector("#describe-work").value, "");
+  const secondDescription = window.document.querySelector("#describe-work");
+  secondDescription.value = "Define ladder authoring.";
+  secondDescription.dispatchEvent(new window.Event("input", { bubbles: true }));
+  submit(window, "[data-describe-work-form]");
   await settle(window);
-  const batch = posts.find((entry) => entry.path === "/api/outcome/batch");
-  assert.equal(batch.body.parent.title, "Make the scene flow reliable");
-  assert.equal(batch.body.children.length, 2);
-  assert.equal(window.localStorage.getItem("agent-shell.shape-draft"), null);
+  assert.ok(window.document.querySelector(".agent-page"));
+  click(window, "#back-button");
+  assert.equal(window.document.querySelectorAll(".desk-definition").length, 2);
+  assert.match(window.document.querySelector("#screen").textContent, /Make the scene flow reliable/);
+  assert.match(window.document.querySelector("#screen").textContent, /Define ladder authoring/);
+  assert.match(window.document.querySelector("#screen").textContent, /Agent working/);
+  click(window, "#areas-tab");
+  click(window, "[data-toggle-area='neara']");
+  assert.match(window.document.querySelector("#screen").textContent, /Hackathon/);
+  click(window, "[data-toggle-area='neara/hackathon']");
+  assert.match(window.document.querySelector("#screen").textContent, /Live Edit/);
+  click(window, "[data-select-area='neara/hackathon/live-edit']");
+  assert.match(window.document.querySelector("#screen").textContent, /3 Documents/);
+  assert.match(window.document.querySelector("#screen").textContent, /1 Goal/);
+  assert.equal(window.document.querySelector("[data-new-goal]").textContent.trim(), "Create Goal");
+  click(window, "[data-new-goal]");
+  await settle(window);
+  assert.equal(window.document.querySelector("#new-goal-area").value, "neara/hackathon/live-edit");
+  assert.equal(window.document.querySelector("#new-goal-title"), window.document.activeElement);
+  click(window, "[data-cancel-create]");
+  assert.match(window.document.querySelector("#screen").textContent, /3 Documents/);
+  assert.equal(window.document.querySelector("[data-new-goal]").textContent.trim(), "Create Goal");
+  click(window, "[data-new-goal]");
+  window.document.querySelector("#new-goal-title").value = "Share a scene safely";
+  window.document.querySelector("#new-goal-result").value = "A collaborator can join without losing scene edits.";
+  submit(window, "[data-create-form]");
+  await settle(window);
+  const manualGoal = posts.find((entry) => entry.path === "/api/goals/new");
+  assert.deepEqual(manualGoal.body, {
+    area: "neara/hackathon/live-edit",
+    title: "Share a scene safely",
+    doneWhen: "A collaborator can join without losing scene edits.",
+    state: "",
+  });
+  assert.equal(posts.some((entry) => entry.path === "/api/goals/agent" && entry.body.file === goalFile), false);
+  click(window, "#back-button");
+  click(window, "#areas-tab");
+  click(window, "[data-select-area='neara/hackathon/live-edit']");
+  assert.match(window.document.querySelector("#screen").textContent, /Live Edit use cases/);
+  assert.match(window.document.querySelector(".area-goal-brief").textContent, /A clear design for Live Edit collaboration/);
+  click(window, `[data-open-document='${liveEditDocument.file}']`);
+  await settle(window);
+  assert.match(window.document.querySelector("#screen").textContent, /People can work together/);
+  assert.equal(window.document.querySelector(".work-review-nav"), null);
+  assert.ok(window.document.querySelector(".document-reader"));
+  assert.equal(window.document.querySelector("#bar-context").textContent, "");
+  assert.equal(window.document.querySelectorAll(".document-picker [data-open-document]").length, 3);
+  assert.equal(window.document.querySelectorAll(".document-outline a").length, 2);
+  assert.match(window.document.querySelector(".document-outline").textContent, /Collaboration shapes/);
+  assert.doesNotMatch(window.document.querySelector(".document-content").textContent, /type: document|status: draft/);
+  assert.equal(window.document.querySelectorAll(".document-content table").length, 1);
+  assert.equal(window.document.querySelectorAll(".document-content th").length, 3);
+  assert.match(window.document.querySelector(".document-content td.align-center").textContent, /Presence/);
+  assert.doesNotMatch(window.document.querySelector(".document-content").textContent, /---/);
+  assert.equal(window.document.querySelector("#back-button").textContent, "Areas");
+  assert.match(window.document.querySelector(".markdown-vault-link").textContent, /Principles of a good solution/);
+  assert.match(window.document.querySelector(".markdown-vault-link + .markdown-vault-link").textContent, /open the design/);
+  assert.equal(window.document.querySelector("[data-document-history='back']").disabled, true);
+
+  click(window, ".markdown-vault-link");
+  await settle(window);
+  assert.match(window.document.querySelector(".document-content").textContent, /Shared boundaries stay explicit/);
+  assert.match(window.document.querySelector(".document-picker button.selected").textContent, /Principles/);
+  assert.equal(window.document.querySelector("[data-document-history='back']").disabled, false);
+
+  click(window, "[data-document-history='back']");
+  await settle(window);
+  assert.match(window.document.querySelector(".document-content").textContent, /Collaboration shapes/);
+  assert.equal(window.document.querySelector("[data-document-history='forward']").disabled, false);
+  click(window, "[data-document-history='forward']");
+  await settle(window);
+  assert.match(window.document.querySelector(".document-content").textContent, /Shared boundaries stay explicit/);
+
+  click(window, `[data-open-document='${liveEditDocument.file}']`);
+  await settle(window);
+  click(window, "[data-open-area='neara/hackathon/live-edit']");
+  assert.match(window.document.querySelector(".area-contents-heading").textContent, /Live Edit/);
+  click(window, `[data-open-document='${liveEditDocument.file}']`);
+  await settle(window);
+
+  click(window, "[data-open-reader-agent]");
+  await settle(window);
+  const collaboration = posts.find((entry) => entry.path === "/api/goals/agent");
+  assert.equal(collaboration.body.file, liveEditGoal.file);
+  assert.equal(collaboration.body.document, liveEditDocument.file);
+  assert.ok(window.document.querySelector(".agent-page"));
+  assert.equal(window.document.querySelector(".document-reader"), null);
+  assert.equal(window.document.querySelector("#back-button").textContent, "Document");
+  click(window, "#back-button");
+  await settle(window);
+  assert.ok(window.document.querySelector(".document-reader"));
+  assert.match(window.document.querySelector(".document-content").textContent, /Cursor/);
+  click(window, "#back-button");
+  assert.match(window.document.querySelector("#screen").textContent, /Live Edit use cases/);
+  click(window, "[data-toggle-area='neara']");
+  assert.equal(window.document.querySelector("[data-select-area='neara/hackathon']"), null);
+  click(window, "[data-toggle-area='neara']");
+  assert.ok(window.document.querySelector("[data-select-area='neara/hackathon']"));
+  click(window, "#back-button");
+  click(window, "#programs-button");
+  assert.match(window.document.querySelector("#screen").textContent, /Things that run/);
+  assert.equal(window.document.querySelector("#programs-button").getAttribute("aria-current"), "page");
+  assert.equal(window.document.querySelector("#work-tab").hidden, false);
+  assert.equal(window.document.querySelector("#areas-tab").hidden, false);
+  click(window, "[data-toggle-area='otto/dnd']");
+  click(window, "[data-select-program]");
+  assert.match(window.document.querySelector("#screen").textContent, /npm run dev:hmr/);
+  assert.match(window.document.querySelector("#screen").textContent, /Start/);
+
+  click(window, "#work-tab");
+  click(window, `[data-complete-goal='${subgoal.file}']`);
+  assert.match(window.document.querySelector("#modal-title").textContent, /Mark “Use cases” complete/);
+  click(window, "[data-modal-confirm]");
+  await settle(window);
+  assert.ok(posts.some((entry) => entry.path === "/api/goals/edit" && entry.body.file === subgoal.file && entry.body.status === "done"));
+  assert.match(window.document.querySelector("#screen").textContent, /Work by Area/);
 
   dom.window.close();
 });

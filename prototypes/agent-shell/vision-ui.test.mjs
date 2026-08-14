@@ -21,7 +21,7 @@ function submit(window, selector) {
   form.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
 }
 
-test("the product vision keeps native chat and uses ordinary outcomes for shaped work", async () => {
+test("the product vision keeps native chat and uses flexible work boundaries", async () => {
   const [html, script] = await Promise.all([
     readFile(path.join(here, "public", "vision.html"), "utf8"),
     readFile(path.join(here, "public", "vision.js"), "utf8"),
@@ -32,6 +32,8 @@ test("the product vision keeps native chat and uses ordinary outcomes for shaped
 
   assert.match(window.document.body.textContent, /Reload the thought before the controls/);
   assert.match(window.document.querySelector("#demo-shell").textContent, /Current brief/);
+  assert.doesNotMatch(window.document.querySelector("#demo-shell").textContent, /What changed|Two-minute context/);
+  assert.match(window.document.querySelector("#demo-shell").textContent, /Design Document: Live Edit Collaboration/);
   assert.match(window.document.querySelector("#demo-shell").textContent, /Reply to Codex/);
 
   click(window, "[data-action='next']");
@@ -42,29 +44,27 @@ test("the product vision keeps native chat and uses ordinary outcomes for shaped
   assert.equal(window.document.querySelector("#demo-shell textarea"), null);
 
   click(window, "[data-scene='2']");
-  submit(window, "[data-shape-form]");
-  assert.match(window.document.querySelector("#demo-shell").textContent, /Complete scene loop works end to end/);
+  submit(window, "[data-describe-form]");
+  assert.ok(window.document.querySelector("[aria-label='Native conversation about new work']"));
+  assert.match(window.document.querySelector("#demo-shell").textContent, /Otto \/ D&D repository/);
+  assert.match(window.document.querySelector("#demo-shell").textContent, /Before I create Goals/);
+  assert.match(window.document.querySelector("#demo-shell").textContent, /Continue defining the work/);
   assert.equal(window.document.querySelector("[data-scope]"), null);
-  click(window, "[data-action='create-map']");
-  click(window, "[data-select-shaped-outcome='parent']");
-  assert.match(window.document.querySelector("#demo-shell").textContent, /Parent outcome/);
-  assert.match(window.document.querySelector("#demo-shell").textContent, /See what the agent will do/);
-  click(window, "[data-select-shaped-outcome='generation']");
-  assert.match(window.document.querySelector("#demo-shell").textContent, /Generated terrain fits the current view/);
+  assert.doesNotMatch(window.document.querySelector("#demo-shell").textContent, /Review execution plan|Read what will happen/);
 
   click(window, "[data-scene='3']");
   assert.match(window.document.querySelector("#demo-shell").textContent, /Where work belongs/);
   assert.match(window.document.querySelector("#demo-shell").textContent, /Hackathon/);
   assert.match(window.document.querySelector("#demo-shell").textContent, /Live Edit/);
-  click(window, "[data-action='new-root-project']");
-  assert.match(window.document.querySelector("#demo-shell").textContent, /Add a top-level project/);
-  click(window, "[data-action='project-tree']");
-  click(window, "[data-action='move-project']");
+  click(window, "[data-action='new-root-area']");
+  assert.match(window.document.querySelector("#demo-shell").textContent, /Add a top-level Area/);
+  click(window, "[data-action='area-tree']");
+  click(window, "[data-action='move-area']");
   assert.match(window.document.querySelector("#demo-shell").textContent, /Path preview/);
   assert.match(window.document.querySelector("#demo-shell").textContent, /neara\/hackathon\/live-edit/);
-  click(window, "[data-action='project-tree']");
-  click(window, "[data-action='new-child-project']");
-  submit(window, "[data-project-create-form]");
+  click(window, "[data-action='area-tree']");
+  click(window, "[data-action='new-nested-area']");
+  submit(window, "[data-area-create-form]");
   assert.match(window.document.querySelector("#demo-shell").textContent, /Live Edit/);
 
   click(window, "[data-scene='4']");
@@ -88,8 +88,30 @@ test("the product vision keeps native chat and uses ordinary outcomes for shaped
   assert.match(window.document.querySelector("#demo-shell").textContent, /Mac stays awake/);
 
   click(window, "[data-scene='6']");
-  assert.match(window.document.querySelector("#demo-shell").textContent, /Two-minute context/);
-  assert.match(window.document.querySelector("#demo-shell").textContent, /Open question/);
+  assert.match(window.document.querySelector("#demo-shell").textContent, /Document/);
+  assert.match(window.document.querySelector("#demo-shell").textContent, /design-live-edit-collaboration\.md/);
+  assert.equal(window.document.querySelectorAll(".vision-table-wrap table").length, 1);
+  assert.equal(window.document.querySelector(".vision-review-nav"), null);
+  assert.ok(window.document.querySelector(".vision-reader"));
+  assert.equal(window.document.querySelector(".shell-context").textContent, "");
+  assert.equal(window.document.querySelectorAll(".vision-document-picker [data-review-document]").length, 3);
+  assert.match(window.document.querySelector(".vision-page-outline").textContent, /On this page/);
+  assert.match(window.document.querySelector(".vision-reader-toolbar").textContent, /Open agent/);
+  assert.equal(window.document.querySelector("[data-action='review-back']").disabled, true);
+  click(window, ".vision-doc-link");
+  assert.match(window.document.querySelector(".vision-document-page").textContent, /Shared boundaries are explicit and small/);
+  assert.equal(window.document.querySelector("[data-action='review-back']").disabled, false);
+  click(window, "[data-action='review-back']");
+  assert.match(window.document.querySelector(".vision-document-page").textContent, /Project edits/);
+  click(window, "[data-action='review-forward']");
+  assert.match(window.document.querySelector(".vision-document-page").textContent, /Observable behavior wins/);
+  click(window, "[data-action='open-reader-agent']");
+  assert.equal(window.document.querySelector(".vision-reader"), null);
+  assert.match(window.document.querySelector(".native-chat").textContent, /edit or consolidate Documents/);
+  assert.match(window.document.querySelector(".native-chat").textContent, /complete Goal, all three linked Documents/);
+  click(window, "[data-action='close-reader-agent']");
+  assert.ok(window.document.querySelector(".vision-reader"));
+  assert.match(window.document.querySelector(".vision-document-page").textContent, /Observable behavior wins/);
 
   dom.window.close();
 });

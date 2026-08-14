@@ -38,7 +38,7 @@
     "@tangent/usage-schema": "^0.1.0"
   },
   "optionalDependencies": {
-    "better-sqlite3": "^11.10.0"
+    "better-sqlite3": "^12.10.0"
   },
   "license": "MIT",
   "engines": {

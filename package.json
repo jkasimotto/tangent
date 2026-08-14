@@ -11,6 +11,8 @@
   },
   "workspaces": [
     "packages/agent-runtime",
+    "packages/agent-shell",
+    "packages/agent-shell-ui",
     "packages/core",
     "packages/launcher",
     "packages/repo",
@@ -50,6 +52,7 @@
     "@tangent/tangent-ui": "^0.1.0"
   },
   "peerDependencies": {
+    "@tangent/agent-shell": "^0.1.0",
     "@tangent/eval": "^0.1.0",
     "@tangent/governance": "^0.1.0",
     "@tangent/rollup": "^0.1.0",
@@ -58,12 +61,27 @@
     "@tangent/usage": "^0.1.0"
   },
   "peerDependenciesMeta": {
-    "@tangent/eval": { "optional": true },
-    "@tangent/governance": { "optional": true },
-    "@tangent/rollup": { "optional": true },
-    "@tangent/search": { "optional": true },
-    "@tangent/threads": { "optional": true },
-    "@tangent/usage": { "optional": true }
+    "@tangent/agent-shell": {
+      "optional": true
+    },
+    "@tangent/eval": {
+      "optional": true
+    },
+    "@tangent/governance": {
+      "optional": true
+    },
+    "@tangent/rollup": {
+      "optional": true
+    },
+    "@tangent/search": {
+      "optional": true
+    },
+    "@tangent/threads": {
+      "optional": true
+    },
+    "@tangent/usage": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.6.3",
@@ -82,5 +100,11 @@
   "license": "MIT",
   "engines": {
     "node": ">=20"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true,
+    "better-sqlite3@11.10.0": true,
+    "fsevents@2.3.3": true,
+    "esbuild@0.25.12": true
   }
 }

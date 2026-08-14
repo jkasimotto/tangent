@@ -1,6 +1,6 @@
 import type { EvalAgentConfig } from "../types/provider.js";
 import type { EvalAgentEvent, EvalAgentEventKind } from "../types/telemetry.js";
-import { processFailure, runProcess } from "@tangent/agent-runtime/process";
+import { runAgentCli } from "@tangent/agent-runtime/agent";
 
 type ClaudeConfig = Extract<EvalAgentConfig, { kind: "claude-cli" }>;
 type ProcessOutputChunk = { stream: "stdout" | "stderr"; chunk: string };
@@ -21,23 +21,8 @@ export async function runClaudeCli(args: {
   onEvent?: (event: EvalAgentEvent) => void;
   onUsageTotal?: (tokensTotal: number) => void;
 }): Promise<string> {
-  const command = args.config.command || "claude";
-  const cliArgs = ["--print", "--output-format", "stream-json", "--verbose", "--model", args.config.model];
-  if (args.config.permissionMode) cliArgs.push("--permission-mode", args.config.permissionMode);
-  if (args.config.maxTurns) cliArgs.push("--max-turns", String(args.config.maxTurns));
-
-  let buffer = "";
-  let resultText = "";
-  /** Parses one stream-json line, emitting telemetry and capturing the final result text. */
-  const handleLine = (line: string): void => {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-    let event: Record<string, unknown>;
-    try {
-      event = JSON.parse(trimmed) as Record<string, unknown>;
-    } catch {
-      return;
-    }
+  /** Emits Eval telemetry from one shared runner event. */
+  const handleEvent = (event: Record<string, unknown>): void => {
     if (event.type === "assistant") {
       const at = new Date().toISOString();
       const message = event.message as { usage?: Record<string, number>; content?: Array<{ type?: string; name?: string }> } | undefined;
@@ -46,37 +31,28 @@ export async function runClaudeCli(args: {
         if (block.type === "tool_use") args.onEvent?.({ at, kind: toolEventKind(block.name || ""), tokens: 0 });
       }
     } else if (event.type === "result") {
-      if (typeof event.result === "string") resultText = event.result;
       const total = totalTokens(event.usage as Record<string, number> | undefined);
       if (total) args.onUsageTotal?.(total);
     }
   };
-
-  const result = await runProcess({
-    command,
-    args: cliArgs,
-    stdin: args.prompt,
+  const result = await runAgentCli({
+    agent: {
+      provider: "claude",
+      command: args.config.command,
+      model: args.config.model,
+      permissionMode: args.config.permissionMode,
+      maxTurns: args.config.maxTurns,
+      timeoutMs: args.config.timeoutMs,
+      env: args.env
+    },
+    prompt: args.prompt,
     cwd: args.cwd,
-    timeoutMs: args.config.timeoutMs || 1800000,
-    env: args.env,
     signal: args.signal,
-    /** Splits streamed stdout into whole lines for incremental stream-json parsing. */
-    onOutput: (chunk) => {
-      if (chunk.stream === "stdout") {
-        buffer += chunk.chunk;
-        let newline = buffer.indexOf("\n");
-        while (newline >= 0) {
-          handleLine(buffer.slice(0, newline));
-          buffer = buffer.slice(newline + 1);
-          newline = buffer.indexOf("\n");
-        }
-      }
-      args.onOutput?.(chunk);
-    }
+    onOutput: args.onOutput,
+    /** Projects one runner event into evaluation telemetry. */
+    onEvent: ({ event }) => handleEvent(event)
   });
-  if (buffer.trim()) handleLine(buffer);
-  if (result.code !== 0) throw processFailure(command, result.code, result.stderr, result.stdout);
-  return resultText;
+  return result.text;
 }
 
 /** Output tokens billed for one assistant turn, used to weight that turn's flame bucket. */

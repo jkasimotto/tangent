@@ -2,10 +2,10 @@ const scenes = [
   {
     kicker: "01 — Return",
     title: "Reload the thought before the controls",
-    summary: "The first screen restores identity, intent, the latest change, and the next decision.",
-    human: "Interruptions erase working context. An outcome title alone does not restore a useful mental model.",
+    summary: "The first screen restores the requested result, the short story, and the documents that carry the work.",
+    human: "Interruptions erase working context. A result title alone does not restore a useful mental model.",
     model: "Chat history is complete but expensive to reread. A generated summary can also drift.",
-    response: "Show one current brief and one short story. Open the native chat when Julian wants the complete exchange.",
+    response: "Show one requested-result line, one short story, and linked documents. Keep the native agent at the bottom.",
   },
   {
     kicker: "02 — Chat",
@@ -13,60 +13,62 @@ const scenes = [
     summary: "Agent Shell adds context and return controls around the chat. It does not replace the chat.",
     human: "People need complete agent messages and tool activity before they can judge or direct the work.",
     model: "The native agent interface already shows provider features, tool activity, history, and its composer.",
-    response: "Open the native chat unchanged. Keep Summary, outcome context, and Stop agent in the shell chrome.",
+    response: "Open the native chat unchanged. Keep Summary, goal context, and Stop agent in the shell chrome.",
   },
   {
-    kicker: "03 — Shape",
-    title: "Let natural description become organized work",
-    summary: "Julian speaks freely first. The agent reflects one body of work and an optional outcome map.",
-    human: "People often know the experience they want before they know the correct task structure.",
-    model: "Models split work too early and lose the whole experience. They also invent scope from vague language.",
-    response: "Preserve the description. Propose a parent and children. Then let Julian open any outcome and start an agent there.",
+    kicker: "03 — Describe",
+    title: "Define work through a native conversation",
+    summary: "Julian speaks freely first. An Area-scoped agent helps him find the useful Goal boundaries.",
+    human: "People often know the situation they want to change before they know the correct work structure.",
+    model: "A one-shot conversion splits work too early and hides the judgment behind generated form fields.",
+    response: "Open the native agent in the Area repository. Discuss exact Goals and Subgoals before the agent writes them.",
   },
   {
     kicker: "04 — Organize",
-    title: "Give noun nodes one temporary home",
-    summary: "A Projects action opens the noun hierarchy alone. Empty projects remain visible without becoming fake work.",
-    human: "People need a stable map of subjects. They do not need that complete map beside every outcome or agent message.",
-    model: "Moving one noun node changes every descendant path. A conversational request can hide that complete effect.",
-    response: "Put Projects on the Work screen. Show one full-screen tree with New child, Rename, and Move actions. Preview every changed path.",
+    title: "Give durable Areas one clear home",
+    summary: "The Areas action opens the hierarchy alone. Empty Areas remain visible without becoming fake work.",
+    human: "People need a stable map of subjects. They do not need that complete map beside every goal or agent message.",
+    model: "Moving one Area changes every descendant path. A conversational request can hide that complete effect.",
+    response: "Put Areas on the Work screen. Show one full-screen tree with New nested Area, Rename, and Move actions. Preview every changed path.",
   },
   {
     kicker: "05 — Programs",
-    title: "Keep operational programs near their nouns",
-    summary: "Programs gathers live processes, on-demand commands, and scheduled agent routines without turning them into outcomes.",
+    title: "Keep operational programs near their areas",
+    summary: "Programs gathers live processes, on-demand commands, and scheduled agent routines without turning them into goals.",
     human: "People need to find a running server quickly. They also need quiet confidence that a daily agent will run once.",
     model: "A command can stop while its tmux session remains useful. A scheduled agent can overlap or repeat unless the scheduler prevents duplicates.",
-    response: "Group programs by noun. Show true process state, open the native tmux session, and give schedules an explicit next-run and catch-up rule.",
+    response: "Group programs by area. Show true process state, open the native tmux session, and give schedules an explicit next-run and catch-up rule.",
   },
   {
     kicker: "06 — Leave",
     title: "Support unattended work at the moment it matters",
-    summary: "The outcome summary states the live assignment. Sleep prevention sits beside the working state.",
+    summary: "The goal summary states the live assignment. Sleep prevention sits beside the working state.",
     human: "People want to leave long work alone. Hidden system controls create doubt before they walk away.",
     model: "An agent can work for a long time, but terminal activity does not prove useful progress.",
     response: "Show purpose and truthful state. Offer one contextual keep-awake control. Hide the terminal by default.",
   },
   {
-    kicker: "07 — Hand off",
-    title: "Prepare context while the work happens",
-    summary: "Another person receives the same compact memory that restores Julian's context.",
-    human: "New readers need purpose, decisions, current direction, and open questions. They do not need the complete chat.",
-    model: "A fresh model or person lacks private context. A new summary written later can omit important decisions.",
-    response: "Derive a short handoff from the brief, story, and linked documents. Keep every source inspectable.",
+    kicker: "07 — Continue",
+    title: "Read one Document at a time",
+    summary: "One centered Document stays dominant. History, Document choice, the page outline, and Open agent remain quiet at the edge.",
+    human: "A persistent Goal index competes with the prose. Two complete surfaces create more visual decisions than the reader needs.",
+    model: "The linked Goal can supply complete agent context without occupying the reading surface.",
+    response: "Use a calm reader with familiar history controls, a compact Document picker, a quiet outline, and a separate native-agent screen.",
   },
 ];
 
 let currentScene = 0;
 let rationaleVisible = true;
-let shaped = false;
-let mapCreated = false;
-let selectedWork = "";
+let describing = false;
 let awake = false;
 let organizeMode = "tree";
 let programView = "list";
 let dndServerRunning = true;
 let dndStopConfirm = false;
+let readerAgentOpen = false;
+let selectedReviewDocument = "design";
+let reviewTrail = ["design"];
+let reviewTrailIndex = 0;
 let toastTimer = null;
 
 const demoShell = document.querySelector("#demo-shell");
@@ -95,9 +97,9 @@ function shellBar({ back = "Work", backAction = "previous", context = "Otto / Ta
   `;
 }
 
-/** Renders the current outcome's read-only noun path. */
-function projectPath() {
-  return `<div class="project-path"><span>Otto</span><span>Tangent</span></div>`;
+/** Renders the current goal's read-only area path. */
+function areaPath() {
+  return `<div class="area-path"><span>Otto</span><span>Tangent</span></div>`;
 }
 
 /** Renders the compact sequence of meaningful product decisions. */
@@ -107,32 +109,39 @@ function storySoFar({ open = false } = {}) {
       <summary>Story so far · 5 meaningful moments</summary>
       <ol class="timeline">
         <li><time>First use</time><div><strong>The phase dashboard failed.</strong><p>It showed system concepts before it restored context.</p></div></li>
-        <li><time>Second use</time><div><strong>The context-first shell worked.</strong><p>Project, result, progress, and agent state became clear.</p></div></li>
-        <li><time>Third use</time><div><strong>The summary gained durable memory.</strong><p>A current brief and short history support return and handoff.</p></div></li>
+        <li><time>Second use</time><div><strong>The context-first shell worked.</strong><p>Area, result, progress, and agent state became clear.</p></div></li>
+        <li><time>Third use</time><div><strong>The summary gained durable memory.</strong><p>One requested result and a short history support return.</p></div></li>
         <li><time>Fourth use</time><div><strong>Native chat remained central.</strong><p>Agent Shell augments the chat instead of replacing it.</p></div></li>
-        <li><time>Now</time><div><strong>Projects and programs gained quiet homes.</strong><p>The noun map and operational tools stay close without crowding focused work.</p></div></li>
+        <li><time>Now</time><div><strong>The goal-first view failed.</strong><p>Stable areas and flexible work boundaries now serve different jobs.</p></div></li>
       </ol>
     </details>
   `;
 }
 
-/** Renders the context-first outcome summary. */
+/** Renders the context-first goal summary. */
 function renderReturn() {
   return `
     ${shellBar({ actions: `${dndServerRunning ? `<button class="shell-bar-button" type="button" data-action="programs"><span class="live-indicator" aria-hidden="true"></span>1 program</button>` : ""}<button class="shell-bar-button" type="button">Find work&nbsp; ⌘/</button>` })}
     <main class="shell-screen">
       <article class="reading-page">
-        ${projectPath()}
-        <h1 class="outcome-title">UX Product Vision</h1>
+        ${areaPath()}
+        <h1 class="goal-title">UX Product Vision</h1>
 
         <section class="brief-card">
           <p class="eyebrow">Current brief</p>
-          <h2>Make Agent Shell a calm place to understand, direct, and resume agent work.</h2>
-          <dl class="brief-facts">
-            <div class="brief-fact"><dt>You wanted</dt><dd>One focused surface that restores context before it shows controls.</dd></div>
-            <div class="brief-fact"><dt>What changed</dt><dd>The summary now restores the current direction and the short path that produced it.</dd></div>
-            <div class="brief-fact"><dt>Now</dt><dd>Keep chat central. Give noun structure and noun-owned programs quiet secondary surfaces.</dd></div>
-          </dl>
+          <h2>Agent Shell organizes work around the subject and boundary that make sense to you.</h2>
+        </section>
+
+        <section class="memory-section">
+          <div class="memory-head"><h3>Story so far</h3><span>Meaningful changes only</span></div>
+          ${storySoFar({ open: true })}
+        </section>
+
+        <section class="memory-section">
+          <div class="memory-head"><h3>Documents</h3><span>3 linked Documents</span></div>
+          <div class="document-row"><div><strong>Use Case Documentation</strong><small>Document</small></div><button class="quiet-button" type="button" data-action="document">Read</button></div>
+          <div class="document-row"><div><strong>Principles of a Good Solution</strong><small>Document</small></div><button class="quiet-button" type="button" data-action="document">Read</button></div>
+          <div class="document-row"><div><strong>Design Document: Live Edit Collaboration</strong><small>Document</small></div><button class="quiet-button" type="button" data-action="document">Read</button></div>
         </section>
 
         <section class="agent-card">
@@ -141,18 +150,6 @@ function renderReturn() {
             <button class="primary-button" type="button" data-action="next">Reply to Codex</button>
             <button class="secondary-button" type="button">Choose next step…</button>
           </div>
-        </section>
-
-        <section class="memory-section">
-          <div class="memory-head"><h3>Your latest take</h3><span>Saved with this outcome</span></div>
-          <blockquote class="checkpoint-quote">The summary and story work. Agent Shell must augment the native chat, not replace it.</blockquote>
-          ${storySoFar()}
-        </section>
-
-        <section class="memory-section">
-          <div class="memory-head"><h3>Living document</h3><button class="quiet-button" type="button" data-action="document">Open</button></div>
-          <div class="document-row"><div><strong>Agent Shell product design</strong><small>Current principles and solution contract</small></div><button class="quiet-button" type="button" data-action="document">Read</button></div>
-          <button class="quiet-button" type="button" data-action="handoff">Share context with another person →</button>
         </section>
       </article>
     </main>
@@ -173,7 +170,7 @@ function renderChat() {
         <div class="native-transcript">
           <div class="native-user"><span>›</span><p>Keep the chat central. I want Agent Shell to augment this experience, not replace it.</p></div>
           <div class="native-tool"><span>• Read</span><code>design-tangent.md</code></div>
-          <div class="native-tool"><span>• Read</span><code>outcome-ux-product-vision.md</code></div>
+          <div class="native-tool"><span>• Read</span><code>goal-ux-product-vision.md</code></div>
           <div class="native-agent">
             <p>That creates a cleaner boundary.</p>
             <p>The native chat remains the complete place for messages, tool activity, and feedback. Agent Shell adds three things around it:</p>
@@ -191,55 +188,20 @@ function renderChat() {
   `;
 }
 
-const originalDescription = "I want to make the complete D&D scene workflow reliable. I care about terrain generation, sprite cutouts, ramps, and movement. I want one coherent experience, but I also want to finish one useful result at a time. My proposed breakdown is useful context, not a fixed execution plan.";
+const originalDescription = "I want to make the complete D&D scene workflow reliable. I care about terrain generation, sprite cutouts, ramps, and movement. I want one coherent experience, but I also want to finish one useful result at a time. My proposed subgoals is useful context, not a fixed execution plan.";
 
-const shapedOutcomes = {
-  parent: {
-    title: "Complete scene loop works end to end",
-    kind: "Parent outcome",
-    result: "A player creates terrain and a creature, then moves through the complete scene in one flow.",
-  },
-  generation: {
-    title: "Scene generation preserves the world",
-    kind: "Child outcome",
-    result: "Generated terrain fits the current view and preserves existing world content.",
-  },
-  sprites: {
-    title: "Sprite cutouts preserve the asset",
-    kind: "Child outcome",
-    result: "Segmentation removes the background and keeps the complete visible asset.",
-  },
-  movement: {
-    title: "Movement works across ramps",
-    kind: "Child outcome",
-    result: "A creature crosses partial-width ramps without leaving the movement flow.",
-  },
-};
-
-/** Renders one proposed parent or child outcome. */
-function shapedOutcomeRow(id, child = false) {
-  const outcome = shapedOutcomes[id];
-  const tag = mapCreated ? "Ready" : outcome.kind;
-  return `
-    <button class="map-row ${child ? "child" : ""} ${selectedWork === id ? "selected" : ""}" type="button" ${mapCreated ? `data-select-shaped-outcome="${id}"` : "disabled"}>
-      <span><strong>${outcome.title}</strong><small>${tag}</small></span>
-      <span class="map-arrow" aria-hidden="true">${mapCreated ? "→" : ""}</span>
-    </button>
-  `;
-}
-
-/** Renders natural work capture and the proposed outcome structure. */
-function renderShape() {
-  if (!shaped) {
+/** Renders natural work capture and its native agent conversation. */
+function renderDescribe() {
+  if (!describing) {
     return `
       ${shellBar({ back: "Work", context: "Describe new work" })}
       <main class="shell-screen">
-        <article class="shape-page">
-          <header class="shape-head"><p class="eyebrow">New work</p><h1>Describe the experience you want to change.</h1><p>Speak or type naturally. Agent Shell will reflect the whole before it creates outcomes.</p></header>
-          <form class="capture-card" data-shape-form>
-            <label><span>Project</span><select><option>Otto / D&amp;D</option><option>Otto / Tangent</option></select></label>
+        <article class="describe-page">
+          <header class="describe-head"><p class="eyebrow">New work</p><h1>What do you want to work out?</h1><p>Speak or type the whole thought. Then continue with an agent that knows this Area.</p></header>
+          <form class="capture-card" data-describe-form>
+            <label><span>Area</span><select><option>Otto / D&amp;D</option><option>Otto / Tangent</option></select></label>
             <label><span>Your description</span><textarea>${originalDescription}</textarea></label>
-            <div class="action-row"><button class="primary-button" type="submit">Shape this work</button><button class="quiet-button" type="button" data-action="save-idea">Save as an idea</button></div>
+            <div class="action-row"><button class="primary-button" type="submit">Open agent</button><button class="quiet-button" type="button" data-action="save-idea">Save as an idea</button></div>
           </form>
         </article>
       </main>
@@ -247,139 +209,123 @@ function renderShape() {
   }
 
   return `
-    ${shellBar({ back: "Your description", context: "Otto / D&D · Shape new work" })}
-    <main class="shell-screen">
-      <article class="shape-page">
-        <header class="shape-head"><p class="eyebrow">Codex reflected your description</p><h1>Make the complete scene loop reliable</h1><p>${mapCreated ? "The outcomes are ready. Open the parent or any child." : "Nothing exists in the vault until you create these outcomes."}</p></header>
-        <section class="result-card shape-result-card">
-          <p class="eyebrow">Body of work</p>
-          <h2>One coherent player experience</h2>
-          <p class="user-story">From an empty map, create terrain and a creature. Then move the creature through the complete scene without leaving the flow.</p>
-          <div class="work-map">
-            ${shapedOutcomeRow("parent")}
-            ${shapedOutcomeRow("generation", true)}
-            ${shapedOutcomeRow("sprites", true)}
-            ${shapedOutcomeRow("movement", true)}
+    ${shellBar({ back: "Work", context: "Otto / D&D · Defining work · Waiting for you", actions: `<button class="shell-bar-button danger" type="button">Stop agent…</button>` })}
+    <main class="shell-screen native-chat-screen">
+      <section class="native-chat" aria-label="Native conversation about new work">
+        <div class="native-chat-heading"><span>&gt;_</span><strong>OpenAI Codex</strong><small>Otto / D&amp;D repository</small></div>
+        <div class="native-transcript">
+          <div class="native-user"><span>›</span><p>${originalDescription}</p></div>
+          <div class="native-tool"><span>• Read</span><code>otto/dnd/dnd.md</code></div>
+          <div class="native-tool"><span>• Explore</span><code>Otto D&amp;D repository</code></div>
+          <div class="native-agent">
+            <p>I see one broad experience and three results that might need separate focus.</p>
+            <p>Before I create Goals, let us decide whether generation, sprite cutouts, and ramp movement can finish independently.</p>
+            <p>I will show the exact Goal names, done conditions, and links before I write them.</p>
           </div>
-          ${mapCreated
-            ? `<p class="map-note">These are ordinary outcomes. Select the parent for the complete body, or select a child for one result.</p>`
-            : `<div class="shape-actions"><button class="primary-button" type="button" data-action="create-map">Create these outcomes</button><button class="quiet-button" type="button" data-action="save-idea">Save as an idea</button></div>`}
-          <details class="original-details"><summary>Read my original description</summary><p>${originalDescription}</p></details>
-        </section>
-        ${selectedWork ? renderSelectedWork() : ""}
-      </article>
+        </div>
+        <div class="native-composer"><span>›</span><span class="composer-placeholder">Continue defining the work…</span><kbd>⌘↵</kbd></div>
+      </section>
     </main>
   `;
 }
 
-/** Renders the selected outcome's ordinary start action. */
-function renderSelectedWork() {
-  const outcome = shapedOutcomes[selectedWork];
+/** Renders one row in the temporary Area hierarchy. */
+function areaRow({ name, path, depth = 0, selected = false, parent = false }) {
   return `
-    <section class="selected-work">
-      <div><p class="eyebrow">${outcome.kind}</p><h2>${outcome.title}</h2><p>${outcome.result}</p></div>
-      <div class="action-row"><button class="primary-button" type="button" data-action="start-shaped-outcome">See what the agent will do</button><button class="secondary-button" type="button">Talk it through first</button></div>
-    </section>
-  `;
-}
-
-/** Renders one noun-node row in the temporary project hierarchy. */
-function projectNode({ name, path, depth = 0, selected = false, parent = false }) {
-  return `
-    <button class="project-node ${selected ? "selected" : ""} ${parent ? "parent" : ""}" style="--node-depth: ${depth}" type="button" data-project-node="${path}">
-      <span class="node-disclosure" aria-hidden="true">${parent ? "⌄" : ""}</span>
+    <button class="area-row ${selected ? "selected" : ""} ${parent ? "parent" : ""}" style="--area-depth: ${depth}" type="button" data-area-row="${path}">
+      <span class="area-disclosure" aria-hidden="true">${parent ? "⌄" : ""}</span>
       <span>${name}</span>
       ${selected ? `<span class="selected-label">Selected</span>` : ""}
     </button>
   `;
 }
 
-/** Renders the temporary noun hierarchy and its direct structural actions. */
-function renderProjectTree() {
+/** Renders the temporary area hierarchy and its direct structural actions. */
+function renderAreaTree() {
   return `
-    ${shellBar({ back: "Work", backAction: "work", context: "Projects" })}
+    ${shellBar({ back: "Work", backAction: "work", context: "Areas" })}
     <main class="shell-screen">
-      <article class="projects-page">
-        <header class="projects-head">
-          <div><p class="eyebrow">Projects</p><h1>Where work belongs.</h1><p>This view contains nouns only. Outcomes remain on the Work screen.</p></div>
-          <button class="primary-button" type="button" data-action="new-root-project">New project</button>
+      <article class="areas-page">
+        <header class="areas-head">
+          <div><p class="eyebrow">Areas</p><h1>Where work belongs.</h1><p>This view contains areas only. Goals remain on the Work screen.</p></div>
+          <button class="primary-button" type="button" data-action="new-root-area">New area</button>
         </header>
 
-        <section class="project-tree-card" aria-label="Project hierarchy">
-          ${projectNode({ name: "Neara", path: "neara", parent: true })}
-          ${projectNode({ name: "Essential", path: "neara/essential", depth: 1 })}
-          ${projectNode({ name: "Hackathon", path: "neara/hackathon", depth: 1, selected: true, parent: true })}
-          ${projectNode({ name: "Live Edit", path: "neara/hackathon/live-edit", depth: 2 })}
-          ${projectNode({ name: "Hedno", path: "neara/hedno", depth: 1 })}
-          ${projectNode({ name: "PG&E", path: "neara/pgande", depth: 1, parent: true })}
-          ${projectNode({ name: "Portland", path: "neara/portland", depth: 1, parent: true })}
-          ${projectNode({ name: "Python", path: "neara/pyth", depth: 1 })}
-          ${projectNode({ name: "Otto", path: "otto", parent: true })}
-          ${projectNode({ name: "D&D", path: "otto/dnd", depth: 1, parent: true })}
-          ${projectNode({ name: "Tangent", path: "otto/tangent", depth: 1 })}
+        <section class="area-tree-card" aria-label="Area hierarchy">
+          ${areaRow({ name: "Neara", path: "neara", parent: true })}
+          ${areaRow({ name: "Essential", path: "neara/essential", depth: 1 })}
+          ${areaRow({ name: "Hackathon", path: "neara/hackathon", depth: 1, selected: true, parent: true })}
+          ${areaRow({ name: "Live Edit", path: "neara/hackathon/live-edit", depth: 2 })}
+          ${areaRow({ name: "Hedno", path: "neara/hedno", depth: 1 })}
+          ${areaRow({ name: "PG&E", path: "neara/pgande", depth: 1, parent: true })}
+          ${areaRow({ name: "Portland", path: "neara/portland", depth: 1, parent: true })}
+          ${areaRow({ name: "Python", path: "neara/pyth", depth: 1 })}
+          ${areaRow({ name: "Otto", path: "otto", parent: true })}
+          ${areaRow({ name: "D&D", path: "otto/dnd", depth: 1, parent: true })}
+          ${areaRow({ name: "Tangent", path: "otto/tangent", depth: 1 })}
         </section>
 
-        <section class="project-selection-card">
-          <div><p class="eyebrow">Neara / Hackathon</p><h2>Hackathon</h2><p>Live Edit belongs below this noun.</p></div>
-          <div class="action-row"><button class="primary-button" type="button" data-action="new-child-project">New child</button><button class="secondary-button" type="button" data-action="move-project">Move…</button><button class="quiet-button" type="button" data-action="rename-project">Rename</button></div>
+        <section class="area-selection-card">
+          <div><p class="eyebrow">Neara / Hackathon</p><h2>Hackathon</h2><p>Live Edit belongs below this area.</p></div>
+          <div class="action-row"><button class="primary-button" type="button" data-action="new-nested-area">New nested Area</button><button class="secondary-button" type="button" data-action="move-area">Move…</button><button class="quiet-button" type="button" data-action="rename-area">Rename</button></div>
         </section>
 
-        <p class="projects-principle">The hierarchy disappears when you return to work. Project breadcrumbs elsewhere remain read-only.</p>
+        <p class="areas-principle">The hierarchy disappears when you return to work. Area breadcrumbs elsewhere remain read-only.</p>
       </article>
     </main>
   `;
 }
 
-/** Renders a focused form for a root or child noun node. */
-function renderNewProject({ root = false } = {}) {
+/** Renders a focused form for a root or nested Area. */
+function renderNewArea({ root = false } = {}) {
   const parent = root ? "Top level" : "Neara / Hackathon";
   return `
-    ${shellBar({ back: "Projects", backAction: "project-tree", context: root ? "New project" : "Neara / Hackathon · New child" })}
+    ${shellBar({ back: "Areas", backAction: "area-tree", context: root ? "New Area" : "Neara / Hackathon · New nested Area" })}
     <main class="shell-screen">
-      <article class="project-action-page">
-        <p class="eyebrow">New noun node</p>
-        <h1>${root ? "Add a top-level project." : "Add a noun below Hackathon."}</h1>
-        <form class="project-action-form" data-project-create-form data-project-parent="${root ? "root" : "neara/hackathon"}">
-          <label><span>${root ? "Location" : "Parent"}</span><div class="fixed-path">${parent}</div></label>
-          <label><span>Name</span><input value="${root ? "New project" : "Demo area"}" aria-label="Noun name" required /></label>
-          <div class="action-row"><button class="primary-button" type="submit">Create noun node</button><button class="quiet-button" type="button" data-action="cancel-project-action">Cancel</button></div>
+      <article class="area-action-page">
+        <p class="eyebrow">New Area</p>
+        <h1>${root ? "Add a top-level Area." : "Add an Area below Hackathon."}</h1>
+        <form class="area-action-form" data-area-create-form data-area-parent="${root ? "root" : "neara/hackathon"}">
+          <label><span>${root ? "Location" : "Inside"}</span><div class="fixed-path">${parent}</div></label>
+          <label><span>Name</span><input value="${root ? "New area" : "Demo area"}" aria-label="Area name" required /></label>
+          <div class="action-row"><button class="primary-button" type="submit">Create Area</button><button class="quiet-button" type="button" data-action="cancel-area-action">Cancel</button></div>
         </form>
-        <p class="project-action-note">This creates a place for future work. It does not create an outcome or start an agent.</p>
+        <p class="area-action-note">This creates a place for future work. It does not create a Goal or start an agent.</p>
       </article>
     </main>
   `;
 }
 
-/** Renders the complete path effect before a noun-node move. */
-function renderMoveProject() {
+/** Renders the complete path effect before an Area move. */
+function renderMoveArea() {
   return `
-    ${shellBar({ back: "Projects", backAction: "project-tree", context: "Move Hackathon" })}
+    ${shellBar({ back: "Areas", backAction: "area-tree", context: "Move Hackathon" })}
     <main class="shell-screen">
-      <article class="project-action-page move-project-page">
-        <p class="eyebrow">Move noun node</p>
+      <article class="area-action-page move-area-page">
+        <p class="eyebrow">Move Area</p>
         <h1>Move Hackathon and everything below it.</h1>
-        <label class="move-destination"><span>New parent</span><select><option>Otto</option><option>Neara</option><option>Otto / D&D</option><option>Otto / Tangent</option></select></label>
+        <label class="move-destination"><span>Move inside</span><select><option>Otto</option><option>Neara</option><option>Otto / D&D</option><option>Otto / Tangent</option></select></label>
         <section class="move-preview">
           <p class="eyebrow">Path preview</p>
           <div class="path-change"><span>Before</span><code>neara/hackathon</code><span aria-hidden="true">→</span><code>otto/hackathon</code></div>
-          <div class="path-change descendant"><span>Child</span><code>neara/hackathon/live-edit</code><span aria-hidden="true">→</span><code>otto/hackathon/live-edit</code></div>
+          <div class="path-change descendant"><span>Nested Area</span><code>neara/hackathon/live-edit</code><span aria-hidden="true">→</span><code>otto/hackathon/live-edit</code></div>
         </section>
-        <div class="action-row"><button class="primary-button" type="button" data-action="confirm-project-move">Move project</button><button class="quiet-button" type="button" data-action="cancel-project-action">Cancel</button></div>
-        <p class="project-action-note">The preview shows every changed path before Agent Shell writes the move.</p>
+        <div class="action-row"><button class="primary-button" type="button" data-action="confirm-area-move">Move area</button><button class="quiet-button" type="button" data-action="cancel-area-action">Cancel</button></div>
+        <p class="area-action-note">The preview shows every changed path before Agent Shell writes the move.</p>
       </article>
     </main>
   `;
 }
 
-/** Selects the current project-organization subview. */
+/** Selects the current area-organization subview. */
 function renderOrganize() {
-  if (organizeMode === "new-child") return renderNewProject();
-  if (organizeMode === "new-root") return renderNewProject({ root: true });
-  if (organizeMode === "move") return renderMoveProject();
-  return renderProjectTree();
+  if (organizeMode === "new-nested-area") return renderNewArea();
+  if (organizeMode === "new-root") return renderNewArea({ root: true });
+  if (organizeMode === "move") return renderMoveArea();
+  return renderAreaTree();
 }
 
-/** Renders one noun-owned program with truthful state and one obvious action. */
+/** Renders one area-owned program with truthful state and one obvious action. */
 function programRow({ name, kind, state, detail, action = "Open", id, running = false }) {
   return `
     <button class="program-row" type="button" data-program="${id}">
@@ -391,7 +337,7 @@ function programRow({ name, kind, state, detail, action = "Open", id, running = 
   `;
 }
 
-/** Renders the noun-grouped index of processes, commands, and agent routines. */
+/** Renders the area-grouped index of processes, commands, and agent routines. */
 function renderProgramList() {
   const liveAction = dndServerRunning ? `<button class="shell-bar-button" type="button"><span class="live-indicator" aria-hidden="true"></span>1 running</button>` : "";
   return `
@@ -417,7 +363,7 @@ function renderProgramList() {
           ${programRow({ name: "Deploy", kind: "Command", state: "Ready", detail: "Requires confirmation before it starts", id: "neara-deploy", action: "Review" })}
         </section>
 
-        <p class="programs-principle">Programs belong to nouns. They do not become outcomes unless the result itself needs tracked work.</p>
+        <p class="programs-principle">Programs belong to areas. They do not become goals unless the result itself needs tracked work.</p>
       </article>
     </main>
   `;
@@ -429,7 +375,7 @@ function renderDndProgram() {
     ${shellBar({ back: "Programs", backAction: "program-list", context: "Otto / D&D · Development server" })}
     <main class="shell-screen">
       <article class="program-detail-page">
-        <div class="project-path"><span>Otto</span><span>D&amp;D</span></div>
+        <div class="area-path"><span>Otto</span><span>D&amp;D</span></div>
         <p class="eyebrow">Process</p>
         <h1>Development server</h1>
         <section class="program-hero ${dndServerRunning ? "running" : "stopped"}">
@@ -449,7 +395,7 @@ function renderDailyAgentProgram() {
     ${shellBar({ back: "Programs", backAction: "program-list", context: "Neara / PG&E / Dev · Daily remediation run" })}
     <main class="shell-screen">
       <article class="program-detail-page">
-        <div class="project-path"><span>Neara</span><span>PG&amp;E</span><span>Dev</span></div>
+        <div class="area-path"><span>Neara</span><span>PG&amp;E</span><span>Dev</span></div>
         <p class="eyebrow">Scheduled agent routine</p>
         <h1>Daily remediation run</h1>
         <section class="schedule-card">
@@ -476,9 +422,9 @@ function renderWorking() {
     ${shellBar({ actions: `${dndServerRunning ? `<button class="shell-bar-button" type="button" data-action="programs"><span class="live-indicator" aria-hidden="true"></span>1 program</button>` : ""}<button class="shell-bar-button danger" type="button">Stop agent…</button>` })}
     <main class="shell-screen">
       <article class="reading-page">
-        ${projectPath()}
-        <h1 class="outcome-title">UX Product Vision</h1>
-        <section class="assignment-card"><p class="eyebrow">What Codex is doing now</p><h2>Build the context around the native agent chat</h2><p>Show re-entry, shaped work, unattended execution, and a concise human handoff.</p></section>
+        ${areaPath()}
+        <h1 class="goal-title">UX Product Vision</h1>
+        <section class="assignment-card"><p class="eyebrow">What Codex is doing now</p><h2>Build the context around the native agent chat</h2><p>Show re-entry, conversational work definition, readable documents, and unattended execution.</p></section>
         <section class="agent-card working">
           <div class="agent-state"><span class="state-dot" aria-hidden="true"></span><div><h3>Codex is working.</h3><p>Started 8 minutes ago. You do not need to watch it.</p></div></div>
           <button class="awake-control ${awake ? "on" : ""}" type="button" data-action="awake" aria-pressed="${awake}">
@@ -494,30 +440,119 @@ function renderWorking() {
   `;
 }
 
-/** Renders concise context for another human reader. */
-function renderHandoff() {
-  return `
-    ${shellBar({ back: "Outcome", context: "Share context · UX Product Vision" })}
-    <main class="shell-screen">
-      <article class="handoff-page">
-        <header class="handoff-head"><div><p class="eyebrow">Two-minute context</p><h1>Agent Shell product direction</h1><p>Generated from current sources. No separate handoff document needs maintenance.</p></div><button class="primary-button" type="button" data-action="copy-handoff">Copy context</button></header>
-        <section class="handoff-sheet">
-          <div class="handoff-grid">
-            <article class="handoff-block"><h2>Result</h2><p>Make Agent Shell a calm place to understand, direct, and resume agent work.</p></article>
-            <article class="handoff-block"><h2>Current direction</h2><p>Use a context-first summary around the complete native agent chat.</p></article>
-            <article class="handoff-block"><h2>Why</h2><p>Human attention and memory are limited. The chat remains useful evidence but requires concise return context.</p></article>
-            <article class="handoff-block"><h2>Decisions</h2><ul><li>No permanent tree beside the work.</li><li>No second chat or composer.</li><li>Projects and Programs open as temporary secondary surfaces.</li><li>Programs belong to nouns, not outcomes.</li></ul></article>
-            <article class="handoff-block"><h2>What happened</h2><ul><li>The first phase dashboard failed.</li><li>The context-first shell worked.</li><li>Julian kept native chat as the collaboration surface.</li></ul></article>
-            <article class="handoff-block"><h2>Open question</h2><p>Which moments deserve a human checkpoint without adding ceremony to clear work?</p></article>
-          </div>
-          <div class="handoff-resources"><span class="resource-chip">Outcome · UX Product Vision</span><span class="resource-chip">Design · Agent Shell product design</span><span class="resource-chip">Story · 5 moments</span><span class="resource-chip">Native chat · Source evidence</span></div>
-        </section>
-      </article>
-    </main>
-  `;
+const reviewDocuments = {
+  useCases: { title: "Live Edit use cases", file: "use-case-documentation.md" },
+  principles: { title: "Principles of a good solution", file: "principles-of-a-good-solution.md" },
+  design: { title: "Design Document: Live Edit Collaboration", file: "design-live-edit-collaboration.md" },
+};
+
+/** Returns the useful headings for the selected Document. */
+function reviewHeadings() {
+  return selectedReviewDocument === "design"
+    ? ["Problem", "Shared state", "Recommended direction"]
+    : selectedReviewDocument === "principles"
+      ? ["Shared boundaries are explicit and small", "Observable behavior wins"]
+      : ["Co-edit", "Observe"];
 }
 
-const renderers = [renderReturn, renderChat, renderShape, renderOrganize, renderPrograms, renderWorking, renderHandoff];
+/** Renders the selected Document content for the calm reader. */
+function productDocument() {
+  const document = reviewDocuments[selectedReviewDocument];
+  const content = selectedReviewDocument === "design" ? `
+    <h2>Problem</h2>
+    <p>Several people need to edit one project while keeping personal layouts, cameras, cursors, and selections.</p>
+    <p>The complete use cases and <button class="vision-doc-link" type="button" data-review-document="principles">principles of a good solution</button> remain separate Documents.</p>
+    <h2>Shared state</h2>
+    <div class="vision-table-wrap"><table><thead><tr><th>State</th><th>Scope</th><th>Transport</th></tr></thead><tbody><tr><td>Project edits</td><td>Shared</td><td>Operations</td></tr><tr><td>Cursor position</td><td>Presence</td><td>Ephemeral</td></tr><tr><td>Camera</td><td>Personal</td><td>Presence when followed</td></tr></tbody></table></div>
+    <h2>Recommended direction</h2>
+    <p>Use a semantics-free server relay with sequence numbers. Keep personal state outside the durable project stream.</p>` : selectedReviewDocument === "principles" ? `
+    <h2>Shared boundaries are explicit and small</h2>
+    <p>A reviewer can challenge this principle while the complete design and use cases remain one click away.</p>
+    <h2>Observable behavior wins</h2>
+    <p>Each principle names a result that the team can inspect.</p>` : `
+    <h2>Co-edit</h2><p>Two participants edit the same project and see the same durable state.</p>
+    <h2>Observe</h2><p>One participant follows another without replacing personal state.</p>`;
+  return `
+    <article class="reading-page vision-document-page">
+      <h1 class="goal-title">${document.title}</h1>
+      <section class="memory-section document-prose">${content}</section>
+      <p class="checkpoint-quote">Source: neara/hackathon/live-edit/${document.file}</p>
+    </article>`;
+}
+
+/** Renders the small Document picker in the reader toolbar. */
+function productDocumentPicker() {
+  return `
+    <details class="vision-document-picker">
+      <summary>${reviewDocuments[selectedReviewDocument].title}<span aria-hidden="true">⌄</span></summary>
+      <div><p>Linked to Define Live Edit collaboration</p>${Object.entries(reviewDocuments).map(([id, document]) => `<button class="${id === selectedReviewDocument ? "selected" : ""}" type="button" data-review-document="${id}">${document.title}${id === selectedReviewDocument ? " · Current" : ""}</button>`).join("")}</div>
+    </details>`;
+}
+
+/** Renders the quiet page outline beside the selected Document. */
+function productPageOutline() {
+  return `<aside class="vision-page-outline"><p>On this page</p><nav>${reviewHeadings().map((heading, index) => `<a class="${index === 0 ? "active" : ""}" href="#">${heading}</a>`).join("")}</nav></aside>`;
+}
+
+/** Renders one Document reader or its separate native-agent surface. */
+function renderDocument() {
+  if (readerAgentOpen) {
+    return `
+      ${shellBar({ back: "Document", backAction: "close-reader-agent", context: "Define Live Edit collaboration · OpenAI Codex" })}
+      <main class="shell-screen native-chat-screen">
+        <section class="native-chat">
+          <div class="native-chat-heading"><span>&gt;_</span><strong>OpenAI Codex</strong><small>Define Live Edit collaboration</small></div>
+          <div class="native-transcript">
+            <div class="native-agent"><p>I read the complete Goal, all three linked Documents, and your selected reading location.</p><p>Give feedback naturally. I can answer a question, edit or consolidate Documents, or propose a separate Goal.</p></div>
+          </div>
+          <div class="native-composer"><span>›</span><span class="composer-placeholder">Give feedback across this Goal…</span><kbd>⌘↵</kbd></div>
+        </section>
+      </main>`;
+  }
+  const bar = shellBar({
+    back: "Summary",
+    backAction: "work",
+    context: "",
+  });
+  return `
+    ${bar}
+    <main class="shell-screen vision-reader-only">
+      <section class="vision-reader">
+        <header class="vision-reader-toolbar">
+          <div class="vision-reader-route">
+            <div class="vision-reader-history">
+              <button type="button" data-action="review-back" ${reviewTrailIndex > 0 ? "" : "disabled"} aria-label="Previous Document">←</button>
+              <button type="button" data-action="review-forward" ${reviewTrailIndex < reviewTrail.length - 1 ? "" : "disabled"} aria-label="Next Document">→</button>
+            </div>
+            <div class="area-path"><button>Neara</button><button>Hackathon</button><button>Live Edit</button></div>
+            <span class="vision-route-separator">/</span>
+            ${productDocumentPicker()}
+          </div>
+          <button class="shell-bar-button" type="button" data-action="open-reader-agent">Open agent</button>
+        </header>
+        <div class="vision-reader-scroll">
+          <div class="vision-reader-grid">
+            ${productDocument()}
+            ${productPageOutline()}
+          </div>
+        </div>
+      </section>
+    </main>`;
+}
+
+/** Selects one Document and updates the local reading trail. */
+function selectReviewDocument(id, { record = true } = {}) {
+  if (!reviewDocuments[id]) return;
+  if (record && id !== selectedReviewDocument) {
+    reviewTrail = reviewTrail.slice(0, reviewTrailIndex + 1);
+    reviewTrail.push(id);
+    reviewTrailIndex = reviewTrail.length - 1;
+  }
+  selectedReviewDocument = id;
+  render();
+}
+
+const renderers = [renderReturn, renderChat, renderDescribe, renderOrganize, renderPrograms, renderWorking, renderDocument];
 
 /** Shows one temporary response to a concept interaction. */
 function showToast(message) {
@@ -564,11 +599,8 @@ document.addEventListener("click", (event) => {
     }
     return showToast("The command opens a short review before Agent Shell starts its visible tmux session.");
   }
-  const shapedOutcome = target.closest("[data-select-shaped-outcome]");
-  if (shapedOutcome) {
-    selectedWork = shapedOutcome.dataset.selectShapedOutcome;
-    return render();
-  }
+  const reviewDocument = target.closest("[data-review-document]");
+  if (reviewDocument) return selectReviewDocument(reviewDocument.dataset.reviewDocument);
   const action = target.closest("[data-action]")?.dataset.action;
   if (!action) return;
   if (action === "next") return setScene(currentScene + 1);
@@ -578,25 +610,24 @@ document.addEventListener("click", (event) => {
     programView = "list";
     return setScene(4);
   }
-  if (action === "handoff") return setScene(6);
-  if (action === "new-child-project") {
-    organizeMode = "new-child";
+  if (action === "new-nested-area") {
+    organizeMode = "new-nested-area";
     return render();
   }
-  if (action === "new-root-project") {
+  if (action === "new-root-area") {
     organizeMode = "new-root";
     return render();
   }
-  if (action === "move-project") {
+  if (action === "move-area") {
     organizeMode = "move";
     return render();
   }
-  if (action === "project-tree" || action === "cancel-project-action") {
+  if (action === "area-tree" || action === "cancel-area-action") {
     organizeMode = "tree";
     return render();
   }
-  if (action === "confirm-project-move") return showToast("Agent Shell shows the complete path change before it moves the noun node.");
-  if (action === "rename-project") return showToast("Rename uses the same focused path preview.");
+  if (action === "confirm-area-move") return showToast("Agent Shell shows the complete path change before it moves the Area.");
+  if (action === "rename-area") return showToast("Rename uses the same focused path preview.");
   if (action === "program-list") {
     programView = "list";
     dndStopConfirm = false;
@@ -629,30 +660,40 @@ document.addEventListener("click", (event) => {
     render();
     return showToast(awake ? "This Mac will stay awake while Agent Shell is open." : "This Mac can sleep normally.");
   }
-  if (action === "create-map") {
-    mapCreated = true;
-    render();
-    return showToast("The parent and child outcomes are ready.");
+  if (action === "save-idea") return showToast("The description is saved as an idea. No work was created.");
+  if (action === "document") return setScene(6);
+  if (action === "review-back" && reviewTrailIndex > 0) {
+    reviewTrailIndex -= 1;
+    return selectReviewDocument(reviewTrail[reviewTrailIndex], { record: false });
   }
-  if (action === "save-idea") return showToast("The description is saved as an idea. No outcomes were created.");
-  if (action === "start-shaped-outcome") return showToast(`The normal start plan opens for “${shapedOutcomes[selectedWork].title}”.`);
-  if (action === "copy-handoff") return showToast("The two-minute context is ready to share.");
-  if (action === "document") return showToast("A document opens alone in the same reading column.");
+  if (action === "review-forward" && reviewTrailIndex < reviewTrail.length - 1) {
+    reviewTrailIndex += 1;
+    return selectReviewDocument(reviewTrail[reviewTrailIndex], { record: false });
+  }
+  if (action === "open-reader-agent") {
+    readerAgentOpen = true;
+    return render();
+  }
+  if (action === "close-reader-agent") {
+    readerAgentOpen = false;
+    return render();
+  }
 });
 
 document.addEventListener("submit", (event) => {
-  if (event.target.matches("[data-shape-form]")) {
+  if (event.target.matches("[data-describe-form]")) {
     event.preventDefault();
-    shaped = true;
+    describing = true;
     render();
     return;
   }
-  if (event.target.matches("[data-project-create-form]")) {
+  if (event.target.matches("[data-area-create-form]")) {
     event.preventDefault();
-    const atRoot = event.target.dataset.projectParent === "root";
+    const atRoot = event.target.dataset.areaParent === "root";
     organizeMode = "tree";
     render();
-    showToast(atRoot ? "The new top-level noun node now exists." : "The new noun node now exists below Neara / Hackathon.");
+    showToast(atRoot ? "The new top-level Area now exists." : "The new Area now exists below Neara / Hackathon.");
+    return;
   }
 });
 
@@ -663,14 +704,16 @@ rationaleToggle.addEventListener("click", () => {
   render();
 });
 document.querySelector("#restart-vision").addEventListener("click", () => {
-  shaped = false;
-  mapCreated = false;
-  selectedWork = "";
+  describing = false;
   awake = false;
   organizeMode = "tree";
   programView = "list";
   dndServerRunning = true;
   dndStopConfirm = false;
+  readerAgentOpen = false;
+  selectedReviewDocument = "design";
+  reviewTrail = ["design"];
+  reviewTrailIndex = 0;
   setScene(0);
 });
 

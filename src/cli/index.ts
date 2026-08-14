@@ -16,11 +16,11 @@ const tangentCommandSpec: CliCommandSpec = {
       name: "process",
       description: "Run named local processes visibly in the Tangent tree",
       subcommands: [
-        { name: "list", description: "List inherited process definitions", options: [{ name: "node", takesValue: true, description: "Tangent noun node" }] },
-        { name: "start", description: "Start or reopen a named process", args: "<name>", options: [{ name: "node", takesValue: true, description: "Tangent noun node" }] },
-        { name: "stop", description: "Stop a process but keep its visible session", args: "<name>", options: [{ name: "node", takesValue: true, description: "Tangent noun node" }] },
-        { name: "restart", description: "Restart a named process", args: "<name>", options: [{ name: "node", takesValue: true, description: "Tangent noun node" }] },
-        { name: "close", description: "Close a process session and remove its row", args: "<name>", options: [{ name: "node", takesValue: true, description: "Tangent noun node" }] }
+        { name: "list", description: "List inherited process definitions", options: [{ name: "area", takesValue: true, description: "Tangent Area path" }] },
+        { name: "start", description: "Start or reopen a named process", args: "<name>", options: [{ name: "area", takesValue: true, description: "Tangent Area path" }] },
+        { name: "stop", description: "Stop a process but keep its visible session", args: "<name>", options: [{ name: "area", takesValue: true, description: "Tangent Area path" }] },
+        { name: "restart", description: "Restart a named process", args: "<name>", options: [{ name: "area", takesValue: true, description: "Tangent Area path" }] },
+        { name: "close", description: "Close a process session and remove its row", args: "<name>", options: [{ name: "area", takesValue: true, description: "Tangent Area path" }] }
       ]
     },
     productCommandSpec("usage", "Inspect coding-agent activity"),

@@ -1,187 +1,59 @@
-# How to manage tmux sessions and the project vault
+# Agent Shell operating rules
 
-You run inside a tmux session named `chat`. This session is the user's chat window and the home agent of the project tree's root. Do not detach it. Do not kill it.
+Agent Shell uses tmux for native agent sessions. Do not detach or kill the orchestrator session. The vault contains Areas, Goals, and Documents.
 
-Tree nodes can have their own home agent session: named after the node, marked `@tangent_kind 'home'`, running the same orchestrator command. The shell spawns these when the user addresses a node by voice or typed command. A home session organizes its node; work sessions do the individual pieces of work.
+## Vocabulary
 
-In this file, "session" always means a tmux session. The vault has no sessions.
+- An Area is a durable subject that the user creates explicitly.
+- A Goal records something the user wants to make true.
+- A Subgoal is another Goal linked by “To do that.”
+- A Document stores reusable knowledge linked to relevant Goals.
+- A Program is a repeatable operation attached to an Area.
+- A Run is one agent session working on one Goal.
 
-The user asks you to open directories in new tmux sessions. Each session appears as a tab in the app. Use the `tmux` commands below. Confirm each action in one line.
+## Start a Run
 
-## Words
+If the user names an Area, read its canonical note first. Use the repository or worktree in `## Resources`. Before you start a server or watcher, run `tangent process list`. Start a matching Program with `tangent process start <name>`.
+Otherwise, create a tmux session in the selected directory. Confirm that its name is not in use. Always quote directory paths.
 
-- A "vertical panes" request means panes side by side. Use `split-window -h`.
-- A "horizontal panes" request means panes stacked. Use `split-window -v`.
-- A "session name" contains only lowercase letters, digits, and hyphens. It does not contain dots or colons.
-- A "tree node" is a directory path in the project tree at `~/.tangent/trees/`. Examples: `neara/pgande`, `otto/tangent/shell`. The path is relative to the tree root.
-
-## Open a directory in a new session
-
-When the user names a tree node instead of a directory, do not search the filesystem:
-
-1. Read the node note `~/.tangent/trees/<node>/<basename>.md`, section `## Resources`.
-2. If it lists a Repository or Worktree path, use that directory. Do not ask.
-3. If it does not, ask the user for the directory in one short question. Then save it to `## Resources` with the `remember` skill, so the next session start needs no question.
-
-Then:
-
-1. If the user gives a name, use it. If not, name the session after the piece of work, in lowercase with hyphens. Examples: `fix-shell`, `review-usage`, `upgrade-deps`. Do not name the session after the directory. The tree node already shows the project; the session name must say what the work is.
-2. Make sure that the session does not exist: `tmux has-session -t <name>`. If it exists, choose a more specific work name. Do not add a number suffix.
-3. Create the session, detached, in the directory:
-
-   ```sh
-   tmux new-session -d -s <name> -c '<directory>'
-   ```
-
-4. For each extra pane, split in the same directory:
-
-   ```sh
-   tmux split-window -h -t <name> -c '<directory>'   # side by side
-   tmux split-window -v -t <name> -c '<directory>'   # stacked
-   ```
-
-5. If the session has three or more panes, balance them: `tmux select-layout -t <name> even-horizontal` (or `even-vertical`, or `tiled`).
-6. Always quote the directory path. Paths can contain spaces and special characters, for example `PG&E`.
-7. Attach the session to a tree node (see the next section).
-
-## Attach a session to a tree node
-
-The app shows sessions on a project tree in the sidebar. Each session must point to one tree node.
-
-1. Select the tree node for the work. If the user names a node, use it. If not, select the node that matches the directory or the task.
-2. If no node matches, list the candidates with `ls ~/.tangent/trees/<parent>` and give the user your best guess.
-3. Set the node on the session:
-
-   ```sh
-   tmux set-option -t <name> @tangent_node '<node-path>'
-   ```
-
-4. If the user states a goal for the work, set it too:
-
-   ```sh
-   tmux set-option -t <name> @tangent_goal '<goal in one sentence>'
-   ```
-
-5. Confirm the node in the same line as the session confirmation.
-
-Option names use underscores (`@tangent_node`, `@tangent_goal`). The sidebar reads `@tangent_node` and breaks silently on other spellings.
-
-A session without a node appears under "unfiled sessions" in the sidebar. Do not leave a session unfiled.
-
-### Example
-
-The user says: "open /Users/julianotto/Projects/delivery/Customers/PG&E with two vertical panes, name it feature-x".
+Bind each Goal Run with these tmux options:
 
 ```sh
-tmux new-session -d -s feature-x -c '/Users/julianotto/Projects/delivery/Customers/PG&E'
-tmux split-window -h -t feature-x -c '/Users/julianotto/Projects/delivery/Customers/PG&E'
-tmux set-option -t feature-x @tangent_node 'neara/pgande'
+tmux set-option -t <name> @tangent_area '<area-path>'
+tmux set-option -t <name> @tangent_goal '<vault-relative-goal-file>'
+tmux set-option -t <name> @tangent_kind 'goal'
 ```
 
-Then confirm: `opened feature-x (2 vertical panes) in .../Customers/PG&E, node neara/pgande`.
+A Program uses `@tangent_area`, `@tangent_kind`, and `@tangent_process`.
 
-## Inspect sessions
+## Maintain the vault
 
-- List sessions: `tmux list-sessions`
-- List the panes of one session: `tmux list-panes -t <name> -F '#{pane_index} #{pane_current_path} #{pane_current_command}'`
+Each Area is one directory. Its canonical note uses `type: area`.
+Create an Area only after user confirmation. Do not infer an Area from each subject in a Goal.
+A Goal file uses `goal-<slug>.md` and `type: goal`. Its frontmatter contains `status`, `done_when`, and `session`.
+When the opening prompt provides `goal-command.mjs`, use that command for every confirmed new Goal and Subgoal. Do not hand-write Goal frontmatter or Area links. The command validates and writes the current schema through Agent Shell.
+Legacy `outcome-*.md` files remain readable during migration. Do not create new legacy Outcome files.
 
-## Run a command in a pane
+Link ordered Subgoals in `## Subgoals`. Keep small actions in the agent plan or `## Steps`.
 
-```sh
-tmux send-keys -t <name>.<pane-index> '<command>' Enter
-```
+Link each Document to the Goals that explain why it exists. Store the Document in a suitable Area.
 
-Pane indexes start at 0. Make sure that the target pane is correct before you send keys.
+Before you write design prose, use the Simple English skill in pragmatic mode. Complete its mandatory self-check.
 
-## Start a named process
+Keep `## State` current. Keep exactly one `You wanted` bullet in `## Current brief`.
 
-Specific long-running commands Julian cares about are declared locally on noun nodes in ignored `.processes.json` files:
+Add a short Story moment only when feedback, a decision, or a result changes the plan. Keep no more than five moments.
 
-```json
-{ "scripts": { "hmr": "npm run dev:hmr" } }
-```
+Propose marking a completed Goal done. Never mark it done without confirmation.
 
-Definitions inherit into descendant nodes; the nearest definition wins. A process always belongs to and runs from the noun node that defined it.
+## Safety
 
-Before starting any long-running server, watcher, or similar command:
+- Confirm the target before you send tmux keys.
+- Never kill, detach, or send keys to the orchestrator session.
+- Ask before you close a session that the user did not name.
+- Keep one session per named Goal or Program.
+- Use `@tangent_area` as the authoritative save target.
 
-1. Resolve the current tree node from `@tangent_node`.
-2. Run `tangent process list`.
-3. If the requested command matches a declared name, always use `tangent process start <name>`. This wrapper creates the durable tmux session, binds it to the defining node, and makes it visible in the tree.
-4. If it is not declared, run it normally. Only the named processes on the list need special visibility; do not add definitions or ask to add one unless Julian requests it.
+## Read next
 
-Use `tangent process stop <name>` to interrupt a process while retaining its tree row and scrollback, `restart` to rerun it, and `close` to kill the process session and remove its row. Do not reproduce the tmux mechanics by hand.
-
-## Close a session
-
-CAUTION: `kill-session` stops all processes in the session. Ask the user before you close a session that the user did not name.
-
-```sh
-tmux kill-session -t <name>
-```
-
-## The project vault
-
-The tree at `~/.tangent/trees/` is also the user's memory vault. Each active node directory has one note named after the directory, for example `neara/pgande/pgande.md`. The note describes the present state of that work: Purpose, Current, Road to done, Knowledge, Ideas and open questions, Resources. The vault rules are in `~/.tangent/trees/README.md`.
-
-### Design documents
-
-Before you create or revise a design document, read `~/.agents/skills/simple-english/SKILL.md`. Use its pragmatic mode. Do its mandatory self-check before you save the document. This rule applies to new prose and proposed edits. Do not change code, identifiers, commands, file paths, or quoted errors during the language pass.
-
-## Outcomes
-
-Nodes are what the user talks about; outcomes are what they achieve. There is no separate task concept: a task is just an outcome small enough to work directly. An outcome is one file `outcome-<slug>.md` in its owning node's directory, with a mandatory one-line `outcome` (the done condition) and a `status` (`open | active | waiting | deferred | done | dropped`). Outcomes nest: an optional `## Breakdown` section lists `[[outcome-...]]` wikilinks to child outcomes in priority order, so a big outcome completes as the sum of its smallest achievable parts. The node note's `## Road to done` links the node's top-level outcomes in order. There is no derived "next": the user picks what to work on. Full schema: `~/.tangent/trees/README.md`, section Outcomes.
-
-- The shell's launcher (Cmd+K, then `/`) spawns outcome sessions itself: agent in the node's repo, bound with `@tangent_node` and `@tangent_outcome`, outcome flipped to `active`. You do not need to replicate that; when the user asks you for a session on a specific outcome, you may create it the same way (set both options, flip the status, commit).
-- When the user states an outcome they want to achieve ("I want X"), or asks to break one down, use the `outcome` skill. It resolves the node, drafts a checkable done condition, probes the edge cases, decomposes only when that earns it, and writes the file linked from Road to done or from a parent outcome's Breakdown after the user confirms. If the done condition cannot be stated yet, it is not an outcome; save it as an idea on the node instead.
-- Outcome state changes are spoken: "mark it done", "that's waiting on Sami", "defer that". Apply them to the outcome file with the `remember` skill rules. On done: harvest durable results to the node's `## Knowledge` first, keep the file until the node lands.
-- Only the shell flips `open <-> active`; never fight it. If a session died mid-outcome, the shell reverts the outcome to `open` on its own.
-
-### Start focus
-
-When the user says "I am working on <X>", "let's work on <X>", or "open up <X>":
-
-1. Resolve <X> to its vault node.
-2. Read the node note and the nearest project note above it.
-3. Brief the user: the current state, the open outcomes, the blockers, and the resources (branches, worktrees, reviews).
-4. Do not create a file. Do not write to the vault.
-
-### End focus
-
-When the user says "I am done with <X>" or "done for now":
-
-1. If the user gives a result, use the `remember` skill to update the note: `## Current`, outcome state, `status`.
-2. If the user gives no result, write nothing. Do not invent one.
-
-### Saves and questions
-
-- When the user says "remember", "save", "note this", "add a task", or "I want to achieve X", use the `remember` skill.
-- When the user asks what is recorded, what remains, or what the state is, use the `recall` skill.
-- The bound `@tangent_node` of a tmux session is the authoritative save target for agents in that session. Do not infer the node from a directory or branch.
-
-### Starting an agent in a work session
-
-When you start an agent inside a tmux work session, send it one short first message:
-
-```text
-Tangent node: <node-path>
-Goal: <goal>
-
-/recall reads memory for this node. /remember writes to this node unless another node is explicitly named.
-```
-
-### Start work with a context dump
-
-When the user asks for a new session and states the goal or context in the same request ("start a new tangent session, the goal is that cmd+D no longer kills the tmux session"):
-
-1. Create the work session on the node and start the agent as above, first message included.
-2. Then type the user's own words about the goal into the agent with `send-keys` WITHOUT a trailing Enter. The user wants to add more before sending; never submit it for them.
-3. Confirm in one line and name the session so the user can switch to it.
-
-## Rules
-
-- One session per named piece of work.
-- Many sessions on one node or one directory are normal. Different work in the same repository gets different sessions.
-- Anything long-running you are asked to run (a build, a server, a test watch) gets its own node-bound session the user can open and inspect. Never bury it in your own pane.
-- Do not touch the `chat` session with `kill-session`, `detach-client`, or `send-keys`.
-- Do not kill a home session (`@tangent_kind 'home'`) unless the user names it explicitly.
+No package docs exist because this directory is only a session workspace. Read `~/.tangent/trees/README.md` for commit and provenance rules. If its storage examples still describe Outcomes, the opening prompt's deterministic Goal command is authoritative for new work.

@@ -3,8 +3,8 @@ import test from "node:test";
 import { documentHash, markdownTitle, safeMarkdownPath, wikiLinks } from "./vault-documents.mjs";
 
 test("wikiLinks reads prose but not inline or fenced code", () => {
-  const text = "[[design-one|Design]] and [[outcome-work#State]] `[[not-this]]`\n```md\n[[nor-this]]\n```";
-  assert.deepEqual(wikiLinks(text), ["design-one", "outcome-work"]);
+  const text = "[[design-one|Design]] and [[goal-work#State]] `[[not-this]]`\n```md\n[[nor-this]]\n```";
+  assert.deepEqual(wikiLinks(text), ["design-one", "goal-work"]);
 });
 
 test("safeMarkdownPath confines markdown files to the vault", () => {

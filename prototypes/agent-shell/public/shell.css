@@ -716,6 +716,32 @@ details.more-work .area-work-list { margin-top: 18px; }
 .launch-command code { overflow-x: auto; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: #101318; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; white-space: nowrap; }
 .launch-command input { flex: 1; min-width: 0; padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: #101318; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .launch-command .quiet-button { flex-shrink: 0; padding: 4px 9px; font-size: 12px; }
+.launch-registry-link { justify-self: start; padding: 2px 0; font-size: 12px; }
+.launch-registry-link:hover { background: transparent; text-decoration: underline; }
+
+/* Split Start-agent control and its anchored agent chooser. */
+.desk-split { display: inline-flex; }
+.desk-split .desk-action:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.desk-launch-toggle { margin-left: -1px; padding: 4px 5px; border-top-left-radius: 0; border-bottom-left-radius: 0; color: #7f8994; }
+.desk-launch-toggle:hover, .desk-launch-toggle.open { border-color: #68727e; color: #fff; }
+.launch-popover { position: fixed; z-index: 60; overflow-y: auto; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--bg); box-shadow: 0 18px 48px rgba(0, 0, 0, .55); }
+.launch-popover .launch-picker { margin-top: 0; border: 0; border-radius: 0; }
+.launch-popover-header { display: grid; gap: 2px; padding: 14px 20px 0; }
+.launch-popover-header small { color: var(--quiet); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+.launch-popover-header strong { font-size: 14px; }
+
+/* Harness registry editor. */
+.harness-editor .summary-section { display: grid; gap: 14px; justify-items: start; }
+.harness-rows, .model-rows { display: grid; gap: 8px; justify-self: stretch; }
+.harness-row { display: grid; grid-template-columns: 180px minmax(0, 1fr) 170px auto; gap: 10px; align-items: center; }
+.model-row { display: grid; grid-template-columns: 180px minmax(0, 1fr) auto; gap: 10px; align-items: center; }
+.harness-editor input, .harness-editor select { padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: #101318; color: var(--text); font-size: 13px; }
+.harness-editor input.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.model-set { display: grid; gap: 8px; justify-items: start; justify-self: stretch; padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.model-set h3 { margin: 0; font-size: 13px; }
+.model-set-add { display: flex; gap: 10px; align-items: center; }
+.harness-editor .action-row { margin-top: 30px; }
+.harness-editor .action-row + .form-note { margin-top: 12px; }
 
 /* Agent terminal */
 

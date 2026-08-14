@@ -53,6 +53,10 @@ const state = {
     notice: "",
   },
   launch: { area: "", options: null, loading: false, choice: null, command: "", editing: false, open: false },
+  launchTarget: "",
+  launchAnchor: null,
+  harnessDraft: null,
+  harnessReturnView: "work",
   query: "",
   workFilter: localStorage.getItem("agent-shell.work-filter") || "all",
   editingWords: false,
@@ -1073,7 +1077,9 @@ function deskGoalRow(goal, { subgoal = false } = {}) {
       </button>
       <div class="desk-goal-controls">
         <span class="desk-state ${action.kind}">${escapeHtml(action.state)}</span>
-        <button class="desk-action" type="button" ${route}>${escapeHtml(action.action)}</button>
+        ${action.action === "Start agent"
+          ? `<span class="desk-split"><button class="desk-action" type="button" ${route}>Start agent</button><button class="desk-action desk-launch-toggle${state.launchTarget === goal.file ? " open" : ""}" type="button" data-launch-for="${escapeHtml(goal.file)}" title="Choose agent and model" aria-label="Choose agent and model for ${escapeHtml(goal.title)}" aria-expanded="${state.launchTarget === goal.file}">▾</button></span>`
+          : `<button class="desk-action" type="button" ${route}>${escapeHtml(action.action)}</button>`}
         ${["run", "reviewed"].includes(action.route) ? `<button class="desk-icon-action" type="button" data-view-goal="${escapeHtml(goal.file)}" aria-label="View details for ${escapeHtml(goal.title)}">Details</button>` : ""}
         ${complete ? `<button class="desk-icon-action complete" type="button" data-complete-goal="${escapeHtml(goal.file)}" aria-label="Mark ${escapeHtml(goal.title)} complete">Done</button>` : ""}
       </div>
@@ -1180,7 +1186,29 @@ function renderWork() {
         </div>
       </div>
       ${content}
+      ${launchPopover()}
     </section>
+  `;
+}
+
+/**
+ * The agent chooser, anchored at the Start-agent split control that opened
+ * it. The choice lives at the point of starting: no page change, and the
+ * fast path (plain Start agent) never passes through here.
+ */
+function launchPopover() {
+  if (!state.launchTarget) return "";
+  const goal = goalByFile(state.launchTarget);
+  if (!goal) return "";
+  launchOptionsFor(goal.area);
+  const anchor = state.launchAnchor ?? { top: 120, right: window.innerWidth - 16 };
+  const width = Math.min(640, window.innerWidth - 32);
+  const left = Math.max(16, anchor.right - width);
+  return `
+    <div class="launch-popover" data-launch-popover role="dialog" aria-label="Choose agent and model" style="top:${anchor.top}px;left:${left}px;width:${width}px;max-height:calc(100vh - ${anchor.top + 16}px)">
+      <header class="launch-popover-header"><small>${escapeHtml(areaLabel(goal.area))}</small><strong>${escapeHtml(goal.title)}</strong></header>
+      ${launchPickerBlock()}
+    </div>
   `;
 }
 
@@ -2016,15 +2044,16 @@ function launchPickerBlock() {
       <div class="action-row start-actions">
         <button class="primary-button" type="button" data-launch-start>Start ${escapeHtml(startLabel)}</button>
         ${canSave ? `<button class="quiet-button" type="button" data-launch-save>Save as Area default</button>` : ""}
-        <button class="quiet-button" type="button" data-launch-close>Back</button>
+        <button class="quiet-button" type="button" data-launch-close>${state.launchTarget ? "Close" : "Back"}</button>
       </div>
+      <button class="quiet-button launch-registry-link" type="button" data-open-harnesses>Edit harnesses and models…</button>
     </div>
   `;
 }
 
 /** Saves the current picker selection as the Area's durable default. */
 async function saveLaunchDefault() {
-  const goal = currentGoal();
+  const goal = state.launchTarget ? goalByFile(state.launchTarget) : currentGoal();
   const selection = launchSelection();
   if (!goal || !selection?.harness || selection.edited) return;
   try {
@@ -2039,6 +2068,117 @@ async function saveLaunchDefault() {
   } catch (error) {
     showToast(error.message);
   }
+}
+
+/** Opens the harness registry editor and loads the current registry. */
+function showHarnessEditor(returnView = state.view === "harnesses" ? state.harnessReturnView : state.view) {
+  state.harnessReturnView = returnView;
+  state.launchTarget = "";
+  state.launchAnchor = null;
+  state.launch.open = false;
+  state.harnessDraft = null;
+  state.view = "harnesses";
+  api("/api/harnesses")
+    .then((data) => { state.harnessDraft = data.registry; paint(true); })
+    .catch((error) => showToast(error.message));
+  paint(true);
+}
+
+/** A stable lowercase id for a new registry entry. */
+function harnessSlug(value, taken) {
+  let slug = String(value ?? "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "entry";
+  for (let index = 2; taken.has(slug); index += 1) slug = `${slug}-${index}`;
+  taken.add(slug);
+  return slug;
+}
+
+/** Saves the edited registry for every Area, then returns to the caller view. */
+async function saveHarnesses() {
+  const draft = structuredClone(state.harnessDraft ?? { modelSets: {}, harnesses: [] });
+  draft.version = 1;
+  draft.harnesses = (draft.harnesses ?? []).filter((harness) => (harness.label ?? "").trim() || (harness.command ?? "").trim());
+  const harnessIds = new Set(draft.harnesses.map((harness) => harness.id).filter(Boolean));
+  for (const harness of draft.harnesses) {
+    if (!harness.id) harness.id = harnessSlug(harness.label || harness.command, harnessIds);
+    if (!harness.modelSet) delete harness.modelSet;
+  }
+  for (const name of Object.keys(draft.modelSets ?? {})) {
+    draft.modelSets[name] = (draft.modelSets[name] ?? []).filter((model) => (model.label ?? "").trim() || (model.args ?? "").trim());
+    const modelIds = new Set(draft.modelSets[name].map((model) => model.id).filter(Boolean));
+    for (const model of draft.modelSets[name]) {
+      if (!model.id) model.id = harnessSlug(model.label || model.args, modelIds);
+    }
+  }
+  try {
+    await post("/api/harnesses", draft);
+    state.launch = { area: "", options: null, loading: false, choice: null, command: "", editing: false, open: false };
+    state.view = state.harnessReturnView;
+    state.harnessDraft = null;
+    paint(true);
+    showToast("Harnesses saved for every Area.");
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+/**
+ * The harness registry editor: plain fields instead of a file. A harness is
+ * one exact command or alias; a model option pairs a display label with
+ * exact arguments; harnesses with the same interface share one model set.
+ */
+function renderHarnessEditor() {
+  const draft = state.harnessDraft;
+  if (!draft) return `<div class="loading">Loading harnesses…</div>`;
+  const setNames = Object.keys(draft.modelSets ?? {});
+  const harnessRows = (draft.harnesses ?? []).map((harness, index) => `
+    <div class="harness-row">
+      <input data-harness-field="label" data-index="${index}" value="${escapeHtml(harness.label ?? "")}" placeholder="Display name" aria-label="Harness name">
+      <input class="mono" data-harness-field="command" data-index="${index}" value="${escapeHtml(harness.command ?? "")}" placeholder="Exact command or alias" aria-label="Harness command">
+      <select data-harness-field="modelSet" data-index="${index}" aria-label="Model set">
+        <option value="">No models</option>
+        ${setNames.map((name) => `<option value="${escapeHtml(name)}"${harness.modelSet === name ? " selected" : ""}>${escapeHtml(name)} models</option>`).join("")}
+      </select>
+      <button class="quiet-button" type="button" data-remove-harness="${index}" aria-label="Remove ${escapeHtml(harness.label || "harness")}">✕</button>
+    </div>`).join("");
+  const setBlocks = setNames.map((name) => `
+    <div class="model-set">
+      <h3>${escapeHtml(name)} models</h3>
+      <div class="model-rows">
+        ${(draft.modelSets[name] ?? []).map((model, index) => `
+        <div class="model-row">
+          <input data-model-field="label" data-set="${escapeHtml(name)}" data-index="${index}" value="${escapeHtml(model.label ?? "")}" placeholder="Display label (Opus 4.6)" aria-label="Model label">
+          <input class="mono" data-model-field="args" data-set="${escapeHtml(name)}" data-index="${index}" value="${escapeHtml(model.args ?? "")}" placeholder="Exact arguments (--model claude-opus-4-6)" aria-label="Model arguments">
+          <button class="quiet-button" type="button" data-remove-model data-set="${escapeHtml(name)}" data-index="${index}" aria-label="Remove option">✕</button>
+        </div>`).join("")}
+      </div>
+      <button class="quiet-button" type="button" data-add-model="${escapeHtml(name)}">Add model</button>
+    </div>`).join("");
+  return `
+    <article class="summary-page harness-editor" data-harness-form>
+      <p class="kicker">Machine-wide</p>
+      <h1 class="goal-title">Harnesses and models</h1>
+      <p class="next-action-copy">A harness is one exact CLI command or alias. A model pairs the label you pick from with the exact arguments the command needs. Every Area launches from this one list.</p>
+      <section class="summary-section">
+        <h2>Harnesses</h2>
+        <div class="harness-rows">${harnessRows || `<p class="launch-none">No harnesses yet.</p>`}</div>
+        <button class="secondary-button" type="button" data-add-harness>Add harness</button>
+      </section>
+      <section class="summary-section">
+        <h2>Model sets</h2>
+        <p class="form-note">Harnesses with the same model interface share one set. Both Claude identities use the claude set.</p>
+        ${setBlocks || ""}
+        <div class="model-set-add">
+          <input id="new-set-name" placeholder="New set name" aria-label="New model set name">
+          <button class="secondary-button" type="button" data-add-set>Add model set</button>
+        </div>
+      </section>
+      <div class="action-row">
+        <button class="primary-button" type="button" data-save-harnesses>Save</button>
+        <button class="quiet-button" type="button" data-cancel-harnesses>Cancel</button>
+      </div>
+      <p class="form-note">Saved to <code>~/.tangent/trees/harnesses.md</code> and applied to the next launch. Area defaults keep pointing at unchanged ids.</p>
+    </article>
+  `;
 }
 
 /** Renders the next actions for a Goal without a live Run. */
@@ -2376,6 +2516,7 @@ function renderKey() {
     vaultRenderProjection(),
     goal ? [goal.file, goal.status, goal.mtime, goal.stateText, goal.currentBrief, goal.storyText, goal.why, goal.subgoalItems, goal.documents] : null,
     [state.launch.area, state.launch.open, state.launch.editing, state.launch.command, state.launch.choice, state.launch.loading, Boolean(state.launch.options), state.launch.options?.default?.label ?? null, state.launch.options?.default?.command ?? null],
+    [state.launchTarget, state.launchAnchor, Boolean(state.harnessDraft)],
     state.sessions.map((item) => [item.name, item.goal, item.kind, item.area, item.state, item.phase, item.command, item.created, item.workTitle, item.launchLabel]),
   ]);
 }
@@ -2530,7 +2671,7 @@ function updateLiveHeader() {
 /** Selects and renders the current full-screen view. */
 function renderScreen() {
   const goal = currentGoal();
-  const goalFreeViews = ["work", "create", "describe", "describe-agent", "areas", "area-edit", "programs", "program-detail", "program-create", "program-session", "reviewed-program", "reviewed-run", "document"];
+  const goalFreeViews = ["work", "create", "describe", "describe-agent", "areas", "area-edit", "programs", "program-detail", "program-create", "program-session", "reviewed-program", "reviewed-run", "document", "harnesses"];
   if (!goal && !goalFreeViews.includes(state.view)) state.view = "work";
   const session = sessionForGoal(goal);
   const describeSession = describeWorkSession();
@@ -2561,6 +2702,7 @@ function renderScreen() {
   else if (state.view === "reviewed-program") screen.innerHTML = renderReviewedEditor("program");
   else if (state.view === "reviewed-setup") screen.innerHTML = renderReviewedEditor("setup");
   else if (state.view === "reviewed-run") screen.innerHTML = renderReviewedRun();
+  else if (state.view === "harnesses") screen.innerHTML = renderHarnessEditor();
   else if (state.view === "agent") screen.innerHTML = renderAgent(goal, session);
   else if (state.view === "decision" && session) screen.innerHTML = renderDecision(goal, session);
   else if (state.view === "document") screen.innerHTML = renderDocument();
@@ -2584,7 +2726,7 @@ function paint(force = false) {
   }
   const key = renderKey();
   const active = document.activeElement;
-  if (!force && active && (["work-search", "my-understanding", "launch-command-input"].includes(active.id) || active.closest?.("[data-create-form], [data-describe-work-form], [data-area-form], [data-program-form], [data-reviewed-decision], [data-reviewed-pending-form], .reviewed-editor-page"))) {
+  if (!force && active && (["work-search", "my-understanding", "launch-command-input"].includes(active.id) || active.closest?.("[data-create-form], [data-describe-work-form], [data-area-form], [data-program-form], [data-reviewed-decision], [data-reviewed-pending-form], .reviewed-editor-page, [data-harness-form]"))) {
     updateHeader();
     return;
   }
@@ -3210,6 +3352,12 @@ async function toggleAwake() {
 
 document.addEventListener("click", async (event) => {
   const target = event.target;
+  // A click outside the agent chooser closes it; the clicked control still runs.
+  if (state.launchTarget && !target.closest?.("[data-launch-popover]") && !target.closest?.("[data-launch-for]")) {
+    state.launchTarget = "";
+    state.launchAnchor = null;
+    paint(true);
+  }
   const workFilter = target.closest("[data-work-filter]");
   if (workFilter) {
     state.workFilter = workFilter.dataset.workFilter;
@@ -3334,9 +3482,27 @@ document.addEventListener("click", async (event) => {
     state.launch.open = true;
     return paint(true);
   }
+  const launchFor = target.closest("[data-launch-for]");
+  if (launchFor) {
+    const goal = goalByFile(launchFor.dataset.launchFor);
+    if (!goal) return;
+    if (state.launchTarget === goal.file) {
+      state.launchTarget = "";
+      state.launchAnchor = null;
+      return paint(true);
+    }
+    launchOptionsFor(goal.area);
+    const rect = launchFor.getBoundingClientRect();
+    state.launchTarget = goal.file;
+    state.launchAnchor = { top: Math.round(rect.bottom + 8), right: Math.round(rect.right) };
+    state.launch.open = false;
+    return paint(true);
+  }
   if (target.closest("[data-launch-close]")) {
     state.launch.open = false;
     state.launch.editing = false;
+    state.launchTarget = "";
+    state.launchAnchor = null;
     return paint(true);
   }
   const launchHarness = target.closest("[data-launch-harness]");
@@ -3369,10 +3535,47 @@ document.addEventListener("click", async (event) => {
   }
   if (target.closest("[data-launch-start]")) {
     state.launch.command = document.querySelector("#launch-command-input")?.value ?? state.launch.command;
+    const targetFile = state.launchTarget;
     state.launch.open = false;
+    state.launchTarget = "";
+    state.launchAnchor = null;
+    if (targetFile) rememberGoal(targetFile);
     return openGoalAgent({ returnView: "work" });
   }
   if (target.closest("[data-launch-save]")) return saveLaunchDefault();
+  if (target.closest("[data-open-harnesses]")) return showHarnessEditor();
+  if (target.closest("[data-add-harness]") && state.harnessDraft) {
+    state.harnessDraft.harnesses = [...(state.harnessDraft.harnesses ?? []), { id: "", label: "", command: "" }];
+    return paint(true);
+  }
+  const removeHarness = target.closest("[data-remove-harness]");
+  if (removeHarness && state.harnessDraft) {
+    state.harnessDraft.harnesses.splice(Number(removeHarness.dataset.removeHarness), 1);
+    return paint(true);
+  }
+  const addModel = target.closest("[data-add-model]");
+  if (addModel && state.harnessDraft) {
+    state.harnessDraft.modelSets[addModel.dataset.addModel].push({ id: "", label: "", args: "" });
+    return paint(true);
+  }
+  const removeModel = target.closest("[data-remove-model]");
+  if (removeModel && state.harnessDraft) {
+    state.harnessDraft.modelSets[removeModel.dataset.set].splice(Number(removeModel.dataset.index), 1);
+    return paint(true);
+  }
+  if (target.closest("[data-add-set]") && state.harnessDraft) {
+    const name = document.querySelector("#new-set-name")?.value.trim();
+    if (!name) return showToast("Name the model set first.");
+    if (state.harnessDraft.modelSets?.[name]) return showToast(`The set "${name}" already exists.`);
+    state.harnessDraft.modelSets = { ...(state.harnessDraft.modelSets ?? {}), [name]: [] };
+    return paint(true);
+  }
+  if (target.closest("[data-save-harnesses]")) return saveHarnesses();
+  if (target.closest("[data-cancel-harnesses]")) {
+    state.harnessDraft = null;
+    state.view = state.harnessReturnView;
+    return paint(true);
+  }
   if (target.closest("[data-launch-open-session]")) return launchOpenSession();
   if (target.closest("[data-open-agent]")) {
     state.agentReturnView = "work";
@@ -3608,6 +3811,16 @@ document.addEventListener("input", (event) => {
     state.launch.command = event.target.value;
     return;
   }
+  const harnessField = event.target.closest?.("[data-harness-field]");
+  if (harnessField && state.harnessDraft) {
+    state.harnessDraft.harnesses[Number(harnessField.dataset.index)][harnessField.dataset.harnessField] = harnessField.value;
+    return;
+  }
+  const modelField = event.target.closest?.("[data-model-field]");
+  if (modelField && state.harnessDraft) {
+    state.harnessDraft.modelSets[modelField.dataset.set][Number(modelField.dataset.index)][modelField.dataset.modelField] = modelField.value;
+    return;
+  }
   if (event.target.matches?.("[data-reviewed-draft-field]")) {
     const stepId = event.target.dataset.stepId;
     const field = event.target.dataset.reviewedDraftField;
@@ -3658,6 +3871,10 @@ document.addEventListener("input", (event) => {
 });
 
 document.addEventListener("change", async (event) => {
+  if (event.target.matches?.("select[data-harness-field]") && state.harnessDraft) {
+    state.harnessDraft.harnesses[Number(event.target.dataset.index)][event.target.dataset.harnessField] = event.target.value;
+    return;
+  }
   if (event.target.matches?.("[data-reviewed-area]")) {
     try {
       await loadReviewedProgram(event.target.value);
@@ -3752,6 +3969,13 @@ document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !modalLayer.hidden) {
     event.preventDefault();
     closeModal();
+    return;
+  }
+  if (event.key === "Escape" && state.launchTarget) {
+    event.preventDefault();
+    state.launchTarget = "";
+    state.launchAnchor = null;
+    paint(true);
     return;
   }
   if (event.key === "/" && event.metaKey) {

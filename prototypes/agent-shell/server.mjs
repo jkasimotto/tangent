@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { doneCascade } from "./goal-cascade.mjs";
 import { noteResource } from "./area-agent-command.mjs";
-import { harnessModels, inheritedLaunch, parseHarnessRegistry, resolveLaunch, upsertEnvironmentLaunch } from "./launch-environment.mjs";
+import { harnessModels, inheritedLaunch, parseHarnessRegistry, resolveLaunch, upsertEnvironmentLaunch, upsertHarnessRegistry, validateHarnessRegistry } from "./launch-environment.mjs";
 import { createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
 import { commandSession, programsSnapshot, saveLocalProgram, saveRoutine, setRoutinePaused } from "./programs.mjs";
 import { createReviewedBuildBridge } from "./reviewed-build.mjs";
@@ -2188,6 +2188,38 @@ const server = http.createServer(async (req, res) => {
         res.writeHead(500, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: String(error.stderr ?? error.message ?? error) }));
       }
+      return;
+    }
+    // The registry for the harness editor: read the raw structure, and
+    // write a validated replacement back into the harnesses Document.
+    if (url.pathname === "/api/harnesses" && req.method === "GET") {
+      const registry = await harnessRegistry();
+      if (registry.error) {
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: registry.error }));
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ registry }));
+      return;
+    }
+    if (url.pathname === "/api/harnesses" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      const registry = { version: 1, modelSets: body.modelSets ?? {}, harnesses: body.harnesses ?? [] };
+      const problem = validateHarnessRegistry(registry);
+      if (problem) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: problem }));
+        return;
+      }
+      const absolute = path.join(TREES_ROOT, "harnesses.md");
+      const text = await readFile(absolute, "utf8").catch(() => "");
+      await writeFile(absolute, upsertHarnessRegistry(text, registry));
+      await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", "harnesses.md"]).catch(() => {});
+      await vaultCommit(["harnesses.md"], "update: harness registry from Agent Shell", "machine", null);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
       return;
     }
     // Launch choices for the Start work surface: the registry's named

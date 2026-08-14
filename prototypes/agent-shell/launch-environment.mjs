@@ -83,6 +83,47 @@ export function resolveLaunch(registry, ref) {
 }
 
 /**
+ * Rejects a registry that would break launches before it is written:
+ * missing ids or commands, duplicate ids, and unknown model-set references.
+ * Returns the first problem as a string, or null for a valid registry.
+ */
+export function validateHarnessRegistry(registry) {
+  const harnesses = Array.isArray(registry?.harnesses) ? registry.harnesses : [];
+  const modelSets = registry?.modelSets && typeof registry.modelSets === "object" ? registry.modelSets : {};
+  const seen = new Set();
+  for (const harness of harnesses) {
+    if (!harness.id || !harness.command) return "every harness needs an id and a command";
+    if (seen.has(harness.id)) return `duplicate harness id "${harness.id}"`;
+    seen.add(harness.id);
+    if (harness.modelSet && !Array.isArray(modelSets[harness.modelSet])) {
+      return `harness "${harness.id}" references unknown model set "${harness.modelSet}"`;
+    }
+  }
+  for (const [name, options] of Object.entries(modelSets)) {
+    const ids = new Set();
+    for (const option of options ?? []) {
+      if (!option.id) return `a model option in the "${name}" set has no id`;
+      if (ids.has(option.id)) return `duplicate model id "${option.id}" in the "${name}" set`;
+      ids.add(option.id);
+    }
+  }
+  return null;
+}
+
+/**
+ * Writes the registry back into the harnesses Document: replaces the
+ * existing fenced block, or appends one to a new or blockless file.
+ */
+export function upsertHarnessRegistry(text, registry) {
+  const block = "```tangent.harnesses.v1\n" + JSON.stringify(registry, null, 2) + "\n```";
+  if (fencedBlock(text, "tangent.harnesses.v1") !== null) {
+    return String(text).replace(/```tangent\.harnesses\.v1\s*\n[\s\S]*?\n```/, block);
+  }
+  const base = String(text ?? "").trim() || "# Harnesses\n\nThis Document is the machine-wide harness registry. Every Area inherits it. Edit it here or through the Agent Shell harness editor.";
+  return `${base}\n\n${block}\n`;
+}
+
+/**
  * Writes one launch reference as a note's durable default: updates the
  * existing environment block in place, or appends a Development environment
  * section with a fresh block. Only the explicit save action calls this.

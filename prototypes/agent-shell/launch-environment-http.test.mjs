@@ -145,6 +145,31 @@ test("launch options resolve the registry, and saving writes an Area default", a
   assert.equal(after.default.command, "pi-code");
   assert.equal(after.default.label, "Pi Code");
 
+  // The harness editor round trip: read the registry, save a change, and
+  // see the new option in the next launch options without a restart.
+  const editable = await fetch(`${base}/api/harnesses`).then((response) => response.json());
+  assert.equal(editable.registry.harnesses.length, 2);
+  editable.registry.modelSets.claude.push({ id: "haiku-4-5", label: "Haiku 4.5", args: "--model claude-haiku-4-5" });
+  editable.registry.harnesses.push({ id: "agy", label: "Agy", command: "agy" });
+  const savedRegistry = await fetch(`${base}/api/harnesses`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(editable.registry),
+  });
+  assert.equal(savedRegistry.status, 200);
+  const registryNote = await readFile(path.join(trees, "harnesses.md"), "utf8");
+  assert.match(registryNote, /"haiku-4-5"/);
+  const refreshed = await fetch(`${base}/api/launch/options?area=otto/test`).then((response) => response.json());
+  assert.deepEqual(refreshed.harnesses.map((harness) => harness.id), ["claude-otto", "pi-code", "agy"]);
+  assert.equal(refreshed.harnesses[0].models.length, 2);
+  const invalid = await fetch(`${base}/api/harnesses`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ harnesses: [{ id: "x", command: "x", modelSet: "nope" }] }),
+  });
+  assert.equal(invalid.status, 400);
+  assert.match((await invalid.json()).error, /unknown model set "nope"/);
+
   // Starting a Goal with an explicit choice types the exact composed
   // command into the shell pane without submitting it, and records the
   // display label on the session.

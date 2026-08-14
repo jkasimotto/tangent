@@ -10,6 +10,8 @@ import {
   parseHarnessRegistry,
   resolveLaunch,
   upsertEnvironmentLaunch,
+  upsertHarnessRegistry,
+  validateHarnessRegistry,
 } from "./launch-environment.mjs";
 
 const REGISTRY_NOTE = `# Harnesses
@@ -140,6 +142,23 @@ test("saving a default keeps other environment keys in the block", () => {
   const environment = parseEnvironmentBlock(saved);
   assert.equal(environment.paneConfigurations.length, 1);
   assert.deepEqual(environment.defaults.launch, { harness: "pi-code" });
+});
+
+test("registry validation names duplicates and broken references", () => {
+  assert.equal(validateHarnessRegistry(registry), null);
+  assert.match(validateHarnessRegistry({ harnesses: [{ id: "a", command: "a" }, { id: "a", command: "b" }] }), /duplicate harness id "a"/);
+  assert.match(validateHarnessRegistry({ harnesses: [{ id: "a", command: "a", modelSet: "x" }] }), /unknown model set "x"/);
+  assert.match(validateHarnessRegistry({ harnesses: [], modelSets: { m: [{ id: "y" }, { id: "y" }] } }), /duplicate model id "y"/);
+  assert.match(validateHarnessRegistry({ harnesses: [{ label: "No id" }] }), /needs an id and a command/);
+});
+
+test("writing the registry replaces the block and keeps surrounding prose", () => {
+  const next = { version: 1, modelSets: {}, harnesses: [{ id: "agy", label: "Agy", command: "agy" }] };
+  const replaced = upsertHarnessRegistry(REGISTRY_NOTE, next);
+  assert.match(replaced, /# Harnesses/);
+  assert.equal(parseHarnessRegistry(replaced).harnesses.length, 1);
+  const created = upsertHarnessRegistry("", next);
+  assert.equal(parseHarnessRegistry(created).harnesses[0].id, "agy");
 });
 
 test("launch labels fall back to ids and fenced lookup handles dots", () => {

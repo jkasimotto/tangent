@@ -398,6 +398,16 @@ test("the live shell restores context, defines work with an agent, and organizes
   const description = window.document.querySelector("#describe-work");
   description.value = "Make the scene flow reliable. Terrain generation fits the view. Sprite cutouts keep the asset.";
   description.dispatchEvent(new window.Event("input", { bubbles: true }));
+  click(window, "[data-launch-for='__describe__']");
+  await settle(window);
+  await settle(window);
+  const describeAgentPicker = window.document.querySelector("[data-launch-popover]");
+  assert.ok(describeAgentPicker, "the Describe work agent picker opens");
+  assert.match(describeAgentPicker.textContent, /Claude/);
+  assert.match(describeAgentPicker.textContent, /Codex/);
+  assert.match(describeAgentPicker.textContent, /Pi Code/);
+  assert.equal(window.document.querySelector("#describe-work").value, description.value);
+  click(window, "[data-launch-for='__describe__']");
   submit(window, "[data-describe-work-form]");
   await settle(window);
   const described = posts.find((entry) => entry.path === "/api/work/describe");

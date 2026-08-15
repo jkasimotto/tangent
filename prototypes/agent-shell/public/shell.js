@@ -1739,6 +1739,7 @@ function renderDescribeCapture() {
         <p class="form-note">The agent reads the Area notes and can inspect its vault and repository. It discusses the structure before it creates Goals.</p>
       </form>
     </article>
+    ${launchPopover()}
   `;
 }
 

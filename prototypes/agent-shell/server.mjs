@@ -12,6 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { doneCascade } from "./goal-cascade.mjs";
+import { promptArrived, splitPrompt, squash } from "./prompt-delivery.mjs";
 import { noteResource } from "./area-agent-command.mjs";
 import { harnessModels, inheritedLaunch, parseHarnessRegistry, resolveLaunch, upsertEnvironmentLaunch, upsertHarnessRegistry, validateHarnessRegistry } from "./launch-environment.mjs";
 import { createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
@@ -1145,7 +1146,6 @@ const READY_MAX_MS = 30_000; // stop waiting for a quiet screen and type anyway
 const ECHO_MS = 1200; // time for a TUI to draw what was typed into it
 const RETRY_MS = 2500; // extra boot time before typing the prompt again
 const TYPE_ATTEMPTS = 3;
-const PROBE_CHARS = 24; // opening words, short enough to stay visible in a composer
 const armedSessions = new Map(); // session -> { phase, submit, document, prompt }
 let armTimer = null;
 
@@ -1204,22 +1204,21 @@ async function waitForHarnessReady(session) {
  * read. So the opening words go in alone as a probe and have to appear on
  * screen before the rest follows. Only the probe can be checked that way — a
  * composer holding the whole prompt has scrolled its first line out of sight,
- * so the far end is what proves the remainder arrived.
+ * so the far end is what proves the remainder arrived, unless the harness
+ * collapsed the remainder into a pasted-text marker (Claude Code does for any
+ * large input); prompt-delivery.mjs holds both rules.
  */
 async function typePromptWhenReady(session, prompt, submit = false, label = "agent prompt") {
   try {
-    /** Whitespace-free comparison form, so wrapping cannot hide a match. */
-    const squash = (s) => s.replace(/\s+/g, "");
-    const probe = prompt.slice(0, PROBE_CHARS);
-    const tail = squash(prompt.slice(-40));
+    const { probe, rest } = splitPrompt(prompt);
     for (let attempt = 1; attempt <= TYPE_ATTEMPTS; attempt++) {
       if (!(await waitForHarnessReady(session))) return;
       await typeInto(session, probe, false);
       await sleep(ECHO_MS);
       if ((await paneText(session)).includes(squash(probe))) {
-        await typeInto(session, prompt.slice(PROBE_CHARS), false);
+        await typeInto(session, rest, false);
         await sleep(ECHO_MS);
-        if ((await paneText(session)).includes(tail)) {
+        if (promptArrived(await paneText(session), prompt)) {
           if (submit) await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "Enter"]);
           return;
         }

@@ -3,7 +3,7 @@
 // tmux sessions through node-pty.
 import http from "node:http";
 import os from "node:os";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { appendFile, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { execFile, spawn } from "node:child_process";
@@ -19,6 +19,7 @@ import { commandSession, programsSnapshot, saveLocalProgram, saveRoutine, setRou
 import { createReviewedBuildBridge } from "./reviewed-build.mjs";
 import pty from "node-pty";
 import { documentHash, markdownTitle, safeMarkdownPath, wikiLinks } from "./vault-documents.mjs";
+import { createSourceChangeMonitor } from "./source-change-monitor.mjs";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -26,6 +27,10 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 4321);
 const HOST = process.env.HOST ?? "127.0.0.1";
 const GOAL_COMMAND = path.join(here, "goal-command.mjs");
+// A fresh id per server process. The frontend compares it across polls to
+// notice that a rebuilt server is live and offer one explicit reload.
+const BOOT_ID = randomUUID();
+const sourceChanges = createSourceChangeMonitor({ root: path.join(here, "..", "..") });
 let agentCmd = process.env.AGENT_CMD ?? "claude";
 
 /**
@@ -1976,7 +1981,7 @@ const server = http.createServer(async (req, res) => {
       reconcileGoals(sessions); // throttled fire-and-forget
       res.writeHead(200, { "content-type": "application/json" });
       res.end(
-        JSON.stringify({ agent: agentCmd, caffeinate: caffeinateProc !== null, voice: Boolean(GROQ_KEY), sessions })
+        JSON.stringify({ agent: agentCmd, boot: BOOT_ID, sourceChanged: sourceChanges.changed, caffeinate: caffeinateProc !== null, voice: Boolean(GROQ_KEY), sessions })
       );
       return;
     }
@@ -2535,6 +2540,28 @@ const server = http.createServer(async (req, res) => {
       setCaffeinate(Boolean(body.on));
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: true, caffeinate: caffeinateProc !== null }));
+      return;
+    }
+    // Rebuilds the workspace and restarts this server, on the user's explicit
+    // Agent Shell menu action only. The detached child survives the server
+    // exit; launchd's KeepAlive respawns the server with the new code, and the
+    // frontend reloads itself when it sees a new boot id. tmux agent sessions
+    // are unaffected.
+    if (url.pathname === "/api/shell/rebuild" && req.method === "POST") {
+      if (process.env.TANGENT_VERIFY_READONLY) {
+        res.writeHead(403, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "Rebuild is disabled in the verification harness." }));
+        return;
+      }
+      const repoRoot = path.join(here, "..", "..");
+      const log = path.join(os.homedir(), ".tangent", "agent-shell-rebuild.log");
+      const child = spawn("/bin/bash", ["-c", `cd ${JSON.stringify(repoRoot)} && npm run build >>${JSON.stringify(log)} 2>&1; kill ${process.pid}`], {
+        detached: true,
+        stdio: "ignore",
+      });
+      child.unref();
+      res.writeHead(202, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, boot: BOOT_ID }));
       return;
     }
     // Switches the orchestrator's agent command only; goal sessions

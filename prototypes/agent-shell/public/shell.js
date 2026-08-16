@@ -62,7 +62,11 @@ const state = {
   editingWords: false,
   caffeinate: false,
   decisionReturnView: "agent",
-  agentReturnView: "overview",
+  agentReturnView: "work",
+  offline: false,
+  rebuilding: false,
+  updateAvailable: false,
+  bootId: "",
   loading: true,
   error: "",
   renderedKey: "",
@@ -82,6 +86,8 @@ const modalTitle = document.querySelector("#modal-title");
 const modalCopy = document.querySelector("#modal-copy");
 const modalActions = document.querySelector("#modal-actions");
 const toast = document.querySelector("#toast");
+const statusPill = document.querySelector("#status-pill");
+const shellMenu = document.querySelector("#shell-menu");
 
 let terminal = null;
 let terminalFit = null;
@@ -2767,8 +2773,11 @@ async function refresh({ initial = false } = {}) {
       state.reviewed.latestOutput = detail.latestOutput || "";
     }
     state.caffeinate = Boolean(sessionPayload.caffeinate);
+    if (sessionPayload.sourceChanged) state.updateAvailable = true;
     state.loading = false;
     state.error = "";
+    state.offline = false;
+    noteServerBoot(sessionPayload.boot || "");
     if (state.view === "program-session" && !currentProgram()?.session) {
       disposeTerminal();
       state.view = currentProgram() ? "program-detail" : "programs";
@@ -2784,15 +2793,92 @@ async function refresh({ initial = false } = {}) {
       revealArea(state.areaSelection);
     }
     void syncDockBadge();
+    updateStatusPill();
     paint(initial);
   } catch (error) {
     state.loading = false;
+    // A poll that fails after the app has data means the server is away,
+    // usually because an agent is rebuilding it. Keep the screen exactly as
+    // it is and show one quiet pill; the next successful poll clears it.
+    if (state.vault) {
+      state.offline = true;
+      updateStatusPill();
+      return;
+    }
     state.error = error.message;
     paint(true);
   }
 }
 
-/** Selects a Goal without starting work. */
+/**
+ * Tracks the server process identity across polls. A changed boot id means
+ * new code is live; the app never reloads itself unless the user asked for
+ * the rebuild from the Agent Shell menu.
+ */
+function noteServerBoot(boot) {
+  if (!boot) return;
+  if (!state.bootId) {
+    state.bootId = boot;
+    return;
+  }
+  if (boot === state.bootId) return;
+  if (state.rebuilding) return location.reload();
+  state.updateAvailable = true;
+  updateStatusPill();
+}
+
+/** Keeps the quiet connection pill and the menu's update hint current. */
+function updateStatusPill() {
+  const text = state.rebuilding
+    ? "Rebuilding Agent Shell…"
+    : state.offline
+      ? "Server offline · reconnecting"
+      : "";
+  statusPill.textContent = text;
+  statusPill.hidden = !text;
+  backButton.classList.toggle("has-update", state.updateAvailable);
+  const updateItem = shellMenu.querySelector("#menu-update");
+  if (updateItem) updateItem.hidden = !state.updateAvailable;
+}
+
+/** Opens or closes the Agent Shell menu under the top-left title. */
+function toggleShellMenu(open = shellMenu.hidden) {
+  if (!open) {
+    shellMenu.hidden = true;
+    return;
+  }
+  const awakeItem = shellMenu.querySelector("#menu-awake");
+  if (awakeItem) awakeItem.textContent = state.caffeinate ? "Let Mac sleep normally" : "Keep Mac awake";
+  updateStatusPill();
+  const rect = backButton.getBoundingClientRect();
+  shellMenu.style.top = `${Math.round(rect.bottom + 6)}px`;
+  shellMenu.style.left = `${Math.round(rect.left)}px`;
+  shellMenu.hidden = false;
+}
+
+/** Rebuilds the workspace and restarts the server after explicit confirmation. */
+function confirmRebuild() {
+  toggleShellMenu(false);
+  openModal({
+    kicker: "Agent Shell",
+    title: "Rebuild and restart Agent Shell?",
+    copy: "The server rebuilds the workspace and restarts itself. Agent sessions keep running in tmux. This page reloads automatically when the new server is up.",
+    confirmLabel: "Rebuild and restart",
+    /** Starts the rebuild and waits for the new server boot id. */
+    onConfirm: async () => {
+      await post("/api/shell/rebuild", {});
+      state.rebuilding = true;
+      updateStatusPill();
+      showToast("Rebuilding. The app reloads when the new server is ready.");
+    },
+  });
+}
+
+/**
+ * Shows a Goal where it lives: its row on the Work desk. There is no
+ * separate Goal page; the row carries the brief, Documents, handoff, and
+ * actions. Selection never spawns anything.
+ */
 function selectGoal(file) {
   state.currentFile = file;
   state.view = "overview";
@@ -3904,8 +3990,7 @@ document.addEventListener("change", async (event) => {
 });
 
 backButton.addEventListener("click", async () => {
-  if (state.view === "work") return;
-  if (state.view === "areas" || state.view === "programs") return showWork();
+  if (["work", "areas", "programs"].includes(state.view)) return toggleShellMenu();
   if (state.view === "area-edit") return showAreas();
   if (state.view === "program-detail" || state.view === "program-create") return showPrograms();
   if (state.view === "reviewed-program") return showPrograms();
@@ -3956,6 +4041,22 @@ findButton.addEventListener("click", () => {
 });
 
 secondaryAction.addEventListener("click", confirmStop);
+
+shellMenu.addEventListener("click", async (event) => {
+  const item = event.target.closest("button");
+  if (!item) return;
+  toggleShellMenu(false);
+  if (item.id === "menu-refresh") {
+    await refresh();
+    paint(true);
+    showToast("Agent Shell data is current.");
+    return;
+  }
+  if (item.id === "menu-reload") return location.reload();
+  if (item.id === "menu-update") return confirmRebuild();
+  if (item.id === "menu-rebuild") return confirmRebuild();
+  if (item.id === "menu-awake") return toggleAwake();
+});
 
 modalLayer.addEventListener("click", (event) => {
   if (event.target === modalLayer) closeModal();

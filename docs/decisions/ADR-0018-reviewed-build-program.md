@@ -2,6 +2,8 @@
 
 Date: 2026-08-14
 
+Status: superseded by ADR-0023 (agent pipelines replace Reviewed build; the engine was deleted).
+
 ## Decision
 
 `@tangent/agent-shell` owns Goal-bound Programs and durable multi-agent Runs.

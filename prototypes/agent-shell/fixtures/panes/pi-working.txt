@@ -1,0 +1,11 @@
+write ...
+
+# Analytics map overlay API: design
+
+... (17 more lines, 27 total, ctrl+o to expand)
+
+⠧ Working...
+
+────────────────────────────────────────────────────────────────────────────────
+~/.tangent/trees/neara/hackathon/embedded-js (main)
+↑43k ↓20k R1.1M CH98.8% 6.8%/1.0M (auto) resetdata-glm zai/glm-5.2 • xhigh

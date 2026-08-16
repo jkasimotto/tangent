@@ -4,7 +4,7 @@ Tangent provides a native work shell, conversation telemetry, evals, and structu
 
 Four main products ship here:
 
-- **Agent Shell**: organize work by Area and Goal. Run native agent sessions or start a durable Reviewed build with automatic agent handoffs.
+- **Agent Shell**: organize work by Area and Goal. Start native agent sessions, or a pipeline of steps on a Goal where each step agent hands facts to the next.
 - **usage**: read your own agent activity. A local UI and queryable API over every Claude Code, Codex, and Gemini CLI session on your machine.
 - **eval**: compare. Run the same task under different contexts, prompts, or models and look at the results side by side.
 - **search**: structural code search built for coding agents. A CLI that indexes a repo's source and answers "where is X defined, who calls Y" without reading whole files.
@@ -38,7 +38,7 @@ npm --prefix prototypes/agent-shell install
 npm --prefix prototypes/agent-shell run app
 ```
 
-Open a Goal and select **Run reviewed build**. The Program designs, reviews, implements, reviews the implementation, and applies one final fix pass.
+Open a Goal's Start agent control and type the steps, for example design, review, implement, each with its own harness, model, and effort. Every step is an open tmux conversation; the step agent finishes with `tangent goal handover "<facts>"` and the next step starts.
 
 ## Create your own eval
 

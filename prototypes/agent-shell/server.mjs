@@ -12,22 +12,23 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { doneCascade } from "./goal-cascade.mjs";
-import { promptArrived, splitPrompt, squash } from "./prompt-delivery.mjs";
 import { noteResource } from "./area-agent-command.mjs";
-import { harnessModels, inheritedLaunch, parseHarnessRegistry, resolveLaunch, upsertEnvironmentLaunch, upsertHarnessRegistry, validateHarnessRegistry } from "./launch-environment.mjs";
+import { harnessEfforts, harnessModels, inheritedLaunch, parseHarnessRegistry, resolveLaunch, upsertEnvironmentLaunch, upsertHarnessRegistry, validateHarnessRegistry } from "./launch-environment.mjs";
 import { createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
 import { commandSession, programsSnapshot, saveLocalProgram, saveRoutine, setRoutinePaused } from "./programs.mjs";
-import { createReviewedBuildBridge } from "./reviewed-build.mjs";
 import pty from "node-pty";
 import { documentHash, markdownTitle, safeMarkdownPath, wikiLinks } from "./vault-documents.mjs";
+import { classifyStaticPane, stabilizeStaticPane } from "./pane-state.mjs";
+import { currentStep, newPipeline, nextPendingStep, pipelineStatus, readAllPipelines, readPipeline, validateSteps, writePipeline } from "./pipeline-record.mjs";
+import { deliveryDecision, messageBanner, normalizeMessage } from "./agent-messages.mjs";
 import { createSourceChangeMonitor } from "./source-change-monitor.mjs";
+import { promptArrived, splitPrompt, squash } from "./prompt-delivery.mjs";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 const PORT = Number(process.env.PORT ?? 4321);
 const HOST = process.env.HOST ?? "127.0.0.1";
-const GOAL_COMMAND = path.join(here, "goal-command.mjs");
 // A fresh id per server process. The frontend compares it across polls to
 // notice that a rebuilt server is live and offer one explicit reload.
 const BOOT_ID = randomUUID();
@@ -41,7 +42,7 @@ let agentCmd = process.env.AGENT_CMD ?? "claude";
  */
 async function harnessRegistry() {
   const text = await readFile(path.join(TREES_ROOT, "harnesses.md"), "utf8").catch(() => "");
-  return parseHarnessRegistry(text) ?? { modelSets: {}, harnesses: [] };
+  return parseHarnessRegistry(text) ?? { modelSets: {}, effortSets: {}, harnesses: [] };
 }
 
 /**
@@ -102,10 +103,10 @@ function withDefaultModel(cmd) {
 const CHAT_SESSION = process.env.CHAT_SESSION ?? "orchestrator";
 const WORKSPACE = process.env.WORKSPACE ?? path.join(here, "workspace");
 const TREES_ROOT = process.env.TREES_ROOT ?? path.join(os.homedir(), ".tangent", "trees");
-const reviewedBuild = createReviewedBuildBridge({
-  treesRoot: TREES_ROOT,
-  loopsRoot: process.env.TANGENT_LOOPS_ROOT,
-});
+// One JSON record per Goal with a pipeline: its steps, their sessions, and
+// the handovers between them. Ownership stays in the Goal file; this holds
+// only what neither the Goal nor tmux can.
+const PIPELINES_ROOT = process.env.TANGENT_PIPELINES_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "pipelines");
 
 if (!existsSync(WORKSPACE)) mkdirSync(WORKSPACE, { recursive: true });
 
@@ -129,14 +130,14 @@ async function listSessions() {
     const { stdout } = await execFileAsync("tmux", [
       "list-sessions",
       "-F",
-      "#{session_name}\t#{session_path}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{@tangent_area}\t#{@tangent_kind}\t#{@tangent_goal}\t#{@tangent_process}\t#{pane_current_command}\t#{@tangent_phase}\t#{@tangent_work_title}\t#{@tangent_launch}",
+      "#{session_name}\t#{session_path}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{@tangent_area}\t#{@tangent_kind}\t#{@tangent_goal}\t#{@tangent_process}\t#{pane_current_command}\t#{@tangent_phase}\t#{@tangent_work_title}\t#{@tangent_launch}\t#{@tangent_pipeline}\t#{@tangent_step}",
     ]);
     const sessions = stdout
       .trim()
       .split("\n")
       .filter(Boolean)
       .map((line) => {
-        const [name, cwd, windows, attached, created, area, kind, goal, processName, command, phase, workTitle, launchLabel] = line.split("\t");
+        const [name, cwd, windows, attached, created, area, kind, goal, processName, command, phase, workTitle, launchLabel, pipeline, step] = line.split("\t");
         return {
           name,
           cwd,
@@ -151,6 +152,8 @@ async function listSessions() {
           phase: phase || null,
           workTitle: workTitle || null,
           launchLabel: launchLabel || null,
+          pipeline: pipeline || null,
+          step: step ? Number(step) : null,
           isChat: name === CHAT_SESSION,
         };
       });
@@ -187,6 +190,7 @@ async function listProgramSessions() {
 // into idle-at-prompt vs blocked-on-question with a cheap LLM call.
 const SHELL_CMDS = new Set(["zsh", "bash", "fish", "sh", "dash", "tcsh", "nu"]);
 const MIN_SAMPLE_MS = 1200; // a repaint window; closer polls can't show a diff
+const WAIT_STABLE_MS = 8_000; // generic static panes must remain quiet before demanding attention
 const paneSamples = new Map(); // session name -> { hash, at, state }
 
 /**
@@ -200,20 +204,63 @@ async function screenHash(name) {
 }
 
 /**
- * Classifies one session as working, waiting, or shell by comparing the pane
- * hash against the previous poll's sample in `paneSamples`. Polls closer than
- * MIN_SAMPLE_MS return the cached state, so extra clients cannot mask repaints.
+ * The cursor position of a session's active pane, for the empty-composer
+ * test. Reads are passive; a failure degrades to (0,0), which classifies as
+ * plain waiting rather than idle, so delivery stays conservative.
  */
-function classifyState(name, command, hash, now) {
+async function paneCursor(name) {
+  try {
+    const { stdout } = await execFileAsync("tmux", ["display-message", "-p", "-t", "=" + name + ":", "#{cursor_x} #{cursor_y}"]);
+    const [x, y] = stdout.trim().split(/\s+/).map(Number);
+    return { cursorX: Number.isFinite(x) ? x : 0, cursorY: Number.isFinite(y) ? y : 0 };
+  } catch {
+    return { cursorX: 0, cursorY: 0 };
+  }
+}
+
+/**
+ * Classifies one session by comparing the pane hash against the previous
+ * poll's sample in `paneSamples`. Polls closer than MIN_SAMPLE_MS return the
+ * cached sample, so extra clients cannot mask repaints. A static screen is
+ * refined by pane-state.mjs into detail: "decision" (a dialog waits on a
+ * choice, with its question), "idle" (empty composer), "draft" (unsent
+ * composer text), or null (static but unrecognized). The wire state stays
+ * working|waiting|shell; detail rides beside it as stateDetail.
+ */
+async function classifyState(name, command, now) {
   if (SHELL_CMDS.has(command)) {
-    paneSamples.set(name, { hash, at: now, state: "shell" });
-    return "shell";
+    paneSamples.set(name, { hash: "", at: now, state: "shell", detail: null, question: "" });
+    return { state: "shell", detail: null, question: "" };
   }
   const prev = paneSamples.get(name);
-  if (prev && now - prev.at < MIN_SAMPLE_MS) return prev.state;
-  const state = !prev || prev.state === "shell" || hash !== prev.hash ? "working" : "waiting";
-  paneSamples.set(name, { hash, at: now, state });
-  return state;
+  if (prev && now - prev.at < MIN_SAMPLE_MS) return { state: prev.state, detail: prev.detail ?? null, question: prev.question ?? "", idleSince: prev.idleSince ?? null };
+  const { stdout: text } = await execFileAsync("tmux", ["capture-pane", "-p", "-t", "=" + name + ":"]);
+  const hash = createHash("sha1").update(text).digest("hex");
+  let state = !prev || prev.state === "shell" || hash !== prev.hash ? "working" : "waiting";
+  let detail = null;
+  let question = "";
+  let quietSince = null;
+  if (state === "waiting") {
+    const classified = classifyStaticPane({ text, ...(await paneCursor(name)) });
+    const stable = stabilizeStaticPane({
+      classification: classified,
+      quietSince: prev?.hash === hash ? prev?.quietSince : null,
+      now,
+      thresholdMs: WAIT_STABLE_MS,
+    });
+    const refined = stable.classification;
+    quietSince = stable.quietSince;
+    if (refined.kind === "working") state = "working";
+    else if (refined.kind !== "waiting") {
+      detail = refined.kind;
+      question = refined.question ?? "";
+    }
+  }
+  // idleSince: when the pane first went quiet at an empty composer, kept
+  // while it stays so; the desk uses it to offer "send on" after a while.
+  const idleSince = state === "waiting" && (detail === "idle" || detail === null) ? (prev?.idleSince ?? now) : null;
+  paneSamples.set(name, { hash, at: now, state, detail, question, idleSince, quietSince });
+  return { state, detail, question, idleSince };
 }
 
 /**
@@ -230,12 +277,13 @@ async function withAgentStates(sessions) {
   const out = await Promise.all(
     sessions.map(async (s) => {
       if (s.kind === "process" || s.kind === "service" || s.kind === "command") {
-        return { ...s, state: SHELL_CMDS.has(s.command) ? "stopped" : "service" };
+        return { ...s, state: SHELL_CMDS.has(s.command) ? "stopped" : "service", stateDetail: null, stateQuestion: "" };
       }
       try {
-        return { ...s, state: classifyState(s.name, s.command, await screenHash(s.name), now) };
+        const { state, detail, question, idleSince } = await classifyState(s.name, s.command, now);
+        return { ...s, state, stateDetail: detail, stateQuestion: question, idleSince: idleSince ?? null };
       } catch {
-        return { ...s, state: null };
+        return { ...s, state: null, stateDetail: null, stateQuestion: "" };
       }
     })
   );
@@ -819,12 +867,12 @@ function replaceNoteSection(text, name, value) {
 }
 
 /** Applies the allowed direct-edit fields to one goal Markdown file. */
-async function editGoalFile(file, { status, session, title, doneWhen, state, understanding, currentBrief, story }) {
+async function editGoalFile(file, { status, session, title, doneWhen, state, understanding, currentBrief, story, wontDoReason }) {
   const abs = path.join(TREES_ROOT, file);
   let text = await readFile(abs, "utf8");
   if (status !== undefined) {
     text = withFrontmatterLine(text, "status", status);
-    if (status === "done") {
+    if (["done", "dropped"].includes(status)) {
       text = withFrontmatterLine(text, "session", null);
       text = withFrontmatterLine(text, "waiting_on", null);
     }
@@ -843,6 +891,12 @@ async function editGoalFile(file, { status, session, title, doneWhen, state, und
   if (understanding !== undefined) text = replaceNoteSection(text, "My understanding", understanding);
   if (currentBrief !== undefined) text = replaceNoteSection(text, "Current brief", currentBrief);
   if (story !== undefined) text = replaceNoteSection(text, "Story so far", story);
+  if (wontDoReason !== undefined) {
+    const stateMatch = text.match(/^## State[^\n]*\n+([\s\S]*?)(?=^## |\s*$)/m);
+    const previousState = stateMatch?.[1]?.trim() ?? "";
+    const decision = `### Won't do\n\n${oneLine(wontDoReason)}`;
+    text = replaceNoteSection(text, "State", [decision, previousState].filter(Boolean).join("\n\n"));
+  }
   await writeFile(abs, text);
 }
 
@@ -961,6 +1015,20 @@ async function createGoalFile(area, { title, doneWhen, state }) {
   return created.file;
 }
 
+/** Parses idea lines out of an Area note's Ideas and open questions section, in order. */
+function ideasFromNote(text) {
+  return noteSection(text, "Ideas and open questions")
+    .split("\n")
+    .map((line) => line.match(/^-\s*Idea:\s*(.+)$/))
+    .filter(Boolean)
+    .map((match) => match[1].trim());
+}
+
+/** Reduces one readAreaGoals() entry to the compact shape the tangent goal CLI lists. */
+function goalSummary(goal) {
+  return { slug: goal.slug, file: goal.file, area: goal.area, title: goal.title, status: goal.status, doneWhen: goal.doneWhen };
+}
+
 /** Saves a natural work description as an idea without creating goals. */
 async function saveWorkIdea(area, description) {
   const file = areaNoteFile(area);
@@ -1050,27 +1118,16 @@ function describeWorkPrompt(area, description, sources = []) {
   ];
   return (
     `# Describe work with Julian\n\n` +
-    `Help Julian turn the following description into durable work. This is a conversation, not a one-shot form.\n\n` +
+    `Julian described work for this Area. Help him turn it into work that starts well.\n\n` +
     `## Area\n\n${area}\n\n` +
     `## Julian's description\n\n${description}\n\n` +
     `## Sources\n\n${sourceLines.join("\n") || "- No source notes or Documents were found."}\n\n` +
-    `## Working contract\n\n` +
-    `- Read the Area notes from nearest to farthest. Read each listed Document.\n` +
-    `- When code or existing work can resolve an important question, inspect the Area's repository.\n` +
-    `- Discuss the work with Julian in this native agent conversation. Do not reduce his description to a generated form.\n` +
-    `- Preserve the complete intent. Ask about choices that would change meaning, scope, trade-offs, or proof.\n` +
-    `- Use an Area for a durable subject. Use a Goal for a desired change with a clear finish.\n` +
-    `- Use a Subgoal only for a separately focusable result that answers “To do that” for its parent Goal.\n` +
-    `- Use separate top-level Goals for results that Julian can start, pause, or finish independently.\n` +
-    `- Unless an action produces a separately useful result, keep it in the agent plan.\n` +
-    `- Inspect related Goals and Documents in the Area folder before you propose new work.\n` +
-    `- When the requested work already exists, prefer an update.\n` +
-    `- Show the exact Goal names, done conditions, and Subgoal links before you write them. Wait for Julian to confirm them.\n` +
-    `- Create confirmed Goals only through the deterministic command below. Never hand-write Goal frontmatter or Area links. Repeat the Subgoal option pair for each confirmed Subgoal.\n` +
-    `  node ${JSON.stringify(GOAL_COMMAND)} create --server ${JSON.stringify(`http://127.0.0.1:${PORT}`)} --area ${JSON.stringify(area)} --title "<Goal name>" --done-when "<done condition>" [--description "<shared context>"] [--source "<vault-relative Document>"] [--subgoal-title "<Subgoal name>" --subgoal-done-when "<done condition>"]\n` +
-    `- Before you create Goals, read ${path.join(TREES_ROOT, "README.md")} for its commit and provenance rules. Its older Outcome storage examples do not override the command's current Goal schema.\n` +
-    `- Link each source Document to the Goal that it informs.\n` +
-    `- Do not implement product code in this conversation. The result is well-defined work in Tangent.`
+    `## How to work\n\n` +
+    `Read the Area notes from nearest to farthest and each listed Document. When code answers a question better than a guess, look at the Area's repository. Related Goals and Documents already in the Area folder show what exists; prefer updating existing work over duplicating it.\n\n` +
+    `Two good outcomes:\n\n` +
+    `- The work is small and clear: create the Goal yourself (\`tangent goal create --area ${area} ... --own\`), say in a line what you are doing, and do it now.\n` +
+    `- The work is bigger or splits into parts: gather context, talk with Julian where his intent is genuinely unclear, and create Goals that give a fresh agent a great launchpad: the intent, what Julian already decided, and pointers to the Documents and code that matter (link each with \`--source\`). The fresh agent scopes the details itself and can ask its own questions. What wastes Julian's time is explaining the same thing twice, so put what he told you into each Goal's description.\n\n` +
+    `The judgment between the two is yours. Lean toward doing trivial things immediately and leaving real work well-framed for later. An Area holds a durable subject, a Goal a desired change with a clear finish, and a Subgoal only a separately focusable step that answers “To do that” for its parent; independently startable results are separate top-level Goals.`
   );
 }
 
@@ -1079,49 +1136,72 @@ function describeWorkPrompt(area, description, sources = []) {
  * harness. Markdown keeps the contract readable in both the shell and the
  * agent composer.
  */
-async function goalPrompt(area, o) {
+async function goalPrompt(area, o, extras = []) {
   const context = await goalContext(area, o);
   const sources = [
     `- Goal: ${context.goalFile}`,
     ...context.notes.map((note, index) => `- Area note ${index + 1}: ${note}`),
     ...context.documents.map((document) => `- Document: ${document}`),
   ];
+  const alsoOwned = extras.length
+    ? `## Also in this session\n\n` +
+      `Julian assigned these Goals to this session too. Work them after the assignment above, in order; each file holds its own context.\n\n` +
+      extras.map((extra) => `- ${extra.title}: done when ${extra.doneWhen || "see the Goal file"} (${path.join(TREES_ROOT, extra.file)})`).join("\n") +
+      `\n\n`
+    : "";
   return (
     `# Assignment: ${o.title}\n\n` +
     `## Done when\n\n${o.doneWhen || "Read the Goal file for the done condition."}\n\n` +
     (o.myUnderstanding ? `## Julian's understanding\n\n${o.myUnderstanding}\n\n` : "") +
     `## Sources\n\n${sources.join("\n")}\n\n` +
-    `## Working contract\n\n` +
-    `- Read the goal first. Then read the area notes from nearest to farthest.\n` +
+    alsoOwned +
+    `## How to work\n\n` +
+    `This Goal was already scoped with Julian. Its file holds what he explained, so he does not need to repeat it. Pick up the work directly, scope the details yourself, and bring him real decisions when they come up. There is no need to re-confirm the assignment before starting.\n\n` +
+    `Read the goal first, then the area notes from nearest to farthest.` +
     (context.documents.length
-      ? `- Read each linked Document. Before you write design prose, read ${path.join(os.homedir(), ".agents", "skills", "simple-english", "SKILL.md")}. Use pragmatic mode and do its mandatory self-check.\n`
+      ? ` Read each linked Document; before writing design prose, read ${path.join(os.homedir(), ".agents", "skills", "simple-english", "SKILL.md")} (pragmatic mode, with its self-check).`
       : "") +
-    (o.subgoals.length ? `- Work through the Subgoals in order.\n` : "") +
-    `- Before you start a long-running server or watcher, run \`tangent process list\`. Use \`tangent process start\` for a matching managed process.\n` +
-    `- Keep the goal State section current.\n` +
-    `- When the Goal changes, update the one You wanted bullet in Current brief.\n` +
-    `- Add to Story so far only after meaningful feedback, an accepted or rejected direction, or a result that changes the plan. Use one short heading and no more than two sentences. Keep at most five moments. Do not copy the chat.\n` +
-    `- When the result is met, propose marking it done. Never mark it done without confirmation.`
+    (o.subgoals.length ? ` The Subgoals are ordered; work through them in order.` : "") +
+    `\n\n` +
+    `Useful habits here: check \`tangent process list\` before starting a server or watcher; keep the goal State section current as things settle; add a Story so far moment only when feedback or a result changes the plan (one short heading, two sentences, at most five moments). When the done condition is met, say so; Goal status changes on Julian's word.\n\n` +
+    `Design documents for this work belong in the Area folder ${path.join(TREES_ROOT, area)} as design-<slug>.md (a solution beside it as design-<slug>-solution.md), in Simple English (${path.join(os.homedir(), ".agents", "skills", "simple-english", "SKILL.md")}, pragmatic mode), with a [[${o.file.split("/").pop().replace(/\.md$/, "")}]] link so the Goal shows them. Read files wherever they are; write new design documents there.`
+  );
+}
+
+/**
+ * The first message of one pipeline step: the Goal assignment, this step's
+ * instruction, every earlier handover verbatim (facts from earlier agents),
+ * and how to hand over when done. Guidance, not a schema.
+ */
+async function pipelineStepPrompt(area, o, record, index, extras = []) {
+  const assignment = await goalPrompt(area, o, extras);
+  const step = record.steps[index - 1];
+  const total = record.steps.length;
+  const earlier = record.steps
+    .filter((item) => item.index < index && item.handover)
+    .map((item) => `### Handover from step ${item.index} (${item.label || "agent"}, ${item.status})\n\n${item.handover}`);
+  return (
+    `${assignment}\n\n` +
+    `## Your step\n\n` +
+    `Step ${index} of ${total}${total > 1 ? " in a pipeline" : ""}: ${step.instruction}\n\n` +
+    (earlier.length ? `## Handovers so far\n\n${earlier.join("\n\n")}\n\n` : "") +
+    `## When you finish\n\n` +
+    `Run \`tangent goal handover "<facts>"\` from this session. State facts a fresh agent needs: files you wrote or changed with full paths, what is finished, what is unresolved, decisions Julian made. No recommendations, no narrative. The next step starts from your handover and the files. If a real decision needs Julian, ask him here; the pipeline waits.`
   );
 }
 
 /** The contract for one native-agent collaboration around a complete Goal. */
-async function collaborationPrompt(area, o, documentFile = "") {
-  const assignment = await goalPrompt(area, o);
+async function collaborationPrompt(area, o, documentFile = "", extras = []) {
+  const assignment = await goalPrompt(area, o, extras);
   const focus = documentFile ? await readVaultDocument(documentFile) : null;
   const documentFocus = focus
     ? `## Current reading location\n\nJulian is reading ${focus.file}. Use this location to interpret references such as “this section.” It does not limit the feedback to one Document.\n\n`
     : "";
   return (
     `# Work with Julian\n\n` +
-    `This session covers the complete Goal and all linked Documents. Julian can ask questions, give feedback, request Document edits, or describe new work.\n\n` +
-    `Do not ask Julian to classify a message as discussion, feedback, or related work. Infer the useful response from his words.\n\n` +
-    `Read all source context before you respond. You can edit linked Documents when Julian requests or accepts a change.\n\n` +
-    `Do not implement product code until Julian explicitly requests implementation.\n\n` +
-    `If the feedback defines a separate Goal, propose its exact name and done condition. Wait for confirmation before you create it.\n\n` +
-    `Research facts yourself. Present one product decision at a time. Julian owns decisions that change meaning, scope, trade-offs, or proof.\n\n` +
-    `Keep the goal State section current with these headings when they are useful: Goal, Settled decisions, Deferred, Proof, and Unresolved decisions.\n\n` +
-    `When no important decision remains, show the complete shared understanding. Then propose one exact next action.\n\n` +
+    `This session covers the ${extras.length ? "assigned Goals" : "complete Goal"} and all linked Documents. Julian can ask questions, give feedback, request Document edits, or describe new work; infer the useful response from his words rather than asking him to classify them.\n\n` +
+    `Read the source context before you respond, and research facts yourself. Bring Julian one real decision at a time; he owns choices that change meaning, scope, trade-offs, or proof. When the work is already well defined, get to it; when he is thinking out loud, think with him.\n\n` +
+    `You can edit linked Documents when Julian requests or accepts a change. If feedback turns into separate work, shape it into a Goal with him. Keep the goal State section current with the headings that help: Goal, Settled decisions, Deferred, Proof, and Unresolved decisions.\n\n` +
     documentFocus +
     `## Source context\n\n${assignment}`
   );
@@ -1236,10 +1316,12 @@ async function typePromptWhenReady(session, prompt, submit = false, label = "age
 }
 
 /** Types a Goal assignment after its native harness is ready. */
-async function typeGoalPromptWhenReady(session, area, file, phase = "execute", submit = false, documentFile = "") {
-  const o = (await readAreaGoals(area)).find((t) => t.file === file);
+async function typeGoalPromptWhenReady(session, area, file, phase = "execute", submit = false, documentFile = "", extraFiles = []) {
+  const goals = await readAreaGoals(area);
+  const o = goals.find((t) => t.file === file);
   if (!o) return;
-  const prompt = phase === "collaborate" ? await collaborationPrompt(area, o, documentFile) : await goalPrompt(area, o);
+  const extras = (extraFiles ?? []).map((extra) => goals.find((t) => t.file === extra)).filter(Boolean);
+  const prompt = phase === "collaborate" ? await collaborationPrompt(area, o, documentFile, extras) : await goalPrompt(area, o, extras);
   await typePromptWhenReady(session, prompt, submit, "goal prompt");
 }
 
@@ -1267,8 +1349,8 @@ async function tickArmedSessions() {
     if (!armedSessions.has(name) || SHELL_CMDS.has(command)) continue;
     const armed = armedSessions.get(name);
     armedSessions.delete(name);
-    if (armed.prompt) typePromptWhenReady(name, armed.prompt, armed.submit, "describe-work prompt");
-    else if (area && file) typeGoalPromptWhenReady(name, area, file, armed.phase, armed.submit, armed.document);
+    if (armed.prompt) typePromptWhenReady(name, armed.prompt, armed.submit, "armed prompt");
+    else if (area && file) typeGoalPromptWhenReady(name, area, file, armed.phase, armed.submit, armed.document, armed.extraFiles);
   }
   for (const name of armedSessions.keys()) if (!live.has(name)) armedSessions.delete(name);
 }
@@ -1278,8 +1360,8 @@ async function tickArmedSessions() {
  * armed: one tmux query a second, never overlapping, stopped once every primed
  * session has its harness.
  */
-function armSession(name, phase = "execute", submit = false, document = "", prompt = "") {
-  armedSessions.set(name, { phase, submit, document, prompt });
+function armSession(name, phase = "execute", submit = false, document = "", prompt = "", extraFiles = []) {
+  armedSessions.set(name, { phase, submit, document, prompt, extraFiles });
   if (armTimer) return;
   let running = false;
   armTimer = setInterval(async () => {
@@ -1300,16 +1382,90 @@ function armSession(name, phase = "execute", submit = false, document = "", prom
   armTimer.unref();
 }
 
+// ---- cross-agent messages ----
+// One queue per target session. The server is the only writer into panes, so
+// every message flows through here: stamped with the sender's identity,
+// delivered only into a positively identified empty composer, and audited to
+// ~/.tangent/agent-shell-messages.jsonl. Rules live in agent-messages.mjs.
+
+const MESSAGE_POLL_MS = 2000;
+const MESSAGE_LOG = process.env.AGENT_MESSAGE_LOG ?? path.join(os.homedir(), ".tangent", "agent-shell-messages.jsonl");
+const messageQueues = new Map(); // target session -> [{ from, area, text, queuedAt }]
+let messageTimer = null;
+
+/** Appends one messaging event to the audit log; failures only log. */
+async function logAgentMessage(entry) {
+  try {
+    await appendFile(MESSAGE_LOG, JSON.stringify({ at: new Date().toISOString(), ...entry }) + "\n");
+  } catch (err) {
+    console.error("agent message log:", err.message ?? err);
+  }
+}
+
+/** Types one stamped message into its target composer and audits the result. */
+async function deliverAgentMessage(target, entry) {
+  const text = entry.banner === false ? entry.text : messageBanner(entry.from, entry.area, entry.text);
+  await typePromptWhenReady(target, text, true, entry.banner === false ? "pipeline step" : "agent message");
+  await logAgentMessage({ event: "delivered", to: target, from: entry.from, area: entry.area, text: entry.text, banner: entry.banner !== false, queuedAt: entry.queuedAt });
+}
+
+/**
+ * One queue pass: delivers to every queued target whose composer is empty,
+ * and drops (with an audit entry) messages whose target session died.
+ * At-most-once by design; there is no retry beyond the queue itself.
+ */
+async function tickMessageQueues() {
+  if (!messageQueues.size) return;
+  const sessions = await listSessions();
+  for (const [target, queue] of [...messageQueues.entries()]) {
+    const live = sessions.find((session) => session.name === target);
+    if (!live) {
+      messageQueues.delete(target);
+      for (const entry of queue) await logAgentMessage({ event: "dropped", to: target, from: entry.from, text: entry.text, reason: "session ended" });
+      continue;
+    }
+    if (deliveryDecision(live).action !== "deliver") continue;
+    const entry = queue.shift();
+    if (!queue.length) messageQueues.delete(target);
+    await deliverAgentMessage(target, entry);
+  }
+}
+
+/** Queues one message and keeps the delivery timer running while any wait. */
+function queueAgentMessage(target, entry) {
+  const queue = messageQueues.get(target) ?? [];
+  queue.push(entry);
+  messageQueues.set(target, queue);
+  if (messageTimer) return;
+  let running = false;
+  messageTimer = setInterval(async () => {
+    if (running) return;
+    running = true;
+    try {
+      await tickMessageQueues();
+    } catch (err) {
+      console.error("message queue:", err.message ?? err);
+    } finally {
+      running = false;
+      if (!messageQueues.size) {
+        clearInterval(messageTimer);
+        messageTimer = null;
+      }
+    }
+  }, MESSAGE_POLL_MS);
+  messageTimer.unref();
+}
+
 /**
  * Primes a session sitting at its shell: the area's suggested launch command
  * typed but not submitted, and the goal prompt armed to follow whatever
  * harness the user starts. A pane that is already running something is left
  * alone — priming must never type over an agent mid-conversation.
  */
-async function primeGoalSession(session, area, phase = "execute", { launch = false, document = "", command = "" } = {}) {
+async function primeGoalSession(session, area, phase = "execute", { launch = false, document = "", command = "", extraFiles = [], prompt = "" } = {}) {
   const { stdout } = await execFileAsync("tmux", ["display-message", "-p", "-t", "=" + session + ":", "#{pane_current_command}"]);
   if (!SHELL_CMDS.has(stdout.trim())) return false;
-  armSession(session, phase, launch, document);
+  armSession(session, phase, launch, document, prompt, extraFiles);
   await typeInto(session, withDefaultModel(command || (await agentCmdForArea(area))), false);
   if (launch) {
     await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "Enter"]);
@@ -1319,11 +1475,11 @@ async function primeGoalSession(session, area, phase = "execute", { launch = fal
 }
 
 /** Primes one native agent with a conversation about new work. */
-async function primeDescribeWorkSession(session, area, prompt, { launch = true } = {}) {
+async function primeDescribeWorkSession(session, area, prompt, { launch = true, command = "" } = {}) {
   const { stdout } = await execFileAsync("tmux", ["display-message", "-p", "-t", "=" + session + ":", "#{pane_current_command}"]);
   if (!SHELL_CMDS.has(stdout.trim())) return false;
   armSession(session, "define", launch, "", prompt);
-  await typeInto(session, withDefaultModel(await agentCmdForArea(area)), false);
+  await typeInto(session, withDefaultModel(command || (await agentCmdForArea(area))), false);
   if (launch) {
     await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "Enter"]);
     await sleep(250);
@@ -1338,7 +1494,7 @@ function describeWorkTitle(description) {
 }
 
 /** Opens a native agent in the selected Area to define durable work. */
-async function spawnDescribeWorkSession(area, description, sources, { session: requested = "", launch = true } = {}) {
+async function spawnDescribeWorkSession(area, description, sources, { session: requested = "", launch = true, command = "", label = "" } = {}) {
   const sessions = await listSessions();
   const existing = requested
     ? sessions.find((item) => item.name === requested && item.kind === "work-definition" && item.area === area)
@@ -1346,7 +1502,7 @@ async function spawnDescribeWorkSession(area, description, sources, { session: r
   if (existing) {
     const prompt = describeWorkPrompt(area, description, sources);
     const primed = existing.state === "shell"
-      ? await primeDescribeWorkSession(existing.name, area, prompt, { launch }).catch(() => false)
+      ? await primeDescribeWorkSession(existing.name, area, prompt, { launch, command }).catch(() => false)
       : false;
     return { status: 200, session: existing.name, reattached: true, primed };
   }
@@ -1362,12 +1518,13 @@ async function spawnDescribeWorkSession(area, description, sources, { session: r
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_kind", "work-definition"]);
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_phase", "define"]);
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_work_title", title]);
+  if (label) await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_launch", label]);
 
   /** Sends the captured description after the native agent is ready. */
   const prime = async () => {
     await sleep(700);
     try {
-      await primeDescribeWorkSession(name, area, describeWorkPrompt(area, description, sources), { launch });
+      await primeDescribeWorkSession(name, area, describeWorkPrompt(area, description, sources), { launch, command });
     } catch (error) {
       console.error("describe work session:", error.message ?? error);
     }
@@ -1384,8 +1541,9 @@ async function spawnDescribeWorkSession(area, description, sources, { session: r
  * Both the launch line and the opening prompt follow the type-but-never-submit
  * rule, so the harness, the model, and the words all stay the user's call.
  */
-async function spawnGoalSession(area, slug, { phase = "execute", approved = false, launch = false, document = "", command = "", label = "" } = {}) {
-  const o = (await readAreaGoals(area)).find((t) => t.slug === slug);
+async function spawnGoalSession(area, slug, { phase = "execute", approved = false, launch = false, document = "", command = "", label = "", extraSlugs = [], pipeline = null } = {}) {
+  const areaGoals = await readAreaGoals(area);
+  const o = areaGoals.find((t) => t.slug === slug);
   if (!o) return { status: 404, error: `no goal "${slug}" on ${area}` };
   if (["done", "dropped"].includes(o.status)) return { status: 409, error: `goal is ${o.status}` };
   // Resolve the launch before any tmux action: a declaration that does not
@@ -1397,12 +1555,25 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
     if (!label && inherited.label) label = inherited.label;
   }
   const sessions = await listSessions();
+  // Extra Goals ride along in the same session: same Area only, still open,
+  // never pulled away from another live session's ownership.
+  const liveNames = new Set(sessions.map((s) => s.name));
+  const extras = [...new Set(extraSlugs)]
+    .map((extraSlug) => areaGoals.find((t) => t.slug === extraSlug))
+    .filter((extra) => extra && extra.slug !== slug && !["done", "dropped"].includes(extra.status));
   const baseName = normName(`${area.split("/").pop()}--${slug}`).slice(0, 60);
-  const phaseName = phase === "collaborate" ? normName(`${baseName}--collaborate`).slice(0, 60) : baseName;
+  const phaseName = pipeline ? pipeline.sessionName : phase === "collaborate" ? normName(`${baseName}--collaborate`).slice(0, 60) : baseName;
+  const ownExtras = extras.filter((extra) => !extra.session || !liveNames.has(extra.session) || [o.session, baseName, phaseName].includes(extra.session));
+  const extraFiles = ownExtras.map((extra) => extra.file);
+  // A pipeline step is always a fresh session with its own name; the step
+  // prompt is typed verbatim once the harness is up. AGENT_SHELL_TEST_NO_LAUNCH
+  // leaves the pane at its shell so tests can prove binding without a harness.
+  const stepPrompt = pipeline ? await pipelineStepPrompt(area, o, pipeline.record, pipeline.index, ownExtras) : "";
+  if (pipeline && process.env.AGENT_SHELL_TEST_NO_LAUNCH === "1") launch = false;
   // Starting a Goal that already has a session re-primes it: a pane left
   // at a shell (the agent was stopped to do ordinary work) gets the launch
   // line and the prompt again, a pane still running one is only reattached.
-  const existing = [o.session, phaseName, baseName].find((n) => n && sessions.some((s) => s.name === n));
+  const existing = pipeline ? null : [o.session, phaseName, baseName].find((n) => n && sessions.some((s) => s.name === n));
   if (existing) {
     await execFileAsync("tmux", ["set-option", "-t", existing, "@tangent_phase", phase]);
     if (document) await execFileAsync("tmux", ["set-option", "-t", existing, "@tangent_document", document]);
@@ -1411,13 +1582,14 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
     let primed = false;
     if (approved && phase === "execute" && live && !SHELL_CMDS.has(live.command)) {
       if (live.state === "working") return { status: 409, error: "the agent is still working; wait before you approve another assignment" };
-      await typeInto(existing, await goalPrompt(area, o), true);
+      await typeInto(existing, await goalPrompt(area, o, ownExtras), true);
     } else {
-      primed = await primeGoalSession(existing, area, phase, { launch, document, command }).catch(() => false);
+      primed = await primeGoalSession(existing, area, phase, { launch, document, command, extraFiles }).catch(() => false);
     }
-    if (o.status !== "active" || o.session !== existing) {
-      await writeGoalBinding(o.file, { status: "active", session: existing });
-      await vaultCommit([o.file], `update: ${area} goal ${slug} active`, area, existing);
+    const rebind = [o, ...ownExtras].filter((goal) => goal.status !== "active" || goal.session !== existing);
+    if (rebind.length) {
+      for (const goal of rebind) await writeGoalBinding(goal.file, { status: "active", session: existing });
+      await vaultCommit(rebind.map((goal) => goal.file), `update: ${area} ${rebind.length === 1 ? `goal ${rebind[0].slug}` : `${rebind.length} goals`} active`, area, existing);
     }
     return { status: 200, session: existing, reattached: true, primed };
   }
@@ -1431,9 +1603,14 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
   await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_phase", phase]);
   if (document) await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_document", document]);
   if (label) await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_launch", label]);
+  if (pipeline) {
+    await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_pipeline", o.file]);
+    await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_step", String(pipeline.index)]);
+  }
   try {
-    await writeGoalBinding(o.file, { status: "active", session: phaseName });
-    await vaultCommit([o.file], `update: ${area} goal ${slug} active`, area, phaseName);
+    const owned = [o, ...ownExtras];
+    for (const goal of owned) await writeGoalBinding(goal.file, { status: "active", session: phaseName });
+    await vaultCommit(owned.map((goal) => goal.file), `update: ${area} ${owned.length === 1 ? `goal ${slug}` : `${owned.length} goals`} active`, area, phaseName);
   } catch (err) {
     console.error("goal binding:", err.message ?? err);
   }
@@ -1443,7 +1620,7 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
     // be wiped by the redraw.
     await sleep(700);
     try {
-      await primeGoalSession(phaseName, area, phase, { launch, document, command });
+      await primeGoalSession(phaseName, area, phase, { launch, document, command, extraFiles, prompt: stepPrompt });
     } catch (err) {
       console.error("prime session:", err.message ?? err);
     }
@@ -1451,6 +1628,24 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
   if (launch) await primeNewSession();
   else primeNewSession();
   return { status: 200, session: phaseName };
+}
+
+/**
+ * A work-definition session that takes Goal ownership becomes that Goal's
+ * session: its tmux identity flips from "Defining work" to the Goal it now
+ * works, so the desk shows it on the Goal row instead of under Dispatches.
+ * Sessions that already carry a Goal keep their identity; extra owned Goals
+ * show through their own session bindings.
+ */
+async function adoptGoalSession(sessions, sessionName, goal) {
+  const session = sessions.find((s) => s.name === sessionName);
+  if (!session || session.kind !== "work-definition") return;
+  /** Writes one tmux option on the adopted session, ignoring failures. */
+  const set = (key, value) => execFileAsync("tmux", ["set-option", "-t", "=" + sessionName + ":", key, value]).catch(() => {});
+  await set("@tangent_kind", "goal");
+  await set("@tangent_area", goal.area);
+  await set("@tangent_goal", goal.file);
+  await set("@tangent_phase", "execute");
 }
 
 let lastReconcile = 0;
@@ -1476,6 +1671,7 @@ async function reconcileGoals(sessions) {
       await writeGoalBinding(t.file, { status: "open", session: null });
       await vaultCommit([t.file], `update: ${t.area} goal ${t.slug} back to open, session ended`, t.area, null);
     }
+    await reconcilePipelines(sessions);
     for (const s of sessions) {
       if (!s.goal) continue;
       const t = byFile.get(s.goal);
@@ -1550,9 +1746,243 @@ async function goalsByFile() {
  * asked, and the harness itself is always started by the user.
  */
 async function startGoal(file, options = {}) {
-  const o = (await goalsByFile()).get(file);
+  const byFile = await goalsByFile();
+  const o = byFile.get(file);
   if (!o) return { status: 404, error: `no goal file ${file}` };
-  return spawnGoalSession(o.area, o.slug, options);
+  // Extra Goals must share the primary's Area: one session, one repository.
+  const extraSlugs = (options.extraFiles ?? [])
+    .map((extra) => byFile.get(extra))
+    .filter((extra) => extra && extra.area === o.area)
+    .map((extra) => extra.slug);
+  return spawnGoalSession(o.area, o.slug, { ...options, extraSlugs });
+}
+
+// ---- agent pipelines ----
+// A pipeline is a list of steps on one Goal. Each step is an ordinary Goal
+// session (spawnGoalSession with the pipeline option) or the step prompt
+// delivered into an earlier step's live session. The record under
+// PIPELINES_ROOT holds the steps and their handovers; the Goal file's session
+// binding follows the current step. Design: design-agent-pipelines.
+
+/** The tmux session name for one step; restarts get the smallest free suffix. */
+function pipelineStepSessionName(record, index, liveNames) {
+  const base = normName(`${record.area.split("/").pop()}--${record.slug}`).slice(0, 60);
+  const stepName = index === 1 ? base : normName(`${base}--s${index}`).slice(0, 60);
+  if (!liveNames.has(stepName)) return stepName;
+  for (let k = 2; ; k += 1) {
+    const candidate = normName(`${stepName}-r${k}`).slice(0, 60);
+    if (!liveNames.has(candidate)) return candidate;
+  }
+}
+
+/** Resolves one step's launch to an exact command, or returns the error. */
+async function resolveStepLaunch(step) {
+  if (!step.launch) return step.command ? { command: step.command, label: step.label || "Edited command" } : { error: `step ${step.index}: no command` };
+  const registry = await harnessRegistry();
+  if (registry.error) return { error: registry.error };
+  return resolveLaunch(registry, step.launch);
+}
+
+/**
+ * Starts one pending step: fresh session by default, or the step prompt
+ * delivered into an earlier step's live session when the step continues it.
+ * The Goal binds to whichever session now works it.
+ */
+async function startPipelineStep(record, index) {
+  const step = record.steps[index - 1];
+  if (!step) return { status: 404, error: `no step ${index}` };
+  if (step.status !== "pending") return { status: 409, error: `step ${index} is ${step.status}` };
+  const resolved = await resolveStepLaunch(step);
+  if (resolved.error) return { status: 409, error: `step ${index}: ${resolved.error}` };
+  step.command = resolved.command;
+  step.label = resolved.label;
+  const byFile = await goalsByFile();
+  const o = byFile.get(record.goal);
+  if (!o) return { status: 404, error: `no goal file ${record.goal}` };
+  const sessions = await listSessions();
+  const liveNames = new Set(sessions.map((item) => item.name));
+  const extraSlugs = (record.extraFiles ?? []).map((extra) => byFile.get(extra)).filter((extra) => extra && extra.area === o.area).map((extra) => extra.slug);
+  const source = step.continueFrom ? record.steps[step.continueFrom - 1] : null;
+  if (source?.session && liveNames.has(source.session)) {
+    const goals = await readAreaGoals(record.area);
+    const extras = extraSlugs.map((extraSlug) => goals.find((goal) => goal.slug === extraSlug)).filter(Boolean);
+    const prompt = await pipelineStepPrompt(record.area, o, record, index, extras);
+    queueAgentMessage(source.session, { from: "tangent", area: record.area, text: prompt, banner: false, queuedAt: new Date().toISOString() });
+    await execFileAsync("tmux", ["set-option", "-t", "=" + source.session + ":", "@tangent_step", String(index)]).catch(() => {});
+    if (o.status !== "active" || o.session !== source.session) {
+      await writeGoalBinding(o.file, { status: "active", session: source.session });
+      await vaultCommit([o.file], `update: ${record.area} goal ${record.slug} active`, record.area, source.session);
+    }
+    step.session = source.session;
+  } else {
+    if (source) step.continueFrom = null; // the earlier session is gone: fall back to fresh
+    const sessionName = pipelineStepSessionName(record, index, liveNames);
+    const result = await spawnGoalSession(record.area, record.slug, {
+      phase: "execute",
+      approved: true,
+      launch: true,
+      command: step.command,
+      label: step.label,
+      extraSlugs,
+      pipeline: { record, index, sessionName },
+    });
+    if (result.status !== 200) return result;
+    step.session = result.session;
+  }
+  step.status = "running";
+  step.startedAt = new Date().toISOString();
+  step.endedAt = null;
+  await writePipeline(PIPELINES_ROOT, record);
+  return { status: 200, session: step.session, index, pipeline: record };
+}
+
+/** Creates the record for one Goal and starts its first step. */
+async function startPipeline(file, { steps, extraFiles = [] } = {}) {
+  const byFile = await goalsByFile();
+  const o = byFile.get(file);
+  if (!o) return { status: 404, error: `no goal file ${file}` };
+  if (["done", "dropped"].includes(o.status)) return { status: 409, error: `goal is ${o.status}` };
+  const sessions = await listSessions();
+  if (o.session && sessions.some((item) => item.name === o.session)) {
+    return { status: 409, error: `goal is owned by live session ${o.session}` };
+  }
+  const error = validateSteps(steps);
+  if (error) return { status: 400, error };
+  const sameArea = extraFiles.map(String).filter((extra) => byFile.get(extra)?.area === o.area);
+  const record = newPipeline({ goal: o.file, area: o.area, slug: o.slug, extraFiles: sameArea, steps });
+  // Resolve step 1 before anything is written: a bad launch names itself
+  // and leaves no record and no session behind.
+  const first = await resolveStepLaunch(record.steps[0]);
+  if (first.error) return { status: 409, error: `step 1: ${first.error}` };
+  await writePipeline(PIPELINES_ROOT, record);
+  return startPipelineStep(record, 1);
+}
+
+/** Finds the record and step a live session works, or null. */
+async function pipelineStepForSession(sessionName) {
+  for (const record of await readAllPipelines(PIPELINES_ROOT)) {
+    const step = record.steps.find((item) => item.session === sessionName && item.status === "running");
+    if (step) return { record, step };
+  }
+  return null;
+}
+
+/** Records one step's handover and starts the next pending step. */
+async function handoverPipelineStep(sessionName, text) {
+  const found = await pipelineStepForSession(sessionName);
+  if (!found) return { status: 404, error: "this session is not a running pipeline step" };
+  return completePipelineStep(found.record, found.step, text, "agent");
+}
+
+/** Marks a step complete with its handover text and advances the line. */
+async function completePipelineStep(record, step, text, source) {
+  step.handover = text;
+  step.handoverSource = source;
+  step.status = source === "skip" ? "skipped" : "complete";
+  step.endedAt = new Date().toISOString();
+  await writePipeline(PIPELINES_ROOT, record);
+  const next = nextPendingStep(record, step.index);
+  if (!next) return { status: 200, state: "complete", next: null, pipeline: record };
+  const started = await startPipelineStep(record, next.index);
+  if (started.status !== 200) return started;
+  return { status: 200, state: "started", next: { index: next.index, session: started.session }, pipeline: record };
+}
+
+/** The last agent message visible in a pane, for a step sent on without a handover. */
+async function paneLastMessage(sessionName) {
+  try {
+    const { stdout } = await execFileAsync("tmux", ["capture-pane", "-p", "-S", "-200", "-t", "=" + sessionName + ":"]);
+    const lines = stdout.split("\n").map((line) => line.trimEnd()).filter((line) => line.trim());
+    const text = lines.slice(-40).join("\n").trim();
+    return text || "(no handover text)";
+  } catch {
+    return "(no handover text)";
+  }
+}
+
+/** Restart, skip, or send-on one step at Julian's explicit action. */
+async function controlPipeline(goalFile, action, index) {
+  const byFile = await goalsByFile();
+  const o = byFile.get(goalFile);
+  if (!o) return { status: 404, error: `no goal file ${goalFile}` };
+  const record = await readPipeline(PIPELINES_ROOT, o.area, o.slug);
+  if (!record) return { status: 404, error: "no pipeline on this goal" };
+  const step = record.steps[Number(index) - 1];
+  if (!step) return { status: 404, error: `no step ${index}` };
+  const sessions = await listSessions();
+  const live = step.session ? sessions.find((item) => item.name === step.session) : null;
+  if (action === "restart") {
+    if (!(step.status === "stopped" || (step.status === "running" && !live))) return { status: 409, error: `step ${step.index} is ${step.status}; restart needs a stopped step` };
+    step.status = "pending";
+    step.session = null;
+    await writePipeline(PIPELINES_ROOT, record);
+    return startPipelineStep(record, step.index);
+  }
+  if (action === "skip") {
+    if (!["stopped", "running", "pending"].includes(step.status)) return { status: 409, error: `step ${step.index} is ${step.status}` };
+    return completePipelineStep(record, step, `Step ${step.index} was skipped by Julian.`, "skip");
+  }
+  if (action === "send") {
+    if (step.status !== "running" || !live) return { status: 409, error: `step ${step.index} is not running` };
+    if (!(live.state === "waiting" && ["idle", null, undefined].includes(live.stateDetail))) return { status: 409, error: `step ${step.index} is ${live.state}; send needs an idle agent` };
+    return completePipelineStep(record, step, await paneLastMessage(step.session), "last-message");
+  }
+  return { status: 400, error: `unknown action ${action}` };
+}
+
+/** Edits one pending step; started steps are history. */
+async function editPipelineStep(goalFile, index, patch) {
+  const byFile = await goalsByFile();
+  const o = byFile.get(goalFile);
+  if (!o) return { status: 404, error: `no goal file ${goalFile}` };
+  const record = await readPipeline(PIPELINES_ROOT, o.area, o.slug);
+  if (!record) return { status: 404, error: "no pipeline on this goal" };
+  const step = record.steps[Number(index) - 1];
+  if (!step) return { status: 404, error: `no step ${index}` };
+  if (step.status !== "pending") return { status: 409, error: `step ${step.index} is ${step.status}; only pending steps change` };
+  const draft = record.steps.map((item) => ({ ...item }));
+  const target = draft[step.index - 1];
+  if (typeof patch.instruction === "string") target.instruction = patch.instruction.trim();
+  if (typeof patch.command === "string" && patch.command.trim()) { target.command = patch.command.trim(); target.launch = null; }
+  else if (patch.choice && typeof patch.choice === "object") { target.launch = { harness: String(patch.choice.harness ?? ""), model: patch.choice.model ?? null, effort: patch.choice.effort ?? null }; target.command = ""; }
+  if (patch.continueFrom === null || Number.isInteger(patch.continueFrom)) target.continueFrom = patch.continueFrom;
+  const error = validateSteps(draft);
+  if (error) return { status: 400, error };
+  record.steps = draft;
+  await writePipeline(PIPELINES_ROOT, record);
+  return { status: 200, pipeline: record };
+}
+
+/**
+ * Every pipeline record with live facts folded in: whether each step's
+ * session exists, its pane state, and the derived pipeline status.
+ */
+async function pipelinesView(sessions) {
+  const byName = new Map(sessions.map((item) => [item.name, item]));
+  const records = await readAllPipelines(PIPELINES_ROOT);
+  return records.map((record) => ({
+    ...record,
+    status: pipelineStatus(record, (name) => byName.has(name)),
+    steps: record.steps.map((step) => {
+      const live = step.session ? byName.get(step.session) : null;
+      return { ...step, live: Boolean(live), state: live?.state ?? null, stateDetail: live?.stateDetail ?? null, idleSince: live?.idleSince ?? null };
+    }),
+  }));
+}
+
+/** Marks running steps whose session is gone as stopped. */
+async function reconcilePipelines(sessions) {
+  const live = new Set(sessions.map((item) => item.name));
+  for (const record of await readAllPipelines(PIPELINES_ROOT)) {
+    let changed = false;
+    for (const step of record.steps) {
+      if (step.status !== "running" || !step.session || live.has(step.session)) continue;
+      step.status = "stopped";
+      step.endedAt = new Date().toISOString();
+      changed = true;
+    }
+    if (changed) await writePipeline(PIPELINES_ROOT, record);
+  }
 }
 
 /** Stops one accepted assignment without claiming that its goal is done. */
@@ -1974,15 +2404,110 @@ function voiceNameHints(ctx) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   try {
-    if (await reviewedBuild.handle(req, res, url)) return;
     if (url.pathname === "/api/sessions") {
       const sessions = await listSessions();
       reconcileGoals(sessions); // throttled fire-and-forget
+      const pipelines = await pipelinesView(sessions).catch(() => []);
       res.writeHead(200, { "content-type": "application/json" });
       res.end(
-        JSON.stringify({ agent: agentCmd, boot: BOOT_ID, sourceChanged: sourceChanges.changed, caffeinate: caffeinateProc !== null, voice: Boolean(GROQ_KEY), sessions })
+        JSON.stringify({ agent: agentCmd, boot: BOOT_ID, sourceChanged: sourceChanges.changed, caffeinate: caffeinateProc !== null, voice: Boolean(GROQ_KEY), sessions, pipelines })
       );
       return;
+    }
+    // A step agent hands facts to the next step; the server advances the line.
+    if (url.pathname === "/api/goals/handover" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      let text;
+      try {
+        text = normalizeMessage(body.text);
+      } catch (error) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: String(error.message ?? error) }));
+        return;
+      }
+      const result = await handoverPipelineStep(String(body.session ?? ""), text);
+      res.writeHead(result.status, { "content-type": "application/json" });
+      res.end(JSON.stringify(result.status === 200 ? { status: result.state, next: result.next, pipeline: result.pipeline } : { error: result.error }));
+      return;
+    }
+    // Restart, skip, or send on one pipeline step (Julian's explicit action).
+    if (url.pathname === "/api/pipelines/control" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      const result = await controlPipeline(String(body.goal ?? ""), String(body.action ?? ""), body.step);
+      res.writeHead(result.status, { "content-type": "application/json" });
+      res.end(JSON.stringify(result.status === 200 ? { status: result.state ?? "started", next: result.next ?? (result.index ? { index: result.index, session: result.session } : null), pipeline: result.pipeline } : { error: result.error }));
+      return;
+    }
+    // Edits one pending step; started steps are history.
+    if (url.pathname === "/api/pipelines/edit" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      const result = await editPipelineStep(String(body.goal ?? ""), body.step, body);
+      res.writeHead(result.status, { "content-type": "application/json" });
+      res.end(JSON.stringify(result.status === 200 ? { pipeline: result.pipeline } : { error: result.error }));
+      return;
+    }
+    // The live agents, for `tangent agent list`: every non-process session
+    // with its refined state and any queued message count.
+    if (url.pathname === "/api/agents" && req.method === "GET") {
+      const sessions = await listSessions();
+      const agents = sessions
+        .filter((session) => !["process", "service", "command"].includes(session.kind ?? ""))
+        .map((session) => ({
+          name: session.name,
+          area: session.area,
+          kind: session.kind,
+          goal: session.goalTitle ?? null,
+          state: session.state,
+          stateDetail: session.stateDetail ?? null,
+          stateQuestion: session.stateQuestion ?? "",
+          queued: (messageQueues.get(session.name) ?? []).length,
+        }));
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ agents }));
+      return;
+    }
+    // Sends one cross-agent message. The server stamps the sender banner and
+    // owns delivery timing; agent-messages.mjs owns the rules.
+    if (url.pathname === "/api/agents/send" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      try {
+        const text = normalizeMessage(body.text);
+        const sessions = await listSessions();
+        const target = resolveSession(String(body.to ?? ""), sessions);
+        const live = sessions.find((session) => session.name === target);
+        const decision = deliveryDecision(live ?? null);
+        if (decision.action === "refuse") {
+          res.writeHead(live ? 409 : 404, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: decision.error }));
+          return;
+        }
+        // The sender is the claimed session when it is live; its area rides
+        // along. A claim that names no live session is stamped as unknown
+        // rather than trusted.
+        const sender = sessions.find((session) => session.name === String(body.from ?? ""));
+        const entry = { from: sender?.name ?? "unknown sender", area: sender?.area ?? null, text, queuedAt: new Date().toISOString() };
+        if (decision.action === "deliver" && !(messageQueues.get(live.name) ?? []).length) {
+          deliverAgentMessage(live.name, entry).catch((err) => console.error("agent message:", err.message ?? err));
+          await logAgentMessage({ event: "sent", to: live.name, from: entry.from, text, disposition: "delivered" });
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ status: "delivered", to: live.name }));
+          return;
+        }
+        queueAgentMessage(live.name, entry);
+        const reason = decision.action === "queue" ? decision.reason : "messages queued ahead";
+        await logAgentMessage({ event: "sent", to: live.name, from: entry.from, text, disposition: "queued", reason });
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ status: "queued", to: live.name, reason, position: messageQueues.get(live.name).length }));
+        return;
+      } catch (error) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: String(error.message ?? error) }));
+        return;
+      }
     }
     // The frontend must target the same orchestrator session the server
     // special-cases, so the name ships as a tiny script instead of being
@@ -1995,6 +2520,25 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/tree") {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ root: TREES_ROOT, areas: await readTree(TREES_ROOT) }));
+      return;
+    }
+    // One Area's note sections and its own Goals and Ideas, for `tangent area show`.
+    if (url.pathname === "/api/areas/show" && req.method === "GET") {
+      const area = url.searchParams.get("area") ?? "";
+      if (!area || !flattenAreaPaths(await readTree(TREES_ROOT)).includes(area)) {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: `no area "${area}"` }));
+        return;
+      }
+      const text = await areaNote(area);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        area,
+        purpose: noteSection(text, "Purpose"),
+        resources: noteSection(text, "Resources"),
+        goals: (await readAreaGoals(area)).map(goalSummary),
+        ideas: ideasFromNote(text),
+      }));
       return;
     }
     if (url.pathname === "/api/areas/new" && req.method === "POST") {
@@ -2147,6 +2691,104 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify(result.status === 200 ? result.document : { error: result.error, current: result.current }));
       return;
     }
+    // Goal listing for `tangent goal list [<area>]`: one Area's own Goals, or every
+    // Area's Goals across the vault when no area is given.
+    if (url.pathname === "/api/goals" && req.method === "GET") {
+      const area = url.searchParams.get("area");
+      const allAreas = flattenAreaPaths(await readTree(TREES_ROOT));
+      if (area && !allAreas.includes(area)) {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: `no area "${area}"` }));
+        return;
+      }
+      const areas = area ? [area] : allAreas;
+      const goals = [];
+      for (const one of areas) goals.push(...(await readAreaGoals(one)).map(goalSummary));
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ goals }));
+      return;
+    }
+    // Slug lookup across the whole vault for `tangent goal show/done/wont-do <slug>`.
+    if (url.pathname === "/api/goals/show" && req.method === "GET") {
+      const slug = url.searchParams.get("slug") ?? "";
+      let found = null;
+      for (const area of flattenAreaPaths(await readTree(TREES_ROOT))) {
+        found = (await readAreaGoals(area)).find((goal) => goal.slug === slug);
+        if (found) break;
+      }
+      if (!found) {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: `no goal ${slug}` }));
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ goal: found }));
+      return;
+    }
+    // Ownership lane for agents (`tangent goal own|release`): a session claims
+    // the Goals it will work, or hands them back. Ownership is the Goal's
+    // existing session binding, so the desk and the reconcile pass need no new
+    // machinery. A Goal is never pulled away from another live session.
+    if ((url.pathname === "/api/goals/own" || url.pathname === "/api/goals/release") && req.method === "POST") {
+      const releasing = url.pathname === "/api/goals/release";
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      const session = String(body.session ?? "").trim();
+      const slugs = (Array.isArray(body.slugs) ? body.slugs : []).map(String).filter(Boolean);
+      if (!session || !slugs.length) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: `${releasing ? "release" : "own"} needs a session name and at least one goal slug` }));
+        return;
+      }
+      const liveSessions = await listSessions();
+      const live = new Set(liveSessions.map((s) => s.name));
+      if (!releasing && !live.has(session)) {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: `no tmux session "${session}"; run this inside the agent's session or pass --session` }));
+        return;
+      }
+      const resolved = [];
+      const allAreas = flattenAreaPaths(await readTree(TREES_ROOT));
+      for (const slug of slugs) {
+        let found = null;
+        for (const area of allAreas) {
+          found = (await readAreaGoals(area)).find((goal) => goal.slug === slug);
+          if (found) break;
+        }
+        if (!found) {
+          res.writeHead(404, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: `no goal ${slug}` }));
+          return;
+        }
+        if (!releasing && ["done", "dropped"].includes(found.status)) {
+          res.writeHead(409, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: `goal ${slug} is ${found.status}` }));
+          return;
+        }
+        if (found.session && found.session !== session && live.has(found.session)) {
+          res.writeHead(409, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: `goal ${slug} is owned by ${found.session}` }));
+          return;
+        }
+        resolved.push(found);
+      }
+      try {
+        for (const goal of resolved) {
+          const target = releasing ? { status: "open", session: null } : { status: "active", session };
+          if (goal.status === target.status && (goal.session ?? null) === target.session) continue;
+          if (releasing && goal.status !== "active") continue;
+          await writeGoalBinding(goal.file, target);
+          await vaultCommit([goal.file], `update: ${goal.area} goal ${goal.slug} ${releasing ? "released" : `owned by ${session}`}`, goal.area, releasing ? null : session);
+        }
+        if (!releasing && resolved.length) await adoptGoalSession(liveSessions, session, resolved[0]);
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true, session, slugs: resolved.map((goal) => goal.slug) }));
+      } catch (err) {
+        res.writeHead(500, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
+      }
+      return;
+    }
     if (url.pathname === "/api/goals/brief" && req.method === "GET") {
       const file = url.searchParams.get("file") ?? "";
       const goal = (await goalsByFile()).get(file);
@@ -2180,11 +2822,19 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ error: "describe the work before you open an agent" }));
         return;
       }
+      const chosenDescribe = await requestedLaunch(body);
+      if (chosenDescribe.error) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: chosenDescribe.error }));
+        return;
+      }
       try {
         const sources = await sourceDocuments(body.sources);
         const result = await spawnDescribeWorkSession(area, description, sources, {
           session: String(body.session ?? ""),
           launch: body.launch !== false,
+          command: chosenDescribe.command,
+          label: chosenDescribe.label,
         });
         res.writeHead(result.status, { "content-type": "application/json" });
         res.end(JSON.stringify(result.status === 200 ? result : { error: result.error }));
@@ -2210,7 +2860,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/harnesses" && req.method === "POST") {
       let body = {};
       try { body = JSON.parse(await readBody(req)); } catch {}
-      const registry = { version: 1, modelSets: body.modelSets ?? {}, harnesses: body.harnesses ?? [] };
+      const registry = { version: 1, modelSets: body.modelSets ?? {}, ...(body.effortSets && Object.keys(body.effortSets).length ? { effortSets: body.effortSets } : {}), harnesses: body.harnesses ?? [] };
       const problem = validateHarnessRegistry(registry);
       if (problem) {
         res.writeHead(400, { "content-type": "application/json" });
@@ -2243,6 +2893,7 @@ const server = http.createServer(async (req, res) => {
           label: harness.label || harness.id,
           command: harness.command,
           models: harnessModels(registry, harness).map((model) => ({ id: model.id, label: model.label || model.id, args: model.args })),
+          efforts: harnessEfforts(registry, harness).map((effort) => ({ id: effort.id, label: effort.label || effort.id, args: effort.args })),
         })),
         default: await launchForArea(area),
       }));
@@ -2264,7 +2915,7 @@ const server = http.createServer(async (req, res) => {
       const file = areaNoteFile(area);
       const absolute = path.join(TREES_ROOT, file);
       const text = await readFile(absolute, "utf8").catch(() => emptyAreaNote(area));
-      const ref = { harness: resolved.harness, ...(resolved.model ? { model: resolved.model } : {}) };
+      const ref = { harness: resolved.harness, ...(resolved.model ? { model: resolved.model } : {}), ...(resolved.effort ? { effort: resolved.effort } : {}) };
       await writeFile(absolute, upsertEnvironmentLaunch(text, ref));
       await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", file]).catch(() => {});
       await vaultCommit([file], `update: ${area} default launch ${resolved.label}`, area, null);
@@ -2289,6 +2940,7 @@ const server = http.createServer(async (req, res) => {
           document: focus?.file ?? "",
           command: chosen.command,
           label: chosen.label,
+          extraFiles: Array.isArray(body.extraFiles) ? body.extraFiles.map(String) : [],
         });
         res.writeHead(result.status, { "content-type": "application/json" });
         res.end(JSON.stringify(result.status === 200 ? result : { error: result.error }));
@@ -2298,10 +2950,25 @@ const server = http.createServer(async (req, res) => {
       }
       return;
     }
-    // The one spawn path: the visible start-agent action for a Goal.
+    // The one spawn path: the visible start-agent action for a Goal. With
+    // `steps`, it starts a pipeline whose first step is spawned the same way.
     if (url.pathname === "/api/goals/start" && req.method === "POST") {
       let body = {};
       try { body = JSON.parse(await readBody(req)); } catch {}
+      if (Array.isArray(body.steps) && body.steps.length) {
+        try {
+          const result = await startPipeline(String(body.file ?? ""), {
+            steps: body.steps,
+            extraFiles: Array.isArray(body.extraFiles) ? body.extraFiles.map(String) : [],
+          });
+          res.writeHead(result.status, { "content-type": "application/json" });
+          res.end(JSON.stringify(result.status === 200 ? { session: result.session, pipeline: result.pipeline } : { error: result.error }));
+        } catch (err) {
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
+        }
+        return;
+      }
       const chosen = await requestedLaunch(body);
       if (chosen.error) {
         res.writeHead(400, { "content-type": "application/json" });
@@ -2315,6 +2982,7 @@ const server = http.createServer(async (req, res) => {
           launch: body.launch === true,
           command: chosen.command,
           label: chosen.label,
+          extraFiles: Array.isArray(body.extraFiles) ? body.extraFiles.map(String) : [],
         });
         res.writeHead(result.status, { "content-type": "application/json" });
         res.end(
@@ -2427,6 +3095,15 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ error: "each Subgoal needs a name and a done condition" }));
         return;
       }
+      // `tangent goal create --own`: the creating agent takes ownership in the
+      // same step, so a trivial task is one command away from being worked.
+      const own = String(body.own ?? "").trim();
+      const ownSessions = own ? await listSessions() : [];
+      if (own && !ownSessions.some((s) => s.name === own)) {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: `no tmux session "${own}"; run create --own inside the agent's session or pass --session` }));
+        return;
+      }
       try {
         const sources = await sourceDocuments(body.sources);
         const created = await createGoalSet(area, {
@@ -2439,8 +3116,13 @@ const server = http.createServer(async (req, res) => {
           description: String(body.description ?? "").trim(),
           sources: sources.map((source) => ({ file: source.file, title: source.title })),
         });
+        if (own && created.file) {
+          await writeGoalBinding(created.file, { status: "active", session: own });
+          await vaultCommit([created.file], `update: ${area} goal owned by ${own}`, area, own);
+          await adoptGoalSession(ownSessions, own, { area, file: created.file });
+        }
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify(created));
+        res.end(JSON.stringify({ ...created, ...(own ? { session: own } : {}) }));
       } catch (err) {
         res.writeHead(500, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
@@ -2472,6 +3154,23 @@ const server = http.createServer(async (req, res) => {
       }
       return;
     }
+    // Idea listing for `tangent idea list [<area>]`: one Area's own ideas, or every
+    // Area's ideas across the vault when no area is given.
+    if (url.pathname === "/api/ideas" && req.method === "GET") {
+      const area = url.searchParams.get("area");
+      const allAreas = flattenAreaPaths(await readTree(TREES_ROOT));
+      if (area && !allAreas.includes(area)) {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: `no area "${area}"` }));
+        return;
+      }
+      const areas = area ? [area] : allAreas;
+      const ideas = [];
+      for (const one of areas) ideas.push(...ideasFromNote(await areaNote(one)).map((text) => ({ area: one, text })));
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ideas }));
+      return;
+    }
     // The tree's edit lane: a status flip (mark done / reopen) or the
     // goal's own text, written on the user's click with a provenance
     // commit. Direct edits are the user's word; no agent is in the loop.
@@ -2487,12 +3186,21 @@ const server = http.createServer(async (req, res) => {
       }
       const fields = {};
       if (body.status !== undefined) {
-        if (!["open", "done"].includes(body.status)) {
+        if (!["open", "done", "dropped"].includes(body.status)) {
           res.writeHead(400, { "content-type": "application/json" });
-          res.end(JSON.stringify({ error: `status must be open or done, got "${body.status}"` }));
+          res.end(JSON.stringify({ error: `status must be open, done, or dropped, got "${body.status}"` }));
           return;
         }
         fields.status = body.status;
+        if (body.status === "dropped") {
+          const reason = oneLine(body.reason);
+          if (!reason) {
+            res.writeHead(400, { "content-type": "application/json" });
+            res.end(JSON.stringify({ error: "give a brief reason before you mark this goal won't do" }));
+            return;
+          }
+          fields.wontDoReason = reason;
+        }
       }
       for (const key of ["title", "doneWhen", "state"]) {
         if (typeof body[key] === "string") fields[key] = body[key];
@@ -2504,13 +3212,16 @@ const server = http.createServer(async (req, res) => {
       }
       try {
         await editGoalFile(file, fields);
+        if (fields.status === "dropped" && o.session) {
+          await execFileAsync("tmux", ["kill-session", "-t", "=" + o.session]).catch(() => {});
+        }
         const changed = fields.status === "done"
           ? await cascadeGoalDone(file, await goalsByFile())
           : [file];
         // The requested file can also carry text edits.
         if (!changed.includes(file)) changed.unshift(file);
         const what =
-          fields.status === "done" ? "done" : fields.status === "open" ? "reopened" : "edited";
+          fields.status === "done" ? "done" : fields.status === "dropped" ? "marked won't do" : fields.status === "open" ? "reopened" : "edited";
         await vaultCommit(changed, `update: ${o.area} goal ${o.slug} ${what} in tree`, o.area, null);
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({ ok: true }));
@@ -2671,6 +3382,7 @@ const server = http.createServer(async (req, res) => {
         "xterm.js": "@xterm/xterm/lib/xterm.js",
         "xterm.css": "@xterm/xterm/css/xterm.css",
         "addon-fit.js": "@xterm/addon-fit/lib/addon-fit.js",
+        "addon-webgl.js": "@xterm/addon-webgl/lib/addon-webgl.js",
       };
       if (!roots[rel]) {
         res.writeHead(404).end("not found");

@@ -1,14 +1,12 @@
 # @tangent/agent-shell Architecture
 
-The package owns Goal loading, Program definitions, Run records, step prompts, and handoff validation.
+The package is `src/cli/` and nothing else. The root `tangent` CLI lazily loads `@tangent/agent-shell/cli` for the `area`, `goal`, `idea`, `vault`, and `agent` nouns, the same way it loads `usage`, `eval`, `rollup`, `search`, and `threads`.
 
-Run records live in `~/.tangent/loops/reviewed-build/runs/`. Each attempt has an append-only process log.
+- `src/cli/spec.ts`: the help specs (`areaCommandSpec`, `goalCommandSpec`, `ideaCommandSpec`, `agentCommandSpec`, `vaultCommandSpec`).
+- `src/cli/client.ts`: the HTTP client. Loopback-only, default `http://127.0.0.1:4321`, overridable via `--server` or `TANGENT_SHELL_URL`. It also reads the current tmux session name, which is the agent's identity for ownership, messaging, and handover.
+- `src/cli/commands/{area,goal,idea,agent}.ts`: thin HTTP clients to the Agent Shell server. They never read or write vault files, and never spawn agents. `goal start` and `goal handover` post to the server's pipeline endpoints; the server (`prototypes/agent-shell/server.mjs`) records the pipeline under `~/.tangent/agent-shell/pipelines/` and spawns each step as an ordinary tmux Goal session.
+- `src/cli/commands/vault.ts`: the one command that shells out itself. `vault commit` uses `@tangent/repo`'s `git()` to commit directly to `~/.tangent/trees` with the same message shape and trailers as the server's `vaultCommit()`.
 
-Repository files are the canonical design, plan, review, response, and implementation artifacts. The engine validates each handoff before it starts the next step.
+Dependencies: `@tangent/core` (arg parsing, help rendering), `@tangent/agent-runtime` (`runProcess` for `tmux display-message`), `@tangent/repo` (git for `vault commit`). The package does not import browser code, Eval, Usage, Rollup, Search, or Threads.
 
-The package depends on two platform packages:
-
-- `@tangent/agent-runtime` runs provider processes and provider sessions.
-- `@tangent/repo` provides Git facts.
-
-The native Agent Shell owns the HTTP bridge and browser interface in `prototypes/agent-shell/`. This package does not import browser code, Eval, Usage, Rollup, Search, or Threads.
+The Reviewed build engine that used to live here was deleted in ADR-0023; pipelines replaced it.

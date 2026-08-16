@@ -29,13 +29,17 @@ export function parseHarnessRegistry(text) {
   }
   const harnesses = Array.isArray(parsed.harnesses) ? parsed.harnesses : [];
   const modelSets = parsed.modelSets && typeof parsed.modelSets === "object" ? parsed.modelSets : {};
+  const effortSets = parsed.effortSets && typeof parsed.effortSets === "object" ? parsed.effortSets : {};
   for (const harness of harnesses) {
     if (!harness.id || !harness.command) return { error: `harness entries need an id and a command` };
     if (harness.modelSet && !Array.isArray(modelSets[harness.modelSet])) {
       return { error: `harness "${harness.id}" references unknown model set "${harness.modelSet}"` };
     }
+    if (harness.effortSet && !Array.isArray(effortSets[harness.effortSet])) {
+      return { error: `harness "${harness.id}" references unknown effort set "${harness.effortSet}"` };
+    }
   }
-  return { modelSets, harnesses };
+  return { modelSets, effortSets, harnesses };
 }
 
 /** Parses one note's tangent.environment.v1 block, or null when absent. */
@@ -55,30 +59,46 @@ export function harnessModels(registry, harness) {
   return registry?.modelSets?.[harness.modelSet] ?? [];
 }
 
-/** The display label for one resolved harness and optional model. */
-export function launchLabel(harness, model) {
-  const harnessLabel = harness.label || harness.id;
-  return model ? `${harnessLabel} · ${model.label || model.id}` : harnessLabel;
+/** The effort options one harness offers, in registry order. */
+export function harnessEfforts(registry, harness) {
+  if (!harness?.effortSet) return [];
+  return registry?.effortSets?.[harness.effortSet] ?? [];
+}
+
+/** The display label for one resolved harness, optional model, and optional effort. */
+export function launchLabel(harness, model, effort) {
+  return [harness.label || harness.id, model ? model.label || model.id : "", effort ? effort.label || effort.id : ""]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 /**
- * Composes the exact command for one { harness, model } launch reference.
- * Never substitutes: an id that does not resolve is an error that names it.
+ * Composes the exact command for one { harness, model?, effort? } launch
+ * reference: harness command, then model args, then effort args. Never
+ * substitutes: an id that does not resolve is an error that names it.
  */
 export function resolveLaunch(registry, ref) {
   const harnessId = String(ref?.harness ?? "");
   const harness = (registry?.harnesses ?? []).find((entry) => entry.id === harnessId);
   if (!harness) return { error: `unknown harness "${harnessId}"` };
   const modelId = String(ref?.model ?? "");
-  if (!modelId) return { command: harness.command, label: launchLabel(harness), harness: harness.id, model: null };
-  const options = harnessModels(registry, harness);
-  const model = options.find((entry) => entry.id === modelId);
-  if (!model) return { error: `unknown model "${modelId}" for harness "${harness.id}"` };
+  let model = null;
+  if (modelId) {
+    model = harnessModels(registry, harness).find((entry) => entry.id === modelId) ?? null;
+    if (!model) return { error: `unknown model "${modelId}" for harness "${harness.id}"` };
+  }
+  const effortId = String(ref?.effort ?? "");
+  let effort = null;
+  if (effortId) {
+    effort = harnessEfforts(registry, harness).find((entry) => entry.id === effortId) ?? null;
+    if (!effort) return { error: `unknown effort "${effortId}" for harness "${harness.id}"` };
+  }
   return {
-    command: `${harness.command} ${model.args}`.trim(),
-    label: launchLabel(harness, model),
+    command: [harness.command, model?.args, effort?.args].filter((part) => part && String(part).trim()).join(" ").trim(),
+    label: launchLabel(harness, model, effort),
     harness: harness.id,
-    model: model.id,
+    model: model ? model.id : null,
+    effort: effort ? effort.id : null,
   };
 }
 
@@ -90,6 +110,7 @@ export function resolveLaunch(registry, ref) {
 export function validateHarnessRegistry(registry) {
   const harnesses = Array.isArray(registry?.harnesses) ? registry.harnesses : [];
   const modelSets = registry?.modelSets && typeof registry.modelSets === "object" ? registry.modelSets : {};
+  const effortSets = registry?.effortSets && typeof registry.effortSets === "object" ? registry.effortSets : {};
   const seen = new Set();
   for (const harness of harnesses) {
     if (!harness.id || !harness.command) return "every harness needs an id and a command";
@@ -98,12 +119,23 @@ export function validateHarnessRegistry(registry) {
     if (harness.modelSet && !Array.isArray(modelSets[harness.modelSet])) {
       return `harness "${harness.id}" references unknown model set "${harness.modelSet}"`;
     }
+    if (harness.effortSet && !Array.isArray(effortSets[harness.effortSet])) {
+      return `harness "${harness.id}" references unknown effort set "${harness.effortSet}"`;
+    }
   }
   for (const [name, options] of Object.entries(modelSets)) {
     const ids = new Set();
     for (const option of options ?? []) {
       if (!option.id) return `a model option in the "${name}" set has no id`;
       if (ids.has(option.id)) return `duplicate model id "${option.id}" in the "${name}" set`;
+      ids.add(option.id);
+    }
+  }
+  for (const [name, options] of Object.entries(effortSets)) {
+    const ids = new Set();
+    for (const option of options ?? []) {
+      if (!option.id) return `an effort option in the "${name}" set has no id`;
+      if (ids.has(option.id)) return `duplicate effort id "${option.id}" in the "${name}" set`;
       ids.add(option.id);
     }
   }

@@ -58,7 +58,7 @@ const allowedPackageDeps: Record<string, string[]> = {
   "@tangent/core": [],
   "@tangent/repo": ["@tangent/core"],
   "@tangent/agent-runtime": ["@tangent/core"],
-  "@tangent/agent-shell": ["@tangent/agent-runtime", "@tangent/repo"],
+  "@tangent/agent-shell": ["@tangent/core", "@tangent/agent-runtime", "@tangent/repo"],
   "@tangent/governance": ["@tangent/core", "@tangent/repo"],
   "@tangent/usage-schema": [],
   "@tangent/usage-core": ["@tangent/core", "@tangent/repo", "@tangent/usage-schema"],

@@ -27,7 +27,11 @@ const tangentCommandSpec: CliCommandSpec = {
     productCommandSpec("search", "Index and search repository structure"),
     productCommandSpec("eval", "Run and inspect coding-agent evals"),
     productCommandSpec("threads", "Delegated-thread sweep, registry, and attach"),
-    { name: "mark", description: "Capture agent behavior marks; install @tangent/eval if unavailable", args: "[note]" },
+    { name: "agent", description: "List live agents and send messages between them; install @tangent/agent-shell if unavailable", args: "<list|send>" },
+    { name: "area", description: "List and inspect Tangent tree Areas; install @tangent/agent-shell if unavailable", args: "<list|show>" },
+    { name: "goal", description: "Create, list, start, hand over, and close Goals; install @tangent/agent-shell if unavailable", args: "<create|list|show|start|handover|done|wont-do>" },
+    { name: "idea", description: "Capture and list ideas on an Area note; install @tangent/agent-shell if unavailable", args: "<add|list>" },
+    { name: "vault", description: "Commit vault edits directly; install @tangent/agent-shell if unavailable", args: "<commit>" },
     doctorCommandSpec,
     { name: "governance", description: "Run architecture governance lints", hidden: true },
     devCommandSpec,
@@ -105,9 +109,33 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
     return;
   }
 
-  if (app === "mark") {
-    const { runMarkCli } = await requiredProductModule<{ runMarkCli(argv: string[]): Promise<void> }>("@tangent/eval/cli", "mark");
-    await runMarkCli(rest);
+  if (app === "agent") {
+    const { runAgentCli } = await requiredProductModule<{ runAgentCli(argv: string[]): Promise<void> }>("@tangent/agent-shell/cli", "agent");
+    await runAgentCli(rest);
+    return;
+  }
+
+  if (app === "area") {
+    const { runAreaCli } = await requiredProductModule<{ runAreaCli(argv: string[]): Promise<void> }>("@tangent/agent-shell/cli", "area");
+    await runAreaCli(rest);
+    return;
+  }
+
+  if (app === "goal") {
+    const { runGoalCli } = await requiredProductModule<{ runGoalCli(argv: string[]): Promise<void> }>("@tangent/agent-shell/cli", "goal");
+    await runGoalCli(rest);
+    return;
+  }
+
+  if (app === "idea") {
+    const { runIdeaCli } = await requiredProductModule<{ runIdeaCli(argv: string[]): Promise<void> }>("@tangent/agent-shell/cli", "idea");
+    await runIdeaCli(rest);
+    return;
+  }
+
+  if (app === "vault") {
+    const { runVaultCli } = await requiredProductModule<{ runVaultCli(argv: string[]): Promise<void> }>("@tangent/agent-shell/cli", "vault");
+    await runVaultCli(rest);
     return;
   }
 
@@ -191,7 +219,11 @@ Examples:
   tangent search index
   tangent search "horizontal tension"
   tangent eval run eval.json
-  tangent mark "you should have read the docs index first"
+  tangent area list
+  tangent agent list
+  tangent goal create --area otto/dnd --title "Connect chosen ramp faces" --done-when "The chosen faces connect at the dragged width."
+  tangent idea add otto/dnd Maybe add a calmer return screen later.
+  tangent vault commit otto/dnd/dnd.md -m "note: otto/dnd captures an idea"
   tangent threads sweep
   tangent completion zsh
 `);

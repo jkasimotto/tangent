@@ -101,6 +101,7 @@ If the CLI/SDK is unavailable, the global index at `~/.tangent/usage/global/inde
 - @tangent/eval: coding-agent eval preparation, execution, collection, and reports.
 - @tangent/search: structural indexing and search over TypeScript and Dart source (standalone, no Usage/Rollup/Eval dependency).
 - @tangent/threads: delegated-thread sweep over the tangent vault and Usage telemetry; CLI `tangent threads`.
+- @tangent/agent-shell: the vault CLI (`tangent area`, `tangent goal`, `tangent idea`, `tangent vault commit`), the cross-agent messaging CLI (`tangent agent list|send`), and the pipeline CLI (`tangent goal start`, `tangent goal handover`); thin HTTP clients to the running Agent Shell server except `vault commit`, which commits directly to the vault's git history. The Agent Shell server owns pipelines (ADR-0023).
 
 Architecture docs:
 - ARCHITECTURE.md
@@ -111,7 +112,7 @@ Architecture docs:
 - docs/agent/validation.md
 
 Primary entry point:
-- The daily product is Agent Shell: `prototypes/agent-shell/server.mjs` on port 4321. The `@tangent/agent-shell` engine supports it. Verify visible changes against this server.
+- The daily product is Agent Shell: `prototypes/agent-shell/server.mjs` on port 4321. The `@tangent/agent-shell` package is its CLI surface. Verify visible changes against this server.
 - The combined launcher and shell were deleted on 2026-08-14. See docs/decisions/ADR-0019-delete-combined-tangent-ui.md. Never restore the shell, command, or manifest discovery.
 - Usage and Eval keep their standalone servers as secondary analysis surfaces: `tangent usage ui` and `tangent eval ui`.
 - The Usage UI defaults to all projects across every Claude profile (`~/.claude*/projects`, unioned by `claudeHomes()`, with `scope: "all"`).
@@ -119,7 +120,7 @@ Primary entry point:
 
 Product direction: the mark loop (design contract: docs/superpowers/specs/2026-07-05-mark-loop-design.md):
 - Tangent is a feedback loop for coding agents, not a standalone eval tool: notice -> mark -> diagnose -> fix -> prove -> ship. Evals are a byproduct of noticing, never a project you set up.
-- Two lenses, one proof. Quality is human-judged and moment-anchored: marks are captured in-session (/mark skill, `tangent mark`) in seconds, diagnosed at mark time by the session's own model. Efficiency is computed: insights are deterministic aggregations over the Usage index; models describe findings, they never discover them. Both lenses converge on N-way evals with binary judged criteria.
+- Two lenses, one proof. Quality is human-judged and moment-anchored: marks are captured in-session (/mark skill) in seconds, diagnosed at mark time by the session's own model. Efficiency is computed: insights are deterministic aggregations over the Usage index; models describe findings, they never discover them. Both lenses converge on N-way evals with binary judged criteria.
 - Capture must never break the user's flow. Any capture surface that takes over a minute or forces a context switch is wrong.
 - The unit of insight display is the finding, not the chart: ranked by wall-clock cost, plain language, evidence one click away, remedy tag, mark->eval action, park/dismiss curation (parked findings resurface only if cost grows).
 - Proof travels with the fix: report.md (pasteable verdict matrix) and report.html (single self-contained file) attach to the PR that changes CLAUDE.md/skills/tools. Color encodes pass/fail only; criteria where variants disagree sort first.

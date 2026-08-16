@@ -25,8 +25,9 @@ Decisions:
 - decisions/ADR-0015-marks-in-eval.md
 - decisions/ADR-0016-threads-vertical-app.md
 - decisions/ADR-0017-agent-shell-daily-product.md
-- decisions/ADR-0018-reviewed-build-program.md
+- decisions/ADR-0018-reviewed-build-program.md (superseded by ADR-0023)
 - decisions/ADR-0019-delete-combined-tangent-ui.md
+- decisions/ADR-0023-agent-pipelines-replace-reviewed-build.md
 - ui/adr/0001-ui-package-split.md
 - ui/adr/0002-react-vite-ui-stack.md
 - ui/adr/0006-svelte-usage-ui.md

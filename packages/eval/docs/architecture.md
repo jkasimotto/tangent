@@ -38,6 +38,6 @@ The `evaluation.json` sidecar (schema `eval.evaluation.v1`) sits beside `metrics
 
 `marks/resolve.ts` resolves a mark's anchor without reimplementing transcript discovery: `resolveCurrentSessionAnchor(cwd)` and `resolveAnchorForSession(sessionId)` both call `discoverClaudeNative`, re-exported from `@tangent/usage-index-sqlite` (backed by `@tangent/usage-providers`, which already handles nested-cwd project-dir discovery and unions every `~/.claude*` profile). The resolved anchor's `ordinal` is left unset; the Usage index fills it lazily on first view rather than making capture depend on the session already being indexed.
 
-`cli/commands/mark.ts` is the CLI surface: bare-note capture, `--json` stdin capture (validating and defaulting a full or partial record), and `list`/`show`/`update`. `cli/index.ts` exports `runMarkCli` separately from `runEvalCli` so the root CLI can wire `tangent mark` as a top-level command while the implementation stays in this package. See ADR-0015 for why marks live in Eval rather than a new package or in Usage.
+There is no CLI surface over marks. The `tangent mark` root command (bare-note capture, `--json` stdin capture, `list`/`show`/`update`/`to-eval`/`scan`) was removed 2026-08-15 (ADR-0020). `server/marks-routes.ts` reads and updates marks directly for the Eval UI's marks inbox. See ADR-0015 for why marks live in Eval rather than a new package or in Usage, and ADR-0020 for the CLI removal.
 
 Refer to ../../../docs/architecture/package-boundaries.md and ../../../docs/architecture/dependency-graph.md for monorepo boundaries.

@@ -1,12 +1,16 @@
 {
   "name": "@tangent/agent-shell",
   "version": "0.1.0",
-  "description": "Goal-bound programs and durable multi-agent runs for Tangent.",
+  "description": "Vault, agent messaging, and pipeline CLI for the Tangent Agent Shell.",
   "type": "module",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli/index.d.ts",
+      "import": "./dist/cli/index.js"
     }
   },
   "files": [
@@ -16,10 +20,11 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build -w @tangent/agent-runtime && npm run build -w @tangent/repo && npm run build && node --test test/*.test.mjs"
+    "test": "npm run build -w @tangent/core && npm run build -w @tangent/agent-runtime && npm run build -w @tangent/repo && npm run build && node --test test/*.test.mjs"
   },
   "dependencies": {
     "@tangent/agent-runtime": "^0.1.0",
+    "@tangent/core": "^0.1.0",
     "@tangent/repo": "^0.1.0"
   },
   "license": "MIT",

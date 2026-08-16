@@ -93,6 +93,8 @@ test("the context-first shell is default and keeps the user's understanding with
       TANGENT_LOOPS_ROOT: path.join(root, "loops"),
       WORKSPACE: workspace,
       AGENT_SHELL_NO_OPEN: "1",
+      AGENT_SHELL_TEST_NO_LAUNCH: "1",
+      TANGENT_PIPELINES_ROOT: path.join(root, "pipelines"),
       GROQ_API_KEY: "",
       CHAT_SESSION: `focus-shell-test-${process.pid}`,
     },
@@ -119,8 +121,9 @@ test("the context-first shell is default and keeps the user's understanding with
   const serverSource = await readFile(path.join(here, "server.mjs"), "utf8");
   assert.match(shellScript, /data-command-enter-submit/);
   assert.match(shellScript, /event\.key === "Enter" && event\.metaKey/);
-  assert.match(shellScript, /data-new-goal/);
-  assert.match(shellScript, /data-next-step/);
+  assert.match(shellScript, /data-create-form/);
+  assert.match(shellScript, /What happens next\?/);
+  assert.match(shellScript, /data-mark-wont-do/);
   assert.match(shellScript, /data-toggle-awake/);
   assert.match(shellScript, /data-open-vision/);
   assert.match(shellScript, /data-describe-work/);
@@ -136,10 +139,17 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.match(shellScript, /Current brief/);
   assert.match(shellScript, /Story so far/);
   assert.match(shellScript, /post\("\/api\/caffeinate"/);
-  assert.doesNotMatch(shellScript, /EventSource|location\.reload|api\/reload/);
+  assert.doesNotMatch(shellScript, /EventSource|api\/reload/);
+  assert.match(shellScript, /noteServerBoot/);
+  assert.match(shellScript, /api\/shell\/rebuild/);
+  assert.match(shellScript, /data-goal-anchor/);
+  assert.doesNotMatch(shellScript, /data-view-goal|Goal details/);
   assert.doesNotMatch(serverSource, /createReloadController|api\/reload|source changed; restarting|watch\(here/);
-  assert.match(serverSource, /goal-command\.mjs/);
-  assert.match(serverSource, /Never hand-write Goal frontmatter or Area links/);
+  // Command teaching moved to the ambient ~/.agents/AGENTS.md: the describe
+  // prompt names the trivial-path command and the two good outcomes instead.
+  assert.match(serverSource, /tangent goal create/);
+  assert.match(serverSource, /--own/);
+  assert.doesNotMatch(serverSource, /goal-command\.mjs/);
 
   const reloadEndpoint = await fetch(`${base}/api/reload`, { method: "POST" });
   assert.equal(reloadEndpoint.status, 404);
@@ -149,13 +159,6 @@ test("the context-first shell is default and keeps the user's understanding with
 
   const programs = await fetch(`${base}/api/programs`).then((response) => response.json());
   assert.equal(programs.programs.find((program) => program.name === "dev").type, "process");
-
-  const reviewedProgram = await fetch(`${base}/api/reviewed-build/program?area=otto%2Ftest`).then((response) => response.json());
-  assert.equal(reviewedProgram.id, "reviewed-build");
-  assert.equal(reviewedProgram.steps.length, 8);
-  assert.equal(reviewedProgram.sessions["design"].mode, "fresh");
-  const reviewedRuns = await fetch(`${base}/api/reviewed-build/runs`).then((response) => response.json());
-  assert.deepEqual(reviewedRuns.runs, []);
 
   const command = await fetch(`${base}/api/programs/new`, {
     method: "POST",
@@ -252,7 +255,7 @@ test("the context-first shell is default and keeps the user's understanding with
   const updated = await fetch(`${base}/api/goals/brief?file=otto%2Ftest%2Fgoal-prove-it.md`).then((response) => response.json());
   assert.equal(updated.goal.myUnderstanding, "I asked for a visible result. I will inspect it before I close the goal.");
   assert.match(updated.markdown, /## Julian's understanding/);
-  assert.match(updated.markdown, /update the one You wanted bullet in Current brief/);
+  assert.match(updated.markdown, /no need to re-confirm the assignment/);
   assert.match(updated.markdown, /Story so far/);
 
   const described = await fetch(`${base}/api/work/describe`, {
@@ -272,6 +275,37 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(workSession.kind, "work-definition");
   assert.equal(workSession.area, "otto/test");
   assert.equal(workSession.cwd, workspace);
+
+  // A defining agent that creates a Goal with --own stops being "Defining
+  // work": the Goal binds to its session and the session adopts the Goal's
+  // identity, so the desk shows it on the Goal row instead of Dispatches.
+  const ownedCreate = await fetch(`${base}/api/goals/create`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      area: "otto/test",
+      goal: { title: "A trivial fix", doneWhen: "The fix is visible." },
+      own: described.session,
+    }),
+  }).then((response) => response.json());
+  assert.equal(ownedCreate.session, described.session);
+  const ownedText = await readFile(path.join(trees, ownedCreate.file), "utf8");
+  assert.match(ownedText, /^status: active$/m);
+  assert.match(ownedText, new RegExp(`^session: ${described.session}$`, "m"));
+  const adopted = (await fetch(`${base}/api/sessions`).then((response) => response.json())).sessions
+    .find((session) => session.name === described.session);
+  assert.equal(adopted.kind, "goal");
+  assert.equal(adopted.goal, ownedCreate.file);
+
+  // Release hands the Goal back to open; the session stays alive.
+  const releasedOwned = await fetch(`${base}/api/goals/release`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session: described.session, slugs: ["a-trivial-fix"] }),
+  });
+  assert.equal(releasedOwned.status, 200);
+  const releasedText = await readFile(path.join(trees, ownedCreate.file), "utf8");
+  assert.match(releasedText, /^status: open$/m);
 
   const created = await fetch(`${base}/api/goals/new`, {
     method: "POST",
@@ -329,6 +363,257 @@ test("the context-first shell is default and keeps the user's understanding with
   }).then((response) => response.json());
   assert.equal(idea.ok, true);
   assert.match(await readFile(path.join(areaDirectory, "test.md"), "utf8"), /Idea: Maybe add a calmer return screen later\./);
+
+  // Read-only endpoints behind `tangent area`, `tangent goal`, and `tangent idea`.
+  const areaShow = await fetch(`${base}/api/areas/show?area=otto%2Ftest`).then((response) => response.json());
+  assert.deepEqual(areaShow.goals.map((goal) => goal.slug).sort(), [
+    "a-second-visible-result", "a-trivial-fix", "complete-flow-works", "connect-chosen-ramp-faces", "first-proof-works", "prove-it", "second-proof-works",
+  ]);
+  assert.deepEqual(areaShow.ideas, ["Maybe add a calmer return screen later."]);
+  const missingAreaShow = await fetch(`${base}/api/areas/show?area=otto%2Fnowhere`);
+  assert.equal(missingAreaShow.status, 404);
+
+  const areaGoals = await fetch(`${base}/api/goals?area=otto%2Ftest`).then((response) => response.json());
+  assert.deepEqual(areaGoals.goals.map((goal) => goal.slug).sort(), [
+    "a-second-visible-result", "a-trivial-fix", "complete-flow-works", "connect-chosen-ramp-faces", "first-proof-works", "prove-it", "second-proof-works",
+  ]);
+  const allGoals = await fetch(`${base}/api/goals`).then((response) => response.json());
+  assert.ok(allGoals.goals.some((goal) => goal.slug === "prove-it" && goal.area === "otto/test"));
+
+  const goalShow = await fetch(`${base}/api/goals/show?slug=prove-it`).then((response) => response.json());
+  assert.equal(goalShow.goal.title, "Prove it");
+  assert.equal(goalShow.goal.file, "otto/test/goal-prove-it.md");
+  const missingGoalShow = await fetch(`${base}/api/goals/show?slug=does-not-exist`);
+  assert.equal(missingGoalShow.status, 404);
+
+  const agents = await fetch(`${base}/api/agents`).then((response) => response.json());
+  assert.ok(Array.isArray(agents.agents));
+  assert.ok(agents.agents.every((agent) => !["process", "service", "command"].includes(agent.kind ?? "")));
+  assert.ok(agents.agents.every((agent) => "stateDetail" in agent && "queued" in agent));
+
+  const sendMissing = await fetch(`${base}/api/agents/send`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ to: "no-such-session-anywhere", text: "hello" }),
+  });
+  assert.equal(sendMissing.status, 404);
+  const sendEmpty = await fetch(`${base}/api/agents/send`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ to: "no-such-session-anywhere", text: "   " }),
+  });
+  assert.equal(sendEmpty.status, 400);
+
+  // Ownership lane: own validates the claiming session against live tmux
+  // sessions; release is idempotent for a goal nobody owns.
+  const ownNoBody = await fetch(`${base}/api/goals/own`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  assert.equal(ownNoBody.status, 400);
+  const ownUnknownSession = await fetch(`${base}/api/goals/own`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session: "no-such-session-anywhere", slugs: ["prove-it"] }),
+  });
+  assert.equal(ownUnknownSession.status, 404);
+  const releaseUnowned = await fetch(`${base}/api/goals/release`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session: "no-such-session-anywhere", slugs: ["prove-it"] }),
+  });
+  assert.equal(releaseUnowned.status, 200);
+  const unownedText = await readFile(path.join(areaDirectory, "goal-prove-it.md"), "utf8");
+  assert.match(unownedText, /^status: open$/m);
+  const createOwnUnknownSession = await fetch(`${base}/api/goals/create`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      area: "otto/test",
+      goal: { title: "Never created", doneWhen: "Never." },
+      own: "no-such-session-anywhere",
+    }),
+  });
+  assert.equal(createOwnUnknownSession.status, 404);
+  const afterFailedOwnCreate = await fetch(`${base}/api/goals?area=otto%2Ftest`).then((response) => response.json());
+  assert.ok(!afterFailedOwnCreate.goals.some((goal) => goal.title === "Never created"));
+
+  const areaIdeas = await fetch(`${base}/api/ideas?area=otto%2Ftest`).then((response) => response.json());
+  assert.deepEqual(areaIdeas.ideas, [{ area: "otto/test", text: "Maybe add a calmer return screen later." }]);
+  const allIdeas = await fetch(`${base}/api/ideas`).then((response) => response.json());
+  assert.ok(allIdeas.ideas.some((entry) => entry.area === "otto/test" && entry.text === "Maybe add a calmer return screen later."));
+
+  // ---- agent pipelines ----
+  // A registry with an effort axis; step launches resolve through it.
+  await writeFile(path.join(trees, "harnesses.md"), "# Harnesses\n\n```tangent.harnesses.v1\n" + JSON.stringify({
+    version: 1,
+    modelSets: { fake: [{ id: "one", label: "One", args: "--model one" }] },
+    effortSets: { fake: [{ id: "high", label: "High", args: "--effort high" }] },
+    harnesses: [{ id: "fake", label: "Fake", command: "fake-agent", modelSet: "fake", effortSet: "fake" }],
+  }, null, 2) + "\n```\n", "utf8");
+  const options = await fetch(`${base}/api/launch/options?area=otto%2Ftest`).then((response) => response.json());
+  assert.deepEqual(options.harnesses[0].efforts, [{ id: "high", label: "High", args: "--effort high" }]);
+  assert.match(serverSource, /## Your step/);
+  assert.match(serverSource, /## When you finish/);
+  assert.match(serverSource, /tangent goal handover/);
+  assert.match(serverSource, /design-<slug>\.md/);
+
+  const pipelineGoal = await fetch(`${base}/api/goals/create`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ area: "otto/test", goal: { title: "Pipeline demo", doneWhen: "Three agents handed over." } }),
+  }).then((response) => response.json());
+  const badEffort = await fetch(`${base}/api/goals/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file: pipelineGoal.file, steps: [{ instruction: "design", launch: { harness: "fake", model: "one", effort: "ultra" } }] }),
+  });
+  assert.equal(badEffort.status, 409);
+  assert.match((await badEffort.json()).error, /unknown effort "ultra"/);
+  assert.equal(existsSync(path.join(root, "pipelines", "otto", "test", "pipeline-demo.json")), false);
+  const badSteps = await fetch(`${base}/api/goals/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file: pipelineGoal.file, steps: [{ instruction: "  ", launch: { harness: "fake" } }] }),
+  });
+  assert.equal(badSteps.status, 400);
+
+  const startedPipeline = await fetch(`${base}/api/goals/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      file: pipelineGoal.file,
+      steps: [
+        { instruction: "/design this Goal.", launch: { harness: "fake", model: "one", effort: "high" } },
+        { instruction: "Review the design from step 1 and update it.", launch: { harness: "fake", model: "one" }, continueFrom: 1 },
+        { instruction: "Implement the design.", command: "fake-agent --implement" },
+      ],
+    }),
+  }).then((response) => response.json());
+  openedSessions.push(startedPipeline.session);
+  assert.equal(startedPipeline.session, "test-pipeline-demo");
+  assert.equal(startedPipeline.pipeline.steps[0].status, "running");
+  assert.equal(startedPipeline.pipeline.steps[0].command, "fake-agent --model one --effort high");
+  assert.equal(startedPipeline.pipeline.steps[0].label, "Fake · One · High");
+  assert.ok(existsSync(path.join(root, "pipelines", "otto", "test", "pipeline-demo.json")));
+  let goalText = await readFile(path.join(trees, pipelineGoal.file), "utf8");
+  assert.match(goalText, /^status: active$/m);
+  assert.match(goalText, /^session: test-pipeline-demo$/m);
+  let snapshot = await fetch(`${base}/api/sessions`).then((response) => response.json());
+  const stepOne = snapshot.sessions.find((session) => session.name === "test-pipeline-demo");
+  assert.equal(stepOne.pipeline, pipelineGoal.file);
+  assert.equal(stepOne.step, 1);
+  assert.equal(stepOne.goal, pipelineGoal.file);
+  assert.equal(snapshot.pipelines.length, 1);
+  assert.equal(snapshot.pipelines[0].status, "running");
+  assert.equal(snapshot.pipelines[0].steps[0].live, true);
+
+  const ownedElsewhere = await fetch(`${base}/api/goals/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file: pipelineGoal.file, steps: [{ instruction: "again", launch: { harness: "fake" } }] }),
+  });
+  assert.equal(ownedElsewhere.status, 409);
+  assert.match((await ownedElsewhere.json()).error, /owned by live session test-pipeline-demo/);
+
+  const strayHandover = await fetch(`${base}/api/goals/handover`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session: described.session, text: "nothing" }),
+  });
+  assert.equal(strayHandover.status, 404);
+  const editRunning = await fetch(`${base}/api/pipelines/edit`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ goal: pipelineGoal.file, step: 1, instruction: "changed" }),
+  });
+  assert.equal(editRunning.status, 409);
+  const editPending = await fetch(`${base}/api/pipelines/edit`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ goal: pipelineGoal.file, step: 3, instruction: "Implement the design and prove it." }),
+  }).then((response) => response.json());
+  assert.equal(editPending.pipeline.steps[2].instruction, "Implement the design and prove it.");
+
+  // Step 1 hands over: step 2 continues step 1's session (same tmux session,
+  // step option advanced), the Goal stays bound to it.
+  const handoverOne = await fetch(`${base}/api/goals/handover`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session: "test-pipeline-demo", text: "Design written: design-pipeline-demo.md. Unresolved: none." }),
+  }).then((response) => response.json());
+  assert.equal(handoverOne.status, "started");
+  assert.deepEqual(handoverOne.next, { index: 2, session: "test-pipeline-demo" });
+  assert.equal(handoverOne.pipeline.steps[0].status, "complete");
+  assert.equal(handoverOne.pipeline.steps[0].handoverSource, "agent");
+  snapshot = await fetch(`${base}/api/sessions`).then((response) => response.json());
+  assert.equal(snapshot.sessions.find((session) => session.name === "test-pipeline-demo").step, 2);
+
+  // Step 2 hands over: step 3 is a fresh session named for its step and the
+  // Goal follows it.
+  const handoverTwo = await fetch(`${base}/api/goals/handover`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session: "test-pipeline-demo", text: "Design reviewed and updated in place." }),
+  }).then((response) => response.json());
+  assert.deepEqual(handoverTwo.next, { index: 3, session: "test-pipeline-demo-s3" });
+  openedSessions.push("test-pipeline-demo-s3");
+  goalText = await readFile(path.join(trees, pipelineGoal.file), "utf8");
+  assert.match(goalText, /^session: test-pipeline-demo-s3$/m);
+  snapshot = await fetch(`${base}/api/sessions`).then((response) => response.json());
+  const stepThree = snapshot.sessions.find((session) => session.name === "test-pipeline-demo-s3");
+  assert.equal(stepThree.step, 3);
+  assert.equal(stepThree.launchLabel, "Edited command");
+  const sendShell = await fetch(`${base}/api/pipelines/control`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ goal: pipelineGoal.file, action: "send", step: 3 }),
+  });
+  assert.equal(sendShell.status, 409);
+
+  // The step 3 session dies: restart creates a new session for the same step.
+  await new Promise((resolve, reject) => execFile("tmux", ["kill-session", "-t", "=test-pipeline-demo-s3"], (error, stdout, stderr) => (error ? reject(new Error(stderr || error.message)) : resolve())));
+  await new Promise((resolve) => execFile("tmux", ["has-session", "-t", "=test-pipeline-demo-s3"], (error) => resolve(assert.ok(error, "step 3 session should be gone"))));
+  const restarted = await fetch(`${base}/api/pipelines/control`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ goal: pipelineGoal.file, action: "restart", step: 3 }),
+  }).then((response) => response.json());
+  assert.equal(restarted.next.index, 3);
+  assert.equal(restarted.next.session, "test-pipeline-demo-s3");
+  openedSessions.push(restarted.next.session);
+  goalText = await readFile(path.join(trees, pipelineGoal.file), "utf8");
+  assert.match(goalText, /^session: test-pipeline-demo-s3$/m);
+
+  // Skipping the last step completes the pipeline.
+  const skipped = await fetch(`${base}/api/pipelines/control`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ goal: pipelineGoal.file, action: "skip", step: 3 }),
+  }).then((response) => response.json());
+  assert.equal(skipped.status, "complete");
+  assert.equal(skipped.pipeline.steps[2].status, "skipped");
+  snapshot = await fetch(`${base}/api/sessions`).then((response) => response.json());
+  assert.equal(snapshot.pipelines[0].status, "complete");
+
+  const missingDropReason = await fetch(`${base}/api/goals/edit`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file: hierarchy.file, status: "dropped" }),
+  });
+  assert.equal(missingDropReason.status, 400);
+
+  const dropped = await fetch(`${base}/api/goals/edit`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file: hierarchy.file, status: "dropped", reason: "The simpler flow already solves this need." }),
+  });
+  assert.equal(dropped.status, 200);
+  const droppedText = await readFile(path.join(trees, hierarchy.file), "utf8");
+  assert.match(droppedText, /^status: dropped$/m);
+  assert.match(droppedText, /^session:$/m);
+  assert.match(droppedText, /### Won't do\n\nThe simpler flow already solves this need\./);
 
   const completed = await fetch(`${base}/api/goals/edit`, {
     method: "POST",

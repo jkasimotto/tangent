@@ -1,8 +1,12 @@
 # @tangent/agent-shell Docs
 
-Purpose: Run one Goal through a durable sequence of agent work and independent review.
+Purpose: the CLI surface of the Agent Shell. Three lanes, all under the root `tangent` command:
 
-Reviewed build has eight ordered steps. It ends after implementation review and one response-and-fix pass.
+- Vault CLI: `tangent area`, `tangent goal`, `tangent idea`, `tangent vault commit`.
+- Agent messaging CLI: `tangent agent list`, `tangent agent send`.
+- Pipeline CLI: `tangent goal start` (one agent or a list of steps on a Goal) and `tangent goal handover` (a step agent hands facts to the next step).
+
+The Agent Shell server in `prototypes/agent-shell/` owns Goals, pipelines, and sessions. This package never runs an agent itself; see ADR-0023.
 
 Read next:
 - architecture.md

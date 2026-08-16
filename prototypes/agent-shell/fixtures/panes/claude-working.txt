@@ -1,0 +1,7 @@
+  Reading the server file to trace the request handler.
+
+✳ Simmering… (esc to interrupt · 42s · 12.1k tokens)
+──────────────────────────────────────────────────────────────
+❯ 
+──────────────────────────────────────────────────────────────
+  [Opus 5 (1M context)] ░░░░░░░░░░ 8% (78k/1000k)

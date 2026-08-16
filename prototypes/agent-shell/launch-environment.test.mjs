@@ -165,3 +165,34 @@ test("launch labels fall back to ids and fenced lookup handles dots", () => {
   assert.equal(launchLabel({ id: "agy" }), "agy");
   assert.equal(fencedBlock("```a.b.c\nx\n```", "a.b.c"), "x");
 });
+
+const EFFORT_REGISTRY = {
+  modelSets: { codex: [{ id: "sol", label: "Sol", args: "--model gpt-5.6-sol" }] },
+  effortSets: { codex: [{ id: "high", label: "High", args: "-c model_reasoning_effort=high" }, { id: "max", label: "Max", args: "-c model_reasoning_effort=max" }] },
+  harnesses: [
+    { id: "codex", label: "Codex", command: "codex", modelSet: "codex", effortSet: "codex" },
+    { id: "agy", label: "Agy", command: "agy" },
+  ],
+};
+
+test("effort is a third axis: harness command, model args, then effort args", () => {
+  const resolved = resolveLaunch(EFFORT_REGISTRY, { harness: "codex", model: "sol", effort: "max" });
+  assert.equal(resolved.command, "codex --model gpt-5.6-sol -c model_reasoning_effort=max");
+  assert.equal(resolved.label, "Codex · Sol · Max");
+  assert.equal(resolved.effort, "max");
+  const noEffort = resolveLaunch(EFFORT_REGISTRY, { harness: "codex", model: "sol" });
+  assert.equal(noEffort.command, "codex --model gpt-5.6-sol");
+  assert.equal(noEffort.effort, null);
+});
+
+test("an effort a harness does not offer is an error that names it", () => {
+  assert.equal(resolveLaunch(EFFORT_REGISTRY, { harness: "codex", model: "sol", effort: "ultra" }).error, 'unknown effort "ultra" for harness "codex"');
+  assert.equal(resolveLaunch(EFFORT_REGISTRY, { harness: "agy", effort: "high" }).error, 'unknown effort "high" for harness "agy"');
+});
+
+test("registry validation covers effort sets", () => {
+  assert.equal(validateHarnessRegistry(EFFORT_REGISTRY), null);
+  assert.equal(validateHarnessRegistry({ ...EFFORT_REGISTRY, harnesses: [{ id: "x", command: "x", effortSet: "missing" }] }), 'harness "x" references unknown effort set "missing"');
+  assert.equal(validateHarnessRegistry({ ...EFFORT_REGISTRY, effortSets: { codex: [{ id: "a" }, { id: "a" }] } }), 'duplicate effort id "a" in the "codex" set');
+  assert.equal(parseHarnessRegistry("```tangent.harnesses.v1\n" + JSON.stringify({ harnesses: [{ id: "x", command: "x", effortSet: "nope" }] }) + "\n```").error, 'harness "x" references unknown effort set "nope"');
+});

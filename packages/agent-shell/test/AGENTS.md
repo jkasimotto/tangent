@@ -1,11 +1,10 @@
 # Agent Notes
 
-Purpose: Durable Program and Agent Shell server tests.
+Purpose: CLI spec tests for `@tangent/agent-shell`.
 
 Local rules:
 - Import built files from `../dist/`.
-- Use temporary vault, loop, and Git repository paths.
-- Use fake provider runners. Do not spend provider tokens in the default test suite.
+- Do not start the Agent Shell server or a harness here; endpoint behaviour is tested in `prototypes/agent-shell/*.test.mjs`.
 
 Read next:
 - ../docs/index.md

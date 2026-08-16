@@ -1623,7 +1623,7 @@ function launchOptionsFor(area) {
     api(`/api/launch/options?area=${encodeURIComponent(area)}`)
       .then((options) => { state.launch.options = options; })
       .catch((error) => { state.launch.options = { harnesses: [], default: { error: error.message } }; })
-      .finally(() => { state.launch.loading = false; paint(); });
+      .finally(() => { state.launch.loading = false; paint(true); });
   }
   return state.launch.options;
 }
@@ -2460,6 +2460,7 @@ function renderScreen() {
   screen.classList.toggle("terminal-screen", ["agent", "describe-agent", "program-session"].includes(state.view));
   screen.classList.toggle("review-screen", state.view === "document");
 
+  const scrollPositions = rememberScreenScroll();
   if (state.view === "work") screen.innerHTML = renderWork();
   else if (state.view === "create") screen.innerHTML = renderCreate();
   else if (state.view === "describe") screen.innerHTML = renderDescribeCapture();
@@ -2480,8 +2481,36 @@ function renderScreen() {
 
   updateHeader();
   if (state.view === "document") bindDocumentReader();
+  restoreScreenScroll(scrollPositions);
   const host = screen.querySelector("[data-session]");
   if (host) mountTerminal(host, host.dataset.session);
+}
+
+/** The elements that scroll inside the screen, by a selector stable across repaints. */
+const SCREEN_SCROLL_SELECTORS = [".document-reader-scroll", "[data-launch-popover]"];
+
+/**
+ * Captures every scroll position on the screen before its markup is replaced.
+ * A repaint rebuilds the DOM from strings, which puts each container back at
+ * the top; the reading position must survive that.
+ */
+function rememberScreenScroll() {
+  const positions = { view: state.view, screen: screen.scrollTop, inner: new Map() };
+  for (const selector of SCREEN_SCROLL_SELECTORS) {
+    const element = screen.querySelector(selector);
+    if (element) positions.inner.set(selector, element.scrollTop);
+  }
+  return positions;
+}
+
+/** Puts the captured scroll positions back after a repaint of the same view. */
+function restoreScreenScroll(positions) {
+  if (positions.view !== state.view) return;
+  if (positions.screen) screen.scrollTop = positions.screen;
+  for (const [selector, top] of positions.inner) {
+    const element = screen.querySelector(selector);
+    if (element && top) element.scrollTop = top;
+  }
 }
 
 /** Renders changed state while preserving active form inputs. */
@@ -2497,8 +2526,7 @@ function paint(force = false) {
     return;
   }
   const key = renderKey();
-  const active = document.activeElement;
-  if (!force && active && (["work-search", "launch-command-input"].includes(active.id) || active.closest?.("[data-create-form], [data-describe-work-form], [data-area-form], [data-program-form], [data-harness-form]"))) {
+  if (!force && editingSurfaceOnScreen()) {
     updateHeader();
     return;
   }
@@ -2508,6 +2536,19 @@ function paint(force = false) {
   } else {
     updateLiveHeader();
   }
+}
+
+/**
+ * True while Julian is on a surface he edits by hand: a form, the launch
+ * popover, or a focused text field. Background polls never rebuild the screen
+ * while one is present, focused or not; a rebuild would reset scroll, drop
+ * focus, and recreate every input. Only his own actions repaint these
+ * surfaces (paint(true)), and the deferred rebuild happens when he leaves.
+ */
+function editingSurfaceOnScreen() {
+  const active = document.activeElement;
+  if (active && (["work-search", "launch-command-input"].includes(active.id) || ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName))) return true;
+  return Boolean(screen.querySelector("[data-create-form], [data-describe-work-form], [data-area-form], [data-program-form], [data-harness-form], [data-launch-popover]"));
 }
 
 /** Refreshes the vault, program, and session projections from the server. */
@@ -3805,6 +3846,10 @@ document.addEventListener("submit", async (event) => {
 document.addEventListener("input", (event) => {
   if (event.target.id === "launch-command-input") {
     state.launch.command = event.target.value;
+    return;
+  }
+  if (event.target.id === "launch-instruction") {
+    state.launch.instruction = event.target.value;
     return;
   }
   const harnessField = event.target.closest?.("[data-harness-field]");

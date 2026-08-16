@@ -17,7 +17,6 @@
       <nav class="primary-tabs" aria-label="Agent Shell sections">
         <button id="work-tab" class="primary-tab" type="button">Work</button>
         <button id="areas-tab" class="primary-tab" type="button">Areas</button>
-        <button id="programs-button" class="primary-tab" type="button">Programs</button>
       </nav>
       <div id="bar-context" class="bar-context" aria-live="polite"></div>
       <div class="bar-actions">
@@ -42,6 +41,7 @@
         <p id="modal-kicker" class="kicker"></p>
         <h2 id="modal-title"></h2>
         <p id="modal-copy" class="modal-copy"></p>
+        <div id="modal-field" class="modal-field" hidden></div>
         <div id="modal-actions" class="modal-actions"></div>
       </section>
     </div>
@@ -51,6 +51,7 @@
 
   <script src="/vendor/xterm/xterm.js"></script>
   <script src="/vendor/xterm/addon-fit.js"></script>
+  <script src="/vendor/xterm/addon-webgl.js"></script>
   <script src="/terminal-selection.js"></script>
   <script src="/config.js"></script>
   <script src="/shell.js"></script>

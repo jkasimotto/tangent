@@ -167,36 +167,6 @@ test("the live shell restores context, defines work with an agent, and organizes
   let reviewAgentStarted = false;
   let tangentSessionState = "waiting";
   const describeSessions = [];
-  const reviewedSteps = [
-    "Create the design",
-    "Review the design",
-    "Respond and plan",
-    "Review the implementation plan",
-    "Respond to the plan review",
-    "Implement",
-    "Review the implementation",
-    "Respond and fix",
-  ].map((label, index) => ({
-    id: `step-${index + 1}`,
-    order: index + 1,
-    label,
-    instruction: `Do step ${index + 1}.`,
-    status: "pending",
-    defaultBinding: index % 2 ? "codex" : "claude",
-    binding: index % 2
-      ? { id: "codex-max", label: "Codex Max", provider: "codex", command: "codex", effort: "max" }
-      : { id: "claude-fable", label: "Claude Fable", provider: "claude", command: "claude", model: "fable" },
-    session: { mode: "fresh" },
-    attempts: [],
-  }));
-  const reviewedProgram = {
-    id: "reviewed-build",
-    description: "Design, review, implement, review, and finish.",
-    steps: reviewedSteps,
-    bindings: Object.fromEntries(reviewedSteps.map((step) => [step.id, step.binding])),
-    sessions: Object.fromEntries(reviewedSteps.map((step) => [step.id, step.session])),
-  };
-  const reviewedRuns = [];
 
   window.localStorage.setItem("agent-shell.current-goal", goalFile);
   window.setInterval = () => 0;
@@ -218,6 +188,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   });
   Object.defineProperty(window, "Notification", {
     value: {
+      /** Reports the notification permission the shell reads before badging. */
       get permission() { return notificationPermission; },
       /** Grants the permission that WebKit requires before displaying a Dock badge. */
       async requestPermission() { notificationPermission = "granted"; return notificationPermission; },
@@ -228,19 +199,6 @@ test("the live shell restores context, defines work with an agent, and organizes
     if (options.method === "POST") {
       const body = JSON.parse(options.body);
       posts.push({ path: pathname, body });
-      if (pathname === "/api/reviewed-build/runs") {
-        const run = {
-          id: "reviewed-run-1",
-          status: "queued",
-          goalPath: body.goalPath,
-          goalTitle: goal.title,
-          areaPath: goal.area,
-          steps: structuredClone(reviewedSteps),
-          decisions: [],
-        };
-        reviewedRuns.unshift(run);
-        return jsonResponse({ run });
-      }
       if (pathname === "/api/goals/agent") reviewAgentStarted = true;
       if (pathname === "/api/work/describe") {
         const first = describeSessions.length === 0;
@@ -258,8 +216,19 @@ test("the live shell restores context, defines work with an agent, and organizes
       }
       return jsonResponse({ file: goalFile, files: [goalFile] });
     }
+    if (pathname === "/api/launch/options") {
+      return jsonResponse({
+        harnesses: [
+          { id: "claude", label: "Claude", command: "claude", provider: "claude", models: [{ id: "fable-5", label: "Fable 5", args: "--model claude-fable-5" }, { id: "opus-5", label: "Opus 5", args: "--model claude-opus-5" }] },
+          { id: "codex", label: "Codex", command: "codex", provider: "codex", models: [{ id: "sol", label: "Sol", args: "--model gpt-5.6-sol" }] },
+          { id: "pi-code", label: "Pi Code", command: "pi-code", provider: null, models: [] },
+        ],
+        default: { command: "claude", label: "Claude", harness: "claude", model: null, source: null },
+      });
+    }
     if (pathname === "/api/sessions") {
       return jsonResponse({
+        boot: "boot-1",
         caffeinate: false,
         sessions: [
           { name: "tangent-vision", goal: goalFile, state: tangentSessionState, command: "codex" },
@@ -279,9 +248,6 @@ test("the live shell restores context, defines work with an agent, and organizes
         scheduler: { installed: true, intervalMinutes: 30, lastExitCode: 0 },
       });
     }
-    if (pathname === "/api/reviewed-build/runs") return jsonResponse({ runs: reviewedRuns });
-    if (pathname === "/api/reviewed-build/program") return jsonResponse(reviewedProgram);
-    if (pathname === "/api/reviewed-build/runs/reviewed-run-1") return jsonResponse({ run: reviewedRuns[0], latestOutput: "" });
     if (pathname === "/api/document") {
       const file = new URL(url, window.location.href).searchParams.get("file");
       if (file === liveEditDocument.file) {
@@ -321,20 +287,6 @@ test("the live shell restores context, defines work with an agent, and organizes
   await settle(window);
   assert.deepEqual(dockBadges, [2]);
   assert.equal(window.document.querySelector("[data-enable-dock-badge]"), null);
-  reviewedRuns.push({
-    id: "reviewed-run-needs-you",
-    status: "needs_attention",
-    areaPath: "otto/dnd",
-    goalPath: "otto/dnd/goal-review-build.md",
-    goalTitle: "Review the build",
-  });
-  await window.refresh();
-  await settle(window);
-  assert.deepEqual(dockBadges, [2, 3]);
-  reviewedRuns.pop();
-  await window.refresh();
-  await settle(window);
-  assert.deepEqual(dockBadges, [2, 3, 2]);
 
   window.__agentShellNativeDockBadge = true;
   notificationPermission = "denied";
@@ -345,9 +297,24 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.match(window.document.querySelector(".area-desk-panel:nth-child(2)").textContent, /Tangent/);
   assert.match(window.document.querySelector(".area-desk-panel:nth-child(2) .desk-documents").textContent, /Tangent product design/);
   assert.equal(window.document.querySelectorAll(".desk-goal.subgoal").length, 1);
+  assert.equal(window.document.querySelector("[data-work-filter='all']").getAttribute("aria-pressed"), "true");
+  click(window, "[data-work-filter='active']");
+  assert.equal(window.localStorage.getItem("agent-shell.work-filter"), "active");
+  assert.equal(window.document.querySelectorAll(".area-desk-panel").length, 1);
+  assert.match(window.document.querySelector(".area-desk-panel").textContent, /UX Product Vision/);
+  assert.match(window.document.querySelector(".area-desk-panel").textContent, /Waiting for you/);
+  assert.equal(window.document.querySelectorAll(".desk-goal.subgoal").length, 1);
+  assert.doesNotMatch(window.document.querySelector("#screen").textContent, /Define Live Edit collaboration/);
+  click(window, "[data-work-filter='inactive']");
+  assert.equal(window.document.querySelectorAll(".area-desk-panel").length, 1);
+  assert.match(window.document.querySelector(".area-desk-section.goals h3").textContent, /Inactive work/);
+  assert.match(window.document.querySelector(".area-desk-panel").textContent, /Define Live Edit collaboration/);
+  assert.doesNotMatch(window.document.querySelector("#screen").textContent, /UX Product Vision/);
+  click(window, "[data-work-filter='all']");
   assert.equal(window.document.querySelector("#work-tab").getAttribute("aria-current"), "page");
   assert.equal(window.document.querySelector("#areas-tab").hidden, false);
-  assert.equal(window.document.querySelector("#programs-button").hidden, false);
+  // Programs live inside the Area card now: the top bar carries no Programs tab.
+  assert.equal(window.document.querySelector("#programs-button"), null);
 
   click(window, `[data-open-goal-run='${goalFile}']`);
   assert.ok(window.document.querySelector(".agent-page"));
@@ -355,26 +322,28 @@ test("the live shell restores context, defines work with an agent, and organizes
   click(window, "#back-button");
   assert.match(window.document.querySelector("#screen").textContent, /Work by Area/);
 
-  click(window, `[data-view-goal='${goalFile}']`);
-  assert.match(window.document.querySelector("#screen").textContent, /Goal details/);
-  assert.match(window.document.querySelector("#screen").textContent, /Current brief/);
-  assert.equal(window.document.querySelector(".goal-history").open, false);
-  assert.match(window.document.querySelector("#screen").textContent, /Tangent product design/);
-  assert.doesNotMatch(window.document.querySelector("#screen").textContent, /Review execution plan|Read what will happen/);
-  assert.match(window.document.querySelector("[data-start-reviewed]").textContent, /Run reviewed build/);
-  click(window, "[data-start-reviewed]");
-  await settle(window);
-  assert.equal(window.document.querySelectorAll(".reviewed-run-step").length, 8);
-  assert.match(window.document.querySelector("#screen").textContent, /0 of 8 steps complete/);
-  assert.ok(posts.some((entry) => entry.path === "/api/reviewed-build/runs" && entry.body.goalPath === goalFile));
-  click(window, "#back-button");
+  // The Goal row carries the details itself: brief, Documents, and handoff.
+  const goalRow = window.document.querySelector(`[data-goal-anchor='${goalFile}']`);
+  assert.match(goalRow.textContent, /One calm surface/);
+  assert.match(goalRow.querySelector(".desk-goal-docs").textContent, /Tangent product design/);
+  assert.match(goalRow.querySelector("[data-stop-goal]").textContent, /End agent/);
+  const handoffRow = window.document.querySelector(`[data-goal-anchor='${liveEditGoal.file}']`);
+  assert.match(handoffRow.querySelector(".desk-goal-handoff").textContent, /Handoff: Julian/);
+  assert.equal(handoffRow.querySelector("[data-stop-goal]"), null);
+  assert.equal(window.document.querySelector("[data-view-goal]"), null);
 
-  click(window, "[data-open-document]");
+  click(window, `[data-stop-goal='${goalFile}']`);
+  assert.match(window.document.querySelector("#modal-title").textContent, /Stop Codex/);
+  assert.match(window.document.querySelector("#modal-copy").textContent, /work and its notes stay here/);
+  click(window, "[data-modal-confirm]");
+  await settle(window);
+  assert.ok(posts.some((entry) => entry.path === "/api/kill/tangent-vision"));
+
+  click(window, `[data-goal-anchor='${goalFile}'] [data-open-document]`);
   await settle(window);
   assert.match(window.document.querySelector("#screen").textContent, /Document/);
   assert.match(window.document.querySelector("#screen").textContent, /Native chat stays complete/);
 
-  click(window, "#back-button");
   click(window, "#back-button");
   assert.equal(window.document.querySelector("[data-new-goal]"), null);
   assert.equal(window.document.querySelectorAll(".area-desk-panel").length, 2);
@@ -388,6 +357,13 @@ test("the live shell restores context, defines work with an agent, and organizes
   search.dispatchEvent(new window.Event("input", { bubbles: true }));
   assert.match(window.document.querySelector("#screen").textContent, /Tangent product design/);
   assert.match(window.document.querySelector("#screen").textContent, /Land the PG&E megabranch → Land Viz Input/);
+  const joinedAreaSearch = window.document.querySelector("#work-search");
+  joinedAreaSearch.value = "liveedit";
+  joinedAreaSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
+  const matchingAreaPanel = window.document.querySelector(".search-area-results .area-desk-panel");
+  assert.ok(matchingAreaPanel);
+  assert.match(matchingAreaPanel.textContent, /Live Edit/);
+  assert.match(matchingAreaPanel.textContent, /Define Live Edit collaboration/);
   const clearedSearch = window.document.querySelector("#work-search");
   clearedSearch.value = "";
   clearedSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
@@ -545,23 +521,39 @@ test("the live shell restores context, defines work with an agent, and organizes
   click(window, "[data-toggle-area='neara']");
   assert.ok(window.document.querySelector("[data-select-area='neara/hackathon']"));
   click(window, "#back-button");
-  click(window, "#programs-button");
-  assert.match(window.document.querySelector("#screen").textContent, /Things that run/);
-  assert.match(window.document.querySelector(".reviewed-program-card").textContent, /Reviewed build/);
-  assert.equal(window.document.querySelector("#programs-button").getAttribute("aria-current"), "page");
-  assert.equal(window.document.querySelector("#work-tab").hidden, false);
-  assert.equal(window.document.querySelector("#areas-tab").hidden, false);
-  click(window, "[data-open-reviewed-program]");
+  // The Area card carries the Programs of the selected Area.
+  click(window, "[data-select-area='otto/dnd']");
+  const programSection = [...window.document.querySelectorAll(".area-content-section")].at(-1);
+  assert.match(programSection.textContent, /1 Program/);
+  assert.match(programSection.textContent, /npm run dev:hmr/);
+  assert.match(programSection.querySelector(".program-state").textContent, /Not running/);
+  click(window, "[data-new-program]");
+  assert.equal(window.document.querySelector("[data-program-draft='area']").value, "otto/dnd");
+  click(window, "[data-cancel-program-create]");
+  assert.ok(window.document.querySelector("[data-select-program]"));
+  click(window, "[data-program-action='start']");
   await settle(window);
-  assert.equal(window.document.querySelectorAll(".reviewed-editor-step").length, 8);
-  assert.match(window.document.querySelector("#screen").textContent, /Fresh session/);
-  click(window, "#back-button");
-  click(window, "[data-toggle-area='otto/dnd']");
+  assert.ok(posts.some((entry) => entry.path === "/api/programs/control" && entry.body.id === "process:otto/dnd:hmr" && entry.body.action === "start"));
   click(window, "[data-select-program]");
   assert.match(window.document.querySelector("#screen").textContent, /npm run dev:hmr/);
   assert.match(window.document.querySelector("#screen").textContent, /Start/);
+  assert.equal(window.document.querySelector("#back-button").textContent, "Areas");
+  assert.equal(window.document.querySelector("#areas-tab").getAttribute("aria-current"), "page");
+  click(window, "#back-button");
+  assert.ok(window.document.querySelector("[data-select-program]"));
 
   click(window, "#work-tab");
+  click(window, `[data-wont-do-goal='${goal.file}']`);
+  assert.match(window.document.querySelector("#modal-title").textContent, /Mark “UX Product Vision” won't do/);
+  click(window, "[data-modal-confirm]");
+  await settle(window);
+  assert.equal(posts.some((entry) => entry.body.status === "dropped"), false);
+  assert.equal(window.document.querySelector("#modal-layer").hidden, false);
+  window.document.querySelector("[data-modal-input]").value = "A smaller goal replaced this work.";
+  click(window, "[data-modal-confirm]");
+  await settle(window);
+  assert.ok(posts.some((entry) => entry.path === "/api/goals/edit" && entry.body.file === goal.file && entry.body.status === "dropped" && entry.body.reason === "A smaller goal replaced this work."));
+
   click(window, `[data-complete-goal='${subgoal.file}']`);
   assert.match(window.document.querySelector("#modal-title").textContent, /Mark “Use cases” complete/);
   click(window, "[data-modal-confirm]");
@@ -652,6 +644,251 @@ test("the Agent Shell menu owns refresh, reload, and rebuild, and a dead server 
   await settle(window);
   assert.ok(posts.some((entry) => entry.path === "/api/shell/rebuild"));
   assert.match(window.document.querySelector("#status-pill").textContent, /Rebuilding/);
+
+  dom.window.close();
+});
+
+test("checked Goals start one shared agent that owns them in checked order", async () => {
+  const [html, script] = await Promise.all([
+    readFile(path.join(here, "public", "shell.html"), "utf8"),
+    readFile(path.join(here, "public", "shell.js"), "utf8"),
+  ]);
+  const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
+  const { window } = dom;
+  window.setInterval = () => 0;
+  /** One startable root Goal for the selection desk. */
+  const makeGoal = (slug, title, mtime) => ({
+    mtime,
+    area: "otto/dnd",
+    slug,
+    file: `otto/dnd/goal-${slug}.md`,
+    title,
+    status: "open",
+    doneWhen: `${title} is done.`,
+    stateText: "",
+    currentBrief: `- You wanted: ${title}.`,
+    storyText: "",
+    documents: [],
+    why: [],
+    subgoalItems: [],
+    subgoals: [],
+    depth: 0,
+  });
+  const first = makeGoal("fix-the-flicker", "Fix the flicker", 1);
+  const second = makeGoal("name-the-panes", "Name the panes", 2);
+  const posts = [];
+  let started = false;
+  window.fetch = async (url, options = {}) => {
+    const pathname = new URL(url, window.location.href).pathname;
+    if (options.method === "POST") {
+      posts.push({ path: pathname, body: options.body ? JSON.parse(options.body) : {} });
+      if (pathname === "/api/goals/agent") started = true;
+      return jsonResponse({ ok: true, session: "dnd--name-the-panes" });
+    }
+    if (pathname === "/api/sessions") {
+      return jsonResponse({
+        boot: "boot-1",
+        caffeinate: false,
+        sessions: started ? [{ name: "dnd--name-the-panes", goal: second.file, state: "waiting", phase: "collaborate", command: "codex" }] : [],
+      });
+    }
+    if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
+    return jsonResponse({
+      areas: [
+        { path: "otto", name: "otto", goals: [] },
+        { path: "otto/dnd", name: "dnd", goals: [first, second], documents: [] },
+      ],
+      map: [{ path: "otto/dnd", name: "dnd", goals: [first, second] }],
+      documents: [],
+    });
+  };
+
+  window.eval(script);
+  await settle(window);
+  assert.match(window.document.querySelector("#screen").textContent, /Work by Area/);
+
+  // Both startable rows carry a checkbox; nothing is checked, so no action bar.
+  assert.equal(window.document.querySelectorAll("[data-check-goal]").length, 2);
+  assert.equal(window.document.querySelector("[data-start-selected]"), null);
+
+  // Checking is free: the bar appears, nothing starts.
+  click(window, `[data-check-goal='${second.file}']`);
+  assert.match(window.document.querySelector("[data-start-selected]").textContent, /Start agent on 1 Goal/);
+  click(window, `[data-check-goal='${first.file}']`);
+  assert.match(window.document.querySelector("[data-start-selected]").textContent, /Start agent on 2 Goals/);
+  assert.equal(posts.length, 0);
+
+  // Escape clears the selection.
+  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  assert.equal(window.document.querySelector("[data-start-selected]"), null);
+  assert.equal(window.document.querySelectorAll("[data-check-goal]:checked").length, 0);
+
+  // Checked order decides the primary: the first checked Goal leads the session.
+  click(window, `[data-check-goal='${second.file}']`);
+  click(window, `[data-check-goal='${first.file}']`);
+  click(window, "[data-start-selected]");
+  await settle(window);
+  const start = posts.find((entry) => entry.path === "/api/goals/agent");
+  assert.equal(start.body.file, second.file);
+  assert.deepEqual(start.body.extraFiles, [first.file]);
+  assert.equal(start.body.launch, true);
+
+  // The selection is spent: returning to the desk shows clean checkboxes.
+  click(window, "#work-tab");
+  await settle(window);
+  assert.equal(window.document.querySelector("[data-start-selected]"), null);
+  assert.equal(window.document.querySelectorAll("[data-check-goal]:checked").length, 0);
+
+  dom.window.close();
+});
+
+test("the launch popover composes a pipeline of steps and the desk shows its progress", async () => {
+  const [html, script] = await Promise.all([
+    readFile(path.join(here, "public", "shell.html"), "utf8"),
+    readFile(path.join(here, "public", "shell.js"), "utf8"),
+  ]);
+  const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
+  const { window } = dom;
+  window.setInterval = () => 0;
+  const goal = {
+    mtime: 1,
+    area: "otto/dnd",
+    slug: "ship-the-map",
+    file: "otto/dnd/goal-ship-the-map.md",
+    title: "Ship the map",
+    status: "open",
+    doneWhen: "The map ships.",
+    stateText: "",
+    currentBrief: "- You wanted: Ship the map.",
+    storyText: "",
+    documents: [],
+    why: [],
+    subgoalItems: [],
+    subgoals: [],
+    depth: 0,
+  };
+  const posts = [];
+  let pipeline = null;
+  let sessions = [];
+  window.fetch = async (url, options = {}) => {
+    const pathname = new URL(url, window.location.href).pathname;
+    if (options.method === "POST") {
+      const body = options.body ? JSON.parse(options.body) : {};
+      posts.push({ path: pathname, body });
+      if (pathname === "/api/goals/start" && body.steps) {
+        pipeline = {
+          goal: goal.file, area: goal.area, slug: goal.slug, status: "running", updatedAt: "t1", extraFiles: [],
+          steps: body.steps.map((step, index) => ({
+            index: index + 1, instruction: step.instruction, launch: step.launch ?? null, command: step.command ?? "",
+            label: index === 0 ? "Codex · Sol · High" : "Claude · Fable 5", continueFrom: step.continueFrom ?? null,
+            status: index === 0 ? "running" : "pending", session: index === 0 ? "dnd-ship-the-map" : null,
+            handover: null, handoverSource: null, live: index === 0, state: index === 0 ? "working" : null, stateDetail: null, idleSince: null,
+          })),
+        };
+        sessions = [{ name: "dnd-ship-the-map", goal: goal.file, state: "working", phase: "execute", command: "codex", pipeline: goal.file, step: 1 }];
+        return jsonResponse({ session: "dnd-ship-the-map", pipeline });
+      }
+      if (pathname === "/api/pipelines/control") {
+        pipeline.steps[0].status = "complete";
+        pipeline.steps[0].handover = "Design written: design-map.md.\nUnresolved: none.";
+        pipeline.steps[1].status = "running";
+        pipeline.steps[1].session = "dnd-ship-the-map-s2";
+        pipeline.steps[1].live = false;
+        return jsonResponse({ status: "started", next: { index: 2, session: "dnd-ship-the-map-s2" }, pipeline });
+      }
+      return jsonResponse({ ok: true, session: "dnd-ship-the-map" });
+    }
+    if (pathname === "/api/sessions") return jsonResponse({ boot: "boot-1", caffeinate: false, sessions, pipelines: pipeline ? [pipeline] : [] });
+    if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
+    if (pathname === "/api/launch/options") {
+      return jsonResponse({
+        harnesses: [
+          { id: "codex", label: "Codex", command: "codex", models: [{ id: "sol", label: "Sol", args: "--model sol" }], efforts: [{ id: "high", label: "High", args: "-c effort=high" }] },
+          { id: "claude", label: "Claude", command: "claude", models: [{ id: "fable-5", label: "Fable 5", args: "--model claude-fable-5" }], efforts: [] },
+        ],
+        default: { harness: "claude", model: "fable-5", effort: null, command: "claude --model claude-fable-5", label: "Claude · Fable 5" },
+      });
+    }
+    return jsonResponse({
+      areas: [{ path: "otto", name: "otto", goals: [] }, { path: "otto/dnd", name: "dnd", goals: [goal], documents: [] }],
+      map: [{ path: "otto/dnd", name: "dnd", goals: [goal] }],
+      documents: [],
+    });
+  };
+
+  window.eval(script);
+  await settle(window);
+  click(window, `[data-launch-for='${goal.file}']`);
+  await settle(window);
+  await settle(window);
+  /** Reads the launch popover, which the shell redraws on every paint. */
+  const popover = () => window.document.querySelector("[data-launch-popover]");
+  assert.ok(popover(), "the popover opened");
+  // One step, no instruction: a plain start with the Area default.
+  assert.equal(window.document.querySelectorAll("[data-launch-step-select]").length, 1);
+  assert.match(window.document.querySelector("[data-launch-start]").textContent, /Start Claude · Fable 5/);
+
+  // Step 1: Codex Sol at High effort, with an instruction that survives repaints.
+  click(window, "[data-launch-harness='codex']");
+  assert.ok(window.document.querySelector("[data-launch-effort='high']"), "the Effort column shows for a harness with efforts");
+  click(window, "[data-launch-effort='high']");
+  assert.match(window.document.querySelector(".launch-command code").textContent, /codex --model sol -c effort=high/);
+  window.document.querySelector("#launch-instruction").value = "/design the map";
+  click(window, "[data-launch-step-add]");
+  assert.equal(window.document.querySelectorAll("[data-launch-step-select]").length, 2);
+  assert.match(window.document.querySelector("[data-launch-step-select='0']").textContent, /Codex · Sol · High/);
+  assert.match(window.document.querySelector("[data-launch-step-select='0']").textContent, /design the map/);
+  assert.match(window.document.querySelector("[data-launch-start]").textContent, /Start 2 steps/);
+  // Step 2 keeps the Area default and continues step 1's session.
+  window.document.querySelector("#launch-instruction").value = "Review the design and update it";
+  const continueSelect = window.document.querySelector("[data-launch-continue]");
+  assert.ok(continueSelect, "a later step can continue an earlier one");
+  continueSelect.value = "1";
+  continueSelect.dispatchEvent(new window.Event("change", { bubbles: true }));
+  // Switching rows keeps both drafts.
+  click(window, "[data-launch-step-select='0']");
+  assert.equal(window.document.querySelector("#launch-instruction").value, "/design the map");
+  click(window, "[data-launch-step-select='1']");
+  assert.equal(window.document.querySelector("#launch-instruction").value, "Review the design and update it");
+
+  click(window, "[data-launch-start]");
+  await settle(window);
+  await settle(window);
+  const start = posts.find((entry) => entry.path === "/api/goals/start");
+  assert.equal(start.body.file, goal.file);
+  assert.deepEqual(start.body.steps, [
+    { instruction: "/design the map", continueFrom: null, launch: { harness: "codex", model: "sol", effort: "high" } },
+    { instruction: "Review the design and update it", continueFrom: 1, launch: { harness: "claude", model: "fable-5", effort: null } },
+  ]);
+
+  // The desk shows step 1 of 2 with a chip per step; step 2 is not startable by hand.
+  click(window, "#work-tab");
+  await settle(window);
+  const row = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
+  assert.match(row.querySelector(".desk-state").textContent, /Step 1 of 2 · Codex · Sol · High · working/);
+  assert.equal(row.querySelectorAll(".desk-step").length, 2);
+  assert.equal(row.querySelector("[data-check-goal]"), null);
+  assert.equal(row.querySelector("[data-pipeline-control]"), null);
+  assert.match(row.querySelector("[data-stop-goal]").textContent, /End agent/);
+
+  // The step session dies: the row offers Restart and Skip; Skip advances the line
+  // and the latest handover shows under the chips.
+  sessions = [];
+  pipeline.steps[0].live = false;
+  click(window, "#menu-refresh");
+  await settle(window);
+  await settle(window);
+  const stoppedRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
+  assert.match(stoppedRow.querySelector(".desk-state").textContent, /Step 1 of 2 · Codex · Sol · High · stopped/);
+  assert.equal(stoppedRow.querySelector("[data-stop-goal]"), null);
+  assert.ok(stoppedRow.querySelector("[data-pipeline-control='restart']"));
+  click(window, `[data-goal-anchor='${goal.file}'] [data-pipeline-control='skip']`);
+  await settle(window);
+  await settle(window);
+  const control = posts.find((entry) => entry.path === "/api/pipelines/control");
+  assert.deepEqual(control.body, { goal: goal.file, action: "skip", step: 1 });
+  const afterRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
+  assert.match(afterRow.querySelector(".desk-handover").textContent, /Step 1: Design written: design-map\.md\./);
 
   dom.window.close();
 });

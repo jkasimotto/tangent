@@ -3,7 +3,8 @@ const requestedLocation = new URLSearchParams(location.search);
 const requestedView = requestedLocation.get("view");
 const requestedArea = requestedLocation.get("area") || "";
 const requestedDocument = requestedLocation.get("document") || "";
-const initialView = requestedDocument ? "document" : ["areas", "programs"].includes(requestedView) ? requestedView : "work";
+// Programs now live inside the Area card, so an old ?view=programs link opens Areas.
+const initialView = requestedDocument ? "document" : ["areas", "programs"].includes(requestedView) ? "areas" : "work";
 
 /** Reads one optional JSON value from local storage. */
 function storedJson(key) {
@@ -38,28 +39,16 @@ const state = {
   areaEdit: null,
   programId: "",
   programDraft: { type: "process", area: "", name: "", command: "", time: "07:30", cwd: "", model: "sonnet", prompt: "" },
-  reviewed: {
-    runs: [],
-    runId: localStorage.getItem("agent-shell.reviewed-run") || "",
-    run: null,
-    latestOutput: "",
-    program: null,
-    draftBindings: {},
-    draftSessions: {},
-    area: "",
-    returnView: "overview",
-    decision: "",
-    error: "",
-    notice: "",
-  },
-  launch: { area: "", options: null, loading: false, choice: null, command: "", editing: false, open: false },
+  launch: { area: "", options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", continueFrom: null, steps: [], active: 0, record: null },
+  pipelines: [],
+  agentSessionName: null,
+  goalSelection: [], // checked Goal files in checked order; transient, work view only
   launchTarget: "",
   launchAnchor: null,
   harnessDraft: null,
   harnessReturnView: "work",
   query: "",
   workFilter: localStorage.getItem("agent-shell.work-filter") || "all",
-  editingWords: false,
   caffeinate: false,
   decisionReturnView: "agent",
   agentReturnView: "work",
@@ -78,12 +67,12 @@ const workTab = document.querySelector("#work-tab");
 const areasTab = document.querySelector("#areas-tab");
 const barContext = document.querySelector("#bar-context");
 const findButton = document.querySelector("#find-button");
-const programsButton = document.querySelector("#programs-button");
 const secondaryAction = document.querySelector("#secondary-action");
 const modalLayer = document.querySelector("#modal-layer");
 const modalKicker = document.querySelector("#modal-kicker");
 const modalTitle = document.querySelector("#modal-title");
 const modalCopy = document.querySelector("#modal-copy");
+const modalField = document.querySelector("#modal-field");
 const modalActions = document.querySelector("#modal-actions");
 const toast = document.querySelector("#toast");
 const statusPill = document.querySelector("#status-pill");
@@ -347,6 +336,27 @@ function storyEntries(text) {
   return matches.slice(-5).map((match) => ({ title: cleanText(match[1]), body: clip(match[2], 320) }));
 }
 
+// The launch popover's target when it chooses the agent for a describe-work
+// conversation instead of a Goal. Never collides with a goal file path.
+const DESCRIBE_LAUNCH_TARGET = "__describe__";
+
+/** The Area a describe-work launch applies to, read live from the form. */
+function describeLaunchArea() {
+  return document.querySelector("#describe-area")?.value || state.describeDraft?.area || preferredArea();
+}
+
+/**
+ * Captures the describe form's typed values into the stored draft. Any
+ * re-render replaces the textarea, so every interaction that paints while the
+ * describe form is visible must run this first or the text is lost.
+ */
+function syncDescribeDraft() {
+  const textarea = document.querySelector("#describe-work");
+  if (!textarea) return;
+  state.describeDraft = { ...(state.describeDraft ?? { sources: [] }), area: describeLaunchArea(), description: textarea.value };
+  saveDescribeDraft();
+}
+
 /** Keeps an unfinished work description across navigation and restarts. */
 function saveDescribeDraft() {
   if (state.describeDraft) localStorage.setItem("agent-shell.describe-draft", JSON.stringify(state.describeDraft));
@@ -450,7 +460,7 @@ function filteredGoalTrees(trees) {
   return trees;
 }
 
-/** Stores the one shared expansion state used by Areas and Programs. */
+/** Stores the expansion state of the Area tree. */
 function saveExpandedAreas() {
   localStorage.setItem("agent-shell.expanded-areas", JSON.stringify([...state.expandedAreas].sort()));
 }
@@ -472,155 +482,16 @@ function currentGoal() {
   return goalByFile(state.currentFile);
 }
 
-/** Returns the newest Reviewed build for one Goal. */
-function latestReviewedRun(goalOrFile) {
-  const file = typeof goalOrFile === "string" ? goalOrFile : goalOrFile?.file;
-  return state.reviewed.runs.find((run) => run.goalPath === file) ?? null;
-}
-
-/** Returns the selected Reviewed build Run. */
-function currentReviewedRun() {
-  if (state.reviewed.run?.id === state.reviewed.runId) return state.reviewed.run;
-  return state.reviewed.runs.find((run) => run.id === state.reviewed.runId) ?? null;
-}
-
-/** Formats one durable Reviewed build status. */
-function reviewedStatusLabel(status) {
-  return humanName(String(status ?? "unknown").replaceAll("_", "-"));
-}
-
-/** Returns the number of active Reviewed build Runs. */
-function activeReviewedCount() {
-  return state.reviewed.runs.filter((run) => ["queued", "running"].includes(run.status)).length;
-}
-
-/** Copies one API value before it becomes an editable draft. */
-function cloneValue(value) {
-  return JSON.parse(JSON.stringify(value));
-}
-
-/** Returns the current Reviewed build step definitions. */
-function reviewedSteps() {
-  return state.reviewed.program?.steps || currentReviewedRun()?.steps || [];
-}
-
-/** Converts one session choice into an HTML select value. */
-function reviewedSessionValue(session) {
-  return session?.mode === "continue" ? `continue:${session.fromStepId}` : "fresh";
-}
-
-/** Converts one HTML select value into a durable session choice. */
-function reviewedSessionChoice(value) {
-  return String(value).startsWith("continue:")
-    ? { mode: "continue", fromStepId: String(value).slice("continue:".length) }
-    : { mode: "fresh" };
-}
-
-/** Creates a complete provider binding from the compact editor fields. */
-function reviewedBinding(provider, model, effort, previous = {}) {
-  if (provider === "claude") {
-    const selectedModel = model || "fable";
-    return { id: `claude-${selectedModel}`, label: `Claude ${humanName(selectedModel)}`, provider, command: "claude", model: selectedModel, permissionMode: previous.permissionMode || "bypassPermissions" };
-  }
-  if (provider === "gemini") {
-    const selectedModel = model || "gemini-2.5-pro";
-    return { id: `gemini-${selectedModel}`, label: `Gemini ${selectedModel}`, provider, command: "gemini", model: selectedModel };
-  }
-  const selectedEffort = effort || "max";
-  return { id: `codex-${selectedEffort}`, label: `Codex ${humanName(selectedEffort)}`, provider: "codex", command: "codex", ...(model ? { model } : {}), effort: selectedEffort };
-}
-
-/** Loads the Reviewed build Program for one Area into the local editor. */
-async function loadReviewedProgram(area) {
-  const program = await api(`/api/reviewed-build/program${area ? `?area=${encodeURIComponent(area)}` : ""}`);
-  state.reviewed.program = program;
-  state.reviewed.area = area || "";
-  state.reviewed.draftBindings = cloneValue(program.bindings || {});
-  state.reviewed.draftSessions = cloneValue(program.sessions || {});
-  state.reviewed.error = "";
-  return program;
-}
-
-/** Opens launch choices for one Goal without starting the Program. */
-async function openReviewedSetup(file) {
-  const goal = rememberGoal(file);
-  if (!goal) return;
-  try {
-    await loadReviewedProgram(goal.area);
-    state.reviewed.returnView = "overview";
-    state.view = "reviewed-setup";
-    paint(true);
-  } catch (error) {
-    showToast(error.message);
-  }
-}
-
-/** Opens the reusable Reviewed build Program editor. */
-async function openReviewedProgram(area = preferredArea()) {
-  try {
-    await loadReviewedProgram(area);
-    state.reviewed.returnView = "programs";
-    state.view = "reviewed-program";
-    paint(true);
-  } catch (error) {
-    showToast(error.message);
-  }
-}
-
-/** Opens one durable Reviewed build Run. */
-async function openReviewedRun(id, returnView = "work") {
-  try {
-    const payload = await api(`/api/reviewed-build/runs/${encodeURIComponent(id)}`);
-    state.reviewed.runId = id;
-    state.reviewed.run = payload.run;
-    state.reviewed.latestOutput = payload.latestOutput || "";
-    state.reviewed.returnView = returnView;
-    state.reviewed.decision = "";
-    localStorage.setItem("agent-shell.reviewed-run", id);
-    if (payload.run?.goalPath) rememberGoal(payload.run.goalPath);
-    state.view = "reviewed-run";
-    paint(true);
-  } catch (error) {
-    showToast(error.message);
-  }
-}
-
-/** Starts a Reviewed build with defaults or with the open editor choices. */
-async function startReviewedRun(goal, useDraft = false) {
-  if (!goal) return;
-  try {
-    const payload = await post("/api/reviewed-build/runs", {
-      goalPath: goal.file,
-      ...(useDraft ? { bindings: state.reviewed.draftBindings, sessions: state.reviewed.draftSessions } : {}),
-    });
-    state.reviewed.runs = [payload.run, ...state.reviewed.runs.filter((run) => run.id !== payload.run.id)];
-    await openReviewedRun(payload.run.id, "overview");
-    showToast("Reviewed build started. Agent Shell will continue without supervision.");
-  } catch (error) {
-    showToast(error.message);
-  }
-}
-
-/** Stops, resumes, or retries the selected Reviewed build. */
-async function controlReviewedRun(action, decision = "") {
-  const run = currentReviewedRun();
-  if (!run) return;
-  try {
-    const payload = await post(`/api/reviewed-build/runs/${encodeURIComponent(run.id)}/control`, { action, ...(decision ? { decision } : {}) });
-    state.reviewed.run = payload.run;
-    state.reviewed.runs = state.reviewed.runs.map((item) => item.id === payload.run.id ? payload.run : item);
-    state.reviewed.decision = "";
-    paint(true);
-    showToast(action === "stop" ? "Reviewed build stopped." : "Reviewed build resumed with a new attempt.");
-  } catch (error) {
-    showToast(error.message);
-  }
-}
-
 /** Finds the live session bound to one goal. */
 function sessionForGoal(goal) {
   if (!goal || ["done", "dropped", "deferred"].includes(goal.status)) return null;
-  return state.sessions.find((session) => session.goal === goal.file || session.name === goal.session) || null;
+  const bound = state.sessions.filter((session) => session.goal === goal.file || session.name === goal.session);
+  // A pipeline leaves earlier step sessions alive on the same Goal: the one
+  // Julian opened by name wins, then the Goal's bound session, then any.
+  return bound.find((session) => session.name === state.agentSessionName)
+    ?? bound.find((session) => session.name === goal.session)
+    ?? bound[0]
+    ?? null;
 }
 
 /** Returns every live conversation that is defining work, newest first. */
@@ -703,11 +574,19 @@ function goalNeedsYou(goal) {
   return /\b(julian|you)\b/i.test(String(goal.waitingOn ?? ""));
 }
 
+/** The refined waiting label: why the static agent needs (or can wait for) you. */
+function waitingLabel(session) {
+  if (session.stateDetail === "decision") return "Needs your decision";
+  if (session.stateDetail === "idle") return "Finished · ready for you";
+  if (session.stateDetail === "draft") return "Holding your draft";
+  return "Waiting for you";
+}
+
 /** Describes one Goal and Run state in user terms. */
 function stateLabel(goal, session) {
   if (goal.status === "done") return "Complete";
   if (!session) return goalNeedsYou(goal) ? "Waiting for you" : "Ready";
-  if (session.state === "waiting") return "Waiting for you";
+  if (session.state === "waiting") return waitingLabel(session);
   if (session.state === "working") return "Agent working";
   if (session.state === "shell") return "Agent did not start";
   return "Session open";
@@ -716,7 +595,7 @@ function stateLabel(goal, session) {
 /** Describes one work-definition conversation without a Goal status. */
 function describeWorkStateLabel(session) {
   if (!session) return "Agent session ended";
-  if (session.state === "waiting") return "Waiting for you";
+  if (session.state === "waiting") return waitingLabel(session);
   if (session.state === "working") return "Agent working";
   if (session.state === "shell") return "Agent did not start";
   return "Session open";
@@ -879,7 +758,8 @@ function searchTerms(query) {
 function searchScore(record, terms, emphasis = "") {
   if (!terms.length) return 0;
   const text = normalizedSearchText(record.searchText || `${record.title || ""} ${record.area || ""} ${record.body || ""}`);
-  if (!terms.every((term) => text.includes(term))) return 0;
+  const joinedText = text.replaceAll(" ", "");
+  if (!terms.every((term) => text.includes(term) || joinedText.includes(term))) return 0;
   const strong = normalizedSearchText(emphasis || record.title || "");
   return terms.reduce((score, term) => score + 1 + (strong.includes(term) ? 4 : 0), 0) + Number(record.mtime || 0) / 1e15;
 }
@@ -914,24 +794,24 @@ function searchResults(query) {
     .filter((item) => item.score > 0)
     .sort((left, right) => right.score - left.score)
     .map((item) => item.area);
+  const deskRecords = new Map(deskAreas().map((record) => [record.area.path, record]));
+  const matchingAreaPanels = matchingAreas.map((area) => deskRecords.get(area.path)).filter(Boolean);
   const count = goals.length + documents.length + matchingAreas.length;
   if (!count) return `<div class="empty-state">No Goals, Documents, or Areas match “${escapeHtml(query)}”.</div>`;
   return `
+    ${matchingAreaPanels.length ? `<section class="area-desk-grid search-area-results" aria-label="Matching Areas">${matchingAreaPanels.map(deskAreaPanel).join("")}</section>` : ""}
     ${documents.length ? `<section class="work-section"><div class="section-heading"><h2>Documents</h2><span>${documents.length}</span></div><div class="search-result-list">${documents.map(documentSearchCard).join("")}</div></section>` : ""}
     ${goals.length ? workSection("Goals", goals, "", String(goals.length)) : ""}
-    ${matchingAreas.length ? `<section class="work-section"><div class="section-heading"><h2>Areas</h2><span>${matchingAreas.length}</span></div><div class="search-result-list">${matchingAreas.map((area) => `<button class="search-result-card" type="button" data-open-area="${escapeHtml(area.path)}"><span><span class="search-result-kind">Area</span><strong>${escapeHtml(areaLabel(area.path))}</strong><small>${escapeHtml(clip(area.purpose || area.path, 160))}</small></span><span aria-hidden="true">→</span></button>`).join("")}</div></section>` : ""}`;
+    ${matchingAreas.length && !matchingAreaPanels.length ? `<section class="work-section"><div class="section-heading"><h2>Areas</h2><span>${matchingAreas.length}</span></div><div class="search-result-list">${matchingAreas.map((area) => `<button class="search-result-card" type="button" data-open-area="${escapeHtml(area.path)}"><span><span class="search-result-kind">Area</span><strong>${escapeHtml(areaLabel(area.path))}</strong><small>${escapeHtml(clip(area.purpose || area.path, 160))}</small></span><span aria-hidden="true">→</span></button>`).join("")}</div></section>` : ""}`;
 }
 
 /** Returns one compact, explicit state for an Area on the Work desk. */
 function deskAreaState(path, trees, descriptions) {
   const goals = trees.flatMap((tree) => tree.goals).filter((goal) => !["done", "dropped", "deferred"].includes(goal.status));
   const sessions = [...goals.map(sessionForGoal).filter(Boolean), ...descriptions];
-  const reviewed = state.reviewed.runs.filter((run) => run.areaPath === path);
   const waiting = sessions.filter((session) => ["waiting", "shell"].includes(session.state)).length
-    + goals.filter((goal) => !sessionForGoal(goal) && goalNeedsYou(goal)).length
-    + reviewed.filter((run) => run.status === "needs_attention").length;
-  const working = sessions.filter((session) => session.state === "working").length
-    + reviewed.filter((run) => ["queued", "running"].includes(run.status)).length;
+    + goals.filter((goal) => !sessionForGoal(goal) && goalNeedsYou(goal)).length;
+  const working = sessions.filter((session) => session.state === "working").length;
   if (waiting) return { kind: "waiting", label: `${waiting} ${waiting === 1 ? "item needs" : "items need"} you` };
   if (working) return { kind: "working", label: `${working} ${working === 1 ? "agent" : "agents"} working` };
   const ready = goals.filter((goal) => !sessionForGoal(goal)).length;
@@ -961,6 +841,9 @@ function deskAttentionItems() {
   const goalItems = allGoals().flatMap((goal) => {
     if (["done", "dropped", "deferred"].includes(goal.status)) return [];
     const session = sessionForGoal(goal);
+    const pipeline = pipelineForGoal(goal);
+    const stoppedStep = pipeline?.steps.find((step) => step.status === "stopped" || (step.status === "running" && !step.live));
+    if (stoppedStep) return [{ kind: "pipeline", goal, session: null, area: goal.area, title: `${goal.title} · step ${stoppedStep.index} stopped` }];
     if (session && ["waiting", "shell"].includes(session.state)) {
       return [{ kind: "goal", goal, session, area: goal.area, title: goal.title }];
     }
@@ -970,10 +853,7 @@ function deskAttentionItems() {
   const definitionItems = describeWorkSessions()
     .filter((session) => describeWorkAttention(session) === "waiting")
     .map((session) => ({ kind: "definition", session, area: session.area, title: session.workTitle || "Define new work" }));
-  const reviewedItems = state.reviewed.runs
-    .filter((run) => run.status === "needs_attention")
-    .map((run) => ({ kind: "reviewed", run, area: run.areaPath, title: run.goalTitle }));
-  return [...goalItems, ...definitionItems, ...reviewedItems].sort((left, right) => left.area.localeCompare(right.area) || left.title.localeCompare(right.title));
+  return [...goalItems, ...definitionItems].sort((left, right) => left.area.localeCompare(right.area) || left.title.localeCompare(right.title));
 }
 
 let dockBadgeCount = null;
@@ -1034,14 +914,12 @@ function deskAttentionQueue() {
       <header><p class="kicker">Attention</p><h2 id="attention-heading">Needs you now</h2>${enableBadge ? `<button class="attention-badge-button" type="button" data-enable-dock-badge>Show in Dock</button>` : ""}<span>${items.length}</span></header>
       <div class="attention-items">${items.map((item) => {
         const name = item.session ? agentName(item.session) : "Handoff";
-        const action = item.kind === "reviewed"
-          ? `data-open-reviewed-run="${escapeHtml(item.run.id)}"`
-          : item.kind === "definition"
+        const action = item.kind === "definition"
           ? `data-select-work-definition="${escapeHtml(item.session.name)}"`
-          : item.kind === "handoff"
-            ? `data-view-goal="${escapeHtml(item.goal.file)}"`
+          : item.kind === "handoff" || item.kind === "pipeline"
+            ? `data-reveal-goal="${escapeHtml(item.goal.file)}"`
             : `data-open-goal-run="${escapeHtml(item.goal.file)}"`;
-        const label = item.kind === "reviewed" ? "Review agent question" : item.kind === "handoff" ? "Review handoff" : `Open ${name}`;
+        const label = item.kind === "handoff" ? "See handoff" : item.kind === "pipeline" ? "See steps" : `Open ${name}`;
         return `<button type="button" ${action}><span><small>${escapeHtml(areaLabel(item.area))}</small><strong>${escapeHtml(item.title)}</strong></span><span>${escapeHtml(label)} <b aria-hidden="true">→</b></span></button>`;
       }).join("")}</div>
     </section>`;
@@ -1050,46 +928,132 @@ function deskAttentionQueue() {
 /** Returns the action text for one Goal without hiding its current state. */
 function deskGoalAction(goal) {
   if (["done", "dropped", "deferred"].includes(goal.status)) {
-    return { state: goal.status === "done" ? "Complete" : humanName(goal.status), action: "View details", kind: "complete", route: "details" };
+    return { state: goal.status === "done" ? "Complete" : humanName(goal.status), action: "", kind: "complete", route: "" };
   }
-  const reviewed = latestReviewedRun(goal);
-  if (reviewed?.status === "needs_attention") return { state: "Waiting for you", action: "Open reviewed build", kind: "waiting", route: "reviewed", runId: reviewed.id };
-  if (["queued", "running"].includes(reviewed?.status)) return { state: "Agents working", action: "Open reviewed build", kind: "working", route: "reviewed", runId: reviewed.id };
-  if (reviewed?.status === "complete") return { state: "Reviewed build complete", action: "View result", kind: "complete", route: "reviewed", runId: reviewed.id };
-  if (reviewed?.status === "stopped") return { state: "Reviewed build stopped", action: "Open reviewed build", kind: "ready", route: "reviewed", runId: reviewed.id };
   const session = sessionForGoal(goal);
-  if (!session) return { state: goalNeedsYou(goal) ? "Waiting for you" : "Ready", action: goalNeedsYou(goal) ? "Review handoff" : "Start agent", kind: goalNeedsYou(goal) ? "waiting" : "ready", route: goalNeedsYou(goal) ? "details" : "run" };
+  if (!session) return { state: goalNeedsYou(goal) ? "Waiting for you" : "Ready", action: "Start agent", kind: goalNeedsYou(goal) ? "waiting" : "ready", route: "run" };
   if (session.state === "working") return { state: "Agent working", action: `Open ${agentName(session)}`, kind: "working", route: "run" };
   if (session.state === "waiting") return { state: "Waiting for you", action: `Open ${agentName(session)}`, kind: "waiting", route: "run" };
   if (session.state === "shell") return { state: "Agent did not start", action: "Open session", kind: "waiting", route: "run" };
   return { state: "Session open", action: "Open agent", kind: "ready", route: "run" };
 }
 
-/** Renders one Goal with direct Run, detail, and completion actions. */
+/** The idle time (ms) after which an idle step is offered "Send to next". */
+const PIPELINE_SEND_AFTER_MS = 60_000;
+
+/** The pipeline row's state pill and primary action. */
+function deskPipelineAction(goal, pipeline) {
+  const step = pipeline.steps.find((item) => item.status === "running" || item.status === "stopped") ?? pipeline.steps.find((item) => item.status === "pending");
+  if (!step) return deskGoalAction(goal);
+  const prefix = `Step ${step.index} of ${pipeline.steps.length} · ${step.label || "agent"}`;
+  if (step.status === "stopped" || (step.status === "running" && !step.live)) return { state: `${prefix} · stopped`, action: "", kind: "waiting", route: "" };
+  if (step.status === "pending") return { state: `${prefix} · not started`, action: "", kind: "waiting", route: "" };
+  if (step.state === "working") return { state: `${prefix} · working`, action: `Open step ${step.index}`, kind: "working", route: "run" };
+  if (step.state === "waiting") return { state: `${prefix} · waiting for you`, action: `Open step ${step.index}`, kind: "waiting", route: "run" };
+  if (step.state === "shell") return { state: `${prefix} · agent did not start`, action: `Open step ${step.index}`, kind: "waiting", route: "run" };
+  return { state: prefix, action: `Open step ${step.index}`, kind: "ready", route: "run" };
+}
+
+/** One chip per step and the first line of the latest handover. */
+function deskPipelineSteps(goal) {
+  const record = (state.pipelines ?? []).find((item) => item.goal === goal.file);
+  if (!record || ["done", "dropped", "deferred"].includes(goal.status)) return "";
+  const glyph = { complete: "✓", running: "●", pending: "○", skipped: "–", stopped: "■" };
+  const chips = record.steps.map((step) => {
+    const label = `${step.index} ${step.label || "agent"}: ${clip(step.instruction, 80)}`;
+    const dead = step.status === "running" && !step.live;
+    const status = dead ? "stopped" : step.status;
+    return step.live
+      ? `<button type="button" class="desk-step ${status}" data-open-session="${escapeHtml(step.session)}" data-open-session-goal="${escapeHtml(goal.file)}" title="Open ${escapeHtml(label)}"><b aria-hidden="true">${glyph[status] ?? "○"}</b>${step.index}</button>`
+      : `<span class="desk-step ${status}" title="${escapeHtml(label)}${step.session ? " (no live session)" : ""}"><b aria-hidden="true">${glyph[status] ?? "○"}</b>${step.index}</span>`;
+  }).join("");
+  const latest = [...record.steps].reverse().find((step) => step.handover);
+  const line = latest ? `<span class="desk-handover">Step ${latest.index}: ${escapeHtml(clip(String(latest.handover).split("\n")[0], 120))}</span>` : "";
+  return `<span class="desk-pipeline-steps" aria-label="Pipeline steps">${chips}</span>${line}`;
+}
+
+/** Restart, Skip, and Send-to-next, only when they apply. */
+function deskPipelineControls(goal, pipeline) {
+  const step = pipeline.steps.find((item) => item.status === "running" || item.status === "stopped");
+  if (!step) return "";
+  const last = step.index >= pipeline.steps.length;
+  const stopped = step.status === "stopped" || (step.status === "running" && !step.live);
+  if (stopped) {
+    return `<button class="desk-action" type="button" data-pipeline-control="restart" data-pipeline-goal="${escapeHtml(goal.file)}" data-pipeline-step="${step.index}">Restart step ${step.index}</button>`
+      + (last ? "" : `<button class="desk-action" type="button" data-pipeline-control="skip" data-pipeline-goal="${escapeHtml(goal.file)}" data-pipeline-step="${step.index}">Skip to step ${step.index + 1}</button>`);
+  }
+  const idleLong = step.state === "waiting" && (step.stateDetail === "idle" || step.stateDetail === null) && step.idleSince && Date.now() - step.idleSince >= PIPELINE_SEND_AFTER_MS;
+  if (idleLong && !last) {
+    return `<button class="desk-action" type="button" data-pipeline-control="send" data-pipeline-goal="${escapeHtml(goal.file)}" data-pipeline-step="${step.index}" title="Use the agent's last message as its handover">Send to step ${step.index + 1}</button>`;
+  }
+  return "";
+}
+
+/** Renders the Documents linked to one Goal as compact reader chips. */
+function deskGoalDocuments(goal) {
+  const documents = (goal.documents ?? []).filter((document) => document.kind === "document" || !document.kind);
+  if (!documents.length) return "";
+  return `<span class="desk-goal-docs">${documents.map((document) => `
+    <button class="desk-doc-chip" type="button" data-open-document="${escapeHtml(document.file)}" title="Open ${escapeHtml(document.title)}"><b aria-hidden="true">DOC</b>${escapeHtml(document.title)}</button>`).join("")}</span>`;
+}
+
+/** Renders one Goal with its brief, Documents, handoff, and direct actions. */
 function deskGoalRow(goal, { subgoal = false } = {}) {
-  const action = deskGoalAction(goal);
+  const pipeline = pipelineForGoal(goal);
+  const action = pipeline ? deskPipelineAction(goal, pipeline) : deskGoalAction(goal);
+  const liveSession = sessionForGoal(goal);
   const complete = !["done", "dropped", "deferred"].includes(goal.status);
-  const route = action.route === "reviewed"
-    ? `data-open-reviewed-run="${escapeHtml(action.runId)}"`
-    : action.route === "run"
-    ? `data-open-goal-run="${escapeHtml(goal.file)}"`
-    : `data-view-goal="${escapeHtml(goal.file)}"`;
+  const handoff = !sessionForGoal(goal) && goalNeedsYou(goal) ? String(goal.waitingOn ?? "").trim() : "";
+  const route = `data-open-goal-run="${escapeHtml(goal.file)}"`;
+  const selectable = action.action === "Start agent";
+  const selected = selectable && state.goalSelection.includes(goal.file);
   return `
-    <article class="desk-goal ${subgoal ? "subgoal" : "root-goal"} ${action.kind}">
-      <button class="desk-goal-main" type="button" data-view-goal="${escapeHtml(goal.file)}">
+    <article class="desk-goal ${subgoal ? "subgoal" : "root-goal"} ${action.kind}${selected ? " selected" : ""}" data-goal-anchor="${escapeHtml(goal.file)}">
+      ${selectable ? `<label class="desk-select" title="Select for one shared agent"><input type="checkbox" data-check-goal="${escapeHtml(goal.file)}" ${selected ? "checked" : ""} aria-label="Select ${escapeHtml(goal.title)} for one shared agent"></label>` : ""}
+      <div class="desk-goal-main">
         <small>${subgoal ? "Subgoal" : "Goal"}</small>
         <strong>${escapeHtml(goal.title)}</strong>
         <span>${escapeHtml(currentBriefFields(goal).wanted)}</span>
-      </button>
+        ${handoff ? `<span class="desk-goal-handoff">Handoff: ${escapeHtml(clip(handoff, 180))}</span>` : ""}
+        ${deskPipelineSteps(goal)}
+        ${deskGoalDocuments(goal)}
+      </div>
       <div class="desk-goal-controls">
         <span class="desk-state ${action.kind}">${escapeHtml(action.state)}</span>
+        ${pipeline ? deskPipelineControls(goal, pipeline) : ""}
         ${action.action === "Start agent"
-          ? `<span class="desk-split"><button class="desk-action" type="button" ${route}>Start agent</button><button class="desk-action desk-launch-toggle${state.launchTarget === goal.file ? " open" : ""}" type="button" data-launch-for="${escapeHtml(goal.file)}" title="Choose agent and model" aria-label="Choose agent and model for ${escapeHtml(goal.title)}" aria-expanded="${state.launchTarget === goal.file}">▾</button></span>`
-          : `<button class="desk-action" type="button" ${route}>${escapeHtml(action.action)}</button>`}
-        ${["run", "reviewed"].includes(action.route) ? `<button class="desk-icon-action" type="button" data-view-goal="${escapeHtml(goal.file)}" aria-label="View details for ${escapeHtml(goal.title)}">Details</button>` : ""}
-        ${complete ? `<button class="desk-icon-action complete" type="button" data-complete-goal="${escapeHtml(goal.file)}" aria-label="Mark ${escapeHtml(goal.title)} complete">Done</button>` : ""}
+          ? `<span class="desk-split"><button class="desk-action" type="button" ${route}>Start agent</button><button class="desk-action desk-launch-toggle${state.launchTarget === goal.file ? " open" : ""}" type="button" data-launch-for="${escapeHtml(goal.file)}" title="Choose agent or model" aria-label="Choose agent or model for ${escapeHtml(goal.title)}" aria-expanded="${state.launchTarget === goal.file}">▾</button></span>`
+          : action.action ? `<button class="desk-action" type="button" ${route}>${escapeHtml(action.action)}</button>` : ""}
+        ${liveSession ? `<button class="desk-icon-action" type="button" data-stop-goal="${escapeHtml(goal.file)}" aria-label="End the agent run for ${escapeHtml(goal.title)}">End agent</button>` : ""}
+        ${complete ? `<button class="desk-icon-action" type="button" data-wont-do-goal="${escapeHtml(goal.file)}" aria-label="Mark ${escapeHtml(goal.title)} won't do">Won't do</button><button class="desk-icon-action complete" type="button" data-complete-goal="${escapeHtml(goal.file)}" aria-label="Mark ${escapeHtml(goal.title)} complete">Done</button>` : ""}
       </div>
     </article>`;
+}
+
+/** The checked Goal files that belong to one Area panel, in checked order. */
+function selectedGoalFiles(trees) {
+  const panelFiles = new Set(trees.flatMap((tree) => tree.goals.map((goal) => goal.file)));
+  return state.goalSelection.filter((file) => panelFiles.has(file));
+}
+
+/**
+ * The one action for a checked set of Goals: start a single agent that owns
+ * them all and works them in checked order. Renders only while something in
+ * this Area panel is checked; checking itself never starts anything.
+ */
+function deskSelectionBar(areaPath, trees) {
+  const selected = selectedGoalFiles(trees);
+  if (!selected.length) return "";
+  const count = selected.length;
+  const primary = selected[0];
+  return `
+    <span class="desk-selection-bar">
+      <span class="desk-split">
+        <button class="desk-action" type="button" data-start-selected="${escapeHtml(areaPath)}">Start agent on ${count} ${count === 1 ? "Goal" : "Goals"}</button>
+        <button class="desk-action desk-launch-toggle${state.launchTarget === primary ? " open" : ""}" type="button" data-launch-for="${escapeHtml(primary)}" title="Choose agent or model" aria-label="Choose agent or model for the ${count} selected ${count === 1 ? "Goal" : "Goals"}" aria-expanded="${state.launchTarget === primary}">▾</button>
+      </span>
+      <button class="desk-icon-action" type="button" data-clear-selection>Clear <kbd>Esc</kbd></button>
+    </span>`;
 }
 
 /** Renders a root Goal and visually distinct Subgoals as one group. */
@@ -1141,7 +1105,7 @@ function deskAreaPanel(record, position) {
       <div class="area-desk-body">
         ${descriptions.length ? `<section class="area-desk-section definitions"><div class="area-desk-section-heading"><h3>Dispatches</h3><span>${descriptions.length}</span></div>${descriptions.map(deskDefinitionRow).join("")}</section>` : ""}
         <section class="area-desk-section goals">
-          <div class="area-desk-section-heading"><h3>${goalSectionTitle}</h3><span>${openGoalCount}</span></div>
+          <div class="area-desk-section-heading"><h3>${goalSectionTitle}</h3><span>${openGoalCount}</span>${deskSelectionBar(area.path, trees)}</div>
           ${trees.length ? trees.map(deskGoalGroup).join("") : `<p class="desk-empty">No active Goals.</p>`}
         </section>
         <section class="area-desk-section documents">
@@ -1204,15 +1168,17 @@ function renderWork() {
  */
 function launchPopover() {
   if (!state.launchTarget) return "";
-  const goal = goalByFile(state.launchTarget);
-  if (!goal) return "";
-  launchOptionsFor(goal.area);
+  const describing = state.launchTarget === DESCRIBE_LAUNCH_TARGET;
+  const goal = describing ? null : goalByFile(state.launchTarget);
+  if (!describing && !goal) return "";
+  const area = describing ? describeLaunchArea() : goal.area;
+  launchOptionsFor(area);
   const anchor = state.launchAnchor ?? { top: 120, right: window.innerWidth - 16 };
   const width = Math.min(640, window.innerWidth - 32);
   const left = Math.max(16, anchor.right - width);
   return `
     <div class="launch-popover" data-launch-popover role="dialog" aria-label="Choose agent and model" style="top:${anchor.top}px;left:${left}px;width:${width}px;max-height:calc(100vh - ${anchor.top + 16}px)">
-      <header class="launch-popover-header"><small>${escapeHtml(areaLabel(goal.area))}</small><strong>${escapeHtml(goal.title)}</strong></header>
+      <header class="launch-popover-header"><small>${escapeHtml(areaLabel(area))}</small><strong>${describing ? "Describe work" : escapeHtml(goal.title)}</strong></header>
       ${launchPickerBlock()}
     </div>
   `;
@@ -1233,22 +1199,11 @@ function areaParent(path) {
   return String(path ?? "").split("/").slice(0, -1).join("/");
 }
 
-/** Builds one shared collapsible area tree for Areas and Programs. */
-function areaTreeRows({ mode, programsByArea = new Map() }) {
+/** Builds the collapsible Area tree. */
+function areaTreeRows() {
   const areaItems = areas();
   const byPath = new Map(areaItems.map((area) => [area.path, area]));
-  const relevant = new Set();
-  if (mode === "programs") {
-    for (const area of programsByArea.keys()) {
-      const parts = area.split("/");
-      for (let index = 1; index <= parts.length; index += 1) {
-        const path = parts.slice(0, index).join("/");
-        if (byPath.has(path)) relevant.add(path);
-      }
-    }
-  } else {
-    for (const area of areaItems) relevant.add(area.path);
-  }
+  const relevant = new Set(areaItems.map((area) => area.path));
   const children = new Map();
   for (const path of relevant) {
     const parent = relevant.has(areaParent(path)) ? areaParent(path) : "";
@@ -1257,30 +1212,40 @@ function areaTreeRows({ mode, programsByArea = new Map() }) {
   }
   for (const list of children.values()) list.sort((left, right) => left.localeCompare(right));
 
-  /** Renders one area and its expanded contents. */
+  /** Renders one area and its expanded children. */
   const branch = (path, depth) => {
     const area = byPath.get(path);
     const childPaths = children.get(path) || [];
-    const programs = programsByArea.get(path) || [];
-    const expandable = childPaths.length > 0 || programs.length > 0;
+    const expandable = childPaths.length > 0;
     const expanded = expandable && state.expandedAreas.has(path);
-    const selected = mode === "areas" && selectedArea()?.path === path;
+    const selected = selectedArea()?.path === path;
     const row = `
       <div class="area-tree-row ${selected ? "selected" : ""}" style="--area-depth:${depth}">
         ${expandable
           ? `<button class="area-toggle" type="button" data-toggle-area="${escapeHtml(path)}" aria-expanded="${expanded}" aria-label="${expanded ? "Collapse" : "Expand"} ${escapeHtml(humanName(area.name))}"><span aria-hidden="true">${expanded ? "▾" : "▸"}</span></button>`
           : `<span class="area-toggle-spacer" aria-hidden="true"></span>`}
-        ${mode === "areas"
-          ? `<button class="area-row" type="button" data-select-area="${escapeHtml(path)}"><span>${escapeHtml(humanName(area.name))}</span><small>${escapeHtml(path)}</small></button>`
-          : `<button class="area-program-row" type="button" ${expandable ? `data-toggle-area="${escapeHtml(path)}" aria-expanded="${expanded}"` : "disabled"}><span>${escapeHtml(humanName(area.name))}</span><small>${programs.length ? `${programs.length} here` : ""}</small></button>`}
+        <button class="area-row" type="button" data-select-area="${escapeHtml(path)}"><span>${escapeHtml(humanName(area.name))}</span><small>${escapeHtml(path)}</small>${areaProgramMark(path, expanded)}</button>
       </div>`;
     if (!expanded) return row;
-    const owned = programs.length
-      ? `<div class="area-programs" style="--area-depth:${depth + 1}">${programs.map(programRow).join("")}</div>`
-      : "";
-    return row + owned + childPaths.map((child) => branch(child, depth + 1)).join("");
+    return row + childPaths.map((child) => branch(child, depth + 1)).join("");
   };
   return (children.get("") || []).map((root) => branch(root, 0)).join("");
+}
+
+/**
+ * Marks the Area rows that carry running Programs or a broken Program file.
+ * The tree is the only place a Program in another Area can announce itself
+ * now that the Programs tab is gone, so a collapsed row counts its whole
+ * subtree.
+ */
+function areaProgramMark(path, expanded) {
+  /** True while one Program or problem belongs to the counted scope. */
+  const inScope = (value) => value === path || (!expanded && value.startsWith(`${path}/`));
+  const live = state.programs.programs.filter((program) => inScope(program.area) && programIsLive(program)).length;
+  const broken = state.programs.errors.some((item) => inScope(item.area));
+  if (live) return `<span class="area-row-mark live">${live} running</span>`;
+  if (broken) return `<span class="area-row-mark warn">Program problem</span>`;
+  return "";
 }
 
 /** Renders one Area Goal with its current brief. */
@@ -1292,9 +1257,11 @@ function areaGoalRow(goal) {
     </button>`;
 }
 
-/** Renders the Goals and Documents stored directly in one Area. */
+/** Renders the Goals, Documents, and Programs stored directly in one Area. */
 function areaContents(area) {
   const goals = (area.goals ?? []).filter((goal) => goal.area === area.path);
+  const programs = state.programs.programs.filter((program) => program.area === area.path);
+  const problems = state.programs.errors.filter((item) => item.area === area.path);
   const authoredOrder = new Map(goals.flatMap((goal) => goal.documents ?? []).map((document, index) => [document.file, index]));
   const documents = [...(area.documents ?? [])].sort((left, right) =>
     (authoredOrder.get(left.file) ?? Number.MAX_SAFE_INTEGER) - (authoredOrder.get(right.file) ?? Number.MAX_SAFE_INTEGER)
@@ -1320,13 +1287,23 @@ function areaContents(area) {
           ? `<div class="goal-relation-list area-goal-list">${goals.map(areaGoalRow).join("")}</div>`
           : `<p class="memory-empty">No Goals exist in this Area.</p>`}
       </section>
+      <section class="area-content-section">
+        <div class="memory-heading">
+          <div><p class="kicker">Programs</p><h3>${programs.length} ${programs.length === 1 ? "Program" : "Programs"}</h3></div>
+          <button class="quiet-button" type="button" data-new-program>New program</button>
+        </div>
+        ${programs.length
+          ? `<div class="program-list">${programs.map(programRow).join("")}</div>`
+          : `<p class="memory-empty">No Programs exist in this Area. Servers, commands, and daily agents belong here.</p>`}
+        ${problems.length ? `<details class="program-errors"><summary>${problems.length} configuration ${problems.length === 1 ? "problem" : "problems"}</summary>${problems.map((item) => `<p>${escapeHtml(item.file)} — ${escapeHtml(item.error)}</p>`).join("")}</details>` : ""}
+      </section>
     </section>`;
 }
 
 /** Renders the Area hierarchy and the contents of the selected Area. */
 function renderAreas() {
   const selected = selectedArea();
-  const rows = areaTreeRows({ mode: "areas" });
+  const rows = areaTreeRows();
   return `
     <section class="areas-page">
       <header class="surface-heading">
@@ -1376,8 +1353,18 @@ function renderAreaEditor() {
 }
 
 /** Returns one program by its stable UI identity. */
+function programById(id) {
+  return state.programs.programs.find((program) => program.id === id) ?? null;
+}
+
+/** Returns the program the shell has open. */
 function currentProgram() {
-  return state.programs.programs.find((program) => program.id === state.programId) ?? null;
+  return programById(state.programId);
+}
+
+/** True while one program holds a running session. */
+function programIsLive(program) {
+  return Boolean(program.session && !["stopped", "shell"].includes(program.session.state));
 }
 
 /** Describes one program's current state in plain language. */
@@ -1396,190 +1383,41 @@ function localMoment(value) {
   return date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
 }
 
-/** Renders one compact program row. */
+/** Names the kind of one program for a reader. */
+function programKind(program) {
+  return program.type === "process" ? "Server or watcher" : program.type === "command" ? "Command" : "Daily agent";
+}
+
+/**
+ * The one runtime control a program row offers. Stopping a runaway program
+ * must not be a hidden feature, so the row carries it beside the state.
+ */
+function programRowControl(program) {
+  if (programIsLive(program)) return { action: "stop", label: "Stop" };
+  if (program.type === "routine") return { action: "run", label: "Run now" };
+  if (!program.available) return null;
+  return program.type === "process" ? { action: "start", label: "Start" } : { action: "run", label: "Run" };
+}
+
+/** Renders one compact program row with its state and one control. */
 function programRow(program) {
-  const type = program.type === "process" ? "Server or watcher" : program.type === "command" ? "Command" : "Daily agent";
+  const control = programRowControl(program);
   return `
-    <button class="program-row" type="button" data-select-program="${escapeHtml(program.id)}">
-      <span><small>${escapeHtml(type)}</small><strong>${escapeHtml(program.label)}</strong><em>${escapeHtml(program.type === "routine" ? program.schedule : program.command)}</em></span>
-      <span class="program-state ${program.session && !["stopped", "shell"].includes(program.session.state) ? "live" : ""}">${escapeHtml(programState(program))}</span>
-    </button>`;
-}
-
-/** Returns completed and total steps for one Reviewed build Run. */
-function reviewedProgress(run) {
-  const complete = run?.steps?.filter((step) => step.status === "complete").length || 0;
-  return { complete, total: run?.steps?.length || 8 };
-}
-
-/** Renders the built-in multi-agent Program above operational programs. */
-function reviewedProgramCard() {
-  const active = activeReviewedCount();
-  const attention = state.reviewed.runs.filter((run) => run.status === "needs_attention").length;
-  const latest = state.reviewed.runs[0];
-  const recent = state.reviewed.runs.slice(0, 4);
-  return `
-    <section class="reviewed-program-card">
-      <div>
-        <p class="kicker">Built-in agent workflow</p>
-        <h2>Reviewed build</h2>
-        <p>Design, independent reviews, implementation, and one final response-and-fix pass. Each step uses a fresh session by default.</p>
-        <ol><li>Design</li><li>Review</li><li>Revise and plan</li><li>Plan review</li><li>Respond</li><li>Implement</li><li>Implementation review</li><li>Fix</li></ol>
+    <div class="program-row">
+      <button class="program-open" type="button" data-select-program="${escapeHtml(program.id)}">
+        <small>${escapeHtml(programKind(program))}</small><strong>${escapeHtml(program.label)}</strong><em>${escapeHtml(program.type === "routine" ? program.schedule : program.command)}</em>
+      </button>
+      <div class="program-row-controls">
+        <span class="program-state ${programIsLive(program) ? "live" : ""}">${escapeHtml(programState(program))}</span>
+        ${control ? `<button class="desk-icon-action" type="button" data-program-action="${control.action}" data-program-id="${escapeHtml(program.id)}" aria-label="${escapeHtml(control.label)} ${escapeHtml(program.label)}">${escapeHtml(control.label)}</button>` : ""}
       </div>
-      <div class="reviewed-program-actions">
-        <span>${attention ? `${attention} need you` : active ? `${active} active` : latest ? `Latest: ${reviewedStatusLabel(latest.status)}` : "Ready"}</span>
-        <button class="primary-button" type="button" data-open-reviewed-program>Open program</button>
-      </div>
-      ${recent.length ? `<div class="reviewed-recent-runs">${recent.map((run) => {
-        const progress = reviewedProgress(run);
-        return `<button type="button" data-open-reviewed-run="${escapeHtml(run.id)}"><span><small>${escapeHtml(areaLabel(run.areaPath))}</small><strong>${escapeHtml(run.goalTitle)}</strong></span><span>${progress.complete}/${progress.total} · ${escapeHtml(reviewedStatusLabel(run.status))} →</span></button>`;
-      }).join("")}</div>` : ""}
-    </section>`;
-}
-
-/** Lists valid fresh and continuation choices for one draft step. */
-function reviewedSessionOptions(step, index) {
-  const binding = state.reviewed.draftBindings[step.id] || {};
-  const selected = reviewedSessionValue(state.reviewed.draftSessions[step.id]);
-  const earlier = reviewedSteps().slice(0, index).filter((item) => state.reviewed.draftBindings[item.id]?.provider === binding.provider);
-  return [
-    `<option value="fresh" ${selected === "fresh" ? "selected" : ""}>Fresh session</option>`,
-    ...(binding.provider === "gemini" ? [] : earlier.map((item) => {
-      const value = `continue:${item.id}`;
-      return `<option value="${escapeHtml(value)}" ${selected === value ? "selected" : ""}>Continue step ${item.order}: ${escapeHtml(item.label)}</option>`;
-    })),
-  ].join("");
-}
-
-/** Renders one editable agent and session assignment. */
-function reviewedStepEditor(step, index, { pending = false } = {}) {
-  const binding = pending ? step.binding : state.reviewed.draftBindings[step.id] || {};
-  const session = pending ? step.session : state.reviewed.draftSessions[step.id] || { mode: "fresh" };
-  const provider = binding.provider || "codex";
-  const prefix = pending ? "pending" : "draft";
-  const sessionOptions = pending
-    ? (() => {
-        const earlier = currentReviewedRun().steps.slice(0, index).filter((item) => item.binding.provider === provider);
-        const selected = reviewedSessionValue(session);
-        return [`<option value="fresh" ${selected === "fresh" ? "selected" : ""}>Fresh session</option>`, ...(provider === "gemini" ? [] : earlier.map((item) => `<option value="continue:${escapeHtml(item.id)}" ${selected === `continue:${item.id}` ? "selected" : ""}>Continue step ${item.order}: ${escapeHtml(item.label)}</option>`))].join("");
-      })()
-    : reviewedSessionOptions(step, index);
-  return `
-    <div class="reviewed-editor-step" data-reviewed-step="${escapeHtml(step.id)}">
-      <header><span>${step.order}</span><div><strong>${escapeHtml(step.label)}</strong><small>${escapeHtml(step.instruction)}</small></div></header>
-      <div class="reviewed-agent-fields">
-        <label><span>Agent</span><select name="provider" data-reviewed-${prefix}-field="provider" data-step-id="${escapeHtml(step.id)}">
-          <option value="claude" ${provider === "claude" ? "selected" : ""}>Claude</option>
-          <option value="codex" ${provider === "codex" ? "selected" : ""}>Codex</option>
-          <option value="gemini" ${provider === "gemini" ? "selected" : ""}>Gemini</option>
-        </select></label>
-        <label><span>Model</span><input name="model" data-reviewed-${prefix}-field="model" data-step-id="${escapeHtml(step.id)}" value="${escapeHtml(binding.model || "")}" placeholder="Provider default" /></label>
-        <label><span>Effort</span><select name="effort" data-reviewed-${prefix}-field="effort" data-step-id="${escapeHtml(step.id)}" ${provider === "codex" ? "" : "disabled"}>
-          ${["low", "medium", "high", "xhigh", "max"].map((value) => `<option value="${value}" ${binding.effort === value || (!binding.effort && value === "max") ? "selected" : ""}>${humanName(value)}</option>`).join("")}
-        </select></label>
-        <label class="reviewed-session-field"><span>Session</span><select name="session" data-reviewed-${prefix}-field="session" data-step-id="${escapeHtml(step.id)}">${sessionOptions}</select></label>
-      </div>
-      ${pending ? `<button class="quiet-button" type="submit">Update pending step</button>` : ""}
     </div>`;
-}
-
-/** Renders Area defaults or one Goal's launch-time overrides. */
-function renderReviewedEditor(mode) {
-  const goal = currentGoal();
-  const program = state.reviewed.program;
-  if (!program) return `<div class="loading">Loading Reviewed build…</div>`;
-  const setup = mode === "setup";
-  return `
-    <article class="reviewed-editor-page">
-      <p class="kicker">${setup ? "Goal program" : "Built-in program"}</p>
-      <h1>${setup ? `Run “${escapeHtml(goal?.title || "Goal") }”` : "Reviewed build"}</h1>
-      <p class="reviewed-lede">${escapeHtml(program.description)}</p>
-      ${setup ? `<p class="reviewed-default-note">These choices apply only to this Run. Area defaults stay unchanged.</p>` : `<label class="reviewed-area-picker"><span>Defaults for Area</span><select data-reviewed-area>${areaOptions(state.reviewed.area)}</select></label>`}
-      <div class="reviewed-editor-list">${program.steps.map((step, index) => reviewedStepEditor(step, index)).join("")}</div>
-      <div class="reviewed-sticky-actions">
-        ${setup
-          ? `<button class="primary-button" type="button" data-launch-reviewed-custom>Run reviewed build</button><button class="quiet-button" type="button" data-launch-reviewed-default>Use Area defaults</button>`
-          : `<button class="primary-button" type="button" data-save-reviewed-defaults>Save Area defaults</button>`}
-      </div>
-    </article>`;
-}
-
-/** Returns the newest attempt for one step. */
-function latestReviewedAttempt(step) {
-  return step.attempts?.at(-1) || null;
-}
-
-/** Renders recorded handoffs and proof for one attempt. */
-function reviewedAttemptDetails(run, step, attempt) {
-  if (!attempt) return "";
-  const artifacts = attempt.artifacts || [];
-  const proof = attempt.proof || [];
-  return `
-    ${attempt.envelope?.summary ? `<p class="reviewed-step-summary">${escapeHtml(attempt.envelope.summary)}</p>` : ""}
-    ${artifacts.length ? `<div class="reviewed-artifacts"><strong>Artifacts</strong>${artifacts.map((artifact, index) => `<a href="/api/reviewed-build/runs/${encodeURIComponent(run.id)}/artifacts/${encodeURIComponent(step.id)}/${attempt.number}/${index}" target="_blank" rel="noreferrer"><span>${escapeHtml(artifact.purpose)}</span>${escapeHtml(artifact.path)}</a>`).join("")}</div>` : ""}
-    ${proof.length ? `<details class="reviewed-proof"><summary>Proof · ${proof.length}</summary>${proof.map((item) => `<div><code>${escapeHtml(item.command)}</code><p>${escapeHtml(item.result)}</p></div>`).join("")}</details>` : ""}
-    ${attempt.error ? `<p class="reviewed-step-error">${escapeHtml(attempt.error)}</p>` : ""}`;
-}
-
-/** Renders one durable Reviewed build with progress and controls. */
-function renderReviewedRun() {
-  const run = currentReviewedRun();
-  if (!run) return `<div class="error-card">This Reviewed build Run is not available.</div>`;
-  const progress = reviewedProgress(run);
-  const attention = run.attention;
-  const active = ["queued", "running"].includes(run.status);
-  const resumable = ["needs_attention", "stopped"].includes(run.status);
-  return `
-    <article class="reviewed-run-page">
-      ${areaPath(run.areaPath)}
-      <header class="reviewed-run-heading">
-        <div><p class="kicker">Reviewed build · ${escapeHtml(reviewedStatusLabel(run.status))}</p><h1>${escapeHtml(run.goalTitle)}</h1><p>${progress.complete} of ${progress.total} steps complete</p></div>
-        <div class="reviewed-run-actions">
-          ${active ? `<button class="danger-button" type="button" data-reviewed-control="stop">Stop</button>` : ""}
-          ${resumable && attention?.kind !== "judgment" ? `<button class="primary-button" type="button" data-reviewed-control="resume">Resume</button>` : ""}
-          ${run.status === "complete" ? `<button class="secondary-button" type="button" data-start-reviewed-again="${escapeHtml(run.goalPath)}">Run again</button>` : ""}
-          <a class="quiet-link" href="/api/reviewed-build/runs/${encodeURIComponent(run.id)}/diff" target="_blank" rel="noreferrer">Open current diff</a>
-        </div>
-      </header>
-      ${attention ? `<section class="reviewed-attention"><p class="kicker">Needs you</p><h2>${escapeHtml(attention.question || attention.message)}</h2>${attention.question ? `<form data-reviewed-decision><label><span>Your decision</span><textarea name="decision" required>${escapeHtml(state.reviewed.decision)}</textarea></label><button class="primary-button" type="submit">Answer and resume</button></form>` : `<p>${escapeHtml(attention.message)}</p>`}</section>` : ""}
-      <section class="reviewed-run-steps">${run.steps.map((step, index) => {
-        const attempt = latestReviewedAttempt(step);
-        return `<article class="reviewed-run-step ${escapeHtml(step.status)}">
-          <header><span>${step.order}</span><div><strong>${escapeHtml(step.label)}</strong><small>${escapeHtml(step.binding.label)} · ${step.session.mode === "fresh" ? "Fresh session" : `Continues ${step.session.fromStepId}`}</small></div><em>${escapeHtml(reviewedStatusLabel(step.status))}</em></header>
-          ${reviewedAttemptDetails(run, step, attempt)}
-          ${step.status === "pending" ? `<details class="reviewed-pending-editor"><summary>Change agent or session</summary><form data-reviewed-pending-form="${escapeHtml(step.id)}">${reviewedStepEditor(step, index, { pending: true })}</form></details>` : ""}
-        </article>`;
-      }).join("")}</section>
-      ${state.reviewed.latestOutput ? `<section class="reviewed-output"><p class="kicker">Latest agent output</p><pre>${escapeHtml(state.reviewed.latestOutput)}</pre></section>` : ""}
-      ${run.final ? `<section class="reviewed-final"><p class="kicker">Final result</p><h2>${run.final.changedPaths.length} changed ${run.final.changedPaths.length === 1 ? "file" : "files"}</h2><ul>${run.final.changedPaths.map((file) => `<li><code>${escapeHtml(file)}</code></li>`).join("") || "<li>No repository path changed.</li>"}</ul>${run.final.proof.length ? `<div class="reviewed-final-proof">${run.final.proof.map((item) => `<p><code>${escapeHtml(item.command)}</code><span>${escapeHtml(item.result)}</span></p>`).join("")}</div>` : ""}</section>` : ""}
-    </article>`;
-}
-
-/** Renders the area-grouped operational surface. */
-function renderPrograms() {
-  const groups = new Map();
-  for (const program of state.programs.programs) {
-    if (!groups.has(program.area)) groups.set(program.area, []);
-    groups.get(program.area).push(program);
-  }
-  return `
-    <section class="programs-page">
-      <header class="surface-heading">
-        <div><p class="kicker">Programs</p><h1>Things that run</h1><p>Agent workflows, servers, useful commands, and scheduled agents stay with their areas.</p></div>
-        <button class="primary-button" type="button" data-new-program>New program</button>
-      </header>
-      ${reviewedProgramCard()}
-      <div class="program-groups area-tree">
-        ${groups.size ? areaTreeRows({ mode: "programs", programsByArea: groups }) : `<div class="empty-state">No programs exist yet.</div>`}
-      </div>
-      ${state.programs.errors.length ? `<details class="program-errors"><summary>${state.programs.errors.length} configuration ${state.programs.errors.length === 1 ? "problem" : "problems"}</summary>${state.programs.errors.map((item) => `<p>${escapeHtml(item.file)} — ${escapeHtml(item.error)}</p>`).join("")}</details>` : ""}
-    </section>`;
 }
 
 /** Renders the controls and facts for one selected program. */
 function renderProgramDetail(program) {
-  if (!program) return renderPrograms();
-  const live = program.session && !["stopped", "shell"].includes(program.session.state);
+  if (!program) return renderAreas();
+  const live = programIsLive(program);
   const retained = Boolean(program.session);
   let actions = "";
   if (program.type === "process") {
@@ -1604,7 +1442,7 @@ function renderProgramDetail(program) {
   return `
     <article class="program-detail">
       ${areaPath(program.area)}
-      <p class="kicker">${program.type === "process" ? "Server or watcher" : program.type === "command" ? "Command" : "Daily agent"}</p>
+      <p class="kicker">${escapeHtml(programKind(program))}</p>
       <h1>${escapeHtml(program.label)}</h1>
       <p class="program-detail-state"><span class="status-mark"></span>${escapeHtml(programState(program))}</p>
       <dl class="program-facts">
@@ -1719,6 +1557,10 @@ function renderCreate() {
 /** Renders natural-language capture before a work-definition conversation. */
 function renderDescribeCapture() {
   const draft = state.describeDraft;
+  launchOptionsFor(draft?.area || preferredArea());
+  const selection = launchSelection();
+  const startLabel = selection?.label ? `Start ${selection.label}` : "Start agent";
+  const chooserOpen = state.launchTarget === DESCRIBE_LAUNCH_TARGET;
   return `
     <article class="create-page describe-page">
       <p class="kicker">Describe work</p>
@@ -1737,7 +1579,10 @@ function renderDescribeCapture() {
           <textarea id="describe-work" name="description" class="describe-work-input" required placeholder="Describe the result, the context, and any parts that already matter to you.">${escapeHtml(draft?.description || "")}</textarea>
         </label>
         <div class="create-actions">
-          <button class="primary-button" type="submit">Open agent <kbd>⌘↵</kbd></button>
+          <span class="desk-split describe-launch-split">
+            <button class="primary-button" type="submit">${escapeHtml(startLabel)} <kbd>⌘↵</kbd></button>
+            <button class="primary-button describe-launch-toggle${chooserOpen ? " open" : ""}" type="button" data-launch-for="${DESCRIBE_LAUNCH_TARGET}" title="Choose agent or model" aria-label="Choose the agent for this conversation" aria-expanded="${chooserOpen}">▾</button>
+          </span>
           <button class="quiet-button" type="button" data-create-manually>Create Goal manually</button>
           <button class="quiet-button" type="button" data-save-idea>Save as an idea</button>
           <button class="quiet-button" type="button" data-cancel-describe>Cancel</button>
@@ -1765,198 +1610,13 @@ function describeSourcesBlock(draft) {
     </section>`;
 }
 
-/** Renders the compact present-tense memory at the top of a Goal. */
-function currentBriefBlock(goal) {
-  const fields = currentBriefFields(goal);
-  return `
-    <section class="brief-card">
-      <p class="kicker">Current brief</p>
-      <p class="brief-wanted">${escapeHtml(fields.wanted)}</p>
-    </section>
-  `;
-}
-
-/** Renders the Goal chain that explains why the selected Goal exists. */
-function whyBlock(goal) {
-  const why = goal.why ?? [];
-  if (!why.length) return "";
-  return `
-    <section class="summary-section goal-relations">
-      <div class="memory-heading"><div><p class="kicker">Why</p><h2>This Goal helps complete</h2></div></div>
-      <div class="goal-relation-list">${why.map((item) => `<button type="button" data-select-goal="${escapeHtml(item.file)}"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(clip(item.doneWhen, 150))}</small></button>`).join("")}</div>
-    </section>`;
-}
-
-/** Renders the immediate Goals needed to complete the selected Goal. */
-function subgoalsBlock(goal) {
-  const subgoals = goal.subgoalItems ?? [];
-  if (!subgoals.length) return "";
-  return `
-    <section class="summary-section goal-relations">
-      <div class="memory-heading"><div><p class="kicker">To do that</p><h2>${subgoals.length} ${subgoals.length === 1 ? "Subgoal" : "Subgoals"}</h2></div></div>
-      <div class="goal-relation-list">${subgoals.map((item) => `<button type="button" data-select-goal="${escapeHtml(item.file)}"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(clip(item.doneWhen, 150))}</small></button>`).join("")}</div>
-    </section>`;
-}
-
-/** Renders the user's durable restatement of the work. */
-function wordsBlock(goal) {
-  const words = goal.myUnderstanding?.trim() || "";
-  if (!words) return "";
-  return `<section class="summary-section"><div class="your-words"><p class="kicker">Your words</p><blockquote>${escapeHtml(words)}</blockquote></div></section>`;
-}
-
-/** Keeps Goal history available without making it part of the normal route. */
-function storyBlock(goal) {
-  const entries = storyEntries(goal.storyText);
-  return `
-    <section class="summary-section history-section">
-      <details class="goal-history">
-        <summary><span><small>Optional context</small><strong>History${entries.length ? ` · ${entries.length} ${entries.length === 1 ? "update" : "updates"}` : ""}</strong></span><b aria-hidden="true">+</b></summary>
-        <div class="goal-history-body">
-          ${entries.length
-            ? `<ol class="story-list">${entries.map((entry) => `<li><strong>${escapeHtml(entry.title)}</strong><p>${escapeHtml(entry.body)}</p></li>`).join("")}</ol>`
-            : `<p class="memory-empty">No short history exists.</p>`}
-          ${goal.stateText?.trim() ? `<details class="full-note"><summary>Read the full progress note</summary><div class="full-note-content">${markdownToHtml(goal.stateText)}</div></details>` : ""}
-        </div>
-      </details>
-    </section>
-  `;
-}
-
-/** Renders the Documents linked to one Goal. */
-function livingDocumentsBlock(goal) {
-  const documents = goal.documents ?? [];
-  return `
-    <section class="summary-section memory-section">
-      <div class="memory-heading"><div><p class="kicker">Documents</p><h2>${documents.length ? `${documents.length} linked ${documents.length === 1 ? "Document" : "Documents"}` : "No linked Documents"}</h2></div></div>
-      ${documents.length
-        ? `<div class="document-list">${documents.map((document) => `<button class="document-row" type="button" data-open-document="${escapeHtml(document.file)}"><span><strong>${escapeHtml(document.title)}</strong><small>Document</small></span><span aria-hidden="true">→</span></button>`).join("")}</div>`
-        : `<p class="memory-empty">The Goal and native chat still provide the source context.</p>`}
-    </section>
-  `;
-}
-
-/** Renders sleep prevention only where it is useful or active. */
-function awakeControl({ useful = false } = {}) {
-  if (!useful && !state.caffeinate) return "";
-  const on = state.caffeinate;
-  return `
-    <button class="awake-control ${on ? "on" : ""}" type="button" data-toggle-awake aria-pressed="${on}">
-      <span class="awake-symbol" aria-hidden="true">☕</span>
-      <span class="awake-copy">
-        <strong>${on ? "Mac stays awake" : "Keep Mac awake"}</strong>
-        <small>${on ? "Until you turn this off or quit Agent Shell." : "Useful while an agent works."}</small>
-      </span>
-      <span class="awake-switch" aria-hidden="true"><span></span></span>
-    </button>
-  `;
-}
-
-/** Renders the current live-agent state and its available actions. */
-function runCard(goal, session) {
-  const name = agentName(session);
-  const title = session.launchLabel || name;
-  if (session.state === "waiting") {
-    return `
-      <section class="summary-section">
-        <div class="run-card waiting">
-          <div class="run-status">
-            <span class="status-mark" aria-hidden="true"></span>
-            <div><h2>${escapeHtml(title)} is waiting for you.</h2><p>Read the message. Then continue, end this run, or complete the work.</p></div>
-          </div>
-          ${awakeControl()}
-          <div class="action-row">
-            <button class="primary-button" type="button" data-open-agent>Open ${escapeHtml(name)}</button>
-            <button class="secondary-button" type="button" data-next-step>Choose next step…</button>
-            <button class="danger-button" type="button" data-stop-agent>Stop agent…</button>
-          </div>
-        </div>
-      </section>
-    `;
-  }
-  if (session.state === "working") {
-    return `
-      <section class="summary-section">
-        <div class="run-card working">
-          <div class="run-status">
-            <span class="status-mark" aria-hidden="true"></span>
-            <div><h2>${escapeHtml(title)} is working.</h2><p>${escapeHtml(ageText(session.created))}. You do not need to watch it.</p></div>
-          </div>
-          ${awakeControl({ useful: true })}
-          <div class="action-row">
-            <button class="secondary-button" type="button" data-open-agent>Open ${escapeHtml(name)}</button>
-            <button class="secondary-button" type="button" data-next-step>Choose next step…</button>
-            <button class="danger-button" type="button" data-stop-agent>Stop agent…</button>
-          </div>
-        </div>
-      </section>
-    `;
-  }
-  if (session.state === "shell") {
-    const collaboration = session.phase === "collaborate";
-    return `
-      <section class="summary-section">
-        <div class="run-card shell">
-          <div class="run-status">
-            <span class="status-mark" aria-hidden="true"></span>
-            <div><h2>The session is open, but the agent did not start.</h2><p>You can start it now or close the session.</p></div>
-          </div>
-          <div class="action-row">
-            <button class="primary-button" type="button" data-launch-open-session>${collaboration ? "Open the agent" : "Start the agent"}</button>
-            <button class="quiet-button" type="button" data-mark-complete>Mark work complete…</button>
-          </div>
-        </div>
-      </section>
-    `;
-  }
-  return `
-    <section class="summary-section">
-      <div class="run-card">
-        <div class="run-status"><span class="status-mark" aria-hidden="true"></span><div><h2>A work session is open.</h2><p>Open it to see its current state.</p></div></div>
-        <div class="action-row"><button class="primary-button" type="button" data-open-agent>Open agent</button><button class="secondary-button" type="button" data-next-step>Choose next step…</button><button class="danger-button" type="button" data-stop-agent>Stop agent…</button></div>
-      </div>
-    </section>
-  `;
-}
-
-/** Renders the one-click autonomous workflow for an open Goal. */
-function reviewedBuildBlock(goal) {
-  if (["done", "dropped", "deferred"].includes(goal.status)) return "";
-  const run = latestReviewedRun(goal);
-  if (!run) {
-    return `
-      <section class="summary-section reviewed-goal-launch">
-        <p class="kicker">Multi-agent program</p>
-        <h2>Reviewed build</h2>
-        <p class="next-action-copy">Claude designs. Codex reviews and implements. The agents revise, review, and finish without you coordinating every handoff.</p>
-        <div class="action-row start-actions">
-          <button class="primary-button" type="button" data-start-reviewed="${escapeHtml(goal.file)}">Run reviewed build</button>
-          <button class="quiet-button" type="button" data-configure-reviewed="${escapeHtml(goal.file)}">Change agents or sessions</button>
-        </div>
-        <p class="form-note">Eight steps. Fresh provider session for each step by default. Stops only for a required judgment, an error, or your command.</p>
-      </section>`;
-  }
-  const progress = reviewedProgress(run);
-  return `
-    <section class="summary-section reviewed-goal-launch">
-      <p class="kicker">Multi-agent program</p>
-      <h2>Reviewed build · ${escapeHtml(reviewedStatusLabel(run.status))}</h2>
-      <p class="next-action-copy">${progress.complete} of ${progress.total} steps complete${run.attention ? ` · ${escapeHtml(run.attention.question || run.attention.message)}` : ""}</p>
-      <div class="action-row start-actions">
-        <button class="${run.status === "needs_attention" ? "primary-button" : "secondary-button"}" type="button" data-open-reviewed-run="${escapeHtml(run.id)}">Open reviewed build</button>
-        ${run.status === "complete" ? `<button class="quiet-button" type="button" data-start-reviewed-again="${escapeHtml(goal.file)}">Run again</button>` : ""}
-        <button class="quiet-button" type="button" data-configure-reviewed="${escapeHtml(goal.file)}">Change agents for a new Run</button>
-      </div>
-    </section>`;
-}
-
 /**
  * Fetches the launch choices for one Area once and repaints when they land.
  * Selecting a different Goal in the same Area keeps the loaded options.
  */
 function launchOptionsFor(area) {
   if (state.launch.area !== area) {
-    state.launch = { area, options: null, loading: false, choice: null, command: "", editing: false, open: false };
+    state.launch = { area, options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", continueFrom: null, steps: [], active: 0, record: null };
   }
   if (!state.launch.options && !state.launch.loading) {
     state.launch.loading = true;
@@ -1976,16 +1636,17 @@ function launchSelection() {
   const options = state.launch.options;
   if (!options) return null;
   const preset = options.default && !options.default.error ? options.default : null;
-  const choice = state.launch.choice ?? (preset?.harness ? { harness: preset.harness, model: preset.model } : null);
+  const choice = state.launch.choice ?? (preset?.harness ? { harness: preset.harness, model: preset.model, effort: preset.effort ?? null } : null);
   const harness = choice ? (options.harnesses ?? []).find((entry) => entry.id === choice.harness) : null;
   if (!harness) {
-    return preset ? { harness: null, model: null, command: preset.command, label: preset.label || "", edited: false } : null;
+    return preset ? { harness: null, model: null, effort: null, command: preset.command, label: preset.label || "", edited: false } : null;
   }
   const model = (harness.models ?? []).find((entry) => entry.id === choice.model) ?? null;
+  const effort = (harness.efforts ?? []).find((entry) => entry.id === choice.effort) ?? null;
   const edited = Boolean(state.launch.command.trim());
-  const command = edited ? state.launch.command.trim() : model ? `${harness.command} ${model.args}` : harness.command;
-  const label = edited ? "Edited command" : model ? `${harness.label} · ${model.label}` : harness.label;
-  return { harness, model, command, label, edited };
+  const command = edited ? state.launch.command.trim() : [harness.command, model?.args, effort?.args].filter(Boolean).join(" ");
+  const label = edited ? "Edited command" : [harness.label, model?.label, effort?.label].filter(Boolean).join(" · ");
+  return { harness, model, effort, command, label, edited };
 }
 
 /** Explicit per-run launch fields for a start request, or nothing. */
@@ -1994,21 +1655,123 @@ function launchRequestFields() {
   if (!selection) return {};
   if (selection.edited) return { command: selection.command };
   if (state.launch.choice && selection.harness) {
-    return { choice: { harness: selection.harness.id, ...(selection.model ? { model: selection.model.id } : {}) } };
+    return { choice: { harness: selection.harness.id, ...(selection.model ? { model: selection.model.id } : {}), ...(selection.effort ? { effort: selection.effort.id } : {}) } };
   }
   return {};
 }
 
-/** One quiet line naming what "Open agent" will start, with the way to change it. */
-function launchQuietLine(goal) {
-  const options = launchOptionsFor(goal.area);
-  if (!options) return `<p class="launch-line">…</p>`;
-  if (options.default?.error) {
-    return `<p class="launch-line launch-error">${escapeHtml(options.default.error)} <button class="quiet-button launch-change" type="button" data-launch-change>Change</button></p>`;
+// ---- pipeline drafts ----
+// The popover holds one draft step per row. The active row's fields live in
+// state.launch (choice, command, instruction, continueFrom) so the picker
+// code works unchanged; the other rows wait in state.launch.steps.
+
+/** The active row's draft as one plain object. */
+function launchStepDraft() {
+  return { choice: state.launch.choice, command: state.launch.command, instruction: state.launch.instruction, continueFrom: state.launch.continueFrom };
+}
+
+/** Copies the typed instruction and command into the active row before any repaint. */
+function syncLaunchDraft() {
+  const instruction = document.querySelector("#launch-instruction");
+  if (instruction) state.launch.instruction = instruction.value;
+  const command = document.querySelector("#launch-command-input");
+  if (command) state.launch.command = command.value;
+}
+
+/** Stores the active row's fields into the steps array and returns the array. */
+function commitActiveStep() {
+  const steps = state.launch.steps.length ? state.launch.steps : [launchStepDraft()];
+  steps[state.launch.active] = launchStepDraft();
+  state.launch.steps = steps;
+  return steps;
+}
+
+/** Loads one row into the active fields. */
+function activateLaunchStep(index) {
+  const steps = commitActiveStep();
+  const row = steps[index] ?? { choice: null, command: "", instruction: "", continueFrom: null };
+  state.launch.active = index;
+  state.launch.choice = row.choice ?? null;
+  state.launch.command = row.command ?? "";
+  state.launch.instruction = row.instruction ?? "";
+  state.launch.continueFrom = row.continueFrom ?? null;
+  state.launch.editing = false;
+}
+
+/** Appends one row and makes it active. */
+function addLaunchStep() {
+  const steps = commitActiveStep();
+  steps.push({ choice: null, command: "", instruction: "", continueFrom: null });
+  activateLaunchStep(steps.length - 1);
+}
+
+/** Removes one row; the active row moves to the nearest remaining one. */
+function removeLaunchStep(index) {
+  const steps = commitActiveStep();
+  if (steps.length <= 1) return;
+  steps.splice(index, 1);
+  for (const step of steps) if (step.continueFrom && step.continueFrom > steps.length) step.continueFrom = null;
+  activateLaunchStep(Math.min(state.launch.active > index ? state.launch.active - 1 : state.launch.active, steps.length - 1));
+}
+
+/** The label one draft row shows in the step list. */
+function launchStepLabel(row) {
+  const options = state.launch.options;
+  if (row.command?.trim()) return "Edited command";
+  const harness = row.choice ? (options?.harnesses ?? []).find((entry) => entry.id === row.choice.harness) : null;
+  if (!harness) return options?.default && !options.default.error ? (options.default.label || options.default.command || "Area default") : "Area default";
+  const model = (harness.models ?? []).find((entry) => entry.id === row.choice.model);
+  const effort = (harness.efforts ?? []).find((entry) => entry.id === row.choice.effort);
+  return [harness.label, model?.label, effort?.label].filter(Boolean).join(" · ");
+}
+
+/** One request step for the server: instruction plus a launch or a command. */
+function launchStepRequest(row) {
+  const options = state.launch.options;
+  const base = { instruction: row.instruction.trim(), continueFrom: row.continueFrom ?? null };
+  if (row.command?.trim()) return { ...base, command: row.command.trim() };
+  if (row.choice?.harness) return { ...base, launch: { harness: row.choice.harness, model: row.choice.model ?? null, effort: row.choice.effort ?? null } };
+  const preset = options?.default && !options.default.error ? options.default : null;
+  if (preset?.harness) return { ...base, launch: { harness: preset.harness, model: preset.model ?? null, effort: preset.effort ?? null } };
+  if (preset?.command) return { ...base, command: preset.command };
+  return base;
+}
+
+/** True when the popover holds more than one row or an instruction: a pipeline, not a plain start. */
+function launchIsPipeline() {
+  const steps = commitActiveStep();
+  return steps.length > 1 || Boolean(steps[0]?.instruction?.trim());
+}
+
+/** The pipeline on one Goal that is not finished, or null. */
+function pipelineForGoal(goal) {
+  if (!goal) return null;
+  const record = (state.pipelines ?? []).find((item) => item.goal === goal.file);
+  return record && record.status !== "complete" ? record : null;
+}
+
+/** The step list above the picker: rows, add, remove; describe mode has none. */
+function launchStepList() {
+  if (state.launchTarget === DESCRIBE_LAUNCH_TARGET) return "";
+  const record = state.launch.record;
+  if (record) {
+    const glyph = { complete: "✓", running: "●", pending: "○", skipped: "–", stopped: "■" };
+    return `<ol class="launch-steps" aria-label="Pipeline steps">${record.steps.map((step, index) => `
+      <li class="launch-step ${step.status}${state.launch.active === index ? " selected" : ""}">
+        ${step.status === "pending"
+          ? `<button type="button" data-launch-step-select="${index}" title="Edit step ${step.index}"><b>${glyph[step.status]}</b><span>${step.index} · ${escapeHtml(step.label || launchStepLabel({ choice: step.launch, command: step.command }))}</span><em>${escapeHtml(clip(step.instruction, 60))}</em></button>`
+          : `<span class="launch-step-fixed"><b>${glyph[step.status] ?? "○"}</b><span>${step.index} · ${escapeHtml(step.label || "agent")}</span><em>${escapeHtml(clip(step.instruction, 60))}</em></span>`}
+      </li>`).join("")}</ol>`;
   }
-  const selection = launchSelection();
-  const what = selection ? (selection.label ? escapeHtml(selection.label) : `<code>${escapeHtml(selection.command)}</code>`) : "";
-  return `<p class="launch-line">Starts ${what}<button class="quiet-button launch-change" type="button" data-launch-change>Change</button></p>`;
+  const steps = commitActiveStep();
+  return `
+    <ol class="launch-steps" aria-label="Steps">${steps.map((row, index) => `
+      <li class="launch-step${state.launch.active === index ? " selected" : ""}">
+        <button type="button" data-launch-step-select="${index}" title="Edit step ${index + 1}"><b>${index + 1}</b><span>${escapeHtml(launchStepLabel(row))}</span><em>${row.instruction?.trim() ? escapeHtml(clip(row.instruction.trim(), 60)) : "<i>no instruction</i>"}</em></button>
+        ${steps.length > 1 ? `<button type="button" class="launch-step-remove" data-launch-step-remove="${index}" aria-label="Remove step ${index + 1}">×</button>` : ""}
+      </li>`).join("")}
+    </ol>
+    <button type="button" class="quiet-button launch-step-add" data-launch-step-add>+ Add step</button>`;
 }
 
 /**
@@ -2033,23 +1796,39 @@ function launchPickerBlock() {
         <span>${escapeHtml(model.label)}</span>${preset.harness === currentHarness?.id && preset.model === model.id ? `<span class="launch-default-tag">default</span>` : ""}
       </button>`).join("")
     : `<p class="launch-none">${currentHarness ? "No model choice. The command is complete." : "Pick a harness first."}</p>`;
+  const efforts = currentHarness?.efforts ?? [];
+  const effortButtons = efforts.map((effort) => `
+      <button type="button" class="launch-option${selection?.effort?.id === effort.id ? " selected" : ""}" data-launch-effort="${escapeHtml(effort.id)}">
+        <span>${escapeHtml(effort.label)}</span>${preset.harness === currentHarness?.id && preset.effort === effort.id ? `<span class="launch-default-tag">default</span>` : ""}
+      </button>`).join("");
   const command = selection?.command ?? "";
   const commandZone = state.launch.editing
     ? `<div class="launch-command"><input id="launch-command-input" type="text" spellcheck="false" value="${escapeHtml(state.launch.command || command)}"><button class="quiet-button" type="button" data-launch-reset>Reset</button></div>
        <p class="form-note">The edited command applies to this run only.</p>`
     : `<div class="launch-command"><code>${escapeHtml(command)}</code>${selection?.edited ? `<span class="launch-default-tag">edited</span>` : ""}<button class="quiet-button" type="button" data-launch-edit>Edit command</button></div>`;
-  const startLabel = selection ? (selection.label || "agent") : "agent";
+  const describing = state.launchTarget === DESCRIBE_LAUNCH_TARGET;
+  const record = state.launch.record;
+  const stepCount = describing ? 1 : record ? record.steps.length : commitActiveStep().length;
+  const startLabel = record
+    ? `Save step ${state.launch.active + 1}`
+    : stepCount > 1 ? `Start ${stepCount} steps` : `Start ${selection ? (selection.label || "agent") : "agent"}`;
   const canSave = Boolean(state.launch.choice && selection?.harness && !selection?.edited);
+  const stepZone = describing ? "" : `
+      <label class="launch-instruction"><span>Step ${state.launch.active + 1} does</span><textarea id="launch-instruction" rows="2" placeholder="${stepCount > 1 || record ? "What this agent does" : "What this agent does (optional for one step)"}">${escapeHtml(state.launch.instruction ?? "")}</textarea></label>
+      ${state.launch.active > 0 ? `<label class="launch-continue"><span>Session</span><select data-launch-continue><option value="">Fresh session</option>${Array.from({ length: state.launch.active }, (_, k) => `<option value="${k + 1}"${state.launch.continueFrom === k + 1 ? " selected" : ""}>Continue step ${k + 1}</option>`).join("")}</select></label>` : ""}`;
   return `
     <div class="launch-picker">
+      ${launchStepList()}
       ${(options.harnesses ?? []).length ? `
       <div class="launch-columns">
         <div class="launch-col"><p class="launch-col-title">Harness</p>${harnessButtons}</div>
         <div class="launch-col"><p class="launch-col-title">Model</p>${modelButtons}</div>
+        ${efforts.length ? `<div class="launch-col"><p class="launch-col-title">Effort</p>${effortButtons}</div>` : ""}
       </div>` : `<p class="launch-none">No harness registry. Add one at <code>~/.tangent/trees/harnesses.md</code>.</p>`}
       ${commandZone}
+      ${stepZone}
       <div class="action-row start-actions">
-        <button class="primary-button" type="button" data-launch-start>Start ${escapeHtml(startLabel)}</button>
+        <button class="primary-button" type="button" data-launch-start>${escapeHtml(startLabel)}</button>
         ${canSave ? `<button class="quiet-button" type="button" data-launch-save>Save as Area default</button>` : ""}
         <button class="quiet-button" type="button" data-launch-close>${state.launchTarget ? "Close" : "Back"}</button>
       </div>
@@ -2060,17 +1839,19 @@ function launchPickerBlock() {
 
 /** Saves the current picker selection as the Area's durable default. */
 async function saveLaunchDefault() {
-  const goal = state.launchTarget ? goalByFile(state.launchTarget) : currentGoal();
+  const area = state.launchTarget === DESCRIBE_LAUNCH_TARGET
+    ? describeLaunchArea()
+    : (state.launchTarget ? goalByFile(state.launchTarget)?.area : currentGoal()?.area);
   const selection = launchSelection();
-  if (!goal || !selection?.harness || selection.edited) return;
+  if (!area || !selection?.harness || selection.edited) return;
   try {
     const saved = await post("/api/launch/default", {
-      area: goal.area,
-      launch: { harness: selection.harness.id, ...(selection.model ? { model: selection.model.id } : {}) },
+      area,
+      launch: { harness: selection.harness.id, ...(selection.model ? { model: selection.model.id } : {}), ...(selection.effort ? { effort: selection.effort.id } : {}) },
     });
     state.launch.options = null;
-    launchOptionsFor(goal.area);
-    showToast(`${saved.label} is now the default for ${areaLabel(goal.area)}.`);
+    launchOptionsFor(area);
+    showToast(`${saved.label} is now the default for ${areaLabel(area)}.`);
     paint(true);
   } catch (error) {
     showToast(error.message);
@@ -2108,6 +1889,15 @@ async function saveHarnesses() {
   for (const harness of draft.harnesses) {
     if (!harness.id) harness.id = harnessSlug(harness.label || harness.command, harnessIds);
     if (!harness.modelSet) delete harness.modelSet;
+    if (!harness.effortSet) delete harness.effortSet;
+  }
+  draft.effortSets = draft.effortSets ?? {};
+  for (const name of Object.keys(draft.effortSets)) {
+    draft.effortSets[name] = (draft.effortSets[name] ?? []).filter((effort) => (effort.label ?? "").trim() || (effort.args ?? "").trim());
+    const effortIds = new Set(draft.effortSets[name].map((effort) => effort.id).filter(Boolean));
+    for (const effort of draft.effortSets[name]) {
+      if (!effort.id) effort.id = harnessSlug(effort.label || effort.args, effortIds);
+    }
   }
   for (const name of Object.keys(draft.modelSets ?? {})) {
     draft.modelSets[name] = (draft.modelSets[name] ?? []).filter((model) => (model.label ?? "").trim() || (model.args ?? "").trim());
@@ -2118,7 +1908,7 @@ async function saveHarnesses() {
   }
   try {
     await post("/api/harnesses", draft);
-    state.launch = { area: "", options: null, loading: false, choice: null, command: "", editing: false, open: false };
+    state.launch = { area: "", options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", continueFrom: null, steps: [], active: 0, record: null };
     state.view = state.harnessReturnView;
     state.harnessDraft = null;
     paint(true);
@@ -2137,6 +1927,7 @@ function renderHarnessEditor() {
   const draft = state.harnessDraft;
   if (!draft) return `<div class="loading">Loading harnesses…</div>`;
   const setNames = Object.keys(draft.modelSets ?? {});
+  const effortSetNames = Object.keys(draft.effortSets ?? {});
   const harnessRows = (draft.harnesses ?? []).map((harness, index) => `
     <div class="harness-row">
       <input data-harness-field="label" data-index="${index}" value="${escapeHtml(harness.label ?? "")}" placeholder="Display name" aria-label="Harness name">
@@ -2144,6 +1935,10 @@ function renderHarnessEditor() {
       <select data-harness-field="modelSet" data-index="${index}" aria-label="Model set">
         <option value="">No models</option>
         ${setNames.map((name) => `<option value="${escapeHtml(name)}"${harness.modelSet === name ? " selected" : ""}>${escapeHtml(name)} models</option>`).join("")}
+      </select>
+      <select data-harness-field="effortSet" data-index="${index}" aria-label="Effort set">
+        <option value="">No effort</option>
+        ${effortSetNames.map((name) => `<option value="${escapeHtml(name)}"${harness.effortSet === name ? " selected" : ""}>${escapeHtml(name)} efforts</option>`).join("")}
       </select>
       <button class="quiet-button" type="button" data-remove-harness="${index}" aria-label="Remove ${escapeHtml(harness.label || "harness")}">✕</button>
     </div>`).join("");
@@ -2160,10 +1955,23 @@ function renderHarnessEditor() {
       </div>
       <button class="quiet-button" type="button" data-add-model="${escapeHtml(name)}">Add model</button>
     </div>`).join("");
+  const effortBlocks = effortSetNames.map((name) => `
+    <div class="model-set">
+      <h3>${escapeHtml(name)} efforts</h3>
+      <div class="model-rows">
+        ${(draft.effortSets[name] ?? []).map((effort, index) => `
+        <div class="model-row">
+          <input data-effort-field="label" data-set="${escapeHtml(name)}" data-index="${index}" value="${escapeHtml(effort.label ?? "")}" placeholder="Display label (High)" aria-label="Effort label">
+          <input class="mono" data-effort-field="args" data-set="${escapeHtml(name)}" data-index="${index}" value="${escapeHtml(effort.args ?? "")}" placeholder="Exact arguments (-c model_reasoning_effort=high)" aria-label="Effort arguments">
+          <button class="quiet-button" type="button" data-remove-effort data-set="${escapeHtml(name)}" data-index="${index}" aria-label="Remove option">✕</button>
+        </div>`).join("")}
+      </div>
+      <button class="quiet-button" type="button" data-add-effort="${escapeHtml(name)}">Add effort</button>
+    </div>`).join("");
   return `
     <article class="summary-page harness-editor" data-harness-form>
       <p class="kicker">Machine-wide</p>
-      <h1 class="goal-title">Harnesses and models</h1>
+      <h1 class="goal-title">Harnesses, models, and efforts</h1>
       <p class="next-action-copy">A harness is one exact CLI command or alias. A model pairs the label you pick from with the exact arguments the command needs. Every Area launches from this one list.</p>
       <section class="summary-section">
         <h2>Harnesses</h2>
@@ -2179,58 +1987,20 @@ function renderHarnessEditor() {
           <button class="secondary-button" type="button" data-add-set>Add model set</button>
         </div>
       </section>
+      <section class="summary-section">
+        <h2>Effort sets</h2>
+        <p class="form-note">A third axis after the model: the exact arguments that set thinking effort. A harness with no effort set has no effort choice.</p>
+        ${effortBlocks || ""}
+        <div class="model-set-add">
+          <input id="new-effort-set-name" placeholder="New effort set name" aria-label="New effort set name">
+          <button class="secondary-button" type="button" data-add-effort-set>Add effort set</button>
+        </div>
+      </section>
       <div class="action-row">
         <button class="primary-button" type="button" data-save-harnesses>Save</button>
         <button class="quiet-button" type="button" data-cancel-harnesses>Cancel</button>
       </div>
       <p class="form-note">Saved to <code>~/.tangent/trees/harnesses.md</code> and applied to the next launch. Area defaults keep pointing at unchanged ids.</p>
-    </article>
-  `;
-}
-
-/** Renders the next actions for a Goal without a live Run. */
-function startBlock(goal) {
-  if (["done", "dropped", "deferred"].includes(goal.status)) {
-    return `
-      <section class="summary-section">
-        <div class="run-card">
-          <div class="run-status"><span class="status-mark" aria-hidden="true"></span><div><h2>This work is ${escapeHtml(goal.status)}.</h2><p>No agent is working on it.</p></div></div>
-          ${goal.status === "done" ? `<div class="action-row"><button class="secondary-button" type="button" data-reopen-goal>Reopen work</button></div>` : ""}
-        </div>
-      </section>
-    `;
-  }
-  const picker = state.launch.open && state.launch.area === goal.area;
-  return `
-    <section class="summary-section">
-      <h2>Continue with an agent</h2>
-      <p class="next-action-copy">Open the native agent to discuss the Goal, give feedback, or ask for work.</p>
-      ${picker ? launchPickerBlock() : `
-      <div class="action-row start-actions">
-        <button class="primary-button" type="button" data-open-goal-agent>Open agent</button>
-      </div>
-      ${launchQuietLine(goal)}`}
-      <button class="quiet-button complete-without-run" type="button" data-mark-complete>Already finished? Mark this work complete…</button>
-    </section>
-  `;
-}
-
-/** Renders optional Goal details without blocking the Work-to-agent route. */
-function renderOverview(goal, session) {
-  return `
-    <article class="summary-page">
-      ${areaPath(goal.area)}
-      <p class="goal-detail-label">Goal details</p>
-      <h1 class="goal-title">${escapeHtml(goal.title)}</h1>
-
-      ${currentBriefBlock(goal)}
-      ${livingDocumentsBlock(goal)}
-      ${reviewedBuildBlock(goal)}
-      ${session ? runCard(goal, session) : startBlock(goal)}
-      ${whyBlock(goal)}
-      ${subgoalsBlock(goal)}
-      ${storyBlock(goal)}
-      ${wordsBlock(goal)}
     </article>
   `;
 }
@@ -2270,6 +2040,7 @@ function renderDecision(goal, session) {
         <button class="decision-option" type="button" data-keep-working><strong>Keep working with ${escapeHtml(reference)}</strong><span>Return to the agent and type your next message.</span></button>
         <button class="decision-option" type="button" data-finish-run><strong>End this agent run</strong><span>The session ends. The work and its progress note stay open.</span></button>
         <button class="decision-option" type="button" data-mark-complete><strong>The complete work is done</strong><span>The work closes only after you approve a confirmation.</span></button>
+        <button class="decision-option" type="button" data-mark-wont-do><strong>This work won't be done</strong><span>Give a brief reason so that you can recall the decision later.</span></button>
       </div>
     </article>
   `;
@@ -2415,6 +2186,22 @@ function disposeTerminal() {
   terminalSession = "";
 }
 
+/**
+ * Renders the terminal on a WebGL canvas instead of xterm's DOM renderer.
+ * The DOM renderer left stale glyphs on screen when Safari partially
+ * repainted a scrolled terminal; a canvas repaints whole frames, so an
+ * earlier frame cannot survive. On WebGL context loss the addon is
+ * disposed and xterm falls back to the DOM renderer instead of going blank.
+ */
+function loadTerminalWebgl(term) {
+  if (!window.WebglAddon) return;
+  try {
+    const webgl = new WebglAddon.WebglAddon();
+    webgl.onContextLoss(() => webgl.dispose());
+    term.loadAddon(webgl);
+  } catch {}
+}
+
 /** Mounts one stable xterm instance for the selected tmux session. */
 function mountTerminal(host, sessionName) {
   if (terminal && terminalSession === sessionName && terminal.element && host.contains(terminal.element)) return;
@@ -2442,6 +2229,7 @@ function mountTerminal(host, sessionName) {
   terminalFit = new FitAddon.FitAddon();
   terminal.loadAddon(terminalFit);
   terminal.open(host);
+  loadTerminalWebgl(terminal);
   terminalSelection = window.AgentShellTerminalSelection?.preserveTerminalSelection({
     terminal,
     host,
@@ -2503,29 +2291,21 @@ function renderKey() {
   return JSON.stringify([
     state.view,
     state.query,
-    state.editingWords,
     state.caffeinate,
     state.document ? [state.document.file, state.document.hash, state.documentTrailIndex, state.documentTrail.length] : null,
     state.describeDraft,
     state.describeSessionName,
     state.areaSelection,
+    state.goalSelection,
     [...state.expandedAreas].sort(),
     state.areaEdit,
     state.programId,
     state.programDraft,
     state.programs.programs.map((item) => [item.id, item.paused, item.lastRunAt, item.nextRunAt, item.session?.state]),
-    state.reviewed.runs.map((item) => [item.id, item.goalPath, item.status, item.updatedAt, item.currentStepId, item.attention?.message]),
-    state.reviewed.run,
-    state.reviewed.latestOutput,
-    state.reviewed.program,
-    state.reviewed.draftBindings,
-    state.reviewed.draftSessions,
-    state.reviewed.area,
-    state.reviewed.decision,
-    state.reviewed.error,
     vaultRenderProjection(),
     goal ? [goal.file, goal.status, goal.mtime, goal.stateText, goal.currentBrief, goal.storyText, goal.why, goal.subgoalItems, goal.documents] : null,
-    [state.launch.area, state.launch.open, state.launch.editing, state.launch.command, state.launch.choice, state.launch.loading, Boolean(state.launch.options), state.launch.options?.default?.label ?? null, state.launch.options?.default?.command ?? null],
+    [state.launch.area, state.launch.open, state.launch.editing, state.launch.command, state.launch.choice, state.launch.loading, Boolean(state.launch.options), state.launch.options?.default?.label ?? null, state.launch.options?.default?.command ?? null, state.launch.instruction, state.launch.continueFrom, state.launch.active, state.launch.steps, state.launch.record?.updatedAt ?? null],
+    (state.pipelines ?? []).map((item) => [item.goal, item.status, item.updatedAt, item.steps.map((step) => [step.status, step.live, step.state, step.idleSince])]),
     [state.launchTarget, state.launchAnchor, Boolean(state.harnessDraft)],
     state.sessions.map((item) => [item.name, item.goal, item.kind, item.area, item.state, item.phase, item.command, item.created, item.workTitle, item.launchLabel]),
   ]);
@@ -2543,16 +2323,11 @@ function updateHeader() {
   const isDescribeAgent = state.view === "describe-agent";
   const isAreas = state.view === "areas";
   const isAreaEdit = state.view === "area-edit";
-  const isPrograms = state.view === "programs";
   const isProgramDetail = state.view === "program-detail";
   const isProgramCreate = state.view === "program-create";
   const isProgramSession = state.view === "program-session";
-  const isReviewedProgram = state.view === "reviewed-program";
-  const isReviewedSetup = state.view === "reviewed-setup";
-  const isReviewedRun = state.view === "reviewed-run";
-  const reviewedRun = currentReviewedRun();
   const program = currentProgram();
-  const isTopLevel = isWork || isAreas || isPrograms;
+  const isTopLevel = isWork || isAreas;
   backButton.classList.toggle("has-back", !isTopLevel);
   backButton.textContent = isTopLevel
     ? "Agent Shell"
@@ -2562,27 +2337,15 @@ function updateHeader() {
       ? state.describeReturnView === "document" && state.document ? "Document" : "Work"
     : isAreaEdit
       ? "Areas"
-    : isProgramDetail || isProgramCreate || isReviewedProgram
-      ? "Programs"
+    : isProgramDetail || isProgramCreate
+      ? "Areas"
     : isProgramSession
       ? "Program"
-    : isReviewedSetup
-      ? "Goal details"
-    : isReviewedRun
-      ? state.reviewed.returnView === "programs" ? "Programs" : state.reviewed.returnView === "overview" ? "Goal details" : "Work"
-    : isWork
-        ? "Agent Shell"
-        : state.view === "overview"
-          ? "Work"
-          : state.view === "agent"
-              ? state.agentReturnView === "document" && state.document ? "Document" : "Work"
-              : state.view === "document"
-                ? state.documentReturnView === "areas"
-                  ? "Areas"
-                  : state.documentReturnView === "overview"
-                    ? "Summary"
-                    : "Work"
-                : "Agent";
+    : state.view === "agent"
+        ? state.agentReturnView === "document" && state.document ? "Document" : "Work"
+        : state.view === "document"
+          ? state.documentReturnView === "areas" ? "Areas" : "Work"
+          : "Agent";
   barContext.textContent = isCreate
     ? "Define new work"
     : isDescribe
@@ -2593,50 +2356,39 @@ function updateHeader() {
           ? "Organize Areas"
         : isAreaEdit
           ? "Review the path before it changes"
-        : isPrograms
-          ? "Servers, commands, and scheduled agents"
         : (isProgramDetail || isProgramSession) && program
           ? `${areaLabel(program.area)} · ${program.label} · ${programState(program)}`
         : isProgramCreate
           ? "Add a program to one area"
-          : isReviewedProgram
-            ? "Reviewed build defaults"
-          : isReviewedSetup
-            ? "Choose agents and sessions"
-          : isReviewedRun && reviewedRun
-            ? `${areaLabel(reviewedRun.areaPath)} · Reviewed build · ${reviewedStatusLabel(reviewedRun.status)}`
           : state.view === "document" && state.document
             ? ""
             : goal
-              ? `${state.view === "overview" ? "Goal details · " : ""}${areaLabel(goal.area)} · ${goal.title}${goalSession ? ` · ${stateLabel(goal, goalSession)}` : ""}`
+              ? `${areaLabel(goal.area)} · ${goal.title}${goalSession ? ` · ${stateLabel(goal, goalSession)}` : ""}`
               : "";
 
   const topLevel = isWork
     ? "work"
-    : isAreas || isAreaEdit || (isCreate && state.createReturnView === "areas")
+    : isAreas || isAreaEdit || isProgramDetail || isProgramCreate || isProgramSession || (isCreate && state.createReturnView === "areas")
       ? "areas"
-      : isPrograms || isProgramDetail || isProgramCreate || isProgramSession || isReviewedProgram
-        ? "programs"
-        : isReviewedRun || isReviewedSetup ? "work" : "";
+      : "";
   const attentionCount = deskAttentionItems().length;
   workTab.textContent = attentionCount ? `Work · ${attentionCount}` : "Work";
   workTab.classList.toggle("active", topLevel === "work");
   workTab.classList.toggle("has-attention", attentionCount > 0);
   areasTab.classList.toggle("active", topLevel === "areas");
-  programsButton.classList.toggle("active", topLevel === "programs");
-  for (const [button, active] of [[workTab, topLevel === "work"], [areasTab, topLevel === "areas"], [programsButton, topLevel === "programs"]]) {
+  for (const [button, active] of [[workTab, topLevel === "work"], [areasTab, topLevel === "areas"]]) {
     if (active) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   }
 
-  secondaryAction.hidden = !session || ["work", "create", "describe", "areas", "area-edit", "programs", "program-detail", "program-create", "program-session", "reviewed-program", "reviewed-setup", "reviewed-run", "document"].includes(state.view);
+  secondaryAction.hidden = !session || ["work", "create", "describe", "areas", "area-edit", "program-detail", "program-create", "program-session", "document"].includes(state.view);
   secondaryAction.textContent = session?.state === "shell" ? "Close session…" : "Stop agent…";
 
   if (state.view === "agent" && session?.state === "waiting") {
     findButton.hidden = false;
     findButton.textContent = "Next step";
     findButton.dataset.action = "next-step";
-  } else if (["work", "create", "describe", "describe-agent", "areas", "area-edit", "programs", "program-detail", "program-create", "program-session", "reviewed-program", "reviewed-setup", "reviewed-run", "agent", "decision"].includes(state.view)) {
+  } else if (["work", "create", "describe", "describe-agent", "areas", "area-edit", "program-detail", "program-create", "program-session", "agent", "decision"].includes(state.view)) {
     findButton.hidden = true;
     findButton.textContent = "Find work";
     findButton.dataset.action = "find";
@@ -2645,8 +2397,19 @@ function updateHeader() {
     findButton.innerHTML = `Find work <kbd>⌘/</kbd>`;
     findButton.dataset.action = "find";
   }
-  const livePrograms = state.programs.liveCount + activeReviewedCount();
-  programsButton.textContent = livePrograms ? `Programs · ${livePrograms}` : "Programs";
+  updateLiveProgramCount();
+}
+
+/**
+ * Announces running Programs on the Areas tab. Programs sit inside the Area
+ * card now, so this count is the only view-independent sign that something
+ * still runs.
+ */
+function updateLiveProgramCount() {
+  const live = state.programs.liveCount;
+  areasTab.textContent = live ? `Areas · ${live}` : "Areas";
+  areasTab.title = live ? `${live} ${live === 1 ? "Program is" : "Programs are"} running` : "";
+  areasTab.classList.toggle("has-live", live > 0);
 }
 
 /** Refreshes live agent state without replacing the terminal. */
@@ -2656,8 +2419,7 @@ function updateLiveHeader() {
     if (!session) return;
     barContext.textContent = `${areaLabel(session.area)} · Defining work · ${describeWorkStateLabel(session)}`;
     findButton.hidden = true;
-    const livePrograms = state.programs.liveCount + activeReviewedCount();
-    programsButton.textContent = livePrograms ? `Programs · ${livePrograms}` : "Programs";
+    updateLiveProgramCount();
     return;
   }
   if (state.view !== "agent") return;
@@ -2674,18 +2436,17 @@ function updateLiveHeader() {
   } else {
     findButton.hidden = true;
   }
-  const livePrograms = state.programs.liveCount + activeReviewedCount();
-  programsButton.textContent = livePrograms ? `Programs · ${livePrograms}` : "Programs";
+  updateLiveProgramCount();
 }
 
 /** Selects and renders the current full-screen view. */
 function renderScreen() {
   const goal = currentGoal();
-  const goalFreeViews = ["work", "create", "describe", "describe-agent", "areas", "area-edit", "programs", "program-detail", "program-create", "program-session", "reviewed-program", "reviewed-run", "document", "harnesses"];
+  const goalFreeViews = ["work", "create", "describe", "describe-agent", "areas", "area-edit", "program-detail", "program-create", "program-session", "document", "harnesses"];
   if (!goal && !goalFreeViews.includes(state.view)) state.view = "work";
   const session = sessionForGoal(goal);
   const describeSession = describeWorkSession();
-  if (["program-detail", "program-session"].includes(state.view) && !currentProgram()) state.view = "programs";
+  if (["program-detail", "program-session"].includes(state.view) && !currentProgram()) state.view = "areas";
   if (state.view === "program-session" && !currentProgram()?.session) state.view = "program-detail";
   if (state.view === "agent" && !session) state.view = state.agentReturnView === "document" && state.document ? "document" : "work";
   if (state.view === "describe-agent" && !describeSession) {
@@ -2705,18 +2466,17 @@ function renderScreen() {
   else if (state.view === "describe-agent") screen.innerHTML = renderDescribeWorkAgent(describeSession);
   else if (state.view === "areas") screen.innerHTML = renderAreas();
   else if (state.view === "area-edit") screen.innerHTML = renderAreaEditor();
-  else if (state.view === "programs") screen.innerHTML = renderPrograms();
   else if (state.view === "program-detail") screen.innerHTML = renderProgramDetail(currentProgram());
   else if (state.view === "program-create") screen.innerHTML = renderProgramCreate();
   else if (state.view === "program-session") screen.innerHTML = renderProgramSession(currentProgram());
-  else if (state.view === "reviewed-program") screen.innerHTML = renderReviewedEditor("program");
-  else if (state.view === "reviewed-setup") screen.innerHTML = renderReviewedEditor("setup");
-  else if (state.view === "reviewed-run") screen.innerHTML = renderReviewedRun();
   else if (state.view === "harnesses") screen.innerHTML = renderHarnessEditor();
   else if (state.view === "agent") screen.innerHTML = renderAgent(goal, session);
   else if (state.view === "decision" && session) screen.innerHTML = renderDecision(goal, session);
   else if (state.view === "document") screen.innerHTML = renderDocument();
-  else screen.innerHTML = renderOverview(goal, session);
+  else {
+    state.view = "work";
+    screen.innerHTML = renderWork();
+  }
 
   updateHeader();
   if (state.view === "document") bindDocumentReader();
@@ -2726,6 +2486,8 @@ function renderScreen() {
 
 /** Renders changed state while preserving active form inputs. */
 function paint(force = false) {
+  // Goal selection is a work-view gesture: leaving the desk clears it.
+  if (state.view !== "work" && state.goalSelection.length) state.goalSelection = [];
   if (state.loading) {
     screen.innerHTML = `<div class="loading">Loading Agent Shell…</div>`;
     return;
@@ -2736,7 +2498,7 @@ function paint(force = false) {
   }
   const key = renderKey();
   const active = document.activeElement;
-  if (!force && active && (["work-search", "my-understanding", "launch-command-input"].includes(active.id) || active.closest?.("[data-create-form], [data-describe-work-form], [data-area-form], [data-program-form], [data-reviewed-decision], [data-reviewed-pending-form], .reviewed-editor-page, [data-harness-form]"))) {
+  if (!force && active && (["work-search", "launch-command-input"].includes(active.id) || active.closest?.("[data-create-form], [data-describe-work-form], [data-area-form], [data-program-form], [data-harness-form]"))) {
     updateHeader();
     return;
   }
@@ -2751,13 +2513,10 @@ function paint(force = false) {
 /** Refreshes the vault, program, and session projections from the server. */
 async function refresh({ initial = false } = {}) {
   try {
-    const reviewedList = api("/api/reviewed-build/runs").catch((error) => ({ runs: [], error: error.message }));
-    const reviewedDetail = state.reviewed.runId
-      ? api(`/api/reviewed-build/runs/${encodeURIComponent(state.reviewed.runId)}`).catch(() => null)
-      : Promise.resolve(null);
-    const [vault, sessionPayload, programs, reviewed, detail] = await Promise.all([api("/api/vault"), api("/api/sessions"), api("/api/programs"), reviewedList, reviewedDetail]);
+    const [vault, sessionPayload, programs] = await Promise.all([api("/api/vault"), api("/api/sessions"), api("/api/programs")]);
     state.vault = vault;
     state.sessions = sessionPayload.sessions || [];
+    state.pipelines = sessionPayload.pipelines || [];
     state.programs = {
       programs: programs.programs || [],
       errors: programs.errors || [],
@@ -2766,12 +2525,6 @@ async function refresh({ initial = false } = {}) {
       timezone: programs.timezone || "",
       scheduler: programs.scheduler || { installed: false, intervalMinutes: 30 },
     };
-    state.reviewed.runs = reviewed.runs || [];
-    state.reviewed.error = reviewed.error || "";
-    if (detail?.run) {
-      state.reviewed.run = detail.run;
-      state.reviewed.latestOutput = detail.latestOutput || "";
-    }
     state.caffeinate = Boolean(sessionPayload.caffeinate);
     if (sessionPayload.sourceChanged) state.updateAvailable = true;
     state.loading = false;
@@ -2780,7 +2533,7 @@ async function refresh({ initial = false } = {}) {
     noteServerBoot(sessionPayload.boot || "");
     if (state.view === "program-session" && !currentProgram()?.session) {
       disposeTerminal();
-      state.view = currentProgram() ? "program-detail" : "programs";
+      state.view = currentProgram() ? "program-detail" : "areas";
       state.renderedKey = "";
     }
     if (initial && state.currentFile && !goalByFile(state.currentFile)) {
@@ -2880,19 +2633,27 @@ function confirmRebuild() {
  * actions. Selection never spawns anything.
  */
 function selectGoal(file) {
-  state.currentFile = file;
-  state.view = "overview";
+  const goal = rememberGoal(file);
+  state.view = "work";
+  state.query = "";
   state.document = null;
   state.documentTrail = [];
   state.documentTrailIndex = -1;
-  state.editingWords = false;
-  localStorage.setItem("agent-shell.current-goal", file);
-  const goal = goalByFile(file);
-  if (goal?.area) localStorage.setItem("agent-shell.last-area", goal.area);
+  if (goal && state.workFilter !== "all" && !filteredGoalTrees(goalTrees().filter((tree) => tree.goals.some((item) => item.file === file))).length) {
+    state.workFilter = "all";
+    localStorage.setItem("agent-shell.work-filter", state.workFilter);
+  }
   paint(true);
+  window.setTimeout(() => {
+    const row = document.querySelector(`[data-goal-anchor='${String(file).replaceAll("\\", "\\\\").replaceAll("'", "\\'")}']`);
+    if (!row) return;
+    try { row.scrollIntoView({ block: "center" }); } catch {}
+    row.classList.add("flash");
+    window.setTimeout(() => row.classList.remove("flash"), 1600);
+  }, 0);
 }
 
-/** Stores one Goal as the active Run context without opening Goal details. */
+/** Stores one Goal as the active Run context without changing the view. */
 function rememberGoal(file) {
   state.currentFile = file;
   localStorage.setItem("agent-shell.current-goal", file);
@@ -2905,10 +2666,10 @@ function rememberGoal(file) {
 async function openGoalRun(file) {
   const goal = rememberGoal(file);
   if (!goal) return;
+  state.agentSessionName = null;
   state.document = null;
   state.documentTrail = [];
   state.documentTrailIndex = -1;
-  state.editingWords = false;
   const session = sessionForGoal(goal);
   if (!session) return openGoalAgent({ returnView: "work" });
   state.agentReturnView = "work";
@@ -2923,7 +2684,6 @@ function showWork({ focus = false } = {}) {
   state.document = null;
   state.documentTrail = [];
   state.documentTrailIndex = -1;
-  state.editingWords = false;
   paint(true);
   if (focus) window.setTimeout(() => document.querySelector("#work-search")?.focus(), 0);
 }
@@ -2957,11 +2717,10 @@ function beginAreaMove() {
   paint(true);
 }
 
-/** Opens the area-grouped program list. */
-function showPrograms() {
-  state.view = "programs";
-  state.programId = "";
-  paint(true);
+/** Returns to the Areas surface with one Area selected. */
+function showAreasAt(path) {
+  if (path && areas().some((area) => area.path === path)) state.areaSelection = path;
+  showAreas();
 }
 
 /** Opens one program without changing its runtime. */
@@ -2971,9 +2730,9 @@ function selectProgram(id) {
   paint(true);
 }
 
-/** Opens the new-program form with the current area as its default. */
+/** Opens the new-program form with the selected area as its default. */
 function showProgramCreate() {
-  const area = preferredArea();
+  const area = selectedArea()?.path || preferredArea();
   state.programDraft = { type: "process", area, name: "", command: "", time: "07:30", cwd: programAreaDirectory(area), model: "sonnet", prompt: "" };
   state.view = "program-create";
   paint(true);
@@ -2990,8 +2749,8 @@ function openProgramSession() {
 }
 
 /** Executes one already-confirmed program control. */
-async function performProgramAction(action) {
-  const program = currentProgram();
+async function performProgramAction(action, id) {
+  const program = programById(id);
   if (!program) return;
   await post("/api/programs/control", { id: program.id, action });
   if (["stop", "close"].includes(action) && state.view === "program-session") state.view = "program-detail";
@@ -3002,11 +2761,11 @@ async function performProgramAction(action) {
 }
 
 /** Adds confirmation where a program action starts or destroys work. */
-function controlProgram(action) {
-  const program = currentProgram();
+function controlProgram(action, id = state.programId) {
+  const program = programById(id);
   if (!program) return;
   if (["start", "pause", "resume"].includes(action)) {
-    performProgramAction(action).catch((error) => showToast(error.message));
+    performProgramAction(action, id).catch((error) => showToast(error.message));
     return;
   }
   const descriptions = {
@@ -3024,7 +2783,7 @@ function controlProgram(action) {
     confirmLabel: action === "run" ? "Run now" : action === "restart" ? "Restart" : action === "close" ? "Remove log" : "Stop",
     danger: ["stop", "close"].includes(action),
     /** Applies the confirmed Program action. */
-    onConfirm: () => performProgramAction(action),
+    onConfirm: () => performProgramAction(action, id),
   });
 }
 
@@ -3053,16 +2812,6 @@ async function confirmAreaMove() {
   }
 }
 
-/** Returns to the selected goal summary. */
-function showOverview() {
-  state.view = "overview";
-  state.document = null;
-  state.documentTrail = [];
-  state.documentTrailIndex = -1;
-  state.editingWords = false;
-  paint(true);
-}
-
 /** Opens the fast new-goal form. */
 function showCreate(area = "", returnView = state.view) {
   state.createReturnView = ["areas", "describe"].includes(returnView) ? returnView : "work";
@@ -3071,9 +2820,19 @@ function showCreate(area = "", returnView = state.view) {
   state.document = null;
   state.documentTrail = [];
   state.documentTrailIndex = -1;
-  state.editingWords = false;
   paint(true);
   window.setTimeout(() => document.querySelector("#new-goal-title")?.focus(), 0);
+}
+
+/**
+ * Moves from the describe form to manual Goal creation without losing the
+ * typed description: the switch re-renders the page, so the textarea value
+ * must land in the stored draft first. Cancel from manual create returns to
+ * the describe form with the text intact.
+ */
+function switchDescribeToManualCreate() {
+  syncDescribeDraft();
+  showCreate(describeLaunchArea(), "describe");
 }
 
 /** Returns from manual Goal creation to the surface that opened it. */
@@ -3170,7 +2929,7 @@ async function openDocument(file, { trail = "push", trailIndex = -1, heading = "
   rememberDocumentPosition();
   if (enteringReader) {
     if (state.view !== "document") {
-      state.documentReturnView = ["overview", "areas"].includes(state.view) ? state.view : "work";
+      state.documentReturnView = state.view === "areas" ? "areas" : "work";
       state.documentTrail = [];
       state.documentTrailIndex = -1;
     }
@@ -3283,13 +3042,97 @@ async function saveVisibleIdea() {
 
 /** Opens the explicit next-step decision page. */
 function showDecision(returnView = state.view) {
-  state.decisionReturnView = returnView === "overview" ? "overview" : "agent";
+  state.decisionReturnView = "agent";
   state.view = "decision";
   state.renderedKey = "";
   paint(true);
 }
 
 /** Opens a native agent with the complete Goal context. */
+/** The checked Goal files that belong to one Area, in checked order. */
+function selectionForArea(areaPath) {
+  return state.goalSelection.filter((file) => goalByFile(file)?.area === areaPath);
+}
+
+/**
+ * Starts one agent that owns every Goal checked in one Area panel. The first
+ * checked Goal is the primary: it names the session and leads the prompt; the
+ * rest ride along as "Also in this session" and flip to active on the same
+ * session binding.
+ */
+/**
+ * Starts the popover's step list as one pipeline on the target Goal (and the
+ * other checked Goals of its Area, which ride along in every step). One step
+ * without an instruction never comes here; that is a plain start.
+ */
+async function startPipeline(targetFile) {
+  const goal = goalByFile(targetFile);
+  if (!goal) return;
+  const steps = commitActiveStep().map(launchStepRequest);
+  const selection = selectionForArea(goal.area);
+  const extraFiles = selection[0] === targetFile ? selection.slice(1) : [];
+  try {
+    const result = await post("/api/goals/start", { file: targetFile, steps, extraFiles });
+    state.launch.open = false;
+    state.launchTarget = "";
+    state.launchAnchor = null;
+    state.launch.steps = [];
+    state.launch.active = 0;
+    state.launch.instruction = "";
+    state.launch.continueFrom = null;
+    state.goalSelection = [];
+    await refresh();
+    rememberGoal(targetFile);
+    state.agentReturnView = "work";
+    state.view = "agent";
+    state.renderedKey = "";
+    paint(true);
+    showToast(steps.length > 1 ? `Started ${steps.length} steps; step 1 is ${result.pipeline?.steps?.[0]?.label || "running"}.` : "The agent started.");
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+/** Saves the active pending step of a running pipeline. */
+async function savePipelineStep(targetFile) {
+  const record = state.launch.record;
+  if (!record) return;
+  const row = launchStepDraft();
+  const step = record.steps[state.launch.active];
+  if (!step || step.status !== "pending") return showToast("Only pending steps change.");
+  const request = launchStepRequest(row);
+  try {
+    await post("/api/pipelines/edit", { goal: targetFile, step: step.index, instruction: request.instruction, ...(request.command ? { command: request.command } : request.launch ? { choice: request.launch } : {}), continueFrom: request.continueFrom });
+    await refresh();
+    state.launch.record = pipelineForGoal(goalByFile(targetFile));
+    paint(true);
+    showToast(`Step ${step.index} saved.`);
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+/** Starts one agent that owns every checked Goal in one Area. */
+async function startSelectedGoals(areaPath) {
+  const files = selectionForArea(areaPath);
+  const [primary, ...extraFiles] = files;
+  if (!primary) return;
+  try {
+    rememberGoal(primary);
+    await post("/api/goals/agent", { file: primary, launch: true, extraFiles, ...launchRequestFields() });
+    state.goalSelection = state.goalSelection.filter((file) => !files.includes(file));
+    await refresh();
+    state.agentReturnView = "work";
+    state.view = "agent";
+    state.renderedKey = "";
+    paint(true);
+    showToast(files.length === 1 ? "The agent opened with this Goal." : `The agent opened with ${files.length} Goals.`);
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+/** Opens the agent for the selected Goal and remembers the return view. */
 async function openGoalAgent({ returnView = "work" } = {}) {
   const goal = currentGoal();
   if (!goal) return;
@@ -3353,22 +3196,28 @@ async function launchOpenSession() {
 }
 
 /** Opens one confirmation modal with an explicit effect. */
-function openModal({ kicker = "", title, copy, confirmLabel, danger = false, onConfirm }) {
+function openModal({ kicker = "", title, copy, field = null, confirmLabel, danger = false, onConfirm }) {
   modalKicker.textContent = kicker;
   modalTitle.textContent = title;
   modalCopy.textContent = copy;
+  modalField.hidden = !field;
+  modalField.innerHTML = field
+    ? `<label><span>${escapeHtml(field.label)}</span><textarea data-modal-input required placeholder="${escapeHtml(field.placeholder)}"></textarea></label>`
+    : "";
   modalActions.innerHTML = `
     <button class="quiet-button" type="button" data-modal-cancel>Cancel</button>
     <button class="${danger ? "danger-button" : "primary-button"}" type="button" data-modal-confirm>${escapeHtml(confirmLabel)}</button>
   `;
   modalConfirm = onConfirm;
   modalLayer.hidden = false;
-  window.setTimeout(() => modalActions.querySelector("[data-modal-confirm]")?.focus(), 0);
+  window.setTimeout(() => (modalField.querySelector("[data-modal-input]") || modalActions.querySelector("[data-modal-confirm]"))?.focus(), 0);
 }
 
 /** Closes the confirmation modal without acting. */
 function closeModal() {
   modalLayer.hidden = true;
+  modalField.hidden = true;
+  modalField.innerHTML = "";
   modalConfirm = null;
 }
 
@@ -3428,6 +3277,38 @@ function confirmComplete() {
   });
 }
 
+/** Requires a recallable reason before the selected goal closes as dropped. */
+function confirmWontDo() {
+  const goal = currentGoal();
+  if (!goal) return;
+  openModal({
+    kicker: "Won't do",
+    title: `Mark “${goal.title}” won't do?`,
+    copy: "This closes the work and ends its live session. The goal file stays available for later recall.",
+    field: {
+      label: "Why won't this be done?",
+      placeholder: "Give a brief reason",
+    },
+    confirmLabel: "Mark won't do",
+    danger: true,
+    /** Drops the goal only after a brief reason is present. */
+    onConfirm: async () => {
+      const reason = modalField.querySelector("[data-modal-input]")?.value.trim() || "";
+      if (!reason) {
+        showToast("Give a brief reason before you mark this work won't do.");
+        modalField.querySelector("[data-modal-input]")?.focus();
+        return false;
+      }
+      await post("/api/goals/edit", { file: goal.file, status: "dropped", reason });
+      state.view = "work";
+      await refresh();
+      paint(true);
+      showToast("The work is marked won't do.");
+      return true;
+    },
+  });
+}
+
 /** Toggles the server-owned macOS sleep assertion. */
 async function toggleAwake() {
   try {
@@ -3442,6 +3323,11 @@ async function toggleAwake() {
 
 document.addEventListener("click", async (event) => {
   const target = event.target;
+  // Clicks can trigger re-renders while the describe form is visible; the
+  // typed description survives them only through the stored draft.
+  if (state.view === "describe") syncDescribeDraft();
+  if (state.launchTarget) syncLaunchDraft();
+  if (!shellMenu.hidden && !target.closest?.("#shell-menu") && !backButton.contains(target)) toggleShellMenu(false);
   // A click outside the agent chooser closes it; the clicked control still runs.
   if (state.launchTarget && !target.closest?.("[data-launch-popover]") && !target.closest?.("[data-launch-for]")) {
     state.launchTarget = "";
@@ -3455,52 +3341,28 @@ document.addEventListener("click", async (event) => {
     return paint(true);
   }
   if (target.closest("[data-enable-dock-badge]")) return enableDockBadge();
-  const reviewedRun = target.closest("[data-open-reviewed-run]");
-  if (reviewedRun) {
-    const returnView = state.view === "programs" ? "programs" : state.view === "overview" ? "overview" : "work";
-    return openReviewedRun(reviewedRun.dataset.openReviewedRun, returnView);
-  }
-  const startReviewed = target.closest("[data-start-reviewed], [data-start-reviewed-again]");
-  if (startReviewed) {
-    const file = startReviewed.dataset.startReviewed || startReviewed.dataset.startReviewedAgain;
-    return startReviewedRun(rememberGoal(file));
-  }
-  const configureReviewed = target.closest("[data-configure-reviewed]");
-  if (configureReviewed) return openReviewedSetup(configureReviewed.dataset.configureReviewed);
-  if (target.closest("[data-open-reviewed-program]")) return openReviewedProgram();
-  if (target.closest("[data-launch-reviewed-custom]")) return startReviewedRun(currentGoal(), true);
-  if (target.closest("[data-launch-reviewed-default]")) return startReviewedRun(currentGoal());
-  if (target.closest("[data-save-reviewed-defaults]")) {
-    if (!state.reviewed.area) return showToast("Choose an Area for these defaults.");
-    try {
-      await api(`/api/reviewed-build/defaults/${encodeURIComponent(state.reviewed.area)}`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ bindings: state.reviewed.draftBindings, sessions: state.reviewed.draftSessions }),
-      });
-      await loadReviewedProgram(state.reviewed.area);
-      paint(true);
-      showToast("Reviewed build defaults saved for this Area.");
-    } catch (error) {
-      showToast(error.message);
-    }
-    return;
-  }
-  const reviewedControl = target.closest("[data-reviewed-control]");
-  if (reviewedControl) return controlReviewedRun(reviewedControl.dataset.reviewedControl);
   const goalRun = target.closest("[data-open-goal-run]");
   if (goalRun) return openGoalRun(goalRun.dataset.openGoalRun);
-  const goalDetails = target.closest("[data-view-goal]");
-  if (goalDetails) return selectGoal(goalDetails.dataset.viewGoal);
+  const revealGoal = target.closest("[data-reveal-goal]");
+  if (revealGoal) return selectGoal(revealGoal.dataset.revealGoal);
+  const stopGoal = target.closest("[data-stop-goal]");
+  if (stopGoal) {
+    rememberGoal(stopGoal.dataset.stopGoal);
+    return confirmStop();
+  }
   const completeGoal = target.closest("[data-complete-goal]");
   if (completeGoal) {
     rememberGoal(completeGoal.dataset.completeGoal);
     return confirmComplete();
   }
+  const wontDoGoal = target.closest("[data-wont-do-goal]");
+  if (wontDoGoal) {
+    rememberGoal(wontDoGoal.dataset.wontDoGoal);
+    return confirmWontDo();
+  }
   const select = target.closest("[data-select-goal]");
   if (select) return selectGoal(select.dataset.selectGoal);
   if (target.closest("[data-show-areas]")) return showAreas();
-  if (target.closest("[data-show-programs]")) return showPrograms();
   const areaToggle = target.closest("[data-toggle-area]");
   if (areaToggle) {
     const area = areaToggle.dataset.toggleArea;
@@ -3530,20 +3392,34 @@ document.addEventListener("click", async (event) => {
   const program = target.closest("[data-select-program]");
   if (program) return selectProgram(program.dataset.selectProgram);
   if (target.closest("[data-new-program]")) return showProgramCreate();
-  if (target.closest("[data-cancel-program-create]")) return showPrograms();
+  if (target.closest("[data-cancel-program-create]")) return showAreasAt(state.programDraft.area);
   if (target.closest("[data-open-program-session]")) return openProgramSession();
   if (target.closest("[data-back-program]")) {
     state.view = "program-detail";
     return paint(true);
   }
   const programAction = target.closest("[data-program-action]");
-  if (programAction) return controlProgram(programAction.dataset.programAction);
+  if (programAction) return controlProgram(programAction.dataset.programAction, programAction.dataset.programId || state.programId);
   const workDefinition = target.closest("[data-select-work-definition]");
   if (workDefinition) return openDescribeSession(workDefinition.dataset.selectWorkDefinition);
   const describeArea = target.closest("[data-describe-area]");
   if (describeArea) return showDescribe({ area: describeArea.dataset.describeArea });
   if (target.closest("[data-describe-work]")) return showDescribe();
-  if (target.closest("[data-create-manually]")) return showCreate(document.querySelector("#describe-area")?.value || preferredArea(), "describe");
+  const checkGoal = target.closest("[data-check-goal]");
+  if (checkGoal) {
+    const file = checkGoal.dataset.checkGoal;
+    state.goalSelection = state.goalSelection.includes(file)
+      ? state.goalSelection.filter((item) => item !== file)
+      : [...state.goalSelection, file];
+    return paint(true);
+  }
+  const startSelected = target.closest("[data-start-selected]");
+  if (startSelected) return startSelectedGoals(startSelected.dataset.startSelected);
+  if (target.closest("[data-clear-selection]")) {
+    state.goalSelection = [];
+    return paint(true);
+  }
+  if (target.closest("[data-create-manually]")) return switchDescribeToManualCreate();
   if (target.closest("[data-open-vision]")) return window.location.assign("/vision");
   if (target.closest("[data-cancel-create]")) return cancelCreate();
   if (target.closest("[data-cancel-describe]")) return cancelDescribe();
@@ -3566,24 +3442,65 @@ document.addEventListener("click", async (event) => {
   const documentHistory = target.closest("[data-document-history]");
   if (documentHistory) return navigateDocumentHistory(documentHistory.dataset.documentHistory);
   if (target.closest("[data-open-reader-agent]")) return openReaderAgent();
-  if (target.closest("[data-back-overview]")) return showOverview();
   if (target.closest("[data-open-goal-agent]")) return openGoalAgent({ returnView: "work" });
   if (target.closest("[data-launch-change]")) {
     state.launch.open = true;
     return paint(true);
   }
+  const openSession = target.closest("[data-open-session]");
+  if (openSession) {
+    state.agentSessionName = openSession.dataset.openSession;
+    const goal = rememberGoal(openSession.dataset.openSessionGoal);
+    if (!goal) return;
+    state.document = null;
+    state.agentReturnView = "work";
+    state.view = "agent";
+    state.renderedKey = "";
+    return paint(true);
+  }
+  const pipelineControl = target.closest("[data-pipeline-control]");
+  if (pipelineControl) {
+    const { pipelineControl: action, pipelineGoal: goalFile, pipelineStep: step } = pipelineControl.dataset;
+    try {
+      const result = await post("/api/pipelines/control", { goal: goalFile, action, step: Number(step) });
+      await refresh();
+      paint(true);
+      showToast(result.next ? `Step ${result.next.index} started.` : action === "skip" ? `Step ${step} skipped; the pipeline is complete.` : `Step ${step} ${action}ed.`);
+    } catch (error) {
+      showToast(error.message);
+    }
+    return;
+  }
   const launchFor = target.closest("[data-launch-for]");
   if (launchFor) {
-    const goal = goalByFile(launchFor.dataset.launchFor);
-    if (!goal) return;
-    if (state.launchTarget === goal.file) {
+    const file = launchFor.dataset.launchFor;
+    const describing = file === DESCRIBE_LAUNCH_TARGET;
+    const goal = describing ? null : goalByFile(file);
+    if (!describing && !goal) return;
+    if (state.launchTarget === file) {
       state.launchTarget = "";
       state.launchAnchor = null;
       return paint(true);
     }
-    launchOptionsFor(goal.area);
+    launchOptionsFor(describing ? describeLaunchArea() : goal.area);
+    const record = describing ? null : pipelineForGoal(goal);
+    if (record) {
+      state.launch.record = record;
+      const firstPending = record.steps.findIndex((step) => step.status === "pending");
+      state.launch.steps = record.steps.map((step) => ({ choice: step.launch, command: step.launch ? "" : step.command, instruction: step.instruction, continueFrom: step.continueFrom }));
+      state.launch.active = -1;
+      activateLaunchStep(firstPending >= 0 ? firstPending : 0);
+    } else if (state.launch.record || (state.launchTarget && state.launchTarget !== file)) {
+      state.launch.record = null;
+      state.launch.steps = [];
+      state.launch.active = 0;
+      state.launch.choice = null;
+      state.launch.command = "";
+      state.launch.instruction = "";
+      state.launch.continueFrom = null;
+    }
     const rect = launchFor.getBoundingClientRect();
-    state.launchTarget = goal.file;
+    state.launchTarget = file;
     state.launchAnchor = { top: Math.round(rect.bottom + 8), right: Math.round(rect.right) };
     state.launch.open = false;
     return paint(true);
@@ -3598,7 +3515,7 @@ document.addEventListener("click", async (event) => {
   const launchHarness = target.closest("[data-launch-harness]");
   if (launchHarness) {
     const harness = (state.launch.options?.harnesses ?? []).find((entry) => entry.id === launchHarness.dataset.launchHarness);
-    if (harness) state.launch.choice = { harness: harness.id, model: harness.models?.[0]?.id ?? null };
+    if (harness) state.launch.choice = { harness: harness.id, model: harness.models?.[0]?.id ?? null, effort: null };
     state.launch.command = "";
     state.launch.editing = false;
     return paint(true);
@@ -3606,10 +3523,33 @@ document.addEventListener("click", async (event) => {
   const launchModel = target.closest("[data-launch-model]");
   if (launchModel) {
     const selection = launchSelection();
-    if (selection?.harness) state.launch.choice = { harness: selection.harness.id, model: launchModel.dataset.launchModel };
+    if (selection?.harness) state.launch.choice = { harness: selection.harness.id, model: launchModel.dataset.launchModel, effort: selection.effort?.id ?? null };
     state.launch.command = "";
     state.launch.editing = false;
     return paint(true);
+  }
+  const launchEffort = target.closest("[data-launch-effort]");
+  if (launchEffort) {
+    const selection = launchSelection();
+    if (selection?.harness) state.launch.choice = { harness: selection.harness.id, model: selection.model?.id ?? null, effort: selection.effort?.id === launchEffort.dataset.launchEffort ? null : launchEffort.dataset.launchEffort };
+    state.launch.command = "";
+    state.launch.editing = false;
+    return paint(true);
+  }
+  const launchStepSelect = target.closest("[data-launch-step-select]");
+  if (launchStepSelect) {
+    activateLaunchStep(Number(launchStepSelect.dataset.launchStepSelect));
+    return paint(true);
+  }
+  const launchStepRemove = target.closest("[data-launch-step-remove]");
+  if (launchStepRemove) {
+    removeLaunchStep(Number(launchStepRemove.dataset.launchStepRemove));
+    return paint(true);
+  }
+  if (target.closest("[data-launch-step-add]")) {
+    addLaunchStep();
+    paint(true);
+    return window.setTimeout(() => document.querySelector("#launch-instruction")?.focus(), 0);
   }
   if (target.closest("[data-launch-edit]")) {
     const selection = launchSelection();
@@ -3624,11 +3564,16 @@ document.addEventListener("click", async (event) => {
     return paint(true);
   }
   if (target.closest("[data-launch-start]")) {
-    state.launch.command = document.querySelector("#launch-command-input")?.value ?? state.launch.command;
+    syncLaunchDraft();
     const targetFile = state.launchTarget;
+    if (targetFile !== DESCRIBE_LAUNCH_TARGET && state.launch.record) return savePipelineStep(targetFile);
+    if (targetFile !== DESCRIBE_LAUNCH_TARGET && launchIsPipeline()) return startPipeline(targetFile);
     state.launch.open = false;
     state.launchTarget = "";
     state.launchAnchor = null;
+    if (targetFile === DESCRIBE_LAUNCH_TARGET) return document.querySelector("[data-describe-work-form]")?.requestSubmit();
+    const targetGoal = targetFile ? goalByFile(targetFile) : null;
+    if (targetGoal && selectionForArea(targetGoal.area)[0] === targetFile) return startSelectedGoals(targetGoal.area);
     if (targetFile) rememberGoal(targetFile);
     return openGoalAgent({ returnView: "work" });
   }
@@ -3660,6 +3605,23 @@ document.addEventListener("click", async (event) => {
     state.harnessDraft.modelSets = { ...(state.harnessDraft.modelSets ?? {}), [name]: [] };
     return paint(true);
   }
+  const addEffort = target.closest("[data-add-effort]");
+  if (addEffort && state.harnessDraft) {
+    state.harnessDraft.effortSets[addEffort.dataset.addEffort].push({ id: "", label: "", args: "" });
+    return paint(true);
+  }
+  const removeEffort = target.closest("[data-remove-effort]");
+  if (removeEffort && state.harnessDraft) {
+    state.harnessDraft.effortSets[removeEffort.dataset.set].splice(Number(removeEffort.dataset.index), 1);
+    return paint(true);
+  }
+  if (target.closest("[data-add-effort-set]") && state.harnessDraft) {
+    const name = document.querySelector("#new-effort-set-name")?.value.trim();
+    if (!name) return showToast("Name the effort set first.");
+    if (state.harnessDraft.effortSets?.[name]) return showToast(`The set "${name}" already exists.`);
+    state.harnessDraft.effortSets = { ...(state.harnessDraft.effortSets ?? {}), [name]: [] };
+    return paint(true);
+  }
   if (target.closest("[data-save-harnesses]")) return saveHarnesses();
   if (target.closest("[data-cancel-harnesses]")) {
     state.harnessDraft = null;
@@ -3673,18 +3635,8 @@ document.addEventListener("click", async (event) => {
     state.renderedKey = "";
     return paint(true);
   }
-  if (target.closest("[data-next-step]")) return showDecision("overview");
   if (target.closest("[data-toggle-awake]")) return toggleAwake();
   if (target.closest("[data-stop-agent]")) return confirmStop();
-  if (target.closest("[data-edit-words]")) {
-    state.editingWords = true;
-    paint(true);
-    return window.setTimeout(() => document.querySelector("#my-understanding")?.focus(), 0);
-  }
-  if (target.closest("[data-cancel-words]")) {
-    state.editingWords = false;
-    return paint(true);
-  }
   if (target.closest("[data-keep-working]")) {
     state.view = "agent";
     state.renderedKey = "";
@@ -3705,6 +3657,7 @@ document.addEventListener("click", async (event) => {
     return;
   }
   if (target.closest("[data-mark-complete]")) return confirmComplete();
+  if (target.closest("[data-mark-wont-do]")) return confirmWontDo();
   if (target.closest("[data-reopen-goal]")) {
     const goal = currentGoal();
     if (!goal) return;
@@ -3721,10 +3674,10 @@ document.addEventListener("click", async (event) => {
   if (target.closest("[data-modal-cancel]")) return closeModal();
   if (target.closest("[data-modal-confirm]")) {
     const action = modalConfirm;
-    closeModal();
     if (!action) return;
     try {
-      await action();
+      const result = await action();
+      if (result !== false) closeModal();
     } catch (error) {
       showToast(error.message);
     }
@@ -3732,37 +3685,6 @@ document.addEventListener("click", async (event) => {
 });
 
 document.addEventListener("submit", async (event) => {
-  if (event.target.matches("[data-reviewed-decision]")) {
-    event.preventDefault();
-    const decision = new FormData(event.target).get("decision")?.toString().trim() || "";
-    if (!decision) return showToast("Answer the agent question before the Run resumes.");
-    return controlReviewedRun("resume", decision);
-  }
-  if (event.target.matches("[data-reviewed-pending-form]")) {
-    event.preventDefault();
-    const run = currentReviewedRun();
-    const stepId = event.target.dataset.reviewedPendingForm;
-    const step = run?.steps.find((item) => item.id === stepId);
-    if (!run || !step) return;
-    const fields = new FormData(event.target);
-    const provider = fields.get("provider")?.toString() || step.binding.provider;
-    const binding = reviewedBinding(provider, fields.get("model")?.toString().trim() || "", fields.get("effort")?.toString() || "max", step.binding);
-    const session = reviewedSessionChoice(fields.get("session")?.toString() || "fresh");
-    try {
-      const payload = await api(`/api/reviewed-build/runs/${encodeURIComponent(run.id)}/steps/${encodeURIComponent(stepId)}`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ binding, session }),
-      });
-      state.reviewed.run = payload.run;
-      state.reviewed.runs = state.reviewed.runs.map((item) => item.id === payload.run.id ? payload.run : item);
-      paint(true);
-      showToast("The pending step will use the new agent choice.");
-    } catch (error) {
-      showToast(error.message);
-    }
-    return;
-  }
   if (event.target.matches("[data-area-form]")) {
     event.preventDefault();
     const edit = state.areaEdit;
@@ -3858,6 +3780,7 @@ document.addEventListener("submit", async (event) => {
         description,
         sources,
         launch: true,
+        ...launchRequestFields(),
       });
       state.describeSessionName = opened.session;
       state.describeDraft = null;
@@ -3872,27 +3795,10 @@ document.addEventListener("submit", async (event) => {
       showToast("The agent opened with the Area, your description, and the selected Documents.");
     } catch (error) {
       submitButton.disabled = false;
-      submitButton.innerHTML = `Open agent <kbd>⌘↵</kbd>`;
+      submitButton.innerHTML = `Start agent <kbd>⌘↵</kbd>`;
       showToast(error.message);
     }
     return;
-  }
-  if (!event.target.matches("[data-words-form]")) return;
-  event.preventDefault();
-  const goal = currentGoal();
-  const understanding = new FormData(event.target).get("understanding")?.toString().trim() || "";
-  if (!goal || !understanding) {
-    showToast("Write what you think this work means.");
-    return;
-  }
-  try {
-    await post("/api/goals/understanding", { file: goal.file, understanding });
-    state.editingWords = false;
-    await refresh();
-    paint(true);
-    showToast("Your note is saved with this goal.");
-  } catch (error) {
-    showToast(error.message);
   }
 });
 
@@ -3911,22 +3817,9 @@ document.addEventListener("input", (event) => {
     state.harnessDraft.modelSets[modelField.dataset.set][Number(modelField.dataset.index)][modelField.dataset.modelField] = modelField.value;
     return;
   }
-  if (event.target.matches?.("[data-reviewed-draft-field]")) {
-    const stepId = event.target.dataset.stepId;
-    const field = event.target.dataset.reviewedDraftField;
-    const previous = state.reviewed.draftBindings[stepId] || {};
-    if (field === "session") {
-      state.reviewed.draftSessions[stepId] = reviewedSessionChoice(event.target.value);
-      return;
-    }
-    const provider = field === "provider" ? event.target.value : previous.provider || "codex";
-    const model = field === "model" ? event.target.value.trim() : previous.model || "";
-    const effort = field === "effort" ? event.target.value : previous.effort || "max";
-    state.reviewed.draftBindings[stepId] = reviewedBinding(provider, field === "provider" ? "" : model, effort, previous);
-    if (field === "provider") {
-      state.reviewed.draftSessions[stepId] = { mode: "fresh" };
-      return paint(true);
-    }
+  const effortField = event.target.closest?.("[data-effort-field]");
+  if (effortField && state.harnessDraft) {
+    state.harnessDraft.effortSets[effortField.dataset.set][Number(effortField.dataset.index)][effortField.dataset.effortField] = effortField.value;
     return;
   }
   if (event.target.closest?.("[data-area-form]") && state.areaEdit) {
@@ -3961,52 +3854,27 @@ document.addEventListener("input", (event) => {
 });
 
 document.addEventListener("change", async (event) => {
+  if (event.target.matches?.("select[data-launch-continue]")) {
+    state.launch.continueFrom = event.target.value ? Number(event.target.value) : null;
+    return;
+  }
   if (event.target.matches?.("select[data-harness-field]") && state.harnessDraft) {
     state.harnessDraft.harnesses[Number(event.target.dataset.index)][event.target.dataset.harnessField] = event.target.value;
     return;
   }
-  if (event.target.matches?.("[data-reviewed-area]")) {
-    try {
-      await loadReviewedProgram(event.target.value);
-      paint(true);
-    } catch (error) {
-      showToast(error.message);
-    }
-    return;
-  }
-  if (!event.target.matches?.("[data-reviewed-pending-field='provider']")) return;
-  const form = event.target.closest("[data-reviewed-pending-form]");
-  const run = currentReviewedRun();
-  const stepId = form?.dataset.reviewedPendingForm;
-  const index = run?.steps.findIndex((step) => step.id === stepId) ?? -1;
-  if (!form || !run || index < 0) return;
-  const provider = event.target.value;
-  const effort = form.querySelector("[name='effort']");
-  if (effort) effort.disabled = provider !== "codex";
-  const session = form.querySelector("[name='session']");
-  if (!session) return;
-  const earlier = run.steps.slice(0, index).filter((step) => step.binding.provider === provider);
-  session.innerHTML = `<option value="fresh">Fresh session</option>${provider === "gemini" ? "" : earlier.map((step) => `<option value="continue:${escapeHtml(step.id)}">Continue step ${step.order}: ${escapeHtml(step.label)}</option>`).join("")}`;
 });
 
 backButton.addEventListener("click", async () => {
-  if (["work", "areas", "programs"].includes(state.view)) return toggleShellMenu();
+  if (["work", "areas"].includes(state.view)) return toggleShellMenu();
   if (state.view === "area-edit") return showAreas();
-  if (state.view === "program-detail" || state.view === "program-create") return showPrograms();
-  if (state.view === "reviewed-program") return showPrograms();
-  if (state.view === "reviewed-setup") return showOverview();
-  if (state.view === "reviewed-run") {
-    if (state.reviewed.returnView === "programs") return showPrograms();
-    if (state.reviewed.returnView === "overview" && currentGoal()) return showOverview();
-    return showWork();
-  }
+  if (state.view === "program-detail") return showAreasAt(currentProgram()?.area);
+  if (state.view === "program-create") return showAreasAt(state.programDraft.area);
   if (state.view === "program-session") {
     state.view = "program-detail";
     return paint(true);
   }
   if (state.view === "create") return cancelCreate();
   if (state.view === "describe" || state.view === "describe-agent") return cancelDescribe();
-  if (state.view === "overview") return showWork();
   if (state.view === "agent") {
     if (state.agentReturnView === "document" && state.document) {
       state.view = "document";
@@ -4018,7 +3886,6 @@ backButton.addEventListener("click", async () => {
   }
   if (state.view === "document") {
     rememberDocumentPosition();
-    if (state.documentReturnView === "overview" && currentGoal()) return showOverview();
     if (state.documentReturnView === "areas") return showAreas();
     return showWork();
   }
@@ -4031,7 +3898,6 @@ backButton.addEventListener("click", async () => {
 
 workTab.addEventListener("click", showWork);
 areasTab.addEventListener("click", showAreas);
-programsButton.addEventListener("click", showPrograms);
 
 findButton.addEventListener("click", () => {
   if (findButton.dataset.action === "next-step") {
@@ -4076,10 +3942,22 @@ document.addEventListener("keydown", (event) => {
     closeModal();
     return;
   }
+  if (event.key === "Escape" && !shellMenu.hidden) {
+    event.preventDefault();
+    toggleShellMenu(false);
+    return;
+  }
   if (event.key === "Escape" && state.launchTarget) {
     event.preventDefault();
+    if (state.view === "describe") syncDescribeDraft();
     state.launchTarget = "";
     state.launchAnchor = null;
+    paint(true);
+    return;
+  }
+  if (event.key === "Escape" && state.goalSelection.length) {
+    event.preventDefault();
+    state.goalSelection = [];
     paint(true);
     return;
   }

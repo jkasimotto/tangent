@@ -165,6 +165,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   let dockBadgeClears = 0;
   let notificationPermission = "default";
   let reviewAgentStarted = false;
+  let tangentSessionState = "waiting";
   const describeSessions = [];
   const reviewedSteps = [
     "Create the design",
@@ -261,7 +262,7 @@ test("the live shell restores context, defines work with an agent, and organizes
       return jsonResponse({
         caffeinate: false,
         sessions: [
-          { name: "tangent-vision", goal: goalFile, state: "waiting", command: "codex" },
+          { name: "tangent-vision", goal: goalFile, state: tangentSessionState, command: "codex" },
           { name: "stale-completed-run", goal: staleCompletedGoal.file, state: "waiting", command: "codex" },
           ...describeSessions,
           ...(reviewAgentStarted ? [{ name: "live-edit-collaboration", goal: liveEditGoal.file, state: "waiting", phase: "collaborate", command: "codex" }] : []),
@@ -495,6 +496,14 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.match(window.document.querySelector(".markdown-vault-link").textContent, /Principles of a good solution/);
   assert.match(window.document.querySelector(".markdown-vault-link + .markdown-vault-link").textContent, /open the design/);
   assert.equal(window.document.querySelector("[data-document-history='back']").disabled, true);
+
+  const readingPane = window.document.querySelector(".document-reader-scroll");
+  readingPane.scrollTop = 180;
+  readingPane.dispatchEvent(new window.Event("scroll"));
+  tangentSessionState = "working";
+  await window.refresh();
+  assert.equal(window.document.querySelector(".document-reader-scroll"), readingPane);
+  assert.equal(readingPane.scrollTop, 180);
 
   click(window, ".markdown-vault-link");
   await settle(window);

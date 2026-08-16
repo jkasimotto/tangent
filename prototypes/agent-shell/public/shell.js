@@ -2480,6 +2480,9 @@ function vaultRenderProjection() {
 function renderKey() {
   const goal = currentGoal();
   const session = sessionForGoal(goal);
+  if (state.view === "document") {
+    return JSON.stringify([state.view, state.document?.file, state.document?.hash, state.documentTrailIndex, state.documentTrail.length]);
+  }
   if (state.view === "agent") {
     return JSON.stringify([state.view, goal?.file, session?.name, state.agentReturnView, state.document?.hash]);
   }

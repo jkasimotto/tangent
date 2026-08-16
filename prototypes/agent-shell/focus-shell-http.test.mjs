@@ -586,16 +586,102 @@ test("the context-first shell is default and keeps the user's understanding with
   goalText = await readFile(path.join(trees, pipelineGoal.file), "utf8");
   assert.match(goalText, /^session: test-pipeline-demo-s3$/m);
 
-  // Skipping the last step completes the pipeline.
+  // Appending mid-run: step 4 waits behind the running step 3 and nothing
+  // that already ran changes.
+  const appendMidRun = await fetch(`${base}/api/pipelines/append`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ goal: pipelineGoal.file, steps: [{ instruction: "Prove the implementation.", launch: { harness: "fake", model: "one" } }] }),
+  }).then((response) => response.json());
+  assert.equal(appendMidRun.status, "queued");
+  assert.equal(appendMidRun.after, 3);
+  assert.deepEqual(appendMidRun.added, [4]);
+  assert.equal(appendMidRun.pipeline.steps[3].status, "pending");
+  assert.equal(appendMidRun.pipeline.steps[0].handover, "Design written: design-pipeline-demo.md. Unresolved: none.");
+  assert.equal(appendMidRun.pipeline.steps[2].status, "running");
+  const appendEmpty = await fetch(`${base}/api/pipelines/append`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ goal: pipelineGoal.file, steps: [] }),
+  });
+  assert.equal(appendEmpty.status, 400);
+  const appendNoPipeline = await fetch(`${base}/api/pipelines/append`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ goal: hierarchy.file, steps: [{ instruction: "x", launch: { harness: "fake" } }] }),
+  });
+  assert.equal(appendNoPipeline.status, 404);
+
+  // Skipping step 3 flows into the appended step 4 without any restart.
   const skipped = await fetch(`${base}/api/pipelines/control`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ goal: pipelineGoal.file, action: "skip", step: 3 }),
   }).then((response) => response.json());
-  assert.equal(skipped.status, "complete");
+  assert.equal(skipped.status, "started");
+  assert.deepEqual(skipped.next, { index: 4, session: "test-pipeline-demo-s4" });
+  openedSessions.push("test-pipeline-demo-s4");
   assert.equal(skipped.pipeline.steps[2].status, "skipped");
+  const handoverFour = await fetch(`${base}/api/goals/handover`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session: "test-pipeline-demo-s4", text: "Proof written." }),
+  }).then((response) => response.json());
+  assert.equal(handoverFour.status, "complete");
   snapshot = await fetch(`${base}/api/sessions`).then((response) => response.json());
   assert.equal(snapshot.pipelines[0].status, "complete");
+
+  // Appending to a finished pipeline whose last agent is gone (its pane sits
+  // at a shell): the new step starts at once.
+  const appendAfterDead = await fetch(`${base}/api/pipelines/append`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ goal: pipelineGoal.file, steps: [{ instruction: "Write the release note.", launch: { harness: "fake", model: "one" } }] }),
+  }).then((response) => response.json());
+  assert.equal(appendAfterDead.status, "started");
+  assert.deepEqual(appendAfterDead.next, { index: 5, session: "test-pipeline-demo-s5" });
+  openedSessions.push("test-pipeline-demo-s5");
+  assert.equal(appendAfterDead.pipeline.steps[3].status, "complete", "the finished step stays finished");
+  const handoverFive = await fetch(`${base}/api/goals/handover`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session: "test-pipeline-demo-s5", text: "Release note written." }),
+  }).then((response) => response.json());
+  assert.equal(handoverFive.status, "complete");
+
+  // Appending to a finished pipeline whose last agent still runs: that step
+  // is asked to hand over again; its second handover is kept beside the first
+  // and flows into the new step.
+  await new Promise((resolve, reject) => execFile("tmux", ["send-keys", "-t", "=test-pipeline-demo-s5:", "sleep 300", "Enter"], (error, stdout, stderr) => (error ? reject(new Error(stderr || error.message)) : resolve())));
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const command = await new Promise((resolve) => execFile("tmux", ["display-message", "-p", "-t", "=test-pipeline-demo-s5:", "#{pane_current_command}"], (error, stdout) => resolve(error ? "" : stdout.trim())));
+    if (command === "sleep") break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  const appendAfterLive = await fetch(`${base}/api/pipelines/append`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ goal: pipelineGoal.file, steps: [{ instruction: "Announce it.", launch: { harness: "fake" } }, { instruction: "Archive it.", command: "fake-agent --archive", continueFrom: 6 }] }),
+  }).then((response) => response.json());
+  assert.equal(appendAfterLive.status, "asked");
+  assert.equal(appendAfterLive.after, 5);
+  assert.equal(appendAfterLive.session, "test-pipeline-demo-s5");
+  assert.deepEqual(appendAfterLive.added, [6, 7]);
+  assert.equal(appendAfterLive.pipeline.steps[4].status, "running");
+  assert.equal(appendAfterLive.pipeline.steps[4].handover, "Release note written.");
+  assert.equal(appendAfterLive.pipeline.steps[5].status, "pending");
+  snapshot = await fetch(`${base}/api/sessions`).then((response) => response.json());
+  assert.equal(snapshot.pipelines[0].status, "running");
+  const handoverAgain = await fetch(`${base}/api/goals/handover`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session: "test-pipeline-demo-s5", text: "Nothing changed since; the note is final." }),
+  }).then((response) => response.json());
+  assert.deepEqual(handoverAgain.next, { index: 6, session: "test-pipeline-demo-s6" });
+  openedSessions.push("test-pipeline-demo-s6");
+  assert.equal(handoverAgain.pipeline.steps[4].status, "complete");
+  assert.equal(handoverAgain.pipeline.steps[4].handover, "Release note written.\n\nNothing changed since; the note is final.");
+  assert.equal(handoverAgain.pipeline.steps[5].status, "running");
 
   const missingDropReason = await fetch(`${base}/api/goals/edit`, {
     method: "POST",

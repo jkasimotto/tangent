@@ -14,7 +14,7 @@ export const areaCommandSpec: CliCommandSpec = {
 
 export const goalCommandSpec: CliCommandSpec = {
   name: "goal",
-  description: "Create, list, start, hand over, and close Goals in the Tangent tree",
+  description: "Create, list, start, append to, hand over, and close Goals in the Tangent tree",
   subcommands: [
     {
       name: "create",
@@ -59,6 +59,18 @@ export const goalCommandSpec: CliCommandSpec = {
       args: "<slug>",
       options: [
         { name: "step", takesValue: true, description: "One step's instruction, in your words; repeatable, steps run in order" },
+        { name: "launch", takesValue: true, description: "Harness for the step at the same position as <harness[/model[/effort]]>; repeatable; missing means the Area default" },
+        { name: "continue-from", takesValue: true, description: "Step number whose session the step at the same position continues, or - for a fresh session; repeatable" },
+        serverOption,
+        jsonOption
+      ]
+    },
+    {
+      name: "append",
+      description: "Add steps to the end of a Goal's pipeline, mid-run or finished, without restarting what already ran. Same --step, --launch, and --continue-from pairing as start.",
+      args: "<slug>",
+      options: [
+        { name: "step", takesValue: true, description: "One new step's instruction, in your words; repeatable, steps run in order after the existing ones" },
         { name: "launch", takesValue: true, description: "Harness for the step at the same position as <harness[/model[/effort]]>; repeatable; missing means the Area default" },
         { name: "continue-from", takesValue: true, description: "Step number whose session the step at the same position continues, or - for a fresh session; repeatable" },
         serverOption,

@@ -788,6 +788,16 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
         sessions = [{ name: "dnd-ship-the-map", goal: goal.file, state: "working", phase: "execute", command: "codex", pipeline: goal.file, step: 1 }];
         return jsonResponse({ session: "dnd-ship-the-map", pipeline });
       }
+      if (pathname === "/api/pipelines/append") {
+        const added = body.steps.map((step, offset) => ({
+          index: pipeline.steps.length + offset + 1, instruction: step.instruction, launch: step.launch ?? null, command: step.command ?? "",
+          label: "Claude · Fable 5", continueFrom: step.continueFrom ?? null, status: "pending", session: null,
+          handover: null, handoverSource: null, live: false, state: null, stateDetail: null, idleSince: null,
+        }));
+        pipeline.steps.push(...added);
+        pipeline.updatedAt = `t${pipeline.steps.length}`;
+        return jsonResponse({ status: "queued", after: 1, added: added.map((step) => step.index), pipeline });
+      }
       if (pathname === "/api/pipelines/control") {
         pipeline.steps[0].status = "complete";
         pipeline.steps[0].handover = "Design written: design-map.md.\nUnresolved: none.";
@@ -871,6 +881,35 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   assert.equal(row.querySelector("[data-pipeline-control]"), null);
   assert.match(row.querySelector("[data-stop-goal]").textContent, /End agent/);
 
+  // The running pipeline row keeps a ▾ that opens the step list: history is
+  // fixed, the pending step edits in place, and a draft row appends.
+  const stepsToggle = row.querySelector("[data-launch-for]");
+  assert.ok(stepsToggle, "a running pipeline row offers its steps");
+  assert.equal(stepsToggle.title, "Add or edit steps");
+  click(window, `[data-goal-anchor='${goal.file}'] [data-launch-for]`);
+  await settle(window);
+  await settle(window);
+  assert.ok(popover(), "the popover opened on the running pipeline");
+  assert.equal(window.document.querySelectorAll(".launch-step-fixed").length, 1, "the running step is history");
+  assert.equal(window.document.querySelectorAll("[data-launch-step-select]").length, 1, "only the pending step is editable");
+  assert.equal(window.document.querySelector("#launch-instruction").value, "Review the design and update it");
+  assert.match(window.document.querySelector("[data-launch-start]").textContent, /Save step 2/);
+  click(window, "[data-launch-step-add]");
+  assert.equal(window.document.querySelectorAll("[data-launch-step-select]").length, 2);
+  assert.match(window.document.querySelector("[data-launch-start]").textContent, /Add step 3/);
+  window.document.querySelector("#launch-instruction").value = "Prove it";
+  click(window, "[data-launch-harness='codex']");
+  click(window, "[data-launch-start]");
+  await settle(window);
+  await settle(window);
+  const append = posts.find((entry) => entry.path === "/api/pipelines/append");
+  assert.deepEqual(append.body, { goal: goal.file, steps: [{ instruction: "Prove it", continueFrom: null, launch: { harness: "codex", model: "sol", effort: null } }] });
+  assert.equal(popover(), null, "the popover closed after the append");
+  assert.equal(posts.filter((entry) => entry.path === "/api/goals/start").length, 1, "an append never restarts the pipeline");
+  const grownRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
+  assert.equal(grownRow.querySelectorAll(".desk-step").length, 3);
+  assert.match(grownRow.querySelector(".desk-state").textContent, /Step 1 of 3/);
+
   // The step session dies: the row offers Restart and Skip; Skip advances the line
   // and the latest handover shows under the chips.
   sessions = [];
@@ -879,7 +918,7 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   await settle(window);
   await settle(window);
   const stoppedRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
-  assert.match(stoppedRow.querySelector(".desk-state").textContent, /Step 1 of 2 · Codex · Sol · High · stopped/);
+  assert.match(stoppedRow.querySelector(".desk-state").textContent, /Step 1 of 3 · Codex · Sol · High · stopped/);
   assert.equal(stoppedRow.querySelector("[data-stop-goal]"), null);
   assert.ok(stoppedRow.querySelector("[data-pipeline-control='restart']"));
   click(window, `[data-goal-anchor='${goal.file}'] [data-pipeline-control='skip']`);
@@ -889,6 +928,29 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   assert.deepEqual(control.body, { goal: goal.file, action: "skip", step: 1 });
   const afterRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
   assert.match(afterRow.querySelector(".desk-handover").textContent, /Step 1: Design written: design-map\.md\./);
+
+  // A finished pipeline: the row is a plain Goal row again, and its ▾ opens
+  // the finished steps with a draft row ready to append, never a fresh start.
+  for (const step of pipeline.steps) { step.status = "complete"; step.live = false; }
+  pipeline.status = "complete";
+  pipeline.updatedAt = "t-complete";
+  click(window, "#menu-refresh");
+  await settle(window);
+  await settle(window);
+  const finishedRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
+  assert.match(finishedRow.querySelector(".desk-state").textContent, /Ready/);
+  assert.equal(finishedRow.querySelector("[data-launch-for]").title, "Add or edit steps");
+  click(window, `[data-goal-anchor='${goal.file}'] [data-launch-for]`);
+  await settle(window);
+  await settle(window);
+  assert.equal(window.document.querySelectorAll(".launch-step-fixed").length, 3, "finished steps stay as history");
+  assert.equal(window.document.querySelectorAll("[data-launch-step-select]").length, 1, "one draft row waits to be appended");
+  assert.equal(window.document.querySelector("[data-launch-step-remove]"), null, "the only draft row cannot be removed");
+  assert.match(window.document.querySelector("[data-launch-start]").textContent, /Add step 4/);
+  click(window, "[data-launch-step-add]");
+  assert.match(window.document.querySelector("[data-launch-start]").textContent, /Add 2 steps/);
+  click(window, "[data-launch-step-remove='4']");
+  assert.match(window.document.querySelector("[data-launch-start]").textContent, /Add step 4/);
 
   dom.window.close();
 });

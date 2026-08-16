@@ -20,6 +20,14 @@ test("tangent goal start takes a slug and repeatable step, launch, and continue-
   }
 });
 
+test("tangent goal append takes a slug and the same repeatable step options as start", () => {
+  const append = subcommand("append");
+  assert.ok(append, "goal spec has an append subcommand");
+  assert.equal(append.args, "<slug>");
+  assert.deepEqual(optionNames(append), ["step", "launch", "continue-from", "server", "json"]);
+  assert.match(append.description, /without restarting/);
+});
+
 test("tangent goal handover takes the facts and an optional session", () => {
   const handover = subcommand("handover");
   assert.ok(handover, "goal spec has a handover subcommand");
@@ -31,6 +39,6 @@ test("tangent goal handover takes the facts and an optional session", () => {
 test("goal help still lists the vault commands beside start and handover", () => {
   assert.deepEqual(
     goalCommandSpec.subcommands.map((entry) => entry.name),
-    ["create", "list", "show", "own", "release", "start", "handover", "done", "wont-do"]
+    ["create", "list", "show", "own", "release", "start", "append", "handover", "done", "wont-do"]
   );
 });

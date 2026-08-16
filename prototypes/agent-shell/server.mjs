@@ -19,7 +19,7 @@ import { commandSession, programsSnapshot, saveLocalProgram, saveRoutine, setRou
 import pty from "node-pty";
 import { documentHash, markdownTitle, safeMarkdownPath, wikiLinks } from "./vault-documents.mjs";
 import { classifyStaticPane, stabilizeStaticPane } from "./pane-state.mjs";
-import { currentStep, newPipeline, nextPendingStep, pipelineStatus, readAllPipelines, readPipeline, validateSteps, writePipeline } from "./pipeline-record.mjs";
+import { appendSteps, currentStep, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, readAllPipelines, readPipeline, validateSteps, writePipeline } from "./pipeline-record.mjs";
 import { deliveryDecision, messageBanner, normalizeMessage } from "./agent-messages.mjs";
 import { createSourceChangeMonitor } from "./source-change-monitor.mjs";
 import { promptArrived, splitPrompt, squash } from "./prompt-delivery.mjs";
@@ -1874,9 +1874,14 @@ async function handoverPipelineStep(sessionName, text) {
   return completePipelineStep(found.record, found.step, text, "agent");
 }
 
-/** Marks a step complete with its handover text and advances the line. */
+/**
+ * Marks a step complete with its handover text and advances the line. A step
+ * asked to hand over again (a step was appended after it finished) keeps its
+ * first handover and gains the second below it: nothing already handed over
+ * is lost.
+ */
 async function completePipelineStep(record, step, text, source) {
-  step.handover = text;
+  step.handover = step.handover ? `${step.handover}\n\n${text}` : text;
   step.handoverSource = source;
   step.status = source === "skip" ? "skipped" : "complete";
   step.endedAt = new Date().toISOString();
@@ -1928,6 +1933,61 @@ async function controlPipeline(goalFile, action, index) {
     return completePipelineStep(record, step, await paneLastMessage(step.session), "last-message");
   }
   return { status: 400, error: `unknown action ${action}` };
+}
+
+/** The banner-less message that asks a finished step's agent to hand over again into appended steps. */
+function handoverAgainMessage(step, added) {
+  const first = added[0];
+  const list = added.length === 1
+    ? `step ${first.index} (${first.instruction})`
+    : `steps ${first.index} to ${added[added.length - 1].index}; step ${first.index} is: ${first.instruction}`;
+  return `Tangent: after you handed over, Julian added ${list} to this pipeline. Run \`tangent goal handover "<facts>"\` again from this session with your current facts (files with full paths, what is finished, what is unresolved, decisions Julian made) so the pipeline continues into step ${first.index}. Your earlier handover is kept; state only what changed since or what the next agent still needs.`;
+}
+
+/**
+ * Appends steps to a Goal's pipeline without touching what already ran.
+ * Mid-run, the new steps simply wait: the running step's handover flows into
+ * them through nextPendingStep. On a finished pipeline the previously last
+ * step is asked to hand over again when its session still runs an agent
+ * (its status returns to running so the desk and the handover path treat it
+ * as the current step); otherwise the first new step starts at once.
+ */
+async function appendPipelineSteps(goalFile, steps) {
+  const byFile = await goalsByFile();
+  const o = byFile.get(goalFile);
+  if (!o) return { status: 404, error: `no goal file ${goalFile}` };
+  if (["done", "dropped"].includes(o.status)) return { status: 409, error: `goal is ${o.status}` };
+  const record = await readPipeline(PIPELINES_ROOT, o.area, o.slug);
+  if (!record) return { status: 404, error: "no pipeline on this goal" };
+  const finished = pipelineFinished(record);
+  const last = record.steps[record.steps.length - 1];
+  let added;
+  try {
+    added = appendSteps(record, steps);
+  } catch (error) {
+    return { status: 400, error: error.message };
+  }
+  // Resolve the first new step before anything is written: a bad launch
+  // names itself and leaves the record as it was.
+  const first = await resolveStepLaunch(added[0]);
+  if (first.error) return { status: 409, error: `step ${added[0].index}: ${first.error}` };
+  if (!finished) {
+    await writePipeline(PIPELINES_ROOT, record);
+    return { status: 200, state: "queued", after: currentStep(record)?.index ?? last.index, added: added.map((step) => step.index), pipeline: record };
+  }
+  const sessions = last.status === "complete" && last.session ? await withAgentStates(await listSessions()) : [];
+  const live = sessions.find((session) => session.name === last.session && session.state !== "shell");
+  if (live) {
+    last.status = "running";
+    last.endedAt = null;
+    await writePipeline(PIPELINES_ROOT, record);
+    queueAgentMessage(last.session, { from: "tangent", area: record.area, text: handoverAgainMessage(last, added), banner: false, queuedAt: new Date().toISOString() });
+    return { status: 200, state: "asked", after: last.index, session: last.session, added: added.map((step) => step.index), pipeline: record };
+  }
+  await writePipeline(PIPELINES_ROOT, record);
+  const started = await startPipelineStep(record, added[0].index);
+  if (started.status !== 200) return started;
+  return { status: 200, state: "started", next: { index: added[0].index, session: started.session }, added: added.map((step) => step.index), pipeline: record };
 }
 
 /** Edits one pending step; started steps are history. */
@@ -2441,6 +2501,15 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     // Edits one pending step; started steps are history.
+    // Append steps to a pipeline that already ran, mid-run or finished.
+    if (url.pathname === "/api/pipelines/append" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      const result = await appendPipelineSteps(String(body.goal ?? ""), Array.isArray(body.steps) ? body.steps : []);
+      res.writeHead(result.status, { "content-type": "application/json" });
+      res.end(JSON.stringify(result.status === 200 ? { status: result.state, after: result.after ?? null, next: result.next ?? null, session: result.session ?? null, added: result.added, pipeline: result.pipeline } : { error: result.error }));
+      return;
+    }
     if (url.pathname === "/api/pipelines/edit" && req.method === "POST") {
       let body = {};
       try { body = JSON.parse(await readBody(req)); } catch {}

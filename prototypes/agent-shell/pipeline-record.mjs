@@ -72,6 +72,33 @@ export function newPipeline({ goal, area, slug, extraFiles = [], steps, now = ne
   };
 }
 
+/**
+ * Appends steps to a record whose earlier steps may already have run. The
+ * new steps are validated together with the existing ones (numbering and the
+ * step cap continue from the record), normalized to pending, and pushed in
+ * place. Returns the appended steps. Throws with the validation message.
+ * Nothing already in the record changes: finished steps and their handovers
+ * are history.
+ */
+export function appendSteps(record, steps) {
+  if (!Array.isArray(steps) || steps.length < 1) throw new Error("append needs at least one step");
+  const existing = record?.steps ?? [];
+  const error = validateSteps([...existing, ...steps]);
+  if (error) throw new Error(error);
+  const added = steps.map((step, position) => normalizeStep(step, existing.length + position + 1));
+  record.steps = [...existing, ...added];
+  return added;
+}
+
+/**
+ * Whether every step has finished (complete or skipped), so nothing running
+ * or pending would carry the pipeline into a step appended now.
+ */
+export function pipelineFinished(record) {
+  const steps = record?.steps ?? [];
+  return steps.length > 0 && steps.every((step) => step.status === "complete" || step.status === "skipped");
+}
+
 /** Returns an error string naming the offending step, or null when the steps are valid. */
 export function validateSteps(steps) {
   if (!Array.isArray(steps) || steps.length < 1 || steps.length > MAX_STEPS) {
@@ -117,9 +144,7 @@ export function nextPendingStep(record, afterIndex) {
  */
 export function pipelineStatus(record, isLive) {
   const steps = record?.steps ?? [];
-  if (steps.length > 0 && steps.every((step) => step.status === "complete" || step.status === "skipped")) {
-    return "complete";
-  }
+  if (pipelineFinished(record)) return "complete";
   if (steps.some((step) => step.status === "stopped")) return "stopped";
   const running = steps.filter((step) => step.status === "running");
   if (running.some((step) => !isLive(step.session))) return "stopped";

@@ -17,6 +17,7 @@ export async function runGoalCli(argv = process.argv.slice(2)): Promise<void> {
   if (subcommand === "own") return args.help ? help() : ownershipCommand(args, "own");
   if (subcommand === "release") return args.help ? help() : ownershipCommand(args, "release");
   if (subcommand === "start") return args.help ? help() : startCommand(args);
+  if (subcommand === "append") return args.help ? help() : appendCommand(args);
   if (subcommand === "handover") return args.help ? help() : handoverCommand(args);
   if (subcommand === "done") return doneCommand(args);
   if (subcommand === "wont-do") return wontDoCommand(args);
@@ -90,14 +91,43 @@ async function startCommand(args: Args): Promise<void> {
   else console.log(`started ${slug} in ${session}`);
 }
 
+/**
+ * Handles `tangent goal append <slug> --step <instruction> [--launch ...] [--continue-from ...]...`.
+ * Adds steps after the ones that already ran. The server says what happened: the steps wait
+ * behind the running step, the finished last agent was asked to hand over again, or the first
+ * new step started.
+ */
+async function appendCommand(args: Args): Promise<void> {
+  const server = resolveServerUrl(stringArg(args.server));
+  const slug = requiredString(args._[1], "tangent goal append requires <slug>.");
+  const goal = await requireGoal(server, slug);
+  const steps = pipelineSteps(args, { appending: true });
+  if (!steps.length) throw new Error("tangent goal append needs at least one --step.");
+  const result = await postJson(server, "/api/pipelines/append", { goal: goal.file, steps });
+  if (booleanArg(args.json)) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  const added = Array.isArray(result.added) ? (result.added as number[]) : [];
+  const which = added.length > 1 ? `steps ${added[0]} to ${added[added.length - 1]}` : `step ${added[0] ?? "?"}`;
+  const next = result.next as { index?: number; session?: string } | null | undefined;
+  if (result.status === "asked") console.log(`added ${which} to ${slug}; step ${String(result.after)}'s agent (${String(result.session)}) was asked to hand over again`);
+  else if (result.status === "started") console.log(`added ${which} to ${slug}; step ${String(next?.index ?? added[0])} started in ${String(next?.session ?? "(no session)")}`);
+  else console.log(`added ${which} to ${slug}; it starts when step ${String(result.after)} hands over`);
+}
+
 type PipelineStepInput = {
   instruction: string;
   launch?: { harness: string; model?: string; effort?: string };
   continueFrom: number | null;
 };
 
-/** Pairs each --step with the --launch and --continue-from at the same position. */
-function pipelineSteps(args: Args): PipelineStepInput[] {
+/**
+ * Pairs each --step with the --launch and --continue-from at the same position. When appending,
+ * a step may continue any step of the existing pipeline, so only the server (which knows the final
+ * numbering) checks the upper bound.
+ */
+function pipelineSteps(args: Args, { appending = false } = {}): PipelineStepInput[] {
   const instructions = stringsArg(args.step).map((step) => step.trim());
   const launches = stringsArg(args.launch);
   const continues = stringsArg(args["continue-from"]);
@@ -105,7 +135,7 @@ function pipelineSteps(args: Args): PipelineStepInput[] {
   if (launches.length > instructions.length) throw new Error("More --launch values than --step values; each --launch pairs with the --step at the same position.");
   if (continues.length > instructions.length) throw new Error("More --continue-from values than --step values; each pairs with the --step at the same position.");
   return instructions.map((instruction, index) => {
-    const step: PipelineStepInput = { instruction, continueFrom: parseContinueFrom(continues[index], index + 1) };
+    const step: PipelineStepInput = { instruction, continueFrom: parseContinueFrom(continues[index], appending ? Number.POSITIVE_INFINITY : index + 1) };
     const launch = parseLaunch(launches[index]);
     if (launch) step.launch = launch;
     return step;
@@ -125,7 +155,8 @@ function parseContinueFrom(value: string | undefined, stepIndex: number): number
   if (value === undefined || value.trim() === "" || value.trim() === "-") return null;
   const n = Number(value);
   if (!Number.isInteger(n) || n < 1 || n >= stepIndex) {
-    throw new Error(`--continue-from for step ${stepIndex} must be an earlier step number (1 to ${stepIndex - 1}) or -, got "${value}".`);
+    const range = Number.isFinite(stepIndex) ? ` (1 to ${stepIndex - 1})` : "";
+    throw new Error(`--continue-from${Number.isFinite(stepIndex) ? ` for step ${stepIndex}` : ""} must be an earlier step number${range} or -, got "${value}".`);
   }
   return n;
 }
@@ -227,6 +258,7 @@ Examples:
   tangent goal start connect-chosen-ramp-faces
   tangent goal start pipelines-demo --step "/design this" --launch claude/fable-5 --step "review the design and update it" --launch codex/sol/high --step "implement" --launch claude/opus-5
   tangent goal start pipelines-demo --step "/design this" --step "implement the design" --continue-from - --continue-from 1
+  tangent goal append pipelines-demo --step "prove the implementation" --launch codex/sol/high
   tangent goal handover "Design written: ~/.tangent/trees/otto/tangent/design-x.md. Unresolved: none."
 `);
 }

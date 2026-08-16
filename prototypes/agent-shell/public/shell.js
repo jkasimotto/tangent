@@ -1000,8 +1000,12 @@ function deskGoalDocuments(goal) {
 /** Renders one Goal with its brief, Documents, handoff, and direct actions. */
 function deskGoalRow(goal, { subgoal = false } = {}) {
   const pipeline = pipelineForGoal(goal);
+  const record = pipelineRecordForGoal(goal);
   const action = pipeline ? deskPipelineAction(goal, pipeline) : deskGoalAction(goal);
   const liveSession = sessionForGoal(goal);
+  const launchTitle = record ? "Add or edit steps" : "Choose agent or model";
+  /** The ▾ that opens this Goal's launch popover: agent choice, or the step list once a pipeline exists. */
+  const launchToggle = (label) => `<button class="desk-action desk-launch-toggle${state.launchTarget === goal.file ? " open" : ""}" type="button" data-launch-for="${escapeHtml(goal.file)}" title="${launchTitle}" aria-label="${launchTitle} for ${escapeHtml(goal.title)}" aria-expanded="${state.launchTarget === goal.file}">${label}</button>`;
   const complete = !["done", "dropped", "deferred"].includes(goal.status);
   const handoff = !sessionForGoal(goal) && goalNeedsYou(goal) ? String(goal.waitingOn ?? "").trim() : "";
   const route = `data-open-goal-run="${escapeHtml(goal.file)}"`;
@@ -1022,8 +1026,10 @@ function deskGoalRow(goal, { subgoal = false } = {}) {
         <span class="desk-state ${action.kind}">${escapeHtml(action.state)}</span>
         ${pipeline ? deskPipelineControls(goal, pipeline) : ""}
         ${action.action === "Start agent"
-          ? `<span class="desk-split"><button class="desk-action" type="button" ${route}>Start agent</button><button class="desk-action desk-launch-toggle${state.launchTarget === goal.file ? " open" : ""}" type="button" data-launch-for="${escapeHtml(goal.file)}" title="Choose agent or model" aria-label="Choose agent or model for ${escapeHtml(goal.title)}" aria-expanded="${state.launchTarget === goal.file}">▾</button></span>`
-          : action.action ? `<button class="desk-action" type="button" ${route}>${escapeHtml(action.action)}</button>` : ""}
+          ? `<span class="desk-split"><button class="desk-action" type="button" ${route}>Start agent</button>${launchToggle("▾")}</span>`
+          : action.action
+            ? (record ? `<span class="desk-split"><button class="desk-action" type="button" ${route}>${escapeHtml(action.action)}</button>${launchToggle("▾")}</span>` : `<button class="desk-action" type="button" ${route}>${escapeHtml(action.action)}</button>`)
+            : record ? launchToggle("Steps ▾") : ""}
         ${liveSession ? `<button class="desk-icon-action" type="button" data-stop-goal="${escapeHtml(goal.file)}" aria-label="End the agent run for ${escapeHtml(goal.title)}">End agent</button>` : ""}
         ${complete ? `<button class="desk-icon-action" type="button" data-wont-do-goal="${escapeHtml(goal.file)}" aria-label="Mark ${escapeHtml(goal.title)} won't do">Won't do</button><button class="desk-icon-action complete" type="button" data-complete-goal="${escapeHtml(goal.file)}" aria-label="Mark ${escapeHtml(goal.title)} complete">Done</button>` : ""}
       </div>
@@ -1686,9 +1692,13 @@ function commitActiveStep() {
   return steps;
 }
 
-/** Loads one row into the active fields. */
+/** Stores the active row, then loads another row into the active fields. */
 function activateLaunchStep(index) {
-  const steps = commitActiveStep();
+  loadLaunchStep(commitActiveStep(), index);
+}
+
+/** Loads one row of the given steps into the active fields without storing the current one. */
+function loadLaunchStep(steps, index) {
   const row = steps[index] ?? { choice: null, command: "", instruction: "", continueFrom: null };
   state.launch.active = index;
   state.launch.choice = row.choice ?? null;
@@ -1705,13 +1715,22 @@ function addLaunchStep() {
   activateLaunchStep(steps.length - 1);
 }
 
-/** Removes one row; the active row moves to the nearest remaining one. */
+/**
+ * Removes one draft row; the active row moves to the nearest remaining
+ * editable one. Rows that belong to a record are history and never go. The
+ * last editable row stays, so the picker always has something to edit.
+ */
 function removeLaunchStep(index) {
   const steps = commitActiveStep();
-  if (steps.length <= 1) return;
+  const fixed = state.launch.record ? state.launch.record.steps.length : 0;
+  const firstPending = state.launch.record ? state.launch.record.steps.findIndex((step) => step.status === "pending") : -1;
+  if (index < fixed) return;
+  if (steps.length - fixed <= 1 && firstPending < 0) return;
   steps.splice(index, 1);
   for (const step of steps) if (step.continueFrom && step.continueFrom > steps.length) step.continueFrom = null;
-  activateLaunchStep(Math.min(state.launch.active > index ? state.launch.active - 1 : state.launch.active, steps.length - 1));
+  const nearest = Math.min(state.launch.active > index ? state.launch.active - 1 : state.launch.active, steps.length - 1);
+  // Load without committing: the removed row must not be written back.
+  loadLaunchStep(steps, nearest >= fixed || firstPending < 0 ? Math.max(nearest, fixed) : firstPending);
 }
 
 /** The label one draft row shows in the step list. */
@@ -1745,31 +1764,52 @@ function launchIsPipeline() {
 
 /** The pipeline on one Goal that is not finished, or null. */
 function pipelineForGoal(goal) {
-  if (!goal) return null;
-  const record = (state.pipelines ?? []).find((item) => item.goal === goal.file);
+  const record = pipelineRecordForGoal(goal);
   return record && record.status !== "complete" ? record : null;
+}
+
+/**
+ * The pipeline record on one Goal in any status, or null. A Goal that once
+ * ran a pipeline keeps it: the popover shows its history and appends to it
+ * rather than starting over. Finished Goals show nothing.
+ */
+function pipelineRecordForGoal(goal) {
+  if (!goal || ["done", "dropped", "deferred"].includes(goal.status)) return null;
+  return (state.pipelines ?? []).find((item) => item.goal === goal.file) ?? null;
+}
+
+/** The draft rows the popover holds after a record's own steps: the steps to append. */
+function launchDraftRows(steps = commitActiveStep()) {
+  const record = state.launch.record;
+  return record ? steps.slice(record.steps.length) : steps;
 }
 
 /** The step list above the picker: rows, add, remove; describe mode has none. */
 function launchStepList() {
   if (state.launchTarget === DESCRIBE_LAUNCH_TARGET) return "";
   const record = state.launch.record;
-  if (record) {
-    const glyph = { complete: "✓", running: "●", pending: "○", skipped: "–", stopped: "■" };
-    return `<ol class="launch-steps" aria-label="Pipeline steps">${record.steps.map((step, index) => `
+  const steps = commitActiveStep();
+  const fixed = record ? record.steps.length : 0;
+  const glyph = { complete: "✓", running: "●", pending: "○", skipped: "–", stopped: "■" };
+  // Rows of a record: history stays fixed, pending rows edit in place.
+  const recordRows = (record?.steps ?? []).map((step, index) => `
       <li class="launch-step ${step.status}${state.launch.active === index ? " selected" : ""}">
         ${step.status === "pending"
           ? `<button type="button" data-launch-step-select="${index}" title="Edit step ${step.index}"><b>${glyph[step.status]}</b><span>${step.index} · ${escapeHtml(step.label || launchStepLabel({ choice: step.launch, command: step.command }))}</span><em>${escapeHtml(clip(step.instruction, 60))}</em></button>`
           : `<span class="launch-step-fixed"><b>${glyph[step.status] ?? "○"}</b><span>${step.index} · ${escapeHtml(step.label || "agent")}</span><em>${escapeHtml(clip(step.instruction, 60))}</em></span>`}
-      </li>`).join("")}</ol>`;
-  }
-  const steps = commitActiveStep();
+      </li>`);
+  // Draft rows: a new pipeline, or the steps to append after a record.
+  const removable = record ? steps.length - fixed > 1 || record.steps.some((step) => step.status === "pending") : steps.length > 1;
+  const draftRows = steps.slice(fixed).map((row, offset) => {
+    const index = fixed + offset;
+    return `
+      <li class="launch-step draft${state.launch.active === index ? " selected" : ""}">
+        <button type="button" data-launch-step-select="${index}" title="Edit step ${index + 1}"><b>${record ? "+" : index + 1}</b><span>${record ? `${index + 1} · ` : ""}${escapeHtml(launchStepLabel(row))}</span><em>${row.instruction?.trim() ? escapeHtml(clip(row.instruction.trim(), 60)) : "<i>no instruction</i>"}</em></button>
+        ${removable ? `<button type="button" class="launch-step-remove" data-launch-step-remove="${index}" aria-label="Remove step ${index + 1}">×</button>` : ""}
+      </li>`;
+  });
   return `
-    <ol class="launch-steps" aria-label="Steps">${steps.map((row, index) => `
-      <li class="launch-step${state.launch.active === index ? " selected" : ""}">
-        <button type="button" data-launch-step-select="${index}" title="Edit step ${index + 1}"><b>${index + 1}</b><span>${escapeHtml(launchStepLabel(row))}</span><em>${row.instruction?.trim() ? escapeHtml(clip(row.instruction.trim(), 60)) : "<i>no instruction</i>"}</em></button>
-        ${steps.length > 1 ? `<button type="button" class="launch-step-remove" data-launch-step-remove="${index}" aria-label="Remove step ${index + 1}">×</button>` : ""}
-      </li>`).join("")}
+    <ol class="launch-steps" aria-label="${record ? "Pipeline steps" : "Steps"}">${[...recordRows, ...draftRows].join("")}
     </ol>
     <button type="button" class="quiet-button launch-step-add" data-launch-step-add>+ Add step</button>`;
 }
@@ -1808,9 +1848,10 @@ function launchPickerBlock() {
     : `<div class="launch-command"><code>${escapeHtml(command)}</code>${selection?.edited ? `<span class="launch-default-tag">edited</span>` : ""}<button class="quiet-button" type="button" data-launch-edit>Edit command</button></div>`;
   const describing = state.launchTarget === DESCRIBE_LAUNCH_TARGET;
   const record = state.launch.record;
-  const stepCount = describing ? 1 : record ? record.steps.length : commitActiveStep().length;
+  const stepCount = describing ? 1 : commitActiveStep().length;
+  const drafts = record ? launchDraftRows().length : 0;
   const startLabel = record
-    ? `Save step ${state.launch.active + 1}`
+    ? (state.launch.active < record.steps.length ? `Save step ${state.launch.active + 1}` : drafts > 1 ? `Add ${drafts} steps` : `Add step ${record.steps.length + 1}`)
     : stepCount > 1 ? `Start ${stepCount} steps` : `Start ${selection ? (selection.label || "agent") : "agent"}`;
   const canSave = Boolean(state.launch.choice && selection?.harness && !selection?.edited);
   const stepZone = describing ? "" : `
@@ -3153,6 +3194,39 @@ async function savePipelineStep(targetFile) {
   }
 }
 
+/**
+ * Appends the popover's draft rows to the Goal's pipeline. The server says
+ * what happened: the steps wait behind the running step, the finished last
+ * agent was asked to hand over again, or the first new step started.
+ */
+async function appendPipelineSteps(targetFile) {
+  const record = state.launch.record;
+  if (!record) return;
+  const drafts = launchDraftRows();
+  if (!drafts.length) return showToast("Add a step first.");
+  const steps = drafts.map(launchStepRequest);
+  try {
+    const result = await post("/api/pipelines/append", { goal: targetFile, steps });
+    state.launch.open = false;
+    state.launchTarget = "";
+    state.launchAnchor = null;
+    state.launch.record = null;
+    state.launch.steps = [];
+    state.launch.active = 0;
+    state.launch.instruction = "";
+    state.launch.continueFrom = null;
+    await refresh();
+    paint(true);
+    const added = result.added ?? [];
+    const which = added.length > 1 ? `Steps ${added[0]} to ${added[added.length - 1]} added` : `Step ${added[0]} added`;
+    if (result.status === "asked") showToast(`${which}; step ${result.after}'s agent was asked to hand over again.`);
+    else if (result.status === "started") showToast(`${which}; step ${result.next?.index ?? added[0]} started.`);
+    else showToast(`${which}; it starts when step ${result.after} hands over.`);
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
 /** Starts one agent that owns every checked Goal in one Area. */
 async function startSelectedGoals(areaPath) {
   const files = selectionForArea(areaPath);
@@ -3524,13 +3598,16 @@ document.addEventListener("click", async (event) => {
       return paint(true);
     }
     launchOptionsFor(describing ? describeLaunchArea() : goal.area);
-    const record = describing ? null : pipelineForGoal(goal);
+    const record = describing ? null : pipelineRecordForGoal(goal);
     if (record) {
+      // Record mode: history stays, the first pending step is up for edits,
+      // and when nothing is pending a draft row waits to be appended.
       state.launch.record = record;
       const firstPending = record.steps.findIndex((step) => step.status === "pending");
-      state.launch.steps = record.steps.map((step) => ({ choice: step.launch, command: step.launch ? "" : step.command, instruction: step.instruction, continueFrom: step.continueFrom }));
-      state.launch.active = -1;
-      activateLaunchStep(firstPending >= 0 ? firstPending : 0);
+      const steps = record.steps.map((step) => ({ choice: step.launch, command: step.launch ? "" : step.command, instruction: step.instruction, continueFrom: step.continueFrom }));
+      if (firstPending < 0) steps.push({ choice: null, command: "", instruction: "", continueFrom: null });
+      state.launch.steps = steps;
+      loadLaunchStep(steps, firstPending >= 0 ? firstPending : steps.length - 1);
     } else if (state.launch.record || (state.launchTarget && state.launchTarget !== file)) {
       state.launch.record = null;
       state.launch.steps = [];
@@ -3607,7 +3684,9 @@ document.addEventListener("click", async (event) => {
   if (target.closest("[data-launch-start]")) {
     syncLaunchDraft();
     const targetFile = state.launchTarget;
-    if (targetFile !== DESCRIBE_LAUNCH_TARGET && state.launch.record) return savePipelineStep(targetFile);
+    if (targetFile !== DESCRIBE_LAUNCH_TARGET && state.launch.record) {
+      return state.launch.active < state.launch.record.steps.length ? savePipelineStep(targetFile) : appendPipelineSteps(targetFile);
+    }
     if (targetFile !== DESCRIBE_LAUNCH_TARGET && launchIsPipeline()) return startPipeline(targetFile);
     state.launch.open = false;
     state.launchTarget = "";

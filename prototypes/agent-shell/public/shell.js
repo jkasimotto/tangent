@@ -43,6 +43,8 @@ const state = {
   programDraft: { type: "process", area: "", name: "", command: "", time: "07:30", cwd: "", model: "sonnet", prompt: "" },
   launch: { area: "", options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", continueFrom: null, steps: [], active: 0, record: null },
   pipelines: [],
+  brains: [],
+  brainDraft: null,
   agentSessionName: null,
   goalSelection: [], // checked Goal files in checked order; transient, work view only
   launchTarget: "",
@@ -413,6 +415,8 @@ function storyEntries(text) {
 // The launch popover's target when it chooses the agent for a describe-work
 // conversation instead of a Goal. Never collides with a goal file path.
 const DESCRIBE_LAUNCH_TARGET = "__describe__";
+/** The launch popover target while Julian gives an Area brain its instruction. */
+const BRAIN_LAUNCH_TARGET = "__brain__";
 
 /** The Area a describe-work launch applies to, read live from the form. */
 function describeLaunchArea() {
@@ -587,9 +591,131 @@ function describeWorkSessions() {
     .sort((left, right) => Number(right.created || 0) - Number(left.created || 0));
 }
 
-/** Finds only the work-definition conversation the user selected. */
+/** Finds only the work-definition (or brain) conversation the user selected. */
 function describeWorkSession() {
-  return describeWorkSessions().find((session) => session.name === state.describeSessionName) ?? null;
+  return describeWorkSessions().find((session) => session.name === state.describeSessionName)
+    ?? brainSessions().find((session) => session.name === state.describeSessionName)
+    ?? null;
+}
+
+// ---- Area brains ----
+// One long-lived orchestrating agent per Area (ADR-0024). The server keeps
+// the record; the desk shows it as an icon and one line on the Area card,
+// and opens its terminal through the same view as a describe-work agent.
+
+/** Every live brain session. */
+function brainSessions() {
+  return state.sessions.filter((session) => session.kind === "brain");
+}
+
+/** The brain record of exactly this Area, or null. A parent card never shows a child brain. */
+function brainForAreaCard(areaPath) {
+  return (state.brains ?? []).find((brain) => brain.area === areaPath) ?? null;
+}
+
+/** The desk word for a brain's state: live pane state, else its record status. */
+function brainStateLabel(brain) {
+  if (!brain) return "No brain";
+  if (brain.live) {
+    if (brain.state === "working") return "Brain working";
+    if (brain.state === "waiting") return brain.stateDetail === "decision" ? "Brain needs a decision" : "Brain waiting for you";
+    if (brain.state === "shell") return "Brain did not start";
+    return "Brain session open";
+  }
+  return brain.status === "ended" ? "Brain ended" : "Brain stopped";
+}
+
+/** The class that colours the brain icon: none, working, waiting, live, stopped, ended. */
+function brainKind(brain) {
+  if (!brain) return "none";
+  if (brain.live) return brain.state === "waiting" ? "waiting" : brain.state === "working" ? "working" : "live";
+  return brain.status === "ended" ? "ended" : "stopped";
+}
+
+/** The brain icon in the Area card header: dim without a brain, stateful with one. */
+function deskBrainButton(areaPath) {
+  const brain = brainForAreaCard(areaPath);
+  const kind = brainKind(brain);
+  const open = state.launchTarget === BRAIN_LAUNCH_TARGET && state.brainDraft?.area === areaPath;
+  const title = !brain
+    ? "Start a brain for this Area"
+    : brain.live
+      ? `Open the brain (generation ${brain.generation}, ${brainStateLabel(brain).toLowerCase()})`
+      : `${brainStateLabel(brain)} after generation ${brain.generation}: resume or start over`;
+  return `<button class="area-brain ${kind}${open ? " open" : ""}" type="button" data-launch-for="${BRAIN_LAUNCH_TARGET}" data-brain-area="${escapeHtml(areaPath)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}" aria-expanded="${open}"><span aria-hidden="true">🧠</span></button>`;
+}
+
+/** One line under the Area card header: generation, state, latest handover. */
+function deskBrainLine(areaPath) {
+  const brain = brainForAreaCard(areaPath);
+  if (!brain) return "";
+  const handover = String(brain.latestHandover ?? "").split("\n")[0].trim();
+  if (brain.live) {
+    return `<button class="area-brain-line ${brainKind(brain)}" type="button" data-open-brain="${escapeHtml(brain.session)}" title="Open the brain"><strong>Brain · generation ${brain.generation} · ${escapeHtml(brainStateLabel(brain))}</strong>${handover ? `<span>${escapeHtml(handover)}</span>` : ""}</button>`;
+  }
+  return `<p class="area-brain-line ${brainKind(brain)}"><strong>${escapeHtml(brainStateLabel(brain))} after generation ${brain.generation}</strong><span>Resume or start over from the brain icon.</span></p>`;
+}
+
+/** Opens the brain's terminal in the same view as a describe-work agent. */
+function openBrainSession(name) {
+  const session = brainSessions().find((item) => item.name === name);
+  if (!session) return showToast("The brain session is not live.");
+  state.describeSessionName = session.name;
+  state.describeReturnView = "work";
+  state.document = null;
+  saveDescribeSession();
+  state.view = "describe-agent";
+  state.renderedKey = "";
+  paint(true);
+}
+
+/** Opens or closes the brain popover for one Area card; a live brain opens its terminal instead. */
+function toggleBrainPopover(button) {
+  const area = button.dataset.brainArea;
+  const brain = brainForAreaCard(area);
+  if (brain?.live) return openBrainSession(brain.session);
+  if (state.launchTarget === BRAIN_LAUNCH_TARGET && state.brainDraft?.area === area) {
+    state.launchTarget = "";
+    state.launchAnchor = null;
+    return paint(true);
+  }
+  launchOptionsFor(area);
+  state.launch.record = null;
+  state.launch.steps = [];
+  state.launch.active = 0;
+  state.launch.command = "";
+  state.launch.editing = false;
+  state.launch.instruction = "";
+  state.launch.continueFrom = null;
+  // Fable plans by default; the picker shows it selected when the registry
+  // has it, and the server falls back to the Area default when it does not.
+  state.launch.choice = brain?.launch ?? { harness: "claude", model: "fable-5", effort: null };
+  state.brainDraft = { area, instruction: brain?.instruction ?? "" };
+  const rect = button.getBoundingClientRect();
+  state.launchTarget = BRAIN_LAUNCH_TARGET;
+  state.launchAnchor = { top: Math.round(rect.bottom + 8), right: Math.round(rect.right) };
+  state.launch.open = false;
+  return paint(true);
+}
+
+/** Starts, resumes, or starts over the brain of the popover's Area. */
+async function startBrain({ resume = false } = {}) {
+  syncLaunchDraft();
+  const area = state.brainDraft?.area;
+  const instruction = (state.brainDraft?.instruction ?? "").trim();
+  if (!area) return;
+  if (!resume && !instruction) return showToast("Tell the brain what this Area should get done.");
+  try {
+    const result = await post("/api/brains/start", { area, instruction, ...(resume ? {} : launchRequestFields()), resume });
+    state.launchTarget = "";
+    state.launchAnchor = null;
+    state.brainDraft = null;
+    await refresh();
+    showToast(result.reattached ? "The brain already runs." : resume ? `Brain resumed (generation ${result.generation}).` : "Brain started.");
+    openBrainSession(result.session);
+  } catch (error) {
+    showToast(error.message);
+  }
 }
 
 const NAME_MAP = new Map([
@@ -939,7 +1065,10 @@ function deskAttentionItems() {
   const definitionItems = describeWorkSessions()
     .filter((session) => describeWorkAttention(session) === "waiting")
     .map((session) => ({ kind: "definition", session, area: session.area, title: session.workTitle || "Define new work" }));
-  return [...goalItems, ...definitionItems].sort((left, right) => left.area.localeCompare(right.area) || left.title.localeCompare(right.title));
+  const brainItems = brainSessions()
+    .filter((session) => session.state === "waiting")
+    .map((session) => ({ kind: "brain", session, area: session.area ?? "", title: `Brain · ${humanName(String(session.area ?? "").split("/").pop() ?? "")}` }));
+  return [...goalItems, ...definitionItems, ...brainItems].sort((left, right) => left.area.localeCompare(right.area) || left.title.localeCompare(right.title));
 }
 
 let dockBadgeCount = null;
@@ -1002,10 +1131,12 @@ function deskAttentionQueue() {
         const name = item.session ? agentName(item.session) : "Handoff";
         const action = item.kind === "definition"
           ? `data-select-work-definition="${escapeHtml(item.session.name)}"`
+          : item.kind === "brain"
+            ? `data-open-brain="${escapeHtml(item.session.name)}"`
           : item.kind === "handoff" || item.kind === "pipeline"
             ? `data-reveal-goal="${escapeHtml(item.goal.file)}"`
             : `data-open-goal-run="${escapeHtml(item.goal.file)}"`;
-        const label = item.kind === "handoff" ? "See handoff" : item.kind === "pipeline" ? "See steps" : `Open ${name}`;
+        const label = item.kind === "handoff" ? "See handoff" : item.kind === "pipeline" ? "See steps" : item.kind === "brain" ? "Open brain" : `Open ${name}`;
         return `<button type="button" ${action}><span><small>${escapeHtml(areaLabel(item.area))}</small><strong>${escapeHtml(item.title)}</strong></span><span>${escapeHtml(label)} <b aria-hidden="true">→</b></span></button>`;
       }).join("")}</div>
     </section>`;
@@ -1196,7 +1327,9 @@ function deskAreaPanel(record, position) {
         <span class="area-desk-index" aria-hidden="true">${String(position + 1).padStart(2, "0")}</span>
         <div><small>${escapeHtml(parent)}</small><h2>${escapeHtml(humanName(area.name))}</h2></div>
         <span class="area-desk-state ${status.kind}">${escapeHtml(status.label)}</span>
+        ${deskBrainButton(area.path)}
       </header>
+      ${deskBrainLine(area.path)}
       <div class="area-desk-body">
         ${descriptions.length ? `<section class="area-desk-section definitions"><div class="area-desk-section-heading"><h3>Dispatches</h3><span>${descriptions.length}</span></div>${descriptions.map(deskDefinitionRow).join("")}</section>` : ""}
         <section class="area-desk-section goals">
@@ -1264,16 +1397,18 @@ function renderWork() {
 function launchPopover() {
   if (!state.launchTarget) return "";
   const describing = state.launchTarget === DESCRIBE_LAUNCH_TARGET;
-  const goal = describing ? null : goalByFile(state.launchTarget);
-  if (!describing && !goal) return "";
-  const area = describing ? describeLaunchArea() : goal.area;
+  const braining = state.launchTarget === BRAIN_LAUNCH_TARGET;
+  const goal = describing || braining ? null : goalByFile(state.launchTarget);
+  if (!describing && !braining && !goal) return "";
+  if (braining && !state.brainDraft?.area) return "";
+  const area = describing ? describeLaunchArea() : braining ? state.brainDraft.area : goal.area;
   launchOptionsFor(area);
   const anchor = state.launchAnchor ?? { top: 120, right: window.innerWidth - 16 };
   const width = Math.min(640, window.innerWidth - 32);
   const left = Math.max(16, anchor.right - width);
   return `
     <div class="launch-popover" data-launch-popover role="dialog" aria-label="Choose agent and model" style="top:${anchor.top}px;left:${left}px;width:${width}px;max-height:calc(100vh - ${anchor.top + 16}px)">
-      <header class="launch-popover-header"><small>${escapeHtml(areaLabel(area))}</small><strong>${describing ? "Describe work" : escapeHtml(goal.title)}</strong></header>
+      <header class="launch-popover-header"><small>${escapeHtml(areaLabel(area))}</small><strong>${describing ? "Describe work" : braining ? "Brain" : escapeHtml(goal.title)}</strong></header>
       ${launchPickerBlock()}
     </div>
   `;
@@ -1769,6 +1904,8 @@ function launchStepDraft() {
 function syncLaunchDraft() {
   const instruction = document.querySelector("#launch-instruction");
   if (instruction) state.launch.instruction = instruction.value;
+  const brainInstruction = document.querySelector("#brain-instruction");
+  if (brainInstruction && state.brainDraft) state.brainDraft.instruction = brainInstruction.value;
   const command = document.querySelector("#launch-command-input");
   if (command) state.launch.command = command.value;
 }
@@ -1875,7 +2012,7 @@ function launchDraftRows(steps = commitActiveStep()) {
 
 /** The step list above the picker: rows, add, remove; describe mode has none. */
 function launchStepList() {
-  if (state.launchTarget === DESCRIBE_LAUNCH_TARGET) return "";
+  if (state.launchTarget === DESCRIBE_LAUNCH_TARGET || state.launchTarget === BRAIN_LAUNCH_TARGET) return "";
   const record = state.launch.record;
   const steps = commitActiveStep();
   const fixed = record ? record.steps.length : 0;
@@ -1936,19 +2073,28 @@ function launchPickerBlock() {
        <p class="form-note">The edited command applies to this run only.</p>`
     : `<div class="launch-command"><code>${escapeHtml(command)}</code>${selection?.edited ? `<span class="launch-default-tag">edited</span>` : ""}<button class="quiet-button" type="button" data-launch-edit>Edit command</button></div>`;
   const describing = state.launchTarget === DESCRIBE_LAUNCH_TARGET;
+  const braining = state.launchTarget === BRAIN_LAUNCH_TARGET;
+  const brain = braining ? brainForAreaCard(state.brainDraft?.area) : null;
+  const brainResumes = Boolean(brain && !brain.live);
   const record = state.launch.record;
-  const stepCount = describing ? 1 : commitActiveStep().length;
+  const stepCount = describing || braining ? 1 : commitActiveStep().length;
   const drafts = record ? launchDraftRows().length : 0;
-  const startLabel = record
+  const startLabel = braining
+    ? (brainResumes ? "Resume brain" : "Start brain")
+    : record
     ? (state.launch.active < record.steps.length ? `Save step ${state.launch.active + 1}` : drafts > 1 ? `Add ${drafts} steps` : `Add step ${record.steps.length + 1}`)
     : stepCount > 1 ? `Start ${stepCount} steps` : `Start ${selection ? (selection.label || "agent") : "agent"}`;
   const canSave = Boolean(state.launch.choice && selection?.harness && !selection?.edited);
-  const stepZone = describing ? "" : `
+  const brainZone = braining ? `
+      <label class="brain-instruction"><span>What should this Area get done?</span><textarea id="brain-instruction" rows="5" placeholder="The instruction the brain plans and dispatches from. It splits the work into Goals, starts agents in dependency order, reviews what comes back, and asks you only for real decisions.">${escapeHtml(state.brainDraft?.instruction ?? "")}</textarea></label>
+      ${brainResumes ? `<p class="form-note">A brain ran here before (generation ${brain.generation}, ${escapeHtml(brainStateLabel(brain).toLowerCase())}). Resume continues from its plan and handover. Start over begins a new brain from the instruction above.</p>` : ""}` : "";
+  const stepZone = describing || braining ? "" : `
       <label class="launch-instruction"><span>Step ${state.launch.active + 1} does</span><textarea id="launch-instruction" rows="2" placeholder="${stepCount > 1 || record ? "What this agent does" : "What this agent does (optional for one step)"}">${escapeHtml(state.launch.instruction ?? "")}</textarea></label>
       ${state.launch.active > 0 ? `<label class="launch-continue"><span>Session</span><select data-launch-continue><option value="">Fresh session</option>${Array.from({ length: state.launch.active }, (_, k) => `<option value="${k + 1}"${state.launch.continueFrom === k + 1 ? " selected" : ""}>Continue step ${k + 1}</option>`).join("")}</select></label>` : ""}`;
   return `
     <div class="launch-picker">
       ${launchStepList()}
+      ${brainZone}
       ${(options.harnesses ?? []).length ? `
       <div class="launch-columns">
         <div class="launch-col"><p class="launch-col-title">Harness</p>${harnessButtons}</div>
@@ -1959,6 +2105,7 @@ function launchPickerBlock() {
       ${stepZone}
       <div class="action-row start-actions">
         <button class="primary-button" type="button" data-launch-start>${escapeHtml(startLabel)}</button>
+        ${brainResumes ? `<button class="quiet-button" type="button" data-brain-start-over>Start over</button>` : ""}
         ${canSave ? `<button class="quiet-button" type="button" data-launch-save>Save as Area default</button>` : ""}
         <button class="quiet-button" type="button" data-launch-close>${state.launchTarget ? "Close" : "Back"}</button>
       </div>
@@ -1971,7 +2118,9 @@ function launchPickerBlock() {
 async function saveLaunchDefault() {
   const area = state.launchTarget === DESCRIBE_LAUNCH_TARGET
     ? describeLaunchArea()
-    : (state.launchTarget ? goalByFile(state.launchTarget)?.area : currentGoal()?.area);
+    : state.launchTarget === BRAIN_LAUNCH_TARGET
+      ? state.brainDraft?.area
+      : (state.launchTarget ? goalByFile(state.launchTarget)?.area : currentGoal()?.area);
   const selection = launchSelection();
   if (!area || !selection?.harness || selection.edited) return;
   try {
@@ -2457,6 +2606,8 @@ function renderKey() {
     goal ? [goal.file, goal.status, goal.mtime, goal.stateText, goal.currentBrief, goal.storyText, goal.why, goal.subgoalItems, goal.documents] : null,
     [state.launch.area, state.launch.open, state.launch.editing, state.launch.command, state.launch.choice, state.launch.loading, Boolean(state.launch.options), state.launch.options?.default?.label ?? null, state.launch.options?.default?.command ?? null, state.launch.instruction, state.launch.continueFrom, state.launch.active, state.launch.steps, state.launch.record?.updatedAt ?? null],
     (state.pipelines ?? []).map((item) => [item.goal, item.status, item.updatedAt, item.steps.map((step) => [step.status, step.live, step.state, step.idleSince])]),
+    (state.brains ?? []).map((item) => [item.area, item.status, item.generation, item.session, item.live, item.state, item.stateDetail, item.updatedAt]),
+    state.brainDraft,
     [state.launchTarget, state.launchAnchor, Boolean(state.harnessDraft)],
     state.sessions.map((item) => [item.name, item.goal, item.kind, item.area, item.state, item.phase, item.command, item.created, item.workTitle, item.launchLabel]),
   ]);
@@ -2568,7 +2719,9 @@ function updateLiveHeader() {
   if (state.view === "describe-agent") {
     const session = describeWorkSession();
     if (!session) return;
-    barContext.textContent = `${areaLabel(session.area)} · Defining work · ${describeWorkStateLabel(session)}`;
+    barContext.textContent = session.kind === "brain"
+      ? `${areaLabel(session.area)} · Brain · generation ${session.generation ?? "?"} · ${describeWorkStateLabel(session)}`
+      : `${areaLabel(session.area)} · Defining work · ${describeWorkStateLabel(session)}`;
     findButton.hidden = true;
     updateLiveProgramCount();
     return;
@@ -2709,6 +2862,7 @@ async function refresh({ initial = false } = {}) {
     state.vault = vault;
     state.sessions = sessionPayload.sessions || [];
     state.pipelines = sessionPayload.pipelines || [];
+    state.brains = sessionPayload.brains || [];
     state.programs = {
       programs: programs.programs || [],
       errors: programs.errors || [],
@@ -3709,7 +3863,9 @@ function confirmStop() {
     kicker: shell ? "Open session" : "Live agent",
     title: shell ? "Close this session?" : `Stop ${agentName(session)}?`,
     copy: describing
-      ? "This ends the conversation about new work. Any Goals or Documents already created stay in Tangent."
+      ? session.kind === "brain"
+        ? "This ends the brain. Goals and pipelines it started keep running. Resume it later from the brain icon on the Area card."
+        : "This ends the conversation about new work. Any Goals or Documents already created stay in Tangent."
       : pipeline
         ? `This ends the run${stepsLeft ? ` and its ${stepsLeft} remaining step${stepsLeft === 1 ? "" : "s"}` : ""}. The Goal, its notes, and its handovers stay here.`
         : "This ends the live session. The work and its notes stay here.",
@@ -3933,6 +4089,8 @@ document.addEventListener("click", async (event) => {
     state.launch.open = true;
     return paint(true);
   }
+  const openBrain = target.closest("[data-open-brain]");
+  if (openBrain) return openBrainSession(openBrain.dataset.openBrain);
   const openSession = target.closest("[data-open-session]");
   if (openSession) {
     state.agentSessionName = openSession.dataset.openSession;
@@ -3960,6 +4118,7 @@ document.addEventListener("click", async (event) => {
   const launchFor = target.closest("[data-launch-for]");
   if (launchFor) {
     const file = launchFor.dataset.launchFor;
+    if (file === BRAIN_LAUNCH_TARGET) return toggleBrainPopover(launchFor);
     const describing = file === DESCRIBE_LAUNCH_TARGET;
     const goal = describing ? null : goalByFile(file);
     if (!describing && !goal) return;
@@ -4052,9 +4211,14 @@ document.addEventListener("click", async (event) => {
     state.launch.editing = false;
     return paint(true);
   }
+  if (target.closest("[data-brain-start-over]")) return startBrain({ resume: false });
   if (target.closest("[data-launch-start]")) {
     syncLaunchDraft();
     const targetFile = state.launchTarget;
+    if (targetFile === BRAIN_LAUNCH_TARGET) {
+      const brain = brainForAreaCard(state.brainDraft?.area);
+      return startBrain({ resume: Boolean(brain && !brain.live) });
+    }
     if (targetFile !== DESCRIBE_LAUNCH_TARGET && state.launch.record) {
       return state.launch.active < state.launch.record.steps.length ? savePipelineStep(targetFile) : appendPipelineSteps(targetFile);
     }

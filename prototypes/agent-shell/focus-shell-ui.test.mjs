@@ -38,12 +38,18 @@ function jsonResponse(payload) {
 }
 
 test("the live shell restores context, defines work with an agent, and organizes areas", async () => {
-  const [html, script] = await Promise.all([
+  const [html, script, mapCore, mapView] = await Promise.all([
     readFile(path.join(here, "public", "shell.html"), "utf8"),
     readFile(path.join(here, "public", "shell.js"), "utf8"),
+    readFile(path.join(here, "public", "area-map-core.js"), "utf8"),
+    readFile(path.join(here, "public", "area-map.js"), "utf8"),
   ]);
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
   const { window } = dom;
+  // jsdom has no 2d canvas; the Area map renders its outline without one.
+  window.HTMLCanvasElement.prototype.getContext = () => null;
+  window.eval(mapCore);
+  window.eval(mapView);
   const goalFile = "otto/tangent/goal-ux-product-vision.md";
   const goal = {
     mtime: 1,
@@ -240,10 +246,13 @@ test("the live shell restores context, defines work with an agent, and organizes
     }
     if (pathname === "/api/programs") {
       return jsonResponse({
-        programs: [{ id: "process:otto/dnd:hmr", type: "process", area: "otto/dnd", name: "hmr", label: "HMR", command: "npm run dev:hmr", cwd: "/tmp", sessionName: "process-dnd--hmr-test", session: null, available: true }],
+        programs: [
+          { id: "process:otto/dnd:hmr", type: "process", area: "otto/dnd", name: "hmr", label: "HMR", command: "npm run dev:hmr", cwd: "/tmp", sessionName: "process-dnd--hmr-test", session: null, available: true },
+          { id: "process:otto/tangent:shell", type: "process", area: "otto/tangent", name: "shell", label: "Agent Shell", command: "npm start", cwd: "/tmp", sessionName: "process-tangent--shell-test", session: { name: "process-tangent--shell-test", state: "running" }, available: true },
+        ],
         errors: [],
         areas: [{ path: "otto/dnd", cwd: "/tmp" }],
-        liveCount: 0,
+        liveCount: 1,
         timezone: "Europe/Athens",
         scheduler: { installed: true, intervalMinutes: 30, lastExitCode: 0 },
       });
@@ -279,7 +288,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   window.eval(script);
   await settle(window);
 
-  assert.match(window.document.querySelector("#screen").textContent, /Work by Area/);
+  assert.ok(window.document.querySelector(".work-page"), "the desk shows the Work page");
   assert.equal(window.document.querySelectorAll(".area-desk-panel").length, 2);
   assert.match(window.document.querySelector(".attention-queue").textContent, /Needs you now/);
   assert.deepEqual(dockBadges, []);
@@ -311,6 +320,17 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.match(window.document.querySelector(".area-desk-panel").textContent, /Define Live Edit collaboration/);
   assert.doesNotMatch(window.document.querySelector("#screen").textContent, /UX Product Vision/);
   click(window, "[data-work-filter='all']");
+  // The Area square on the desk carries the Area's Programs beside its Goals and Documents.
+  const tangentPanel = [...window.document.querySelectorAll(".area-desk-panel")].find((panel) => panel.textContent.includes("Tangent"));
+  const deskProgram = tangentPanel.querySelector(".desk-program");
+  assert.match(deskProgram.textContent, /Agent Shell/);
+  assert.match(deskProgram.textContent, /Running/);
+  assert.ok(deskProgram.classList.contains("live"));
+  click(window, "[data-program-action='stop'][data-program-id='process:otto/tangent:shell']");
+  assert.match(window.document.querySelector("#modal-title").textContent, /Stop Agent Shell/);
+  click(window, "[data-modal-confirm]");
+  await settle(window);
+  assert.ok(posts.some((entry) => entry.path === "/api/programs/control" && entry.body.id === "process:otto/tangent:shell" && entry.body.action === "stop"));
   assert.equal(window.document.querySelector("#work-tab").getAttribute("aria-current"), "page");
   assert.equal(window.document.querySelector("#areas-tab").hidden, false);
   // Programs live inside the Area card now: the top bar carries no Programs tab.
@@ -320,7 +340,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.ok(window.document.querySelector(".agent-page"));
   assert.equal(window.document.querySelector("#back-button").textContent, "Work");
   click(window, "#back-button");
-  assert.match(window.document.querySelector("#screen").textContent, /Work by Area/);
+  assert.ok(window.document.querySelector(".work-page"), "the desk shows the Work page");
 
   // The Goal row carries the details itself: brief, Documents, and handoff.
   const goalRow = window.document.querySelector(`[data-goal-anchor='${goalFile}']`);
@@ -368,7 +388,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   clearedSearch.value = "";
   clearedSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
 
-  click(window, "[data-describe-work]");
+  click(window, "[data-describe-area]");
   const describeArea = window.document.querySelector("#describe-area");
   describeArea.value = "otto/dnd";
   describeArea.dispatchEvent(new window.Event("input", { bubbles: true }));
@@ -398,7 +418,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.equal(window.localStorage.getItem("agent-shell.describe-session"), "dnd--describe-scene-flow");
 
   click(window, "#back-button");
-  assert.equal(window.document.querySelector("[data-describe-work]").textContent.trim(), "Describe work");
+  assert.equal(window.document.querySelector("[data-describe-area]").textContent.trim(), "Describe work here");
   const workDefinition = window.document.querySelector(".desk-definition");
   assert.ok(workDefinition, window.document.querySelector("#screen").textContent);
   assert.match(workDefinition.closest(".area-desk-panel").textContent, /D&D/);
@@ -408,7 +428,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   click(window, "[data-select-work-definition='dnd--describe-scene-flow']");
   assert.ok(window.document.querySelector(".agent-page"));
   click(window, "#back-button");
-  click(window, "[data-describe-work]");
+  click(window, "[data-describe-area]");
   assert.ok(window.document.querySelector("[data-describe-work-form]"));
   assert.equal(window.document.querySelector("#describe-work").value, "");
   const secondDescription = window.document.querySelector("#describe-work");
@@ -422,7 +442,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.match(window.document.querySelector("#screen").textContent, /Make the scene flow reliable/);
   assert.match(window.document.querySelector("#screen").textContent, /Define ladder authoring/);
   assert.match(window.document.querySelector("#screen").textContent, /Agent working/);
-  click(window, "[data-describe-work]");
+  click(window, "[data-describe-area]");
   const manualArea = window.document.querySelector("#describe-area");
   manualArea.value = "neara/hackathon/live-edit";
   manualArea.dispatchEvent(new window.Event("input", { bubbles: true }));
@@ -452,9 +472,16 @@ test("the live shell restores context, defines work with an agent, and organizes
   click(window, "[data-toggle-area='neara']");
   click(window, "[data-toggle-area='neara/hackathon']");
   click(window, "[data-select-area='neara/hackathon/live-edit']");
-  assert.match(window.document.querySelector("#screen").textContent, /Live Edit use cases/);
-  assert.match(window.document.querySelector(".area-goal-brief").textContent, /A clear design for Live Edit collaboration/);
-  click(window, `[data-open-document='${liveEditDocument.file}']`);
+  await settle(window);
+  assert.ok(window.document.querySelector(".area-map-screen"), "the selected Area shows its map screen");
+  assert.match(window.document.querySelector(".area-map-outline").textContent, /Live Edit use cases/);
+  assert.equal(window.document.querySelectorAll(".area-map-row").length, 3, "the three Live Edit Documents are outline rows");
+  assert.ok(window.document.querySelector("[data-mark-area-done='neara/hackathon/live-edit']"), "Mark done is offered");
+  const useCasesRow = [...window.document.querySelectorAll(".area-map-row")].find((row) => /Live Edit use cases/.test(row.textContent));
+  useCasesRow.click();
+  await settle(window);
+  assert.match(window.document.querySelector(".area-map-card").textContent, /Live Edit use cases/);
+  click(window, `.area-map-card [data-open-document='${liveEditDocument.file}']`);
   await settle(window);
   assert.match(window.document.querySelector("#screen").textContent, /People can work together/);
   assert.equal(window.document.querySelector(".work-review-nav"), null);
@@ -559,7 +586,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   click(window, "[data-modal-confirm]");
   await settle(window);
   assert.ok(posts.some((entry) => entry.path === "/api/goals/edit" && entry.body.file === subgoal.file && entry.body.status === "done"));
-  assert.match(window.document.querySelector("#screen").textContent, /Work by Area/);
+  assert.ok(window.document.querySelector(".work-page"), "the desk shows the Work page");
 
   goal.status = "done";
   subgoal.status = "done";
@@ -598,7 +625,7 @@ test("the Agent Shell menu owns refresh, reload, and rebuild, and a dead server 
 
   window.eval(script);
   await settle(window);
-  assert.match(window.document.querySelector("#screen").textContent, /Work by Area/);
+  assert.ok(window.document.querySelector(".work-page"), "the desk shows the Work page");
   assert.equal(window.document.querySelector("#shell-menu").hidden, true);
 
   // The top-left title opens the menu on a top-level view.
@@ -622,7 +649,7 @@ test("the Agent Shell menu owns refresh, reload, and rebuild, and a dead server 
   offline = true;
   await window.refresh();
   await settle(window);
-  assert.match(window.document.querySelector("#screen").textContent, /Work by Area/);
+  assert.ok(window.document.querySelector(".work-page"), "the desk shows the Work page");
   assert.equal(window.document.querySelector("#status-pill").hidden, false);
   assert.match(window.document.querySelector("#status-pill").textContent, /Server offline/);
 
@@ -705,7 +732,7 @@ test("checked Goals start one shared agent that owns them in checked order", asy
 
   window.eval(script);
   await settle(window);
-  assert.match(window.document.querySelector("#screen").textContent, /Work by Area/);
+  assert.ok(window.document.querySelector(".work-page"), "the desk shows the Work page");
 
   // Both startable rows carry a checkbox; nothing is checked, so no action bar.
   assert.equal(window.document.querySelectorAll("[data-check-goal]").length, 2);
@@ -1191,7 +1218,7 @@ test("background polls never rebuild the screen under an editing surface or a re
   assert.notEqual(window.document.querySelector(`[data-goal-anchor='${goal.file}']`), deskBefore, "the desk repaints once nothing is being edited");
 
   // Describing work: the form survives a poll while Julian reads elsewhere on the page.
-  click(window, "[data-describe-work]");
+  click(window, "[data-describe-area]");
   const form = window.document.querySelector("[data-describe-work-form]");
   assert.ok(form);
   const description = window.document.querySelector("#describe-work");
@@ -1220,530 +1247,6 @@ test("background polls never rebuild the screen under an editing surface or a re
   const repainted = window.document.querySelector(".document-reader-scroll");
   assert.notEqual(repainted, reader, "an explicit refresh repaints the reader");
   assert.equal(repainted.scrollTop, 320, "the reading position survives the repaint");
-});
-
-test("comments render as red blocks, save through the base-hash path with re-anchoring, and remove with undo", async () => {
-  const [html, script, commentsScript] = await Promise.all([
-    readFile(path.join(here, "public", "shell.html"), "utf8"),
-    readFile(path.join(here, "public", "shell.js"), "utf8"),
-    readFile(path.join(here, "public", "document-comments.js"), "utf8"),
-  ]);
-  await import("./public/document-comments.js");
-  const helper = globalThis.AgentShellDocumentComments;
-  const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
-  const { window } = dom;
-  window.setInterval = () => 0;
-  window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() { this.dataset.scrolledTo = "1"; };
-  const doc = { file: "otto/dnd/design-map.md", area: "otto/dnd", kind: "document", title: "Map design", searchText: "map", goalHistory: [] };
-  let text = "# Map design\n\nA long design with {==clear words==}{>>Julian: Say why.<<} here.\n\n## Part two\n\nMore prose.\n";
-  let hash = 1;
-  const saves = [];
-  let conflictOnce = false;
-  /** The document as the server would return it: text, hash, and parsed comments. */
-  const served = () => ({ ...doc, text, hash: `map-${hash}`, comments: helper.parseComments(text) });
-  /** The server's 409 reply, which carries the current Document for re-anchoring. */
-  const conflictResponse = () => ({
-    ok: false,
-    status: 409,
-    /** Returns the conflict body. */
-    async json() { return { error: "document changed since it was opened", current: served() }; },
-  });
-  window.fetch = async (url, options = {}) => {
-    const pathname = new URL(url, window.location.href).pathname;
-    if (pathname === "/api/document" && options.method === "POST") {
-      const body = JSON.parse(options.body);
-      if (conflictOnce) {
-        conflictOnce = false;
-        text = text.replace("More prose.", "More prose, edited by an agent.");
-        hash += 1;
-        return conflictResponse();
-      }
-      if (body.baseHash !== `map-${hash}`) return conflictResponse();
-      saves.push(body);
-      text = body.text;
-      hash += 1;
-      return jsonResponse(served());
-    }
-    if (options.method === "POST") return jsonResponse({ ok: true });
-    if (pathname === "/api/sessions") return jsonResponse({ boot: "boot-1", caffeinate: false, sessions: [], pipelines: [] });
-    if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
-    if (pathname === "/api/document") return jsonResponse(served());
-    return jsonResponse({
-      areas: [{ path: "otto", name: "otto", goals: [] }, { path: "otto/dnd", name: "dnd", goals: [], documents: [doc] }],
-      map: [],
-      documents: [doc],
-    });
-  };
-  window.eval(commentsScript);
-  window.eval(script);
-  await settle(window);
-  click(window, `[data-open-document='${doc.file}']`);
-  await settle(window);
-  await settle(window);
-
-  // The existing comment is a red-ruled block under its paragraph, its words are marked, and the toolbar counts it.
-  const aside = window.document.querySelector(".document-comment");
-  assert.ok(aside, "the comment renders");
-  assert.equal(aside.getAttribute("role"), "note");
-  assert.match(aside.getAttribute("aria-label"), /Comment from Julian/);
-  assert.match(aside.textContent, /Say why\./);
-  assert.equal(aside.previousElementSibling.tagName, "P");
-  assert.equal(window.document.querySelector(".document-comment-mark").textContent, "clear words");
-  assert.doesNotMatch(window.document.querySelector(".document-content").textContent, /\{>>|<<\}|\{==/);
-  assert.match(window.document.querySelector(".document-comment-nav").textContent, /1 comment/);
-  assert.ok(window.document.querySelector(".document-comment-remove"), "the remove control is always drawn");
-  assert.ok(window.document.querySelector("[data-comment-new]"), "the Comment action is visible");
-
-  // Next comment scrolls to and focuses the comment block.
-  click(window, "[data-comment-step='1']");
-  assert.equal(window.document.querySelector(".document-comment").dataset.scrolledTo, "1");
-
-  // Comment without a selection: the composer opens under the section in view and can switch to the whole Document.
-  click(window, ".reader-comment-action");
-  await settle(window);
-  let composer = window.document.querySelector("[data-comment-composer]");
-  assert.ok(composer, "the composer opened");
-  assert.equal(window.document.activeElement.id, "comment-text");
-  const field = window.document.querySelector("#comment-text");
-  field.value = "Overall: shorter.";
-  field.dispatchEvent(new window.Event("input", { bubbles: true }));
-  click(window, "[data-comment-scope='document']");
-  await settle(window);
-  composer = window.document.querySelector("[data-comment-composer]");
-  assert.equal(window.document.querySelector("#comment-text").value, "Overall: shorter.", "the draft survives the scope switch");
-  assert.equal(window.document.querySelector("[data-comment-scope='document']").getAttribute("aria-pressed"), "true");
-  // An agent edits the file first: the save gets a 409, re-anchors, and saves again without losing the agent's edit.
-  conflictOnce = true;
-  submit(window, "[data-comment-composer]");
-  await settle(window);
-  await settle(window);
-  await settle(window);
-  assert.equal(saves.length, 1, "one save landed after the conflict");
-  assert.match(saves[0].text, /# Map design\n\n\{>>Julian: Overall: shorter\.<<\}\n/);
-  assert.match(saves[0].text, /edited by an agent/);
-  assert.equal(saves[0].summary, "added a comment");
-  assert.equal(window.document.querySelector("[data-comment-composer]"), null, "the composer closed");
-  assert.equal(window.document.querySelectorAll(".document-comment").length, 2);
-  assert.match(window.document.querySelector("#toast").textContent, /Comment added/);
-  assert.ok(window.document.querySelector("#toast .toast-action"), "the toast offers Undo");
-
-  // Escape cancels a fresh composer and keeps nothing.
-  click(window, ".reader-comment-action");
-  await settle(window);
-  assert.ok(window.document.querySelector("[data-comment-composer]"));
-  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-  await settle(window);
-  assert.equal(window.document.querySelector("[data-comment-composer]"), null);
-  assert.equal(saves.length, 1);
-
-  // Remove goes through the same save with Undo, and Undo puts the words back.
-  click(window, "[data-remove-comment='1']");
-  await settle(window);
-  await settle(window);
-  assert.equal(saves.length, 2);
-  assert.equal(saves[1].summary, "removed a comment");
-  assert.doesNotMatch(saves[1].text, /Say why/);
-  assert.match(saves[1].text, /A long design with clear words here\./);
-  assert.equal(window.document.querySelectorAll(".document-comment").length, 1);
-  click(window, "#toast .toast-action");
-  await settle(window);
-  await settle(window);
-  assert.equal(saves.length, 3);
-  assert.match(saves[2].text, /\{==clear words==\}\{>>Julian: Say why\.<<\}/);
-  assert.equal(window.document.querySelectorAll(".document-comment").length, 2);
-});
-
-test("comments render as red blocks, save through the base-hash path with re-anchoring, and remove with undo", async () => {
-  const [html, script, commentsScript] = await Promise.all([
-    readFile(path.join(here, "public", "shell.html"), "utf8"),
-    readFile(path.join(here, "public", "shell.js"), "utf8"),
-    readFile(path.join(here, "public", "document-comments.js"), "utf8"),
-  ]);
-  await import("./public/document-comments.js");
-  const helper = globalThis.AgentShellDocumentComments;
-  const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
-  const { window } = dom;
-  window.setInterval = () => 0;
-  window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() { this.dataset.scrolledTo = "1"; };
-  const doc = { file: "otto/dnd/design-map.md", area: "otto/dnd", kind: "document", title: "Map design", searchText: "map", goalHistory: [] };
-  let text = "# Map design\n\nA long design with {==clear words==}{>>Julian: Say why.<<} here.\n\n## Part two\n\nMore prose.\n";
-  let hash = 1;
-  const saves = [];
-  let conflictOnce = false;
-  /** The document as the server would return it: text, hash, and parsed comments. */
-  const served = () => ({ ...doc, text, hash: `map-${hash}`, comments: helper.parseComments(text) });
-  /** The server's 409 reply, which carries the current Document for re-anchoring. */
-  const conflictResponse = () => ({
-    ok: false,
-    status: 409,
-    /** Returns the conflict body. */
-    async json() { return { error: "document changed since it was opened", current: served() }; },
-  });
-  window.fetch = async (url, options = {}) => {
-    const pathname = new URL(url, window.location.href).pathname;
-    if (pathname === "/api/document" && options.method === "POST") {
-      const body = JSON.parse(options.body);
-      if (conflictOnce) {
-        conflictOnce = false;
-        text = text.replace("More prose.", "More prose, edited by an agent.");
-        hash += 1;
-        return conflictResponse();
-      }
-      if (body.baseHash !== `map-${hash}`) return conflictResponse();
-      saves.push(body);
-      text = body.text;
-      hash += 1;
-      return jsonResponse(served());
-    }
-    if (options.method === "POST") return jsonResponse({ ok: true });
-    if (pathname === "/api/sessions") return jsonResponse({ boot: "boot-1", caffeinate: false, sessions: [], pipelines: [] });
-    if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
-    if (pathname === "/api/document") return jsonResponse(served());
-    return jsonResponse({
-      areas: [{ path: "otto", name: "otto", goals: [] }, { path: "otto/dnd", name: "dnd", goals: [], documents: [doc] }],
-      map: [],
-      documents: [doc],
-    });
-  };
-  window.eval(commentsScript);
-  window.eval(script);
-  await settle(window);
-  click(window, `[data-open-document='${doc.file}']`);
-  await settle(window);
-  await settle(window);
-
-  // The existing comment is a red-ruled block under its paragraph, its words are marked, and the toolbar counts it.
-  const aside = window.document.querySelector(".document-comment");
-  assert.ok(aside, "the comment renders");
-  assert.equal(aside.getAttribute("role"), "note");
-  assert.match(aside.getAttribute("aria-label"), /Comment from Julian/);
-  assert.match(aside.textContent, /Say why\./);
-  assert.equal(aside.previousElementSibling.tagName, "P");
-  assert.equal(window.document.querySelector(".document-comment-mark").textContent, "clear words");
-  assert.doesNotMatch(window.document.querySelector(".document-content").textContent, /\{>>|<<\}|\{==/);
-  assert.match(window.document.querySelector(".document-comment-nav").textContent, /1 comment/);
-  assert.ok(window.document.querySelector(".document-comment-remove"), "the remove control is always drawn");
-  assert.ok(window.document.querySelector("[data-comment-new]"), "the Comment action is visible");
-
-  // Next comment scrolls to and focuses the comment block.
-  click(window, "[data-comment-step='1']");
-  assert.equal(window.document.querySelector(".document-comment").dataset.scrolledTo, "1");
-
-  // Comment without a selection: the composer opens under the section in view and can switch to the whole Document.
-  click(window, ".reader-comment-action");
-  await settle(window);
-  let composer = window.document.querySelector("[data-comment-composer]");
-  assert.ok(composer, "the composer opened");
-  assert.equal(window.document.activeElement.id, "comment-text");
-  const field = window.document.querySelector("#comment-text");
-  field.value = "Overall: shorter.";
-  field.dispatchEvent(new window.Event("input", { bubbles: true }));
-  click(window, "[data-comment-scope='document']");
-  await settle(window);
-  composer = window.document.querySelector("[data-comment-composer]");
-  assert.equal(window.document.querySelector("#comment-text").value, "Overall: shorter.", "the draft survives the scope switch");
-  assert.equal(window.document.querySelector("[data-comment-scope='document']").getAttribute("aria-pressed"), "true");
-  // An agent edits the file first: the save gets a 409, re-anchors, and saves again without losing the agent's edit.
-  conflictOnce = true;
-  submit(window, "[data-comment-composer]");
-  await settle(window);
-  await settle(window);
-  await settle(window);
-  assert.equal(saves.length, 1, "one save landed after the conflict");
-  assert.match(saves[0].text, /# Map design\n\n\{>>Julian: Overall: shorter\.<<\}\n/);
-  assert.match(saves[0].text, /edited by an agent/);
-  assert.equal(saves[0].summary, "added a comment");
-  assert.equal(window.document.querySelector("[data-comment-composer]"), null, "the composer closed");
-  assert.equal(window.document.querySelectorAll(".document-comment").length, 2);
-  assert.match(window.document.querySelector("#toast").textContent, /Comment added/);
-  assert.ok(window.document.querySelector("#toast .toast-action"), "the toast offers Undo");
-
-  // Escape cancels a fresh composer and keeps nothing.
-  click(window, ".reader-comment-action");
-  await settle(window);
-  assert.ok(window.document.querySelector("[data-comment-composer]"));
-  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-  await settle(window);
-  assert.equal(window.document.querySelector("[data-comment-composer]"), null);
-  assert.equal(saves.length, 1);
-
-  // Remove goes through the same save with Undo, and Undo puts the words back.
-  click(window, "[data-remove-comment='1']");
-  await settle(window);
-  await settle(window);
-  assert.equal(saves.length, 2);
-  assert.equal(saves[1].summary, "removed a comment");
-  assert.doesNotMatch(saves[1].text, /Say why/);
-  assert.match(saves[1].text, /A long design with clear words here\./);
-  assert.equal(window.document.querySelectorAll(".document-comment").length, 1);
-  click(window, "#toast .toast-action");
-  await settle(window);
-  await settle(window);
-  assert.equal(saves.length, 3);
-  assert.match(saves[2].text, /\{==clear words==\}\{>>Julian: Say why\.<<\}/);
-  assert.equal(window.document.querySelectorAll(".document-comment").length, 2);
-});
-
-test("comments render as red blocks, save through the base-hash path with re-anchoring, and remove with undo", async () => {
-  const [html, script, commentsScript] = await Promise.all([
-    readFile(path.join(here, "public", "shell.html"), "utf8"),
-    readFile(path.join(here, "public", "shell.js"), "utf8"),
-    readFile(path.join(here, "public", "document-comments.js"), "utf8"),
-  ]);
-  await import("./public/document-comments.js");
-  const helper = globalThis.AgentShellDocumentComments;
-  const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
-  const { window } = dom;
-  window.setInterval = () => 0;
-  window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() { this.dataset.scrolledTo = "1"; };
-  const doc = { file: "otto/dnd/design-map.md", area: "otto/dnd", kind: "document", title: "Map design", searchText: "map", goalHistory: [] };
-  let text = "# Map design\n\nA long design with {==clear words==}{>>Julian: Say why.<<} here.\n\n## Part two\n\nMore prose.\n";
-  let hash = 1;
-  const saves = [];
-  let conflictOnce = false;
-  /** The document as the server would return it: text, hash, and parsed comments. */
-  const served = () => ({ ...doc, text, hash: `map-${hash}`, comments: helper.parseComments(text) });
-  /** The server's 409 reply, which carries the current Document for re-anchoring. */
-  const conflictResponse = () => ({
-    ok: false,
-    status: 409,
-    /** Returns the conflict body. */
-    async json() { return { error: "document changed since it was opened", current: served() }; },
-  });
-  window.fetch = async (url, options = {}) => {
-    const pathname = new URL(url, window.location.href).pathname;
-    if (pathname === "/api/document" && options.method === "POST") {
-      const body = JSON.parse(options.body);
-      if (conflictOnce) {
-        conflictOnce = false;
-        text = text.replace("More prose.", "More prose, edited by an agent.");
-        hash += 1;
-        return conflictResponse();
-      }
-      if (body.baseHash !== `map-${hash}`) return conflictResponse();
-      saves.push(body);
-      text = body.text;
-      hash += 1;
-      return jsonResponse(served());
-    }
-    if (options.method === "POST") return jsonResponse({ ok: true });
-    if (pathname === "/api/sessions") return jsonResponse({ boot: "boot-1", caffeinate: false, sessions: [], pipelines: [] });
-    if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
-    if (pathname === "/api/document") return jsonResponse(served());
-    return jsonResponse({
-      areas: [{ path: "otto", name: "otto", goals: [] }, { path: "otto/dnd", name: "dnd", goals: [], documents: [doc] }],
-      map: [],
-      documents: [doc],
-    });
-  };
-  window.eval(commentsScript);
-  window.eval(script);
-  await settle(window);
-  click(window, `[data-open-document='${doc.file}']`);
-  await settle(window);
-  await settle(window);
-
-  // The existing comment is a red-ruled block under its paragraph, its words are marked, and the toolbar counts it.
-  const aside = window.document.querySelector(".document-comment");
-  assert.ok(aside, "the comment renders");
-  assert.equal(aside.getAttribute("role"), "note");
-  assert.match(aside.getAttribute("aria-label"), /Comment from Julian/);
-  assert.match(aside.textContent, /Say why\./);
-  assert.equal(aside.previousElementSibling.tagName, "P");
-  assert.equal(window.document.querySelector(".document-comment-mark").textContent, "clear words");
-  assert.doesNotMatch(window.document.querySelector(".document-content").textContent, /\{>>|<<\}|\{==/);
-  assert.match(window.document.querySelector(".document-comment-nav").textContent, /1 comment/);
-  assert.ok(window.document.querySelector(".document-comment-remove"), "the remove control is always drawn");
-  assert.ok(window.document.querySelector("[data-comment-new]"), "the Comment action is visible");
-
-  // Next comment scrolls to and focuses the comment block.
-  click(window, "[data-comment-step='1']");
-  assert.equal(window.document.querySelector(".document-comment").dataset.scrolledTo, "1");
-
-  // Comment without a selection: the composer opens under the section in view and can switch to the whole Document.
-  click(window, ".reader-comment-action");
-  await settle(window);
-  let composer = window.document.querySelector("[data-comment-composer]");
-  assert.ok(composer, "the composer opened");
-  assert.equal(window.document.activeElement.id, "comment-text");
-  const field = window.document.querySelector("#comment-text");
-  field.value = "Overall: shorter.";
-  field.dispatchEvent(new window.Event("input", { bubbles: true }));
-  click(window, "[data-comment-scope='document']");
-  await settle(window);
-  composer = window.document.querySelector("[data-comment-composer]");
-  assert.equal(window.document.querySelector("#comment-text").value, "Overall: shorter.", "the draft survives the scope switch");
-  assert.equal(window.document.querySelector("[data-comment-scope='document']").getAttribute("aria-pressed"), "true");
-  // An agent edits the file first: the save gets a 409, re-anchors, and saves again without losing the agent's edit.
-  conflictOnce = true;
-  submit(window, "[data-comment-composer]");
-  await settle(window);
-  await settle(window);
-  await settle(window);
-  assert.equal(saves.length, 1, "one save landed after the conflict");
-  assert.match(saves[0].text, /# Map design\n\n\{>>Julian: Overall: shorter\.<<\}\n/);
-  assert.match(saves[0].text, /edited by an agent/);
-  assert.equal(saves[0].summary, "added a comment");
-  assert.equal(window.document.querySelector("[data-comment-composer]"), null, "the composer closed");
-  assert.equal(window.document.querySelectorAll(".document-comment").length, 2);
-  assert.match(window.document.querySelector("#toast").textContent, /Comment added/);
-  assert.ok(window.document.querySelector("#toast .toast-action"), "the toast offers Undo");
-
-  // Escape cancels a fresh composer and keeps nothing.
-  click(window, ".reader-comment-action");
-  await settle(window);
-  assert.ok(window.document.querySelector("[data-comment-composer]"));
-  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-  await settle(window);
-  assert.equal(window.document.querySelector("[data-comment-composer]"), null);
-  assert.equal(saves.length, 1);
-
-  // Remove goes through the same save with Undo, and Undo puts the words back.
-  click(window, "[data-remove-comment='1']");
-  await settle(window);
-  await settle(window);
-  assert.equal(saves.length, 2);
-  assert.equal(saves[1].summary, "removed a comment");
-  assert.doesNotMatch(saves[1].text, /Say why/);
-  assert.match(saves[1].text, /A long design with clear words here\./);
-  assert.equal(window.document.querySelectorAll(".document-comment").length, 1);
-  click(window, "#toast .toast-action");
-  await settle(window);
-  await settle(window);
-  assert.equal(saves.length, 3);
-  assert.match(saves[2].text, /\{==clear words==\}\{>>Julian: Say why\.<<\}/);
-  assert.equal(window.document.querySelectorAll(".document-comment").length, 2);
-});
-
-test("comments render as red blocks, save through the base-hash path with re-anchoring, and remove with undo", async () => {
-  const [html, script, commentsScript] = await Promise.all([
-    readFile(path.join(here, "public", "shell.html"), "utf8"),
-    readFile(path.join(here, "public", "shell.js"), "utf8"),
-    readFile(path.join(here, "public", "document-comments.js"), "utf8"),
-  ]);
-  await import("./public/document-comments.js");
-  const helper = globalThis.AgentShellDocumentComments;
-  const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
-  const { window } = dom;
-  window.setInterval = () => 0;
-  window.HTMLElement.prototype.scrollIntoView = function scrollIntoView() { this.dataset.scrolledTo = "1"; };
-  const doc = { file: "otto/dnd/design-map.md", area: "otto/dnd", kind: "document", title: "Map design", searchText: "map", goalHistory: [] };
-  let text = "# Map design\n\nA long design with {==clear words==}{>>Julian: Say why.<<} here.\n\n## Part two\n\nMore prose.\n";
-  let hash = 1;
-  const saves = [];
-  let conflictOnce = false;
-  /** The document as the server would return it: text, hash, and parsed comments. */
-  const served = () => ({ ...doc, text, hash: `map-${hash}`, comments: helper.parseComments(text) });
-  /** The server's 409 reply, which carries the current Document for re-anchoring. */
-  const conflictResponse = () => ({
-    ok: false,
-    status: 409,
-    /** Returns the conflict body. */
-    async json() { return { error: "document changed since it was opened", current: served() }; },
-  });
-  window.fetch = async (url, options = {}) => {
-    const pathname = new URL(url, window.location.href).pathname;
-    if (pathname === "/api/document" && options.method === "POST") {
-      const body = JSON.parse(options.body);
-      if (conflictOnce) {
-        conflictOnce = false;
-        text = text.replace("More prose.", "More prose, edited by an agent.");
-        hash += 1;
-        return conflictResponse();
-      }
-      if (body.baseHash !== `map-${hash}`) return conflictResponse();
-      saves.push(body);
-      text = body.text;
-      hash += 1;
-      return jsonResponse(served());
-    }
-    if (options.method === "POST") return jsonResponse({ ok: true });
-    if (pathname === "/api/sessions") return jsonResponse({ boot: "boot-1", caffeinate: false, sessions: [], pipelines: [] });
-    if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
-    if (pathname === "/api/document") return jsonResponse(served());
-    return jsonResponse({
-      areas: [{ path: "otto", name: "otto", goals: [] }, { path: "otto/dnd", name: "dnd", goals: [], documents: [doc] }],
-      map: [],
-      documents: [doc],
-    });
-  };
-  window.eval(commentsScript);
-  window.eval(script);
-  await settle(window);
-  click(window, `[data-open-document='${doc.file}']`);
-  await settle(window);
-  await settle(window);
-
-  // The existing comment is a red-ruled block under its paragraph, its words are marked, and the toolbar counts it.
-  const aside = window.document.querySelector(".document-comment");
-  assert.ok(aside, "the comment renders");
-  assert.equal(aside.getAttribute("role"), "note");
-  assert.match(aside.getAttribute("aria-label"), /Comment from Julian/);
-  assert.match(aside.textContent, /Say why\./);
-  assert.equal(aside.previousElementSibling.tagName, "P");
-  assert.equal(window.document.querySelector(".document-comment-mark").textContent, "clear words");
-  assert.doesNotMatch(window.document.querySelector(".document-content").textContent, /\{>>|<<\}|\{==/);
-  assert.match(window.document.querySelector(".document-comment-nav").textContent, /1 comment/);
-  assert.ok(window.document.querySelector(".document-comment-remove"), "the remove control is always drawn");
-  assert.ok(window.document.querySelector("[data-comment-new]"), "the Comment action is visible");
-
-  // Next comment scrolls to and focuses the comment block.
-  click(window, "[data-comment-step='1']");
-  assert.equal(window.document.querySelector(".document-comment").dataset.scrolledTo, "1");
-
-  // Comment without a selection: the composer opens under the section in view and can switch to the whole Document.
-  click(window, ".reader-comment-action");
-  await settle(window);
-  let composer = window.document.querySelector("[data-comment-composer]");
-  assert.ok(composer, "the composer opened");
-  assert.equal(window.document.activeElement.id, "comment-text");
-  const field = window.document.querySelector("#comment-text");
-  field.value = "Overall: shorter.";
-  field.dispatchEvent(new window.Event("input", { bubbles: true }));
-  click(window, "[data-comment-scope='document']");
-  await settle(window);
-  composer = window.document.querySelector("[data-comment-composer]");
-  assert.equal(window.document.querySelector("#comment-text").value, "Overall: shorter.", "the draft survives the scope switch");
-  assert.equal(window.document.querySelector("[data-comment-scope='document']").getAttribute("aria-pressed"), "true");
-  // An agent edits the file first: the save gets a 409, re-anchors, and saves again without losing the agent's edit.
-  conflictOnce = true;
-  submit(window, "[data-comment-composer]");
-  await settle(window);
-  await settle(window);
-  await settle(window);
-  assert.equal(saves.length, 1, "one save landed after the conflict");
-  assert.match(saves[0].text, /# Map design\n\n\{>>Julian: Overall: shorter\.<<\}\n/);
-  assert.match(saves[0].text, /edited by an agent/);
-  assert.equal(saves[0].summary, "added a comment");
-  assert.equal(window.document.querySelector("[data-comment-composer]"), null, "the composer closed");
-  assert.equal(window.document.querySelectorAll(".document-comment").length, 2);
-  assert.match(window.document.querySelector("#toast").textContent, /Comment added/);
-  assert.ok(window.document.querySelector("#toast .toast-action"), "the toast offers Undo");
-
-  // Escape cancels a fresh composer and keeps nothing.
-  click(window, ".reader-comment-action");
-  await settle(window);
-  assert.ok(window.document.querySelector("[data-comment-composer]"));
-  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-  await settle(window);
-  assert.equal(window.document.querySelector("[data-comment-composer]"), null);
-  assert.equal(saves.length, 1);
-
-  // Remove goes through the same save with Undo, and Undo puts the words back.
-  click(window, "[data-remove-comment='1']");
-  await settle(window);
-  await settle(window);
-  assert.equal(saves.length, 2);
-  assert.equal(saves[1].summary, "removed a comment");
-  assert.doesNotMatch(saves[1].text, /Say why/);
-  assert.match(saves[1].text, /A long design with clear words here\./);
-  assert.equal(window.document.querySelectorAll(".document-comment").length, 1);
-  click(window, "#toast .toast-action");
-  await settle(window);
-  await settle(window);
-  assert.equal(saves.length, 3);
-  assert.match(saves[2].text, /\{==clear words==\}\{>>Julian: Say why\.<<\}/);
-  assert.equal(window.document.querySelectorAll(".document-comment").length, 2);
 });
 
 test("comments render as red blocks, save through the base-hash path with re-anchoring, and remove with undo", async () => {

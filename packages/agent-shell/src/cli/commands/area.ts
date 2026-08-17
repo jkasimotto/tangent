@@ -1,7 +1,7 @@
 import { renderCommandHelp } from "@tangent/core";
 import { booleanArg, parseArgs, requiredString, stringArg, type Args } from "@tangent/core/cli";
 
-import { listAreaPaths, postJson, requireArea, resolveServerUrl, vaultFetch } from "../client.js";
+import { currentTmuxSession, listAreaPaths, postJson, requireArea, resolveServerUrl, vaultFetch } from "../client.js";
 import { areaCommandSpec } from "../spec.js";
 
 /** Dispatches `tangent area` subcommands. */
@@ -12,7 +12,9 @@ export async function runAreaCli(argv = process.argv.slice(2)): Promise<void> {
   if (subcommand === "list") return listCommand(args);
   if (subcommand === "show") return showCommand(args);
   if (subcommand === "create") return createCommand(args);
-  throw new Error(`Unknown area command: ${subcommand}. Try "tangent area list", "tangent area show <area>", or "tangent area create <parent> <name>".`);
+  if (subcommand === "done") return statusCommand(args, "done");
+  if (subcommand === "reopen") return statusCommand(args, "active");
+  throw new Error(`Unknown area command: ${subcommand}. Try "tangent area list", "tangent area show <area>", "tangent area create <parent> <name>", "tangent area done <area>", or "tangent area reopen <area>".`);
 }
 
 /** Handles `tangent area list`. */
@@ -74,6 +76,21 @@ async function createCommand(args: Args): Promise<void> {
   console.log(`note: ${created.note}`);
 }
 
+/**
+ * Handles `tangent area done <area>` and `tangent area reopen <area>`. Status is written on
+ * Julian's explicit word only, as `tangent goal done` is: an Area with no open work is not
+ * done until he says so. Goals inside the Area are not changed.
+ */
+async function statusCommand(args: Args, status: "done" | "active"): Promise<void> {
+  const verb = status === "done" ? "done" : "reopen";
+  const server = resolveServerUrl(stringArg(args.server));
+  const area = await requireArea(server, requiredString(args._[1], `tangent area ${verb} requires <area>.`));
+  const result = await postJson(server, "/api/areas/status", { area, status, session: await currentTmuxSession() });
+  const open = Number(result.openGoals ?? 0);
+  if (status === "done") console.log(`${area} marked done.${open ? ` ${open} open Goal${open === 1 ? " stays" : "s stay"} open and hidden.` : ""}`);
+  else console.log(`${area} reopened.`);
+}
+
 /** Prints `tangent area` help with real examples. */
 function help(): void {
   console.log(renderCommandHelp(areaCommandSpec));
@@ -83,5 +100,7 @@ Examples:
   tangent area list --json
   tangent area show otto/tangent
   tangent area create otto/tangent "Area map"
+  tangent area done neara/hackathon
+  tangent area reopen neara/hackathon
 `);
 }

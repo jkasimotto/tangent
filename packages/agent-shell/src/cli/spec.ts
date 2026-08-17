@@ -14,7 +14,9 @@ export const areaCommandSpec: CliCommandSpec = {
       description: "Create a nested Area under a parent, with its note, committed with provenance. Only for a durable subject; a result is a Goal.",
       args: "<parent> <name>",
       options: [serverOption, jsonOption]
-    }
+    },
+    { name: "done", description: "Mark an Area done on Julian's word: it folds away from the desk and the tree; its Goals are not changed", args: "<area>", options: [serverOption] },
+    { name: "reopen", description: "Reopen a done Area", args: "<area>", options: [serverOption] }
   ]
 };
 

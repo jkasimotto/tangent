@@ -21,6 +21,7 @@
       <div id="bar-context" class="bar-context" aria-live="polite"></div>
       <div class="bar-actions">
         <span id="status-pill" class="status-pill" role="status" hidden></span>
+        <button id="awake-button" class="bar-button awake-button" type="button" aria-label="Keep Mac awake" title="Keep Mac awake">☕︎</button>
         <button id="secondary-action" class="bar-button danger-bar-button" type="button" hidden>Stop agent…</button>
         <button id="find-button" class="bar-button find-button" type="button">Find work <kbd>⌘/</kbd></button>
       </div>
@@ -54,6 +55,12 @@
   <script src="/vendor/xterm/addon-webgl.js"></script>
   <script src="/terminal-selection.js"></script>
   <script src="/document-comments.js"></script>
+  <script src="/vendor/d3/d3-dispatch.min.js"></script>
+  <script src="/vendor/d3/d3-quadtree.min.js"></script>
+  <script src="/vendor/d3/d3-timer.min.js"></script>
+  <script src="/vendor/d3/d3-force.min.js"></script>
+  <script src="/area-map-core.js"></script>
+  <script src="/area-map.js"></script>
   <script src="/config.js"></script>
   <script src="/shell.js"></script>
 </body>

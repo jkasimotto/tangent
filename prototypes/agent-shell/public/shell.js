@@ -38,6 +38,9 @@ const state = {
   createArea: "",
   createReturnView: "work",
   expandedAreas: new Set(storedJson("agent-shell.expanded-areas") || []),
+  mapStates: new Map(), // Area path -> stored map state ({positions, kindsOff, showDone, collapsed}) or "loading"
+  mapSelectFile: "", // a Document to select on the Area map once, set by the reader's Area path
+  showDoneAreas: localStorage.getItem("agent-shell.show-done-areas") === "1",
   areaEdit: null,
   programId: "",
   programDraft: { type: "process", area: "", name: "", command: "", time: "07:30", cwd: "", model: "sonnet", prompt: "" },
@@ -80,6 +83,7 @@ const modalField = document.querySelector("#modal-field");
 const modalActions = document.querySelector("#modal-actions");
 const toast = document.querySelector("#toast");
 const statusPill = document.querySelector("#status-pill");
+const awakeButton = document.querySelector("#awake-button");
 const shellMenu = document.querySelector("#shell-menu");
 
 let terminal = null;
@@ -1044,7 +1048,8 @@ function deskAreas() {
     ].filter((document) => document.kind === "document" || !document.kind).map((document) => [document.file, document])).values()];
     if (state.workFilter !== "all" && !areaTrees.length && !areaDescriptions.length) return [];
     if (!areaTrees.length && !areaDescriptions.length && !documents.length) return [];
-    return [{ area, trees: areaTrees, descriptions: areaDescriptions, documents, index }];
+    const programs = state.programs.programs.filter((program) => program.area === area.path);
+    return [{ area, trees: areaTrees, descriptions: areaDescriptions, documents, programs, index }];
   });
 }
 
@@ -1314,9 +1319,25 @@ function deskDocumentShelf(documents) {
     </button>`).join("")}</div>`;
 }
 
+/** Renders the Programs of one Area as a compact operational shelf. */
+function deskProgramShelf(programs) {
+  return `<div class="desk-programs">${programs.map((program) => {
+    const control = programRowControl(program);
+    return `
+      <div class="desk-program ${programIsLive(program) ? "live" : ""}">
+        <button type="button" data-select-program="${escapeHtml(program.id)}">
+          <span aria-hidden="true">${program.type === "process" ? "SERVER" : program.type === "command" ? "COMMAND" : "AGENT"}</span>
+          <strong>${escapeHtml(program.label)}</strong>
+          <em>${escapeHtml(programState(program))}</em>
+        </button>
+        ${control ? `<button class="desk-icon-action" type="button" data-program-action="${control.action}" data-program-id="${escapeHtml(program.id)}" aria-label="${escapeHtml(control.label)} ${escapeHtml(program.label)}">${escapeHtml(control.label)}</button>` : ""}
+      </div>`;
+  }).join("")}</div>`;
+}
+
 /** Renders one stable Area landmark with work and knowledge together. */
 function deskAreaPanel(record, position) {
-  const { area, trees, descriptions, documents } = record;
+  const { area, trees, descriptions, documents, programs } = record;
   const status = deskAreaState(area.path, trees, descriptions);
   const parent = areaParts(area.path).slice(0, -1).join(" / ") || "Top level";
   const openGoalCount = trees.reduce((count, tree) => count + tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status)).length, 0);
@@ -1340,6 +1361,10 @@ function deskAreaPanel(record, position) {
           <div class="area-desk-section-heading"><h3>Documents</h3><span>${documents.length}</span></div>
           ${deskDocumentShelf(documents)}
         </section>
+        ${programs.length ? `<section class="area-desk-section programs">
+          <div class="area-desk-section-heading"><h3>Programs</h3><span>${programs.length}</span></div>
+          ${deskProgramShelf(programs)}
+        </section>` : ""}
       </div>
       <footer class="area-desk-actions">
         <button type="button" data-describe-area="${escapeHtml(area.path)}">Describe work here</button>
@@ -1363,16 +1388,6 @@ function renderWork() {
 
   return `
     <section class="work-page">
-      <header class="work-intro">
-        <div>
-          <p class="kicker">Dispatch desk</p>
-          <h1 class="page-title">Work by Area</h1>
-          <p class="page-lede">Areas stay put. Agents and Goals change inside them.</p>
-        </div>
-        <div class="work-intro-actions">
-          <button class="primary-button work-intro-button" type="button" data-describe-work>Describe work</button>
-        </div>
-      </header>
       <div class="work-tools">
         <label class="search-field">
           <span class="search-icon" aria-hidden="true">⌕</span>
@@ -1416,7 +1431,40 @@ function launchPopover() {
 
 /** Returns every area in stable path order. */
 function areas() {
-  return [...(state.vault?.areas ?? [])].filter((area) => area.path).sort((left, right) => left.path.localeCompare(right.path));
+  return [...(state.vault?.areas ?? [])]
+    .filter((area) => area.path && (state.showDoneAreas || !areaIsFolded(area.path)))
+    .sort((left, right) => left.path.localeCompare(right.path));
+}
+
+/** Every Area the vault knows, done ones included. */
+function allAreas() {
+  return [...(state.vault?.areas ?? [])].filter((area) => area.path);
+}
+
+/** True when a done Area folds this path away: itself or an ancestor is done, and it is not the selected Area. */
+function areaIsFolded(path) {
+  if (path === state.areaSelection) return false;
+  const done = new Set(allAreas().filter((area) => area.status === "done").map((area) => area.path));
+  const parts = String(path).split("/");
+  return parts.some((part, index) => done.has(parts.slice(0, index + 1).join("/")));
+}
+
+/** Sets an Area's status on Julian's word and offers Undo. */
+async function setAreaStatus(area, status) {
+  const result = await api("/api/areas/status", { method: "POST", body: JSON.stringify({ area, status }) }).catch(() => null);
+  if (!result || result.error) return showToast(result?.error || "The Area status did not save.");
+  await refresh();
+  if (status === "done") {
+    const kept = result.openGoals ? ` ${result.openGoals} open ${result.openGoals === 1 ? "Goal stays" : "Goals stay"} open and hidden.` : "";
+    /** Undo puts the Area back to active. */
+    const undo = () => setAreaStatus(area, "active");
+    showToast(`${humanName(area.split("/").pop())} is done.${kept}`, { label: "Undo", run: undo });
+  } else {
+    /** Undo marks the Area done again. */
+    const undo = () => setAreaStatus(area, "done");
+    showToast(`${humanName(area.split("/").pop())} is active again.`, { label: "Undo", run: undo });
+  }
+  paint(true);
 }
 
 /** Returns the selected area when it still exists. */
@@ -1454,12 +1502,16 @@ function areaTreeRows() {
         ${expandable
           ? `<button class="area-toggle" type="button" data-toggle-area="${escapeHtml(path)}" aria-expanded="${expanded}" aria-label="${expanded ? "Collapse" : "Expand"} ${escapeHtml(humanName(area.name))}"><span aria-hidden="true">${expanded ? "▾" : "▸"}</span></button>`
           : `<span class="area-toggle-spacer" aria-hidden="true"></span>`}
-        <button class="area-row" type="button" data-select-area="${escapeHtml(path)}"><span>${escapeHtml(humanName(area.name))}</span><small>${escapeHtml(path)}</small>${areaProgramMark(path, expanded)}</button>
+        <button class="area-row ${area.status === "done" ? "done" : ""}" type="button" data-select-area="${escapeHtml(path)}"><span>${escapeHtml(humanName(area.name))}</span><small>${escapeHtml(path)}</small>${area.status === "done" ? `<span class="area-row-mark done">done</span>` : ""}${areaProgramMark(path, expanded)}</button>
       </div>`;
     if (!expanded) return row;
     return row + childPaths.map((child) => branch(child, depth + 1)).join("");
   };
-  return (children.get("") || []).map((root) => branch(root, 0)).join("");
+  const doneCount = allAreas().filter((area) => area.status === "done").length;
+  const doneToggle = doneCount
+    ? `<button class="area-tree-done-toggle" type="button" data-toggle-done-areas aria-pressed="${state.showDoneAreas}">${state.showDoneAreas ? "Hide" : "Show"} ${doneCount} done ${doneCount === 1 ? "Area" : "Areas"}</button>`
+    : "";
+  return (children.get("") || []).map((root) => branch(root, 0)).join("") + doneToggle;
 }
 
 /**
@@ -1487,36 +1539,93 @@ function areaGoalRow(goal) {
     </button>`;
 }
 
-/** Renders the Goals, Documents, and Programs stored directly in one Area. */
+/** The desk's word for one Goal: waiting (needs Julian), working (an agent runs), or ready. */
+function goalAttention(goal) {
+  const session = sessionForGoal(goal);
+  if (goalNeedsYou(goal) || ["waiting", "shell"].includes(session?.state)) return "waiting";
+  if (session) return "working";
+  return "ready";
+}
+
+/** Fetches the stored map state of one Area once; the map mounts again when it arrives. */
+function loadMapState(area) {
+  if (state.mapStates.has(area)) return;
+  state.mapStates.set(area, "loading");
+  api(`/api/map-state?area=${encodeURIComponent(area)}`)
+    .then((payload) => state.mapStates.set(area, payload?.state ?? {}))
+    .catch(() => state.mapStates.set(area, {}))
+    .then(() => { const host = [...screen.querySelectorAll("[data-area-map]")].find((element) => element.dataset.areaMap === area); if (host) mountAreaMap(host); });
+}
+
+/**
+ * Mounts the Area map into its host after a repaint. The map keeps its own
+ * DOM, positions, and filters across repaints (see public/area-map.js); this
+ * only hands it the current facts and the shell's routes.
+ */
+function mountAreaMap(host) {
+  const view = window.AgentShellAreaMapView;
+  const area = host.dataset.areaMap;
+  if (!view || !area || !state.vault) return;
+  loadMapState(area);
+  const stored = state.mapStates.get(area);
+  const selectFile = state.mapSelectFile;
+  state.mapSelectFile = "";
+  /** The readable name of an Area path. */
+  const areaName = (path) => humanName(String(path).split("/").pop());
+  /** A short date for the card. */
+  const dateLabel = (at) => (at ? new Date(at).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "");
+  /** The desk word for a Goal record. */
+  const attentionOf = (record) => goalAttention(goalByFile(record.file) ?? record);
+  /** Opens a Document in the reader. */
+  const onOpenDocument = (file) => openDocument(file);
+  /** Opens a Goal. */
+  const onSelectGoal = (file) => selectGoal(file);
+  /** Moves the map to another Area. */
+  const onSelectArea = (path) => { state.areaSelection = path; localStorage.setItem("agent-shell.last-area", path); revealArea(path); paint(true); };
+  /** Stores positions and filters for this Area outside the vault. */
+  const onSaveState = (mapState) => {
+    state.mapStates.set(area, mapState);
+    api("/api/map-state", { method: "POST", body: JSON.stringify({ area, state: mapState }) }).catch(() => {});
+  };
+  view.mount(host, {
+    scope: area,
+    records: state.vault.documents ?? [],
+    areaPaths: areas().map((item) => item.path),
+    now: Date.now(),
+    timezoneOffset: new Date().getTimezoneOffset(),
+    areaName, dateLabel, attentionOf,
+    mapState: stored === "loading" ? null : stored,
+    selectFile,
+    onOpenDocument, onSelectGoal, onSelectArea, onSaveState,
+  });
+}
+
+/** Renders the Area map screen: header, the map host, and the Area's Programs. */
 function areaContents(area) {
-  const goals = (area.goals ?? []).filter((goal) => goal.area === area.path);
   const programs = state.programs.programs.filter((program) => program.area === area.path);
   const problems = state.programs.errors.filter((item) => item.area === area.path);
-  const authoredOrder = new Map(goals.flatMap((goal) => goal.documents ?? []).map((document, index) => [document.file, index]));
-  const documents = [...(area.documents ?? [])].sort((left, right) =>
-    (authoredOrder.get(left.file) ?? Number.MAX_SAFE_INTEGER) - (authoredOrder.get(right.file) ?? Number.MAX_SAFE_INTEGER)
-    || left.title.localeCompare(right.title));
+  const done = area.status === "done";
+  const current = clip(area.current ?? "", 240);
   return `
-    <section class="area-contents">
+    <section class="area-contents area-map-screen ${done ? "area-done" : ""}">
       <header class="area-contents-heading">
-        <div><p class="kicker">Selected Area</p><h2>${escapeHtml(humanName(area.name))}</h2><small>${escapeHtml(area.path)}</small></div>
+        <div>
+          ${areaPath(area.path)}
+          <h2>${escapeHtml(humanName(area.name))}${area.status ? `<span class="area-status ${escapeHtml(area.status)}">${escapeHtml(area.status)}</span>` : ""}</h2>
+          ${area.purpose ? `<p class="area-purpose">${escapeHtml(area.purpose)}</p>` : ""}
+          ${current ? `<p class="area-current">${escapeHtml(current)}</p>` : ""}
+        </div>
         <div class="area-contents-actions">
+          <button class="quiet-button" type="button" data-describe-area="${escapeHtml(area.path)}">Describe work</button>
           <button class="quiet-button" type="button" data-new-area>Add nested Area</button>
           ${area.path.split("/").length > 1 ? `<button class="quiet-button" type="button" data-rename-area>Rename or move</button>` : ""}
+          <span class="area-contents-actions-spacer"></span>
+          ${done
+            ? `<button class="quiet-button" type="button" data-reopen-area="${escapeHtml(area.path)}">Reopen</button>`
+            : `<button class="quiet-button" type="button" data-mark-area-done="${escapeHtml(area.path)}">Mark done</button>`}
         </div>
       </header>
-      <section class="area-content-section">
-        <div class="memory-heading"><div><p class="kicker">Documents</p><h3>${documents.length} ${documents.length === 1 ? "Document" : "Documents"}</h3></div></div>
-        ${documents.length
-          ? `<div class="document-list">${documents.map((document) => `<button class="document-row" type="button" data-open-document="${escapeHtml(document.file)}"><span><strong>${escapeHtml(document.title)}</strong><small>Document</small></span><span aria-hidden="true">→</span></button>`).join("")}</div>`
-          : `<p class="memory-empty">No Documents exist in this Area.</p>`}
-      </section>
-      <section class="area-content-section">
-        <div class="memory-heading"><div><p class="kicker">Goals</p><h3>${goals.length} ${goals.length === 1 ? "Goal" : "Goals"}</h3></div></div>
-        ${goals.length
-          ? `<div class="goal-relation-list area-goal-list">${goals.map(areaGoalRow).join("")}</div>`
-          : `<p class="memory-empty">No Goals exist in this Area.</p>`}
-      </section>
+      <div class="area-map-host" data-area-map="${escapeHtml(area.path)}"></div>
       <section class="area-content-section">
         <div class="memory-heading">
           <div><p class="kicker">Programs</p><h3>${programs.length} ${programs.length === 1 ? "Program" : "Programs"}</h3></div>
@@ -2562,11 +2671,11 @@ function mountTerminal(host, sessionName) {
 function vaultRenderProjection() {
   if (!state.vault) return null;
   /** Selects the Goal fields that affect visible rendering. */
-  const goalFields = (goal) => [goal.file, goal.title, goal.status, goal.doneWhen, goal.mtime, goal.depth, goal.waitingOn, goal.storyText, goal.searchText];
+  const goalFields = (goal) => [goal.file, goal.title, goal.status, goal.doneWhen, goal.mtime, goal.changedAt, goal.depth, goal.waitingOn, goal.storyText, goal.searchText];
   return [
     (state.vault.map ?? []).map((group) => [group.path, (group.goals ?? []).map(goalFields)]),
-    (state.vault.areas ?? []).map((area) => [area.path, area.purpose, area.body, (area.goals ?? []).map(goalFields), (area.documents ?? []).map((document) => [document.file, document.title, document.mtime])]),
-    (state.vault.documents ?? []).map((document) => [document.file, document.title, document.mtime, document.hash, document.searchText, document.goalHistory]),
+    (state.vault.areas ?? []).map((area) => [area.path, area.status, area.children, area.purpose, area.body, (area.goals ?? []).map(goalFields), (area.documents ?? []).map((document) => [document.file, document.title, document.mtime, document.changedAt])]),
+    (state.vault.documents ?? []).map((document) => [document.file, document.title, document.mtime, document.hash, document.docKind, document.changedAt, document.inDegree, document.searchText, document.goalHistory]),
   ];
 }
 
@@ -2788,6 +2897,8 @@ function renderScreen() {
   restoreScreenScroll(scrollPositions);
   const host = screen.querySelector("[data-session]");
   if (host) mountTerminal(host, host.dataset.session);
+  const mapHost = screen.querySelector("[data-area-map]");
+  if (mapHost) mountAreaMap(mapHost);
 }
 
 /** The elements that scroll inside the screen, by a selector stable across repaints. */
@@ -2935,6 +3046,9 @@ function updateStatusPill() {
       : "";
   statusPill.textContent = text;
   statusPill.hidden = !text;
+  awakeButton.classList.toggle("active", state.caffeinate);
+  awakeButton.title = state.caffeinate ? "Let Mac sleep normally" : "Keep Mac awake";
+  awakeButton.setAttribute("aria-label", awakeButton.title);
   backButton.classList.toggle("has-update", state.updateAvailable);
   const updateItem = shellMenu.querySelector("#menu-update");
   if (updateItem) updateItem.hidden = !state.updateAvailable;
@@ -3972,6 +4086,7 @@ document.addEventListener("click", async (event) => {
     localStorage.setItem("agent-shell.work-filter", state.workFilter);
     return paint(true);
   }
+  if (target === awakeButton || target.closest("#awake-button")) return toggleAwake();
   if (target.closest("[data-enable-dock-badge]")) return enableDockBadge();
   const goalRun = target.closest("[data-open-goal-run]");
   if (goalRun) return openGoalRun(goalRun.dataset.openGoalRun);
@@ -4011,10 +4126,20 @@ document.addEventListener("click", async (event) => {
   }
   const openArea = target.closest("[data-open-area]");
   if (openArea) {
+    if (state.view === "document" && state.document?.file) state.mapSelectFile = state.document.file;
     state.areaSelection = openArea.dataset.openArea;
     localStorage.setItem("agent-shell.last-area", state.areaSelection);
     state.view = "areas";
     revealArea(state.areaSelection);
+    return paint(true);
+  }
+  const markAreaDone = target.closest("[data-mark-area-done]");
+  if (markAreaDone) return setAreaStatus(markAreaDone.dataset.markAreaDone, "done");
+  const reopenArea = target.closest("[data-reopen-area]");
+  if (reopenArea) return setAreaStatus(reopenArea.dataset.reopenArea, "active");
+  if (target.closest("[data-toggle-done-areas]")) {
+    state.showDoneAreas = !state.showDoneAreas;
+    localStorage.setItem("agent-shell.show-done-areas", state.showDoneAreas ? "1" : "0");
     return paint(true);
   }
   if (target.closest("[data-new-area]")) return beginAreaCreate();

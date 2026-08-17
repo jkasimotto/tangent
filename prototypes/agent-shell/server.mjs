@@ -19,10 +19,15 @@ import { commandSession, programsSnapshot, saveLocalProgram, saveRoutine, setRou
 import pty from "node-pty";
 import { documentHash, markdownTitle, safeMarkdownPath, wikiLinks } from "./vault-documents.mjs";
 import "./public/document-comments.js";
+import "./public/area-map-core.js";
+import { createGitTimesReader, fileTimes } from "./area-map.mjs";
 
 // The comment parser is shared with the browser, so it is a plain script that
 // registers a global (see public/document-comments.js).
 const documentComments = globalThis.AgentShellDocumentComments;
+// The Area map facts (kind, recency, desk grouping) are shared the same way
+// (see public/area-map-core.js and the design contract design-area-map).
+const areaMapCore = globalThis.AgentShellAreaMap;
 import { classifyStaticPane, stabilizeStaticPane } from "./pane-state.mjs";
 import { appendSteps, currentStep, endPipeline, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, readAllPipelines, readPipeline, validateSteps, writePipeline } from "./pipeline-record.mjs";
 import { deliveryDecision, messageBanner, normalizeMessage } from "./agent-messages.mjs";
@@ -109,6 +114,13 @@ function withDefaultModel(cmd) {
 const CHAT_SESSION = process.env.CHAT_SESSION ?? "orchestrator";
 const WORKSPACE = process.env.WORKSPACE ?? path.join(here, "workspace");
 const TREES_ROOT = process.env.TREES_ROOT ?? path.join(os.homedir(), ".tangent", "trees");
+/** Per-file git times for the vault, cached by HEAD (design-area-map Decision 9). */
+const vaultGitTimes = createGitTimesReader(TREES_ROOT);
+/**
+ * Where the Area map keeps node positions and filters per Area. Shell state,
+ * not knowledge, so it lives outside the vault (design-area-map Decision 7).
+ */
+const MAP_STATE_ROOT = process.env.TANGENT_MAP_STATE_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "map-state");
 // One JSON record per Goal with a pipeline: its steps, their sessions, and
 // the handovers between them. Ownership stays in the Goal file; this holds
 // only what neither the Goal nor tmux can.
@@ -747,10 +759,13 @@ async function vaultIndex() {
   const records = [];
   for (const { n, note, own, documents } of entries) {
     const noteFile = `${n.path}/${n.name}.md`;
-    records.push({ file: noteFile, area: n.path, kind: "note", title: markdownTitle(note, n.name), links: wikiLinks(note) });
+    const noteMtime = await stat(path.join(TREES_ROOT, noteFile)).then((s) => s.mtimeMs, () => null);
+    // An Area without a note keeps a record (the shell reads area.note) marked
+    // missing, so the map and the chips leave it out.
+    records.push({ file: noteFile, area: n.path, kind: "note", title: markdownTitle(note, n.name), links: wikiLinks(note), mtime: noteMtime ?? 0, missing: noteMtime === null });
     for (const o of own) {
       const text = await readFile(path.join(TREES_ROOT, o.file), "utf8").catch(() => "");
-      records.push({ file: o.file, area: o.area, kind: "goal", title: o.title, links: wikiLinks(text), searchText: o.searchText });
+      records.push({ file: o.file, area: o.area, kind: "goal", title: o.title, status: o.status, links: wikiLinks(text), searchText: o.searchText, mtime: o.mtime, goal: o });
     }
     records.push(...documents);
   }
@@ -762,6 +777,25 @@ async function vaultIndex() {
     if (hit && hit.file !== source.file) backlinks.get(hit.file).push(source.file);
   }
   for (const record of records) record.backlinks = backlinks.get(record.file) ?? [];
+  // Area map facts on every record: file-name kind, git times, and link
+  // degrees. Goals carry the same facts on their index object so the desk and
+  // the map rank one way (design-area-map Decisions 9, 10, 13).
+  areaMapCore.assignKinds(records);
+  const gitTimes = await vaultGitTimes();
+  for (const record of records) {
+    const { createdAt, changedAt } = fileTimes(record.file, record.mtime, gitTimes);
+    record.createdAt = createdAt;
+    record.changedAt = changedAt;
+    record.inDegree = record.backlinks.length;
+    record.outDegree = record.links.filter((target) => {
+      const hit = target.includes("/") ? byTarget.get(target.replace(/\.md$/i, "")) : byStem.get(path.basename(target));
+      return hit && hit.file !== record.file;
+    }).length;
+    if (record.goal) {
+      Object.assign(record.goal, { docKind: record.docKind, createdAt, changedAt, inDegree: record.inDegree, outDegree: record.outDegree });
+      delete record.goal;
+    }
+  }
   for (const goal of bySlug.values()) {
     const goalRecord = records.find((record) => record.file === goal.file);
     const directOrder = goalRecord?.links ?? [];
@@ -820,7 +854,12 @@ async function vaultIndex() {
     out.push({
       path: n.path,
       name: n.name,
+      parent: areaMapCore.parentOf(n.path),
+      children: n.children.map((child) => child.path),
+      status: fm.status || "",
+      type: fm.type || "",
       purpose: noteSection(note, "Purpose").split("\n")[0] ?? "",
+      current: noteSection(note, "Current").split(/\n\s*\n/)[0]?.trim() ?? "",
       people: [fm.owners, fm.waiting_on, ...own.map((o) => o.waitingOn)].filter(Boolean).join(" "),
       body: note.slice(0, 4000).toLowerCase(),
       note: records.find((r) => r.kind === "note" && r.area === n.path),
@@ -863,6 +902,34 @@ async function vaultIndex() {
   }
   groups.sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0) || b.mtime - a.mtime);
   return { areas: out, map: groups, documents: records };
+}
+
+/** True for a vault-relative Area path with no traversal. */
+function validAreaPath(area) {
+  return /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*$/.test(area) && !area.split("/").includes("..");
+}
+
+/** The JSON file that stores one Area's map state. */
+function mapStateFile(area) {
+  return path.join(MAP_STATE_ROOT, `${area.replaceAll("/", "__")}.json`);
+}
+
+/** Reads one Area's stored map state, or an empty object. */
+async function readMapState(area) {
+  if (!validAreaPath(area)) return {};
+  try {
+    return JSON.parse(await readFile(mapStateFile(area), "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+/** Writes one Area's map state atomically. */
+async function writeMapState(area, mapState) {
+  mkdirSync(MAP_STATE_ROOT, { recursive: true });
+  const file = mapStateFile(area);
+  await writeFile(`${file}.tmp`, JSON.stringify(mapState), "utf8");
+  await rename(`${file}.tmp`, file);
 }
 
 /** Replaces (or appends) one `key: value` line inside a note's frontmatter. */
@@ -1006,6 +1073,41 @@ function emptyAreaNote(area) {
     `## Purpose\n\n\n\n## Current\n\n\n\n## Goals\n\n\n\n` +
     `## Knowledge\n\n\n\n## Ideas and open questions\n\n\n\n## Resources\n`
   );
+}
+
+/**
+ * Sets an Area's status (`done` or `active`) in its note frontmatter on
+ * Julian's word (design-area-map Decision 11). Goals are not touched. Creates
+ * the note when the Area has none. Returns the open Goals that stay open and
+ * hidden with the Area, so the caller can say so.
+ */
+async function setAreaStatus(area, status, tmuxSession) {
+  const file = areaNoteFile(area);
+  const absolute = path.join(TREES_ROOT, file);
+  const text = await readFile(absolute, "utf8").catch(() => emptyAreaNote(area));
+  const next = withFrontmatterLine(text, "status", status);
+  await writeFile(absolute, next, "utf8");
+  await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", file]).catch(() => {});
+  await vaultCommit([file], `update: ${area} area ${status === "done" ? "done" : "reopened"}`, area, tmuxSession);
+  const openGoals = (await readAreaGoalsDeep(area)).filter((goal) => !["done", "dropped", "deferred"].includes(goal.status));
+  return { file, status, openGoals: openGoals.length };
+}
+
+/** Every Goal stored in an Area or any Area inside it. */
+async function readAreaGoalsDeep(area) {
+  const goals = [];
+  /** Collects the Goals of one directory and every Area directory inside it. */
+  const walk = async (dir, rel) => {
+    goals.push(...await readAreaGoals(rel));
+    let entries = [];
+    try { entries = await readdir(dir, { withFileTypes: true }); } catch {}
+    for (const entry of entries) {
+      if (!entry.isDirectory() || TREE_SKIP.has(entry.name) || entry.name.startsWith(".")) continue;
+      await walk(path.join(dir, entry.name), `${rel}/${entry.name}`);
+    }
+  };
+  await walk(path.join(TREES_ROOT, area), area);
+  return goals;
 }
 
 /** Adds one top-level goal to the area's ordered Goals. */
@@ -1214,7 +1316,7 @@ async function goalPrompt(area, o, extras = []) {
       ? `Julian left comments in the Documents marked above. They look like \`{>>Julian: ...<<}\`, sometimes after \`{==the words they refer to==}\`. Read them before you change a Document, and do what they ask or discuss them with Julian. \`tangent document comments <vault-relative file>\` lists them. Close each one only with \`tangent document resolve <file> "<first words of the comment>" -m "<what changed>"\`, after the work is done or after Julian says to close it. Never remove or rewrite a comment by hand, and carry comments along when you rewrite the text around them.\n\n`
       : "") +
     `Useful habits here: check \`tangent process list\` before starting a server or watcher; keep the goal State section current as things settle; add a Story so far moment only when feedback or a result changes the plan (one short heading, two sentences, at most five moments). When the done condition is met, say so; Goal status changes on Julian's word.\n\n` +
-    `Design documents for this work belong in the Area folder ${path.join(TREES_ROOT, area)} as design-<slug>.md (a solution beside it as design-<slug>-solution.md), in Simple English (${path.join(os.homedir(), ".agents", "skills", "simple-english", "SKILL.md")}, pragmatic mode), with a [[${o.file.split("/").pop().replace(/\.md$/, "")}]] link so the Goal shows them. Read files wherever they are; write new design documents there.`
+    `Design documents for this work belong in the Area folder ${path.join(TREES_ROOT, area)} as design-<slug>.md (a solution beside it as impl-<slug>.md), in Simple English (${path.join(os.homedir(), ".agents", "skills", "simple-english", "SKILL.md")}, pragmatic mode), with a [[${o.file.split("/").pop().replace(/\.md$/, "")}]] link so the Goal shows them. Read files wherever they are; write new design documents there.`
   );
 }
 
@@ -3120,6 +3222,27 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify(await vaultIndex()));
       return;
     }
+    if (url.pathname === "/api/map-state" && req.method === "GET") {
+      const area = url.searchParams.get("area") ?? "";
+      const stored = await readMapState(area);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ area, state: stored }));
+      return;
+    }
+    if (url.pathname === "/api/map-state" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      const area = String(body.area ?? "");
+      if (!validAreaPath(area) || typeof body.state !== "object" || body.state === null) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "area and state required" }));
+        return;
+      }
+      await writeMapState(area, body.state);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+      return;
+    }
     if (url.pathname === "/api/document" && req.method === "GET") {
       const document = await readVaultDocument(url.searchParams.get("file") ?? "");
       res.writeHead(document ? 200 : 404, { "content-type": "application/json" });
@@ -3638,6 +3761,28 @@ const server = http.createServer(async (req, res) => {
     // The tree's edit lane: a status flip (mark done / reopen) or the
     // goal's own text, written on the user's click with a provenance
     // commit. Direct edits are the user's word; no agent is in the loop.
+    if (url.pathname === "/api/areas/status" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      const area = String(body.area ?? "");
+      const status = String(body.status ?? "");
+      if (!validAreaPath(area) || !["done", "active"].includes(status)) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "area and status (done or active) required" }));
+        return;
+      }
+      try {
+        await stat(path.join(TREES_ROOT, area));
+      } catch {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: `no Area ${area}` }));
+        return;
+      }
+      const result = await setAreaStatus(area, status, body.session ? String(body.session) : null);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(result));
+      return;
+    }
     if (url.pathname === "/api/goals/edit" && req.method === "POST") {
       let body = {};
       try { body = JSON.parse(await readBody(req)); } catch {}
@@ -3848,6 +3993,19 @@ const server = http.createServer(async (req, res) => {
       filePath = path.join(here, "public", "shell.html");
     } else if (url.pathname === "/vision" || url.pathname === "/vision/") {
       filePath = path.join(here, "public", "vision.html");
+    } else if (url.pathname.startsWith("/vendor/d3/")) {
+      const rel = url.pathname.slice("/vendor/d3/".length);
+      const roots = {
+        "d3-dispatch.min.js": "d3-dispatch/dist/d3-dispatch.min.js",
+        "d3-quadtree.min.js": "d3-quadtree/dist/d3-quadtree.min.js",
+        "d3-timer.min.js": "d3-timer/dist/d3-timer.min.js",
+        "d3-force.min.js": "d3-force/dist/d3-force.min.js",
+      };
+      if (!roots[rel]) {
+        res.writeHead(404).end("not found");
+        return;
+      }
+      filePath = path.join(here, "node_modules", roots[rel]);
     } else if (url.pathname.startsWith("/vendor/xterm/")) {
       const rel = url.pathname.slice("/vendor/xterm/".length);
       const roots = {

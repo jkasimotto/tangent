@@ -1663,3 +1663,72 @@ test("a sub-Area with open work nests as a section of its ancestor's desk panel,
   const titles = [...section.querySelectorAll(".desk-goal-main strong")].map((node) => node.textContent);
   assert.deepEqual(titles, ["Needs you goal", "Working goal", "Old ready goal"], "needs-you, then working, then ready by latest change, not authored order");
 });
+
+test("the Area map holds stored node positions on reload, simulates only new nodes, and persists its first layout", async () => {
+  const [html, mapCore, mapView, ...d3] = await Promise.all([
+    readFile(path.join(here, "public", "shell.html"), "utf8"),
+    readFile(path.join(here, "public", "area-map-core.js"), "utf8"),
+    readFile(path.join(here, "public", "area-map.js"), "utf8"),
+    ...["d3-dispatch", "d3-quadtree", "d3-timer", "d3-force"].map((name) => readFile(path.join(here, "node_modules", name, "dist", `${name}.min.js`), "utf8")),
+  ]);
+  const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
+  const { window } = dom;
+  window.HTMLCanvasElement.prototype.getContext = () => null;
+  for (const script of d3) window.eval(script);
+  window.eval(mapCore);
+  window.eval(mapView);
+  const view = window.AgentShellAreaMapView;
+  const host = window.document.createElement("div");
+  window.document.body.append(host);
+  const now = 1_700_000_000_000;
+  /** One design Document record in otto/dnd, as the vault index serves it. */
+  const record = (file, links = []) => ({ file, area: "otto/dnd", kind: "document", docKind: "design", title: file, links, backlinks: [], changedAt: now, mtime: now, inDegree: 0, outDegree: links.length });
+  const records = [record("otto/dnd/design-a.md", ["design-b"]), record("otto/dnd/design-b.md"), record("otto/dnd/design-c.md", ["design-a"])];
+  const saved = [];
+  /** Records every state the map asks the shell to save. */
+  const onSaveState = (state) => saved.push(state);
+  /** Nothing to do for the shell routes in this test. */
+  const noop = () => {};
+  /** The Area path itself as its readable name. */
+  const areaName = (p) => p;
+  /** No dates on the card in this test. */
+  const dateLabel = () => "";
+  /** Every Goal is ready in this test. */
+  const attentionOf = () => "ready";
+  /** The mount props for the otto/dnd map, with overrides. */
+  const props = (extra = {}) => ({
+    scope: "otto/dnd", records, areaPaths: ["otto", "otto/dnd"], now, timezoneOffset: 0,
+    areaName, dateLabel, attentionOf, mapState: null,
+    onOpenDocument: noop, onSelectGoal: noop, onSelectArea: noop, onSaveState, ...extra,
+  });
+  // While the stored state loads, nothing is laid out and nothing is saved.
+  let instance = view.mount(host, props({ mapState: null }));
+  assert.equal(instance.nodes.length, 0, "no layout before the stored state arrives");
+  // Stored positions: every node keeps its place, and no simulation runs.
+  const stored = { positions: { "otto/dnd/design-a.md": { x: 10, y: 20 }, "otto/dnd/design-b.md": { x: -30, y: 40, pinned: true }, "otto/dnd/design-c.md": { x: 50, y: -60 } }, kindsOff: [], showDone: false, collapsed: [] };
+  instance = view.mount(host, props({ mapState: stored }));
+  /** The current graph position of one file's node. */
+  const at = (file) => { const node = instance.nodes.find((n) => n.file === file); return [node.x, node.y]; };
+  assert.deepEqual(at("otto/dnd/design-a.md"), [10, 20]);
+  assert.deepEqual(at("otto/dnd/design-b.md"), [-30, 40]);
+  assert.deepEqual(at("otto/dnd/design-c.md"), [50, -60]);
+  await new Promise((resolve) => window.setTimeout(resolve, 700));
+  assert.equal(saved.length, 0, "placing stored nodes is not a change worth saving");
+  // A new file joins on the next poll: it gets a place, the stored nodes do not move, and the layout is saved.
+  records.push(record("otto/dnd/design-d.md", ["design-a"]));
+  instance = view.mount(host, props({ mapState: stored }));
+  assert.deepEqual(at("otto/dnd/design-a.md"), [10, 20], "a stored node holds while a new one settles");
+  assert.deepEqual(at("otto/dnd/design-b.md"), [-30, 40]);
+  const [dx, dy] = at("otto/dnd/design-d.md");
+  assert.ok(Number.isFinite(dx) && Number.isFinite(dy), "the new node was simulated into a place");
+  await new Promise((resolve) => window.setTimeout(resolve, 700));
+  assert.equal(saved.length, 1, "the new layout is persisted once");
+  assert.deepEqual([saved[0].positions["otto/dnd/design-a.md"].x, saved[0].positions["otto/dnd/design-a.md"].y], [10, 20]);
+  assert.equal(saved[0].positions["otto/dnd/design-b.md"].pinned, true);
+  // A first-ever map (no stored positions) lays out and persists.
+  view.forget("otto/dnd");
+  const first = view.mount(host, props({ mapState: {} }));
+  assert.ok(first.nodes.every((n) => Number.isFinite(n.x)), "the first layout places every node");
+  await new Promise((resolve) => window.setTimeout(resolve, 700));
+  assert.equal(saved.length, 2, "the first layout is persisted");
+});

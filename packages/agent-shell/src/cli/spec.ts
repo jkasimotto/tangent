@@ -5,10 +5,42 @@ const jsonOption = { name: "json", description: "Print machine-readable JSON" };
 
 export const areaCommandSpec: CliCommandSpec = {
   name: "area",
-  description: "List and inspect Tangent tree Areas",
+  description: "List, inspect, and create Tangent tree Areas",
   subcommands: [
     { name: "list", description: "List every Area path in the vault", options: [serverOption, jsonOption] },
-    { name: "show", description: "Show one Area's purpose, Goals, and ideas", args: "<area>", options: [serverOption, jsonOption] }
+    { name: "show", description: "Show one Area's purpose, Goals, and ideas", args: "<area>", options: [serverOption, jsonOption] },
+    {
+      name: "create",
+      description: "Create a nested Area under a parent, with its note, committed with provenance. Only for a durable subject; a result is a Goal.",
+      args: "<parent> <name>",
+      options: [serverOption, jsonOption]
+    }
+  ]
+};
+
+export const brainCommandSpec: CliCommandSpec = {
+  name: "brain",
+  description: "The Area brain: the long-lived agent that plans and dispatches an Area's work",
+  subcommands: [
+    {
+      name: "handover",
+      description: "Hand this brain's facts to a fresh copy of itself: the next generation starts from the plan and these facts, and this session ends.",
+      args: "<facts...>",
+      options: [
+        { name: "session", takesValue: true, description: "Brain session name; defaults to the tmux session this command runs in" },
+        serverOption
+      ]
+    },
+    {
+      name: "status",
+      description: "Show the brain of an Area, or of the session this command runs in: status, generation, instruction, latest handover",
+      args: "[area]",
+      options: [
+        { name: "session", takesValue: true, description: "Brain session name; defaults to the tmux session this command runs in" },
+        serverOption,
+        jsonOption
+      ]
+    }
   ]
 };
 

@@ -1,7 +1,7 @@
 import { renderCommandHelp } from "@tangent/core";
 import { booleanArg, parseArgs, requiredString, stringArg, type Args } from "@tangent/core/cli";
 
-import { listAreaPaths, requireArea, resolveServerUrl, vaultFetch } from "../client.js";
+import { listAreaPaths, postJson, requireArea, resolveServerUrl, vaultFetch } from "../client.js";
 import { areaCommandSpec } from "../spec.js";
 
 /** Dispatches `tangent area` subcommands. */
@@ -11,7 +11,8 @@ export async function runAreaCli(argv = process.argv.slice(2)): Promise<void> {
   if (!subcommand || args.help) return help();
   if (subcommand === "list") return listCommand(args);
   if (subcommand === "show") return showCommand(args);
-  throw new Error(`Unknown area command: ${subcommand}. Try "tangent area list" or "tangent area show <area>".`);
+  if (subcommand === "create") return createCommand(args);
+  throw new Error(`Unknown area command: ${subcommand}. Try "tangent area list", "tangent area show <area>", or "tangent area create <parent> <name>".`);
 }
 
 /** Handles `tangent area list`. */
@@ -54,6 +55,25 @@ async function showCommand(args: Args): Promise<void> {
   for (const idea of detail.ideas) console.log(`  - ${idea}`);
 }
 
+/**
+ * Handles `tangent area create <parent> <name>`: the same route the desk uses, so an agent
+ * (the Area brain, a describe-work agent) creates a sub-Area with the desk's note shape and
+ * a provenance commit instead of hand-writing the vault.
+ */
+async function createCommand(args: Args): Promise<void> {
+  const server = resolveServerUrl(stringArg(args.server));
+  const parent = await requireArea(server, requiredString(args._[1], "tangent area create requires <parent> <name>."));
+  const name = args._.slice(2).map(String).join(" ").trim();
+  if (!name) throw new Error("tangent area create requires <name> after the parent Area.");
+  const created = await postJson(server, "/api/areas/new", { parent, name });
+  if (booleanArg(args.json)) {
+    console.log(JSON.stringify(created, null, 2));
+    return;
+  }
+  console.log(`area: ${created.area}`);
+  console.log(`note: ${created.note}`);
+}
+
 /** Prints `tangent area` help with real examples. */
 function help(): void {
   console.log(renderCommandHelp(areaCommandSpec));
@@ -62,5 +82,6 @@ Examples:
   tangent area list
   tangent area list --json
   tangent area show otto/tangent
+  tangent area create otto/tangent "Area map"
 `);
 }

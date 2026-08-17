@@ -42,3 +42,16 @@ test("goal help still lists the vault commands beside start and handover", () =>
     ["create", "list", "show", "own", "release", "start", "append", "handover", "done", "wont-do"]
   );
 });
+
+test("tangent brain has handover and status; tangent area gains create", async () => {
+  const { brainCommandSpec, areaCommandSpec } = await import("../dist/cli/index.js");
+  const handover = brainCommandSpec.subcommands.find((entry) => entry.name === "handover");
+  assert.ok(handover, "brain spec has a handover subcommand");
+  assert.equal(handover.args, "<facts...>");
+  assert.deepEqual(optionNames(handover), ["session", "server"]);
+  const status = brainCommandSpec.subcommands.find((entry) => entry.name === "status");
+  assert.equal(status.args, "[area]");
+  const create = areaCommandSpec.subcommands.find((entry) => entry.name === "create");
+  assert.ok(create, "area spec has a create subcommand");
+  assert.equal(create.args, "<parent> <name>");
+});

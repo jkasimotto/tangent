@@ -28,7 +28,8 @@ const tangentCommandSpec: CliCommandSpec = {
     productCommandSpec("eval", "Run and inspect coding-agent evals"),
     productCommandSpec("threads", "Delegated-thread sweep, registry, and attach"),
     { name: "agent", description: "List live agents and send messages between them; install @tangent/agent-shell if unavailable", args: "<list|send>" },
-    { name: "area", description: "List and inspect Tangent tree Areas; install @tangent/agent-shell if unavailable", args: "<list|show>" },
+    { name: "area", description: "List, inspect, and create Tangent tree Areas; install @tangent/agent-shell if unavailable", args: "<list|show|create>" },
+    { name: "brain", description: "The Area brain: hand over to a fresh copy of itself, or show its status; install @tangent/agent-shell if unavailable", args: "<handover|status>" },
     { name: "goal", description: "Create, list, start, hand over, and close Goals; install @tangent/agent-shell if unavailable", args: "<create|list|show|start|handover|done|wont-do>" },
     { name: "idea", description: "Capture and list ideas on an Area note; install @tangent/agent-shell if unavailable", args: "<add|list>" },
     { name: "document", description: "List and resolve comments inside a vault Document; install @tangent/agent-shell if unavailable", args: "<comments|resolve>" },
@@ -119,6 +120,12 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
   if (app === "area") {
     const { runAreaCli } = await requiredProductModule<{ runAreaCli(argv: string[]): Promise<void> }>("@tangent/agent-shell/cli", "area");
     await runAreaCli(rest);
+    return;
+  }
+
+  if (app === "brain") {
+    const { runBrainCli } = await requiredProductModule<{ runBrainCli(argv: string[]): Promise<void> }>("@tangent/agent-shell/cli", "brain");
+    await runBrainCli(rest);
     return;
   }
 

@@ -13,8 +13,8 @@ UI platform packages:
 - Product UI packages such as @tangent/usage-ui and @tangent/eval-ui own the browser modules their app servers mount. There is no combined shell package (ADR-0019).
 
 Vertical apps:
-- @tangent/agent-shell owns the vault CLI (`tangent area`, `tangent goal`, `tangent idea`, `tangent vault commit`), the agent messaging CLI (`tangent agent list|send`), and the pipeline CLI (`tangent goal start`, `tangent goal handover`), lazily loaded from `@tangent/agent-shell/cli`. Every command but `vault commit` is a thin HTTP client to the Agent Shell server.
-- The standalone prototype server in `prototypes/agent-shell/` serves the Agent Shell UI and owns Goals, sessions, and pipelines (ADR-0023).
+- @tangent/agent-shell owns the vault CLI (`tangent area`, `tangent goal`, `tangent idea`, `tangent vault commit`), the agent messaging CLI (`tangent agent list|send`), the pipeline CLI (`tangent goal start`, `tangent goal handover`), and the brain CLI (`tangent brain handover|status`, `tangent area create`), lazily loaded from `@tangent/agent-shell/cli`. Every command but `vault commit` is a thin HTTP client to the Agent Shell server.
+- The standalone prototype server in `prototypes/agent-shell/` serves the Agent Shell UI and owns Goals, sessions, pipelines (ADR-0023), and Area brains (ADR-0024).
 - @tangent/usage owns the full Usage app surface: compatibility SDK exports, standalone CLI, and local Usage UI server.
 - @tangent/rollup owns rollup note schemas, period-level user-message rollup inputs, examples, rendering, ledgers, and summarization workflows.
 - @tangent/eval owns eval specs, contexts, run manifests, metrics, reports, diffs, and the local read-only Eval UI server.

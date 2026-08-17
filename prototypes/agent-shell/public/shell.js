@@ -29,6 +29,8 @@ const state = {
   documentTrail: [],
   documentTrailIndex: -1,
   documentPositions: new Map(),
+  commentComposer: null,
+  commentCursor: -1,
   describeReturnView: "work",
   describeDraft: storedDescribeDraft?.session ? null : storedDescribeDraft,
   describeSessionName: savedDescribeSession,
@@ -198,11 +200,18 @@ function markdownHeadingAnchor(value, seen) {
 /** Returns the visible heading hierarchy with the same anchors as the renderer. */
 function markdownHeadings(text) {
   const seen = new Map();
-  return visibleMarkdown(text).split("\n").flatMap((line) => {
+  const offset = frontmatterLineCount(text);
+  return visibleMarkdown(text).split("\n").flatMap((line, index) => {
     const match = line.trimEnd().match(/^(#{1,4})\s+(.+)$/);
     if (!match) return [];
-    return [{ level: match[1].length, title: cleanText(match[2]), id: markdownHeadingAnchor(match[2], seen) }];
+    return [{ level: match[1].length, title: cleanText(match[2]), id: markdownHeadingAnchor(match[2], seen), line: index + offset }];
   });
+}
+
+/** Lines that visibleMarkdown removes, so visible line numbers map to file lines. */
+function frontmatterLineCount(text) {
+  const full = String(text ?? "").replace(/\r/g, "").split("\n").length;
+  return full - visibleMarkdown(text).split("\n").length;
 }
 
 /** Splits one Markdown table row without treating escaped pipes as columns. */
@@ -221,12 +230,38 @@ function markdownTableAlignments(value) {
   return cells.map((cell) => cell.startsWith(":") && cell.endsWith(":") ? "center" : cell.endsWith(":") ? "right" : "left");
 }
 
-/** Renders safe headings, paragraphs, lists, and tables from Markdown. */
-function markdownToHtml(text) {
+/**
+ * Renders safe headings, paragraphs, lists, and tables from Markdown. With
+ * `options.comments` (parsed by document-comments.js) each comment renders as
+ * a red-ruled block under the block that holds it, and its quoted words as a
+ * mark; `options.composer` places the comment composer at its anchor line.
+ * Blocks carry `data-line`, the file line they came from, so a selection can be
+ * mapped back to the Markdown.
+ */
+function markdownToHtml(text, options = {}) {
   const source = visibleMarkdown(text);
   const lines = source.split("\n");
   const html = [];
   const headingIds = new Map();
+  const comments = options.comments ?? [];
+  const composer = options.composer ?? null;
+  const lineOffset = frontmatterLineCount(text);
+  /** Comment blocks (and the composer) that belong under one file line. */
+  const tailFor = (fileLine) => {
+    const parts = comments.filter((comment) => comment.line === fileLine)
+      .map((comment) => composer?.editing?.index === comment.index ? commentComposerHtml(composer) : commentAsideHtml(comment));
+    if (composer && !composer.editing && composer.placeLine === fileLine) parts.push(commentComposerHtml(composer));
+    return parts.join("");
+  };
+  /** Removes comment markup from one line, leaving a marker for quoted words. */
+  const stripComments = (value, fileLine) => {
+    let line = value;
+    for (const comment of comments.filter((comment) => comment.line === fileLine)) {
+      line = line.replace(comment.markup, comment.quote != null ? `\u0005${comment.index}\u0006${comment.quote}\u0005\u0006` : "");
+    }
+    return line;
+  };
+  if (composer && !composer.editing && composer.placeLine < 0) html.push(commentComposerHtml(composer));
   let list = null;
   /** Closes the current list when the Markdown block type changes. */
   const closeList = () => {
@@ -235,8 +270,10 @@ function markdownToHtml(text) {
     list = null;
   };
   for (let index = 0; index < lines.length; index += 1) {
-    const raw = lines[index];
+    const fileLine = index + lineOffset;
+    const raw = stripComments(lines[index], fileLine);
     const line = raw.trimEnd();
+    const tail = tailFor(fileLine);
     const heading = line.match(/^(#{1,4})\s+(.+)$/);
     const bullet = line.match(/^\s*[-*]\s+(.+)$/);
     const ordered = line.match(/^\s*\d+[.)]\s+(.+)$/);
@@ -245,25 +282,28 @@ function markdownToHtml(text) {
     if (alignments && headers.length === alignments.length) {
       closeList();
       const rows = [];
+      const tableLine = fileLine;
+      let tableTail = tail;
       index += 2;
       while (index < lines.length && lines[index].includes("|") && lines[index].trim()) {
-        const cells = markdownTableCells(lines[index]);
+        const cells = markdownTableCells(stripComments(lines[index], index + lineOffset));
         if (cells.length !== headers.length) break;
         rows.push(cells);
+        tableTail += tailFor(index + lineOffset);
         index += 1;
       }
       index -= 1;
       /** Returns the alignment class for one table column. */
       const cellClass = (column) => ` class="align-${alignments[column]}"`;
       html.push(
-        `<div class="markdown-table-wrap"><table><thead><tr>${headers.map((cell, column) => `<th${cellClass(column)}>${inlineMarkdown(cell)}</th>`).join("")}</tr></thead>` +
-        `<tbody>${rows.map((row) => `<tr>${row.map((cell, column) => `<td${cellClass(column)}>${inlineMarkdown(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`
+        `<div class="markdown-table-wrap" data-line="${tableLine}"><table><thead><tr>${headers.map((cell, column) => `<th${cellClass(column)}>${inlineMarkdown(cell)}</th>`).join("")}</tr></thead>` +
+        `<tbody>${rows.map((row) => `<tr>${row.map((cell, column) => `<td${cellClass(column)}>${inlineMarkdown(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>${tableTail}`
       );
     } else if (heading) {
       closeList();
       const level = Math.min(4, heading[1].length);
       const id = markdownHeadingAnchor(heading[2], headingIds);
-      html.push(`<h${level} id="${escapeHtml(id)}">${inlineMarkdown(heading[2])}</h${level}>`);
+      html.push(`<h${level} id="${escapeHtml(id)}" data-line="${fileLine}">${inlineMarkdown(heading[2])}</h${level}>${tail}`);
     } else if (bullet || ordered) {
       const nextList = ordered ? "ol" : "ul";
       if (list !== nextList) {
@@ -271,16 +311,50 @@ function markdownToHtml(text) {
         list = nextList;
         html.push(`<${list}>`);
       }
-      html.push(`<li>${inlineMarkdown((bullet || ordered)[1])}</li>`);
+      html.push(`<li data-line="${fileLine}">${inlineMarkdown((bullet || ordered)[1])}${tail}</li>`);
     } else if (!line.trim()) {
       closeList();
+      if (tail) html.push(tail);
     } else {
       closeList();
-      html.push(`<p>${inlineMarkdown(line)}</p>`);
+      html.push(`<p data-line="${fileLine}">${inlineMarkdown(line)}</p>${tail}`);
     }
   }
   closeList();
-  return html.join("");
+  return html.join("").replace(/\u0005(\d+)\u0006([\s\S]*?)\u0005\u0006/g, '<mark class="document-comment-mark" data-comment-index="$1">$2</mark>');
+}
+
+/** One comment as a red-ruled block: author, words, and an always-visible remove control. */
+function commentAsideHtml(comment) {
+  const author = comment.author || "Comment";
+  return `<aside class="document-comment" id="document-comment-${comment.index}" role="note" aria-label="Comment from ${escapeHtml(author)}" data-comment-index="${comment.index}" tabindex="-1">
+    <button class="document-comment-body" type="button" data-edit-comment="${comment.index}" title="Edit comment"><span class="document-comment-author">${escapeHtml(author)}</span><span class="document-comment-text">${escapeHtml(comment.text)}</span></button>
+    <button class="document-comment-remove" type="button" data-remove-comment="${comment.index}" aria-label="Remove comment" title="Remove comment">×</button>
+  </aside>`;
+}
+
+/** The inline comment composer, at its anchor, with its scope and printed keys. */
+function commentComposerHtml(composer) {
+  const anchor = composer.anchor;
+  const where = composer.editing
+    ? `<span>Editing your comment</span>`
+    : anchor.kind === "selection"
+      ? `<span>On “${escapeHtml(clip(anchor.quote, 70))}”</span>`
+      : `<span class="document-comment-scope" role="group" aria-label="Where this comment goes">
+          <button type="button" data-comment-scope="section" aria-pressed="${anchor.kind === "section"}" ${composer.section ? "" : "disabled"}>${composer.section ? `Section “${escapeHtml(clip(composer.section.title, 40))}”` : "This section"}</button>
+          <button type="button" data-comment-scope="document" aria-pressed="${anchor.kind === "document"}">Whole Document</button>
+        </span>`;
+  return `<form class="document-comment-composer" data-comment-composer data-command-enter-submit aria-label="${composer.editing ? "Edit comment" : "New comment"}">
+    <textarea id="comment-text" rows="2" placeholder="Your comment" aria-label="Comment">${escapeHtml(composer.text)}</textarea>
+    <div class="document-comment-composer-row">
+      <div class="document-comment-composer-where">${where}</div>
+      <div class="document-comment-composer-actions">
+        <button class="quiet-button" type="button" data-cancel-comment>Cancel <kbd>esc</kbd></button>
+        <button class="primary-button" type="submit">Save comment <kbd>⌘↵</kbd></button>
+      </div>
+    </div>
+    ${composer.notice ? `<p class="document-comment-composer-notice" role="alert">${escapeHtml(composer.notice)}</p>` : ""}
+  </form>`;
 }
 
 /** Removes display Markdown and collapses whitespace. */
@@ -370,11 +444,23 @@ function saveDescribeSession() {
 }
 
 /** Shows one temporary status message. */
-function showToast(message) {
+function showToast(message, action = null) {
   toast.textContent = message;
+  toast.classList.toggle("has-action", Boolean(action));
+  if (action) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "toast-action";
+    button.textContent = action.label;
+    button.addEventListener("click", () => {
+      toast.classList.remove("show");
+      action.run();
+    });
+    toast.append(button);
+  }
   toast.classList.add("show");
   window.clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => toast.classList.remove("show"), 3200);
+  toastTimer = window.setTimeout(() => toast.classList.remove("show"), action ? 8000 : 3200);
 }
 
 /** Calls a JSON API and converts non-success replies into errors. */
@@ -2117,7 +2203,26 @@ function documentOutlineItems() {
 
 /** Renders one set of heading links for the wide outline or compact menu. */
 function documentOutlineLinks() {
-  return documentOutlineItems().map((heading) => `<a href="#${escapeHtml(heading.id)}" style="--heading-depth:${Math.max(0, heading.level - 2)}" data-document-heading="${escapeHtml(heading.id)}">${escapeHtml(heading.title)}</a>`).join("");
+  const items = documentOutlineItems();
+  const comments = state.document?.comments ?? [];
+  return items.map((heading, index) => {
+    const next = items[index + 1]?.line ?? Number.MAX_SAFE_INTEGER;
+    const count = comments.filter((comment) => comment.line > heading.line && comment.line < next).length;
+    return `<a href="#${escapeHtml(heading.id)}" class="${count ? "has-comments" : ""}" style="--heading-depth:${Math.max(0, heading.level - 2)}" data-document-heading="${escapeHtml(heading.id)}">${escapeHtml(heading.title)}${count ? `<i class="outline-comment-dot" aria-label="${count} comment${count === 1 ? "" : "s"}" title="${count} comment${count === 1 ? "" : "s"}"></i>` : ""}</a>`;
+  }).join("");
+}
+
+/** The toolbar's comment controls: a red count with next and previous, and one Comment action. */
+function documentCommentControls() {
+  const count = state.document?.comments?.length ?? 0;
+  const nav = count
+    ? `<div class="document-comment-nav" role="group" aria-label="Comments">
+        <button type="button" data-comment-step="-1" aria-label="Previous comment" title="Previous comment (⌘⌥P)">‹</button>
+        <span aria-live="polite">${count} comment${count === 1 ? "" : "s"}</span>
+        <button type="button" data-comment-step="1" aria-label="Next comment" title="Next comment (⌘⌥N)">›</button>
+      </div>`
+    : "";
+  return `${nav}<button class="reader-comment-action" type="button" data-comment-new title="Comment on the selected words or this section (⌘⌥M)">Comment <kbd>⌘⌥M</kbd></button>`;
 }
 
 /** Renders the quiet wide-screen page outline. */
@@ -2179,6 +2284,7 @@ function documentToolbar(goal) {
       </div>
       <div class="document-reader-actions">
         ${documentOutlineMenu()}
+        ${documentCommentControls()}
         ${goal ? `<button class="reader-agent-action" type="button" data-open-reader-agent>Open agent</button>` : ""}
       </div>
     </header>`;
@@ -2192,9 +2298,10 @@ function renderDocumentArticle() {
       <header class="document-heading">
         <h1>${escapeHtml(state.document.title)}</h1>
       </header>
-      <div class="document-content">${markdownToHtml(state.document.text)}</div>
+      <div class="document-content">${markdownToHtml(state.document.text, { comments: state.document.comments ?? [], composer: state.commentComposer })}</div>
       <p class="document-source">Source: ${escapeHtml(state.document.file)}</p>
-    </article>`;
+    </article>
+    <button class="selection-comment-button" type="button" data-comment-new hidden>Comment <kbd>⌘⌥M</kbd></button>`;
 }
 
 /** Renders one calm Document reader with optional navigation at the edge. */
@@ -2319,7 +2426,7 @@ function renderKey() {
   const goal = currentGoal();
   const session = sessionForGoal(goal);
   if (state.view === "document") {
-    return JSON.stringify([state.view, state.document?.file, state.document?.hash, state.documentTrailIndex, state.documentTrail.length]);
+    return JSON.stringify([state.view, state.document?.file, state.document?.hash, state.documentTrailIndex, state.documentTrail.length, commentComposerKey()]);
   }
   if (state.view === "agent") {
     return JSON.stringify([state.view, goal?.file, session?.name, state.agentReturnView, state.document?.hash]);
@@ -2592,7 +2699,7 @@ function paint(force = false) {
 function editingSurfaceOnScreen() {
   const active = document.activeElement;
   if (active && (["work-search", "launch-command-input"].includes(active.id) || ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName))) return true;
-  return Boolean(screen.querySelector("[data-create-form], [data-describe-work-form], [data-area-form], [data-program-form], [data-harness-form], [data-launch-popover]"));
+  return Boolean(screen.querySelector("[data-create-form], [data-describe-work-form], [data-area-form], [data-program-form], [data-harness-form], [data-launch-popover], [data-comment-composer]"));
 }
 
 /** Refreshes the vault, program, and session projections from the server. */
@@ -3022,6 +3129,8 @@ async function openDocument(file, { trail = "push", trailIndex = -1, heading = "
     state.document = null;
     paint(true);
   }
+  state.commentComposer = null;
+  state.commentCursor = -1;
   try {
     state.document = await api(`/api/document?file=${encodeURIComponent(file)}`);
     updateDocumentTrail(file, trail, trailIndex);
@@ -3076,8 +3185,9 @@ function bindDocumentReader() {
   /** Synchronizes the reader outline with the scroll position. */
   const update = () => {
     let active = headings[0]?.id || "";
+    const top = scroll.getBoundingClientRect().top;
     for (const heading of headings) {
-      if (heading.element.offsetTop <= scroll.scrollTop + 150) active = heading.id;
+      if (heading.element.getBoundingClientRect().top - top <= 150) active = heading.id;
     }
     for (const link of links) {
       const current = link.dataset.documentHeading === active;
@@ -3088,7 +3198,13 @@ function bindDocumentReader() {
     if (state.document) state.documentPositions.set(state.document.file, scroll.scrollTop);
   };
   scroll.addEventListener("scroll", update, { passive: true });
+  scroll.addEventListener("scroll", hideSelectionCommentButton, { passive: true });
   update();
+  const composerField = screen.querySelector("#comment-text");
+  if (composerField && document.activeElement !== composerField) {
+    composerField.focus();
+    composerField.setSelectionRange(composerField.value.length, composerField.value.length);
+  }
 }
 
 /** Reloads the visible Document after an agent changes its source file. */
@@ -3104,6 +3220,244 @@ async function refreshDocument({ announce = false } = {}) {
   } catch (error) {
     showToast(error.message);
   }
+}
+
+// ---- Document comments (design contract: design-comment-on-documents) ----
+// A comment is CriticMarkup inside the Document text; document-comments.js
+// parses, inserts, and removes it. Every change goes through the base-hash
+// save, so a comment can never overwrite an agent's edit.
+
+/** The stable part of the composer for the render key (typed text is synced, not keyed). */
+function commentComposerKey() {
+  const composer = state.commentComposer;
+  return composer ? [composer.anchor?.kind, composer.placeLine, composer.editing?.index ?? -1, composer.notice] : null;
+}
+
+/** The nearest rendered block above a DOM node, which knows its file line. */
+function readerBlockOf(node) {
+  const element = node?.nodeType === Node.TEXT_NODE ? node.parentElement : node;
+  if (!element || element.closest?.(".document-comment, .document-comment-composer")) return null;
+  return element.closest?.("[data-line]") ?? null;
+}
+
+/** The words Julian selected inside the reading column, mapped to their file line. */
+function readerSelection() {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || !selection.rangeCount) return null;
+  const content = screen.querySelector(".document-content");
+  const range = selection.getRangeAt(0);
+  const startBlock = readerBlockOf(range.startContainer);
+  const endBlock = readerBlockOf(range.endContainer);
+  if (!content || !startBlock || !content.contains(startBlock)) return null;
+  const crossed = endBlock !== startBlock;
+  const quote = (crossed ? selection.toString().split("\n")[0] : selection.toString()).replace(/\s+/g, " ").trim();
+  if (!quote) return null;
+  return { quote, line: Number(startBlock.dataset.line), crossed, rect: range.getBoundingClientRect() };
+}
+
+/** Shows the floating Comment button beside a live selection, or hides it. */
+function updateSelectionCommentButton() {
+  const button = screen.querySelector(".selection-comment-button");
+  if (!button) return;
+  const selection = state.commentComposer ? null : readerSelection();
+  if (!selection || !selection.rect.width) {
+    button.hidden = true;
+    return;
+  }
+  button.hidden = false;
+  button.style.top = `${Math.max(8, selection.rect.top - 42)}px`;
+  button.style.left = `${Math.max(8, selection.rect.left + selection.rect.width / 2)}px`;
+}
+
+/** Hides the floating Comment button without touching the selection. */
+function hideSelectionCommentButton() {
+  const button = screen.querySelector(".selection-comment-button");
+  if (button) button.hidden = true;
+}
+
+/** The outline heading whose section is in view, so a section comment lands there. */
+function readerSectionInView() {
+  const scroll = screen.querySelector(".document-reader-scroll");
+  const items = documentOutlineItems();
+  if (!scroll || !items.length) return null;
+  let active = null;
+  const top = scroll.getBoundingClientRect().top;
+  for (const heading of items) {
+    const element = document.getElementById(heading.id);
+    if (element && element.getBoundingClientRect().top - top <= 150) active = heading;
+  }
+  return active;
+}
+
+/** The file line of the Document title, where a whole-Document comment goes. */
+function documentTitleLine() {
+  return markdownHeadings(state.document?.text).find((heading) => heading.level === 1)?.line ?? -1;
+}
+
+/**
+ * Opens the composer: on the selected words when there is a selection, else
+ * under the section in view with a switch to the whole Document.
+ */
+function openCommentComposer() {
+  if (state.view !== "document" || !state.document) return;
+  const selection = readerSelection();
+  const section = selection ? null : readerSectionInView();
+  const composer = {
+    text: "",
+    notice: selection?.crossed ? "The selection crossed a paragraph. The comment goes on the first one." : "",
+    editing: null,
+    section,
+    anchor: selection
+      ? { kind: "selection", quote: selection.quote, line: selection.line }
+      : section ? { kind: "section", heading: section.title } : { kind: "document" },
+    placeLine: selection ? selection.line : section ? section.line : documentTitleLine(),
+  };
+  state.commentComposer = composer;
+  window.getSelection()?.removeAllRanges();
+  paint(true);
+}
+
+/** Switches a new comment between the section in view and the whole Document. */
+function setCommentScope(kind) {
+  const composer = state.commentComposer;
+  if (!composer || composer.editing) return;
+  syncCommentDraft();
+  composer.anchor = kind === "section" && composer.section ? { kind: "section", heading: composer.section.title } : { kind: "document" };
+  composer.placeLine = composer.anchor.kind === "section" ? composer.section.line : documentTitleLine();
+  paint(true);
+}
+
+/** Opens one existing comment in the composer. */
+function editComment(index) {
+  const comment = (state.document?.comments ?? [])[index];
+  if (!comment) return;
+  state.commentComposer = { text: comment.text, notice: "", editing: comment, section: null, anchor: { kind: "edit" }, placeLine: comment.line };
+  paint(true);
+}
+
+/** Keeps the typed comment in state, so a repaint cannot lose it. */
+function syncCommentDraft() {
+  const field = screen.querySelector("#comment-text");
+  if (field && state.commentComposer) state.commentComposer.text = field.value;
+}
+
+/** Closes the composer and drops its draft. */
+function cancelCommentComposer() {
+  if (!state.commentComposer) return;
+  const focusIndex = state.commentComposer.editing?.index;
+  state.commentComposer = null;
+  paint(true);
+  if (Number.isInteger(focusIndex)) document.getElementById(`document-comment-${focusIndex}`)?.focus();
+}
+
+/** Shows one line of trouble inside the composer and keeps the draft. */
+function noteInComposer(message) {
+  if (!state.commentComposer) return;
+  syncCommentDraft();
+  state.commentComposer.notice = message;
+  paint(true);
+}
+
+/** Applies the composer to one Document text: the new markup, or why it cannot be placed. */
+function composerResult(document, composer) {
+  const helper = window.AgentShellDocumentComments;
+  if (composer.editing) {
+    const match = (document.comments ?? []).find((comment) => comment.markup === composer.editing.markup && comment.line === composer.editing.line)
+      ?? (document.comments ?? []).find((comment) => comment.markup === composer.editing.markup);
+    if (!match) return { error: "That comment changed while you were editing. Read it again." };
+    return { text: helper.replaceCommentText(document.text, match, composer.text) };
+  }
+  return helper.insertComment(document.text, composer.anchor, composer.text);
+}
+
+/** One base-hash save of the whole Document text; returns the raw reply so a 409 can be handled. */
+async function saveDocumentText(text, summary, baseHash = state.document?.hash) {
+  const response = await fetch("/api/document", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file: state.document.file, text, baseHash, summary }),
+  });
+  const data = await response.json().catch(() => ({}));
+  return { ok: response.ok, status: response.status, data };
+}
+
+/** Replaces the open Document with a saved copy without losing the reading place. */
+function adoptSavedDocument(document) {
+  rememberDocumentPosition();
+  state.document = document;
+  state.renderedKey = "";
+  paint(true);
+  restoreDocumentPosition();
+}
+
+/** Puts an earlier text back, for Undo, unless the file moved on again. */
+async function restoreDocumentText(text, summary) {
+  const result = await saveDocumentText(text, summary);
+  if (!result.ok) return showToast(result.data.error === "document changed since it was opened" ? "The Document changed since then, so nothing was undone." : (result.data.error || "Undo did not save."));
+  adoptSavedDocument(result.data);
+}
+
+/**
+ * Saves the composer. On a 409 the current text comes back with the reply, so
+ * the comment is placed again by heading or exact words and saved once more;
+ * if its place is gone the composer stays open with the draft.
+ */
+async function submitCommentComposer() {
+  const composer = state.commentComposer;
+  if (!composer || !state.document) return;
+  syncCommentDraft();
+  if (!composer.text.trim()) return noteInComposer("Write the comment first.");
+  const summary = composer.editing ? "edited a comment" : "added a comment";
+  let attempt = composerResult(state.document, composer);
+  if (attempt.error) return noteInComposer(attempt.error);
+  let previous = state.document.text;
+  let result = await saveDocumentText(attempt.text, summary);
+  if (result.status === 409 && result.data.current) {
+    state.document = { ...state.document, ...result.data.current };
+    attempt = composerResult(state.document, composer);
+    if (attempt.error) return noteInComposer(attempt.error);
+    previous = state.document.text;
+    result = await saveDocumentText(attempt.text, summary);
+  }
+  if (!result.ok) return noteInComposer(result.data.error || "The comment did not save.");
+  const wasEditing = Boolean(composer.editing);
+  state.commentComposer = null;
+  adoptSavedDocument(result.data);
+  showToast(wasEditing ? "Comment updated." : "Comment added.", {
+    label: "Undo",
+    /** Puts the text from before this comment change back. */
+    run: () => restoreDocumentText(previous, wasEditing ? "undid a comment edit" : "removed a comment"),
+  });
+}
+
+/** Removes one comment with Undo, never with a dialog. */
+async function removeComment(index) {
+  const comment = (state.document?.comments ?? [])[index];
+  if (!comment) return;
+  const previous = state.document.text;
+  const text = window.AgentShellDocumentComments.removeComment(previous, comment);
+  const result = await saveDocumentText(text, "removed a comment");
+  if (result.status === 409) return showToast("The Document changed since it was opened. Open it again, then remove the comment.");
+  if (!result.ok) return showToast(result.data.error || "The comment did not save.");
+  if (state.commentComposer?.editing?.index === index) state.commentComposer = null;
+  adoptSavedDocument(result.data);
+  showToast("Comment removed.", {
+    label: "Undo",
+    /** Puts the removed comment back. */
+    run: () => restoreDocumentText(previous, "restored a comment"),
+  });
+}
+
+/** Moves to the next or previous comment, wrapping at the ends, and gives it focus. */
+function stepComment(direction) {
+  const comments = state.document?.comments ?? [];
+  if (!comments.length) return;
+  const count = comments.length;
+  state.commentCursor = ((state.commentCursor + direction) % count + count) % count;
+  const element = document.getElementById(`document-comment-${state.commentCursor}`);
+  if (!element) return;
+  element.scrollIntoView({ block: "center", behavior: "smooth" });
+  element.focus({ preventScroll: true });
 }
 
 /** Saves the visible natural description as an idea and creates no goal. */
@@ -3564,6 +3918,16 @@ document.addEventListener("click", async (event) => {
   const documentHistory = target.closest("[data-document-history]");
   if (documentHistory) return navigateDocumentHistory(documentHistory.dataset.documentHistory);
   if (target.closest("[data-open-reader-agent]")) return openReaderAgent();
+  if (target.closest("[data-comment-new]")) return openCommentComposer();
+  const commentStep = target.closest("[data-comment-step]");
+  if (commentStep) return stepComment(Number(commentStep.dataset.commentStep));
+  const commentScope = target.closest("[data-comment-scope]");
+  if (commentScope) return setCommentScope(commentScope.dataset.commentScope);
+  if (target.closest("[data-cancel-comment]")) return cancelCommentComposer();
+  const editCommentButton = target.closest("[data-edit-comment]");
+  if (editCommentButton) return editComment(Number(editCommentButton.dataset.editComment));
+  const removeCommentButton = target.closest("[data-remove-comment]");
+  if (removeCommentButton) return removeComment(Number(removeCommentButton.dataset.removeComment));
   if (target.closest("[data-open-goal-agent]")) return openGoalAgent({ returnView: "work" });
   if (target.closest("[data-launch-change]")) {
     state.launch.open = true;
@@ -3812,6 +4176,10 @@ document.addEventListener("click", async (event) => {
 });
 
 document.addEventListener("submit", async (event) => {
+  if (event.target.matches("[data-comment-composer]")) {
+    event.preventDefault();
+    return submitCommentComposer();
+  }
   if (event.target.matches("[data-area-form]")) {
     event.preventDefault();
     const edit = state.areaEdit;
@@ -3930,6 +4298,10 @@ document.addEventListener("submit", async (event) => {
 });
 
 document.addEventListener("input", (event) => {
+  if (event.target.id === "comment-text" && state.commentComposer) {
+    state.commentComposer.text = event.target.value;
+    return;
+  }
   if (event.target.id === "launch-command-input") {
     state.launch.command = event.target.value;
     return;
@@ -4078,6 +4450,21 @@ document.addEventListener("keydown", (event) => {
     toggleShellMenu(false);
     return;
   }
+  if (event.key === "Escape" && state.commentComposer) {
+    event.preventDefault();
+    cancelCommentComposer();
+    return;
+  }
+  if (state.view === "document" && event.metaKey && event.altKey && !event.shiftKey && !event.ctrlKey) {
+    if (event.code === "KeyM") {
+      event.preventDefault();
+      return openCommentComposer();
+    }
+    if (event.code === "KeyN" || event.code === "KeyP") {
+      event.preventDefault();
+      return stepComment(event.code === "KeyN" ? 1 : -1);
+    }
+  }
   if (event.key === "Escape" && state.launchTarget) {
     event.preventDefault();
     if (state.view === "describe") syncDescribeDraft();
@@ -4100,6 +4487,10 @@ document.addEventListener("keydown", (event) => {
 
 window.addEventListener("resize", () => {
   try { terminalFit?.fit(); } catch {}
+});
+
+document.addEventListener("selectionchange", () => {
+  if (state.view === "document") updateSelectionCommentButton();
 });
 
 void (async () => {

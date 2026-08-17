@@ -2,7 +2,7 @@
 
 Purpose: the CLI surface of the Agent Shell. Three lanes, all under the root `tangent` command:
 
-- Vault CLI: `tangent area`, `tangent goal`, `tangent idea`, `tangent vault commit`.
+- Vault CLI: `tangent area`, `tangent goal`, `tangent idea`, `tangent document`, `tangent vault commit`.
 - Agent messaging CLI: `tangent agent list`, `tangent agent send`.
 - Pipeline CLI: `tangent goal start` (one agent or a list of steps on a Goal) and `tangent goal handover` (a step agent hands facts to the next step).
 

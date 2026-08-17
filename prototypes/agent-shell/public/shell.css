@@ -869,8 +869,44 @@ details.more-work .area-work-list { margin-top: 18px; }
 .modal-field textarea { min-height: 92px; resize: vertical; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 28px; }
 
+/* Document comments: red-ruled blocks under their block, marks on quoted words, one inline composer. */
+.document-comment { position: relative; display: flex; align-items: flex-start; gap: 8px; margin: 10px 0 18px; padding: 8px 6px 8px 14px; border-left: 3px solid var(--red); border-radius: 0 6px 6px 0; background: rgba(240, 154, 154, .05); }
+.document-comment:focus { outline: none; box-shadow: 0 0 0 2px rgba(240, 154, 154, .45); }
+.document-comment-body { display: grid; flex: 1; gap: 3px; min-width: 0; margin: 0; padding: 0; border: 0; background: transparent; color: var(--text); font: inherit; text-align: left; cursor: text; }
+.document-comment-author { color: var(--red); font-size: 11px; font-weight: 720; letter-spacing: .06em; text-transform: uppercase; }
+.document-comment-text { font-size: 15px; line-height: 1.55; white-space: pre-wrap; }
+.document-comment-remove { flex: none; width: 24px; height: 24px; margin: -2px 0 0; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--quiet); font-size: 16px; line-height: 1; cursor: pointer; }
+.document-comment-remove:hover, .document-comment-remove:focus-visible { background: var(--red-soft); color: var(--red); outline: none; }
+.document-comment-mark { padding: 0 1px; border-bottom: 2px solid var(--red); border-radius: 2px; background: var(--red-soft); color: inherit; }
+li .document-comment { margin: 8px 0 10px; }
+.document-comment-composer { display: grid; gap: 8px; margin: 10px 0 20px; padding: 10px 10px 10px 14px; border-left: 3px solid var(--red); border-radius: 0 8px 8px 0; background: rgba(240, 154, 154, .05); }
+.document-comment-composer textarea { width: 100%; min-height: 54px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 15px; line-height: 1.5; resize: vertical; }
+.document-comment-composer textarea:focus { border-color: var(--red); outline: none; }
+.document-comment-composer-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.document-comment-composer-where { min-width: 0; color: var(--muted); font-size: 12px; }
+.document-comment-composer-actions { display: flex; flex: none; align-items: center; gap: 4px; }
+.document-comment-composer-actions .primary-button, .document-comment-composer-actions .quiet-button { padding: 6px 10px; font-size: 12px; }
+.document-comment-composer-actions kbd { margin-left: 8px; font-family: inherit; font-size: 11px; opacity: .7; }
+.document-comment-scope { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 8px; }
+.document-comment-scope button { padding: 4px 9px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 640; cursor: pointer; }
+.document-comment-scope button[aria-pressed="true"] { background: var(--surface-raised); color: var(--text); }
+.document-comment-scope button:disabled { opacity: .45; cursor: default; }
+.document-comment-composer-notice { margin: 0; color: var(--red); font-size: 12px; }
+.document-comment-nav { display: inline-flex; align-items: center; gap: 2px; margin-right: 4px; color: var(--red); font-size: 12px; font-weight: 680; }
+.document-comment-nav button { width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--red); font-size: 17px; line-height: 1; cursor: pointer; }
+.document-comment-nav button:hover { background: var(--red-soft); }
+.reader-comment-action { padding: 7px 9px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 640; }
+.reader-comment-action:hover { background: var(--surface-raised); color: var(--text); }
+.reader-comment-action kbd, .selection-comment-button kbd { margin-left: 7px; font-family: inherit; font-size: 10px; opacity: .6; }
+.selection-comment-button { position: fixed; z-index: 60; padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: #1a1e23; box-shadow: 0 10px 28px rgba(0, 0, 0, .4); color: var(--text); font-size: 12px; font-weight: 640; cursor: pointer; transform: translate(-50%, 0); }
+.selection-comment-button:hover { border-color: var(--red); }
+.document-outline a .outline-comment-dot { display: inline-block; width: 6px; height: 6px; margin: 0 0 1px 7px; border-radius: 50%; background: var(--red); vertical-align: middle; }
+.document-outline-menu a .outline-comment-dot { display: inline-block; width: 6px; height: 6px; margin: 0 0 1px 7px; border-radius: 50%; background: var(--red); vertical-align: middle; }
 .toast { position: fixed; right: 24px; bottom: 24px; z-index: 120; max-width: 420px; padding: 13px 16px; border: 1px solid var(--line-strong); border-radius: 12px; background: #1a1e23; box-shadow: 0 16px 42px rgba(0, 0, 0, .42); color: var(--text); font-size: 14px; opacity: 0; pointer-events: none; transform: translateY(8px); transition: opacity 140ms ease, transform 140ms ease; }
 .toast.show { opacity: 1; transform: translateY(0); }
+.toast.has-action { display: flex; align-items: center; gap: 14px; pointer-events: auto; }
+.toast-action { padding: 4px 9px; border: 1px solid var(--line-strong); border-radius: 6px; background: transparent; color: var(--blue); font-size: 12px; font-weight: 680; cursor: pointer; }
+.toast-action:hover { background: var(--surface-raised); }
 
 @media (max-width: 1100px) {
   .app-bar { grid-template-columns: auto 1fr auto; }

@@ -4,7 +4,8 @@
 // `threads` use.
 export { runAgentCli } from "./commands/agent.js";
 export { runAreaCli } from "./commands/area.js";
+export { runDocumentCli } from "./commands/document.js";
 export { runGoalCli } from "./commands/goal.js";
 export { runIdeaCli } from "./commands/idea.js";
 export { runVaultCli } from "./commands/vault.js";
-export { agentCommandSpec, areaCommandSpec, goalCommandSpec, ideaCommandSpec, vaultCommandSpec } from "./spec.js";
+export { agentCommandSpec, areaCommandSpec, documentCommandSpec, goalCommandSpec, ideaCommandSpec, vaultCommandSpec } from "./spec.js";

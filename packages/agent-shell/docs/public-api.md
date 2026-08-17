@@ -5,7 +5,7 @@ Public import paths:
 - `@tangent/agent-shell`
 - `@tangent/agent-shell/cli`
 
-Both export the same surface: `runAreaCli`, `runGoalCli`, `runIdeaCli`, `runAgentCli`, `runVaultCli`, and their help specs `areaCommandSpec`, `goalCommandSpec`, `ideaCommandSpec`, `agentCommandSpec`, `vaultCommandSpec`. The root `tangent` CLI lazily loads `@tangent/agent-shell/cli` for the `area`, `goal`, `idea`, `agent`, and `vault` nouns, the same way `usage`/`eval`/`rollup`/`search`/`threads` are loaded. Nothing else is exported; the Reviewed build engine was removed in ADR-0023.
+Both export the same surface: `runAreaCli`, `runGoalCli`, `runIdeaCli`, `runDocumentCli`, `runAgentCli`, `runVaultCli`, and their help specs `areaCommandSpec`, `goalCommandSpec`, `ideaCommandSpec`, `documentCommandSpec`, `agentCommandSpec`, `vaultCommandSpec`. The root `tangent` CLI lazily loads `@tangent/agent-shell/cli` for the `area`, `goal`, `idea`, `document`, `agent`, and `vault` nouns, the same way `usage`/`eval`/`rollup`/`search`/`threads` are loaded. Nothing else is exported; the Reviewed build engine was removed in ADR-0023.
 
 ## Vault CLI
 
@@ -15,6 +15,7 @@ Both export the same surface: `runAreaCli`, `runGoalCli`, `runIdeaCli`, `runAgen
 - `tangent goal own <slug...>`, `tangent goal release <slug...>` `[--session <name>]`: take or hand back ownership. Ownership is the Goal's existing `session:` binding (status flips to `active`/`open` with it), so the desk display and the dead-session reconcile pass need no extra machinery. Owning never steals from another live session; the server refuses and names the owner. The session defaults to the tmux session the command runs in.
 - `tangent goal done <slug>`, `tangent goal wont-do <slug> --reason <text>`: flip a Goal's status. Run only on the user's explicit word; idempotent when already in the target status.
 - `tangent idea add <area> <text...>`, `tangent idea list [<area>]`: capture and list Area ideas.
+- `tangent document comments <file>`, `tangent document resolve <file> "<first words>" -m "<what changed>"`: list Julian's comments (CriticMarkup `{>>Julian: ...<<}` inside the Markdown) in one vault Document, and remove exactly one in its own `resolve:` commit. Resolve is the only agent path that removes a comment (design contract: otto/tangent/design-comment-on-documents).
 - `tangent vault commit <paths...> -m "<verb>: <area> <summary>" [--area <path>]`: the one command in this surface that talks to git directly instead of the server. Verb is one of `add`, `note`, `update`, `remove`. Commits exactly the given vault-relative paths (pathspec, never staged) with `Tangent-Area`/`Tangent-Tmux` trailers, mirroring the server's own `vaultCommit()`.
 
 ## Agent messaging CLI
@@ -37,7 +38,7 @@ Every command but `vault commit` is a thin HTTP client to the running Agent Shel
 
 Endpoints in `prototypes/agent-shell/server.mjs` used by this package:
 
-- Read: `GET /api/tree`, `GET /api/areas/show?area=<path>`, `GET /api/goals[?area=<path>]`, `GET /api/goals/show?slug=<slug>`, `GET /api/ideas[?area=<path>]`, `GET /api/sessions`.
+- Read: `GET /api/tree`, `GET /api/areas/show?area=<path>`, `GET /api/goals[?area=<path>]`, `GET /api/goals/show?slug=<slug>`, `GET /api/ideas[?area=<path>]`, `GET /api/document/comments?file=<path>`, `GET /api/sessions`.
 - Vault mutations: `POST /api/goals/create` (accepts `own: <session>`), `POST /api/idea/new`, `POST /api/goals/edit`, `POST /api/goals/own` and `POST /api/goals/release` (`{ session, slugs }`), `POST /api/agents/send`.
 - `POST /api/goals/start`: `{ file, approved, launch, extraFiles? }` starts one agent; `{ file, steps: [{ instruction, launch?: { harness, model?, effort? }, continueFrom: n | null }], extraFiles? }` starts a pipeline and responds `{ session, pipeline: <record> }`. One endpoint for both, so there is one way to start work. Errors: 404 unknown Goal, 409 Goal done/dropped or owned by another live session or an unresolvable launch (names the harness/model/effort), 400 invalid steps.
 - `POST /api/goals/handover`: `{ session, text }`. Marks the running step whose session matches as `complete` with `handover: text`, `handoverSource: "agent"`, then starts the next pending step. A step that already holds a handover (it was asked to hand over again after an append) keeps it and gains the new text below a blank line. Responds `{ status: "started", next: { index, session } }` or `{ status: "complete", next: null }`. 404 when the session is not a running step; 400 when the text is empty.

@@ -241,6 +241,45 @@ test("the context-first shell is default and keeps the user's understanding with
   const linkedDocument = await fetch(`${base}/api/document?file=otto%2Ftest%2Fuse-cases.md`).then((response) => response.json());
   assert.equal(linkedDocument.kind, "document");
   assert.match(linkedDocument.text, /inspect the use cases/);
+  assert.deepEqual(linkedDocument.comments, []);
+
+  // Comments: a base-hash save adds one, the Goal prompt counts it, and only
+  // `tangent document resolve` removes it, in its own named commit.
+  const commented = linkedDocument.text.replace("inspect the use cases", "inspect the {==use cases==}{>>Julian: Name them.<<}");
+  const stale = await fetch(`${base}/api/document`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file: "otto/test/use-cases.md", text: commented, baseHash: "stale", summary: "added a comment" }),
+  });
+  assert.equal(stale.status, 409);
+  assert.equal((await stale.json()).current.hash, linkedDocument.hash);
+  const commentedDocument = await fetch(`${base}/api/document`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file: "otto/test/use-cases.md", text: commented, baseHash: linkedDocument.hash, summary: "added a comment" }),
+  }).then((response) => response.json());
+  assert.deepEqual(commentedDocument.comments.map((comment) => [comment.author, comment.text, comment.quote]), [["Julian", "Name them.", "use cases"]]);
+  const listed = await fetch(`${base}/api/document/comments?file=otto%2Ftest%2Fuse-cases.md`).then((response) => response.json());
+  assert.equal(listed.comments.length, 1);
+  const briefWithComment = await fetch(`${base}/api/goals/brief?file=otto%2Ftest%2Fgoal-prove-it.md`).then((response) => response.json());
+  assert.match(briefWithComment.markdown, /use-cases\.md \(1 open comment from Julian\)/);
+  assert.match(briefWithComment.markdown, /tangent document resolve/);
+  const missing = await fetch(`${base}/api/document/resolve`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file: "otto/test/use-cases.md", prefix: "Nothing like this", note: "x" }),
+  });
+  assert.equal(missing.status, 404);
+  const resolved = await fetch(`${base}/api/document/resolve`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file: "otto/test/use-cases.md", prefix: "name them", note: "Listed the use cases." }),
+  }).then((response) => response.json());
+  assert.equal(resolved.comment.text, "Name them.");
+  assert.equal(resolved.remaining, 0);
+  assert.equal(await readFile(path.join(areaDirectory, "use-cases.md"), "utf8"), linkedDocument.text);
+  const briefAfterResolve = await fetch(`${base}/api/goals/brief?file=otto%2Ftest%2Fgoal-prove-it.md`).then((response) => response.json());
+  assert.doesNotMatch(briefAfterResolve.markdown, /open comment/);
 
   const saved = await fetch(`${base}/api/goals/understanding`, {
     method: "POST",

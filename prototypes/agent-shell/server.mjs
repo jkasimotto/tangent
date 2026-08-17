@@ -18,6 +18,11 @@ import { createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area
 import { commandSession, programsSnapshot, saveLocalProgram, saveRoutine, setRoutinePaused } from "./programs.mjs";
 import pty from "node-pty";
 import { documentHash, markdownTitle, safeMarkdownPath, wikiLinks } from "./vault-documents.mjs";
+import "./public/document-comments.js";
+
+// The comment parser is shared with the browser, so it is a plain script that
+// registers a global (see public/document-comments.js).
+const documentComments = globalThis.AgentShellDocumentComments;
 import { classifyStaticPane, stabilizeStaticPane } from "./pane-state.mjs";
 import { appendSteps, currentStep, endPipeline, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, readAllPipelines, readPipeline, validateSteps, writePipeline } from "./pipeline-record.mjs";
 import { deliveryDecision, messageBanner, normalizeMessage } from "./agent-messages.mjs";
@@ -534,6 +539,7 @@ async function readAreaDocuments(area) {
       documents.push({
         file, area, kind: "document", title: markdownTitle(text, name.slice(0, -3)),
         mtime: info.mtimeMs, hash: documentHash(text), links: wikiLinks(text),
+        commentCount: documentComments.parseComments(text).length,
         searchText: `${file}\n${text}`.toLowerCase(),
       });
     } catch {}
@@ -549,7 +555,7 @@ async function readVaultDocument(file) {
   const metadata = index.documents.find((d) => d.file === safe.relative);
   if (!metadata) return null;
   const text = await readFile(safe.absolute, "utf8").catch(() => null);
-  return text == null ? null : { ...metadata, text, hash: documentHash(text) };
+  return text == null ? null : { ...metadata, text, hash: documentHash(text), comments: documentComments.parseComments(text) };
 }
 
 /** Tests one wiki target against a record path or its short stem. */
@@ -560,19 +566,42 @@ function linkTargetsRecord(target, record) {
   return link.includes("/") ? link === recordPath : path.basename(link) === path.basename(recordPath);
 }
 
+/** Writes one Document atomically and commits only that path. */
+async function writeVaultDocument(current, text, message, tmuxSession = null) {
+  const safe = safeMarkdownPath(TREES_ROOT, current.file);
+  const temp = `${safe.absolute}.tangent-${process.pid}-${Date.now()}.tmp`;
+  await writeFile(temp, text, "utf8");
+  await rename(temp, safe.absolute);
+  await vaultCommit([safe.relative], message, current.area, tmuxSession);
+  return { ...current, text, hash: documentHash(text), comments: documentComments.parseComments(text) };
+}
+
 /** Conflict-safe, atomic replacement of an existing indexed Markdown file. */
-async function saveVaultDocument(file, text, baseHash) {
+async function saveVaultDocument(file, text, baseHash, summary = "edited in tree") {
   const current = await readVaultDocument(file);
   if (!current) return { status: 404, error: `no document ${file}` };
   if (!baseHash || baseHash !== current.hash) {
     return { status: 409, error: "document changed since it was opened", current };
   }
-  const safe = safeMarkdownPath(TREES_ROOT, file);
-  const temp = `${safe.absolute}.tangent-${process.pid}-${Date.now()}.tmp`;
-  await writeFile(temp, text, "utf8");
-  await rename(temp, safe.absolute);
-  await vaultCommit([safe.relative], `update: ${current.area} ${current.kind} ${path.basename(file, ".md")} edited in tree`, current.area, null);
-  return { status: 200, document: { ...current, text, hash: documentHash(text) } };
+  const what = String(summary || "edited in tree").replace(/\s+/g, " ").trim().slice(0, 80);
+  const document = await writeVaultDocument(current, text, `update: ${current.area} ${current.kind} ${path.basename(file, ".md")} ${what}`);
+  return { status: 200, document };
+}
+
+/**
+ * The only agent path that removes a comment (design-comment-on-documents,
+ * decision 5): exactly one comment must start with the given words, and the
+ * removal is its own named commit, so nothing is lost silently.
+ */
+async function resolveVaultDocumentComment(file, prefix, note, tmuxSession) {
+  const current = await readVaultDocument(file);
+  if (!current) return { status: 404, error: `no document ${file}` };
+  const result = documentComments.resolveComment(current.text, prefix);
+  if (result.error) return { status: result.matches.length ? 409 : 404, error: result.error, matches: result.matches };
+  const words = result.comment.text.split(/\s+/).slice(0, 6).join(" ");
+  const message = `resolve: ${current.area} ${path.basename(file, ".md")} "${words}"` + (note ? `\n\n${String(note).trim()}` : "");
+  const document = await writeVaultDocument(current, result.text, message, tmuxSession || null);
+  return { status: 200, document, comment: result.comment };
 }
 
 /** Reads current or legacy Goal links from one ordered Markdown section. */
@@ -1105,6 +1134,7 @@ async function goalContext(area, o) {
     goalFile: path.join(TREES_ROOT, o.file),
     notes,
     documents: linked.map((d) => path.join(TREES_ROOT, d.file)),
+    commentCounts: linked.map((d) => d.commentCount ?? 0),
   };
 }
 
@@ -1141,8 +1171,9 @@ async function goalPrompt(area, o, extras = []) {
   const sources = [
     `- Goal: ${context.goalFile}`,
     ...context.notes.map((note, index) => `- Area note ${index + 1}: ${note}`),
-    ...context.documents.map((document) => `- Document: ${document}`),
+    ...context.documents.map((document, index) => `- Document: ${document}${context.commentCounts[index] ? ` (${context.commentCounts[index]} open comment${context.commentCounts[index] === 1 ? "" : "s"} from Julian)` : ""}`),
   ];
+  const openComments = context.commentCounts.some(Boolean);
   const alsoOwned = extras.length
     ? `## Also in this session\n\n` +
       `Julian assigned these Goals to this session too. Work them after the assignment above, in order; each file holds its own context.\n\n` +
@@ -1163,6 +1194,9 @@ async function goalPrompt(area, o, extras = []) {
       : "") +
     (o.subgoals.length ? ` The Subgoals are ordered; work through them in order.` : "") +
     `\n\n` +
+    (openComments
+      ? `Julian left comments in the Documents marked above. They look like \`{>>Julian: ...<<}\`, sometimes after \`{==the words they refer to==}\`. Read them before you change a Document, and do what they ask or discuss them with Julian. \`tangent document comments <vault-relative file>\` lists them. Close each one only with \`tangent document resolve <file> "<first words of the comment>" -m "<what changed>"\`, after the work is done or after Julian says to close it. Never remove or rewrite a comment by hand, and carry comments along when you rewrite the text around them.\n\n`
+      : "") +
     `Useful habits here: check \`tangent process list\` before starting a server or watcher; keep the goal State section current as things settle; add a Story so far moment only when feedback or a result changes the plan (one short heading, two sentences, at most five moments). When the done condition is met, say so; Goal status changes on Julian's word.\n\n` +
     `Design documents for this work belong in the Area folder ${path.join(TREES_ROOT, area)} as design-<slug>.md (a solution beside it as design-<slug>-solution.md), in Simple English (${path.join(os.homedir(), ".agents", "skills", "simple-english", "SKILL.md")}, pragmatic mode), with a [[${o.file.split("/").pop().replace(/\.md$/, "")}]] link so the Goal shows them. Read files wherever they are; write new design documents there.`
   );
@@ -2779,9 +2813,25 @@ const server = http.createServer(async (req, res) => {
         res.end(JSON.stringify({ error: "text is required" }));
         return;
       }
-      const result = await saveVaultDocument(String(body.file ?? ""), body.text, String(body.baseHash ?? ""));
+      const result = await saveVaultDocument(String(body.file ?? ""), body.text, String(body.baseHash ?? ""), body.summary);
       res.writeHead(result.status, { "content-type": "application/json" });
       res.end(JSON.stringify(result.status === 200 ? result.document : { error: result.error, current: result.current }));
+      return;
+    }
+    // `tangent document comments <file>`: the open comments of one Document.
+    if (url.pathname === "/api/document/comments" && req.method === "GET") {
+      const document = await readVaultDocument(url.searchParams.get("file") ?? "");
+      res.writeHead(document ? 200 : 404, { "content-type": "application/json" });
+      res.end(JSON.stringify(document ? { file: document.file, title: document.title, comments: document.comments } : { error: "document not found" }));
+      return;
+    }
+    // `tangent document resolve <file> "<first words>" -m "<note>"`: removes one comment in one named commit.
+    if (url.pathname === "/api/document/resolve" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      const result = await resolveVaultDocumentComment(String(body.file ?? ""), String(body.prefix ?? ""), String(body.note ?? ""), String(body.session ?? ""));
+      res.writeHead(result.status, { "content-type": "application/json" });
+      res.end(JSON.stringify(result.status === 200 ? { file: result.document.file, comment: result.comment, remaining: result.document.comments.length } : { error: result.error, matches: result.matches ?? [] }));
       return;
     }
     // Goal listing for `tangent goal list [<area>]`: one Area's own Goals, or every

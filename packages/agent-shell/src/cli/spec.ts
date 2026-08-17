@@ -110,6 +110,23 @@ export const ideaCommandSpec: CliCommandSpec = {
   ]
 };
 
+export const documentCommandSpec: CliCommandSpec = {
+  name: "document",
+  description: "List and resolve Julian's comments inside a vault Document",
+  subcommands: [
+    { name: "comments", description: "List the open comments of one Document", args: "<file>", options: [serverOption, jsonOption] },
+    {
+      name: "resolve",
+      description: "Remove exactly one comment, matched by its first words, in its own named commit. Use it only after the work is done or Julian said to close it. Requires -m \"<what changed>\".",
+      args: "<file> <first words...>",
+      options: [
+        { name: "session", takesValue: true, description: "Session for the commit trailer; defaults to the tmux session this command runs in" },
+        serverOption
+      ]
+    }
+  ]
+};
+
 export const agentCommandSpec: CliCommandSpec = {
   name: "agent",
   description: "List live agents and send messages between them",

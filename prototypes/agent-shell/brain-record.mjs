@@ -4,7 +4,7 @@
 // shape, its validation, and the derived questions (which generation runs,
 // which brain covers an Area, what the latest handover says), so the rules
 // are unit-testable without a live shell. Design: the vault Document
-// design-area-brain-solution.md on otto/tangent.
+// impl-area-brain.md on otto/tangent.
 
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";

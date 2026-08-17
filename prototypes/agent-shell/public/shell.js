@@ -1400,6 +1400,7 @@ function deskProgramShelf(programs) {
 function deskAreaPanel(record, position) {
   const { area, trees, descriptions, sections, programs } = record;
   const status = deskAreaState(area.path, trees, descriptions);
+  const parentPath = area.path.split("/").slice(0, -1).join("/");
   const parent = areaParts(area.path).slice(0, -1).join(" / ") || "Top level";
   const openGoalCount = trees.reduce((count, tree) => count + tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status)).length, 0);
   const goalSectionTitle = state.workFilter === "all" ? "Goal work" : `${humanName(state.workFilter)} work`;
@@ -1407,7 +1408,7 @@ function deskAreaPanel(record, position) {
     <article class="area-desk-panel ${status.kind}" style="--desk-order:${position}">
       <header class="area-desk-header">
         <span class="area-desk-index" aria-hidden="true">${String(position + 1).padStart(2, "0")}</span>
-        <div><small>${escapeHtml(parent)}</small><h2>${escapeHtml(humanName(area.name))}</h2></div>
+        <div>${parentPath ? `<small>${areaPath(parentPath)}</small>` : `<small>${escapeHtml(parent)}</small>`}<h2><button type="button" data-open-area="${escapeHtml(area.path)}" title="Open the ${escapeHtml(humanName(area.name))} Area map">${escapeHtml(humanName(area.name))}</button></h2></div>
         <span class="area-desk-state ${status.kind}">${escapeHtml(status.label)}</span>
         ${deskBrainButton(area.path)}
       </header>
@@ -1448,12 +1449,15 @@ function deskAreaSection(section) {
   const expanded = !state.collapsedDeskSections.has(area.path);
   return `
     <section class="area-desk-section desk-subarea ${status.kind}${expanded ? "" : " collapsed"}">
-      <button class="desk-subarea-toggle" type="button" data-toggle-desk-section="${escapeHtml(area.path)}" aria-expanded="${expanded}" aria-label="${expanded ? "Collapse" : "Expand"} ${escapeHtml(humanName(area.name))}">
-        <span class="desk-subarea-caret" aria-hidden="true">${expanded ? "▾" : "▸"}</span>
-        <strong>${escapeHtml(humanName(area.name))}</strong>
-        <span class="desk-subarea-count">${openGoalCount} ${openGoalCount === 1 ? "Goal" : "Goals"}</span>
-        <span class="desk-subarea-state desk-state ${status.kind}">${escapeHtml(status.label)}</span>
-      </button>
+      <div class="desk-subarea-head">
+        <button class="desk-subarea-toggle" type="button" data-toggle-desk-section="${escapeHtml(area.path)}" aria-expanded="${expanded}" aria-label="${expanded ? "Collapse" : "Expand"} ${escapeHtml(humanName(area.name))}">
+          <span class="desk-subarea-caret" aria-hidden="true">${expanded ? "▾" : "▸"}</span>
+          <strong>${escapeHtml(humanName(area.name))}</strong>
+          <span class="desk-subarea-count">${openGoalCount} ${openGoalCount === 1 ? "Goal" : "Goals"}</span>
+          <span class="desk-subarea-state desk-state ${status.kind}">${escapeHtml(status.label)}</span>
+        </button>
+        <button class="desk-subarea-open" type="button" data-open-area="${escapeHtml(area.path)}" title="Open the ${escapeHtml(humanName(area.name))} Area map" aria-label="Open the ${escapeHtml(humanName(area.name))} Area map">Map ↗</button>
+      </div>
       ${expanded ? `
         <div class="desk-subarea-body">
           ${descriptions.length ? descriptions.map(deskDefinitionRow).join("") : ""}

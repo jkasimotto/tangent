@@ -1310,13 +1310,43 @@ function deskDefinitionRow(session) {
     </button>`;
 }
 
-/** Renders Documents as a reading shelf, not another set of Goal cards. */
-function deskDocumentShelf(documents) {
+/** How many Documents a desk shelf shows before `Show all` (design-area-map Decision 12). */
+const DESK_SHELF_CAP = 8;
+
+/**
+ * The Documents of one Area subtree, newest change first (design-area-map
+ * Decision 12): the same rank the Area map outline uses, so the shelf is
+ * the top of the outline. Documents only; Goals and Area notes have their
+ * own rows on the desk.
+ */
+function deskShelfDocuments(areaPath) {
+  const core = window.AgentShellAreaMap;
+  const records = (state.vault?.documents ?? []).filter((record) => record.kind === "document" && core.isInside(record.area ?? String(record.file).split("/").slice(0, -1).join("/"), areaPath));
+  return core.orderDocuments(records);
+}
+
+/**
+ * Renders the newest Documents of an Area subtree as a reading shelf with
+ * kind, in-degree, and age as printed facts, capped at DESK_SHELF_CAP, and a
+ * `Show all N` link that opens the Area map for the rest.
+ */
+function deskDocumentShelf(areaPath) {
+  const core = window.AgentShellAreaMap;
+  const documents = deskShelfDocuments(areaPath);
   if (!documents.length) return `<p class="desk-empty">No Documents in this Area.</p>`;
-  return `<div class="desk-documents">${documents.map((document) => `
-    <button type="button" data-open-document="${escapeHtml(document.file)}">
-      <span aria-hidden="true">DOC</span><strong>${escapeHtml(document.title)}</strong><b aria-hidden="true">↗</b>
-    </button>`).join("")}</div>`;
+  const now = Date.now();
+  const rows = documents.slice(0, DESK_SHELF_CAP).map((document) => {
+    const kind = core.kindLabel(document.docKind ?? "page");
+    const inDegree = Number(document.inDegree ?? 0);
+    const age = core.relativeDay(document.changedAt ?? document.mtime, now, new Date().getTimezoneOffset());
+    return `
+    <button type="button" data-open-document="${escapeHtml(document.file)}" title="${escapeHtml(document.file)}">
+      <span aria-hidden="true">${escapeHtml(kind)}</span><strong>${escapeHtml(document.title)}</strong><small title="${inDegree} incoming links">${inDegree ? `${inDegree} in` : ""}</small><em>${escapeHtml(age)}</em>
+    </button>`;
+  });
+  const rest = documents.length - DESK_SHELF_CAP;
+  const showAll = rest > 0 ? `<button class="desk-shelf-more" type="button" data-open-area="${escapeHtml(areaPath)}">Show all ${documents.length} in the Area map →</button>` : "";
+  return `<div class="desk-documents">${rows.join("")}</div>${showAll}`;
 }
 
 /** Renders the Programs of one Area as a compact operational shelf. */
@@ -1358,8 +1388,8 @@ function deskAreaPanel(record, position) {
           ${trees.length ? trees.map(deskGoalGroup).join("") : `<p class="desk-empty">No active Goals.</p>`}
         </section>
         <section class="area-desk-section documents">
-          <div class="area-desk-section-heading"><h3>Documents</h3><span>${documents.length}</span></div>
-          ${deskDocumentShelf(documents)}
+          <div class="area-desk-section-heading"><h3>Documents</h3><span>${deskShelfDocuments(area.path).length}</span></div>
+          ${deskDocumentShelf(area.path)}
         </section>
         ${programs.length ? `<section class="area-desk-section programs">
           <div class="area-desk-section-heading"><h3>Programs</h3><span>${programs.length}</span></div>

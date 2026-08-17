@@ -600,9 +600,10 @@ test("the live shell restores context, defines work with an agent, and organizes
 });
 
 test("the Agent Shell menu owns refresh, reload, and rebuild, and a dead server never wipes the screen", async () => {
-  const [html, script] = await Promise.all([
+  const [html, script, mapCore] = await Promise.all([
     readFile(path.join(here, "public", "shell.html"), "utf8"),
     readFile(path.join(here, "public", "shell.js"), "utf8"),
+    readFile(path.join(here, "public", "area-map-core.js"), "utf8"),
   ]);
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
   const { window } = dom;
@@ -623,6 +624,7 @@ test("the Agent Shell menu owns refresh, reload, and rebuild, and a dead server 
     return jsonResponse({ areas: [], map: [], documents: [] });
   };
 
+  window.eval(mapCore);
   window.eval(script);
   await settle(window);
   assert.ok(window.document.querySelector(".work-page"), "the desk shows the Work page");
@@ -676,9 +678,10 @@ test("the Agent Shell menu owns refresh, reload, and rebuild, and a dead server 
 });
 
 test("checked Goals start one shared agent that owns them in checked order", async () => {
-  const [html, script] = await Promise.all([
+  const [html, script, mapCore] = await Promise.all([
     readFile(path.join(here, "public", "shell.html"), "utf8"),
     readFile(path.join(here, "public", "shell.js"), "utf8"),
+    readFile(path.join(here, "public", "area-map-core.js"), "utf8"),
   ]);
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
   const { window } = dom;
@@ -730,6 +733,7 @@ test("checked Goals start one shared agent that owns them in checked order", asy
     });
   };
 
+  window.eval(mapCore);
   window.eval(script);
   await settle(window);
   assert.ok(window.document.querySelector(".work-page"), "the desk shows the Work page");
@@ -770,9 +774,10 @@ test("checked Goals start one shared agent that owns them in checked order", asy
 });
 
 test("the launch popover composes a pipeline of steps and the desk shows its progress", async () => {
-  const [html, script] = await Promise.all([
+  const [html, script, mapCore] = await Promise.all([
     readFile(path.join(here, "public", "shell.html"), "utf8"),
     readFile(path.join(here, "public", "shell.js"), "utf8"),
+    readFile(path.join(here, "public", "area-map-core.js"), "utf8"),
   ]);
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
   const { window } = dom;
@@ -859,6 +864,7 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
     });
   };
 
+  window.eval(mapCore);
   window.eval(script);
   await settle(window);
   click(window, `[data-launch-for='${goal.file}']`);
@@ -1006,9 +1012,10 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
 });
 
 test("the Area card brain icon starts, shows, and resumes the Area brain", async () => {
-  const [html, script] = await Promise.all([
+  const [html, script, mapCore] = await Promise.all([
     readFile(path.join(here, "public", "shell.html"), "utf8"),
     readFile(path.join(here, "public", "shell.js"), "utf8"),
+    readFile(path.join(here, "public", "area-map-core.js"), "utf8"),
   ]);
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
   const { window } = dom;
@@ -1056,6 +1063,7 @@ test("the Area card brain icon starts, shows, and resumes the Area brain", async
     });
   };
 
+  window.eval(mapCore);
   window.eval(script);
   await settle(window);
   // No brain: the icon is dim and clicking it opens the brain popover, seeded with Fable, not the Area default.
@@ -1137,9 +1145,10 @@ test("the Area card brain icon starts, shows, and resumes the Area brain", async
 });
 
 test("background polls never rebuild the screen under an editing surface or a reader", async () => {
-  const [html, script] = await Promise.all([
+  const [html, script, mapCore] = await Promise.all([
     readFile(path.join(here, "public", "shell.html"), "utf8"),
     readFile(path.join(here, "public", "shell.js"), "utf8"),
+    readFile(path.join(here, "public", "area-map-core.js"), "utf8"),
   ]);
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
   const { window } = dom;
@@ -1189,6 +1198,7 @@ test("background polls never rebuild the screen under an editing surface or a re
     await settle(window);
   };
 
+  window.eval(mapCore);
   window.eval(script);
   await settle(window);
   assert.ok(poll, "the shell polls the server");
@@ -1250,9 +1260,10 @@ test("background polls never rebuild the screen under an editing surface or a re
 });
 
 test("comments render as red blocks, save through the base-hash path with re-anchoring, and remove with undo", async () => {
-  const [html, script, commentsScript] = await Promise.all([
+  const [html, script, commentsScript, mapCore] = await Promise.all([
     readFile(path.join(here, "public", "shell.html"), "utf8"),
     readFile(path.join(here, "public", "shell.js"), "utf8"),
+    readFile(path.join(here, "public", "area-map-core.js"), "utf8"),
     readFile(path.join(here, "public", "document-comments.js"), "utf8"),
   ]);
   await import("./public/document-comments.js");
@@ -1302,6 +1313,7 @@ test("comments render as red blocks, save through the base-hash path with re-anc
     });
   };
   window.eval(commentsScript);
+  window.eval(mapCore);
   window.eval(script);
   await settle(window);
   click(window, `[data-open-document='${doc.file}']`);
@@ -1381,9 +1393,10 @@ test("comments render as red blocks, save through the base-hash path with re-anc
 });
 
 test("comments render as red blocks, save through the base-hash path with re-anchoring, and remove with undo", async () => {
-  const [html, script, commentsScript] = await Promise.all([
+  const [html, script, commentsScript, mapCore] = await Promise.all([
     readFile(path.join(here, "public", "shell.html"), "utf8"),
     readFile(path.join(here, "public", "shell.js"), "utf8"),
+    readFile(path.join(here, "public", "area-map-core.js"), "utf8"),
     readFile(path.join(here, "public", "document-comments.js"), "utf8"),
   ]);
   await import("./public/document-comments.js");
@@ -1433,6 +1446,7 @@ test("comments render as red blocks, save through the base-hash path with re-anc
     });
   };
   window.eval(commentsScript);
+  window.eval(mapCore);
   window.eval(script);
   await settle(window);
   click(window, `[data-open-document='${doc.file}']`);
@@ -1509,4 +1523,74 @@ test("comments render as red blocks, save through the base-hash path with re-anc
   assert.equal(saves.length, 3);
   assert.match(saves[2].text, /\{==clear words==\}\{>>Julian: Say why\.<<\}/);
   assert.equal(window.document.querySelectorAll(".document-comment").length, 2);
+});
+
+test("the desk Documents shelf shows the eight newest subtree Documents with kind, in-degree, and age, and Show all opens the Area map", async () => {
+  const [html, script, mapCore, mapView] = await Promise.all([
+    readFile(path.join(here, "public", "shell.html"), "utf8"),
+    readFile(path.join(here, "public", "shell.js"), "utf8"),
+    readFile(path.join(here, "public", "area-map-core.js"), "utf8"),
+    readFile(path.join(here, "public", "area-map.js"), "utf8"),
+  ]);
+  const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
+  const { window } = dom;
+  window.setInterval = () => 0;
+  window.HTMLCanvasElement.prototype.getContext = () => null;
+  const DAY = 86_400_000;
+  const now = Date.now();
+  const goal = {
+    mtime: 1, area: "otto/dnd", slug: "ship-the-map", file: "otto/dnd/goal-ship-the-map.md", title: "Ship the map", status: "open",
+    doneWhen: "Shipped.", stateText: "", currentBrief: "", storyText: "", documents: [], why: [], subgoalItems: [], subgoals: [], depth: 0,
+  };
+  /** One Document record as /api/vault serves it after the map facts landed. */
+  const makeDocument = (index, area) => ({
+    file: `${area}/design-doc-${index}.md`, area, kind: "document", docKind: index === 10 ? "plan" : "design",
+    title: `Doc ${index}`, mtime: now - index * DAY, changedAt: now - index * DAY, inDegree: index === 1 ? 3 : 0, searchText: "", goalHistory: [],
+  });
+  // Ten Documents: nine in the Area and one in a sub-Area, ages 1 to 10 days. The sub-Area one is the newest.
+  const documents = [makeDocument(10, "otto/dnd"), ...[9, 8, 7, 6, 5, 4, 3, 2].map((i) => makeDocument(i, "otto/dnd")), makeDocument(1, "otto/dnd/maps")];
+  const elsewhere = makeDocument(0, "otto/tangent");
+  window.fetch = async (url, options = {}) => {
+    const pathname = new URL(url, window.location.href).pathname;
+    if (options.method === "POST") return jsonResponse({ ok: true });
+    if (pathname === "/api/sessions") return jsonResponse({ boot: "boot-1", caffeinate: false, sessions: [] });
+    if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
+    if (pathname === "/api/map-state") return jsonResponse({ area: "otto/dnd", state: null });
+    return jsonResponse({
+      areas: [
+        { path: "otto", name: "otto", goals: [], documents: [], children: ["otto/dnd", "otto/tangent"], parent: "" },
+        { path: "otto/dnd", name: "dnd", goals: [goal], documents: documents.slice(0, 9), children: ["otto/dnd/maps"], parent: "otto" },
+        { path: "otto/dnd/maps", name: "maps", goals: [], documents: [documents[9]], children: [], parent: "otto/dnd" },
+        { path: "otto/tangent", name: "tangent", goals: [], documents: [elsewhere], children: [], parent: "otto" },
+      ],
+      map: [{ path: "otto/dnd", name: "dnd", goals: [goal] }],
+      documents: [...documents, elsewhere, goal],
+    });
+  };
+  window.eval(mapCore);
+  window.eval(mapView);
+  window.eval(script);
+  await settle(window);
+  const panel = [...window.document.querySelectorAll(".area-desk-panel")].find((node) => node.textContent.includes("Ship the map"));
+  assert.ok(panel, "the dnd Area is a desk panel");
+  const rows = [...panel.querySelectorAll(".desk-documents button")];
+  assert.equal(rows.length, 8, "the shelf caps at eight Documents");
+  // Newest change first, across the subtree: the sub-Area Document leads.
+  assert.equal(rows[0].dataset.openDocument, "otto/dnd/maps/design-doc-1.md");
+  assert.equal(rows[7].dataset.openDocument, "otto/dnd/design-doc-8.md");
+  assert.ok(!rows.some((row) => row.dataset.openDocument.startsWith("otto/tangent/")), "Documents outside the subtree stay off the shelf");
+  // Kind, in-degree, and age are printed facts.
+  assert.equal(rows[0].querySelector("span").textContent, "design");
+  assert.equal(rows[0].querySelector("small").textContent, "3 in");
+  assert.equal(rows[0].querySelector("em").textContent, "yesterday");
+  assert.equal(rows[1].querySelector("small").textContent, "");
+  assert.equal(panel.querySelector(".area-desk-section.documents .area-desk-section-heading span").textContent, "10");
+  // Show all names the count and opens the Area map for the Area.
+  const more = panel.querySelector(".desk-shelf-more");
+  assert.match(more.textContent, /Show all 10/);
+  assert.equal(more.dataset.openArea, "otto/dnd");
+  more.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+  assert.ok(window.document.querySelector(".area-map-screen"), "Show all opens the Area map screen");
+  assert.equal(window.localStorage.getItem("agent-shell.last-area"), "otto/dnd");
 });

@@ -924,7 +924,7 @@ button.desk-step:hover { border-color: #5a6470; }
 .desk-step.complete b { color: #6fbf73; }
 .desk-step.running b { color: #e0b64a; }
 .desk-step.stopped b { color: #e06c6c; }
-.desk-step.pending, .desk-step.skipped { opacity: .6; }
+.desk-step.pending, .desk-step.skipped, .desk-step.ended { opacity: .6; }
 .desk-handover { display: block; margin-top: 4px; color: #8a939d; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .desk-doc-chip { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; padding: 3px 9px; border: 1px solid #343b44; border-radius: 999px; background: #14171c; color: #cdd2d7; cursor: pointer; font-size: 11px; line-height: 1.4; }
 .desk-doc-chip b { color: #68727d; font: 8px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; letter-spacing: .1em; }

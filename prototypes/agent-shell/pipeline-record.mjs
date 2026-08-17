@@ -90,13 +90,36 @@ export function appendSteps(record, steps) {
   return added;
 }
 
+/** Step statuses that never change again: the step ran, was skipped, or Julian ended the run. */
+const FINAL_STATUSES = new Set(["complete", "skipped", "ended"]);
+
 /**
- * Whether every step has finished (complete or skipped), so nothing running
- * or pending would carry the pipeline into a step appended now.
+ * Whether every step has finished (complete, skipped, or ended), so nothing
+ * running or pending would carry the pipeline into a step appended now.
  */
 export function pipelineFinished(record) {
   const steps = record?.steps ?? [];
-  return steps.length > 0 && steps.every((step) => step.status === "complete" || step.status === "skipped");
+  return steps.length > 0 && steps.every((step) => FINAL_STATUSES.has(step.status));
+}
+
+/**
+ * Ends the run at Julian's word: every running, stopped, or pending step
+ * becomes "ended" and keeps its handover, so the Goal falls back to plain
+ * open work and the desk never offers Restart for it again. Steps that ran
+ * to completion or were skipped are history and stay as they were. Returns
+ * the indices that changed; an empty list means nothing was left to end.
+ * Appending steps later starts fresh after the ended ones.
+ */
+export function endPipeline(record, now = new Date().toISOString()) {
+  const changed = [];
+  for (const step of record?.steps ?? []) {
+    if (FINAL_STATUSES.has(step.status)) continue;
+    step.status = "ended";
+    step.endedAt = now;
+    changed.push(step.index);
+  }
+  if (changed.length) record.updatedAt = now;
+  return changed;
 }
 
 /** Returns an error string naming the offending step, or null when the steps are valid. */

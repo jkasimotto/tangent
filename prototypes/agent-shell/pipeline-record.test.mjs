@@ -9,6 +9,7 @@ import {
   appendSteps,
   currentStep,
   deletePipeline,
+  endPipeline,
   newPipeline,
   nextPendingStep,
   pipelineFinished,
@@ -224,10 +225,26 @@ test("appendSteps validates the new steps in their final numbering", () => {
   assert.equal(record.steps.length, 2, "a rejected append leaves the record as it was");
 });
 
-test("pipelineFinished is true only when every step is complete or skipped", () => {
+test("pipelineFinished is true only when every step is complete, skipped, or ended", () => {
   assert.equal(pipelineFinished(recordWith(["complete", "skipped"])), true);
+  assert.equal(pipelineFinished(recordWith(["complete", "ended", "ended"])), true);
   assert.equal(pipelineFinished(recordWith(["complete", "running"])), false);
   assert.equal(pipelineFinished(recordWith(["complete", "pending"])), false);
   assert.equal(pipelineFinished(recordWith(["complete", "stopped"])), false);
   assert.equal(pipelineFinished({ steps: [] }), false);
+});
+
+test("endPipeline ends what has not run and leaves history alone", () => {
+  const record = recordWith(["complete", "stopped", "pending", "skipped", "running"]);
+  record.steps[0].handover = "Design written.";
+  record.steps[1].handover = "Half a review.";
+  assert.deepEqual(endPipeline(record, "2026-08-17T10:00:00.000Z"), [2, 3, 5]);
+  assert.deepEqual(record.steps.map((step) => step.status), ["complete", "ended", "ended", "skipped", "ended"]);
+  assert.equal(record.steps[1].handover, "Half a review.", "an ended step keeps its handover");
+  assert.equal(record.steps[1].endedAt, "2026-08-17T10:00:00.000Z");
+  assert.equal(record.updatedAt, "2026-08-17T10:00:00.000Z");
+  assert.equal(pipelineFinished(record), true);
+  assert.equal(currentStep(record), null, "nothing is current after the run ends");
+  assert.equal(pipelineStatus(record, () => false), "complete");
+  assert.deepEqual(endPipeline(record), [], "ending twice changes nothing");
 });

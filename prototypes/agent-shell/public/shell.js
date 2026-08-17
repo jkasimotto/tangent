@@ -958,7 +958,7 @@ function deskPipelineAction(goal, pipeline) {
 function deskPipelineSteps(goal) {
   const record = (state.pipelines ?? []).find((item) => item.goal === goal.file);
   if (!record || ["done", "dropped", "deferred"].includes(goal.status)) return "";
-  const glyph = { complete: "✓", running: "●", pending: "○", skipped: "–", stopped: "■" };
+  const glyph = { complete: "✓", running: "●", pending: "○", skipped: "–", stopped: "■", ended: "■" };
   const chips = record.steps.map((step) => {
     const label = `${step.index} ${step.label || "agent"}: ${clip(step.instruction, 80)}`;
     const dead = step.status === "running" && !step.live;
@@ -972,15 +972,18 @@ function deskPipelineSteps(goal) {
   return `<span class="desk-pipeline-steps" aria-label="Pipeline steps">${chips}</span>${line}`;
 }
 
-/** Restart, Skip, and Send-to-next, only when they apply. */
+/** Restart, Skip, Stop work, and Send-to-next, only when they apply. */
 function deskPipelineControls(goal, pipeline) {
   const step = pipeline.steps.find((item) => item.status === "running" || item.status === "stopped");
   if (!step) return "";
   const last = step.index >= pipeline.steps.length;
   const stopped = step.status === "stopped" || (step.status === "running" && !step.live);
   if (stopped) {
+    // A step whose session died on its own. Julian's own Stop agent already
+    // ends the run, so Stop work here is the same exit for a crashed step.
     return `<button class="desk-action" type="button" data-pipeline-control="restart" data-pipeline-goal="${escapeHtml(goal.file)}" data-pipeline-step="${step.index}">Restart step ${step.index}</button>`
-      + (last ? "" : `<button class="desk-action" type="button" data-pipeline-control="skip" data-pipeline-goal="${escapeHtml(goal.file)}" data-pipeline-step="${step.index}">Skip to step ${step.index + 1}</button>`);
+      + (last ? "" : `<button class="desk-action" type="button" data-pipeline-control="skip" data-pipeline-goal="${escapeHtml(goal.file)}" data-pipeline-step="${step.index}">Skip to step ${step.index + 1}</button>`)
+      + `<button class="desk-action" type="button" data-pipeline-control="end" data-pipeline-goal="${escapeHtml(goal.file)}" data-pipeline-step="${step.index}" title="End the run; the Goal stays open with its handovers">Stop work</button>`;
   }
   const idleLong = step.state === "waiting" && (step.stateDetail === "idle" || step.stateDetail === null) && step.idleSince && Date.now() - step.idleSince >= PIPELINE_SEND_AFTER_MS;
   if (idleLong && !last) {
@@ -1790,7 +1793,7 @@ function launchStepList() {
   const record = state.launch.record;
   const steps = commitActiveStep();
   const fixed = record ? record.steps.length : 0;
-  const glyph = { complete: "✓", running: "●", pending: "○", skipped: "–", stopped: "■" };
+  const glyph = { complete: "✓", running: "●", pending: "○", skipped: "–", stopped: "■", ended: "■" };
   // Rows of a record: history stays fixed, pending rows edit in place.
   const recordRows = (record?.steps ?? []).map((step, index) => `
       <li class="launch-step ${step.status}${state.launch.active === index ? " selected" : ""}">
@@ -3343,6 +3346,8 @@ function confirmStop() {
   const session = describing ? describeWorkSession() : sessionForGoal(goal);
   if (!session || (!describing && !goal)) return;
   const shell = session.state === "shell";
+  const pipeline = describing ? null : pipelineForGoal(goal);
+  const stepsLeft = pipeline ? pipeline.steps.filter((step) => step.status === "pending").length : 0;
   const returnToDocument = describing
     ? state.describeReturnView === "document" && Boolean(state.document)
     : state.view === "agent" && state.agentReturnView === "document" && Boolean(state.document);
@@ -3351,7 +3356,9 @@ function confirmStop() {
     title: shell ? "Close this session?" : `Stop ${agentName(session)}?`,
     copy: describing
       ? "This ends the conversation about new work. Any Goals or Documents already created stay in Tangent."
-      : "This ends the live session. The work and its notes stay here.",
+      : pipeline
+        ? `This ends the run${stepsLeft ? ` and its ${stepsLeft} remaining step${stepsLeft === 1 ? "" : "s"}` : ""}. The Goal, its notes, and its handovers stay here.`
+        : "This ends the live session. The work and its notes stay here.",
     confirmLabel: shell ? "Close session" : "Stop agent",
     danger: true,
     /** Stops only the live run and preserves the goal. */
@@ -3580,7 +3587,7 @@ document.addEventListener("click", async (event) => {
       const result = await post("/api/pipelines/control", { goal: goalFile, action, step: Number(step) });
       await refresh();
       paint(true);
-      showToast(result.next ? `Step ${result.next.index} started.` : action === "skip" ? `Step ${step} skipped; the pipeline is complete.` : `Step ${step} ${action}ed.`);
+      showToast(result.next ? `Step ${result.next.index} started.` : action === "skip" ? `Step ${step} skipped; the pipeline is complete.` : action === "end" ? "Work stopped. The Goal stays open." : `Step ${step} ${action}ed.`);
     } catch (error) {
       showToast(error.message);
     }

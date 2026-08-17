@@ -658,6 +658,9 @@ test("the context-first shell is default and keeps the user's understanding with
     if (command === "sleep") break;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
+  // The server caches a pane sample for MIN_SAMPLE_MS (1200ms); the last poll
+  // saw a shell, so wait out the window or the append reads a stale "shell".
+  await new Promise((resolve) => setTimeout(resolve, 1300));
   const appendAfterLive = await fetch(`${base}/api/pipelines/append`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -682,6 +685,44 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(handoverAgain.pipeline.steps[4].status, "complete");
   assert.equal(handoverAgain.pipeline.steps[4].handover, "Release note written.\n\nNothing changed since; the note is final.");
   assert.equal(handoverAgain.pipeline.steps[5].status, "running");
+
+  // Julian stops the agent on step 6 (the same kill as Stop agent, ⌘D, or ✕):
+  // the run ends. Step 6 and the pending step 7 are ended, not left
+  // "stopped", so the desk offers no Restart and the Goal settles back to
+  // plain open work.
+  const killed = await fetch(`${base}/api/kill/${encodeURIComponent("test-pipeline-demo-s6")}`, { method: "POST" }).then((response) => response.json());
+  assert.equal(killed.pipelineEnded, true);
+  snapshot = await fetch(`${base}/api/sessions`).then((response) => response.json());
+  assert.deepEqual(snapshot.pipelines[0].steps.slice(4).map((step) => step.status), ["complete", "ended", "ended"]);
+  assert.equal(snapshot.pipelines[0].status, "complete");
+  const killedPlain = await fetch(`${base}/api/kill/${encodeURIComponent("test-pipeline-demo-s5")}`, { method: "POST" }).then((response) => response.json());
+  assert.equal(killedPlain.pipelineEnded, false, "killing a session that is no running step ends nothing");
+  // Ending a run twice is harmless, and a later append starts fresh after the ended steps.
+  const endAgain = await fetch(`${base}/api/pipelines/control`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ goal: pipelineGoal.file, action: "end", step: 6 }),
+  }).then((response) => response.json());
+  assert.equal(endAgain.status, "ended");
+  assert.deepEqual(endAgain.ended, []);
+  const appendAfterEnd = await fetch(`${base}/api/pipelines/append`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ goal: pipelineGoal.file, steps: [{ instruction: "Pick it up again.", launch: { harness: "fake" } }] }),
+  }).then((response) => response.json());
+  assert.equal(appendAfterEnd.status, "started");
+  assert.deepEqual(appendAfterEnd.next, { index: 8, session: "test-pipeline-demo-s8" });
+  openedSessions.push("test-pipeline-demo-s8");
+  assert.equal(appendAfterEnd.pipeline.steps[6].status, "ended", "the ended step stays ended");
+  // A step whose session died on its own can be ended from the desk too.
+  await new Promise((resolve, reject) => execFile("tmux", ["kill-session", "-t", "=test-pipeline-demo-s8"], (error, stdout, stderr) => (error ? reject(new Error(stderr || error.message)) : resolve())));
+  const endDead = await fetch(`${base}/api/pipelines/control`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ goal: pipelineGoal.file, action: "end", step: 8 }),
+  }).then((response) => response.json());
+  assert.deepEqual(endDead.ended, [8]);
+  assert.equal(endDead.pipeline.steps[7].status, "ended");
 
   const missingDropReason = await fetch(`${base}/api/goals/edit`, {
     method: "POST",

@@ -798,6 +798,12 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
         pipeline.updatedAt = `t${pipeline.steps.length}`;
         return jsonResponse({ status: "queued", after: 1, added: added.map((step) => step.index), pipeline });
       }
+      if (pathname === "/api/pipelines/control" && body.action === "end") {
+        for (const step of pipeline.steps) if (!["complete", "skipped"].includes(step.status)) { step.status = "ended"; step.live = false; }
+        pipeline.status = "complete";
+        pipeline.updatedAt = "t-ended";
+        return jsonResponse({ status: "ended", next: null, ended: [2, 3], pipeline });
+      }
       if (pathname === "/api/pipelines/control") {
         pipeline.steps[0].status = "complete";
         pipeline.steps[0].handover = "Design written: design-map.md.\nUnresolved: none.";
@@ -928,6 +934,23 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   assert.deepEqual(control.body, { goal: goal.file, action: "skip", step: 1 });
   const afterRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
   assert.match(afterRow.querySelector(".desk-handover").textContent, /Step 1: Design written: design-map\.md\./);
+
+  // Step 2 died too. Stop work ends the run: the row settles back to a plain
+  // open Goal, no Restart lingers, and the handovers stay visible.
+  assert.match(afterRow.querySelector(".desk-state").textContent, /Step 2 of 3 · .* · stopped/);
+  const stopWork = afterRow.querySelector("[data-pipeline-control='end']");
+  assert.ok(stopWork, "a stopped step offers Stop work");
+  assert.equal(stopWork.textContent, "Stop work");
+  click(window, `[data-goal-anchor='${goal.file}'] [data-pipeline-control='end']`);
+  await settle(window);
+  await settle(window);
+  const endPost = posts.filter((entry) => entry.path === "/api/pipelines/control").at(-1);
+  assert.deepEqual(endPost.body, { goal: goal.file, action: "end", step: 2 });
+  const endedRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
+  assert.match(endedRow.querySelector(".desk-state").textContent, /Ready/);
+  assert.equal(endedRow.querySelector("[data-pipeline-control]"), null, "nothing offers Restart after Stop work");
+  assert.equal(endedRow.querySelectorAll(".desk-step.ended").length, 2);
+  assert.match(endedRow.querySelector(".desk-handover").textContent, /Step 1: Design written/);
 
   // A finished pipeline: the row is a plain Goal row again, and its ▾ opens
   // the finished steps with a draft row ready to append, never a fresh start.

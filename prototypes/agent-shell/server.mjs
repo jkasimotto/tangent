@@ -19,7 +19,7 @@ import { commandSession, programsSnapshot, saveLocalProgram, saveRoutine, setRou
 import pty from "node-pty";
 import { documentHash, markdownTitle, safeMarkdownPath, wikiLinks } from "./vault-documents.mjs";
 import { classifyStaticPane, stabilizeStaticPane } from "./pane-state.mjs";
-import { appendSteps, currentStep, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, readAllPipelines, readPipeline, validateSteps, writePipeline } from "./pipeline-record.mjs";
+import { appendSteps, currentStep, endPipeline, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, readAllPipelines, readPipeline, validateSteps, writePipeline } from "./pipeline-record.mjs";
 import { deliveryDecision, messageBanner, normalizeMessage } from "./agent-messages.mjs";
 import { createSourceChangeMonitor } from "./source-change-monitor.mjs";
 import { promptArrived, splitPrompt, squash } from "./prompt-delivery.mjs";
@@ -1867,6 +1867,22 @@ async function pipelineStepForSession(sessionName) {
   return null;
 }
 
+/**
+ * Ends the pipeline whose step this session works, if any. Called when Julian
+ * kills a session: Stop agent, ⌘D, or ✕ on a tree row. Without this the
+ * reconciler would only mark the step "stopped", the Goal would sit in
+ * attention offering Restart forever, and the multi-step Goal would never
+ * settle back to plain open work the way a solo Goal does. Returns the record
+ * that ended, or null when the session was no pipeline step.
+ */
+async function endPipelineForSession(sessionName) {
+  const found = await pipelineStepForSession(sessionName);
+  if (!found) return null;
+  endPipeline(found.record);
+  await writePipeline(PIPELINES_ROOT, found.record);
+  return found.record;
+}
+
 /** Records one step's handover and starts the next pending step. */
 async function handoverPipelineStep(sessionName, text) {
   const found = await pipelineStepForSession(sessionName);
@@ -1905,7 +1921,7 @@ async function paneLastMessage(sessionName) {
   }
 }
 
-/** Restart, skip, or send-on one step at Julian's explicit action. */
+/** Restart, skip, end, or send-on one step at Julian's explicit action. */
 async function controlPipeline(goalFile, action, index) {
   const byFile = await goalsByFile();
   const o = byFile.get(goalFile);
@@ -1926,6 +1942,14 @@ async function controlPipeline(goalFile, action, index) {
   if (action === "skip") {
     if (!["stopped", "running", "pending"].includes(step.status)) return { status: 409, error: `step ${step.index} is ${step.status}` };
     return completePipelineStep(record, step, `Step ${step.index} was skipped by Julian.`, "skip");
+  }
+  if (action === "end") {
+    // Stop work on the whole run: kill the live step, if any, and end every
+    // step that has not run. The Goal stays open with its handovers.
+    if (live) await execFileAsync("tmux", ["kill-session", "-t", "=" + step.session]).catch(() => {});
+    const ended = endPipeline(record);
+    await writePipeline(PIPELINES_ROOT, record);
+    return { status: 200, state: "ended", ended, pipeline: record };
   }
   if (action === "send") {
     if (step.status !== "running" || !live) return { status: 409, error: `step ${step.index} is not running` };
@@ -2497,7 +2521,7 @@ const server = http.createServer(async (req, res) => {
       try { body = JSON.parse(await readBody(req)); } catch {}
       const result = await controlPipeline(String(body.goal ?? ""), String(body.action ?? ""), body.step);
       res.writeHead(result.status, { "content-type": "application/json" });
-      res.end(JSON.stringify(result.status === 200 ? { status: result.state ?? "started", next: result.next ?? (result.index ? { index: result.index, session: result.session } : null), pipeline: result.pipeline } : { error: result.error }));
+      res.end(JSON.stringify(result.status === 200 ? { status: result.state ?? "started", next: result.next ?? (result.index ? { index: result.index, session: result.session } : null), pipeline: result.pipeline, ...(result.ended ? { ended: result.ended } : {}) } : { error: result.error }));
       return;
     }
     // Edits one pending step; started steps are history.
@@ -3377,8 +3401,12 @@ const server = http.createServer(async (req, res) => {
       }
       try {
         await execFileAsync("tmux", ["kill-session", "-t", "=" + name]);
+        const ended = await endPipelineForSession(name).catch((err) => {
+          console.error("end pipeline on kill:", err.message ?? err);
+          return null;
+        });
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: true }));
+        res.end(JSON.stringify({ ok: true, pipelineEnded: Boolean(ended) }));
       } catch (err) {
         res.writeHead(500, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));

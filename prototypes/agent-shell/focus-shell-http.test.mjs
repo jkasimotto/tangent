@@ -95,6 +95,8 @@ test("the context-first shell is default and keeps the user's understanding with
       AGENT_SHELL_NO_OPEN: "1",
       AGENT_SHELL_TEST_NO_LAUNCH: "1",
       TANGENT_PIPELINES_ROOT: path.join(root, "pipelines"),
+      TANGENT_BRAINS_ROOT: path.join(root, "brains"),
+      AGENT_MESSAGE_LOG: path.join(root, "messages.jsonl"),
       GROQ_API_KEY: "",
       CHAT_SESSION: `focus-shell-test-${process.pid}`,
     },
@@ -762,6 +764,110 @@ test("the context-first shell is default and keeps the user's understanding with
   }).then((response) => response.json());
   assert.deepEqual(endDead.ended, [8]);
   assert.equal(endDead.pipeline.steps[7].status, "ended");
+
+  // ---- Area brain ----
+  // Julian starts one brain on the Area; it is a session of kind brain with a
+  // record under the brains root, and every Goal prompt on the Area names it.
+  assert.match(serverSource, /# Brain for \$\{area\}/);
+  assert.match(serverSource, /tangent brain handover/);
+  assert.match(serverSource, /Sonnet is the workhorse/);
+  const emptyBrain = await fetch(`${base}/api/brains/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ area: "otto/test", instruction: "   " }),
+  });
+  assert.equal(emptyBrain.status, 400);
+  const brainStart = await fetch(`${base}/api/brains/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ area: "otto/test", instruction: "Get the test Area done.", choice: { harness: "fake", model: "one" } }),
+  }).then((response) => response.json());
+  assert.equal(brainStart.session, "test-brain");
+  openedSessions.push("test-brain");
+  assert.equal(brainStart.generation, 1);
+  assert.equal(brainStart.brain.command, "fake-agent --model one");
+  assert.equal(brainStart.brain.planFile, "otto/test/plan-test.md");
+  assert.ok(existsSync(path.join(root, "brains", "otto", "test", "brain.json")));
+  snapshot = await fetch(`${base}/api/sessions`).then((response) => response.json());
+  const brainSession = snapshot.sessions.find((session) => session.name === "test-brain");
+  assert.equal(brainSession.kind, "brain");
+  assert.equal(brainSession.brain, "otto/test");
+  assert.equal(brainSession.generation, 1);
+  assert.equal(snapshot.brains.length, 1);
+  assert.equal(snapshot.brains[0].live, true);
+  assert.equal(snapshot.brains[0].status, "running");
+  const brainAgain = await fetch(`${base}/api/brains/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ area: "otto/test", instruction: "Something else." }),
+  }).then((response) => response.json());
+  assert.equal(brainAgain.reattached, true);
+  assert.equal(brainAgain.session, "test-brain");
+  const brainShow = await fetch(`${base}/api/brains/show?session=test-brain`).then((response) => response.json());
+  assert.equal(brainShow.brain.area, "otto/test");
+  assert.equal((await fetch(`${base}/api/brains/show?area=otto%2Fnowhere`)).status, 404);
+  const briefUnderBrain = await fetch(`${base}/api/goals/brief?file=${encodeURIComponent(pipelineGoal.file)}`).then((response) => response.json());
+  assert.match(briefUnderBrain.markdown, /## Brain\n\nThis Goal is part of the plan of the brain session `test-brain` for Area otto\/test/);
+  // A pipeline event on the Area is queued to the brain as a message from tangent.
+  const eventPipeline = await fetch(`${base}/api/pipelines/append`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ goal: pipelineGoal.file, steps: [{ instruction: "One more.", launch: { harness: "fake" } }] }),
+  }).then((response) => response.json());
+  assert.equal(eventPipeline.status, "started");
+  openedSessions.push(eventPipeline.next.session);
+  const eventHandover = await fetch(`${base}/api/goals/handover`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session: eventPipeline.next.session, text: "One more done." }),
+  }).then((response) => response.json());
+  assert.equal(eventHandover.status, "complete");
+  const messageLog = (await readFile(path.join(root, "messages.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+  const brainEvent = messageLog.find((entry) => entry.to === "test-brain" && entry.from === "tangent" && /pipeline complete/.test(entry.text));
+  assert.ok(brainEvent, "the brain hears that the pipeline completed");
+  assert.match(brainEvent.text, /Last handover: One more done\./);
+  // Handover from a session that is not a brain is refused; from the brain it
+  // starts generation 2 on a new session and the record follows it.
+  const notBrain = await fetch(`${base}/api/brains/handover`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session: "test-pipeline-demo", text: "facts" }),
+  });
+  assert.equal(notBrain.status, 404);
+  const brainHandover = await fetch(`${base}/api/brains/handover`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session: "test-brain", text: "Wave 1 dispatched: pipeline-demo runs step 9. Next: wait for it." }),
+  }).then((response) => response.json());
+  assert.equal(brainHandover.status, "started");
+  assert.equal(brainHandover.session, "test-brain-g2");
+  assert.equal(brainHandover.generation, 2);
+  openedSessions.push("test-brain-g2");
+  await new Promise((resolve) => setTimeout(resolve, 1800));
+  snapshot = await fetch(`${base}/api/sessions`).then((response) => response.json());
+  assert.equal(snapshot.sessions.some((session) => session.name === "test-brain"), false, "the old generation ends after the new one starts");
+  assert.equal(snapshot.brains[0].session, "test-brain-g2");
+  assert.equal(snapshot.brains[0].generation, 2);
+  assert.equal(snapshot.brains[0].status, "running");
+  assert.equal(snapshot.brains[0].latestHandover, "Wave 1 dispatched: pipeline-demo runs step 9. Next: wait for it.");
+  assert.equal(snapshot.brains[0].generations[0].handover, "Wave 1 dispatched: pipeline-demo runs step 9. Next: wait for it.");
+  // Stop agent on the brain ends it; Resume starts generation 3 from the record.
+  const brainKilled = await fetch(`${base}/api/kill/${encodeURIComponent("test-brain-g2")}`, { method: "POST" }).then((response) => response.json());
+  assert.equal(brainKilled.brainEnded, true);
+  snapshot = await fetch(`${base}/api/sessions`).then((response) => response.json());
+  assert.equal(snapshot.brains[0].status, "ended");
+  assert.equal(snapshot.brains[0].live, false);
+  const briefWithoutBrain = await fetch(`${base}/api/goals/brief?file=${encodeURIComponent(pipelineGoal.file)}`).then((response) => response.json());
+  assert.doesNotMatch(briefWithoutBrain.markdown, /## Brain/);
+  const brainResume = await fetch(`${base}/api/brains/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ area: "otto/test", resume: true }),
+  }).then((response) => response.json());
+  assert.equal(brainResume.session, "test-brain-g3");
+  assert.equal(brainResume.generation, 3);
+  openedSessions.push("test-brain-g3");
+  assert.equal(brainResume.brain.instruction, "Get the test Area done.");
 
   const missingDropReason = await fetch(`${base}/api/goals/edit`, {
     method: "POST",

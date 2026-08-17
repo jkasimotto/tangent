@@ -26,6 +26,7 @@ const documentComments = globalThis.AgentShellDocumentComments;
 import { classifyStaticPane, stabilizeStaticPane } from "./pane-state.mjs";
 import { appendSteps, currentStep, endPipeline, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, readAllPipelines, readPipeline, validateSteps, writePipeline } from "./pipeline-record.mjs";
 import { deliveryDecision, messageBanner, normalizeMessage } from "./agent-messages.mjs";
+import { beginGeneration, brainForArea, brainSessionName, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, recordHandover, validateInstruction, writeBrain } from "./brain-record.mjs";
 import { createSourceChangeMonitor } from "./source-change-monitor.mjs";
 import { promptArrived, splitPrompt, squash } from "./prompt-delivery.mjs";
 
@@ -112,6 +113,13 @@ const TREES_ROOT = process.env.TREES_ROOT ?? path.join(os.homedir(), ".tangent",
 // the handovers between them. Ownership stays in the Goal file; this holds
 // only what neither the Goal nor tmux can.
 const PIPELINES_ROOT = process.env.TANGENT_PIPELINES_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "pipelines");
+// One JSON record per Area with a brain: Julian's instruction, the launch,
+// the generations, and their self-handovers (design-area-brain-solution).
+const BRAINS_ROOT = process.env.TANGENT_BRAINS_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "brains");
+// After this long in one generation the brain is reminded to hand over.
+const BRAIN_REFRESH_MS = Number(process.env.TANGENT_BRAIN_REFRESH_MINUTES ?? 90) * 60_000;
+// A running step idle this long without a handover is reported to the brain once.
+const BRAIN_IDLE_NOTICE_MS = Number(process.env.TANGENT_BRAIN_IDLE_MINUTES ?? 10) * 60_000;
 
 if (!existsSync(WORKSPACE)) mkdirSync(WORKSPACE, { recursive: true });
 
@@ -135,14 +143,14 @@ async function listSessions() {
     const { stdout } = await execFileAsync("tmux", [
       "list-sessions",
       "-F",
-      "#{session_name}\t#{session_path}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{@tangent_area}\t#{@tangent_kind}\t#{@tangent_goal}\t#{@tangent_process}\t#{pane_current_command}\t#{@tangent_phase}\t#{@tangent_work_title}\t#{@tangent_launch}\t#{@tangent_pipeline}\t#{@tangent_step}",
+      "#{session_name}\t#{session_path}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{@tangent_area}\t#{@tangent_kind}\t#{@tangent_goal}\t#{@tangent_process}\t#{pane_current_command}\t#{@tangent_phase}\t#{@tangent_work_title}\t#{@tangent_launch}\t#{@tangent_pipeline}\t#{@tangent_step}\t#{@tangent_brain}\t#{@tangent_generation}",
     ]);
     const sessions = stdout
       .trim()
       .split("\n")
       .filter(Boolean)
       .map((line) => {
-        const [name, cwd, windows, attached, created, area, kind, goal, processName, command, phase, workTitle, launchLabel, pipeline, step] = line.split("\t");
+        const [name, cwd, windows, attached, created, area, kind, goal, processName, command, phase, workTitle, launchLabel, pipeline, step, brain, generation] = line.split("\t");
         return {
           name,
           cwd,
@@ -159,6 +167,8 @@ async function listSessions() {
           launchLabel: launchLabel || null,
           pipeline: pipeline || null,
           step: step ? Number(step) : null,
+          brain: brain || null,
+          generation: generation ? Number(generation) : null,
           isChat: name === CHAT_SESSION,
         };
       });
@@ -1174,6 +1184,11 @@ async function goalPrompt(area, o, extras = []) {
     ...context.documents.map((document, index) => `- Document: ${document}${context.commentCounts[index] ? ` (${context.commentCounts[index]} open comment${context.commentCounts[index] === 1 ? "" : "s"} from Julian)` : ""}`),
   ];
   const openComments = context.commentCounts.some(Boolean);
+  const brain = await liveBrainForArea(area);
+  const brainSection = brain
+    ? `## Brain\n\n` +
+      `This Goal is part of the plan of the brain session \`${brain.session}\` for Area ${brain.area}. Tangent reports your handovers and the end of your session to it. If you are blocked on something the plan decided, message it: \`tangent agent send ${brain.session} "<text>"\`. Words from the brain arrive as \`[Message from ${brain.session}]\`; Julian's words come only from Julian.\n\n`
+    : "";
   const alsoOwned = extras.length
     ? `## Also in this session\n\n` +
       `Julian assigned these Goals to this session too. Work them after the assignment above, in order; each file holds its own context.\n\n` +
@@ -1186,6 +1201,7 @@ async function goalPrompt(area, o, extras = []) {
     (o.myUnderstanding ? `## Julian's understanding\n\n${o.myUnderstanding}\n\n` : "") +
     `## Sources\n\n${sources.join("\n")}\n\n` +
     alsoOwned +
+    brainSection +
     `## How to work\n\n` +
     `This Goal was already scoped with Julian. Its file holds what he explained, so he does not need to repeat it. Pick up the work directly, scope the details yourself, and bring him real decisions when they come up. There is no need to re-confirm the assignment before starting.\n\n` +
     `Read the goal first, then the area notes from nearest to farthest.` +
@@ -1704,8 +1720,12 @@ async function reconcileGoals(sessions) {
       if (t.status !== "active" || !t.session || live.has(t.session)) continue;
       await writeGoalBinding(t.file, { status: "open", session: null });
       await vaultCommit([t.file], `update: ${t.area} goal ${t.slug} back to open, session ended`, t.area, null);
+      if (!(await pipelineStepForSession(t.session))) {
+        await notifyBrain(t.area, `Goal ${t.slug}: its session ${t.session} ended without a pipeline; the Goal is open again.`);
+      }
     }
     await reconcilePipelines(sessions);
+    await reconcileBrains(sessions);
     for (const s of sessions) {
       if (!s.goal) continue;
       const t = byFile.get(s.goal);
@@ -1914,6 +1934,7 @@ async function endPipelineForSession(sessionName) {
   if (!found) return null;
   endPipeline(found.record);
   await writePipeline(PIPELINES_ROOT, found.record);
+  await notifyBrain(found.record.area, `Goal ${found.record.slug}: pipeline ended by Julian at step ${found.step.index}.`);
   return found.record;
 }
 
@@ -1937,9 +1958,17 @@ async function completePipelineStep(record, step, text, source) {
   step.endedAt = new Date().toISOString();
   await writePipeline(PIPELINES_ROOT, record);
   const next = nextPendingStep(record, step.index);
-  if (!next) return { status: 200, state: "complete", next: null, pipeline: record };
+  const stepWord = source === "skip" ? "skipped" : "complete";
+  if (!next) {
+    await notifyBrain(record.area, `Goal ${record.slug}: pipeline complete (${record.steps.length} steps; step ${step.index} ${stepWord}, ${step.label || "agent"}). Last handover: ${brainMessageExcerpt(step.handover)}`);
+    return { status: 200, state: "complete", next: null, pipeline: record };
+  }
   const started = await startPipelineStep(record, next.index);
-  if (started.status !== 200) return started;
+  if (started.status !== 200) {
+    await notifyBrain(record.area, `Goal ${record.slug}: step ${step.index} ${stepWord}, but step ${next.index} could not start: ${started.error}`);
+    return started;
+  }
+  await notifyBrain(record.area, `Goal ${record.slug}: step ${step.index} of ${record.steps.length} ${stepWord} (${step.label || "agent"}). Step ${next.index} started (${next.label || "agent"}). Handover: ${brainMessageExcerpt(step.handover)}`);
   return { status: 200, state: "started", next: { index: next.index, session: started.session }, pipeline: record };
 }
 
@@ -1983,6 +2012,7 @@ async function controlPipeline(goalFile, action, index) {
     if (live) await execFileAsync("tmux", ["kill-session", "-t", "=" + step.session]).catch(() => {});
     const ended = endPipeline(record);
     await writePipeline(PIPELINES_ROOT, record);
+    await notifyBrain(record.area, `Goal ${record.slug}: pipeline ended by Julian at step ${step.index}.`);
     return { status: 200, state: "ended", ended, pipeline: record };
   }
   if (action === "send") {
@@ -2090,17 +2120,265 @@ async function pipelinesView(sessions) {
 
 /** Marks running steps whose session is gone as stopped. */
 async function reconcilePipelines(sessions) {
-  const live = new Set(sessions.map((item) => item.name));
+  const byName = new Map(sessions.map((item) => [item.name, item]));
+  const now = Date.now();
   for (const record of await readAllPipelines(PIPELINES_ROOT)) {
     let changed = false;
     for (const step of record.steps) {
-      if (step.status !== "running" || !step.session || live.has(step.session)) continue;
-      step.status = "stopped";
-      step.endedAt = new Date().toISOString();
-      changed = true;
+      const key = `${record.goal}#${step.index}#${step.session}`;
+      if (step.status !== "running" || !step.session) {
+        idleNoticed.delete(key);
+        continue;
+      }
+      const live = byName.get(step.session);
+      if (!live) {
+        step.status = "stopped";
+        step.endedAt = new Date().toISOString();
+        changed = true;
+        idleNoticed.delete(key);
+        await notifyBrain(record.area, `Goal ${record.slug}: step ${step.index} of ${record.steps.length} stopped (its session ended without a handover). Restart, skip, or end it on the desk, or start it again with tangent goal start.`);
+        continue;
+      }
+      // One idle notice per step session: the brain decides whether to send
+      // the step on, message the worker, or ask Julian.
+      const idle = live.state === "waiting" && (live.stateDetail === "idle" || live.stateDetail == null) && live.idleSince && now - live.idleSince >= BRAIN_IDLE_NOTICE_MS;
+      if (idle && !idleNoticed.has(key)) {
+        idleNoticed.add(key);
+        await notifyBrain(record.area, `Goal ${record.slug}: step ${step.index} of ${record.steps.length} (${step.label || "agent"}, session ${step.session}) has been idle for ${Math.round(BRAIN_IDLE_NOTICE_MS / 60_000)} minutes without a handover.`);
+      }
     }
     if (changed) await writePipeline(PIPELINES_ROOT, record);
   }
+}
+const idleNoticed = new Set();
+
+// ---- Area brains ----
+// One long-lived orchestrating agent per Area (design-area-brain-solution in
+// the vault). The server owns the record, the session, the event messages
+// the brain hears, and the self-handover that starts a fresh generation.
+
+/** The first 400 characters of a handover for a brain message, one line. */
+function brainMessageExcerpt(text) {
+  const flat = oneLine(String(text ?? "").trim());
+  if (!flat) return "(no handover text)";
+  return flat.length > 400 ? `${flat.slice(0, 397)}…` : flat;
+}
+
+/** The running brain that covers an Area whose session is live, or null. */
+async function liveBrainForArea(area) {
+  const record = brainForArea(await readAllBrains(BRAINS_ROOT), area);
+  if (!record?.session) return null;
+  try {
+    await execFileAsync("tmux", ["has-session", "-t", "=" + record.session]);
+    return record;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Tells the brain that covers an Area what happened, as a message from
+ * `tangent`. The queue delivers it into an idle composer; a working brain
+ * reads it when it pauses. Returns true when a brain was addressed.
+ */
+async function notifyBrain(area, text) {
+  try {
+    const record = await liveBrainForArea(area);
+    if (!record) return false;
+    const message = normalizeMessage(text);
+    queueAgentMessage(record.session, { from: "tangent", area: null, text: message, queuedAt: new Date().toISOString() });
+    await logAgentMessage({ event: "sent", to: record.session, from: "tangent", text: message, disposition: "queued", reason: "brain event" });
+    return true;
+  } catch (err) {
+    console.error("brain notify:", err.message ?? err);
+    return false;
+  }
+}
+
+/** The first message of one brain generation: instruction, sources, policy. */
+async function brainPrompt(record) {
+  const area = record.area;
+  const generation = currentGeneration(record)?.generation ?? 1;
+  const notes = areaNoteFiles(area);
+  const documents = (await readAreaDocuments(area)).filter((doc) => doc.file !== record.planFile);
+  const planPath = path.join(TREES_ROOT, record.planFile);
+  const handover = latestHandover(record);
+  const sourceLines = [
+    `- Plan: ${planPath} (yours; create it if it does not exist)`,
+    `- Area folder: ${path.join(TREES_ROOT, area)}`,
+    ...notes.map((note, index) => `- Area note ${index + 1}: ${note}`),
+    ...documents.map((doc) => `- Document: ${path.join(TREES_ROOT, doc.file)}`),
+  ];
+  return (
+    `# Brain for ${area}\n\n` +
+    `You are the brain of the Area ${area}: the one long-lived agent that plans and dispatches its work. Julian started you with the instruction below and will mostly leave you alone. This is generation ${generation} of this brain${handover ? "; the earlier generation handed over the facts under Handover" : ""}.\n\n` +
+    `## Julian's instruction\n\n${record.instruction}\n\n` +
+    `## Sources\n\n${sourceLines.join("\n")}\n\n` +
+    (handover ? `## Handover from generation ${generation - 1}\n\n${handover}\n\n` : "") +
+    `## How to work\n\n` +
+    `Read the plan first when it exists, then the Area notes from nearest to farthest, then the Documents that matter. Look at the Area's repository when code answers a question better than a guess.\n\n` +
+    `Write the plan before you start anything: the instruction in your words, the sub-Areas and Goals you will create, the waves in dependency order, and what you decided. Keep it current: what runs, what came back, what you decided next. Commit it with \`tangent vault commit\`. Julian reads the plan and may leave comments in it (\`{>>Julian: ...<<}\`); \`tangent document comments <file>\` lists them and \`tangent document resolve\` closes one after the work is done.\n\n` +
+    `Split the work into Goals: a Goal is a result with a clear finish. Create a sub-Area only for a durable subject Julian will return to (\`tangent area create <parent> <name>\`). Give each Goal a description a fresh agent can start from: intent, what Julian decided, and the Documents and code that matter (\`tangent goal create --area ${area} --title "..." --done-when "..." --description "..." --source <vault-file>\`).\n\n` +
+    `Start each leaf Goal as a pipeline, for example: \`tangent goal start <slug> --step "/design this Goal" --launch claude/fable-5 --step "/impl the design at <path>" --launch claude/fable-5 --step "implement the solution" --launch claude/sonnet-5 --step "review the implementation against the design and solution; fix what is wrong" --launch claude/fable-5\`. Judge each Goal: when the work is small and clear, one implementer step is enough; when it is hard or vague, raise the implementer to Opus or Fable and keep the design step. Fable plans, designs, decomposes, and reviews; Sonnet is the workhorse. Run one implementing pipeline per repository at a time; design and review steps may run in parallel. \`tangent agent list\` shows what runs and \`tangent goal list ${area}\` shows the Goals.\n\n` +
+    `Tangent sends you messages: a step handed over, a pipeline completed, a step stopped or sat idle, a Goal session ended. Read the handover and the files. When a review asks for changes, \`tangent goal append <slug> --step "..." --launch ...\`. When a result is good, note it in the plan and start what its completion unblocked. Workers may message you; answer with \`tangent agent send <session> "<text>"\`.\n\n` +
+    `Ask Julian only for real decisions; ask here, he sees it. Goal status changes on Julian's word: leave Goals open for him unless his instruction above grants you to mark them done; then \`tangent goal done <slug>\` counts as his word for those Goals.\n\n` +
+    `## When to hand over\n\n` +
+    `Your context fills. At a natural pause, after a wave is dispatched or a batch of results is processed, and always when Tangent reminds you, write the plan status and run \`tangent brain handover "<facts>"\`: what runs (Goal, step, session), what waits and why, decisions taken, what the next generation should do first. Facts, no narrative. A fresh copy of you starts from the plan and those facts, and this session ends.`
+  );
+}
+
+/** Creates and primes the next generation's session for one brain record. */
+async function spawnBrainSession(record) {
+  const sessions = await listSessions();
+  const names = new Set(sessions.map((item) => item.name));
+  const generation = (record.generations?.length ?? 0) + 1;
+  let name = brainSessionName(record.area, generation);
+  for (let k = 2; names.has(name); k += 1) name = `${brainSessionName(record.area, generation).slice(0, 55)}-r${k}`;
+  const directory = (await areaDirectory(record.area)) ?? path.join(TREES_ROOT, record.area);
+  try {
+    await execFileAsync("tmux", ["new-session", "-d", "-s", name, "-c", directory]);
+  } catch (error) {
+    return { status: 500, error: `could not create the brain session: ${error.stderr ?? error.message ?? error}` };
+  }
+  await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_area", record.area]);
+  await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_kind", "brain"]);
+  await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_phase", "orchestrate"]);
+  await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_brain", record.area]);
+  await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_generation", String(generation)]);
+  if (record.label) await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_launch", record.label]);
+  beginGeneration(record, name);
+  await writeBrain(BRAINS_ROOT, record);
+  if (process.env.AGENT_SHELL_TEST_NO_LAUNCH !== "1") {
+    await sleep(700);
+    try {
+      await primeDescribeWorkSession(name, record.area, await brainPrompt(record), { launch: true, command: record.command });
+    } catch (error) {
+      console.error("brain session:", error.message ?? error);
+    }
+  }
+  return { status: 200, session: name, generation, brain: record };
+}
+
+/**
+ * Starts a brain on an Area from Julian's instruction, resumes a stopped or
+ * ended one, or reattaches to the one that runs. One brain per Area.
+ */
+async function startBrain(area, { instruction = "", choice = null, command = "", resume = false } = {}) {
+  if (!area || !existsSync(path.join(TREES_ROOT, area))) return { status: 404, error: `no Area ${area || "(none)"}` };
+  const existing = await readBrain(BRAINS_ROOT, area);
+  if (existing?.status === "running" && existing.session) {
+    const live = await execFileAsync("tmux", ["has-session", "-t", "=" + existing.session]).then(() => true, () => false);
+    if (live) return { status: 200, session: existing.session, generation: existing.generation, brain: existing, reattached: true };
+  }
+  if (resume) {
+    if (!existing) return { status: 404, error: "no brain to resume on this Area" };
+    return spawnBrainSession(existing);
+  }
+  const invalid = validateInstruction(instruction);
+  if (invalid) return { status: 400, error: invalid };
+  // Fable plans by default; the picker, an edited command, or the Area
+  // default (when the registry has no Fable) replace it.
+  let launch = await requestedLaunch({ choice, command });
+  let ref = command ? null : choice;
+  if (!launch.error && !launch.command) {
+    const registry = await harnessRegistry();
+    const fable = registry.error ? { error: registry.error } : resolveLaunch(registry, { harness: "claude", model: "fable-5" });
+    if (!fable.error) {
+      launch = fable;
+      ref = { harness: "claude", model: "fable-5", effort: null };
+    } else {
+      launch = await launchForArea(area);
+      ref = launch.harness ? { harness: launch.harness, model: launch.model ?? null, effort: launch.effort ?? null } : null;
+    }
+  }
+  if (launch.error) return { status: 409, error: launch.error };
+  const leaf = area.split("/").pop();
+  let record;
+  try {
+    record = newBrain({
+      area,
+      instruction,
+      launch: ref,
+      command: launch.command,
+      label: launch.label ?? "",
+      planFile: `${area}/plan-${leaf}.md`,
+    });
+  } catch (error) {
+    return { status: 400, error: String(error.message ?? error) };
+  }
+  return spawnBrainSession(record);
+}
+
+/**
+ * The brain hands over to itself: record the facts, start the next
+ * generation, and end this session once the new one is primed. On a failed
+ * spawn the old session stays alive and hears the error.
+ */
+async function handoverBrain(sessionName, text) {
+  const records = await readAllBrains(BRAINS_ROOT);
+  const record = records.find((item) => item.status === "running" && item.session === sessionName);
+  if (!record) return { status: 404, error: "this session is not a running brain" };
+  const previous = sessionName;
+  recordHandover(record, text);
+  await writeBrain(BRAINS_ROOT, record);
+  const started = await spawnBrainSession(record);
+  if (started.status !== 200) {
+    queueAgentMessage(previous, { from: "tangent", area: null, text: `Handover recorded, but the next generation could not start: ${started.error}. You are still the brain.`, queuedAt: new Date().toISOString() });
+    return started;
+  }
+  setTimeout(() => {
+    execFileAsync("tmux", ["kill-session", "-t", "=" + previous]).catch(() => {});
+  }, 1500).unref();
+  return { status: 200, state: "started", session: started.session, generation: started.generation, previous, brain: record };
+}
+
+/** Ends the brain whose current session Julian killed, if any. */
+async function endBrainForSession(sessionName) {
+  const records = await readAllBrains(BRAINS_ROOT);
+  const record = records.find((item) => item.status === "running" && item.session === sessionName);
+  if (!record) return null;
+  endBrain(record, "ended");
+  await writeBrain(BRAINS_ROOT, record);
+  return record;
+}
+
+/**
+ * Marks running brains whose session is gone as stopped, and reminds a
+ * long-running generation once to hand over.
+ */
+async function reconcileBrains(sessions) {
+  const live = new Set(sessions.map((item) => item.name));
+  const now = Date.now();
+  for (const record of await readAllBrains(BRAINS_ROOT)) {
+    if (record.status !== "running" || !record.session) continue;
+    if (!live.has(record.session)) {
+      endBrain(record, "stopped");
+      await writeBrain(BRAINS_ROOT, record);
+      continue;
+    }
+    const entry = currentGeneration(record);
+    if (!entry || entry.remindedAt || now - Date.parse(entry.startedAt) < BRAIN_REFRESH_MS) continue;
+    entry.remindedAt = new Date().toISOString();
+    await writeBrain(BRAINS_ROOT, record);
+    const minutes = Math.round((now - Date.parse(entry.startedAt)) / 60_000);
+    queueAgentMessage(record.session, { from: "tangent", area: null, text: `You have run ${minutes} minutes in this generation. At the next natural pause, write the plan status and run tangent brain handover "<facts>".`, queuedAt: new Date().toISOString() });
+  }
+}
+
+/** Every brain record with its current session's live state, for the desk. */
+async function brainsView(sessions) {
+  const byName = new Map(sessions.map((item) => [item.name, item]));
+  return (await readAllBrains(BRAINS_ROOT)).map((record) => {
+    const live = record.session ? byName.get(record.session) : null;
+    return {
+      ...record,
+      live: Boolean(live),
+      state: live?.state ?? null,
+      stateDetail: live?.stateDetail ?? null,
+      idleSince: live?.idleSince ?? null,
+      latestHandover: latestHandover(record),
+    };
+  });
 }
 
 /** Stops one accepted assignment without claiming that its goal is done. */
@@ -2526,10 +2804,53 @@ const server = http.createServer(async (req, res) => {
       const sessions = await listSessions();
       reconcileGoals(sessions); // throttled fire-and-forget
       const pipelines = await pipelinesView(sessions).catch(() => []);
+      const brains = await brainsView(sessions).catch(() => []);
       res.writeHead(200, { "content-type": "application/json" });
       res.end(
-        JSON.stringify({ agent: agentCmd, boot: BOOT_ID, sourceChanged: sourceChanges.changed, caffeinate: caffeinateProc !== null, voice: Boolean(GROQ_KEY), sessions, pipelines })
+        JSON.stringify({ agent: agentCmd, boot: BOOT_ID, sourceChanged: sourceChanges.changed, caffeinate: caffeinateProc !== null, voice: Boolean(GROQ_KEY), sessions, pipelines, brains })
       );
+      return;
+    }
+    // Julian starts, resumes, or reattaches the one brain of an Area.
+    if (url.pathname === "/api/brains/start" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      const result = await startBrain(String(body.area ?? ""), {
+        instruction: String(body.instruction ?? ""),
+        choice: body.choice && typeof body.choice === "object" ? body.choice : null,
+        command: typeof body.command === "string" ? body.command : "",
+        resume: Boolean(body.resume),
+      });
+      res.writeHead(result.status, { "content-type": "application/json" });
+      res.end(JSON.stringify(result.status === 200 ? { session: result.session, generation: result.generation, reattached: Boolean(result.reattached), brain: result.brain } : { error: result.error }));
+      return;
+    }
+    // The brain hands its facts to a fresh copy of itself.
+    if (url.pathname === "/api/brains/handover" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      let text;
+      try {
+        text = normalizeMessage(body.text);
+      } catch (error) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: String(error.message ?? error) }));
+        return;
+      }
+      const result = await handoverBrain(String(body.session ?? ""), text);
+      res.writeHead(result.status, { "content-type": "application/json" });
+      res.end(JSON.stringify(result.status === 200 ? { status: result.state, session: result.session, generation: result.generation, previous: result.previous } : { error: result.error }));
+      return;
+    }
+    // One brain record by Area or by session, with its live state.
+    if (url.pathname === "/api/brains/show" && req.method === "GET") {
+      const area = url.searchParams.get("area") ?? "";
+      const session = url.searchParams.get("session") ?? "";
+      const sessions = await listSessions();
+      const brains = await brainsView(sessions).catch(() => []);
+      const brain = brains.find((item) => (area && item.area === area) || (session && item.session === session)) ?? null;
+      res.writeHead(brain ? 200 : 404, { "content-type": "application/json" });
+      res.end(JSON.stringify(brain ? { brain } : { error: area ? `no brain on ${area}` : "this session is not a brain" }));
       return;
     }
     // A step agent hands facts to the next step; the server advances the line.
@@ -3455,8 +3776,12 @@ const server = http.createServer(async (req, res) => {
           console.error("end pipeline on kill:", err.message ?? err);
           return null;
         });
+        const brainEnded = await endBrainForSession(name).catch((err) => {
+          console.error("end brain on kill:", err.message ?? err);
+          return null;
+        });
         res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: true, pipelineEnded: Boolean(ended) }));
+        res.end(JSON.stringify({ ok: true, pipelineEnded: Boolean(ended), brainEnded: Boolean(brainEnded) }));
       } catch (err) {
         res.writeHead(500, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));

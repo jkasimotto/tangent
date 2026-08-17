@@ -272,6 +272,17 @@ button.area-brain-line:hover { background: #191d22; }
 .area-desk-section-heading span { color: #646d78; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .desk-empty { margin: 0; color: #6f7883; font-size: 13px; }
 
+.desk-subarea { padding: 14px 18px 14px 30px; border-left: 2px solid #373d45; background: #14171b; }
+.desk-subarea.waiting { border-left-color: var(--amber); }
+.desk-subarea.working { border-left-color: var(--blue); }
+.desk-subarea-toggle { display: flex; width: 100%; align-items: baseline; gap: 10px; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; text-align: left; }
+.desk-subarea-caret { width: 10px; color: #69737e; font-size: 11px; }
+.desk-subarea-toggle strong { color: #d7dbe0; font-size: 14px; }
+.desk-subarea-count { color: #646d78; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.desk-subarea-state { margin-left: auto; }
+.desk-subarea-body { display: grid; gap: 14px; margin-top: 14px; }
+.desk-subarea.collapsed { padding-bottom: 14px; }
+
 .desk-goal-group + .desk-goal-group { margin-top: 14px; padding-top: 14px; border-top: 1px solid #292e35; }
 .desk-goal { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 15px; }
 .desk-goal-main { display: grid; min-width: 0; gap: 3px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }

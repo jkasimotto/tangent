@@ -38,6 +38,7 @@ const state = {
   createArea: "",
   createReturnView: "work",
   expandedAreas: new Set(storedJson("agent-shell.expanded-areas") || []),
+  collapsedDeskSections: new Set(storedJson("agent-shell.collapsed-desk-sections") || []),
   mapStates: new Map(), // Area path -> stored map state ({positions, kindsOff, showDone, collapsed}) or "loading"
   mapSelectFile: "", // a Document to select on the Area map once, set by the reader's Area path
   showDoneAreas: localStorage.getItem("agent-shell.show-done-areas") === "1",
@@ -1035,22 +1036,52 @@ function deskAreaState(path, trees, descriptions) {
   return { kind: "quiet", label: "Reference Area" };
 }
 
-/** Returns the Areas that have direct work, Documents, or definition Runs. */
+/**
+ * Groups the Areas with open work into desk panels, sub-Areas nested inside
+ * as sections (design-area-map Decision 1). An Area needs its own Goal
+ * trees or a live "Describe work" session to earn a panel or a section this
+ * way. An Area with only Documents and no goal-bearing ancestor already on
+ * the desk still gets its own flat panel, as before Decision 1: the desk
+ * must not go quiet on a subject that has notes but no open Goal yet.
+ */
 function deskAreas() {
   const trees = filteredGoalTrees(goalTrees().filter((tree) => goalTreeState(tree) !== "closed"));
   const descriptions = state.workFilter === "inactive" ? [] : describeWorkSessions();
-  return areas().flatMap((area, index) => {
-    const areaTrees = trees.filter((tree) => tree.path === area.path);
-    const areaDescriptions = descriptions.filter((session) => session.area === area.path);
-    const documents = [...new Map([
-      ...(area.documents ?? []),
-      ...areaTrees.flatMap((tree) => tree.goals.flatMap((goal) => goal.documents ?? [])),
-    ].filter((document) => document.kind === "document" || !document.kind).map((document) => [document.file, document])).values()];
-    if (state.workFilter !== "all" && !areaTrees.length && !areaDescriptions.length) return [];
-    if (!areaTrees.length && !areaDescriptions.length && !documents.length) return [];
-    const programs = state.programs.programs.filter((program) => program.area === area.path);
-    return [{ area, trees: areaTrees, descriptions: areaDescriptions, documents, programs, index }];
+  const core = window.AgentShellAreaMap;
+  const areaList = areas();
+  const byPath = new Map(areaList.map((area) => [area.path, area]));
+  /** One Area's own open Goal trees and definition sessions, not its descendants'. */
+  const workOf = (path) => ({
+    trees: trees.filter((tree) => tree.path === path),
+    descriptions: descriptions.filter((session) => session.area === path),
   });
+  const openCounts = new Map();
+  for (const area of areaList) {
+    const { trees: areaTrees, descriptions: areaDescriptions } = workOf(area.path);
+    const openGoalCount = areaTrees.reduce((count, tree) => count + tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status)).length, 0);
+    openCounts.set(area.path, Math.max(openGoalCount, areaDescriptions.length ? 1 : 0));
+  }
+  const panelDefs = core.deskPanels(openCounts);
+  const covered = new Set(panelDefs.flatMap((panel) => [panel.path, ...panel.sections]));
+  const panels = panelDefs.map((panel) => {
+    const area = byPath.get(panel.path);
+    const own = workOf(panel.path);
+    const sections = panel.sections
+      .map((path) => ({ area: byPath.get(path), ...workOf(path) }))
+      .filter((section) => section.area);
+    const programs = state.programs.programs.filter((program) => program.area === panel.path);
+    return { area, trees: own.trees, descriptions: own.descriptions, sections, programs };
+  }).filter((record) => record.area);
+  if (state.workFilter === "all") {
+    for (const area of areaList) {
+      if (covered.has(area.path)) continue;
+      if (!(area.documents ?? []).length) continue;
+      if (panels.some((panel) => core.isInside(area.path, panel.area.path))) continue;
+      panels.push({ area, trees: [], descriptions: [], sections: [], programs: state.programs.programs.filter((program) => program.area === area.path) });
+    }
+    panels.sort((left, right) => left.area.path.localeCompare(right.area.path));
+  }
+  return panels.map((record, index) => ({ ...record, index }));
 }
 
 /** Returns direct routes to every agent or handoff that needs the user. */
@@ -1367,7 +1398,7 @@ function deskProgramShelf(programs) {
 
 /** Renders one stable Area landmark with work and knowledge together. */
 function deskAreaPanel(record, position) {
-  const { area, trees, descriptions, documents, programs } = record;
+  const { area, trees, descriptions, sections, programs } = record;
   const status = deskAreaState(area.path, trees, descriptions);
   const parent = areaParts(area.path).slice(0, -1).join(" / ") || "Top level";
   const openGoalCount = trees.reduce((count, tree) => count + tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status)).length, 0);
@@ -1385,8 +1416,9 @@ function deskAreaPanel(record, position) {
         ${descriptions.length ? `<section class="area-desk-section definitions"><div class="area-desk-section-heading"><h3>Dispatches</h3><span>${descriptions.length}</span></div>${descriptions.map(deskDefinitionRow).join("")}</section>` : ""}
         <section class="area-desk-section goals">
           <div class="area-desk-section-heading"><h3>${goalSectionTitle}</h3><span>${openGoalCount}</span>${deskSelectionBar(area.path, trees)}</div>
-          ${trees.length ? trees.map(deskGoalGroup).join("") : `<p class="desk-empty">No active Goals.</p>`}
+          ${trees.length ? orderedGoalTrees(trees).map(deskGoalGroup).join("") : `<p class="desk-empty">No active Goals.</p>`}
         </section>
+        ${sections.map(deskAreaSection).join("")}
         <section class="area-desk-section documents">
           <div class="area-desk-section-heading"><h3>Documents</h3><span>${deskShelfDocuments(area.path).length}</span></div>
           ${deskDocumentShelf(area.path)}
@@ -1401,6 +1433,33 @@ function deskAreaPanel(record, position) {
         <button type="button" data-open-area="${escapeHtml(area.path)}">Organize Area</button>
       </footer>
     </article>`;
+}
+
+/**
+ * Renders one descendant Area with open work as an indented, collapsible
+ * section of its ancestor's desk panel (design-area-map Decision 1). The
+ * state pill stays visible even collapsed, so a live agent below cannot
+ * hide behind a closed section.
+ */
+function deskAreaSection(section) {
+  const { area, trees, descriptions } = section;
+  const status = deskAreaState(area.path, trees, descriptions);
+  const openGoalCount = trees.reduce((count, tree) => count + tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status)).length, 0);
+  const expanded = !state.collapsedDeskSections.has(area.path);
+  return `
+    <section class="area-desk-section desk-subarea ${status.kind}${expanded ? "" : " collapsed"}">
+      <button class="desk-subarea-toggle" type="button" data-toggle-desk-section="${escapeHtml(area.path)}" aria-expanded="${expanded}" aria-label="${expanded ? "Collapse" : "Expand"} ${escapeHtml(humanName(area.name))}">
+        <span class="desk-subarea-caret" aria-hidden="true">${expanded ? "▾" : "▸"}</span>
+        <strong>${escapeHtml(humanName(area.name))}</strong>
+        <span class="desk-subarea-count">${openGoalCount} ${openGoalCount === 1 ? "Goal" : "Goals"}</span>
+        <span class="desk-subarea-state desk-state ${status.kind}">${escapeHtml(status.label)}</span>
+      </button>
+      ${expanded ? `
+        <div class="desk-subarea-body">
+          ${descriptions.length ? descriptions.map(deskDefinitionRow).join("") : ""}
+          ${trees.length ? orderedGoalTrees(trees).map(deskGoalGroup).join("") : ""}
+        </div>` : ""}
+    </section>`;
 }
 
 /** Renders the complete area-first work desk. */
@@ -1575,6 +1634,12 @@ function goalAttention(goal) {
   if (goalNeedsYou(goal) || ["waiting", "shell"].includes(session?.state)) return "waiting";
   if (session) return "working";
   return "ready";
+}
+
+/** Desk order of Goal trees by their root's attention, then latest change (design-area-map Decision 2). */
+function orderedGoalTrees(trees) {
+  const byRoot = new Map(trees.map((tree) => [tree.root.file, tree]));
+  return window.AgentShellAreaMap.orderGoals(trees.map((tree) => tree.root), goalAttention).map((root) => byRoot.get(root.file));
 }
 
 /** Fetches the stored map state of one Area once; the map mounts again when it arrives. */
@@ -4146,6 +4211,14 @@ document.addEventListener("click", async (event) => {
     if (state.expandedAreas.has(area)) state.expandedAreas.delete(area);
     else state.expandedAreas.add(area);
     saveExpandedAreas();
+    return paint(true);
+  }
+  const deskSectionToggle = target.closest("[data-toggle-desk-section]");
+  if (deskSectionToggle) {
+    const area = deskSectionToggle.dataset.toggleDeskSection;
+    if (state.collapsedDeskSections.has(area)) state.collapsedDeskSections.delete(area);
+    else state.collapsedDeskSections.add(area);
+    localStorage.setItem("agent-shell.collapsed-desk-sections", JSON.stringify([...state.collapsedDeskSections]));
     return paint(true);
   }
   const area = target.closest("[data-select-area]");

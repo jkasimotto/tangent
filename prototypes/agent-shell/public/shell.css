@@ -315,12 +315,15 @@ button.area-brain-line:hover { background: #191d22; }
 .desk-definition b { color: #b7bec6; font-size: 10px; font-weight: 680; }
 
 .desk-documents { display: grid; gap: 1px; }
-.desk-documents button { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: baseline; gap: 9px; width: 100%; padding: 7px 5px; border: 0; border-bottom: 1px dotted #3e454e; background: transparent; color: inherit; cursor: pointer; text-align: left; }
+.desk-documents button { display: grid; grid-template-columns: 58px minmax(0, 1fr) auto auto; align-items: baseline; gap: 9px; width: 100%; padding: 7px 5px; border: 0; border-bottom: 1px dotted #3e454e; background: transparent; color: inherit; cursor: pointer; text-align: left; }
 .desk-documents button:last-child { border-bottom: 0; }
 .desk-documents button:hover strong { color: #fff; }
-.desk-documents span { color: #76818d; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
+.desk-documents span { color: #76818d; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .desk-documents strong { color: #cdd2d7; font-family: Georgia, "Times New Roman", serif; font-size: 14px; font-weight: 500; line-height: 1.35; overflow-wrap: anywhere; }
-.desk-documents b { color: #68727d; font-size: 11px; font-weight: 500; }
+.desk-documents small { min-width: 28px; color: #68727d; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
+.desk-documents em { min-width: 44px; color: #68727d; font-size: 11px; font-style: normal; text-align: right; white-space: nowrap; }
+.desk-shelf-more { display: block; width: 100%; margin-top: 6px; padding: 6px 5px; border: 0; background: transparent; color: #8fa0b3; cursor: pointer; font: inherit; font-size: 12px; font-weight: 600; text-align: left; }
+.desk-shelf-more:hover { color: #fff; }
 .desk-programs { display: grid; gap: 1px; }
 .desk-program { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 9px; border-bottom: 1px dotted #3e454e; }
 .desk-program:last-child { border-bottom: 0; }
@@ -1087,3 +1090,6 @@ button.desk-step:hover { border-color: #5a6470; }
 .area-row.done > span:first-child { color: var(--quiet); }
 .area-tree-done-toggle { margin: 10px 0 0 28px; padding: 6px 0; border: 0; background: transparent; color: var(--quiet); cursor: pointer; font: inherit; font-size: 12px; font-weight: 600; text-align: left; }
 .area-tree-done-toggle:hover { color: var(--text); }
+/* Beside the map the tree is narrow: the name wins, the path truncates. */
+.area-layout:has(.area-map-screen) .area-row > span:first-child { flex: none; max-width: 100%; }
+.area-layout:has(.area-map-screen) .area-row small { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }

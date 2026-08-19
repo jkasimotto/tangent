@@ -34,6 +34,7 @@ import { appendSteps, currentStep, endPipeline, goalBindingGoneFromSnapshot, new
 import { deliveryDecision, messageBanner, normalizeMessage } from "./agent-messages.mjs";
 import { beginGeneration, brainForArea, brainRecordForArea, brainSessionName, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, recordHandover, validateInstruction, writeBrain } from "./brain-record.mjs";
 import { appendNotice, inboxesForBrain, markDelivered, mergeNotices, noticeBlock, noticeDigest, readAllInboxes, readInbox, writeInbox } from "./brain-inbox.mjs";
+import { parseForJulian, removeForJulianLine, restoreForJulianLine } from "./for-julian.mjs";
 import { createSourceChangeMonitor } from "./source-change-monitor.mjs";
 import { promptArrived, splitPrompt, squash } from "./prompt-delivery.mjs";
 
@@ -2779,10 +2780,41 @@ async function reconcileBrains(sessions) {
   }
 }
 
+/** The plan text of one brain record, or "" when the plan does not exist yet. */
+async function brainPlanText(record) {
+  if (!record?.planFile) return "";
+  const safe = safeMarkdownPath(TREES_ROOT, record.planFile);
+  if (!safe) return "";
+  return readFile(safe.absolute, "utf8").catch(() => "");
+}
+
+/**
+ * The rows the brain wrote for Julian, resolved against the vault index so the
+ * desk can show titles and comment counts without a second request.
+ * Returns [] when the plan has no section.
+ */
+async function forJulianItems(record, index) {
+  const rows = parseForJulian(await brainPlanText(record));
+  return rows.map((row) => {
+    const item = { ...row, file: null, title: null, commentCount: 0, missing: false, goalStatus: null };
+    if (row.kind === "brain") return { ...item, title: row.text };
+    const hit = row.kind === "decision"
+      ? index.documents.find((document) => linkTargetsRecord(row.target, document))
+      : index.documents.find((document) => document.kind === "goal" && path.basename(document.file, ".md") === `goal-${row.target}`);
+    if (!hit) return { ...item, file: row.kind === "decision" ? row.target : null, title: row.target, missing: true };
+    if (row.kind === "decision") {
+      return { ...item, file: hit.file, title: hit.title, commentCount: hit.commentCount ?? 0 };
+    }
+    return { ...item, file: hit.file, title: hit.title, goalStatus: hit.status ?? null };
+  });
+}
+
 /** Every brain record with its current session's live state, for the desk. */
 async function brainsView(sessions) {
   const byName = new Map(sessions.map((item) => [item.name, item]));
-  return (await readAllBrains(BRAINS_ROOT)).map((record) => {
+  const index = await vaultIndex();
+  const records = await readAllBrains(BRAINS_ROOT);
+  return Promise.all(records.map(async (record) => {
     const live = record.session ? byName.get(record.session) : null;
     return {
       ...record,
@@ -2791,8 +2823,9 @@ async function brainsView(sessions) {
       stateDetail: live?.stateDetail ?? null,
       idleSince: live?.idleSince ?? null,
       latestHandover: latestHandover(record),
+      forJulian: await forJulianItems(record, index),
     };
-  });
+  }));
 }
 
 /** Stops one accepted assignment without claiming that its goal is done. */

@@ -179,6 +179,15 @@ test("the live shell restores context, defines work with an agent, and organizes
   let reviewAgentStarted = false;
   let tangentSessionState = "waiting";
   let liveEditBrainStarted = false;
+  // What the brain wrote in its plan's `## For Julian` section, as the server
+  // parses and resolves it: one line of each of the three kinds.
+  const decisionLine = "- Decision [[design-live-edit]]: 3 questions. Unblocks: the audit.";
+  const tryItLine = "- Try it [[goal-live-edit-collaboration]]: press Cmd+K, type a title, press Enter.";
+  let brainRowsForJulian = [
+    { kind: "decision", target: "design-live-edit", text: "3 questions", unblocks: "the audit", line: decisionLine, index: 1, file: liveEditDesign.file, title: "Live Edit collaboration design", commentCount: 2, missing: false, goalStatus: null },
+    { kind: "tryit", target: "live-edit-collaboration", text: "press Cmd+K, type a title, press Enter.", unblocks: null, line: tryItLine, index: 2, file: liveEditGoal.file, title: "Live Edit collaboration", commentCount: 0, missing: false, goalStatus: "open" },
+    { kind: "brain", target: null, text: "should the audit cover the Usage UI too?", unblocks: null, line: "- Brain: should the audit cover the Usage UI too?", index: 3, file: null, title: "should the audit cover the Usage UI too?", commentCount: 0, missing: false, goalStatus: null },
+  ];
   const describeSessions = [];
 
   window.localStorage.setItem("agent-shell.current-goal", goalFile);
@@ -213,6 +222,10 @@ test("the live shell restores context, defines work with an agent, and organizes
       const body = JSON.parse(options.body);
       posts.push({ path: pathname, body });
       if (pathname === "/api/goals/agent") reviewAgentStarted = true;
+      if (pathname === "/api/brains/tried") {
+        brainRowsForJulian = brainRowsForJulian.filter((row) => row.line !== body.line);
+        return jsonResponse({ ok: true, line: body.line, index: 2 });
+      }
       if (pathname === "/api/work/describe") {
         const first = describeSessions.length === 0;
         const session = {
@@ -250,7 +263,7 @@ test("the live shell restores context, defines work with an agent, and organizes
           ...(reviewAgentStarted ? [{ name: "live-edit-collaboration", goal: liveEditGoal.file, state: "waiting", phase: "collaborate", command: "codex" }] : []),
           ...(liveEditBrainStarted ? [{ name: "live-edit-brain", area: liveEditGoal.area, kind: "brain", state: "waiting", command: "claude" }] : []),
         ],
-        brains: liveEditBrainStarted ? [{ area: liveEditGoal.area, session: "live-edit-brain", live: true, generation: 1, state: "waiting", stateDetail: "decision" }] : [],
+        brains: liveEditBrainStarted ? [{ area: liveEditGoal.area, session: "live-edit-brain", live: true, generation: 1, state: "waiting", stateDetail: "decision", forJulian: brainRowsForJulian }] : [],
       });
     }
     if (pathname === "/api/programs") {
@@ -299,11 +312,13 @@ test("the live shell restores context, defines work with an agent, and organizes
 
   assert.ok(window.document.querySelector(".work-page"), "the desk shows the Work page");
   assert.equal(window.document.querySelectorAll(".area-desk-panel").length, 2);
-  assert.equal(window.document.querySelector(".attention-queue"), null, "Needs you now is hidden for now");
+  assert.match(window.document.querySelector(".attention-queue h2").textContent, /For you/, "the card is named For you");
+  assert.equal(window.document.querySelectorAll(".attention-queue .attention-items > *").length, 2, "without a brain the card is today's inferred rows");
+  assert.equal(window.document.querySelector(".for-you-group"), null, "no brain, no brain group");
   assert.deepEqual(dockBadges, []);
   await window.enableDockBadge();
   await settle(window);
-  assert.deepEqual(dockBadges, [2], "the Dock badge still follows deskAttentionItems even though the section is hidden");
+  assert.deepEqual(dockBadges, [2], "the Dock badge follows the For you count");
 
   // A live brain on the Live Edit Area takes over as Julian's touchpoint: its
   // Goal drops out of the attention list, and the brain's own row never
@@ -315,7 +330,34 @@ test("the live shell restores context, defines work with an agent, and organizes
   const itemsUnderBrain = window.deskAttentionItems();
   assert.ok(!itemsUnderBrain.some((item) => item.goal?.file === liveEditGoal.file), "a Goal in an Area a live brain covers drops out of the attention list");
   assert.ok(!itemsUnderBrain.some((item) => item.kind === "brain"), "the brain's own row does not appear; the Area card already shows it");
-  assert.equal(dockBadges.at(-1), 1, "the Dock badge count drops once the brain covers the Live Edit Goal");
+
+  // Under the brain, its own three rows lead the card, and the count is one
+  // number: the brain's rows plus the inferred rows of Areas without a brain.
+  const group = window.document.querySelector(".for-you-group");
+  assert.ok(group, "the brain's Area gets its own group");
+  assert.match(group.querySelector("header").textContent, /Reply to brain/, "the group header answers the brain in one press");
+  assert.equal(group.querySelector("[data-open-brain]").dataset.openBrain, "live-edit-brain");
+  const rows = [...group.querySelectorAll(".attention-items > *")];
+  assert.equal(rows.length, 3);
+  assert.match(rows[0].textContent, /Live Edit collaboration design/);
+  assert.match(rows[0].textContent, /3 questions · Unblocks: the audit · 2 comments left/);
+  assert.equal(rows[0].dataset.openDocument, liveEditDesign.file, "Read opens the Document Julian answers in");
+  assert.match(rows[1].textContent, /Tried it/);
+  assert.match(rows[2].textContent, /Brain asks/);
+  assert.equal(window.forYouItems().length, 4, "the brain's three rows plus the one inferred row left");
+  assert.equal(dockBadges.at(-1), 4, "the Dock badge counts what the brain wrote too");
+
+  // Tried it clears one Try it row, and the plan is the store: the next poll
+  // no longer carries it.
+  click(window, "[data-tried-line]");
+  await settle(window);
+  assert.equal(posts.at(-1).path, "/api/brains/tried");
+  assert.equal(posts.at(-1).body.line, tryItLine);
+  assert.equal(window.document.querySelectorAll(".for-you-group .attention-items > *").length, 2, "the row goes at once");
+  await window.refresh();
+  await settle(window);
+  assert.equal(window.document.querySelectorAll(".for-you-group .attention-items > *").length, 2, "and stays gone after the poll");
+
   liveEditBrainStarted = false;
   await window.refresh();
   await settle(window);

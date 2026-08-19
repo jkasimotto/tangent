@@ -51,6 +51,7 @@ const state = {
   brains: [],
   brainDraft: null,
   agentSessionName: null,
+  triedLines: new Set(), // For you rows a Tried it press hid, until the next poll drops them
   goalSelection: [], // checked Goal files in checked order; transient, work view only
   goTo: null, // the open Go to finder: { query, selected, rows, returnFocus }
   launchTarget: "",
@@ -1156,9 +1157,9 @@ function deskAttentionItems() {
 
 let dockBadgeCount = null;
 
-/** Keeps the installed Safari web app's Dock badge equal to the Needs you now projection. */
+/** Keeps the installed Safari web app's Dock badge equal to the For you count. */
 async function syncDockBadge() {
-  const count = deskAttentionItems().length;
+  const count = forYouItems().length;
   if (count === dockBadgeCount) return;
   const nativeBridge = window.__agentShellNativeDockBadge === true;
   if (!nativeBridge && (typeof Notification === "undefined" || Notification.permission !== "granted")) return;
@@ -1196,17 +1197,128 @@ async function enableDockBadge() {
   dockBadgeCount = null;
   await syncDockBadge();
   paint(true);
-  showToast("The Dock badge now follows Needs you now. No notification banners are sent.");
+  showToast("The Dock badge now follows For you. No notification banners are sent.");
+}
+
+/** Brain records that have rows for Julian: live ones, and stopped or ended ones whose plan still lists rows. */
+function brainsWithRowsForJulian() {
+  return (state.brains ?? []).filter((brain) => brain.live || (brain.forJulian ?? []).length);
 }
 
 /**
- * The "Needs you now" section is hidden for now: Julian's touchpoint per
- * Area is the brain, and the mixed list of idle pipeline agents was no
- * longer useful (a later design decides what replaces it). deskAttentionItems
- * still drives the Dock badge and the Work tab count.
+ * The brain-written rows, grouped by Area in brain record order. One group:
+ * { area, brain, rows: [row] }. A stopped or ended brain's group is marked
+ * stopped and gets one synthetic row { kind: "brain", text: "Brain stopped",
+ * resume: true } in front of its plan rows. A group with no row is left out:
+ * a brain with nothing for Julian says nothing.
+ */
+function forYouGroups() {
+  return brainsWithRowsForJulian()
+    .map((brain) => {
+      const rows = (brain.forJulian ?? []).filter((row) => !state.triedLines.has(row.line));
+      const stopped = !brain.live;
+      return {
+        area: brain.area,
+        brain,
+        stopped,
+        rows: stopped && rows.length ? [{ kind: "brain", text: "Brain stopped", resume: true, line: `resume:${brain.area}` }, ...rows] : rows,
+      };
+    })
+    .filter((group) => group.rows.length);
+}
+
+/** Every row Tangent shows for Julian: brain-written rows first, then today's inferred rows. */
+function forYouItems() {
+  return [...forYouGroups().flatMap((group) => group.rows), ...deskAttentionItems()];
+}
+
+/** One brain-written row: two lines and one action. */
+function forYouRow(group, row) {
+  const area = escapeHtml(group.area);
+  if (row.kind === "tryit") {
+    return `<div class="attention-row"><span><strong>${escapeHtml(row.title ?? row.target ?? "")}</strong><small>${escapeHtml(row.text)}</small></span>`
+      + `<button class="attention-tried" type="button" data-tried-area="${area}" data-tried-line="${escapeHtml(row.line)}">Tried it</button></div>`;
+  }
+  if (row.kind === "brain") {
+    if (row.resume) {
+      return `<button type="button" data-launch-for="${BRAIN_LAUNCH_TARGET}" data-brain-area="${area}"><span><strong>Brain stopped</strong><small>Its rows stay until it resumes.</small></span><span>Resume <b aria-hidden="true">→</b></span></button>`;
+    }
+    return `<button type="button" data-open-brain="${escapeHtml(group.brain.session ?? "")}"><span><strong>Brain asks</strong><small>${escapeHtml(row.text)}</small></span><span>Open brain <b aria-hidden="true">→</b></span></button>`;
+  }
+  const facts = [row.text, row.unblocks ? `Unblocks: ${row.unblocks}` : "", row.commentCount ? `${row.commentCount} ${row.commentCount === 1 ? "comment" : "comments"} left` : ""].filter(Boolean).join(" · ");
+  if (row.missing) {
+    return `<div class="attention-row"><span><strong>${escapeHtml(row.title ?? "")}</strong><small>Document missing · ${escapeHtml(row.target ?? "")} · ${escapeHtml(facts)}</small></span></div>`;
+  }
+  return `<button type="button" data-open-document="${escapeHtml(row.file)}"><span><strong>${escapeHtml(row.title ?? "")}</strong><small>${escapeHtml(facts)}</small></span><span>Read <b aria-hidden="true">→</b></span></button>`;
+}
+
+/** One inferred row: today's wording, for an Area no live brain covers. */
+function inferredRow(item) {
+  const name = item.session ? agentName(item.session) : "Handoff";
+  const action = item.kind === "definition"
+    ? `data-select-work-definition="${escapeHtml(item.session.name)}"`
+    : item.kind === "handoff" || item.kind === "pipeline"
+      ? `data-reveal-goal="${escapeHtml(item.goal.file)}"`
+      : `data-open-goal-run="${escapeHtml(item.goal.file)}"`;
+  const label = item.kind === "handoff" ? "See handoff" : item.kind === "pipeline" ? "See steps" : `Open ${name}`;
+  return `<button type="button" ${action}><span><small>${escapeHtml(areaLabel(item.area))}</small><strong>${escapeHtml(item.title)}</strong></span><span>${escapeHtml(label)} <b aria-hidden="true">→</b></span></button>`;
+}
+
+/**
+ * The For you card: what the brains wrote, then what Tangent still infers for
+ * the Areas no live brain covers. Under a live brain only its own list counts,
+ * so a static pane in a brain-run Area never reaches this card.
  */
 function deskAttentionQueue() {
-  return "";
+  const groups = forYouGroups();
+  const inferred = deskAttentionItems();
+  const count = groups.reduce((total, group) => total + group.rows.length, 0) + inferred.length;
+  if (!count) return "";
+  const enableBadge = typeof navigator.setAppBadge === "function"
+    && window.__agentShellNativeDockBadge !== true
+    && typeof Notification !== "undefined"
+    && Notification.permission !== "granted";
+  const groupMarkup = groups.map((group) => `
+    <div class="for-you-group${group.stopped ? " stopped" : ""}">
+      <header><span>${escapeHtml(areaLabel(group.area))}</span>${group.brain.live ? `<button class="attention-tried" type="button" data-open-brain="${escapeHtml(group.brain.session ?? "")}">Reply to brain</button>` : `<span class="for-you-stopped">Brain stopped</span>`}</header>
+      <div class="attention-items">${group.rows.map((row) => forYouRow(group, row)).join("")}</div>
+    </div>`).join("");
+  const inferredMarkup = inferred.length
+    ? `${groups.length ? `<div class="for-you-group"><header><span>Needs you now</span></header></div>` : ""}<div class="attention-items">${inferred.map(inferredRow).join("")}</div>`
+    : "";
+  return `
+    <section class="attention-queue" aria-labelledby="attention-heading">
+      <header><p class="kicker">Attention</p><h2 id="attention-heading">For you</h2>${enableBadge ? `<button class="attention-badge-button" type="button" data-enable-dock-badge>Show in Dock</button>` : ""}<span>${count}</span></header>
+      ${groupMarkup}${inferredMarkup}
+    </section>`;
+}
+
+/**
+ * Julian pressed `Tried it`: the row goes now and the plan follows. An Undo
+ * toast puts it back where it was, so a mis-press costs one click.
+ */
+async function clearTryItRow(area, line) {
+  state.triedLines.add(line);
+  paint(true);
+  try {
+    const result = await post("/api/brains/tried", { area, line });
+    /** Puts the line back into the plan and on the desk. */
+    const undo = async () => {
+      try {
+        await post("/api/brains/tried/undo", { area, line, index: result.index });
+        state.triedLines.delete(line);
+        await refresh();
+        paint(true);
+      } catch (error) {
+        showToast(error.message);
+      }
+    };
+    showToast("Tried it. The row is gone.", { label: "Undo", run: undo });
+  } catch (error) {
+    state.triedLines.delete(line);
+    paint(true);
+    showToast(error.message);
+  }
 }
 
 /**
@@ -2899,7 +3011,8 @@ function renderKey() {
     goal ? [goal.file, goal.status, goal.mtime, goal.stateText, goal.currentBrief, goal.storyText, goal.why, goal.subgoalItems, goal.documents] : null,
     [state.launch.area, state.launch.open, state.launch.editing, state.launch.command, state.launch.choice, state.launch.loading, Boolean(state.launch.options), state.launch.options?.default?.label ?? null, state.launch.options?.default?.command ?? null, state.launch.instruction, state.launch.continueFrom, state.launch.active, state.launch.steps, state.launch.record?.updatedAt ?? null],
     (state.pipelines ?? []).map((item) => [item.goal, item.status, item.updatedAt, item.steps.map((step) => [step.status, step.live, step.state, step.idleSince, step.waitingSince])]),
-    (state.brains ?? []).map((item) => [item.area, item.status, item.generation, item.session, item.live, item.state, item.stateDetail, item.updatedAt]),
+    (state.brains ?? []).map((item) => [item.area, item.status, item.generation, item.session, item.live, item.state, item.stateDetail, item.updatedAt, (item.forJulian ?? []).map((row) => [row.line, row.commentCount, row.missing])]),
+    [...state.triedLines],
     state.brainDraft,
     [state.launchTarget, state.launchAnchor, Boolean(state.harnessDraft)],
     state.sessions.map((item) => [item.name, item.goal, item.kind, item.area, item.state, item.phase, item.command, item.created, item.workTitle, item.launchLabel, item.waitingSince]),
@@ -2968,7 +3081,7 @@ function updateHeader() {
     : isAreas || isAreaEdit || isProgramDetail || isProgramCreate || isProgramSession || (isCreate && state.createReturnView === "areas")
       ? "areas"
       : "";
-  const attentionCount = deskAttentionItems().length;
+  const attentionCount = forYouItems().length;
   workTab.textContent = attentionCount ? `Work · ${attentionCount}` : "Work";
   workTab.classList.toggle("active", topLevel === "work");
   workTab.classList.toggle("has-attention", attentionCount > 0);
@@ -4634,6 +4747,11 @@ document.addEventListener("click", async (event) => {
   if (target.closest("[data-launch-change]")) {
     state.launch.open = true;
     return paint(true);
+  }
+  const triedRow = target.closest("[data-tried-line]");
+  if (triedRow) {
+    event.stopPropagation();
+    return clearTryItRow(triedRow.dataset.triedArea, triedRow.dataset.triedLine);
   }
   const openBrain = target.closest("[data-open-brain]");
   if (openBrain) return openBrainSession(openBrain.dataset.openBrain);

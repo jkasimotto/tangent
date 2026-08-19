@@ -134,6 +134,18 @@ test("a second selection that crosses an existing comment saves pieces and parse
   assert.equal(comments.removeComment(both, comments.parseComments(both)[1]), first);
 });
 
+test("a selection that crosses two existing comments saves three pieces and every comment keeps its own words", () => {
+  const first = comment(SENTENCE, "brown fox", "first").text;
+  const two = comment(first, "lazy dog", "second").text;
+  const three = comment(two, "fox jumps over the lazy", "third").text;
+  assert.equal(three, "The quick {==brown {==fox==}==}{>>Julian: first<<}{== jumps over the ==}{=={==lazy==}{>>Julian: third<<} dog==}{>>Julian: second<<}.");
+  assert.deepEqual(quotes(three), [["first", "brown fox"], ["third", "fox jumps over the lazy"], ["second", "lazy dog"]]);
+  assert.equal(comments.parseComments(three)[1].pieces.length, 3);
+  assert.equal(comments.removeComment(three, comments.parseComments(three)[1]), two);
+  const withoutFirst = comments.removeComment(three, comments.parseComments(three)[0]);
+  assert.deepEqual(quotes(withoutFirst), [["third", "fox jumps over the lazy"], ["second", "lazy dog"]]);
+});
+
 test("a second selection inside, containing, or on the same words nests or shares one mark", () => {
   const first = comment(SENTENCE, "brown fox", "first").text;
   const inside = comment(first, "fox", "second").text;

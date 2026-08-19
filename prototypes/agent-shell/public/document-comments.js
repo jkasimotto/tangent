@@ -256,12 +256,16 @@
             pieces = [last.mark];
             dropMark(orphans, last.mark);
             // A closed mark with no comment of its own belongs to the next
-            // comment whose mark touches it: only comment markup stands between.
-            for (const orphan of [...orphans]) {
-              if (orphan.end > last.mark.start) continue;
-              if (!coveredBetween(tokenRanges, orphan.end, last.mark.start)) continue;
+            // comment whose mark touches it: only markup stands between it and
+            // the piece already claimed. Walk backward piece by piece, so a mark
+            // in three or more pieces is joined whole.
+            let earliest = last.mark.start;
+            for (const orphan of [...orphans].sort((a, b) => b.end - a.end)) {
+              if (orphan.end > earliest) continue;
+              if (!coveredBetween(tokenRanges, orphan.end, earliest)) continue;
               pieces.push(orphan);
               dropMark(orphans, orphan);
+              earliest = orphan.start;
             }
             pieces.sort((a, b) => a.start - b.start);
           }

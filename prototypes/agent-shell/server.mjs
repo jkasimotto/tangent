@@ -2841,13 +2841,21 @@ async function forJulianItems(record, index) {
 }
 
 /**
+ * The brain record of exactly this Area, running or not. A stopped brain's
+ * rows stay on the desk, so its plan is still Julian's to edit.
+ */
+async function brainOfArea(area) {
+  return (await readAllBrains(BRAINS_ROOT)).find((record) => record.area === area) ?? null;
+}
+
+/**
  * Julian pressed `Tried it` on one Try it row: the line leaves the plan's
  * `## For Julian` section and the plan is committed. Only a Try it line can
  * go this way; the brain clears its own Decision and Brain lines. The brain
  * need not be live: a stopped brain's Try it row is still Julian's to clear.
  */
 async function clearTryItLine(area, line) {
-  const record = brainForArea(await readAllBrains(BRAINS_ROOT), area);
+  const record = await brainOfArea(area);
   if (!record) return { status: 404, error: `no brain on ${area || "(none)"}` };
   if (!String(line ?? "").trim()) return { status: 400, error: "no line" };
   const current = await readVaultDocument(record.planFile);
@@ -2863,7 +2871,7 @@ async function clearTryItLine(area, line) {
 
 /** Puts one cleared Try it line back where it was, for the undo toast. */
 async function restoreTryItLine(area, line, index) {
-  const record = brainForArea(await readAllBrains(BRAINS_ROOT), area);
+  const record = await brainOfArea(area);
   if (!record) return { status: 404, error: `no brain on ${area || "(none)"}` };
   if (!String(line ?? "").trim()) return { status: 400, error: "no line" };
   const current = await readVaultDocument(record.planFile);

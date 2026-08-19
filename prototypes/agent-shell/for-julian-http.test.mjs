@@ -280,6 +280,14 @@ test("Tried it removes one Try it line, and undo puts it back", async (context) 
   const noBrain = await post(probe.base, "/api/brains/tried", { area: "otto/nowhere", line: probe.lines.tryit });
   assert.equal(noBrain.status, 404, JSON.stringify(noBrain.body));
   assert.equal((await brainOf(probe.base)).forJulian.length, 3, "a refused press changes nothing");
+
+  // A stopped brain's rows stay on the desk, so its Try it row is still
+  // Julian's to clear.
+  await killSession(probe.brain.session);
+  await waitFor("the brain to be stopped", async () => (await brainOf(probe.base))?.live === false);
+  const stopped = await post(probe.base, "/api/brains/tried", { area: probe.area, line: probe.lines.tryit });
+  assert.equal(stopped.status, 200, JSON.stringify(stopped.body));
+  assert.equal((await readFile(probe.planFile, "utf8")).includes(probe.lines.tryit), false);
 });
 
 test("a saved comment on a listed Document wakes its brain, and only that Document does", async (context) => {

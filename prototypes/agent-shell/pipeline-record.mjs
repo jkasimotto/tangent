@@ -160,6 +160,27 @@ export function nextPendingStep(record, afterIndex) {
   return steps.find((step) => step.status === "pending" && step.index > afterIndex) ?? null;
 }
 
+// A sessions snapshot the server polls tmux for can predate a step or Goal
+// binding written moments earlier (spawnGoalSession creates the tmux session
+// and writes the binding before the next poll can see it): a reconcile pass
+// racing that stale snapshot must not treat the missing session as gone.
+export const RECONCILE_GRACE_MS = 30_000;
+
+/**
+ * True while `at` (an epoch ms, or NaN/undefined) is recent enough that a
+ * sessions snapshot taken around `now` cannot be trusted to include
+ * whatever tmux session it caused.
+ */
+export function withinReconcileGrace(at, now = Date.now(), graceMs = RECONCILE_GRACE_MS) {
+  return typeof at === "number" && !Number.isNaN(at) && now - at < graceMs;
+}
+
+/** True while a running step started too recently for a stale sessions snapshot to be trusted about it being gone. */
+export function stepStartedWithinGrace(step, now = Date.now(), graceMs = RECONCILE_GRACE_MS) {
+  const startedAt = step?.startedAt ? Date.parse(step.startedAt) : NaN;
+  return withinReconcileGrace(startedAt, now, graceMs);
+}
+
 /**
  * Derived pipeline status. isLive(sessionName) tells whether a running
  * step's session still exists; a running step whose session is gone counts

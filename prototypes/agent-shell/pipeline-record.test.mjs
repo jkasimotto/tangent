@@ -6,6 +6,7 @@ import path from "node:path";
 
 import {
   PIPELINE_SCHEMA,
+  RECONCILE_GRACE_MS,
   appendSteps,
   currentStep,
   deletePipeline,
@@ -17,7 +18,9 @@ import {
   pipelineStatus,
   readAllPipelines,
   readPipeline,
+  stepStartedWithinGrace,
   validateSteps,
+  withinReconcileGrace,
   writePipeline
 } from "./pipeline-record.mjs";
 
@@ -232,6 +235,37 @@ test("pipelineFinished is true only when every step is complete, skipped, or end
   assert.equal(pipelineFinished(recordWith(["complete", "pending"])), false);
   assert.equal(pipelineFinished(recordWith(["complete", "stopped"])), false);
   assert.equal(pipelineFinished({ steps: [] }), false);
+});
+
+test("withinReconcileGrace is true only for a recent timestamp", () => {
+  const now = Date.parse("2026-08-19T13:14:00.000Z");
+  assert.equal(withinReconcileGrace(now - 1, now), true);
+  assert.equal(withinReconcileGrace(now - (RECONCILE_GRACE_MS - 1), now), true);
+  assert.equal(withinReconcileGrace(now - RECONCILE_GRACE_MS, now), false);
+  assert.equal(withinReconcileGrace(now - RECONCILE_GRACE_MS - 1, now), false);
+  assert.equal(withinReconcileGrace(undefined, now), false);
+  assert.equal(withinReconcileGrace(NaN, now), false);
+});
+
+test("stepStartedWithinGrace reproduces the race: a step started after a stale sessions snapshot is not yet gone", () => {
+  // Mirrors the 2026-08-19 incident: startPipelineStep records startedAt,
+  // then a reconcile pass runs 240 ms later against a sessions list gathered
+  // before the tmux session existed. The step must not read as gone yet.
+  const startedAt = "2026-08-19T13:13:51.000Z";
+  const reconcileRanAt = Date.parse(startedAt) + 240;
+  const step = { status: "running", session: "tangent--shift-enter", startedAt };
+  assert.equal(stepStartedWithinGrace(step, reconcileRanAt), true);
+
+  // A step that is genuinely gone (its session never reappears) still gets
+  // reaped once the grace period passes.
+  const laterReconcile = Date.parse(startedAt) + RECONCILE_GRACE_MS + 1;
+  assert.equal(stepStartedWithinGrace(step, laterReconcile), false);
+});
+
+test("stepStartedWithinGrace is false without a usable startedAt", () => {
+  assert.equal(stepStartedWithinGrace({ status: "running", session: "s" }), false);
+  assert.equal(stepStartedWithinGrace({ status: "running", session: "s", startedAt: null }), false);
+  assert.equal(stepStartedWithinGrace({ status: "running", session: "s", startedAt: "not a date" }), false);
 });
 
 test("endPipeline ends what has not run and leaves history alone", () => {

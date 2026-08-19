@@ -86,9 +86,16 @@ async function startCommand(args: Args): Promise<void> {
     console.log(JSON.stringify(result, null, 2));
     return;
   }
+  printLaunchWarnings(result);
   const session = result.session ? String(result.session) : "(no session)";
   if (steps.length) console.log(`started ${slug}: ${steps.length} step${steps.length === 1 ? "" : "s"}, step 1 in ${session}`);
   else console.log(`started ${slug} in ${session}`);
+}
+
+/** Prints one line per step whose --launch harness differs from the Area's default; the server computes them. */
+function printLaunchWarnings(result: { warnings?: unknown }): void {
+  const warnings = Array.isArray(result.warnings) ? (result.warnings as string[]) : [];
+  for (const warning of warnings) console.error(`warning: ${warning}`);
 }
 
 /**
@@ -108,6 +115,7 @@ async function appendCommand(args: Args): Promise<void> {
     console.log(JSON.stringify(result, null, 2));
     return;
   }
+  printLaunchWarnings(result);
   const added = Array.isArray(result.added) ? (result.added as number[]) : [];
   const which = added.length > 1 ? `steps ${added[0]} to ${added[added.length - 1]}` : `step ${added[0] ?? "?"}`;
   const next = result.next as { index?: number; session?: string } | null | undefined;

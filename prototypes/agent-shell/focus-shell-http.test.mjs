@@ -538,6 +538,11 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(startedPipeline.pipeline.steps[0].command, "fake-agent --model one --effort high");
   assert.equal(startedPipeline.pipeline.steps[0].label, "Fake · One · High");
   assert.ok(existsSync(path.join(root, "pipelines", "otto", "test", "pipeline-demo.json")));
+  // otto/test's default harness is claude-otto (profile fallback); steps 1 and
+  // 2 named a different harness, so the server warns without blocking either.
+  assert.equal(startedPipeline.warnings.length, 2);
+  assert.match(startedPipeline.warnings[0], /step 1: --launch fake\/one differs from otto\/test's default harness claude-otto\./);
+  assert.match(startedPipeline.warnings[1], /step 2: --launch fake\/one differs from otto\/test's default harness claude-otto\./);
   let goalText = await readFile(path.join(trees, pipelineGoal.file), "utf8");
   assert.match(goalText, /^status: active$/m);
   assert.match(goalText, /^session: test-pipeline-demo$/m);
@@ -771,6 +776,7 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.match(serverSource, /# Brain for \$\{area\}/);
   assert.match(serverSource, /tangent brain handover/);
   assert.match(serverSource, /Sonnet is the workhorse/);
+  assert.match(serverSource, /Every --launch in this Area is \$\{harness\}/);
   const emptyBrain = await fetch(`${base}/api/brains/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -805,6 +811,10 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(brainAgain.session, "test-brain");
   const brainShow = await fetch(`${base}/api/brains/show?session=test-brain`).then((response) => response.json());
   assert.equal(brainShow.brain.area, "otto/test");
+  // otto/test resolves to claude-otto (profile fallback); the prompt states
+  // it in plain words and every example launch uses it, never plain claude.
+  assert.match(brainShow.prompt, /Every --launch in this Area is claude-otto\/<model>/);
+  assert.doesNotMatch(brainShow.prompt, /claude\//);
   assert.equal((await fetch(`${base}/api/brains/show?area=otto%2Fnowhere`)).status, 404);
   const briefUnderBrain = await fetch(`${base}/api/goals/brief?file=${encodeURIComponent(pipelineGoal.file)}`).then((response) => response.json());
   assert.match(briefUnderBrain.markdown, /## Brain\n\nThis Goal is part of the plan of the brain session `test-brain` for Area otto\/test/);

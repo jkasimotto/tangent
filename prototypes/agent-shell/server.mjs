@@ -1940,6 +1940,34 @@ async function resolveStepLaunch(step) {
 }
 
 /**
+ * The Area's resolved harness id in plain words: the registry harness id
+ * when the default resolves through the registry, else the bare command
+ * from the profile or legacy fallback (a single word, no arguments). Null
+ * when the Area's launch is broken or the fallback command carries
+ * arguments, so callers skip rather than compare against a guess.
+ */
+async function areaHarnessId(area) {
+  const launch = await launchForArea(area);
+  if (launch.error) return null;
+  if (launch.harness) return launch.harness;
+  const command = String(launch.command ?? "").trim();
+  return command && !command.includes(" ") ? command : null;
+}
+
+/**
+ * One warning per step whose explicit --launch harness differs from the
+ * Area's inherited default. Warns, never blocks: the step's own choice is
+ * still honored.
+ */
+async function launchHarnessWarnings(area, steps) {
+  const areaHarness = await areaHarnessId(area);
+  if (!areaHarness) return [];
+  return steps
+    .filter((step) => step.launch?.harness && step.launch.harness !== areaHarness)
+    .map((step) => `step ${step.index}: --launch ${step.launch.harness}${step.launch.model ? `/${step.launch.model}` : ""} differs from ${area}'s default harness ${areaHarness}.`);
+}
+
+/**
  * Starts one pending step: fresh session by default, or the step prompt
  * delivered into an earlier step's live session when the step continues it.
  * The Goal binds to whichever session now works it.
@@ -2010,8 +2038,11 @@ async function startPipeline(file, { steps, extraFiles = [] } = {}) {
   // and leaves no record and no session behind.
   const first = await resolveStepLaunch(record.steps[0]);
   if (first.error) return { status: 409, error: `step 1: ${first.error}` };
+  const warnings = await launchHarnessWarnings(o.area, record.steps);
   await writePipeline(PIPELINES_ROOT, record);
-  return startPipelineStep(record, 1);
+  const started = await startPipelineStep(record, 1);
+  if (started.status !== 200) return started;
+  return { ...started, warnings };
 }
 
 /** Finds the record and step a live session works, or null. */
@@ -2161,9 +2192,10 @@ async function appendPipelineSteps(goalFile, steps) {
   // names itself and leaves the record as it was.
   const first = await resolveStepLaunch(added[0]);
   if (first.error) return { status: 409, error: `step ${added[0].index}: ${first.error}` };
+  const warnings = await launchHarnessWarnings(record.area, added);
   if (!finished) {
     await writePipeline(PIPELINES_ROOT, record);
-    return { status: 200, state: "queued", after: currentStep(record)?.index ?? last.index, added: added.map((step) => step.index), pipeline: record };
+    return { status: 200, state: "queued", after: currentStep(record)?.index ?? last.index, added: added.map((step) => step.index), pipeline: record, warnings };
   }
   const sessions = last.status === "complete" && last.session ? await withAgentStates(await listSessions()) : [];
   const live = sessions.find((session) => session.name === last.session && session.state !== "shell");
@@ -2172,12 +2204,12 @@ async function appendPipelineSteps(goalFile, steps) {
     last.endedAt = null;
     await writePipeline(PIPELINES_ROOT, record);
     queueAgentMessage(last.session, { from: "tangent", area: record.area, text: handoverAgainMessage(last, added), banner: false, queuedAt: new Date().toISOString() });
-    return { status: 200, state: "asked", after: last.index, session: last.session, added: added.map((step) => step.index), pipeline: record };
+    return { status: 200, state: "asked", after: last.index, session: last.session, added: added.map((step) => step.index), pipeline: record, warnings };
   }
   await writePipeline(PIPELINES_ROOT, record);
   const started = await startPipelineStep(record, added[0].index);
   if (started.status !== 200) return started;
-  return { status: 200, state: "started", next: { index: added[0].index, session: started.session }, added: added.map((step) => step.index), pipeline: record };
+  return { status: 200, state: "started", next: { index: added[0].index, session: started.session }, added: added.map((step) => step.index), pipeline: record, warnings };
 }
 
 /** Edits one pending step; started steps are history. */
@@ -2297,6 +2329,18 @@ async function notifyBrain(area, text) {
   }
 }
 
+/**
+ * The registry model ids one harness offers, or the standard three
+ * (fable-5, sonnet-5, opus-5) when the harness is not in the registry
+ * (the profile and legacy fallbacks never resolve through it).
+ */
+async function areaHarnessModelIds(harnessId) {
+  const registry = await harnessRegistry();
+  const entry = !registry.error ? (registry.harnesses ?? []).find((item) => item.id === harnessId) : null;
+  const ids = entry ? harnessModels(registry, entry).map((model) => model.id) : [];
+  return ids.length ? ids : ["fable-5", "sonnet-5", "opus-5"];
+}
+
 /** The first message of one brain generation: instruction, sources, policy. */
 async function brainPrompt(record) {
   const area = record.area;
@@ -2305,6 +2349,13 @@ async function brainPrompt(record) {
   const documents = (await readAreaDocuments(area)).filter((doc) => doc.file !== record.planFile);
   const planPath = path.join(TREES_ROOT, record.planFile);
   const handover = latestHandover(record);
+  const harness = (await areaHarnessId(area)) ?? "claude";
+  const modelIds = await areaHarnessModelIds(harness);
+  /** The wanted model id when the harness offers it, else its first model. */
+  const pickModel = (id) => (modelIds.includes(id) ? id : modelIds[0]);
+  const designModel = pickModel("fable-5");
+  const implementModel = pickModel("sonnet-5");
+  const harnessRule = `Every --launch in this Area is ${harness}/<model>; models: ${modelIds.join(", ")}; never another harness unless Julian says so.`;
   const sourceLines = [
     `- Plan: ${planPath} (yours; create it if it does not exist)`,
     `- Area folder: ${path.join(TREES_ROOT, area)}`,
@@ -2318,10 +2369,11 @@ async function brainPrompt(record) {
     `## Sources\n\n${sourceLines.join("\n")}\n\n` +
     (handover ? `## Handover from generation ${generation - 1}\n\n${handover}\n\n` : "") +
     `## How to work\n\n` +
+    `${harnessRule}\n\n` +
     `Read the plan first when it exists, then the Area notes from nearest to farthest, then the Documents that matter. Look at the Area's repository when code answers a question better than a guess.\n\n` +
     `Write the plan before you start anything: the instruction in your words, the sub-Areas and Goals you will create, the waves in dependency order, and what you decided. Keep it current: what runs, what came back, what you decided next. Commit it with \`tangent vault commit\`. Julian reads the plan and may leave comments in it (\`{>>Julian: ...<<}\`); \`tangent document comments <file>\` lists them and \`tangent document resolve\` closes one after the work is done.\n\n` +
     `Split the work into Goals: a Goal is a result with a clear finish. Create a sub-Area only for a durable subject Julian will return to (\`tangent area create <parent> <name>\`). Give each Goal a description a fresh agent can start from: intent, what Julian decided, and the Documents and code that matter (\`tangent goal create --area ${area} --title "..." --done-when "..." --description "..." --source <vault-file>\`).\n\n` +
-    `Start each leaf Goal as a pipeline, for example: \`tangent goal start <slug> --step "/design this Goal" --launch claude/fable-5 --step "/impl the design at <path>" --launch claude/fable-5 --step "implement the solution" --launch claude/sonnet-5 --step "review the implementation against the design and solution; fix what is wrong" --launch claude/fable-5\`. Judge each Goal: when the work is small and clear, one implementer step is enough; when it is hard or vague, raise the implementer to Opus or Fable and keep the design step. Fable plans, designs, decomposes, and reviews; Sonnet is the workhorse. Run one implementing pipeline per repository at a time; design and review steps may run in parallel. \`tangent agent list\` shows what runs and \`tangent goal list ${area}\` shows the Goals.\n\n` +
+    `Start each leaf Goal as a pipeline, for example: \`tangent goal start <slug> --step "/design this Goal" --launch ${harness}/${designModel} --step "/impl the design at <path>" --launch ${harness}/${designModel} --step "implement the solution" --launch ${harness}/${implementModel} --step "review the implementation against the design and solution; fix what is wrong" --launch ${harness}/${designModel}\`. Judge each Goal: when the work is small and clear, one implementer step is enough; when it is hard or vague, raise the implementer to Opus or Fable and keep the design step. Fable plans, designs, decomposes, and reviews; Sonnet is the workhorse. Run one implementing pipeline per repository at a time; design and review steps may run in parallel. \`tangent agent list\` shows what runs and \`tangent goal list ${area}\` shows the Goals.\n\n` +
     `Tangent sends you messages: a step handed over, a pipeline completed, a step stopped or sat idle, a Goal session ended. Read the handover and the files. When a review asks for changes, \`tangent goal append <slug> --step "..." --launch ...\`. When a result is good, note it in the plan and start what its completion unblocked. Workers may message you; answer with \`tangent agent send <session> "<text>"\`.\n\n` +
     `Ask Julian only for real decisions; ask here, he sees it. Julian started this brain to get the Area done, and that start is his word on Goal status for the Goals under it: when a Goal's review passes and its done condition holds, write the verdict into the Goal's State section, then run \`tangent goal done <slug>\`; when a Goal turns out wrong, \`tangent goal wont-do <slug> --reason "..."\`. His instruction above can narrow this (for example, ask before closing). Goals outside your plan stay his.\n\n` +
     `## When to hand over\n\n` +
@@ -2952,7 +3004,7 @@ const server = http.createServer(async (req, res) => {
       const brains = await brainsView(sessions).catch(() => []);
       const brain = brains.find((item) => (area && item.area === area) || (session && item.session === session)) ?? null;
       res.writeHead(brain ? 200 : 404, { "content-type": "application/json" });
-      res.end(JSON.stringify(brain ? { brain } : { error: area ? `no brain on ${area}` : "this session is not a brain" }));
+      res.end(JSON.stringify(brain ? { brain, prompt: await brainPrompt(brain) } : { error: area ? `no brain on ${area}` : "this session is not a brain" }));
       return;
     }
     // A step agent hands facts to the next step; the server advances the line.
@@ -2988,7 +3040,7 @@ const server = http.createServer(async (req, res) => {
       try { body = JSON.parse(await readBody(req)); } catch {}
       const result = await appendPipelineSteps(String(body.goal ?? ""), Array.isArray(body.steps) ? body.steps : []);
       res.writeHead(result.status, { "content-type": "application/json" });
-      res.end(JSON.stringify(result.status === 200 ? { status: result.state, after: result.after ?? null, next: result.next ?? null, session: result.session ?? null, added: result.added, pipeline: result.pipeline } : { error: result.error }));
+      res.end(JSON.stringify(result.status === 200 ? { status: result.state, after: result.after ?? null, next: result.next ?? null, session: result.session ?? null, added: result.added, pipeline: result.pipeline, warnings: result.warnings ?? [] } : { error: result.error }));
       return;
     }
     if (url.pathname === "/api/pipelines/edit" && req.method === "POST") {
@@ -3549,7 +3601,7 @@ const server = http.createServer(async (req, res) => {
             extraFiles: Array.isArray(body.extraFiles) ? body.extraFiles.map(String) : [],
           });
           res.writeHead(result.status, { "content-type": "application/json" });
-          res.end(JSON.stringify(result.status === 200 ? { session: result.session, pipeline: result.pipeline } : { error: result.error }));
+          res.end(JSON.stringify(result.status === 200 ? { session: result.session, pipeline: result.pipeline, warnings: result.warnings ?? [] } : { error: result.error }));
         } catch (err) {
           res.writeHead(500, { "content-type": "application/json" });
           res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));

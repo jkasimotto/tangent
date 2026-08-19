@@ -42,8 +42,13 @@ test("removing every comment restores the original text, and resolve matches exa
   assert.doesNotMatch(resolved.text, /Wrong here/);
   assert.match(comments.resolveComment(text, "nothing like this").error, /No open comment/);
   assert.equal(comments.resolveComment(text, "").matches.length, 0);
+  // Offsets move with every removal, so the text is parsed again between them.
   let stripped = text;
-  for (const comment of comments.parseComments(stripped).reverse()) stripped = comments.removeComment(stripped, comment);
+  for (let guard = 0; guard < 5; guard += 1) {
+    const parsed = comments.parseComments(stripped);
+    if (!parsed.length) break;
+    stripped = comments.removeComment(stripped, parsed.at(-1));
+  }
   assert.equal(stripped, DOCUMENT);
 });
 
@@ -51,4 +56,56 @@ test("editing keeps the place and the quoted words", () => {
   const text = comments.insertComment(DOCUMENT, { kind: "selection", quote: "some words" }, "Old").text;
   const [comment] = comments.parseComments(text);
   assert.match(comments.replaceCommentText(text, comment, "New words"), /\{==some words==\}\{>>Julian: New words<<\} here/);
+});
+
+/** Every comment of one line as author-free pairs, for a short assertion. */
+function quotes(text) {
+  return comments.parseComments(text).map((comment) => [comment.text, comment.quote]);
+}
+
+test("visibleLine maps rendered characters back to the source", () => {
+  const line = "## Intro with **bold**, `code`, [[target|alias]], [label](https://x) and {==old==}{>>Julian: c<<} end";
+  const tokens = comments.commentTokensOnLine(comments.parseComments(line), 0);
+  const visible = comments.visibleLine(line, tokens);
+  assert.equal(visible.text, "Intro with bold, code, alias, label and old end");
+  assert.equal(line[visible.offsets[visible.text.indexOf("bold")]], "b");
+  assert.equal(visible.spans.length, 4, "bold, code, wiki link, and Markdown link each stay one unit");
+});
+
+test("marks nest, share, and come in pieces, and each comment keeps its own words", () => {
+  assert.deepEqual(quotes("{==brown fox==}{>>Julian: first<<}"), [["first", "brown fox"]]);
+  assert.deepEqual(quotes("{==brown fox==}{>>Julian: first<<}{>>Julian: second<<}"), [["first", "brown fox"], ["second", "brown fox"]]);
+  assert.deepEqual(quotes("{==brown {==fox==}{>>Julian: second<<}==}{>>Julian: first<<}"), [["second", "fox"], ["first", "brown fox"]]);
+  assert.deepEqual(quotes("{=={==brown fox==}{>>Julian: first<<} jumps==}{>>Julian: second<<}"), [["first", "brown fox"], ["second", "brown fox jumps"]]);
+  assert.deepEqual(quotes("{==brown {==fox==}==}{>>Julian: first<<}{== jumps==}{>>Julian: second<<}"), [["first", "brown fox"], ["second", "fox jumps"]]);
+  assert.deepEqual(quotes("brown {==fox==}{== jumps==}{>>Julian: second<<}"), [["second", "fox jumps"]]);
+  assert.deepEqual(quotes("{==runs **home** fast==}{>>Julian: x<<}"), [["x", "runs home fast"]]);
+  // A closed mark that no comment touches stays plain text.
+  assert.deepEqual(quotes("{==a==} b {==c==}{>>Julian: x<<}"), [["x", "c"]]);
+  const pieced = comments.parseComments("{==brown {==fox==}==}{>>Julian: first<<}{== jumps==}{>>Julian: second<<}");
+  assert.equal(pieced[1].pieces.length, 2, "a crossing comment records both pieces of its mark");
+  assert.deepEqual(comments.commentTokensOnLine(pieced, 0).map((token) => token.kind), ["open", "open", "close", "close", "comment", "open", "close", "comment"]);
+});
+
+test("removing one comment of an overlapping pair leaves the other exact", () => {
+  const crossing = "The quick {==brown {==fox==}==}{>>Julian: first<<}{== jumps==}{>>Julian: second<<} over.";
+  /** The text with the one comment whose words are `body` taken out. */
+  const without = (text, body) => comments.removeComment(text, comments.parseComments(text).find((comment) => comment.text === body));
+  assert.equal(without(crossing, "first"), "The quick brown {==fox==}{== jumps==}{>>Julian: second<<} over.");
+  assert.deepEqual(quotes(without(crossing, "first")), [["second", "fox jumps"]]);
+  assert.equal(without(crossing, "second"), "The quick {==brown fox==}{>>Julian: first<<} jumps over.");
+  const nested = "The {==brown {==fox==}{>>Julian: second<<}==}{>>Julian: first<<} jumps.";
+  assert.deepEqual(quotes(without(nested, "first")), [["second", "fox"]]);
+  assert.deepEqual(quotes(without(nested, "second")), [["first", "brown fox"]]);
+  const shared = "The {==brown fox==}{>>Julian: first<<}{>>Julian: second<<} jumps.";
+  assert.equal(without(shared, "first"), "The {==brown fox==}{>>Julian: second<<} jumps.");
+  assert.equal(without(shared, "second"), "The {==brown fox==}{>>Julian: first<<} jumps.");
+  // Taking every comment out, newest first, puts the original sentence back.
+  let stripped = crossing;
+  for (let guard = 0; guard < 5; guard += 1) {
+    const parsed = comments.parseComments(stripped);
+    if (!parsed.length) break;
+    stripped = comments.removeComment(stripped, parsed.at(-1));
+  }
+  assert.equal(stripped, "The quick brown fox jumps over.");
 });

@@ -285,13 +285,20 @@ function markdownToHtml(text, options = {}) {
     if (composer && !composer.editing && composer.placeLine === fileLine) parts.push(commentComposerHtml(composer));
     return parts.join("");
   };
-  /** Removes comment markup from one line, leaving a marker for quoted words. */
+  /** Removes comment markup from one line, leaving an open and a close marker for each mark. */
   const stripComments = (value, fileLine) => {
-    let line = value;
-    for (const comment of comments.filter((comment) => comment.line === fileLine)) {
-      line = line.replace(comment.markup, comment.quote != null ? `\u0005${comment.index}\u0006${comment.quote}\u0005\u0006` : "");
+    if (!comments.length) return value;
+    const tokens = window.AgentShellDocumentComments.commentTokensOnLine(comments, fileLine);
+    if (!tokens.length) return value;
+    let out = "";
+    let cursor = 0;
+    for (const token of tokens) {
+      out += value.slice(cursor, token.from);
+      if (token.kind === "open") out += `\u0005${token.index}\u0006`;
+      else if (token.kind === "close") out += "\u0005\u0006";
+      cursor = Math.max(cursor, token.to);
     }
-    return line;
+    return out + value.slice(cursor);
   };
   if (composer && !composer.editing && composer.placeLine < 0) html.push(commentComposerHtml(composer));
   let list = null;
@@ -353,7 +360,10 @@ function markdownToHtml(text, options = {}) {
     }
   }
   closeList();
-  return html.join("").replace(/\u0005(\d+)\u0006([\s\S]*?)\u0005\u0006/g, '<mark class="document-comment-mark" data-comment-index="$1">$2</mark>');
+  // Marks nest as their brackets nest, so every token becomes its own tag.
+  return html.join("")
+    .replace(/\u0005(\d+)\u0006/g, '<mark class="document-comment-mark" data-comment-index="$1">')
+    .replace(/\u0005\u0006/g, "</mark>");
 }
 
 /** One comment as a red-ruled block: author, words, and an always-visible remove control. */

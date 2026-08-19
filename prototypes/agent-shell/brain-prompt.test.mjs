@@ -171,9 +171,6 @@ test("the brain prompt tells the brain to close finished Goals itself, not leave
   assert.match(show.prompt, /run `tangent goal done <slug>` in that same turn/, "run goal done in the same turn a review passes");
   assert.match(show.prompt, /Before every handover, sweep `tangent goal list otto\/probesweep` and `tangent agent list`/, "sweep goal list and agent list before every handover");
   assert.match(show.prompt, /a failure of the brain, not a question for Julian/, "a finished Goal left waiting is a failure, not a question for Julian");
-  assert.match(show.prompt, /rebuild and restart the server yourself before you tell him/, "the brain owns the Try it duty: rebuild and restart before telling Julian");
-  assert.match(show.prompt, /npm run build.*launchctl kickstart -k gui\/\$\(id -u\)\/com\.tangent\.agent-shell/, "the Try it duty names the actual Tangent rebuild and restart commands");
-  assert.match(show.prompt, /send him a short Try it note in this session: where to go, what to press, what he should see/, "the Try it duty ends in a note Julian can act on");
 });
 
 test("a pipeline step under a brain sends its decisions and blockers to the brain, and never waits on Julian in its terminal", async () => {
@@ -188,4 +185,74 @@ test("a pipeline step under a brain sends its decisions and blockers to the brai
     /If a real decision needs Julian, ask him here; the pipeline waits\./,
     "a pipeline step with no brain on the Area keeps asking Julian directly"
   );
+});
+
+test("the brain prompt tells the brain the For Julian line shapes and the rebuild rule", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-brain-forjulian-"));
+  const trees = path.join(root, "trees");
+  const leaf = `probeforjulian${process.pid}`;
+  const area = path.join(trees, "otto", leaf);
+  await mkdir(area, { recursive: true });
+  await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
+  await writeFile(path.join(area, `${leaf}.md`), `---\ntype: area\n---\n\n# ${leaf}\n`, "utf8");
+
+  let port;
+  try {
+    port = await freePort();
+  } catch (error) {
+    if (error?.code === "EPERM") {
+      context.skip("This environment does not permit local HTTP listeners.");
+      return;
+    }
+    throw error;
+  }
+  const openedSessions = [];
+  const child = spawn(process.execPath, ["server.mjs"], {
+    cwd: here,
+    env: {
+      ...process.env,
+      PORT: String(port),
+      HOST: "127.0.0.1",
+      TREES_ROOT: trees,
+      TANGENT_LOOPS_ROOT: path.join(root, "loops"),
+      WORKSPACE: path.join(root, "workspace"),
+      AGENT_SHELL_NO_OPEN: "1",
+      AGENT_SHELL_TEST_NO_LAUNCH: "1",
+      TANGENT_PIPELINES_ROOT: path.join(root, "pipelines"),
+      TANGENT_BRAINS_ROOT: path.join(root, "brains"),
+      AGENT_MESSAGE_LOG: path.join(root, "messages.jsonl"),
+      GROQ_API_KEY: "",
+      CHAT_SESSION: `brain-forjulian-test-${process.pid}`,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  context.after(async () => {
+    await Promise.all(openedSessions.map((session) => new Promise((resolve) => {
+      execFile("tmux", ["kill-session", "-t", `=${session}`], () => resolve());
+    })));
+    child.kill("SIGTERM");
+    await Promise.race([once(child, "exit"), new Promise((resolve) => setTimeout(resolve, 1000))]);
+    await rm(root, { recursive: true, force: true });
+  });
+  const base = `http://127.0.0.1:${port}`;
+  await waitForServer(base);
+
+  const brain = await fetch(`${base}/api/brains/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ area: `otto/${leaf}`, instruction: "Get the probe Area done." }),
+  }).then((response) => response.json());
+  openedSessions.push(brain.session);
+  const show = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(brain.session)}`).then((response) => response.json());
+
+  assert.match(show.prompt, /## For Julian/, "the prompt has the section that carries what waits on Julian");
+  assert.match(show.prompt, /Tangent reads only that section/, "only the plan section is the list");
+  assert.match(show.prompt, /- Decision \[\[<document>\]\]: <what it asks, one line>\. Unblocks: <what your answer unblocks>\./, "the Decision line shape");
+  assert.match(show.prompt, /- Try it \[\[<goal-slug>\]\]: <where to go, what to press, what he sees; two lines at most>\./, "the Try it line shape");
+  assert.match(show.prompt, /- Brain: <one question that fits no Document>\./, "the Brain line shape");
+  assert.match(show.prompt, /run `tangent shell rebuild` before you write its Try it line/, "the server runs the new code before Julian presses anything");
+  assert.match(show.prompt, /Julian clears Try it lines himself\. You clear Decision and Brain lines\./, "who clears which line");
+  assert.match(show.prompt, /`tangent brain status` prints "Tangent shows N items for Julian"/, "the brain can check that its lines parsed");
+  assert.match(show.prompt, /ask in the plan's For Julian section \(below\)/, "the decision rule points at the list");
+  assert.doesNotMatch(show.prompt, /launchctl kickstart/, "the rebuild rule is one command, not a launchctl recipe");
 });

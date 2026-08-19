@@ -824,9 +824,15 @@ function ageText(created) {
   return `Started ${days} ${days === 1 ? "day" : "days"} ago`;
 }
 
-/** True when one stored handoff names the user. */
+/** True when a live brain owns this Goal's Area: it is the brain's decision, not a desk item for Julian. */
+function goalCoveredByBrain(goal) {
+  return Boolean(brainForAreaCard(goal?.area ?? "")?.live);
+}
+
+/** True when one stored handoff names the user, and no live brain already covers this Goal's Area. */
 function goalNeedsYou(goal) {
   if (!goal || ["done", "dropped", "deferred"].includes(goal.status)) return false;
+  if (goalCoveredByBrain(goal)) return false;
   return /\b(julian|you)\b/i.test(String(goal.waitingOn ?? ""));
 }
 
@@ -1115,10 +1121,16 @@ function deskAreas() {
   return panels.map((record, index) => ({ ...record, index }));
 }
 
-/** Returns direct routes to every agent or handoff that needs the user. */
+/**
+ * Returns direct routes to every agent or handoff that needs the user.
+ * A Goal in an Area a live brain owns is excluded: it reports to the brain,
+ * not the desk. The brain's own row is excluded too; the Area card's brain
+ * line already shows "Brain needs a decision".
+ */
 function deskAttentionItems() {
   const goalItems = allGoals().flatMap((goal) => {
     if (["done", "dropped", "deferred"].includes(goal.status)) return [];
+    if (goalCoveredByBrain(goal)) return [];
     const session = sessionForGoal(goal);
     const pipeline = pipelineForGoal(goal);
     const stoppedStep = pipeline?.steps.find((step) => step.status === "stopped" || (step.status === "running" && !step.live));
@@ -1132,10 +1144,7 @@ function deskAttentionItems() {
   const definitionItems = describeWorkSessions()
     .filter((session) => describeWorkAttention(session) === "waiting")
     .map((session) => ({ kind: "definition", session, area: session.area, title: session.workTitle || "Define new work" }));
-  const brainItems = brainSessions()
-    .filter((session) => session.state === "waiting")
-    .map((session) => ({ kind: "brain", session, area: session.area ?? "", title: `Brain · ${humanName(String(session.area ?? "").split("/").pop() ?? "")}` }));
-  return [...goalItems, ...definitionItems, ...brainItems].sort((left, right) => left.area.localeCompare(right.area) || left.title.localeCompare(right.title));
+  return [...goalItems, ...definitionItems].sort((left, right) => left.area.localeCompare(right.area) || left.title.localeCompare(right.title));
 }
 
 let dockBadgeCount = null;
@@ -1183,30 +1192,14 @@ async function enableDockBadge() {
   showToast("The Dock badge now follows Needs you now. No notification banners are sent.");
 }
 
-/** Renders the small action index above the stable Area map. */
+/**
+ * The "Needs you now" section is hidden for now: Julian's touchpoint per
+ * Area is the brain, and the mixed list of idle pipeline agents was no
+ * longer useful (a later design decides what replaces it). deskAttentionItems
+ * still drives the Dock badge and the Work tab count.
+ */
 function deskAttentionQueue() {
-  const items = deskAttentionItems();
-  if (!items.length) return "";
-  const enableBadge = typeof navigator.setAppBadge === "function"
-    && window.__agentShellNativeDockBadge !== true
-    && typeof Notification !== "undefined"
-    && Notification.permission !== "granted";
-  return `
-    <section class="attention-queue" aria-labelledby="attention-heading">
-      <header><p class="kicker">Attention</p><h2 id="attention-heading">Needs you now</h2>${enableBadge ? `<button class="attention-badge-button" type="button" data-enable-dock-badge>Show in Dock</button>` : ""}<span>${items.length}</span></header>
-      <div class="attention-items">${items.map((item) => {
-        const name = item.session ? agentName(item.session) : "Handoff";
-        const action = item.kind === "definition"
-          ? `data-select-work-definition="${escapeHtml(item.session.name)}"`
-          : item.kind === "brain"
-            ? `data-open-brain="${escapeHtml(item.session.name)}"`
-          : item.kind === "handoff" || item.kind === "pipeline"
-            ? `data-reveal-goal="${escapeHtml(item.goal.file)}"`
-            : `data-open-goal-run="${escapeHtml(item.goal.file)}"`;
-        const label = item.kind === "handoff" ? "See handoff" : item.kind === "pipeline" ? "See steps" : item.kind === "brain" ? "Open brain" : `Open ${name}`;
-        return `<button type="button" ${action}><span><small>${escapeHtml(areaLabel(item.area))}</small><strong>${escapeHtml(item.title)}</strong></span><span>${escapeHtml(label)} <b aria-hidden="true">→</b></span></button>`;
-      }).join("")}</div>
-    </section>`;
+  return "";
 }
 
 /** Returns the action text for one Goal without hiding its current state. */

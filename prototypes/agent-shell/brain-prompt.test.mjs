@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -171,4 +171,21 @@ test("the brain prompt tells the brain to close finished Goals itself, not leave
   assert.match(show.prompt, /run `tangent goal done <slug>` in that same turn/, "run goal done in the same turn a review passes");
   assert.match(show.prompt, /Before every handover, sweep `tangent goal list otto\/probesweep` and `tangent agent list`/, "sweep goal list and agent list before every handover");
   assert.match(show.prompt, /a failure of the brain, not a question for Julian/, "a finished Goal left waiting is a failure, not a question for Julian");
+  assert.match(show.prompt, /rebuild and restart the server yourself before you tell him/, "the brain owns the Try it duty: rebuild and restart before telling Julian");
+  assert.match(show.prompt, /npm run build.*launchctl kickstart -k gui\/\$\(id -u\)\/com\.tangent\.agent-shell/, "the Try it duty names the actual Tangent rebuild and restart commands");
+  assert.match(show.prompt, /send him a short Try it note in this session: where to go, what to press, what he should see/, "the Try it duty ends in a note Julian can act on");
+});
+
+test("a pipeline step under a brain sends its decisions and blockers to the brain, and never waits on Julian in its terminal", async () => {
+  const serverSource = await readFile(path.join(here, "server.mjs"), "utf8");
+  assert.match(
+    serverSource,
+    /If a real decision needs Julian, send it to the brain: .*tangent agent send \$\{brain\.session\}.*Keep going on the brain's answer or its own recommendation; never sit waiting for Julian in this terminal\. Julian decides in Documents and through the brain\./,
+    "under a brain, a stuck pipeline step reports to the brain and keeps going, it never sits waiting for Julian"
+  );
+  assert.match(
+    serverSource,
+    /If a real decision needs Julian, ask him here; the pipeline waits\./,
+    "a pipeline step with no brain on the Area keeps asking Julian directly"
+  );
 });

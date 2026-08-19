@@ -175,6 +175,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   let notificationPermission = "default";
   let reviewAgentStarted = false;
   let tangentSessionState = "waiting";
+  let liveEditBrainStarted = false;
   const describeSessions = [];
 
   window.localStorage.setItem("agent-shell.current-goal", goalFile);
@@ -244,7 +245,9 @@ test("the live shell restores context, defines work with an agent, and organizes
           { name: "stale-completed-run", goal: staleCompletedGoal.file, state: "waiting", command: "codex" },
           ...describeSessions,
           ...(reviewAgentStarted ? [{ name: "live-edit-collaboration", goal: liveEditGoal.file, state: "waiting", phase: "collaborate", command: "codex" }] : []),
+          ...(liveEditBrainStarted ? [{ name: "live-edit-brain", area: liveEditGoal.area, kind: "brain", state: "waiting", command: "claude" }] : []),
         ],
+        brains: liveEditBrainStarted ? [{ area: liveEditGoal.area, session: "live-edit-brain", live: true, generation: 1, state: "waiting", stateDetail: "decision" }] : [],
       });
     }
     if (pathname === "/api/programs") {
@@ -293,12 +296,26 @@ test("the live shell restores context, defines work with an agent, and organizes
 
   assert.ok(window.document.querySelector(".work-page"), "the desk shows the Work page");
   assert.equal(window.document.querySelectorAll(".area-desk-panel").length, 2);
-  assert.match(window.document.querySelector(".attention-queue").textContent, /Needs you now/);
+  assert.equal(window.document.querySelector(".attention-queue"), null, "Needs you now is hidden for now");
   assert.deepEqual(dockBadges, []);
-  click(window, "[data-enable-dock-badge]");
+  await window.enableDockBadge();
   await settle(window);
-  assert.deepEqual(dockBadges, [2]);
-  assert.equal(window.document.querySelector("[data-enable-dock-badge]"), null);
+  assert.deepEqual(dockBadges, [2], "the Dock badge still follows deskAttentionItems even though the section is hidden");
+
+  // A live brain on the Live Edit Area takes over as Julian's touchpoint: its
+  // Goal drops out of the attention list, and the brain's own row never
+  // appeared there in the first place (the Area card already shows it).
+  assert.ok(window.deskAttentionItems().some((item) => item.goal?.file === liveEditGoal.file), "before the brain, the Live Edit handoff still needs Julian");
+  liveEditBrainStarted = true;
+  await window.refresh();
+  await settle(window);
+  const itemsUnderBrain = window.deskAttentionItems();
+  assert.ok(!itemsUnderBrain.some((item) => item.goal?.file === liveEditGoal.file), "a Goal in an Area a live brain covers drops out of the attention list");
+  assert.ok(!itemsUnderBrain.some((item) => item.kind === "brain"), "the brain's own row does not appear; the Area card already shows it");
+  assert.equal(dockBadges.at(-1), 1, "the Dock badge count drops once the brain covers the Live Edit Goal");
+  liveEditBrainStarted = false;
+  await window.refresh();
+  await settle(window);
 
   window.__agentShellNativeDockBadge = true;
   notificationPermission = "denied";

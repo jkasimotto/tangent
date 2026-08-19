@@ -109,3 +109,61 @@ test("removing one comment of an overlapping pair leaves the other exact", () =>
   }
   assert.equal(stripped, "The quick brown fox jumps over.");
 });
+
+const SENTENCE = "The quick brown fox jumps over the lazy dog.";
+
+/** Adds one comment on the words Julian selected, at the place he selected them. */
+function comment(text, quote, body) {
+  const visible = comments.visibleLine(text, comments.commentTokensOnLine(comments.parseComments(text), 0));
+  return comments.insertComment(text, { kind: "selection", quote, line: 0, offset: visible.text.indexOf(quote) }, body);
+}
+
+test("a second selection that crosses an existing comment saves pieces and parses back exact", () => {
+  const first = comment(SENTENCE, "brown fox", "first").text;
+  assert.equal(first, "The quick {==brown fox==}{>>Julian: first<<} jumps over the lazy dog.");
+  const both = comment(first, "fox jumps", "second").text;
+  assert.equal(both, "The quick {==brown {==fox==}==}{>>Julian: first<<}{== jumps==}{>>Julian: second<<} over the lazy dog.");
+  assert.deepEqual(quotes(both), [["first", "brown fox"], ["second", "fox jumps"]]);
+  assert.equal(comments.parseComments(both)[1].pieces.length, 2);
+  assert.deepEqual(comments.commentTokensOnLine(comments.parseComments(both), 0).map((token) => token.kind),
+    ["open", "open", "close", "close", "comment", "open", "close", "comment"]);
+  // Either comment can go without moving or losing the other.
+  const withoutFirst = comments.removeComment(both, comments.parseComments(both)[0]);
+  assert.equal(withoutFirst, "The quick brown {==fox==}{== jumps==}{>>Julian: second<<} over the lazy dog.");
+  assert.deepEqual(quotes(withoutFirst), [["second", "fox jumps"]]);
+  assert.equal(comments.removeComment(both, comments.parseComments(both)[1]), first);
+});
+
+test("a second selection inside, containing, or on the same words nests or shares one mark", () => {
+  const first = comment(SENTENCE, "brown fox", "first").text;
+  const inside = comment(first, "fox", "second").text;
+  assert.equal(inside, "The quick {==brown {==fox==}{>>Julian: second<<}==}{>>Julian: first<<} jumps over the lazy dog.");
+  assert.deepEqual(quotes(inside), [["second", "fox"], ["first", "brown fox"]]);
+  const around = comment(first, "quick brown fox jumps", "second").text;
+  assert.equal(around, "The {==quick {==brown fox==}{>>Julian: first<<} jumps==}{>>Julian: second<<} over the lazy dog.");
+  assert.deepEqual(quotes(around), [["first", "brown fox"], ["second", "quick brown fox jumps"]]);
+  const same = comment(first, "brown fox", "second").text;
+  assert.equal(same, "The quick {==brown fox==}{>>Julian: first<<}{>>Julian: second<<} jumps over the lazy dog.");
+  assert.deepEqual(quotes(same), [["first", "brown fox"], ["second", "brown fox"]]);
+  // Removing either one of a pair leaves the other on its exact words.
+  for (const text of [inside, around, same]) {
+    for (const index of [0, 1]) {
+      const rest = comments.removeComment(text, comments.parseComments(text)[index]);
+      assert.equal(comments.parseComments(rest).length, 1, text);
+      assert.equal(comments.parseComments(rest)[0].quote, quotes(text)[1 - index][1]);
+    }
+  }
+});
+
+test("a selection across bold marks outside the bold markup", () => {
+  const line = "The dog runs **home** fast.";
+  const marked = comment(line, "runs home fast", "x").text;
+  assert.equal(marked, "The dog {==runs **home** fast==}{>>Julian: x<<}.");
+  assert.deepEqual(quotes(marked), [["x", "runs home fast"]]);
+});
+
+test("the selection offset picks the occurrence Julian selected", () => {
+  const line = "the cat and the dog";
+  assert.equal(comments.insertComment(line, { kind: "selection", quote: "the", line: 0, offset: 12 }, "x").text, "the cat and {==the==}{>>Julian: x<<} dog");
+  assert.equal(comments.insertComment(line, { kind: "selection", quote: "the", line: 0, offset: 0 }, "x").text, "{==the==}{>>Julian: x<<} cat and the dog");
+});

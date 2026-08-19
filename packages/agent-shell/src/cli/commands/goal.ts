@@ -223,7 +223,7 @@ async function showCommand(args: Args): Promise<void> {
   if (goal.doneWhen) console.log(`done when: ${goal.doneWhen}`);
 }
 
-/** Handles `tangent goal done <slug>`. Status is written on Julian's explicit word only; see helpDoneWontDo(). */
+/** Handles `tangent goal done <slug>`. Status is written on Julian's explicit word, or a brain closing a Goal under its own plan on a passing review; see helpDoneWontDo(). */
 async function doneCommand(args: Args): Promise<void> {
   if (args.help) return helpDoneWontDo("done");
   const server = resolveServerUrl(stringArg(args.server));
@@ -237,7 +237,7 @@ async function doneCommand(args: Args): Promise<void> {
   console.log(`${slug} marked done.`);
 }
 
-/** Handles `tangent goal wont-do <slug> --reason <text>`. Status is written on Julian's explicit word only; see helpDoneWontDo(). */
+/** Handles `tangent goal wont-do <slug> --reason <text>`. Status is written on Julian's explicit word, or a brain closing a Goal under its own plan on a passing review; see helpDoneWontDo(). */
 async function wontDoCommand(args: Args): Promise<void> {
   if (args.help) return helpDoneWontDo("wont-do");
   const server = resolveServerUrl(stringArg(args.server));
@@ -275,7 +275,7 @@ Examples:
 function helpDoneWontDo(subcommand: "done" | "wont-do"): void {
   console.log(`tangent goal ${subcommand} <slug>${subcommand === "wont-do" ? ' --reason "<text>"' : ""}`);
   console.log("");
-  console.log("Run only on Julian's explicit word. Status is written on the user's say-so.");
+  console.log("Run only on Julian's explicit word, except a brain started by Julian: it closes Goals under its own plan on a passing review. Status is written on the user's say-so.");
   console.log("");
   console.log("Examples:");
   if (subcommand === "done") console.log("  tangent goal done connect-chosen-ramp-faces");

@@ -110,3 +110,65 @@ test("the brain prompt names the Area's resolved harness and uses it in every ex
   assert.match(salesShow.prompt, /Every --launch in this Area is claude\/<model>/);
   assert.doesNotMatch(salesShow.prompt, /claude-otto\//);
 });
+
+test("the brain prompt tells the brain to close finished Goals itself, not leave them waiting", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-brain-sweep-"));
+  const trees = path.join(root, "trees");
+  const area = path.join(trees, "otto", "probesweep");
+  await mkdir(area, { recursive: true });
+  await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
+  await writeFile(path.join(area, "probesweep.md"), "---\ntype: area\n---\n\n# Probe sweep\n", "utf8");
+
+  let port;
+  try {
+    port = await freePort();
+  } catch (error) {
+    if (error?.code === "EPERM") {
+      context.skip("This environment does not permit local HTTP listeners.");
+      return;
+    }
+    throw error;
+  }
+  const openedSessions = [];
+  const child = spawn(process.execPath, ["server.mjs"], {
+    cwd: here,
+    env: {
+      ...process.env,
+      PORT: String(port),
+      HOST: "127.0.0.1",
+      TREES_ROOT: trees,
+      TANGENT_LOOPS_ROOT: path.join(root, "loops"),
+      WORKSPACE: path.join(root, "workspace"),
+      AGENT_SHELL_NO_OPEN: "1",
+      AGENT_SHELL_TEST_NO_LAUNCH: "1",
+      TANGENT_PIPELINES_ROOT: path.join(root, "pipelines"),
+      TANGENT_BRAINS_ROOT: path.join(root, "brains"),
+      AGENT_MESSAGE_LOG: path.join(root, "messages.jsonl"),
+      GROQ_API_KEY: "",
+      CHAT_SESSION: `brain-sweep-test-${process.pid}`,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  context.after(async () => {
+    await Promise.all(openedSessions.map((session) => new Promise((resolve) => {
+      execFile("tmux", ["kill-session", "-t", `=${session}`], () => resolve());
+    })));
+    child.kill("SIGTERM");
+    await Promise.race([once(child, "exit"), new Promise((resolve) => setTimeout(resolve, 1000))]);
+    await rm(root, { recursive: true, force: true });
+  });
+  const base = `http://127.0.0.1:${port}`;
+  await waitForServer(base);
+
+  const brain = await fetch(`${base}/api/brains/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ area: "otto/probesweep", instruction: "Get the probe Area done." }),
+  }).then((response) => response.json());
+  openedSessions.push(brain.session);
+  const show = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(brain.session)}`).then((response) => response.json());
+
+  assert.match(show.prompt, /run `tangent goal done <slug>` in that same turn/, "run goal done in the same turn a review passes");
+  assert.match(show.prompt, /Before every handover, sweep `tangent goal list otto\/probesweep` and `tangent agent list`/, "sweep goal list and agent list before every handover");
+  assert.match(show.prompt, /a failure of the brain, not a question for Julian/, "a finished Goal left waiting is a failure, not a question for Julian");
+});

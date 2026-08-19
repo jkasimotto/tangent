@@ -87,6 +87,26 @@ const statusPill = document.querySelector("#status-pill");
 const awakeButton = document.querySelector("#awake-button");
 const shellMenu = document.querySelector("#shell-menu");
 
+/**
+ * The global shortcuts. The keydown handler and every printed label read this
+ * one table, so what the bar says and what the keyboard does cannot drift.
+ */
+const KEYMAP = {
+  goTo: { key: "k", label: "⌘K" },
+  findWork: { key: "/", label: "⌘/" },
+};
+
+/** True when the event is this binding: ⌘ plus the key, no other modifier. */
+function shortcutMatches(event, binding) {
+  return event.metaKey && !event.altKey && !event.ctrlKey && !event.shiftKey
+    && String(event.key).toLowerCase() === binding.key;
+}
+
+/** The printed shortcut for one binding, for a button or a hint. */
+function shortcutKbd(name) {
+  return `<kbd>${escapeHtml(KEYMAP[name].label)}</kbd>`;
+}
+
 let terminal = null;
 let terminalFit = null;
 let terminalSocket = null;
@@ -1477,7 +1497,7 @@ function renderWork() {
         <label class="search-field">
           <span class="search-icon" aria-hidden="true">⌕</span>
           <input id="work-search" type="search" value="${escapeHtml(state.query)}" placeholder="Find a Goal, Document, or Area" autocomplete="off" />
-          <kbd>⌘/</kbd>
+          ${shortcutKbd("findWork")}
         </label>
         <div class="work-filter" role="group" aria-label="Filter work by live session">
           ${["all", "active", "inactive"].map((filter) => `<button type="button" data-work-filter="${filter}" aria-pressed="${state.workFilter === filter}">${humanName(filter)}</button>`).join("")}
@@ -2896,7 +2916,7 @@ function updateHeader() {
     findButton.dataset.action = "find";
   } else {
     findButton.hidden = false;
-    findButton.innerHTML = `Find work <kbd>⌘/</kbd>`;
+    findButton.innerHTML = `Find work ${shortcutKbd("findWork")}`;
     findButton.dataset.action = "find";
   }
   updateLiveProgramCount();
@@ -4867,7 +4887,7 @@ document.addEventListener("keydown", (event) => {
     paint(true);
     return;
   }
-  if (event.key === "/" && event.metaKey) {
+  if (shortcutMatches(event, KEYMAP.findWork)) {
     event.preventDefault();
     showWork({ focus: true });
   }

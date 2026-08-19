@@ -146,6 +146,21 @@ export function brainForArea(records, area) {
   return null;
 }
 
+/**
+ * The nearest brain record for an Area, whatever its status: the record on
+ * the Area itself or on its closest ancestor. A stopped or ended brain still
+ * owns its Area, so notices for it are kept until a generation reads them.
+ */
+export function brainRecordForArea(records, area) {
+  const parts = String(area ?? "").split("/").filter(Boolean);
+  for (let i = parts.length; i >= 1; i--) {
+    const candidate = parts.slice(0, i).join("/");
+    const record = records.find((item) => item.area === candidate);
+    if (record) return record;
+  }
+  return null;
+}
+
 /** The text of the latest non-null handover, or null. */
 export function latestHandover(record) {
   const list = [...(record?.generations ?? [])].reverse();

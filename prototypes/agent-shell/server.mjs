@@ -31,7 +31,8 @@ const areaMapCore = globalThis.AgentShellAreaMap;
 import { classifyStaticPane, stabilizeStaticPane, staticSinceOf } from "./pane-state.mjs";
 import { appendSteps, currentStep, endPipeline, goalBindingGoneFromSnapshot, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, readAllPipelines, readPipeline, stepGoneFromSnapshot, validateSteps, writePipeline } from "./pipeline-record.mjs";
 import { deliveryDecision, messageBanner, normalizeMessage } from "./agent-messages.mjs";
-import { beginGeneration, brainForArea, brainSessionName, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, recordHandover, validateInstruction, writeBrain } from "./brain-record.mjs";
+import { beginGeneration, brainForArea, brainRecordForArea, brainSessionName, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, recordHandover, validateInstruction, writeBrain } from "./brain-record.mjs";
+import { appendNotice, inboxesForBrain, markDelivered, mergeNotices, noticeBlock, noticeDigest, readAllInboxes, readInbox, writeInbox } from "./brain-inbox.mjs";
 import { createSourceChangeMonitor } from "./source-change-monitor.mjs";
 import { promptArrived, splitPrompt, squash } from "./prompt-delivery.mjs";
 
@@ -1574,6 +1575,9 @@ async function deliverAgentMessage(target, entry) {
   const text = entry.banner === false ? entry.text : messageBanner(entry.from, entry.area, entry.text);
   await typePromptWhenReady(target, text, true, entry.banner === false ? "pipeline step" : "agent message");
   await logAgentMessage({ event: "delivered", to: target, from: entry.from, area: entry.area, text: entry.text, banner: entry.banner !== false, queuedAt: entry.queuedAt });
+  // A brain notice is persisted before it is queued. It counts as read only
+  // here, after the text reached the composer.
+  if (entry.notices?.length) await markBrainNoticesDelivered(entry.notices, target, entry.generation ?? null);
 }
 
 /**
@@ -2331,22 +2335,120 @@ async function liveBrainForArea(area) {
   }
 }
 
+// ---- the brain's notice inbox ----
+// Every brain notice is written to disk before it is queued, and marked read
+// only after it reached a composer or was listed in a new generation's first
+// message. That is what makes a notice survive a server restart, a
+// generation handover, and a gap with no live brain. Rules and file shape
+// live in brain-inbox.mjs.
+
+const inboxWrites = new Map(); // area -> the promise of its last change
+
+/**
+ * Runs one read-change-write pass on an Area's inbox, after any earlier pass
+ * on the same Area. Notices arrive from several places at once, so the
+ * changes are serialized instead of racing on the file.
+ */
+function withInbox(area, change) {
+  const earlier = inboxWrites.get(area) ?? Promise.resolve();
+  /** Reads the inbox, applies the change, and writes it back. */
+  const run = async () => {
+    const record = await readInbox(BRAINS_ROOT, area);
+    const result = await change(record);
+    await writeInbox(BRAINS_ROOT, record);
+    return result;
+  };
+  /** Ignores the earlier pass's outcome; this pass runs either way. */
+  const ignoreEarlier = () => undefined;
+  const next = earlier.then(ignoreEarlier, ignoreEarlier).then(run);
+  inboxWrites.set(area, next);
+  /** Forgets the chain once this pass is the last one on the Area. */
+  const forget = () => {
+    if (inboxWrites.get(area) === next) inboxWrites.delete(area);
+  };
+  next.then(forget, forget);
+  return next;
+}
+
+/** Writes one notice for the Area's brain and returns it. */
+async function recordBrainNotice(area, text) {
+  return withInbox(area, (record) => appendNotice(record, text));
+}
+
+/** Every notice no generation of one brain has read, oldest first. */
+async function unreadBrainNotices(area) {
+  return mergeNotices(inboxesForBrain(await readAllInboxes(BRAINS_ROOT), area));
+}
+
+/** Marks notices read by one brain session and generation. */
+async function markBrainNoticesDelivered(notices, session, generation) {
+  const byArea = new Map();
+  for (const notice of notices) {
+    const ids = byArea.get(notice.area) ?? [];
+    ids.push(notice.id);
+    byArea.set(notice.area, ids);
+  }
+  for (const [area, ids] of byArea) {
+    await withInbox(area, (record) => markDelivered(record, ids, { session, generation }));
+  }
+}
+
 /**
  * Tells the brain that covers an Area what happened, as a message from
- * `tangent`. The queue delivers it into an idle composer; a working brain
- * reads it when it pauses. Returns true when a brain was addressed.
+ * `tangent`. The notice is persisted first, then queued when a brain session
+ * is live; the queue delivers it into an idle composer and a working brain
+ * reads it when it pauses. With no live brain the notice waits on disk for
+ * the next generation. Returns true when a live brain was addressed.
  */
 async function notifyBrain(area, text) {
   try {
-    const record = await liveBrainForArea(area);
-    if (!record) return false;
     const message = normalizeMessage(text);
-    queueAgentMessage(record.session, { from: "tangent", area: null, text: message, queuedAt: new Date().toISOString() });
+    const owner = brainRecordForArea(await readAllBrains(BRAINS_ROOT), area);
+    if (!owner) return false;
+    const notice = await recordBrainNotice(area, message);
+    const record = await liveBrainForArea(area);
+    if (!record) {
+      await logAgentMessage({ event: "kept", to: `${owner.area} brain`, from: "tangent", text: message, reason: "no live brain; waits for the next generation" });
+      return false;
+    }
+    queueAgentMessage(record.session, {
+      from: "tangent",
+      area: null,
+      text: message,
+      notices: [{ area, id: notice.id }],
+      generation: record.generation ?? null,
+      queuedAt: new Date().toISOString(),
+    });
     await logAgentMessage({ event: "sent", to: record.session, from: "tangent", text: message, disposition: "queued", reason: "brain event" });
     return true;
   } catch (err) {
     console.error("brain notify:", err.message ?? err);
     return false;
+  }
+}
+
+/**
+ * Queues every unread notice for the brains that run right now. The server
+ * calls this when it starts: the memory queue is gone after a restart, but
+ * the notices are on disk, so a live generation still hears them.
+ */
+async function flushBrainNotices() {
+  const sessions = await listSessions();
+  const live = new Set(sessions.map((session) => session.name));
+  for (const record of await readAllBrains(BRAINS_ROOT)) {
+    if (record.status !== "running" || !record.session || !live.has(record.session)) continue;
+    const unread = await unreadBrainNotices(record.area);
+    if (!unread.length) continue;
+    const text = unread.length === 1 ? unread[0].text : noticeDigest(unread);
+    queueAgentMessage(record.session, {
+      from: "tangent",
+      area: null,
+      text,
+      notices: unread.map((notice) => ({ area: notice.area, id: notice.id })),
+      generation: record.generation ?? null,
+      queuedAt: new Date().toISOString(),
+    });
+    await logAgentMessage({ event: "sent", to: record.session, from: "tangent", text, disposition: "queued", reason: "unread notices after a server start" });
   }
 }
 
@@ -2362,10 +2464,15 @@ async function areaHarnessModelIds(harnessId) {
   return ids.length ? ids : ["fable-5", "sonnet-5", "opus-5"];
 }
 
-/** The first message of one brain generation: instruction, sources, policy. */
+/**
+ * The first message of one brain generation: instruction, sources, the
+ * notices no generation read, and policy. The notices come from the
+ * generation entry, so this rebuilds the message the brain was given.
+ */
 async function brainPrompt(record) {
   const area = record.area;
   const generation = currentGeneration(record)?.generation ?? 1;
+  const notices = currentGeneration(record)?.notices ?? [];
   const notes = areaNoteFiles(area);
   const documents = (await readAreaDocuments(area)).filter((doc) => doc.file !== record.planFile);
   const planPath = path.join(TREES_ROOT, record.planFile);
@@ -2389,13 +2496,16 @@ async function brainPrompt(record) {
     `## Julian's instruction\n\n${record.instruction}\n\n` +
     `## Sources\n\n${sourceLines.join("\n")}\n\n` +
     (handover ? `## Handover from generation ${generation - 1}\n\n${handover}\n\n` : "") +
+    (notices.length
+      ? `## Notices you have not read\n\nTangent recorded these while no generation of this brain was reading. Each one is an agent event under this Area. Read them before you plan, and act on the ones that need it.\n\n${noticeBlock(notices)}\n\n`
+      : "") +
     `## How to work\n\n` +
     `${harnessRule}\n\n` +
     `Read the plan first when it exists, then the Area notes from nearest to farthest, then the Documents that matter. Look at the Area's repository when code answers a question better than a guess.\n\n` +
     `Write the plan before you start anything: the instruction in your words, the sub-Areas and Goals you will create, the waves in dependency order, and what you decided. Keep it current: what runs, what came back, what you decided next. Commit it with \`tangent vault commit\`. Julian reads the plan and may leave comments in it (\`{>>Julian: ...<<}\`); \`tangent document comments <file>\` lists them and \`tangent document resolve\` closes one after the work is done.\n\n` +
     `Split the work into Goals: a Goal is a result with a clear finish. Create a sub-Area only for a durable subject Julian will return to (\`tangent area create <parent> <name>\`). Give each Goal a description a fresh agent can start from: intent, what Julian decided, and the Documents and code that matter (\`tangent goal create --area ${area} --title "..." --done-when "..." --description "..." --source <vault-file>\`).\n\n` +
     `Start each leaf Goal as a pipeline, for example: \`tangent goal start <slug> --step "/design this Goal" --launch ${harness}/${designModel} --step "/impl the design at <path>" --launch ${harness}/${designModel} --step "implement the solution" --launch ${harness}/${implementModel} --step "review the implementation against the design and solution; fix what is wrong" --launch ${harness}/${designModel}\`. Judge each Goal: when the work is small and clear, one implementer step is enough; when it is hard or vague, raise the implementer to Opus or Fable and keep the design step. Fable plans, designs, decomposes, and reviews; Sonnet is the workhorse. Run one implementing pipeline per repository at a time; design and review steps may run in parallel. \`tangent agent list\` shows what runs and \`tangent goal list ${area}\` shows the Goals.\n\n` +
-    `Tangent sends you messages: a step handed over, a pipeline completed, a step stopped or sat idle, a Goal session ended. Read the handover and the files. When a review asks for changes, \`tangent goal append <slug> --step "..." --launch ...\`. When a result is good, note it in the plan and start what its completion unblocked. Workers may message you; answer with \`tangent agent send <session> "<text>"\`.\n\n` +
+    `Tangent sends you messages: a step handed over, a pipeline completed, a step stopped or sat idle, a Goal session ended. No message is lost: each one is kept on disk until a generation of this brain reads it, so what arrived while you were away is in the section above, or in a message that reaches you after a restart. Read the handover and the files. When a review asks for changes, \`tangent goal append <slug> --step "..." --launch ...\`. When a result is good, note it in the plan and start what its completion unblocked. Workers may message you; answer with \`tangent agent send <session> "<text>"\`.\n\n` +
     `Ask Julian only for real decisions; ask here, he sees it. Julian started this brain to get the Area done, and that start is his word on Goal status for the Goals under it. When a Goal's final review hands over with a pass and its done condition holds, write the verdict into the Goal's State section and run \`tangent goal done <slug>\` in that same turn; when a Goal turns out wrong, \`tangent goal wont-do <slug> --reason "..."\` in that same turn. After every batch of results, sweep for Goals whose pipeline finished and close them: a finished Goal left showing Waiting for you is a failure of the brain, not a question for Julian. His instruction above can narrow this (for example, ask before closing). Goals outside your plan stay his; only real decisions wait for Julian.\n\n` +
     `When a Goal you closed changes what Julian sees or presses, rebuild and restart the server yourself before you tell him: for Tangent, \`npm run build\` if packages changed, then \`launchctl kickstart -k gui/$(id -u)/com.tangent.agent-shell\`. Then send him a short Try it note in this session: where to go, what to press, what he should see.\n\n` +
     `## When to hand over\n\n` +
@@ -2422,16 +2532,24 @@ async function spawnBrainSession(record) {
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_brain", record.area]);
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_generation", String(generation)]);
   if (record.label) await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_launch", record.label]);
-  beginGeneration(record, name);
+  const entry = beginGeneration(record, name);
+  // The notices no generation read belong in this generation's first
+  // message. They are kept on the record so the desk can show the message
+  // the brain actually got, and marked read only after priming worked.
+  const unread = await unreadBrainNotices(record.area);
+  entry.notices = unread.map((notice) => ({ area: notice.area, id: notice.id, text: notice.text, createdAt: notice.createdAt }));
   await writeBrain(BRAINS_ROOT, record);
+  let primed = true;
   if (process.env.AGENT_SHELL_TEST_NO_LAUNCH !== "1") {
     await sleep(700);
     try {
       await primeDescribeWorkSession(name, record.area, await brainPrompt(record), { launch: true, command: record.command });
     } catch (error) {
+      primed = false;
       console.error("brain session:", error.message ?? error);
     }
   }
+  if (primed && unread.length) await markBrainNoticesDelivered(unread, name, generation);
   return { status: 200, session: name, generation, brain: record };
 }
 
@@ -4159,6 +4277,10 @@ server.listen(PORT, HOST, () => {
   console.log(`  orchestrator session "${CHAT_SESSION}" runs: ${agentCmd}`);
   console.log(`  workspace: ${WORKSPACE}`);
   if (!process.env.AGENT_SHELL_NO_OPEN) openStandaloneWindow();
+  // The message queue died with the last process; the notices did not.
+  /** Reports a failed flush without stopping the server. */
+  const flushFailed = (err) => console.error("brain notices:", err.message ?? err);
+  flushBrainNotices().catch(flushFailed);
 });
 
 /**

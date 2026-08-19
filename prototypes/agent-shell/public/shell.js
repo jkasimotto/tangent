@@ -3814,7 +3814,9 @@ function bindDocumentReader() {
   update();
   const composerField = screen.querySelector("#comment-text");
   if (composerField && document.activeElement !== composerField) {
-    composerField.focus();
+    // Plain focus scrolls the field into view, which moves the words Julian is
+    // reading. The composer sits at his selection, so it is already on screen.
+    composerField.focus({ preventScroll: true });
     composerField.setSelectionRange(composerField.value.length, composerField.value.length);
   }
 }

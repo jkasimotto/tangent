@@ -2787,6 +2787,16 @@ function mountTerminal(host, sessionName) {
     terminalSelection?.noteInput();
     if (terminalSocket?.readyState === WebSocket.OPEN) terminalSocket.send(data);
   });
+  // xterm holds one custom key handler. Agent Shell's own key translations
+  // come first, then the selection module gets the keys it owns.
+  terminal.attachCustomKeyEventHandler((event) => {
+    const keys = window.AgentShellTerminalKeys?.terminalKeySequence(event) ?? "";
+    if (!keys) return terminalSelection?.handleKeyEvent(event) ?? true;
+    terminalSelection?.noteInput();
+    if (terminalSocket?.readyState === WebSocket.OPEN) terminalSocket.send(keys);
+    event.preventDefault();
+    return false;
+  });
   terminal.focus();
 }
 

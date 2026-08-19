@@ -40,6 +40,7 @@
       }
     });
 
+    /** Starts a drag selection, and presents it to xterm as a forced selection. */
     const beginSelection = (event) => {
       selecting = true;
       saved = null;
@@ -51,6 +52,7 @@
         try { Object.defineProperty(event, "altKey", { configurable: true, value: true }); } catch {}
       }
     };
+    /** Remembers the selection when the drag ends. */
     const finishSelection = () => {
       if (!selecting) return;
       selecting = false;
@@ -59,21 +61,28 @@
     host.addEventListener("mousedown", beginSelection, true);
     root.document.addEventListener("mouseup", finishSelection, true);
 
-    terminal.attachCustomKeyEventHandler((event) => {
+    /**
+     * Copies the remembered selection on Command-C. xterm holds one custom
+     * key handler, and shell.js owns it, so it calls this for the keys it
+     * does not translate itself.
+     */
+    function handleKeyEvent(event) {
       if (event.type !== "keydown" || !event.metaKey || event.key.toLowerCase() !== "c") return true;
       const text = saved?.text || (terminal.hasSelection() ? terminal.getSelection() : "");
       if (text) void clipboard?.writeText(text);
       event.preventDefault();
       return false;
-    });
+    }
 
     return {
+      handleKeyEvent,
       /** Clears the durable selection when the user intentionally types into the agent. */
       noteInput() {
         if (!saved) return;
         saved = null;
         terminal.clearSelection();
       },
+      /** Stops listening to the terminal and the document. */
       dispose() {
         selectionDisposable?.dispose();
         host.removeEventListener("mousedown", beginSelection, true);

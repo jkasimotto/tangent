@@ -12,34 +12,41 @@ function terminalDouble() {
   let selection = "";
   let position;
   let selectionHandler;
-  let keyHandler;
   const terminal = {
     cols: 80,
+    /** Gives the text xterm reports as selected. */
     getSelection: () => selection,
+    /** Gives the buffer range xterm reports as selected. */
     getSelectionPosition: () => position,
+    /** Says whether xterm holds a selection. */
     hasSelection: () => Boolean(selection),
+    /** Keeps the selection listener the module registers. */
     onSelectionChange(handler) {
       selectionHandler = handler;
-      return { dispose() {} };
+      return {
+        /** Ends the subscription. */
+        dispose() {},
+      };
     },
-    attachCustomKeyEventHandler(handler) { keyHandler = handler; },
+    /** Repaints the highlight the module asks for. */
     select(column, row, length) {
       terminal.restored = { column, row, length };
       selection = "repainted cells";
       position = { start: { x: column, y: row }, end: { x: column + length, y: row } };
       selectionHandler();
     },
+    /** Drops the highlight, as a repaint does. */
     clearSelection() {
       selection = "";
       position = undefined;
       selectionHandler();
     },
+    /** Puts a finished selection in place. */
     setSelection(text, range) {
       selection = text;
       position = range;
       selectionHandler();
     },
-    key(event) { return keyHandler(event); },
   };
   return terminal;
 }
@@ -52,10 +59,14 @@ test("completed terminal selections survive repaints and Command-C copies the or
   const copied = [];
   const deferred = [];
   window.eval(source);
-  window.AgentShellTerminalSelection.preserveTerminalSelection({
+  const selection = window.AgentShellTerminalSelection.preserveTerminalSelection({
     terminal,
     host: window.document.querySelector("#host"),
-    clipboard: { async writeText(text) { copied.push(text); } },
+    clipboard: {
+      /** Records what the module copies. */
+      async writeText(text) { copied.push(text); },
+    },
+    /** Holds the deferred restore until the test runs it. */
     defer(callback) { deferred.push(callback); },
   });
 
@@ -75,10 +86,11 @@ test("completed terminal selections survive repaints and Command-C copies the or
   assert.deepEqual(terminal.restored, { column: 4, row: 2, length: 85 });
 
   let prevented = false;
-  const forwarded = terminal.key({
+  const forwarded = selection.handleKeyEvent({
     type: "keydown",
     metaKey: true,
     key: "c",
+    /** Records that the module took the key. */
     preventDefault() { prevented = true; },
   });
   await Promise.resolve();

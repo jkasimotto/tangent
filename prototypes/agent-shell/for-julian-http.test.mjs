@@ -281,3 +281,46 @@ test("Tried it removes one Try it line, and undo puts it back", async (context) 
   assert.equal(noBrain.status, 404, JSON.stringify(noBrain.body));
   assert.equal((await brainOf(probe.base)).forJulian.length, 3, "a refused press changes nothing");
 });
+
+test("a saved comment on a listed Document wakes its brain, and only that Document does", async (context) => {
+  const probe = await startProbe(context, "forjuliancomment");
+  if (!probe) return;
+
+  await waitFor("the rows in the payload", async () => (await brainOf(probe.base))?.forJulian?.length === 3);
+
+  /** Saves one Document with the text a fresh read gives, plus the added line. */
+  const comment = async (file, added) => {
+    const current = await get(probe.base, `/api/document?file=${encodeURIComponent(file)}`);
+    assert.ok(current.hash, JSON.stringify(current));
+    const saved = await post(probe.base, "/api/document", { file, text: `${current.text}${added}`, baseHash: current.hash, summary: "commented" });
+    assert.equal(saved.status, 200, JSON.stringify(saved.body));
+    return saved.body;
+  };
+
+  const listed = `${probe.area}/design-probe.md`;
+  await comment(listed, "\nAnother point. {>>Julian: do the second one<<}\n");
+  const notices = await waitFor("the notice on disk", async () => {
+    const inbox = await readInbox(probe.brains, probe.area);
+    return inbox.notices.length ? inbox.notices : null;
+  });
+  assert.equal(notices.length, 1);
+  assert.equal(
+    notices[0].text,
+    `Julian commented on ${listed} (2 open comments). Read them with tangent document comments ${listed}; remove the Decision line from the plan when you have what you need.`
+  );
+
+  // A save that removes a comment is not an answer: an Undo never wakes the brain.
+  const after = await get(probe.base, `/api/document?file=${encodeURIComponent(listed)}`);
+  const withoutOne = await post(probe.base, "/api/document", {
+    file: listed,
+    text: after.text.replace("{>>Julian: do the second one<<}", ""),
+    baseHash: after.hash,
+    summary: "removed a comment",
+  });
+  assert.equal(withoutOne.status, 200, JSON.stringify(withoutOne.body));
+
+  // A Document no Decision row names is not the brain's business.
+  await comment(`${probe.area}/design-quiet.md`, "\nA thought. {>>Julian: and this?<<}\n");
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal((await readInbox(probe.brains, probe.area)).notices.length, 1, "only a listed Document wakes the brain");
+});

@@ -618,7 +618,33 @@ async function saveVaultDocument(file, text, baseHash, summary = "edited in tree
   }
   const what = String(summary || "edited in tree").replace(/\s+/g, " ").trim().slice(0, 80);
   const document = await writeVaultDocument(current, text, `update: ${current.area} ${current.kind} ${path.basename(file, ".md")} ${what}`);
+  // Julian answers where he reads. A comment on a Document a brain listed for
+  // him is his answer to that brain, so the brain hears about it.
+  try {
+    await notifyBrainsOfComment(current, document);
+  } catch (error) {
+    console.error("comment notify:", error.message ?? error);
+  }
   return { status: 200, document };
+}
+
+/**
+ * Tells every brain that lists this Document as a Decision that Julian
+ * commented on it. Fires only when a comment was added or its text changed,
+ * never on a removal, so an Undo does not wake the brain.
+ */
+async function notifyBrainsOfComment(before, after) {
+  const seen = new Set((before.comments ?? []).map((comment) => comment.markup));
+  const fresh = (after.comments ?? []).filter((comment) => !seen.has(comment.markup));
+  if (!fresh.length) return;
+  const open = after.comments.length;
+  const text = `Julian commented on ${after.file} (${open} open ${open === 1 ? "comment" : "comments"}). `
+    + `Read them with tangent document comments ${after.file}; remove the Decision line from the plan when you have what you need.`;
+  const index = await vaultIndex();
+  for (const record of await readAllBrains(BRAINS_ROOT)) {
+    const rows = await forJulianItems(record, index);
+    if (rows.some((row) => row.kind === "decision" && row.file === after.file)) await notifyBrain(record.area, text);
+  }
 }
 
 /**

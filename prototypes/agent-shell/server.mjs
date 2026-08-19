@@ -789,7 +789,7 @@ async function vaultIndex() {
   // degrees. Goals carry the same facts on their index object so the desk and
   // the map rank one way (design-area-map Decisions 9, 10, 13).
   areaMapCore.assignKinds(records);
-  const { times: gitTimes } = await vaultGit();
+  const { times: gitTimes, runs: gitRuns } = await vaultGit();
   for (const record of records) {
     const { createdAt, changedAt } = fileTimes(record.file, record.mtime, gitTimes);
     record.createdAt = createdAt;
@@ -800,7 +800,10 @@ async function vaultIndex() {
       return hit && hit.file !== record.file;
     }).length;
     if (record.goal) {
-      Object.assign(record.goal, { docKind: record.docKind, createdAt, changedAt, inDegree: record.inDegree, outDegree: record.outDegree });
+      // The agents that ever worked this Goal, when the work started, and when
+      // it last ended: the facts line of the Goal card (design-goal-cards).
+      const run = gitRuns.get(record.file);
+      Object.assign(record.goal, { docKind: record.docKind, createdAt, changedAt, inDegree: record.inDegree, outDegree: record.outDegree, agents: run?.agents ?? [], firstStartAt: run?.firstStartAt ?? null, lastEndAt: run?.lastEndAt ?? null });
       delete record.goal;
     }
   }
@@ -819,7 +822,7 @@ async function vaultIndex() {
       });
     goal.documents = related
       .filter((record) => record.kind === "document")
-      .map((record) => ({ file: record.file, title: record.title, kind: record.kind }));
+      .map((record) => ({ file: record.file, title: record.title, kind: record.kind, docKind: record.docKind, changedAt: record.changedAt }));
   }
   for (const document of records.filter((record) => record.kind === "document")) {
     const relatedGoals = [...bySlug.values()].filter((goal) => {

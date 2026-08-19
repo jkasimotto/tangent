@@ -20,7 +20,7 @@ import pty from "node-pty";
 import { documentHash, markdownTitle, safeMarkdownPath, wikiLinks } from "./vault-documents.mjs";
 import "./public/document-comments.js";
 import "./public/area-map-core.js";
-import { createGitTimesReader, fileTimes } from "./area-map.mjs";
+import { createVaultGitReader, fileTimes } from "./area-map.mjs";
 
 // The comment parser is shared with the browser, so it is a plain script that
 // registers a global (see public/document-comments.js).
@@ -114,8 +114,8 @@ function withDefaultModel(cmd) {
 const CHAT_SESSION = process.env.CHAT_SESSION ?? "orchestrator";
 const WORKSPACE = process.env.WORKSPACE ?? path.join(here, "workspace");
 const TREES_ROOT = process.env.TREES_ROOT ?? path.join(os.homedir(), ".tangent", "trees");
-/** Per-file git times for the vault, cached by HEAD (design-area-map Decision 9). */
-const vaultGitTimes = createGitTimesReader(TREES_ROOT);
+/** Per-file git times and agent runs for the vault, cached by HEAD (design-area-map Decision 9, design-goal-cards Decision 1). */
+const vaultGit = createVaultGitReader(TREES_ROOT);
 /**
  * Where the Area map keeps node positions and filters per Area. Shell state,
  * not knowledge, so it lives outside the vault (design-area-map Decision 7).
@@ -781,7 +781,7 @@ async function vaultIndex() {
   // degrees. Goals carry the same facts on their index object so the desk and
   // the map rank one way (design-area-map Decisions 9, 10, 13).
   areaMapCore.assignKinds(records);
-  const gitTimes = await vaultGitTimes();
+  const { times: gitTimes } = await vaultGit();
   for (const record of records) {
     const { createdAt, changedAt } = fileTimes(record.file, record.mtime, gitTimes);
     record.createdAt = createdAt;

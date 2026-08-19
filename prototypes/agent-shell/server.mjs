@@ -922,8 +922,10 @@ async function buildVaultIndex() {
  * A string that changes whenever the vault index would change: the path, size,
  * and modification time of every Markdown file the index reads, plus the size
  * and modification time of the vault reflog, because the index also carries
- * git times and agent runs that only a commit changes. One `readdir` per Area
- * and one `stat` per file, some 50 times cheaper than a build.
+ * git times and agent runs that only a commit changes, plus every Area
+ * directory, because a directory is an Area even when it holds no file. One
+ * `readdir` per Area and one `stat` per file, some 50 times cheaper than a
+ * build.
  */
 async function vaultFingerprint(dir = TREES_ROOT, rel = "") {
   let entries;
@@ -941,7 +943,9 @@ async function vaultFingerprint(dir = TREES_ROOT, rel = "") {
     const absolute = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       if (TREE_SKIP.has(entry.name) || entry.name.startsWith(".")) continue;
-      parts.push(await vaultFingerprint(absolute, rel ? `${rel}/${entry.name}` : entry.name));
+      const childRel = rel ? `${rel}/${entry.name}` : entry.name;
+      // A directory is an Area even with no Markdown file in it.
+      parts.push(`dir:${childRel}`, await vaultFingerprint(absolute, childRel));
       continue;
     }
     if (!entry.name.endsWith(".md")) continue;

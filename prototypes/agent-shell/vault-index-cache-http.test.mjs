@@ -14,7 +14,7 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -159,4 +159,13 @@ test("a Document opens and saves in under a second on a vault of realistic size"
   const afterEdit = await timed(documentUrl);
   assert.equal(afterEdit.body.comments.length, 1, "an edit outside the server is not hidden by the cache");
   assert.match(afterEdit.body.comments[0].text, /a second look/);
+
+  // A directory with no file in it is an Area too, so a new one and a renamed
+  // one both show on the next read.
+  await mkdir(path.join(trees, "otto", "fresh"), { recursive: true });
+  const added = await timed(`${base}/api/vault`);
+  assert.ok(added.body.areas.some((entry) => entry.path === "otto/fresh"), "a new empty Area directory is not hidden by the cache");
+  await rename(path.join(trees, "otto", "fresh"), path.join(trees, "otto", "renamed"));
+  const renamed = await timed(`${base}/api/vault`);
+  assert.ok(renamed.body.areas.some((entry) => entry.path === "otto/renamed"), "a renamed empty Area directory is not hidden by the cache");
 });

@@ -105,3 +105,18 @@ test("goalCardFacts: a Goal with no agent record still shows that it waits", () 
   const facts = core.goalCardFacts({ goal, sessions: [], pipeline: null, now: NOW });
   assert.equal(line(facts), "no agent yet · waiting for you");
 });
+
+test("goalCardFacts: an idle pane from a finished step is no wait while a later step works", () => {
+  const goal = { status: "active", agents: ["p1", "p2"], firstStartAt: NOW - 34 * MINUTE, lastEndAt: null };
+  const pipeline = { steps: [
+    { index: 1, session: "p1", status: "complete", startedAt: new Date(NOW - 34 * MINUTE).toISOString(), endedAt: new Date(NOW - 20 * MINUTE).toISOString() },
+    { index: 2, session: "p2", status: "running", live: true, state: "working", startedAt: new Date(NOW - 20 * MINUTE).toISOString() },
+  ] };
+  const sessions = [
+    { name: "p1", created: NOW - 34 * MINUTE, state: "waiting", stateDetail: "idle", waitingSince: NOW - 20 * MINUTE },
+    { name: "p2", created: NOW - 20 * MINUTE, state: "working" },
+  ];
+  const facts = core.goalCardFacts({ goal, sessions, pipeline, now: NOW });
+  assert.equal(facts.waiting, null);
+  assert.equal(line(facts), "2 agents · running 34m");
+});

@@ -61,8 +61,14 @@
    * The first live session or pipeline step that waits for Julian, in the
    * order the card trusts: a session bound to the Goal, then a running step
    * whose session is not bound, then a stopped step, then a stored handover.
+   * While any agent on the Goal works, the Goal waits for nobody: a pipeline
+   * leaves the panes of finished steps sitting idle at their prompt, and they
+   * must not read as a wait for Julian.
    */
   function waitingFact({ goal, sessions, steps, now, handoffNeedsYou }) {
+    const working = sessions.some((session) => session.state === "working")
+      || steps.some((step) => step.status === "running" && step.live && step.state === "working");
+    if (working) return null;
     const bound = new Set(sessions.map((session) => session.name));
     const stalled = sessions.find((session) => session.state === "waiting" || session.state === "shell");
     if (stalled) return waitFrom(stalled.waitingSince, now, waitReason(stalled));

@@ -1036,7 +1036,11 @@ li .document-comment { margin: 8px 0 10px; }
 /* Goal-row Documents and reveal highlight */
 .desk-docs-chip { display: inline-flex; align-items: center; gap: 5px; width: max-content; margin-top: 4px; padding: 2px 8px; border: 1px solid #343b44; border-radius: 999px; background: #14171c; color: #cdd2d7; cursor: pointer; font-size: 11px; line-height: 1.5; }
 .desk-docs-chip:hover, .desk-docs-chip.open { border-color: #4a525c; color: #fff; }
+/* The same rows as the desk shelf, in a narrower column: one line each. */
 .desk-goal-doc-list { margin-top: 4px; }
+.desk-goal-doc-list button { grid-template-columns: 46px minmax(0, 1fr) auto; gap: 8px; padding: 5px 4px; }
+.desk-goal-doc-list strong { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.desk-goal-doc-list small { display: none; }
 .desk-goal.flash { animation: desk-goal-flash 1.5s ease-out; }
 .area-desk-panel.flash { outline: 2px solid var(--blue, #6ea8ff); outline-offset: 2px; }
 @keyframes desk-goal-flash { 0% { background: #2a3547; } 100% { background: transparent; } }

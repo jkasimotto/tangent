@@ -93,3 +93,15 @@ test("goalCardFacts: every pipeline step session counts as an agent", () => {
   assert.equal(facts.agentCount, 3);
   assert.equal(line(facts), "3 agents · running 1h 00m");
 });
+
+test("goalCardFacts: a caller can say a stored handover no longer waits for Julian", () => {
+  const goal = { status: "active", agents: ["s1"], firstStartAt: NOW - 2 * HOUR, lastEndAt: NOW - HOUR, waitingOn: "Julian: pick one" };
+  assert.equal(core.goalCardFacts({ goal, sessions: [], pipeline: null, now: NOW, handoffNeedsYou: false }).waiting, null);
+  assert.equal(core.goalCardFacts({ goal, sessions: [], pipeline: null, now: NOW, handoffNeedsYou: true }).waiting.ms, HOUR);
+});
+
+test("goalCardFacts: a Goal with no agent record still shows that it waits", () => {
+  const goal = { status: "active", agents: [], firstStartAt: null, lastEndAt: null, waitingOn: "Julian: pick a name" };
+  const facts = core.goalCardFacts({ goal, sessions: [], pipeline: null, now: NOW });
+  assert.equal(line(facts), "no agent yet · waiting for you");
+});

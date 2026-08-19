@@ -62,7 +62,7 @@
    * order the card trusts: a session bound to the Goal, then a running step
    * whose session is not bound, then a stopped step, then a stored handover.
    */
-  function waitingFact({ goal, sessions, steps, now }) {
+  function waitingFact({ goal, sessions, steps, now, handoffNeedsYou }) {
     const bound = new Set(sessions.map((session) => session.name));
     const stalled = sessions.find((session) => session.state === "waiting" || session.state === "shell");
     if (stalled) return waitFrom(stalled.waitingSince, now, waitReason(stalled));
@@ -70,7 +70,10 @@
     if (stepWaiting) return waitFrom(stepWaiting.waitingSince, now, `Step ${stepWaiting.index}: ${waitReason(stepWaiting)}`);
     const stepStopped = steps.find((step) => step.status === "stopped" || (step.status === "running" && !step.live));
     if (stepStopped) return waitFrom(stepTime(stepStopped.endedAt), now, `Step ${stepStopped.index} stopped`);
-    if (sessions.length || !/\b(julian|you)\b/i.test(String(goal.waitingOn ?? ""))) return null;
+    const needsYou = handoffNeedsYou === null || handoffNeedsYou === undefined
+      ? /\b(julian|you)\b/i.test(String(goal.waitingOn ?? ""))
+      : Boolean(handoffNeedsYou);
+    if (sessions.length || !needsYou) return null;
     const handedOver = Math.max(Number(goal.lastEndAt) || 0, ...steps.map((step) => stepTime(step.endedAt)));
     return waitFrom(handedOver, now, firstLine(goal.waitingOn) || "Waiting for you");
   }
@@ -80,10 +83,12 @@
    *   goal:     { status, waitingOn, agents, firstStartAt, lastEndAt }
    *   sessions: the live sessions bound to the Goal
    *   pipeline: the pipeline record with live facts folded in, or null
+   *   handoffNeedsYou: whether a stored handover still waits for Julian; the
+   *     caller decides, because a live Area brain answers its own Goals
    * Returns { agentCount, startedAt, running, waiting }, where a fact the
    * records cannot answer is null and never a guess.
    */
-  function goalCardFacts({ goal, sessions = [], pipeline = null, now }) {
+  function goalCardFacts({ goal, sessions = [], pipeline = null, now, handoffNeedsYou = null }) {
     const steps = pipeline?.steps ?? [];
     const live = sessions.filter((session) => session.state !== "shell");
     const stepSessions = steps.map((step) => step.session).filter(Boolean);
@@ -98,7 +103,7 @@
       const endedAt = Math.max(Number(goal.lastEndAt) || 0, ...steps.map((step) => stepTime(step.endedAt)));
       if (endedAt > started) running = { word: "ran", ms: endedAt - started };
     }
-    return { agentCount, startedAt: started, running, waiting: waitingFact({ goal, sessions, steps, now }) };
+    return { agentCount, startedAt: started, running, waiting: waitingFact({ goal, sessions, steps, now, handoffNeedsYou }) };
   }
 
   /**
@@ -107,7 +112,6 @@
    * `agentNames` fills the hover title of the agent count.
    */
   function factsSegments(facts, now, agentNames = []) {
-    if (!facts.agentCount && !facts.running) return [{ text: "no agent yet", kind: "agents", title: "" }];
     const segments = [];
     if (facts.agentCount) {
       segments.push({
@@ -115,6 +119,8 @@
         kind: "agents",
         title: agentNames.join(", "),
       });
+    } else if (!facts.running) {
+      segments.push({ text: "no agent yet", kind: "agents", title: "" });
     }
     if (facts.running) {
       segments.push({

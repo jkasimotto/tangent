@@ -39,6 +39,7 @@ const state = {
   createReturnView: "work",
   expandedAreas: new Set(storedJson("agent-shell.expanded-areas") || []),
   collapsedDeskSections: new Set(storedJson("agent-shell.collapsed-desk-sections") || []),
+  expandedGoalDocs: new Set(), // Goal files whose Docs chip is open; a reload closes them, a poll never does
   mapStates: new Map(), // Area path -> stored map state ({positions, kindsOff, showDone, collapsed}) or "loading"
   mapSelectFile: "", // a Document to select on the Area map once, set by the reader's Area path
   showDoneAreas: localStorage.getItem("agent-shell.show-done-areas") === "1",
@@ -628,6 +629,12 @@ function sessionForGoal(goal) {
     ?? null;
 }
 
+/** Every live session bound to one Goal, for the agent count on its card. */
+function sessionsForGoal(goal) {
+  if (!goal || ["done", "dropped", "deferred"].includes(goal.status)) return [];
+  return state.sessions.filter((session) => session.goal === goal.file || session.name === goal.session);
+}
+
 /** Returns every live conversation that is defining work, newest first. */
 function describeWorkSessions() {
   return state.sessions
@@ -1202,51 +1209,42 @@ function deskAttentionQueue() {
   return "";
 }
 
-/** Returns the action text for one Goal without hiding its current state. */
+/**
+ * The state pill and the primary action of one Goal. The pill is one word:
+ * the facts line under the title carries the duration, and the card keeps no
+ * prose (design-goal-cards Decision 4).
+ */
 function deskGoalAction(goal) {
+  const line = { stepLine: "", stepTitle: "" };
   if (["done", "dropped", "deferred"].includes(goal.status)) {
-    return { state: goal.status === "done" ? "Complete" : humanName(goal.status), action: "", kind: "complete", route: "" };
+    return { ...line, state: goal.status === "done" ? "Complete" : humanName(goal.status), action: "", kind: "complete", route: "" };
   }
   const session = sessionForGoal(goal);
-  if (!session) return { state: goalNeedsYou(goal) ? "Waiting for you" : "Ready", action: "Start agent", kind: goalNeedsYou(goal) ? "waiting" : "ready", route: "run" };
-  if (session.state === "working") return { state: "Agent working", action: `Open ${agentName(session)}`, kind: "working", route: "run" };
-  if (session.state === "waiting") return { state: "Waiting for you", action: `Open ${agentName(session)}`, kind: "waiting", route: "run" };
-  if (session.state === "shell") return { state: "Agent did not start", action: "Open session", kind: "waiting", route: "run" };
-  return { state: "Session open", action: "Open agent", kind: "ready", route: "run" };
+  if (!session) return { ...line, state: goalNeedsYou(goal) ? "Waiting" : "Ready", action: "Start agent", kind: goalNeedsYou(goal) ? "waiting" : "ready", route: "run" };
+  if (session.state === "working") return { ...line, state: "Working", action: `Open ${agentName(session)}`, kind: "working", route: "run" };
+  if (session.state === "waiting") return { ...line, state: "Waiting", action: `Open ${agentName(session)}`, kind: "waiting", route: "run" };
+  if (session.state === "shell") return { ...line, state: "Stopped", action: "Open session", kind: "waiting", route: "run" };
+  return { ...line, state: "Ready", action: "Open agent", kind: "ready", route: "run" };
 }
 
 /** The idle time (ms) after which an idle step is offered "Send to next". */
 const PIPELINE_SEND_AFTER_MS = 60_000;
 
-/** The pipeline row's state pill and primary action. */
+/**
+ * The pipeline row's state pill, primary action, and the small `Step N of M`
+ * line above the pill. The step's agent and instruction stay in that line's
+ * hover title: Julian reads the step in the launch popover, not on the card.
+ */
 function deskPipelineAction(goal, pipeline) {
   const step = pipeline.steps.find((item) => item.status === "running" || item.status === "stopped") ?? pipeline.steps.find((item) => item.status === "pending");
   if (!step) return deskGoalAction(goal);
-  const prefix = `Step ${step.index} of ${pipeline.steps.length} · ${step.label || "agent"}`;
-  if (step.status === "stopped" || (step.status === "running" && !step.live)) return { state: `${prefix} · stopped`, action: "", kind: "waiting", route: "" };
-  if (step.status === "pending") return { state: `${prefix} · not started`, action: "", kind: "waiting", route: "" };
-  if (step.state === "working") return { state: `${prefix} · working`, action: `Open step ${step.index}`, kind: "working", route: "run" };
-  if (step.state === "waiting") return { state: `${prefix} · waiting for you`, action: `Open step ${step.index}`, kind: "waiting", route: "run" };
-  if (step.state === "shell") return { state: `${prefix} · agent did not start`, action: `Open step ${step.index}`, kind: "waiting", route: "run" };
-  return { state: prefix, action: `Open step ${step.index}`, kind: "ready", route: "run" };
-}
-
-/** One chip per step and the first line of the latest handover. */
-function deskPipelineSteps(goal) {
-  const record = (state.pipelines ?? []).find((item) => item.goal === goal.file);
-  if (!record || ["done", "dropped", "deferred"].includes(goal.status)) return "";
-  const glyph = { complete: "✓", running: "●", pending: "○", skipped: "–", stopped: "■", ended: "■" };
-  const chips = record.steps.map((step) => {
-    const label = `${step.index} ${step.label || "agent"}: ${clip(step.instruction, 80)}`;
-    const dead = step.status === "running" && !step.live;
-    const status = dead ? "stopped" : step.status;
-    return step.live
-      ? `<button type="button" class="desk-step ${status}" data-open-session="${escapeHtml(step.session)}" data-open-session-goal="${escapeHtml(goal.file)}" title="Open ${escapeHtml(label)}"><b aria-hidden="true">${glyph[status] ?? "○"}</b>${step.index}</button>`
-      : `<span class="desk-step ${status}" title="${escapeHtml(label)}${step.session ? " (no live session)" : ""}"><b aria-hidden="true">${glyph[status] ?? "○"}</b>${step.index}</span>`;
-  }).join("");
-  const latest = [...record.steps].reverse().find((step) => step.handover);
-  const line = latest ? `<span class="desk-handover">Step ${latest.index}: ${escapeHtml(clip(String(latest.handover).split("\n")[0], 120))}</span>` : "";
-  return `<span class="desk-pipeline-steps" aria-label="Pipeline steps">${chips}</span>${line}`;
+  const line = { stepLine: `Step ${step.index} of ${pipeline.steps.length}`, stepTitle: `${step.label || "agent"}: ${step.instruction ?? ""}` };
+  if (step.status === "stopped" || (step.status === "running" && !step.live)) return { ...line, state: "Stopped", action: "", kind: "waiting", route: "" };
+  if (step.status === "pending") return { ...line, state: "Not started", action: "", kind: "waiting", route: "" };
+  if (step.state === "working") return { ...line, state: "Working", action: `Open step ${step.index}`, kind: "working", route: "run" };
+  if (step.state === "waiting") return { ...line, state: "Waiting", action: `Open step ${step.index}`, kind: "waiting", route: "run" };
+  if (step.state === "shell") return { ...line, state: "Stopped", action: `Open step ${step.index}`, kind: "waiting", route: "run" };
+  return { ...line, state: "Ready", action: `Open step ${step.index}`, kind: "ready", route: "run" };
 }
 
 /** Restart, Skip, Stop work, and Send-to-next, only when they apply. */
@@ -1269,15 +1267,67 @@ function deskPipelineControls(goal, pipeline) {
   return "";
 }
 
-/** Renders the Documents linked to one Goal as compact reader chips. */
-function deskGoalDocuments(goal) {
-  const documents = (goal.documents ?? []).filter((document) => document.kind === "document" || !document.kind);
-  if (!documents.length) return "";
-  return `<span class="desk-goal-docs">${documents.map((document) => `
-    <button class="desk-doc-chip" type="button" data-open-document="${escapeHtml(document.file)}" title="Open ${escapeHtml(document.title)}"><b aria-hidden="true">DOC</b>${escapeHtml(document.title)}</button>`).join("")}</span>`;
+/**
+ * The one line of facts under the title: how many agents worked this Goal,
+ * how long it runs or ran, and how long it has waited for Julian. The facts
+ * come from the vault git log, the live sessions, and the pipeline record;
+ * a fact the records cannot answer is left out (design-goal-cards).
+ */
+function deskGoalFacts(goal) {
+  const core = window.AgentShellGoalCard;
+  if (!core) return "";
+  const now = Date.now();
+  const sessions = sessionsForGoal(goal);
+  const facts = core.goalCardFacts({ goal, sessions, pipeline: pipelineRecordForGoal(goal), now, handoffNeedsYou: goalNeedsYou(goal) });
+  const names = [...new Set([...(goal.agents ?? []), ...sessions.map((session) => session.name)])];
+  const segments = core.factsSegments(facts, now, names).map((segment) =>
+    `<span class="${segment.kind}"${segment.title ? ` title="${escapeHtml(segment.title)}"` : ""}>${escapeHtml(segment.text)}</span>`);
+  return `<span class="desk-goal-facts">${segments.join(`<i aria-hidden="true">·</i>`)}</span>`;
 }
 
-/** Renders one Goal with its brief, Documents, handoff, and direct actions. */
+/**
+ * The Documents linked to one Goal as one `Docs N ▾` chip. The chip opens an
+ * inline list in the Area map's order, newest change first, so the card keeps
+ * one line whatever the Goal reads (design-goal-cards Decision 5).
+ */
+function deskGoalDocuments(goal) {
+  const core = window.AgentShellAreaMap;
+  const documents = (goal.documents ?? []).filter((document) => document.kind === "document" || !document.kind);
+  if (!documents.length) return "";
+  const open = state.expandedGoalDocs.has(goal.file);
+  const chip = `<button class="desk-docs-chip${open ? " open" : ""}" type="button" data-toggle-goal-docs="${escapeHtml(goal.file)}" aria-expanded="${open}" title="Documents linked from this Goal">Docs ${documents.length} ${open ? "▴" : "▾"}</button>`;
+  if (!open) return chip;
+  const now = Date.now();
+  const offset = new Date().getTimezoneOffset();
+  const rows = core.orderDocuments(documents).map((document) => `
+    <button type="button" data-open-document="${escapeHtml(document.file)}" title="${escapeHtml(document.file)}">
+      <span aria-hidden="true">${escapeHtml(core.kindLabel(document.docKind ?? "page"))}</span><strong>${escapeHtml(document.title)}</strong><small></small><em>${escapeHtml(core.relativeDay(document.changedAt ?? document.mtime, now, offset))}</em>
+    </button>`);
+  return `${chip}<div class="desk-documents desk-goal-doc-list">${rows.join("")}</div>`;
+}
+
+/**
+ * The fixed `End · Won't do · Done` row. Every action stays visible and in
+ * the same place: one that does not apply is disabled, never removed, so
+ * Done never moves under the cursor (design-goal-cards Decision 4).
+ */
+function deskGoalSecondaryActions(goal, liveSession) {
+  const open = !["done", "dropped", "deferred"].includes(goal.status);
+  const buttons = [
+    liveSession
+      ? `<button class="desk-icon-action" type="button" data-stop-goal="${escapeHtml(goal.file)}" aria-label="End the agent run for ${escapeHtml(goal.title)}">End</button>`
+      : `<button class="desk-icon-action" type="button" disabled title="No live agent to end">End</button>`,
+    open
+      ? `<button class="desk-icon-action" type="button" data-wont-do-goal="${escapeHtml(goal.file)}" aria-label="Mark ${escapeHtml(goal.title)} won't do">Won't do</button>`
+      : `<button class="desk-icon-action" type="button" disabled title="This Goal is closed">Won't do</button>`,
+    open
+      ? `<button class="desk-icon-action complete" type="button" data-complete-goal="${escapeHtml(goal.file)}" aria-label="Mark ${escapeHtml(goal.title)} complete">Done</button>`
+      : `<button class="desk-icon-action complete" type="button" disabled title="This Goal is closed">Done</button>`,
+  ];
+  return `<span class="desk-secondary-actions">${buttons.join(`<i aria-hidden="true">·</i>`)}</span>`;
+}
+
+/** Renders one Goal as title, one facts line, its Documents chip, and a fixed action column. */
 function deskGoalRow(goal, { subgoal = false } = {}) {
   const pipeline = pipelineForGoal(goal);
   const record = pipelineRecordForGoal(goal);
@@ -1286,9 +1336,8 @@ function deskGoalRow(goal, { subgoal = false } = {}) {
   const launchTitle = record ? "Add or edit steps" : "Choose agent or model";
   /** The ▾ that opens this Goal's launch popover: agent choice, or the step list once a pipeline exists. */
   const launchToggle = (label) => `<button class="desk-action desk-launch-toggle${state.launchTarget === goal.file ? " open" : ""}" type="button" data-launch-for="${escapeHtml(goal.file)}" title="${launchTitle}" aria-label="${launchTitle} for ${escapeHtml(goal.title)}" aria-expanded="${state.launchTarget === goal.file}">${label}</button>`;
-  const complete = !["done", "dropped", "deferred"].includes(goal.status);
-  const handoff = !sessionForGoal(goal) && goalNeedsYou(goal) ? String(goal.waitingOn ?? "").trim() : "";
   const route = `data-open-goal-run="${escapeHtml(goal.file)}"`;
+  const controls = pipeline ? deskPipelineControls(goal, pipeline) : "";
   const selectable = action.action === "Start agent";
   const selected = selectable && state.goalSelection.includes(goal.file);
   return `
@@ -1297,21 +1346,19 @@ function deskGoalRow(goal, { subgoal = false } = {}) {
       <div class="desk-goal-main">
         <small>${subgoal ? "Subgoal" : "Goal"}</small>
         <strong>${escapeHtml(goal.title)}</strong>
-        <span>${escapeHtml(currentBriefFields(goal).wanted)}</span>
-        ${handoff ? `<span class="desk-goal-handoff">Handoff: ${escapeHtml(clip(handoff, 180))}</span>` : ""}
-        ${deskPipelineSteps(goal)}
+        ${deskGoalFacts(goal)}
         ${deskGoalDocuments(goal)}
       </div>
       <div class="desk-goal-controls">
+        ${action.stepLine ? `<small class="desk-step-line" title="${escapeHtml(action.stepTitle)}">${escapeHtml(action.stepLine)}</small>` : ""}
         <span class="desk-state ${action.kind}">${escapeHtml(action.state)}</span>
-        ${pipeline ? deskPipelineControls(goal, pipeline) : ""}
         ${action.action === "Start agent"
           ? `<span class="desk-split"><button class="desk-action" type="button" ${route}>Start agent</button>${launchToggle("▾")}</span>`
           : action.action
             ? (record ? `<span class="desk-split"><button class="desk-action" type="button" ${route}>${escapeHtml(action.action)}</button>${launchToggle("▾")}</span>` : `<button class="desk-action" type="button" ${route}>${escapeHtml(action.action)}</button>`)
             : record ? launchToggle("Steps ▾") : ""}
-        ${liveSession ? `<button class="desk-icon-action" type="button" data-stop-goal="${escapeHtml(goal.file)}" aria-label="End the agent run for ${escapeHtml(goal.title)}">End agent</button>` : ""}
-        ${complete ? `<button class="desk-icon-action" type="button" data-wont-do-goal="${escapeHtml(goal.file)}" aria-label="Mark ${escapeHtml(goal.title)} won't do">Won't do</button><button class="desk-icon-action complete" type="button" data-complete-goal="${escapeHtml(goal.file)}" aria-label="Mark ${escapeHtml(goal.title)} complete">Done</button>` : ""}
+        ${deskGoalSecondaryActions(goal, liveSession)}
+        ${controls ? `<span class="desk-pipeline-controls">${controls}</span>` : ""}
       </div>
     </article>`;
 }
@@ -2804,7 +2851,7 @@ function mountTerminal(host, sessionName) {
 function vaultRenderProjection() {
   if (!state.vault) return null;
   /** Selects the Goal fields that affect visible rendering. */
-  const goalFields = (goal) => [goal.file, goal.title, goal.status, goal.doneWhen, goal.mtime, goal.changedAt, goal.depth, goal.waitingOn, goal.storyText, goal.searchText];
+  const goalFields = (goal) => [goal.file, goal.title, goal.status, goal.doneWhen, goal.mtime, goal.changedAt, goal.depth, goal.waitingOn, goal.storyText, goal.searchText, goal.agents, goal.firstStartAt, goal.lastEndAt, (goal.documents ?? []).map((document) => [document.file, document.changedAt])];
   return [
     (state.vault.map ?? []).map((group) => [group.path, (group.goals ?? []).map(goalFields)]),
     (state.vault.areas ?? []).map((area) => [area.path, area.status, area.children, area.purpose, area.body, (area.goals ?? []).map(goalFields), (area.documents ?? []).map((document) => [document.file, document.title, document.mtime, document.changedAt])]),
@@ -2840,6 +2887,10 @@ function renderKey() {
     state.areaSelection,
     state.goalSelection,
     [...state.expandedAreas].sort(),
+    [...state.expandedGoalDocs].sort(),
+    // The card's durations count up, so a repaint is due once a minute even
+    // when nothing else changed.
+    Math.floor(Date.now() / 60_000),
     state.areaEdit,
     state.programId,
     state.programDraft,
@@ -2847,11 +2898,11 @@ function renderKey() {
     vaultRenderProjection(),
     goal ? [goal.file, goal.status, goal.mtime, goal.stateText, goal.currentBrief, goal.storyText, goal.why, goal.subgoalItems, goal.documents] : null,
     [state.launch.area, state.launch.open, state.launch.editing, state.launch.command, state.launch.choice, state.launch.loading, Boolean(state.launch.options), state.launch.options?.default?.label ?? null, state.launch.options?.default?.command ?? null, state.launch.instruction, state.launch.continueFrom, state.launch.active, state.launch.steps, state.launch.record?.updatedAt ?? null],
-    (state.pipelines ?? []).map((item) => [item.goal, item.status, item.updatedAt, item.steps.map((step) => [step.status, step.live, step.state, step.idleSince])]),
+    (state.pipelines ?? []).map((item) => [item.goal, item.status, item.updatedAt, item.steps.map((step) => [step.status, step.live, step.state, step.idleSince, step.waitingSince])]),
     (state.brains ?? []).map((item) => [item.area, item.status, item.generation, item.session, item.live, item.state, item.stateDetail, item.updatedAt]),
     state.brainDraft,
     [state.launchTarget, state.launchAnchor, Boolean(state.harnessDraft)],
-    state.sessions.map((item) => [item.name, item.goal, item.kind, item.area, item.state, item.phase, item.command, item.created, item.workTitle, item.launchLabel]),
+    state.sessions.map((item) => [item.name, item.goal, item.kind, item.area, item.state, item.phase, item.command, item.created, item.workTitle, item.launchLabel, item.waitingSince]),
   ]);
 }
 
@@ -4471,6 +4522,13 @@ document.addEventListener("click", async (event) => {
     if (state.expandedAreas.has(area)) state.expandedAreas.delete(area);
     else state.expandedAreas.add(area);
     saveExpandedAreas();
+    return paint(true);
+  }
+  const goalDocsToggle = target.closest("[data-toggle-goal-docs]");
+  if (goalDocsToggle) {
+    const file = goalDocsToggle.dataset.toggleGoalDocs;
+    if (state.expandedGoalDocs.has(file)) state.expandedGoalDocs.delete(file);
+    else state.expandedGoalDocs.add(file);
     return paint(true);
   }
   const deskSectionToggle = target.closest("[data-toggle-desk-section]");

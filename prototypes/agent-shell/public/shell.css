@@ -297,8 +297,20 @@ button.area-brain-line:hover { background: #191d22; }
 .desk-goal-main small { color: #737d88; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 760; letter-spacing: .11em; text-transform: uppercase; }
 .desk-goal-main strong { color: #e7eaed; font-size: 16px; line-height: 1.35; overflow-wrap: anywhere; }
 .desk-goal-main > span { color: #98a1ac; font-size: 12px; line-height: 1.48; }
-.desk-goal-controls { display: flex; max-width: 190px; flex-wrap: wrap; justify-content: flex-end; gap: 5px 9px; }
-.desk-goal-controls .desk-state { width: 100%; justify-content: flex-end; margin-bottom: 2px; }
+/* The one facts line: agents, running, waiting for you (design-goal-cards). */
+.desk-goal-facts { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px; }
+.desk-goal-facts i { color: #4d555f; font-style: normal; }
+.desk-goal-facts .waiting { color: var(--amber); }
+/* One fixed column, so Done never moves under the cursor (design-goal-cards Decision 4). */
+.desk-goal-controls { display: grid; width: 190px; justify-items: end; gap: 5px; }
+.desk-goal-controls .desk-state { justify-content: flex-end; }
+.desk-step-line { color: #737d88; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 760; letter-spacing: .08em; text-transform: uppercase; }
+.desk-secondary-actions { display: inline-flex; align-items: center; gap: 0 3px; }
+.desk-secondary-actions i { color: #4d555f; font-size: 10px; font-style: normal; }
+.desk-secondary-actions .desk-icon-action { padding: 2px 3px; }
+.desk-secondary-actions .desk-icon-action:disabled { opacity: .35; cursor: default; }
+.desk-secondary-actions .desk-icon-action:disabled:hover { border-color: transparent; color: #7f8994; }
+.desk-pipeline-controls { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
 .desk-goal:has(.desk-select) { grid-template-columns: auto minmax(0, 1fr) auto; }
 .desk-select { display: flex; align-items: flex-start; padding: 3px 2px 8px 0; cursor: pointer; }
 .desk-select input { width: 15px; height: 15px; margin: 0; accent-color: var(--blue); cursor: pointer; }
@@ -322,7 +334,7 @@ button.area-brain-line:hover { background: #191d22; }
 .desk-goal.subgoal { grid-template-columns: minmax(0, 1fr) auto; padding-top: 0; }
 .desk-goal.subgoal .desk-goal-main strong { font-size: 14px; font-weight: 620; }
 .desk-goal.subgoal .desk-goal-main > span { font-size: 11px; }
-.desk-goal.subgoal .desk-goal-controls { max-width: 165px; }
+.desk-goal.subgoal .desk-goal-controls { width: 165px; }
 
 .desk-definition { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 18px; width: 100%; padding: 11px 12px; border: 1px solid #3a4149; border-left: 3px solid var(--amber); border-radius: 1px; background: #171a1e; color: inherit; cursor: pointer; text-align: left; }
 .desk-definition.working { border-left-color: var(--blue); }
@@ -1021,23 +1033,10 @@ li .document-comment { margin: 8px 0 10px; }
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .001ms !important; }
 }
 
-/* Goal-row Documents, handoffs, and reveal highlight */
-.desk-goal-docs { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
-/* Pipeline progress on a Goal row: one chip per step, latest handover below. */
-.desk-pipeline-steps { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
-.desk-step { display: inline-flex; align-items: center; gap: 4px; min-width: 34px; height: 20px; padding: 0 7px; border: 1px solid #343b44; border-radius: 999px; background: #14171c; color: #cdd2d7; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.desk-step b { font-weight: 700; }
-button.desk-step { cursor: pointer; }
-button.desk-step:hover { border-color: #5a6470; }
-.desk-step.complete b { color: #6fbf73; }
-.desk-step.running b { color: #e0b64a; }
-.desk-step.stopped b { color: #e06c6c; }
-.desk-step.pending, .desk-step.skipped, .desk-step.ended { opacity: .6; }
-.desk-handover { display: block; margin-top: 4px; color: #8a939d; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.desk-doc-chip { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; padding: 3px 9px; border: 1px solid #343b44; border-radius: 999px; background: #14171c; color: #cdd2d7; cursor: pointer; font-size: 11px; line-height: 1.4; }
-.desk-doc-chip b { color: #68727d; font: 8px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; letter-spacing: .1em; }
-.desk-doc-chip:hover { border-color: #4a525c; color: #fff; }
-.desk-goal-handoff { margin-top: 3px; color: var(--amber); font-size: 12px; line-height: 1.45; }
+/* Goal-row Documents and reveal highlight */
+.desk-docs-chip { display: inline-flex; align-items: center; gap: 5px; width: max-content; margin-top: 4px; padding: 2px 8px; border: 1px solid #343b44; border-radius: 999px; background: #14171c; color: #cdd2d7; cursor: pointer; font-size: 11px; line-height: 1.5; }
+.desk-docs-chip:hover, .desk-docs-chip.open { border-color: #4a525c; color: #fff; }
+.desk-goal-doc-list { margin-top: 4px; }
 .desk-goal.flash { animation: desk-goal-flash 1.5s ease-out; }
 .area-desk-panel.flash { outline: 2px solid var(--blue, #6ea8ff); outline-offset: 2px; }
 @keyframes desk-goal-flash { 0% { background: #2a3547; } 100% { background: transparent; } }

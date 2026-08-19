@@ -8,6 +8,8 @@ import { JSDOM } from "jsdom";
 const here = path.dirname(fileURLToPath(import.meta.url));
 // shell.js reads its search normalizer from this script, as the page does.
 const goToCore = await readFile(path.join(here, "public", "go-to-core.js"), "utf8");
+// The Goal card reads its counts and durations from this script, as the page does.
+const goalCardCore = await readFile(path.join(here, "public", "goal-card-core.js"), "utf8");
 
 /** Lets promise callbacks scheduled by the evaluated browser script finish. */
 async function settle(window) {
@@ -51,6 +53,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   // jsdom has no 2d canvas; the Area map renders its outline without one.
   window.HTMLCanvasElement.prototype.getContext = () => null;
   window.eval(goToCore);
+  window.eval(goalCardCore);
   window.eval(mapCore);
   window.eval(mapView);
   const goalFile = "otto/tangent/goal-ux-product-vision.md";
@@ -331,7 +334,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.equal(window.localStorage.getItem("agent-shell.work-filter"), "active");
   assert.equal(window.document.querySelectorAll(".area-desk-panel").length, 1);
   assert.match(window.document.querySelector(".area-desk-panel").textContent, /UX Product Vision/);
-  assert.match(window.document.querySelector(".area-desk-panel").textContent, /Waiting for you/);
+  assert.match(window.document.querySelector(".area-desk-panel").textContent, /Waiting/, "the pill is one word now; the duration is on the facts line");
   assert.equal(window.document.querySelectorAll(".desk-goal.subgoal").length, 1);
   assert.doesNotMatch(window.document.querySelector("#screen").textContent, /Define Live Edit collaboration/);
   click(window, "[data-work-filter='inactive']");
@@ -362,14 +365,25 @@ test("the live shell restores context, defines work with an agent, and organizes
   click(window, "#back-button");
   assert.ok(window.document.querySelector(".work-page"), "the desk shows the Work page");
 
-  // The Goal row carries the details itself: brief, Documents, and handoff.
+  // The Goal row carries facts, not prose: no done condition, one Docs chip,
+  // and the three secondary actions always in the same place.
   const goalRow = window.document.querySelector(`[data-goal-anchor='${goalFile}']`);
-  assert.match(goalRow.textContent, /One calm surface/);
-  assert.match(goalRow.querySelector(".desk-goal-docs").textContent, /Tangent product design/);
-  assert.match(goalRow.querySelector("[data-stop-goal]").textContent, /End agent/);
+  assert.doesNotMatch(goalRow.textContent, /One calm surface/, "the done condition left the card");
+  assert.equal(goalRow.querySelector(".desk-goal-docs"), null, "one chip stands in for the Document pills");
+  assert.match(goalRow.querySelector(".desk-docs-chip").textContent, /Docs 1/);
+  click(window, `[data-goal-anchor='${goalFile}'] [data-toggle-goal-docs]`);
+  const openRow = window.document.querySelector(`[data-goal-anchor='${goalFile}']`);
+  assert.match(openRow.querySelector(".desk-goal-doc-list").textContent, /Tangent product design/);
+  assert.match(openRow.querySelector(".desk-docs-chip").textContent, /Docs 1 ▴/);
+  click(window, `[data-goal-anchor='${goalFile}'] [data-toggle-goal-docs]`);
+  assert.equal(window.document.querySelector(`[data-goal-anchor='${goalFile}'] .desk-goal-doc-list`), null, "the list closes again");
+  click(window, `[data-goal-anchor='${goalFile}'] [data-toggle-goal-docs]`);
+  assert.match(goalRow.querySelector("[data-stop-goal]").textContent, /^End$/);
   const handoffRow = window.document.querySelector(`[data-goal-anchor='${liveEditGoal.file}']`);
-  assert.match(handoffRow.querySelector(".desk-goal-handoff").textContent, /Handoff: Julian/);
+  assert.equal(handoffRow.querySelector(".desk-goal-handoff"), null, "the handoff line left the card");
+  assert.match(handoffRow.querySelector(".desk-goal-facts .waiting").textContent, /^waiting for you/);
   assert.equal(handoffRow.querySelector("[data-stop-goal]"), null);
+  assert.equal(handoffRow.querySelector(".desk-secondary-actions button:disabled").textContent, "End", "a Goal with no agent still shows End, disabled");
   assert.equal(window.document.querySelector("[data-view-goal]"), null);
 
   click(window, `[data-stop-goal='${goalFile}']`);
@@ -388,7 +402,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.equal(window.document.querySelector("[data-new-goal]"), null);
   assert.equal(window.document.querySelectorAll(".area-desk-panel").length, 2);
   assert.match(window.document.querySelector("#screen").textContent, /Define Live Edit collaboration/);
-  assert.match(window.document.querySelector("#screen").textContent, /Waiting for you/);
+  assert.match(window.document.querySelector("#screen").textContent, /waiting for you/i, "the desk still says a Goal waits for Julian");
   assert.doesNotMatch(window.document.querySelector("#screen").textContent, /Already complete/);
   assert.match(window.document.querySelector(".desk-subgoal-disclosure > summary").textContent, /To do that1 Subgoal/);
 
@@ -646,6 +660,7 @@ test("the Agent Shell menu owns refresh, reload, and rebuild, and a dead server 
   };
 
   window.eval(goToCore);
+  window.eval(goalCardCore);
   window.eval(mapCore);
   window.eval(script);
   await settle(window);
@@ -756,6 +771,7 @@ test("checked Goals start one shared agent that owns them in checked order", asy
   };
 
   window.eval(goToCore);
+  window.eval(goalCardCore);
   window.eval(mapCore);
   window.eval(script);
   await settle(window);
@@ -888,6 +904,7 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   };
 
   window.eval(goToCore);
+  window.eval(goalCardCore);
   window.eval(mapCore);
   window.eval(script);
   await settle(window);
@@ -938,11 +955,14 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   click(window, "#work-tab");
   await settle(window);
   const row = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
-  assert.match(row.querySelector(".desk-state").textContent, /Step 1 of 2 · Codex · Sol · High · working/);
-  assert.equal(row.querySelectorAll(".desk-step").length, 2);
+  assert.match(row.querySelector(".desk-state").textContent, /^Working$/);
+  assert.equal(row.querySelector(".desk-step-line").textContent, "Step 1 of 2");
+  assert.match(row.querySelector(".desk-step-line").title, /Codex · Sol · High/);
+  assert.equal(row.querySelector(".desk-step"), null, "the step chips left the card");
+  assert.equal(row.querySelector(".desk-goal-facts").textContent, "1 agent", "the step session counts as one agent");
   assert.equal(row.querySelector("[data-check-goal]"), null);
   assert.equal(row.querySelector("[data-pipeline-control]"), null);
-  assert.match(row.querySelector("[data-stop-goal]").textContent, /End agent/);
+  assert.match(row.querySelector("[data-stop-goal]").textContent, /^End$/);
 
   // The running pipeline row keeps a ▾ that opens the step list: history is
   // fixed, the pending step edits in place, and a draft row appends.
@@ -970,8 +990,7 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   assert.equal(popover(), null, "the popover closed after the append");
   assert.equal(posts.filter((entry) => entry.path === "/api/goals/start").length, 1, "an append never restarts the pipeline");
   const grownRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
-  assert.equal(grownRow.querySelectorAll(".desk-step").length, 3);
-  assert.match(grownRow.querySelector(".desk-state").textContent, /Step 1 of 3/);
+  assert.equal(grownRow.querySelector(".desk-step-line").textContent, "Step 1 of 3");
 
   // The step session dies: the row offers Restart and Skip; Skip advances the line
   // and the latest handover shows under the chips.
@@ -981,7 +1000,8 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   await settle(window);
   await settle(window);
   const stoppedRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
-  assert.match(stoppedRow.querySelector(".desk-state").textContent, /Step 1 of 3 · Codex · Sol · High · stopped/);
+  assert.match(stoppedRow.querySelector(".desk-state").textContent, /^Stopped$/);
+  assert.equal(stoppedRow.querySelector(".desk-step-line").textContent, "Step 1 of 3");
   assert.equal(stoppedRow.querySelector("[data-stop-goal]"), null);
   assert.ok(stoppedRow.querySelector("[data-pipeline-control='restart']"));
   click(window, `[data-goal-anchor='${goal.file}'] [data-pipeline-control='skip']`);
@@ -990,11 +1010,12 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   const control = posts.find((entry) => entry.path === "/api/pipelines/control");
   assert.deepEqual(control.body, { goal: goal.file, action: "skip", step: 1 });
   const afterRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
-  assert.match(afterRow.querySelector(".desk-handover").textContent, /Step 1: Design written: design-map\.md\./);
+  assert.equal(afterRow.querySelector(".desk-handover"), null, "the handover line left the card");
 
   // Step 2 died too. Stop work ends the run: the row settles back to a plain
-  // open Goal, no Restart lingers, and the handovers stay visible.
-  assert.match(afterRow.querySelector(".desk-state").textContent, /Step 2 of 3 · .* · stopped/);
+  // open Goal and no Restart lingers.
+  assert.match(afterRow.querySelector(".desk-state").textContent, /^Stopped$/);
+  assert.equal(afterRow.querySelector(".desk-step-line").textContent, "Step 2 of 3");
   const stopWork = afterRow.querySelector("[data-pipeline-control='end']");
   assert.ok(stopWork, "a stopped step offers Stop work");
   assert.equal(stopWork.textContent, "Stop work");
@@ -1006,8 +1027,6 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   const endedRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
   assert.match(endedRow.querySelector(".desk-state").textContent, /Ready/);
   assert.equal(endedRow.querySelector("[data-pipeline-control]"), null, "nothing offers Restart after Stop work");
-  assert.equal(endedRow.querySelectorAll(".desk-step.ended").length, 2);
-  assert.match(endedRow.querySelector(".desk-handover").textContent, /Step 1: Design written/);
 
   // A finished pipeline: the row is a plain Goal row again, and its ▾ opens
   // the finished steps with a draft row ready to append, never a fresh start.
@@ -1088,6 +1107,7 @@ test("the Area card brain icon starts, shows, and resumes the Area brain", async
   };
 
   window.eval(goToCore);
+  window.eval(goalCardCore);
   window.eval(mapCore);
   window.eval(script);
   await settle(window);
@@ -1224,6 +1244,7 @@ test("background polls never rebuild the screen under an editing surface or a re
   };
 
   window.eval(goToCore);
+  window.eval(goalCardCore);
   window.eval(mapCore);
   window.eval(script);
   await settle(window);
@@ -1340,6 +1361,7 @@ test("comments render as red blocks, save through the base-hash path with re-anc
   };
   window.eval(commentsScript);
   window.eval(goToCore);
+  window.eval(goalCardCore);
   window.eval(mapCore);
   window.eval(script);
   await settle(window);
@@ -1474,6 +1496,7 @@ test("comments render as red blocks, save through the base-hash path with re-anc
   };
   window.eval(commentsScript);
   window.eval(goToCore);
+  window.eval(goalCardCore);
   window.eval(mapCore);
   window.eval(script);
   await settle(window);
@@ -1596,6 +1619,7 @@ test("the desk Documents shelf shows the eight newest subtree Documents with kin
     });
   };
   window.eval(goToCore);
+  window.eval(goalCardCore);
   window.eval(mapCore);
   window.eval(mapView);
   window.eval(script);
@@ -1676,6 +1700,7 @@ test("a sub-Area with open work nests as a section of its ancestor's desk panel,
     });
   };
   window.eval(goToCore);
+  window.eval(goalCardCore);
   window.eval(mapCore);
   window.eval(mapView);
   window.eval(script);
@@ -1706,6 +1731,7 @@ test("the Area map holds stored node positions on reload, simulates only new nod
   window.HTMLCanvasElement.prototype.getContext = () => null;
   for (const script of d3) window.eval(script);
   window.eval(goToCore);
+  window.eval(goalCardCore);
   window.eval(mapCore);
   window.eval(mapView);
   const view = window.AgentShellAreaMapView;
@@ -1807,6 +1833,7 @@ test("a second comment lands on the words Julian selected, and the reader holds 
   };
   window.eval(commentsScript);
   window.eval(goToCore);
+  window.eval(goalCardCore);
   window.eval(mapCore);
   window.eval(script);
   await settle(window);

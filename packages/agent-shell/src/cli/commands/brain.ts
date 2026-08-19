@@ -53,7 +53,7 @@ async function statusCommand(args: Args): Promise<void> {
  * what the plan says is the brain's signal to fix its lines.
  */
 function printForJulian(rows: ForJulianRow[]): void {
-  console.log(`for Julian: Tangent shows ${rows.length} ${rows.length === 1 ? "item" : "items"}`);
+  console.log(`Tangent shows ${rows.length} ${rows.length === 1 ? "item" : "items"} for Julian`);
   rows.forEach((row, at) => {
     const number = `  ${at + 1}.`;
     if (row.kind === "decision") {

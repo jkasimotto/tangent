@@ -24,6 +24,6 @@ The design (`~/.tangent/trees/otto/tangent/design-what-needs-julian-under-brains
 
 - New module `prototypes/agent-shell/for-julian.mjs` with unit tests; new HTTP tests in `for-julian-http.test.mjs`; the desk card is covered in `focus-shell-ui.test.mjs`.
 - New endpoints `POST /api/brains/tried` and `POST /api/brains/tried/undo`; `saveVaultDocument` gains one brain notice.
-- New CLI noun `tangent shell rebuild`; `tangent brain status` ends with `for Julian: Tangent shows N items` and the rows.
+- New CLI noun `tangent shell rebuild`; `tangent brain status` ends with `Tangent shows N items for Julian` and the rows.
 - The brain prompt's `launchctl kickstart` paragraph is gone: one command replaces the recipe.
 - A row is only as good as the brain's line. Tangent never invents an item for Julian under a live brain, so a brain that writes nothing shows nothing.

@@ -38,7 +38,7 @@ A pipeline is a list of steps on one Goal. The server owns it (one record per Go
 An Area brain is one long-lived orchestrating agent per Area (ADR-0024; design contract `otto/tangent/impl-area-brain`). The server owns its record (`~/.tangent/agent-shell/brains/<area>/brain.json`, schema `area-brain.v1`), its session, the event messages it hears, and its self-handover. Julian starts it from the brain icon on the Area card. This package only posts to the endpoints below.
 
 - `tangent brain handover <facts...> [--session <name>] [--server]`: run by the brain when its context fills. Posts `POST /api/brains/handover { session, text }`; the server records the facts on the current generation, starts the next generation on a new session with the same instruction, the plan path, and these facts, then ends the calling session. Prints the new generation and session. A session that is not a running brain gets the server's 404 error text.
-- `tangent brain status [<area>] [--session <name>] [--server] [--json]`: shows one brain (status, generation, session, plan file, instruction, latest handover) by Area, or by the tmux session the command runs in, then `for Julian: Tangent shows N items` and one numbered line per row. `GET /api/brains/show?area=|session=`.
+- `tangent brain status [<area>] [--session <name>] [--server] [--json]`: shows one brain (status, generation, session, plan file, instruction, latest handover) by Area, or by the tmux session the command runs in, then `Tangent shows N items for Julian` and one numbered line per row. `GET /api/brains/show?area=|session=`.
 
 ## What waits on Julian
 

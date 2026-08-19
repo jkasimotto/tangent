@@ -1303,6 +1303,17 @@ function deskAttentionQueue() {
 }
 
 /**
+ * Drops from `state.triedLines` every line the server no longer lists, once
+ * the plan commit has landed. The line is hidden only while the press is in
+ * flight; a line the brain writes again later is shown again.
+ */
+function forgetClearedTryItLines() {
+  if (!state.triedLines.size) return;
+  const listed = new Set((state.brains ?? []).flatMap((brain) => (brain.forJulian ?? []).map((row) => row.line)));
+  for (const line of [...state.triedLines]) if (!listed.has(line)) state.triedLines.delete(line);
+}
+
+/**
  * Julian pressed `Tried it`: the row goes now and the plan follows. An Undo
  * toast puts it back where it was, so a mis-press costs one click.
  */
@@ -3362,6 +3373,7 @@ async function refresh({ initial = false } = {}) {
     state.sessions = sessionPayload.sessions || [];
     state.pipelines = sessionPayload.pipelines || [];
     state.brains = sessionPayload.brains || [];
+    forgetClearedTryItLines();
     state.programs = {
       programs: programs.programs || [],
       errors: programs.errors || [],

@@ -954,17 +954,9 @@ function workSection(title, goals, className = "", note = "") {
 
 const SEARCH_FILLER = new Set(["a", "an", "and", "built", "did", "do", "for", "in", "it", "of", "on", "the", "thing", "things", "to", "we", "when"]);
 
-/** Normalizes conversational wording for forgiving local search. */
-function normalizedSearchText(value) {
-  return String(value ?? "")
-    .toLowerCase()
-    .replace(/p\s*&\s*g\s*&\s*e/g, "pgande")
-    .replace(/[^a-z0-9]+/g, " ")
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((word) => word.length > 4 && word.endsWith("ing") ? word.slice(0, -3) : word.length > 3 && word.endsWith("ed") ? word.slice(0, -2) : word)
-    .join(" ");
-}
+// Normalizes conversational wording for forgiving local search. The work
+// search, the Go to finder, and the tests share one copy (see go-to-core.js).
+const normalizedSearchText = window.AgentShellGoTo.normalizedSearchText;
 
 /** Extracts the meaningful terms from one conversational query. */
 function searchTerms(query) {

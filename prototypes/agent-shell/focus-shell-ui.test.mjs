@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+// shell.js reads its search normalizer from this script, as the page does.
+const goToCore = await readFile(path.join(here, "public", "go-to-core.js"), "utf8");
 
 /** Lets promise callbacks scheduled by the evaluated browser script finish. */
 async function settle(window) {
@@ -48,6 +50,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   const { window } = dom;
   // jsdom has no 2d canvas; the Area map renders its outline without one.
   window.HTMLCanvasElement.prototype.getContext = () => null;
+  window.eval(goToCore);
   window.eval(mapCore);
   window.eval(mapView);
   const goalFile = "otto/tangent/goal-ux-product-vision.md";
@@ -624,6 +627,7 @@ test("the Agent Shell menu owns refresh, reload, and rebuild, and a dead server 
     return jsonResponse({ areas: [], map: [], documents: [] });
   };
 
+  window.eval(goToCore);
   window.eval(mapCore);
   window.eval(script);
   await settle(window);
@@ -733,6 +737,7 @@ test("checked Goals start one shared agent that owns them in checked order", asy
     });
   };
 
+  window.eval(goToCore);
   window.eval(mapCore);
   window.eval(script);
   await settle(window);
@@ -864,6 +869,7 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
     });
   };
 
+  window.eval(goToCore);
   window.eval(mapCore);
   window.eval(script);
   await settle(window);
@@ -1063,6 +1069,7 @@ test("the Area card brain icon starts, shows, and resumes the Area brain", async
     });
   };
 
+  window.eval(goToCore);
   window.eval(mapCore);
   window.eval(script);
   await settle(window);
@@ -1198,6 +1205,7 @@ test("background polls never rebuild the screen under an editing surface or a re
     await settle(window);
   };
 
+  window.eval(goToCore);
   window.eval(mapCore);
   window.eval(script);
   await settle(window);
@@ -1313,6 +1321,7 @@ test("comments render as red blocks, save through the base-hash path with re-anc
     });
   };
   window.eval(commentsScript);
+  window.eval(goToCore);
   window.eval(mapCore);
   window.eval(script);
   await settle(window);
@@ -1446,6 +1455,7 @@ test("comments render as red blocks, save through the base-hash path with re-anc
     });
   };
   window.eval(commentsScript);
+  window.eval(goToCore);
   window.eval(mapCore);
   window.eval(script);
   await settle(window);
@@ -1567,6 +1577,7 @@ test("the desk Documents shelf shows the eight newest subtree Documents with kin
       documents: [...documents, elsewhere, goal],
     });
   };
+  window.eval(goToCore);
   window.eval(mapCore);
   window.eval(mapView);
   window.eval(script);
@@ -1646,6 +1657,7 @@ test("a sub-Area with open work nests as a section of its ancestor's desk panel,
       documents: [],
     });
   };
+  window.eval(goToCore);
   window.eval(mapCore);
   window.eval(mapView);
   window.eval(script);
@@ -1675,6 +1687,7 @@ test("the Area map holds stored node positions on reload, simulates only new nod
   const { window } = dom;
   window.HTMLCanvasElement.prototype.getContext = () => null;
   for (const script of d3) window.eval(script);
+  window.eval(goToCore);
   window.eval(mapCore);
   window.eval(mapView);
   const view = window.AgentShellAreaMapView;

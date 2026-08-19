@@ -14,7 +14,7 @@ import { execFile, spawn } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { readInbox, unreadNotices } from "./brain-inbox.mjs";
+import { appendNotice, readInbox, unreadNotices, writeInbox } from "./brain-inbox.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -250,4 +250,51 @@ test("a notice with no live brain waits on disk and the next generation reads it
   sessions.push(third.session);
   const thirdShow = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(third.session)}`).then((response) => response.json());
   assert.doesNotMatch(thirdShow.prompt, /## Notices you have not read/);
+});
+
+test("a sweep queues an unread notice for the live brain once, and never twice", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-notice-sweep-"));
+  const leaf = `probesweep${process.pid}`;
+  const trees = await makeTrees(root, leaf);
+  const brains = path.join(root, "brains");
+  const sessions = [];
+  let port;
+  try {
+    port = await freePort();
+  } catch (error) {
+    if (error?.code === "EPERM") {
+      context.skip("This environment does not permit local HTTP listeners.");
+      return;
+    }
+    throw error;
+  }
+  const child = startServer(root, trees, port, "notice-sweep");
+  context.after(async () => {
+    for (const session of sessions) await killSession(session);
+    await stopServer(child);
+    await rm(root, { recursive: true, force: true });
+  });
+  const base = `http://127.0.0.1:${port}`;
+  await waitForServer(base);
+
+  const brain = await post(base, "/api/brains/start", { area: `otto/${leaf}`, instruction: "Get the probe Area done." });
+  sessions.push(brain.session);
+
+  // A notice that is on disk but in no queue: the shape of a delivery that
+  // failed, or of a queue entry that died with an older generation's session.
+  const inbox = await readInbox(brains, `otto/${leaf}`);
+  appendNotice(inbox, `Goal sweep-demo: pipeline complete. Last handover: written while nothing queued it.`);
+  await writeInbox(brains, inbox);
+
+  /** The brain's queue length as the desk sees it; the poll also runs a reconcile pass. */
+  const queuedForBrain = async () => {
+    await fetch(`${base}/api/sessions`);
+    const { agents } = await fetch(`${base}/api/agents`).then((response) => response.json());
+    return agents.find((agent) => agent.name === brain.session)?.queued ?? 0;
+  };
+  await waitFor("the sweep to queue the notice", async () => (await queuedForBrain()) > 0, 300);
+  // More sweeps do not queue it again while it is on its way.
+  for (let pass = 0; pass < 3; pass += 1) await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(await queuedForBrain(), 1, "a notice on its way is queued once");
+  assert.equal(unreadNotices(await readInbox(brains, `otto/${leaf}`)).length, 1, "a queued notice the brain did not read stays unread");
 });

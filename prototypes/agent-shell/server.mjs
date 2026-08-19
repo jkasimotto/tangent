@@ -1500,12 +1500,16 @@ async function waitForHarnessReady(session) {
  * so the far end is what proves the remainder arrived, unless the harness
  * collapsed the remainder into a pasted-text marker (Claude Code does for any
  * large input); prompt-delivery.mjs holds both rules.
+ *
+ * Returns true when the whole prompt showed in the pane, false when the
+ * session was gone, sat at a shell, or never took the whole prompt. A brain
+ * notice counts as read only on true.
  */
 async function typePromptWhenReady(session, prompt, submit = false, label = "agent prompt") {
   try {
     const { probe, rest } = splitPrompt(prompt);
     for (let attempt = 1; attempt <= TYPE_ATTEMPTS; attempt++) {
-      if (!(await waitForHarnessReady(session))) return;
+      if (!(await waitForHarnessReady(session))) return false;
       await typeInto(session, probe, false);
       await sleep(ECHO_MS);
       if ((await paneText(session)).includes(squash(probe))) {
@@ -1513,7 +1517,7 @@ async function typePromptWhenReady(session, prompt, submit = false, label = "age
         await sleep(ECHO_MS);
         if (promptArrived(await paneText(session), prompt)) {
           if (submit) await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "Enter"]);
-          return;
+          return true;
         }
       }
       console.error(`${label}: ${session} took it partially (attempt ${attempt}), clearing and retyping`);
@@ -1526,6 +1530,7 @@ async function typePromptWhenReady(session, prompt, submit = false, label = "age
   } catch (err) {
     console.error(`${label}:`, err.message ?? err);
   }
+  return false;
 }
 
 /** Types a Goal assignment after its native harness is ready. */
@@ -1562,10 +1567,22 @@ async function tickArmedSessions() {
     if (!armedSessions.has(name) || SHELL_CMDS.has(command)) continue;
     const armed = armedSessions.get(name);
     armedSessions.delete(name);
-    if (armed.prompt) typePromptWhenReady(name, armed.prompt, armed.submit, "armed prompt");
+    if (armed.prompt) typePromptWhenReady(name, armed.prompt, armed.submit, "armed prompt").then(armed.onTyped ?? noop).catch(reportArmedPromptFailure);
     else if (area && file) typeGoalPromptWhenReady(name, area, file, armed.phase, armed.submit, armed.document, armed.extraFiles);
   }
-  for (const name of armedSessions.keys()) if (!live.has(name)) armedSessions.delete(name);
+  for (const [name, armed] of [...armedSessions.entries()]) {
+    if (live.has(name)) continue;
+    armedSessions.delete(name);
+    if (armed.onTyped) armed.onTyped(false);
+  }
+}
+
+/** Does nothing; the default for an armed prompt nobody waits on. */
+function noop() {}
+
+/** Reports a failure in what an armed prompt's caller did on arrival. */
+function reportArmedPromptFailure(err) {
+  console.error("armed prompt:", err.message ?? err);
 }
 
 /**
@@ -1573,8 +1590,8 @@ async function tickArmedSessions() {
  * armed: one tmux query a second, never overlapping, stopped once every primed
  * session has its harness.
  */
-function armSession(name, phase = "execute", submit = false, document = "", prompt = "", extraFiles = []) {
-  armedSessions.set(name, { phase, submit, document, prompt, extraFiles });
+function armSession(name, phase = "execute", submit = false, document = "", prompt = "", extraFiles = [], onTyped = null) {
+  armedSessions.set(name, { phase, submit, document, prompt, extraFiles, onTyped });
   if (armTimer) return;
   let running = false;
   armTimer = setInterval(async () => {
@@ -1618,11 +1635,14 @@ async function logAgentMessage(entry) {
 /** Types one stamped message into its target composer and audits the result. */
 async function deliverAgentMessage(target, entry) {
   const text = entry.banner === false ? entry.text : messageBanner(entry.from, entry.area, entry.text);
-  await typePromptWhenReady(target, text, true, entry.banner === false ? "pipeline step" : "agent message");
-  await logAgentMessage({ event: "delivered", to: target, from: entry.from, area: entry.area, text: entry.text, banner: entry.banner !== false, queuedAt: entry.queuedAt });
+  const arrived = await typePromptWhenReady(target, text, true, entry.banner === false ? "pipeline step" : "agent message");
+  await logAgentMessage({ event: arrived ? "delivered" : "not delivered", to: target, from: entry.from, area: entry.area, text: entry.text, banner: entry.banner !== false, queuedAt: entry.queuedAt });
   // A brain notice is persisted before it is queued. It counts as read only
-  // here, after the text reached the composer.
-  if (entry.notices?.length) await markBrainNoticesDelivered(entry.notices, target, entry.generation ?? null);
+  // here, after the whole text showed in the composer. Otherwise it stays
+  // unread on disk and the next sweep queues it again.
+  if (!entry.notices?.length) return;
+  if (arrived) await markBrainNoticesDelivered(entry.notices, target, entry.generation ?? null);
+  else releaseBrainNotices(entry.notices);
 }
 
 /**
@@ -1637,7 +1657,12 @@ async function tickMessageQueues() {
     const live = sessions.find((session) => session.name === target);
     if (!live) {
       messageQueues.delete(target);
-      for (const entry of queue) await logAgentMessage({ event: "dropped", to: target, from: entry.from, text: entry.text, reason: "session ended" });
+      for (const entry of queue) {
+        await logAgentMessage({ event: "dropped", to: target, from: entry.from, text: entry.text, reason: "session ended" });
+        // A brain notice is not lost with its queue entry: it stays unread on
+        // disk, and the next generation or the next sweep picks it up.
+        if (entry.notices?.length) releaseBrainNotices(entry.notices);
+      }
       continue;
     }
     if (deliveryDecision(live).action !== "deliver") continue;
@@ -1691,10 +1716,10 @@ async function primeGoalSession(session, area, phase = "execute", { launch = fal
 }
 
 /** Primes one native agent with a conversation about new work. */
-async function primeDescribeWorkSession(session, area, prompt, { launch = true, command = "" } = {}) {
+async function primeDescribeWorkSession(session, area, prompt, { launch = true, command = "", onTyped = null } = {}) {
   const { stdout } = await execFileAsync("tmux", ["display-message", "-p", "-t", "=" + session + ":", "#{pane_current_command}"]);
   if (!SHELL_CMDS.has(stdout.trim())) return false;
-  armSession(session, "define", launch, "", prompt);
+  armSession(session, "define", launch, "", prompt, [], onTyped);
   await typeInto(session, withDefaultModel(command || (await agentCmdForArea(area))), false);
   if (launch) {
     await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "Enter"]);
@@ -2425,8 +2450,12 @@ async function unreadBrainNotices(area) {
   return mergeNotices(inboxesForBrain(await readAllInboxes(BRAINS_ROOT), area));
 }
 
-/** Marks notices read by one brain session and generation. */
+/**
+ * Marks notices read by one brain session and generation, and lets go of
+ * them: they are no longer on their way anywhere.
+ */
 async function markBrainNoticesDelivered(notices, session, generation) {
+  releaseBrainNotices(notices);
   const byArea = new Map();
   for (const notice of notices) {
     const ids = byArea.get(notice.area) ?? [];
@@ -2436,6 +2465,28 @@ async function markBrainNoticesDelivered(notices, session, generation) {
   for (const [area, ids] of byArea) {
     await withInbox(area, (record) => markDelivered(record, ids, { session, generation }));
   }
+}
+
+// A notice is "on its way" from the moment it is queued or put into a new
+// generation's first message until it is marked read or that way failed. The
+// sweep in flushBrainNotices queues only notices that are not on their way,
+// so a retry never doubles a delivery that is still in progress, and a
+// failed delivery is tried again at the next sweep.
+const noticesOnTheirWay = new Set(); // "area\u0000id"
+
+/** The key of one notice in the on-their-way set. */
+function noticeKey(notice) {
+  return `${notice.area}\u0000${notice.id}`;
+}
+
+/** Remembers that these notices are on their way to a brain. */
+function holdBrainNotices(notices) {
+  for (const notice of notices) noticesOnTheirWay.add(noticeKey(notice));
+}
+
+/** Forgets that these notices are on their way; they may be queued again. */
+function releaseBrainNotices(notices) {
+  for (const notice of notices) noticesOnTheirWay.delete(noticeKey(notice));
 }
 
 /**
@@ -2456,11 +2507,13 @@ async function notifyBrain(area, text) {
       await logAgentMessage({ event: "kept", to: `${owner.area} brain`, from: "tangent", text: message, reason: "no live brain; waits for the next generation" });
       return false;
     }
+    const notices = [{ area, id: notice.id }];
+    holdBrainNotices(notices);
     queueAgentMessage(record.session, {
       from: "tangent",
       area: null,
       text: message,
-      notices: [{ area, id: notice.id }],
+      notices,
       generation: record.generation ?? null,
       queuedAt: new Date().toISOString(),
     });
@@ -2473,27 +2526,30 @@ async function notifyBrain(area, text) {
 }
 
 /**
- * Queues every unread notice for the brains that run right now. The server
- * calls this when it starts: the memory queue is gone after a restart, but
- * the notices are on disk, so a live generation still hears them.
+ * Queues every unread notice that is not already on its way, for the brains
+ * that run right now. The server calls this when it starts (the memory queue
+ * is gone after a restart, the notices are not) and on every reconcile pass,
+ * so a notice whose delivery failed or whose queue entry died with an old
+ * generation's session still reaches the live generation.
  */
-async function flushBrainNotices() {
-  const sessions = await listSessions();
-  const live = new Set(sessions.map((session) => session.name));
+async function flushBrainNotices(sessions = null, reason = "unread notices after a server start") {
+  const live = new Set((sessions ?? await listSessions()).map((session) => session.name));
   for (const record of await readAllBrains(BRAINS_ROOT)) {
     if (record.status !== "running" || !record.session || !live.has(record.session)) continue;
-    const unread = await unreadBrainNotices(record.area);
+    const unread = (await unreadBrainNotices(record.area)).filter((notice) => !noticesOnTheirWay.has(noticeKey(notice)));
     if (!unread.length) continue;
     const text = unread.length === 1 ? unread[0].text : noticeDigest(unread);
+    const notices = unread.map((notice) => ({ area: notice.area, id: notice.id }));
+    holdBrainNotices(notices);
     queueAgentMessage(record.session, {
       from: "tangent",
       area: null,
       text,
-      notices: unread.map((notice) => ({ area: notice.area, id: notice.id })),
+      notices,
       generation: record.generation ?? null,
       queuedAt: new Date().toISOString(),
     });
-    await logAgentMessage({ event: "sent", to: record.session, from: "tangent", text, disposition: "queued", reason: "unread notices after a server start" });
+    await logAgentMessage({ event: "sent", to: record.session, from: "tangent", text, disposition: "queued", reason });
   }
 }
 
@@ -2580,21 +2636,33 @@ async function spawnBrainSession(record) {
   const entry = beginGeneration(record, name);
   // The notices no generation read belong in this generation's first
   // message. They are kept on the record so the desk can show the message
-  // the brain actually got, and marked read only after priming worked.
+  // the brain actually got, and marked read only after that message showed
+  // in the new session's composer. Until then they are on their way, so the
+  // sweep does not queue them a second time; if the message never arrives
+  // they are let go, stay unread, and the sweep queues them for whichever
+  // generation is live.
   const unread = await unreadBrainNotices(record.area);
   entry.notices = unread.map((notice) => ({ area: notice.area, id: notice.id, text: notice.text, createdAt: notice.createdAt }));
   await writeBrain(BRAINS_ROOT, record);
-  let primed = true;
-  if (process.env.AGENT_SHELL_TEST_NO_LAUNCH !== "1") {
-    await sleep(700);
-    try {
-      await primeDescribeWorkSession(name, record.area, await brainPrompt(record), { launch: true, command: record.command });
-    } catch (error) {
-      primed = false;
-      console.error("brain session:", error.message ?? error);
-    }
+  holdBrainNotices(unread);
+  /** Settles the notices once the first message arrived, or failed to. */
+  const firstMessageTyped = async (arrived) => {
+    if (!unread.length) return;
+    if (arrived) await markBrainNoticesDelivered(unread, name, generation);
+    else releaseBrainNotices(unread);
+  };
+  if (process.env.AGENT_SHELL_TEST_NO_LAUNCH === "1") {
+    await firstMessageTyped(true);
+    return { status: 200, session: name, generation, brain: record };
   }
-  if (primed && unread.length) await markBrainNoticesDelivered(unread, name, generation);
+  await sleep(700);
+  let primed = false;
+  try {
+    primed = await primeDescribeWorkSession(name, record.area, await brainPrompt(record), { launch: true, command: record.command, onTyped: firstMessageTyped });
+  } catch (error) {
+    console.error("brain session:", error.message ?? error);
+  }
+  if (!primed) releaseBrainNotices(unread);
   return { status: 200, session: name, generation, brain: record };
 }
 
@@ -2681,13 +2749,20 @@ async function endBrainForSession(sessionName) {
   return record;
 }
 
+/** Reports a failed notice sweep without stopping the reconcile pass. */
+function reportNoticeSweepFailure(err) {
+  console.error("brain notices:", err.message ?? err);
+}
+
 /**
- * Marks running brains whose session is gone as stopped, and reminds a
- * long-running generation once to hand over.
+ * Queues unread brain notices for live brains, marks running brains whose
+ * session is gone as stopped, and reminds a long-running generation once to
+ * hand over.
  */
 async function reconcileBrains(sessions) {
   const live = new Set(sessions.map((item) => item.name));
   const now = Date.now();
+  await flushBrainNotices(sessions, "unread notices found by a sweep").catch(reportNoticeSweepFailure);
   for (const record of await readAllBrains(BRAINS_ROOT)) {
     if (record.status !== "running" || !record.session) continue;
     if (!live.has(record.session)) {

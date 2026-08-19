@@ -345,6 +345,25 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.match(rows[1].textContent, /Tried it/);
   assert.match(rows[2].textContent, /Brain asks/);
   assert.equal(window.forYouItems().length, 4, "the brain's three rows plus the one inferred row left");
+  const brainGoalCard = window.document.querySelector(`[data-goal-anchor="${liveEditGoal.file}"]`);
+  assert.ok(brainGoalCard, "the brain's Area still shows its Goal");
+  assert.equal(brainGoalCard.classList.contains("waiting"), false, "a brain-run Goal keeps no amber");
+  assert.match(brainGoalCard.className, /\bready\b/, "with no agent on it, the Goal is simply ready");
+
+  // With an agent on it, the pane is static because the brain has not read it
+  // yet: the row states the fact and keeps the amber that means "you" off.
+  const beforeAgent = reviewAgentStarted;
+  reviewAgentStarted = true;
+  await window.refresh();
+  await settle(window);
+  const runningGoalCard = window.document.querySelector(`[data-goal-anchor="${liveEditGoal.file}"]`);
+  assert.ok(runningGoalCard.classList.contains("fact"), "under a live brain it is a fact, not a call on Julian");
+  assert.equal(runningGoalCard.classList.contains("waiting"), false, "and it keeps no amber");
+  assert.match(runningGoalCard.querySelector(".desk-state.fact").textContent, /Waiting/, "the state word stays");
+  reviewAgentStarted = beforeAgent;
+  await window.refresh();
+  await settle(window);
+  assert.match(window.document.querySelector(".area-brain-line strong").textContent, /3 for you/, "the brain line counts what it asked of Julian");
   assert.equal(dockBadges.at(-1), 4, "the Dock badge counts what the brain wrote too");
 
   // Tried it clears one Try it row, and the plan is the store: the next poll

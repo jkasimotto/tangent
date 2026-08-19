@@ -258,6 +258,8 @@ summary:focus-visible {
 .area-desk-state.working::before, .desk-state.working::before { background: var(--blue); }
 .desk-state.complete { color: var(--green); }
 .desk-state.complete::before { background: var(--green); }
+.desk-state.fact { color: var(--muted); }
+.desk-state.fact::before { background: var(--muted); }
 .area-desk-body { display: grid; }
 .area-desk-header:has(.area-brain) { grid-template-columns: 36px minmax(0, 1fr) auto auto; }
 .area-brain { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 1px solid transparent; border-radius: 50%; background: transparent; color: inherit; cursor: pointer; font-size: 17px; line-height: 1; opacity: .38; filter: grayscale(1); transition: opacity .12s, filter .12s; }
@@ -329,6 +331,7 @@ button.area-brain-line:hover { background: #191d22; }
 .desk-action:hover, .desk-icon-action:hover { border-color: #68727e; color: #fff; }
 .desk-action { color: var(--blue); }
 .desk-goal.waiting .desk-action { border-color: #665735; color: var(--amber); }
+.desk-goal.fact .desk-action { border-color: #3c434c; color: #cbd1d7; }
 .desk-icon-action { border-color: transparent; background: transparent; color: #7f8994; }
 .desk-icon-action.complete:hover { color: var(--green); }
 .desk-subgoal-disclosure { margin: 11px 0 0 16px; }

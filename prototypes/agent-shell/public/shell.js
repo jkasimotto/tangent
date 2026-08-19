@@ -572,12 +572,17 @@ function goalTrees() {
   return trees;
 }
 
-/** Places one complete work tree in a single attention group. */
+/**
+ * Places one complete work tree in a single attention group. A tree in an Area
+ * a live brain runs is never "waiting": what waits on Julian there is the
+ * brain's own list, so the tree does not sort in front of it.
+ */
 function goalTreeState(tree) {
   const openGoals = tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status));
   if (!openGoals.length) return "closed";
+  const covered = goalCoveredByBrain(tree.root);
   const sessions = openGoals.map(sessionForGoal).filter(Boolean);
-  if (sessions.some((session) => ["waiting", "shell"].includes(session.state))) return "waiting";
+  if (sessions.some((session) => ["waiting", "shell"].includes(session.state))) return covered ? "open" : "waiting";
   if (sessions.some((session) => session.state === "working")) return "working";
   if (sessions.length) return "open";
   if (openGoals.some(goalNeedsYou)) return "waiting";
@@ -703,7 +708,8 @@ function deskBrainLine(areaPath) {
   if (!brain) return "";
   const handover = String(brain.latestHandover ?? "").split("\n")[0].trim();
   if (brain.live) {
-    return `<button class="area-brain-line ${brainKind(brain)}" type="button" data-open-brain="${escapeHtml(brain.session)}" title="Open the brain"><strong>Brain · generation ${brain.generation} · ${escapeHtml(brainStateLabel(brain))}</strong>${handover ? `<span>${escapeHtml(handover)}</span>` : ""}</button>`;
+    const forJulian = (brain.forJulian ?? []).length;
+    return `<button class="area-brain-line ${brainKind(brain)}" type="button" data-open-brain="${escapeHtml(brain.session)}" title="Open the brain"><strong>Brain · generation ${brain.generation} · ${escapeHtml(brainStateLabel(brain))}${forJulian ? ` · ${forJulian} for you` : ""}</strong>${handover ? `<span>${escapeHtml(handover)}</span>` : ""}</button>`;
   }
   return `<p class="area-brain-line ${brainKind(brain)}"><strong>${escapeHtml(brainStateLabel(brain))} after generation ${brain.generation}</strong><span>Resume or start over from the brain icon.</span></p>`;
 }
@@ -1071,8 +1077,11 @@ function searchResults(query) {
 function deskAreaState(path, trees, descriptions) {
   const goals = trees.flatMap((tree) => tree.goals).filter((goal) => !["done", "dropped", "deferred"].includes(goal.status));
   const sessions = [...goals.map(sessionForGoal).filter(Boolean), ...descriptions];
-  const waiting = sessions.filter((session) => ["waiting", "shell"].includes(session.state)).length
-    + goals.filter((goal) => !sessionForGoal(goal) && goalNeedsYou(goal)).length;
+  const brain = brainForAreaCard(path);
+  const waiting = brain?.live
+    ? (forYouGroups().find((group) => group.area === path)?.rows.length ?? 0)
+    : sessions.filter((session) => ["waiting", "shell"].includes(session.state)).length
+      + goals.filter((goal) => !sessionForGoal(goal) && goalNeedsYou(goal)).length;
   const working = sessions.filter((session) => session.state === "working").length;
   if (waiting) return { kind: "waiting", label: `${waiting} ${waiting === 1 ? "item needs" : "items need"} you` };
   if (working) return { kind: "working", label: `${working} ${working === 1 ? "agent" : "agents"} working` };
@@ -1332,10 +1341,13 @@ function deskGoalAction(goal) {
     return { ...line, state: goal.status === "done" ? "Complete" : humanName(goal.status), action: "", kind: "complete", route: "" };
   }
   const session = sessionForGoal(goal);
-  if (!session) return { ...line, state: goalNeedsYou(goal) ? "Waiting" : "Ready", action: "Start agent", kind: goalNeedsYou(goal) ? "waiting" : "ready", route: "run" };
+  // Under a live brain a static pane waits for the brain, not for Julian: the
+  // state stays as a fact, without the amber that means "you".
+  const idle = goalCoveredByBrain(goal) ? "fact" : "waiting";
+  if (!session) return { ...line, state: goalNeedsYou(goal) ? "Waiting" : "Ready", action: "Start agent", kind: goalNeedsYou(goal) ? idle : "ready", route: "run" };
   if (session.state === "working") return { ...line, state: "Working", action: `Open ${agentName(session)}`, kind: "working", route: "run" };
-  if (session.state === "waiting") return { ...line, state: "Waiting", action: `Open ${agentName(session)}`, kind: "waiting", route: "run" };
-  if (session.state === "shell") return { ...line, state: "Stopped", action: "Open session", kind: "waiting", route: "run" };
+  if (session.state === "waiting") return { ...line, state: "Waiting", action: `Open ${agentName(session)}`, kind: idle, route: "run" };
+  if (session.state === "shell") return { ...line, state: "Stopped", action: "Open session", kind: idle, route: "run" };
   return { ...line, state: "Ready", action: "Open agent", kind: "ready", route: "run" };
 }
 
@@ -1351,11 +1363,12 @@ function deskPipelineAction(goal, pipeline) {
   const step = pipeline.steps.find((item) => item.status === "running" || item.status === "stopped") ?? pipeline.steps.find((item) => item.status === "pending");
   if (!step) return deskGoalAction(goal);
   const line = { stepLine: `Step ${step.index} of ${pipeline.steps.length}`, stepTitle: `${step.label || "agent"}: ${step.instruction ?? ""}` };
-  if (step.status === "stopped" || (step.status === "running" && !step.live)) return { ...line, state: "Stopped", action: "", kind: "waiting", route: "" };
-  if (step.status === "pending") return { ...line, state: "Not started", action: "", kind: "waiting", route: "" };
+  const idle = goalCoveredByBrain(goal) ? "fact" : "waiting";
+  if (step.status === "stopped" || (step.status === "running" && !step.live)) return { ...line, state: "Stopped", action: "", kind: idle, route: "" };
+  if (step.status === "pending") return { ...line, state: "Not started", action: "", kind: idle, route: "" };
   if (step.state === "working") return { ...line, state: "Working", action: `Open step ${step.index}`, kind: "working", route: "run" };
-  if (step.state === "waiting") return { ...line, state: "Waiting", action: `Open step ${step.index}`, kind: "waiting", route: "run" };
-  if (step.state === "shell") return { ...line, state: "Stopped", action: `Open step ${step.index}`, kind: "waiting", route: "run" };
+  if (step.state === "waiting") return { ...line, state: "Waiting", action: `Open step ${step.index}`, kind: idle, route: "run" };
+  if (step.state === "shell") return { ...line, state: "Stopped", action: `Open step ${step.index}`, kind: idle, route: "run" };
   return { ...line, state: "Ready", action: `Open step ${step.index}`, kind: "ready", route: "run" };
 }
 

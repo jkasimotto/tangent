@@ -1805,4 +1805,25 @@ test("a second comment lands on the words Julian selected, and the reader holds 
   assert.equal(marks[1].parentElement, marks[0], "the second comment's mark nests inside the first");
   assert.deepEqual(marks.map((mark) => mark.dataset.commentIndex), ["0", "1", "1"]);
   assert.equal(window.document.querySelectorAll(".document-comment").length, 2);
+
+  // A third selection next to the overlapping pair lands on exactly those words.
+  const tail = paragraph.lastChild;
+  const range = window.document.createRange();
+  range.setStart(tail, tail.textContent.indexOf("over"));
+  range.setEnd(tail, tail.textContent.indexOf("over") + "over the".length);
+  window.getSelection().removeAllRanges();
+  window.getSelection().addRange(range);
+  click(window, ".reader-comment-action");
+  await settle(window);
+  const field = window.document.querySelector("#comment-text");
+  assert.ok(field, "the composer opened on the selection");
+  field.value = "Third";
+  field.dispatchEvent(new window.Event("input", { bubbles: true }));
+  submit(window, "[data-comment-composer]");
+  await settle(window);
+  await settle(window);
+  assert.equal(saves.length, 1, "the comment saved without a re-anchor");
+  assert.match(saves[0].text, /\{==over the==\}\{>>Julian: Third<<\}/);
+  assert.equal(window.document.querySelector(".document-content p").textContent, "The quick brown fox jumps over the lazy dog.");
+  assert.equal(window.document.querySelectorAll(".document-comment").length, 3);
 });

@@ -947,7 +947,9 @@ details.more-work .area-work-list { margin-top: 18px; }
 .document-comment-text { font-size: 15px; line-height: 1.55; white-space: pre-wrap; }
 .document-comment-remove { flex: none; width: 24px; height: 24px; margin: -2px 0 0; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--quiet); font-size: 16px; line-height: 1; cursor: pointer; }
 .document-comment-remove:hover, .document-comment-remove:focus-visible { background: var(--red-soft); color: var(--red); outline: none; }
-.document-comment-mark { padding: 0 1px; border-bottom: 2px solid var(--red); border-radius: 2px; background: var(--red-soft); color: inherit; }
+/* No padding: a mark must never re-wrap the line it sits on. A nested mark, where two comments overlap, takes a stronger tint. */
+.document-comment-mark { padding: 0; border-bottom: 2px solid var(--red); border-radius: 2px; background: var(--red-soft); color: inherit; }
+.document-comment-mark .document-comment-mark { background: rgba(240, 154, 154, .18); }
 li .document-comment { margin: 8px 0 10px; }
 .document-comment-composer { display: grid; gap: 8px; margin: 10px 0 20px; padding: 10px 10px 10px 14px; border-left: 3px solid var(--red); border-radius: 0 8px 8px 0; background: rgba(240, 154, 154, .05); }
 .document-comment-composer textarea { width: 100%; min-height: 54px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 15px; line-height: 1.5; resize: vertical; }

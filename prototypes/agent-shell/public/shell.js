@@ -170,7 +170,11 @@ function vaultLinkRecord(target) {
   return records.find((record) => record.file.split("/").at(-1)?.replace(/\.md$/i, "") === value) ?? null;
 }
 
-/** Renders the small inline Markdown subset used by vault notes. */
+/**
+ * Renders the small inline Markdown subset used by vault notes. `visibleLine`
+ * in document-comments.js mirrors these rules to map a selection back to the
+ * source; change both together.
+ */
 function inlineMarkdown(value) {
   const links = [];
   const source = String(value ?? "")
@@ -3853,7 +3857,13 @@ function readerSelection() {
   const crossed = endBlock !== startBlock;
   const quote = (crossed ? selection.toString().split("\n")[0] : selection.toString()).replace(/\s+/g, " ").trim();
   if (!quote) return null;
-  return { quote, line: Number(startBlock.dataset.line), crossed, rect: range.getBoundingClientRect() };
+  // The same words can stand twice in one block, so the composer also carries
+  // how far into the block the selection started.
+  const prefix = document.createRange();
+  prefix.setStart(startBlock, 0);
+  prefix.setEnd(range.startContainer, range.startOffset);
+  const offset = prefix.toString().replace(/\s+/g, " ").trimStart().length;
+  return { quote, line: Number(startBlock.dataset.line), offset, crossed, rect: range.getBoundingClientRect() };
 }
 
 /** Shows the floating Comment button beside a live selection, or hides it. */
@@ -3909,7 +3919,7 @@ function openCommentComposer() {
     editing: null,
     section,
     anchor: selection
-      ? { kind: "selection", quote: selection.quote, line: selection.line }
+      ? { kind: "selection", quote: selection.quote, line: selection.line, offset: selection.offset }
       : section ? { kind: "section", heading: section.title } : { kind: "document" },
     placeLine: selection ? selection.line : section ? section.line : documentTitleLine(),
   };

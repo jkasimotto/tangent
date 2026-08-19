@@ -25,13 +25,13 @@ const state = {
   currentFile: savedGoal,
   view: initialView,
   document: null,
-  documentReturnView: "work",
+  documentReturn: null,
   documentTrail: [],
   documentTrailIndex: -1,
   documentPositions: new Map(),
   commentComposer: null,
   commentCursor: -1,
-  describeReturnView: "work",
+  describeReturn: null,
   describeDraft: storedDescribeDraft?.session ? null : storedDescribeDraft,
   describeSessionName: savedDescribeSession,
   areaSelection: requestedArea || localStorage.getItem("agent-shell.last-area") || "",
@@ -685,8 +685,8 @@ function deskBrainLine(areaPath) {
 function openBrainSession(name) {
   const session = brainSessions().find((item) => item.name === name);
   if (!session) return showToast("The brain session is not live.");
+  state.describeReturn = captureReturnPoint();
   state.describeSessionName = session.name;
-  state.describeReturnView = "work";
   state.document = null;
   saveDescribeSession();
   state.view = "describe-agent";
@@ -2802,7 +2802,7 @@ function renderKey() {
   }
   if (state.view === "describe-agent") {
     const describeSession = describeWorkSession();
-    return JSON.stringify([state.view, describeSession?.name, state.describeReturnView, state.document?.hash]);
+    return JSON.stringify([state.view, describeSession?.name, state.describeReturn?.state.view, state.document?.hash]);
   }
   if (state.view === "program-session") {
     const program = currentProgram();
@@ -2856,7 +2856,7 @@ function updateHeader() {
     : isCreate
       ? state.createReturnView === "areas" ? "Areas" : "Work"
     : isDescribe || isDescribeAgent
-      ? state.describeReturnView === "document" && state.document ? "Document" : "Work"
+      ? returnPointLabel(state.describeReturn)
     : isAreaEdit
       ? "Areas"
     : isProgramDetail || isProgramCreate
@@ -2866,8 +2866,10 @@ function updateHeader() {
     : state.view === "agent"
         ? state.agentReturnView === "document" && state.document ? "Document" : "Work"
         : state.view === "document"
-          ? state.documentReturnView === "areas" ? "Areas" : "Work"
+          ? returnPointLabel(state.documentReturn, { brain: returnsToBrain() })
           : "Agent";
+  // The reader is the one view Esc leaves, so its Back button prints the key.
+  if (state.view === "document") backButton.innerHTML = `${escapeHtml(backButton.textContent)} <kbd>esc</kbd>`;
   barContext.textContent = isCreate
     ? "Define new work"
     : isDescribe
@@ -3037,6 +3039,82 @@ function restoreScreenScroll(positions) {
     const element = screen.querySelector(selector);
     if (element && top) element.scrollTop = top;
   }
+}
+
+// ---- Return points ----
+// One mechanism for every screen that opens over another: the reader, the
+// Describe work form, and the brain terminal. The point holds the state keys
+// that identify the screen, its scroll positions, and the Document the reader
+// showed. Back and Esc put it all back (design-find-a-document-by-title
+// Decision 5).
+
+const returnPointLabel = window.AgentShellGoTo.returnPointLabel;
+
+/** Captures the screen Julian is on, so the reader or the brain view can bring him back. */
+function captureReturnPoint() {
+  // A repaint replaces the textarea, so the typed description must be stored first.
+  if (state.view === "describe") syncDescribeDraft();
+  // The launch popover anchors to a fixed pixel position a repaint can move.
+  if (state.launchTarget) {
+    state.launchTarget = "";
+    state.launchAnchor = null;
+  }
+  const positions = rememberScreenScroll();
+  return window.AgentShellGoTo.returnPointFrom(state, { screen: positions.screen, inner: [...positions.inner] });
+}
+
+/** Puts back the scroll positions one return point captured. */
+function restoreReturnScroll(scroll) {
+  if (!scroll) return;
+  screen.scrollTop = scroll.screen;
+  for (const [selector, top] of scroll.inner) {
+    const element = screen.querySelector(selector);
+    if (element) element.scrollTop = top;
+  }
+}
+
+/**
+ * Puts the captured screen back: state, view, repaint, scroll. Without a point
+ * the fallback is the Work desk. A restored view that cannot exist any more is
+ * corrected by renderScreen(), as it corrects every other stale view.
+ */
+function restoreReturnPoint(point) {
+  if (!point) return showWork();
+  if (state.view === "document") rememberDocumentPosition();
+  const previousSession = state.describeSessionName;
+  const previousGoal = state.currentFile;
+  Object.assign(state, point.state);
+  if (state.describeSessionName !== previousSession) saveDescribeSession();
+  if (state.currentFile && state.currentFile !== previousGoal) localStorage.setItem("agent-shell.current-goal", state.currentFile);
+  if (point.state.view === "document") {
+    if (!point.document) return showWork();
+    state.documentTrail = [...point.document.trail];
+    state.documentTrailIndex = point.document.trailIndex;
+    void openDocument(point.document.file, { trail: "jump", trailIndex: point.document.trailIndex });
+    return;
+  }
+  state.document = null;
+  state.documentTrail = [];
+  state.documentTrailIndex = -1;
+  state.renderedKey = "";
+  if (state.view === "areas") {
+    revealArea(state.areaSelection);
+    state.areaEdit = null;
+  }
+  paint(true);
+  window.setTimeout(() => restoreReturnScroll(point.scroll), 0);
+}
+
+/** Back from the reader: restore its return point, or the Work desk without one. */
+function leaveReader() {
+  restoreReturnPoint(state.documentReturn);
+}
+
+/** True when the reader's return point is a brain terminal, not a defining agent. */
+function returnsToBrain() {
+  const point = state.documentReturn;
+  if (point?.state?.view !== "describe-agent") return false;
+  return state.sessions.some((session) => session.name === point.state.describeSessionName && session.kind === "brain");
 }
 
 /** Renders changed state while preserving active form inputs. */
@@ -3423,7 +3501,9 @@ function addDescribeSource(source) {
 
 /** Opens a fresh or unfinished description without taking over another defining agent. */
 function showDescribe({ source = null, area = "" } = {}) {
-  state.describeReturnView = source && state.document ? "document" : "work";
+  // Cancelling the new-work form returns into this form; it is not a fresh
+  // entry, so the return point it already holds stays.
+  if (state.view !== "create") state.describeReturn = captureReturnPoint();
   if (source) {
     state.describeDraft = { area: source.area, description: "", sources: [] };
     addDescribeSource(source);
@@ -3443,8 +3523,8 @@ function showDescribe({ source = null, area = "" } = {}) {
 function openDescribeSession(name) {
   const session = describeWorkSessions().find((item) => item.name === name);
   if (!session) return;
+  state.describeReturn = captureReturnPoint();
   state.describeSessionName = session.name;
-  state.describeReturnView = "work";
   state.document = null;
   saveDescribeSession();
   state.view = "describe-agent";
@@ -3452,13 +3532,9 @@ function openDescribeSession(name) {
   paint(true);
 }
 
-/** Returns from work definition to its source Document, when present. */
+/** Returns from work definition to the exact screen that opened it. */
 function cancelDescribe() {
-  if (state.describeReturnView === "document" && state.document) {
-    state.view = "document";
-    return paint(true);
-  }
-  showWork();
+  restoreReturnPoint(state.describeReturn);
 }
 
 /** Saves the reading position before the reader changes or closes. */
@@ -3500,7 +3576,7 @@ async function openDocument(file, { trail = "push", trailIndex = -1, heading = "
   rememberDocumentPosition();
   if (enteringReader) {
     if (state.view !== "document") {
-      state.documentReturnView = state.view === "areas" ? "areas" : "work";
+      state.documentReturn = captureReturnPoint();
       state.documentTrail = [];
       state.documentTrailIndex = -1;
     }
@@ -3517,7 +3593,7 @@ async function openDocument(file, { trail = "push", trailIndex = -1, heading = "
     restoreDocumentPosition(heading);
   } catch (error) {
     showToast(error.message);
-    if (enteringReader) showWork();
+    if (enteringReader) restoreReturnPoint(state.documentReturn);
   }
 }
 
@@ -4081,9 +4157,7 @@ function confirmStop() {
   const shell = session.state === "shell";
   const pipeline = describing ? null : pipelineForGoal(goal);
   const stepsLeft = pipeline ? pipeline.steps.filter((step) => step.status === "pending").length : 0;
-  const returnToDocument = describing
-    ? state.describeReturnView === "document" && Boolean(state.document)
-    : state.view === "agent" && state.agentReturnView === "document" && Boolean(state.document);
+  const returnToDocument = !describing && state.view === "agent" && state.agentReturnView === "document" && Boolean(state.document);
   openModal({
     kicker: shell ? "Open session" : "Live agent",
     title: shell ? "Close this session?" : `Stop ${agentName(session)}?`,
@@ -4102,14 +4176,16 @@ function confirmStop() {
       if (describing) {
         state.describeSessionName = "";
         saveDescribeSession();
+        await refresh();
+        restoreReturnPoint(state.describeReturn);
+        showToast("The conversation ended. Saved work stays in Tangent.");
+        return;
       }
       state.view = returnToDocument ? "document" : "work";
       await refresh();
       paint(true);
       if (returnToDocument) await refreshDocument();
-      showToast(describing
-        ? "The conversation ended. Saved work stays in Tangent."
-        : shell ? "The session closed." : "The agent stopped. The work stays open.");
+      showToast(shell ? "The session closed." : "The agent stopped. The work stays open.");
     },
   });
 }
@@ -4795,11 +4871,7 @@ backButton.addEventListener("click", async () => {
     }
     return showWork();
   }
-  if (state.view === "document") {
-    rememberDocumentPosition();
-    if (state.documentReturnView === "areas") return showAreas();
-    return showWork();
-  }
+  if (state.view === "document") return leaveReader();
   if (state.view === "decision") {
     state.view = state.decisionReturnView;
     state.renderedKey = "";
@@ -4886,6 +4958,10 @@ document.addEventListener("keydown", (event) => {
     state.goalSelection = [];
     paint(true);
     return;
+  }
+  if (event.key === "Escape" && state.view === "document") {
+    event.preventDefault();
+    return leaveReader();
   }
   if (shortcutMatches(event, KEYMAP.findWork)) {
     event.preventDefault();

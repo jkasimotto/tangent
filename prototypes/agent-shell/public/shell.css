@@ -78,6 +78,7 @@ summary:focus-visible {
 .back-button.has-back::before { content: "←"; margin-right: 8px; }
 .find-button { justify-self: end; }
 .find-button kbd { margin-left: 8px; color: var(--quiet); font-family: inherit; font-size: 12px; font-weight: 500; }
+.back-button kbd { margin-left: 8px; color: var(--quiet); font-family: inherit; font-size: 12px; font-weight: 500; }
 .bar-actions { display: flex; justify-content: flex-end; gap: 7px; }
 .bar-button[hidden] { display: none; }
 .awake-button { font-size: 15px; padding: 6px 8px; opacity: .35; transition: opacity .15s; }

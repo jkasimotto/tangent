@@ -498,7 +498,8 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.equal(window.document.querySelectorAll(".document-content th").length, 3);
   assert.match(window.document.querySelector(".document-content td.align-center").textContent, /Presence/);
   assert.doesNotMatch(window.document.querySelector(".document-content").textContent, /---/);
-  assert.equal(window.document.querySelector("#back-button").textContent, "Areas");
+  // The reader names the screen it returns to and prints the key that leaves it.
+  assert.equal(window.document.querySelector("#back-button").textContent, "Areas esc");
   assert.match(window.document.querySelector(".markdown-vault-link").textContent, /Principles of a good solution/);
   assert.match(window.document.querySelector(".markdown-vault-link + .markdown-vault-link").textContent, /open the design/);
   assert.equal(window.document.querySelector("[data-document-history='back']").disabled, true);

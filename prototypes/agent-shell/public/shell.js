@@ -51,6 +51,7 @@ const state = {
   brainDraft: null,
   agentSessionName: null,
   goalSelection: [], // checked Goal files in checked order; transient, work view only
+  goTo: null, // the open Go to finder: { query, selected, rows, returnFocus }
   launchTarget: "",
   launchAnchor: null,
   harnessDraft: null,
@@ -86,6 +87,10 @@ const toast = document.querySelector("#toast");
 const statusPill = document.querySelector("#status-pill");
 const awakeButton = document.querySelector("#awake-button");
 const shellMenu = document.querySelector("#shell-menu");
+const goToButton = document.querySelector("#go-to-button");
+const goToLayer = document.querySelector("#go-to-layer");
+const goToInput = document.querySelector("#go-to-input");
+const goToList = document.querySelector("#go-to-list");
 
 /**
  * The global shortcuts. The keydown handler and every printed label read this
@@ -1417,7 +1422,7 @@ function deskAreaPanel(record, position) {
   const openGoalCount = trees.reduce((count, tree) => count + tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status)).length, 0);
   const goalSectionTitle = state.workFilter === "all" ? "Goal work" : `${humanName(state.workFilter)} work`;
   return `
-    <article class="area-desk-panel ${status.kind}" style="--desk-order:${position}">
+    <article class="area-desk-panel ${status.kind}" data-desk-area="${escapeHtml(area.path)}" style="--desk-order:${position}">
       <header class="area-desk-header">
         <span class="area-desk-index" aria-hidden="true">${String(position + 1).padStart(2, "0")}</span>
         <div>${parentPath ? `<small>${areaPath(parentPath)}</small>` : `<small>${escapeHtml(parent)}</small>`}<h2><button type="button" data-open-area="${escapeHtml(area.path)}" title="Open the ${escapeHtml(humanName(area.name))} Area map">${escapeHtml(humanName(area.name))}</button></h2></div>
@@ -3193,6 +3198,7 @@ async function refresh({ initial = false } = {}) {
     }
     void syncDockBadge();
     updateStatusPill();
+    if (state.goTo) renderGoToList();
     paint(initial);
   } catch (error) {
     state.loading = false;
@@ -3256,6 +3262,136 @@ function toggleShellMenu(open = shellMenu.hidden) {
   shellMenu.style.top = `${Math.round(rect.bottom + 6)}px`;
   shellMenu.style.left = `${Math.round(rect.left)}px`;
   shellMenu.hidden = false;
+}
+
+// ---- Go to ----
+// One printed shortcut (⌘K) opens any Document, Area note, or Area brain by
+// name from any screen. The layer lives outside #screen, so the screen under
+// it never repaints, and Back or Esc returns to it exactly
+// (design-find-a-document-by-title).
+
+const GO_TO_LIMIT = 12;
+
+/** The finder's word for a brain's state, from the desk label without its prefix. */
+function brainStateWord(brain) {
+  const label = brainStateLabel(brain).replace(/^Brain /, "");
+  return label.charAt(0).toLowerCase() + label.slice(1);
+}
+
+/**
+ * The finder's rows for the typed query: every Document, every Area note that
+ * exists, and every Area brain. Null while the vault is still loading.
+ */
+function goToRows() {
+  if (!state.vault) return null;
+  const core = window.AgentShellAreaMap;
+  const rows = [];
+  for (const record of state.vault.documents ?? []) {
+    if (record.kind !== "document" && !(record.kind === "note" && !record.missing)) continue;
+    rows.push({
+      key: record.file,
+      kind: record.kind,
+      kindLabel: record.kind === "note" ? "Area note" : core.kindLabel(record.docKind ?? "page"),
+      name: record.title,
+      area: record.area,
+      areaLabel: areaLabel(record.area),
+      detail: "",
+      changedAt: Number(record.changedAt ?? record.mtime ?? 0),
+      live: false,
+      file: record.file,
+    });
+  }
+  for (const brain of state.brains ?? []) {
+    rows.push({
+      key: `brain:${brain.area}`,
+      kind: "brain",
+      kindLabel: "Brain",
+      name: areaLabel(brain.area),
+      area: brain.area,
+      areaLabel: areaLabel(brain.area),
+      detail: `${brainStateWord(brain)} · generation ${brain.generation}`,
+      changedAt: Date.parse(brain.updatedAt) || 0,
+      live: Boolean(brain.live),
+      session: brain.session,
+    });
+  }
+  return window.AgentShellGoTo.matchRows(rows, state.goTo.query, GO_TO_LIMIT);
+}
+
+/** Opens the finder over the current screen, or closes it when ⌘K repeats. */
+function openGoTo() {
+  if (!modalLayer.hidden) return;
+  if (state.goTo) return closeGoTo();
+  if (!shellMenu.hidden) toggleShellMenu(false);
+  state.goTo = { query: "", selected: 0, rows: [], returnFocus: document.activeElement };
+  goToInput.value = "";
+  goToLayer.hidden = false;
+  renderGoToList();
+  goToInput.focus();
+}
+
+/** Closes the finder and gives the keyboard back to the screen underneath. */
+function closeGoTo() {
+  if (!state.goTo) return;
+  const focus = state.goTo.returnFocus;
+  state.goTo = null;
+  goToLayer.hidden = true;
+  goToList.innerHTML = "";
+  if (focus && focus !== document.body && focus.isConnected) {
+    try { focus.focus(); } catch {}
+  }
+}
+
+/** Draws the finder's list. It never touches #screen. */
+function renderGoToList() {
+  if (!state.goTo) return;
+  const rows = goToRows();
+  if (rows === null) {
+    state.goTo.rows = [];
+    goToList.innerHTML = `<li class="go-to-empty">Loading the vault…</li>`;
+    return;
+  }
+  state.goTo.rows = rows;
+  state.goTo.selected = rows.length ? Math.min(Math.max(state.goTo.selected, 0), rows.length - 1) : 0;
+  if (!rows.length) {
+    goToList.innerHTML = `<li class="go-to-empty">Nothing is named “${escapeHtml(state.goTo.query)}”.</li>`;
+    return;
+  }
+  goToList.innerHTML = rows.map((row, index) => `
+    <li id="go-to-row-${index}" role="option" aria-selected="${index === state.goTo.selected}" data-go-to-row="${index}">
+      <span class="search-result-kind">${escapeHtml(row.kindLabel)}</span>
+      <span><strong>${escapeHtml(row.name)}</strong><small>${escapeHtml(row.detail || row.areaLabel)}</small></span>
+    </li>`).join("");
+  goToInput.setAttribute("aria-activedescendant", `go-to-row-${state.goTo.selected}`);
+  goToList.children[state.goTo.selected]?.scrollIntoView?.({ block: "nearest" });
+}
+
+/** Goes to one chosen row. Enter never starts an agent. */
+function chooseGoToRow(row) {
+  if (!row) return;
+  closeGoTo();
+  if (row.kind === "brain") {
+    if (row.live) return openBrainSession(row.session);
+    return showWorkAt(row.area);
+  }
+  return openDocument(row.file);
+}
+
+/**
+ * Opens the Work desk at one Area card, where the control that resumes a
+ * stopped brain lives. Without a card for that Area the Areas screen is the
+ * next nearest place. Neither starts anything.
+ */
+function showWorkAt(area) {
+  if (!deskAreas().some((record) => record.area.path === area)) return showAreasAt(area);
+  showWork();
+  window.setTimeout(() => {
+    const card = screen.querySelector(`[data-desk-area="${CSS.escape(area)}"]`);
+    if (!card) return;
+    try { card.scrollIntoView({ block: "start" }); } catch {}
+    card.classList.add("flash");
+    window.setTimeout(() => card.classList.remove("flash"), 1600);
+  }, 0);
 }
 
 /** Rebuilds the workspace and restarts the server after explicit confirmation. */
@@ -4879,6 +5015,51 @@ backButton.addEventListener("click", async () => {
   }
 });
 
+goToButton.innerHTML = `Go to ${shortcutKbd("goTo")}`;
+goToButton.addEventListener("click", openGoTo);
+
+goToInput.addEventListener("input", () => {
+  if (!state.goTo) return;
+  state.goTo.query = goToInput.value;
+  state.goTo.selected = 0;
+  renderGoToList();
+});
+
+goToLayer.addEventListener("keydown", (event) => {
+  if (!state.goTo) return;
+  const rows = state.goTo.rows;
+  /** Keeps the finder's keys inside the layer, away from the global handler. */
+  const own = () => {
+    event.preventDefault();
+    event.stopPropagation();
+  };
+  if (event.key === "ArrowDown") {
+    state.goTo.selected = Math.min(state.goTo.selected + 1, Math.max(rows.length - 1, 0));
+    renderGoToList();
+    return own();
+  }
+  if (event.key === "ArrowUp") {
+    state.goTo.selected = Math.max(state.goTo.selected - 1, 0);
+    renderGoToList();
+    return own();
+  }
+  if (event.key === "Enter") {
+    own();
+    return chooseGoToRow(rows[state.goTo.selected]);
+  }
+  if (event.key === "Escape" || shortcutMatches(event, KEYMAP.goTo)) {
+    own();
+    return closeGoTo();
+  }
+});
+
+goToLayer.addEventListener("click", (event) => {
+  event.stopPropagation();
+  if (event.target === goToLayer) return closeGoTo();
+  const row = event.target.closest?.("[data-go-to-row]");
+  if (row) return chooseGoToRow(state.goTo?.rows[Number(row.dataset.goToRow)]);
+});
+
 workTab.addEventListener("click", showWork);
 areasTab.addEventListener("click", showAreas);
 
@@ -4912,6 +5093,12 @@ modalLayer.addEventListener("click", (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
+  if (shortcutMatches(event, KEYMAP.goTo)) {
+    event.preventDefault();
+    return openGoTo();
+  }
+  // No other global shortcut fires while the finder holds the keyboard.
+  if (state.goTo) return;
   if (event.key === "Enter" && event.metaKey) {
     const form = event.target.closest?.("[data-command-enter-submit]");
     if (form) {

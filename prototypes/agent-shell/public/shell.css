@@ -923,6 +923,22 @@ details.more-work .area-work-list { margin-top: 18px; }
 .modal-field textarea { min-height: 92px; resize: vertical; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 28px; }
 
+/* Go to: one named Document, Area note, or Area brain from any screen. The
+   layer sits outside #screen, so nothing under it repaints while it is open. */
+.go-to-layer { position: fixed; inset: 0; z-index: 110; display: grid; align-content: start; justify-items: center; padding: 10vh 24px 24px; background: rgba(2, 4, 6, .6); backdrop-filter: blur(6px); }
+.go-to-layer[hidden] { display: none; }
+.go-to { width: min(640px, 100%); padding: 18px 20px 14px; border: 1px solid var(--line-strong); border-radius: 16px; background: var(--surface-raised); box-shadow: 0 28px 80px rgba(0, 0, 0, .48); }
+.go-to input { width: 100%; margin-top: 8px; padding: 12px 14px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--bg); color: var(--text); font-size: 18px; }
+.go-to-hint { margin: 8px 0 0; color: var(--quiet); font-size: 12px; }
+#go-to-list { margin: 12px 0 0; padding: 0; list-style: none; display: grid; gap: 2px; max-height: 60vh; overflow: auto; }
+#go-to-list li { display: grid; grid-template-columns: 84px minmax(0, 1fr); column-gap: 14px; align-items: baseline; padding: 9px 10px; border-radius: 8px; cursor: pointer; }
+#go-to-list li[aria-selected="true"] { background: var(--surface); }
+#go-to-list li:hover { background: var(--surface); }
+#go-to-list li .search-result-kind { text-align: right; }
+#go-to-list li strong { display: block; font-size: 15px; }
+#go-to-list li small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+#go-to-list .go-to-empty { display: block; color: var(--muted); padding: 9px 10px; cursor: default; }
+
 /* Document comments: red-ruled blocks under their block, marks on quoted words, one inline composer. */
 .document-comment { position: relative; display: flex; align-items: flex-start; gap: 8px; margin: 10px 0 18px; padding: 8px 6px 8px 14px; border-left: 3px solid var(--red); border-radius: 0 6px 6px 0; background: rgba(240, 154, 154, .05); }
 .document-comment:focus { outline: none; box-shadow: 0 0 0 2px rgba(240, 154, 154, .45); }
@@ -1021,6 +1037,7 @@ button.desk-step:hover { border-color: #5a6470; }
 .desk-doc-chip:hover { border-color: #4a525c; color: #fff; }
 .desk-goal-handoff { margin-top: 3px; color: var(--amber); font-size: 12px; line-height: 1.45; }
 .desk-goal.flash { animation: desk-goal-flash 1.5s ease-out; }
+.area-desk-panel.flash { outline: 2px solid var(--blue, #6ea8ff); outline-offset: 2px; }
 @keyframes desk-goal-flash { 0% { background: #2a3547; } 100% { background: transparent; } }
 
 /* Agent Shell menu and connection pill */

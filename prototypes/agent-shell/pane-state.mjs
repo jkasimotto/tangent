@@ -63,6 +63,18 @@ export function stabilizeStaticPane({ classification, quietSince = null, now, th
 }
 
 /**
+ * When a pane last stopped changing, the start of the "waiting for you"
+ * duration on the Goal card (design-goal-cards Decision 3). A pane that
+ * repainted since the last poll, one with no earlier sample, and a plain
+ * shell have no static start: the answer is null. After a server restart the
+ * first equal hash starts the clock at `now`, so the value is a lower bound.
+ */
+export function staticSinceOf({ previous, hash, now }) {
+  if (!previous || previous.state === "shell" || previous.hash !== hash) return null;
+  return previous.staticSince ?? now;
+}
+
+/**
  * Classifies one static pane. Input: the pane text exactly as
  * `tmux capture-pane -p` prints it, and the cursor position from
  * `#{cursor_x} #{cursor_y}`. Returns one of:

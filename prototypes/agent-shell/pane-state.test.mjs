@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { classifyStaticPane, stabilizeStaticPane } from "./pane-state.mjs";
+import { classifyStaticPane, stabilizeStaticPane, staticSinceOf } from "./pane-state.mjs";
 
 const fixturesDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "panes");
 
@@ -91,4 +91,15 @@ test("a dialog wins over the composer prompt on the same screen", () => {
   // The selected option row starts with the same ❯ character as the composer.
   const result = classifyStaticPane({ text, cursorX: 2, cursorY: 7 });
   assert.equal(result.kind, "decision");
+});
+
+test("staticSinceOf: the first equal hash starts the clock, a later one keeps it", () => {
+  assert.equal(staticSinceOf({ previous: { hash: "a", state: "working" }, hash: "a", now: 500 }), 500);
+  assert.equal(staticSinceOf({ previous: { hash: "a", state: "waiting", staticSince: 500 }, hash: "a", now: 900 }), 500);
+});
+
+test("staticSinceOf: a repaint, a missing sample, or a shell sample has no static start", () => {
+  assert.equal(staticSinceOf({ previous: { hash: "a", state: "waiting", staticSince: 500 }, hash: "b", now: 900 }), null);
+  assert.equal(staticSinceOf({ previous: undefined, hash: "a", now: 900 }), null);
+  assert.equal(staticSinceOf({ previous: { hash: "a", state: "shell", staticSince: 500 }, hash: "a", now: 900 }), null);
 });

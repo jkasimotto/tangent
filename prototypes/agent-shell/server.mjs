@@ -28,7 +28,7 @@ const documentComments = globalThis.AgentShellDocumentComments;
 // The Area map facts (kind, recency, desk grouping) are shared the same way
 // (see public/area-map-core.js and the design contract design-area-map).
 const areaMapCore = globalThis.AgentShellAreaMap;
-import { classifyStaticPane, stabilizeStaticPane } from "./pane-state.mjs";
+import { classifyStaticPane, stabilizeStaticPane, staticSinceOf } from "./pane-state.mjs";
 import { appendSteps, currentStep, endPipeline, goalBindingGoneFromSnapshot, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, readAllPipelines, readPipeline, stepGoneFromSnapshot, validateSteps, writePipeline } from "./pipeline-record.mjs";
 import { deliveryDecision, messageBanner, normalizeMessage } from "./agent-messages.mjs";
 import { beginGeneration, brainForArea, brainSessionName, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, recordHandover, validateInstruction, writeBrain } from "./brain-record.mjs";
@@ -255,12 +255,16 @@ async function paneCursor(name) {
  * working|waiting|shell; detail rides beside it as stateDetail.
  */
 async function classifyState(name, command, now) {
-  if (SHELL_CMDS.has(command)) {
-    paneSamples.set(name, { hash: "", at: now, state: "shell", detail: null, question: "" });
-    return { state: "shell", detail: null, question: "" };
-  }
   const prev = paneSamples.get(name);
-  if (prev && now - prev.at < MIN_SAMPLE_MS) return { state: prev.state, detail: prev.detail ?? null, question: prev.question ?? "", idleSince: prev.idleSince ?? null };
+  if (SHELL_CMDS.has(command)) {
+    const shellSince = prev?.state === "shell" ? prev.staticSince ?? now : now;
+    paneSamples.set(name, { hash: "", at: now, state: "shell", detail: null, question: "", staticSince: shellSince });
+    return { state: "shell", detail: null, question: "", idleSince: null, waitingSince: shellSince };
+  }
+  if (prev && now - prev.at < MIN_SAMPLE_MS) {
+    const cachedWait = prev.state === "waiting" || prev.state === "shell" ? prev.staticSince ?? null : null;
+    return { state: prev.state, detail: prev.detail ?? null, question: prev.question ?? "", idleSince: prev.idleSince ?? null, waitingSince: cachedWait };
+  }
   const { stdout: text } = await execFileAsync("tmux", ["capture-pane", "-p", "-t", "=" + name + ":"]);
   const hash = createHash("sha1").update(text).digest("hex");
   let state = !prev || prev.state === "shell" || hash !== prev.hash ? "working" : "waiting";
@@ -286,8 +290,12 @@ async function classifyState(name, command, now) {
   // idleSince: when the pane first went quiet at an empty composer, kept
   // while it stays so; the desk uses it to offer "send on" after a while.
   const idleSince = state === "waiting" && (detail === "idle" || detail === null) ? (prev?.idleSince ?? now) : null;
-  paneSamples.set(name, { hash, at: now, state, detail, question, idleSince, quietSince });
-  return { state, detail, question, idleSince };
+  // staticSince: when the pane stopped changing, whatever the detail. It is
+  // the start of "waiting for you" on the Goal card; quietSince covers only
+  // the unrecognized static pane and its stable-wait delay.
+  const staticSince = staticSinceOf({ previous: prev, hash, now });
+  paneSamples.set(name, { hash, at: now, state, detail, question, idleSince, quietSince, staticSince });
+  return { state, detail, question, idleSince, waitingSince: state === "waiting" ? staticSince : null };
 }
 
 /**
@@ -307,8 +315,8 @@ async function withAgentStates(sessions) {
         return { ...s, state: SHELL_CMDS.has(s.command) ? "stopped" : "service", stateDetail: null, stateQuestion: "" };
       }
       try {
-        const { state, detail, question, idleSince } = await classifyState(s.name, s.command, now);
-        return { ...s, state, stateDetail: detail, stateQuestion: question, idleSince: idleSince ?? null };
+        const { state, detail, question, idleSince, waitingSince } = await classifyState(s.name, s.command, now);
+        return { ...s, state, stateDetail: detail, stateQuestion: question, idleSince: idleSince ?? null, waitingSince: waitingSince ?? null };
       } catch {
         return { ...s, state: null, stateDetail: null, stateQuestion: "" };
       }
@@ -2254,7 +2262,7 @@ async function pipelinesView(sessions) {
     status: pipelineStatus(record, (name) => byName.has(name)),
     steps: record.steps.map((step) => {
       const live = step.session ? byName.get(step.session) : null;
-      return { ...step, live: Boolean(live), state: live?.state ?? null, stateDetail: live?.stateDetail ?? null, idleSince: live?.idleSince ?? null };
+      return { ...step, live: Boolean(live), state: live?.state ?? null, stateDetail: live?.stateDetail ?? null, idleSince: live?.idleSince ?? null, waitingSince: live?.waitingSince ?? null };
     }),
   }));
 }

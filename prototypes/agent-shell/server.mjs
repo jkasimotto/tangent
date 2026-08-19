@@ -21,6 +21,7 @@ import { documentHash, markdownTitle, safeMarkdownPath, wikiLinks } from "./vaul
 import "./public/document-comments.js";
 import "./public/area-map-core.js";
 import { createVaultGitReader, fileTimes } from "./area-map.mjs";
+import { createFingerprintCache } from "./vault-index-cache.mjs";
 
 // The comment parser is shared with the browser, so it is a plain script that
 // registers a global (see public/document-comments.js).
@@ -708,11 +709,12 @@ async function readAreaGoals(area) {
  * flatten of its Goal roots through Subgoal links. Subgoals can be
  * homed in other areas), with `depth` for indentation; goal files nothing
  * links trail at the top level, alphabetically.
- * Small vault, read fresh per request. Returns { areas, map }: the per-area
- * entries for typed search, plus the unified deduplicated map (built below)
- * that the launcher's browse view renders.
+ * Returns { areas, map }: the per-area entries for typed search, plus the
+ * unified deduplicated map (built below) that the launcher's browse view
+ * renders. Reads every Markdown file in the vault, so callers use the cached
+ * `vaultIndex` below rather than this function.
  */
-async function vaultIndex() {
+async function buildVaultIndex() {
   const flat = [];
   /** Depth-first over the area tree, collecting every area. */
   const walk = async (areas) => {
@@ -915,6 +917,45 @@ async function vaultIndex() {
   groups.sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0) || b.mtime - a.mtime);
   return { areas: out, map: groups, documents: records };
 }
+
+/**
+ * A string that changes whenever the vault index would change: the path, size,
+ * and modification time of every Markdown file the index reads, plus the size
+ * and modification time of the vault reflog, because the index also carries
+ * git times and agent runs that only a commit changes. One `readdir` per Area
+ * and one `stat` per file, some 50 times cheaper than a build.
+ */
+async function vaultFingerprint(dir = TREES_ROOT, rel = "") {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch {
+    return "";
+  }
+  const parts = [];
+  if (!rel) {
+    const reflog = await stat(path.join(TREES_ROOT, ".git", "logs", "HEAD")).catch(() => null);
+    parts.push(`git:${reflog ? `${reflog.mtimeMs}:${reflog.size}` : "none"}`);
+  }
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    const absolute = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (TREE_SKIP.has(entry.name) || entry.name.startsWith(".")) continue;
+      parts.push(await vaultFingerprint(absolute, rel ? `${rel}/${entry.name}` : entry.name));
+      continue;
+    }
+    if (!entry.name.endsWith(".md")) continue;
+    const info = await stat(absolute).catch(() => null);
+    if (info) parts.push(`${rel}/${entry.name}:${info.mtimeMs}:${info.size}`);
+  }
+  return parts.join("\n");
+}
+
+/**
+ * The vault index every Document, Goal, and map request reads, built once per
+ * vault change instead of once per request. See vault-index-cache.mjs for why.
+ */
+const vaultIndex = createFingerprintCache({ fingerprint: vaultFingerprint, build: buildVaultIndex });
 
 /** True for a vault-relative Area path with no traversal. */
 function validAreaPath(area) {

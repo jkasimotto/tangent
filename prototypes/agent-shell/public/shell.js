@@ -3025,8 +3025,8 @@ function renderScreen() {
   }
 
   updateHeader();
-  if (state.view === "document") bindDocumentReader();
   restoreScreenScroll(scrollPositions);
+  if (state.view === "document") bindDocumentReader();
   const host = screen.querySelector("[data-session]");
   if (host) mountTerminal(host, host.dataset.session);
   const mapHost = screen.querySelector("[data-area-map]");
@@ -3800,9 +3800,16 @@ function bindDocumentReader() {
       if (current) link.setAttribute("aria-current", "location");
       else link.removeAttribute("aria-current");
     }
+  };
+  // Only a real scroll may store the reading position. At bind time the reader
+  // is still at the top, and storing that would wipe the place a save,
+  // a refresh, or a return from an agent is about to restore.
+  /** Stores the reading position on a real scroll. */
+  const remember = () => {
     if (state.document) state.documentPositions.set(state.document.file, scroll.scrollTop);
   };
   scroll.addEventListener("scroll", update, { passive: true });
+  scroll.addEventListener("scroll", remember, { passive: true });
   scroll.addEventListener("scroll", hideSelectionCommentButton, { passive: true });
   update();
   const composerField = screen.querySelector("#comment-text");

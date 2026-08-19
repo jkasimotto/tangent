@@ -1806,6 +1806,10 @@ test("a second comment lands on the words Julian selected, and the reader holds 
   assert.deepEqual(marks.map((mark) => mark.dataset.commentIndex), ["0", "1", "1"]);
   assert.equal(window.document.querySelectorAll(".document-comment").length, 2);
 
+  // Julian has read down the page before he comments.
+  window.document.querySelector(".document-reader-scroll").scrollTop = 320;
+  window.document.querySelector(".document-reader-scroll").dispatchEvent(new window.Event("scroll"));
+
   // A third selection next to the overlapping pair lands on exactly those words.
   const tail = paragraph.lastChild;
   const range = window.document.createRange();
@@ -1826,4 +1830,7 @@ test("a second comment lands on the words Julian selected, and the reader holds 
   assert.match(saves[0].text, /\{==over the==\}\{>>Julian: Third<<\}/);
   assert.equal(window.document.querySelector(".document-content p").textContent, "The quick brown fox jumps over the lazy dog.");
   assert.equal(window.document.querySelectorAll(".document-comment").length, 3);
+  await settle(window);
+  await settle(window);
+  assert.equal(window.document.querySelector(".document-reader-scroll").scrollTop, 320, "the reader keeps its place after the save");
 });

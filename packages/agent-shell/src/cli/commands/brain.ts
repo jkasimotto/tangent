@@ -43,7 +43,43 @@ async function statusCommand(args: Args): Promise<void> {
   console.log(`plan: ${brain.planFile}`);
   console.log(`instruction: ${firstLine(brain.instruction)}`);
   if (brain.latestHandover) console.log(`latest handover: ${firstLine(brain.latestHandover)}`);
+  printForJulian(brain.forJulian ?? []);
 }
+
+/**
+ * Prints what Tangent shows Julian for this brain: the rows it parsed from the
+ * plan's `## For Julian` section, numbered as they appear on his desk. A line
+ * the brain wrote in another shape is not a row, so a count that is short of
+ * what the plan says is the brain's signal to fix its lines.
+ */
+function printForJulian(rows: ForJulianRow[]): void {
+  console.log(`for Julian: Tangent shows ${rows.length} ${rows.length === 1 ? "item" : "items"}`);
+  rows.forEach((row, at) => {
+    const number = `  ${at + 1}.`;
+    if (row.kind === "decision") {
+      const unblocks = row.unblocks ? ` · unblocks ${row.unblocks}` : "";
+      const missing = row.missing ? " · DOCUMENT MISSING" : "";
+      console.log(`${number} Decision ${row.file ?? row.title}: ${row.text}${unblocks} · ${row.commentCount} open comments${missing}`);
+      return;
+    }
+    if (row.kind === "tryit") {
+      console.log(`${number} Try it ${row.title}: ${row.text}`);
+      return;
+    }
+    console.log(`${number} Brain: ${row.text}`);
+  });
+}
+
+type ForJulianRow = {
+  kind: "decision" | "tryit" | "brain";
+  text: string;
+  unblocks: string | null;
+  file: string | null;
+  title: string | null;
+  commentCount: number;
+  missing: boolean;
+  line: string;
+};
 
 type BrainSummary = {
   area: string;
@@ -54,6 +90,7 @@ type BrainSummary = {
   planFile: string;
   instruction: string;
   latestHandover: string | null;
+  forJulian: ForJulianRow[];
 };
 
 /** The first line of a text, trimmed. */
@@ -79,5 +116,8 @@ Area folder and the handover facts are the memory that crosses generations.
 Examples:
   tangent brain handover "Wave 1 dispatched: area-map runs step 2 (tangent-area-map-s2). Waiting: nothing. Next: review area-map when it completes."
   tangent brain status otto/tangent
+
+The status ends with what Tangent shows Julian: the rows it parsed from the
+plan's "## For Julian" section. A line in another shape is not a row.
 `);
 }

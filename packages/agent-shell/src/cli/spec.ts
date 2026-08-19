@@ -46,6 +46,21 @@ export const brainCommandSpec: CliCommandSpec = {
   ]
 };
 
+export const shellCommandSpec: CliCommandSpec = {
+  name: "shell",
+  description: "Agent Shell itself: rebuild and restart the running server",
+  subcommands: [
+    {
+      name: "rebuild",
+      description: "Rebuild the packages, restart the Agent Shell server, and return when the new boot answers. Run it before a Try it note, so the keys work the first time.",
+      options: [
+        serverOption,
+        { name: "timeout", takesValue: true, description: "Seconds to wait for the new boot (default 240)" }
+      ]
+    }
+  ]
+};
+
 export const goalCommandSpec: CliCommandSpec = {
   name: "goal",
   description: "Create, list, start, append to, hand over, and close Goals in the Tangent tree",

@@ -29,6 +29,7 @@ Decisions:
 - decisions/ADR-0019-delete-combined-tangent-ui.md
 - decisions/ADR-0023-agent-pipelines-replace-reviewed-build.md
 - decisions/ADR-0024-area-brain.md
+- decisions/ADR-0025-brain-writes-what-needs-julian.md
 - ui/adr/0001-ui-package-split.md
 - ui/adr/0002-react-vite-ui-stack.md
 - ui/adr/0006-svelte-usage-ui.md

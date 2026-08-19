@@ -5,7 +5,7 @@ Public import paths:
 - `@tangent/agent-shell`
 - `@tangent/agent-shell/cli`
 
-Both export the same surface: `runAreaCli`, `runBrainCli`, `runGoalCli`, `runIdeaCli`, `runDocumentCli`, `runAgentCli`, `runVaultCli`, and their help specs `areaCommandSpec`, `brainCommandSpec`, `goalCommandSpec`, `ideaCommandSpec`, `documentCommandSpec`, `agentCommandSpec`, `vaultCommandSpec`. The root `tangent` CLI lazily loads `@tangent/agent-shell/cli` for the `area`, `brain`, `goal`, `idea`, `document`, `agent`, and `vault` nouns, the same way `usage`/`eval`/`rollup`/`search`/`threads` are loaded. Nothing else is exported; the Reviewed build engine was removed in ADR-0023.
+Both export the same surface: `runAreaCli`, `runBrainCli`, `runGoalCli`, `runIdeaCli`, `runDocumentCli`, `runAgentCli`, `runShellCli`, `runVaultCli`, and their help specs `areaCommandSpec`, `brainCommandSpec`, `goalCommandSpec`, `ideaCommandSpec`, `documentCommandSpec`, `agentCommandSpec`, `shellCommandSpec`, `vaultCommandSpec`. The root `tangent` CLI lazily loads `@tangent/agent-shell/cli` for the `area`, `brain`, `goal`, `idea`, `document`, `agent`, `shell`, and `vault` nouns, the same way `usage`/`eval`/`rollup`/`search`/`threads` are loaded. Nothing else is exported; the Reviewed build engine was removed in ADR-0023.
 
 ## Vault CLI
 
@@ -38,7 +38,17 @@ A pipeline is a list of steps on one Goal. The server owns it (one record per Go
 An Area brain is one long-lived orchestrating agent per Area (ADR-0024; design contract `otto/tangent/impl-area-brain`). The server owns its record (`~/.tangent/agent-shell/brains/<area>/brain.json`, schema `area-brain.v1`), its session, the event messages it hears, and its self-handover. Julian starts it from the brain icon on the Area card. This package only posts to the endpoints below.
 
 - `tangent brain handover <facts...> [--session <name>] [--server]`: run by the brain when its context fills. Posts `POST /api/brains/handover { session, text }`; the server records the facts on the current generation, starts the next generation on a new session with the same instruction, the plan path, and these facts, then ends the calling session. Prints the new generation and session. A session that is not a running brain gets the server's 404 error text.
-- `tangent brain status [<area>] [--session <name>] [--server] [--json]`: shows one brain (status, generation, session, plan file, instruction, latest handover) by Area, or by the tmux session the command runs in. `GET /api/brains/show?area=|session=`.
+- `tangent brain status [<area>] [--session <name>] [--server] [--json]`: shows one brain (status, generation, session, plan file, instruction, latest handover) by Area, or by the tmux session the command runs in, then `for Julian: Tangent shows N items` and one numbered line per row. `GET /api/brains/show?area=|session=`.
+
+## What waits on Julian
+
+Under a live brain, the brain's plan is the only list of what waits on Julian (ADR-0025; design contract `otto/tangent/impl-what-needs-julian-under-brains`). The brain writes a `## For Julian` section in its plan Document; the server parses it (`prototypes/agent-shell/for-julian.mjs`) and shows it on the desk as the `For you` card. Three line shapes and nothing else:
+
+- `- Decision [[<document>]]: <what it asks>. Unblocks: <what the answer unblocks>.`
+- `- Try it [[<goal-slug>]]: <where to go, what to press, what he sees>.`
+- `- Brain: <one question that fits no Document>.`
+
+- `tangent shell rebuild [--server <url>] [--timeout <seconds>]`: posts `POST /api/shell/rebuild`, then polls `GET /api/sessions` every 500 ms until `boot` changes, so the command returns only when the new code answers. Default timeout 240 s; the failure names the rebuild log. The brain runs it before it writes a Try it line.
 
 ## Server contract
 
@@ -64,10 +74,14 @@ Brain endpoints:
 
 - `POST /api/brains/start`: `{ area, instruction, choice?, command?, resume? }`. Starts the Area's brain (Claude · Fable 5 unless a choice, an edited command, or the Area default replaces it), reattaches when one runs (`reattached: true`), or with `resume: true` starts a new generation of a stopped or ended brain from its record. Responds `{ session, generation, brain }`. 400 empty instruction, 404 unknown Area, 409 unresolvable launch.
 - `POST /api/brains/handover`: `{ session, text }` as above. Responds `{ status: "started", session, generation, previous }`.
-- `GET /api/brains/show?area=<path>` or `?session=<name>`: `{ brain }` with `live`, `state`, `stateDetail`, `latestHandover`; 404 when none.
-- `GET /api/sessions` gains `brains`: every record with `live`, `state`, `stateDetail`, `idleSince`, `latestHandover`. Brain sessions carry `kind: "brain"`, `brain` (the Area), and `generation`.
+- `GET /api/brains/show?area=<path>` or `?session=<name>`: `{ brain }` with `live`, `state`, `stateDetail`, `latestHandover`, `forJulian`; 404 when none.
+- `GET /api/sessions` gains `brains`: every record with `live`, `state`, `stateDetail`, `idleSince`, `latestHandover`, and `forJulian`. Brain sessions carry `kind: "brain"`, `brain` (the Area), and `generation`.
+- `forJulian` is the parsed `## For Julian` section, resolved against the vault index: `[{ kind: "decision" | "tryit" | "brain", target, text, unblocks, line, index, file, title, commentCount, missing, goalStatus }]`. `line` is the exact plan line and the key a `Tried it` press sends back.
+- `POST /api/brains/tried`: `{ area, line }`. Removes one Try it line from the brain's plan and commits it. Responds `{ ok: true, line, index }`; 400 when the line is not a Try it line, 404 when no brain covers the Area or the plan has no such line.
+- `POST /api/brains/tried/undo`: `{ area, line, index }`. Puts the line back at that position and commits. Responds `{ ok: true }`.
+- A save through `POST /api/document` that adds or changes a comment in a Document a brain lists as a Decision sends that brain one notice through the brain inbox. A removal sends nothing.
 - `POST /api/kill/<name>` also ends the brain whose current session that is (`brainEnded: true`).
 
 Brain record shape (`area-brain.v1`): `{ schema, area, instruction, launch | null, command, label, planFile, status: "running" | "stopped" | "ended", generation, session, createdAt, updatedAt, generations: [{ generation, session, startedAt, endedAt, handover, remindedAt }] }`.
 
-See ADR-0020 for why the vault CLI lives here, ADR-0023 for pipelines, and ADR-0024 for the Area brain.
+See ADR-0020 for why the vault CLI lives here, ADR-0023 for pipelines, ADR-0024 for the Area brain, and ADR-0025 for what waits on Julian under one.

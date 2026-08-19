@@ -1,10 +1,11 @@
 # @tangent/agent-shell Docs
 
-Purpose: the CLI surface of the Agent Shell. Three lanes, all under the root `tangent` command:
+Purpose: the CLI surface of the Agent Shell. Four lanes, all under the root `tangent` command:
 
 - Vault CLI: `tangent area`, `tangent goal`, `tangent idea`, `tangent document`, `tangent vault commit`.
 - Agent messaging CLI: `tangent agent list`, `tangent agent send`.
 - Pipeline CLI: `tangent goal start` (one agent or a list of steps on a Goal) and `tangent goal handover` (a step agent hands facts to the next step).
+- Brain and server CLI: `tangent brain handover|status` (the Area brain's own lane; `status` ends with what Tangent shows Julian) and `tangent shell rebuild` (rebuild and restart the server, and wait for the new boot).
 
 The Agent Shell server in `prototypes/agent-shell/` owns Goals, pipelines, and sessions. This package never runs an agent itself; see ADR-0023.
 

@@ -1332,13 +1332,17 @@ async function pipelineStepPrompt(area, o, record, index, extras = []) {
   const earlier = record.steps
     .filter((item) => item.index < index && item.handover)
     .map((item) => `### Handover from step ${item.index} (${item.label || "agent"}, ${item.status})\n\n${item.handover}`);
+  const brain = await liveBrainForArea(area);
+  const decisionLine = brain
+    ? `If a real decision needs Julian, send it to the brain: \`tangent agent send ${brain.session} "<question>"\`. Keep going on the brain's answer or its own recommendation; never sit waiting for Julian in this terminal. Julian decides in Documents and through the brain.`
+    : `If a real decision needs Julian, ask him here; the pipeline waits.`;
   return (
     `${assignment}\n\n` +
     `## Your step\n\n` +
     `Step ${index} of ${total}${total > 1 ? " in a pipeline" : ""}: ${step.instruction}\n\n` +
     (earlier.length ? `## Handovers so far\n\n${earlier.join("\n\n")}\n\n` : "") +
     `## When you finish\n\n` +
-    `Run \`tangent goal handover "<facts>"\` from this session. State facts a fresh agent needs: files you wrote or changed with full paths, what is finished, what is unresolved, decisions Julian made. No recommendations, no narrative. The next step starts from your handover and the files. If a real decision needs Julian, ask him here; the pipeline waits.`
+    `Run \`tangent goal handover "<facts>"\` from this session. State facts a fresh agent needs: files you wrote or changed with full paths, what is finished, what is unresolved, decisions Julian made. No recommendations, no narrative. The next step starts from your handover and the files. ${decisionLine}`
   );
 }
 
@@ -2384,6 +2388,7 @@ async function brainPrompt(record) {
     `Start each leaf Goal as a pipeline, for example: \`tangent goal start <slug> --step "/design this Goal" --launch ${harness}/${designModel} --step "/impl the design at <path>" --launch ${harness}/${designModel} --step "implement the solution" --launch ${harness}/${implementModel} --step "review the implementation against the design and solution; fix what is wrong" --launch ${harness}/${designModel}\`. Judge each Goal: when the work is small and clear, one implementer step is enough; when it is hard or vague, raise the implementer to Opus or Fable and keep the design step. Fable plans, designs, decomposes, and reviews; Sonnet is the workhorse. Run one implementing pipeline per repository at a time; design and review steps may run in parallel. \`tangent agent list\` shows what runs and \`tangent goal list ${area}\` shows the Goals.\n\n` +
     `Tangent sends you messages: a step handed over, a pipeline completed, a step stopped or sat idle, a Goal session ended. Read the handover and the files. When a review asks for changes, \`tangent goal append <slug> --step "..." --launch ...\`. When a result is good, note it in the plan and start what its completion unblocked. Workers may message you; answer with \`tangent agent send <session> "<text>"\`.\n\n` +
     `Ask Julian only for real decisions; ask here, he sees it. Julian started this brain to get the Area done, and that start is his word on Goal status for the Goals under it. When a Goal's final review hands over with a pass and its done condition holds, write the verdict into the Goal's State section and run \`tangent goal done <slug>\` in that same turn; when a Goal turns out wrong, \`tangent goal wont-do <slug> --reason "..."\` in that same turn. After every batch of results, sweep for Goals whose pipeline finished and close them: a finished Goal left showing Waiting for you is a failure of the brain, not a question for Julian. His instruction above can narrow this (for example, ask before closing). Goals outside your plan stay his; only real decisions wait for Julian.\n\n` +
+    `When a Goal you closed changes what Julian sees or presses, rebuild and restart the server yourself before you tell him: for Tangent, \`npm run build\` if packages changed, then \`launchctl kickstart -k gui/$(id -u)/com.tangent.agent-shell\`. Then send him a short Try it note in this session: where to go, what to press, what he should see.\n\n` +
     `## When to hand over\n\n` +
     `Before every handover, sweep \`tangent goal list ${area}\` and \`tangent agent list\` for any Goal whose pipeline finished and close it (\`tangent goal done <slug>\` or \`tangent goal wont-do <slug> --reason "..."\`); a finished Goal left waiting is a failure, never something to hand off to the next generation. Then, at a natural pause, after a wave is dispatched or a batch of results is processed, and always when Tangent reminds you, write the plan status and run \`tangent brain handover "<facts>"\`: what runs (Goal, step, session), what waits and why, decisions taken, what the next generation should do first. Facts, no narrative. A fresh copy of you starts from the plan and those facts, and this session ends.`
   );

@@ -72,12 +72,45 @@ async function makeTrees(root, leaf) {
   return trees;
 }
 
+/** Runs one git command in the test vault, with no user configuration. */
+async function git(trees, ...args) {
+  await new Promise((resolve, reject) => {
+    execFile("git", ["-C", trees, ...args], { env: GIT_ENV }, (error, stdout) => (error ? reject(error) : resolve(stdout)));
+  });
+}
+
+/** The environment that keeps the test vault's git out of the machine's configuration. */
+const GIT_ENV = {
+  ...process.env,
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_SYSTEM: "/dev/null",
+  GIT_AUTHOR_NAME: "Tangent Test",
+  GIT_AUTHOR_EMAIL: "test@tangent.local",
+  GIT_COMMITTER_NAME: "Tangent Test",
+  GIT_COMMITTER_EMAIL: "test@tangent.local",
+};
+
+/** Makes the test vault a git repository with every file tracked. */
+async function initGit(trees) {
+  await git(trees, "init", "-q", "-b", "main");
+  await git(trees, "add", "-A");
+  await git(trees, "commit", "-q", "-m", "add: the probe vault");
+}
+
+/** The subjects of the vault's commits, newest first. */
+async function gitSubjects(trees) {
+  const out = await new Promise((resolve) => {
+    execFile("git", ["-C", trees, "log", "--format=%s"], { env: GIT_ENV }, (error, stdout) => resolve(error ? "" : stdout));
+  });
+  return out.split("\n").filter(Boolean);
+}
+
 /** Starts one Agent Shell server against the given roots. */
 function startServer(root, trees, port, label) {
   return spawn(process.execPath, ["server.mjs"], {
     cwd: here,
     env: {
-      ...process.env,
+      ...GIT_ENV,
       PORT: String(port),
       HOST: "127.0.0.1",
       TREES_ROOT: trees,
@@ -167,6 +200,9 @@ async function startProbe(context, label) {
     brain: "- Brain: should the audit cover the Usage UI too?",
   };
   await writeFile(planFile, `# Plan for ${area}\n\n## For Julian\n\n${lines.decision}\n${lines.tryit}\n${lines.brain}\n\n## Waves\n\n- one\n`, "utf8");
+  // Every file is tracked, so the vault's own commits (a Tried it, a comment
+  // save) land in its history the way they do in the real vault.
+  await initGit(trees);
   return { root, trees, area, leaf, base, brains: path.join(root, "brains"), brain: brain.body, planFile, lines, slug };
 }
 
@@ -209,4 +245,39 @@ test("a row whose link resolves to nothing is marked missing", async (context) =
   assert.equal(rows[0].missing, true);
   assert.equal(rows[0].title, "design-gone");
   assert.equal(rows[0].commentCount, 0);
+});
+
+test("Tried it removes one Try it line, and undo puts it back", async (context) => {
+  const probe = await startProbe(context, "forjuliantried");
+  if (!probe) return;
+
+  await waitFor("the rows in the payload", async () => (await brainOf(probe.base))?.forJulian?.length === 3);
+
+  const tried = await post(probe.base, "/api/brains/tried", { area: probe.area, line: probe.lines.tryit });
+  assert.equal(tried.status, 200, JSON.stringify(tried.body));
+  assert.equal(tried.body.index, 2, "the body index counts the blank line under the heading");
+  assert.equal((await readFile(probe.planFile, "utf8")).includes(probe.lines.tryit), false);
+  const left = await waitFor("the row to leave the payload", async () => {
+    const rows = (await brainOf(probe.base))?.forJulian ?? [];
+    return rows.length === 2 ? rows : null;
+  });
+  assert.deepEqual(left.map((row) => row.kind), ["decision", "brain"]);
+  assert.equal((await gitSubjects(probe.trees))[0], `update: ${probe.area} plan tried it ${probe.slug}`);
+
+  const undo = await post(probe.base, "/api/brains/tried/undo", { area: probe.area, line: probe.lines.tryit, index: tried.body.index });
+  assert.equal(undo.status, 200, JSON.stringify(undo.body));
+  const back = await waitFor("the row to come back", async () => {
+    const rows = (await brainOf(probe.base))?.forJulian ?? [];
+    return rows.length === 3 ? rows : null;
+  });
+  assert.deepEqual(back.map((row) => row.kind), ["decision", "tryit", "brain"]);
+  assert.equal((await gitSubjects(probe.trees))[0], `update: ${probe.area} plan restore try it ${probe.slug}`);
+
+  const decision = await post(probe.base, "/api/brains/tried", { area: probe.area, line: probe.lines.decision });
+  assert.equal(decision.status, 400, JSON.stringify(decision.body));
+  const unknown = await post(probe.base, "/api/brains/tried", { area: probe.area, line: "- Try it [[goal-nothing]]: nothing." });
+  assert.equal(unknown.status, 404, JSON.stringify(unknown.body));
+  const noBrain = await post(probe.base, "/api/brains/tried", { area: "otto/nowhere", line: probe.lines.tryit });
+  assert.equal(noBrain.status, 404, JSON.stringify(noBrain.body));
+  assert.equal((await brainOf(probe.base)).forJulian.length, 3, "a refused press changes nothing");
 });

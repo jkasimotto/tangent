@@ -2809,6 +2809,40 @@ async function forJulianItems(record, index) {
   });
 }
 
+/**
+ * Julian pressed `Tried it` on one Try it row: the line leaves the plan's
+ * `## For Julian` section and the plan is committed. Only a Try it line can
+ * go this way; the brain clears its own Decision and Brain lines. The brain
+ * need not be live: a stopped brain's Try it row is still Julian's to clear.
+ */
+async function clearTryItLine(area, line) {
+  const record = brainForArea(await readAllBrains(BRAINS_ROOT), area);
+  if (!record) return { status: 404, error: `no brain on ${area || "(none)"}` };
+  if (!String(line ?? "").trim()) return { status: 400, error: "no line" };
+  const current = await readVaultDocument(record.planFile);
+  if (!current) return { status: 404, error: `no plan ${record.planFile}` };
+  const row = parseForJulian(current.text).find((item) => item.line.trimEnd() === String(line).trimEnd());
+  if (!row) return { status: 404, error: "the plan has no such line" };
+  if (row.kind !== "tryit") return { status: 400, error: "only a Try it line leaves this way" };
+  const { text, removed, index } = removeForJulianLine(current.text, line);
+  if (!removed) return { status: 404, error: "the plan has no such line" };
+  await writeVaultDocument(current, text, `update: ${area} plan tried it ${row.target}`);
+  return { status: 200, line: row.line, index };
+}
+
+/** Puts one cleared Try it line back where it was, for the undo toast. */
+async function restoreTryItLine(area, line, index) {
+  const record = brainForArea(await readAllBrains(BRAINS_ROOT), area);
+  if (!record) return { status: 404, error: `no brain on ${area || "(none)"}` };
+  if (!String(line ?? "").trim()) return { status: 400, error: "no line" };
+  const current = await readVaultDocument(record.planFile);
+  if (!current) return { status: 404, error: `no plan ${record.planFile}` };
+  const text = restoreForJulianLine(current.text, line, index);
+  const row = parseForJulian(text).find((item) => item.line.trimEnd() === String(line).trimEnd());
+  await writeVaultDocument(current, text, `update: ${area} plan restore try it ${row?.target ?? "row"}`);
+  return { status: 200 };
+}
+
 /** Every brain record with its current session's live state, for the desk. */
 async function brainsView(sessions) {
   const byName = new Map(sessions.map((item) => [item.name, item]));
@@ -3298,6 +3332,24 @@ const server = http.createServer(async (req, res) => {
       const brain = brains.find((item) => (area && item.area === area) || (session && item.session === session)) ?? null;
       res.writeHead(brain ? 200 : 404, { "content-type": "application/json" });
       res.end(JSON.stringify(brain ? { brain, prompt: await brainPrompt(brain) } : { error: area ? `no brain on ${area}` : "this session is not a brain" }));
+      return;
+    }
+    // Julian pressed `Tried it`: the Try it row leaves the brain's plan.
+    if (url.pathname === "/api/brains/tried" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      const result = await clearTryItLine(String(body.area ?? ""), String(body.line ?? ""));
+      res.writeHead(result.status, { "content-type": "application/json" });
+      res.end(JSON.stringify(result.status === 200 ? { ok: true, line: result.line, index: result.index } : { error: result.error }));
+      return;
+    }
+    // The undo of that press: the row goes back where it was.
+    if (url.pathname === "/api/brains/tried/undo" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      const result = await restoreTryItLine(String(body.area ?? ""), String(body.line ?? ""), Number(body.index ?? 0));
+      res.writeHead(result.status, { "content-type": "application/json" });
+      res.end(JSON.stringify(result.status === 200 ? { ok: true } : { error: result.error }));
       return;
     }
     // A step agent hands facts to the next step; the server advances the line.

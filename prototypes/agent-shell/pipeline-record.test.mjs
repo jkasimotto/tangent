@@ -11,6 +11,7 @@ import {
   currentStep,
   deletePipeline,
   endPipeline,
+  goalBindingGoneFromSnapshot,
   newPipeline,
   nextPendingStep,
   pipelineFinished,
@@ -18,6 +19,7 @@ import {
   pipelineStatus,
   readAllPipelines,
   readPipeline,
+  stepGoneFromSnapshot,
   stepStartedWithinGrace,
   validateSteps,
   withinReconcileGrace,
@@ -260,6 +262,33 @@ test("stepStartedWithinGrace reproduces the race: a step started after a stale s
   // reaped once the grace period passes.
   const laterReconcile = Date.parse(startedAt) + RECONCILE_GRACE_MS + 1;
   assert.equal(stepStartedWithinGrace(step, laterReconcile), false);
+});
+
+test("reconcile against a stale sessions snapshot leaves a just-started step and its Goal binding alone", () => {
+  // The race itself: the snapshot was listed before startPipelineStep created
+  // the tmux session and wrote the step and the Goal binding; reconcile then
+  // runs 240 ms after the start with that stale list.
+  const startedAt = "2026-08-19T13:13:51.000Z";
+  const started = Date.parse(startedAt);
+  const staleSnapshot = new Map([["tangent-brain-g2", { name: "tangent-brain-g2" }]]);
+  const step = { index: 1, status: "running", session: "tangent-shift-enter-s1", startedAt };
+  const goal = { status: "active", session: "tangent-shift-enter-s1", mtime: started + 5 };
+  assert.equal(stepGoneFromSnapshot(step, staleSnapshot, started + 240), false);
+  assert.equal(goalBindingGoneFromSnapshot(goal, staleSnapshot, started + 240), false);
+
+  // The next poll lists the new session: still not gone, long after the grace.
+  const freshSnapshot = new Set(["tangent-brain-g2", "tangent-shift-enter-s1"]);
+  assert.equal(stepGoneFromSnapshot(step, freshSnapshot, started + 10 * RECONCILE_GRACE_MS), false);
+  assert.equal(goalBindingGoneFromSnapshot(goal, freshSnapshot, started + 10 * RECONCILE_GRACE_MS), false);
+
+  // A session that never shows up is reaped once the grace period passes.
+  assert.equal(stepGoneFromSnapshot(step, staleSnapshot, started + RECONCILE_GRACE_MS + 1), true);
+  assert.equal(goalBindingGoneFromSnapshot(goal, staleSnapshot, goal.mtime + RECONCILE_GRACE_MS + 1), true);
+
+  // Never a candidate: a step without a session, a Goal that is not active or unbound.
+  assert.equal(stepGoneFromSnapshot({ status: "running", session: null, startedAt }, staleSnapshot, started + RECONCILE_GRACE_MS + 1), false);
+  assert.equal(goalBindingGoneFromSnapshot({ status: "open", session: "x", mtime: 0 }, staleSnapshot, started), false);
+  assert.equal(goalBindingGoneFromSnapshot({ status: "active", session: null, mtime: 0 }, staleSnapshot, started), false);
 });
 
 test("stepStartedWithinGrace is false without a usable startedAt", () => {

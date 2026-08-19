@@ -29,7 +29,7 @@ const documentComments = globalThis.AgentShellDocumentComments;
 // (see public/area-map-core.js and the design contract design-area-map).
 const areaMapCore = globalThis.AgentShellAreaMap;
 import { classifyStaticPane, stabilizeStaticPane } from "./pane-state.mjs";
-import { appendSteps, currentStep, endPipeline, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, readAllPipelines, readPipeline, stepStartedWithinGrace, validateSteps, withinReconcileGrace, writePipeline } from "./pipeline-record.mjs";
+import { appendSteps, currentStep, endPipeline, goalBindingGoneFromSnapshot, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, readAllPipelines, readPipeline, stepGoneFromSnapshot, validateSteps, writePipeline } from "./pipeline-record.mjs";
 import { deliveryDecision, messageBanner, normalizeMessage } from "./agent-messages.mjs";
 import { beginGeneration, brainForArea, brainSessionName, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, recordHandover, validateInstruction, writeBrain } from "./brain-record.mjs";
 import { createSourceChangeMonitor } from "./source-change-monitor.mjs";
@@ -1824,11 +1824,9 @@ async function reconcileGoals(sessions) {
       for (const t of await readAreaGoals(area)) byFile.set(t.file, t);
     }
     for (const t of byFile.values()) {
-      if (t.status !== "active" || !t.session || live.has(t.session)) continue;
       // The Goal file's own mtime is when its binding was last written: a
-      // binding this fresh may be newer than the sessions snapshot above,
-      // not actually stopped.
-      if (withinReconcileGrace(t.mtime, now)) continue;
+      // binding fresher than the sessions snapshot above is not stopped.
+      if (!goalBindingGoneFromSnapshot(t, live, now)) continue;
       await writeGoalBinding(t.file, { status: "open", session: null });
       await vaultCommit([t.file], `update: ${t.area} goal ${t.slug} back to open, session ended`, t.area, null);
       if (!(await pipelineStepForSession(t.session))) {
@@ -2277,7 +2275,7 @@ async function reconcilePipelines(sessions) {
       if (!live) {
         // The step may have started after this sessions snapshot was taken:
         // its tmux session exists but this list predates it.
-        if (stepStartedWithinGrace(step, now)) continue;
+        if (!stepGoneFromSnapshot(step, byName, now)) continue;
         step.status = "stopped";
         step.endedAt = new Date().toISOString();
         changed = true;

@@ -182,6 +182,28 @@ export function stepStartedWithinGrace(step, now = Date.now(), graceMs = RECONCI
 }
 
 /**
+ * True when a running step's session is missing from a sessions snapshot and
+ * the step is old enough that the snapshot can be trusted: this is the only
+ * condition under which reconcile marks a step stopped. `liveNames` is any
+ * collection with `has(name)` (a Set of names or a Map keyed by name).
+ */
+export function stepGoneFromSnapshot(step, liveNames, now = Date.now(), graceMs = RECONCILE_GRACE_MS) {
+  if (!step?.session || liveNames.has(step.session)) return false;
+  return !stepStartedWithinGrace(step, now, graceMs);
+}
+
+/**
+ * True when an active Goal's bound session is missing from a sessions
+ * snapshot and the binding (the Goal file's mtime, epoch ms) is old enough
+ * that the snapshot can be trusted: the only condition under which
+ * reconcile flips the Goal back to open.
+ */
+export function goalBindingGoneFromSnapshot(goal, liveNames, now = Date.now(), graceMs = RECONCILE_GRACE_MS) {
+  if (goal?.status !== "active" || !goal.session || liveNames.has(goal.session)) return false;
+  return !withinReconcileGrace(goal.mtime, now, graceMs);
+}
+
+/**
  * Derived pipeline status. isLive(sessionName) tells whether a running
  * step's session still exists; a running step whose session is gone counts
  * as stopped.

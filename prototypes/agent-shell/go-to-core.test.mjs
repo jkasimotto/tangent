@@ -73,6 +73,14 @@ test("equal tiers break by the newest change", () => {
   assert.deepEqual(names(core.matchRows(rows, "area map", 12)), ["Area map new", "Area map old"]);
 });
 
+test("a live brain ranks before a newer Document of the same tier", () => {
+  const rows = [
+    row({ name: "Plan: otto/tangent brain", kindLabel: "plan", changedAt: 9 }),
+    row({ name: "Otto / Tangent", kind: "brain", kindLabel: "Brain", changedAt: 1, live: true }),
+  ];
+  assert.deepEqual(names(core.matchRows(rows, "brain tangent", 12)), ["Otto / Tangent", "Plan: otto/tangent brain"]);
+});
+
 test("returnPointFrom copies the identifying keys, the scroll, and the reader's Document", () => {
   const scroll = { screen: 120, inner: [[".document-reader-scroll", 40]] };
   const reader = {

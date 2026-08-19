@@ -50,8 +50,10 @@
   /**
    * Ranks the finder's rows against one typed query. Every typed word must be
    * a substring of the normalized name, kind word, or Area path, so Julian can
-   * predict the result from his own words. Without a query the list is the
-   * live brains first, then the newest change first.
+   * predict the result from his own words. A live brain ranks before other
+   * rows of the same tier, because a brain record's updatedAt is its start
+   * time and a newer Document would otherwise push a working brain down.
+   * Without a query the list is the live brains first, then the newest change.
    */
   function matchRows(rows, query, limit) {
     const words = normalizedSearchText(query).split(" ").filter(Boolean);
@@ -85,6 +87,7 @@
     scored.sort((left, right) =>
       Number(right.allInName) - Number(left.allInName)
       || Number(right.startsName) - Number(left.startsName)
+      || Number(right.row.live) - Number(left.row.live)
       || Number(right.row.changedAt ?? 0) - Number(left.row.changedAt ?? 0)
       || String(left.row.name).localeCompare(String(right.row.name)));
     return scored.slice(0, limit).map((item) => item.row);

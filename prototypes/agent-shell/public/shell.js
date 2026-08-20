@@ -57,6 +57,7 @@ const state = {
   goTo: null, // the open Go to finder: { query, selected, rows, returnFocus }
   launchTarget: "",
   launchAnchor: null,
+  whatHappened: null, // the open What happened look: { area, anchor: { top, right } }
   harnessDraft: null,
   harnessReturnView: "work",
   query: "",
@@ -1712,6 +1713,7 @@ function deskAreaPanel(record, position) {
         <span class="area-desk-index" aria-hidden="true">${String(position + 1).padStart(2, "0")}</span>
         <div>${parentPath ? `<small>${areaPath(parentPath)}</small>` : `<small>${escapeHtml(parent)}</small>`}<h2><button type="button" data-open-area="${escapeHtml(area.path)}" title="Open the ${escapeHtml(humanName(area.name))} Area map">${escapeHtml(humanName(area.name))}</button></h2></div>
         <span class="area-desk-state ${status.kind}">${escapeHtml(status.label)}</span>
+        <button class="area-desk-what-happened" type="button" data-what-happened-for="${escapeHtml(area.path)}" aria-haspopup="dialog" aria-expanded="${state.whatHappened?.area === area.path}">What happened</button>
         ${deskBrainButton(area.path)}
       </header>
       ${deskBrainLine(area.path)}
@@ -1796,8 +1798,75 @@ function renderWork() {
       </div>
       ${content}
       ${launchPopover()}
+      ${whatHappenedOverlay()}
     </section>
   `;
+}
+
+/**
+ * The What happened look: one Area's closed work in the last 12 hours,
+ * anchored at the panel header that opened it (design-done-goals-timeline).
+ * The desk under it never moves; the poll can still add a new close at the
+ * top while it is open.
+ */
+function whatHappenedOverlay() {
+  if (!state.whatHappened) return "";
+  const { area, anchor } = state.whatHappened;
+  const width = Math.min(560, window.innerWidth - 32);
+  const left = Math.max(16, anchor.right - width);
+  const style = `top:${anchor.top}px;left:${left}px;width:${width}px;max-height:calc(100vh - ${anchor.top + 16}px)`;
+  const label = `What happened in ${areaLabel(area)} in the last 12 hours`;
+  if (!state.vault) {
+    return `
+      <div class="what-happened" data-what-happened role="dialog" aria-label="${escapeHtml(label)}" style="${style}">
+        <header class="what-happened-header"><strong>What happened · last 12 hours</strong><small>esc</small></header>
+        <p class="what-happened-empty">Loading the vault…</p>
+      </div>`;
+  }
+  const core = window.AgentShellWhatHappened;
+  const areaMapCore = window.AgentShellAreaMap;
+  const now = Date.now();
+  const closes = core.windowCloses(core.areaCloses(state.vault.recentCloses ?? [], area, areaMapCore.isInside), now);
+  const timezoneOffset = new Date().getTimezoneOffset();
+  const body = closes.length
+    ? closes.map((close) => whatHappenedRow(close, area, now, timezoneOffset)).join("")
+    : `<p class="what-happened-empty">Nothing was marked done or won't do in the last 12 hours.</p>`;
+  return `
+    <div class="what-happened" data-what-happened role="dialog" aria-label="${escapeHtml(label)}" style="${style}">
+      <header class="what-happened-header"><strong>What happened · last 12 hours</strong><small>esc</small></header>
+      ${body}
+      <button class="what-happened-all" type="button" data-open-area="${escapeHtml(area)}">Everything ever done: Show done on the Area map →</button>
+    </div>`;
+}
+
+/** One What happened row: time, mark and word, title, closer (design-done-goals-timeline Decision 3). */
+function whatHappenedRow(close, panelArea, now, timezoneOffset) {
+  const core = window.AgentShellWhatHappened;
+  const goal = goalByFile(close.file);
+  const directory = close.file.split("/").slice(0, -1).join("/");
+  const foreign = directory !== panelArea ? `<small class="what-happened-area">${escapeHtml(humanName(directory.split("/").pop()))}</small>` : "";
+  const title = goal ? goal.title : humanName(close.file.split("/").pop().replace(/^goal-/, "").replace(/\.md$/, ""));
+  const hoverTitle = !goal ? "" : close.kind === "done" ? goal.doneWhen : core.wontDoReason(goal.stateText);
+  const word = close.kind === "done" ? "done" : "won't do";
+  const mark = close.kind === "done" ? "✓" : "✕";
+  return `
+    <button class="what-happened-row" type="button" data-open-close="${escapeHtml(close.file)}" title="${escapeHtml(hoverTitle)}">
+      <span class="what-happened-time">${escapeHtml(core.closeMomentLabel(close.at, now, timezoneOffset))}</span>
+      <span class="what-happened-kind ${close.kind}">${mark} ${escapeHtml(word)}</span>
+      <span class="what-happened-title">${escapeHtml(title)}${foreign}</span>
+      <span class="what-happened-closer">${escapeHtml(core.closerLabel(close.session))}</span>
+    </button>`;
+}
+
+/** The render key contribution of the What happened look: null closed, else the open Area and its newest windowed close. */
+function whatHappenedRenderKey() {
+  if (!state.whatHappened) return null;
+  const { area, anchor } = state.whatHappened;
+  const core = window.AgentShellWhatHappened;
+  const areaMapCore = window.AgentShellAreaMap;
+  const closes = state.vault ? core.windowCloses(core.areaCloses(state.vault.recentCloses ?? [], area, areaMapCore.isInside), Date.now()) : [];
+  const first = closes[0] ?? null;
+  return [area, anchor.top, anchor.right, first?.file ?? null, first?.at ?? null];
 }
 
 /**
@@ -3136,6 +3205,7 @@ function renderKey() {
     [...state.handledLines],
     state.brainDraft,
     [state.launchTarget, state.launchAnchor, Boolean(state.harnessDraft)],
+    whatHappenedRenderKey(),
     state.sessions.map((item) => [item.name, item.goal, item.kind, item.area, item.state, item.phase, item.command, item.created, item.workTitle, item.launchLabel, item.waitingSince]),
   ]);
 }
@@ -3322,7 +3392,7 @@ function renderScreen() {
 }
 
 /** The elements that scroll inside the screen, by a selector stable across repaints. */
-const SCREEN_SCROLL_SELECTORS = [".document-reader-scroll", "[data-launch-popover]"];
+const SCREEN_SCROLL_SELECTORS = [".document-reader-scroll", "[data-launch-popover]", "[data-what-happened]"];
 
 /**
  * Captures every scroll position on the screen before its markup is replaced.
@@ -3366,6 +3436,8 @@ function captureReturnPoint() {
     state.launchTarget = "";
     state.launchAnchor = null;
   }
+  // Same reason: the What happened look anchors to a fixed pixel position too.
+  state.whatHappened = null;
   const positions = rememberScreenScroll();
   return window.AgentShellGoTo.returnPointFrom(state, { screen: positions.screen, inner: [...positions.inner] });
 }
@@ -4721,6 +4793,11 @@ document.addEventListener("click", async (event) => {
     state.launchAnchor = null;
     paint(true);
   }
+  // A click outside the What happened look closes it; the clicked control still runs.
+  if (state.whatHappened && !target.closest?.("[data-what-happened]") && !target.closest?.("[data-what-happened-for]")) {
+    state.whatHappened = null;
+    paint(true);
+  }
   const workFilter = target.closest("[data-work-filter]");
   if (workFilter) {
     state.workFilter = workFilter.dataset.workFilter;
@@ -4786,6 +4863,7 @@ document.addEventListener("click", async (event) => {
     state.areaSelection = openArea.dataset.openArea;
     localStorage.setItem("agent-shell.last-area", state.areaSelection);
     state.view = "areas";
+    state.whatHappened = null;
     revealArea(state.areaSelection);
     return paint(true);
   }
@@ -4852,6 +4930,12 @@ document.addEventListener("click", async (event) => {
   }
   const documentButton = target.closest("[data-open-document]");
   if (documentButton) return openDocument(documentButton.dataset.openDocument);
+  const closeRow = target.closest("[data-open-close]");
+  if (closeRow) {
+    const file = closeRow.dataset.openClose;
+    if (!goalByFile(file)) return showToast("The Goal file was removed from the vault.");
+    return openDocument(file);
+  }
   const documentHistory = target.closest("[data-document-history]");
   if (documentHistory) return navigateDocumentHistory(documentHistory.dataset.documentHistory);
   if (target.closest("[data-open-reader-agent]")) return openReaderAgent();
@@ -4910,6 +4994,19 @@ document.addEventListener("click", async (event) => {
       showToast(error.message);
     }
     return;
+  }
+  const whatHappenedFor = target.closest("[data-what-happened-for]");
+  if (whatHappenedFor) {
+    const area = whatHappenedFor.dataset.whatHappenedFor;
+    if (state.whatHappened?.area === area) {
+      state.whatHappened = null;
+      return paint(true);
+    }
+    const rect = whatHappenedFor.getBoundingClientRect();
+    state.launchTarget = "";
+    state.launchAnchor = null;
+    state.whatHappened = { area, anchor: { top: Math.round(rect.bottom + 8), right: Math.round(rect.right) } };
+    return paint(true);
   }
   const launchFor = target.closest("[data-launch-for]");
   if (launchFor) {
@@ -5477,6 +5574,12 @@ document.addEventListener("keydown", (event) => {
     if (state.view === "describe") syncDescribeDraft();
     state.launchTarget = "";
     state.launchAnchor = null;
+    paint(true);
+    return;
+  }
+  if (event.key === "Escape" && state.whatHappened) {
+    event.preventDefault();
+    state.whatHappened = null;
     paint(true);
     return;
   }

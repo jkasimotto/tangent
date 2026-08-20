@@ -272,6 +272,10 @@ summary:focus-visible {
 .desk-state.fact::before { background: var(--muted); }
 .area-desk-body { display: grid; }
 .area-desk-header:has(.area-brain) { grid-template-columns: 36px minmax(0, 1fr) auto auto; }
+.area-desk-header:has(.area-desk-what-happened) { grid-template-columns: 36px minmax(0, 1fr) auto auto; }
+.area-desk-header:has(.area-desk-what-happened):has(.area-brain) { grid-template-columns: 36px minmax(0, 1fr) auto auto auto; }
+.area-desk-what-happened { padding: 4px 8px; border: 1px solid transparent; border-radius: 3px; background: transparent; color: var(--quiet); cursor: pointer; font-size: 11px; font-weight: 690; white-space: nowrap; }
+.area-desk-what-happened:hover, .area-desk-what-happened[aria-expanded="true"] { border-color: #3c434c; background: var(--surface-raised); color: var(--text); }
 .area-brain { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 1px solid transparent; border-radius: 50%; background: transparent; color: inherit; cursor: pointer; font-size: 17px; line-height: 1; opacity: .38; filter: grayscale(1); transition: opacity .12s, filter .12s; }
 .area-brain:hover, .area-brain.open { border-color: #3c434c; opacity: .9; filter: none; }
 .area-brain.working, .area-brain.waiting, .area-brain.live { opacity: 1; filter: none; }
@@ -832,6 +836,26 @@ details.more-work .area-work-list { margin-top: 18px; }
 .launch-popover-header { display: grid; gap: 2px; padding: 14px 20px 0; }
 .launch-popover-header small { color: var(--quiet); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
 .launch-popover-header strong { font-size: 14px; }
+
+/* The What happened look (design-done-goals-timeline): an Area's closed work
+   in the last 12 hours, anchored at the panel header that opened it. */
+.what-happened { position: fixed; z-index: 60; overflow-y: auto; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--bg); box-shadow: 0 18px 48px rgba(0, 0, 0, .55); }
+.what-happened-header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 14px 20px; border-bottom: 1px solid #2b3037; }
+.what-happened-header strong { font-size: 13px; font-weight: 700; }
+.what-happened-header small { color: var(--quiet); font-size: 11px; text-transform: uppercase; }
+.what-happened-empty { margin: 0; padding: 16px 20px; color: var(--quiet); font-size: 13px; }
+.what-happened-row { display: grid; width: 100%; min-height: 24px; grid-template-columns: 52px auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 8px 20px; border: 0; border-bottom: 1px solid #22262c; background: transparent; color: inherit; cursor: pointer; font: inherit; text-align: left; }
+.what-happened-row:last-of-type { border-bottom: 0; }
+.what-happened-row:hover { background: var(--surface-raised); }
+.what-happened-time { color: var(--quiet); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.what-happened-kind { font-size: 12px; font-weight: 700; white-space: nowrap; }
+.what-happened-kind.done { color: var(--green); }
+.what-happened-kind.wontdo { color: var(--quiet); }
+.what-happened-title { overflow: hidden; color: var(--text); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.what-happened-area { margin-left: 6px; color: var(--quiet); font-size: 11px; }
+.what-happened-closer { color: var(--quiet); font-size: 11px; text-align: right; white-space: nowrap; }
+.what-happened-all { width: 100%; padding: 12px 20px; border: 0; border-top: 1px solid #2b3037; background: transparent; color: var(--quiet); cursor: pointer; font: inherit; font-size: 12px; text-align: left; }
+.what-happened-all:hover { color: var(--text); }
 
 /* Harness registry editor. */
 .harness-editor .summary-section { display: grid; gap: 14px; justify-items: start; }

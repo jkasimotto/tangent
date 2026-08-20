@@ -232,6 +232,7 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.deepEqual(brief.context.documents.map((file) => path.basename(file)).sort(), ["design-test.md", "use-cases.md"]);
 
   const initialVault = await fetch(`${base}/api/vault`).then((response) => response.json());
+  assert.deepEqual(initialVault.recentCloses, [], "a vault without git carries no close events");
   const initialGoal = initialVault.map.flatMap((group) => group.goals).find((item) => item.file === "otto/test/goal-prove-it.md");
   assert.deepEqual(initialGoal.documents.map((item) => [path.basename(item.file), item.kind]), [
     ["use-cases.md", "document"],
@@ -911,7 +912,7 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.match(completedText, /^session:$/m);
 });
 
-test("a close commit records the session that closed the Goal (Decision 7)", async (context) => {
+test("a close commit records the session that closed the Goal, and the vault payload carries it as a recent close", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "what-happened-http-"));
   const trees = path.join(root, "trees");
   const workspace = path.join(root, "workspace");
@@ -976,4 +977,8 @@ test("a close commit records the session that closed the Goal (Decision 7)", asy
   const { stdout: log } = await execFileAsync("git", ["-C", trees, "log", "-1", "--format=%s%n%b"]);
   assert.match(log, /done in tree/);
   assert.match(log, /Tangent-Tmux: tangent-brain-g4/);
+
+  const vault = await fetch(`${base}/api/vault`).then((response) => response.json());
+  assert.deepEqual(vault.recentCloses, [{ file: "otto/test/goal-prove-it.md", kind: "done", at: vault.recentCloses[0]?.at, session: "tangent-brain-g4" }]);
+  assert.ok(vault.recentCloses[0].at > Date.now() - 60_000, "the close time is the fresh commit's time");
 });

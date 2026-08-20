@@ -20,6 +20,7 @@ import pty from "node-pty";
 import { documentHash, markdownTitle, safeMarkdownPath, wikiLinks } from "./vault-documents.mjs";
 import "./public/document-comments.js";
 import "./public/area-map-core.js";
+import "./public/what-happened-core.js";
 import { createVaultGitReader, fileTimes } from "./area-map.mjs";
 import { createFingerprintCache } from "./vault-index-cache.mjs";
 
@@ -29,6 +30,9 @@ const documentComments = globalThis.AgentShellDocumentComments;
 // The Area map facts (kind, recency, desk grouping) are shared the same way
 // (see public/area-map-core.js and the design contract design-area-map).
 const areaMapCore = globalThis.AgentShellAreaMap;
+// The What happened look's window and closer facts, shared the same way
+// (see public/what-happened-core.js and design-done-goals-timeline).
+const whatHappenedCore = globalThis.AgentShellWhatHappened;
 import { classifyStaticPane, stabilizeStaticPane, staticSinceOf } from "./pane-state.mjs";
 import { appendSteps, currentStep, endPipeline, goalBindingGoneFromSnapshot, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, readAllPipelines, readPipeline, stepGoneFromSnapshot, validateSteps, writePipeline } from "./pipeline-record.mjs";
 import { deliveryDecision, messageBanner, normalizeMessage } from "./agent-messages.mjs";
@@ -819,7 +823,7 @@ async function buildVaultIndex() {
   // degrees. Goals carry the same facts on their index object so the desk and
   // the map rank one way (design-area-map Decisions 9, 10, 13).
   areaMapCore.assignKinds(records);
-  const { times: gitTimes, runs: gitRuns } = await vaultGit();
+  const { times: gitTimes, runs: gitRuns, closes: gitCloses } = await vaultGit();
   for (const record of records) {
     const { createdAt, changedAt } = fileTimes(record.file, record.mtime, gitTimes);
     record.createdAt = createdAt;
@@ -942,7 +946,11 @@ async function buildVaultIndex() {
     g.mtime = Math.max(0, ...g.goals.map((o) => o.mtime ?? 0));
   }
   groups.sort((a, b) => (b.active ? 1 : 0) - (a.active ? 1 : 0) || b.mtime - a.mtime);
-  return { areas: out, map: groups, documents: records };
+  // A 12-hour window of closes, windowed again in the browser at render time
+  // with its own clock so rows age out between vault commits
+  // (design-done-goals-timeline, Decision 6).
+  const recentCloses = whatHappenedCore.windowCloses(gitCloses, Date.now());
+  return { areas: out, map: groups, documents: records, recentCloses };
 }
 
 /**

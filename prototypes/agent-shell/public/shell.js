@@ -1403,10 +1403,10 @@ async function clearDecisionRow(area, line) {
   paint(true);
   try {
     const result = await post("/api/brains/decision-done", { area, line });
-    /** Puts the line back into the plan; does not tell the brain again. */
+    /** Puts the line (and any continuation line it left with) back into the plan; does not tell the brain again. */
     const undo = async () => {
       try {
-        await post("/api/brains/decision-done/undo", { area, line, index: result.index });
+        await post("/api/brains/decision-done/undo", { area, line: result.removedText ?? line, index: result.index });
         state.handledLines.delete(line);
         await refresh();
         paint(true);

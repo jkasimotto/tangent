@@ -2897,11 +2897,11 @@ async function clearDecisionLine(area, line) {
   const row = parseForJulian(current.text).find((item) => item.line.trimEnd() === String(line).trimEnd());
   if (!row) return { status: 404, error: "the plan has no such line" };
   if (row.kind !== "decision") return { status: 400, error: "only a Decision line leaves this way" };
-  const { text, removed, index } = removeForJulianLine(current.text, line);
+  const { text, removed, index, removedText } = removeForJulianLine(current.text, line);
   if (!removed) return { status: 404, error: "the plan has no such line" };
   await writeVaultDocument(current, text, `update: ${area} plan decision ${row.target} handled`);
   await notifyBrain(area, `Julian marked Decision ${row.target} done`);
-  return { status: 200, line: row.line, index };
+  return { status: 200, line: row.line, removedText, index };
 }
 
 /** Puts one cleared Decision line back where it was, for the undo toast. */
@@ -3446,7 +3446,7 @@ const server = http.createServer(async (req, res) => {
       try { body = JSON.parse(await readBody(req)); } catch {}
       const result = await clearDecisionLine(String(body.area ?? ""), String(body.line ?? ""));
       res.writeHead(result.status, { "content-type": "application/json" });
-      res.end(JSON.stringify(result.status === 200 ? { ok: true, line: result.line, index: result.index } : { error: result.error }));
+      res.end(JSON.stringify(result.status === 200 ? { ok: true, line: result.line, removedText: result.removedText, index: result.index } : { error: result.error }));
       return;
     }
     // The undo of that press: the Decision row goes back where it was.

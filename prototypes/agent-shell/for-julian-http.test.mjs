@@ -324,6 +324,7 @@ test("Julian marks a Decision handled from its row, and the brain is told", asyn
 
   const done = await post(probe.base, "/api/brains/decision-done", { area: probe.area, line: probe.lines.decision });
   assert.equal(done.status, 200, JSON.stringify(done.body));
+  assert.equal(done.body.removedText, probe.lines.decision, "undo restores what actually left the plan");
   assert.equal((await readFile(probe.planFile, "utf8")).includes(probe.lines.decision), false);
   const left = await waitFor("the row to leave the payload", async () => {
     const rows = (await brainOf(probe.base))?.forJulian ?? [];

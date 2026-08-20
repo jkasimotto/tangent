@@ -4343,7 +4343,7 @@ const server = http.createServer(async (req, res) => {
         if (!changed.includes(file)) changed.unshift(file);
         const what =
           fields.status === "done" ? "done" : fields.status === "dropped" ? "marked won't do" : fields.status === "open" ? "reopened" : "edited";
-        await vaultCommit(changed, `update: ${o.area} goal ${o.slug} ${what} in tree`, o.area, null);
+        await vaultCommit(changed, `update: ${o.area} goal ${o.slug} ${what} in tree`, o.area, body.session ? String(body.session) : null);
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({ ok: true }));
       } catch (err) {

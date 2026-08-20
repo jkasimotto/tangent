@@ -233,7 +233,7 @@ async function doneCommand(args: Args): Promise<void> {
     console.log(`${slug} is already done.`);
     return;
   }
-  await postJson(server, "/api/goals/edit", { file: goal.file, status: "done" });
+  await postJson(server, "/api/goals/edit", { file: goal.file, status: "done", session: await currentTmuxSession() });
   console.log(`${slug} marked done.`);
 }
 
@@ -248,7 +248,7 @@ async function wontDoCommand(args: Args): Promise<void> {
     console.log(`${slug} is already marked won't do.`);
     return;
   }
-  await postJson(server, "/api/goals/edit", { file: goal.file, status: "dropped", reason });
+  await postJson(server, "/api/goals/edit", { file: goal.file, status: "dropped", reason, session: await currentTmuxSession() });
   console.log(`${slug} marked won't do: ${reason}`);
 }
 

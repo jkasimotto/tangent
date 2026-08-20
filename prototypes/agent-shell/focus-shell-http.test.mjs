@@ -6,10 +6,12 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { execFile, spawn } from "node:child_process";
+import { promisify } from "node:util";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const execFileAsync = promisify(execFile);
 
 /** Reserves and releases one local port for the HTTP test. */
 async function freePort() {
@@ -907,4 +909,71 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.match(completedText, /^status: done$/m);
   assert.match(completedText, /^waiting_on:$/m);
   assert.match(completedText, /^session:$/m);
+});
+
+test("a close commit records the session that closed the Goal (Decision 7)", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "what-happened-http-"));
+  const trees = path.join(root, "trees");
+  const workspace = path.join(root, "workspace");
+  const areaDirectory = path.join(trees, "otto", "test");
+  await mkdir(areaDirectory, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
+  await writeFile(path.join(areaDirectory, "test.md"), "---\ntype: area\n---\n\n# Test\n\n## Goals\n\n1. [[goal-prove-it]]\n", "utf8");
+  await writeFile(
+    path.join(areaDirectory, "goal-prove-it.md"),
+    "---\ntype: goal\nstatus: open\ndone_when: The result is visible\nsession:\n---\n\n# Prove it\n\n## State\n\nNot started.\n",
+    "utf8"
+  );
+  await execFileAsync("git", ["-C", trees, "init", "-q"]);
+  await execFileAsync("git", ["-C", trees, "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A"]);
+  await execFileAsync("git", ["-C", trees, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "add: everything"]);
+
+  let port;
+  try {
+    port = await freePort();
+  } catch (error) {
+    if (error?.code === "EPERM") {
+      context.skip("This environment does not permit local HTTP listeners.");
+      return;
+    }
+    throw error;
+  }
+  const child = spawn(nodeExecutable(), ["server.mjs"], {
+    cwd: here,
+    env: {
+      ...process.env,
+      PORT: String(port),
+      HOST: "127.0.0.1",
+      TREES_ROOT: trees,
+      TANGENT_LOOPS_ROOT: path.join(root, "loops"),
+      WORKSPACE: workspace,
+      AGENT_SHELL_NO_OPEN: "1",
+      AGENT_SHELL_TEST_NO_LAUNCH: "1",
+      TANGENT_PIPELINES_ROOT: path.join(root, "pipelines"),
+      TANGENT_BRAINS_ROOT: path.join(root, "brains"),
+      AGENT_MESSAGE_LOG: path.join(root, "messages.jsonl"),
+      GROQ_API_KEY: "",
+      CHAT_SESSION: `what-happened-http-test-${process.pid}`,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  context.after(async () => {
+    child.kill("SIGTERM");
+    await Promise.race([once(child, "exit"), new Promise((resolve) => setTimeout(resolve, 1000))]);
+    await rm(root, { recursive: true, force: true });
+  });
+  const base = `http://127.0.0.1:${port}`;
+  await waitForServer(base);
+
+  const edited = await fetch(`${base}/api/goals/edit`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file: "otto/test/goal-prove-it.md", status: "done", session: "tangent-brain-g4" }),
+  });
+  assert.equal(edited.status, 200);
+
+  const { stdout: log } = await execFileAsync("git", ["-C", trees, "log", "-1", "--format=%s%n%b"]);
+  assert.match(log, /done in tree/);
+  assert.match(log, /Tangent-Tmux: tangent-brain-g4/);
 });

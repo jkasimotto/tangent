@@ -18,6 +18,7 @@ import { createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area
 import { commandSession, programsSnapshot, saveLocalProgram, saveRoutine, setRoutinePaused } from "./programs.mjs";
 import pty from "node-pty";
 import { documentHash, markdownTitle, safeMarkdownPath, wikiLinks } from "./vault-documents.mjs";
+import { rationaleDossierContract } from "./rationale-dossier.mjs";
 import "./public/document-comments.js";
 import "./public/area-map-core.js";
 import "./public/what-happened-core.js";
@@ -1430,7 +1431,7 @@ async function goalPrompt(area, o, extras = []) {
  * instruction, every earlier handover verbatim (facts from earlier agents),
  * and how to hand over when done. Guidance, not a schema.
  */
-async function pipelineStepPrompt(area, o, record, index, extras = []) {
+async function pipelineStepPrompt(area, o, record, index, extras = [], sessionName = "") {
   const assignment = await goalPrompt(area, o, extras);
   const step = record.steps[index - 1];
   const total = record.steps.length;
@@ -1441,12 +1442,14 @@ async function pipelineStepPrompt(area, o, record, index, extras = []) {
   const decisionLine = brain
     ? `If a real decision needs Julian, send it to the brain: \`tangent agent send ${brain.session} "<question>"\`. Keep going on the brain's answer or its own recommendation; never sit waiting for Julian in this terminal. Julian decides in Documents and through the brain.`
     : `If a real decision needs Julian, ask him here; the pipeline waits.`;
+  const dossierContract = rationaleDossierContract({ goalFile: o.file, title: o.title, area, treesRoot: TREES_ROOT, session: sessionName });
   return (
     `${assignment}\n\n` +
     `## Your step\n\n` +
     `Step ${index} of ${total}${total > 1 ? " in a pipeline" : ""}: ${step.instruction}\n\n` +
     (earlier.length ? `## Handovers so far\n\n${earlier.join("\n\n")}\n\n` : "") +
     `## When you finish\n\n` +
+    `${dossierContract}\n\n` +
     `Run \`tangent goal handover "<facts>"\` from this session. State facts a fresh agent needs: files you wrote or changed with full paths, what is finished, what is unresolved, decisions Julian made. No recommendations, no narrative. The next step starts from your handover and the files. ${decisionLine}`
   );
 }
@@ -1857,7 +1860,7 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
   // A pipeline step is always a fresh session with its own name; the step
   // prompt is typed verbatim once the harness is up. AGENT_SHELL_TEST_NO_LAUNCH
   // leaves the pane at its shell so tests can prove binding without a harness.
-  const stepPrompt = pipeline ? await pipelineStepPrompt(area, o, pipeline.record, pipeline.index, ownExtras) : "";
+  const stepPrompt = pipeline ? await pipelineStepPrompt(area, o, pipeline.record, pipeline.index, ownExtras, pipeline.sessionName) : "";
   if (pipeline && process.env.AGENT_SHELL_TEST_NO_LAUNCH === "1") launch = false;
   // Starting a Goal that already has a session re-primes it: a pane left
   // at a shell (the agent was stopped to do ordinary work) gets the launch
@@ -2130,7 +2133,7 @@ async function startPipelineStep(record, index) {
   if (source?.session && liveNames.has(source.session)) {
     const goals = await readAreaGoals(record.area);
     const extras = extraSlugs.map((extraSlug) => goals.find((goal) => goal.slug === extraSlug)).filter(Boolean);
-    const prompt = await pipelineStepPrompt(record.area, o, record, index, extras);
+    const prompt = await pipelineStepPrompt(record.area, o, record, index, extras, source.session);
     queueAgentMessage(source.session, { from: "tangent", area: record.area, text: prompt, banner: false, queuedAt: new Date().toISOString() });
     await execFileAsync("tmux", ["set-option", "-t", "=" + source.session + ":", "@tangent_step", String(index)]).catch(() => {});
     if (o.status !== "active" || o.session !== source.session) {

@@ -502,6 +502,7 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.match(serverSource, /## When you finish/);
   assert.match(serverSource, /tangent goal handover/);
   assert.match(serverSource, /design-<slug>\.md/);
+  assert.match(serverSource, /rationaleDossierContract\(/);
 
   const pipelineGoal = await fetch(`${base}/api/goals/create`, {
     method: "POST",

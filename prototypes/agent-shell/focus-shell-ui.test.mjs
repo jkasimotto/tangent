@@ -315,6 +315,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.match(window.document.querySelector(".attention-queue h2").textContent, /For you/, "the card is named For you");
   assert.equal(window.document.querySelectorAll(".attention-queue .attention-items > *").length, 2, "without a brain the card is today's inferred rows");
   assert.equal(window.document.querySelector(".for-you-group"), null, "no brain, no brain group");
+  assert.equal(window.document.querySelector(".area-for-you"), null, "no live brain, no rows on any Area panel either");
   assert.deepEqual(dockBadges, []);
   await window.enableDockBadge();
   await settle(window);
@@ -333,7 +334,7 @@ test("the live shell restores context, defines work with an agent, and organizes
 
   // Under the brain, its own three rows lead the card, and the count is one
   // number: the brain's rows plus the inferred rows of Areas without a brain.
-  const group = window.document.querySelector(".for-you-group");
+  const group = window.document.querySelector(".attention-queue .for-you-group");
   assert.ok(group, "the brain's Area gets its own group");
   assert.match(group.querySelector("header").textContent, /Reply to brain/, "the group header answers the brain in one press");
   assert.equal(group.querySelector("[data-open-brain]").dataset.openBrain, "live-edit-brain");
@@ -349,6 +350,19 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.ok(brainGoalCard, "the brain's Area still shows its Goal");
   assert.equal(brainGoalCard.classList.contains("waiting"), false, "a brain-run Goal keeps no amber");
   assert.match(brainGoalCard.className, /\bready\b/, "with no agent on it, the Goal is simply ready");
+
+  // The same three rows, with the same actions, sit under the Area's own
+  // brain line on its panel: Julian decides there without the desk-wide card
+  // (goal-decisions-show-on-the-area-view-not-just-a-count).
+  const areaPanel = window.document.querySelector(`.area-desk-panel[data-desk-area="${liveEditGoal.area}"]`);
+  assert.ok(areaPanel, "the Live Edit Area has its own panel");
+  const areaGroup = areaPanel.querySelector(".area-for-you .for-you-group");
+  assert.ok(areaGroup, "the Area panel gets the brain's group directly under its brain line");
+  assert.equal(areaPanel.querySelector(".area-brain-line + .area-for-you"), areaPanel.querySelector(".area-for-you"), "the group sits right after the brain line, before Goal work");
+  const areaRows = [...areaGroup.querySelectorAll(".attention-items > *")];
+  assert.equal(areaRows.length, 3, "the Area panel shows the same three rows as the desk card");
+  assert.equal(areaRows[0].dataset.openDocument, liveEditDesign.file, "Read on the Area panel opens the same Document");
+  assert.equal(areaGroup.querySelector("[data-open-brain]").dataset.openBrain, "live-edit-brain", "Reply to brain also works from the Area panel");
 
   // With an agent on it, the pane is static because the brain has not read it
   // yet: the row states the fact and keeps the amber that means "you" off.
@@ -372,10 +386,12 @@ test("the live shell restores context, defines work with an agent, and organizes
   await settle(window);
   assert.equal(posts.at(-1).path, "/api/brains/tried");
   assert.equal(posts.at(-1).body.line, tryItLine);
-  assert.equal(window.document.querySelectorAll(".for-you-group .attention-items > *").length, 2, "the row goes at once");
+  assert.equal(window.document.querySelectorAll(".attention-queue .for-you-group .attention-items > *").length, 2, "the row goes at once on the desk card");
+  assert.equal(window.document.querySelectorAll(".area-for-you .for-you-group .attention-items > *").length, 2, "and on the Area panel too");
   await window.refresh();
   await settle(window);
-  assert.equal(window.document.querySelectorAll(".for-you-group .attention-items > *").length, 2, "and stays gone after the poll");
+  assert.equal(window.document.querySelectorAll(".attention-queue .for-you-group .attention-items > *").length, 2, "and stays gone after the poll");
+  assert.equal(window.document.querySelectorAll(".area-for-you .for-you-group .attention-items > *").length, 2);
 
   liveEditBrainStarted = false;
   await window.refresh();

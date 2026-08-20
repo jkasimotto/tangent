@@ -235,6 +235,7 @@ summary:focus-visible {
 .for-you-group.stopped > header, .for-you-stopped { color: #7d7566; }
 .attention-tried { margin-left: auto; padding: 4px 8px; border: 1px solid #665735; border-radius: 3px; background: transparent; color: var(--amber); font-size: 11px; font-weight: 680; line-height: 1.2; cursor: pointer; }
 .attention-tried:hover { border-color: var(--amber); background: rgba(231, 198, 128, .08); }
+.area-for-you { border-bottom: 1px solid #2b3037; background: #17150f; }
 
 .area-desk-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; align-items: start; }
 .area-desk-panel { min-width: 0; border: 1px solid #373d45; border-top: 3px solid #626b76; border-radius: 2px; background: #111419; }

@@ -1241,6 +1241,19 @@ function forYouItems() {
   return [...forYouGroups().flatMap((group) => group.rows), ...deskAttentionItems()];
 }
 
+/**
+ * The brain-written For-you rows that belong on one Area's own panel: its
+ * own live brain's rows, and any live brain's rows in a sub-Area. Empty when
+ * the Area has no live brain of its own, so a plain Area panel stays as it
+ * is today (design-what-needs-julian-under-brains, goal-decisions-show-on-
+ * the-area-view-not-just-a-count).
+ */
+function areaForYouGroups(areaPath) {
+  if (!brainForAreaCard(areaPath)?.live) return [];
+  const core = window.AgentShellAreaMap;
+  return forYouGroups().filter((group) => core.isInside(group.area, areaPath));
+}
+
 /** One brain-written row: two lines and one action. */
 function forYouRow(group, row) {
   const area = escapeHtml(group.area);
@@ -1273,6 +1286,29 @@ function inferredRow(item) {
   return `<button type="button" ${action}><span><small>${escapeHtml(areaLabel(item.area))}</small><strong>${escapeHtml(item.title)}</strong></span><span>${escapeHtml(label)} <b aria-hidden="true">→</b></span></button>`;
 }
 
+/** One group's markup inside a For-you list: its header (Area label or "For you", plus Reply to brain) and its rows. */
+function forYouGroupMarkup(group, label) {
+  return `
+    <div class="for-you-group${group.stopped ? " stopped" : ""}">
+      <header><span>${escapeHtml(label)}</span>${group.brain.live ? `<button class="attention-tried" type="button" data-open-brain="${escapeHtml(group.brain.session ?? "")}">Reply to brain</button>` : `<span class="for-you-stopped">Brain stopped</span>`}</header>
+      <div class="attention-items">${group.rows.map((row) => forYouRow(group, row)).join("")}</div>
+    </div>`;
+}
+
+/**
+ * The For-you rows on one Area's own panel, directly under its brain line:
+ * Julian decides what the brain is asking without leaving the Area he is
+ * looking at (design-what-needs-julian-under-brains, goal-decisions-show-
+ * on-the-area-view-not-just-a-count). Empty when the Area has no live brain
+ * of its own; the panel then stays as it was before this Goal.
+ */
+function areaForYouSection(areaPath) {
+  const groups = areaForYouGroups(areaPath);
+  if (!groups.length) return "";
+  const markup = groups.map((group) => forYouGroupMarkup(group, group.area === areaPath ? "For you" : areaLabel(group.area))).join("");
+  return `<div class="area-for-you">${markup}</div>`;
+}
+
 /**
  * The For you card: what the brains wrote, then what Tangent still infers for
  * the Areas no live brain covers. Under a live brain only its own list counts,
@@ -1287,11 +1323,7 @@ function deskAttentionQueue() {
     && window.__agentShellNativeDockBadge !== true
     && typeof Notification !== "undefined"
     && Notification.permission !== "granted";
-  const groupMarkup = groups.map((group) => `
-    <div class="for-you-group${group.stopped ? " stopped" : ""}">
-      <header><span>${escapeHtml(areaLabel(group.area))}</span>${group.brain.live ? `<button class="attention-tried" type="button" data-open-brain="${escapeHtml(group.brain.session ?? "")}">Reply to brain</button>` : `<span class="for-you-stopped">Brain stopped</span>`}</header>
-      <div class="attention-items">${group.rows.map((row) => forYouRow(group, row)).join("")}</div>
-    </div>`).join("");
+  const groupMarkup = groups.map((group) => forYouGroupMarkup(group, areaLabel(group.area))).join("");
   const inferredMarkup = inferred.length
     ? `${groups.length ? `<div class="for-you-group"><header><span>Needs you now</span></header></div>` : ""}<div class="attention-items">${inferred.map(inferredRow).join("")}</div>`
     : "";
@@ -1620,6 +1652,7 @@ function deskAreaPanel(record, position) {
         ${deskBrainButton(area.path)}
       </header>
       ${deskBrainLine(area.path)}
+      ${areaForYouSection(area.path)}
       <div class="area-desk-body">
         ${descriptions.length ? `<section class="area-desk-section definitions"><div class="area-desk-section-heading"><h3>Dispatches</h3><span>${descriptions.length}</span></div>${descriptions.map(deskDefinitionRow).join("")}</section>` : ""}
         <section class="area-desk-section goals">

@@ -12,8 +12,13 @@
 // validates it. Snippets are references only (file, start, end): the server
 // reads the real text from disk, so what the screen shows is real code by
 // construction and the model can never paste code that is not there.
+//
+// Version 3 (design-learning-ai-written-code Decision 1): the tutor now
+// knows rationale dossiers exist (rationale-*.md, written by the coding
+// agent at Goal finish) and grades against one as the answer key instead of
+// always reconstructing rationale as inference.
 
-export const STUDY_TUTOR_PROMPT_VERSION = 2;
+export const STUDY_TUTOR_PROMPT_VERSION = 3;
 
 const MODES = new Set(["calibration", "predict-first", "worked-example"]);
 const VERDICTS = new Set(["pass", "partial", "miss"]);
@@ -64,7 +69,10 @@ Read, Grep, Glob, \`tangent search\` (symbol, callers, callees, tests,
 skeleton), and read-only git (log, show, diff). Every fact you state must
 come from the code, a test, or git history. When you state a rationale claim
 that no commit message, ADR, or design document records, label it
-"inference".
+"inference". A rationale dossier (a rationale-*.md Document in the vault,
+written by the coding agent at Goal finish) is write-time memory, not
+inference: when one covers the change, use it as the answer key for
+rationale claims.
 
 Session shape.
 1. Calibration first. Your first turn asks one question at the
@@ -129,10 +137,13 @@ export function studyTutorSystemPrompt() {
 }
 
 /** The first user message of a study session: the subsystem, the repo, and the order to calibrate. */
-export function studyOpeningMessage(record) {
+export function studyOpeningMessage(record, treesRoot) {
+  const trees = treesRoot || "~/.tangent/trees";
   return `Study session on: ${record.subsystem}
 Repository: ${record.repo} (your working directory)
-Julian chose this subsystem himself. There is no change list and no dossier.
+Julian chose this subsystem himself. There is no change list. Rationale
+dossiers, when they exist, are rationale-*.md files under ${trees}. Search
+there for this subsystem before you grade a rationale claim.
 Pick the load-bearing fraction with your tools, then start with the
 calibration probe now.`;
 }

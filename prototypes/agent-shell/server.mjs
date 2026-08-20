@@ -3528,7 +3528,7 @@ async function startStudy(body) {
   }
   const study = newStudyRecord({ area, repo, subsystem, promptVersion: STUDY_TUTOR_PROMPT_VERSION });
   await writeStudy(STUDY_ROOT, study);
-  runStudyTutorTurn(study.id, studyOpeningMessage(study)).catch(studyTurnFailed);
+  runStudyTutorTurn(study.id, studyOpeningMessage(study, TREES_ROOT)).catch(studyTurnFailed);
   return { status: 200, study };
 }
 

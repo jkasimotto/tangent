@@ -28,14 +28,21 @@ test("the prompt carries the session contract Julian decided", () => {
   assert.match(prompt, /Never print a mastery percentage/);
   assert.match(prompt, /Every turn that grades an answer to a hidden question must set reveal/);
   assert.match(prompt, /Never send two turns in a row with neither reveal nor question\.snippet/);
-  assert.equal(STUDY_TUTOR_PROMPT_VERSION, 2);
+  assert.match(prompt, /rationale dossier/i);
+  assert.equal(STUDY_TUTOR_PROMPT_VERSION, 3);
 });
 
 test("the opening message names the subsystem, the repo, and orders the calibration probe", () => {
-  const message = studyOpeningMessage({ subsystem: "the search indexer", repo: "/repo" });
+  const message = studyOpeningMessage({ subsystem: "the search indexer", repo: "/repo" }, "/trees");
   assert.match(message, /Study session on: the search indexer/);
   assert.match(message, /Repository: \/repo/);
+  assert.match(message, /rationale-\*\.md files under \/trees/);
   assert.match(message, /calibration probe now/);
+});
+
+test("the opening message falls back to ~/.tangent/trees without a treesRoot", () => {
+  const message = studyOpeningMessage({ subsystem: "the search indexer", repo: "/repo" });
+  assert.match(message, /rationale-\*\.md files under ~\/\.tangent\/trees/);
 });
 
 test("the answer message is verbatim, the end message is the fixed marker", () => {

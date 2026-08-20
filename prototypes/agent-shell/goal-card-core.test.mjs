@@ -106,6 +106,43 @@ test("goalCardFacts: a Goal with no agent record still shows that it waits", () 
   assert.equal(line(facts), "no agent yet · waiting for you");
 });
 
+test("factsBarShares: no agent yet draws no bar", () => {
+  const facts = core.goalCardFacts({ goal: { status: "active", agents: [], firstStartAt: null, lastEndAt: null }, sessions: [], pipeline: null, now: NOW });
+  assert.equal(core.factsBarShares(facts, NOW), null);
+});
+
+test("factsBarShares: working right now is all worked, no wait", () => {
+  const goal = { status: "active", agents: ["s1"], firstStartAt: NOW - 8 * MINUTE, lastEndAt: null };
+  const sessions = [{ name: "s1", created: NOW - 8 * MINUTE, state: "working" }];
+  const facts = core.goalCardFacts({ goal, sessions, pipeline: null, now: NOW });
+  assert.deepEqual(core.factsBarShares(facts, NOW), { workedShare: 1, waitShare: 0, waitKind: "waiting" });
+});
+
+test("factsBarShares: splits at the start of the current wait, amber for Julian", () => {
+  const goal = { status: "active", agents: ["s1"], firstStartAt: NOW - HOUR, lastEndAt: null };
+  const sessions = [{ name: "s1", created: NOW - HOUR, state: "waiting", stateDetail: "idle", waitingSince: NOW - 12 * MINUTE }];
+  const facts = core.goalCardFacts({ goal, sessions, pipeline: null, now: NOW });
+  const shares = core.factsBarShares(facts, NOW);
+  assert.equal(shares.waitKind, "waiting");
+  assert.ok(Math.abs(shares.waitShare - 12 / 60) < 0.001);
+  assert.ok(Math.abs(shares.workedShare - 48 / 60) < 0.001);
+});
+
+test("factsBarShares: a wait under a live brain draws gray, not amber", () => {
+  const goal = { status: "active", agents: ["s1"], firstStartAt: NOW - HOUR, lastEndAt: null };
+  const sessions = [{ name: "s1", created: NOW - HOUR, state: "waiting", stateDetail: "idle", waitingSince: NOW - 12 * MINUTE }];
+  const facts = core.goalCardFacts({ goal, sessions, pipeline: null, now: NOW });
+  const shares = core.factsBarShares(facts, NOW, { waitsForBrain: true });
+  assert.equal(shares.waitKind, "fact");
+});
+
+test("factsBarShares: a handover with no live session splits at the last end mark", () => {
+  const goal = { status: "active", agents: ["s1", "s2"], firstStartAt: NOW - 32 * HOUR, lastEndAt: NOW - 28 * HOUR, waitingOn: "Julian: the map is built" };
+  const facts = core.goalCardFacts({ goal, sessions: [], pipeline: null, now: NOW });
+  const shares = core.factsBarShares(facts, NOW);
+  assert.ok(Math.abs(shares.waitShare - 28 / 32) < 0.001);
+});
+
 test("goalCardFacts: an idle pane from a finished step is no wait while a later step works", () => {
   const goal = { status: "active", agents: ["p1", "p2"], firstStartAt: NOW - 34 * MINUTE, lastEndAt: null };
   const pipeline = { steps: [

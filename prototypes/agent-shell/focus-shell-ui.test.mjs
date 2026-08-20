@@ -31,6 +31,22 @@ function submit(window, selector) {
   form.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
 }
 
+/**
+ * Opens a Document by title through Go to (⌘K): the work desk no longer
+ * opens a Document from a Goal card or a Documents section
+ * (design-compact-work-desk), so tests that only need a Document open reach
+ * it through the finder, one of the routes that stayed.
+ */
+async function openDocumentViaGoTo(window, title) {
+  click(window, "#go-to-button");
+  const input = window.document.querySelector("#go-to-input");
+  input.value = title;
+  input.dispatchEvent(new window.Event("input", { bubbles: true }));
+  await settle(window);
+  click(window, "[data-go-to-row='0']");
+  await settle(window);
+}
+
 /** Creates the small JSON response shape used by the browser API helper. */
 function jsonResponse(payload) {
   return {
@@ -407,7 +423,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   await settle(window);
   assert.deepEqual(dockBadges, [2]);
   assert.match(window.document.querySelector(".area-desk-panel:nth-child(2)").textContent, /Tangent/);
-  assert.match(window.document.querySelector(".area-desk-panel:nth-child(2) .desk-documents").textContent, /Tangent product design/);
+  assert.equal(window.document.querySelector(".area-desk-panel:nth-child(2) .area-desk-section.documents"), null, "the Documents section left the work tab");
   assert.equal(window.document.querySelectorAll(".desk-goal.subgoal").length, 1);
   assert.equal(window.document.querySelector("[data-work-filter='all']").getAttribute("aria-pressed"), "true");
   click(window, "[data-work-filter='active']");
@@ -445,23 +461,15 @@ test("the live shell restores context, defines work with an agent, and organizes
   click(window, "#back-button");
   assert.ok(window.document.querySelector(".work-page"), "the desk shows the Work page");
 
-  // The Goal row carries facts, not prose: no done condition, one Docs chip,
+  // The Goal row carries facts, not prose: no done condition, no Docs chip,
   // and the three secondary actions always in the same place.
   const goalRow = window.document.querySelector(`[data-goal-anchor='${goalFile}']`);
   assert.doesNotMatch(goalRow.textContent, /One calm surface/, "the done condition left the card");
-  assert.equal(goalRow.querySelector(".desk-goal-docs"), null, "one chip stands in for the Document pills");
-  assert.match(goalRow.querySelector(".desk-docs-chip").textContent, /Docs 1/);
-  click(window, `[data-goal-anchor='${goalFile}'] [data-toggle-goal-docs]`);
-  const openRow = window.document.querySelector(`[data-goal-anchor='${goalFile}']`);
-  assert.match(openRow.querySelector(".desk-goal-doc-list").textContent, /Tangent product design/);
-  assert.match(openRow.querySelector(".desk-docs-chip").textContent, /Docs 1 ▴/);
-  click(window, `[data-goal-anchor='${goalFile}'] [data-toggle-goal-docs]`);
-  assert.equal(window.document.querySelector(`[data-goal-anchor='${goalFile}'] .desk-goal-doc-list`), null, "the list closes again");
-  click(window, `[data-goal-anchor='${goalFile}'] [data-toggle-goal-docs]`);
+  assert.equal(goalRow.querySelector(".desk-docs-chip"), null, "the Docs chip left the card");
   assert.match(goalRow.querySelector("[data-stop-goal]").textContent, /^End$/);
   const handoffRow = window.document.querySelector(`[data-goal-anchor='${liveEditGoal.file}']`);
   assert.equal(handoffRow.querySelector(".desk-goal-handoff"), null, "the handoff line left the card");
-  assert.match(handoffRow.querySelector(".desk-goal-facts .waiting").textContent, /^waiting for you/);
+  assert.match(handoffRow.querySelector(".desk-state").textContent, /Waiting/, "the state pill says the Goal waits for Julian; the duration moved off the card");
   assert.equal(handoffRow.querySelector("[data-stop-goal]"), null);
   assert.equal(handoffRow.querySelector(".desk-secondary-actions button:disabled").textContent, "End", "a Goal with no agent still shows End, disabled");
   assert.equal(window.document.querySelector("[data-view-goal]"), null);
@@ -473,8 +481,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   await settle(window);
   assert.ok(posts.some((entry) => entry.path === "/api/kill/tangent-vision"));
 
-  click(window, `[data-goal-anchor='${goalFile}'] [data-open-document]`);
-  await settle(window);
+  await openDocumentViaGoTo(window, "Tangent product design");
   assert.match(window.document.querySelector("#screen").textContent, /Document/);
   assert.match(window.document.querySelector("#screen").textContent, /Native chat stays complete/);
 
@@ -482,7 +489,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.equal(window.document.querySelector("[data-new-goal]"), null);
   assert.equal(window.document.querySelectorAll(".area-desk-panel").length, 2);
   assert.match(window.document.querySelector("#screen").textContent, /Define Live Edit collaboration/);
-  assert.match(window.document.querySelector("#screen").textContent, /waiting for you/i, "the desk still says a Goal waits for Julian");
+  assert.match(window.document.querySelector("#screen").textContent, /Waiting/, "the desk still says a Goal waits for Julian");
   assert.doesNotMatch(window.document.querySelector("#screen").textContent, /Already complete/);
   assert.match(window.document.querySelector(".desk-subgoal-disclosure > summary").textContent, /To do that1 Subgoal/);
 
@@ -1369,8 +1376,7 @@ test("background polls never rebuild the screen under an editing surface or a re
   await settle(window);
 
   // Reading a Document: the reader survives a poll and a forced repaint keeps the reading position.
-  click(window, `[data-open-document='${doc.file}']`);
-  await settle(window);
+  await openDocumentViaGoTo(window, doc.title);
   await settle(window);
   const reader = window.document.querySelector(".document-reader-scroll");
   assert.ok(reader, "the Document opened");
@@ -1445,8 +1451,7 @@ test("comments render as red blocks, save through the base-hash path with re-anc
   window.eval(mapCore);
   window.eval(script);
   await settle(window);
-  click(window, `[data-open-document='${doc.file}']`);
-  await settle(window);
+  await openDocumentViaGoTo(window, doc.title);
   await settle(window);
 
   // The existing comment is a red-ruled block under its paragraph, its words are marked, and the toolbar counts it.
@@ -1580,8 +1585,7 @@ test("comments render as red blocks, save through the base-hash path with re-anc
   window.eval(mapCore);
   window.eval(script);
   await settle(window);
-  click(window, `[data-open-document='${doc.file}']`);
-  await settle(window);
+  await openDocumentViaGoTo(window, doc.title);
   await settle(window);
 
   // The existing comment is a red-ruled block under its paragraph, its words are marked, and the toolbar counts it.
@@ -1654,78 +1658,6 @@ test("comments render as red blocks, save through the base-hash path with re-anc
   assert.equal(saves.length, 3);
   assert.match(saves[2].text, /\{==clear words==\}\{>>Julian: Say why\.<<\}/);
   assert.equal(window.document.querySelectorAll(".document-comment").length, 2);
-});
-
-test("the desk Documents shelf shows the eight newest subtree Documents with kind, in-degree, and age, and Show all opens the Area map", async () => {
-  const [html, script, mapCore, mapView] = await Promise.all([
-    readFile(path.join(here, "public", "shell.html"), "utf8"),
-    readFile(path.join(here, "public", "shell.js"), "utf8"),
-    readFile(path.join(here, "public", "area-map-core.js"), "utf8"),
-    readFile(path.join(here, "public", "area-map.js"), "utf8"),
-  ]);
-  const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
-  const { window } = dom;
-  window.setInterval = () => 0;
-  window.HTMLCanvasElement.prototype.getContext = () => null;
-  const DAY = 86_400_000;
-  const now = Date.now();
-  const goal = {
-    mtime: 1, area: "otto/dnd", slug: "ship-the-map", file: "otto/dnd/goal-ship-the-map.md", title: "Ship the map", status: "open",
-    doneWhen: "Shipped.", stateText: "", currentBrief: "", storyText: "", documents: [], why: [], subgoalItems: [], subgoals: [], depth: 0,
-  };
-  /** One Document record as /api/vault serves it after the map facts landed. */
-  const makeDocument = (index, area) => ({
-    file: `${area}/design-doc-${index}.md`, area, kind: "document", docKind: index === 10 ? "plan" : "design",
-    title: `Doc ${index}`, mtime: now - index * DAY, changedAt: now - index * DAY, inDegree: index === 1 ? 3 : 0, searchText: "", goalHistory: [],
-  });
-  // Ten Documents: nine in the Area and one in a sub-Area, ages 1 to 10 days. The sub-Area one is the newest.
-  const documents = [makeDocument(10, "otto/dnd"), ...[9, 8, 7, 6, 5, 4, 3, 2].map((i) => makeDocument(i, "otto/dnd")), makeDocument(1, "otto/dnd/maps")];
-  const elsewhere = makeDocument(0, "otto/tangent");
-  window.fetch = async (url, options = {}) => {
-    const pathname = new URL(url, window.location.href).pathname;
-    if (options.method === "POST") return jsonResponse({ ok: true });
-    if (pathname === "/api/sessions") return jsonResponse({ boot: "boot-1", caffeinate: false, sessions: [] });
-    if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
-    if (pathname === "/api/map-state") return jsonResponse({ area: "otto/dnd", state: null });
-    return jsonResponse({
-      areas: [
-        { path: "otto", name: "otto", goals: [], documents: [], children: ["otto/dnd", "otto/tangent"], parent: "" },
-        { path: "otto/dnd", name: "dnd", goals: [goal], documents: documents.slice(0, 9), children: ["otto/dnd/maps"], parent: "otto" },
-        { path: "otto/dnd/maps", name: "maps", goals: [], documents: [documents[9]], children: [], parent: "otto/dnd" },
-        { path: "otto/tangent", name: "tangent", goals: [], documents: [elsewhere], children: [], parent: "otto" },
-      ],
-      map: [{ path: "otto/dnd", name: "dnd", goals: [goal] }],
-      documents: [...documents, elsewhere, goal],
-    });
-  };
-  window.eval(goToCore);
-  window.eval(goalCardCore);
-  window.eval(mapCore);
-  window.eval(mapView);
-  window.eval(script);
-  await settle(window);
-  const panel = [...window.document.querySelectorAll(".area-desk-panel")].find((node) => node.textContent.includes("Ship the map"));
-  assert.ok(panel, "the dnd Area is a desk panel");
-  const rows = [...panel.querySelectorAll(".desk-documents button")];
-  assert.equal(rows.length, 8, "the shelf caps at eight Documents");
-  // Newest change first, across the subtree: the sub-Area Document leads.
-  assert.equal(rows[0].dataset.openDocument, "otto/dnd/maps/design-doc-1.md");
-  assert.equal(rows[7].dataset.openDocument, "otto/dnd/design-doc-8.md");
-  assert.ok(!rows.some((row) => row.dataset.openDocument.startsWith("otto/tangent/")), "Documents outside the subtree stay off the shelf");
-  // Kind, in-degree, and age are printed facts.
-  assert.equal(rows[0].querySelector("span").textContent, "design");
-  assert.equal(rows[0].querySelector("small").textContent, "3 in");
-  assert.equal(rows[0].querySelector("em").textContent, "yesterday");
-  assert.equal(rows[1].querySelector("small").textContent, "");
-  assert.equal(panel.querySelector(".area-desk-section.documents .area-desk-section-heading span").textContent, "10");
-  // Show all names the count and opens the Area map for the Area.
-  const more = panel.querySelector(".desk-shelf-more");
-  assert.match(more.textContent, /Show all 10/);
-  assert.equal(more.dataset.openArea, "otto/dnd");
-  more.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-  await settle(window);
-  assert.ok(window.document.querySelector(".area-map-screen"), "Show all opens the Area map screen");
-  assert.equal(window.localStorage.getItem("agent-shell.last-area"), "otto/dnd");
 });
 
 test("a sub-Area with open work nests as a section of its ancestor's desk panel, and Goals order needs-you, working, ready by latest change", async () => {
@@ -1917,8 +1849,7 @@ test("a second comment lands on the words Julian selected, and the reader holds 
   window.eval(mapCore);
   window.eval(script);
   await settle(window);
-  click(window, `[data-open-document='${doc.file}']`);
-  await settle(window);
+  await openDocumentViaGoTo(window, doc.title);
   await settle(window);
 
   // Both comments render: one mark nests inside the other, and no markup leaks into the words.

@@ -315,27 +315,35 @@ button.area-brain-line:hover { background: #191d22; }
 .desk-subarea-body { display: grid; gap: 14px; margin-top: 14px; }
 .desk-subarea.collapsed { padding-bottom: 14px; }
 
-.desk-goal-group + .desk-goal-group { margin-top: 14px; padding-top: 14px; border-top: 1px solid #292e35; }
-.desk-goal { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 15px; }
-.desk-goal-main { display: grid; min-width: 0; gap: 3px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }
-.desk-goal-main small { color: #737d88; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 760; letter-spacing: .11em; text-transform: uppercase; }
-.desk-goal-main strong { color: #e7eaed; font-size: 16px; line-height: 1.35; overflow-wrap: anywhere; }
-.desk-goal-main > span { color: #98a1ac; font-size: 12px; line-height: 1.48; }
-/* The one facts line: agents, running, waiting for you (design-goal-cards). */
-.desk-goal-facts { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px; }
-.desk-goal-facts i { color: #4d555f; font-style: normal; }
-.desk-goal-facts .waiting { color: var(--amber); }
-/* One fixed column, so Done never moves under the cursor (design-goal-cards Decision 4). */
-.desk-goal-controls { display: grid; width: 190px; justify-items: end; gap: 5px; }
-.desk-goal-controls .desk-state { justify-content: flex-end; }
+.desk-goal-group + .desk-goal-group { margin-top: 10px; padding-top: 10px; border-top: 1px solid #292e35; }
+/* Two lines, nothing else: title with step and status, then the bar with
+   the agent count and the actions (design-compact-work-desk Decision 3). */
+.desk-goal { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 3px; padding: 5px 0; }
+.desk-goal-main { display: grid; min-width: 0; gap: 4px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }
+.desk-goal-line1 { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.desk-goal-main strong { min-width: 0; overflow: hidden; color: #e7eaed; font-size: 14px; font-weight: 640; line-height: 1.3; white-space: nowrap; text-overflow: ellipsis; }
+.desk-goal-status { display: inline-flex; flex: none; align-items: baseline; gap: 5px; white-space: nowrap; }
+.desk-goal-status i { color: #4d555f; font-style: normal; }
 .desk-step-line { color: #737d88; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 760; letter-spacing: .08em; text-transform: uppercase; }
+.desk-goal-line2 { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+/* The bar: worked (blue) against the current wait (amber, or gray under a
+   live brain), composition not magnitude (design-compact-work-desk
+   Decisions 1 and 2). The agent count is the only fact left as text. */
+.desk-goal-bar-group { display: inline-flex; min-width: 0; align-items: center; gap: 8px; }
+.desk-goal-bar { display: inline-flex; width: 84px; height: 6px; overflow: hidden; border-radius: 3px; background: #262b31; flex: none; }
+.desk-goal-bar-worked { display: block; height: 100%; background: var(--blue); }
+.desk-goal-bar-wait { display: block; height: 100%; min-width: 3px; background: var(--amber); }
+.desk-goal-bar-wait.fact { background: var(--muted); }
+.desk-goal-facts { color: #98a1ac; font-size: 11px; white-space: nowrap; }
+.desk-goal-actions { display: inline-flex; flex: none; align-items: center; gap: 8px; }
+.desk-goal-line3 { display: flex; justify-content: flex-end; }
 .desk-secondary-actions { display: inline-flex; align-items: center; gap: 0 3px; }
 .desk-secondary-actions i { color: #4d555f; font-size: 10px; font-style: normal; }
 .desk-secondary-actions .desk-icon-action { padding: 2px 3px; }
 .desk-secondary-actions .desk-icon-action:disabled { opacity: .35; cursor: default; }
 .desk-secondary-actions .desk-icon-action:disabled:hover { border-color: transparent; color: #7f8994; }
 .desk-pipeline-controls { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
-.desk-goal:has(.desk-select) { grid-template-columns: auto minmax(0, 1fr) auto; }
+.desk-goal:has(.desk-select) { grid-template-columns: auto minmax(0, 1fr); }
 .desk-select { display: flex; align-items: flex-start; padding: 3px 2px 8px 0; cursor: pointer; }
 .desk-select input { width: 15px; height: 15px; margin: 0; accent-color: var(--blue); cursor: pointer; }
 .desk-goal.selected { background: rgba(94, 144, 255, .06); box-shadow: inset 2px 0 0 var(--blue); }
@@ -354,12 +362,10 @@ button.area-brain-line:hover { background: #191d22; }
 .desk-subgoal-disclosure > summary::before { display: inline-block; width: 10px; color: #69737e; content: "+"; }
 .desk-subgoal-disclosure[open] > summary::before { content: "−"; }
 .desk-subgoal-disclosure > summary small { color: #626b76; font: inherit; }
-.desk-subgoals { position: relative; display: grid; gap: 11px; margin: 8px 0 0; padding: 10px 0 1px 20px; border-left: 1px dashed #4b535d; }
+.desk-subgoals { position: relative; display: grid; gap: 8px; margin: 8px 0 0; padding: 10px 0 1px 20px; border-left: 1px dashed #4b535d; }
 .desk-subgoals::before { position: absolute; top: 0; left: -3px; width: 5px; height: 5px; border-radius: 50%; background: #69737e; content: ""; }
-.desk-goal.subgoal { grid-template-columns: minmax(0, 1fr) auto; padding-top: 0; }
-.desk-goal.subgoal .desk-goal-main strong { font-size: 14px; font-weight: 620; }
-.desk-goal.subgoal .desk-goal-main > span { font-size: 11px; }
-.desk-goal.subgoal .desk-goal-controls { width: 165px; }
+.desk-goal.subgoal .desk-goal-main strong { font-size: 13px; font-weight: 600; }
+.desk-goal.subgoal .desk-goal-bar { width: 68px; }
 
 .desk-definition { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 18px; width: 100%; padding: 11px 12px; border: 1px solid #3a4149; border-left: 3px solid var(--amber); border-radius: 1px; background: #171a1e; color: inherit; cursor: pointer; text-align: left; }
 .desk-definition.working { border-left-color: var(--blue); }
@@ -370,16 +376,6 @@ button.area-brain-line:hover { background: #191d22; }
 .desk-definition em { justify-self: end; font-style: normal; }
 .desk-definition b { color: #b7bec6; font-size: 10px; font-weight: 680; }
 
-.desk-documents { display: grid; gap: 1px; }
-.desk-documents button { display: grid; grid-template-columns: 58px minmax(0, 1fr) auto auto; align-items: baseline; gap: 9px; width: 100%; padding: 7px 5px; border: 0; border-bottom: 1px dotted #3e454e; background: transparent; color: inherit; cursor: pointer; text-align: left; }
-.desk-documents button:last-child { border-bottom: 0; }
-.desk-documents button:hover strong { color: #fff; }
-.desk-documents span { color: #76818d; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.desk-documents strong { color: #cdd2d7; font-family: Georgia, "Times New Roman", serif; font-size: 14px; font-weight: 500; line-height: 1.35; overflow-wrap: anywhere; }
-.desk-documents small { min-width: 28px; color: #68727d; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
-.desk-documents em { min-width: 44px; color: #68727d; font-size: 11px; font-style: normal; text-align: right; white-space: nowrap; }
-.desk-shelf-more { display: block; width: 100%; margin-top: 6px; padding: 6px 5px; border: 0; background: transparent; color: #8fa0b3; cursor: pointer; font: inherit; font-size: 12px; font-weight: 600; text-align: left; }
-.desk-shelf-more:hover { color: #fff; }
 .desk-programs { display: grid; gap: 1px; }
 .desk-program { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 9px; border-bottom: 1px dotted #3e454e; }
 .desk-program:last-child { border-bottom: 0; }
@@ -1078,14 +1074,7 @@ li .document-comment { margin: 8px 0 10px; }
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .001ms !important; }
 }
 
-/* Goal-row Documents and reveal highlight */
-.desk-docs-chip { display: inline-flex; align-items: center; gap: 5px; width: max-content; margin-top: 4px; padding: 2px 8px; border: 1px solid #343b44; border-radius: 999px; background: #14171c; color: #cdd2d7; cursor: pointer; font-size: 11px; line-height: 1.5; }
-.desk-docs-chip:hover, .desk-docs-chip.open { border-color: #4a525c; color: #fff; }
-/* The same rows as the desk shelf, in a narrower column: one line each. */
-.desk-goal-doc-list { margin-top: 4px; }
-.desk-goal-doc-list button { grid-template-columns: 46px minmax(0, 1fr) auto; gap: 8px; padding: 5px 4px; }
-.desk-goal-doc-list strong { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.desk-goal-doc-list small { display: none; }
+/* Reveal highlight */
 .desk-goal.flash { animation: desk-goal-flash 1.5s ease-out; }
 .area-desk-panel.flash { outline: 2px solid var(--blue, #6ea8ff); outline-offset: 2px; }
 @keyframes desk-goal-flash { 0% { background: #2a3547; } 100% { background: transparent; } }

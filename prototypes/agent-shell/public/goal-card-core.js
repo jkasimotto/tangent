@@ -146,5 +146,22 @@
     return segments;
   }
 
-  root.AgentShellGoalCard = { durationLabel, goalCardFacts, factsSegments };
+  /**
+   * The bar's two shares: worked (blue) against the current wait (amber, or
+   * gray under a live brain). Composition, not magnitude (the bar is always
+   * full; design-compact-work-desk Decision 2), split at the start of the
+   * current wait, the only split the records can answer (Decision 1). A
+   * wait whose start the server lost draws a minimum sliver rather than
+   * nothing, so it still reads as a wait. Returns null when no agent has
+   * started, so the card shows text instead of an empty bar.
+   */
+  function factsBarShares(facts, now, { waitsForBrain = false } = {}) {
+    if (!facts.startedAt) return null;
+    const total = Math.max(now - facts.startedAt, 1);
+    if (!facts.waiting) return { workedShare: 1, waitShare: 0, waitKind: "waiting" };
+    const waitShare = Math.min(1, Math.max(facts.waiting.ms ?? 0, 0) / total);
+    return { workedShare: 1 - waitShare, waitShare, waitKind: waitsForBrain ? "fact" : "waiting" };
+  }
+
+  root.AgentShellGoalCard = { durationLabel, goalCardFacts, factsSegments, factsBarShares };
 })(typeof globalThis !== "undefined" ? globalThis : this);

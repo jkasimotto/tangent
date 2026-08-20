@@ -39,7 +39,6 @@ const state = {
   createReturnView: "work",
   expandedAreas: new Set(storedJson("agent-shell.expanded-areas") || []),
   collapsedDeskSections: new Set(storedJson("agent-shell.collapsed-desk-sections") || []),
-  expandedGoalDocs: new Set(), // Goal files whose Docs chip is open; a reload closes them, a poll never does
   mapStates: new Map(), // Area path -> stored map state ({positions, kindsOff, showDone, collapsed}) or "loading"
   mapSelectFile: "", // a Document to select on the Area map once, set by the reader's Area path
   showDoneAreas: localStorage.getItem("agent-shell.show-done-areas") === "1",
@@ -1501,42 +1500,51 @@ function deskPipelineControls(goal, pipeline) {
 }
 
 /**
- * The one line of facts under the title: how many agents worked this Goal,
- * how long it runs or ran, and how long it has waited for Julian. The facts
- * come from the vault git log, the live sessions, and the pipeline record;
- * a fact the records cannot answer is left out (design-goal-cards).
+ * The Goal's facts (pure, from the vault git log, live sessions, and the
+ * pipeline record) plus the clock they were read at, computed once per row
+ * so the bar and the agent-count fact stay in step (design-compact-work-desk).
  */
-function deskGoalFacts(goal) {
+function deskGoalFactsData(goal) {
   const core = window.AgentShellGoalCard;
-  if (!core) return "";
   const now = Date.now();
   const sessions = sessionsForGoal(goal);
-  const facts = core.goalCardFacts({ goal, sessions, pipeline: pipelineRecordForGoal(goal), now, handoffNeedsYou: goalNeedsYou(goal) });
+  const facts = core ? core.goalCardFacts({ goal, sessions, pipeline: pipelineRecordForGoal(goal), now, handoffNeedsYou: goalNeedsYou(goal) }) : null;
   const names = [...new Set([...(goal.agents ?? []), ...sessions.map((session) => session.name)])];
-  const segments = core.factsSegments(facts, now, names).map((segment) =>
-    `<span class="${segment.kind}"${segment.title ? ` title="${escapeHtml(segment.title)}"` : ""}>${escapeHtml(segment.text)}</span>`);
-  return `<span class="desk-goal-facts">${segments.join(`<i aria-hidden="true">·</i>`)}</span>`;
+  return { facts, names, now };
 }
 
 /**
- * The Documents linked to one Goal as one `Docs N ▾` chip. The chip opens an
- * inline list in the Area map's order, newest change first, so the card keeps
- * one line whatever the Goal reads (design-goal-cards Decision 5).
+ * The agent-count fact, the only text fact left on the card: how long the
+ * Goal runs or waits is now the bar (design-compact-work-desk).
  */
-function deskGoalDocuments(goal) {
-  const core = window.AgentShellAreaMap;
-  const documents = (goal.documents ?? []).filter((document) => document.kind === "document" || !document.kind);
-  if (!documents.length) return "";
-  const open = state.expandedGoalDocs.has(goal.file);
-  const chip = `<button class="desk-docs-chip${open ? " open" : ""}" type="button" data-toggle-goal-docs="${escapeHtml(goal.file)}" aria-expanded="${open}" title="Documents linked from this Goal">Docs ${documents.length} ${open ? "▴" : "▾"}</button>`;
-  if (!open) return chip;
-  const now = Date.now();
-  const offset = new Date().getTimezoneOffset();
-  const rows = core.orderDocuments(documents).map((document) => `
-    <button type="button" data-open-document="${escapeHtml(document.file)}" title="${escapeHtml(document.file)}">
-      <span aria-hidden="true">${escapeHtml(core.kindLabel(document.docKind ?? "page"))}</span><strong>${escapeHtml(document.title)}</strong><small></small><em>${escapeHtml(core.relativeDay(document.changedAt ?? document.mtime, now, offset))}</em>
-    </button>`);
-  return `${chip}<div class="desk-documents desk-goal-doc-list">${rows.join("")}</div>`;
+function deskGoalFacts(facts, names, now) {
+  const core = window.AgentShellGoalCard;
+  if (!core || !facts) return "";
+  const segment = core.factsSegments(facts, now, names).find((item) => item.kind === "agents");
+  if (!segment) return "";
+  return `<span class="desk-goal-facts"><span title="${escapeHtml(segment.title)}">${escapeHtml(segment.text)}</span></span>`;
+}
+
+/**
+ * The bar: worked time (blue) against the current wait (amber, or gray under
+ * a live brain: it waits for the brain, not for Julian), split at the start
+ * of the current wait, the only split the records can answer. Always full:
+ * shares, not age (design-compact-work-desk Decisions 1 and 2). The hover
+ * title carries the exact words and the start time; a Goal nobody has
+ * started draws no bar.
+ */
+function deskGoalBar(goal, facts, now) {
+  const core = window.AgentShellGoalCard;
+  if (!core || !facts) return "";
+  const shares = core.factsBarShares(facts, now, { waitsForBrain: goalCoveredByBrain(goal) });
+  if (!shares) return "";
+  const words = core.factsSegments(facts, now).filter((segment) => segment.kind !== "agents").map((segment) => segment.text).join(" · ");
+  const started = facts.startedAt ? `Started ${new Date(facts.startedAt).toLocaleString()}` : "";
+  const title = [words, started].filter(Boolean).join("\n");
+  return `<span class="desk-goal-bar" title="${escapeHtml(title)}" role="img" aria-label="${escapeHtml(words || "no agent yet")}">
+    <i class="desk-goal-bar-worked" style="width:${(shares.workedShare * 100).toFixed(2)}%"></i>
+    ${facts.waiting ? `<i class="desk-goal-bar-wait ${shares.waitKind}" style="width:${(shares.waitShare * 100).toFixed(2)}%"></i>` : ""}
+  </span>`;
 }
 
 /**
@@ -1560,7 +1568,13 @@ function deskGoalSecondaryActions(goal, liveSession) {
   return `<span class="desk-secondary-actions">${buttons.join(`<i aria-hidden="true">·</i>`)}</span>`;
 }
 
-/** Renders one Goal as title, one facts line, its Documents chip, and a fixed action column. */
+/**
+ * Renders one Goal as a compact two-line card: title with step and status
+ * on line one, the bar with the agent count and the actions on line two,
+ * pipeline controls on a rare third line (design-compact-work-desk
+ * Decision 3). The kicker and the Documents chip are gone; a Subgoal reads
+ * from its indent and smaller title under the `To do that` disclosure.
+ */
 function deskGoalRow(goal, { subgoal = false } = {}) {
   const pipeline = pipelineForGoal(goal);
   const record = pipelineRecordForGoal(goal);
@@ -1573,25 +1587,33 @@ function deskGoalRow(goal, { subgoal = false } = {}) {
   const controls = pipeline ? deskPipelineControls(goal, pipeline) : "";
   const selectable = action.action === "Start agent";
   const selected = selectable && state.goalSelection.includes(goal.file);
+  const { facts, names, now } = deskGoalFactsData(goal);
   return `
     <article class="desk-goal ${subgoal ? "subgoal" : "root-goal"} ${action.kind}${selected ? " selected" : ""}" data-goal-anchor="${escapeHtml(goal.file)}">
       ${selectable ? `<label class="desk-select" title="Select for one shared agent"><input type="checkbox" data-check-goal="${escapeHtml(goal.file)}" ${selected ? "checked" : ""} aria-label="Select ${escapeHtml(goal.title)} for one shared agent"></label>` : ""}
       <div class="desk-goal-main">
-        <small>${subgoal ? "Subgoal" : "Goal"}</small>
-        <strong>${escapeHtml(goal.title)}</strong>
-        ${deskGoalFacts(goal)}
-        ${deskGoalDocuments(goal)}
-      </div>
-      <div class="desk-goal-controls">
-        ${action.stepLine ? `<small class="desk-step-line" title="${escapeHtml(action.stepTitle)}">${escapeHtml(action.stepLine)}</small>` : ""}
-        <span class="desk-state ${action.kind}">${escapeHtml(action.state)}</span>
-        ${action.action === "Start agent"
-          ? `<span class="desk-split"><button class="desk-action" type="button" ${route}>Start agent</button>${launchToggle("▾")}</span>`
-          : action.action
-            ? (record ? `<span class="desk-split"><button class="desk-action" type="button" ${route}>${escapeHtml(action.action)}</button>${launchToggle("▾")}</span>` : `<button class="desk-action" type="button" ${route}>${escapeHtml(action.action)}</button>`)
-            : record ? launchToggle("Steps ▾") : ""}
-        ${deskGoalSecondaryActions(goal, liveSession)}
-        ${controls ? `<span class="desk-pipeline-controls">${controls}</span>` : ""}
+        <div class="desk-goal-line1">
+          <strong title="${escapeHtml(goal.title)}">${escapeHtml(goal.title)}</strong>
+          <span class="desk-goal-status">
+            ${action.stepLine ? `<small class="desk-step-line" title="${escapeHtml(action.stepTitle)}">${escapeHtml(action.stepLine)}</small><i aria-hidden="true">·</i>` : ""}
+            <span class="desk-state ${action.kind}">${escapeHtml(action.state)}</span>
+          </span>
+        </div>
+        <div class="desk-goal-line2">
+          <span class="desk-goal-bar-group">
+            ${deskGoalBar(goal, facts, now)}
+            ${deskGoalFacts(facts, names, now)}
+          </span>
+          <span class="desk-goal-actions">
+            ${action.action === "Start agent"
+              ? `<span class="desk-split"><button class="desk-action" type="button" ${route}>Start agent</button>${launchToggle("▾")}</span>`
+              : action.action
+                ? (record ? `<span class="desk-split"><button class="desk-action" type="button" ${route}>${escapeHtml(action.action)}</button>${launchToggle("▾")}</span>` : `<button class="desk-action" type="button" ${route}>${escapeHtml(action.action)}</button>`)
+                : record ? launchToggle("Steps ▾") : ""}
+            ${deskGoalSecondaryActions(goal, liveSession)}
+          </span>
+        </div>
+        ${controls ? `<div class="desk-goal-line3"><span class="desk-pipeline-controls">${controls}</span></div>` : ""}
       </div>
     </article>`;
 }
@@ -1645,45 +1667,6 @@ function deskDefinitionRow(session) {
     </button>`;
 }
 
-/** How many Documents a desk shelf shows before `Show all` (design-area-map Decision 12). */
-const DESK_SHELF_CAP = 8;
-
-/**
- * The Documents of one Area subtree, newest change first (design-area-map
- * Decision 12): the same rank the Area map outline uses, so the shelf is
- * the top of the outline. Documents only; Goals and Area notes have their
- * own rows on the desk.
- */
-function deskShelfDocuments(areaPath) {
-  const core = window.AgentShellAreaMap;
-  const records = (state.vault?.documents ?? []).filter((record) => record.kind === "document" && core.isInside(record.area ?? String(record.file).split("/").slice(0, -1).join("/"), areaPath));
-  return core.orderDocuments(records);
-}
-
-/**
- * Renders the newest Documents of an Area subtree as a reading shelf with
- * kind, in-degree, and age as printed facts, capped at DESK_SHELF_CAP, and a
- * `Show all N` link that opens the Area map for the rest.
- */
-function deskDocumentShelf(areaPath) {
-  const core = window.AgentShellAreaMap;
-  const documents = deskShelfDocuments(areaPath);
-  if (!documents.length) return `<p class="desk-empty">No Documents in this Area.</p>`;
-  const now = Date.now();
-  const rows = documents.slice(0, DESK_SHELF_CAP).map((document) => {
-    const kind = core.kindLabel(document.docKind ?? "page");
-    const inDegree = Number(document.inDegree ?? 0);
-    const age = core.relativeDay(document.changedAt ?? document.mtime, now, new Date().getTimezoneOffset());
-    return `
-    <button type="button" data-open-document="${escapeHtml(document.file)}" title="${escapeHtml(document.file)}">
-      <span aria-hidden="true">${escapeHtml(kind)}</span><strong>${escapeHtml(document.title)}</strong><small title="${inDegree} incoming links">${inDegree ? `${inDegree} in` : ""}</small><em>${escapeHtml(age)}</em>
-    </button>`;
-  });
-  const rest = documents.length - DESK_SHELF_CAP;
-  const showAll = rest > 0 ? `<button class="desk-shelf-more" type="button" data-open-area="${escapeHtml(areaPath)}">Show all ${documents.length} in the Area map →</button>` : "";
-  return `<div class="desk-documents">${rows.join("")}</div>${showAll}`;
-}
-
 /** Renders the Programs of one Area as a compact operational shelf. */
 function deskProgramShelf(programs) {
   return `<div class="desk-programs">${programs.map((program) => {
@@ -1726,10 +1709,6 @@ function deskAreaPanel(record, position) {
           ${trees.length ? orderedGoalTrees(trees).map(deskGoalGroup).join("") : `<p class="desk-empty">No active Goals.</p>`}
         </section>
         ${sections.map(deskAreaSection).join("")}
-        <section class="area-desk-section documents">
-          <div class="area-desk-section-heading"><h3>Documents</h3><span>${deskShelfDocuments(area.path).length}</span></div>
-          ${deskDocumentShelf(area.path)}
-        </section>
         ${programs.length ? `<section class="area-desk-section programs">
           <div class="area-desk-section-heading"><h3>Programs</h3><span>${programs.length}</span></div>
           ${deskProgramShelf(programs)}
@@ -3190,7 +3169,6 @@ function renderKey() {
     state.areaSelection,
     state.goalSelection,
     [...state.expandedAreas].sort(),
-    [...state.expandedGoalDocs].sort(),
     // The card's durations count up, so a repaint is due once a minute even
     // when nothing else changed.
     Math.floor(Date.now() / 60_000),
@@ -4852,13 +4830,6 @@ document.addEventListener("click", async (event) => {
     if (state.expandedAreas.has(area)) state.expandedAreas.delete(area);
     else state.expandedAreas.add(area);
     saveExpandedAreas();
-    return paint(true);
-  }
-  const goalDocsToggle = target.closest("[data-toggle-goal-docs]");
-  if (goalDocsToggle) {
-    const file = goalDocsToggle.dataset.toggleGoalDocs;
-    if (state.expandedGoalDocs.has(file)) state.expandedGoalDocs.delete(file);
-    else state.expandedGoalDocs.add(file);
     return paint(true);
   }
   const deskSectionToggle = target.closest("[data-toggle-desk-section]");

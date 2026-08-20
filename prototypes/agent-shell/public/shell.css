@@ -320,7 +320,9 @@ button.area-brain-line:hover { background: #191d22; }
    the agent count and the actions (design-compact-work-desk Decision 3). */
 .desk-goal { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 3px; padding: 5px 0; }
 .desk-goal-main { display: grid; min-width: 0; gap: 4px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }
-.desk-goal-line1 { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+/* min-width: 0, or the grid sizes the line to the unclipped nowrap title
+   and the status spills past the panel instead of the title ellipsizing. */
+.desk-goal-line1 { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: 12px; }
 .desk-goal-main strong { min-width: 0; overflow: hidden; color: #e7eaed; font-size: 14px; font-weight: 640; line-height: 1.3; white-space: nowrap; text-overflow: ellipsis; }
 .desk-goal-status { display: inline-flex; flex: none; align-items: baseline; gap: 5px; white-space: nowrap; }
 .desk-goal-status i { color: #4d555f; font-style: normal; }

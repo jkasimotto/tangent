@@ -13,7 +13,7 @@
 // reads the real text from disk, so what the screen shows is real code by
 // construction and the model can never paste code that is not there.
 
-export const STUDY_TUTOR_PROMPT_VERSION = 1;
+export const STUDY_TUTOR_PROMPT_VERSION = 2;
 
 const MODES = new Set(["calibration", "predict-first", "worked-example"]);
 const VERDICTS = new Set(["pass", "partial", "miss"]);
@@ -111,6 +111,13 @@ ${REPLY_SCHEMA}
 - say is one short plain-text line, under 30 words.
 - question.index and question.total keep the session frame visible.
 
+The code pane. The screen shows exactly one snippet: your reveal when you
+send one, else your question's own snippet, else nothing. So:
+- Every turn that grades an answer to a hidden question must set reveal,
+  pointing at the lines your verdict.evidence quotes.
+- Never send two turns in a row with neither reveal nor question.snippet.
+  An empty pane teaches nothing.
+
 Closing. When your plan is done, or when the message "(end session)"
 arrives, reply with done true and record set: one line of facts in the
 shape "predict-first, 4 of 5 first try, Q4 missed twice". The record is a
@@ -143,6 +150,31 @@ export function studyEndMessage() {
 /** One corrective retry message, sent after a reply that did not parse. */
 export function studyRetryMessage(reason) {
   return `Your last reply was not one valid JSON object (${reason}). Send the reply again as exactly one JSON object, nothing else.`;
+}
+
+/**
+ * Reads the harness envelope `claude -p --output-format json` prints. The
+ * plain form is one result object; with verbose output on, the same flag
+ * prints the whole array of stream events instead, and the last `result`
+ * event carries the reply. Both shapes appear in the wild, so both are read.
+ * Returns { sessionId, result, error }: `result` is the tutor's raw reply
+ * text, `error` names why there is none.
+ */
+export function parseTutorEnvelope(stdout) {
+  let parsed;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch (error) {
+    return { sessionId: null, result: null, error: `the tutor printed no JSON envelope (${String(error.message ?? error)})` };
+  }
+  const events = (Array.isArray(parsed) ? parsed : [parsed]).filter((event) => event && typeof event === "object");
+  const envelope = [...events].reverse().find((event) => event.type === "result") ?? events[events.length - 1] ?? {};
+  const sessionId = envelope.session_id ?? events.find((event) => event.session_id)?.session_id ?? null;
+  if (envelope.is_error || typeof envelope.result !== "string") {
+    const said = String(envelope.result ?? envelope.error ?? "").trim() || `${envelope.type ?? "no"}/${envelope.subtype ?? "result"}`;
+    return { sessionId, result: null, error: `the tutor reported an error (${said.slice(0, 300)})` };
+  }
+  return { sessionId, result: envelope.result, error: null };
 }
 
 /**

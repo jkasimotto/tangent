@@ -66,7 +66,8 @@ async function settled(base, id, attempts = 100) {
 
 /** The stub tutor: one Node script that answers by the message it is given. */
 const STUB = `#!/usr/bin/env node
-const message = process.argv[process.argv.length - 1];
+import { readFileSync } from "node:fs";
+const message = readFileSync(0, "utf8");
 /** Prints one harness envelope with the tutor reply as its result string. */
 function say(reply) {
   process.stdout.write(JSON.stringify({ type: "result", is_error: false, session_id: "stub-1", result: JSON.stringify(reply) }));
@@ -202,6 +203,7 @@ test("an unparsable tutor reply is retried once, and a failing tutor leaves the 
   const stub = path.join(root, "stub-tutor.mjs");
   await writeFile(stub, `#!/usr/bin/env node
 import { appendFileSync, readFileSync } from "node:fs";
+readFileSync(0, "utf8");
 const counter = ${JSON.stringify(path.join(root, "calls.txt"))};
 appendFileSync(counter, "x");
 const calls = readFileSync(counter, "utf8").length;

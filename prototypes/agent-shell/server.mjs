@@ -39,7 +39,7 @@ import { deliveryDecision, messageBanner, normalizeMessage } from "./agent-messa
 import { beginGeneration, brainForArea, brainRecordForArea, brainSessionName, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, recordHandover, validateInstruction, writeBrain } from "./brain-record.mjs";
 import { appendNotice, inboxesForBrain, markDelivered, mergeNotices, noticeBlock, noticeDigest, readAllInboxes, readInbox, writeInbox } from "./brain-inbox.mjs";
 import { parseForJulian, removeForJulianLine, restoreForJulianLine } from "./for-julian.mjs";
-import { STUDY_SNIPPET_MAX_LINES, STUDY_TUTOR_PROMPT_VERSION, parseTutorReply, studyAnswerMessage, studyEndMessage, studyOpeningMessage, studyRetryMessage, studyTutorSystemPrompt } from "./study-tutor.mjs";
+import { STUDY_SNIPPET_MAX_LINES, STUDY_TUTOR_PROMPT_VERSION, parseTutorEnvelope, parseTutorReply, studyAnswerMessage, studyEndMessage, studyOpeningMessage, studyRetryMessage, studyTutorSystemPrompt } from "./study-tutor.mjs";
 import { applyAnswer, applyTutorFailure, applyTutorReply, closeStudy, latestStudy, newStudyRecord, readAllStudies, readStudy, writeStudy } from "./study-record.mjs";
 import { createSourceChangeMonitor } from "./source-change-monitor.mjs";
 import { promptArrived, splitPrompt, squash } from "./prompt-delivery.mjs";
@@ -3449,18 +3449,19 @@ async function groundStudyReply(repo, reply) {
 async function studyTutorAttempt(repo, sessionId, message) {
   const argv = ["-p", "--output-format", "json", "--model", STUDY_MODEL, "--append-system-prompt", studyTutorSystemPrompt(), "--allowedTools", STUDY_TOOLS.join(",")];
   if (sessionId) argv.push("--resume", sessionId);
-  argv.push(message);
-  let envelope;
+  let stdout;
   try {
-    const { stdout } = await execFileAsync(STUDY_TUTOR_CMD, argv, { cwd: repo, timeout: STUDY_TURN_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 });
-    envelope = JSON.parse(stdout);
+    // The message goes in on stdin, not as a positional argument: --allowedTools
+    // is variadic and swallows a trailing prompt.
+    const running = execFileAsync(STUDY_TUTOR_CMD, argv, { cwd: repo, timeout: STUDY_TURN_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 });
+    running.child.stdin.end(message);
+    ({ stdout } = await running);
   } catch (error) {
     return { reply: null, sessionId, error: `the tutor did not answer (${String(error.message ?? error).split("\n")[0]})`, retryable: false };
   }
-  const nextSession = envelope.session_id ?? sessionId;
-  if (envelope.is_error || typeof envelope.result !== "string") {
-    return { reply: null, sessionId: nextSession, error: `the tutor reported an error (${String(envelope.result ?? "no result").slice(0, 200)})`, retryable: false };
-  }
+  const envelope = parseTutorEnvelope(stdout);
+  const nextSession = envelope.sessionId ?? sessionId;
+  if (envelope.error) return { reply: null, sessionId: nextSession, error: envelope.error, retryable: false };
   try {
     return { reply: parseTutorReply(envelope.result), sessionId: nextSession, error: null, retryable: false };
   } catch (error) {

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   STUDY_TUTOR_PROMPT_VERSION,
+  parseTutorEnvelope,
   parseTutorReply,
   studyAnswerMessage,
   studyEndMessage,
@@ -25,7 +26,9 @@ test("the prompt carries the session contract Julian decided", () => {
   assert.match(prompt, /must quote the line, caller name, or test name/);
   assert.match(prompt, /exactly one JSON object and nothing else/);
   assert.match(prompt, /Never print a mastery percentage/);
-  assert.equal(STUDY_TUTOR_PROMPT_VERSION, 1);
+  assert.match(prompt, /Every turn that grades an answer to a hidden question must set reveal/);
+  assert.match(prompt, /Never send two turns in a row with neither reveal nor question\.snippet/);
+  assert.equal(STUDY_TUTOR_PROMPT_VERSION, 2);
 });
 
 test("the opening message names the subsystem, the repo, and orders the calibration probe", () => {
@@ -84,4 +87,27 @@ test("parseTutorReply throws with the failing field named", () => {
   assert.throws(() => parseTutorReply(reply({ question: { type: "guess", text: "x" } })), /question\.type is unknown/);
   assert.throws(() => parseTutorReply(reply({ question: { type: "why", text: " " } })), /question\.text is empty/);
   assert.throws(() => parseTutorReply(reply({ done: "yes" })), /done must be a boolean/);
+});
+
+test("parseTutorEnvelope reads the plain result object and the verbose event array", () => {
+  const body = reply({ mode: "predict-first" });
+  const plain = parseTutorEnvelope(JSON.stringify({ type: "result", subtype: "success", is_error: false, session_id: "a1", result: body }));
+  assert.deepEqual(plain, { sessionId: "a1", result: body, error: null });
+
+  const verbose = parseTutorEnvelope(JSON.stringify([
+    { type: "system", subtype: "init", session_id: "b2", tools: ["Read"] },
+    { type: "assistant", session_id: "b2" },
+    { type: "result", subtype: "success", is_error: false, session_id: "b2", result: body },
+  ]));
+  assert.deepEqual(verbose, { sessionId: "b2", result: body, error: null });
+});
+
+test("parseTutorEnvelope names why there is no reply, and keeps the session id", () => {
+  assert.match(parseTutorEnvelope("not json").error, /printed no JSON envelope/);
+  const failed = parseTutorEnvelope(JSON.stringify({ type: "result", subtype: "error_during_execution", is_error: true, session_id: "c3", result: "the model refused" }));
+  assert.equal(failed.sessionId, "c3");
+  assert.match(failed.error, /the model refused/);
+  const cut = parseTutorEnvelope(JSON.stringify([{ type: "system", subtype: "init", session_id: "d4" }]));
+  assert.equal(cut.sessionId, "d4", "the id survives so the next turn can resume");
+  assert.match(cut.error, /system\/init/);
 });

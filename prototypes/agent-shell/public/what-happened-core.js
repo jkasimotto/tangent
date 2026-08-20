@@ -22,11 +22,16 @@
     return closes.filter((close) => isInside(close.file.split("/").slice(0, -1).join("/"), areaPath));
   }
 
-  /** The printed name of whoever closed a Goal, from the close commit's session. */
+  /**
+   * The printed name of whoever closed a Goal, from the close commit's
+   * session. A brain session is `<areaLeaf>-brain`, `-g<N>` from generation
+   * 2, `-r<k>` on a name collision (brain-record.mjs brainSessionName), for
+   * any Area, so the match is on the suffix, not on one Area's leaf.
+   */
   function closerLabel(session) {
     if (!session) return "Julian";
-    const brain = session.match(/^tangent-brain-g(\d+)$/);
-    if (brain) return `brain g${brain[1]}`;
+    const brain = session.match(/(?:^|-)brain(?:-g(\d+))?(?:-r\d+)?$/);
+    if (brain) return brain[1] ? `brain g${brain[1]}` : "brain";
     return session.replace(/^tangent-/, "");
   }
 

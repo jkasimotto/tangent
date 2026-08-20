@@ -30,10 +30,13 @@ test("areaCloses keeps a close in the Area itself and in a descendant, drops a s
   assert.deepEqual(kept, ["otto/tangent/goal-a.md", "otto/tangent/model/goal-b.md"]);
 });
 
-test("closerLabel: Julian without a session, brain g<N>, otherwise the session without its tangent- prefix", () => {
+test("closerLabel: Julian without a session, brain g<N> for any Area's brain, otherwise the session without its tangent- prefix", () => {
   assert.equal(core.closerLabel(null), "Julian");
   assert.equal(core.closerLabel(""), "Julian");
   assert.equal(core.closerLabel("tangent-brain-g10"), "brain g10");
+  assert.equal(core.closerLabel("dnd-brain-g5"), "brain g5");
+  assert.equal(core.closerLabel("dnd-brain"), "brain");
+  assert.equal(core.closerLabel("tangent-brain-g10-r2"), "brain g10");
   assert.equal(core.closerLabel("tangent-x-s2"), "x-s2");
 });
 

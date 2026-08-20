@@ -105,22 +105,30 @@ export function parseForJulian(planText) {
 }
 
 /**
- * Removes the first line of the section that equals `line` exactly.
- * Returns { text, removed: true, index } or { text: planText, removed: false, index: -1 }.
+ * Removes the first line of the section that equals `line` exactly. A Try it
+ * entry can wrap to a second, indented line with no bullet of its own (the
+ * brain writes "two lines at most"); when the removed line is followed by
+ * one, it leaves with it, so no dangling continuation stays behind.
+ * Returns { text, removed: true, index, removedText } (removedText is the
+ * one or two removed lines, joined by "\n") or
+ * { text: planText, removed: false, index: -1, removedText: "" }.
  */
 export function removeForJulianLine(planText, line) {
   const original = String(planText ?? "");
   const wanted = String(line ?? "").trimEnd();
-  if (!wanted) return { text: original, removed: false, index: -1 };
+  if (!wanted) return { text: original, removed: false, index: -1, removedText: "" };
   const lines = original.split("\n");
   const { start, end } = sectionBody(lines, FOR_JULIAN_SECTION);
-  if (start === -1) return { text: original, removed: false, index: -1 };
+  if (start === -1) return { text: original, removed: false, index: -1, removedText: "" };
   for (let i = start; i < end; i += 1) {
     if (lines[i].trimEnd() !== wanted) continue;
-    const kept = [...lines.slice(0, i), ...lines.slice(i + 1)];
-    return { text: kept.join("\n"), removed: true, index: i - start };
+    const next = lines[i + 1];
+    const hasContinuation = i + 1 < end && next !== undefined && next.trim() !== "" && !/^\s*[-*]\s/.test(next);
+    const removedLines = hasContinuation ? [lines[i], next] : [lines[i]];
+    const kept = [...lines.slice(0, i), ...lines.slice(i + removedLines.length)];
+    return { text: kept.join("\n"), removed: true, index: i - start, removedText: removedLines.join("\n") };
   }
-  return { text: original, removed: false, index: -1 };
+  return { text: original, removed: false, index: -1, removedText: "" };
 }
 
 /**

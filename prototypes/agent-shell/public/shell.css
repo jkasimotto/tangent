@@ -230,11 +230,20 @@ summary:focus-visible {
 .attention-items .attention-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 22px; width: 100%; padding: 13px 18px; border-top: 1px solid #2c281f; }
 .attention-items .attention-row:first-child { border-top: 0; }
 .attention-items .attention-row > span:first-child { display: grid; min-width: 0; gap: 2px; }
+/* A Decision row's Read action is a button nested inside .attention-row: the
+   row already carries the padding and top border, so the nested button
+   drops its own to avoid doubling them. */
+.attention-items .attention-row > button:first-child { padding: 0; border: 0; }
+.attention-items .attention-row > button:first-child:hover { background: transparent; }
+.attention-row-actions { display: flex; align-items: center; gap: 6px; }
+.attention-row-actions .attention-tried { margin-left: 0; }
 .for-you-group > header { display: flex; align-items: center; gap: 12px; padding: 12px 18px 8px; border-top: 1px solid #383124; color: #a79776; font-size: 11px; font-weight: 690; letter-spacing: .045em; text-transform: uppercase; }
 .for-you-group:first-of-type > header { border-top: 0; }
 .for-you-group.stopped > header, .for-you-stopped { color: #7d7566; }
-.attention-tried { margin-left: auto; padding: 4px 8px; border: 1px solid #665735; border-radius: 3px; background: transparent; color: var(--amber); font-size: 11px; font-weight: 680; line-height: 1.2; cursor: pointer; }
+.attention-tried { margin-left: auto; padding: 4px 8px; border: 1px solid #665735; border-radius: 3px; background: transparent; color: var(--amber); font-size: 11px; font-weight: 680; line-height: 1.2; white-space: nowrap; cursor: pointer; }
 .attention-tried:hover { border-color: var(--amber); background: rgba(231, 198, 128, .08); }
+.attention-reply { color: #a79776; border-color: #46402f; }
+.attention-reply:hover { color: var(--amber); border-color: #665735; }
 .area-for-you { border-bottom: 1px solid #2b3037; background: #17150f; }
 
 .area-desk-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; align-items: start; }

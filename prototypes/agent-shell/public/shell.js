@@ -52,6 +52,7 @@ const state = {
   brainDraft: null,
   agentSessionName: null,
   triedLines: new Set(), // For you rows a Tried it press hid, until the next poll drops them
+  handledLines: new Set(), // For you Decision rows a Handled press hid, until the next poll drops them
   goalSelection: [], // checked Goal files in checked order; transient, work view only
   goTo: null, // the open Go to finder: { query, selected, rows, returnFocus }
   launchTarget: "",
@@ -1224,7 +1225,7 @@ function brainsWithRowsForJulian() {
 function forYouGroups() {
   return brainsWithRowsForJulian()
     .map((brain) => {
-      const rows = (brain.forJulian ?? []).filter((row) => !state.triedLines.has(row.line));
+      const rows = (brain.forJulian ?? []).filter((row) => !state.triedLines.has(row.line) && !state.handledLines.has(row.line));
       const stopped = !brain.live;
       return {
         area: brain.area,
@@ -1254,12 +1255,28 @@ function areaForYouGroups(areaPath) {
   return forYouGroups().filter((group) => core.isInside(group.area, areaPath));
 }
 
-/** One brain-written row: two lines and one action. */
+/** The file-name slug for a Decision row: the vault file without its Area path or `.md`. */
+function fileNameSlug(file) {
+  return String(file ?? "").split("/").pop().replace(/\.md$/i, "");
+}
+
+/**
+ * A small Reply button for one row: opens the brain's terminal after telling
+ * it the row's subject, so whatever Julian types next carries that context.
+ * Shown only while the brain is live; a stopped brain has no terminal to open.
+ */
+function replyButton(group, subject) {
+  if (!group.brain.live) return "";
+  return `<button class="attention-tried attention-reply" type="button" data-reply-area="${escapeHtml(group.area)}" data-reply-session="${escapeHtml(group.brain.session ?? "")}" data-reply-subject="${escapeHtml(subject)}">Reply</button>`;
+}
+
+/** One brain-written row: two lines and one or two actions. */
 function forYouRow(group, row) {
   const area = escapeHtml(group.area);
   if (row.kind === "tryit") {
-    return `<div class="attention-row"><span><strong>${escapeHtml(row.title ?? row.target ?? "")}</strong><small>${escapeHtml(row.text)}</small></span>`
-      + `<button class="attention-tried" type="button" data-tried-area="${area}" data-tried-line="${escapeHtml(row.line)}">Tried it</button></div>`;
+    const subject = row.title ?? row.target ?? "";
+    return `<div class="attention-row"><span><strong>${escapeHtml(subject)}</strong><small>${escapeHtml(row.text)}</small></span>`
+      + `<span class="attention-row-actions"><button class="attention-tried" type="button" data-tried-area="${area}" data-tried-line="${escapeHtml(row.line)}">Tried it</button>${replyButton(group, subject)}</span></div>`;
   }
   if (row.kind === "brain") {
     if (row.resume) {
@@ -1269,9 +1286,11 @@ function forYouRow(group, row) {
   }
   const facts = [row.text, row.unblocks ? `Unblocks: ${row.unblocks}` : "", row.commentCount ? `${row.commentCount} ${row.commentCount === 1 ? "comment" : "comments"} left` : ""].filter(Boolean).join(" · ");
   if (row.missing) {
-    return `<div class="attention-row"><span><strong>${escapeHtml(row.title ?? "")}</strong><small>Document missing · ${escapeHtml(row.target ?? "")} · ${escapeHtml(facts)}</small></span></div>`;
+    return `<div class="attention-row"><span><strong>${escapeHtml(row.target ?? row.title ?? "")}</strong><small>Document missing · ${escapeHtml(facts)}</small></span></div>`;
   }
-  return `<button type="button" data-open-document="${escapeHtml(row.file)}"><span><strong>${escapeHtml(row.title ?? "")}</strong><small>${escapeHtml(facts)}</small></span><span>Read <b aria-hidden="true">→</b></span></button>`;
+  const fileName = fileNameSlug(row.file);
+  return `<div class="attention-row"><button type="button" data-open-document="${escapeHtml(row.file)}"><span><strong>${escapeHtml(fileName)}</strong><small>${escapeHtml(facts)}</small></span><span>Read <b aria-hidden="true">→</b></span></button>`
+    + `<span class="attention-row-actions"><button class="attention-tried" type="button" data-decision-done-area="${area}" data-decision-done-line="${escapeHtml(row.line)}">Handled</button>${replyButton(group, fileName)}</span></div>`;
 }
 
 /** One inferred row: today's wording, for an Area no live brain covers. */
@@ -1335,14 +1354,16 @@ function deskAttentionQueue() {
 }
 
 /**
- * Drops from `state.triedLines` every line the server no longer lists, once
- * the plan commit has landed. The line is hidden only while the press is in
- * flight; a line the brain writes again later is shown again.
+ * Drops from `state.triedLines` and `state.handledLines` every line the
+ * server no longer lists, once the plan commit has landed. A line is hidden
+ * only while its press is in flight; a line the brain writes again later is
+ * shown again.
  */
-function forgetClearedTryItLines() {
-  if (!state.triedLines.size) return;
+function forgetClearedForJulianLines() {
+  if (!state.triedLines.size && !state.handledLines.size) return;
   const listed = new Set((state.brains ?? []).flatMap((brain) => (brain.forJulian ?? []).map((row) => row.line)));
   for (const line of [...state.triedLines]) if (!listed.has(line)) state.triedLines.delete(line);
+  for (const line of [...state.handledLines]) if (!listed.has(line)) state.handledLines.delete(line);
 }
 
 /**
@@ -1354,10 +1375,10 @@ async function clearTryItRow(area, line) {
   paint(true);
   try {
     const result = await post("/api/brains/tried", { area, line });
-    /** Puts the line back into the plan and on the desk. */
+    /** Puts the line (and any continuation line it left with) back into the plan and on the desk. */
     const undo = async () => {
       try {
-        await post("/api/brains/tried/undo", { area, line, index: result.index });
+        await post("/api/brains/tried/undo", { area, line: result.removedText ?? line, index: result.index });
         state.triedLines.delete(line);
         await refresh();
         paint(true);
@@ -1371,6 +1392,48 @@ async function clearTryItRow(area, line) {
     paint(true);
     showToast(error.message);
   }
+}
+
+/**
+ * Julian pressed `Handled` on a Decision row: the row goes now, the brain is
+ * told, and the plan follows. An Undo toast puts it back where it was.
+ */
+async function clearDecisionRow(area, line) {
+  state.handledLines.add(line);
+  paint(true);
+  try {
+    const result = await post("/api/brains/decision-done", { area, line });
+    /** Puts the line back into the plan; does not tell the brain again. */
+    const undo = async () => {
+      try {
+        await post("/api/brains/decision-done/undo", { area, line, index: result.index });
+        state.handledLines.delete(line);
+        await refresh();
+        paint(true);
+      } catch (error) {
+        showToast(error.message);
+      }
+    };
+    showToast("Marked handled. The brain was told.", { label: "Undo", run: undo });
+  } catch (error) {
+    state.handledLines.delete(line);
+    paint(true);
+    showToast(error.message);
+  }
+}
+
+/**
+ * Julian pressed `Reply` on one row: tells the brain the row's subject, then
+ * opens its terminal, so whatever he types next carries that context. Opens
+ * the terminal even when the notice fails to send; the reply matters more.
+ */
+async function replyAboutRow(area, session, subject) {
+  try {
+    await post("/api/brains/reply", { area, subject });
+  } catch (error) {
+    showToast(error.message);
+  }
+  openBrainSession(session);
 }
 
 /**
@@ -3070,6 +3133,7 @@ function renderKey() {
     (state.pipelines ?? []).map((item) => [item.goal, item.status, item.updatedAt, item.steps.map((step) => [step.status, step.live, step.state, step.idleSince, step.waitingSince])]),
     (state.brains ?? []).map((item) => [item.area, item.status, item.generation, item.session, item.live, item.state, item.stateDetail, item.updatedAt, (item.forJulian ?? []).map((row) => [row.line, row.commentCount, row.missing])]),
     [...state.triedLines],
+    [...state.handledLines],
     state.brainDraft,
     [state.launchTarget, state.launchAnchor, Boolean(state.harnessDraft)],
     state.sessions.map((item) => [item.name, item.goal, item.kind, item.area, item.state, item.phase, item.command, item.created, item.workTitle, item.launchLabel, item.waitingSince]),
@@ -3406,7 +3470,7 @@ async function refresh({ initial = false } = {}) {
     state.sessions = sessionPayload.sessions || [];
     state.pipelines = sessionPayload.pipelines || [];
     state.brains = sessionPayload.brains || [];
-    forgetClearedTryItLines();
+    forgetClearedForJulianLines();
     state.programs = {
       programs: programs.programs || [],
       errors: programs.errors || [],
@@ -4810,6 +4874,16 @@ document.addEventListener("click", async (event) => {
   if (triedRow) {
     event.stopPropagation();
     return clearTryItRow(triedRow.dataset.triedArea, triedRow.dataset.triedLine);
+  }
+  const decisionDoneRow = target.closest("[data-decision-done-line]");
+  if (decisionDoneRow) {
+    event.stopPropagation();
+    return clearDecisionRow(decisionDoneRow.dataset.decisionDoneArea, decisionDoneRow.dataset.decisionDoneLine);
+  }
+  const replyRow = target.closest("[data-reply-subject]");
+  if (replyRow) {
+    event.stopPropagation();
+    return replyAboutRow(replyRow.dataset.replyArea, replyRow.dataset.replySession, replyRow.dataset.replySubject);
   }
   const openBrain = target.closest("[data-open-brain]");
   if (openBrain) return openBrainSession(openBrain.dataset.openBrain);

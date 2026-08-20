@@ -251,7 +251,9 @@ test("the brain prompt tells the brain the For Julian line shapes and the rebuil
   assert.match(show.prompt, /- Try it \[\[<goal-slug>\]\]: <where to go, what to press, what he sees; two lines at most>\./, "the Try it line shape");
   assert.match(show.prompt, /- Brain: <one question that fits no Document>\./, "the Brain line shape");
   assert.match(show.prompt, /run `tangent shell rebuild` before you write its Try it line/, "the server runs the new code before Julian presses anything");
-  assert.match(show.prompt, /Julian clears Try it lines himself\. You clear Decision and Brain lines\./, "who clears which line");
+  assert.match(show.prompt, /Julian clears Try it lines himself, and can also mark a Decision line handled straight from its row/, "who clears which line");
+  assert.match(show.prompt, /Tangent sends you "Julian marked Decision <file> done"/, "the brain is told when Julian marks a Decision handled");
+  assert.match(show.prompt, /Tangent sends you "Julian is replying about: <subject>"/, "the brain is told the subject before a reply arrives");
   assert.match(show.prompt, /`tangent brain status` prints "Tangent shows N items for Julian"/, "the brain can check that its lines parsed");
   assert.match(show.prompt, /ask in the plan's For Julian section \(below\)/, "the decision rule points at the list");
   assert.doesNotMatch(show.prompt, /launchctl kickstart/, "the rebuild rule is one command, not a launchctl recipe");

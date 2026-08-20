@@ -340,11 +340,14 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.equal(group.querySelector("[data-open-brain]").dataset.openBrain, "live-edit-brain");
   const rows = [...group.querySelectorAll(".attention-items > *")];
   assert.equal(rows.length, 3);
-  assert.match(rows[0].textContent, /Live Edit collaboration design/);
+  assert.match(rows[0].textContent, /design-live-edit-collaboration/, "the Decision row leads with the Document's file name");
   assert.match(rows[0].textContent, /3 questions · Unblocks: the audit · 2 comments left/);
-  assert.equal(rows[0].dataset.openDocument, liveEditDesign.file, "Read opens the Document Julian answers in");
+  assert.equal(rows[0].querySelector("[data-open-document]").dataset.openDocument, liveEditDesign.file, "Read opens the Document Julian answers in");
+  assert.match(rows[0].textContent, /Handled/, "a Decision row can be marked handled from the row");
   assert.match(rows[1].textContent, /Tried it/);
   assert.match(rows[2].textContent, /Brain asks/);
+  assert.match(rows[0].textContent, /Reply/, "a Decision row carries a reply affordance");
+  assert.match(rows[1].textContent, /Reply/, "a Try it row carries a reply affordance too");
   assert.equal(window.forYouItems().length, 4, "the brain's three rows plus the one inferred row left");
   const brainGoalCard = window.document.querySelector(`[data-goal-anchor="${liveEditGoal.file}"]`);
   assert.ok(brainGoalCard, "the brain's Area still shows its Goal");
@@ -361,7 +364,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.equal(areaPanel.querySelector(".area-brain-line + .area-for-you"), areaPanel.querySelector(".area-for-you"), "the group sits right after the brain line, before Goal work");
   const areaRows = [...areaGroup.querySelectorAll(".attention-items > *")];
   assert.equal(areaRows.length, 3, "the Area panel shows the same three rows as the desk card");
-  assert.equal(areaRows[0].dataset.openDocument, liveEditDesign.file, "Read on the Area panel opens the same Document");
+  assert.equal(areaRows[0].querySelector("[data-open-document]").dataset.openDocument, liveEditDesign.file, "Read on the Area panel opens the same Document");
   assert.equal(areaGroup.querySelector("[data-open-brain]").dataset.openBrain, "live-edit-brain", "Reply to brain also works from the Area panel");
 
   // With an agent on it, the pane is static because the brain has not read it

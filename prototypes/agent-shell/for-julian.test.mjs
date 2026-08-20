@@ -86,9 +86,34 @@ test("removeForJulianLine removes only the first equal line and leaves the rest 
 });
 
 test("removeForJulianLine reports removed false for an unknown line", () => {
-  assert.deepEqual(removeForJulianLine(PLAN, "- Try it [[goal-other]]: nothing."), { text: PLAN, removed: false, index: -1 });
-  assert.deepEqual(removeForJulianLine(PLAN, ""), { text: PLAN, removed: false, index: -1 });
+  assert.deepEqual(removeForJulianLine(PLAN, "- Try it [[goal-other]]: nothing."), { text: PLAN, removed: false, index: -1, removedText: "" });
+  assert.deepEqual(removeForJulianLine(PLAN, ""), { text: PLAN, removed: false, index: -1, removedText: "" });
   assert.equal(removeForJulianLine("# Plan\n", "- Brain: x").removed, false);
+});
+
+test("removeForJulianLine drops a Try it entry's indented continuation line with it", () => {
+  const first = "- Try it [[goal-timeline]]: open the Tangent Area view.";
+  const continuation = "  Your Decision and Try it rows now sit under the brain line; Read opens the Document.";
+  const plan = [
+    "# Plan for otto/tangent",
+    "",
+    "## For Julian",
+    "",
+    "- Decision [[design-x]]: 5 questions.",
+    first,
+    continuation,
+    "- Brain: one question.",
+    "",
+    "## Later",
+    "",
+  ].join("\n");
+  const result = removeForJulianLine(plan, first);
+  assert.equal(result.removed, true);
+  assert.equal(result.removedText, `${first}\n${continuation}`);
+  assert.equal(result.text.includes(continuation), false, "the continuation line does not dangle");
+  assert.deepEqual(parseForJulian(result.text).map((row) => row.kind), ["decision", "brain"]);
+  // Undo restores both lines together.
+  assert.equal(restoreForJulianLine(result.text, result.removedText, result.index), plan);
 });
 
 test("restoreForJulianLine puts the line back at its index", () => {

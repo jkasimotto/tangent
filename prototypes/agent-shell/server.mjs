@@ -2640,7 +2640,7 @@ async function brainPrompt(record) {
     `- Decision [[<document>]]: <what it asks, one line>. Unblocks: <what your answer unblocks>.\n` +
     `- Try it [[<goal-slug>]]: <where to go, what to press, what he sees; two lines at most>.\n` +
     `- Brain: <one question that fits no Document>.\n` +
-    `Write a Decision line only for a Document with open questions or recommendations that need his word. A recommendation he does not need to see never goes on the list. When Julian comments on a listed Document, Tangent sends you "Julian commented on <file> (N open comments)". Read the comments, act, resolve them, then remove the line and commit the plan. Julian may also answer in this session. If a closed Goal changes what Julian sees or presses in Tangent, run \`tangent shell rebuild\` before you write its Try it line. The command rebuilds, restarts the server, and returns when the new boot answers, so the keys work the first time he presses them. Julian clears Try it lines himself. You clear Decision and Brain lines. \`tangent brain status\` prints "Tangent shows N items for Julian" and the rows, so you can check that your lines parsed.\n\n` +
+    `Write a Decision line only for a Document with open questions or recommendations that need his word. A recommendation he does not need to see never goes on the list. When Julian comments on a listed Document, Tangent sends you "Julian commented on <file> (N open comments)". Read the comments, act, resolve them, then remove the line and commit the plan. Julian may also answer in this session. If a closed Goal changes what Julian sees or presses in Tangent, run \`tangent shell rebuild\` before you write its Try it line. The command rebuilds, restarts the server, and returns when the new boot answers, so the keys work the first time he presses them. Julian clears Try it lines himself, and can also mark a Decision line handled straight from its row; when he does, Tangent sends you "Julian marked Decision <file> done" and the line is already gone from the plan, so treat that as his answer and do not write it again unless a new question comes up. You still remove a Decision line yourself once your reading of his comments answers it, and you always clear Brain lines. When Julian presses Reply on a row before opening this terminal, Tangent sends you "Julian is replying about: <subject>" first, so read that as the topic of what he types next. \`tangent brain status\` prints "Tangent shows N items for Julian" and the rows, so you can check that your lines parsed.\n\n` +
     `## When to hand over\n\n` +
     `Before every handover, sweep \`tangent goal list ${area}\` and \`tangent agent list\` for any Goal whose pipeline finished and close it (\`tangent goal done <slug>\` or \`tangent goal wont-do <slug> --reason "..."\`); a finished Goal left waiting is a failure, never something to hand off to the next generation. Then, at a natural pause, after a wave is dispatched or a batch of results is processed, and always when Tangent reminds you, write the plan status and run \`tangent brain handover "<facts>"\`: what runs (Goal, step, session), what waits and why, decisions taken, what the next generation should do first. Facts, no narrative. A fresh copy of you starts from the plan and those facts, and this session ends.`
   );
@@ -2863,10 +2863,10 @@ async function clearTryItLine(area, line) {
   const row = parseForJulian(current.text).find((item) => item.line.trimEnd() === String(line).trimEnd());
   if (!row) return { status: 404, error: "the plan has no such line" };
   if (row.kind !== "tryit") return { status: 400, error: "only a Try it line leaves this way" };
-  const { text, removed, index } = removeForJulianLine(current.text, line);
+  const { text, removed, index, removedText } = removeForJulianLine(current.text, line);
   if (!removed) return { status: 404, error: "the plan has no such line" };
   await writeVaultDocument(current, text, `update: ${area} plan tried it ${row.target}`);
-  return { status: 200, line: row.line, index };
+  return { status: 200, line: row.line, removedText, index };
 }
 
 /** Puts one cleared Try it line back where it was, for the undo toast. */
@@ -2879,6 +2879,55 @@ async function restoreTryItLine(area, line, index) {
   const text = restoreForJulianLine(current.text, line, index);
   const row = parseForJulian(text).find((item) => item.line.trimEnd() === String(line).trimEnd());
   await writeVaultDocument(current, text, `update: ${area} plan restore try it ${row?.target ?? "row"}`);
+  return { status: 200 };
+}
+
+/**
+ * Julian marked one Decision row handled from the row itself: the line
+ * leaves the plan's `## For Julian` section, the plan is committed, and the
+ * Area's brain is told, since it is the brain that would otherwise remove
+ * this line once it had what it needed. The brain need not be live.
+ */
+async function clearDecisionLine(area, line) {
+  const record = await brainOfArea(area);
+  if (!record) return { status: 404, error: `no brain on ${area || "(none)"}` };
+  if (!String(line ?? "").trim()) return { status: 400, error: "no line" };
+  const current = await readVaultDocument(record.planFile);
+  if (!current) return { status: 404, error: `no plan ${record.planFile}` };
+  const row = parseForJulian(current.text).find((item) => item.line.trimEnd() === String(line).trimEnd());
+  if (!row) return { status: 404, error: "the plan has no such line" };
+  if (row.kind !== "decision") return { status: 400, error: "only a Decision line leaves this way" };
+  const { text, removed, index } = removeForJulianLine(current.text, line);
+  if (!removed) return { status: 404, error: "the plan has no such line" };
+  await writeVaultDocument(current, text, `update: ${area} plan decision ${row.target} handled`);
+  await notifyBrain(area, `Julian marked Decision ${row.target} done`);
+  return { status: 200, line: row.line, index };
+}
+
+/** Puts one cleared Decision line back where it was, for the undo toast. */
+async function restoreDecisionLine(area, line, index) {
+  const record = await brainOfArea(area);
+  if (!record) return { status: 404, error: `no brain on ${area || "(none)"}` };
+  if (!String(line ?? "").trim()) return { status: 400, error: "no line" };
+  const current = await readVaultDocument(record.planFile);
+  if (!current) return { status: 404, error: `no plan ${record.planFile}` };
+  const text = restoreForJulianLine(current.text, line, index);
+  const row = parseForJulian(text).find((item) => item.line.trimEnd() === String(line).trimEnd());
+  await writeVaultDocument(current, text, `update: ${area} plan restore decision ${row?.target ?? "row"}`);
+  return { status: 200 };
+}
+
+/**
+ * Tells the Area's brain which For-you row Julian is about to reply to,
+ * right before he opens its terminal, so whatever he types next is read
+ * with that row's subject already named.
+ */
+async function noteReplySubject(area, subject) {
+  const record = await brainOfArea(area);
+  if (!record) return { status: 404, error: `no brain on ${area || "(none)"}` };
+  const clean = String(subject ?? "").trim();
+  if (!clean) return { status: 400, error: "no subject" };
+  await notifyBrain(area, `Julian is replying about: ${clean}`);
   return { status: 200 };
 }
 
@@ -3379,7 +3428,7 @@ const server = http.createServer(async (req, res) => {
       try { body = JSON.parse(await readBody(req)); } catch {}
       const result = await clearTryItLine(String(body.area ?? ""), String(body.line ?? ""));
       res.writeHead(result.status, { "content-type": "application/json" });
-      res.end(JSON.stringify(result.status === 200 ? { ok: true, line: result.line, index: result.index } : { error: result.error }));
+      res.end(JSON.stringify(result.status === 200 ? { ok: true, line: result.line, removedText: result.removedText, index: result.index } : { error: result.error }));
       return;
     }
     // The undo of that press: the row goes back where it was.
@@ -3387,6 +3436,33 @@ const server = http.createServer(async (req, res) => {
       let body = {};
       try { body = JSON.parse(await readBody(req)); } catch {}
       const result = await restoreTryItLine(String(body.area ?? ""), String(body.line ?? ""), Number(body.index ?? 0));
+      res.writeHead(result.status, { "content-type": "application/json" });
+      res.end(JSON.stringify(result.status === 200 ? { ok: true } : { error: result.error }));
+      return;
+    }
+    // Julian marked a Decision row handled: the line leaves the plan and the brain is told.
+    if (url.pathname === "/api/brains/decision-done" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      const result = await clearDecisionLine(String(body.area ?? ""), String(body.line ?? ""));
+      res.writeHead(result.status, { "content-type": "application/json" });
+      res.end(JSON.stringify(result.status === 200 ? { ok: true, line: result.line, index: result.index } : { error: result.error }));
+      return;
+    }
+    // The undo of that press: the Decision row goes back where it was.
+    if (url.pathname === "/api/brains/decision-done/undo" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      const result = await restoreDecisionLine(String(body.area ?? ""), String(body.line ?? ""), Number(body.index ?? 0));
+      res.writeHead(result.status, { "content-type": "application/json" });
+      res.end(JSON.stringify(result.status === 200 ? { ok: true } : { error: result.error }));
+      return;
+    }
+    // Julian pressed Reply on one row: the brain is told its subject before he opens its terminal.
+    if (url.pathname === "/api/brains/reply" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      const result = await noteReplySubject(String(body.area ?? ""), String(body.subject ?? ""));
       res.writeHead(result.status, { "content-type": "application/json" });
       res.end(JSON.stringify(result.status === 200 ? { ok: true } : { error: result.error }));
       return;

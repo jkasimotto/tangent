@@ -47,13 +47,21 @@
       .join(" ");
   }
 
+  /** The normalized file-name slug for a row's file: the basename, no extension. */
+  function fileSlug(file) {
+    const base = String(file ?? "").split("/").pop() ?? "";
+    return normalizedSearchText(base.replace(/\.md$/i, ""));
+  }
+
   /**
    * Ranks the finder's rows against one typed query. Every typed word must be
-   * a substring of the normalized name, kind word, or Area path, so Julian can
-   * predict the result from his own words. A live brain ranks before other
-   * rows of the same tier, because a brain record's updatedAt is its start
-   * time and a newer Document would otherwise push a working brain down.
-   * Without a query the list is the live brains first, then the newest change.
+   * a substring of the normalized name, kind word, Area path, or file-name
+   * slug, so Julian can predict the result from his own words and can find a
+   * Document by its file name even when the title differs. A live brain ranks
+   * before other rows of the same tier, because a brain record's updatedAt is
+   * its start time and a newer Document would otherwise push a working brain
+   * down. Without a query the list is the live brains first, then the newest
+   * change.
    */
   function matchRows(rows, query, limit) {
     const words = normalizedSearchText(query).split(" ").filter(Boolean);
@@ -70,13 +78,15 @@
       const joinedName = name.replaceAll(" ", "");
       const area = normalizedSearchText(row.area);
       const joinedArea = area.replaceAll(" ", "");
+      const slug = fileSlug(row.file);
+      const joinedSlug = slug.replaceAll(" ", "");
       const bareName = normalizedSearchText(row.name);
       let keep = true;
       let allInName = true;
       for (const word of words) {
         const inName = name.includes(word) || joinedName.includes(word);
         if (!inName) allInName = false;
-        if (!inName && !area.includes(word) && !joinedArea.includes(word)) {
+        if (!inName && !area.includes(word) && !joinedArea.includes(word) && !slug.includes(word) && !joinedSlug.includes(word)) {
           keep = false;
           break;
         }
@@ -122,7 +132,7 @@
 
   const api = {
     RETURN_POINT_KEYS,
-    normalizedSearchText, matchRows,
+    normalizedSearchText, fileSlug, matchRows,
     returnPointFrom, returnPointLabel,
   };
   root.AgentShellGoTo = api;

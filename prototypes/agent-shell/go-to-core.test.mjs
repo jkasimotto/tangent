@@ -42,6 +42,27 @@ test("every typed word must match", () => {
   assert.deepEqual(core.matchRows(rows, "right map", 12), []);
 });
 
+test("fileSlug takes the basename without extension", () => {
+  assert.equal(core.fileSlug("otto/tangent/design-done-goals-timeline.md"), "design done goals timeline");
+  assert.equal(core.fileSlug(undefined), "");
+});
+
+test("a file-name slug finds a Document whose title differs", () => {
+  const rows = [
+    row({ name: "The timeline: what got done and what happened, day by day", file: "otto/tangent/design-done-goals-timeline.md" }),
+    row({ name: "Area map", file: "otto/tangent/design-area-map.md" }),
+  ];
+  assert.deepEqual(names(core.matchRows(rows, "design-done-goals", 12)), ["The timeline: what got done and what happened, day by day"]);
+});
+
+test("a title match ranks above a file-name-slug-only match", () => {
+  const rows = [
+    row({ name: "Design", file: "otto/tangent/plan-x.md", changedAt: 1 }),
+    row({ name: "Other", file: "otto/tangent/design-x.md", changedAt: 9 }),
+  ];
+  assert.deepEqual(names(core.matchRows(rows, "design", 12)), ["Design", "Other"]);
+});
+
 test("an Area word narrows two rows of the same name", () => {
   const rows = [row({ name: "Design", area: "otto/tangent" }), row({ name: "Design", area: "neara/pgande" })];
   const matched = core.matchRows(rows, "design tangent", 12);

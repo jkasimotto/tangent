@@ -191,12 +191,25 @@
     return panels;
   }
 
+  /**
+   * Desk order of panels (design-area-map, recently-worked-areas-sort-to-
+   * the-top): a panel with an agent working now sorts first; among the
+   * rest, most recent Goal or vault activity wins; ties keep path order.
+   * `activityOf(panel)` returns `{ working, mtime }` for one panel record.
+   */
+  function orderPanels(panels, activityOf) {
+    return [...panels].sort((left, right) => {
+      const l = activityOf(left), r = activityOf(right);
+      return (r.working ? 1 : 0) - (l.working ? 1 : 0) || (r.mtime ?? 0) - (l.mtime ?? 0);
+    });
+  }
+
   const api = {
     KNOWN_KINDS, KIND_ORDER, MULTIWORD_PREFIXES,
     prefixOf, stemOf, assignKinds, kindLabel, orderKinds,
     recencyOpacity, relativeDay,
     goalIsOpen, goalAttentionRank, orderGoals, orderDocuments,
-    isInside, parentOf, childrenOf, subAreaOf, deskPanels,
+    isInside, parentOf, childrenOf, subAreaOf, deskPanels, orderPanels,
   };
   root.AgentShellAreaMap = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

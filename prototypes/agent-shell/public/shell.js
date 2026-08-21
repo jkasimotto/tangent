@@ -1082,12 +1082,38 @@ function deskAreaState(path, trees, descriptions) {
 }
 
 /**
+ * Whether a live session anywhere in a desk panel (its own Area or its
+ * nested sections) is presently working, and the latest Goal or Document
+ * change across them (recently-worked-areas-sort-to-the-top). Panels order
+ * by this: working now first, then most recent activity.
+ */
+function panelActivity(record) {
+  const parts = [
+    { trees: record.trees, descriptions: record.descriptions, documents: record.area?.documents ?? [] },
+    ...record.sections.map((section) => ({ trees: section.trees, descriptions: section.descriptions, documents: section.area?.documents ?? [] })),
+  ];
+  let working = false;
+  let mtime = 0;
+  for (const part of parts) {
+    const goals = part.trees.flatMap((tree) => tree.goals);
+    const sessions = [...goals.map(sessionForGoal).filter(Boolean), ...part.descriptions];
+    if (sessions.some((session) => session.state === "working")) working = true;
+    for (const goal of goals) mtime = Math.max(mtime, goal.changedAt ?? goal.mtime ?? 0);
+    for (const doc of part.documents) mtime = Math.max(mtime, doc.changedAt ?? doc.mtime ?? 0);
+  }
+  return { working, mtime };
+}
+
+/**
  * Groups the Areas with open work into desk panels, sub-Areas nested inside
  * as sections (design-area-map Decision 1). An Area needs its own Goal
  * trees or a live "Describe work" session to earn a panel or a section this
  * way. An Area with only Documents and no goal-bearing ancestor already on
  * the desk still gets its own flat panel, as before Decision 1: the desk
  * must not go quiet on a subject that has notes but no open Goal yet.
+ * Panels order by recent work, not path (recently-worked-areas-sort-to-
+ * the-top): an Area with an agent working now first, then most recent
+ * Goal or vault activity.
  */
 function deskAreas() {
   const trees = filteredGoalTrees(goalTrees().filter((tree) => goalTreeState(tree) !== "closed"));
@@ -1124,9 +1150,8 @@ function deskAreas() {
       if (panels.some((panel) => core.isInside(area.path, panel.area.path))) continue;
       panels.push({ area, trees: [], descriptions: [], sections: [], programs: state.programs.programs.filter((program) => program.area === area.path) });
     }
-    panels.sort((left, right) => left.area.path.localeCompare(right.area.path));
   }
-  return panels.map((record, index) => ({ ...record, index }));
+  return core.orderPanels(panels, panelActivity).map((record, index) => ({ ...record, index }));
 }
 
 /**

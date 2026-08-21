@@ -370,14 +370,14 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.equal(brainGoalCard.classList.contains("waiting"), false, "a brain-run Goal keeps no amber");
   assert.match(brainGoalCard.className, /\bready\b/, "with no agent on it, the Goal is simply ready");
 
-  // The same three rows, with the same actions, sit under the Area's own
-  // brain line on its panel: Julian decides there without the desk-wide card
+  // The same three rows, with the same actions, sit right on the Area's own
+  // panel: Julian decides there without the desk-wide card
   // (goal-decisions-show-on-the-area-view-not-just-a-count).
   const areaPanel = window.document.querySelector(`.area-desk-panel[data-desk-area="${liveEditGoal.area}"]`);
   assert.ok(areaPanel, "the Live Edit Area has its own panel");
   const areaGroup = areaPanel.querySelector(".area-for-you .for-you-group");
-  assert.ok(areaGroup, "the Area panel gets the brain's group directly under its brain line");
-  assert.equal(areaPanel.querySelector(".area-brain-line + .area-for-you"), areaPanel.querySelector(".area-for-you"), "the group sits right after the brain line, before Goal work");
+  assert.ok(areaGroup, "the Area panel gets the brain's group directly under its header");
+  assert.equal(areaPanel.querySelector(".area-desk-header + .area-for-you"), areaPanel.querySelector(".area-for-you"), "the group sits right after the header, before Goal work");
   const areaRows = [...areaGroup.querySelectorAll(".attention-items > *")];
   assert.equal(areaRows.length, 3, "the Area panel shows the same three rows as the desk card");
   assert.equal(areaRows[0].querySelector("[data-open-document]").dataset.openDocument, liveEditDesign.file, "Read on the Area panel opens the same Document");
@@ -396,7 +396,6 @@ test("the live shell restores context, defines work with an agent, and organizes
   reviewAgentStarted = beforeAgent;
   await window.refresh();
   await settle(window);
-  assert.match(window.document.querySelector(".area-brain-line strong").textContent, /3 for you/, "the brain line counts what it asked of Julian");
   assert.equal(dockBadges.at(-1), 4, "the Dock badge counts what the brain wrote too");
 
   // Tried it clears one Try it row, and the plan is the store: the next poll
@@ -1203,7 +1202,6 @@ test("the Area card brain icon starts, shows, and resumes the Area brain", async
   const icon = () => window.document.querySelector("[data-brain-area='otto/dnd']");
   assert.ok(icon(), "the Area card carries a brain icon");
   assert.ok(icon().classList.contains("none"));
-  assert.equal(window.document.querySelector(".area-brain-line"), null, "no brain line without a brain");
   click(window, "[data-brain-area='otto/dnd']");
   await settle(window);
   await settle(window);
@@ -1234,7 +1232,7 @@ test("the Area card brain icon starts, shows, and resumes the Area brain", async
   assert.equal(started.body.instruction, "Ship the map and every leaf under it.");
   assert.deepEqual(started.body.choice, { harness: "claude", model: "sonnet-5" });
   assert.equal(started.body.resume, false);
-  // The terminal view opened on the brain session; back on the desk the icon is live and the line shows generation 1.
+  // The terminal view opened on the brain session; back on the desk the icon is live.
   assert.ok(window.document.querySelector("#describe-work-terminal[data-session='dnd-brain']"), "the brain terminal opened");
   window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   await settle(window);
@@ -1243,10 +1241,6 @@ test("the Area card brain icon starts, shows, and resumes the Area brain", async
   await settle(window);
   assert.ok(icon(), "the desk shows the card again");
   assert.ok(icon().classList.contains("working"), "the icon carries the brain's state");
-  const line = window.document.querySelector(".area-brain-line");
-  assert.ok(line, "the card shows the brain line");
-  assert.match(line.textContent, /Brain · generation 1 · Brain working/);
-  assert.equal(line.dataset.openBrain, "dnd-brain");
   // Clicking the icon of a live brain opens its terminal, not the popover.
   click(window, "[data-brain-area='otto/dnd']");
   await settle(window);
@@ -1254,14 +1248,13 @@ test("the Area card brain icon starts, shows, and resumes the Area brain", async
   assert.ok(window.document.querySelector("#describe-work-terminal[data-session='dnd-brain']"));
   click(window, "#back-button");
   await settle(window);
-  // The brain stopped: the icon is dim again, the line says so, and the popover offers Resume with the old instruction.
+  // The brain stopped: the icon is dim again, and the popover offers Resume with the old instruction.
   brain = { ...brain, status: "stopped", live: false, state: null, latestHandover: "Wave 1 dispatched.\nNext: review.", updatedAt: "t-stopped" };
   sessions = [];
   click(window, "#menu-refresh");
   await settle(window);
   await settle(window);
   assert.ok(icon().classList.contains("stopped"), `stopped icon, got ${icon().className}`);
-  assert.match(window.document.querySelector(".area-brain-line").textContent, /Brain stopped after generation 1/);
   click(window, "[data-brain-area='otto/dnd']");
   await settle(window);
   await settle(window);

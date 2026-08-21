@@ -704,18 +704,6 @@ function deskBrainButton(areaPath) {
   return `<button class="area-brain ${kind}${open ? " open" : ""}" type="button" data-launch-for="${BRAIN_LAUNCH_TARGET}" data-brain-area="${escapeHtml(areaPath)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}" aria-expanded="${open}"><span aria-hidden="true">🧠</span></button>`;
 }
 
-/** One line under the Area card header: generation, state, latest handover. */
-function deskBrainLine(areaPath) {
-  const brain = brainForAreaCard(areaPath);
-  if (!brain) return "";
-  const handover = String(brain.latestHandover ?? "").split("\n")[0].trim();
-  if (brain.live) {
-    const forJulian = (brain.forJulian ?? []).length;
-    return `<button class="area-brain-line ${brainKind(brain)}" type="button" data-open-brain="${escapeHtml(brain.session)}" title="Open the brain"><strong>Brain · generation ${brain.generation} · ${escapeHtml(brainStateLabel(brain))}${forJulian ? ` · ${forJulian} for you` : ""}</strong>${handover ? `<span>${escapeHtml(handover)}</span>` : ""}</button>`;
-  }
-  return `<p class="area-brain-line ${brainKind(brain)}"><strong>${escapeHtml(brainStateLabel(brain))} after generation ${brain.generation}</strong><span>Resume or start over from the brain icon.</span></p>`;
-}
-
 /** Opens the brain's terminal in the same view as a describe-work agent. */
 function openBrainSession(name) {
   const session = brainSessions().find((item) => item.name === name);
@@ -1729,7 +1717,6 @@ function deskAreaPanel(record, position, maxElapsedMs = 0) {
         <button class="area-desk-what-happened" type="button" data-what-happened-for="${escapeHtml(area.path)}" aria-haspopup="dialog" aria-expanded="${state.whatHappened?.area === area.path}">What happened</button>
         ${deskBrainButton(area.path)}
       </header>
-      ${deskBrainLine(area.path)}
       ${areaForYouSection(area.path)}
       <div class="area-desk-body">
         ${descriptions.length ? `<section class="area-desk-section definitions"><div class="area-desk-section-heading"><h3>Dispatches</h3><span>${descriptions.length}</span></div>${descriptions.map(deskDefinitionRow).join("")}</section>` : ""}

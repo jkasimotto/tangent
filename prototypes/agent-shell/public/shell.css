@@ -328,9 +328,13 @@ button.area-brain-line:hover { background: #191d22; }
 .desk-goal-status i { color: #4d555f; font-style: normal; }
 .desk-step-line { color: #737d88; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 760; letter-spacing: .08em; text-transform: uppercase; }
 .desk-goal-line2 { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
-/* The bar: worked (blue) against the current wait (amber, or gray under a
-   live brain), composition not magnitude (design-compact-work-desk
-   Decisions 1 and 2). The agent count is the only fact left as text. */
+/* The bar: its drawn length (worked plus waiting) encodes elapsed time
+   relative to the longest-elapsed Goal on the desk (Julian's word,
+   2026-08-20: a bar that was always full made every running Goal look
+   identical); worked (blue) splits from the current wait (amber, or gray
+   under a live brain) inside that length (design-compact-work-desk
+   Decisions 1 and 2). Undrawn track stays the container's background. The
+   agent count is the only fact left as text. */
 .desk-goal-bar-group { display: inline-flex; min-width: 0; align-items: center; gap: 8px; }
 .desk-goal-bar { display: inline-flex; width: 84px; height: 6px; overflow: hidden; border-radius: 3px; background: #262b31; flex: none; }
 .desk-goal-bar-worked { display: block; height: 100%; background: var(--blue); }

@@ -147,13 +147,15 @@
   }
 
   /**
-   * The bar's two shares: worked (blue) against the current wait (amber, or
-   * gray under a live brain). Composition, not magnitude (the bar is always
-   * full; design-compact-work-desk Decision 2), split at the start of the
-   * current wait, the only split the records can answer (Decision 1). A
-   * wait whose start the server lost draws a minimum sliver rather than
-   * nothing, so it still reads as a wait. Returns null when no agent has
-   * started, so the card shows text instead of an empty bar.
+   * The bar's two shares within its drawn length: worked (blue) against the
+   * current wait (amber, or gray under a live brain). Composition of the
+   * Goal's own elapsed time, split at the start of the current wait, the
+   * only split the records can answer (Decision 1); the bar's overall drawn
+   * length is a separate question (elapsedLengthShare, Decision 2) and does
+   * not change this ratio. A wait whose start the server lost draws a
+   * minimum sliver rather than nothing, so it still reads as a wait.
+   * Returns null when no agent has started, so the card shows text instead
+   * of an empty bar.
    */
   function factsBarShares(facts, now, { waitsForBrain = false } = {}) {
     if (!facts.startedAt) return null;
@@ -163,5 +165,25 @@
     return { workedShare: 1 - waitShare, waitShare, waitKind: waitsForBrain ? "fact" : "waiting" };
   }
 
-  root.AgentShellGoalCard = { durationLabel, goalCardFacts, factsSegments, factsBarShares };
+  /**
+   * The bar's drawn length as a share (0..1) of its track, relative to the
+   * longest-elapsed Goal on the desk right now, on a sqrt curve so a young
+   * Goal still draws a visible sliver next to an old one (Decision 2,
+   * Julian's word 2026-08-20: a bar that is always full made every running
+   * Goal look identical, the opposite of the ask). Sqrt, not log: a desk of
+   * hours-to-weeks-old Goals spans most of the track under sqrt, where log
+   * squeezes every age past a few hours into the top third, near-identical
+   * again; sqrt is also unit-free, log needs an arbitrary unit choice. A
+   * floor keeps a just-started Goal at a visible nub. 1 when this Goal is
+   * the longest-elapsed one, or when there is nothing yet to compare it to.
+   */
+  function elapsedLengthShare(elapsedMs, maxElapsedMs) {
+    const elapsed = Math.max(0, Number(elapsedMs) || 0);
+    const max = Math.max(0, Number(maxElapsedMs) || 0);
+    if (max <= 0) return elapsed > 0 ? 1 : 0;
+    if (elapsed <= 0) return 0;
+    return Math.min(1, Math.max(0.05, Math.sqrt(elapsed / max)));
+  }
+
+  root.AgentShellGoalCard = { durationLabel, goalCardFacts, factsSegments, factsBarShares, elapsedLengthShare };
 })(typeof globalThis !== "undefined" ? globalThis : this);

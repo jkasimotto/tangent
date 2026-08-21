@@ -1068,8 +1068,9 @@ function searchResults(query) {
   const matchingAreaPanels = matchingAreas.map((area) => deskRecords.get(area.path)).filter(Boolean);
   const count = goals.length + documents.length + matchingAreas.length;
   if (!count) return `<div class="empty-state">No Goals, Documents, or Areas match “${escapeHtml(query)}”.</div>`;
+  const maxElapsedMs = deskMaxElapsedMs(matchingAreaPanels, Date.now());
   return `
-    ${matchingAreaPanels.length ? `<section class="area-desk-grid search-area-results" aria-label="Matching Areas">${matchingAreaPanels.map(deskAreaPanel).join("")}</section>` : ""}
+    ${matchingAreaPanels.length ? `<section class="area-desk-grid search-area-results" aria-label="Matching Areas">${matchingAreaPanels.map((record, position) => deskAreaPanel(record, position, maxElapsedMs)).join("")}</section>` : ""}
     ${documents.length ? `<section class="work-section"><div class="section-heading"><h2>Documents</h2><span>${documents.length}</span></div><div class="search-result-list">${documents.map(documentSearchCard).join("")}</div></section>` : ""}
     ${goals.length ? workSection("Goals", goals, "", String(goals.length)) : ""}
     ${matchingAreas.length && !matchingAreaPanels.length ? `<section class="work-section"><div class="section-heading"><h2>Areas</h2><span>${matchingAreas.length}</span></div><div class="search-result-list">${matchingAreas.map((area) => `<button class="search-result-card" type="button" data-open-area="${escapeHtml(area.path)}"><span><span class="search-result-kind">Area</span><strong>${escapeHtml(areaLabel(area.path))}</strong><small>${escapeHtml(clip(area.purpose || area.path, 160))}</small></span><span aria-hidden="true">→</span></button>`).join("")}</div></section>` : ""}`;
@@ -1526,25 +1527,53 @@ function deskGoalFacts(facts, names, now) {
 }
 
 /**
- * The bar: worked time (blue) against the current wait (amber, or gray under
- * a live brain: it waits for the brain, not for Julian), split at the start
- * of the current wait, the only split the records can answer. Always full:
- * shares, not age (design-compact-work-desk Decisions 1 and 2). The hover
- * title carries the exact words and the start time; a Goal nobody has
- * started draws no bar.
+ * The bar: its drawn length encodes total elapsed time relative to the
+ * longest-elapsed Goal on the desk right now, on a sqrt curve (Decision 2,
+ * Julian's word 2026-08-20: a bar that was always full made every running
+ * Goal look identical). Within that length, worked time (blue) splits from
+ * the current wait (amber, or gray under a live brain: it waits for the
+ * brain, not for Julian) at the start of the wait, the only split the
+ * records can answer (Decision 1). The hover title carries the exact words
+ * and the start time; a Goal nobody has started draws no bar.
  */
-function deskGoalBar(goal, facts, now) {
+function deskGoalBar(goal, facts, now, maxElapsedMs) {
   const core = window.AgentShellGoalCard;
   if (!core || !facts) return "";
   const shares = core.factsBarShares(facts, now, { waitsForBrain: goalCoveredByBrain(goal) });
   if (!shares) return "";
+  const lengthShare = core.elapsedLengthShare(now - facts.startedAt, maxElapsedMs);
   const words = core.factsSegments(facts, now).filter((segment) => segment.kind !== "agents").map((segment) => segment.text).join(" · ");
   const started = facts.startedAt ? `Started ${new Date(facts.startedAt).toLocaleString()}` : "";
   const title = [words, started].filter(Boolean).join("\n");
   return `<span class="desk-goal-bar" title="${escapeHtml(title)}" role="img" aria-label="${escapeHtml(words || "no agent yet")}">
-    <i class="desk-goal-bar-worked" style="width:${(shares.workedShare * 100).toFixed(2)}%"></i>
-    ${facts.waiting ? `<i class="desk-goal-bar-wait ${shares.waitKind}" style="width:${(shares.waitShare * 100).toFixed(2)}%"></i>` : ""}
+    <i class="desk-goal-bar-worked" style="width:${(shares.workedShare * lengthShare * 100).toFixed(2)}%"></i>
+    ${facts.waiting ? `<i class="desk-goal-bar-wait ${shares.waitKind}" style="width:${(shares.waitShare * lengthShare * 100).toFixed(2)}%"></i>` : ""}
   </span>`;
+}
+
+/**
+ * The longest elapsed time (first start to now) among every Goal this paint
+ * of the desk will draw a bar for, so every bar's length can be scaled to it
+ * (deskGoalBar, Decision 2). Walks the same records, sections, and trees the
+ * desk renders from; a Goal outside this pass (a different filter, a
+ * collapsed section) is not part of the scale it did not draw into.
+ */
+function deskMaxElapsedMs(records, now) {
+  let max = 0;
+  /** Folds every started Goal of one list of Goal trees into the max. */
+  const scanTrees = (trees) => {
+    for (const tree of trees ?? []) {
+      for (const goal of tree.goals ?? []) {
+        const startedAt = deskGoalFactsData(goal).facts?.startedAt;
+        if (startedAt) max = Math.max(max, now - startedAt);
+      }
+    }
+  };
+  for (const record of records ?? []) {
+    scanTrees(record.trees);
+    for (const section of record.sections ?? []) scanTrees(section.trees);
+  }
+  return max;
 }
 
 /**
@@ -1575,7 +1604,7 @@ function deskGoalSecondaryActions(goal, liveSession) {
  * Decision 3). The kicker and the Documents chip are gone; a Subgoal reads
  * from its indent and smaller title under the `To do that` disclosure.
  */
-function deskGoalRow(goal, { subgoal = false } = {}) {
+function deskGoalRow(goal, { subgoal = false, maxElapsedMs = 0 } = {}) {
   const pipeline = pipelineForGoal(goal);
   const record = pipelineRecordForGoal(goal);
   const action = pipeline ? deskPipelineAction(goal, pipeline) : deskGoalAction(goal);
@@ -1601,7 +1630,7 @@ function deskGoalRow(goal, { subgoal = false } = {}) {
         </div>
         <div class="desk-goal-line2">
           <span class="desk-goal-bar-group">
-            ${deskGoalBar(goal, facts, now)}
+            ${deskGoalBar(goal, facts, now, maxElapsedMs)}
             ${deskGoalFacts(facts, names, now)}
           </span>
           <span class="desk-goal-actions">
@@ -1645,13 +1674,13 @@ function deskSelectionBar(areaPath, trees) {
 }
 
 /** Renders a root Goal and visually distinct Subgoals as one group. */
-function deskGoalGroup(tree) {
+function deskGoalGroup(tree, maxElapsedMs = 0) {
   const subgoals = tree.goals.slice(1).filter((goal) => !["done", "dropped", "deferred"].includes(goal.status));
   const expanded = subgoals.some((goal) => sessionForGoal(goal) || goalNeedsYou(goal));
   return `
     <section class="desk-goal-group">
-      ${deskGoalRow(tree.root)}
-      ${subgoals.length ? `<details class="desk-subgoal-disclosure" ${expanded ? "open" : ""}><summary><span>To do that</span><small>${subgoals.length} ${subgoals.length === 1 ? "Subgoal" : "Subgoals"}</small></summary><div class="desk-subgoals">${subgoals.map((goal) => deskGoalRow(goal, { subgoal: true })).join("")}</div></details>` : ""}
+      ${deskGoalRow(tree.root, { maxElapsedMs })}
+      ${subgoals.length ? `<details class="desk-subgoal-disclosure" ${expanded ? "open" : ""}><summary><span>To do that</span><small>${subgoals.length} ${subgoals.length === 1 ? "Subgoal" : "Subgoals"}</small></summary><div class="desk-subgoals">${subgoals.map((goal) => deskGoalRow(goal, { subgoal: true, maxElapsedMs })).join("")}</div></details>` : ""}
     </section>`;
 }
 
@@ -1684,7 +1713,7 @@ function deskProgramShelf(programs) {
 }
 
 /** Renders one stable Area landmark with work and knowledge together. */
-function deskAreaPanel(record, position) {
+function deskAreaPanel(record, position, maxElapsedMs = 0) {
   const { area, trees, descriptions, sections, programs } = record;
   const status = deskAreaState(area.path, trees, descriptions);
   const parentPath = area.path.split("/").slice(0, -1).join("/");
@@ -1706,9 +1735,9 @@ function deskAreaPanel(record, position) {
         ${descriptions.length ? `<section class="area-desk-section definitions"><div class="area-desk-section-heading"><h3>Dispatches</h3><span>${descriptions.length}</span></div>${descriptions.map(deskDefinitionRow).join("")}</section>` : ""}
         <section class="area-desk-section goals">
           <div class="area-desk-section-heading"><h3>${goalSectionTitle}</h3><span>${openGoalCount}</span>${deskSelectionBar(area.path, trees)}</div>
-          ${trees.length ? orderedGoalTrees(trees).map(deskGoalGroup).join("") : `<p class="desk-empty">No active Goals.</p>`}
+          ${trees.length ? orderedGoalTrees(trees).map((tree) => deskGoalGroup(tree, maxElapsedMs)).join("") : `<p class="desk-empty">No active Goals.</p>`}
         </section>
-        ${sections.map(deskAreaSection).join("")}
+        ${sections.map((section) => deskAreaSection(section, maxElapsedMs)).join("")}
         ${programs.length ? `<section class="area-desk-section programs">
           <div class="area-desk-section-heading"><h3>Programs</h3><span>${programs.length}</span></div>
           ${deskProgramShelf(programs)}
@@ -1728,7 +1757,7 @@ function deskAreaPanel(record, position) {
  * state pill stays visible even collapsed, so a live agent below cannot
  * hide behind a closed section.
  */
-function deskAreaSection(section) {
+function deskAreaSection(section, maxElapsedMs = 0) {
   const { area, trees, descriptions } = section;
   const status = deskAreaState(area.path, trees, descriptions);
   const openGoalCount = trees.reduce((count, tree) => count + tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status)).length, 0);
@@ -1747,7 +1776,7 @@ function deskAreaSection(section) {
       ${expanded ? `
         <div class="desk-subarea-body">
           ${descriptions.length ? descriptions.map(deskDefinitionRow).join("") : ""}
-          ${trees.length ? orderedGoalTrees(trees).map(deskGoalGroup).join("") : ""}
+          ${trees.length ? orderedGoalTrees(trees).map((tree) => deskGoalGroup(tree, maxElapsedMs)).join("") : ""}
         </div>` : ""}
     </section>`;
 }
@@ -1760,8 +1789,9 @@ function renderWork() {
     content = searchResults(query);
   } else {
     const records = deskAreas();
+    const maxElapsedMs = deskMaxElapsedMs(records, Date.now());
     content = `${state.workFilter === "all" ? deskAttentionQueue() : ""}${records.length
-      ? `<section class="area-desk-grid" aria-label="Work by Area">${records.map(deskAreaPanel).join("")}</section>`
+      ? `<section class="area-desk-grid" aria-label="Work by Area">${records.map((record, position) => deskAreaPanel(record, position, maxElapsedMs)).join("")}</section>`
       : `<div class="empty-state">No ${state.workFilter === "all" ? "active Areas contain Goals or Documents" : `${state.workFilter} work`}.</div>`}`;
   }
 

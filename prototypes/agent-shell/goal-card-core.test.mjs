@@ -6,6 +6,7 @@ await import("./public/goal-card-core.js");
 const core = globalThis.AgentShellGoalCard;
 const MINUTE = 60_000;
 const HOUR = 3_600_000;
+const DAY = 86_400_000;
 const NOW = 1_800_000_000_000;
 
 /** The text of the facts line, the way the card prints it. */
@@ -141,6 +142,40 @@ test("factsBarShares: a handover with no live session splits at the last end mar
   const facts = core.goalCardFacts({ goal, sessions: [], pipeline: null, now: NOW });
   const shares = core.factsBarShares(facts, NOW);
   assert.ok(Math.abs(shares.waitShare - 28 / 32) < 0.001);
+});
+
+test("elapsedLengthShare: no Goal to compare against draws full length, or none when nothing has started", () => {
+  assert.equal(core.elapsedLengthShare(0, 0), 0);
+  assert.equal(core.elapsedLengthShare(5 * MINUTE, 0), 1);
+});
+
+test("elapsedLengthShare: the longest-elapsed Goal itself draws full length", () => {
+  assert.equal(core.elapsedLengthShare(28 * HOUR, 28 * HOUR), 1);
+});
+
+test("elapsedLengthShare: a young Goal draws a visible sliver beside an old one, not half the track", () => {
+  const share = core.elapsedLengthShare(MINUTE, 28 * HOUR);
+  assert.ok(share >= 0.05 && share < 0.25, `expected a small visible share, got ${share}`);
+});
+
+test("elapsedLengthShare: day-scale Goals spread across the track, not the top third", () => {
+  const halfDay = core.elapsedLengthShare(12 * HOUR, 7 * DAY);
+  const twoDays = core.elapsedLengthShare(2 * DAY, 7 * DAY);
+  const fiveDays = core.elapsedLengthShare(5 * DAY, 7 * DAY);
+  assert.ok(halfDay < 0.4, `expected a half-day Goal in the lower track, got ${halfDay}`);
+  assert.ok(twoDays > halfDay + 0.15, `expected two days clearly longer than half a day, got ${twoDays} vs ${halfDay}`);
+  assert.ok(fiveDays > twoDays + 0.15, `expected five days clearly longer than two, got ${fiveDays} vs ${twoDays}`);
+});
+
+test("elapsedLengthShare: a just-started Goal keeps a visible floor", () => {
+  assert.equal(core.elapsedLengthShare(1000, 7 * DAY), 0.05);
+});
+
+test("elapsedLengthShare: longer elapsed always draws at least as long, monotonic", () => {
+  const a = core.elapsedLengthShare(10 * MINUTE, DAY);
+  const b = core.elapsedLengthShare(HOUR, DAY);
+  const c = core.elapsedLengthShare(12 * HOUR, DAY);
+  assert.ok(a < b && b < c && c <= 1);
 });
 
 test("goalCardFacts: an idle pane from a finished step is no wait while a later step works", () => {

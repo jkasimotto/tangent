@@ -166,6 +166,18 @@
   }
 
   /**
+   * The Goal's total elapsed time (first start to now) as the same compact
+   * text `durationLabel` prints elsewhere on the card, so the number beside
+   * the bar reads the same span the bar's length encodes (elapsedLengthShare
+   * below). Null when the Goal has not started, so the card shows no number
+   * next to the missing bar.
+   */
+  function elapsedLabel(facts, now) {
+    if (!facts.startedAt) return null;
+    return durationLabel(now - facts.startedAt);
+  }
+
+  /**
    * The bar's drawn length as a share (0..1) of its track, relative to the
    * longest-elapsed Goal on the desk right now, on a sqrt curve so a young
    * Goal still draws a visible sliver next to an old one (Decision 2,
@@ -185,5 +197,5 @@
     return Math.min(1, Math.max(0.05, Math.sqrt(elapsed / max)));
   }
 
-  root.AgentShellGoalCard = { durationLabel, goalCardFacts, factsSegments, factsBarShares, elapsedLengthShare };
+  root.AgentShellGoalCard = { durationLabel, goalCardFacts, factsSegments, factsBarShares, elapsedLengthShare, elapsedLabel };
 })(typeof globalThis !== "undefined" ? globalThis : this);

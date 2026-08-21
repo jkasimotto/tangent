@@ -1540,6 +1540,21 @@ function deskGoalFacts(facts, names, now) {
 }
 
 /**
+ * The elapsed-time text beside the bar: the same total the bar's length
+ * encodes (deskGoalBar, elapsedLengthShare), printed compact so Julian reads
+ * the actual age without a hover (Julian's word 2026-08-22: the redesign
+ * that moved this text to the hover only took it too far).
+ */
+function deskGoalElapsed(facts, now) {
+  const core = window.AgentShellGoalCard;
+  if (!core || !facts) return "";
+  const label = core.elapsedLabel(facts, now);
+  if (!label) return "";
+  const title = facts.startedAt ? `Started ${new Date(facts.startedAt).toLocaleString()}` : "";
+  return `<span class="desk-goal-elapsed" title="${escapeHtml(title)}">${escapeHtml(label)}</span>`;
+}
+
+/**
  * The bar: its drawn length encodes total elapsed time relative to the
  * longest-elapsed Goal on the desk right now, on a sqrt curve (Decision 2,
  * Julian's word 2026-08-20: a bar that was always full made every running
@@ -1644,6 +1659,7 @@ function deskGoalRow(goal, { subgoal = false, maxElapsedMs = 0 } = {}) {
         <div class="desk-goal-line2">
           <span class="desk-goal-bar-group">
             ${deskGoalBar(goal, facts, now, maxElapsedMs)}
+            ${deskGoalElapsed(facts, now)}
             ${deskGoalFacts(facts, names, now)}
           </span>
           <span class="desk-goal-actions">

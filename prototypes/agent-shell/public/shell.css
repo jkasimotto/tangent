@@ -326,12 +326,14 @@ summary:focus-visible {
    identical); worked (blue) splits from the current wait (amber, or gray
    under a live brain) inside that length (design-compact-work-desk
    Decisions 1 and 2). Undrawn track stays the container's background. The
-   agent count is the only fact left as text. */
+   elapsed-time text prints the same total elapsed time the bar's length
+   encodes; the agent count is the only other fact left as text. */
 .desk-goal-bar-group { display: inline-flex; min-width: 0; align-items: center; gap: 8px; }
 .desk-goal-bar { display: inline-flex; width: 84px; height: 6px; overflow: hidden; border-radius: 3px; background: #262b31; flex: none; }
 .desk-goal-bar-worked { display: block; height: 100%; background: var(--blue); }
 .desk-goal-bar-wait { display: block; height: 100%; min-width: 3px; background: var(--amber); }
 .desk-goal-bar-wait.fact { background: var(--muted); }
+.desk-goal-elapsed { color: #98a1ac; font-size: 11px; white-space: nowrap; }
 .desk-goal-facts { color: #98a1ac; font-size: 11px; white-space: nowrap; }
 .desk-goal-actions { display: inline-flex; flex: none; align-items: center; gap: 8px; }
 .desk-goal-line3 { display: flex; justify-content: flex-end; }

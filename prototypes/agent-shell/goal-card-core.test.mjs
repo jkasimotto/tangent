@@ -144,6 +144,19 @@ test("factsBarShares: a handover with no live session splits at the last end mar
   assert.ok(Math.abs(shares.waitShare - 28 / 32) < 0.001);
 });
 
+test("elapsedLabel: no agent yet prints no elapsed text", () => {
+  const facts = core.goalCardFacts({ goal: { status: "active", agents: [], firstStartAt: null, lastEndAt: null }, sessions: [], pipeline: null, now: NOW });
+  assert.equal(core.elapsedLabel(facts, NOW), null);
+});
+
+test("elapsedLabel: prints the same compact text as durationLabel for the Goal's total elapsed time", () => {
+  const goal = { status: "active", agents: ["s1"], firstStartAt: NOW - (28 * HOUR + 4 * HOUR), lastEndAt: null };
+  const sessions = [{ name: "s1", created: NOW - 32 * HOUR, state: "waiting", stateDetail: "idle", waitingSince: NOW - HOUR }];
+  const facts = core.goalCardFacts({ goal, sessions, pipeline: null, now: NOW });
+  assert.equal(core.elapsedLabel(facts, NOW), core.durationLabel(NOW - facts.startedAt));
+  assert.equal(core.elapsedLabel(facts, NOW), "1d 8h");
+});
+
 test("elapsedLengthShare: no Goal to compare against draws full length, or none when nothing has started", () => {
   assert.equal(core.elapsedLengthShare(0, 0), 0);
   assert.equal(core.elapsedLengthShare(5 * MINUTE, 0), 1);

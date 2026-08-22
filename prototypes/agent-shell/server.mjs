@@ -2971,75 +2971,6 @@ async function brainOfArea(area) {
 }
 
 /**
- * Julian pressed `Tried it` on one Try it row: the line leaves the plan's
- * `## For Julian` section and the plan is committed. Only a Try it line can
- * go this way; the brain clears its own Decision and Brain lines. The brain
- * need not be live: a stopped brain's Try it row is still Julian's to clear.
- */
-async function clearTryItLine(area, line) {
-  const record = await brainOfArea(area);
-  if (!record) return { status: 404, error: `no brain on ${area || "(none)"}` };
-  if (!String(line ?? "").trim()) return { status: 400, error: "no line" };
-  const current = await readVaultDocument(record.planFile);
-  if (!current) return { status: 404, error: `no plan ${record.planFile}` };
-  const row = parseForJulian(current.text).find((item) => item.line.trimEnd() === String(line).trimEnd());
-  if (!row) return { status: 404, error: "the plan has no such line" };
-  if (row.kind !== "test") return { status: 400, error: "only a Test line leaves this way" };
-  const { text, removed, index, removedText } = removeForJulianLine(current.text, line);
-  if (!removed) return { status: 404, error: "the plan has no such line" };
-  await writeVaultDocument(current, text, `update: ${area} plan tried it ${row.target}`);
-  return { status: 200, line: row.line, removedText, index };
-}
-
-/** Puts one cleared Try it line back where it was, for the undo toast. */
-async function restoreTryItLine(area, line, index) {
-  const record = await brainOfArea(area);
-  if (!record) return { status: 404, error: `no brain on ${area || "(none)"}` };
-  if (!String(line ?? "").trim()) return { status: 400, error: "no line" };
-  const current = await readVaultDocument(record.planFile);
-  if (!current) return { status: 404, error: `no plan ${record.planFile}` };
-  const text = restoreForJulianLine(current.text, line, index);
-  const row = parseForJulian(text).find((item) => item.line.trimEnd() === String(line).trimEnd());
-  await writeVaultDocument(current, text, `update: ${area} plan restore try it ${row?.target ?? "row"}`);
-  return { status: 200 };
-}
-
-/**
- * Julian marked one Decision row handled from the row itself: the line
- * leaves the plan's `## For Julian` section, the plan is committed, and the
- * Area's brain is told, since it is the brain that would otherwise remove
- * this line once it had what it needed. The brain need not be live.
- */
-async function clearDecisionLine(area, line) {
-  const record = await brainOfArea(area);
-  if (!record) return { status: 404, error: `no brain on ${area || "(none)"}` };
-  if (!String(line ?? "").trim()) return { status: 400, error: "no line" };
-  const current = await readVaultDocument(record.planFile);
-  if (!current) return { status: 404, error: `no plan ${record.planFile}` };
-  const row = parseForJulian(current.text).find((item) => item.line.trimEnd() === String(line).trimEnd());
-  if (!row) return { status: 404, error: "the plan has no such line" };
-  if (row.kind !== "decide" || !row.target) return { status: 400, error: "only a Decide line with a Document leaves this way" };
-  const { text, removed, index, removedText } = removeForJulianLine(current.text, line);
-  if (!removed) return { status: 404, error: "the plan has no such line" };
-  await writeVaultDocument(current, text, `update: ${area} plan decision ${row.target} handled`);
-  await notifyBrain(area, `Julian marked Decision ${row.target} done`);
-  return { status: 200, line: row.line, removedText, index };
-}
-
-/** Puts one cleared Decision line back where it was, for the undo toast. */
-async function restoreDecisionLine(area, line, index) {
-  const record = await brainOfArea(area);
-  if (!record) return { status: 404, error: `no brain on ${area || "(none)"}` };
-  if (!String(line ?? "").trim()) return { status: 400, error: "no line" };
-  const current = await readVaultDocument(record.planFile);
-  if (!current) return { status: 404, error: `no plan ${record.planFile}` };
-  const text = restoreForJulianLine(current.text, line, index);
-  const row = parseForJulian(text).find((item) => item.line.trimEnd() === String(line).trimEnd());
-  await writeVaultDocument(current, text, `update: ${area} plan restore decision ${row?.target ?? "row"}`);
-  return { status: 200 };
-}
-
-/**
  * Julian answered one row: the line leaves the plan's `## For Julian`
  * section, the plan is committed, and the brain hears the verdict. Both
  * verbs are answers, so both travel: Accept means go with it as written,
@@ -3592,42 +3523,6 @@ const server = http.createServer(async (req, res) => {
       const unparsed = brain ? unparsedForJulianLines(await brainPlanText(brain)).map((item) => item.line) : [];
       res.writeHead(brain ? 200 : 404, { "content-type": "application/json" });
       res.end(JSON.stringify(brain ? { brain: { ...brain, forJulianUnparsed: unparsed }, prompt: await brainPrompt(brain) } : { error: area ? `no brain on ${area}` : "this session is not a brain" }));
-      return;
-    }
-    // Julian pressed `Tried it`: the Try it row leaves the brain's plan.
-    if (url.pathname === "/api/brains/tried" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const result = await clearTryItLine(String(body.area ?? ""), String(body.line ?? ""));
-      res.writeHead(result.status, { "content-type": "application/json" });
-      res.end(JSON.stringify(result.status === 200 ? { ok: true, line: result.line, removedText: result.removedText, index: result.index } : { error: result.error }));
-      return;
-    }
-    // The undo of that press: the row goes back where it was.
-    if (url.pathname === "/api/brains/tried/undo" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const result = await restoreTryItLine(String(body.area ?? ""), String(body.line ?? ""), Number(body.index ?? 0));
-      res.writeHead(result.status, { "content-type": "application/json" });
-      res.end(JSON.stringify(result.status === 200 ? { ok: true } : { error: result.error }));
-      return;
-    }
-    // Julian marked a Decision row handled: the line leaves the plan and the brain is told.
-    if (url.pathname === "/api/brains/decision-done" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const result = await clearDecisionLine(String(body.area ?? ""), String(body.line ?? ""));
-      res.writeHead(result.status, { "content-type": "application/json" });
-      res.end(JSON.stringify(result.status === 200 ? { ok: true, line: result.line, removedText: result.removedText, index: result.index } : { error: result.error }));
-      return;
-    }
-    // The undo of that press: the Decision row goes back where it was.
-    if (url.pathname === "/api/brains/decision-done/undo" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const result = await restoreDecisionLine(String(body.area ?? ""), String(body.line ?? ""), Number(body.index ?? 0));
-      res.writeHead(result.status, { "content-type": "application/json" });
-      res.end(JSON.stringify(result.status === 200 ? { ok: true } : { error: result.error }));
       return;
     }
     // Julian answered one row with Accept or Reject: the line leaves the plan and the brain hears the verdict.

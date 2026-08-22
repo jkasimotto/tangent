@@ -50,8 +50,7 @@ const state = {
   brains: [],
   brainDraft: null,
   agentSessionName: null,
-  triedLines: new Set(), // For you rows a Tried it press hid, until the next poll drops them
-  handledLines: new Set(), // For you Decision rows a Handled press hid, until the next poll drops them
+  verdictLines: new Set(), // For you rows an Accept or Reject press hid, until the next poll drops them
   goalSelection: [], // checked Goal files in checked order; transient, work view only
   goTo: null, // the open Go to finder: { query, selected, rows, returnFocus }
   launchTarget: "",
@@ -827,9 +826,21 @@ function ageText(created) {
   return `Started ${days} ${days === 1 ? "day" : "days"} ago`;
 }
 
-/** True when a live brain owns this Goal's Area: it is the brain's decision, not a desk item for Julian. */
+/**
+ * True when this Area has a brain of its own that has not ended: its work
+ * reports to the brain, so Tangent never infers a row for it. Coverage
+ * follows the record, not the session, or a brain that stopped for a minute
+ * would hand its Area back to the fallback and feed the card twice
+ * (design-the-for-you-row-shows-only-direct-asks, Decision 6).
+ */
+function coveredByBrainRecord(areaPath) {
+  const brain = brainForAreaCard(areaPath ?? "");
+  return Boolean(brain && (brain.status === "running" || brain.status === "stopped"));
+}
+
+/** True when a brain owns this Goal's Area: it is the brain's to raise, not a desk item for Julian. */
 function goalCoveredByBrain(goal) {
-  return Boolean(brainForAreaCard(goal?.area ?? "")?.live);
+  return coveredByBrainRecord(goal?.area ?? "");
 }
 
 /** True when one stored handoff names the user, and no live brain already covers this Goal's Area. */
@@ -864,11 +875,6 @@ function describeWorkStateLabel(session) {
   if (session.state === "working") return "Agent working";
   if (session.state === "shell") return "Agent did not start";
   return "Session open";
-}
-
-/** Places a work-definition conversation in the same attention groups as Goal runs. */
-function describeWorkAttention(session) {
-  return session.state === "working" ? "working" : "waiting";
 }
 
 /** Renders one work-definition conversation as a first-class work row. */
@@ -1067,11 +1073,8 @@ function searchResults(query) {
 function deskAreaState(path, trees, descriptions) {
   const goals = trees.flatMap((tree) => tree.goals).filter((goal) => !["done", "dropped", "deferred"].includes(goal.status));
   const sessions = [...goals.map(sessionForGoal).filter(Boolean), ...descriptions];
-  const brain = brainForAreaCard(path);
-  const waiting = brain?.live
-    ? (forYouGroups().find((group) => group.area === path)?.rows.length ?? 0)
-    : sessions.filter((session) => ["waiting", "shell"].includes(session.state)).length
-      + goals.filter((goal) => !sessionForGoal(goal) && goalNeedsYou(goal)).length;
+  // One list, one number: the Area pill counts the same asks the card shows.
+  const waiting = forYouItems().filter((ask) => ask.area === path).length;
   const working = sessions.filter((session) => session.state === "working").length;
   if (waiting) return { kind: "waiting", label: `${waiting} ${waiting === 1 ? "item needs" : "items need"} you` };
   if (working) return { kind: "working", label: `${working} ${working === 1 ? "agent" : "agents"} working` };
@@ -1154,29 +1157,48 @@ function deskAreas() {
 }
 
 /**
- * Returns direct routes to every agent or handoff that needs the user.
- * A Goal in an Area a live brain owns is excluded: it reports to the brain,
- * not the desk. The brain's own row is excluded too; the Area card's brain
- * line already shows "Brain needs a decision".
+ * Whether the work on one Goal is over: its pipeline ran every step, or it
+ * never had a pipeline and no session is live. Only a finished Goal asks
+ * Julian to accept its result; work still running asks nothing by itself.
  */
-function deskAttentionItems() {
-  const goalItems = allGoals().flatMap((goal) => {
+function goalWorkFinished(goal) {
+  const pipeline = pipelineRecordForGoal(goal);
+  if (pipeline) return (pipeline.steps ?? []).every((step) => ["complete", "skipped"].includes(step.status));
+  return !sessionForGoal(goal);
+}
+
+/**
+ * What Tangent itself may ask for an Area with no brain of its own: a
+ * pipeline step that stopped, a session sitting at a dialog, and a handover
+ * that names Julian. Brains are the primary path, so this stays the minimal
+ * fallback and grows nothing (design-the-for-you-row-shows-only-direct-asks,
+ * Julian's answer 3). Idle, waiting, draft, and shell sessions reach no
+ * builder at all, so machine state on its own can never make a row.
+ * Describe-work sessions ask even under a brain: they answer to Julian.
+ */
+function fallbackAsks() {
+  const ask = window.AgentShellAsk;
+  const goalAsks = allGoals().flatMap((goal) => {
     if (["done", "dropped", "deferred"].includes(goal.status)) return [];
-    if (goalCoveredByBrain(goal)) return [];
-    const session = sessionForGoal(goal);
+    if (coveredByBrainRecord(goal.area)) return [];
     const pipeline = pipelineForGoal(goal);
     const stoppedStep = pipeline?.steps.find((step) => step.status === "stopped" || (step.status === "running" && !step.live));
-    if (stoppedStep) return [{ kind: "pipeline", goal, session: null, area: goal.area, title: `${goal.title} · step ${stoppedStep.index} stopped` }];
-    if (session && ["waiting", "shell"].includes(session.state)) {
-      return [{ kind: "goal", goal, session, area: goal.area, title: goal.title }];
+    if (stoppedStep) return [ask.askFromStoppedStep(goal, stoppedStep)];
+    const session = sessionForGoal(goal);
+    if (session) {
+      const action = { kind: "open-run", label: `Open ${agentName(session)}`, arg: { file: goal.file } };
+      return [ask.askFromDialogSession(goal, session, { action })];
     }
-    if (!session && goalNeedsYou(goal)) return [{ kind: "handoff", goal, area: goal.area, title: goal.title }];
-    return [];
+    return [ask.askFromWaitingOn(goal, { finished: goalWorkFinished(goal) })];
   });
-  const definitionItems = describeWorkSessions()
-    .filter((session) => describeWorkAttention(session) === "waiting")
-    .map((session) => ({ kind: "definition", session, area: session.area, title: session.workTitle || "Define new work" }));
-  return [...goalItems, ...definitionItems].sort((left, right) => left.area.localeCompare(right.area) || left.title.localeCompare(right.title));
+  const definitionAsks = describeWorkSessions().map((session) => ask.askFromDialogSession(
+    null,
+    session,
+    { action: { kind: "select-definition", label: "Open", arg: { session: session.name } } }
+  ));
+  return [...goalAsks, ...definitionAsks]
+    .filter(Boolean)
+    .sort((left, right) => left.area.localeCompare(right.area) || left.subject.localeCompare(right.subject));
 }
 
 let dockBadgeCount = null;
@@ -1224,116 +1246,113 @@ async function enableDockBadge() {
   showToast("The Dock badge now follows For you. No notification banners are sent.");
 }
 
-/** Brain records that have rows for Julian: live ones, and stopped or ended ones whose plan still lists rows. */
-function brainsWithRowsForJulian() {
-  return (state.brains ?? []).filter((brain) => brain.live || (brain.forJulian ?? []).length);
-}
-
 /**
- * The brain-written rows, grouped by Area in brain record order. One group:
- * { area, brain, rows: [row] }. A stopped or ended brain's group is marked
- * stopped and gets one synthetic row { kind: "brain", text: "Brain stopped",
- * resume: true } in front of its plan rows. A group with no row is left out:
- * a brain with nothing for Julian says nothing.
+ * The brain-written asks, grouped by Area in brain record order. One group:
+ * { area, brain, stopped, asks }. Only a record that has not ended makes a
+ * group; an ended brain's rows leave the card with it. A group with no ask
+ * is left out, and a stopped brain says nothing about its own state: Julian
+ * associates a brain with its Area and finds it there (Julian's answer 4).
  */
-function forYouGroups() {
-  return brainsWithRowsForJulian()
+function askGroups() {
+  const ask = window.AgentShellAsk;
+  return (state.brains ?? [])
+    .filter((brain) => brain.status === "running" || brain.status === "stopped")
     .map((brain) => {
-      const rows = (brain.forJulian ?? []).filter((row) => !state.triedLines.has(row.line) && !state.handledLines.has(row.line));
-      const stopped = !brain.live;
-      return {
-        area: brain.area,
-        brain,
-        stopped,
-        rows: stopped && rows.length ? [{ kind: "brain", text: "Brain stopped", resume: true, line: `resume:${brain.area}` }, ...rows] : rows,
-      };
+      const rows = (brain.forJulian ?? [])
+        .filter((row) => !state.verdictLines.has(row.line))
+        .map((row) => ask.askFromPlanRow(brain, row));
+      // A brain stuck at its own dialog cannot write a plan line about being
+      // stuck, so Tangent asks for it.
+      const asks = [ask.askFromBrainDialog(brain), ...rows].filter(Boolean);
+      return { area: brain.area, brain, stopped: !brain.live, asks };
     })
-    .filter((group) => group.rows.length);
+    .filter((group) => group.asks.length);
 }
 
-/** Every row Tangent shows for Julian: brain-written rows first, then today's inferred rows. */
+/** Every ask Tangent shows Julian: what the brains wrote, then the fallback. One list, one number. */
 function forYouItems() {
-  return [...forYouGroups().flatMap((group) => group.rows), ...deskAttentionItems()];
+  return [...askGroups().flatMap((group) => group.asks), ...fallbackAsks()];
 }
 
 /**
  * The brain-written For-you rows that belong on one Area's own panel: its
- * own live brain's rows, and any live brain's rows in a sub-Area. Empty when
- * the Area has no live brain of its own, so a plain Area panel stays as it
- * is today (design-what-needs-julian-under-brains, goal-decisions-show-on-
- * the-area-view-not-just-a-count).
+ * own brain's asks, and any brain's asks in a sub-Area. Empty when the Area
+ * has no brain of its own, so a plain Area panel stays as it is today
+ * (design-what-needs-julian-under-brains, goal-decisions-show-on-the-area-
+ * view-not-just-a-count).
  */
 function areaForYouGroups(areaPath) {
-  if (!brainForAreaCard(areaPath)?.live) return [];
+  if (!coveredByBrainRecord(areaPath)) return [];
   const core = window.AgentShellAreaMap;
-  return forYouGroups().filter((group) => core.isInside(group.area, areaPath));
+  return askGroups().filter((group) => core.isInside(group.area, areaPath));
 }
 
-/** The file-name slug for a Decision row: the vault file without its Area path or `.md`. */
-function fileNameSlug(file) {
-  return String(file ?? "").split("/").pop().replace(/\.md$/i, "");
+/** The verbs that open something; the first one a row carries is its main button. */
+const ASK_PRIMARY_ACTIONS = ["open-document", "open-brain", "open-run", "reveal-goal", "select-definition", "answer"];
+
+/** Carries one action's verb and its argument to the click delegation. */
+function askActionAttributes(ask, action) {
+  const arg = action.arg ?? {};
+  if (action.kind === "open-document") return `data-open-document="${escapeHtml(arg.file ?? "")}"`;
+  if (action.kind === "open-brain") return `data-open-brain="${escapeHtml(arg.session ?? "")}"`;
+  if (action.kind === "open-run") return `data-open-goal-run="${escapeHtml(arg.file ?? "")}"`;
+  if (action.kind === "reveal-goal") return `data-reveal-goal="${escapeHtml(arg.file ?? "")}"`;
+  if (action.kind === "select-definition") return `data-select-work-definition="${escapeHtml(arg.session ?? "")}"`;
+  if (action.kind === "answer" || action.kind === "reply") {
+    return `data-reply-area="${escapeHtml(arg.area ?? ask.area)}" data-reply-session="${escapeHtml(arg.session ?? "")}" data-reply-subject="${escapeHtml(arg.subject ?? ask.subject)}"`;
+  }
+  return `data-verdict-area="${escapeHtml(arg.area ?? ask.area)}" data-verdict-line="${escapeHtml(arg.line ?? "")}" data-verdict="${escapeHtml(action.kind)}"`;
 }
 
 /**
- * A small Reply button for one row: opens the brain's terminal after telling
- * it the row's subject, so whatever Julian types next carries that context.
- * Shown only while the brain is live; a stopped brain has no terminal to open.
+ * One ask, whoever built it: who it is about, the facts under the name, and
+ * the question on a line of its own, because the question is the only part
+ * Julian must read. The first opening verb becomes the row's main button;
+ * the answering verbs sit beside it. There is one renderer, so nothing that
+ * is not an ask can be drawn here.
  */
-function replyButton(group, subject) {
-  if (!group.brain.live) return "";
-  return `<button class="attention-tried attention-reply" type="button" data-reply-area="${escapeHtml(group.area)}" data-reply-session="${escapeHtml(group.brain.session ?? "")}" data-reply-subject="${escapeHtml(subject)}">Reply</button>`;
+function askRow(ask) {
+  const text = `<span><strong>${escapeHtml(ask.subject)}</strong>${ask.detail ? `<small>${escapeHtml(ask.detail)}</small>` : ""}<span class="attention-question">${escapeHtml(ask.question)}</span></span>`;
+  const primary = ask.actions.find((action) => ASK_PRIMARY_ACTIONS.includes(action.kind));
+  const rest = ask.actions.filter((action) => action !== primary);
+  const buttons = rest.length
+    ? `<span class="attention-row-actions">${rest.map((action) => `<button class="attention-tried${action.kind === "reply" ? " attention-reply" : ""}" type="button" ${askActionAttributes(ask, action)}>${escapeHtml(action.label)}</button>`).join("")}</span>`
+    : "";
+  const head = primary
+    ? `<button type="button" ${askActionAttributes(ask, primary)}>${text}<span>${escapeHtml(primary.label)} <b aria-hidden="true">→</b></span></button>`
+    : text;
+  return `<div class="attention-row">${head}${buttons}</div>`;
 }
 
-/** One brain-written row: two lines and one or two actions. */
-function forYouRow(group, row) {
-  const area = escapeHtml(group.area);
-  if (row.kind === "tryit") {
-    const subject = row.title ?? row.target ?? "";
-    return `<div class="attention-row"><span><strong>${escapeHtml(subject)}</strong><small>${escapeHtml(row.text)}</small></span>`
-      + `<span class="attention-row-actions"><button class="attention-tried" type="button" data-tried-area="${area}" data-tried-line="${escapeHtml(row.line)}">Tried it</button>${replyButton(group, subject)}</span></div>`;
-  }
-  if (row.kind === "brain") {
-    if (row.resume) {
-      return `<button type="button" data-launch-for="${BRAIN_LAUNCH_TARGET}" data-brain-area="${area}"><span><strong>Brain stopped</strong><small>Its rows stay until it resumes.</small></span><span>Resume <b aria-hidden="true">→</b></span></button>`;
-    }
-    return `<button type="button" data-open-brain="${escapeHtml(group.brain.session ?? "")}"><span><strong>Brain asks</strong><small>${escapeHtml(row.text)}</small></span><span>Open brain <b aria-hidden="true">→</b></span></button>`;
-  }
-  const facts = [row.text, row.unblocks ? `Unblocks: ${row.unblocks}` : "", row.commentCount ? `${row.commentCount} ${row.commentCount === 1 ? "comment" : "comments"} left` : ""].filter(Boolean).join(" · ");
-  if (row.missing) {
-    return `<div class="attention-row"><span><strong>${escapeHtml(row.target ?? row.title ?? "")}</strong><small>Document missing · ${escapeHtml(facts)}</small></span></div>`;
-  }
-  const fileName = fileNameSlug(row.file);
-  return `<div class="attention-row"><button type="button" data-open-document="${escapeHtml(row.file)}"><span><strong>${escapeHtml(fileName)}</strong><small>${escapeHtml(facts)}</small></span><span>Read <b aria-hidden="true">→</b></span></button>`
-    + `<span class="attention-row-actions"><button class="attention-tried" type="button" data-decision-done-area="${area}" data-decision-done-line="${escapeHtml(row.line)}">Handled</button>${replyButton(group, fileName)}</span></div>`;
-}
-
-/** One inferred row: today's wording, for an Area no live brain covers. */
-function inferredRow(item) {
-  const name = item.session ? agentName(item.session) : "Handoff";
-  const action = item.kind === "definition"
-    ? `data-select-work-definition="${escapeHtml(item.session.name)}"`
-    : item.kind === "handoff" || item.kind === "pipeline"
-      ? `data-reveal-goal="${escapeHtml(item.goal.file)}"`
-      : `data-open-goal-run="${escapeHtml(item.goal.file)}"`;
-  const label = item.kind === "handoff" ? "See handoff" : item.kind === "pipeline" ? "See steps" : `Open ${name}`;
-  return `<button type="button" ${action}><span><small>${escapeHtml(areaLabel(item.area))}</small><strong>${escapeHtml(item.title)}</strong></span><span>${escapeHtml(label)} <b aria-hidden="true">→</b></span></button>`;
-}
-
-/** One group's markup inside a For-you list: its header (Area label or "For you", plus Reply to brain) and its rows. */
+/**
+ * One group's markup inside a For-you list: its header (Area label or "For
+ * you", plus the one way to reach the brain) and its asks. A stopped brain's
+ * asks stay standing; the header says it stopped and offers Resume.
+ */
 function forYouGroupMarkup(group, label) {
+  const reach = group.brain.live
+    ? `<button class="attention-tried" type="button" data-open-brain="${escapeHtml(group.brain.session ?? "")}">Reply to brain</button>`
+    : `<span class="for-you-stopped">Brain stopped</span><button class="attention-tried" type="button" data-launch-for="${BRAIN_LAUNCH_TARGET}" data-brain-area="${escapeHtml(group.area)}">Resume</button>`;
   return `
     <div class="for-you-group${group.stopped ? " stopped" : ""}">
-      <header><span>${escapeHtml(label)}</span>${group.brain.live ? `<button class="attention-tried" type="button" data-open-brain="${escapeHtml(group.brain.session ?? "")}">Reply to brain</button>` : `<span class="for-you-stopped">Brain stopped</span>`}</header>
-      <div class="attention-items">${group.rows.map((row) => forYouRow(group, row)).join("")}</div>
+      <header><span>${escapeHtml(label)}</span>${reach}</header>
+      <div class="attention-items">${group.asks.map(askRow).join("")}</div>
     </div>`;
+}
+
+/** The fallback asks grouped by Area, so every row says which Area it is from. */
+function fallbackAskGroups(asks) {
+  const byArea = new Map();
+  for (const ask of asks) byArea.set(ask.area, [...(byArea.get(ask.area) ?? []), ask]);
+  return [...byArea].map(([area, items]) => ({ area, asks: items }));
 }
 
 /**
  * The For-you rows on one Area's own panel, directly under its brain line:
  * Julian decides what the brain is asking without leaving the Area he is
  * looking at (design-what-needs-julian-under-brains, goal-decisions-show-
- * on-the-area-view-not-just-a-count). Empty when the Area has no live brain
- * of its own; the panel then stays as it was before this Goal.
+ * on-the-area-view-not-just-a-count). Empty when the Area has no brain of
+ * its own; the panel then stays as it was before this Goal.
  */
 function areaForYouSection(areaPath) {
   const groups = areaForYouGroups(areaPath);
@@ -1343,103 +1362,76 @@ function areaForYouSection(areaPath) {
 }
 
 /**
- * The For you card: what the brains wrote, then what Tangent still infers for
- * the Areas no live brain covers. Under a live brain only its own list counts,
- * so a static pane in a brain-run Area never reaches this card.
+ * The For you card: what the brains asked, then what Tangent itself asks for
+ * the Areas with no brain. Every row is a direct ask, and the number in the
+ * header is the length of that one list.
  */
 function deskAttentionQueue() {
-  const groups = forYouGroups();
-  const inferred = deskAttentionItems();
-  const count = groups.reduce((total, group) => total + group.rows.length, 0) + inferred.length;
+  const groups = askGroups();
+  const fallback = fallbackAsks();
+  const count = groups.reduce((total, group) => total + group.asks.length, 0) + fallback.length;
   if (!count) return "";
   const enableBadge = typeof navigator.setAppBadge === "function"
     && window.__agentShellNativeDockBadge !== true
     && typeof Notification !== "undefined"
     && Notification.permission !== "granted";
   const groupMarkup = groups.map((group) => forYouGroupMarkup(group, areaLabel(group.area))).join("");
-  const inferredMarkup = inferred.length
-    ? `${groups.length ? `<div class="for-you-group"><header><span>Needs you now</span></header></div>` : ""}<div class="attention-items">${inferred.map(inferredRow).join("")}</div>`
-    : "";
+  const fallbackMarkup = fallbackAskGroups(fallback)
+    .map((group) => `<div class="for-you-group fallback"><header><span>${escapeHtml(areaLabel(group.area))} · no brain</span></header><div class="attention-items">${group.asks.map(askRow).join("")}</div></div>`)
+    .join("");
   return `
     <section class="attention-queue" aria-labelledby="attention-heading">
       <header><p class="kicker">Attention</p><h2 id="attention-heading">For you</h2>${enableBadge ? `<button class="attention-badge-button" type="button" data-enable-dock-badge>Show in Dock</button>` : ""}<span>${count}</span></header>
-      ${groupMarkup}${inferredMarkup}
+      ${groupMarkup}${fallbackMarkup}
     </section>`;
 }
 
 /**
- * Drops from `state.triedLines` and `state.handledLines` every line the
- * server no longer lists, once the plan commit has landed. A line is hidden
- * only while its press is in flight; a line the brain writes again later is
- * shown again.
+ * Drops from `state.verdictLines` every line the server no longer lists, once
+ * the plan commit has landed. A line is hidden only while its press is in
+ * flight; a line the brain writes again later is shown again.
  */
-function forgetClearedForJulianLines() {
-  if (!state.triedLines.size && !state.handledLines.size) return;
+function forgetVerdictLines() {
+  if (!state.verdictLines.size) return;
   const listed = new Set((state.brains ?? []).flatMap((brain) => (brain.forJulian ?? []).map((row) => row.line)));
-  for (const line of [...state.triedLines]) if (!listed.has(line)) state.triedLines.delete(line);
-  for (const line of [...state.handledLines]) if (!listed.has(line)) state.handledLines.delete(line);
+  for (const line of [...state.verdictLines]) if (!listed.has(line)) state.verdictLines.delete(line);
 }
 
 /**
- * Julian pressed `Tried it`: the row goes now and the plan follows. An Undo
- * toast puts it back where it was, so a mis-press costs one click.
+ * Julian answered one row with Accept or Reject: the row goes now and the
+ * plan follows, and the brain hears the verdict either way. An Undo puts the
+ * line back and withdraws the verdict, so a mis-press costs one click and
+ * never leaves the brain acting on an answer Julian took back.
  */
-async function clearTryItRow(area, line) {
-  state.triedLines.add(line);
+async function sendVerdict(area, line, verdict) {
+  state.verdictLines.add(line);
   paint(true);
   try {
-    const result = await post("/api/brains/tried", { area, line });
-    /** Puts the line (and any continuation line it left with) back into the plan and on the desk. */
+    const result = await post("/api/brains/verdict", { area, line, verdict });
+    /** Puts the line (and any continuation line it left with) back, and tells the brain the verdict is off. */
     const undo = async () => {
       try {
-        await post("/api/brains/tried/undo", { area, line: result.removedText ?? line, index: result.index });
-        state.triedLines.delete(line);
+        await post("/api/brains/verdict/undo", { area, line: result.removedText ?? line, index: result.index });
+        state.verdictLines.delete(line);
         await refresh();
         paint(true);
       } catch (error) {
         showToast(error.message);
       }
     };
-    showToast("Tried it. The row is gone.", { label: "Undo", run: undo });
+    showToast(verdict === "accept" ? "Accepted. The brain was told." : "Rejected. The brain parks it.", { label: "Undo", run: undo });
   } catch (error) {
-    state.triedLines.delete(line);
+    state.verdictLines.delete(line);
     paint(true);
     showToast(error.message);
   }
 }
 
 /**
- * Julian pressed `Handled` on a Decision row: the row goes now, the brain is
- * told, and the plan follows. An Undo toast puts it back where it was.
- */
-async function clearDecisionRow(area, line) {
-  state.handledLines.add(line);
-  paint(true);
-  try {
-    const result = await post("/api/brains/decision-done", { area, line });
-    /** Puts the line (and any continuation line it left with) back into the plan; does not tell the brain again. */
-    const undo = async () => {
-      try {
-        await post("/api/brains/decision-done/undo", { area, line: result.removedText ?? line, index: result.index });
-        state.handledLines.delete(line);
-        await refresh();
-        paint(true);
-      } catch (error) {
-        showToast(error.message);
-      }
-    };
-    showToast("Marked handled. The brain was told.", { label: "Undo", run: undo });
-  } catch (error) {
-    state.handledLines.delete(line);
-    paint(true);
-    showToast(error.message);
-  }
-}
-
-/**
- * Julian pressed `Reply` on one row: tells the brain the row's subject, then
- * opens its terminal, so whatever he types next carries that context. Opens
- * the terminal even when the notice fails to send; the reply matters more.
+ * Julian pressed `Reply`, or `Answer` on a question the brain asked with no
+ * Document: tells the brain the row's subject, then opens its terminal, so
+ * whatever he types next carries that context. Opens the terminal even when
+ * the notice fails to send; the reply matters more.
  */
 async function replyAboutRow(area, session, subject) {
   try {
@@ -3236,13 +3228,12 @@ function renderKey() {
     goal ? [goal.file, goal.status, goal.mtime, goal.stateText, goal.currentBrief, goal.storyText, goal.why, goal.subgoalItems, goal.documents] : null,
     [state.launch.area, state.launch.open, state.launch.editing, state.launch.command, state.launch.choice, state.launch.loading, Boolean(state.launch.options), state.launch.options?.default?.label ?? null, state.launch.options?.default?.command ?? null, state.launch.instruction, state.launch.continueFrom, state.launch.active, state.launch.steps, state.launch.record?.updatedAt ?? null],
     (state.pipelines ?? []).map((item) => [item.goal, item.status, item.updatedAt, item.steps.map((step) => [step.status, step.live, step.state, step.idleSince, step.waitingSince])]),
-    (state.brains ?? []).map((item) => [item.area, item.status, item.generation, item.session, item.live, item.state, item.stateDetail, item.updatedAt, (item.forJulian ?? []).map((row) => [row.line, row.commentCount, row.missing])]),
-    [...state.triedLines],
-    [...state.handledLines],
+    (state.brains ?? []).map((item) => [item.area, item.status, item.generation, item.session, item.live, item.state, item.stateDetail, item.stateQuestion, item.updatedAt, (item.forJulian ?? []).map((row) => [row.line, row.commentCount, row.missing, row.goalStatus])]),
+    [...state.verdictLines],
     state.brainDraft,
     [state.launchTarget, state.launchAnchor, Boolean(state.harnessDraft)],
     whatHappenedRenderKey(),
-    state.sessions.map((item) => [item.name, item.goal, item.kind, item.area, item.state, item.phase, item.command, item.created, item.workTitle, item.launchLabel, item.waitingSince]),
+    state.sessions.map((item) => [item.name, item.goal, item.kind, item.area, item.state, item.stateDetail, item.stateQuestion, item.phase, item.command, item.created, item.workTitle, item.launchLabel, item.waitingSince]),
   ]);
 }
 
@@ -3578,7 +3569,7 @@ async function refresh({ initial = false } = {}) {
     state.sessions = sessionPayload.sessions || [];
     state.pipelines = sessionPayload.pipelines || [];
     state.brains = sessionPayload.brains || [];
-    forgetClearedForJulianLines();
+    forgetVerdictLines();
     state.programs = {
       programs: programs.programs || [],
       errors: programs.errors || [],
@@ -4983,15 +4974,10 @@ document.addEventListener("click", async (event) => {
     state.launch.open = true;
     return paint(true);
   }
-  const triedRow = target.closest("[data-tried-line]");
-  if (triedRow) {
+  const verdictRow = target.closest("[data-verdict-line]");
+  if (verdictRow) {
     event.stopPropagation();
-    return clearTryItRow(triedRow.dataset.triedArea, triedRow.dataset.triedLine);
-  }
-  const decisionDoneRow = target.closest("[data-decision-done-line]");
-  if (decisionDoneRow) {
-    event.stopPropagation();
-    return clearDecisionRow(decisionDoneRow.dataset.decisionDoneArea, decisionDoneRow.dataset.decisionDoneLine);
+    return sendVerdict(verdictRow.dataset.verdictArea, verdictRow.dataset.verdictLine, verdictRow.dataset.verdict);
   }
   const replyRow = target.closest("[data-reply-subject]");
   if (replyRow) {

@@ -3,8 +3,9 @@
 // row-shows-only-direct-asks). These tests drive the real server: the brain
 // writes a `## For Julian` section in its plan, the desk payload carries the
 // parsed Decide and Test rows with their titles and comment counts, the lines
-// Tangent shows nothing for travel with the record, a row leaves with an undo,
-// and a saved comment on a listed Document wakes the brain.
+// Tangent shows nothing for travel with the record, Accept and Reject remove a
+// row and reach the brain with an undo that withdraws them, and a saved
+// comment on a listed Document wakes the brain.
 
 import assert from "node:assert/strict";
 import { once } from "node:events";
@@ -201,7 +202,7 @@ async function startProbe(context, label) {
     free: "- Decide: should the audit cover the Usage UI too?",
   };
   await writeFile(planFile, `# Plan for ${area}\n\n## For Julian\n\n${lines.decide}\n${lines.test}\n${lines.free}\n\n## Waves\n\n- one\n`, "utf8");
-  // Every file is tracked, so the vault's own commits (a Tried it, a comment
+  // Every file is tracked, so the vault's own commits (a verdict, a comment
   // save) land in its history the way they do in the real vault.
   await initGit(trees);
   return { root, trees, area, leaf, base, brains: path.join(root, "brains"), brain: brain.body, planFile, lines, slug };
@@ -264,111 +265,6 @@ test("a row whose link resolves to nothing is marked missing", async (context) =
   assert.equal(rows[0].commentCount, 0);
 });
 
-test("Tried it removes one Test line, and undo puts it back", async (context) => {
-  const probe = await startProbe(context, "forjuliantried");
-  if (!probe) return;
-
-  await waitFor("the rows in the payload", async () => (await brainOf(probe.base))?.forJulian?.length === 3);
-
-  const tried = await post(probe.base, "/api/brains/tried", { area: probe.area, line: probe.lines.test });
-  assert.equal(tried.status, 200, JSON.stringify(tried.body));
-  assert.equal(tried.body.index, 2, "the body index counts the blank line under the heading");
-  assert.equal((await readFile(probe.planFile, "utf8")).includes(probe.lines.test), false);
-  const left = await waitFor("the row to leave the payload", async () => {
-    const rows = (await brainOf(probe.base))?.forJulian ?? [];
-    return rows.length === 2 ? rows : null;
-  });
-  assert.deepEqual(left.map((row) => row.kind), ["decide", "decide"]);
-  assert.equal((await gitSubjects(probe.trees))[0], `update: ${probe.area} plan tried it ${probe.slug}`);
-
-  const undo = await post(probe.base, "/api/brains/tried/undo", { area: probe.area, line: probe.lines.test, index: tried.body.index });
-  assert.equal(undo.status, 200, JSON.stringify(undo.body));
-  const back = await waitFor("the row to come back", async () => {
-    const rows = (await brainOf(probe.base))?.forJulian ?? [];
-    return rows.length === 3 ? rows : null;
-  });
-  assert.deepEqual(back.map((row) => row.kind), ["decide", "test", "decide"]);
-  assert.equal((await gitSubjects(probe.trees))[0], `update: ${probe.area} plan restore try it ${probe.slug}`);
-
-  const decision = await post(probe.base, "/api/brains/tried", { area: probe.area, line: probe.lines.decide });
-  assert.equal(decision.status, 400, JSON.stringify(decision.body));
-  const unknown = await post(probe.base, "/api/brains/tried", { area: probe.area, line: "- Test [[goal-nothing]]: nothing." });
-  assert.equal(unknown.status, 404, JSON.stringify(unknown.body));
-  const noBrain = await post(probe.base, "/api/brains/tried", { area: "otto/nowhere", line: probe.lines.test });
-  assert.equal(noBrain.status, 404, JSON.stringify(noBrain.body));
-  assert.equal((await brainOf(probe.base)).forJulian.length, 3, "a refused press changes nothing");
-
-  // A stopped brain's rows stay on the desk, so its Test row is still
-  // Julian's to clear.
-  await killSession(probe.brain.session);
-  await waitFor("the brain to be stopped", async () => (await brainOf(probe.base))?.live === false);
-  const stopped = await post(probe.base, "/api/brains/tried", { area: probe.area, line: probe.lines.test });
-  assert.equal(stopped.status, 200, JSON.stringify(stopped.body));
-  assert.equal((await readFile(probe.planFile, "utf8")).includes(probe.lines.test), false);
-});
-
-test("Tried it drops a Test entry's continuation line too, and undo restores both", async (context) => {
-  const probe = await startProbe(context, "forjuliantriedtwo");
-  if (!probe) return;
-
-  const first = `- Test [[goal-${probe.slug}]]: press Cmd+K, type a title.`;
-  const continuation = "  Then press Enter; the finder opens on the first hit.";
-  await writeFile(
-    probe.planFile,
-    `# Plan for ${probe.area}\n\n## For Julian\n\n${probe.lines.decide}\n${first}\n${continuation}\n${probe.lines.free}\n\n## Waves\n\n- one\n`,
-    "utf8"
-  );
-  await waitFor("the rows in the payload", async () => (await brainOf(probe.base))?.forJulian?.length === 3);
-
-  const tried = await post(probe.base, "/api/brains/tried", { area: probe.area, line: first });
-  assert.equal(tried.status, 200, JSON.stringify(tried.body));
-  assert.equal(tried.body.removedText, `${first}\n${continuation}`);
-  const planText = await readFile(probe.planFile, "utf8");
-  assert.equal(planText.includes(first), false);
-  assert.equal(planText.includes(continuation), false, "the continuation line does not dangle");
-
-  const undo = await post(probe.base, "/api/brains/tried/undo", { area: probe.area, line: tried.body.removedText, index: tried.body.index });
-  assert.equal(undo.status, 200, JSON.stringify(undo.body));
-  const restored = await readFile(probe.planFile, "utf8");
-  assert.ok(restored.includes(first) && restored.includes(continuation), "undo brings both lines back");
-});
-
-test("Julian marks a Decide row handled from its row, and the brain is told", async (context) => {
-  const probe = await startProbe(context, "forjuliandecision");
-  if (!probe) return;
-
-  await waitFor("the rows in the payload", async () => (await brainOf(probe.base))?.forJulian?.length === 3);
-
-  const done = await post(probe.base, "/api/brains/decision-done", { area: probe.area, line: probe.lines.decide });
-  assert.equal(done.status, 200, JSON.stringify(done.body));
-  assert.equal(done.body.removedText, probe.lines.decide, "undo restores what actually left the plan");
-  assert.equal((await readFile(probe.planFile, "utf8")).includes(probe.lines.decide), false);
-  const left = await waitFor("the row to leave the payload", async () => {
-    const rows = (await brainOf(probe.base))?.forJulian ?? [];
-    return rows.length === 2 ? rows : null;
-  });
-  assert.deepEqual(left.map((row) => row.kind), ["test", "decide"]);
-  assert.equal((await gitSubjects(probe.trees))[0], `update: ${probe.area} plan decision design-probe handled`);
-  const notices = await waitFor("the brain's notice on disk", async () => {
-    const inbox = await readInbox(probe.brains, probe.area);
-    return inbox.notices.length ? inbox.notices : null;
-  });
-  assert.equal(notices.some((notice) => notice.text === "Julian marked Decision design-probe done"), true, JSON.stringify(notices));
-
-  const undo = await post(probe.base, "/api/brains/decision-done/undo", { area: probe.area, line: probe.lines.decide, index: done.body.index });
-  assert.equal(undo.status, 200, JSON.stringify(undo.body));
-  const back = await waitFor("the row to come back", async () => {
-    const rows = (await brainOf(probe.base))?.forJulian ?? [];
-    return rows.length === 3 ? rows : null;
-  });
-  assert.deepEqual(back.map((row) => row.kind), ["decide", "test", "decide"]);
-
-  const tryit = await post(probe.base, "/api/brains/decision-done", { area: probe.area, line: probe.lines.test });
-  assert.equal(tryit.status, 400, JSON.stringify(tryit.body));
-  const unknown = await post(probe.base, "/api/brains/decision-done", { area: probe.area, line: "- Decide [[design-nothing]]: nothing?" });
-  assert.equal(unknown.status, 404, JSON.stringify(unknown.body));
-});
-
 test("Accept and Reject answer a row, and the brain hears the verdict", async (context) => {
   const probe = await startProbe(context, "forjulianverdict");
   if (!probe) return;
@@ -415,6 +311,51 @@ test("Accept and Reject answer a row, and the brain hears the verdict", async (c
   assert.equal(unknown.status, 404, JSON.stringify(unknown.body));
   const noBrain = await post(probe.base, "/api/brains/verdict", { area: "otto/nowhere", line: probe.lines.test, verdict: "accept" });
   assert.equal(noBrain.status, 404, JSON.stringify(noBrain.body));
+  assert.equal((await brainOf(probe.base)).forJulian.length, 2, "a refused press changes nothing");
+});
+
+test("a verdict drops a Test entry's continuation line too, and undo restores both", async (context) => {
+  const probe = await startProbe(context, "forjulianverdicttwo");
+  if (!probe) return;
+
+  const first = `- Test [[goal-${probe.slug}]]: press Cmd+K, type a title.`;
+  const continuation = "  Then press Enter; the finder opens on the first hit.";
+  await writeFile(
+    probe.planFile,
+    `# Plan for ${probe.area}\n\n## For Julian\n\n${probe.lines.decide}\n${first}\n${continuation}\n${probe.lines.free}\n\n## Waves\n\n- one\n`,
+    "utf8"
+  );
+  await waitFor("the rows in the payload", async () => (await brainOf(probe.base))?.forJulian?.length === 3);
+
+  const accepted = await post(probe.base, "/api/brains/verdict", { area: probe.area, line: first, verdict: "accept" });
+  assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+  assert.equal(accepted.body.removedText, `${first}\n${continuation}`);
+  const planText = await readFile(probe.planFile, "utf8");
+  assert.equal(planText.includes(first), false);
+  assert.equal(planText.includes(continuation), false, "the continuation line does not dangle");
+
+  const undo = await post(probe.base, "/api/brains/verdict/undo", { area: probe.area, line: accepted.body.removedText, index: accepted.body.index });
+  assert.equal(undo.status, 200, JSON.stringify(undo.body));
+  const restored = await readFile(probe.planFile, "utf8");
+  assert.ok(restored.includes(first) && restored.includes(continuation), "undo brings both lines back");
+});
+
+test("a stopped brain's rows are still Julian's to answer", async (context) => {
+  const probe = await startProbe(context, "forjulianverdictstopped");
+  if (!probe) return;
+
+  await waitFor("the rows in the payload", async () => (await brainOf(probe.base))?.forJulian?.length === 3);
+  await killSession(probe.brain.session);
+  await waitFor("the brain to be stopped", async () => (await brainOf(probe.base))?.live === false);
+
+  const stopped = await post(probe.base, "/api/brains/verdict", { area: probe.area, line: probe.lines.test, verdict: "reject" });
+  assert.equal(stopped.status, 200, JSON.stringify(stopped.body));
+  assert.equal((await readFile(probe.planFile, "utf8")).includes(probe.lines.test), false);
+  const notices = await waitFor("the verdict kept for the next generation", async () => {
+    const inbox = await readInbox(probe.brains, probe.area);
+    return inbox.notices.find((notice) => notice.text === `Julian rejected ${probe.slug}`) ?? null;
+  });
+  assert.ok(notices, "with no live brain the verdict waits on disk");
 });
 
 test("Julian presses Reply on a row, and the brain is told its subject", async (context) => {

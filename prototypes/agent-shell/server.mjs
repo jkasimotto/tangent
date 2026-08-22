@@ -44,6 +44,7 @@ import { STUDY_SNIPPET_MAX_LINES, STUDY_TUTOR_PROMPT_VERSION, parseTutorEnvelope
 import { applyAnswer, applyTutorFailure, applyTutorReply, closeStudy, latestStudy, newStudyRecord, readAllStudies, readStudy, writeStudy } from "./study-record.mjs";
 import { createSourceChangeMonitor } from "./source-change-monitor.mjs";
 import { promptArrived, splitPrompt, squash } from "./prompt-delivery.mjs";
+import { clearArmedPrompt, readAllArmedPrompts, writeArmedPrompt } from "./armed-prompts.mjs";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -145,6 +146,11 @@ const BRAIN_IDLE_NOTICE_MS = Number(process.env.TANGENT_BRAIN_IDLE_MINUTES ?? 10
 // One JSON record per study session: the subsystem, the turns, the verdicts,
 // and the one-line close record (impl-learning-ai-written-code Piece 2).
 const STUDY_ROOT = process.env.TANGENT_STUDY_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "study");
+// One JSON record per session with a prompt armed to type once its harness
+// leaves the shell (armSession below), so the arm survives a server restart
+// between typing the launch command and the harness coming up. Rules and
+// file shape live in armed-prompts.mjs.
+const ARMED_ROOT = process.env.TANGENT_ARMED_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "armed");
 // The tutor is a headless harness run, not a tmux agent: the screen needs
 // structured turns, and a terminal agent cannot give them.
 const STUDY_TUTOR_CMD = process.env.STUDY_TUTOR_CMD ?? "claude";
@@ -1588,16 +1594,20 @@ async function typePromptWhenReady(session, prompt, submit = false, label = "age
 async function typeGoalPromptWhenReady(session, area, file, phase = "execute", submit = false, documentFile = "", extraFiles = []) {
   const goals = await readAreaGoals(area);
   const o = goals.find((t) => t.file === file);
-  if (!o) return;
+  if (!o) return false;
   const extras = (extraFiles ?? []).map((extra) => goals.find((t) => t.file === extra)).filter(Boolean);
   const prompt = phase === "collaborate" ? await collaborationPrompt(area, o, documentFile, extras) : await goalPrompt(area, o, extras);
-  await typePromptWhenReady(session, prompt, submit, "goal prompt");
+  return typePromptWhenReady(session, prompt, submit, "goal prompt");
 }
 
 /**
  * One arming pass: fires the prompt for every armed session whose pane has
  * left the shell, and forgets sessions that died. Armed sessions are the only
  * ones looked at, so a Goal session in ordinary use costs nothing.
+ *
+ * The persisted record (armed-prompts.mjs) is cleared only once delivery is
+ * settled, success or failure, so a restart mid-typing still finds the record
+ * and retries rather than losing it.
  */
 async function tickArmedSessions() {
   let stdout;
@@ -1618,12 +1628,19 @@ async function tickArmedSessions() {
     if (!armedSessions.has(name) || SHELL_CMDS.has(command)) continue;
     const armed = armedSessions.get(name);
     armedSessions.delete(name);
-    if (armed.prompt) typePromptWhenReady(name, armed.prompt, armed.submit, "armed prompt").then(armed.onTyped ?? noop).catch(reportArmedPromptFailure);
-    else if (area && file) typeGoalPromptWhenReady(name, area, file, armed.phase, armed.submit, armed.document, armed.extraFiles);
+    /** Clears the persisted record and runs the caller's callback, once delivery settles. */
+    const settle = (arrived) => {
+      clearArmedPrompt(ARMED_ROOT, name).catch(() => {});
+      (armed.onTyped ?? noop)(arrived);
+    };
+    if (armed.prompt) typePromptWhenReady(name, armed.prompt, armed.submit, "armed prompt").then(settle).catch(reportArmedPromptFailure);
+    else if (area && file) typeGoalPromptWhenReady(name, area, file, armed.phase, armed.submit, armed.document, armed.extraFiles).then(settle).catch(reportArmedPromptFailure);
+    else clearArmedPrompt(ARMED_ROOT, name).catch(() => {}); // no goal bound yet: nothing left to type
   }
   for (const [name, armed] of [...armedSessions.entries()]) {
     if (live.has(name)) continue;
     armedSessions.delete(name);
+    clearArmedPrompt(ARMED_ROOT, name).catch(() => {});
     if (armed.onTyped) armed.onTyped(false);
   }
 }
@@ -1639,10 +1656,17 @@ function reportArmedPromptFailure(err) {
 /**
  * Arms one primed session and keeps the watch timer running while anything is
  * armed: one tmux query a second, never overlapping, stopped once every primed
- * session has its harness.
+ * session has its harness. The arm is written to disk before this returns, so
+ * a restart before the harness leaves its shell still has the prompt to
+ * re-arm at boot (rearmPersistedPrompts).
  */
-function armSession(name, phase = "execute", submit = false, document = "", prompt = "", extraFiles = [], onTyped = null) {
+async function armSession(name, phase = "execute", submit = false, document = "", prompt = "", extraFiles = [], onTyped = null) {
   armedSessions.set(name, { phase, submit, document, prompt, extraFiles, onTyped });
+  try {
+    await writeArmedPrompt(ARMED_ROOT, name, { phase, submit, document, prompt, extraFiles });
+  } catch (err) {
+    console.error("armed prompt persist:", err.message ?? err);
+  }
   if (armTimer) return;
   let running = false;
   armTimer = setInterval(async () => {
@@ -1661,6 +1685,27 @@ function armSession(name, phase = "execute", submit = false, document = "", prom
     }
   }, ARM_POLL_MS);
   armTimer.unref();
+}
+
+/**
+ * Restores armed prompts written before this process last stopped: a prompt
+ * whose session is still alive is re-armed exactly as armSession left it, one
+ * whose session died while the server was down is forgotten. Runs once at
+ * boot, before anything else touches armedSessions, so a step still booting
+ * its harness when `tangent shell rebuild` restarted the server still gets
+ * its prompt from the new process.
+ */
+async function rearmPersistedPrompts() {
+  const records = await readAllArmedPrompts(ARMED_ROOT);
+  if (!records.length) return;
+  const live = new Set((await listSessions()).map((session) => session.name));
+  for (const record of records) {
+    if (!live.has(record.session)) {
+      await clearArmedPrompt(ARMED_ROOT, record.session).catch(() => {});
+      continue;
+    }
+    await armSession(record.session, record.phase, record.submit, record.document, record.prompt, record.extraFiles);
+  }
 }
 
 // ---- cross-agent messages ----
@@ -1757,7 +1802,7 @@ function queueAgentMessage(target, entry) {
 async function primeGoalSession(session, area, phase = "execute", { launch = false, document = "", command = "", extraFiles = [], prompt = "" } = {}) {
   const { stdout } = await execFileAsync("tmux", ["display-message", "-p", "-t", "=" + session + ":", "#{pane_current_command}"]);
   if (!SHELL_CMDS.has(stdout.trim())) return false;
-  armSession(session, phase, launch, document, prompt, extraFiles);
+  await armSession(session, phase, launch, document, prompt, extraFiles);
   await typeInto(session, withDefaultModel(command || (await agentCmdForArea(area))), false);
   if (launch) {
     await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "Enter"]);
@@ -1770,7 +1815,7 @@ async function primeGoalSession(session, area, phase = "execute", { launch = fal
 async function primeDescribeWorkSession(session, area, prompt, { launch = true, command = "", onTyped = null } = {}) {
   const { stdout } = await execFileAsync("tmux", ["display-message", "-p", "-t", "=" + session + ":", "#{pane_current_command}"]);
   if (!SHELL_CMDS.has(stdout.trim())) return false;
-  armSession(session, "define", launch, "", prompt, [], onTyped);
+  await armSession(session, "define", launch, "", prompt, [], onTyped);
   await typeInto(session, withDefaultModel(command || (await agentCmdForArea(area))), false);
   if (launch) {
     await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "Enter"]);
@@ -4834,6 +4879,9 @@ server.listen(PORT, HOST, () => {
   /** Reports a failed flush without stopping the server. */
   const flushFailed = (err) => console.error("brain notices:", err.message ?? err);
   flushBrainNotices().catch(flushFailed);
+  // A prompt armed by the last process is still waiting on disk if its
+  // harness had not left the shell yet.
+  rearmPersistedPrompts().catch((err) => console.error("armed prompts:", err.message ?? err));
   // A study turn that died with the last process must not wedge the screen.
   sweepStudies().catch(studyTurnFailed);
 });

@@ -1,5 +1,6 @@
 // `@tangent/agent-shell` is the CLI surface of the Agent Shell: the vault CLI (`tangent area`,
 // `tangent goal`, `tangent idea`, `tangent vault`), the agent messaging CLI (`tangent agent`),
-// and the pipeline CLI (`tangent goal start`, `tangent goal handover`). Pipelines themselves are
-// owned by the Agent Shell server in prototypes/agent-shell/.
+// the pipeline CLI (`tangent goal start`, `tangent goal handover`), and the study partner launcher
+// (`tangent study`). Pipelines themselves are owned by the Agent Shell server in
+// prototypes/agent-shell/; `tangent study` spawns its own local interactive session instead.
 export * from "./cli/index.js";

@@ -1,7 +1,7 @@
 {
   "name": "@tangent/agent-shell",
   "version": "0.1.0",
-  "description": "Vault, agent messaging, and pipeline CLI for the Tangent Agent Shell.",
+  "description": "Vault, agent messaging, pipeline, and study-partner-launcher CLI for the Tangent Agent Shell.",
   "type": "module",
   "exports": {
     ".": {

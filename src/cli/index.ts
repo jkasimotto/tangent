@@ -34,6 +34,7 @@ const tangentCommandSpec: CliCommandSpec = {
     { name: "goal", description: "Create, list, start, hand over, and close Goals; install @tangent/agent-shell if unavailable", args: "<create|list|show|start|handover|done|wont-do>" },
     { name: "idea", description: "Capture and list ideas on an Area note; install @tangent/agent-shell if unavailable", args: "<add|list>" },
     { name: "document", description: "List and resolve comments inside a vault Document; install @tangent/agent-shell if unavailable", args: "<comments|resolve>" },
+    { name: "study", description: "Start the study partner: an interactive agent session beside nvim; install @tangent/agent-shell if unavailable", args: "<contract>" },
     { name: "vault", description: "Commit vault edits directly; install @tangent/agent-shell if unavailable", args: "<commit>" },
     doctorCommandSpec,
     { name: "governance", description: "Run architecture governance lints", hidden: true },
@@ -151,6 +152,12 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
   if (app === "document") {
     const { runDocumentCli } = await requiredProductModule<{ runDocumentCli(argv: string[]): Promise<void> }>("@tangent/agent-shell/cli", "document");
     await runDocumentCli(rest);
+    return;
+  }
+
+  if (app === "study") {
+    const { runStudyCli } = await requiredProductModule<{ runStudyCli(argv: string[]): Promise<void> }>("@tangent/agent-shell/cli", "study");
+    await runStudyCli(rest);
     return;
   }
 

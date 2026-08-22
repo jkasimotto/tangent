@@ -61,6 +61,14 @@ export const shellCommandSpec: CliCommandSpec = {
   ]
 };
 
+export const studyCommandSpec: CliCommandSpec = {
+  name: "study",
+  description: "Start the study partner: an interactive agent session that explores a codebase with Julian, beside nvim",
+  subcommands: [
+    { name: "contract", description: "Print the partner's contract (the system prompt the launcher appends)" }
+  ]
+};
+
 export const goalCommandSpec: CliCommandSpec = {
   name: "goal",
   description: "Create, list, start, append to, hand over, and close Goals in the Tangent tree",

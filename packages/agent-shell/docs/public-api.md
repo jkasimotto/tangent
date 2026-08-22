@@ -5,7 +5,7 @@ Public import paths:
 - `@tangent/agent-shell`
 - `@tangent/agent-shell/cli`
 
-Both export the same surface: `runAreaCli`, `runBrainCli`, `runGoalCli`, `runIdeaCli`, `runDocumentCli`, `runAgentCli`, `runShellCli`, `runVaultCli`, and their help specs `areaCommandSpec`, `brainCommandSpec`, `goalCommandSpec`, `ideaCommandSpec`, `documentCommandSpec`, `agentCommandSpec`, `shellCommandSpec`, `vaultCommandSpec`. The root `tangent` CLI lazily loads `@tangent/agent-shell/cli` for the `area`, `brain`, `goal`, `idea`, `document`, `agent`, `shell`, and `vault` nouns, the same way `usage`/`eval`/`rollup`/`search`/`threads` are loaded. Nothing else is exported; the Reviewed build engine was removed in ADR-0023.
+Both export the same surface: `runAreaCli`, `runBrainCli`, `runGoalCli`, `runIdeaCli`, `runDocumentCli`, `runAgentCli`, `runShellCli`, `runStudyCli`, `runVaultCli`, and their help specs `areaCommandSpec`, `brainCommandSpec`, `goalCommandSpec`, `ideaCommandSpec`, `documentCommandSpec`, `agentCommandSpec`, `shellCommandSpec`, `studyCommandSpec`, `vaultCommandSpec`, plus `STUDY_CONTRACT` and `STUDY_CONTRACT_VERSION` (the partner's system prompt and its version). The root `tangent` CLI lazily loads `@tangent/agent-shell/cli` for the `area`, `brain`, `goal`, `idea`, `document`, `agent`, `shell`, `study`, and `vault` nouns, the same way `usage`/`eval`/`rollup`/`search`/`threads` are loaded. Nothing else is exported; the Reviewed build engine was removed in ADR-0023.
 
 ## Vault CLI
 
@@ -50,9 +50,16 @@ Under a live brain, the brain's plan is the only list of what waits on Julian (A
 
 - `tangent shell rebuild [--server <url>] [--timeout <seconds>]`: posts `POST /api/shell/rebuild`, then polls `GET /api/sessions` every 500 ms until `boot` changes, so the command returns only when the new code answers. Default timeout 240 s; the failure names the rebuild log. The brain runs it before it writes a Try it line.
 
+## Study CLI
+
+`tangent study` starts the study partner: an interactive agent session beside nvim that explores real code with Julian and gets him to change it (design contract: otto/tangent/design-code-first-study-partner). No repo argument; scoping happens in the opening conversation.
+
+- `tangent study`: spawns `claude --verbose --dangerously-skip-permissions --append-system-prompt <STUDY_CONTRACT>` with `CLAUDE_CONFIG_DIR` set to `~/.claude-otto`, `stdio: "inherit"`. The session owns the terminal until it exits.
+- `tangent study contract`: prints `STUDY_CONTRACT` to stdout and exits; no session is spawned.
+
 ## Server contract
 
-Every command but `vault commit` is a thin HTTP client to the running Agent Shell server (default `http://127.0.0.1:4321`, overridable via `--server` or `TANGENT_SHELL_URL`, loopback-only). `--json` prints machine-readable output on read commands. Server-unreachable errors name the fix ("Agent Shell is not running..."); unknown Area/Goal errors suggest the nearest existing path or slug. Non-2xx responses surface the server's own `error` text.
+Every command but `vault commit` and `study` is a thin HTTP client to the running Agent Shell server (default `http://127.0.0.1:4321`, overridable via `--server` or `TANGENT_SHELL_URL`, loopback-only). `vault commit` writes the vault's git history directly; `study` spawns a local interactive session directly. `--json` prints machine-readable output on read commands. Server-unreachable errors name the fix ("Agent Shell is not running..."); unknown Area/Goal errors suggest the nearest existing path or slug. Non-2xx responses surface the server's own `error` text.
 
 Endpoints in `prototypes/agent-shell/server.mjs` used by this package:
 

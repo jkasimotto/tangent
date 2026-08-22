@@ -51,6 +51,28 @@ export const PANE_SIGNATURES = {
 };
 
 /**
+ * A pane that started a shell of its own and is waiting for it. Claude Code
+ * prints "Running in the background", a spinner line that counts the shells
+ * still running, and keeps a shell count in its status bar. The pane stops
+ * repainting while that shell works, so the screen hash calls it static, but
+ * the session waits on its own work and not on a person: it is working
+ * (design-the-for-you-row-shows-only-direct-asks, Julian's answer 5). The
+ * status-bar pattern is anchored on the separator the status line uses, so
+ * ordinary output that mentions shells cannot match it.
+ */
+const BACKGROUND_SHELL = [
+  /Running in the background/i,
+  /\d+\s+shells?\s+still\s+running/i,
+  /·\s*\d+\s+shells?\b/i,
+];
+
+/** True when the pane shows a background shell it started and still runs. */
+export function hasRunningBackgroundShell(text) {
+  const value = String(text ?? "");
+  return BACKGROUND_SHELL.some((pattern) => pattern.test(value));
+}
+
+/**
  * Requires an unrecognized static pane to stay quiet before it becomes a
  * generic wait. Positive signals (busy marker, dialog, composer, or draft)
  * remain immediate. Returns the timestamp to carry into the next sample.
@@ -78,7 +100,8 @@ export function staticSinceOf({ previous, hash, now }) {
  * Classifies one static pane. Input: the pane text exactly as
  * `tmux capture-pane -p` prints it, and the cursor position from
  * `#{cursor_x} #{cursor_y}`. Returns one of:
- *   { kind: "working" }                     - a busy marker is on screen
+ *   { kind: "working" }                     - a busy marker is on screen, or a
+ *                                             background shell it started runs
  *   { kind: "decision", question }          - a dialog waits for a choice
  *   { kind: "idle" }                        - an empty composer waits for input
  *   { kind: "draft" }                       - the composer holds unsent text
@@ -97,6 +120,9 @@ export function classifyStaticPane({ text, cursorX = 0, cursorY = 0 }) {
       if (line !== undefined) return { kind: "decision", question: dialogQuestion(lines) };
     }
   }
+  // After the dialog sweep, so a pane that asks a question while a shell of
+  // its own runs still reads as an ask, not as work.
+  if (hasRunningBackgroundShell(text)) return { kind: "working" };
   const cursorLine = lines[cursorY] ?? "";
   for (const signature of Object.values(PANE_SIGNATURES)) {
     const { prompt, homeColumn } = signature.composer;

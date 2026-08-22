@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { classifyStaticPane, stabilizeStaticPane, staticSinceOf } from "./pane-state.mjs";
+import { classifyStaticPane, hasRunningBackgroundShell, stabilizeStaticPane, staticSinceOf } from "./pane-state.mjs";
 
 const fixturesDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "panes");
 
@@ -102,4 +102,25 @@ test("staticSinceOf: a repaint, a missing sample, or a shell sample has no stati
   assert.equal(staticSinceOf({ previous: { hash: "a", state: "waiting", staticSince: 500 }, hash: "b", now: 900 }), null);
   assert.equal(staticSinceOf({ previous: undefined, hash: "a", now: 900 }), null);
   assert.equal(staticSinceOf({ previous: { hash: "a", state: "shell", staticSince: 500 }, hash: "a", now: 900 }), null);
+});
+
+test("a pane waiting on a background shell it started is working, never an ask", () => {
+  const { text, cursorY } = fixture("claude-background-shell.txt", /^❯(\s|$)/);
+  assert.ok(cursorY >= 0, "the fixture contains a composer prompt line");
+  assert.deepEqual(classifyStaticPane({ text, cursorX: 2, cursorY }), { kind: "working" }, "an empty composer over a running shell is not idle");
+  assert.equal(hasRunningBackgroundShell(text), true);
+});
+
+test("the background-shell markers are read one at a time, and ordinary prose is not one", () => {
+  assert.equal(hasRunningBackgroundShell("  ⎿  Running in the background (↓ to manage)"), true);
+  assert.equal(hasRunningBackgroundShell("✳ Sautéed for 32s · 1 shell still running"), true);
+  assert.equal(hasRunningBackgroundShell("  ⏵⏵ bypass permissions on (shift+tab to cycle) · 2 shells · ← for agents"), true);
+  assert.equal(hasRunningBackgroundShell("I refactored the 3 shell helpers into one module."), false);
+  assert.equal(hasRunningBackgroundShell(""), false);
+});
+
+test("a dialog still asks, even while a shell it started runs", () => {
+  const { text } = fixture("claude-dialog.txt");
+  const withShell = `${text}\n✳ Sautéed for 32s · 1 shell still running\n`;
+  assert.equal(classifyStaticPane({ text: withShell, cursorX: 0, cursorY: 0 }).kind, "decision");
 });

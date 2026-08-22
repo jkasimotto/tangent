@@ -39,7 +39,7 @@ import { appendSteps, currentStep, endPipeline, goalBindingGoneFromSnapshot, new
 import { deliveryDecision, messageBanner, normalizeMessage } from "./agent-messages.mjs";
 import { beginGeneration, brainForArea, brainRecordForArea, brainSessionName, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, recordHandover, validateInstruction, writeBrain } from "./brain-record.mjs";
 import { appendNotice, inboxesForBrain, markDelivered, mergeNotices, noticeBlock, noticeDigest, readAllInboxes, readInbox, writeInbox } from "./brain-inbox.mjs";
-import { parseForJulian, removeForJulianLine, restoreForJulianLine, unparsedForJulianLines } from "./for-julian.mjs";
+import { forJulianSectionText, parseForJulian, removeForJulianLine, restoreForJulianLine, unparsedForJulianLines } from "./for-julian.mjs";
 import { createSourceChangeMonitor } from "./source-change-monitor.mjs";
 import { promptArrived, splitPrompt, squash } from "./prompt-delivery.mjs";
 import { clearArmedPrompt, readAllArmedPrompts, writeArmedPrompt } from "./armed-prompts.mjs";
@@ -2868,6 +2868,42 @@ function reportNoticeSweepFailure(err) {
   console.error("brain notices:", err.message ?? err);
 }
 
+/** Reports a failed unshown-lines sweep without stopping the reconcile pass. */
+function reportUnshownFailure(err) {
+  console.error("brain unshown lines:", err.message ?? err);
+}
+
+/** The one message that names what Tangent hid, and the shapes that are shown. */
+function unshownNotice(lines) {
+  const shown = lines.slice(0, 3).map((line) => `"${line.trim()}"`).join(", ");
+  const rest = lines.length > 3 ? ` and ${lines.length - 3} more` : "";
+  const subject = lines.length === 1 ? "1 line in your plan's For Julian section is" : `${lines.length} lines in your plan's For Julian section are`;
+  return `${subject} not shown on Julian's desk: ${shown}${rest}. `
+    + `The shapes: "- Decide [[<document>]]: <question>? Unblocks: <what>.", "- Decide: <question>?", "- Test [[<goal-slug>]]: <where, press, see>." `
+    + `A Decide ask must end with ?, and every [[target]] must resolve. Run tangent brain status to see what parses.`;
+}
+
+/**
+ * Tells one brain, once per plan change, which lines of its `## For Julian`
+ * section Tangent shows nothing for: lines in no known shape, and rows whose
+ * [[target]] resolves to nothing. Hiding a line must never be silent, and it
+ * must never nag: the hash of the section is kept on the record, so a section
+ * that did not change since the last look sends nothing.
+ */
+async function reportUnshownForJulian(record, index) {
+  const text = await brainPlanText(record);
+  if (!text) return;
+  const hash = createHash("sha256").update(forJulianSectionText(text)).digest("hex");
+  if (hash === record.forJulianNoticeHash) return;
+  const lines = [
+    ...unparsedForJulianLines(text).map((item) => item.line),
+    ...(await forJulianItems(record, index)).filter((row) => row.missing).map((row) => row.line),
+  ];
+  record.forJulianNoticeHash = hash;
+  await writeBrain(BRAINS_ROOT, record);
+  if (lines.length) await notifyBrain(record.area, unshownNotice(lines));
+}
+
 /**
  * Queues unread brain notices for live brains, marks running brains whose
  * session is gone as stopped, and reminds a long-running generation once to
@@ -2877,7 +2913,11 @@ async function reconcileBrains(sessions) {
   const live = new Set(sessions.map((item) => item.name));
   const now = Date.now();
   await flushBrainNotices(sessions, "unread notices found by a sweep").catch(reportNoticeSweepFailure);
+  const index = await vaultIndex();
   for (const record of await readAllBrains(BRAINS_ROOT)) {
+    if (record.status === "running" || record.status === "stopped") {
+      await reportUnshownForJulian(record, index).catch(reportUnshownFailure);
+    }
     if (record.status !== "running" || !record.session) continue;
     if (!live.has(record.session)) {
       endBrain(record, "stopped");
@@ -2996,6 +3036,52 @@ async function restoreDecisionLine(area, line, index) {
   const text = restoreForJulianLine(current.text, line, index);
   const row = parseForJulian(text).find((item) => item.line.trimEnd() === String(line).trimEnd());
   await writeVaultDocument(current, text, `update: ${area} plan restore decision ${row?.target ?? "row"}`);
+  return { status: 200 };
+}
+
+/**
+ * Julian answered one row: the line leaves the plan's `## For Julian`
+ * section, the plan is committed, and the brain hears the verdict. Both
+ * verbs are answers, so both travel: Accept means go with it as written,
+ * a bare Reject means he parks the subject and the brain must not raise it
+ * again. Only a row with a target goes this way; a targetless Decide is
+ * answered in the brain's own terminal. The brain need not be live: with no
+ * live session the notice waits on disk for the next generation.
+ */
+async function clearRowWithVerdict(area, line, verdict) {
+  if (verdict !== "accept" && verdict !== "reject") return { status: 400, error: "the verdict is accept or reject" };
+  const record = await brainOfArea(area);
+  if (!record) return { status: 404, error: `no brain on ${area || "(none)"}` };
+  if (!String(line ?? "").trim()) return { status: 400, error: "no line" };
+  const current = await readVaultDocument(record.planFile);
+  if (!current) return { status: 404, error: `no plan ${record.planFile}` };
+  const row = parseForJulian(current.text).find((item) => item.line.trimEnd() === String(line).trimEnd());
+  if (!row) return { status: 404, error: "the plan has no such line" };
+  if (!row.target) return { status: 400, error: "a targetless Decide is answered in the brain terminal" };
+  const { text, removed, index, removedText } = removeForJulianLine(current.text, line);
+  if (!removed) return { status: 404, error: "the plan has no such line" };
+  const past = verdict === "accept" ? "accepted" : "rejected";
+  await writeVaultDocument(current, text, `update: ${area} plan ${row.target} ${past}`);
+  await notifyBrain(area, `Julian ${past} ${row.target}`);
+  return { status: 200, line: row.line, removedText, index, target: row.target, verdict };
+}
+
+/**
+ * Julian pressed Undo on a verdict: the line goes back where it was and the
+ * brain hears that the verdict is withdrawn, so it never acts on an answer
+ * that was taken back.
+ */
+async function restoreVerdictLine(area, line, index) {
+  const record = await brainOfArea(area);
+  if (!record) return { status: 404, error: `no brain on ${area || "(none)"}` };
+  if (!String(line ?? "").trim()) return { status: 400, error: "no line" };
+  const current = await readVaultDocument(record.planFile);
+  if (!current) return { status: 404, error: `no plan ${record.planFile}` };
+  const text = restoreForJulianLine(current.text, line, index);
+  const row = parseForJulian(text).find((item) => item.line.trimEnd() === String(line).trimEnd());
+  const target = row?.target ?? "row";
+  await writeVaultDocument(current, text, `update: ${area} plan restore ${target}`);
+  await notifyBrain(area, `Julian withdrew his verdict on ${target}; the line is back`);
   return { status: 200 };
 }
 
@@ -3540,6 +3626,24 @@ const server = http.createServer(async (req, res) => {
       let body = {};
       try { body = JSON.parse(await readBody(req)); } catch {}
       const result = await restoreDecisionLine(String(body.area ?? ""), String(body.line ?? ""), Number(body.index ?? 0));
+      res.writeHead(result.status, { "content-type": "application/json" });
+      res.end(JSON.stringify(result.status === 200 ? { ok: true } : { error: result.error }));
+      return;
+    }
+    // Julian answered one row with Accept or Reject: the line leaves the plan and the brain hears the verdict.
+    if (url.pathname === "/api/brains/verdict" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      const result = await clearRowWithVerdict(String(body.area ?? ""), String(body.line ?? ""), String(body.verdict ?? ""));
+      res.writeHead(result.status, { "content-type": "application/json" });
+      res.end(JSON.stringify(result.status === 200 ? { ok: true, line: result.line, removedText: result.removedText, index: result.index, target: result.target, verdict: result.verdict } : { error: result.error }));
+      return;
+    }
+    // The undo of that answer: the row goes back and the verdict is withdrawn.
+    if (url.pathname === "/api/brains/verdict/undo" && req.method === "POST") {
+      let body = {};
+      try { body = JSON.parse(await readBody(req)); } catch {}
+      const result = await restoreVerdictLine(String(body.area ?? ""), String(body.line ?? ""), Number(body.index ?? 0));
       res.writeHead(result.status, { "content-type": "application/json" });
       res.end(JSON.stringify(result.status === 200 ? { ok: true } : { error: result.error }));
       return;

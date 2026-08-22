@@ -369,6 +369,54 @@ test("Julian marks a Decide row handled from its row, and the brain is told", as
   assert.equal(unknown.status, 404, JSON.stringify(unknown.body));
 });
 
+test("Accept and Reject answer a row, and the brain hears the verdict", async (context) => {
+  const probe = await startProbe(context, "forjulianverdict");
+  if (!probe) return;
+
+  await waitFor("the rows in the payload", async () => (await brainOf(probe.base))?.forJulian?.length === 3);
+
+  const accepted = await post(probe.base, "/api/brains/verdict", { area: probe.area, line: probe.lines.test, verdict: "accept" });
+  assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+  assert.equal(accepted.body.target, probe.slug);
+  assert.equal(accepted.body.verdict, "accept");
+  assert.equal((await readFile(probe.planFile, "utf8")).includes(probe.lines.test), false);
+  assert.equal((await gitSubjects(probe.trees))[0], `update: ${probe.area} plan ${probe.slug} accepted`);
+  const verdictNotice = await waitFor("the verdict on disk", async () => {
+    const inbox = await readInbox(probe.brains, probe.area);
+    return inbox.notices.find((notice) => notice.text === `Julian accepted ${probe.slug}`) ?? null;
+  });
+  assert.ok(verdictNotice);
+
+  const undo = await post(probe.base, "/api/brains/verdict/undo", { area: probe.area, line: accepted.body.removedText ?? probe.lines.test, index: accepted.body.index });
+  assert.equal(undo.status, 200, JSON.stringify(undo.body));
+  assert.equal((await readFile(probe.planFile, "utf8")).includes(probe.lines.test), true, "the line is back");
+  assert.equal((await gitSubjects(probe.trees))[0], `update: ${probe.area} plan restore ${probe.slug}`);
+  const withdrawal = await waitFor("the withdrawal on disk", async () => {
+    const inbox = await readInbox(probe.brains, probe.area);
+    return inbox.notices.find((notice) => notice.text === `Julian withdrew his verdict on ${probe.slug}; the line is back`) ?? null;
+  });
+  assert.ok(withdrawal, "an undo tells the brain the verdict is off");
+
+  // A bare Reject is an answer too: it travels, and the row leaves.
+  const rejected = await post(probe.base, "/api/brains/verdict", { area: probe.area, line: probe.lines.decide, verdict: "reject" });
+  assert.equal(rejected.status, 200, JSON.stringify(rejected.body));
+  assert.equal((await gitSubjects(probe.trees))[0], `update: ${probe.area} plan design-probe rejected`);
+  await waitFor("the rejection on disk", async () => {
+    const inbox = await readInbox(probe.brains, probe.area);
+    return inbox.notices.find((notice) => notice.text === "Julian rejected design-probe") ?? null;
+  });
+
+  const noVerb = await post(probe.base, "/api/brains/verdict", { area: probe.area, line: probe.lines.test, verdict: "handled" });
+  assert.equal(noVerb.status, 400, JSON.stringify(noVerb.body));
+  const targetless = await post(probe.base, "/api/brains/verdict", { area: probe.area, line: probe.lines.free, verdict: "accept" });
+  assert.equal(targetless.status, 400, JSON.stringify(targetless.body));
+  assert.match(targetless.body.error, /answered in the brain terminal/);
+  const unknown = await post(probe.base, "/api/brains/verdict", { area: probe.area, line: "- Test [[goal-nothing]]: nothing.", verdict: "accept" });
+  assert.equal(unknown.status, 404, JSON.stringify(unknown.body));
+  const noBrain = await post(probe.base, "/api/brains/verdict", { area: "otto/nowhere", line: probe.lines.test, verdict: "accept" });
+  assert.equal(noBrain.status, 404, JSON.stringify(noBrain.body));
+});
+
 test("Julian presses Reply on a row, and the brain is told its subject", async (context) => {
   const probe = await startProbe(context, "forjulianreply");
   if (!probe) return;

@@ -5,6 +5,11 @@
 // which brain covers an Area, what the latest handover says), so the rules
 // are unit-testable without a live shell. Design: the vault Document
 // impl-area-brain.md on otto/tangent.
+//
+// The server adds one optional field of its own, `forJulianNoticeHash`: the
+// hash of the plan's `## For Julian` section at the last sweep, so a brain
+// hears about the lines Tangent hides once per plan change and never again
+// (impl-the-for-you-row-shows-only-direct-asks). `newBrain` does not set it.
 
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";

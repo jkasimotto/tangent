@@ -385,16 +385,19 @@ async function areaDirectory(area) {
   return path.isAbsolute(dir) && existsSync(dir) ? dir : null;
 }
 
-let caffeinateProc = null; // running `caffeinate -di` child, or null
+let caffeinateProc = null; // running `caffeinate -is` child, or null
 
 /**
- * Starts or stops a `caffeinate -di` child, the header's keep-awake toggle
- * for long agent runs. `-w` ties the assertion to this server's lifetime, so
- * quitting the shell can never leave the machine stuck awake.
+ * Starts or stops a `caffeinate -is` child, the header's keep-awake toggle
+ * for long agent runs. `-i` blocks idle system sleep and `-s` covers AC with
+ * the lid closed, so agents keep running; deliberately no `-d`, so the
+ * display still sleeps and locks on the normal schedule. `-w` ties the
+ * assertion to this server's lifetime, so quitting the shell can never leave
+ * the machine stuck awake.
  */
 function setCaffeinate(on) {
   if (on && !caffeinateProc) {
-    caffeinateProc = spawn("caffeinate", ["-di", "-w", String(process.pid)], { stdio: "ignore" });
+    caffeinateProc = spawn("caffeinate", ["-is", "-w", String(process.pid)], { stdio: "ignore" });
     caffeinateProc.on("exit", () => (caffeinateProc = null));
   } else if (!on && caffeinateProc) {
     caffeinateProc.kill();

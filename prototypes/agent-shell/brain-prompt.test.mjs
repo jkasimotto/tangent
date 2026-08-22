@@ -187,7 +187,7 @@ test("a pipeline step under a brain sends its decisions and blockers to the brai
   );
 });
 
-test("the brain prompt tells the brain the For Julian line shapes and the rebuild rule", async (context) => {
+test("the brain prompt tells the brain the Decide and Test shapes, the question rule, and the verdicts", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-brain-forjulian-"));
   const trees = path.join(root, "trees");
   const leaf = `probeforjulian${process.pid}`;
@@ -246,15 +246,21 @@ test("the brain prompt tells the brain the For Julian line shapes and the rebuil
   const show = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(brain.session)}`).then((response) => response.json());
 
   assert.match(show.prompt, /## For Julian/, "the prompt has the section that carries what waits on Julian");
-  assert.match(show.prompt, /Tangent reads only that section/, "only the plan section is the list");
-  assert.match(show.prompt, /- Decision \[\[<document>\]\]: <what it asks, one line>\. Unblocks: <what your answer unblocks>\./, "the Decision line shape");
-  assert.match(show.prompt, /- Try it \[\[<goal-slug>\]\]: <where to go, what to press, what he sees; two lines at most>\./, "the Try it line shape");
-  assert.match(show.prompt, /- Brain: <one question that fits no Document>\./, "the Brain line shape");
-  assert.match(show.prompt, /run `tangent shell rebuild` before you write its Try it line/, "the server runs the new code before Julian presses anything");
-  assert.match(show.prompt, /Julian clears Try it lines himself, and can also mark a Decision line handled straight from its row/, "who clears which line");
-  assert.match(show.prompt, /Tangent sends you "Julian marked Decision <file> done"/, "the brain is told when Julian marks a Decision handled");
+  assert.match(show.prompt, /Every row is a direct ask he answers on the row/, "the invariant of the card leads the section");
+  assert.match(show.prompt, /- Decide \[\[<document>\]\]: <the question, ending with \?> Unblocks: <what his answer unblocks>\./, "the targeted Decide line shape");
+  assert.match(show.prompt, /- Decide: <one question that fits no Document, ending with \?>/, "the targetless Decide line shape");
+  assert.match(show.prompt, /- Test \[\[<goal-slug>\]\]: <where to go, what to press, what he sees; two lines at most>\./, "the Test line shape");
+  assert.match(show.prompt, /A Decide ask must end with a question mark or the line is not shown/, "the question rule is stated");
+  assert.match(show.prompt, /Tangent puts the fixed question "Accept it\?" under every Test row/, "the brain never writes the Test question itself");
+  assert.match(show.prompt, /Write a Test line only for a Goal that is done/, "a Test row is a landed Goal");
+  assert.match(show.prompt, /run `tangent shell rebuild` before you write the Test line/, "the server runs the new code before Julian presses anything");
+  assert.match(show.prompt, /sends you "Julian accepted <target>" or "Julian rejected <target>"/, "the verdict reaches the asker");
+  assert.match(show.prompt, /A bare Reject means: he parks it and comes back to it himself\. Do not follow up, do not re-ask, and do not rewrite the line/, "the park rule");
+  assert.match(show.prompt, /Tangent sends "Julian withdrew his verdict on <target>; the line is back"/, "an undo withdraws the verdict");
+  assert.match(show.prompt, /Tangent messages you once per commit that leaves unshown lines/, "hiding a line is never silent");
   assert.match(show.prompt, /Tangent sends you "Julian is replying about: <subject>"/, "the brain is told the subject before a reply arrives");
-  assert.match(show.prompt, /`tangent brain status` prints "Tangent shows N items for Julian"/, "the brain can check that its lines parsed");
+  assert.match(show.prompt, /`tangent brain status` prints the rows Tangent shows and every line it does not show/, "the brain can check its own misses");
   assert.match(show.prompt, /ask in the plan's For Julian section \(below\)/, "the decision rule points at the list");
+  assert.doesNotMatch(show.prompt, /Try it|Tried it|Handled/, "the old verbs and shapes are gone");
   assert.doesNotMatch(show.prompt, /launchctl kickstart/, "the rebuild rule is one command, not a launchctl recipe");
 });

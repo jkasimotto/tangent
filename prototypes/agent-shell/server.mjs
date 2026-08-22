@@ -39,7 +39,7 @@ import { appendSteps, currentStep, endPipeline, goalBindingGoneFromSnapshot, new
 import { deliveryDecision, messageBanner, normalizeMessage } from "./agent-messages.mjs";
 import { beginGeneration, brainForArea, brainRecordForArea, brainSessionName, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, recordHandover, validateInstruction, writeBrain } from "./brain-record.mjs";
 import { appendNotice, inboxesForBrain, markDelivered, mergeNotices, noticeBlock, noticeDigest, readAllInboxes, readInbox, writeInbox } from "./brain-inbox.mjs";
-import { parseForJulian, removeForJulianLine, restoreForJulianLine } from "./for-julian.mjs";
+import { parseForJulian, removeForJulianLine, restoreForJulianLine, unparsedForJulianLines } from "./for-julian.mjs";
 import { createSourceChangeMonitor } from "./source-change-monitor.mjs";
 import { promptArrived, splitPrompt, squash } from "./prompt-delivery.mjs";
 import { clearArmedPrompt, readAllArmedPrompts, writeArmedPrompt } from "./armed-prompts.mjs";
@@ -648,7 +648,7 @@ async function saveVaultDocument(file, text, baseHash, summary = "edited in tree
 }
 
 /**
- * Tells every brain that lists this Document as a Decision that Julian
+ * Tells every brain that lists this Document on a Decide row that Julian
  * commented on it. Fires only when a comment was added or its text changed,
  * never on a removal, so an Undo does not wake the brain.
  */
@@ -658,11 +658,11 @@ async function notifyBrainsOfComment(before, after) {
   if (!fresh.length) return;
   const open = after.comments.length;
   const text = `Julian commented on ${after.file} (${open} open ${open === 1 ? "comment" : "comments"}). `
-    + `Read them with tangent document comments ${after.file}; remove the Decision line from the plan when you have what you need.`;
+    + `Read them with tangent document comments ${after.file}; remove the Decide line from the plan when you have what you need.`;
   const index = await vaultIndex();
   for (const record of await readAllBrains(BRAINS_ROOT)) {
     const rows = await forJulianItems(record, index);
-    if (rows.some((row) => row.kind === "decision" && row.file === after.file)) await notifyBrain(record.area, text);
+    if (rows.some((row) => row.kind === "decide" && row.file === after.file)) await notifyBrain(record.area, text);
   }
 }
 
@@ -2717,11 +2717,12 @@ async function brainPrompt(record) {
     `Tangent sends you messages: a step handed over, a pipeline completed, a step stopped or sat idle, a Goal session ended. No message is lost: each one is kept on disk until a generation of this brain reads it, so what arrived while you were away is in the section above, or in a message that reaches you after a restart. Read the handover and the files. When a review asks for changes, \`tangent goal append <slug> --step "..." --launch ...\`. When a result is good, note it in the plan and start what its completion unblocked. Workers may message you; answer with \`tangent agent send <session> "<text>"\`.\n\n` +
     `Ask Julian only for real decisions, and ask in the plan's For Julian section (below); he sees that list on his desk. Julian started this brain to get the Area done, and that start is his word on Goal status for the Goals under it. When a Goal's final review hands over with a pass and its done condition holds, write the verdict into the Goal's State section and run \`tangent goal done <slug>\` in that same turn; when a Goal turns out wrong, \`tangent goal wont-do <slug> --reason "..."\` in that same turn. After every batch of results, sweep for Goals whose pipeline finished and close them: a finished Goal left showing Waiting for you is a failure of the brain, not a question for Julian. His instruction above can narrow this (for example, ask before closing). Goals outside your plan stay his; only real decisions wait for Julian.\n\n` +
     `## For Julian\n\n` +
-    `Julian's desk shows one list of what waits on him: the \`## For Julian\` section of your plan. Tangent reads only that section. It shows only these three line shapes. A line in another shape is not shown.\n` +
-    `- Decision [[<document>]]: <what it asks, one line>. Unblocks: <what your answer unblocks>.\n` +
-    `- Try it [[<goal-slug>]]: <where to go, what to press, what he sees; two lines at most>.\n` +
-    `- Brain: <one question that fits no Document>.\n` +
-    `Write a Decision line only for a Document with open questions or recommendations that need his word. A recommendation he does not need to see never goes on the list. When Julian comments on a listed Document, Tangent sends you "Julian commented on <file> (N open comments)". Read the comments, act, resolve them, then remove the line and commit the plan. Julian may also answer in this session. If a closed Goal changes what Julian sees or presses in Tangent, run \`tangent shell rebuild\` before you write its Try it line. The command rebuilds, restarts the server, and returns when the new boot answers, so the keys work the first time he presses them. Julian clears Try it lines himself, and can also mark a Decision line handled straight from its row; when he does, Tangent sends you "Julian marked Decision <file> done" and the line is already gone from the plan, so treat that as his answer and do not write it again unless a new question comes up. You still remove a Decision line yourself once your reading of his comments answers it, and you always clear Brain lines. When Julian presses Reply on a row before opening this terminal, Tangent sends you "Julian is replying about: <subject>" first, so read that as the topic of what he types next. \`tangent brain status\` prints "Tangent shows N items for Julian" and the rows, so you can check that your lines parsed.\n\n` +
+    `Julian's desk shows one list of what waits on him: the \`## For Julian\` section of your plan. Every row is a direct ask he answers on the row, so Tangent shows only these line shapes. A line in another shape is not shown, and Tangent messages you once per commit that leaves unshown lines in the section.\n` +
+    `- Decide [[<document>]]: <the question, ending with ?> Unblocks: <what his answer unblocks>.\n` +
+    `- Decide: <one question that fits no Document, ending with ?>\n` +
+    `- Test [[<goal-slug>]]: <where to go, what to press, what he sees; two lines at most>.\n` +
+    `A Decide ask must end with a question mark or the line is not shown. Write a Decide line only for a question that needs his word; a recommendation he does not need to see never goes on the list. Tangent puts the fixed question "Accept it?" under every Test row. Write a Test line only for a Goal that is done; the row stops showing when its Goal is no longer done. If the Goal changes what Julian sees or presses in Tangent, run \`tangent shell rebuild\` before you write the Test line, so the keys work the first time he presses them.\n` +
+    `Julian answers a Decide or Test row with Accept or Reject. Tangent removes the line, commits the plan, and sends you "Julian accepted <target>" or "Julian rejected <target>". Accept on a Decide row means: go with the recommendations as written. A bare Reject means: he parks it and comes back to it himself. Do not follow up, do not re-ask, and do not rewrite the line; the subject returns only when Julian raises it. If he presses Undo, Tangent sends "Julian withdrew his verdict on <target>; the line is back". When Julian comments on a listed Document, Tangent sends you "Julian commented on <file> (N open comments)". Read the comments, act, resolve them, then remove the line and commit the plan. You clear a targetless Decide line yourself once you have the answer; an answered ask left standing is your failure, not his. When Julian presses Reply or Answer on a row, Tangent sends you "Julian is replying about: <subject>" before he types. \`tangent brain status\` prints the rows Tangent shows and every line it does not show, so check it after you edit the section.\n\n` +
     `## When to hand over\n\n` +
     `Before every handover, sweep \`tangent goal list ${area}\` and \`tangent agent list\` for any Goal whose pipeline finished and close it (\`tangent goal done <slug>\` or \`tangent goal wont-do <slug> --reason "..."\`); a finished Goal left waiting is a failure, never something to hand off to the next generation. In the same sweep, check \`tangent agent list\` for a running step showing "needs decision" or "draft" and answer it; do not hand over a step sitting stuck on a question the next generation has to notice all over again. Then, at a natural pause, after a wave is dispatched or a batch of results is processed, and always when Tangent reminds you, write the plan status and run \`tangent brain handover "<facts>"\`: what runs (Goal, step, session), what waits and why, decisions taken, what the next generation should do first. Facts, no narrative. A fresh copy of you starts from the plan and those facts, and this session ends.`
   );
@@ -2909,12 +2910,12 @@ async function forJulianItems(record, index) {
   const rows = parseForJulian(await brainPlanText(record));
   return rows.map((row) => {
     const item = { ...row, file: null, title: null, commentCount: 0, missing: false, goalStatus: null };
-    if (row.kind === "brain") return { ...item, title: row.text };
-    const hit = row.kind === "decision"
+    if (row.kind === "decide" && !row.target) return { ...item, title: row.text };
+    const hit = row.kind === "decide"
       ? index.documents.find((document) => linkTargetsRecord(row.target, document))
       : index.documents.find((document) => document.kind === "goal" && path.basename(document.file, ".md") === `goal-${row.target}`);
-    if (!hit) return { ...item, file: row.kind === "decision" ? row.target : null, title: row.target, missing: true };
-    if (row.kind === "decision") {
+    if (!hit) return { ...item, file: row.kind === "decide" ? row.target : null, title: row.target, missing: true };
+    if (row.kind === "decide") {
       return { ...item, file: hit.file, title: hit.title, commentCount: hit.commentCount ?? 0 };
     }
     return { ...item, file: hit.file, title: hit.title, goalStatus: hit.status ?? null };
@@ -2943,7 +2944,7 @@ async function clearTryItLine(area, line) {
   if (!current) return { status: 404, error: `no plan ${record.planFile}` };
   const row = parseForJulian(current.text).find((item) => item.line.trimEnd() === String(line).trimEnd());
   if (!row) return { status: 404, error: "the plan has no such line" };
-  if (row.kind !== "tryit") return { status: 400, error: "only a Try it line leaves this way" };
+  if (row.kind !== "test") return { status: 400, error: "only a Test line leaves this way" };
   const { text, removed, index, removedText } = removeForJulianLine(current.text, line);
   if (!removed) return { status: 404, error: "the plan has no such line" };
   await writeVaultDocument(current, text, `update: ${area} plan tried it ${row.target}`);
@@ -2977,7 +2978,7 @@ async function clearDecisionLine(area, line) {
   if (!current) return { status: 404, error: `no plan ${record.planFile}` };
   const row = parseForJulian(current.text).find((item) => item.line.trimEnd() === String(line).trimEnd());
   if (!row) return { status: 404, error: "the plan has no such line" };
-  if (row.kind !== "decision") return { status: 400, error: "only a Decision line leaves this way" };
+  if (row.kind !== "decide" || !row.target) return { status: 400, error: "only a Decide line with a Document leaves this way" };
   const { text, removed, index, removedText } = removeForJulianLine(current.text, line);
   if (!removed) return { status: 404, error: "the plan has no such line" };
   await writeVaultDocument(current, text, `update: ${area} plan decision ${row.target} handled`);
@@ -3024,6 +3025,7 @@ async function brainsView(sessions) {
       live: Boolean(live),
       state: live?.state ?? null,
       stateDetail: live?.stateDetail ?? null,
+      stateQuestion: live?.stateQuestion ?? "",
       idleSince: live?.idleSince ?? null,
       latestHandover: latestHandover(record),
       forJulian: await forJulianItems(record, index),
@@ -3499,8 +3501,11 @@ const server = http.createServer(async (req, res) => {
       const sessions = await listSessions();
       const brains = await brainsView(sessions).catch(() => []);
       const brain = brains.find((item) => (area && item.area === area) || (session && item.session === session)) ?? null;
+      // The lines Tangent parsed nothing from travel with the record, so
+      // `tangent brain status` can print what the desk does not show.
+      const unparsed = brain ? unparsedForJulianLines(await brainPlanText(brain)).map((item) => item.line) : [];
       res.writeHead(brain ? 200 : 404, { "content-type": "application/json" });
-      res.end(JSON.stringify(brain ? { brain, prompt: await brainPrompt(brain) } : { error: area ? `no brain on ${area}` : "this session is not a brain" }));
+      res.end(JSON.stringify(brain ? { brain: { ...brain, forJulianUnparsed: unparsed }, prompt: await brainPrompt(brain) } : { error: area ? `no brain on ${area}` : "this session is not a brain" }));
       return;
     }
     // Julian pressed `Tried it`: the Try it row leaves the brain's plan.

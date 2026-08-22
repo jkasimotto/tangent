@@ -56,7 +56,6 @@ const state = {
   goTo: null, // the open Go to finder: { query, selected, rows, returnFocus }
   launchTarget: "",
   launchAnchor: null,
-  studyArea: "", // the Area whose study screen is open
   whatHappened: null, // the open What happened look: { area, anchor: { top, right } }
   harnessDraft: null,
   harnessReturnView: "work",
@@ -1773,7 +1772,6 @@ function deskAreaPanel(record, position, maxElapsedMs = 0) {
       </div>
       <footer class="area-desk-actions">
         <button type="button" data-describe-area="${escapeHtml(area.path)}">Describe work here</button>
-        <button type="button" data-study-area="${escapeHtml(area.path)}">Study code…</button>
         <button type="button" data-open-area="${escapeHtml(area.path)}">Organize Area</button>
       </footer>
     </article>`;
@@ -3263,7 +3261,6 @@ function updateHeader() {
   const isProgramDetail = state.view === "program-detail";
   const isProgramCreate = state.view === "program-create";
   const isProgramSession = state.view === "program-session";
-  const isStudy = state.view === "study";
   const program = currentProgram();
   const isTopLevel = isWork || isAreas;
   backButton.classList.toggle("has-back", !isTopLevel);
@@ -3279,8 +3276,6 @@ function updateHeader() {
       ? "Areas"
     : isProgramSession
       ? "Program"
-    : isStudy
-      ? "Work"
     : state.view === "agent"
         ? state.agentReturnView === "document" && state.document ? "Document" : "Work"
         : state.view === "document"
@@ -3302,8 +3297,6 @@ function updateHeader() {
           ? `${areaLabel(program.area)} · ${program.label} · ${programState(program)}`
         : isProgramCreate
           ? "Add a program to one area"
-        : isStudy
-          ? `${areaLabel(state.studyArea)} · Study`
           : state.view === "document" && state.document
             ? ""
             : goal
@@ -3325,7 +3318,7 @@ function updateHeader() {
     else button.removeAttribute("aria-current");
   }
 
-  secondaryAction.hidden = !session || ["work", "create", "describe", "areas", "area-edit", "program-detail", "program-create", "program-session", "document", "study"].includes(state.view);
+  secondaryAction.hidden = !session || ["work", "create", "describe", "areas", "area-edit", "program-detail", "program-create", "program-session", "document"].includes(state.view);
   secondaryAction.textContent = session?.state === "shell" ? "Close session…" : "Stop agent…";
 
   if (state.view === "agent" && session?.state === "waiting") {
@@ -3388,7 +3381,7 @@ function updateLiveHeader() {
 /** Selects and renders the current full-screen view. */
 function renderScreen() {
   const goal = currentGoal();
-  const goalFreeViews = ["work", "create", "describe", "describe-agent", "areas", "area-edit", "program-detail", "program-create", "program-session", "document", "harnesses", "study"];
+  const goalFreeViews = ["work", "create", "describe", "describe-agent", "areas", "area-edit", "program-detail", "program-create", "program-session", "document", "harnesses"];
   if (!goal && !goalFreeViews.includes(state.view)) state.view = "work";
   const session = sessionForGoal(goal);
   const describeSession = describeWorkSession();
@@ -3420,7 +3413,6 @@ function renderScreen() {
   else if (state.view === "agent") screen.innerHTML = renderAgent(goal, session);
   else if (state.view === "decision" && session) screen.innerHTML = renderDecision(goal, session);
   else if (state.view === "document") screen.innerHTML = renderDocument();
-  else if (state.view === "study") screen.innerHTML = renderStudy();
   else {
     state.view = "work";
     screen.innerHTML = renderWork();
@@ -3433,16 +3425,6 @@ function renderScreen() {
   if (host) mountTerminal(host, host.dataset.session);
   const mapHost = screen.querySelector("[data-area-map]");
   if (mapHost) mountAreaMap(mapHost);
-  const studyHost = screen.querySelector("[data-study]");
-  if (studyHost) AgentShellStudy.mount(studyHost, { area: state.studyArea });
-}
-
-/**
- * The study screen's host. The screen owns its own DOM (see public/study.js):
- * a repaint would otherwise blur the answer box on every poll.
- */
-function renderStudy() {
-  return `<section class="study-screen" data-study></section>`;
 }
 
 /** The elements that scroll inside the screen, by a selector stable across repaints. */
@@ -3585,7 +3567,7 @@ function paint(force = false) {
 function editingSurfaceOnScreen() {
   const active = document.activeElement;
   if (active && (["work-search", "launch-command-input"].includes(active.id) || ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName))) return true;
-  return Boolean(screen.querySelector("[data-create-form], [data-describe-work-form], [data-area-form], [data-program-form], [data-harness-form], [data-launch-popover], [data-comment-composer], [data-study]"));
+  return Boolean(screen.querySelector("[data-create-form], [data-describe-work-form], [data-area-form], [data-program-form], [data-harness-form], [data-launch-popover], [data-comment-composer]"));
 }
 
 /** Refreshes the vault, program, and session projections from the server. */
@@ -4942,12 +4924,6 @@ document.addEventListener("click", async (event) => {
   if (workDefinition) return openDescribeSession(workDefinition.dataset.selectWorkDefinition);
   const describeArea = target.closest("[data-describe-area]");
   if (describeArea) return showDescribe({ area: describeArea.dataset.describeArea });
-  const studyArea = target.closest("[data-study-area]");
-  if (studyArea) {
-    state.studyArea = studyArea.dataset.studyArea;
-    state.view = "study";
-    return paint(true);
-  }
   if (target.closest("[data-describe-work]")) return showDescribe();
   const checkGoal = target.closest("[data-check-goal]");
   if (checkGoal) {
@@ -5498,7 +5474,6 @@ backButton.addEventListener("click", async () => {
     return showWork();
   }
   if (state.view === "document") return leaveReader();
-  if (state.view === "study") return showWork();
   if (state.view === "decision") {
     state.view = state.decisionReturnView;
     state.renderedKey = "";

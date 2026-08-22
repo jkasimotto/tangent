@@ -40,8 +40,6 @@ import { deliveryDecision, messageBanner, normalizeMessage } from "./agent-messa
 import { beginGeneration, brainForArea, brainRecordForArea, brainSessionName, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, recordHandover, validateInstruction, writeBrain } from "./brain-record.mjs";
 import { appendNotice, inboxesForBrain, markDelivered, mergeNotices, noticeBlock, noticeDigest, readAllInboxes, readInbox, writeInbox } from "./brain-inbox.mjs";
 import { parseForJulian, removeForJulianLine, restoreForJulianLine } from "./for-julian.mjs";
-import { STUDY_SNIPPET_MAX_LINES, STUDY_TUTOR_PROMPT_VERSION, parseTutorEnvelope, parseTutorReply, studyAnswerMessage, studyEndMessage, studyOpeningMessage, studyRetryMessage, studyTutorSystemPrompt } from "./study-tutor.mjs";
-import { applyAnswer, applyTutorFailure, applyTutorReply, closeStudy, latestStudy, newStudyRecord, readAllStudies, readStudy, writeStudy } from "./study-record.mjs";
 import { createSourceChangeMonitor } from "./source-change-monitor.mjs";
 import { promptArrived, splitPrompt, squash } from "./prompt-delivery.mjs";
 import { clearArmedPrompt, readAllArmedPrompts, writeArmedPrompt } from "./armed-prompts.mjs";
@@ -148,22 +146,11 @@ const BRAIN_IDLE_NOTICE_MS = Number(process.env.TANGENT_BRAIN_IDLE_MINUTES ?? 10
 // has false positives, so a step that answers itself within the threshold
 // must never notify.
 const BRAIN_WAIT_NOTICE_MS = Number(process.env.TANGENT_BRAIN_WAIT_MINUTES ?? 5) * 60_000;
-// One JSON record per study session: the subsystem, the turns, the verdicts,
-// and the one-line close record (impl-learning-ai-written-code Piece 2).
-const STUDY_ROOT = process.env.TANGENT_STUDY_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "study");
 // One JSON record per session with a prompt armed to type once its harness
 // leaves the shell (armSession below), so the arm survives a server restart
 // between typing the launch command and the harness coming up. Rules and
 // file shape live in armed-prompts.mjs.
 const ARMED_ROOT = process.env.TANGENT_ARMED_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "armed");
-// The tutor is a headless harness run, not a tmux agent: the screen needs
-// structured turns, and a terminal agent cannot give them.
-const STUDY_TUTOR_CMD = process.env.STUDY_TUTOR_CMD ?? "claude";
-const STUDY_MODEL = process.env.STUDY_MODEL ?? "claude-fable-5";
-// Read-only tools by allowlist: the tutor grades against callers and tests
-// and can never edit the code it teaches.
-const STUDY_TOOLS = ["Read", "Grep", "Glob", "Bash(tangent search:*)", "Bash(git log:*)", "Bash(git show:*)", "Bash(git diff:*)"];
-const STUDY_TURN_TIMEOUT_MS = 10 * 60_000;
 
 if (!existsSync(WORKSPACE)) mkdirSync(WORKSPACE, { recursive: true });
 
@@ -3458,174 +3445,6 @@ function voiceNameHints(ctx) {
   return [...new Set([...ctx.sessions.map((s) => s.name), ...areaNames])];
 }
 
-// ---------------------------------------------------------------------------
-// The study screen's tutor (design contract: otto/tangent/design-learning-ai-written-code
-// Decision 7, solution impl-learning-ai-written-code Piece 3).
-//
-// One study turn is one headless harness run inside the repository being
-// studied: `claude -p --output-format json --resume <id>`. The reply is one
-// JSON object (study-tutor.mjs owns its schema). Turns are asynchronous
-// because the tutor reads real code before it asks or grades, so a POST
-// returns at once, the record is marked pending, and the screen polls.
-//
-// Snippets are grounded here, never by the model: the tutor sends only a
-// file and a line range, and the server reads the text from disk. What the
-// pane shows is real code by construction.
-
-/** One study turn in flight per session id; a second call for the same id is a caller bug. */
-const studyTurnsInFlight = new Map();
-
-/** Reports a failed background study turn without stopping the server. */
-function studyTurnFailed(error) {
-  console.error("study tutor:", error?.message ?? error);
-}
-
-/**
- * Reads the real lines a snippet reference points at. Rejects any path that
- * leaves the repository, caps the window, and never throws: a bad reference
- * becomes one plain error line in the pane instead of a broken turn.
- */
-async function studySnippet(repo, ref) {
-  const root = path.resolve(repo);
-  const target = path.resolve(root, ref.file);
-  if (target !== root && !target.startsWith(root + path.sep)) return { ...ref, error: "that file is outside the repository" };
-  try {
-    const lines = (await readFile(target, "utf8")).split("\n");
-    const start = Math.min(ref.start, lines.length);
-    const end = Math.min(ref.end, start + STUDY_SNIPPET_MAX_LINES - 1, lines.length);
-    const grounded = { ...ref, start, end, text: lines.slice(start - 1, end).join("\n") };
-    if (end < ref.end) grounded.truncated = true;
-    return grounded;
-  } catch (error) {
-    return { ...ref, error: String(error.message ?? error) };
-  }
-}
-
-/** Replaces every snippet reference in one parsed reply with the real code from disk. */
-async function groundStudyReply(repo, reply) {
-  const grounded = { ...reply };
-  if (reply.reveal) grounded.reveal = await studySnippet(repo, reply.reveal);
-  if (reply.question?.snippet) {
-    grounded.question = { ...reply.question, snippet: await studySnippet(repo, reply.question.snippet) };
-  }
-  return grounded;
-}
-
-/**
- * Runs the tutor once and parses its reply. Returns
- * { reply, sessionId, error, retryable }: `retryable` is true only when the
- * harness answered and the answer did not fit the reply schema, which one
- * corrective message often fixes.
- */
-async function studyTutorAttempt(repo, sessionId, message) {
-  const argv = ["-p", "--output-format", "json", "--model", STUDY_MODEL, "--append-system-prompt", studyTutorSystemPrompt(), "--allowedTools", STUDY_TOOLS.join(",")];
-  if (sessionId) argv.push("--resume", sessionId);
-  let stdout;
-  try {
-    // The message goes in on stdin, not as a positional argument: --allowedTools
-    // is variadic and swallows a trailing prompt.
-    const running = execFileAsync(STUDY_TUTOR_CMD, argv, { cwd: repo, timeout: STUDY_TURN_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 });
-    running.child.stdin.end(message);
-    ({ stdout } = await running);
-  } catch (error) {
-    return { reply: null, sessionId, error: `the tutor did not answer (${String(error.message ?? error).split("\n")[0]})`, retryable: false };
-  }
-  const envelope = parseTutorEnvelope(stdout);
-  const nextSession = envelope.sessionId ?? sessionId;
-  if (envelope.error) return { reply: null, sessionId: nextSession, error: envelope.error, retryable: false };
-  try {
-    return { reply: parseTutorReply(envelope.result), sessionId: nextSession, error: null, retryable: false };
-  } catch (error) {
-    return { reply: null, sessionId: nextSession, error: String(error.message ?? error), retryable: true };
-  }
-}
-
-/**
- * One tutor turn end to end: run, retry once on an unparsable reply, ground
- * the snippets, and write the record. Never throws; every failure lands in
- * the record as `error` so the screen can show it and offer a retry. The
- * closing turn additionally closes the record even when the tutor is
- * unreachable, so an End press always ends the session.
- */
-async function runStudyTutorTurn(id, message, { closing = false } = {}) {
-  if (studyTurnsInFlight.has(id)) return;
-  studyTurnsInFlight.set(id, true);
-  try {
-    const record = await readStudy(STUDY_ROOT, id);
-    if (!record || record.status !== "open") return;
-    let outcome = await studyTutorAttempt(record.repo, record.claudeSessionId, message);
-    if (outcome.retryable) outcome = await studyTutorAttempt(record.repo, outcome.sessionId, studyRetryMessage(outcome.error));
-    const carried = { ...record, claudeSessionId: outcome.sessionId ?? record.claudeSessionId };
-    if (outcome.reply) {
-      await writeStudy(STUDY_ROOT, applyTutorReply(carried, await groundStudyReply(record.repo, outcome.reply)));
-      return;
-    }
-    const failed = applyTutorFailure(carried, outcome.error);
-    await writeStudy(STUDY_ROOT, closing ? closeStudy(failed, "ended early, tutor unreachable") : failed);
-  } catch (error) {
-    studyTurnFailed(error);
-  } finally {
-    studyTurnsInFlight.delete(id);
-  }
-}
-
-/**
- * Clears study sessions left pending by a server restart. Without this a
- * crashed turn wedges the screen on "the tutor is reading the code" forever.
- */
-async function sweepStudies() {
-  for (const record of await readAllStudies(STUDY_ROOT)) {
-    if (!record.pending) continue;
-    await writeStudy(STUDY_ROOT, applyTutorFailure(record, "the server restarted during a tutor turn"));
-  }
-}
-
-/**
- * Opens a study session on a subsystem Julian names. The repository is his
- * own entry, else the Area's recorded one. The first tutor turn (the
- * calibration probe) starts in the background.
- */
-async function startStudy(body) {
-  const subsystem = String(body.subsystem ?? "").trim();
-  if (!subsystem) return { status: 400, error: "name the subsystem to study" };
-  const area = String(body.area ?? "");
-  const asked = String(body.repo ?? "").trim().replace(/^~(?=\/|$)/, os.homedir());
-  const repo = asked || (await areaDirectory(area)) || "";
-  if (!repo || !existsSync(repo)) {
-    return { status: 400, error: asked ? `no directory at ${asked}` : `no repository recorded on ${area || "this Area"}` };
-  }
-  const study = newStudyRecord({ area, repo, subsystem, promptVersion: STUDY_TUTOR_PROMPT_VERSION });
-  await writeStudy(STUDY_ROOT, study);
-  runStudyTutorTurn(study.id, studyOpeningMessage(study, TREES_ROOT)).catch(studyTurnFailed);
-  return { status: 200, study };
-}
-
-/** Records Julian's answer and starts the tutor turn that grades it. */
-async function answerStudy(body) {
-  const record = await readStudy(STUDY_ROOT, String(body.id ?? ""));
-  if (!record) return { status: 404, error: "no such study session" };
-  if (record.status !== "open") return { status: 409, error: "this study session is closed" };
-  if (record.pending) return { status: 409, error: "the tutor is still working" };
-  const text = String(body.text ?? "").trim();
-  if (!text) return { status: 400, error: "the answer is empty" };
-  const study = applyAnswer(record, text);
-  await writeStudy(STUDY_ROOT, study);
-  runStudyTutorTurn(study.id, studyAnswerMessage(text)).catch(studyTurnFailed);
-  return { status: 200, study };
-}
-
-/** Ends a study session: the tutor closes it with its one-line record. */
-async function endStudy(body) {
-  const record = await readStudy(STUDY_ROOT, String(body.id ?? ""));
-  if (!record) return { status: 404, error: "no such study session" };
-  if (record.status !== "open") return { status: 200, study: record };
-  if (record.pending) return { status: 409, error: "the tutor is still working" };
-  const study = applyAnswer(record, studyEndMessage());
-  await writeStudy(STUDY_ROOT, study);
-  runStudyTutorTurn(study.id, studyEndMessage(), { closing: true }).catch(studyTurnFailed);
-  return { status: 200, study };
-}
-
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   try {
@@ -4013,47 +3832,6 @@ const server = http.createServer(async (req, res) => {
       await writeMapState(area, body.state);
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ ok: true }));
-      return;
-    }
-    // Julian opens a study session on a subsystem he names.
-    if (url.pathname === "/api/study/start" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const result = await startStudy(body);
-      res.writeHead(result.status, { "content-type": "application/json" });
-      res.end(JSON.stringify(result.status === 200 ? { study: result.study } : { error: result.error }));
-      return;
-    }
-    // One study record, polled while a tutor turn is in flight.
-    if (url.pathname === "/api/study/state" && req.method === "GET") {
-      const study = await readStudy(STUDY_ROOT, url.searchParams.get("id") ?? "");
-      res.writeHead(study ? 200 : 404, { "content-type": "application/json" });
-      res.end(JSON.stringify(study ? { study } : { error: "no such study session" }));
-      return;
-    }
-    // The newest study of one Area, so the Study button resumes an open session.
-    if (url.pathname === "/api/study/latest" && req.method === "GET") {
-      const study = latestStudy(await readAllStudies(STUDY_ROOT), url.searchParams.get("area") ?? "");
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ study }));
-      return;
-    }
-    // Julian answers the question in front of him; the tutor grades it.
-    if (url.pathname === "/api/study/answer" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const result = await answerStudy(body);
-      res.writeHead(result.status, { "content-type": "application/json" });
-      res.end(JSON.stringify(result.status === 200 ? { study: result.study } : { error: result.error }));
-      return;
-    }
-    // Julian ends the session; the tutor closes it with its one-line record.
-    if (url.pathname === "/api/study/end" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const result = await endStudy(body);
-      res.writeHead(result.status, { "content-type": "application/json" });
-      res.end(JSON.stringify(result.status === 200 ? { study: result.study } : { error: result.error }));
       return;
     }
     if (url.pathname === "/api/document" && req.method === "GET") {
@@ -4905,8 +4683,6 @@ server.listen(PORT, HOST, () => {
   // A prompt armed by the last process is still waiting on disk if its
   // harness had not left the shell yet.
   rearmPersistedPrompts().catch((err) => console.error("armed prompts:", err.message ?? err));
-  // A study turn that died with the last process must not wedge the screen.
-  sweepStudies().catch(studyTurnFailed);
 });
 
 /**

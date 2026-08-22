@@ -1,5 +1,7 @@
 # ADR-0025: Under a live brain, only the brain says what needs Julian
 
+Amended by ADR-0027: the line shapes are Decide and Test, the clearing verbs are Accept and Reject.
+
 Date: 2026-08-19
 
 Status: accepted.

@@ -269,12 +269,16 @@ function markdownTableAlignments(value) {
 }
 
 /**
- * Renders safe headings, paragraphs, lists, and tables from Markdown. With
- * `options.comments` (parsed by document-comments.js) each comment renders as
- * a red-ruled block under the block that holds it, and its quoted words as a
- * mark; `options.composer` places the comment composer at its anchor line.
- * Blocks carry `data-line`, the file line they came from, so a selection can be
- * mapped back to the Markdown.
+ * Renders safe headings, paragraphs, lists, tables, and fenced code from
+ * Markdown. A fenced block's language tag is highlighted by code-highlight.js
+ * when that language is known; an unknown tag still renders as a plain code
+ * block. With `options.comments` (parsed by document-comments.js) each
+ * comment renders as a red-ruled block under the block that holds it, and its
+ * quoted words as a mark; `options.composer` places the comment composer at
+ * its anchor line. Blocks carry `data-line`, the file line they came from, so
+ * a selection can be mapped back to the Markdown. No line inside a fenced
+ * block gets its own `data-line`: parseComments already treats that whole
+ * range as code, so no comment can anchor there.
  */
 function markdownToHtml(text, options = {}) {
   const source = visibleMarkdown(text);
@@ -322,9 +326,27 @@ function markdownToHtml(text, options = {}) {
     const heading = line.match(/^(#{1,4})\s+(.+)$/);
     const bullet = line.match(/^\s*[-*]\s+(.+)$/);
     const ordered = line.match(/^\s*\d+[.)]\s+(.+)$/);
-    const alignments = line.includes("|") ? markdownTableAlignments(lines[index + 1] ?? "") : null;
+    const fence = line.match(/^\s{0,3}(`{3,}|~{3,})\s*([\w+.#-]*)\s*$/);
+    const alignments = !fence && line.includes("|") ? markdownTableAlignments(lines[index + 1] ?? "") : null;
     const headers = alignments ? markdownTableCells(line) : [];
-    if (alignments && headers.length === alignments.length) {
+    if (fence) {
+      closeList();
+      const lang = fence[2] || "";
+      const closeFence = new RegExp(`^\\s{0,3}${fence[1][0]}{${fence[1].length},}\\s*$`);
+      const body = [];
+      index += 1;
+      while (index < lines.length && !closeFence.test(stripComments(lines[index], index + lineOffset).trimEnd())) {
+        body.push(stripComments(lines[index], index + lineOffset));
+        index += 1;
+      }
+      const highlighter = window.AgentShellCodeHighlight;
+      const language = highlighter?.normalizeLanguage(lang);
+      const code = highlighter ? highlighter.highlightHtml(body.join("\n"), lang) : escapeHtml(body.join("\n"));
+      const label = lang ? `<div class="markdown-code-lang">${escapeHtml(lang)}</div>` : "";
+      html.push(
+        `<div class="markdown-code-wrap" data-line="${fileLine}">${label}<pre><code${language ? ` class="language-${escapeHtml(language)}"` : ""}>${code}</code></pre></div>${tail}`
+      );
+    } else if (alignments && headers.length === alignments.length) {
       closeList();
       const rows = [];
       const tableLine = fileLine;

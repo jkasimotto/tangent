@@ -16,6 +16,8 @@
   --amber-soft: #2a2418;
   --red: #f09a9a;
   --red-soft: #2a191b;
+  --purple: #c9a8f0;
+  --cyan: #7fd7d3;
   --focus: #a9d4ff;
   --reading: 780px;
   font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -956,6 +958,19 @@ details.more-work .area-work-list { margin-top: 18px; }
 .markdown-table-wrap .align-center { text-align: center; }
 .markdown-table-wrap .align-right { text-align: right; }
 .markdown-table-wrap code { padding: 2px 5px; border-radius: 4px; background: #20252b; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.document-content code { padding: 2px 6px; border-radius: 4px; background: #20252b; color: #e3c893; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.markdown-code-wrap { margin: 20px 0 32px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); }
+.markdown-code-lang { padding: 8px 16px; border-bottom: 1px solid var(--line); color: var(--quiet); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .07em; text-transform: uppercase; }
+.markdown-code-wrap pre { margin: 0; padding: 16px; overflow-x: auto; }
+.markdown-code-wrap code { display: block; padding: 0; background: transparent; color: #cbd1d7; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; line-height: 1.62; white-space: pre; }
+.tok-keyword { color: var(--purple); }
+.tok-string, .tok-code { color: var(--green); }
+.tok-number, .tok-variable, .tok-bold { color: var(--amber); }
+.tok-comment, .tok-quote { color: var(--quiet); font-style: italic; }
+.tok-function, .tok-link { color: var(--cyan); }
+.tok-property { color: #c7ced6; }
+.tok-heading { color: var(--blue); font-weight: 650; }
+.tok-list { color: var(--muted); }
 .document-source { margin: 42px 0 0; color: var(--quiet); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .document-outline { position: sticky; top: 0; grid-column: 3; align-self: start; max-height: 100vh; overflow-y: auto; padding-top: 69px; }
 .document-outline > p { margin: 0 0 12px; color: #8b949f; font-size: 11px; font-weight: 690; letter-spacing: .035em; }

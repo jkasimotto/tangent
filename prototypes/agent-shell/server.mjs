@@ -143,6 +143,11 @@ const BRAINS_ROOT = process.env.TANGENT_BRAINS_ROOT ?? path.join(os.homedir(), "
 const BRAIN_REFRESH_MS = Number(process.env.TANGENT_BRAIN_REFRESH_MINUTES ?? 90) * 60_000;
 // A running step idle this long without a handover is reported to the brain once.
 const BRAIN_IDLE_NOTICE_MS = Number(process.env.TANGENT_BRAIN_IDLE_MINUTES ?? 10) * 60_000;
+// A running step's pane sitting this long at a decision menu or an unsent
+// draft is reported to the brain once (Julian, 2026-08-22): the classifier
+// has false positives, so a step that answers itself within the threshold
+// must never notify.
+const BRAIN_WAIT_NOTICE_MS = Number(process.env.TANGENT_BRAIN_WAIT_MINUTES ?? 5) * 60_000;
 // One JSON record per study session: the subsystem, the turns, the verdicts,
 // and the one-line close record (impl-learning-ai-written-code Piece 2).
 const STUDY_ROOT = process.env.TANGENT_STUDY_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "study");
@@ -2453,6 +2458,7 @@ async function reconcilePipelines(sessions) {
       const key = `${record.goal}#${step.index}#${step.session}`;
       if (step.status !== "running" || !step.session) {
         idleNoticed.delete(key);
+        waitNoticed.delete(key);
         continue;
       }
       const live = byName.get(step.session);
@@ -2464,6 +2470,7 @@ async function reconcilePipelines(sessions) {
         step.endedAt = new Date().toISOString();
         changed = true;
         idleNoticed.delete(key);
+        waitNoticed.delete(key);
         await notifyBrain(record.area, `Goal ${record.slug}: step ${step.index} of ${record.steps.length} stopped (its session ended without a handover). Restart, skip, or end it on the desk, or start it again with tangent goal start.`);
         continue;
       }
@@ -2474,11 +2481,23 @@ async function reconcilePipelines(sessions) {
         idleNoticed.add(key);
         await notifyBrain(record.area, `Goal ${record.slug}: step ${step.index} of ${record.steps.length} (${step.label || "agent"}, session ${step.session}) has been idle for ${Math.round(BRAIN_IDLE_NOTICE_MS / 60_000)} minutes without a handover.`);
       }
+      // One notice per wait occurrence: waitingSince marks when this pane
+      // went static, so a fresh occurrence (the pane changed, then went
+      // static again) carries a new timestamp and is eligible again, while a
+      // repeated check against the same still-unanswered wait is not.
+      const waiting = live.state === "waiting" && (live.stateDetail === "decision" || live.stateDetail === "draft") && live.waitingSince && now - live.waitingSince >= BRAIN_WAIT_NOTICE_MS;
+      if (waiting && waitNoticed.get(key) !== live.waitingSince) {
+        waitNoticed.set(key, live.waitingSince);
+        const question = live.stateQuestion ? ` It asks: "${live.stateQuestion}"` : "";
+        const kind = live.stateDetail === "decision" ? "a decision menu" : "an unsent draft";
+        await notifyBrain(record.area, `Goal ${record.slug}: step ${step.index} of ${record.steps.length} (${step.label || "agent"}, session ${step.session}) has sat at ${kind} for ${Math.round(BRAIN_WAIT_NOTICE_MS / 60_000)} minutes without an answer.${question}`);
+      }
     }
     if (changed) await writePipeline(PIPELINES_ROOT, record);
   }
 }
 const idleNoticed = new Set();
+const waitNoticed = new Map();
 
 // ---- Area brains ----
 // One long-lived orchestrating agent per Area (design-area-brain-solution in
@@ -2701,6 +2720,7 @@ async function brainPrompt(record) {
       : "") +
     `## How to work\n\n` +
     `${harnessRule}\n\n` +
+    `On takeover, run \`tangent agent list\` and sweep every running step's pane: a session shown as "needs decision" or "draft" carries an \`asks:\` line with the question, and it is stuck waiting on a person, not idle. Answer it or message the worker (\`tangent agent send <session> "..."\`) before anything else.\n\n` +
     `Read the plan first when it exists, then the Area notes from nearest to farthest, then the Documents that matter. Look at the Area's repository when code answers a question better than a guess.\n\n` +
     `Write the plan before you start anything: the instruction in your words, the sub-Areas and Goals you will create, the waves in dependency order, and what you decided. Keep it current: what runs, what came back, what you decided next. Commit it with \`tangent vault commit\`. Julian reads the plan and may leave comments in it (\`{>>Julian: ...<<}\`); \`tangent document comments <file>\` lists them and \`tangent document resolve\` closes one after the work is done.\n\n` +
     `Split the work into Goals: a Goal is a result with a clear finish. Create a sub-Area only for a durable subject Julian will return to (\`tangent area create <parent> <name>\`). Give each Goal a description a fresh agent can start from: intent, what Julian decided, and the Documents and code that matter (\`tangent goal create --area ${area} --title "..." --done-when "..." --description "..." --source <vault-file>\`).\n\n` +
@@ -2714,7 +2734,7 @@ async function brainPrompt(record) {
     `- Brain: <one question that fits no Document>.\n` +
     `Write a Decision line only for a Document with open questions or recommendations that need his word. A recommendation he does not need to see never goes on the list. When Julian comments on a listed Document, Tangent sends you "Julian commented on <file> (N open comments)". Read the comments, act, resolve them, then remove the line and commit the plan. Julian may also answer in this session. If a closed Goal changes what Julian sees or presses in Tangent, run \`tangent shell rebuild\` before you write its Try it line. The command rebuilds, restarts the server, and returns when the new boot answers, so the keys work the first time he presses them. Julian clears Try it lines himself, and can also mark a Decision line handled straight from its row; when he does, Tangent sends you "Julian marked Decision <file> done" and the line is already gone from the plan, so treat that as his answer and do not write it again unless a new question comes up. You still remove a Decision line yourself once your reading of his comments answers it, and you always clear Brain lines. When Julian presses Reply on a row before opening this terminal, Tangent sends you "Julian is replying about: <subject>" first, so read that as the topic of what he types next. \`tangent brain status\` prints "Tangent shows N items for Julian" and the rows, so you can check that your lines parsed.\n\n` +
     `## When to hand over\n\n` +
-    `Before every handover, sweep \`tangent goal list ${area}\` and \`tangent agent list\` for any Goal whose pipeline finished and close it (\`tangent goal done <slug>\` or \`tangent goal wont-do <slug> --reason "..."\`); a finished Goal left waiting is a failure, never something to hand off to the next generation. Then, at a natural pause, after a wave is dispatched or a batch of results is processed, and always when Tangent reminds you, write the plan status and run \`tangent brain handover "<facts>"\`: what runs (Goal, step, session), what waits and why, decisions taken, what the next generation should do first. Facts, no narrative. A fresh copy of you starts from the plan and those facts, and this session ends.`
+    `Before every handover, sweep \`tangent goal list ${area}\` and \`tangent agent list\` for any Goal whose pipeline finished and close it (\`tangent goal done <slug>\` or \`tangent goal wont-do <slug> --reason "..."\`); a finished Goal left waiting is a failure, never something to hand off to the next generation. In the same sweep, check \`tangent agent list\` for a running step showing "needs decision" or "draft" and answer it; do not hand over a step sitting stuck on a question the next generation has to notice all over again. Then, at a natural pause, after a wave is dispatched or a batch of results is processed, and always when Tangent reminds you, write the plan status and run \`tangent brain handover "<facts>"\`: what runs (Goal, step, session), what waits and why, decisions taken, what the next generation should do first. Facts, no narrative. A fresh copy of you starts from the plan and those facts, and this session ends.`
   );
 }
 

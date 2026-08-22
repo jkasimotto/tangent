@@ -1252,7 +1252,9 @@ async function createGoalSet(area, { goal, subgoals = [], description = "", sour
   }
   const noteFile = await addGoalToArea(area, goalSlug);
   const changed = [...records.map((record) => record.file), noteFile];
-  await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", ...changed]).catch(() => {});
+  await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", ...changed]).catch((err) => {
+    console.error(`goal stage failed: ${changed.join(", ")}: ${String(err.stderr ?? err.message ?? err).slice(0, 200)}`);
+  });
   await vaultCommit(changed, `add: ${area} goal ${goalSlug} from Agent Shell`, area, null);
   return { file: records[0].file, files: records.map((record) => record.file) };
 }
@@ -1302,7 +1304,7 @@ async function vaultCommit(relPaths, message, area, tmuxSession) {
   try {
     await execFileAsync("git", ["-C", TREES_ROOT, "commit", "-m", message, "-m", trailers.join("\n"), "--", ...relPaths]);
   } catch (err) {
-    console.error("vault commit:", String(err.stderr ?? err.message ?? err).slice(0, 200));
+    console.error(`vault commit failed: ${relPaths.join(", ")}: ${String(err.stderr ?? err.message ?? err).slice(0, 200)}`);
   }
 }
 

@@ -113,6 +113,40 @@ test("code text is escaped, never interpreted as HTML", async () => {
   assert.match(out, /&lt;img onerror=alert\(1\)&gt;/);
 });
 
+test("heading lookalikes inside fenced blocks stay out of the outline and never shift anchors", async () => {
+  const window = await loadShell();
+  const doc = [
+    "# Title",
+    "",
+    "## State",
+    "",
+    "```markdown",
+    "## State",
+    "# a bash-style comment would match too",
+    "```",
+    "",
+    "## State",
+    "",
+    "text",
+  ].join("\n");
+  const headings = window.markdownHeadings(doc);
+  assert.equal(headings.map((heading) => heading.id).join(" "), "title state state-2");
+  const rendered = window.markdownToHtml(doc);
+  const renderedIds = [...rendered.matchAll(/<h\d id="([^"]+)"/g)].map((match) => match[1]);
+  assert.equal(renderedIds.join(" "), "title state state-2");
+});
+
+test("a section comment lands under the real heading, never on a fenced lookalike", async () => {
+  const window = await loadShell();
+  const comments = window.AgentShellDocumentComments;
+  const doc = ["# Title", "", "```markdown", "## State", "```", "", "## State", "", "text"].join("\n");
+  const out = comments.insertComment(doc, { kind: "section", heading: "State" }, "Note").text;
+  const lines = out.split("\n");
+  const markupAt = lines.indexOf("{>>Julian: Note<<}");
+  assert.ok(markupAt > lines.indexOf("## State", 4), "comment sits after the real heading, not inside the fence");
+  assert.equal(comments.parseComments(out).length, 1);
+});
+
 test("an unterminated fence still renders as code instead of hanging or throwing", async () => {
   const window = await loadShell();
   const out = window.markdownToHtml("```js\nconst x = 1;\n");

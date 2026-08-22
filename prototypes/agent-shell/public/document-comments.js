@@ -483,7 +483,10 @@
     }
     if (anchor.kind === "section") {
       const wanted = headingKey(anchor.heading);
-      const index = lines.findIndex((line) => /^#{1,6}\s+/.test(line.text) && headingKey(line.text) === wanted);
+      const code = codeRanges(source);
+      /** True when this line sits inside code, so a fenced heading lookalike is never the section. */
+      const inCode = (line) => code.some(([from, to]) => line.start >= from && line.start < to);
+      const index = lines.findIndex((line) => /^#{1,6}\s+/.test(line.text) && !inCode(line) && headingKey(line.text) === wanted);
       if (index < 0) return { error: "That section is gone. Choose where this comment goes." };
       return { text: insertLineAfter(source, index, commentMarkup(body)) };
     }

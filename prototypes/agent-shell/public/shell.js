@@ -235,11 +235,45 @@ function markdownHeadingAnchor(value, seen) {
   return count ? `${base}-${count + 1}` : base;
 }
 
+/** Matches a line that opens a fenced code block; group 1 is the fence marker, group 2 the language tag. */
+const FENCE_OPEN = /^\s{0,3}(`{3,}|~{3,})\s*([\w+.#-]*)\s*$/;
+
+/** The regex for the line that closes a fence opened with `marker`. */
+function fenceCloser(marker) {
+  return new RegExp(`^\\s{0,3}${marker[0]}{${marker.length},}\\s*$`);
+}
+
+/**
+ * Flags each line markdownToHtml shows as fenced code, fence lines included.
+ * Structural scans (markdownHeadings) skip these so a `# comment` inside a
+ * code block never becomes a heading or shifts anchor numbering.
+ */
+function fencedLineFlags(lines) {
+  const flags = new Array(lines.length).fill(false);
+  let close = null;
+  for (const [index, line] of lines.entries()) {
+    const text = line.trimEnd();
+    if (close) {
+      flags[index] = true;
+      if (close.test(text)) close = null;
+      continue;
+    }
+    const fence = text.match(FENCE_OPEN);
+    if (!fence) continue;
+    flags[index] = true;
+    close = fenceCloser(fence[1]);
+  }
+  return flags;
+}
+
 /** Returns the visible heading hierarchy with the same anchors as the renderer. */
 function markdownHeadings(text) {
   const seen = new Map();
   const offset = frontmatterLineCount(text);
-  return visibleMarkdown(text).split("\n").flatMap((line, index) => {
+  const lines = visibleMarkdown(text).split("\n");
+  const fenced = fencedLineFlags(lines);
+  return lines.flatMap((line, index) => {
+    if (fenced[index]) return [];
     const match = line.trimEnd().match(/^(#{1,4})\s+(.+)$/);
     if (!match) return [];
     return [{ level: match[1].length, title: cleanText(match[2]), id: markdownHeadingAnchor(match[2], seen), line: index + offset }];
@@ -326,13 +360,13 @@ function markdownToHtml(text, options = {}) {
     const heading = line.match(/^(#{1,4})\s+(.+)$/);
     const bullet = line.match(/^\s*[-*]\s+(.+)$/);
     const ordered = line.match(/^\s*\d+[.)]\s+(.+)$/);
-    const fence = line.match(/^\s{0,3}(`{3,}|~{3,})\s*([\w+.#-]*)\s*$/);
+    const fence = line.match(FENCE_OPEN);
     const alignments = !fence && line.includes("|") ? markdownTableAlignments(lines[index + 1] ?? "") : null;
     const headers = alignments ? markdownTableCells(line) : [];
     if (fence) {
       closeList();
       const lang = fence[2] || "";
-      const closeFence = new RegExp(`^\\s{0,3}${fence[1][0]}{${fence[1].length},}\\s*$`);
+      const closeFence = fenceCloser(fence[1]);
       const body = [];
       index += 1;
       while (index < lines.length && !closeFence.test(stripComments(lines[index], index + lineOffset).trimEnd())) {

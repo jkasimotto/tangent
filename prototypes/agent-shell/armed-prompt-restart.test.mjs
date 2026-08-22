@@ -24,6 +24,12 @@ import { PROBE_CHARS, promptArrived, squash } from "./prompt-delivery.mjs";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);
 
+// Stands in for a real harness TUI: raw mode (no canonical line-buffer limit,
+// which drops the tail of a multi-KB prompt fed straight to a plain `cat`)
+// with echo on, so the pty shows whatever gets typed into it once it is the
+// pane's foreground command.
+const HARNESS_CMD = 'sh -c "stty raw echo; exec cat"';
+
 /** Reserves and releases one local port for the HTTP test. */
 async function freePort() {
   const server = net.createServer();
@@ -118,6 +124,39 @@ async function paneText(session) {
   return stdout.replace(/\s+/g, "");
 }
 
+/** The pane's foreground command, "" when the session is gone. */
+async function paneCommand(session) {
+  try {
+    const { stdout } = await execFileAsync("tmux", ["display-message", "-p", "-t", `=${session}:`, "#{pane_current_command}"]);
+    return stdout.trim();
+  } catch {
+    return "";
+  }
+}
+
+const SHELLS = new Set(["zsh", "bash", "fish", "sh", "dash", "tcsh", "nu"]);
+
+/**
+ * Puts the pane onto the harness command, retrying until it leaves the shell.
+ * The leftover launch line the server typed before the restart is not trusted:
+ * a login shell still initializing when text arrives can wipe or reorder it
+ * (the redraw window server.mjs's priming sleeps 700ms for), so each attempt
+ * clears the line, types the command fresh, and submits it.
+ */
+async function startHarness(session, command) {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    if (!SHELLS.has(await paneCommand(session))) return;
+    await execFileAsync("tmux", ["send-keys", "-t", `=${session}:`, "C-u"]);
+    await execFileAsync("tmux", ["send-keys", "-t", `=${session}:`, "-l", "--", command]);
+    await execFileAsync("tmux", ["send-keys", "-t", `=${session}:`, "Enter"]);
+    for (let poll = 0; poll < 40; poll += 1) {
+      if (!SHELLS.has(await paneCommand(session))) return;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+  throw new Error(`the pane of ${session} never left its shell for the harness command`);
+}
+
 test("an armed step prompt survives a server restart", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-armed-restart-"));
   const leaf = `probearm${process.pid}`;
@@ -151,11 +190,7 @@ test("an armed step prompt survives a server restart", async (context) => {
 
   const started = await post(base, "/api/goals/start", {
     file: goal.file,
-    // Stands in for a real harness TUI: raw mode (no canonical line-buffer
-    // limit, which drops the tail of a multi-KB prompt fed straight to a
-    // plain `cat`) with echo on, so the pty shows whatever gets typed into
-    // it once it is the pane's foreground command.
-    steps: [{ instruction: "Prove the arm-restart probe delivers.", command: 'sh -c "stty raw echo; exec cat"' }],
+    steps: [{ instruction: "Prove the arm-restart probe delivers.", command: HARNESS_CMD }],
   });
   assert.ok(started.session, `pipeline started: ${JSON.stringify(started)}`);
   sessions.push(started.session);
@@ -178,12 +213,12 @@ test("an armed step prompt survives a server restart", async (context) => {
   const restarted = `http://127.0.0.1:${nextPort}`;
   await waitForServer(restarted);
 
-  // Only after the restart does the harness "start": the pane already holds
-  // the typed but never-submitted command (the priming step never presses
-  // Enter under AGENT_SHELL_TEST_NO_LAUNCH), so pressing Enter now leaves the
-  // pane on a quiet, non-shell command whose pty echo shows whatever gets
-  // typed into it next.
-  await execFileAsync("tmux", ["send-keys", "-t", `=${started.session}:`, "Enter"]);
+  // Only after the restart does the harness "start" (the priming step never
+  // launches it under AGENT_SHELL_TEST_NO_LAUNCH): the pane moves onto a
+  // quiet, non-shell command whose pty echo shows whatever gets typed into it
+  // next. startHarness types the command itself rather than submitting the
+  // leftover primed line, so a slow shell init cannot strand the pane.
+  await startHarness(started.session, HARNESS_CMD);
 
   // The re-armed session must not sit at 0 tokens with an empty composer:
   // real content (the prompt's opening words) reaches the pane once the

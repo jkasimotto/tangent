@@ -52,7 +52,7 @@ export const shellCommandSpec: CliCommandSpec = {
   subcommands: [
     {
       name: "rebuild",
-      description: "Rebuild the packages, restart the Agent Shell server, and return when the new boot answers. Run it before a Try it note, so the keys work the first time.",
+      description: "Rebuild the packages, restart the Agent Shell server, and return when the new boot answers. Run it before a Test line, so the keys work the first time.",
       options: [
         serverOption,
         { name: "timeout", takesValue: true, description: "Seconds to wait for the new boot (default 240)" }

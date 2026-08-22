@@ -43,41 +43,48 @@ async function statusCommand(args: Args): Promise<void> {
   console.log(`plan: ${brain.planFile}`);
   console.log(`instruction: ${firstLine(brain.instruction)}`);
   if (brain.latestHandover) console.log(`latest handover: ${firstLine(brain.latestHandover)}`);
-  printForJulian(brain.forJulian ?? []);
+  printForJulian(brain.forJulian ?? [], brain.forJulianUnparsed ?? []);
 }
 
 /**
- * Prints what Tangent shows Julian for this brain: the rows it parsed from the
- * plan's `## For Julian` section, numbered as they appear on his desk. A line
- * the brain wrote in another shape is not a row, so a count that is short of
- * what the plan says is the brain's signal to fix its lines.
+ * Prints what Tangent shows Julian for this brain, and what it does not: the
+ * rows it parsed from the plan's `## For Julian` section, each marked when
+ * Tangent hides it, then every line the section holds that became no row.
+ * The brain reads this to see its own misses; hiding a line is never silent.
  */
-function printForJulian(rows: ForJulianRow[]): void {
+function printForJulian(rows: ForJulianRow[], unparsed: string[]): void {
   console.log(`Tangent shows ${rows.length} ${rows.length === 1 ? "item" : "items"} for Julian`);
   rows.forEach((row, at) => {
     const number = `  ${at + 1}.`;
-    if (row.kind === "decision") {
-      const unblocks = row.unblocks ? ` · unblocks ${row.unblocks}` : "";
-      const missing = row.missing ? " · DOCUMENT MISSING" : "";
-      console.log(`${number} Decision ${row.file ?? row.title}: ${row.text}${unblocks} · ${row.commentCount} open comments${missing}`);
+    if (row.kind === "test") {
+      const stale = row.goalStatus !== "done" ? ` · goal is ${row.goalStatus ?? "unknown"} (not shown)` : "";
+      const missing = row.missing ? " · TARGET MISSING (not shown)" : "";
+      console.log(`${number} Test ${row.title}: ${row.text} · Accept it?${stale}${missing}`);
       return;
     }
-    if (row.kind === "tryit") {
-      console.log(`${number} Try it ${row.title}: ${row.text}`);
+    if (!row.target) {
+      console.log(`${number} Decide: ${row.text}`);
       return;
     }
-    console.log(`${number} Brain: ${row.text}`);
+    const unblocks = row.unblocks ? ` · unblocks ${row.unblocks}` : "";
+    const missing = row.missing ? " · TARGET MISSING (not shown)" : "";
+    console.log(`${number} Decide ${row.file ?? row.title}: ${row.text}${unblocks} · ${row.commentCount} open comments${missing}`);
   });
+  if (!unparsed.length) return;
+  console.log("Not shown, in other shapes:");
+  for (const line of unparsed) console.log(`  ${line.trim()}`);
 }
 
 type ForJulianRow = {
-  kind: "decision" | "tryit" | "brain";
+  kind: "decide" | "test";
+  target: string | null;
   text: string;
   unblocks: string | null;
   file: string | null;
   title: string | null;
   commentCount: number;
   missing: boolean;
+  goalStatus: string | null;
   line: string;
 };
 
@@ -91,6 +98,7 @@ type BrainSummary = {
   instruction: string;
   latestHandover: string | null;
   forJulian: ForJulianRow[];
+  forJulianUnparsed: string[];
 };
 
 /** The first line of a text, trimmed. */
@@ -118,6 +126,8 @@ Examples:
   tangent brain status otto/tangent
 
 The status ends with what Tangent shows Julian: the rows it parsed from the
-plan's "## For Julian" section. A line in another shape is not a row.
+plan's "## For Julian" section, then every line of that section it shows
+nothing for. A Decide ask must end with a question mark, and a Test row is
+shown only while its Goal is done.
 `);
 }

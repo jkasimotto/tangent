@@ -1,5 +1,5 @@
 # @tangent/agent-shell
 
-The CLI surface of the Tangent Agent Shell: the vault CLI (`tangent area`, `tangent goal`, `tangent idea`, `tangent vault commit`), the agent messaging CLI (`tangent agent list|send`), and the pipeline CLI (`tangent goal start`, `tangent goal handover`). Every command but `vault commit` is a thin HTTP client to the running Agent Shell server (`packages/agent-shell/app/server.mjs`, port 4321), which owns the vault and the pipelines.
+The CLI and daily app surface of Tangent Agent Shell: the vault CLI (`tangent area`, `tangent goal`, `tangent idea`, `tangent vault commit`), agent messaging (`tangent agent list|send`), pipelines, Area brains, and the browser app. Every command but `vault commit` is a thin HTTP client to the running server (`app/server.mjs`, port 4321). The server composes capability route tables, the vault repository, execution records, scheduling, desk projection, static assets, and terminal transport.
 
 See `docs/index.md`.

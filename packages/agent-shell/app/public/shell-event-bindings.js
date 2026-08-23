@@ -1,5 +1,5 @@
 /** Creates this browser boundary with explicit shell-owned dependencies. */
-export function bindShellEvents({ state, post, paint, refresh, showToast, screen, backButton, workTab, areasTab, findButton, secondaryAction, shellMenu, goToButton, goToLayer, goToInput, modalLayer, terminalFit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showAreasAt, showDecision, showCreate, showDescribe, showProgramCreate, selectProgram, openProgramSession, controlProgram, performProgramAction, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelCreate, cancelDescribe, currentProgram, programAreaDirectory, selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain, brainForAreaCard, openBrainSession, toggleBrainPopover, syncDescribeDraft, saveDescribeDraft, saveDescribeSession, describeWorkSession, openDescribeSession, addDescribeSource, switchDescribeToManualCreate, launchSelection, launchRequestFields, syncLaunchDraft, activateLaunchStep, removeLaunchStep, addLaunchStep, launchIsPipeline, saveLaunchDefault, showHarnessEditor, saveHarnesses, startPipeline, savePipelineStep, appendPipelineSteps, selectionForArea, startSelectedGoals, openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, openDocument, navigateDocumentHistory, openVaultLink, openDocumentHeading, openCommentComposer, setCommentScope, editComment, cancelCommentComposer, submitCommentComposer, removeComment, stepComment, saveVisibleIdea, refreshDocument, leaveReader, toggleAwake, closeModal, modalConfirm, updateSelectionCommentButton, preferredArea, areaLabel, programById, DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET }) {
+export function bindShellEvents({ state, post, paint, refresh, showToast, screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction, shellMenu, goToButton, goToLayer, goToInput, modalLayer, terminalFit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, loadGoalPrompt, loadBrainPrompt, closePromptPreview, showAreasAt, showDecision, showCreate, showDescribe, showProgramCreate, selectProgram, openProgramSession, controlProgram, performProgramAction, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelCreate, cancelDescribe, currentProgram, programAreaDirectory, selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain, brainForAreaCard, openBrainSession, toggleBrainPopover, syncDescribeDraft, saveDescribeDraft, saveDescribeSession, describeWorkSession, openDescribeSession, addDescribeSource, switchDescribeToManualCreate, launchSelection, launchRequestFields, syncLaunchDraft, activateLaunchStep, removeLaunchStep, addLaunchStep, launchIsPipeline, saveLaunchDefault, showHarnessEditor, saveHarnesses, startPipeline, savePipelineStep, appendPipelineSteps, selectionForArea, startSelectedGoals, openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, openDocument, navigateDocumentHistory, openVaultLink, openDocumentHeading, openCommentComposer, setCommentScope, editComment, cancelCommentComposer, submitCommentComposer, removeComment, stepComment, saveVisibleIdea, refreshDocument, leaveReader, toggleAwake, closeModal, modalConfirm, updateSelectionCommentButton, preferredArea, areaLabel, programById, DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET }) {
   const awakeButton = document.querySelector("#awake-button");
   const { enableDockBadge, areaIsFolded, saveExpandedAreas, revealArea, setAreaStatus, openReaderAgent, sendVerdict, replyAboutRow, launchOptionsFor, pipelineRecordForGoal, loadLaunchStep, renderWork, describeLaunchArea, describeWorkSessions } = programById;
   document.addEventListener("click", async (event) => {
@@ -28,6 +28,10 @@ export function bindShellEvents({ state, post, paint, refresh, showToast, screen
     }
     if (target === awakeButton || target.closest("#awake-button")) return toggleAwake();
     if (target.closest("[data-enable-dock-badge]")) return enableDockBadge();
+    const goalPrompt = target.closest("[data-load-goal-prompt]");
+    if (goalPrompt) return loadGoalPrompt(document.querySelector("[data-prompt-goal]")?.value ?? "", goalPrompt.dataset.loadGoalPrompt);
+    if (target.closest("[data-load-brain-prompt]")) return loadBrainPrompt(document.querySelector("[data-prompt-brain]")?.value ?? "");
+    if (target.closest("[data-close-prompt-preview]")) return closePromptPreview();
     const goalRun = target.closest("[data-open-goal-run]");
     if (goalRun) return openGoalRun(goalRun.dataset.openGoalRun);
     const revealGoal = target.closest("[data-reveal-goal]");
@@ -634,7 +638,7 @@ export function bindShellEvents({ state, post, paint, refresh, showToast, screen
   });
 
   backButton.addEventListener("click", async () => {
-    if (["work", "areas"].includes(state.view)) return toggleShellMenu();
+    if (["work", "areas", "prompts"].includes(state.view)) return toggleShellMenu();
     if (state.view === "area-edit") return showAreas();
     if (state.view === "program-detail") return showAreasAt(currentProgram()?.area);
     if (state.view === "program-create") return showAreasAt(state.programDraft.area);
@@ -708,6 +712,7 @@ export function bindShellEvents({ state, post, paint, refresh, showToast, screen
 
   workTab.addEventListener("click", showWork);
   areasTab.addEventListener("click", showAreas);
+  promptsTab.addEventListener("click", showPrompts);
 
   findButton.addEventListener("click", () => {
     if (findButton.dataset.action === "next-step") {

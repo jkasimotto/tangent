@@ -40,7 +40,11 @@ export function createGoalQueryRoutes(operations) {
 
   /** Returns the complete launch brief for one Goal file. */
   async function brief(_request, response, url) {
-    sendResult(response, await operations.brief(url.searchParams.get("file") ?? ""));
+    sendResult(response, await operations.brief(
+      url.searchParams.get("file") ?? "",
+      url.searchParams.get("mode") ?? "goal",
+      Number(url.searchParams.get("step") ?? 0),
+    ));
   }
 
   /** Sends one `{status, value|error}` operation result. */

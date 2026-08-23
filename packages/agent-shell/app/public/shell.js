@@ -25,6 +25,7 @@ import { createShellInteractions } from "./shell-interactions.js";
 import { bindShellEvents } from "./shell-event-bindings.js";
 import { createTerminalController } from "./terminal-controller.js";
 import { createActionTelemetry } from "./action-telemetry.js";
+import { renderPromptBestiary } from "./prompt-bestiary.js";
 
 const actionTelemetry = createActionTelemetry();
 actionTelemetry.observe();
@@ -32,7 +33,7 @@ const { api, post } = createApiClient(undefined, actionTelemetry);
 const { requestedArea, requestedDocument, state } = createShellState();
 
 const {
-  screen, "back-button": backButton, "work-tab": workTab, "areas-tab": areasTab, "bar-context": barContext,
+  screen, "back-button": backButton, "work-tab": workTab, "areas-tab": areasTab, "prompts-tab": promptsTab, "bar-context": barContext,
   "find-button": findButton, "secondary-action": secondaryAction, "modal-layer": modalLayer,
   "modal-kicker": modalKicker, "modal-title": modalTitle, "modal-copy": modalCopy, "modal-field": modalField,
   "modal-actions": modalActions, toast, "status-pill": statusPill, "awake-button": awakeButton,
@@ -601,12 +602,13 @@ function updateHeader() {
   const isDescribe = state.view === "describe";
   const isDescribeAgent = state.view === "describe-agent";
   const isAreas = state.view === "areas";
+  const isPrompts = state.view === "prompts";
   const isAreaEdit = state.view === "area-edit";
   const isProgramDetail = state.view === "program-detail";
   const isProgramCreate = state.view === "program-create";
   const isProgramSession = state.view === "program-session";
   const program = currentProgram();
-  const isTopLevel = isWork || isAreas;
+  const isTopLevel = isWork || isAreas || isPrompts;
   backButton.classList.toggle("has-back", !isTopLevel);
   backButton.textContent = isTopLevel
     ? "Agent Shell"
@@ -635,6 +637,8 @@ function updateHeader() {
         ? `${areaLabel(describeSession.area)} · Defining work · ${describeWorkStateLabel(describeSession)}`
         : isAreas
           ? "Organize Areas"
+        : isPrompts
+          ? "Agent prompt bestiary"
         : isAreaEdit
           ? "Review the path before it changes"
         : (isProgramDetail || isProgramSession) && program
@@ -649,6 +653,8 @@ function updateHeader() {
 
   const topLevel = isWork
     ? "work"
+    : isPrompts
+      ? "prompts"
     : isAreas || isAreaEdit || isProgramDetail || isProgramCreate || isProgramSession || (isCreate && state.createReturnView === "areas")
       ? "areas"
       : "";
@@ -657,19 +663,20 @@ function updateHeader() {
   workTab.classList.toggle("active", topLevel === "work");
   workTab.classList.toggle("has-attention", attentionCount > 0);
   areasTab.classList.toggle("active", topLevel === "areas");
-  for (const [button, active] of [[workTab, topLevel === "work"], [areasTab, topLevel === "areas"]]) {
+  promptsTab.classList.toggle("active", topLevel === "prompts");
+  for (const [button, active] of [[workTab, topLevel === "work"], [areasTab, topLevel === "areas"], [promptsTab, topLevel === "prompts"]]) {
     if (active) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   }
 
-  secondaryAction.hidden = !session || ["work", "create", "describe", "areas", "area-edit", "program-detail", "program-create", "program-session", "document"].includes(state.view);
+  secondaryAction.hidden = !session || ["work", "create", "describe", "areas", "prompts", "area-edit", "program-detail", "program-create", "program-session", "document"].includes(state.view);
   secondaryAction.textContent = session?.state === "shell" ? "Close session…" : "Stop agent…";
 
   if (state.view === "agent" && session?.state === "waiting") {
     findButton.hidden = false;
     findButton.textContent = "Next step";
     findButton.dataset.action = "next-step";
-  } else if (["work", "create", "describe", "describe-agent", "areas", "area-edit", "program-detail", "program-create", "program-session", "agent", "decision"].includes(state.view)) {
+  } else if (["work", "create", "describe", "describe-agent", "areas", "prompts", "area-edit", "program-detail", "program-create", "program-session", "agent", "decision"].includes(state.view)) {
     findButton.hidden = true;
     findButton.textContent = "Find work";
     findButton.dataset.action = "find";
@@ -725,7 +732,7 @@ function updateLiveHeader() {
 /** Selects and renders the current full-screen view. */
 function renderScreen() {
   const goal = currentGoal();
-  const goalFreeViews = ["work", "create", "describe", "describe-agent", "areas", "area-edit", "program-detail", "program-create", "program-session", "document", "harnesses"];
+  const goalFreeViews = ["work", "create", "describe", "describe-agent", "areas", "prompts", "area-edit", "program-detail", "program-create", "program-session", "document", "harnesses"];
   if (!goal && !goalFreeViews.includes(state.view)) state.view = "work";
   const session = sessionForGoal(goal);
   const describeSession = describeWorkSession();
@@ -749,6 +756,7 @@ function renderScreen() {
   else if (state.view === "describe") screen.innerHTML = renderDescribeCapture();
   else if (state.view === "describe-agent") screen.innerHTML = renderDescribeWorkAgent(describeSession);
   else if (state.view === "areas") screen.innerHTML = renderAreas();
+  else if (state.view === "prompts") screen.innerHTML = renderPromptBestiary({ goals: allGoals(), brains: state.brains, inspector: state.promptInspector });
   else if (state.view === "area-edit") screen.innerHTML = renderAreaEditor();
   else if (state.view === "program-detail") screen.innerHTML = renderProgramDetail(currentProgram());
   else if (state.view === "program-create") screen.innerHTML = renderProgramCreate();
@@ -1017,10 +1025,52 @@ async function toggleAwake() {
   }
 }
 
+/** Opens the top-level prompt bestiary. */
+function showPrompts() {
+  state.view = "prompts";
+  state.renderedKey = "";
+  paint(true);
+}
+
+/** Loads one Goal's exact current execution prompt. */
+async function loadGoalPrompt(file, mode = "goal") {
+  if (!file) return showToast("Choose a Goal first.");
+  state.promptInspector = { loading: true, title: "", text: "", error: "" };
+  paint(true);
+  try {
+    const brief = await api(`/api/goals/brief?file=${encodeURIComponent(file)}&mode=${encodeURIComponent(mode)}`);
+    const label = mode === "pipeline" ? "Pipeline step" : mode === "collaborate" ? "Collaboration" : "Goal assignment";
+    state.promptInspector = { loading: false, title: `${label} · ${brief.goal.title}`, text: brief.markdown, error: "" };
+  } catch (error) {
+    state.promptInspector = { loading: false, title: "", text: "", error: error.message };
+  }
+  paint(true);
+}
+
+/** Loads one live brain generation's exact current opening prompt. */
+async function loadBrainPrompt(area) {
+  if (!area) return showToast("Choose a brain first.");
+  state.promptInspector = { loading: true, title: "", text: "", error: "" };
+  paint(true);
+  try {
+    const result = await api(`/api/brains/show?area=${encodeURIComponent(area)}`);
+    state.promptInspector = { loading: false, title: `Brain generation · ${area}`, text: result.prompt, error: "" };
+  } catch (error) {
+    state.promptInspector = { loading: false, title: "", text: "", error: error.message };
+  }
+  paint(true);
+}
+
+/** Closes the exact prompt preview without leaving the bestiary. */
+function closePromptPreview() {
+  state.promptInspector = { loading: false, title: "", text: "", error: "" };
+  paint(true);
+}
+
 bindShellEvents({
-  state, post, paint, refresh, showToast, screen, backButton, workTab, areasTab, findButton, secondaryAction,
+  state, post, paint, refresh, showToast, screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction,
   shellMenu, goToButton, goToLayer, goToInput, modalLayer, terminalFit: terminalController.fit, KEYMAP, shortcutMatches,
-  shortcutKbd, toggleShellMenu, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showAreasAt,
+  shortcutKbd, toggleShellMenu, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, loadGoalPrompt, loadBrainPrompt, closePromptPreview, showAreasAt,
   showDecision, showCreate, showDescribe, showProgramCreate, selectProgram, openProgramSession, controlProgram,
   performProgramAction, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelCreate, cancelDescribe, currentProgram,
   programAreaDirectory, selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain,

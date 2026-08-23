@@ -10,7 +10,7 @@ export function createShellState(storage = globalThis.localStorage, href = globa
   const requestedView = requestedLocation.get("view");
   const requestedArea = requestedLocation.get("area") || "";
   const requestedDocument = requestedLocation.get("document") || "";
-  const initialView = requestedDocument ? "document" : ["areas", "programs"].includes(requestedView) ? "areas" : "work";
+  const initialView = requestedDocument ? "document" : requestedView === "prompts" ? "prompts" : ["areas", "programs"].includes(requestedView) ? "areas" : "work";
   const storedDescribeDraft = storedJson("agent-shell.describe-draft");
   const savedDescribeSession = storage.getItem("agent-shell.describe-session") || storedDescribeDraft?.session || "";
   const state = {
@@ -32,6 +32,7 @@ export function createShellState(storage = globalThis.localStorage, href = globa
     harnessDraft: null, harnessReturnView: "work", query: "", workFilter: storage.getItem("agent-shell.work-filter") || "all",
     caffeinate: false, decisionReturnView: "agent", agentReturnView: "work", offline: false, rebuilding: false,
     updateAvailable: false, bootId: "", loading: true, error: "", renderedKey: "",
+    promptInspector: { loading: false, title: "", text: "", error: "" },
   };
   return { requestedArea, requestedDocument, state };
 }

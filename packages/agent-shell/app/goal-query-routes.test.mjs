@@ -35,3 +35,18 @@ test("Goal query routes preserve operation status and payloads", async () => {
   assert.equal(shown.status, 404);
   assert.equal(shown.body.error, "no goal missing");
 });
+
+test("Goal brief routes carry the requested prompt mode and pipeline step", async () => {
+  let received;
+  const routes = createGoalQueryRoutes({
+    /** Captures prompt-inspector arguments. */
+    async brief(...args) {
+      received = args;
+      return { status: 200, value: { markdown: "prompt" } };
+    },
+  });
+  const result = response();
+  await routes.handle(request("GET"), result, new URL("http://shell/api/goals/brief?file=otto%2Fgoal-x.md&mode=pipeline&step=3"));
+  assert.deepEqual(received, ["otto/goal-x.md", "pipeline", 3]);
+  assert.equal(result.body.markdown, "prompt");
+});

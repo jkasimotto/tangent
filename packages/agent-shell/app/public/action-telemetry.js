@@ -22,13 +22,20 @@ export function actionName(target) {
 
 /** Sends anonymous local action records; telemetry never blocks the action. */
 export function createActionTelemetry(fetchJson = globalThis.fetch.bind(globalThis), now = () => performance.now()) {
+  const fetchFallback = arguments.length ? fetchJson : null;
+  const beacon = globalThis.navigator?.sendBeacon?.bind(globalThis.navigator) ?? null;
   /** Posts one fire-and-forget local telemetry record. */
   function record(kind, action, detail = {}) {
     if (!action) return;
-    fetchJson("/api/telemetry/action", {
+    const body = JSON.stringify({ kind, action, ...detail });
+    if (beacon) {
+      beacon("/api/telemetry/action", body);
+      return;
+    }
+    fetchFallback?.("/api/telemetry/action", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ kind, action, ...detail }),
+      body,
       keepalive: true,
     }).catch(() => {});
   }

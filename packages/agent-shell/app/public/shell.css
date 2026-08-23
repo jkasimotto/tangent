@@ -113,6 +113,36 @@ summary:focus-visible {
 .primary-tab.active { color: var(--text); }
 .primary-tab.active::after { background: #9aa5b1; }
 .primary-tab.has-attention { color: var(--amber); }
+
+.prompt-bestiary { display: grid; gap: 46px; max-width: 1320px; margin: 0 auto; padding: 38px 32px 80px; }
+.prompt-bestiary h1 { margin: 4px 0 10px; font-size: 30px; letter-spacing: -.025em; }
+.prompt-bestiary h2 { margin: 0 0 16px; color: #e5e9ed; font-size: 18px; }
+.prompt-bestiary-intro > p:last-child { max-width: 720px; margin: 0; color: var(--muted); line-height: 1.6; }
+.prompt-live-tools { display: grid; gap: 10px; padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.prompt-live-tools > div:not(.prompt-preview) { display: flex; gap: 8px; }
+.prompt-live-tools select { min-width: 300px; max-width: 560px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: #111419; color: var(--text); }
+.prompt-live-tools button, .prompt-preview button { padding: 8px 11px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface-raised); color: var(--text); cursor: pointer; }
+.prompt-preview { display: grid; gap: 10px; min-width: 0; margin-top: 8px; padding-top: 18px; border-top: 1px solid var(--line); }
+.prompt-preview > div { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.prompt-preview pre { max-height: 520px; margin: 0; padding: 18px; overflow: auto; border-radius: 9px; background: #0b0d10; color: #cbd2d9; font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; }
+.lifecycle-grid, .prompt-species-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.lifecycle-card, .prompt-species-card { min-width: 0; padding: 20px; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); }
+.lifecycle-card h3, .prompt-species-card h3 { margin: 0 0 7px; font-size: 16px; }
+.lifecycle-card > p { margin: 0 0 18px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.lifecycle-card ol { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.lifecycle-card li { display: grid; grid-template-columns: minmax(72px, auto) 14px minmax(72px, auto) minmax(130px, 1fr); align-items: baseline; gap: 7px; padding: 7px 0; border-top: 1px solid #252a30; font-size: 12px; }
+.lifecycle-card li b { color: var(--blue); font-weight: 500; }
+.lifecycle-card li small { color: var(--muted); font-size: 11px; }
+.prompt-species-card .kicker { margin: 0 0 5px; color: var(--blue); }
+.prompt-species-card dl { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 7px 10px; margin: 14px 0 0; font-size: 12px; line-height: 1.5; }
+.prompt-species-card dt { color: var(--quiet); font-weight: 670; }
+.prompt-species-card dd { margin: 0; color: #c6ccd2; }
+
+@media (max-width: 850px) {
+  .lifecycle-grid, .prompt-species-grid { grid-template-columns: 1fr; }
+  .prompt-live-tools > div:not(.prompt-preview) { align-items: stretch; flex-direction: column; }
+  .prompt-live-tools select { min-width: 0; max-width: none; }
+}
 .primary-tab.has-attention::before { display: inline-block; width: 5px; height: 5px; margin: 0 7px 2px 0; border-radius: 50%; background: var(--amber); content: ""; }
 .primary-tab.has-live::before { display: inline-block; width: 5px; height: 5px; margin: 0 7px 2px 0; border-radius: 50%; background: var(--green); content: ""; }
 

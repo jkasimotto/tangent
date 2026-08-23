@@ -4031,14 +4031,22 @@ const goalQueryRoutes = createGoalQueryRoutes({
     }
   },
   /** Builds the Goal, prompt, command, and context launch brief. */
-  async brief(file) {
+  async brief(file, mode = "goal", step = 0) {
     const goal = (await goalsByFile()).get(file);
     if (!goal) return { status: 404, error: `no goal file ${file}` };
+    let markdown;
+    if (mode === "collaborate") markdown = await collaborationPrompt(goal.area, goal);
+    else if (mode === "pipeline") {
+      const record = await readPipeline(PIPELINES_ROOT, goal.area, goal.slug);
+      if (!record) return { status: 404, error: "this Goal has no pipeline" };
+      const selected = record.steps.find((item) => item.index === step) ?? currentStep(record) ?? record.steps[0];
+      markdown = await pipelineStepPrompt(goal.area, goal, record, selected.index, [], selected.session ?? "");
+    } else markdown = await goalPrompt(goal.area, goal);
     return {
       status: 200,
       value: {
         goal,
-        markdown: await goalPrompt(goal.area, goal),
+        markdown,
         agent: await agentCmdForArea(goal.area).then(withDefaultModel).catch(() => ""),
         context: await goalContext(goal.area, goal),
       },

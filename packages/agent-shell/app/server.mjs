@@ -45,6 +45,7 @@ import { promptArrived, splitPrompt, squash } from "./prompt-delivery.mjs";
 import { clearArmedPrompt, readAllArmedPrompts, writeArmedPrompt } from "./armed-prompts.mjs";
 import { createRuntimeScheduler } from "./runtime-scheduler.mjs";
 import { attachTerminalTransport } from "./terminal-transport.mjs";
+import { serveStaticAsset } from "./static-assets.mjs";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -170,15 +171,6 @@ function contextTeachingSentence(subject) {
 const ARMED_ROOT = process.env.TANGENT_ARMED_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "armed");
 
 if (!existsSync(WORKSPACE)) mkdirSync(WORKSPACE, { recursive: true });
-
-const MIME = {
-  ".html": "text/html",
-  ".js": "text/javascript",
-  ".mjs": "text/javascript",
-  ".css": "text/css",
-  ".map": "application/json",
-  ".png": "image/png",
-};
 
 /**
  * Lists live tmux sessions for the sidebar in the frontend, which polls
@@ -4876,46 +4868,7 @@ const server = http.createServer(async (req, res) => {
       }
       return;
     }
-    let filePath;
-    if (url.pathname === "/" || url.pathname === "/index.html") {
-      filePath = path.join(here, "public", "shell.html");
-    } else if (url.pathname.startsWith("/vendor/d3/")) {
-      const rel = url.pathname.slice("/vendor/d3/".length);
-      const roots = {
-        "d3-dispatch.min.js": "d3-dispatch/dist/d3-dispatch.min.js",
-        "d3-quadtree.min.js": "d3-quadtree/dist/d3-quadtree.min.js",
-        "d3-timer.min.js": "d3-timer/dist/d3-timer.min.js",
-        "d3-force.min.js": "d3-force/dist/d3-force.min.js",
-      };
-      if (!roots[rel]) {
-        res.writeHead(404).end("not found");
-        return;
-      }
-      filePath = path.join(here, "node_modules", roots[rel]);
-    } else if (url.pathname.startsWith("/vendor/xterm/")) {
-      const rel = url.pathname.slice("/vendor/xterm/".length);
-      const roots = {
-        "xterm.js": "@xterm/xterm/lib/xterm.js",
-        "xterm.css": "@xterm/xterm/css/xterm.css",
-        "addon-fit.js": "@xterm/addon-fit/lib/addon-fit.js",
-        "addon-webgl.js": "@xterm/addon-webgl/lib/addon-webgl.js",
-      };
-      if (!roots[rel]) {
-        res.writeHead(404).end("not found");
-        return;
-      }
-      filePath = path.join(here, "node_modules", roots[rel]);
-    } else {
-      filePath = path.join(here, "public", path.normalize(url.pathname).replace(/^([.][.][/\\])+/, ""));
-    }
-    const body = await readFile(filePath);
-    // no-cache (revalidate, and with no validators: refetch): Safari's
-    // heuristic caching once served stale JavaScript against fresh HTML.
-    res.writeHead(200, {
-      "content-type": MIME[path.extname(filePath)] ?? "application/octet-stream",
-      "cache-control": "no-cache",
-    });
-    res.end(body);
+    await serveStaticAsset(url, res, here);
   } catch {
     res.writeHead(404).end("not found");
   }

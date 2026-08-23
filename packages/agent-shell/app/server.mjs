@@ -45,6 +45,7 @@ import { createVaultRepository } from "./vault-repository.mjs";
 import { pipelineExecution, soloExecution } from "./execution-record.mjs";
 import { createAreaRoutes } from "./area-routes.mjs";
 import { createProgramRoutes } from "./program-routes.mjs";
+import { createDocumentRoutes } from "./document-routes.mjs";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -3890,6 +3891,15 @@ const programRoutes = createProgramRoutes({
     return { ok: true };
   },
 });
+const documentRoutes = createDocumentRoutes({
+  vault: vaultIndex,
+  readMap: readMapState,
+  writeMap: writeMapState,
+  validArea: validAreaPath,
+  readDocument: readVaultDocument,
+  writeDocument: saveVaultDocument,
+  resolve: resolveVaultDocumentComment,
+});
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
@@ -3918,74 +3928,13 @@ const server = http.createServer(async (req, res) => {
     if (await agentRoutes.handle(req, res, url)) return;
     if (await areaRoutes.handle(req, res, url)) return;
     if (await programRoutes.handle(req, res, url)) return;
+    if (await documentRoutes.handle(req, res, url)) return;
     // The frontend must target the same orchestrator session the server
     // special-cases, so the name ships as a tiny script instead of being
     // hardcoded twice.
     if (url.pathname === "/config.js") {
       res.writeHead(200, { "content-type": "text/javascript", "cache-control": "no-cache" });
       res.end(`window.CHAT_SESSION = ${JSON.stringify(CHAT_SESSION)};\n`);
-      return;
-    }
-    // The launcher's index: per-area entries for search plus the unified map.
-    if (url.pathname === "/api/vault") {
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify(await vaultIndex()));
-      return;
-    }
-    if (url.pathname === "/api/map-state" && req.method === "GET") {
-      const area = url.searchParams.get("area") ?? "";
-      const stored = await readMapState(area);
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ area, state: stored }));
-      return;
-    }
-    if (url.pathname === "/api/map-state" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const area = String(body.area ?? "");
-      if (!validAreaPath(area) || typeof body.state !== "object" || body.state === null) {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: "area and state required" }));
-        return;
-      }
-      await writeMapState(area, body.state);
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ok: true }));
-      return;
-    }
-    if (url.pathname === "/api/document" && req.method === "GET") {
-      const document = await readVaultDocument(url.searchParams.get("file") ?? "");
-      res.writeHead(document ? 200 : 404, { "content-type": "application/json" });
-      res.end(JSON.stringify(document ?? { error: "document not found" }));
-      return;
-    }
-    if (url.pathname === "/api/document" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      if (typeof body.text !== "string") {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: "text is required" }));
-        return;
-      }
-      const result = await saveVaultDocument(String(body.file ?? ""), body.text, String(body.baseHash ?? ""), body.summary);
-      res.writeHead(result.status, { "content-type": "application/json" });
-      res.end(JSON.stringify(result.status === 200 ? result.document : { error: result.error, current: result.current }));
-      return;
-    }
-    // `tangent document comments <file>`: the open comments of one Document.
-    if (url.pathname === "/api/document/comments" && req.method === "GET") {
-      const document = await readVaultDocument(url.searchParams.get("file") ?? "");
-      res.writeHead(document ? 200 : 404, { "content-type": "application/json" });
-      res.end(JSON.stringify(document ? { file: document.file, title: document.title, comments: document.comments } : { error: "document not found" }));
-      return;
-    }
-    // `tangent document resolve <file> "<first words>" -m "<note>"`: removes one comment in one named commit.
-    if (url.pathname === "/api/document/resolve" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const result = await resolveVaultDocumentComment(String(body.file ?? ""), String(body.prefix ?? ""), String(body.note ?? ""), String(body.session ?? ""));
-      res.writeHead(result.status, { "content-type": "application/json" });
-      res.end(JSON.stringify(result.status === 200 ? { file: result.document.file, comment: result.comment, remaining: result.document.comments.length } : { error: result.error, matches: result.matches ?? [] }));
       return;
     }
     // Goal listing for `tangent goal list [<area>]`: one Area's own Goals, or every

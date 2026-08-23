@@ -9,83 +9,10 @@ import goToCore from "./go-to-core.js";
 import whatHappenedCore from "./what-happened-core.js";
 import areaMapView from "./area-map.js";
 import { createApiClient } from "./api-client.js";
+import { createShellState } from "./shell-state.js";
 
 const { api, post } = createApiClient();
-
-const savedGoal = localStorage.getItem("agent-shell.current-goal") || "";
-const requestedLocation = new URLSearchParams(location.search);
-const requestedView = requestedLocation.get("view");
-const requestedArea = requestedLocation.get("area") || "";
-const requestedDocument = requestedLocation.get("document") || "";
-// Programs now live inside the Area card, so an old ?view=programs link opens Areas.
-const initialView = requestedDocument ? "document" : ["areas", "programs"].includes(requestedView) ? "areas" : "work";
-
-/** Reads one optional JSON value from local storage. */
-function storedJson(key) {
-  try {
-    return JSON.parse(localStorage.getItem(key) || "null");
-  } catch {
-    return null;
-  }
-}
-
-const storedDescribeDraft = storedJson("agent-shell.describe-draft");
-const savedDescribeSession = localStorage.getItem("agent-shell.describe-session") || storedDescribeDraft?.session || "";
-
-const state = {
-  vault: null,
-  programs: { programs: [], errors: [], areas: [], liveCount: 0, timezone: "", scheduler: { installed: false, intervalMinutes: 30 } },
-  sessions: [],
-  contextHandoverTokens: 0,
-  currentFile: savedGoal,
-  view: initialView,
-  document: null,
-  documentReturn: null,
-  documentTrail: [],
-  documentTrailIndex: -1,
-  documentPositions: new Map(),
-  commentComposer: null,
-  commentCursor: -1,
-  describeReturn: null,
-  describeDraft: storedDescribeDraft?.session ? null : storedDescribeDraft,
-  describeSessionName: savedDescribeSession,
-  areaSelection: requestedArea || localStorage.getItem("agent-shell.last-area") || "",
-  createArea: "",
-  createReturnView: "work",
-  expandedAreas: new Set(storedJson("agent-shell.expanded-areas") || []),
-  collapsedDeskSections: new Set(storedJson("agent-shell.collapsed-desk-sections") || []),
-  mapStates: new Map(), // Area path -> stored map state ({positions, kindsOff, showDone, collapsed}) or "loading"
-  mapSelectFile: "", // a Document to select on the Area map once, set by the reader's Area path
-  showDoneAreas: localStorage.getItem("agent-shell.show-done-areas") === "1",
-  areaEdit: null,
-  programId: "",
-  programDraft: { type: "process", area: "", name: "", command: "", time: "07:30", cwd: "", model: "sonnet", prompt: "" },
-  launch: { area: "", options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", continueFrom: null, steps: [], active: 0, record: null },
-  pipelines: [],
-  brains: [],
-  brainDraft: null,
-  agentSessionName: null,
-  verdictLines: new Set(), // For you rows an Accept or Reject press hid, until the next poll drops them
-  goalSelection: [], // checked Goal files in checked order; transient, work view only
-  goTo: null, // the open Go to finder: { query, selected, rows, returnFocus }
-  launchTarget: "",
-  launchAnchor: null,
-  whatHappened: null, // the open What happened look: { area, anchor: { top, right } }
-  harnessDraft: null,
-  harnessReturnView: "work",
-  query: "",
-  workFilter: localStorage.getItem("agent-shell.work-filter") || "all",
-  caffeinate: false,
-  decisionReturnView: "agent",
-  agentReturnView: "work",
-  offline: false,
-  rebuilding: false,
-  updateAvailable: false,
-  bootId: "",
-  loading: true,
-  error: "",
-  renderedKey: "",
-};
+const { requestedArea, requestedDocument, state } = createShellState();
 
 const screen = document.querySelector("#screen");
 const backButton = document.querySelector("#back-button");

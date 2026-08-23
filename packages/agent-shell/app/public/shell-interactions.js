@@ -116,10 +116,21 @@ export function createShellInteractions({ state, api, post, paint, refresh, show
 
   /** Starts a rebuild and makes its waiting state visible immediately. */
   async function rebuildShell() {
-    await post("/api/shell/rebuild", {});
+    const commits = state.pendingCommits ?? [];
+    closeModal();
     state.rebuilding = true;
+    state.rebuild = { phase: "building", commits, targetCommit: state.currentCommit };
     updateStatusPill();
-    showToast("Rebuilding. The app reloads when the new server is ready.");
+    try {
+      const result = await post("/api/shell/rebuild", {});
+      state.rebuild = result.operation;
+      updateStatusPill();
+    } catch (error) {
+      state.rebuilding = false;
+      state.rebuild = { phase: "failed", commits, targetCommit: state.currentCommit, error: error.message };
+      updateStatusPill();
+    }
+    return false;
   }
 
   /** Runs the advertised pending-change reload without a hidden second step. */
@@ -144,7 +155,7 @@ export function createShellInteractions({ state, api, post, paint, refresh, show
       kicker: "Agent Shell",
       title: "Rebuild and restart Agent Shell?",
       copy: rebuildCommitCopy(),
-      confirmLabel: "Rebuild and restart",
+      confirmLabel: state.pendingCommits?.length ? `Reload with ${state.pendingCommits.length} commit${state.pendingCommits.length === 1 ? "" : "s"}` : "Rebuild and restart",
       onConfirm: rebuildShell,
     });
   }

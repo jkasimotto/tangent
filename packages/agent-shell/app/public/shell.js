@@ -8,7 +8,7 @@ import areaMapView from "./area-map.js";
 import { createApiClient } from "./api-client.js";
 import { createShellState } from "./shell-state.js";
 import { shellDom } from "./shell-dom.js";
-import { startRefreshLifecycle } from "./refresh-lifecycle.js";
+import { startRebuildRefresh, startRefreshLifecycle } from "./refresh-lifecycle.js";
 import { FENCE_OPEN, fenceCloser, frontmatterLineCount, markdownHeadingAnchor, markdownHeadings, markdownTableAlignments, markdownTableCells, visibleMarkdown } from "./markdown-structure.js";
 import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
 import { buildGoToRows } from "./go-to-rows.js";
@@ -924,6 +924,7 @@ function editingSurfaceOnScreen() {
 
 /** Refreshes the vault, program, and session projections from the server. */
 async function refresh({ initial = false } = {}) {
+  const requestedRebuild = state.rebuilding;
   try {
     const [vault, sessionPayload, programs] = await Promise.all([api("/api/vault"), api("/api/sessions"), api("/api/programs")]);
     state.vault = vault;
@@ -943,10 +944,12 @@ async function refresh({ initial = false } = {}) {
     state.deployedCommit = sessionPayload.deployedCommit || "";
     state.currentCommit = sessionPayload.currentCommit || "";
     state.updateAvailable = Boolean(sessionPayload.sourceChanged);
+    state.rebuild = sessionPayload.rebuild || null;
+    state.rebuilding = ["building", "restarting", "reconnecting"].includes(state.rebuild?.phase);
     state.loading = false;
     state.error = "";
     state.offline = false;
-    noteServerBoot(sessionPayload.boot || "");
+    noteServerBoot(sessionPayload.boot || "", requestedRebuild);
     if (state.view === "program-session" && !currentProgram()?.session) {
       disposeTerminal();
       state.view = currentProgram() ? "program-detail" : "areas";
@@ -984,21 +987,23 @@ async function refresh({ initial = false } = {}) {
  * Tracks the server process identity across polls. Only pending commits own
  * the blue update dot; a process restart by itself is not a source change.
  */
-function noteServerBoot(boot) {
+function noteServerBoot(boot, requestedRebuild = false) {
   if (!boot) return;
   if (!state.bootId) {
     state.bootId = boot;
     return;
   }
   if (boot === state.bootId) return;
-  if (state.rebuilding) return location.reload();
+  if (requestedRebuild) return location.reload();
   state.bootId = boot;
 }
 
 /** Keeps the quiet connection pill and the menu's update hint current. */
 function updateStatusPill() {
+  const phase = state.offline && state.rebuilding ? "reconnecting" : state.rebuild?.phase;
+  const labels = { building: "Building Tangent…", restarting: "Restarting Tangent…", reconnecting: "Reconnecting to Tangent…" };
   const text = state.rebuilding
-    ? "Rebuilding Agent Shell…"
+    ? labels[phase] || "Updating Tangent…"
     : state.offline
       ? "Server offline · reconnecting"
       : "";
@@ -1009,7 +1014,39 @@ function updateStatusPill() {
   awakeButton.setAttribute("aria-label", awakeButton.title);
   backButton.classList.toggle("has-update", state.updateAvailable);
   const updateItem = shellMenu.querySelector("#menu-update");
-  if (updateItem) updateItem.hidden = !state.updateAvailable;
+  if (updateItem) {
+    updateItem.hidden = !state.updateAvailable;
+    const count = state.pendingCommits.length;
+    updateItem.textContent = count ? `Update available · ${count} commit${count === 1 ? "" : "s"}` : "Update available";
+  }
+  renderUpdatePanel(phase);
+}
+
+/** Shows durable rebuild progress without blocking the current screen. */
+function renderUpdatePanel(phase = state.rebuild?.phase) {
+  const panel = document.querySelector("#update-panel");
+  if (!panel) return;
+  const operation = state.rebuild;
+  const dismissed = operation?.id && localStorage.getItem("agent-shell.dismissed-rebuild") === operation.id;
+  if (!operation || dismissed || operation.phase === "succeeded") {
+    panel.hidden = true;
+    if (operation?.phase === "succeeded" && operation.id && localStorage.getItem("agent-shell.seen-rebuild") !== operation.id) {
+      localStorage.setItem("agent-shell.seen-rebuild", operation.id);
+      const count = operation.commits?.length || 0;
+      showToast(`Tangent reloaded${count ? ` · ${count} commit${count === 1 ? "" : "s"}` : ""}.`);
+    }
+    return;
+  }
+  const count = operation.commits?.length || 0;
+  const titles = { building: `Building ${count || "the deployed"} commit${count === 1 ? "" : "s"}`, restarting: "Restarting Tangent", reconnecting: "Reconnecting to Tangent", failed: "Build failed" };
+  panel.querySelector("#update-panel-title").textContent = titles[phase] || "Updating Tangent";
+  panel.querySelector("#update-panel-copy").textContent = phase === "failed"
+    ? operation.error || "The build did not complete. The current Agent Shell is still available."
+    : "Agent sessions keep running in tmux. You can continue to use this screen.";
+  panel.querySelector("#update-panel-actions").innerHTML = phase === "failed"
+    ? `<button class="quiet-button" type="button" data-rebuild-log>Copy log path</button><button class="primary-button" type="button" data-rebuild-retry>Try again</button><button class="quiet-button" type="button" data-rebuild-dismiss>Dismiss</button>`
+    : `<button class="quiet-button" type="button" data-rebuild-dismiss>Hide</button>`;
+  panel.hidden = false;
 }
 
 /** Opens or closes the Agent Shell menu under the top-left title. */
@@ -1108,6 +1145,7 @@ void (async () => {
 // Mutations and reconciliation push invalidations. The slow timer is only a
 // recovery path for a suspended browser or a dropped event stream.
 startRefreshLifecycle(refresh);
+startRebuildRefresh(() => state.rebuilding, refresh);
 
 // DOM-level exports keep tests on the module boundary instead of rebuilding
 // the old order-dependent browser globals.

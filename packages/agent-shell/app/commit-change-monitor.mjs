@@ -13,8 +13,8 @@ async function runGit(root, args) {
  * Reports commits added after this Agent Shell process started. Working-tree
  * edits are deliberately invisible: only a new HEAD can advertise a rebuild.
  */
-export async function createCommitChangeMonitor({ root, git = runGit } = {}) {
-  const deployedCommit = await git(root, ["rev-parse", "HEAD"]);
+export async function createCommitChangeMonitor({ root, git = runGit, deployedCommit: suppliedCommit = "" } = {}) {
+  const deployedCommit = suppliedCommit || await git(root, ["rev-parse", "HEAD"]);
 
   /** Reads HEAD and the commits that would enter the next rebuild. */
   async function status() {

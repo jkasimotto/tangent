@@ -14,3 +14,14 @@ export function startRefreshLifecycle(refresh, environment = globalThis) {
     },
   };
 }
+
+/** Checks an active rebuild quickly enough to make restart progress legible. */
+export function startRebuildRefresh(active, refresh, environment = globalThis) {
+  const timer = environment.setInterval(() => {
+    if (active()) void refresh();
+  }, 750);
+  return {
+    /** Stops the active-operation timer. */
+    stop() { environment.clearInterval?.(timer); },
+  };
+}

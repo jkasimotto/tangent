@@ -1201,6 +1201,12 @@ li .document-comment { margin: 8px 0 10px; }
 .shell-menu-item:hover { background: var(--surface-raised); }
 .shell-menu-item.update { color: var(--blue, #6ea8ff); font-weight: 620; }
 .shell-menu-item.update[hidden] { display: none; }
+.update-panel { position: fixed; top: 62px; right: 24px; z-index: 75; display: grid; width: min(390px, calc(100vw - 48px)); gap: 8px; padding: 18px; border: 1px solid var(--line-strong); border-radius: 14px; background: #1a1e23; box-shadow: 0 18px 48px rgba(0, 0, 0, .5); }
+.update-panel[hidden] { display: none; }
+.update-panel .kicker { margin: 0; }
+.update-panel strong { font-size: 17px; }
+.update-panel > p:not(.kicker) { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.update-panel-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 
 /* ---- Area map (design contract: otto/tangent/design-area-map) ---- */
 .areas-page:has(.area-map-screen) { width: min(1680px, calc(100% - 72px)); }

@@ -30,12 +30,19 @@
     </header>
 
     <div id="shell-menu" class="shell-menu" role="menu" aria-label="Agent Shell" hidden>
-      <button id="menu-update" class="shell-menu-item update" type="button" role="menuitem" hidden>Changes · Reload Tangent</button>
+      <button id="menu-update" class="shell-menu-item update" type="button" role="menuitem" hidden>Update available</button>
       <button id="menu-refresh" class="shell-menu-item" type="button" role="menuitem">Refresh data</button>
       <button id="menu-reload" class="shell-menu-item" type="button" role="menuitem">Reload app</button>
       <button id="menu-rebuild" class="shell-menu-item" type="button" role="menuitem">Rebuild and restart…</button>
       <button id="menu-awake" class="shell-menu-item" type="button" role="menuitem">Keep Mac awake</button>
     </div>
+
+    <aside id="update-panel" class="update-panel" role="status" aria-live="polite" hidden>
+      <p id="update-panel-kicker" class="kicker">Tangent update</p>
+      <strong id="update-panel-title"></strong>
+      <p id="update-panel-copy"></p>
+      <div id="update-panel-actions" class="update-panel-actions"></div>
+    </aside>
 
     <main id="screen" class="screen" aria-live="polite"></main>
 

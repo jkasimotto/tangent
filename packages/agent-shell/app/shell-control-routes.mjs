@@ -40,7 +40,7 @@ export function createShellControlRoutes(operations) {
 
   /** Starts an explicit rebuild, or rejects it in verification mode. */
   async function rebuild(_request, response) {
-    const result = operations.rebuild();
+    const result = await operations.rebuild();
     sendJson(response, result.status, result.value);
   }
 

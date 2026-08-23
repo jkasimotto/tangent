@@ -33,7 +33,10 @@ test("the Shell menu owns recovery while offline refresh preserves the screen", 
   window.fetch = async (url, options = {}) => {
     if (offline) throw new Error("connection refused");
     const pathname = new URL(url, window.location.href).pathname;
-    if (options.method === "POST") { posts.push(pathname); return jsonResponse({ ok: true }); }
+    if (options.method === "POST") {
+      posts.push(pathname);
+      return jsonResponse({ ok: true, operation: { id: "rebuild-1", phase: "building", commits: pendingCommits, log: "~/.tangent/agent-shell-rebuild.log" } });
+    }
     if (pathname === "/api/sessions") return jsonResponse({ boot, sourceChanged, pendingCommits: sourceChanged ? pendingCommits : [], caffeinate: false, sessions: [] });
     if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
     return jsonResponse({ areas: [], map: [], documents: [] });
@@ -50,6 +53,7 @@ test("the Shell menu owns recovery while offline refresh preserves the screen", 
   assert.equal(window.document.querySelector("#menu-update").hidden, false);
   click(window, "#menu-update");
   assert.match(window.document.querySelector("#modal-copy").textContent, /abc1234  Improve reload — Julian/);
+  assert.match(window.document.querySelector("[data-modal-confirm]").textContent, /Reload with 1 commit/);
   click(window, "[data-modal-cancel]");
   offline = true;
   await window.refresh();
@@ -64,7 +68,9 @@ test("the Shell menu owns recovery while offline refresh preserves the screen", 
   click(window, "[data-modal-confirm]");
   await settle(window);
   assert.ok(posts.includes("/api/shell/rebuild"));
-  assert.match(window.document.querySelector("#status-pill").textContent, /Rebuilding/);
+  assert.match(window.document.querySelector("#status-pill").textContent, /Building Tangent/);
+  assert.equal(window.document.querySelector("#update-panel").hidden, false);
+  assert.match(window.document.querySelector("#update-panel-title").textContent, /Building 1 commit/);
   posts.length = 0;
   click(window, "#back-button");
   click(window, "#menu-update");

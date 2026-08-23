@@ -4,6 +4,20 @@ export function bindShellEvents({ state, post, paint, refresh, showToast, screen
   const { enableDockBadge, areaIsFolded, saveExpandedAreas, revealArea, setAreaStatus, openReaderAgent, sendVerdict, replyAboutRow, launchOptionsFor, pipelineRecordForGoal, loadLaunchStep, renderWork, describeLaunchArea, describeWorkSessions } = programById;
   document.addEventListener("click", async (event) => {
     const target = event.target;
+    if (target.closest("[data-rebuild-dismiss]")) {
+      if (state.rebuild?.id) localStorage.setItem("agent-shell.dismissed-rebuild", state.rebuild.id);
+      state.rebuild = null;
+      state.rebuilding = false;
+      document.querySelector("#update-panel").hidden = true;
+      return;
+    }
+    if (target.closest("[data-rebuild-retry]")) return confirmRebuild();
+    if (target.closest("[data-rebuild-log]")) {
+      const log = state.rebuild?.log || "~/.tangent/agent-shell-rebuild.log";
+      await navigator.clipboard?.writeText?.(log);
+      showToast(`Copied ${log}`);
+      return;
+    }
     // Clicks can trigger re-renders while the describe form is visible; the
     // typed description survives them only through the stored draft.
     if (state.view === "describe") syncDescribeDraft();

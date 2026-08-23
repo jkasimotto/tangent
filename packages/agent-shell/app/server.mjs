@@ -47,6 +47,7 @@ import { createAreaRoutes } from "./area-routes.mjs";
 import { createProgramRoutes } from "./program-routes.mjs";
 import { createDocumentRoutes } from "./document-routes.mjs";
 import { projectDesk } from "./desk-projection.mjs";
+import { createShellControlRoutes } from "./shell-control-routes.mjs";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -3905,6 +3906,41 @@ const documentRoutes = createDocumentRoutes({
   writeDocument: saveVaultDocument,
   resolve: resolveVaultDocumentComment,
 });
+const shellControlRoutes = createShellControlRoutes({
+  spawn: spawnSession,
+  /** Toggles caffeinate and returns its resulting state. */
+  caffeinate(on) {
+    setCaffeinate(on);
+    return caffeinateProc !== null;
+  },
+  /** Starts a detached rebuild when mutations are allowed. */
+  rebuild() {
+    if (process.env.TANGENT_VERIFY_READONLY) return { status: 403, value: { error: "Rebuild is disabled in the verification harness." } };
+    const repoRoot = path.join(here, "..", "..", "..");
+    const log = path.join(os.homedir(), ".tangent", "agent-shell-rebuild.log");
+    const child = spawn("/bin/bash", ["-c", `cd ${JSON.stringify(repoRoot)} && npm run build >>${JSON.stringify(log)} 2>&1; kill ${process.pid}`], { detached: true, stdio: "ignore" });
+    child.unref();
+    return { status: 202, value: { ok: true, boot: BOOT_ID } };
+  },
+  /** Changes the orchestrator command and stops its old session. */
+  async agent(command) {
+    agentCmd = command;
+    await execFileAsync("tmux", ["kill-session", "-t", "=" + CHAT_SESSION]).catch(() => {});
+    return agentCmd;
+  },
+  /** Kills one exact non-orchestrator session and closes its execution records. */
+  async kill(name) {
+    if (!name || name === CHAT_SESSION) return { status: 400, error: "refusing to kill this session" };
+    try {
+      await execFileAsync("tmux", ["kill-session", "-t", "=" + name]);
+      const ended = await endPipelineForSession(name).catch((error) => { console.error("end pipeline on kill:", error.message ?? error); return null; });
+      const brainEnded = await endBrainForSession(name).catch((error) => { console.error("end brain on kill:", error.message ?? error); return null; });
+      return { status: 200, value: { ok: true, pipelineEnded: Boolean(ended), brainEnded: Boolean(brainEnded) } };
+    } catch (error) {
+      return { status: 500, error: String(error.stderr ?? error.message ?? error) };
+    }
+  },
+});
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
@@ -3934,6 +3970,7 @@ const server = http.createServer(async (req, res) => {
     if (await areaRoutes.handle(req, res, url)) return;
     if (await programRoutes.handle(req, res, url)) return;
     if (await documentRoutes.handle(req, res, url)) return;
+    if (await shellControlRoutes.handle(req, res, url)) return;
     // The frontend must target the same orchestrator session the server
     // special-cases, so the name ships as a tiny script instead of being
     // hardcoded twice.
@@ -4498,99 +4535,6 @@ const server = http.createServer(async (req, res) => {
         await vaultCommit(changed, `update: ${o.area} goal ${o.slug} ${what} in tree`, o.area, body.session ? String(body.session) : null);
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify({ ok: true }));
-      } catch (err) {
-        res.writeHead(500, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
-      }
-      return;
-    }
-    if (url.pathname === "/api/spawn" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      try {
-        const result = await spawnSession(body.area, body.name);
-        res.writeHead(result.status, { "content-type": "application/json" });
-        res.end(JSON.stringify(result.status === 200 ? { ok: true } : { error: result.error }));
-      } catch (err) {
-        res.writeHead(500, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
-      }
-      return;
-    }
-    if (url.pathname === "/api/caffeinate" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      setCaffeinate(Boolean(body.on));
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ok: true, caffeinate: caffeinateProc !== null }));
-      return;
-    }
-    // Rebuilds the workspace and restarts this server, on the user's explicit
-    // Agent Shell menu action only. The detached child survives the server
-    // exit; launchd's KeepAlive respawns the server with the new code, and the
-    // frontend reloads itself when it sees a new boot id. tmux agent sessions
-    // are unaffected.
-    if (url.pathname === "/api/shell/rebuild" && req.method === "POST") {
-      if (process.env.TANGENT_VERIFY_READONLY) {
-        res.writeHead(403, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: "Rebuild is disabled in the verification harness." }));
-        return;
-      }
-      const repoRoot = path.join(here, "..", "..", "..");
-      const log = path.join(os.homedir(), ".tangent", "agent-shell-rebuild.log");
-      const child = spawn("/bin/bash", ["-c", `cd ${JSON.stringify(repoRoot)} && npm run build >>${JSON.stringify(log)} 2>&1; kill ${process.pid}`], {
-        detached: true,
-        stdio: "ignore",
-      });
-      child.unref();
-      res.writeHead(202, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ok: true, boot: BOOT_ID }));
-      return;
-    }
-    // Switches the orchestrator's agent command only; goal sessions
-    // always use their area-owned command (agentCmdForArea). The command is
-    // whatever the user typed (claude, claude-otto, agy, pi, flags allowed);
-    // tmux runs a single trailing string through the shell. Kills the running
-    // orchestrator so the frontend's reconnect respawns it with the new command.
-    if (url.pathname === "/api/agent" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const cmd = typeof body.cmd === "string" ? body.cmd.trim() : "";
-      if (!cmd) {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: "cmd required" }));
-        return;
-      }
-      agentCmd = cmd;
-      try {
-        await execFileAsync("tmux", ["kill-session", "-t", "=" + CHAT_SESSION]);
-      } catch {} // no chat session running: nothing to respawn yet
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ok: true, agent: agentCmd }));
-      return;
-    }
-    // Kills a tmux session (the kill-session shortcut in the frontend). The
-    // "=" target prefix forces an exact name match; without it tmux treats the
-    // target as a prefix and "vault" could kill "vaulttest".
-    if (url.pathname.startsWith("/api/kill/") && req.method === "POST") {
-      const name = decodeURIComponent(url.pathname.slice("/api/kill/".length));
-      if (!name || name === CHAT_SESSION) {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: "refusing to kill this session" }));
-        return;
-      }
-      try {
-        await execFileAsync("tmux", ["kill-session", "-t", "=" + name]);
-        const ended = await endPipelineForSession(name).catch((err) => {
-          console.error("end pipeline on kill:", err.message ?? err);
-          return null;
-        });
-        const brainEnded = await endBrainForSession(name).catch((err) => {
-          console.error("end brain on kill:", err.message ?? err);
-          return null;
-        });
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: true, pipelineEnded: Boolean(ended), brainEnded: Boolean(brainEnded) }));
       } catch (err) {
         res.writeHead(500, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));

@@ -941,7 +941,10 @@ async function refresh({ initial = false } = {}) {
       scheduler: programs.scheduler || { installed: false, intervalMinutes: 30 },
     };
     state.caffeinate = Boolean(sessionPayload.caffeinate);
-    if (sessionPayload.sourceChanged) state.updateAvailable = true;
+    state.pendingCommits = sessionPayload.pendingCommits || [];
+    state.deployedCommit = sessionPayload.deployedCommit || "";
+    state.currentCommit = sessionPayload.currentCommit || "";
+    state.updateAvailable = Boolean(sessionPayload.sourceChanged);
     state.loading = false;
     state.error = "";
     state.offline = false;
@@ -980,9 +983,8 @@ async function refresh({ initial = false } = {}) {
 }
 
 /**
- * Tracks the server process identity across polls. A changed boot id means
- * new code is live; the app never reloads itself unless the user asked for
- * the rebuild from the Agent Shell menu.
+ * Tracks the server process identity across polls. Only pending commits own
+ * the blue update dot; a process restart by itself is not a source change.
  */
 function noteServerBoot(boot) {
   if (!boot) return;
@@ -992,8 +994,7 @@ function noteServerBoot(boot) {
   }
   if (boot === state.bootId) return;
   if (state.rebuilding) return location.reload();
-  state.updateAvailable = true;
-  updateStatusPill();
+  state.bootId = boot;
 }
 
 /** Keeps the quiet connection pill and the menu's update hint current. */

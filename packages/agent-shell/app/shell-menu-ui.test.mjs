@@ -27,13 +27,14 @@ test("the Shell menu owns recovery while offline refresh preserves the screen", 
   window.setInterval = () => 0;
   let boot = "boot-1";
   let sourceChanged = false;
+  const pendingCommits = [{ hash: "abc", shortHash: "abc1234", subject: "Improve reload", author: "Julian" }];
   let offline = false;
   const posts = [];
   window.fetch = async (url, options = {}) => {
     if (offline) throw new Error("connection refused");
     const pathname = new URL(url, window.location.href).pathname;
     if (options.method === "POST") { posts.push(pathname); return jsonResponse({ ok: true }); }
-    if (pathname === "/api/sessions") return jsonResponse({ boot, sourceChanged, caffeinate: false, sessions: [] });
+    if (pathname === "/api/sessions") return jsonResponse({ boot, sourceChanged, pendingCommits: sourceChanged ? pendingCommits : [], caffeinate: false, sessions: [] });
     if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
     return jsonResponse({ areas: [], map: [], documents: [] });
   };
@@ -47,6 +48,9 @@ test("the Shell menu owns recovery while offline refresh preserves the screen", 
   await window.refresh();
   click(window, "#back-button");
   assert.equal(window.document.querySelector("#menu-update").hidden, false);
+  click(window, "#menu-update");
+  assert.match(window.document.querySelector("#modal-copy").textContent, /abc1234  Improve reload — Julian/);
+  click(window, "[data-modal-cancel]");
   offline = true;
   await window.refresh();
   assert.ok(window.document.querySelector(".work-page"));
@@ -64,6 +68,7 @@ test("the Shell menu owns recovery while offline refresh preserves the screen", 
   posts.length = 0;
   click(window, "#back-button");
   click(window, "#menu-update");
+  click(window, "[data-modal-confirm]");
   await settle(window);
   assert.ok(posts.includes("/api/shell/rebuild"), "the pending-change action rebuilds on its first click");
   dom.window.close();

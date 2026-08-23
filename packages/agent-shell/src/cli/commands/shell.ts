@@ -33,6 +33,10 @@ async function rebuildCommand(args: Args): Promise<void> {
   const seconds = numberArg(args.timeout) ?? DEFAULT_TIMEOUT_SECONDS;
   const old = await bootId(server);
   if (!old) throw new Error(`Agent Shell does not answer at ${server.origin}; start it first (tangent process list).`);
+  const snapshot = await vaultFetch(server, "/api/sessions");
+  const commits = Array.isArray(snapshot.pendingCommits) ? snapshot.pendingCommits as Array<{ shortHash?: string; subject?: string; author?: string }> : [];
+  console.log(commits.length ? "commits included:" : "commits included: none (rebuilding the deployed commit)");
+  for (const commit of commits) console.log(`  ${commit.shortHash ?? ""}  ${commit.subject ?? ""} — ${commit.author ?? ""}`);
   await postJson(server, "/api/shell/rebuild", {});
   console.log(`rebuilding; waiting for the new boot (log: ${REBUILD_LOG})`);
   const deadline = Date.now() + seconds * 1000;

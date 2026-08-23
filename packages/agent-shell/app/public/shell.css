@@ -1084,7 +1084,7 @@ details.more-work .area-work-list { margin-top: 18px; }
 .modal-layer[hidden] { display: none; }
 .modal { width: min(500px, 100%); padding: 30px; border: 1px solid var(--line-strong); border-radius: 18px; background: var(--surface-raised); box-shadow: 0 28px 80px rgba(0, 0, 0, .48); }
 .modal h2 { margin: 0; font-size: 28px; letter-spacing: -.03em; }
-.modal-copy { margin: 14px 0 0; color: var(--muted); font-size: 15px; line-height: 1.6; }
+.modal-copy { margin: 14px 0 0; color: var(--muted); font-size: 15px; line-height: 1.6; white-space: pre-line; }
 .modal-field { margin-top: 20px; }
 .modal-field label { display: grid; gap: 8px; color: var(--muted); font-size: 13px; }
 .modal-field textarea { min-height: 92px; resize: vertical; }

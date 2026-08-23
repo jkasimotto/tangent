@@ -125,7 +125,16 @@ export function createShellInteractions({ state, api, post, paint, refresh, show
   /** Runs the advertised pending-change reload without a hidden second step. */
   async function reloadChanges() {
     toggleShellMenu(false);
-    await rebuildShell();
+    confirmRebuild();
+  }
+
+  /** Human-readable commits included by the next rebuild. */
+  function rebuildCommitCopy() {
+    const commits = state.pendingCommits ?? [];
+    const list = commits.length
+      ? commits.map((commit) => `${commit.shortHash}  ${commit.subject} — ${commit.author}`).join("\n")
+      : "No new commits. This rebuild will rebuild the currently deployed commit.";
+    return `Agent sessions keep running in tmux. This page reloads automatically when the new server is up.\n\nCommits included:\n${list}`;
   }
 
   /** Rebuilds from the permanent recovery action after explicit confirmation. */
@@ -134,7 +143,7 @@ export function createShellInteractions({ state, api, post, paint, refresh, show
     openModal({
       kicker: "Agent Shell",
       title: "Rebuild and restart Agent Shell?",
-      copy: "The server rebuilds the workspace and restarts itself. Agent sessions keep running in tmux. This page reloads automatically when the new server is up.",
+      copy: rebuildCommitCopy(),
       confirmLabel: "Rebuild and restart",
       onConfirm: rebuildShell,
     });

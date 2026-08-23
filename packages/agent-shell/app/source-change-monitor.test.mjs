@@ -1,33 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createSourceChangeMonitor } from "./source-change-monitor.mjs";
+import { createCommitChangeMonitor } from "./commit-change-monitor.mjs";
 
-test("source edits make a manual Tangent reload available", () => {
-  let onChange;
-  let closed = false;
-  const monitor = createSourceChangeMonitor({
+test("only commits after the deployed revision make a Tangent rebuild available", async () => {
+  let head = "aaaaaaaa";
+  const calls = [];
+  const monitor = await createCommitChangeMonitor({
     root: "/repo",
-    /** Captures the watcher callback without touching the filesystem. */
-    watchFiles(root, options, listener) {
+    /** Supplies a changing HEAD without touching a repository. */
+    async git(root, args) {
       assert.equal(root, "/repo");
-      assert.deepEqual(options, { recursive: true });
-      onChange = listener;
-      return {
-        /** Accepts the error listener used by the monitor. */
-        on() {},
-        /** Records cleanup. */
-        close() { closed = true; },
-      };
+      calls.push(args);
+      if (args[0] === "rev-parse") return head;
+      return "bbbbbbbb\0bbbbbbb\0Ship committed change\0Julian";
     },
   });
 
-  assert.equal(monitor.changed, false);
-  onChange("change", "node_modules/library/index.js");
-  onChange("change", ".git/index");
-  onChange("change", "notes.txt");
-  assert.equal(monitor.changed, false);
-  onChange("change", "packages/agent-shell/app/public/shell.js");
-  assert.equal(monitor.changed, true);
-  monitor.close();
-  assert.equal(closed, true);
+  assert.deepEqual((await monitor.status()).commits, []);
+  head = "bbbbbbbb";
+  assert.deepEqual((await monitor.status()).commits, [{ hash: "bbbbbbbb", shortHash: "bbbbbbb", subject: "Ship committed change", author: "Julian" }]);
+  assert.ok(calls.some((args) => args[0] === "log" && args.at(-1) === "aaaaaaaa..bbbbbbbb"));
 });

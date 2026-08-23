@@ -31,7 +31,7 @@ import { deliveryDecision, messageBanner, normalizeMessage } from "./agent-messa
 import { beginGeneration, brainForArea, brainRecordForArea, brainSessionName, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, recordHandover, validateInstruction, writeBrain } from "./brain-record.mjs";
 import { appendNotice, inboxesForBrain, markDelivered, mergeNotices, noticeBlock, noticeDigest, readAllInboxes, readInbox, writeInbox } from "./brain-inbox.mjs";
 import { forJulianSectionText, parseForJulian, removeForJulianLine, restoreForJulianLine, unparsedForJulianLines } from "./for-julian.mjs";
-import { createSourceChangeMonitor } from "./source-change-monitor.mjs";
+import { createCommitChangeMonitor } from "./commit-change-monitor.mjs";
 import { promptArrived, splitPrompt, squash } from "./prompt-delivery.mjs";
 import { clearArmedPrompt, readAllArmedPrompts, writeArmedPrompt } from "./armed-prompts.mjs";
 import { createRuntimeScheduler } from "./runtime-scheduler.mjs";
@@ -66,7 +66,8 @@ const HOST = process.env.HOST ?? "127.0.0.1";
 // notice that a rebuilt server is live and offer one explicit reload.
 const BOOT_ID = randomUUID();
 const ACTION_TELEMETRY_LOG = process.env.AGENT_SHELL_ACTION_LOG ?? path.join(os.homedir(), ".tangent", "agent-shell-actions.jsonl");
-const sourceChanges = createSourceChangeMonitor({ root: path.join(here, "..", "..", "..") });
+const repoRoot = path.join(here, "..", "..", "..");
+const commitChanges = await createCommitChangeMonitor({ root: repoRoot });
 const stateEvents = createStateEvents();
 let agentCmd = process.env.AGENT_CMD ?? "claude";
 
@@ -3974,7 +3975,6 @@ const shellControlRoutes = createShellControlRoutes({
   /** Starts a detached rebuild when mutations are allowed. */
   rebuild() {
     if (process.env.TANGENT_VERIFY_READONLY) return { status: 403, value: { error: "Rebuild is disabled in the verification harness." } };
-    const repoRoot = path.join(here, "..", "..", "..");
     const log = path.join(os.homedir(), ".tangent", "agent-shell-rebuild.log");
     const child = spawn("/bin/bash", ["-c", `cd ${JSON.stringify(repoRoot)} && npm run build >>${JSON.stringify(log)} 2>&1; kill ${process.pid}`], { detached: true, stdio: "ignore" });
     child.unref();
@@ -4004,14 +4004,18 @@ const shellStateRoutes = createShellStateRoutes({
   /** Returns one coherent live shell snapshot. */
   async snapshot() {
     const sessions = await listSessions();
-    const [pipelines, brains] = await Promise.all([
+    const [pipelines, brains, revisions] = await Promise.all([
       pipelinesView(sessions).catch(() => []),
       brainsView(sessions).catch(() => []),
+      commitChanges.status().catch(() => ({ deployedCommit: commitChanges.deployedCommit, currentCommit: commitChanges.deployedCommit, commits: [] })),
     ]);
     return {
       agent: agentCmd,
       boot: BOOT_ID,
-      sourceChanged: sourceChanges.changed,
+      sourceChanged: revisions.commits.length > 0,
+      deployedCommit: revisions.deployedCommit,
+      currentCommit: revisions.currentCommit,
+      pendingCommits: revisions.commits,
       caffeinate: caffeinateProc !== null,
       voice: Boolean(GROQ_KEY),
       sessions,

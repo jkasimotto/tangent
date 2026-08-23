@@ -378,7 +378,7 @@ test("Julian presses Reply on a row, and the brain is told its subject", async (
   assert.equal(noBrain.status, 404, JSON.stringify(noBrain.body));
 });
 
-test("a saved comment on a listed Document wakes its brain, and only that Document does", async (context) => {
+test("saving comments is silent until Julian explicitly notifies the nearest live brain", async (context) => {
   const probe = await startProbe(context, "forjuliancomment");
   if (!probe) return;
 
@@ -395,6 +395,13 @@ test("a saved comment on a listed Document wakes its brain, and only that Docume
 
   const listed = `${probe.area}/design-probe.md`;
   await comment(listed, "\nAnother point. {>>Julian: do the second one<<}\n");
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal((await readInbox(probe.brains, probe.area)).notices.length, 0, "saving a comment sends nothing");
+
+  const sent = await post(probe.base, "/api/document/notify-comments", { file: listed });
+  assert.equal(sent.status, 200, JSON.stringify(sent.body));
+  assert.equal(sent.body.brain, probe.area);
+  assert.equal(sent.body.comments, 2);
   const notices = await waitFor("the notice on disk", async () => {
     const inbox = await readInbox(probe.brains, probe.area);
     return inbox.notices.length ? inbox.notices : null;
@@ -402,7 +409,7 @@ test("a saved comment on a listed Document wakes its brain, and only that Docume
   assert.equal(notices.length, 1);
   assert.equal(
     notices[0].text,
-    `Julian commented on ${listed} (2 open comments). Read them with tangent document comments ${listed}; remove the Decide line from the plan when you have what you need.`
+    `Julian added comments to ${listed} (2 open comments). Read them with tangent document comments ${listed}.`
   );
 
   // A save that removes a comment is not an answer: an Undo never wakes the brain.
@@ -415,8 +422,8 @@ test("a saved comment on a listed Document wakes its brain, and only that Docume
   });
   assert.equal(withoutOne.status, 200, JSON.stringify(withoutOne.body));
 
-  // A Document no Decide row names is not the brain's business.
+  // Saving another Document remains silent too.
   await comment(`${probe.area}/design-quiet.md`, "\nA thought. {>>Julian: and this?<<}\n");
   await new Promise((resolve) => setTimeout(resolve, 300));
-  assert.equal((await readInbox(probe.brains, probe.area)).notices.length, 1, "only a listed Document wakes the brain");
+  assert.equal((await readInbox(probe.brains, probe.area)).notices.length, 1);
 });

@@ -1,8 +1,24 @@
 import { markdownHeadings } from "./markdown-structure.js";
 import { escapeHtml } from "./text-format.js";
 
+/** The closest ancestor brain whose session is live in the browser snapshot. */
+export function activeBrainForArea(brains, area) {
+  const parts = String(area ?? "").split("/").filter(Boolean);
+  for (let count = parts.length; count > 0; count -= 1) {
+    const candidate = parts.slice(0, count).join("/");
+    const brain = (brains ?? []).find((item) => item.area === candidate && item.status === "running" && item.live);
+    if (brain) return brain;
+  }
+  return null;
+}
+
 /** Creates the document reader view product boundary. */
 export function createDocumentReaderView({ state, markdownToHtml, currentGoal, goalByFile, sessionsForGoal, areaLabel, areaPath, humanName }) {
+  /** The closest ancestor brain with a currently live session. */
+  function activeDocumentBrain() {
+    return activeBrainForArea(state.brains, state.document?.area);
+  }
+
   /** Returns the Goal associated with the active Document. */
   function documentGoal() {
     const history = state.document?.goalHistory ?? [];
@@ -98,6 +114,10 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
   function documentToolbar(goal) {
     const canGoBack = state.documentTrailIndex > 0;
     const canGoForward = state.documentTrailIndex >= 0 && state.documentTrailIndex < state.documentTrail.length - 1;
+    const brain = activeDocumentBrain();
+    const comments = state.document?.comments?.length ?? 0;
+    const notifyLabel = brain ? `Tell ${brain.area} brain I added comments` : "No active brain to notify";
+    const notifyTitle = !brain ? `No active brain covers ${state.document?.area ?? "this Area"}` : !comments ? "Add a comment before you notify the brain" : notifyLabel;
     return `
       <header class="document-reader-toolbar">
         <div class="document-reader-route">
@@ -112,6 +132,7 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
         <div class="document-reader-actions">
           ${documentOutlineMenu()}
           ${documentCommentControls()}
+          <button class="reader-notify-brain" type="button" data-notify-document-comments title="${escapeHtml(notifyTitle)}" ${brain && comments ? "" : "disabled"}>${escapeHtml(notifyLabel)}</button>
           ${goal ? `<button class="reader-agent-action" type="button" data-open-reader-agent>Open agent</button>` : ""}
         </div>
       </header>`;

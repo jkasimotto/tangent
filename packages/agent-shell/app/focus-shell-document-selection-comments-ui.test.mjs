@@ -21,12 +21,24 @@ test("a second comment lands on the words Julian selected, and the reader holds 
   let text = "# Map design\n\nThe quick {==brown {==fox==}==}{>>Julian: first<<}{== jumps==}{>>Julian: second<<} over the lazy dog.\n\n## Part two\n\nMore prose.\n";
   let hash = 1;
   const saves = [];
+  let conflictOnce = false;
   /** The document as the server would return it: text, hash, and parsed comments. */
   const served = () => ({ ...doc, text, hash: `map-${hash}`, comments: helper.parseComments(text) });
   window.fetch = async (url, options = {}) => {
     const pathname = new URL(url, window.location.href).pathname;
     if (pathname === "/api/document" && options.method === "POST") {
       const body = JSON.parse(options.body);
+      if (conflictOnce) {
+        conflictOnce = false;
+        text = text.replace("More prose.", "Different prose.");
+        hash += 1;
+        return {
+          ok: false,
+          status: 409,
+          /** Returns the server's current Document for re-anchoring. */
+          async json() { return { error: "document changed since it was opened", current: served() }; },
+        };
+      }
       saves.push(body);
       text = body.text;
       hash += 1;
@@ -83,4 +95,25 @@ test("a second comment lands on the words Julian selected, and the reader holds 
   await settle(window);
   await settle(window);
   assert.equal(window.document.querySelector(".document-reader-scroll").scrollTop, 320, "the reader keeps its place after the save");
+
+  // A stale selected anchor never blocks the comment. It falls back to the
+  // section that contained the selection and saves in the same action.
+  const sectionParagraph = [...window.document.querySelectorAll(".document-content p")].find((item) => item.textContent.includes("More prose"));
+  const sectionText = sectionParagraph.firstChild;
+  const staleRange = window.document.createRange();
+  staleRange.setStart(sectionText, 0);
+  staleRange.setEnd(sectionText, "More prose".length);
+  window.getSelection().removeAllRanges();
+  window.getSelection().addRange(staleRange);
+  click(window, ".reader-comment-action");
+  await settle(window);
+  window.document.querySelector("#comment-text").value = "Keep this comment";
+  conflictOnce = true;
+  submit(window, "[data-comment-composer]");
+  await settle(window);
+  await settle(window);
+  await settle(window);
+  assert.equal(window.document.querySelector("[data-comment-composer]"), null, "the stale-anchor composer closes after saving");
+  assert.match(saves.at(-1).text, /## Part two\n\n\{>>Julian: Keep this comment<<\}/);
+  assert.match(window.document.querySelector("#toast").textContent, /added to “Part two”/);
 });

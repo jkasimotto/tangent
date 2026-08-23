@@ -47,3 +47,18 @@ test("map-state writes reject invalid payloads before storage", async () => {
   assert.equal(output.status, 400);
   assert.equal(writes, 0);
 });
+
+test("Document comment notification is an explicit routed action", async () => {
+  let file = "";
+  const routes = createDocumentRoutes({
+    /** Records the explicitly notified Document. */
+    async notifyComments(value) {
+      file = value;
+      return { status: 200, value: { ok: true, brain: "otto/neara", comments: 2 } };
+    },
+  });
+  const output = response();
+  await routes.handle(request("POST", { file: "otto/neara/note.md" }), output, new URL("http://shell/api/document/notify-comments"));
+  assert.equal(file, "otto/neara/note.md");
+  assert.deepEqual(output.body, { ok: true, brain: "otto/neara", comments: 2 });
+});

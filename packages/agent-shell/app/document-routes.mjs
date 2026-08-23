@@ -8,6 +8,7 @@ export function createDocumentRoutes(operations) {
     ["POST /api/map-state", writeMap],
     ["GET /api/document", readDocument],
     ["POST /api/document", writeDocument],
+    ["POST /api/document/notify-comments", notifyComments],
     ["GET /api/document/comments", comments],
     ["POST /api/document/resolve", resolve],
   ]);
@@ -58,6 +59,12 @@ export function createDocumentRoutes(operations) {
     }
     const result = await operations.writeDocument(String(body.file ?? ""), body.text, String(body.baseHash ?? ""), body.summary);
     sendJson(response, result.status, result.status === 200 ? result.document : { error: result.error, current: result.current });
+  }
+
+  /** Explicitly notifies the nearest active brain about saved comments. */
+  async function notifyComments(request, response) {
+    const result = await operations.notifyComments(String((await readJson(request)).file ?? ""));
+    sendJson(response, result.status, result.status === 200 ? result.value : { error: result.error });
   }
 
   /** Returns every open comment on one Document. */

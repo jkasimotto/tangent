@@ -465,7 +465,7 @@ const {
   readerSelection, updateSelectionCommentButton, hideSelectionCommentButton, readerSectionInView, documentTitleLine,
   openCommentComposer, setCommentScope, editComment, syncCommentDraft, cancelCommentComposer, noteInComposer,
   composerResult, saveDocumentText, adoptSavedDocument, restoreDocumentText, submitCommentComposer, removeComment,
-  stepComment, saveVisibleIdea,
+  stepComment, saveVisibleIdea, notifyDocumentComments,
 } = documentReaderController;
 
 const shellInteractions = createShellInteractions({
@@ -1096,7 +1096,7 @@ bindShellEvents({
   saveLaunchDefault, showHarnessEditor, saveHarnesses, startPipeline, savePipelineStep, appendPipelineSteps,
   selectionForArea, startSelectedGoals, openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo,
   openDocument, navigateDocumentHistory, openVaultLink, openDocumentHeading, openCommentComposer, setCommentScope,
-  editComment, cancelCommentComposer, submitCommentComposer, removeComment, stepComment, saveVisibleIdea, refreshDocument,
+  editComment, cancelCommentComposer, submitCommentComposer, removeComment, stepComment, saveVisibleIdea, notifyDocumentComments, refreshDocument,
   leaveReader, toggleAwake, closeModal, modalConfirm: getModalConfirm, updateSelectionCommentButton, preferredArea,
   areaLabel, programById: { enableDockBadge, areaIsFolded, saveExpandedAreas, revealArea, setAreaStatus, openReaderAgent, sendVerdict, replyAboutRow, launchOptionsFor, pipelineRecordForGoal, loadLaunchStep, renderWork, describeLaunchArea, describeWorkSessions },
   DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,

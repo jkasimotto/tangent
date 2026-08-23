@@ -4,6 +4,7 @@ const ACTION_ATTRIBUTES = [
   "data-program-action", "data-area-action", "data-modal-confirm", "data-modal-cancel",
   "data-toggle-awake", "data-stop-agent", "data-finish-run", "data-mark-complete",
   "data-mark-wont-do", "data-reopen-goal", "data-action",
+  "data-notify-document-comments",
 ];
 
 /** Returns a stable action name without labels, typed text, paths, or document content. */

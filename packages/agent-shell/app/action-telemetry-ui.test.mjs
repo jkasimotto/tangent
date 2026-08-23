@@ -20,6 +20,7 @@ function control(attributes = {}, tagName = "BUTTON") {
 test("browser action names use stable data attributes, not visible labels", () => {
   assert.equal(actionName(control({ "data-pipeline-control": "skip" })), "pipeline-control:skip");
   assert.equal(actionName(control({ "data-launch-for": "private/goal.md" })), "launch-for");
+  assert.equal(actionName(control({ "data-notify-document-comments": "" })), "notify-document-comments");
 });
 
 test("API telemetry strips query strings and does not recurse", async () => {

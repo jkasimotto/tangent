@@ -1019,8 +1019,10 @@ details.more-work .area-work-list { margin-top: 18px; }
 .document-picker-popover button.selected { color: #e3f0ff; }
 .document-picker-popover button small { color: var(--blue); font-size: 10px; font-weight: 670; }
 .document-reader-actions { display: flex; flex: none; align-items: center; gap: 5px; }
-.reader-agent-action, .document-outline-menu > summary { padding: 7px 9px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 640; }
-.reader-agent-action:hover, .document-outline-menu > summary:hover, .document-outline-menu[open] > summary { background: var(--surface-raised); color: var(--text); }
+.reader-agent-action, .reader-notify-brain, .document-outline-menu > summary { padding: 7px 9px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 640; }
+.reader-agent-action:hover, .reader-notify-brain:hover:not(:disabled), .document-outline-menu > summary:hover, .document-outline-menu[open] > summary { background: var(--surface-raised); color: var(--text); }
+.reader-notify-brain { color: var(--blue); }
+.reader-notify-brain:disabled { color: #555d66; cursor: default; }
 .document-outline-menu { position: relative; display: none; }
 .document-outline-menu > summary { list-style: none; }
 .document-outline-menu > summary::-webkit-details-marker { display: none; }

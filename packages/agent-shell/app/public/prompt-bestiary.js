@@ -7,7 +7,7 @@ export const PROMPT_SPECIES = [
   { id: "brain-request", name: "Brain request", recipient: "Julian", trigger: "The brain needs plan approval, a decision, a test, or explicit approval", delivery: "Durable request record", shape: "Kind, subject, detail, question, named answers, status, and answer." },
   { id: "handover", name: "Worker handover", recipient: "Controlling Area brain", trigger: "The worker runs tangent handover", delivery: "Recorded before delivery", shape: "Files, commits, checks, completion facts, unresolved facts, and any decision or test need." },
   { id: "context", name: "Context continuation", recipient: "Fresh worker", trigger: "The brain chooses fresh context for the same assignment", delivery: "New prompt confirmed before old session ends", shape: "Original assignment plus every durable continuation handover." },
-  { id: "comment", name: "Document comment notice", recipient: "Controlling Area brain", trigger: "Julian comments on a Document", delivery: "Durable brain notice", shape: "Document, comment location, Julian's words, and Area routing." },
+  { id: "comment", name: "Document comment notice", recipient: "Nearest live Area brain", trigger: "Julian presses the Document notification button", delivery: "Durable brain notice", shape: "Document path, open comment count, and the command that reads them." },
 ];
 
 const TRANSITIONS = {
@@ -141,10 +141,10 @@ const TRANSITIONS = {
     source: "context-handover.mjs; server.mjs: continueWorkerSession",
     layers: ["Original assignment", "Continuation history", "Current worker identity", "Normal exit contract"],
   }),
-  comment: transition("Document comment", "Julian", "Area brain", "comment", {
-    trigger: "Julian comments on selected Document text.",
-    payload: "The Document, selected location, comment text, and Area.",
-    knows: "Agent Shell routes the comment to the controlling brain, not the last editor.",
+  comment: transition("Document comment notice", "Julian", "Nearest live brain", "comment", {
+    trigger: "Julian finishes adding comments and presses Tell brain I added comments.",
+    payload: "The Document path, open comment count, and the command that reads the comments.",
+    knows: "Saving a comment sends nothing. Agent Shell resolves the closest live brain only when Julian presses the button.",
     next: "The brain answers, edits, or assigns the change to a worker.",
     state: "The comment remains until its work is complete and it is resolved.",
     delivery: "A durable notice survives a busy brain or brain generation handover.",
@@ -299,8 +299,8 @@ Test: <test-verdict-if-required>`;
 
 Continue the same assignment. Report through tangent handover.`;
   if (item.species === "comment") return `<brain-notice>
-  Julian commented on <document> at <selected-text-or-section>:
-  <comment>
+  Julian added comments to <document> (<open-comment-count> open comments).
+  Read them with tangent document comments <document>.
 </brain-notice>`;
   return `<message>${item.payload}</message>`;
 }

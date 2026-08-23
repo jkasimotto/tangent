@@ -236,7 +236,9 @@ export function createDocumentReaderController({ state, api, post, paint, showTo
   function openCommentComposer() {
     if (state.view !== "document" || !state.document) return;
     const selection = readerSelection();
-    const section = selection ? null : readerSectionInView();
+    const headings = documentOutlineItems();
+    const selectedSection = selection ? [...headings].reverse().find((heading) => heading.line <= selection.line) ?? null : null;
+    const section = selectedSection ?? readerSectionInView();
     const composer = {
       text: "",
       notice: selection?.crossed ? "The selection crossed a paragraph. The comment goes on the first one." : "",
@@ -293,16 +295,26 @@ export function createDocumentReaderController({ state, api, post, paint, showTo
     paint(true);
   }
 
-  /** Applies the composer to one Document text: the new markup, or why it cannot be placed. */
+  /** Applies a comment, falling back from stale words to its section or Document. */
   function composerResult(document, composer) {
     const helper = documentComments;
     if (composer.editing) {
       const match = (document.comments ?? []).find((comment) => comment.markup === composer.editing.markup && comment.line === composer.editing.line)
         ?? (document.comments ?? []).find((comment) => comment.markup === composer.editing.markup);
-      if (!match) return { error: "That comment changed while you were editing. Read it again." };
+      if (!match) {
+        const fallback = helper.insertComment(document.text, { kind: "document" }, composer.text);
+        return { ...fallback, notice: "The original comment changed, so the edited comment was added to the Document." };
+      }
       return { text: helper.replaceCommentText(document.text, match, composer.text) };
     }
-    return helper.insertComment(document.text, composer.anchor, composer.text);
+    const exact = helper.insertComment(document.text, composer.anchor, composer.text);
+    if (!exact.error) return exact;
+    if (composer.section) {
+      const inSection = helper.insertComment(document.text, { kind: "section", heading: composer.section.title }, composer.text);
+      if (!inSection.error) return { ...inSection, notice: `The selected text moved, so the comment was added to “${composer.section.title}”.` };
+    }
+    const inDocument = helper.insertComment(document.text, { kind: "document" }, composer.text);
+    return { ...inDocument, notice: "The selected text moved, so the comment was added to the whole Document." };
   }
 
   /** One base-hash save of the whole Document text; returns the raw reply so a 409 can be handled. */
@@ -345,12 +357,14 @@ export function createDocumentReaderController({ state, api, post, paint, showTo
     const summary = composer.editing ? "edited a comment" : "added a comment";
     let attempt = composerResult(state.document, composer);
     if (attempt.error) return noteInComposer(attempt.error);
+    let placementNotice = attempt.notice ?? "";
     let previous = state.document.text;
     let result = await saveDocumentText(attempt.text, summary);
     if (result.status === 409 && result.data.current) {
       state.document = { ...state.document, ...result.data.current };
       attempt = composerResult(state.document, composer);
       if (attempt.error) return noteInComposer(attempt.error);
+      placementNotice = attempt.notice ?? placementNotice;
       previous = state.document.text;
       result = await saveDocumentText(attempt.text, summary);
     }
@@ -358,7 +372,7 @@ export function createDocumentReaderController({ state, api, post, paint, showTo
     const wasEditing = Boolean(composer.editing);
     state.commentComposer = null;
     adoptSavedDocument(result.data);
-    showToast(wasEditing ? "Comment updated." : "Comment added.", {
+    showToast(placementNotice || (wasEditing ? "Comment updated." : "Comment added."), {
       label: "Undo",
       /** Puts the text from before this comment change back. */
       run: () => restoreDocumentText(previous, wasEditing ? "undid a comment edit" : "removed a comment"),
@@ -414,7 +428,19 @@ export function createDocumentReaderController({ state, api, post, paint, showTo
     }
   }
 
+  /** Tells the nearest live Area brain that Julian finished commenting. */
+  async function notifyDocumentComments() {
+    if (!state.document?.file) return;
+    try {
+      const result = await post("/api/document/notify-comments", { file: state.document.file });
+      showToast(`Notified the ${result.brain} brain about ${result.comments} comment${result.comments === 1 ? "" : "s"}.`);
+    } catch (error) {
+      showToast(error.message);
+      await refreshDocument();
+    }
+  }
+
   /** Opens the explicit next-step decision page. */
 
-  return { rememberDocumentPosition, restoreDocumentPosition, updateDocumentTrail, openDocument, navigateDocumentHistory, openVaultLink, openDocumentHeading, bindDocumentReader, refreshDocument, commentComposerKey, readerBlockOf, readerSelection, updateSelectionCommentButton, hideSelectionCommentButton, readerSectionInView, documentTitleLine, openCommentComposer, setCommentScope, editComment, syncCommentDraft, cancelCommentComposer, noteInComposer, composerResult, saveDocumentText, adoptSavedDocument, restoreDocumentText, submitCommentComposer, removeComment, stepComment, saveVisibleIdea };
+  return { rememberDocumentPosition, restoreDocumentPosition, updateDocumentTrail, openDocument, navigateDocumentHistory, openVaultLink, openDocumentHeading, bindDocumentReader, refreshDocument, commentComposerKey, readerBlockOf, readerSelection, updateSelectionCommentButton, hideSelectionCommentButton, readerSectionInView, documentTitleLine, openCommentComposer, setCommentScope, editComment, syncCommentDraft, cancelCommentComposer, noteInComposer, composerResult, saveDocumentText, adoptSavedDocument, restoreDocumentText, submitCommentComposer, removeComment, stepComment, saveVisibleIdea, notifyDocumentComments };
 }

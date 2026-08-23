@@ -13,6 +13,7 @@ import { createShellState } from "./shell-state.js";
 import { shellDom } from "./shell-dom.js";
 import { startRefreshLifecycle } from "./refresh-lifecycle.js";
 import { FENCE_OPEN, fenceCloser, frontmatterLineCount, markdownHeadingAnchor, markdownHeadings, markdownTableAlignments, markdownTableCells, visibleMarkdown } from "./markdown-structure.js";
+import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
 
 const { api, post } = createApiClient();
 const { requestedArea, requestedDocument, state } = createShellState();
@@ -54,16 +55,6 @@ let terminalSession = "";
 let terminalSelection = null;
 let toastTimer = null;
 let modalConfirm = null;
-
-/** Escapes arbitrary text before it enters rendered HTML. */
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
 
 /** Decodes one local link without failing on malformed percent escapes. */
 function decodeLink(value) {
@@ -307,40 +298,6 @@ function commentComposerHtml(composer) {
     </div>
     ${composer.notice ? `<p class="document-comment-composer-notice" role="alert">${escapeHtml(composer.notice)}</p>` : ""}
   </form>`;
-}
-
-/** Removes display Markdown and collapses whitespace. */
-function cleanText(value) {
-  return String(value ?? "")
-    .replace(/\[\[([^\]]+)\]\]/g, "$1")
-    .replace(/(?<!!)\[([^\]]+)\]\([^)]+\)/g, "$1")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/^#+\s*/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/** Clips readable text at a nearby word boundary. */
-function clip(value, length = 210) {
-  const text = cleanText(value);
-  if (text.length <= length) return text;
-  const cut = text.slice(0, length - 1);
-  const boundary = cut.lastIndexOf(" ");
-  return `${cut.slice(0, Math.max(boundary, length - 35))}…`;
-}
-
-/** Converts a progress note into a small set of readable points. */
-function progressPoints(text) {
-  const units = String(text ?? "")
-    .replace(/\r/g, "")
-    .split(/\n\s*\n|\n(?=\s*[-*]\s+)/)
-    .map((part) => cleanText(part.replace(/^\s*[-*]\s+/, "")))
-    .filter((part) => part && !/^state$/i.test(part));
-  const unique = [...new Set(units)];
-  if (!unique.length) return ["No progress note exists yet."];
-  if (unique.length <= 4) return unique.map((part) => clip(part));
-  return [unique[0], unique[1], unique.at(-2), unique.at(-1)].map((part) => clip(part));
 }
 
 /** Returns the compact fact that restores the selected Goal. */

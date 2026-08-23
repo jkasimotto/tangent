@@ -1,17 +1,7 @@
+import { cleanText } from "./text-format.js";
+
 /** Matches a line that opens a fenced code block. */
 export const FENCE_OPEN = /^\s{0,3}(`{3,}|~{3,})\s*([\w+.#-]*)\s*$/;
-
-/** Removes display Markdown and collapses whitespace. */
-function cleanText(value) {
-  return String(value ?? "")
-    .replace(/\[\[([^\]]+)\]\]/g, "$1")
-    .replace(/(?<!!)\[([^\]]+)\]\([^)]+\)/g, "$1")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/\*\*([^*]+)\*\*/g, "$1")
-    .replace(/^#+\s*/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
 /** Removes frontmatter from Markdown before display or structural analysis. */
 export function visibleMarkdown(text) {

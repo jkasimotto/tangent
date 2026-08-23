@@ -39,6 +39,7 @@ import { attachTerminalTransport } from "./terminal-transport.mjs";
 import { serveStaticAsset } from "./static-assets.mjs";
 import { createStateEvents } from "./state-events.mjs";
 import { createBrainRoutes } from "./brain-routes.mjs";
+import { createPipelineRoutes } from "./pipeline-routes.mjs";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -3762,6 +3763,14 @@ const brainRoutes = createBrainRoutes({
   },
   prompt: brainPrompt,
 });
+const pipelineRoutes = createPipelineRoutes({
+  normalizeMessage,
+  continueWorker: continueWorkerSession,
+  handoverStep: handoverPipelineStep,
+  control: controlPipeline,
+  append: appendPipelineSteps,
+  edit: editPipelineStep,
+});
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
@@ -3786,58 +3795,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     if (await brainRoutes.handle(req, res, url)) return;
-    // A step agent hands facts to the next step (the server advances the
-    // line), or, with body.continue, to a fresh copy of itself on the same
-    // step or Goal (design-worker-context-handover D4).
-    if (url.pathname === "/api/goals/handover" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      let text;
-      try {
-        text = normalizeMessage(body.text);
-      } catch (error) {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: String(error.message ?? error) }));
-        return;
-      }
-      if (body.continue === true) {
-        const result = await continueWorkerSession(String(body.session ?? ""), text);
-        res.writeHead(result.status, { "content-type": "application/json" });
-        res.end(JSON.stringify(result.status === 200 ? { status: "continued", session: result.session } : { error: result.error }));
-        return;
-      }
-      const result = await handoverPipelineStep(String(body.session ?? ""), text);
-      res.writeHead(result.status, { "content-type": "application/json" });
-      res.end(JSON.stringify(result.status === 200 ? { status: result.state, next: result.next, pipeline: result.pipeline } : { error: result.error }));
-      return;
-    }
-    // Restart, skip, or send on one pipeline step (Julian's explicit action).
-    if (url.pathname === "/api/pipelines/control" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const result = await controlPipeline(String(body.goal ?? ""), String(body.action ?? ""), body.step);
-      res.writeHead(result.status, { "content-type": "application/json" });
-      res.end(JSON.stringify(result.status === 200 ? { status: result.state ?? "started", next: result.next ?? (result.index ? { index: result.index, session: result.session } : null), pipeline: result.pipeline, ...(result.ended ? { ended: result.ended } : {}) } : { error: result.error }));
-      return;
-    }
-    // Edits one pending step; started steps are history.
-    // Append steps to a pipeline that already ran, mid-run or finished.
-    if (url.pathname === "/api/pipelines/append" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const result = await appendPipelineSteps(String(body.goal ?? ""), Array.isArray(body.steps) ? body.steps : []);
-      res.writeHead(result.status, { "content-type": "application/json" });
-      res.end(JSON.stringify(result.status === 200 ? { status: result.state, after: result.after ?? null, next: result.next ?? null, session: result.session ?? null, added: result.added, pipeline: result.pipeline, warnings: result.warnings ?? [] } : { error: result.error }));
-      return;
-    }
-    if (url.pathname === "/api/pipelines/edit" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const result = await editPipelineStep(String(body.goal ?? ""), body.step, body);
-      res.writeHead(result.status, { "content-type": "application/json" });
-      res.end(JSON.stringify(result.status === 200 ? { pipeline: result.pipeline } : { error: result.error }));
-      return;
-    }
+    if (await pipelineRoutes.handle(req, res, url)) return;
     // The live agents, for `tangent agent list`: every non-process session
     // with its refined state and any queued message count.
     if (url.pathname === "/api/agents" && req.method === "GET") {

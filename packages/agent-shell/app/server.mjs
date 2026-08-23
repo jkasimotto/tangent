@@ -43,6 +43,7 @@ import { createPipelineRoutes } from "./pipeline-routes.mjs";
 import { createAgentRoutes } from "./agent-routes.mjs";
 import { createVaultRepository } from "./vault-repository.mjs";
 import { pipelineExecution, soloExecution } from "./execution-record.mjs";
+import { createAreaRoutes } from "./area-routes.mjs";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -3802,6 +3803,43 @@ const agentRoutes = createAgentRoutes({
     return { status: 200, value: { status: "queued", to: live.name, reason, position: messageQueues.get(live.name).length } };
   },
 });
+const areaRoutes = createAreaRoutes({
+  /** Returns the complete Area tree. */
+  async tree() {
+    return { root: TREES_ROOT, areas: await readTree(TREES_ROOT) };
+  },
+  /** Returns one Area's note sections and own Goals. */
+  async show(area) {
+    if (!area || !flattenAreaPaths(await readTree(TREES_ROOT)).includes(area)) return null;
+    const text = await areaNote(area);
+    return {
+      area,
+      purpose: noteSection(text, "Purpose"),
+      resources: noteSection(text, "Resources"),
+      goals: (await readAreaGoals(area)).map(goalSummary),
+      ideas: ideasFromNote(text),
+    };
+  },
+  /** Creates and commits one Area. */
+  async create(body) {
+    const created = await createArea({ treesRoot: TREES_ROOT, parent: body.parent, name: body.name });
+    await runVaultGit(["add", "--", ...created.changedPaths]);
+    await vaultCommit(created.changedPaths, `add: ${created.area} Area`, created.area, null);
+    return created;
+  },
+  /** Describes one valid Area move. */
+  previewMove: (body) => previewAreaMove({ treesRoot: TREES_ROOT, area: body.area, parent: body.parent, name: body.name }),
+  /** Moves an Area, its vault paths, and live session bindings. */
+  async move(body) {
+    if (await areaHasGitChanges({ treesRoot: TREES_ROOT, area: body.area, runGitCapture: captureVaultGit })) {
+      throw new Error("Save or discard this area's pending vault edits before you move it.");
+    }
+    const moved = await moveArea({ treesRoot: TREES_ROOT, area: body.area, parent: body.parent, name: body.name, runGit: runVaultGit });
+    await moveSessionBindings(moved);
+    await vaultCommit([moved.source, moved.destination], `update: ${moved.source} moves to ${moved.destination}`, moved.destination, null);
+    return moved;
+  },
+});
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
@@ -3828,88 +3866,13 @@ const server = http.createServer(async (req, res) => {
     if (await brainRoutes.handle(req, res, url)) return;
     if (await pipelineRoutes.handle(req, res, url)) return;
     if (await agentRoutes.handle(req, res, url)) return;
+    if (await areaRoutes.handle(req, res, url)) return;
     // The frontend must target the same orchestrator session the server
     // special-cases, so the name ships as a tiny script instead of being
     // hardcoded twice.
     if (url.pathname === "/config.js") {
       res.writeHead(200, { "content-type": "text/javascript", "cache-control": "no-cache" });
       res.end(`window.CHAT_SESSION = ${JSON.stringify(CHAT_SESSION)};\n`);
-      return;
-    }
-    if (url.pathname === "/api/tree") {
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ root: TREES_ROOT, areas: await readTree(TREES_ROOT) }));
-      return;
-    }
-    // One Area's note sections and its own Goals and Ideas, for `tangent area show`.
-    if (url.pathname === "/api/areas/show" && req.method === "GET") {
-      const area = url.searchParams.get("area") ?? "";
-      if (!area || !flattenAreaPaths(await readTree(TREES_ROOT)).includes(area)) {
-        res.writeHead(404, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: `no area "${area}"` }));
-        return;
-      }
-      const text = await areaNote(area);
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({
-        area,
-        purpose: noteSection(text, "Purpose"),
-        resources: noteSection(text, "Resources"),
-        goals: (await readAreaGoals(area)).map(goalSummary),
-        ideas: ideasFromNote(text),
-      }));
-      return;
-    }
-    if (url.pathname === "/api/areas/new" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      try {
-        const created = await createArea({ treesRoot: TREES_ROOT, parent: body.parent, name: body.name });
-        await runVaultGit(["add", "--", ...created.changedPaths]);
-        await vaultCommit(created.changedPaths, `add: ${created.area} Area`, created.area, null);
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify(created));
-      } catch (error) {
-        res.writeHead(409, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: String(error.stderr ?? error.message ?? error) }));
-      }
-      return;
-    }
-    if (url.pathname === "/api/areas/preview-move" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      try {
-        const preview = await previewAreaMove({ treesRoot: TREES_ROOT, area: body.area, parent: body.parent, name: body.name });
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify(preview));
-      } catch (error) {
-        res.writeHead(409, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: String(error.message ?? error) }));
-      }
-      return;
-    }
-    if (url.pathname === "/api/areas/move" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      try {
-        if (await areaHasGitChanges({ treesRoot: TREES_ROOT, area: body.area, runGitCapture: captureVaultGit })) {
-          throw new Error("Save or discard this area's pending vault edits before you move it.");
-        }
-        const moved = await moveArea({
-          treesRoot: TREES_ROOT,
-          area: body.area,
-          parent: body.parent,
-          name: body.name,
-          runGit: runVaultGit,
-        });
-        await moveSessionBindings(moved);
-        await vaultCommit([moved.source, moved.destination], `update: ${moved.source} moves to ${moved.destination}`, moved.destination, null);
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify(moved));
-      } catch (error) {
-        res.writeHead(409, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: String(error.stderr ?? error.message ?? error) }));
-      }
       return;
     }
     if (url.pathname === "/api/programs" && req.method === "GET") {

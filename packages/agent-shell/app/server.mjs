@@ -42,6 +42,7 @@ import { createBrainRoutes } from "./brain-routes.mjs";
 import { createPipelineRoutes } from "./pipeline-routes.mjs";
 import { createAgentRoutes } from "./agent-routes.mjs";
 import { createVaultRepository } from "./vault-repository.mjs";
+import { pipelineExecution, soloExecution } from "./execution-record.mjs";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -2379,11 +2380,14 @@ async function continueWorkerSession(sessionName, text) {
 
   if (pipelineHit) {
     const { record, step } = pipelineHit;
-    step.continuations = step.continuations ?? [];
     const entry = { session: sessionName, next, facts: text, at, fill };
-    step.continuations.push(entry);
-    step.session = next;
-    await writePipeline(PIPELINES_ROOT, record);
+    const execution = pipelineExecution({
+      record,
+      step,
+      /** Persists the enclosing pipeline record. */
+      save: (value) => writePipeline(PIPELINES_ROOT, value),
+    });
+    await execution.continueTo(entry);
     retargetMessageQueue(sessionName, next);
 
     const byFile = await goalsByFile();
@@ -2403,9 +2407,7 @@ async function continueWorkerSession(sessionName, text) {
         return;
       }
       execFileAsync("tmux", ["kill-session", "-t", "=" + next]).catch(() => {});
-      entry.failed = true;
-      step.session = sessionName;
-      writePipeline(PIPELINES_ROOT, record).catch(() => {});
+      execution.failContinuation(entry).catch(() => {});
       retargetMessageQueue(next, sessionName);
       if (o) writeGoalBinding(o.file, { status: "active", session: sessionName }).then(() => vaultCommit([o.file], `update: ${record.area} goal ${record.slug} continuation failed, back to ${sessionName}`, record.area, sessionName)).catch(() => {});
       queueAgentMessage(sessionName, { from: "tangent", area: record.area, text: `Continuation recorded, but the fresh session could not start: the prompt never arrived. You still work this step.`, queuedAt: new Date().toISOString() });
@@ -2415,9 +2417,7 @@ async function continueWorkerSession(sessionName, text) {
       pipeline: { record, index: step.index, sessionName: next }, onPrimed,
     });
     if (result.status !== 200) {
-      entry.failed = true;
-      step.session = sessionName;
-      await writePipeline(PIPELINES_ROOT, record);
+      await execution.failContinuation(entry);
       retargetMessageQueue(next, sessionName);
       queueAgentMessage(sessionName, { from: "tangent", area: record.area, text: `Continuation recorded, but the fresh session could not start: ${result.error}. You still work this step.`, queuedAt: new Date().toISOString() });
       return { status: result.status, error: result.error };
@@ -2431,11 +2431,14 @@ async function continueWorkerSession(sessionName, text) {
   const o = byFile.get(soloHit.goal);
   if (!o) return { status: 404, error: "this session's Goal file could not be read" };
   const record = (await readContinuation(CONTINUATIONS_ROOT, o.area, o.slug)) ?? newContinuationRecord({ goal: o.file, area: o.area, slug: o.slug, session: sessionName });
-  record.continuations = record.continuations ?? [];
   const entry = { session: sessionName, next, facts: text, at, fill };
-  record.continuations.push(entry);
-  record.session = next;
-  await writeContinuation(CONTINUATIONS_ROOT, record);
+  const execution = soloExecution({
+    record,
+    area: o.area,
+    /** Persists the solo execution record. */
+    save: (value) => writeContinuation(CONTINUATIONS_ROOT, value),
+  });
+  await execution.continueTo(entry);
   retargetMessageQueue(sessionName, next);
 
   let settled = false;
@@ -2452,9 +2455,7 @@ async function continueWorkerSession(sessionName, text) {
       return;
     }
     execFileAsync("tmux", ["kill-session", "-t", "=" + next]).catch(() => {});
-    entry.failed = true;
-    record.session = sessionName;
-    writeContinuation(CONTINUATIONS_ROOT, record).catch(() => {});
+    execution.failContinuation(entry).catch(() => {});
     retargetMessageQueue(next, sessionName);
     writeGoalBinding(o.file, { status: "active", session: sessionName }).then(() => vaultCommit([o.file], `update: ${o.area} goal ${o.slug} continuation failed, back to ${sessionName}`, o.area, sessionName)).catch(() => {});
     queueAgentMessage(sessionName, { from: "tangent", area: o.area, text: `Continuation recorded, but the fresh session could not start: the prompt never arrived. You still work this Goal.`, queuedAt: new Date().toISOString() });
@@ -2463,9 +2464,7 @@ async function continueWorkerSession(sessionName, text) {
     phase: "execute", launch: true, continuation: { sessionName: next, entries: record.continuations }, onPrimed,
   });
   if (result.status !== 200) {
-    entry.failed = true;
-    record.session = sessionName;
-    await writeContinuation(CONTINUATIONS_ROOT, record);
+    await execution.failContinuation(entry);
     retargetMessageQueue(next, sessionName);
     queueAgentMessage(sessionName, { from: "tangent", area: o.area, text: `Continuation recorded, but the fresh session could not start: ${result.error}. You still work this Goal.`, queuedAt: new Date().toISOString() });
     return { status: result.status, error: result.error };
@@ -3155,36 +3154,36 @@ async function reconcileContextHandovers(sessions) {
   for (const session of sessions) {
     if (session.kind !== "goal" || session.phase !== "execute") continue;
     const pipelineHit = await pipelineStepForSession(session.name);
-    let subject, area, reminders, save;
+    let execution;
     if (pipelineHit) {
       const { record, step } = pipelineHit;
-      subject = "step";
-      area = record.area;
-      reminders = step.contextReminders?.[session.name];
-      save = async (next) => {
-        step.contextReminders = { ...(step.contextReminders ?? {}), [session.name]: next };
-        await writePipeline(PIPELINES_ROOT, record);
-      };
+      execution = pipelineExecution({
+        record,
+        step,
+        /** Persists the enclosing pipeline record. */
+        save: (next) => writePipeline(PIPELINES_ROOT, next),
+      });
     } else if (session.goal) {
       const byFile = await goalsByFile();
       const o = byFile.get(session.goal);
       if (!o) continue;
-      subject = "Goal";
-      area = o.area;
       const existing = await readContinuation(CONTINUATIONS_ROOT, o.area, o.slug);
-      reminders = existing?.contextReminders?.[session.name];
-      save = async (next) => {
-        const record = existing ?? newContinuationRecord({ goal: o.file, area: o.area, slug: o.slug, session: session.name });
-        record.contextReminders = { ...(record.contextReminders ?? {}), [session.name]: next };
-        await writeContinuation(CONTINUATIONS_ROOT, record);
-      };
+      const record = existing ?? newContinuationRecord({ goal: o.file, area: o.area, slug: o.slug, session: session.name });
+      execution = soloExecution({
+        record,
+        area: o.area,
+        /** Persists the solo execution record. */
+        save: (next) => writeContinuation(CONTINUATIONS_ROOT, next),
+      });
     } else {
       continue;
     }
+    const { area, subject } = execution;
+    const reminders = execution.reminder(session.name);
     const level = reminderDue({ fill: session.context, thresholdTokens: CONTEXT_HANDOVER_TOKENS, reminders });
     if (!level) continue;
     const now = new Date().toISOString();
-    await save({ firstAt: reminders?.firstAt ?? (level === "first" ? now : null), repeatAt: level === "repeat" ? now : reminders?.repeatAt ?? null });
+    await execution.saveReminder(session.name, { firstAt: reminders?.firstAt ?? (level === "first" ? now : null), repeatAt: level === "repeat" ? now : reminders?.repeatAt ?? null });
     queueAgentMessage(session.name, {
       from: "tangent",
       area,

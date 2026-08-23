@@ -12,6 +12,7 @@ import { createApiClient } from "./api-client.js";
 import { createShellState } from "./shell-state.js";
 import { shellDom } from "./shell-dom.js";
 import { startRefreshLifecycle } from "./refresh-lifecycle.js";
+import { FENCE_OPEN, fenceCloser, frontmatterLineCount, markdownHeadingAnchor, markdownHeadings, markdownTableAlignments, markdownTableCells, visibleMarkdown } from "./markdown-structure.js";
 
 const { api, post } = createApiClient();
 const { requestedArea, requestedDocument, state } = createShellState();
@@ -149,91 +150,7 @@ function inlineMarkdown(value) {
   return html;
 }
 
-/** Removes frontmatter from Markdown before display or structural analysis. */
-function visibleMarkdown(text) {
-  return String(text ?? "").replace(/\r/g, "").replace(/^---\n[\s\S]*?\n---(?:\n|$)/, "");
-}
-
-/** Creates a stable local anchor from one Markdown heading. */
-function markdownHeadingAnchor(value, seen) {
-  const base = cleanText(value)
-    .normalize("NFKD")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "") || "section";
-  const count = seen.get(base) ?? 0;
-  seen.set(base, count + 1);
-  return count ? `${base}-${count + 1}` : base;
-}
-
-/** Matches a line that opens a fenced code block; group 1 is the fence marker, group 2 the language tag. */
-const FENCE_OPEN = /^\s{0,3}(`{3,}|~{3,})\s*([\w+.#-]*)\s*$/;
-
-/** The regex for the line that closes a fence opened with `marker`. */
-function fenceCloser(marker) {
-  return new RegExp(`^\\s{0,3}${marker[0]}{${marker.length},}\\s*$`);
-}
-
-/**
- * Flags each line markdownToHtml shows as fenced code, fence lines included.
- * Structural scans (markdownHeadings) skip these so a `# comment` inside a
- * code block never becomes a heading or shifts anchor numbering.
- */
-function fencedLineFlags(lines) {
-  const flags = new Array(lines.length).fill(false);
-  let close = null;
-  for (const [index, line] of lines.entries()) {
-    const text = line.trimEnd();
-    if (close) {
-      flags[index] = true;
-      if (close.test(text)) close = null;
-      continue;
-    }
-    const fence = text.match(FENCE_OPEN);
-    if (!fence) continue;
-    flags[index] = true;
-    close = fenceCloser(fence[1]);
-  }
-  return flags;
-}
-
-/** Returns the visible heading hierarchy with the same anchors as the renderer. */
-function markdownHeadings(text) {
-  const seen = new Map();
-  const offset = frontmatterLineCount(text);
-  const lines = visibleMarkdown(text).split("\n");
-  const fenced = fencedLineFlags(lines);
-  return lines.flatMap((line, index) => {
-    if (fenced[index]) return [];
-    const match = line.trimEnd().match(/^(#{1,4})\s+(.+)$/);
-    if (!match) return [];
-    return [{ level: match[1].length, title: cleanText(match[2]), id: markdownHeadingAnchor(match[2], seen), line: index + offset }];
-  });
-}
-
-/** Lines that visibleMarkdown removes, so visible line numbers map to file lines. */
-function frontmatterLineCount(text) {
-  const full = String(text ?? "").replace(/\r/g, "").split("\n").length;
-  return full - visibleMarkdown(text).split("\n").length;
-}
-
-/** Splits one Markdown table row without treating escaped pipes as columns. */
-function markdownTableCells(value) {
-  const escapedPipe = "\u0000";
-  let row = String(value ?? "").trim().replace(/\\\|/g, escapedPipe);
-  if (row.startsWith("|")) row = row.slice(1);
-  if (row.endsWith("|")) row = row.slice(0, -1);
-  return row.split("|").map((cell) => cell.trim().replaceAll(escapedPipe, "|"));
-}
-
-/** Returns table alignment names when one row is a valid Markdown separator. */
-function markdownTableAlignments(value) {
-  const cells = markdownTableCells(value);
-  if (cells.length < 2 || cells.some((cell) => !/^:?-{3,}:?$/.test(cell))) return null;
-  return cells.map((cell) => cell.startsWith(":") && cell.endsWith(":") ? "center" : cell.endsWith(":") ? "right" : "left");
-}
-
-/**
+ /**
  * Renders safe headings, paragraphs, lists, tables, and fenced code from
  * Markdown. A fenced block's language tag is highlighted by code-highlight.js
  * when that language is known; an unknown tag still renders as a plain code

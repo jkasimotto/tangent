@@ -53,6 +53,8 @@ import { createVoiceRoutes } from "./voice-routes.mjs";
 import { createGoalQueryRoutes } from "./goal-query-routes.mjs";
 import { createLaunchRoutes } from "./launch-routes.mjs";
 import { createWorkMutationRoutes } from "./work-mutation-routes.mjs";
+import { recordActionTelemetry } from "./action-telemetry.mjs";
+import { readJson, sendJson } from "./http-json.mjs";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -62,6 +64,7 @@ const HOST = process.env.HOST ?? "127.0.0.1";
 // A fresh id per server process. The frontend compares it across polls to
 // notice that a rebuilt server is live and offer one explicit reload.
 const BOOT_ID = randomUUID();
+const ACTION_TELEMETRY_LOG = process.env.AGENT_SHELL_ACTION_LOG ?? path.join(os.homedir(), ".tangent", "agent-shell-actions.jsonl");
 const sourceChanges = createSourceChangeMonitor({ root: path.join(here, "..", "..", "..") });
 const stateEvents = createStateEvents();
 let agentCmd = process.env.AGENT_CMD ?? "claude";
@@ -1574,10 +1577,16 @@ async function waitForHarnessReady(session) {
  * notice counts as read only on true.
  */
 async function typePromptWhenReady(session, prompt, submit = false, label = "agent prompt") {
+  const startedAt = Date.now();
+  /** Records delivery latency without the session name or prompt content. */
+  const measured = (ok) => {
+    recordActionTelemetry(ACTION_TELEMETRY_LOG, { kind: "delivery", action: label, durationMs: Date.now() - startedAt, ok }).catch(() => {});
+    return ok;
+  };
   try {
     const { probe, rest } = splitPrompt(prompt);
     for (let attempt = 1; attempt <= TYPE_ATTEMPTS; attempt++) {
-      if (!(await waitForHarnessReady(session))) return false;
+      if (!(await waitForHarnessReady(session))) return measured(false);
       await typeInto(session, probe, false);
       await sleep(ECHO_MS);
       if ((await paneText(session)).includes(squash(probe))) {
@@ -1585,7 +1594,7 @@ async function typePromptWhenReady(session, prompt, submit = false, label = "age
         await sleep(ECHO_MS);
         if (promptArrived(await paneText(session), prompt)) {
           if (submit) await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "Enter"]);
-          return true;
+          return measured(true);
         }
       }
       console.error(`${label}: ${session} took it partially (attempt ${attempt}), clearing and retyping`);
@@ -1598,7 +1607,7 @@ async function typePromptWhenReady(session, prompt, submit = false, label = "age
   } catch (err) {
     console.error(`${label}:`, err.message ?? err);
   }
-  return false;
+  return measured(false);
 }
 
 /** Types a Goal assignment after its native harness is ready. */
@@ -3603,7 +3612,12 @@ async function executeVoiceActions(actions, ctx, focused, utterance) {
           break;
         }
         case "keys": {
-          const target = resolveSession(a.session, sessions) ?? focused;
+          const requested = String(a.session ?? "").trim();
+          const target = requested ? resolveSession(requested, sessions) : focused;
+          if (!target) {
+            summary.push(`no session "${requested}" — pressed nothing`);
+            break;
+          }
           const keys = (Array.isArray(a.keys) ? a.keys : [])
             .filter((k) => NAMED_KEYS.has(k) || /^[0-9a-zA-Z]$/.test(k))
             .slice(0, 8);
@@ -4232,6 +4246,12 @@ const server = http.createServer(async (req, res) => {
   try {
     if (url.pathname === "/api/events" && req.method === "GET") {
       stateEvents.connect(req, res);
+      return;
+    }
+    if (url.pathname === "/api/telemetry/action" && req.method === "POST") {
+      const body = await readJson(req);
+      await recordActionTelemetry(ACTION_TELEMETRY_LOG, body).catch(() => {});
+      sendJson(res, 200, { ok: true });
       return;
     }
     if (req.method === "POST") {

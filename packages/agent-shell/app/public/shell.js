@@ -24,8 +24,11 @@ import { createDocumentReaderController } from "./document-reader-controller.js"
 import { createShellInteractions } from "./shell-interactions.js";
 import { bindShellEvents } from "./shell-event-bindings.js";
 import { createTerminalController } from "./terminal-controller.js";
+import { createActionTelemetry } from "./action-telemetry.js";
 
-const { api, post } = createApiClient();
+const actionTelemetry = createActionTelemetry();
+actionTelemetry.observe();
+const { api, post } = createApiClient(undefined, actionTelemetry);
 const { requestedArea, requestedDocument, state } = createShellState();
 
 const {

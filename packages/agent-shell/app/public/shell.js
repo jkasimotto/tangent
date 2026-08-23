@@ -10,31 +10,20 @@ import whatHappenedCore from "./what-happened-core.js";
 import areaMapView from "./area-map.js";
 import { createApiClient } from "./api-client.js";
 import { createShellState } from "./shell-state.js";
+import { shellDom } from "./shell-dom.js";
+import { startRefreshLifecycle } from "./refresh-lifecycle.js";
 
 const { api, post } = createApiClient();
 const { requestedArea, requestedDocument, state } = createShellState();
 
-const screen = document.querySelector("#screen");
-const backButton = document.querySelector("#back-button");
-const workTab = document.querySelector("#work-tab");
-const areasTab = document.querySelector("#areas-tab");
-const barContext = document.querySelector("#bar-context");
-const findButton = document.querySelector("#find-button");
-const secondaryAction = document.querySelector("#secondary-action");
-const modalLayer = document.querySelector("#modal-layer");
-const modalKicker = document.querySelector("#modal-kicker");
-const modalTitle = document.querySelector("#modal-title");
-const modalCopy = document.querySelector("#modal-copy");
-const modalField = document.querySelector("#modal-field");
-const modalActions = document.querySelector("#modal-actions");
-const toast = document.querySelector("#toast");
-const statusPill = document.querySelector("#status-pill");
-const awakeButton = document.querySelector("#awake-button");
-const shellMenu = document.querySelector("#shell-menu");
-const goToButton = document.querySelector("#go-to-button");
-const goToLayer = document.querySelector("#go-to-layer");
-const goToInput = document.querySelector("#go-to-input");
-const goToList = document.querySelector("#go-to-list");
+const {
+  screen, "back-button": backButton, "work-tab": workTab, "areas-tab": areasTab, "bar-context": barContext,
+  "find-button": findButton, "secondary-action": secondaryAction, "modal-layer": modalLayer,
+  "modal-kicker": modalKicker, "modal-title": modalTitle, "modal-copy": modalCopy, "modal-field": modalField,
+  "modal-actions": modalActions, toast, "status-pill": statusPill, "awake-button": awakeButton,
+  "shell-menu": shellMenu, "go-to-button": goToButton, "go-to-layer": goToLayer,
+  "go-to-input": goToInput, "go-to-list": goToList,
+} = shellDom();
 
 /**
  * The global shortcuts. The keydown handler and every printed label read this
@@ -5623,11 +5612,7 @@ void (async () => {
 })();
 // Mutations and reconciliation push invalidations. The slow timer is only a
 // recovery path for a suspended browser or a dropped event stream.
-if (typeof EventSource === "function") {
-  const events = new EventSource("/api/events");
-  events.addEventListener("changed", () => void refresh());
-}
-window.setInterval(() => refresh(), 30_000);
+startRefreshLifecycle(refresh);
 
 // DOM-level exports keep tests on the module boundary instead of rebuilding
 // the old order-dependent browser globals.

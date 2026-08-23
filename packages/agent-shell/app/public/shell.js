@@ -1070,7 +1070,7 @@ function closePromptPreview() {
 bindShellEvents({
   state, post, paint, refresh, showToast, screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction,
   shellMenu, goToButton, goToLayer, goToInput, modalLayer, terminalFit: terminalController.fit, KEYMAP, shortcutMatches,
-  shortcutKbd, toggleShellMenu, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, loadGoalPrompt, loadBrainPrompt, closePromptPreview, showAreasAt,
+  shortcutKbd, toggleShellMenu, confirmRebuild, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, loadGoalPrompt, loadBrainPrompt, closePromptPreview, showAreasAt,
   showDecision, showCreate, showDescribe, showProgramCreate, selectProgram, openProgramSession, controlProgram,
   performProgramAction, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelCreate, cancelDescribe, currentProgram,
   programAreaDirectory, selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain,

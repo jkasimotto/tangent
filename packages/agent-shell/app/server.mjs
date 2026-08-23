@@ -52,6 +52,7 @@ import { createShellStateRoutes } from "./shell-state-routes.mjs";
 import { createVoiceRoutes } from "./voice-routes.mjs";
 import { createGoalQueryRoutes } from "./goal-query-routes.mjs";
 import { createLaunchRoutes } from "./launch-routes.mjs";
+import { createWorkMutationRoutes } from "./work-mutation-routes.mjs";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -4108,6 +4109,123 @@ const launchRoutes = createLaunchRoutes({
     } catch (error) { return { status: 500, error: String(error.stderr ?? error.message ?? error) }; }
   },
 });
+const workMutationRoutes = createWorkMutationRoutes({
+  /** Records Julian's understanding of one Goal. */
+  async understanding(body) {
+    const file = String(body.file ?? "");
+    const understanding = String(body.understanding ?? "").trim();
+    const goal = (await goalsByFile()).get(file);
+    if (!goal) return { status: 404, error: `no goal file ${file}` };
+    if (!understanding) return { status: 400, error: "Write what you think this work means." };
+    try {
+      await editGoalFile(file, { understanding });
+      await vaultCommit([file], `update: ${goal.area} goal ${goal.slug} records Julian's understanding`, goal.area, null);
+      return { status: 200, value: { ok: true, understanding } };
+    } catch (error) { return serverError(error); }
+  },
+  /** Accepts one Goal assignment. */
+  async accept(body) {
+    try {
+      const result = await acceptGoalAssignment(String(body.file ?? ""));
+      return { status: result.status, ...(result.status === 200 ? { value: { ok: true } } : { error: result.error }) };
+    } catch (error) { return serverError(error); }
+  },
+  /** Creates one simple Goal. */
+  async createSimple(body) {
+    const area = String(body.area ?? "");
+    const title = String(body.title ?? "").trim();
+    const doneWhen = String(body.doneWhen ?? "").trim();
+    if (!await areaExists(area)) return { status: 404, error: `no area "${area}"` };
+    if (!title || !doneWhen) return { status: 400, error: !title ? "a title is required" : "a Goal needs a done condition" };
+    try { return { status: 200, value: { file: await createGoalFile(area, { title, doneWhen, state: typeof body.state === "string" ? body.state : "" }) } }; }
+    catch (error) { return serverError(error); }
+  },
+  /** Creates one Goal with optional Subgoals, sources, and ownership. */
+  async create(body) {
+    const area = String(body.area ?? "");
+    const goal = body.goal && typeof body.goal === "object" ? body.goal : {};
+    if (!await areaExists(area)) return { status: 404, error: `no area "${area}"` };
+    if (!String(goal.title ?? "").trim() || !String(goal.doneWhen ?? "").trim()) return { status: 400, error: "the Goal needs a name and a done condition" };
+    const subgoals = (Array.isArray(body.subgoals) ? body.subgoals.slice(0, 8) : []).map((item) => ({ title: String(item?.title ?? "").trim(), doneWhen: String(item?.doneWhen ?? "").trim(), state: "Not started." })).filter((item) => item.title || item.doneWhen);
+    if (subgoals.some((item) => !item.title || !item.doneWhen)) return { status: 400, error: "each Subgoal needs a name and a done condition" };
+    const own = String(body.own ?? "").trim();
+    const sessions = own ? await listSessions() : [];
+    if (own && !sessions.some((session) => session.name === own)) return { status: 404, error: `no tmux session "${own}"; run create --own inside the agent's session or pass --session` };
+    try {
+      const sources = await sourceDocuments(body.sources);
+      const created = await createGoalSet(area, { goal: { title: String(goal.title).trim(), doneWhen: String(goal.doneWhen).trim(), state: String(goal.state ?? "Not started.").trim() }, subgoals, description: String(body.description ?? "").trim(), sources: sources.map((source) => ({ file: source.file, title: source.title })) });
+      if (own && created.file) {
+        await writeGoalBinding(created.file, { status: "active", session: own });
+        await vaultCommit([created.file], `update: ${area} goal owned by ${own}`, area, own);
+        await adoptGoalSession(sessions, own, { area, file: created.file });
+      }
+      return { status: 200, value: { ...created, ...(own ? { session: own } : {}) } };
+    } catch (error) { return serverError(error); }
+  },
+  /** Saves one idea on an Area. */
+  async createIdea(body) {
+    const area = String(body.area ?? "");
+    const description = String(body.description ?? "").trim();
+    if (!await areaExists(area)) return { status: 404, error: `no area "${area}"` };
+    if (!description) return { status: 400, error: "describe the idea before you save it" };
+    try { return { status: 200, value: { ok: true, file: await saveWorkIdea(area, description) } }; }
+    catch (error) { return serverError(error); }
+  },
+  /** Lists ideas in one Area or the complete vault. */
+  async ideas({ area = null }) {
+    const allAreas = flattenAreaPaths(await readTree(TREES_ROOT));
+    if (area && !allAreas.includes(area)) return { status: 404, error: `no area "${area}"` };
+    const ideas = [];
+    for (const one of area ? [area] : allAreas) ideas.push(...ideasFromNote(await areaNote(one)).map((text) => ({ area: one, text })));
+    return { status: 200, value: { ideas } };
+  },
+  /** Marks an Area done or active without changing its Goals. */
+  async areaStatus(body) {
+    const area = String(body.area ?? "");
+    const status = String(body.status ?? "");
+    if (!validAreaPath(area) || !["done", "active"].includes(status)) return { status: 400, error: "area and status (done or active) required" };
+    try { await stat(path.join(TREES_ROOT, area)); }
+    catch { return { status: 404, error: `no Area ${area}` }; }
+    return { status: 200, value: await setAreaStatus(area, status, body.session ? String(body.session) : null) };
+  },
+  /** Applies validated direct edits and status changes to one Goal. */
+  async edit(body) {
+    const file = String(body.file ?? "");
+    const goal = (await goalsByFile()).get(file);
+    if (!goal) return { status: 404, error: `no goal file ${file}` };
+    const fields = {};
+    if (body.status !== undefined) {
+      if (!["open", "done", "dropped"].includes(body.status)) return { status: 400, error: `status must be open, done, or dropped, got "${body.status}"` };
+      fields.status = body.status;
+      if (body.status === "dropped") {
+        const reason = oneLine(body.reason);
+        if (!reason) return { status: 400, error: "give a brief reason before you mark this goal won't do" };
+        fields.wontDoReason = reason;
+      }
+    }
+    for (const key of ["title", "doneWhen", "state"]) if (typeof body[key] === "string") fields[key] = body[key];
+    if (!Object.keys(fields).length) return { status: 400, error: "nothing to edit" };
+    try {
+      await editGoalFile(file, fields);
+      if (fields.status === "dropped" && goal.session) await execFileAsync("tmux", ["kill-session", "-t", "=" + goal.session]).catch(() => {});
+      const changed = fields.status === "done" ? await cascadeGoalDone(file, await goalsByFile()) : [file];
+      if (!changed.includes(file)) changed.unshift(file);
+      const what = fields.status === "done" ? "done" : fields.status === "dropped" ? "marked won't do" : fields.status === "open" ? "reopened" : "edited";
+      await vaultCommit(changed, `update: ${goal.area} goal ${goal.slug} ${what} in tree`, goal.area, body.session ? String(body.session) : null);
+      return { status: 200, value: { ok: true } };
+    } catch (error) { return serverError(error); }
+  },
+});
+
+/** Reports whether one Area exists in the current vault tree. */
+async function areaExists(area) {
+  return Boolean(area) && flattenAreaPaths(await readTree(TREES_ROOT)).includes(area);
+}
+
+/** Converts an unexpected mutation failure to an HTTP operation result. */
+function serverError(error) {
+  return { status: 500, error: String(error.stderr ?? error.message ?? error) };
+}
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
@@ -4132,261 +4250,7 @@ const server = http.createServer(async (req, res) => {
     if (await voiceRoutes.handle(req, res, url)) return;
     if (await goalQueryRoutes.handle(req, res, url)) return;
     if (await launchRoutes.handle(req, res, url)) return;
-    if (url.pathname === "/api/goals/understanding" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const file = String(body.file ?? "");
-      const understanding = typeof body.understanding === "string" ? body.understanding.trim() : "";
-      const goal = (await goalsByFile()).get(file);
-      if (!goal) {
-        res.writeHead(404, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: `no goal file ${file}` }));
-        return;
-      }
-      if (!understanding) {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: "Write what you think this work means." }));
-        return;
-      }
-      try {
-        await editGoalFile(file, { understanding });
-        await vaultCommit(
-          [file],
-          `update: ${goal.area} goal ${goal.slug} records Julian's understanding`,
-          goal.area,
-          null
-        );
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: true, understanding }));
-      } catch (err) {
-        res.writeHead(500, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
-      }
-      return;
-    }
-    if (url.pathname === "/api/goals/accept" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      try {
-        const result = await acceptGoalAssignment(String(body.file ?? ""));
-        res.writeHead(result.status, { "content-type": "application/json" });
-        res.end(JSON.stringify(result.status === 200 ? { ok: true } : { error: result.error }));
-      } catch (err) {
-        res.writeHead(500, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
-      }
-      return;
-    }
-    // The create lane writes a new Goal into an Area,
-    // written on the user's word with a provenance commit, same as edits.
-    if (url.pathname === "/api/goals/new" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const area = String(body.area ?? "");
-      const title = String(body.title ?? "").trim();
-      const doneWhen = String(body.doneWhen ?? "").trim();
-      if (!area || !flattenAreaPaths(await readTree(TREES_ROOT)).includes(area)) {
-        res.writeHead(404, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: `no area "${area}"` }));
-        return;
-      }
-      if (!title || !doneWhen) {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: !title ? "a title is required" : "a Goal needs a done condition" }));
-        return;
-      }
-      try {
-        const file = await createGoalFile(area, { title, doneWhen, state: typeof body.state === "string" ? body.state : "" });
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ file }));
-      } catch (err) {
-        res.writeHead(500, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
-      }
-      return;
-    }
-    if (url.pathname === "/api/goals/create" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const area = String(body.area ?? "");
-      const goal = body.goal && typeof body.goal === "object" ? body.goal : {};
-      const subgoals = Array.isArray(body.subgoals) ? body.subgoals.slice(0, 8) : [];
-      if (!area || !flattenAreaPaths(await readTree(TREES_ROOT)).includes(area)) {
-        res.writeHead(404, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: `no area "${area}"` }));
-        return;
-      }
-      if (!String(goal.title ?? "").trim() || !String(goal.doneWhen ?? "").trim()) {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: "the Goal needs a name and a done condition" }));
-        return;
-      }
-      const normalizedSubgoals = subgoals
-        .map((subgoal) => ({ title: String(subgoal?.title ?? "").trim(), doneWhen: String(subgoal?.doneWhen ?? "").trim(), state: "Not started." }))
-        .filter((subgoal) => subgoal.title || subgoal.doneWhen);
-      if (normalizedSubgoals.some((subgoal) => !subgoal.title || !subgoal.doneWhen)) {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: "each Subgoal needs a name and a done condition" }));
-        return;
-      }
-      // `tangent goal create --own`: the creating agent takes ownership in the
-      // same step, so a trivial task is one command away from being worked.
-      const own = String(body.own ?? "").trim();
-      const ownSessions = own ? await listSessions() : [];
-      if (own && !ownSessions.some((s) => s.name === own)) {
-        res.writeHead(404, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: `no tmux session "${own}"; run create --own inside the agent's session or pass --session` }));
-        return;
-      }
-      try {
-        const sources = await sourceDocuments(body.sources);
-        const created = await createGoalSet(area, {
-          goal: {
-            title: String(goal.title).trim(),
-            doneWhen: String(goal.doneWhen).trim(),
-            state: String(goal.state ?? "Not started.").trim(),
-          },
-          subgoals: normalizedSubgoals,
-          description: String(body.description ?? "").trim(),
-          sources: sources.map((source) => ({ file: source.file, title: source.title })),
-        });
-        if (own && created.file) {
-          await writeGoalBinding(created.file, { status: "active", session: own });
-          await vaultCommit([created.file], `update: ${area} goal owned by ${own}`, area, own);
-          await adoptGoalSession(ownSessions, own, { area, file: created.file });
-        }
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ...created, ...(own ? { session: own } : {}) }));
-      } catch (err) {
-        res.writeHead(500, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
-      }
-      return;
-    }
-    if (url.pathname === "/api/idea/new" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const area = String(body.area ?? "");
-      const description = String(body.description ?? "").trim();
-      if (!area || !flattenAreaPaths(await readTree(TREES_ROOT)).includes(area)) {
-        res.writeHead(404, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: `no area "${area}"` }));
-        return;
-      }
-      if (!description) {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: "describe the idea before you save it" }));
-        return;
-      }
-      try {
-        const file = await saveWorkIdea(area, description);
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: true, file }));
-      } catch (err) {
-        res.writeHead(500, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
-      }
-      return;
-    }
-    // Idea listing for `tangent idea list [<area>]`: one Area's own ideas, or every
-    // Area's ideas across the vault when no area is given.
-    if (url.pathname === "/api/ideas" && req.method === "GET") {
-      const area = url.searchParams.get("area");
-      const allAreas = flattenAreaPaths(await readTree(TREES_ROOT));
-      if (area && !allAreas.includes(area)) {
-        res.writeHead(404, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: `no area "${area}"` }));
-        return;
-      }
-      const areas = area ? [area] : allAreas;
-      const ideas = [];
-      for (const one of areas) ideas.push(...ideasFromNote(await areaNote(one)).map((text) => ({ area: one, text })));
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ideas }));
-      return;
-    }
-    // The tree's edit lane: a status flip (mark done / reopen) or the
-    // goal's own text, written on the user's click with a provenance
-    // commit. Direct edits are the user's word; no agent is in the loop.
-    if (url.pathname === "/api/areas/status" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const area = String(body.area ?? "");
-      const status = String(body.status ?? "");
-      if (!validAreaPath(area) || !["done", "active"].includes(status)) {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: "area and status (done or active) required" }));
-        return;
-      }
-      try {
-        await stat(path.join(TREES_ROOT, area));
-      } catch {
-        res.writeHead(404, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: `no Area ${area}` }));
-        return;
-      }
-      const result = await setAreaStatus(area, status, body.session ? String(body.session) : null);
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify(result));
-      return;
-    }
-    if (url.pathname === "/api/goals/edit" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const file = String(body.file ?? "");
-      const o = (await goalsByFile()).get(file);
-      if (!o) {
-        res.writeHead(404, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: `no goal file ${file}` }));
-        return;
-      }
-      const fields = {};
-      if (body.status !== undefined) {
-        if (!["open", "done", "dropped"].includes(body.status)) {
-          res.writeHead(400, { "content-type": "application/json" });
-          res.end(JSON.stringify({ error: `status must be open, done, or dropped, got "${body.status}"` }));
-          return;
-        }
-        fields.status = body.status;
-        if (body.status === "dropped") {
-          const reason = oneLine(body.reason);
-          if (!reason) {
-            res.writeHead(400, { "content-type": "application/json" });
-            res.end(JSON.stringify({ error: "give a brief reason before you mark this goal won't do" }));
-            return;
-          }
-          fields.wontDoReason = reason;
-        }
-      }
-      for (const key of ["title", "doneWhen", "state"]) {
-        if (typeof body[key] === "string") fields[key] = body[key];
-      }
-      if (!Object.keys(fields).length) {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: "nothing to edit" }));
-        return;
-      }
-      try {
-        await editGoalFile(file, fields);
-        if (fields.status === "dropped" && o.session) {
-          await execFileAsync("tmux", ["kill-session", "-t", "=" + o.session]).catch(() => {});
-        }
-        const changed = fields.status === "done"
-          ? await cascadeGoalDone(file, await goalsByFile())
-          : [file];
-        // The requested file can also carry text edits.
-        if (!changed.includes(file)) changed.unshift(file);
-        const what =
-          fields.status === "done" ? "done" : fields.status === "dropped" ? "marked won't do" : fields.status === "open" ? "reopened" : "edited";
-        await vaultCommit(changed, `update: ${o.area} goal ${o.slug} ${what} in tree`, o.area, body.session ? String(body.session) : null);
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: true }));
-      } catch (err) {
-        res.writeHead(500, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
-      }
-      return;
-    }
+    if (await workMutationRoutes.handle(req, res, url)) return;
     await serveStaticAsset(url, res, here);
   } catch {
     res.writeHead(404).end("not found");

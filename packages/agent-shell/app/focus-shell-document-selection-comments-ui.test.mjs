@@ -21,16 +21,17 @@ test("a second comment lands on the words Julian selected, and the reader holds 
   let text = "# Map design\n\nThe quick {==brown {==fox==}==}{>>Julian: first<<}{== jumps==}{>>Julian: second<<} over the lazy dog.\n\n## Part two\n\nMore prose.\n";
   let hash = 1;
   const saves = [];
-  let conflictOnce = false;
+  let conflictEdit = null;
   /** The document as the server would return it: text, hash, and parsed comments. */
   const served = () => ({ ...doc, text, hash: `map-${hash}`, comments: helper.parseComments(text) });
   window.fetch = async (url, options = {}) => {
     const pathname = new URL(url, window.location.href).pathname;
     if (pathname === "/api/document" && options.method === "POST") {
       const body = JSON.parse(options.body);
-      if (conflictOnce) {
-        conflictOnce = false;
-        text = text.replace("More prose.", "Different prose.");
+      if (conflictEdit) {
+        const edit = conflictEdit;
+        conflictEdit = null;
+        text = edit(text);
         hash += 1;
         return {
           ok: false,
@@ -96,8 +97,8 @@ test("a second comment lands on the words Julian selected, and the reader holds 
   await settle(window);
   assert.equal(window.document.querySelector(".document-reader-scroll").scrollTop, 320, "the reader keeps its place after the save");
 
-  // A stale selected anchor never blocks the comment. It falls back to the
-  // section that contained the selection and saves in the same action.
+  // If an agent moves the selected words to another line, the retry finds the
+  // unchanged words and keeps the comment anchored to them.
   const sectionParagraph = [...window.document.querySelectorAll(".document-content p")].find((item) => item.textContent.includes("More prose"));
   const sectionText = sectionParagraph.firstChild;
   const staleRange = window.document.createRange();
@@ -108,12 +109,33 @@ test("a second comment lands on the words Julian selected, and the reader holds 
   click(window, ".reader-comment-action");
   await settle(window);
   window.document.querySelector("#comment-text").value = "Keep this comment";
-  conflictOnce = true;
+  conflictEdit = (current) => current.replace("## Part two", "A newly inserted line.\n\n## Part two");
   submit(window, "[data-comment-composer]");
   await settle(window);
   await settle(window);
   await settle(window);
-  assert.equal(window.document.querySelector("[data-comment-composer]"), null, "the stale-anchor composer closes after saving");
-  assert.match(saves.at(-1).text, /## Part two\n\n\{>>Julian: Keep this comment<<\}/);
-  assert.match(window.document.querySelector("#toast").textContent, /added to “Part two”/);
+  assert.equal(window.document.querySelector("[data-comment-composer]"), null, "the moved selection saves");
+  assert.match(saves.at(-1).text, /\{==More prose==\}\{>>Julian: Keep this comment<<\}/);
+
+  // If the selected words changed, submission stops. The draft stays open and
+  // no section-level or whole-Document comment is written.
+  const changedParagraph = [...window.document.querySelectorAll(".document-content p")].find((item) => item.textContent.includes("More prose"));
+  const changedText = changedParagraph.querySelector(".document-comment-mark").firstChild;
+  const changedRange = window.document.createRange();
+  changedRange.setStart(changedText, 0);
+  changedRange.setEnd(changedText, "More prose".length);
+  window.getSelection().removeAllRanges();
+  window.getSelection().addRange(changedRange);
+  click(window, ".reader-comment-action");
+  await settle(window);
+  window.document.querySelector("#comment-text").value = "Do not misplace this";
+  conflictEdit = (current) => current.replace("More prose", "Different prose");
+  const savesBeforeChangedSelection = saves.length;
+  submit(window, "[data-comment-composer]");
+  await settle(window);
+  await settle(window);
+  await settle(window);
+  assert.equal(saves.length, savesBeforeChangedSelection, "a changed selection is not saved");
+  assert.equal(window.document.querySelector("#comment-text").value, "Do not misplace this", "the draft stays open");
+  assert.match(window.document.querySelector(".document-comment-composer-notice").textContent, /text you selected changed/i);
 });

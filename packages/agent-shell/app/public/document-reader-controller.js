@@ -295,7 +295,7 @@ export function createDocumentReaderController({ state, api, post, paint, showTo
     paint(true);
   }
 
-  /** Applies a comment, falling back from stale words to its section or Document. */
+  /** Applies a comment at its requested anchor; a stale selection must never change scope. */
   function composerResult(document, composer) {
     const helper = documentComments;
     if (composer.editing) {
@@ -308,13 +308,7 @@ export function createDocumentReaderController({ state, api, post, paint, showTo
       return { text: helper.replaceCommentText(document.text, match, composer.text) };
     }
     const exact = helper.insertComment(document.text, composer.anchor, composer.text);
-    if (!exact.error) return exact;
-    if (composer.section) {
-      const inSection = helper.insertComment(document.text, { kind: "section", heading: composer.section.title }, composer.text);
-      if (!inSection.error) return { ...inSection, notice: `The selected text moved, so the comment was added to “${composer.section.title}”.` };
-    }
-    const inDocument = helper.insertComment(document.text, { kind: "document" }, composer.text);
-    return { ...inDocument, notice: "The selected text moved, so the comment was added to the whole Document." };
+    return exact;
   }
 
   /** One base-hash save of the whole Document text; returns the raw reply so a 409 can be handled. */

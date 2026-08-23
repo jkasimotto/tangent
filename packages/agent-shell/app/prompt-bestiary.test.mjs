@@ -20,11 +20,21 @@ test("the bestiary leads with a selectable canonical lifecycle", () => {
   assert.match(html, /data-bestiary-lifecycle="brain-pipeline" aria-pressed="true"/);
   assert.match(html, /data-bestiary-transition="handover" aria-pressed="true"/);
   assert.match(html, /Only the brain classifies the report/);
+  assert.match(html, /Message sent/);
+  assert.match(html, /tangent handover/);
+  assert.match(html, /&lt;paths&gt;/);
   assert.match(html, /data-load-goal-prompt/);
   assert.match(html, /data-load-brain-prompt/);
   assert.match(html, /goal-probe\.md/);
   assert.match(html, /# Exact prompt/);
   assert.match(html, /Legacy encounters/);
+});
+
+test("the canonical brain boundary shows its prompt without live data", () => {
+  const html = renderPromptBestiary({ selection: { lifecycle: "plan", transition: "work" } });
+  assert.match(html, /# Brain for &lt;area&gt;/);
+  assert.match(html, /Julian's instruction/);
+  assert.match(html, /&lt;durable-worker-and-user-notices&gt;/);
 });
 
 test("a live Goal states whether a brain controls it", () => {

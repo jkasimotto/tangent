@@ -485,7 +485,7 @@ const shellInteractions = createShellInteractions({
   openDocument, refreshDocument, rememberDocumentPosition, DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
 });
 const {
-  toggleShellMenu, goToRows, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWorkAt, confirmRebuild,
+  toggleShellMenu, goToRows, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWorkAt, confirmRebuild, reloadChanges,
   selectGoal, rememberGoal, openGoalRun, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt,
   selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath,
   confirmAreaMove, showCreate, switchDescribeToManualCreate, cancelCreate, addDescribeSource, showDescribe,
@@ -1086,7 +1086,7 @@ function selectBestiaryTransition(transition) {
 bindShellEvents({
   state, post, paint, refresh, showToast, screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction,
   shellMenu, goToButton, goToLayer, goToInput, modalLayer, terminalFit: terminalController.fit, KEYMAP, shortcutMatches,
-  shortcutKbd, toggleShellMenu, confirmRebuild, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, loadGoalPrompt, loadBrainPrompt, closePromptPreview, selectBestiaryLifecycle, selectBestiaryTransition, showAreasAt,
+  shortcutKbd, toggleShellMenu, confirmRebuild, reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, loadGoalPrompt, loadBrainPrompt, closePromptPreview, selectBestiaryLifecycle, selectBestiaryTransition, showAreasAt,
   showDecision, showCreate, showDescribe, showProgramCreate, selectProgram, openProgramSession, controlProgram,
   performProgramAction, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelCreate, cancelDescribe, currentProgram,
   programAreaDirectory, selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain,

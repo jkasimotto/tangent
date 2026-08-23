@@ -11,9 +11,9 @@ export const PROMPT_SPECIES = [
 ];
 
 const TRANSITIONS = {
-  work: transition("Work request", "Julian", "Agent Shell", "brain", {
+  work: transition("Brain opening prompt", "Agent Shell", "Area brain", "brain", {
     trigger: "Julian starts or speaks to the brain for an Area.",
-    payload: "The Area, Julian's instruction, launch choice, and source references.",
+    payload: "The brain role, Area, Julian's instruction, sources, prior facts, and operating contract.",
     knows: "Agent Shell knows the Area tree and finds the one controlling ancestor brain.",
     next: "Agent Shell starts a brain generation or delivers the instruction to the live brain.",
     state: "The brain record identifies the Area, instruction, generation, and session.",
@@ -199,11 +199,117 @@ function controllingBrain(area, brains) {
   return null;
 }
 
+/** Returns the canonical text for one boundary, with dynamic values as tags. */
+function canonicalMessage(item) {
+  if (item.species === "brain") return `# Brain for <area>
+
+You are the brain of the Area <area>. You are the one long-lived agent that plans and dispatches its work. Julian will mostly speak only with you.
+
+## Julian's instruction
+
+<instruction>
+
+## Sources
+
+<area-notes-and-documents>
+
+## Handover from the earlier generation
+
+<brain-handover-if-present>
+
+## Notices you have not read
+
+<durable-worker-and-user-notices>
+
+## How to work
+
+Research the work and write the proposed Goals, done conditions, agent count, assignments, dependencies, parallel work, and risks in the plan. Request one plan approval before you create Goals or start workers.
+
+Workers report only to you through tangent handover. Read each report and choose the next transition. Ask Julian only through plan, decision, test, or approval requests. Close a Goal when its done condition and review policy hold.
+
+## When to hand over
+
+<brain-generation-handover-contract>`;
+  if (item.species === "goal") return `# Assignment: <goal-title>
+
+## Done when
+
+<done-condition>
+
+## Sources
+
+- Goal: <goal-file>
+- Area notes: <area-notes>
+- Documents: <linked-documents>
+
+## Brain
+
+The brain for Area <controlling-area> controls this work. Do the assignment. Do not create, start, close, or re-plan Goals. Do not contact Julian or choose another agent.
+
+## How to work
+
+<assignment-guidance>
+
+When you finish, run tangent handover "<facts>". State files and commits, checks and results, what is complete, what is unresolved, and any decision or test that is needed. The brain decides the next action.`;
+  if (item.species === "pipeline") return item.label === "Advance assignment"
+    ? `tangent brain advance <goal> <step-number>`
+    : `# Assignment: <goal-title>
+
+<goal-assignment>
+
+## Your step
+
+Step <index> of <total>: <step-instruction>
+
+## Handovers so far
+
+<earlier-worker-handovers>
+
+## When you finish
+
+Run tangent handover "<facts>". Report to the brain. Do not choose the next worker.`;
+  if (item.species === "handover") return `tangent handover "Files changed: <paths>. Commits: <commits>. Checks: <commands-and-results>. Complete: <completed-work>. Unresolved: <remaining-work>. Decision or test needed: <need-or-none>."`;
+  if (item.species === "brain-request") {
+    const kind = item.label.startsWith("Plan") ? "plan" : item.label.startsWith("Decision") ? "decision" : "test";
+    const options = kind === "plan" ? "Approve plan | Request changes" : kind === "test" ? "Pass | Needs work" : "<named-options>";
+    return `<brain-request>
+  <kind>${kind}</kind>
+  <subject><subject-text></subject>
+  <detail><why-now-options-effects-and-blocked-work></detail>
+  <question><direct-question></question>
+  <answers>${options}</answers>
+</brain-request>`;
+  }
+  if (["Plan answer", "Decision answer", "Test answer"].includes(item.label)) return `<brain-notice>
+  Julian answered <request-kind> request <request-id>: <named-answer>.
+  <optional-feedback>
+</brain-notice>`;
+  if (item.label === "Close Goal") return `tangent goal done <goal-slug>
+
+Proof: <done-condition-proof>
+Review: <review-verdict>
+Test: <test-verdict-if-required>`;
+  if (item.label === "Context risk") return `Your context is at <used-tokens> of <context-window>. At the next natural pause, report complete continuation facts through tangent handover. The brain decides whether a fresh worker continues.`;
+  if (item.label === "Fresh worker") return `<worker-assignment>
+
+## Continuing this step
+
+<continuation-1-facts>
+<continuation-2-facts-if-present>
+
+Continue the same assignment. Report through tangent handover.`;
+  if (item.species === "comment") return `<brain-notice>
+  Julian commented on <document> at <selected-text-or-section>:
+  <comment>
+</brain-notice>`;
+  return `<message>${item.payload}</message>`;
+}
+
 /** Renders the selected boundary and optional exact live message. */
 function renderTransitionInspector(item, inspector) {
   const rows = [["Why now?", item.trigger], ["From and to", `${item.from} → ${item.to}`], ["What crosses", item.payload], ["Already known", item.knows], ["What happens next", item.next], ["State change", item.state], ["Delivery", item.delivery], ["Code source", item.source]];
   const preview = inspector.loading ? `<div class="prompt-preview"><p>Building the exact current message…</p></div>` : inspector.error ? `<div class="prompt-preview error-card">${escapeHtml(inspector.error)}</div>` : inspector.text ? `<div class="prompt-preview"><div><strong>${escapeHtml(inspector.title)}</strong><button type="button" data-close-prompt-preview>Close exact message</button></div><pre>${escapeHtml(inspector.text)}</pre></div>` : "";
-  return `<aside class="transition-inspector" aria-live="polite"><p class="kicker">Selected boundary</p><h2>${escapeHtml(item.label)}</h2><div class="transition-route"><span>${escapeHtml(item.from)}</span><b>→</b><span>${escapeHtml(item.to)}</span></div><dl>${rows.map(([name, value]) => `<div><dt>${name}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl><section class="prompt-layers"><h3>Message layers</h3><ol>${item.layers.map((layer) => `<li>${escapeHtml(layer)}</li>`).join("")}</ol></section>${preview}</aside>`;
+  return `<aside class="transition-inspector" aria-live="polite"><p class="kicker">Selected boundary</p><h2>${escapeHtml(item.label)}</h2><div class="transition-route"><span>${escapeHtml(item.from)}</span><b>→</b><span>${escapeHtml(item.to)}</span></div><section class="canonical-message"><header><h3>Message sent</h3><small>Dynamic parts stay visible as &lt;tags&gt;.</small></header><pre>${escapeHtml(canonicalMessage(item))}</pre></section><details class="boundary-details"><summary>Why and how this message is sent</summary><dl>${rows.map(([name, value]) => `<div><dt>${name}</dt><dd>${escapeHtml(value)}</dd></div>`).join("")}</dl><section class="prompt-layers"><h3>Message layers</h3><ol>${item.layers.map((layer) => `<li>${escapeHtml(layer)}</li>`).join("")}</ol></section></details>${preview}</aside>`;
 }
 
 /** Renders a lifecycle-first field guide and an optional exact live prompt. */

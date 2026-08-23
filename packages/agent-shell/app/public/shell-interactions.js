@@ -114,7 +114,21 @@ export function createShellInteractions({ state, api, post, paint, refresh, show
     }, 0);
   }
 
-  /** Rebuilds the workspace and restarts the server after explicit confirmation. */
+  /** Starts a rebuild and makes its waiting state visible immediately. */
+  async function rebuildShell() {
+    await post("/api/shell/rebuild", {});
+    state.rebuilding = true;
+    updateStatusPill();
+    showToast("Rebuilding. The app reloads when the new server is ready.");
+  }
+
+  /** Runs the advertised pending-change reload without a hidden second step. */
+  async function reloadChanges() {
+    toggleShellMenu(false);
+    await rebuildShell();
+  }
+
+  /** Rebuilds from the permanent recovery action after explicit confirmation. */
   function confirmRebuild() {
     toggleShellMenu(false);
     openModal({
@@ -122,13 +136,7 @@ export function createShellInteractions({ state, api, post, paint, refresh, show
       title: "Rebuild and restart Agent Shell?",
       copy: "The server rebuilds the workspace and restarts itself. Agent sessions keep running in tmux. This page reloads automatically when the new server is up.",
       confirmLabel: "Rebuild and restart",
-      /** Starts the rebuild and waits for the new server boot id. */
-      onConfirm: async () => {
-        await post("/api/shell/rebuild", {});
-        state.rebuilding = true;
-        updateStatusPill();
-        showToast("Rebuilding. The app reloads when the new server is ready.");
-      },
+      onConfirm: rebuildShell,
     });
   }
 
@@ -709,5 +717,5 @@ export function createShellInteractions({ state, api, post, paint, refresh, show
 
   /** Toggles the server-owned macOS sleep assertion. */
 
-  return { toggleShellMenu, goToRows, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWorkAt, confirmRebuild, selectGoal, rememberGoal, openGoalRun, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt, selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath, confirmAreaMove, showCreate, switchDescribeToManualCreate, cancelCreate, addDescribeSource, showDescribe, openDescribeSession, cancelDescribe, showDecision, selectionForArea, startPipeline, savePipelineStep, appendPipelineSteps, startSelectedGoals, openGoalAgent, openReaderAgent, launchOpenSession, openModal, closeModal, getModalConfirm, confirmStop, confirmComplete, confirmWontDo };
+  return { toggleShellMenu, goToRows, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWorkAt, confirmRebuild, reloadChanges, selectGoal, rememberGoal, openGoalRun, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt, selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath, confirmAreaMove, showCreate, switchDescribeToManualCreate, cancelCreate, addDescribeSource, showDescribe, openDescribeSession, cancelDescribe, showDecision, selectionForArea, startPipeline, savePipelineStep, appendPipelineSteps, startSelectedGoals, openGoalAgent, openReaderAgent, launchOpenSession, openModal, closeModal, getModalConfirm, confirmStop, confirmComplete, confirmWontDo };
 }

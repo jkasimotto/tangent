@@ -61,5 +61,10 @@ test("the Shell menu owns recovery while offline refresh preserves the screen", 
   await settle(window);
   assert.ok(posts.includes("/api/shell/rebuild"));
   assert.match(window.document.querySelector("#status-pill").textContent, /Rebuilding/);
+  posts.length = 0;
+  click(window, "#back-button");
+  click(window, "#menu-update");
+  await settle(window);
+  assert.ok(posts.includes("/api/shell/rebuild"), "the pending-change action rebuilds on its first click");
   dom.window.close();
 });

@@ -49,6 +49,7 @@ import { createDocumentRoutes } from "./document-routes.mjs";
 import { projectDesk } from "./desk-projection.mjs";
 import { createShellControlRoutes } from "./shell-control-routes.mjs";
 import { createShellStateRoutes } from "./shell-state-routes.mjs";
+import { createVoiceRoutes } from "./voice-routes.mjs";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -3398,16 +3399,6 @@ Rules:
 - To act on a prompt in a session that is not focused, put a view action first so the user sees what happens.
 - Unclear or nothing matches: return one speak action asking a single short question.`;
 
-/** Collects a request body as a Buffer (readBody would corrupt audio bytes). */
-function readBinaryBody(req) {
-  return new Promise((resolve, reject) => {
-    const bufs = [];
-    req.on("data", (c) => bufs.push(c));
-    req.on("end", () => resolve(Buffer.concat(bufs)));
-    req.on("error", reject);
-  });
-}
-
 /**
  * Transcribes one recorded utterance via Groq whisper-large-v3-turbo. Session
  * names ride along as the whisper prompt so spoken hyphen-names ("retry loop")
@@ -3964,6 +3955,15 @@ const shellStateRoutes = createShellStateRoutes({
     };
   },
 });
+const voiceRoutes = createVoiceRoutes({
+  chatSession: CHAT_SESSION,
+  /** Reports whether transcription and command routing are configured. */
+  available: () => Boolean(GROQ_KEY),
+  context: voiceContext,
+  transcribe,
+  nameHints: voiceNameHints,
+  route: routeAndExecute,
+});
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
@@ -3985,6 +3985,7 @@ const server = http.createServer(async (req, res) => {
     if (await programRoutes.handle(req, res, url)) return;
     if (await documentRoutes.handle(req, res, url)) return;
     if (await shellControlRoutes.handle(req, res, url)) return;
+    if (await voiceRoutes.handle(req, res, url)) return;
     // Goal listing for `tangent goal list [<area>]`: one Area's own Goals, or every
     // Area's Goals across the vault when no area is given.
     if (url.pathname === "/api/goals" && req.method === "GET") {
@@ -4544,61 +4545,6 @@ const server = http.createServer(async (req, res) => {
       } catch (err) {
         res.writeHead(500, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
-      }
-      return;
-    }
-    if (url.pathname === "/api/voice" && req.method === "POST") {
-      if (!GROQ_KEY) {
-        res.writeHead(503, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: "no Groq key: set GROQ_API_KEY or keep one in otto-launcher/.env" }));
-        return;
-      }
-      const focused = url.searchParams.get("focused") || CHAT_SESSION;
-      try {
-        const audio = await readBinaryBody(req);
-        if (audio.length < 200) {
-          res.writeHead(400, { "content-type": "application/json" });
-          res.end(JSON.stringify({ error: "no audio" }));
-          return;
-        }
-        const visible = (req.headers["x-visible-areas"] ?? "").split(",").filter(Boolean);
-        const ctx = await voiceContext(focused, visible);
-        const transcript = await transcribe(audio, req.headers["content-type"], voiceNameHints(ctx));
-        const out = await routeAndExecute(transcript, focused, ctx);
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ transcript, ...out }));
-      } catch (err) {
-        res.writeHead(500, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: String(err.message ?? err) }));
-      }
-      return;
-    }
-    // The typed lane: the exact sentence the user would have spoken, routed
-    // through the same grammar and actions, no transcription. For places
-    // where talking out loud is not an option.
-    if (url.pathname === "/api/command" && req.method === "POST") {
-      if (!GROQ_KEY) {
-        res.writeHead(503, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: "no Groq key: set GROQ_API_KEY or keep one in otto-launcher/.env" }));
-        return;
-      }
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const text = String(body.text ?? "").trim();
-      if (!text) {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: "text required" }));
-        return;
-      }
-      try {
-        const focused = body.focused || CHAT_SESSION;
-        const ctx = await voiceContext(focused, Array.isArray(body.visibleAreas) ? body.visibleAreas : []);
-        const out = await routeAndExecute(text, focused, ctx);
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ transcript: text, ...out }));
-      } catch (err) {
-        res.writeHead(500, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: String(err.message ?? err) }));
       }
       return;
     }

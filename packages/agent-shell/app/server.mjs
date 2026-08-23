@@ -39,6 +39,7 @@ import { attachTerminalTransport } from "./terminal-transport.mjs";
 import { serveStaticAsset } from "./static-assets.mjs";
 import { createStateEvents } from "./state-events.mjs";
 import { createBrainRoutes } from "./brain-routes.mjs";
+import { answerBrainRequest, createBrainRequest, hasApprovedPlan, openBrainRequests, readBrainRequests, writeBrainRequests } from "./brain-requests.mjs";
 import { createPipelineRoutes } from "./pipeline-routes.mjs";
 import { createAgentRoutes } from "./agent-routes.mjs";
 import { createVaultRepository } from "./vault-repository.mjs";
@@ -1412,7 +1413,7 @@ async function goalPrompt(area, o, extras = [], continuationEntries = []) {
   const brain = await liveBrainForArea(area);
   const brainSection = brain
     ? `## Brain\n\n` +
-      `This Goal is part of the plan of the brain session \`${brain.session}\` for Area ${brain.area}. Tangent reports your handovers and the end of your session to it. If you are blocked on something the plan decided, message it: \`tangent agent send ${brain.session} "<text>"\`. Words from the brain arrive as \`[Message from ${brain.session}]\`; Julian's words come only from Julian.\n\n`
+      `The brain for Area ${brain.area} controls this work. Do the assignment. Do not create, start, close, or re-plan Goals. Do not contact Julian or choose another agent. Report only to the brain with the handover command below.\n\n`
     : "";
   const alsoOwned = extras.length
     ? `## Also in this session\n\n` +
@@ -1438,7 +1439,7 @@ async function goalPrompt(area, o, extras = [], continuationEntries = []) {
     (openComments
       ? `Julian left comments in the Documents marked above. They look like \`{>>Julian: ...<<}\`, sometimes after \`{==the words they refer to==}\`. Read them before you change a Document, and do what they ask or discuss them with Julian. \`tangent document comments <vault-relative file>\` lists them. Close each one only with \`tangent document resolve <file> "<first words of the comment>" -m "<what changed>"\`, after the work is done or after Julian says to close it. Never remove or rewrite a comment by hand, and carry comments along when you rewrite the text around them.\n\n`
       : "") +
-    `Useful habits here: check \`tangent process list\` before starting a server or watcher; keep the goal State section current as things settle; add a Story so far moment only when feedback or a result changes the plan (one short heading, two sentences, at most five moments). When the done condition is met, say so; Goal status changes on Julian's word.\n\n` +
+    `Useful habits here: check \`tangent process list\` before starting a server or watcher. When the done condition is met, report the proof to the brain. The brain controls Goal state.\n\n` +
     `Design documents for this work belong in the Area folder ${path.join(TREES_ROOT, area)} as design-<slug>.md (a solution beside it as impl-<slug>.md), in Simple English (${path.join(os.homedir(), ".agents", "skills", "simple-english", "SKILL.md")}, pragmatic mode), with a [[${o.file.split("/").pop().replace(/\.md$/, "")}]] link so the Goal shows them. Read files wherever they are; write new design documents there.\n\n` +
     contextTeachingSentence("Goal") +
     (continuationEntries.length ? `\n\n${continuationSection({ index: 1, total: 1, entries: continuationEntries, subject: "Goal" })}` : "")
@@ -1459,8 +1460,8 @@ async function pipelineStepPrompt(area, o, record, index, extras = [], sessionNa
     .map((item) => `### Handover from step ${item.index} (${item.label || "agent"}, ${item.status})\n\n${item.handover}`);
   const brain = await liveBrainForArea(area);
   const decisionLine = brain
-    ? `If a real decision needs Julian, send it to the brain: \`tangent agent send ${brain.session} "<question>"\`. Keep going on the brain's answer or its own recommendation; never sit waiting for Julian in this terminal. Julian decides in Documents and through the brain.`
-    : `If a real decision needs Julian, ask him here; the pipeline waits.`;
+    ? `If you need a decision, test, correction, fresh context, or another agent, include that fact in the same handover. The brain decides the next action.`
+    : `If a real decision needs Julian, ask him here; this legacy pipeline waits.`;
   const dossierContract = rationaleDossierContract({ goalFile: o.file, title: o.title, area, treesRoot: TREES_ROOT, session: sessionName });
   const continuationEntries = step.continuations ?? [];
   return (
@@ -1471,7 +1472,7 @@ async function pipelineStepPrompt(area, o, record, index, extras = [], sessionNa
     (continuationEntries.length ? `${continuationSection({ index, total, entries: continuationEntries, subject: "step" })}\n\n` : "") +
     `## When you finish\n\n` +
     `${dossierContract}\n\n` +
-    `Run \`tangent goal handover "<facts>"\` from this session. State facts a fresh agent needs: files you wrote or changed with full paths, what is finished, what is unresolved, decisions Julian made. No recommendations, no narrative. The next step starts from your handover and the files. ${decisionLine} ${contextTeachingSentence("step")}`
+    `Run \`tangent handover "<facts>"\` from this session. State files and commits, checks and results, what is complete, what is unresolved, and any decision or test that is needed. This operation reports to the brain; it does not choose the next agent. ${decisionLine} ${brain ? "If your context is nearly full, hand over that fact through the same command." : contextTeachingSentence("step")}`
   );
 }
 
@@ -2297,7 +2298,14 @@ async function handoverPipelineStep(sessionName, text) {
     // step out from under the live session.
     const movedTo = await swappedAwayNaming(sessionName);
     if (movedTo) return { status: 409, error: `this step moved to a fresh session (${movedTo}); it is no longer yours to hand over` };
-    return { status: 404, error: "this session is not a running pipeline step" };
+    const live = (await listSessions()).find((session) => session.name === sessionName && session.kind === "goal" && session.goal);
+    if (!live) return { status: 404, error: "this session is not a running worker assignment" };
+    const goal = (await goalsByFile()).get(live.goal);
+    if (!goal) return { status: 404, error: "this worker has no Goal" };
+    const controller = brainForArea(await readAllBrains(BRAINS_ROOT), goal.area);
+    if (!controller) return { status: 409, error: "a solo legacy Goal has no brain; use its existing session controls" };
+    await notifyBrain(goal.area, `Goal ${goal.slug}: worker reported and waits for your command. Handover: ${brainMessageExcerpt(text)}`);
+    return { status: 200, state: "reported", next: null, pipeline: null };
   }
   return completePipelineStep(found.record, found.step, text, "agent");
 }
@@ -2509,6 +2517,11 @@ async function completePipelineStep(record, step, text, source) {
     await notifyBrain(record.area, `Goal ${record.slug}: pipeline complete (${record.steps.length} steps; step ${step.index} ${stepWord}, ${step.label || "agent"}). Last handover: ${brainMessageExcerpt(step.handover)}`);
     return { status: 200, state: "complete", next: null, pipeline: record };
   }
+  const controller = brainForArea(await readAllBrains(BRAINS_ROOT), record.area);
+  if (controller && source === "agent") {
+    await notifyBrain(record.area, `Goal ${record.slug}: step ${step.index} of ${record.steps.length} ${stepWord} (${step.label || "agent"}). Step ${next.index} is ready and waits for your command. Handover: ${brainMessageExcerpt(step.handover)}`);
+    return { status: 200, state: "reported", next: { index: next.index, session: null }, pipeline: record };
+  }
   const started = await startPipelineStep(record, next.index);
   if (started.status !== 200) {
     await notifyBrain(record.area, `Goal ${record.slug}: step ${step.index} ${stepWord}, but step ${next.index} could not start: ${started.error}`);
@@ -2541,6 +2554,12 @@ async function controlPipeline(goalFile, action, index) {
   if (!step) return { status: 404, error: `no step ${index}` };
   const sessions = await listSessions();
   const live = step.session ? sessions.find((item) => item.name === step.session) : null;
+  if (action === "advance") {
+    if (step.status !== "pending") return { status: 409, error: `step ${step.index} is ${step.status}; advance needs a pending step` };
+    const controller = brainForArea(await readAllBrains(BRAINS_ROOT), record.area);
+    if (!controller) return { status: 409, error: `no live brain controls ${record.area}` };
+    return startPipelineStep(record, step.index);
+  }
   if (action === "restart") {
     if (!(step.status === "stopped" || (step.status === "running" && !live))) return { status: 409, error: `step ${step.index} is ${step.status}; restart needs a stopped step` };
     step.status = "pending";
@@ -2939,18 +2958,13 @@ async function brainPrompt(record) {
     `${harnessRule}\n\n` +
     `On takeover, run \`tangent agent list\` and sweep every running step's pane: a session shown as "needs decision" or "draft" carries an \`asks:\` line with the question, and it is stuck waiting on a person, not idle. Answer it or message the worker (\`tangent agent send <session> "..."\`) before anything else.\n\n` +
     `Read the plan first when it exists, then the Area notes from nearest to farthest, then the Documents that matter. Look at the Area's repository when code answers a question better than a guess.\n\n` +
-    `Write the plan before you start anything: the instruction in your words, the sub-Areas and Goals you will create, the waves in dependency order, and what you decided. Keep it current: what runs, what came back, what you decided next. Commit it with \`tangent vault commit\`. Julian reads the plan and may leave comments in it (\`{>>Julian: ...<<}\`); \`tangent document comments <file>\` lists them and \`tangent document resolve\` closes one after the work is done.\n\n` +
+    `Before you create a Goal or start a worker, write the proposed result, Goals and done conditions, agent count, assignments, dependencies, parallel work, and known risks in the plan. Commit it with \`tangent vault commit\`. Then request one approval with \`tangent brain request --kind plan --subject "Work plan" --question "Approve this plan?" --detail "<short Goals, agents, and order summary>"\`. Wait for the durable approval notice. A changed Goal boundary or larger scope needs a new plan request. A retry, model change, or review pass inside the approved boundary does not. Julian may also comment in the plan; \`tangent document comments <file>\` lists comments and \`tangent document resolve\` closes one after the work is done.\n\n` +
     `Split the work into Goals: a Goal is a result with a clear finish. Create a sub-Area only for a durable subject Julian will return to (\`tangent area create <parent> <name>\`). Give each Goal a description a fresh agent can start from: intent, what Julian decided, and the Documents and code that matter (\`tangent goal create --area ${area} --title "..." --done-when "..." --description "..." --source <vault-file>\`).\n\n` +
     `Start each leaf Goal as a pipeline, for example: \`tangent goal start <slug> --step "/design this Goal" --launch ${harness}/${designModel} --step "/impl the design at <path>" --launch ${harness}/${designModel} --step "implement the solution" --launch ${harness}/${implementModel} --step "review the implementation against the design and solution; fix what is wrong" --launch ${harness}/${designModel}\`. Judge each Goal: when the work is small and clear, one implementer step is enough; when it is hard or vague, raise the implementer to Opus or Fable and keep the design step. Fable plans, designs, decomposes, and reviews; Sonnet is the workhorse. Run one implementing pipeline per repository at a time; design and review steps may run in parallel. \`tangent agent list\` shows what runs and \`tangent goal list ${area}\` shows the Goals.\n\n` +
-    `Tangent sends you messages: a step handed over, a pipeline completed, a step stopped or sat idle, a Goal session ended. No message is lost: each one is kept on disk until a generation of this brain reads it, so what arrived while you were away is in the section above, or in a message that reaches you after a restart. Read the handover and the files. When a review asks for changes, \`tangent goal append <slug> --step "..." --launch ...\`. When a result is good, note it in the plan and start what its completion unblocked. Workers may message you; answer with \`tangent agent send <session> "<text>"\`.\n\n` +
-    `Ask Julian only for real decisions, and ask in the plan's For Julian section (below); he sees that list on his desk. Julian started this brain to get the Area done, and that start is his word on Goal status for the Goals under it. When a Goal's final review hands over with a pass and its done condition holds, write the verdict into the Goal's State section and run \`tangent goal done <slug>\` in that same turn; when a Goal turns out wrong, \`tangent goal wont-do <slug> --reason "..."\` in that same turn. After every batch of results, sweep for Goals whose pipeline finished and close them: a finished Goal left showing Waiting for you is a failure of the brain, not a question for Julian. His instruction above can narrow this (for example, ask before closing). Goals outside your plan stay his; only real decisions wait for Julian.\n\n` +
-    `## For Julian\n\n` +
-    `Julian's desk shows one list of what waits on him: the \`## For Julian\` section of your plan. Every row is a direct ask he answers on the row, so Tangent shows only these line shapes. A line in another shape is not shown, and Tangent messages you once per commit that leaves unshown lines in the section.\n` +
-    `- Decide [[<document>]]: <the question, ending with ?> Unblocks: <what his answer unblocks>.\n` +
-    `- Decide: <one question that fits no Document, ending with ?>\n` +
-    `- Test [[<goal-slug>]]: <where to go, what to press, what he sees; two lines at most>.\n` +
-    `A Decide ask must end with a question mark or the line is not shown. Write a Decide line only for a question that needs his word; a recommendation he does not need to see never goes on the list. Tangent puts the fixed question "Accept it?" under every Test row. Write a Test line only for a Goal that is done; the row stops showing when its Goal is no longer done. If the Goal changes what Julian sees or presses in Tangent, run \`tangent shell rebuild\` before you write the Test line, so the keys work the first time he presses them.\n` +
-    `Julian answers a Decide or Test row with Accept or Reject. Tangent removes the line, commits the plan, and sends you "Julian accepted <target>" or "Julian rejected <target>". Accept on a Decide row means: go with the recommendations as written. A bare Reject means: he parks it and comes back to it himself. Do not follow up, do not re-ask, and do not rewrite the line; the subject returns only when Julian raises it. If he presses Undo, Tangent sends "Julian withdrew his verdict on <target>; the line is back". When Julian comments on a listed Document, Tangent sends you "Julian commented on <file> (N open comments)". Read the comments, act, resolve them, then remove the line and commit the plan. You clear a targetless Decide line yourself once you have the answer; an answered ask left standing is your failure, not his. When Julian presses Reply or Answer on a row, Tangent sends you "Julian is replying about: <subject>" before he types. \`tangent brain status\` prints the rows Tangent shows and every line it does not show, so check it after you edit the section.\n\n` +
+    `Tangent sends you durable worker reports. Read the handover and the files. You alone choose the next transition. Start a pending approved assignment with \`tangent brain advance <goal> <step>\`. When a review asks for changes, append an assignment. When a result is good, note it in the plan and start what its completion unblocked. Workers do not choose successors.\n\n` +
+    `Ask Julian only through structured requests. Use kind decision with repeated --option values for user behavior, user-facing choices, one-way doors, and material scope changes. Use kind test with exact test steps. Use kind approval only when policy requires an explicit final approval. The answer returns to this brain as a durable notice. Julian started this brain to get the approved Goals done. When a Goal's final review passes and its done condition holds, write the verdict into the Goal State and close it in the same turn. A finished Goal left waiting is a brain failure.\n\n` +
+    `## Requests for Julian\n\n` +
+    `Create requests with \`tangent brain request\`. Do not use plan Markdown as a control protocol. Plan reviews use Approve plan and Request changes. Tests use Pass and Needs work. Decisions use the option names you supply. Each request must state what waits for the answer. If a visible Agent Shell change needs a test, run \`tangent shell rebuild\` before you create the test request. Document comments are a separate direct lane and still arrive here as durable notices.\n\n` +
     `## When to hand over\n\n` +
     `Before every handover, sweep \`tangent goal list ${area}\` and \`tangent agent list\` for any Goal whose pipeline finished and close it (\`tangent goal done <slug>\` or \`tangent goal wont-do <slug> --reason "..."\`); a finished Goal left waiting is a failure, never something to hand off to the next generation. In the same sweep, check \`tangent agent list\` for a running step showing "needs decision" or "draft" and answer it; do not hand over a step sitting stuck on a question the next generation has to notice all over again. Then, at a natural pause, after a wave is dispatched or a batch of results is processed, and always when Tangent reminds you, write the plan status and run \`tangent brain handover "<facts>"\`: what runs (Goal, step, session), what waits and why, decisions taken, what the next generation should do first. Facts, no narrative. A fresh copy of you starts from the plan and those facts, and this session ends.`
   );
@@ -3014,6 +3028,8 @@ async function spawnBrainSession(record) {
  */
 async function startBrain(area, { instruction = "", choice = null, command = "", resume = false } = {}) {
   if (!area || !existsSync(path.join(TREES_ROOT, area))) return { status: 404, error: `no Area ${area || "(none)"}` };
+  const overlap = (await readAllBrains(BRAINS_ROOT)).find((record) => record.area !== area && record.status === "running" && (area.startsWith(`${record.area}/`) || record.area.startsWith(`${area}/`)));
+  if (overlap) return { status: 409, error: `brain ${overlap.area} already controls overlapping work; stop or transfer it before starting ${area}` };
   const existing = await readBrain(BRAINS_ROOT, area);
   if (existing?.status === "running" && existing.session) {
     const live = await execFileAsync("tmux", ["has-session", "-t", "=" + existing.session]).then(() => true, () => false);
@@ -3203,11 +3219,15 @@ async function reconcileContextHandovers(sessions) {
     if (!level) continue;
     const now = new Date().toISOString();
     await execution.saveReminder(session.name, { firstAt: reminders?.firstAt ?? (level === "first" ? now : null), repeatAt: level === "repeat" ? now : reminders?.repeatAt ?? null });
+    const controller = brainForArea(await readAllBrains(BRAINS_ROOT), area);
+    const brainControlledText = level === "first"
+      ? `Your context is nearly full. At the next natural pause, report your files, checks, unresolved facts, and first next action to the brain with: tangent handover "<facts>". The brain will decide whether a fresh worker continues.`
+      : `Your context is well past the handover threshold. Report to the brain now with: tangent handover "<facts>".`;
     queueAgentMessage(session.name, {
       from: "tangent",
       area,
       kind: "context-reminder",
-      text: level === "first"
+      text: controller ? brainControlledText : level === "first"
         ? contextReminderText({ ...session.context, subject })
         : contextRepeatText({ usedTokens: session.context.usedTokens, thresholdTokens: CONTEXT_HANDOVER_TOKENS, subject }),
       // Rebuilt at delivery time so the fill number is current, not the one
@@ -3216,6 +3236,7 @@ async function reconcileContextHandovers(sessions) {
       render: () => {
         const fill = paneSamples.get(session.name)?.context;
         if (!fill) return null;
+        if (controller) return brainControlledText;
         return level === "first"
           ? contextReminderText({ ...fill, subject })
           : contextRepeatText({ usedTokens: fill.usedTokens, thresholdTokens: CONTEXT_HANDOVER_TOKENS, subject });
@@ -3338,6 +3359,7 @@ async function brainsView(sessions) {
       idleSince: live?.idleSince ?? null,
       latestHandover: latestHandover(record),
       forJulian: await forJulianItems(record, index),
+      requests: openBrainRequests(await readBrainRequests(BRAINS_ROOT, record.area)),
     };
   }));
 }
@@ -3760,6 +3782,29 @@ const brainRoutes = createBrainRoutes({
   verdict: clearRowWithVerdict,
   undoVerdict: restoreVerdictLine,
   reply: noteReplySubject,
+  /** Creates a request only for the calling live brain session. */
+  async createRequest(session, input) {
+    const brain = (await readAllBrains(BRAINS_ROOT)).find((item) => item.session === session && item.status === "running");
+    if (!brain) return { status: 403, error: "only a live brain can create a request" };
+    const record = await readBrainRequests(BRAINS_ROOT, brain.area);
+    try {
+      const request = createBrainRequest(record, input);
+      await writeBrainRequests(BRAINS_ROOT, record);
+      return { status: 200, request };
+    } catch (error) { return { status: 400, error: String(error.message ?? error) }; }
+  },
+  /** Records Julian's request answer and delivers it to the brain inbox. */
+  async answerRequest(area, id, answer) {
+    const brain = await brainOfArea(area);
+    if (!brain) return { status: 404, error: `no brain on ${area}` };
+    const record = await readBrainRequests(BRAINS_ROOT, brain.area);
+    try {
+      const request = answerBrainRequest(record, id, answer);
+      await writeBrainRequests(BRAINS_ROOT, record);
+      await notifyBrain(brain.area, `Julian answered ${request.kind} request "${request.subject}": ${request.answer}`);
+      return { status: 200, request };
+    } catch (error) { return { status: 400, error: String(error.message ?? error) }; }
+  },
   /** Finds one enriched brain record by Area or session. */
   async show(area, session) {
     const brains = await brainsView(await listSessions()).catch(() => []);
@@ -4120,6 +4165,17 @@ const launchRoutes = createLaunchRoutes({
   /** Starts a Goal agent or a validated pipeline. */
   async start(body) {
     try {
+      const caller = String(body.caller ?? "").trim();
+      if (caller) {
+        const goal = (await goalsByFile()).get(String(body.file ?? ""));
+        if (!goal) return { status: 404, error: `no goal file ${String(body.file ?? "")}` };
+        const brains = await readAllBrains(BRAINS_ROOT);
+        const callerBrain = brains.find((item) => item.session === caller && item.status === "running");
+        if (!callerBrain) return { status: 403, error: "workers cannot start agents; report to the controlling brain with tangent handover" };
+        const controller = brainForArea(brains, goal.area);
+        if (!controller || controller.session !== caller) return { status: 403, error: `${caller} does not control ${goal.area}` };
+        if (!hasApprovedPlan(await readBrainRequests(BRAINS_ROOT, controller.area))) return { status: 409, error: "Julian must approve the brain's plan before it starts workers" };
+      }
       if (Array.isArray(body.steps) && body.steps.length) {
         const result = await startPipeline(String(body.file ?? ""), { steps: body.steps, extraFiles: Array.isArray(body.extraFiles) ? body.extraFiles.map(String) : [] });
         return { status: result.status, ...(result.status === 200 ? { value: { session: result.session, pipeline: result.pipeline, warnings: result.warnings ?? [] } } : { error: result.error }) };
@@ -4168,6 +4224,16 @@ const workMutationRoutes = createWorkMutationRoutes({
     const goal = body.goal && typeof body.goal === "object" ? body.goal : {};
     if (!await areaExists(area)) return { status: 404, error: `no area "${area}"` };
     if (!String(goal.title ?? "").trim() || !String(goal.doneWhen ?? "").trim()) return { status: 400, error: "the Goal needs a name and a done condition" };
+    const caller = String(body.caller ?? "").trim();
+    if (caller) {
+      const brains = await readAllBrains(BRAINS_ROOT);
+      const callerBrain = brains.find((item) => item.session === caller && item.status === "running");
+      if (!callerBrain) return { status: 403, error: "workers cannot create Goals; report to the controlling brain with tangent handover" };
+      const controller = brainForArea(brains, area);
+      if (!controller || controller.session !== caller) return { status: 403, error: `${caller} does not control ${area}` };
+      const requestRecord = await readBrainRequests(BRAINS_ROOT, callerBrain.area);
+      if (!hasApprovedPlan(requestRecord)) return { status: 409, error: "Julian must approve the brain's plan before it creates Goals" };
+    }
     const subgoals = (Array.isArray(body.subgoals) ? body.subgoals.slice(0, 8) : []).map((item) => ({ title: String(item?.title ?? "").trim(), doneWhen: String(item?.doneWhen ?? "").trim(), state: "Not started." })).filter((item) => item.title || item.doneWhen);
     if (subgoals.some((item) => !item.title || !item.doneWhen)) return { status: 400, error: "each Subgoal needs a name and a done condition" };
     const own = String(body.own ?? "").trim();

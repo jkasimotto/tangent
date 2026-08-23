@@ -25,6 +25,7 @@
     "accept",
     "reject",
     "reply",
+    "request-answer",
   ]);
 
   /** The question Tangent puts under every Test row; the brain never writes it. */
@@ -150,6 +151,26 @@
     });
   }
 
+  /** One durable brain request. These records replace Markdown control lines. */
+  function askFromRequest(brain, request) {
+    if (!brain || !request || request.status !== "open") return null;
+    const answers = request.kind === "plan"
+      ? [["approve", "Approve plan"], ["request-changes", "Request changes"]]
+      : request.kind === "test"
+        ? [["pass", "Pass"], ["needs-work", "Needs work"]]
+        : request.kind === "approval"
+          ? [["approve", "Approve"], ["reject", "Reject"]]
+          : (request.options ?? []).map((option) => [option, option]);
+    return makeAsk({
+      area: brain.area,
+      subject: request.subject,
+      detail: request.detail,
+      question: request.question,
+      actions: answers.map(([answer, label]) => ({ kind: "request-answer", label, arg: { area: brain.area, id: request.id, answer } })),
+      source: `request:${request.kind}`,
+    });
+  }
+
   /**
    * A live brain sitting at its own dialog. A blocked brain cannot write a
    * plan line about its own blockage, so Tangent asks for it.
@@ -218,6 +239,7 @@
 
 export default {
     makeAsk,
+    askFromRequest,
     askFromPlanRow,
     askFromBrainDialog,
     askFromStoppedStep,

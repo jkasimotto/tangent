@@ -1,0 +1,69 @@
+import path from "node:path";
+import { randomUUID } from "node:crypto";
+import { readJsonObject, writeJsonObject } from "./json-store.mjs";
+
+export const BRAIN_REQUESTS_SCHEMA = "area-brain-requests.v1";
+export const REQUEST_KINDS = new Set(["plan", "decision", "test", "approval"]);
+
+/** Returns the durable request-record path for one Area brain. */
+export function brainRequestsPath(root, area) {
+  return path.join(root, area, "requests.json");
+}
+
+/** Reads one Area's requests, or returns an empty valid record. */
+export async function readBrainRequests(root, area) {
+  const value = await readJsonObject(brainRequestsPath(root, area));
+  return value?.schema === BRAIN_REQUESTS_SCHEMA
+    ? { ...value, area, requests: Array.isArray(value.requests) ? value.requests : [] }
+    : { schema: BRAIN_REQUESTS_SCHEMA, area, requests: [] };
+}
+
+/** Writes one Area's request record atomically. */
+export async function writeBrainRequests(root, record) {
+  return writeJsonObject(brainRequestsPath(root, record.area), record);
+}
+
+/** Validates and appends one open request. */
+export function createBrainRequest(record, input, now = new Date().toISOString()) {
+  const kind = String(input.kind ?? "").trim();
+  const subject = String(input.subject ?? "").trim();
+  const question = String(input.question ?? "").trim();
+  const detail = String(input.detail ?? "").trim();
+  const options = Array.isArray(input.options) ? input.options.map(String).map((item) => item.trim()).filter(Boolean) : [];
+  if (!REQUEST_KINDS.has(kind)) throw new Error("kind must be plan, decision, test, or approval");
+  if (!subject) throw new Error("subject is required");
+  if (!question.endsWith("?")) throw new Error("question must end with ?");
+  if (kind === "decision" && options.length < 2) throw new Error("a decision needs at least two options");
+  const request = { id: randomUUID(), kind, subject, question, detail, options, status: "open", createdAt: now, answeredAt: null, answer: null };
+  record.requests.push(request);
+  return request;
+}
+
+/** Validates and records Julian's answer to one open request. */
+export function answerBrainRequest(record, id, answer, now = new Date().toISOString()) {
+  const request = record.requests.find((item) => item.id === id);
+  if (!request) throw new Error("request not found");
+  if (request.status !== "open") throw new Error("request is already answered");
+  const value = String(answer ?? "").trim();
+  const allowed = request.kind === "plan" ? ["approve", "request-changes"]
+    : request.kind === "test" ? ["pass", "needs-work"]
+      : request.kind === "approval" ? ["approve", "reject"]
+        : request.options;
+  if (!allowed.includes(value)) throw new Error(`answer must be one of: ${allowed.join(", ")}`);
+  request.status = "answered";
+  request.answer = value;
+  request.answeredAt = now;
+  return request;
+}
+
+/** Returns the requests that still need Julian's answer. */
+export function openBrainRequests(record) {
+  return record.requests.filter((request) => request.status === "open");
+}
+
+/** True only when the newest plan request has an approval answer. */
+export function hasApprovedPlan(record) {
+  const plans = record.requests.filter((request) => request.kind === "plan");
+  const latest = plans[plans.length - 1];
+  return Boolean(latest && latest.status === "answered" && latest.answer === "approve");
+}

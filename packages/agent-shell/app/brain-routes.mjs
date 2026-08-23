@@ -9,6 +9,8 @@ export function createBrainRoutes(operations) {
     ["POST /api/brains/verdict", verdict],
     ["POST /api/brains/verdict/undo", undoVerdict],
     ["POST /api/brains/reply", reply],
+    ["POST /api/brains/requests", createRequest],
+    ["POST /api/brains/requests/answer", answerRequest],
   ]);
 
   /** Handles one matching request and reports whether this router owned it. */
@@ -76,6 +78,20 @@ export function createBrainRoutes(operations) {
     const body = await readJson(request);
     const result = await operations.reply(String(body.area ?? ""), String(body.subject ?? ""));
     sendJson(response, result.status, result.status === 200 ? { ok: true } : { error: result.error });
+  }
+
+  /** Creates one durable request. Only the live brain session can call this route. */
+  async function createRequest(request, response) {
+    const body = await readJson(request);
+    const result = await operations.createRequest(String(body.session ?? ""), body);
+    sendJson(response, result.status, result.status === 200 ? { request: result.request } : { error: result.error });
+  }
+
+  /** Records Julian's answer and notifies the controlling brain. */
+  async function answerRequest(request, response) {
+    const body = await readJson(request);
+    const result = await operations.answerRequest(String(body.area ?? ""), String(body.id ?? ""), String(body.answer ?? ""));
+    sendJson(response, result.status, result.status === 200 ? { request: result.request } : { error: result.error });
   }
 
   return { handle };

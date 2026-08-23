@@ -3,6 +3,16 @@ import type { CliCommandSpec } from "@tangent/core";
 const serverOption = { name: "server", takesValue: true, description: "Agent Shell server URL (default http://127.0.0.1:4321, or TANGENT_SHELL_URL)" };
 const jsonOption = { name: "json", description: "Print machine-readable JSON" };
 
+export const handoverCommandSpec: CliCommandSpec = {
+  name: "handover",
+  description: "Report this worker's facts to its controlling Area brain; the brain chooses the next action",
+  args: "<facts...>",
+  options: [
+    { name: "session", takesValue: true, description: "Worker session name; defaults to the tmux session this command runs in" },
+    serverOption
+  ]
+};
+
 export const areaCommandSpec: CliCommandSpec = {
   name: "area",
   description: "List, inspect, and create Tangent tree Areas",
@@ -24,6 +34,25 @@ export const brainCommandSpec: CliCommandSpec = {
   name: "brain",
   description: "The Area brain: the long-lived agent that plans and dispatches an Area's work",
   subcommands: [
+    {
+      name: "advance",
+      description: "Start one pending assignment after you have read the prior worker handover.",
+      args: "<goal> <step>",
+      options: [serverOption]
+    },
+    {
+      name: "request",
+      description: "Create one plan, decision, test, or approval request for Julian.",
+      options: [
+        { name: "kind", takesValue: true, description: "plan, decision, test, or approval" },
+        { name: "subject", takesValue: true, description: "Short request subject" },
+        { name: "question", takesValue: true, description: "The question, ending in ?" },
+        { name: "detail", takesValue: true, description: "The plan, test steps, or decision effects" },
+        { name: "option", takesValue: true, description: "Decision choice; repeat for each choice" },
+        { name: "session", takesValue: true, description: "Brain session; defaults to the current tmux session" },
+        serverOption
+      ]
+    },
     {
       name: "handover",
       description: "Hand this brain's facts to a fresh copy of itself: the next generation starts from the plan and these facts, and this session ends.",

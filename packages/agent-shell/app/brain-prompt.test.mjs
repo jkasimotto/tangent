@@ -173,21 +173,21 @@ test("the brain prompt tells the brain to close finished Goals itself, not leave
   assert.match(show.prompt, /a failure of the brain, not a question for Julian/, "a finished Goal left waiting is a failure, not a question for Julian");
 });
 
-test("a pipeline step under a brain sends its decisions and blockers to the brain, and never waits on Julian in its terminal", async () => {
+test("a pipeline step under a brain has one handover route and never chooses the next agent", async () => {
   const serverSource = await readFile(path.join(here, "server.mjs"), "utf8");
   assert.match(
     serverSource,
-    /If a real decision needs Julian, send it to the brain: .*tangent agent send \$\{brain\.session\}.*Keep going on the brain's answer or its own recommendation; never sit waiting for Julian in this terminal\. Julian decides in Documents and through the brain\./,
-    "under a brain, a stuck pipeline step reports to the brain and keeps going, it never sits waiting for Julian"
+    /Run .*tangent handover.*This operation reports to the brain; it does not choose the next agent\./,
+    "under a brain, a worker reports through one route and does not schedule work"
   );
   assert.match(
     serverSource,
-    /If a real decision needs Julian, ask him here; the pipeline waits\./,
+    /If a real decision needs Julian, ask him here; this legacy pipeline waits\./,
     "a pipeline step with no brain on the Area keeps asking Julian directly"
   );
 });
 
-test("the brain prompt tells the brain the Decide and Test shapes, the question rule, and the verdicts", async (context) => {
+test("the brain prompt uses structured plan, decision, test, and approval requests", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-brain-forjulian-"));
   const trees = path.join(root, "trees");
   const leaf = `probeforjulian${process.pid}`;
@@ -245,22 +245,13 @@ test("the brain prompt tells the brain the Decide and Test shapes, the question 
   openedSessions.push(brain.session);
   const show = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(brain.session)}`).then((response) => response.json());
 
-  assert.match(show.prompt, /## For Julian/, "the prompt has the section that carries what waits on Julian");
-  assert.match(show.prompt, /Every row is a direct ask he answers on the row/, "the invariant of the card leads the section");
-  assert.match(show.prompt, /- Decide \[\[<document>\]\]: <the question, ending with \?> Unblocks: <what his answer unblocks>\./, "the targeted Decide line shape");
-  assert.match(show.prompt, /- Decide: <one question that fits no Document, ending with \?>/, "the targetless Decide line shape");
-  assert.match(show.prompt, /- Test \[\[<goal-slug>\]\]: <where to go, what to press, what he sees; two lines at most>\./, "the Test line shape");
-  assert.match(show.prompt, /A Decide ask must end with a question mark or the line is not shown/, "the question rule is stated");
-  assert.match(show.prompt, /Tangent puts the fixed question "Accept it\?" under every Test row/, "the brain never writes the Test question itself");
-  assert.match(show.prompt, /Write a Test line only for a Goal that is done/, "a Test row is a landed Goal");
-  assert.match(show.prompt, /run `tangent shell rebuild` before you write the Test line/, "the server runs the new code before Julian presses anything");
-  assert.match(show.prompt, /sends you "Julian accepted <target>" or "Julian rejected <target>"/, "the verdict reaches the asker");
-  assert.match(show.prompt, /A bare Reject means: he parks it and comes back to it himself\. Do not follow up, do not re-ask, and do not rewrite the line/, "the park rule");
-  assert.match(show.prompt, /Tangent sends "Julian withdrew his verdict on <target>; the line is back"/, "an undo withdraws the verdict");
-  assert.match(show.prompt, /Tangent messages you once per commit that leaves unshown lines/, "hiding a line is never silent");
-  assert.match(show.prompt, /Tangent sends you "Julian is replying about: <subject>"/, "the brain is told the subject before a reply arrives");
-  assert.match(show.prompt, /`tangent brain status` prints the rows Tangent shows and every line it does not show/, "the brain can check its own misses");
-  assert.match(show.prompt, /ask in the plan's For Julian section \(below\)/, "the decision rule points at the list");
-  assert.doesNotMatch(show.prompt, /Try it|Tried it|Handled/, "the old verbs and shapes are gone");
+  assert.match(show.prompt, /## Requests for Julian/, "the prompt names the request contract");
+  assert.match(show.prompt, /tangent brain request --kind plan/, "the plan approval is explicit");
+  assert.match(show.prompt, /kind decision/, "user decisions use a structured request");
+  assert.match(show.prompt, /kind test/, "tests use a structured request");
+  assert.match(show.prompt, /kind approval/, "one-way approvals use a structured request");
+  assert.match(show.prompt, /Plan reviews use Approve plan and Request changes/, "plan actions are stable");
+  assert.match(show.prompt, /Tests use Pass and Needs work/, "test actions are stable");
+  assert.doesNotMatch(show.prompt, /## For Julian/, "Markdown is not the new control protocol");
   assert.doesNotMatch(show.prompt, /launchctl kickstart/, "the rebuild rule is one command, not a launchctl recipe");
 });

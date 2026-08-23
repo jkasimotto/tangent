@@ -740,7 +740,8 @@ export function createWorkDeskView({ state, api, post, paint, refresh, showToast
           .map((row) => ask.askFromPlanRow(brain, row));
         // A brain stuck at its own dialog cannot write a plan line about being
         // stuck, so Tangent asks for it.
-        const asks = [ask.askFromBrainDialog(brain), ...rows].filter(Boolean);
+        const requests = (brain.requests ?? []).map((request) => ask.askFromRequest(brain, request));
+        const asks = [...requests, ask.askFromBrainDialog(brain), ...rows].filter(Boolean);
         return { area: brain.area, brain, stopped: !brain.live, asks };
       })
       .filter((group) => group.asks.length);
@@ -778,6 +779,7 @@ export function createWorkDeskView({ state, api, post, paint, refresh, showToast
     if (action.kind === "answer" || action.kind === "reply") {
       return `data-reply-area="${escapeHtml(arg.area ?? ask.area)}" data-reply-session="${escapeHtml(arg.session ?? "")}" data-reply-subject="${escapeHtml(arg.subject ?? ask.subject)}"`;
     }
+    if (action.kind === "request-answer") return `data-verdict-area="${escapeHtml(arg.area ?? ask.area)}" data-verdict-line="request:${escapeHtml(arg.id ?? "")}" data-verdict="${escapeHtml(arg.answer ?? "")}"`;
     return `data-verdict-area="${escapeHtml(arg.area ?? ask.area)}" data-verdict-line="${escapeHtml(arg.line ?? "")}" data-verdict="${escapeHtml(action.kind)}"`;
   }
 
@@ -884,6 +886,12 @@ export function createWorkDeskView({ state, api, post, paint, refresh, showToast
     state.verdictLines.add(line);
     paint(true);
     try {
+      if (line.startsWith("request:")) {
+        await post("/api/brains/requests/answer", { area, id: line.slice("request:".length), answer: verdict });
+        showToast("Answer sent to the brain.");
+        await refresh();
+        return;
+      }
       const result = await post("/api/brains/verdict", { area, line, verdict });
       /** Puts the line (and any continuation line it left with) back, and tells the brain the verdict is off. */
       const undo = async () => {

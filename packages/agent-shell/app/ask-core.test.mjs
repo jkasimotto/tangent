@@ -26,6 +26,7 @@ function kinds(ask) {
 test("the exports are the constructor, the five builders, and the three fixed questions", () => {
   assert.deepEqual(Object.keys(core), [
     "makeAsk",
+    "askFromRequest",
     "askFromPlanRow",
     "askFromBrainDialog",
     "askFromStoppedStep",
@@ -35,6 +36,17 @@ test("the exports are the constructor, the five builders, and the three fixed qu
     "DIALOG_QUESTION",
     "RESULT_QUESTION",
   ]);
+});
+
+test("structured requests expose the approved plan, test, and decision actions", () => {
+  const owner = brain();
+  const plan = core.askFromRequest(owner, { id: "p1", kind: "plan", subject: "Work plan", detail: "2 Goals", question: "Approve this plan?", status: "open" });
+  assert.deepEqual(plan.actions.map((action) => [action.label, action.arg.answer]), [["Approve plan", "approve"], ["Request changes", "request-changes"]]);
+  const testAsk = core.askFromRequest(owner, { id: "t1", kind: "test", subject: "Reload", detail: "Press it", question: "Did it reload?", status: "open" });
+  assert.deepEqual(testAsk.actions.map((action) => action.label), ["Pass", "Needs work"]);
+  const decision = core.askFromRequest(owner, { id: "d1", kind: "decision", subject: "Behavior", detail: "One-way door", question: "Which behavior?", options: ["Keep", "Change"], status: "open" });
+  assert.deepEqual(decision.actions.map((action) => action.arg.answer), ["Keep", "Change"]);
+  assert.equal(core.askFromRequest(owner, { id: "x", kind: "plan", subject: "Old", question: "Old?", status: "answered" }), null);
 });
 
 test("makeAsk refuses anything that is not a direct ask", () => {

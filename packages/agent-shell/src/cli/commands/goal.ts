@@ -39,6 +39,7 @@ async function createCommand(args: Args): Promise<void> {
     throw new Error("Each --subgoal-title needs one --subgoal-done-when in the same position.");
   }
   const own = booleanArg(args.own) ? await requireSession(args, "tangent goal create --own") : "";
+  const caller = await currentTmuxSession();
   const result = await postJson(server, "/api/goals/create", {
     area,
     description: stringArg(args.description)?.trim() || "",
@@ -48,6 +49,7 @@ async function createCommand(args: Args): Promise<void> {
       doneWhen: subgoalDoneConditions[index]!.trim()
     })),
     sources: stringsArg(args.source).map((source) => source.trim()).filter(Boolean),
+    ...(caller ? { caller } : {}),
     ...(own ? { own } : {})
   });
   if (booleanArg(args.json)) {
@@ -81,10 +83,11 @@ async function startCommand(args: Args): Promise<void> {
   const server = resolveServerUrl(stringArg(args.server));
   const slug = requiredString(args._[1], "tangent goal start requires <slug>.");
   const goal = await requireGoal(server, slug);
+  const caller = await currentTmuxSession();
   const steps = pipelineSteps(args);
   const result = steps.length
-    ? await postJson(server, "/api/goals/start", { file: goal.file, steps })
-    : await postJson(server, "/api/goals/start", { file: goal.file, approved: true, launch: true });
+    ? await postJson(server, "/api/goals/start", { file: goal.file, steps, ...(caller ? { caller } : {}) })
+    : await postJson(server, "/api/goals/start", { file: goal.file, approved: true, launch: true, ...(caller ? { caller } : {}) });
   if (booleanArg(args.json)) {
     console.log(JSON.stringify(result, null, 2));
     return;
@@ -174,7 +177,8 @@ function parseContinueFrom(value: string | undefined, stepIndex: number): number
 
 /**
  * Handles `tangent goal handover [--continue] <facts...>`. Run by a worker at the end of its step or Goal.
- * Plain: the server records the facts and starts the next step, so the pipeline advances without Julian.
+ * Plain: the server records the facts. A controlling brain chooses the next
+ * transition; legacy work without a brain still advances automatically.
  * `--continue`: this step or Goal is not done; the server hands it to a fresh copy of the same session
  * instead of advancing (design-worker-context-handover D4).
  */
@@ -188,7 +192,8 @@ async function handoverCommand(args: Args): Promise<void> {
   const result = await postJson(server, "/api/goals/handover", body);
   if (result.status === "continued") { console.log(`handed over; a fresh copy continues this step: ${result.session}`); return; }
   const next = result.next as { index?: number; session?: string } | null | undefined;
-  if (result.status === "started" && next) console.log(`handed over; next: step ${next.index} (${next.session})`);
+  if (result.status === "reported") console.log("handed over to the brain; the brain chooses what happens next");
+  else if (result.status === "started" && next) console.log(`handed over; next: step ${next.index} (${next.session})`);
   else console.log("pipeline complete");
 }
 

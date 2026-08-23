@@ -54,4 +54,6 @@ test("tangent brain has handover and status; tangent area gains create", async (
   const create = areaCommandSpec.subcommands.find((entry) => entry.name === "create");
   assert.ok(create, "area spec has a create subcommand");
   assert.equal(create.args, "<parent> <name>");
+  assert.equal(brainCommandSpec.subcommands.find((entry) => entry.name === "advance").args, "<goal> <step>");
+  assert.ok(brainCommandSpec.subcommands.find((entry) => entry.name === "request"));
 });

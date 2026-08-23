@@ -1,10 +1,11 @@
 # @tangent/agent-shell Docs
 
-Purpose: the CLI surface of the Agent Shell. Five lanes, all under the root `tangent` command:
+Purpose: the CLI surface of the Agent Shell, under the root `tangent` command:
 
 - Vault CLI: `tangent area`, `tangent goal`, `tangent idea`, `tangent document`, `tangent vault commit`.
 - Agent messaging CLI: `tangent agent list`, `tangent agent send`.
-- Pipeline CLI: `tangent goal start` (one agent or a list of steps on a Goal) and `tangent goal handover` (a step agent hands facts to the next step, or, with `--continue`, to a fresh copy of itself on the same step when its carried context fills, ADR-0028).
+- Worker CLI: `tangent handover` reports facts to the controlling brain. Pipeline and continuation commands remain for legacy work.
+- Brain CLI: `tangent brain request` creates durable user requests, and `tangent brain advance` starts the next approved assignment.
 - Brain and server CLI: `tangent brain handover|status` (the Area brain's own lane; `status` ends with what Tangent shows Julian) and `tangent shell rebuild` (rebuild and restart the server, and wait for the new boot).
 - Study partner CLI: `tangent study` (spawns an interactive `claude-otto` session carrying the partner contract) and `tangent study contract` (prints that contract).
 

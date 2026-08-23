@@ -32,7 +32,7 @@ export function createPipelineRoutes(operations) {
     sendJson(response, result.status, value);
   }
 
-  /** Restarts, skips, sends, or ends a pipeline step. */
+  /** Advances, restarts, skips, sends, or ends a pipeline step. */
   async function control(request, response) {
     const body = await readJson(request);
     const result = await operations.control(String(body.goal ?? ""), String(body.action ?? ""), body.step);

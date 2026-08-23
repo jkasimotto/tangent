@@ -1,17 +1,43 @@
 import { renderCommandHelp } from "@tangent/core";
-import { booleanArg, parseArgs, stringArg, type Args } from "@tangent/core/cli";
+import { booleanArg, parseArgs, stringArg, stringsArg, type Args } from "@tangent/core/cli";
 
-import { currentTmuxSession, postJson, resolveServerUrl, vaultFetch } from "../client.js";
+import { currentTmuxSession, postJson, requireGoal, resolveServerUrl, vaultFetch } from "../client.js";
 import { brainCommandSpec } from "../spec.js";
 
 /** Dispatches `tangent brain` subcommands. */
 export async function runBrainCli(argv = process.argv.slice(2)): Promise<void> {
-  const args = parseArgs(argv);
+  const args = parseArgs(argv, { repeatable: ["option"] });
   const subcommand = args._[0];
   if (!subcommand || args.help) return help();
   if (subcommand === "handover") return handoverCommand(args);
+  if (subcommand === "advance") return advanceCommand(args);
+  if (subcommand === "request") return requestCommand(args);
   if (subcommand === "status") return statusCommand(args);
   throw new Error(`Unknown brain command: ${subcommand}. Try "tangent brain handover <facts>" or "tangent brain status [area]".`);
+}
+
+/** Creates one structured request for Julian. */
+async function requestCommand(args: Args): Promise<void> {
+  const server = resolveServerUrl(stringArg(args.server));
+  const session = await requireSession(args, "tangent brain request");
+  const kind = stringArg(args.kind)?.trim() || "";
+  const subject = stringArg(args.subject)?.trim() || "";
+  const question = stringArg(args.question)?.trim() || "";
+  const detail = stringArg(args.detail)?.trim() || "";
+  const result = await postJson(server, "/api/brains/requests", { session, kind, subject, question, detail, options: stringsArg(args.option) });
+  console.log(`asked Julian: ${String(result.request?.id ?? "request recorded")}`);
+}
+
+/** Starts one pending assignment after the brain has read the prior handover. */
+async function advanceCommand(args: Args): Promise<void> {
+  const server = resolveServerUrl(stringArg(args.server));
+  const slug = String(args._[1] ?? "").trim();
+  const step = Number(args._[2]);
+  if (!slug) throw new Error("tangent brain advance needs <goal> <step>.");
+  if (!Number.isInteger(step) || step < 1) throw new Error("tangent brain advance needs a positive step number.");
+  const goal = await requireGoal(server, slug);
+  const result = await postJson(server, "/api/pipelines/control", { goal: goal.file, action: "advance", step });
+  console.log(`started ${slug} step ${step} in ${String(result.next?.session ?? "(no session)")}`);
 }
 
 /**
@@ -125,9 +151,8 @@ Examples:
   tangent brain handover "Wave 1 dispatched: area-map runs step 2 (tangent-area-map-s2). Waiting: nothing. Next: review area-map when it completes."
   tangent brain status otto/tangent
 
-The status ends with what Tangent shows Julian: the rows it parsed from the
-plan's "## For Julian" section, then every line of that section it shows
-nothing for. A Decide ask must end with a question mark, and a Test row is
-shown only while its Goal is done.
+Create plan, decision, test, and approval requests with `tangent brain request`.
+Their answers return to this brain as durable notices. Existing For Julian
+plan rows remain visible only for legacy runs during migration.
 `);
 }

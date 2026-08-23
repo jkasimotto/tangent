@@ -41,6 +41,7 @@ import { createStateEvents } from "./state-events.mjs";
 import { createBrainRoutes } from "./brain-routes.mjs";
 import { createPipelineRoutes } from "./pipeline-routes.mjs";
 import { createAgentRoutes } from "./agent-routes.mjs";
+import { createVaultRepository } from "./vault-repository.mjs";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -122,6 +123,9 @@ function withDefaultModel(cmd) {
 const CHAT_SESSION = process.env.CHAT_SESSION ?? "orchestrator";
 const WORKSPACE = process.env.WORKSPACE ?? path.join(here, "workspace");
 const TREES_ROOT = process.env.TREES_ROOT ?? path.join(os.homedir(), ".tangent", "trees");
+/** Runs one Git command for the vault repository boundary. */
+const runRepositoryGit = (args) => execFileAsync("git", args);
+const vaultRepository = createVaultRepository({ root: TREES_ROOT, runGit: runRepositoryGit });
 /** Per-file git times and agent runs for the vault, cached by HEAD (design-area-map Decision 9, design-goal-cards Decision 1). */
 const vaultGit = createVaultGitReader(TREES_ROOT);
 /**
@@ -626,11 +630,7 @@ function linkTargetsRecord(target, record) {
 
 /** Writes one Document atomically and commits only that path. */
 async function writeVaultDocument(current, text, message, tmuxSession = null) {
-  const safe = safeMarkdownPath(TREES_ROOT, current.file);
-  const temp = `${safe.absolute}.tangent-${process.pid}-${Date.now()}.tmp`;
-  await writeFile(temp, text, "utf8");
-  await rename(temp, safe.absolute);
-  await vaultCommit([safe.relative], message, current.area, tmuxSession);
+  await vaultRepository.writeAndCommit(current.file, text, message, current.area, tmuxSession);
   return { ...current, text, hash: documentHash(text), comments: documentComments.parseComments(text) };
 }
 
@@ -1306,12 +1306,7 @@ async function saveWorkIdea(area, description) {
  * on, the file edit itself already happened.
  */
 async function vaultCommit(relPaths, message, area, tmuxSession) {
-  const trailers = [`Tangent-Area: ${area}`, tmuxSession ? `Tangent-Tmux: ${tmuxSession}` : null].filter(Boolean);
-  try {
-    await execFileAsync("git", ["-C", TREES_ROOT, "commit", "-m", message, "-m", trailers.join("\n"), "--", ...relPaths]);
-  } catch (err) {
-    console.error(`vault commit failed: ${relPaths.join(", ")}: ${String(err.stderr ?? err.message ?? err).slice(0, 200)}`);
-  }
+  await vaultRepository.commit(relPaths, message, area, tmuxSession);
 }
 
 /**

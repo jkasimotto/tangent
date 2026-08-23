@@ -278,7 +278,7 @@ export function createShellInteractions({ state, api, post, paint, refresh, show
     if (["stop", "close"].includes(action) && state.view === "program-session") state.view = "program-detail";
     await refresh();
     paint(true);
-    const messages = { start: "The process started.", restart: "The process restarted.", stop: "The program stopped.", close: "The saved session was removed.", run: program.type === "routine" ? "The agent started." : "The command started.", pause: "The schedule is paused.", resume: "The schedule is active." };
+    const messages = { start: "The process started.", restart: "The process restarted.", stop: "The program stopped.", close: "The saved session was removed.", run: "The command started." };
     showToast(messages[action] || "The program changed.");
   }
 
@@ -291,15 +291,13 @@ export function createShellInteractions({ state, api, post, paint, refresh, show
       return;
     }
     const descriptions = {
-      run: program.type === "routine"
-        ? `Start ${program.label} now in ${program.cwd}. The normal schedule does not change.`
-        : `Run “${program.command}” in ${program.cwd}.`,
+      run: `Run “${program.command}” in ${program.cwd}.`,
       restart: `Stop the current process, then run “${program.command}” again.`,
       stop: "Stop the live program. A managed process keeps its session and scrollback.",
       close: "Remove the retained tmux session and its scrollback. The program definition stays here.",
     };
     openModal({
-      kicker: program.type === "routine" ? "Scheduled agent" : program.type === "command" ? "Command" : "Managed process",
+      kicker: program.type === "command" ? "Command" : "Managed process",
       title: action === "run" ? `Run ${program.label}?` : action === "restart" ? `Restart ${program.label}?` : action === "close" ? "Remove the saved log?" : `Stop ${program.label}?`,
       copy: descriptions[action],
       confirmLabel: action === "run" ? "Run now" : action === "restart" ? "Restart" : action === "close" ? "Remove log" : "Stop",

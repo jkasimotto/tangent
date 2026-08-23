@@ -1,6 +1,6 @@
 import { readJson, sendJson } from "./http-json.mjs";
 
-/** Creates the HTTP route table for local programs and routines. */
+/** Creates the HTTP route table for local processes and commands. */
 export function createProgramRoutes(operations) {
   const routes = new Map([
     ["GET /api/programs", list],
@@ -21,7 +21,7 @@ export function createProgramRoutes(operations) {
     sendJson(response, 200, await operations.list());
   }
 
-  /** Creates one process, command, or routine. */
+  /** Creates one process or command. */
   async function create(request, response) {
     await mutate(request, response, operations.create);
   }

@@ -28,7 +28,6 @@ rollup -> usage-index-sqlite, core, repo, agent-runtime
 eval  -> usage-index-sqlite, core, repo, agent-runtime, ui-server, eval-ui
 usage -> usage-core, usage-index-sqlite, usage-providers, core, repo, ui-server, usage-ui, usage-ui-data
 search -> core, repo
-threads -> usage-index-sqlite, core, repo, agent-runtime
 repo -> core
 agent-runtime -> core
 governance -> core, repo
@@ -67,8 +66,6 @@ Eval owns local coding-agent evals: specs, contexts, run manifests, agent runs, 
 Eval also owns the mark loop's internal modules (`packages/eval/src/marks/`): the `tangent.mark.v1` record, a per-file JSON store under `~/.tangent/marks/`, mark-to-eval promotion, and Claude session resolution reused from Usage's transcript discovery. These back the Eval UI's marks inbox (`packages/eval/src/server/marks-routes.ts`) directly. The `tangent mark` root CLI command that used to front this store was removed 2026-08-15 (ADR-0020); marks are the connecting artifact from noticing an agent failure (or mining a telemetry exemplar) to proving a fix through the existing eval machinery; see ADR-0015 and `docs/superpowers/specs/2026-07-05-mark-loop-design.md`.
 
 Search owns structural indexing and search over TypeScript and Dart source: a SQLite index per repo, symbol/callers/callees/tests/skeleton/open-plan lookups, and a standalone CLI plus SDK. It is a standalone vertical: it does not depend on Usage, Rollup, or Eval, and none of those may depend on it. It is the subject of the mark loop's flagship eval (phase 2c), which mines information-heavy Usage sessions and compares a `baseline` variant against a `with-search` variant to prove or refute the tool's value.
-
-Threads owns delegated-thread sweep over the tangent vault and Usage telemetry: `tangent threads sweep` derives thread state from vault thread files, overview items, live dispatched agent sessions read through `@tangent/usage-index-sqlite`, and git activity in registered worktrees, then writes `~/.tangent/trees/threads.md` and a statusline sidecar. It reaches the vault by path convention only, never as a code dependency, and never imports Eval or Rollup. See `docs/superpowers/specs/2026-07-16-delegated-threads-orchestration-design.md` and ADR-0016.
 
 `@tangent/agent-shell` owns the vault CLI, the agent messaging CLI, the worker handover CLI (`tangent handover`), the pipeline CLI, the brain CLI, the server CLI, and `tangent study`. The Agent Shell server owns pipelines, Area brains, and durable brain requests. The nearest live Area brain is the control plane for managed work in its subtree. Workers report facts; the brain selects the next assignment. Agent-originated Goal creation and launch require an approved plan request. Legacy work without a brain can still use automatic pipeline advance during migration. See ADR-0029, ADR-0024, and ADR-0023.
 

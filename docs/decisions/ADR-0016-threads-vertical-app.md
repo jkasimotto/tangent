@@ -1,5 +1,7 @@
 # ADR-0016 Threads Vertical App
 
+> Superseded by ADR-0029. The package and its Agent Shell routine surface were removed after they fell out of use.
+
 Date: 2026-07-16
 
 ## Decision

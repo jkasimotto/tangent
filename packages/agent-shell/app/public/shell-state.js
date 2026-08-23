@@ -15,7 +15,7 @@ export function createShellState(storage = globalThis.localStorage, href = globa
   const savedDescribeSession = storage.getItem("agent-shell.describe-session") || storedDescribeDraft?.session || "";
   const state = {
     vault: null,
-    programs: { programs: [], errors: [], areas: [], liveCount: 0, timezone: "", scheduler: { installed: false, intervalMinutes: 30 } },
+    programs: { programs: [], errors: [], areas: [], liveCount: 0 },
     sessions: [], contextHandoverTokens: 0,
     currentFile: storage.getItem("agent-shell.current-goal") || "", view: initialView,
     document: null, documentReturn: null, documentTrail: [], documentTrailIndex: -1, documentPositions: new Map(),
@@ -25,7 +25,7 @@ export function createShellState(storage = globalThis.localStorage, href = globa
     expandedAreas: new Set(storedJson("agent-shell.expanded-areas") || []),
     collapsedDeskSections: new Set(storedJson("agent-shell.collapsed-desk-sections") || []),
     mapStates: new Map(), mapSelectFile: "", showDoneAreas: storage.getItem("agent-shell.show-done-areas") === "1", areaEdit: null,
-    programId: "", programDraft: { type: "process", area: "", name: "", command: "", time: "07:30", cwd: "", model: "sonnet", prompt: "" },
+    programId: "", programDraft: { type: "process", area: "", name: "", command: "", cwd: "" },
     launch: { area: "", options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", continueFrom: null, steps: [], active: 0, record: null },
     pipelines: [], brains: [], brainDraft: null, agentSessionName: null,
     verdictLines: new Set(), goalSelection: [], goTo: null, launchTarget: "", launchAnchor: null, whatHappened: null,

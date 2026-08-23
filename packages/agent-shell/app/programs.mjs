@@ -93,50 +93,11 @@ export function parseProgramManifest(text, file = PROCESS_FILE) {
   return { scripts: readMap("scripts"), commands: readMap("commands") };
 }
 
-/** Reads one recurring-agent definition without expanding its prompt. */
-export function parseRoutine(area, file, text) {
-  const match = text.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
-  if (!match) throw new Error(`${file}: frontmatter is missing`);
-  const fields = {};
-  for (const line of match[1].split("\n")) {
-    const field = line.match(/^([a-z_]+):\s*(.*)$/);
-    if (field) fields[field[1]] = field[2].trim();
-  }
-  const schedule = fields.schedule?.match(/^daily\s+(\d{2}:\d{2})$/i);
-  if (!schedule) throw new Error(`${file}: only daily HH:MM schedules are supported here`);
-  if (!fields.cwd) throw new Error(`${file}: cwd is required`);
-  return {
-    id: `routine:${area}:${file}`,
-    type: "routine",
-    area,
-    name: file.replace(/^recur-/, "").replace(/\.md$/, ""),
-    label: programLabel(file.replace(/^recur-/, "").replace(/\.md$/, "")),
-    source: `${area}/${file}`,
-    schedule: `daily ${schedule[1]}`,
-    time: schedule[1],
-    cwd: fields.cwd.replace(/^~(?=\/|$)/, os.homedir()),
-    model: fields.model || "sonnet",
-    paused: fields.paused?.toLowerCase() === "true",
-    prompt: match[2].trim(),
-    sessionName: `tg-${file.replace(/^recur-/, "").replace(/\.md$/, "")}`,
-  };
-}
-
-/** Computes the next local run for one daily time. */
-function nextDailyRun(time, now = new Date()) {
-  const [hour, minute] = time.split(":").map(Number);
-  const next = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, minute, 0, 0);
-  if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1);
-  return next.toISOString();
-}
-
-/** Reads all processes, commands, and recurring agents for the UI. */
-export async function programsSnapshot({ treesRoot, sessions = [], sidecarFile = path.join(os.homedir(), ".tangent", "threads-status.json") }) {
+/** Reads all managed processes and commands for the UI. */
+export async function programsSnapshot({ treesRoot, sessions = [] }) {
   const programs = [];
   const errors = [];
   const areas = [];
-  let sidecar = {};
-  try { sidecar = JSON.parse(await readFile(sidecarFile, "utf8")); } catch {}
   for (const area of await allAreas(treesRoot)) {
     const directory = absoluteAreaPath(treesRoot, area);
     const cwd = await programDirectory(treesRoot, area);
@@ -161,23 +122,6 @@ export async function programsSnapshot({ treesRoot, sessions = [], sidecarFile =
         errors.push({ area, file: `${area}/${PROCESS_FILE}`, error: error.message });
       }
     }
-    let files = [];
-    try { files = await readdir(directory); } catch {}
-    for (const file of files.filter((name) => /^recur-[^/]+\.md$/.test(name))) {
-      try {
-        const routine = parseRoutine(area, file, await readFile(path.join(directory, file), "utf8"));
-        const session = sessions.find((item) => item.name === routine.sessionName) ?? null;
-        programs.push({
-          ...routine,
-          session,
-          available: existsSync(routine.cwd),
-          lastRunAt: sidecar.recur?.[routine.name]?.lastRunAt ?? null,
-          nextRunAt: routine.paused ? null : nextDailyRun(routine.time),
-        });
-      } catch (error) {
-        errors.push({ area, file: `${area}/${file}`, error: error.message });
-      }
-    }
   }
   programs.sort((left, right) => {
     const leftLive = left.session && !["shell", "stopped"].includes(left.session.state) ? 1 : 0;
@@ -185,7 +129,7 @@ export async function programsSnapshot({ treesRoot, sessions = [], sidecarFile =
     return rightLive - leftLive || left.area.localeCompare(right.area) || left.label.localeCompare(right.label);
   });
   const liveCount = programs.filter((program) => program.session && !["shell", "stopped"].includes(program.session.state)).length;
-  return { programs, errors, areas, liveCount, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone };
+  return { programs, errors, areas, liveCount };
 }
 
 /** Adds one local process or command definition to an Area. */
@@ -207,35 +151,4 @@ export async function saveLocalProgram({ treesRoot, area, type, name, command, c
   await writeFile(temporary, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   await rename(temporary, file);
   return { id: `${type}:${clean}:${slug}`, area: clean, name: slug };
-}
-
-/** Creates one committed daily agent routine definition. */
-export async function saveRoutine({ treesRoot, area, name, time, cwd, model, prompt }) {
-  const clean = cleanAreaPath(area);
-  const slug = areaSlug(name);
-  if (!PROGRAM_NAME.test(slug)) throw new Error("Use a routine name with letters or numbers.");
-  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(time ?? ""))) throw new Error("Use a valid daily time.");
-  const directory = String(cwd ?? "").replace(/^~(?=\/|$)/, os.homedir());
-  if (!path.isAbsolute(directory) || !existsSync(directory)) throw new Error("Choose an existing working directory.");
-  if (!String(prompt ?? "").trim()) throw new Error("Describe what the agent must do.");
-  for (const other of await allAreas(treesRoot)) {
-    if (existsSync(path.join(absoluteAreaPath(treesRoot, other), `recur-${slug}.md`))) throw new Error(`A routine named “${programLabel(slug)}” already exists.`);
-  }
-  const file = `${clean}/recur-${slug}.md`;
-  const text = `---\nschedule: daily ${time}\ncwd: ${directory}\nmodel: ${String(model || "sonnet").trim()}\npaused: false\n---\n${String(prompt).trim()}\n`;
-  await writeFile(path.join(treesRoot, file), text, "utf8");
-  return { id: `routine:${clean}:recur-${slug}.md`, file, area: clean, name: slug };
-}
-
-/** Changes a recurring agent's paused field without changing its prompt. */
-export async function setRoutinePaused({ treesRoot, source, paused }) {
-  const relative = cleanAreaPath(source);
-  if (!/\/recur-[^/]+\.md$/.test(relative)) throw new Error("Choose a recurring agent routine.");
-  const file = absoluteAreaPath(treesRoot, relative);
-  const text = await readFile(file, "utf8");
-  const next = /^paused:/m.test(text)
-    ? text.replace(/^paused:.*$/m, `paused: ${paused ? "true" : "false"}`)
-    : text.replace(/^---\n/, `---\npaused: ${paused ? "true" : "false"}\n`);
-  await writeFile(file, next, "utf8");
-  return { file: relative, paused: Boolean(paused) };
 }

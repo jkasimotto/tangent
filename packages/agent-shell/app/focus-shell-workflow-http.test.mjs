@@ -103,16 +103,8 @@ test("the context-first shell is default and keeps the user's understanding with
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ type: "routine", area: "otto/test", name: "Daily check", time: "07:30", cwd: workspace, model: "sonnet", prompt: "Check the area and leave proof." }),
-  }).then((response) => response.json());
-  assert.equal(routine.id, "routine:otto/test:recur-daily-check.md");
-
-  const paused = await fetch(`${base}/api/programs/control`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ id: routine.id, action: "pause" }),
   });
-  assert.equal(paused.status, 200);
-  assert.match(await readFile(path.join(areaDirectory, "recur-daily-check.md"), "utf8"), /^paused: true$/m);
+  assert.equal(routine.status, 409, "the removed daily-agent type is rejected");
 
   const createdArea = await fetch(`${base}/api/areas/new`, {
     method: "POST",

@@ -9,7 +9,6 @@ root CLI lazy optional products
   -> @tangent/rollup/cli
   -> @tangent/search/cli
   -> @tangent/eval/cli
-  -> @tangent/threads/cli
   -> @tangent/governance/cli
 
 @tangent/rollup -> @tangent/usage-index-sqlite, @tangent/core, @tangent/repo, @tangent/agent-runtime
@@ -17,7 +16,6 @@ root CLI lazy optional products
 @tangent/eval -> @tangent/usage-index-sqlite, @tangent/core, @tangent/repo, @tangent/agent-runtime, @tangent/ui-server, @tangent/eval-ui
 @tangent/usage -> @tangent/core, @tangent/repo, @tangent/ui-server, @tangent/usage-core, @tangent/usage-index-sqlite, @tangent/usage-providers, @tangent/usage-ui, @tangent/usage-ui-data
 @tangent/search -> @tangent/core, @tangent/repo
-@tangent/threads -> @tangent/core, @tangent/repo, @tangent/agent-runtime, @tangent/usage-index-sqlite
 @tangent/repo -> @tangent/core
 @tangent/agent-runtime -> @tangent/core
 @tangent/governance -> @tangent/core
@@ -40,4 +38,4 @@ UI graph:
 
 The graph is enforced by @tangent/governance. If a package dependency changes, update this file and the lint allowlist in the same change. Usage subpaths `/schema`, `/core`, and `/query` are dependency-light entrypoints and must not load optional SQLite, server, or UI code. The Usage package-level UI dependencies are for `tangent usage ui` and the `@tangent/usage/server` subpath.
 
-Package manifests must keep this graph publishable: use normal semver ranges for `@tangent/*` dependencies, not local workspace protocols. Installing one vertical app should install only that app plus its declared platform dependencies. Rollup/Eval/Threads may install dependency-light Usage data packages, but must not install the full Usage app or Usage UI packages just to read telemetry. The root `tangent` package is a thin shell and must not install product packages through `dependencies`; first-party products are optional peers or separately installed packages.
+Package manifests must keep this graph publishable: use normal semver ranges for `@tangent/*` dependencies, not local workspace protocols. Installing one vertical app should install only that app plus its declared platform dependencies. Rollup and Eval may install dependency-light Usage data packages, but must not install the full Usage app or Usage UI packages just to read telemetry. The root `tangent` package is a thin shell and must not install product packages through `dependencies`; first-party products are optional peers or separately installed packages.

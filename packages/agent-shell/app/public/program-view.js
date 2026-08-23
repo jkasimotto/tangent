@@ -19,10 +19,9 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
 
   /** Describes one program's current state in plain language. */
   function programState(program) {
-    if (program.paused) return "Paused";
-    if (!program.session) return program.type === "routine" ? "Scheduled" : "Not running";
+    if (!program.session) return "Not running";
     if (["stopped", "shell"].includes(program.session.state)) return "Stopped · log kept";
-    return program.type === "routine" ? "Agent running" : "Running";
+    return "Running";
   }
 
   /** Formats one stored instant for the local reader. */
@@ -35,7 +34,7 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
 
   /** Names the kind of one program for a reader. */
   function programKind(program) {
-    return program.type === "process" ? "Server or watcher" : program.type === "command" ? "Command" : "Daily agent";
+    return program.type === "process" ? "Server or watcher" : "Command";
   }
 
   /**
@@ -44,7 +43,6 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
    */
   function programRowControl(program) {
     if (programIsLive(program)) return { action: "stop", label: "Stop" };
-    if (program.type === "routine") return { action: "run", label: "Run now" };
     if (!program.available) return null;
     return program.type === "process" ? { action: "start", label: "Start" } : { action: "run", label: "Run" };
   }
@@ -55,7 +53,7 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
     return `
       <div class="program-row">
         <button class="program-open" type="button" data-select-program="${escapeHtml(program.id)}">
-          <small>${escapeHtml(programKind(program))}</small><strong>${escapeHtml(program.label)}</strong><em>${escapeHtml(program.type === "routine" ? program.schedule : program.command)}</em>
+          <small>${escapeHtml(programKind(program))}</small><strong>${escapeHtml(program.label)}</strong><em>${escapeHtml(program.command)}</em>
         </button>
         <div class="program-row-controls">
           <span class="program-state ${programIsLive(program) ? "live" : ""}">${escapeHtml(programState(program))}</span>
@@ -82,12 +80,6 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
         live ? `<button class="danger-button" type="button" data-program-action="stop">Stop…</button>` : `<button class="primary-button" type="button" data-program-action="run">Run…</button>`,
         retained && !live ? `<button class="quiet-button" type="button" data-program-action="close">Remove saved log…</button>` : "",
       ].join("");
-    } else {
-      actions = [
-        live ? `<button class="secondary-button" type="button" data-open-program-session>Open agent</button><button class="danger-button" type="button" data-program-action="stop">Stop agent…</button>` : "",
-        `<button class="primary-button" type="button" data-program-action="run">Run now…</button>`,
-        `<button class="quiet-button" type="button" data-program-action="${program.paused ? "resume" : "pause"}">${program.paused ? "Resume schedule" : "Pause schedule"}</button>`,
-      ].join("");
     }
     return `
       <article class="program-detail">
@@ -96,11 +88,10 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
         <h1>${escapeHtml(program.label)}</h1>
         <p class="program-detail-state"><span class="status-mark"></span>${escapeHtml(programState(program))}</p>
         <dl class="program-facts">
-          ${program.type === "routine" ? `<div><dt>Schedule</dt><dd>${escapeHtml(program.schedule)} · ${escapeHtml(state.programs.timezone || "local time")}</dd></div><div><dt>Dispatcher</dt><dd>${state.programs.scheduler.installed ? `Active · checks every ${state.programs.scheduler.intervalMinutes} minutes` : "Not installed"}</dd></div><div><dt>Next run</dt><dd>${program.paused ? "Paused" : escapeHtml(localMoment(program.nextRunAt))}</dd></div><div><dt>Last run</dt><dd>${escapeHtml(localMoment(program.lastRunAt))}</dd></div><div><dt>Agent</dt><dd>${escapeHtml(program.model)}</dd></div>` : `<div><dt>Command</dt><dd><code>${escapeHtml(program.command)}</code></dd></div>`}
+          <div><dt>Command</dt><dd><code>${escapeHtml(program.command)}</code></dd></div>
           <div><dt>Folder</dt><dd><code>${escapeHtml(program.cwd || "No area folder is recorded")}</code></dd></div>
           ${program.session ? `<div><dt>Session</dt><dd><code>${escapeHtml(program.sessionName)}</code></dd></div>` : ""}
         </dl>
-        ${program.type === "routine" ? `<section class="routine-prompt"><p class="kicker">What the agent does</p><p>${escapeHtml(program.prompt)}</p></section>` : ""}
         <div class="program-actions">${actions}</div>
       </article>`;
   }
@@ -110,7 +101,7 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
     return state.programs.areas.find((item) => item.path === area)?.cwd || "";
   }
 
-  /** Renders creation for a process, command, or daily agent. */
+  /** Renders creation for a process or command. */
   function renderProgramCreate() {
     const draft = state.programDraft;
     return `
@@ -118,18 +109,13 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
         <p class="kicker">New program</p><h1>What should run?</h1>
         <p class="create-lede">Keep the setup with its area. Nothing runs until you use a clear action.</p>
         <form class="create-form" data-program-form data-command-enter-submit>
-          <label><span>Kind</span><select name="type" data-program-draft="type"><option value="process" ${draft.type === "process" ? "selected" : ""}>Server or watcher</option><option value="command" ${draft.type === "command" ? "selected" : ""}>One-off command</option><option value="routine" ${draft.type === "routine" ? "selected" : ""}>Daily agent</option></select></label>
+          <label><span>Kind</span><select name="type" data-program-draft="type"><option value="process" ${draft.type === "process" ? "selected" : ""}>Server or watcher</option><option value="command" ${draft.type === "command" ? "selected" : ""}>One-off command</option></select></label>
           <label><span>Area</span><select name="area" data-program-draft="area" required>${areaOptions(draft.area)}</select></label>
           <label><span>Name</span><input name="name" data-program-draft="name" value="${escapeHtml(draft.name)}" required placeholder="Development server" /></label>
-          ${draft.type === "routine" ? `
-            <label><span>Daily time</span><input name="time" data-program-draft="time" type="time" value="${escapeHtml(draft.time)}" required /></label>
-            <label><span>Working folder</span><input name="cwd" data-program-draft="cwd" value="${escapeHtml(draft.cwd)}" required placeholder="/path/to/repository" /></label>
-            <label><span>Model</span><input name="model" data-program-draft="model" value="${escapeHtml(draft.model)}" required /></label>
-            <label><span>Instructions</span><textarea name="prompt" data-program-draft="prompt" required placeholder="Describe the complete job and what proof the agent must leave.">${escapeHtml(draft.prompt)}</textarea></label>` : `
-            <label><span>Working folder</span><input name="cwd" data-program-draft="cwd" value="${escapeHtml(draft.cwd)}" required placeholder="/path/to/repository" /></label>
-            <label><span>Command</span><input name="command" data-program-draft="command" value="${escapeHtml(draft.command)}" required placeholder="npm run dev" /></label>`}
+          <label><span>Working folder</span><input name="cwd" data-program-draft="cwd" value="${escapeHtml(draft.cwd)}" required placeholder="/path/to/repository" /></label>
+          <label><span>Command</span><input name="command" data-program-draft="command" value="${escapeHtml(draft.command)}" required placeholder="npm run dev" /></label>
           <div class="create-actions"><button class="primary-button" type="submit">Save program <kbd>⌘↵</kbd></button><button class="quiet-button" type="button" data-cancel-program-create>Cancel</button></div>
-          <p class="form-note">${draft.type === "routine" ? "The local scheduler checks twice an hour. It never starts a second copy while one is running." : "Commands always ask before they run. Process sessions keep their scrollback after Stop."}</p>
+          <p class="form-note">Commands always ask before they run. Process sessions keep their scrollback after Stop.</p>
         </form>
       </article>`;
   }

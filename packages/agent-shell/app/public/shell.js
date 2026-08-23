@@ -937,8 +937,6 @@ async function refresh({ initial = false } = {}) {
       errors: programs.errors || [],
       areas: programs.areas || [],
       liveCount: Number(programs.liveCount || 0),
-      timezone: programs.timezone || "",
-      scheduler: programs.scheduler || { installed: false, intervalMinutes: 30 },
     };
     state.caffeinate = Boolean(sessionPayload.caffeinate);
     state.pendingCommits = sessionPayload.pendingCommits || [];

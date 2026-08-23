@@ -17,7 +17,6 @@ const productCommands: Record<string, ProductCommand> = {
   rollup: { module: "@tangent/rollup/cli", exportName: "runRollupCli", installHint: "rollup" },
   search: { module: "@tangent/search/cli", exportName: "runSearchCli", installHint: "search" },
   eval: { module: "@tangent/eval/cli", exportName: "runEvalCli", installHint: "eval" },
-  threads: { module: "@tangent/threads/cli", exportName: "runThreadsCli", installHint: "threads" },
   agent: { module: "@tangent/agent-shell/cli", exportName: "runAgentCli", installHint: "agent" },
   area: { module: "@tangent/agent-shell/cli", exportName: "runAreaCli", installHint: "area" },
   brain: { module: "@tangent/agent-shell/cli", exportName: "runBrainCli", installHint: "brain" },
@@ -53,7 +52,6 @@ const tangentCommandSpec: CliCommandSpec = {
     productCommandSpec("rollup", "Generate private rollup notes"),
     productCommandSpec("search", "Index and search repository structure"),
     productCommandSpec("eval", "Run and inspect coding-agent evals"),
-    productCommandSpec("threads", "Delegated-thread sweep, registry, and attach"),
     { name: "agent", description: "List live agents and send messages between them; install @tangent/agent-shell if unavailable", args: "<list|send>" },
     { name: "area", description: "List, inspect, and create Tangent tree Areas; install @tangent/agent-shell if unavailable", args: "<list|show|create>" },
     { name: "brain", description: "The Area brain: hand over to a fresh copy of itself, or show its status; install @tangent/agent-shell if unavailable", args: "<handover|status>" },
@@ -199,7 +197,6 @@ Examples:
   tangent goal create --area otto/dnd --title "Connect chosen ramp faces" --done-when "The chosen faces connect at the dragged width."
   tangent idea add otto/dnd Maybe add a calmer return screen later.
   tangent vault commit otto/dnd/dnd.md -m "note: otto/dnd captures an idea"
-  tangent threads sweep
   tangent completion zsh
 `);
 }

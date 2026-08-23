@@ -14,7 +14,7 @@ import { doneCascade } from "./goal-cascade.mjs";
 import { noteResource } from "./area-agent-command.mjs";
 import { harnessEfforts, harnessModels, inheritedLaunch, modelEfforts, parseHarnessRegistry, resolveLaunch, upsertEnvironmentLaunch, upsertHarnessRegistry, validateHarnessRegistry } from "./launch-environment.mjs";
 import { createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
-import { commandSession, programsSnapshot, saveLocalProgram, saveRoutine, setRoutinePaused } from "./programs.mjs";
+import { commandSession, programsSnapshot, saveLocalProgram } from "./programs.mjs";
 import { documentHash, markdownTitle, safeMarkdownPath, wikiLinks } from "./vault-documents.mjs";
 import { rationaleDossierContract } from "./rationale-dossier.mjs";
 import documentComments from "./public/document-comments.js";
@@ -550,25 +550,6 @@ async function runLocalTangent(args) {
   });
 }
 
-let schedulerStatusCache = null;
-
-/** Reports whether the macOS recurring-agent dispatcher is installed. */
-async function recurringSchedulerStatus() {
-  if (schedulerStatusCache && Date.now() - schedulerStatusCache.at < 30_000) return schedulerStatusCache.value;
-  const service = `gui/${os.userInfo().uid}/com.tangent.threads-recur`;
-  try {
-    const { stdout } = await execFileAsync("launchctl", ["print", service]);
-    const lastExit = stdout.match(/last exit code = (-?\d+)/)?.[1] ?? null;
-    const value = { installed: true, intervalMinutes: 30, lastExitCode: lastExit === null ? null : Number(lastExit) };
-    schedulerStatusCache = { at: Date.now(), value };
-    return value;
-  } catch {
-    const value = { installed: false, intervalMinutes: 30, lastExitCode: null };
-    schedulerStatusCache = { at: Date.now(), value };
-    return value;
-  }
-}
-
 // ---- goals ----
 // Goal files live beside their Area note. A Goal can contain other Goals
 // through the Subgoals section. This relation records why and how. It does not
@@ -613,7 +594,6 @@ async function readAreaDocuments(area) {
     const absolute = path.join(dir, name);
     try {
       const [text, info] = await Promise.all([readFile(absolute, "utf8"), stat(absolute)]);
-      if (name.startsWith("recur-") || parseFrontmatter(text).type === "routine") continue;
       documents.push({
         file, area, kind: "document", title: markdownTitle(text, name.slice(0, -3)),
         mtime: info.mtimeMs, hash: documentHash(text), links: wikiLinks(text),
@@ -3903,28 +3883,13 @@ const areaRoutes = createAreaRoutes({
   },
 });
 const programRoutes = createProgramRoutes({
-  /** Returns programs with live and recurring-scheduler status. */
+  /** Returns local programs with live status. */
   async list() {
-    const payload = await programsSnapshot({ treesRoot: TREES_ROOT, sessions: await listProgramSessions() });
-    return { ...payload, scheduler: await recurringSchedulerStatus() };
+    return programsSnapshot({ treesRoot: TREES_ROOT, sessions: await listProgramSessions() });
   },
-  /** Creates one local program or committed routine. */
+  /** Creates one local process or command. */
   async create(body) {
-    if (body.type !== "routine") {
-      return saveLocalProgram({ treesRoot: TREES_ROOT, area: body.area, type: body.type, name: body.name, command: body.command, cwd: body.cwd });
-    }
-    const created = await saveRoutine({
-      treesRoot: TREES_ROOT,
-      area: body.area,
-      name: body.name,
-      time: body.time,
-      cwd: body.cwd,
-      model: body.model,
-      prompt: body.prompt,
-    });
-    await runVaultGit(["add", "--", created.file]);
-    await vaultCommit([created.file], `add: ${created.area} routine ${created.name}`, created.area, null);
-    return created;
+    return saveLocalProgram({ treesRoot: TREES_ROOT, area: body.area, type: body.type, name: body.name, command: body.command, cwd: body.cwd });
   },
   /** Applies one control action to a configured program. */
   async control(body) {
@@ -3937,16 +3902,8 @@ const programRoutes = createProgramRoutes({
       await runLocalTangent(["process", action, program.name, "--area", program.area]);
     } else if (program.type === "command") {
       await controlCommand(program, action);
-    } else if (["pause", "resume"].includes(action)) {
-      const changed = await setRoutinePaused({ treesRoot: TREES_ROOT, source: program.source, paused: action === "pause" });
-      await runVaultGit(["add", "--", changed.file]);
-      await vaultCommit([changed.file], `update: ${program.area} routine ${program.name} ${action}d`, program.area, null);
-    } else if (action === "run") {
-      await runLocalTangent(["threads", "recur", "run", program.name]);
-    } else if (["stop", "close"].includes(action)) {
-      if (program.session) await execFileAsync("tmux", ["kill-session", "-t", `=${program.sessionName}`]);
     } else {
-      throw new Error("Choose Run, Pause, Stop, or Close.");
+      throw new Error("Choose Start, Run, Stop, Restart, or Close.");
     }
     return { ok: true };
   },

@@ -25,7 +25,6 @@ const packages = {
   search: "packages/search",
   rollup: "packages/rollup",
   eval: "packages/eval",
-  threads: "packages/threads",
   tangent: "."
 };
 
@@ -47,7 +46,6 @@ const packageNames = {
   search: "@tangent/search",
   rollup: "@tangent/rollup",
   eval: "@tangent/eval",
-  threads: "@tangent/threads",
   tangent: "tangent"
 };
 
@@ -85,13 +83,6 @@ const smokeTargets = [
     importName: "@tangent/eval",
     bin: "tangent-eval",
     absentPackages: ["usage", "usage-ui", "usage-ui-data", "search", "rollup"]
-  },
-  {
-    name: "@tangent/threads",
-    tarballs: ["core", "repo", "agent-runtime", "usage-core", "usage-providers", "usage-index-sqlite", "threads"],
-    importName: "@tangent/threads",
-    bin: "tangent-threads",
-    absentPackages: ["usage", "usage-ui", "usage-ui-data", "search", "rollup", "eval"]
   },
   {
     name: "tangent",

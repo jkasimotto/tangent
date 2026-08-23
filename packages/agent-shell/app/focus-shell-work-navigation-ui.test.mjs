@@ -236,8 +236,6 @@ test("the live shell restores context, defines work with an agent, and organizes
         errors: [],
         areas: [{ path: "otto/dnd", cwd: "/tmp" }],
         liveCount: 1,
-        timezone: "Europe/Athens",
-        scheduler: { installed: true, intervalMinutes: 30, lastExitCode: 0 },
       });
     }
     if (pathname === "/api/document") {

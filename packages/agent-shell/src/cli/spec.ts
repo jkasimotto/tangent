@@ -136,10 +136,11 @@ export const goalCommandSpec: CliCommandSpec = {
     },
     {
       name: "handover",
-      description: "Hand this step's facts to the next agent in the pipeline. State facts only: paths, what changed, what is unresolved.",
+      description: "Hand this step's facts to the next agent in the pipeline, or, with --continue, to a fresh copy of yourself on the same step. State facts only: paths, what changed, what is unresolved.",
       args: "<facts...>",
       options: [
         { name: "session", takesValue: true, description: "The step's session name; defaults to the tmux session this command runs in" },
+        { name: "continue", description: "Hand this step to a fresh copy of yourself; the step continues, the pipeline does not advance" },
         serverOption
       ]
     },

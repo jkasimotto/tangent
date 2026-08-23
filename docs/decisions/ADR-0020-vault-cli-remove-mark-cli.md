@@ -6,7 +6,7 @@ Status: accepted
 
 ## Context
 
-The Tangent vault (`~/.tangent/trees`) had no CLI surface. Reading or changing an Area, Goal, or idea required either the Agent Shell UI or a hand-written HTTP call, and `prototypes/agent-shell/goal-command.mjs` existed only as a narrow, single-purpose script for in-session agents to create Goals.
+The Tangent vault (`~/.tangent/trees`) had no CLI surface. Reading or changing an Area, Goal, or idea required either the Agent Shell UI or a hand-written HTTP call, and `packages/agent-shell/app/goal-command.mjs` existed only as a narrow, single-purpose script for in-session agents to create Goals.
 
 Separately, `tangent mark` (`packages/eval/src/cli/commands/mark.ts` and friends) was the mark loop's capture CLI: bare-note capture, `--json` stdin capture (the `mark-agent-mistake` skill's entry point), `list`/`show`/`update`/`to-eval`/`scan`. Julian decided to remove this top-level command on 2026-08-15.
 
@@ -14,7 +14,7 @@ Separately, `tangent mark` (`packages/eval/src/cli/commands/mark.ts` and friends
 
 Add a gh-style noun-verb vault CLI, registered as four top-level root commands (`tangent area`, `tangent goal`, `tangent idea`, `tangent vault`), implemented in `@tangent/agent-shell` and lazily loaded from `@tangent/agent-shell/cli` the same way `usage`/`eval`/`rollup`/`search`/`threads` are loaded from their own packages:
 
-- `tangent area list|show`, `tangent goal create|list|show|done|wont-do`, `tangent idea add|list` are thin HTTP clients to the running Agent Shell server (`prototypes/agent-shell/server.mjs`), the vault's single writer. They mirror `goal-command.mjs`'s local-server contract: default `http://127.0.0.1:4321`, overridable via `--server`/`TANGENT_SHELL_URL`, loopback-only. Four new read-only GET endpoints (`/api/areas/show`, `/api/goals`, `/api/goals/show`, `/api/ideas`) were added to the server for the commands with no existing endpoint; they reuse the server's existing `readAreaGoals`/`areaNote`/`readTree` helpers rather than re-implementing vault-reading logic in the CLI.
+- `tangent area list|show`, `tangent goal create|list|show|done|wont-do`, `tangent idea add|list` are thin HTTP clients to the running Agent Shell server (`packages/agent-shell/app/server.mjs`), the vault's single writer. They mirror `goal-command.mjs`'s local-server contract: default `http://127.0.0.1:4321`, overridable via `--server`/`TANGENT_SHELL_URL`, loopback-only. Four new read-only GET endpoints (`/api/areas/show`, `/api/goals`, `/api/goals/show`, `/api/ideas`) were added to the server for the commands with no existing endpoint; they reuse the server's existing `readAreaGoals`/`areaNote`/`readTree` helpers rather than re-implementing vault-reading logic in the CLI.
 - `tangent vault commit` is the one exception: it commits directly to `~/.tangent/trees` with `@tangent/repo`'s `git()`, mirroring the server's own `vaultCommit()` (message format, `Tangent-Area`/`Tangent-Tmux` trailers, pathspec-only commit, no staging).
 - `@tangent/agent-shell` was chosen over a new package: it already owns Goal-bound Programs and vault reading (`src/vault.ts`), is already an optional root peer dependency, and the root CLI's lazy-import dispatch mechanism needed no new wiring beyond the four command entries.
 

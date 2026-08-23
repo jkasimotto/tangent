@@ -2,7 +2,7 @@
 
 Start here when changing architecture, package boundaries, or agent workflow.
 
-Agent Shell is the daily product for work with coding agents. Its current local implementation lives in `prototypes/agent-shell/`. It keeps native chat complete and adds compact return context, work shaping, and handoff around it. Work-definition agents appear in the normal attention groups, several can run at once, and confirmed Goals go through a deterministic schema writer. The Document reader shows one Document with history controls, a compact picker, and a quiet page outline. Open agent replaces the reader, and Back restores it. The first rejected interaction notebook remains in `prototypes/agent-shell-vision/`.
+Agent Shell is the daily product for work with coding agents. Its current local implementation lives in `packages/agent-shell/app/`. It keeps native chat complete and adds compact return context, work shaping, and handoff around it. Work-definition agents appear in the normal attention groups, several can run at once, and confirmed Goals go through a deterministic schema writer. The Document reader shows one Document with history controls, a compact picker, and a quiet page outline. Open agent replaces the reader, and Back restores the same Document.
 
 Human CLI defaults are `setup`, `status`, `process`, `usage`, `rollup`, `search`, `eval`, `mark`, `doctor`, and `completion`.
 `tangent process` runs configured processes from inherited, ignored `.processes.json` files in Tangent Areas. Managed processes use Area-bound tmux sessions so they remain visible and inspectable in the hierarchy.

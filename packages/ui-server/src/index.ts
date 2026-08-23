@@ -82,6 +82,15 @@ export type LocalUiServer = {
   close(): Promise<void>;
 };
 
+/** Reads and parses a JSON request body, returning an empty object for an empty body. */
+export async function readJsonBody(request: http.IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) chunks.push(chunk as Buffer);
+  const text = Buffer.concat(chunks).toString("utf8").trim();
+  if (!text) return {};
+  return JSON.parse(text) as Record<string, unknown>;
+}
+
 type ViteDevServerLike = {
   middlewares(request: http.IncomingMessage, response: http.ServerResponse, next: (error?: unknown) => void): void;
   close(): Promise<void>;

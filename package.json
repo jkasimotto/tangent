@@ -13,10 +13,8 @@
     "packages/agent-runtime",
     "packages/agent-shell",
     "packages/core",
-    "packages/launcher",
     "packages/repo",
     "packages/governance",
-    "packages/usage-schema",
     "packages/usage-core",
     "packages/usage-index-sqlite",
     "packages/usage-providers",
@@ -44,8 +42,7 @@
     "clean": "rm -rf dist packages/*/dist"
   },
   "dependencies": {
-    "@tangent/core": "^0.1.0",
-    "@tangent/launcher": "^0.1.0"
+    "@tangent/core": "^0.1.0"
   },
   "peerDependencies": {
     "@tangent/agent-shell": "^0.1.0",

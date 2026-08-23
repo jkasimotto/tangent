@@ -34,8 +34,8 @@ That runs the same task twice, once with no context and once with your repo's gu
 To build and open the native Agent Shell:
 
 ```bash
-npm --prefix prototypes/agent-shell install
-npm --prefix prototypes/agent-shell run app
+npm --prefix packages/agent-shell/app install
+npm --prefix packages/agent-shell/app run app
 ```
 
 Open a Goal's Start agent control and type the steps, for example design, review, implement, each with its own harness, model, and effort. Every step is an open tmux conversation; the step agent finishes with `tangent goal handover "<facts>"` and the next step starts.

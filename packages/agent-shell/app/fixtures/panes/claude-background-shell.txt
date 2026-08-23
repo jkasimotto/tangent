@@ -1,0 +1,16 @@
+
+✻ Crunched for 1m 23s
+
+※ recap: Goal: make scene and sprite generation consistent in the otto/dnd vault node. I wrote and committed the
+  parent outcome plus its three units, all judged by your approval. Next: start work on the blank-region dimetric
+  unit. (disable recaps in /config)
+⏺ Bash(npm run dev)
+  ⎿  Running in the background (↓ to manage)
+
+✳ Sautéed for 32s · 1 shell still running
+                                                                                current: 2.1.227 · latest: 2.1.228
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  [Opus 5 (1M context)] ░░░░░░░░░░ 8% (78k/1000k) $1.38 ~/Projects/otto-tangent/packages/agent-shell/app/workspace
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · 1 shell · ← for agents

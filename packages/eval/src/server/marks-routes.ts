@@ -7,7 +7,7 @@ import type http from "node:http";
 
 import { listMarks, marksHome, readMark, updateMark, type MarkListFilter, type MarkUpdatePatch } from "../marks/store.js";
 import { isMarkKind, isMarkStatus, type MarkLinks, type MarkRecord } from "../marks/types.js";
-import { readJsonBody } from "./http-body.js";
+import { readJsonBody } from "@tangent/ui-server";
 
 /** Lists marks matching the request's status/kind query filters, newest first. `baseDir` defaults to the real marks home; tests pass a temp directory. */
 export async function listMarksRoute(url: URL, baseDir = marksHome()): Promise<{ marks: MarkRecord[] }> {

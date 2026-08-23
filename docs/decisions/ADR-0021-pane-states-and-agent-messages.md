@@ -12,7 +12,7 @@ Agents also had no way to address each other. Every agent-to-agent handoff route
 
 ## Decision
 
-**Refined pane states** (`prototypes/agent-shell/pane-state.mjs`): when the screen hash is static, the server reads the pane text it already captured plus the cursor position (`#{cursor_x} #{cursor_y}`) and classifies against a per-harness signature table:
+**Refined pane states** (`packages/agent-shell/app/pane-state.mjs`): when the screen hash is static, the server reads the pane text it already captured plus the cursor position (`#{cursor_x} #{cursor_y}`) and classifies against a per-harness signature table:
 
 - a busy marker ("esc to interrupt") means `working` despite the static screen;
 - a dialog pattern ("Do you want", `❯ 1.`) means detail `decision`, with the question extracted for attention surfaces;
@@ -22,7 +22,7 @@ Agents also had no way to address each other. Every agent-to-agent handoff route
 
 The wire `state` stays `working|waiting|shell` so the frontend's existing branches keep working; the refinement rides beside it as `stateDetail` and `stateQuestion`. Detection is passive by rule: the server never types a key to discover state, because a probe keystroke can be a dialog answer. The signatures are data with fixture tests (`fixtures/panes/`, real captures where possible); a harness UI change fails a fixture test instead of misdelivering a message.
 
-**Cross-agent messages** (`prototypes/agent-shell/agent-messages.mjs`, `/api/agents`, `/api/agents/send`, `tangent agent list|send`): agents message each other through the server, never through raw tmux. The server stamps a provenance banner (`[Message from <session> (<area>)] ...`) derived from the live sender session, so a receiving agent can always tell agent words from Julian's words and status authority ("on Julian's word") stays unforgeable. Delivery is state-gated: only a positively identified empty composer (`stateDetail === "idle"`) is typed into (echo-verified, then submitted); a working, dialog, draft, or unrecognized-waiting target queues (2s delivery tick); a shell or process target refuses. Messages are at-most-once: a dead target drops the queue with an audit entry. Every send, delivery, and drop appends to `~/.tangent/agent-shell-messages.jsonl`.
+**Cross-agent messages** (`packages/agent-shell/app/agent-messages.mjs`, `/api/agents`, `/api/agents/send`, `tangent agent list|send`): agents message each other through the server, never through raw tmux. The server stamps a provenance banner (`[Message from <session> (<area>)] ...`) derived from the live sender session, so a receiving agent can always tell agent words from Julian's words and status authority ("on Julian's word") stays unforgeable. Delivery is state-gated: only a positively identified empty composer (`stateDetail === "idle"`) is typed into (echo-verified, then submitted); a working, dialog, draft, or unrecognized-waiting target queues (2s delivery tick); a shell or process target refuses. Messages are at-most-once: a dead target drops the queue with an audit entry. Every send, delivery, and drop appends to `~/.tangent/agent-shell-messages.jsonl`.
 
 ## Consequences
 

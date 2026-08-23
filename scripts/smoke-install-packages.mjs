@@ -12,10 +12,8 @@ const packages = {
   repo: "packages/repo",
   "agent-runtime": "packages/agent-runtime",
   "agent-shell": "packages/agent-shell",
-  launcher: "packages/launcher",
   "ui-tokens": "packages/ui-tokens",
   "ui-server": "packages/ui-server",
-  "usage-schema": "packages/usage-schema",
   "usage-core": "packages/usage-core",
   "usage-providers": "packages/usage-providers",
   "usage-index-sqlite": "packages/usage-index-sqlite",
@@ -36,10 +34,8 @@ const packageNames = {
   repo: "@tangent/repo",
   "agent-runtime": "@tangent/agent-runtime",
   "agent-shell": "@tangent/agent-shell",
-  launcher: "@tangent/launcher",
   "ui-tokens": "@tangent/ui-tokens",
   "ui-server": "@tangent/ui-server",
-  "usage-schema": "@tangent/usage-schema",
   "usage-core": "@tangent/usage-core",
   "usage-providers": "@tangent/usage-providers",
   "usage-index-sqlite": "@tangent/usage-index-sqlite",
@@ -64,7 +60,7 @@ const smokeTargets = [
   },
   {
     name: "@tangent/usage",
-    tarballs: ["core", "repo", "usage-schema", "usage-core", "usage-providers", "usage-index-sqlite", "ui-tokens", "ui-server", "usage-ui-data", "usage-ui", "usage"],
+    tarballs: ["core", "repo", "usage-core", "usage-providers", "usage-index-sqlite", "ui-tokens", "ui-server", "usage-ui-data", "usage-ui", "usage"],
     importName: "@tangent/usage",
     bin: "tangent-usage",
     absentPackages: ["search", "rollup", "eval"]
@@ -78,28 +74,28 @@ const smokeTargets = [
   },
   {
     name: "@tangent/rollup",
-    tarballs: ["core", "repo", "agent-runtime", "usage-schema", "usage-core", "usage-providers", "usage-index-sqlite", "rollup"],
+    tarballs: ["core", "repo", "agent-runtime", "usage-core", "usage-providers", "usage-index-sqlite", "rollup"],
     importName: "@tangent/rollup",
     bin: "tangent-rollup",
     absentPackages: ["usage", "usage-ui", "usage-ui-data", "search", "eval"]
   },
   {
     name: "@tangent/eval",
-    tarballs: ["core", "repo", "agent-runtime", "usage-schema", "usage-core", "usage-providers", "usage-index-sqlite", "ui-tokens", "ui-server", "eval-ui", "eval"],
+    tarballs: ["core", "repo", "agent-runtime", "usage-core", "usage-providers", "usage-index-sqlite", "ui-tokens", "ui-server", "eval-ui", "eval"],
     importName: "@tangent/eval",
     bin: "tangent-eval",
     absentPackages: ["usage", "usage-ui", "usage-ui-data", "search", "rollup"]
   },
   {
     name: "@tangent/threads",
-    tarballs: ["core", "repo", "agent-runtime", "usage-schema", "usage-core", "usage-providers", "usage-index-sqlite", "threads"],
+    tarballs: ["core", "repo", "agent-runtime", "usage-core", "usage-providers", "usage-index-sqlite", "threads"],
     importName: "@tangent/threads",
     bin: "tangent-threads",
     absentPackages: ["usage", "usage-ui", "usage-ui-data", "search", "rollup", "eval"]
   },
   {
     name: "tangent",
-    tarballs: ["core", "launcher", "tangent"],
+    tarballs: ["core", "tangent"],
     bin: "tangent",
     smokeArgs: ["--help"],
     expectedStdout: "tangent",

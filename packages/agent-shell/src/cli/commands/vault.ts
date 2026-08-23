@@ -13,7 +13,7 @@ const COMMIT_VERBS = ["add", "note", "update", "remove"];
 /**
  * Dispatches `tangent vault` subcommands. This is the one CLI lane that talks to git directly
  * instead of the Agent Shell server: a provenance-correct commit in ~/.tangent/trees, mirroring
- * the server's own vaultCommit() (prototypes/agent-shell/server.mjs) so both lanes produce
+ * the server's own vaultCommit() (packages/agent-shell/app/server.mjs) so both lanes produce
  * identical commits.
  */
 export async function runVaultCli(argv = process.argv.slice(2)): Promise<void> {

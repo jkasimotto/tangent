@@ -2,7 +2,7 @@ import http from "node:http";
 import { readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
-import type { LocalUiApp, StaticAssetMount, UiRoute, UiRouteResponse } from "@tangent/ui-server";
+import { readJsonBody, type LocalUiApp, type StaticAssetMount, type UiRoute, type UiRouteResponse } from "@tangent/ui-server";
 import { changedFiles, fileOidsAtRef, gitText, showFile, showFileFollowingSymlinks } from "@tangent/repo/git";
 
 import type { EvalAgentConfig } from "../types/provider.js";
@@ -24,7 +24,6 @@ import { readReviews, writeReviews, type EvalReviews } from "./reviews.js";
 import { readSpecPrompts, writeSpecPrompt } from "./prompts.js";
 import { getMarkRoute, listMarksRoute, updateMarkRoute } from "./marks-routes.js";
 import { scoringView } from "./scoring-view.js";
-import { readJsonBody } from "./http-body.js";
 import type {
   EvalCompareArtifactKind,
   EvalCompareArtifactStatus,

@@ -170,15 +170,20 @@ function parseContinueFrom(value: string | undefined, stepIndex: number): number
 }
 
 /**
- * Handles `tangent goal handover <facts...>`. Run by a step agent at the end of its step: the server
- * records the facts on the step and starts the next one, so the pipeline advances without Julian.
+ * Handles `tangent goal handover [--continue] <facts...>`. Run by a worker at the end of its step or Goal.
+ * Plain: the server records the facts and starts the next step, so the pipeline advances without Julian.
+ * `--continue`: this step or Goal is not done; the server hands it to a fresh copy of the same session
+ * instead of advancing (design-worker-context-handover D4).
  */
 async function handoverCommand(args: Args): Promise<void> {
   const server = resolveServerUrl(stringArg(args.server));
   const session = await requireSession(args, "tangent goal handover");
   const text = args._.slice(1).map(String).join(" ").trim();
   if (!text) throw new Error("tangent goal handover needs the facts as text.");
-  const result = await postJson(server, "/api/goals/handover", { session, text });
+  const body: Record<string, unknown> = { session, text };
+  if (booleanArg(args.continue)) body.continue = true;
+  const result = await postJson(server, "/api/goals/handover", body);
+  if (result.status === "continued") { console.log(`handed over; a fresh copy continues this step: ${result.session}`); return; }
   const next = result.next as { index?: number; session?: string } | null | undefined;
   if (result.status === "started" && next) console.log(`handed over; next: step ${next.index} (${next.session})`);
   else console.log("pipeline complete");

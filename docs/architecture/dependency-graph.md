@@ -3,7 +3,6 @@
 ```text
 root CLI
   -> @tangent/core
-  -> @tangent/launcher
 
 root CLI lazy optional products
   -> @tangent/usage/cli
@@ -14,7 +13,7 @@ root CLI lazy optional products
   -> @tangent/governance/cli
 
 @tangent/rollup -> @tangent/usage-index-sqlite, @tangent/core, @tangent/repo, @tangent/agent-runtime
-@tangent/agent-shell -> @tangent/core, @tangent/agent-runtime, @tangent/repo   (CLI only: HTTP client to prototypes/agent-shell/server.mjs; vault commit uses repo git)
+@tangent/agent-shell -> @tangent/core, @tangent/agent-runtime, @tangent/repo   (CLI only: HTTP client to packages/agent-shell/app/server.mjs; vault commit uses repo git)
 @tangent/eval -> @tangent/usage-index-sqlite, @tangent/core, @tangent/repo, @tangent/agent-runtime, @tangent/ui-server, @tangent/eval-ui
 @tangent/usage -> @tangent/core, @tangent/repo, @tangent/ui-server, @tangent/usage-core, @tangent/usage-index-sqlite, @tangent/usage-providers, @tangent/usage-ui, @tangent/usage-ui-data
 @tangent/search -> @tangent/core, @tangent/repo
@@ -28,10 +27,9 @@ root CLI lazy optional products
 UI graph:
 
 ```text
-@tangent/usage-schema -> none
-@tangent/usage-core -> @tangent/usage-schema, @tangent/core, @tangent/repo
-@tangent/usage-index-sqlite -> @tangent/usage-core, @tangent/usage-schema, @tangent/usage-providers, @tangent/repo, optional better-sqlite3
-@tangent/usage-providers -> @tangent/usage-core, @tangent/usage-schema, @tangent/repo
+@tangent/usage-core -> @tangent/core, @tangent/repo
+@tangent/usage-index-sqlite -> @tangent/usage-core, @tangent/usage-providers, @tangent/repo, optional better-sqlite3
+@tangent/usage-providers -> @tangent/usage-core, @tangent/repo
 @tangent/ui-tokens -> none
 @tangent/ui-server -> @tangent/core
 

@@ -112,7 +112,7 @@ Architecture docs:
 - docs/agent/validation.md
 
 Primary entry point:
-- The daily product is Agent Shell: `prototypes/agent-shell/server.mjs` on port 4321. The `@tangent/agent-shell` package is its CLI surface. Verify visible changes against this server.
+- The daily product is Agent Shell: `packages/agent-shell/app/server.mjs` on port 4321. The `@tangent/agent-shell` package is its CLI surface. Verify visible changes against this server.
 - The combined launcher and shell were deleted on 2026-08-14. See docs/decisions/ADR-0019-delete-combined-tangent-ui.md. Never restore the shell, command, or manifest discovery.
 - Usage and Eval keep their standalone servers as secondary analysis surfaces: `tangent usage ui` and `tangent eval ui`.
 - The Usage UI defaults to all projects across every Claude profile (`~/.claude*/projects`, unioned by `claudeHomes()`, with `scope: "all"`).

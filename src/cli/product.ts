@@ -154,7 +154,7 @@ export async function runProductStatusCommand(argv: string[], verboseDefault = f
 /** Runs the open agent/project/setup commands. */
 export async function runOpenCommand(argv: string[]): Promise<void> {
   const [subcommand, ...rest] = argv;
-  const { loadLaunchConfig, saveLaunchConfig, defaultLaunchConfig, openAgent, openDirectory } = await import("@tangent/launcher");
+  const { loadLaunchConfig, saveLaunchConfig, defaultLaunchConfig, openAgent, openDirectory } = await import("../launcher/index.js");
 
   if (!subcommand || subcommand === "--help" || subcommand === "-h") {
     console.log("Usage: tangent open <agent|project|setup> [path]");

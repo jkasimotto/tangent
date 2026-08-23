@@ -21,7 +21,7 @@ The replacement design (`otto/tangent/design-code-first-study-partner.md`, solut
 ## Consequences
 
 - New files: `packages/agent-shell/src/cli/commands/study.ts`, `study-contract.ts`, `packages/agent-shell/test/cli-study-spec.test.mjs`.
-- Removed files: `prototypes/agent-shell/study-tutor.mjs`, `study-record.mjs`, `study-http.test.mjs`, `study-tutor.test.mjs`, `study-record.test.mjs`, `prototypes/agent-shell/public/study.js`.
-- `prototypes/agent-shell/server.mjs` loses the `STUDY_*` constants, the tutor turn machinery, the `/api/study/*` routes, and the `sweepStudies()` boot call. `public/shell.js` and `shell.html` lose every reference to the study view.
+- Removed files: `packages/agent-shell/app/study-tutor.mjs`, `study-record.mjs`, `study-http.test.mjs`, `study-tutor.test.mjs`, `study-record.test.mjs`, `packages/agent-shell/app/public/study.js`.
+- `packages/agent-shell/app/server.mjs` loses the `STUDY_*` constants, the tutor turn machinery, the `/api/study/*` routes, and the `sweepStudies()` boot call. `public/shell.js` and `shell.html` lose every reference to the study view.
 - Never rebuild a study screen or study routes in the Agent Shell server; the partner contract is the one product to change when studying needs to change.
 - Old version-1 records under `~/.tangent/agent-shell/study/` stay on disk, unread. The design's deferred data-flow graph view stays deferred; nothing here depends on it or blocks it.

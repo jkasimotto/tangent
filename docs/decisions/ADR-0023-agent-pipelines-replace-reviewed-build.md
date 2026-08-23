@@ -12,7 +12,7 @@ The design (`~/.tangent/trees/otto/tangent/design-agent-pipelines.md`, solution 
 
 ## Decision
 
-- A pipeline is a list of steps on one Goal. Each step is `{ launch: { harness, model, effort }, instruction, continueFrom }`. The server (`prototypes/agent-shell/server.mjs`) starts each step through the existing `spawnGoalSession` path: the same tmux session, priming, and first message as a plain Goal session, plus a `## Your step` section and every earlier handover verbatim. No `--print` runs remain in Agent Shell.
+- A pipeline is a list of steps on one Goal. Each step is `{ launch: { harness, model, effort }, instruction, continueFrom }`. The server (`packages/agent-shell/app/server.mjs`) starts each step through the existing `spawnGoalSession` path: the same tmux session, priming, and first message as a plain Goal session, plus a `## Your step` section and every earlier handover verbatim. No `--print` runs remain in Agent Shell.
 - A step ends when its agent runs `tangent goal handover "<facts>"`. The server records the facts on the step and starts the next one. The desk offers Restart, Skip, and Send to next as fallbacks.
 - One JSON record per Goal under `~/.tangent/agent-shell/pipelines/<area>/<slug>.json` (schema `agent-pipeline.v1`), plus tmux options `@tangent_pipeline` and `@tangent_step` on each step session. Goal ownership stays in the Goal file `session:` and moves to each step's session.
 - Effort becomes a third axis of the harness registry (`~/.tangent/trees/harnesses.md`, `effortSets`); the composed command is harness + model + effort.
@@ -22,7 +22,7 @@ The design (`~/.tangent/trees/otto/tangent/design-agent-pipelines.md`, solution 
 
 ## Consequences
 
-- The Reviewed build engine, its HTTP bridge, and its UI surfaces are deleted: `packages/agent-shell/src/{engine,program,prompt,attempt,repository,store,types,vault}.ts`, `prototypes/agent-shell/reviewed-build.mjs`, and the matching views, tests, and CSS.
+- The Reviewed build engine, its HTTP bridge, and its UI surfaces are deleted: `packages/agent-shell/src/{engine,program,prompt,attempt,repository,store,types,vault}.ts`, `packages/agent-shell/app/reviewed-build.mjs`, and the matching views, tests, and CSS.
 - `~/.tangent/loops/reviewed-build/` is unused. Nothing reads or writes it.
 - ADR-0018 is superseded. The three vault Goals about Reviewed build change status only on Julian's word.
 - `~/.agents/AGENTS.md` gains one bullet telling a step agent to finish with `tangent goal handover`.

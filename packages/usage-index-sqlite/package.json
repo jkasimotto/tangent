@@ -34,8 +34,7 @@
   "dependencies": {
     "@tangent/usage-core": "^0.1.0",
     "@tangent/usage-providers": "^0.1.0",
-    "@tangent/repo": "^0.1.0",
-    "@tangent/usage-schema": "^0.1.0"
+    "@tangent/repo": "^0.1.0"
   },
   "optionalDependencies": {
     "better-sqlite3": "^12.10.0"

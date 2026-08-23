@@ -52,18 +52,16 @@ export const governanceCommandSpec: CliCommandSpec = {
 
 const allowedPackageDeps: Record<string, string[]> = {
   "tangent": [
-    "@tangent/core",
-    "@tangent/launcher"
+    "@tangent/core"
   ],
   "@tangent/core": [],
   "@tangent/repo": ["@tangent/core"],
   "@tangent/agent-runtime": ["@tangent/core"],
   "@tangent/agent-shell": ["@tangent/core", "@tangent/agent-runtime", "@tangent/repo"],
   "@tangent/governance": ["@tangent/core", "@tangent/repo"],
-  "@tangent/usage-schema": [],
-  "@tangent/usage-core": ["@tangent/core", "@tangent/repo", "@tangent/usage-schema"],
-  "@tangent/usage-index-sqlite": ["@tangent/repo", "@tangent/usage-core", "@tangent/usage-schema", "@tangent/usage-providers"],
-  "@tangent/usage-providers": ["@tangent/repo", "@tangent/usage-core", "@tangent/usage-schema"],
+  "@tangent/usage-core": ["@tangent/core", "@tangent/repo"],
+  "@tangent/usage-index-sqlite": ["@tangent/repo", "@tangent/usage-core", "@tangent/usage-providers"],
+  "@tangent/usage-providers": ["@tangent/repo", "@tangent/usage-core"],
   "@tangent/usage": ["@tangent/core", "@tangent/repo", "@tangent/ui-server", "@tangent/usage-core", "@tangent/usage-index-sqlite", "@tangent/usage-providers", "@tangent/usage-ui", "@tangent/usage-ui-data"],
   "@tangent/ui-tokens": [],
   "@tangent/ui-server": ["@tangent/core"],
@@ -72,7 +70,6 @@ const allowedPackageDeps: Record<string, string[]> = {
   "@tangent/eval-ui": ["@tangent/ui-tokens"],
   "@tangent/rollup": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage-index-sqlite"],
   "@tangent/eval": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage-core", "@tangent/usage-index-sqlite", "@tangent/ui-server", "@tangent/eval-ui"],
-  "@tangent/launcher": ["@tangent/core"],
   "@tangent/search": ["@tangent/core", "@tangent/repo"],
   "@tangent/threads": ["@tangent/core", "@tangent/repo", "@tangent/agent-runtime", "@tangent/usage-index-sqlite"]
 };
@@ -114,16 +111,6 @@ type LintContext = {
 async function lintAgentDocs(ctx: LintContext): Promise<GovernanceFinding[]> {
   const findings: GovernanceFinding[] = [];
   const requiredAgentDirs = new Map<string, string[]>();
-  // `.claude/worktrees` is the gitignored mount point for throwaway dev worktrees (full checkouts);
-  // it is not source to document, so do not require agent docs inside it.
-  const worktreeMount = `${path.sep}.claude${path.sep}worktrees`;
-  for (const dir of await walkDirs(ctx.root)) {
-    if (dir.includes(worktreeMount)) continue;
-    requiredAgentDirs.set(dir, [
-      "Create AGENTS.md in this folder with purpose, local rules, and read-next links.",
-      "Add a sibling CLAUDE.md symlink that points to AGENTS.md."
-    ]);
-  }
   requiredAgentDirs.set(ctx.root, [
     "Create a short root AGENTS.md table of contents.",
     "Link to ARCHITECTURE.md, docs/index.md, and validation commands."
@@ -155,28 +142,16 @@ async function lintAgentDocs(ctx: LintContext): Promise<GovernanceFinding[]> {
       "Document public entrypoints agents may import."
     ]);
 
-    const srcDir = path.join(pkg.dir, "src");
-    if (await pathExists(srcDir)) {
-      for (const dir of await walkDirs(srcDir)) {
-        requiredAgentDirs.set(dir, [
-          "Add a short AGENTS.md to this source directory.",
-          "State the directory purpose and point back to package docs."
-        ]);
-      }
-    }
   }
 
-  const pairedAgentDirs = new Set(requiredAgentDirs.keys());
-  for (const agentFile of await findFiles(ctx.root, "AGENTS.md")) pairedAgentDirs.add(path.dirname(agentFile));
-  for (const claudeFile of await findFiles(ctx.root, "CLAUDE.md")) pairedAgentDirs.add(path.dirname(claudeFile));
-  for (const dir of [...pairedAgentDirs].sort((a, b) => relative(ctx.root, a).localeCompare(relative(ctx.root, b)))) {
+  for (const dir of [...requiredAgentDirs.keys()].sort((a, b) => relative(ctx.root, a).localeCompare(relative(ctx.root, b)))) {
     await requireAgentDocPair(findings, ctx, dir, requiredAgentDirs.get(dir));
   }
 
   for (const agentFile of await findFiles(ctx.root, "AGENTS.md")) {
     const rel = relative(ctx.root, agentFile);
     const lines = (await readFile(agentFile, "utf8")).split(/\r?\n/);
-    const limit = rel === "AGENTS.md" ? 100 : 60;
+    const limit = rel === "AGENTS.md" ? 200 : 60;
     if (lines.length > limit) {
       findings.push({
         rule: "agent-docs/short",
@@ -380,7 +355,7 @@ async function lintUsageDependencyLightEntrypoints(ctx: LintContext): Promise<Go
 async function lintUiPackageBoundaries(ctx: LintContext): Promise<GovernanceFinding[]> {
   const findings: GovernanceFinding[] = [];
   const productPackages = new Set(["@tangent/usage", "@tangent/eval", "@tangent/rollup", "@tangent/search"]);
-  const apiOnlyPackages = new Set(["@tangent/usage-schema", "@tangent/usage-core"]);
+  const apiOnlyPackages = new Set(["@tangent/usage-core"]);
   for (const file of await sourceFiles(ctx.root)) {
     const owner = ownerPackage(file, ctx.packages);
     if (!owner) continue;

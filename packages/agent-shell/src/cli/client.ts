@@ -1,7 +1,7 @@
 // Thin HTTP client for the `tangent area`, `tangent goal`, and `tangent idea` CLI commands. The
-// Agent Shell server (prototypes/agent-shell/server.mjs) is the single writer for the vault
+// Agent Shell server (packages/agent-shell/app/server.mjs) is the single writer for the vault
 // (~/.tangent/trees); these commands never touch vault files directly. Mirrors
-// prototypes/agent-shell/goal-command.mjs's local-server contract: default port 4321,
+// packages/agent-shell/app/goal-command.mjs's local-server contract: default port 4321,
 // loopback-only, overridable via --server or TANGENT_SHELL_URL.
 
 import { runProcess } from "@tangent/agent-runtime/process";
@@ -126,7 +126,7 @@ function isConnectionRefused(error: unknown): boolean {
 /** Turns a refused connection into the actionable "start the Agent Shell" error; passes other errors through. */
 function connectionError(server: URL, error: unknown): Error {
   if (isConnectionRefused(error)) {
-    return new Error(`Agent Shell is not running at ${server.origin}. Start it: cd prototypes/agent-shell && npm start`);
+    return new Error(`Agent Shell is not running at ${server.origin}. Start it: cd packages/agent-shell/app && npm start`);
   }
   return error instanceof Error ? error : new Error(String(error));
 }

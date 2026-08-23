@@ -14,7 +14,7 @@ UI platform packages:
 
 Vertical apps:
 - @tangent/agent-shell owns the vault CLI (`tangent area`, `tangent goal`, `tangent idea`, `tangent vault commit`), the agent messaging CLI (`tangent agent list|send`), the pipeline CLI (`tangent goal start`, `tangent goal handover`), the brain CLI (`tangent brain handover|status`, `tangent area create`), the server CLI (`tangent shell rebuild`), and `tangent study`, lazily loaded from `@tangent/agent-shell/cli`. Every command but `vault commit` and `study` is a thin HTTP client to the Agent Shell server; `vault commit` writes the vault's git history, and `study` spawns a local interactive session.
-- The standalone prototype server in `prototypes/agent-shell/` serves the Agent Shell UI and owns Goals, sessions, pipelines (ADR-0023), Area brains (ADR-0024), and the desk's `For you` list, which under a live brain comes only from that brain's plan (ADR-0025).
+- The standalone prototype server in `packages/agent-shell/app/` serves the Agent Shell UI and owns Goals, sessions, pipelines (ADR-0023), Area brains (ADR-0024), and the desk's `For you` list, which under a live brain comes only from that brain's plan (ADR-0025).
 - @tangent/usage owns the full Usage app surface: compatibility SDK exports, standalone CLI, and local Usage UI server.
 - @tangent/rollup owns rollup note schemas, period-level user-message rollup inputs, examples, rendering, ledgers, and summarization workflows.
 - @tangent/eval owns eval specs, contexts, run manifests, metrics, reports, diffs, and the local read-only Eval UI server.
@@ -22,8 +22,7 @@ Vertical apps:
 - @tangent/threads owns delegated-thread sweep over the tangent vault and Usage telemetry; CLI `tangent threads`.
 
 Split Usage packages:
-- @tangent/usage-schema has no UI, SQLite, or provider parser dependencies.
-- @tangent/usage-core has dependency-light schemas, query helpers, in-memory projections, dataset/report types, and client construction with no UI, SQLite, or built-in provider loading.
+- @tangent/usage-core owns the canonical Usage schemas, query helpers, in-memory projections, dataset/report types, and client construction with no UI, SQLite, or built-in provider loading.
 - @tangent/usage-index-sqlite owns repo/native data loading, optional SQLite projection/index behavior, status, archive, and compatibility SDK APIs.
 - @tangent/usage-providers owns provider adapters/native transcript loading.
 - @tangent/usage owns the standalone Usage CLI; the former usage-cli migration scaffold is removed.
@@ -50,7 +49,7 @@ Hard rules:
 - Native provider transcript formats are interpreted in usage, not hooks. Schema inference tools may live outside runtime packages, but runtime compatibility checks and user-facing version messages belong in usage.
 - Rollup must consume Usage data APIs rather than parsing Claude or Codex provider schemas directly.
 - `@tangent/usage-core` must not load SQLite, pricing, server, UI, or built-in provider parser code.
-- `@tangent/usage-schema` and `@tangent/usage-core` must not import UI, SQLite, or provider parser packages.
+- `@tangent/usage-core` must not import UI, SQLite, or provider parser packages.
 - UI platform packages must not import Usage, Eval, Rollup, or Search product packages.
 - The root `tangent` package must not depend on product packages or statically import product source; products are optional peers or separate installs.
 - agent-runtime must not import Rollup or Eval schemas.

@@ -4,6 +4,32 @@ import { dataCommandSpec, devCommandSpec, doctorCommandSpec, openCommandSpec, ru
 import { requiredProductModule } from "./module-loader.js";
 import { runProcessCommand } from "./processes.js";
 
+type ProductRunner = (argv: string[]) => Promise<void>;
+
+type ProductCommand = {
+  module: string;
+  exportName: string;
+  installHint: string;
+};
+
+const productCommands: Record<string, ProductCommand> = {
+  usage: { module: "@tangent/usage/cli", exportName: "runUsageCli", installHint: "usage" },
+  rollup: { module: "@tangent/rollup/cli", exportName: "runRollupCli", installHint: "rollup" },
+  search: { module: "@tangent/search/cli", exportName: "runSearchCli", installHint: "search" },
+  eval: { module: "@tangent/eval/cli", exportName: "runEvalCli", installHint: "eval" },
+  threads: { module: "@tangent/threads/cli", exportName: "runThreadsCli", installHint: "threads" },
+  agent: { module: "@tangent/agent-shell/cli", exportName: "runAgentCli", installHint: "agent" },
+  area: { module: "@tangent/agent-shell/cli", exportName: "runAreaCli", installHint: "area" },
+  brain: { module: "@tangent/agent-shell/cli", exportName: "runBrainCli", installHint: "brain" },
+  shell: { module: "@tangent/agent-shell/cli", exportName: "runShellCli", installHint: "shell" },
+  goal: { module: "@tangent/agent-shell/cli", exportName: "runGoalCli", installHint: "goal" },
+  idea: { module: "@tangent/agent-shell/cli", exportName: "runIdeaCli", installHint: "idea" },
+  document: { module: "@tangent/agent-shell/cli", exportName: "runDocumentCli", installHint: "document" },
+  study: { module: "@tangent/agent-shell/cli", exportName: "runStudyCli", installHint: "study" },
+  vault: { module: "@tangent/agent-shell/cli", exportName: "runVaultCli", installHint: "vault" },
+  governance: { module: "@tangent/governance/cli", exportName: "runGovernanceCli", installHint: "governance" }
+};
+
 const tangentCommandSpec: CliCommandSpec = {
   name: "tangent",
   description: "Local operating layer for coding-agent work",
@@ -83,93 +109,12 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
     return;
   }
 
-  if (app === "usage") {
-    const { runUsageCli } = await requiredProductModule<{ runUsageCli(argv: string[]): Promise<void> }>("@tangent/usage/cli", "usage");
-    await runUsageCli(rest);
-    return;
-  }
-
-  if (app === "rollup") {
-    const { runRollupCli } = await requiredProductModule<{ runRollupCli(argv: string[]): Promise<void> }>("@tangent/rollup/cli", "rollup");
-    await runRollupCli(rest);
-    return;
-  }
-
-  if (app === "search") {
-    const { runSearchCli } = await requiredProductModule<{ runSearchCli(argv: string[]): Promise<void> }>("@tangent/search/cli", "search");
-    await runSearchCli(rest);
-    return;
-  }
-
-  if (app === "eval") {
-    const { runEvalCli } = await requiredProductModule<{ runEvalCli(argv: string[]): Promise<void> }>("@tangent/eval/cli", "eval");
-    await runEvalCli(rest);
-    return;
-  }
-
-  if (app === "threads") {
-    const { runThreadsCli } = await requiredProductModule<{ runThreadsCli(argv: string[]): Promise<void> }>("@tangent/threads/cli", "threads");
-    await runThreadsCli(rest);
-    return;
-  }
-
-  if (app === "agent") {
-    const { runAgentCli } = await requiredProductModule<{ runAgentCli(argv: string[]): Promise<void> }>("@tangent/agent-shell/cli", "agent");
-    await runAgentCli(rest);
-    return;
-  }
-
-  if (app === "area") {
-    const { runAreaCli } = await requiredProductModule<{ runAreaCli(argv: string[]): Promise<void> }>("@tangent/agent-shell/cli", "area");
-    await runAreaCli(rest);
-    return;
-  }
-
-  if (app === "brain") {
-    const { runBrainCli } = await requiredProductModule<{ runBrainCli(argv: string[]): Promise<void> }>("@tangent/agent-shell/cli", "brain");
-    await runBrainCli(rest);
-    return;
-  }
-
-  if (app === "shell") {
-    const { runShellCli } = await requiredProductModule<{ runShellCli(argv: string[]): Promise<void> }>("@tangent/agent-shell/cli", "shell");
-    await runShellCli(rest);
-    return;
-  }
-
-  if (app === "goal") {
-    const { runGoalCli } = await requiredProductModule<{ runGoalCli(argv: string[]): Promise<void> }>("@tangent/agent-shell/cli", "goal");
-    await runGoalCli(rest);
-    return;
-  }
-
-  if (app === "idea") {
-    const { runIdeaCli } = await requiredProductModule<{ runIdeaCli(argv: string[]): Promise<void> }>("@tangent/agent-shell/cli", "idea");
-    await runIdeaCli(rest);
-    return;
-  }
-
-  if (app === "document") {
-    const { runDocumentCli } = await requiredProductModule<{ runDocumentCli(argv: string[]): Promise<void> }>("@tangent/agent-shell/cli", "document");
-    await runDocumentCli(rest);
-    return;
-  }
-
-  if (app === "study") {
-    const { runStudyCli } = await requiredProductModule<{ runStudyCli(argv: string[]): Promise<void> }>("@tangent/agent-shell/cli", "study");
-    await runStudyCli(rest);
-    return;
-  }
-
-  if (app === "vault") {
-    const { runVaultCli } = await requiredProductModule<{ runVaultCli(argv: string[]): Promise<void> }>("@tangent/agent-shell/cli", "vault");
-    await runVaultCli(rest);
-    return;
-  }
-
-  if (app === "governance") {
-    const { runGovernanceCli } = await requiredProductModule<{ runGovernanceCli(argv: string[]): Promise<void> }>("@tangent/governance/cli", "governance");
-    await runGovernanceCli(rest);
+  const product = productCommands[app];
+  if (product) {
+    const loaded = await requiredProductModule<Record<string, ProductRunner>>(product.module, product.installHint);
+    const runner = loaded[product.exportName];
+    if (typeof runner !== "function") throw new Error(`${product.module} does not export ${product.exportName}.`);
+    await runner(rest);
     return;
   }
 

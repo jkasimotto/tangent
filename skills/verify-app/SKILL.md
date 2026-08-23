@@ -9,7 +9,7 @@ Boot the real app read-only against your live `~/.tangent` data, then drive it w
 
 Target:
 - `usage` (default) or `eval` boots that app's standalone UI server in isolation.
-- For Agent Shell changes, verify against the prototype server (`prototypes/agent-shell/server.mjs`, port 4321). This script does not start it.
+- For Agent Shell changes, verify against the prototype server (`packages/agent-shell/app/server.mjs`, port 4321). This script does not start it.
 
 ## Steps
 

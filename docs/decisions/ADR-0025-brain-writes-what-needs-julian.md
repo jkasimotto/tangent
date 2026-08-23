@@ -14,7 +14,7 @@ The design (`~/.tangent/trees/otto/tangent/design-what-needs-julian-under-brains
 
 ## Decision
 
-- The brain's plan Document is the only store. It writes a `## For Julian` section; `prototypes/agent-shell/for-julian.mjs` parses it. Three line shapes and nothing else: `- Decision [[<document>]]: <what it asks>. Unblocks: <what it unblocks>.`, `- Try it [[<goal-slug>]]: <where to go, what to press, what he sees>.`, and `- Brain: <one question that fits no Document>.` A line in any other shape is not shown. `brainPrompt` gives the shapes; `tangent brain status` prints what Tangent parsed, so the brain can check itself.
+- The brain's plan Document is the only store. It writes a `## For Julian` section; `packages/agent-shell/app/for-julian.mjs` parses it. Three line shapes and nothing else: `- Decision [[<document>]]: <what it asks>. Unblocks: <what it unblocks>.`, `- Try it [[<goal-slug>]]: <where to go, what to press, what he sees>.`, and `- Brain: <one question that fits no Document>.` A line in any other shape is not shown. `brainPrompt` gives the shapes; `tangent brain status` prints what Tangent parsed, so the brain can check itself.
 - `GET /api/sessions` and `GET /api/brains/show` carry the parsed rows on each brain as `forJulian`, resolved against the vault index, so a row shows the Document or Goal title and the Document's open comment count.
 - The desk shows one amber card, `For you`. Its first groups are the brain-written rows, by Area, with `Reply to brain` in the group header. The inferred rows of Areas without a live brain follow, in today's wording. The Dock badge, the Work tab count, and the Area pill read that one list.
 - Julian answers a Decision by commenting in the Document. A save that adds or changes a comment sends the brain one notice through the brain inbox, so the message survives a restart and a gap with no live brain. The brain acts, resolves the comments, and removes the line.
@@ -24,7 +24,7 @@ The design (`~/.tangent/trees/otto/tangent/design-what-needs-julian-under-brains
 
 ## Consequences
 
-- New module `prototypes/agent-shell/for-julian.mjs` with unit tests; new HTTP tests in `for-julian-http.test.mjs`; the desk card is covered in `focus-shell-ui.test.mjs`.
+- New module `packages/agent-shell/app/for-julian.mjs` with unit tests; new HTTP tests in `for-julian-http.test.mjs`; the desk card is covered in `focus-shell-ui.test.mjs`.
 - New endpoints `POST /api/brains/tried` and `POST /api/brains/tried/undo`; `saveVaultDocument` gains one brain notice.
 - New CLI noun `tangent shell rebuild`; `tangent brain status` ends with `Tangent shows N items for Julian` and the rows.
 - The brain prompt's `launchctl kickstart` paragraph is gone: one command replaces the recipe.

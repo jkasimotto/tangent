@@ -1,7 +1,7 @@
 {
   "name": "@tangent/agent-shell",
   "version": "0.1.0",
-  "description": "Vault, agent messaging, pipeline, and study-partner-launcher CLI for the Tangent Agent Shell.",
+  "description": "Tangent's Agent Shell server, browser interface, and CLI.",
   "type": "module",
   "exports": {
     ".": {
@@ -15,17 +15,26 @@
   },
   "files": [
     "dist",
+    "app",
     "README.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build -w @tangent/core && npm run build -w @tangent/agent-runtime && npm run build -w @tangent/repo && npm run build && node --test test/*.test.mjs"
+    "start": "node app/server.mjs",
+    "test": "npm run build -w @tangent/core && npm run build -w @tangent/agent-runtime && npm run build -w @tangent/repo && npm run build && node --test test/*.test.mjs",
+    "test:app": "node --test app/*.test.mjs"
   },
   "dependencies": {
     "@tangent/agent-runtime": "^0.1.0",
     "@tangent/core": "^0.1.0",
-    "@tangent/repo": "^0.1.0"
+    "@tangent/repo": "^0.1.0",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-webgl": "^0.18.0",
+    "@xterm/xterm": "^5.5.0",
+    "d3-force": "^3.0.0",
+    "node-pty": "^1.0.0",
+    "ws": "^8.18.0"
   },
   "license": "MIT",
   "engines": {

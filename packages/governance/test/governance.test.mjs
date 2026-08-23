@@ -50,7 +50,7 @@ test("agent lint rejects plain CLAUDE.md files", async () => {
   }
 });
 
-test("agent lint requires AGENTS.md in every repo directory", async () => {
+test("agent lint does not require AGENTS.md in ordinary implementation directories", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
   try {
     await writeMinimalRootAgentDocs(root);
@@ -59,8 +59,7 @@ test("agent lint requires AGENTS.md in every repo directory", async () => {
 
     const result = await lintGovernance({ root, groups: ["agents"] });
     const finding = result.findings.find((candidate) => candidate.rule === "agent-docs/required" && candidate.file === "scripts/AGENTS.md");
-    assert.ok(finding);
-    assert.equal(finding.message, "required AGENTS.md file is missing.");
+    assert.equal(finding, undefined);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

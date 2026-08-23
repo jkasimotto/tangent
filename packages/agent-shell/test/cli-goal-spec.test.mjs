@@ -32,7 +32,7 @@ test("tangent goal handover takes the facts and an optional session", () => {
   const handover = subcommand("handover");
   assert.ok(handover, "goal spec has a handover subcommand");
   assert.equal(handover.args, "<facts...>");
-  assert.deepEqual(optionNames(handover), ["session", "server"]);
+  assert.deepEqual(optionNames(handover), ["session", "continue", "server"]);
   assert.match(handover.description, /facts/);
 });
 

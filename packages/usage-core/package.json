@@ -45,8 +45,7 @@
   },
   "dependencies": {
     "@tangent/core": "^0.1.0",
-    "@tangent/repo": "^0.1.0",
-    "@tangent/usage-schema": "^0.1.0"
+    "@tangent/repo": "^0.1.0"
   },
   "license": "MIT",
   "engines": {

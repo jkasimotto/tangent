@@ -2,5 +2,5 @@
 // `tangent goal`, `tangent idea`, `tangent vault`), the agent messaging CLI (`tangent agent`),
 // the pipeline CLI (`tangent goal start`, `tangent goal handover`), and the study partner launcher
 // (`tangent study`). Pipelines themselves are owned by the Agent Shell server in
-// prototypes/agent-shell/; `tangent study` spawns its own local interactive session instead.
+// packages/agent-shell/app/; `tangent study` spawns its own local interactive session instead.
 export * from "./cli/index.js";

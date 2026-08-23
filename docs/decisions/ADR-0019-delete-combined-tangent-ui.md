@@ -8,7 +8,7 @@ Status: accepted
 
 The combined `tangent ui` launcher mounted Usage, Eval, and Work inside the `@tangent/tangent-ui` Svelte shell. Package manifests supplied the `tangent.uiApp` discovery data.
 
-The user's daily product moved to Agent Shell (`prototypes/agent-shell/server.mjs`, port 4321). Agent Shell runs on the `@tangent/agent-shell` engine.
+The user's daily product moved to Agent Shell (`packages/agent-shell/app/server.mjs`, port 4321). Agent Shell runs on the `@tangent/agent-shell` engine.
 
 The combined shell was no longer used. Its instructions still sent coding agents to that dead surface and caused repeated confusion.
 

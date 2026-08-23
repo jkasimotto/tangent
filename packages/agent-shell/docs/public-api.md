@@ -42,7 +42,7 @@ An Area brain is one long-lived orchestrating agent per Area (ADR-0024; design c
 
 ## What waits on Julian
 
-Under a brain, the brain's plan is the only list of what waits on Julian (ADR-0025, amended by ADR-0027; design contract `otto/tangent/design-the-for-you-row-shows-only-direct-asks`). Every row is a direct ask he answers on the row. The brain writes a `## For Julian` section in its plan Document; the server parses it (`prototypes/agent-shell/for-julian.mjs`) and shows it on the desk as the `For you` card. Two line shapes and nothing else:
+Under a brain, the brain's plan is the only list of what waits on Julian (ADR-0025, amended by ADR-0027; design contract `otto/tangent/design-the-for-you-row-shows-only-direct-asks`). Every row is a direct ask he answers on the row. The brain writes a `## For Julian` section in its plan Document; the server parses it (`packages/agent-shell/app/for-julian.mjs`) and shows it on the desk as the `For you` card. Two line shapes and nothing else:
 
 - `- Decide [[<document>]]: <the question, ending with ?> Unblocks: <what the answer unblocks>.`
 - `- Decide: <one question that fits no Document, ending with ?>`
@@ -63,7 +63,7 @@ A Decide ask must end with a question mark or the line does not parse. Tangent p
 
 Every command but `vault commit` and `study` is a thin HTTP client to the running Agent Shell server (default `http://127.0.0.1:4321`, overridable via `--server` or `TANGENT_SHELL_URL`, loopback-only). `vault commit` writes the vault's git history directly; `study` spawns a local interactive session directly. `--json` prints machine-readable output on read commands. Server-unreachable errors name the fix ("Agent Shell is not running..."); unknown Area/Goal errors suggest the nearest existing path or slug. Non-2xx responses surface the server's own `error` text.
 
-Endpoints in `prototypes/agent-shell/server.mjs` used by this package:
+Endpoints in `packages/agent-shell/app/server.mjs` used by this package:
 
 - Read: `GET /api/tree`, `GET /api/areas/show?area=<path>`, `GET /api/goals[?area=<path>]`, `GET /api/goals/show?slug=<slug>`, `GET /api/ideas[?area=<path>]`, `GET /api/document/comments?file=<path>`, `GET /api/sessions`.
 - Vault mutations: `POST /api/goals/create` (accepts `own: <session>`), `POST /api/idea/new`, `POST /api/goals/edit`, `POST /api/goals/own` and `POST /api/goals/release` (`{ session, slugs }`), `POST /api/agents/send`.

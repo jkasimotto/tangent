@@ -10,13 +10,11 @@ import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { WebSocketServer } from "ws";
 import { doneCascade } from "./goal-cascade.mjs";
 import { noteResource } from "./area-agent-command.mjs";
 import { harnessEfforts, harnessModels, inheritedLaunch, parseHarnessRegistry, resolveLaunch, upsertEnvironmentLaunch, upsertHarnessRegistry, validateHarnessRegistry } from "./launch-environment.mjs";
 import { createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
 import { commandSession, programsSnapshot, saveLocalProgram, saveRoutine, setRoutinePaused } from "./programs.mjs";
-import pty from "node-pty";
 import { documentHash, markdownTitle, safeMarkdownPath, wikiLinks } from "./vault-documents.mjs";
 import { rationaleDossierContract } from "./rationale-dossier.mjs";
 import "./public/document-comments.js";
@@ -46,6 +44,7 @@ import { createSourceChangeMonitor } from "./source-change-monitor.mjs";
 import { promptArrived, splitPrompt, squash } from "./prompt-delivery.mjs";
 import { clearArmedPrompt, readAllArmedPrompts, writeArmedPrompt } from "./armed-prompts.mjs";
 import { createRuntimeScheduler } from "./runtime-scheduler.mjs";
+import { attachTerminalTransport } from "./terminal-transport.mjs";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -4922,49 +4921,11 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-const wss = new WebSocketServer({ server, path: "/term" });
-
-wss.on("connection", (ws, req) => {
-  const url = new URL(req.url, `http://localhost:${PORT}`);
-  const session = url.searchParams.get("session") ?? CHAT_SESSION;
-  const cols = Number(url.searchParams.get("cols") ?? 120);
-  const rows = Number(url.searchParams.get("rows") ?? 32);
-
-  // -A attaches when the session exists, creates it otherwise. The chat
-  // session runs the agent command; other sessions get a plain shell.
-  const args = ["new-session", "-A", "-s", session, "-c", WORKSPACE];
-  // The agent command runs through the user's interactive shell so aliases
-  // (claude-otto, pi) and rc-file PATH additions resolve; tmux itself spawns
-  // commands via a non-interactive shell where aliases do not exist.
-  if (session === CHAT_SESSION) {
-    const shell = process.env.SHELL ?? "/bin/zsh";
-    const cmd = withDefaultModel(agentCmd);
-    args.push(`exec ${shell} -ic '${cmd.replace(/'/g, "'\\''")}'`);
-  }
-
-  const term = pty.spawn("tmux", args, {
-    name: "xterm-256color",
-    cols,
-    rows,
-    cwd: WORKSPACE,
-    env: { ...process.env, TERM: "xterm-256color" },
-  });
-
-  term.onData((data) => {
-    if (ws.readyState === ws.OPEN) ws.send(data);
-  });
-  term.onExit(() => ws.close());
-
-  ws.on("message", (raw) => {
-    const text = raw.toString();
-    if (text.startsWith("\x00resize:")) {
-      const [c, r] = text.slice(8).split("x").map(Number);
-      if (c > 0 && r > 0) term.resize(c, r);
-      return;
-    }
-    term.write(text);
-  });
-  ws.on("close", () => term.kill()); // kills the tmux *client* (detach); the session survives
+attachTerminalTransport(server, {
+  port: PORT,
+  workspace: WORKSPACE,
+  chatSession: CHAT_SESSION,
+  chatCommand: withDefaultModel(agentCmd),
 });
 
 server.listen(PORT, HOST, () => {

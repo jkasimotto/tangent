@@ -128,6 +128,7 @@ Product direction: the mark loop (design contract: docs/superpowers/specs/2026-0
 
 Development workflow:
 - Do not create or use a git worktree unless the user explicitly asks for one. By default, make requested changes in the current checkout and branch.
+- Other agents can work in this checkout at the same time. Always commit your own changes atomically. Stage only the files and hunks you changed, preserve every unrelated working-tree change, and never sweep another agent's work into your commit.
 - When the user explicitly requests a worktree, create one with `node scripts/dev-worktree.mjs create [name]`. This creates `dev/<name>` from main.
 - In that worktree, `node scripts/verify-app.mjs [usage|eval]` starts a read-only instance on a separate port. It does not conflict with the live app.
 - IMPORTANT: when working in an explicitly requested worktree, target it with absolute paths or run from its directory.

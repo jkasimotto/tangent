@@ -39,6 +39,13 @@ export function parseHarnessRegistry(text) {
       return { error: `harness "${harness.id}" references unknown effort set "${harness.effortSet}"` };
     }
   }
+  for (const options of Object.values(modelSets)) {
+    for (const model of options ?? []) {
+      if (model.effortSet && !Array.isArray(effortSets[model.effortSet])) {
+        return { error: `model "${model.id || "(unnamed)"}" references unknown effort set "${model.effortSet}"` };
+      }
+    }
+  }
   return { modelSets, effortSets, harnesses };
 }
 
@@ -63,6 +70,12 @@ export function harnessModels(registry, harness) {
 export function harnessEfforts(registry, harness) {
   if (!harness?.effortSet) return [];
   return registry?.effortSets?.[harness.effortSet] ?? [];
+}
+
+/** The effort options for one model, falling back to its harness for v1 registries. */
+export function modelEfforts(registry, harness, model = null) {
+  const set = model?.effortSet || harness?.effortSet;
+  return set ? registry?.effortSets?.[set] ?? [] : [];
 }
 
 /** The display label for one resolved harness, optional model, and optional effort. */
@@ -90,7 +103,7 @@ export function resolveLaunch(registry, ref) {
   const effortId = String(ref?.effort ?? "");
   let effort = null;
   if (effortId) {
-    effort = harnessEfforts(registry, harness).find((entry) => entry.id === effortId) ?? null;
+    effort = modelEfforts(registry, harness, model).find((entry) => entry.id === effortId) ?? null;
     if (!effort) return { error: `unknown effort "${effortId}" for harness "${harness.id}"` };
   }
   return {
@@ -129,6 +142,9 @@ export function validateHarnessRegistry(registry) {
       if (!option.id) return `a model option in the "${name}" set has no id`;
       if (ids.has(option.id)) return `duplicate model id "${option.id}" in the "${name}" set`;
       ids.add(option.id);
+      if (option.effortSet && !Array.isArray(effortSets[option.effortSet])) {
+        return `model "${option.id}" references unknown effort set "${option.effortSet}"`;
+      }
     }
   }
   for (const [name, options] of Object.entries(effortSets)) {

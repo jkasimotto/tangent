@@ -6,6 +6,7 @@ import {
   harnessModels,
   inheritedLaunch,
   launchLabel,
+  modelEfforts,
   parseEnvironmentBlock,
   parseHarnessRegistry,
   resolveLaunch,
@@ -195,4 +196,23 @@ test("registry validation covers effort sets", () => {
   assert.equal(validateHarnessRegistry({ ...EFFORT_REGISTRY, harnesses: [{ id: "x", command: "x", effortSet: "missing" }] }), 'harness "x" references unknown effort set "missing"');
   assert.equal(validateHarnessRegistry({ ...EFFORT_REGISTRY, effortSets: { codex: [{ id: "a" }, { id: "a" }] } }), 'duplicate effort id "a" in the "codex" set');
   assert.equal(parseHarnessRegistry("```tangent.harnesses.v1\n" + JSON.stringify({ harnesses: [{ id: "x", command: "x", effortSet: "nope" }] }) + "\n```").error, 'harness "x" references unknown effort set "nope"');
+});
+
+test("a model can narrow the effort choices offered by its harness", () => {
+  const registry = {
+    modelSets: { codex: [
+      { id: "sol", args: "--model gpt-5.6-sol", effortSet: "codex-ultra" },
+      { id: "luna", args: "--model gpt-5.6-luna" },
+    ] },
+    effortSets: {
+      codex: [{ id: "max", args: "-c model_reasoning_effort=max" }],
+      "codex-ultra": [{ id: "ultra", args: "-c model_reasoning_effort=ultra" }],
+    },
+    harnesses: [{ id: "codex", command: "codex", modelSet: "codex", effortSet: "codex" }],
+  };
+  const harness = registry.harnesses[0];
+  assert.deepEqual(modelEfforts(registry, harness, registry.modelSets.codex[0]).map((item) => item.id), ["ultra"]);
+  assert.equal(resolveLaunch(registry, { harness: "codex", model: "sol", effort: "ultra" }).command, "codex --model gpt-5.6-sol -c model_reasoning_effort=ultra");
+  assert.match(resolveLaunch(registry, { harness: "codex", model: "luna", effort: "ultra" }).error, /unknown effort/);
+  assert.equal(validateHarnessRegistry({ ...registry, modelSets: { codex: [{ id: "bad", effortSet: "missing" }] } }), 'model "bad" references unknown effort set "missing"');
 });

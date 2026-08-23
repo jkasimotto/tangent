@@ -152,7 +152,7 @@ export function createGoalLaunchView({ state, api, post, paint, showToast, allAr
       return preset ? { harness: null, model: null, effort: null, command: preset.command, label: preset.label || "", edited: false } : null;
     }
     const model = (harness.models ?? []).find((entry) => entry.id === choice.model) ?? null;
-    const effort = (harness.efforts ?? []).find((entry) => entry.id === choice.effort) ?? null;
+    const effort = (model?.efforts ?? harness.efforts ?? []).find((entry) => entry.id === choice.effort) ?? null;
     const edited = Boolean(state.launch.command.trim());
     const command = edited ? state.launch.command.trim() : [harness.command, model?.args, effort?.args].filter(Boolean).join(" ");
     const label = edited ? "Edited command" : [harness.label, model?.label, effort?.label].filter(Boolean).join(" · ");
@@ -246,7 +246,7 @@ export function createGoalLaunchView({ state, api, post, paint, showToast, allAr
     const harness = row.choice ? (options?.harnesses ?? []).find((entry) => entry.id === row.choice.harness) : null;
     if (!harness) return options?.default && !options.default.error ? (options.default.label || options.default.command || "Area default") : "Area default";
     const model = (harness.models ?? []).find((entry) => entry.id === row.choice.model);
-    const effort = (harness.efforts ?? []).find((entry) => entry.id === row.choice.effort);
+    const effort = (model?.efforts ?? harness.efforts ?? []).find((entry) => entry.id === row.choice.effort);
     return [harness.label, model?.label, effort?.label].filter(Boolean).join(" · ");
   }
 
@@ -342,7 +342,7 @@ export function createGoalLaunchView({ state, api, post, paint, showToast, allAr
           <span>${escapeHtml(model.label)}</span>${preset.harness === currentHarness?.id && preset.model === model.id ? `<span class="launch-default-tag">default</span>` : ""}
         </button>`).join("")
       : `<p class="launch-none">${currentHarness ? "No model choice. The command is complete." : "Pick a harness first."}</p>`;
-    const efforts = currentHarness?.efforts ?? [];
+    const efforts = selection?.model?.efforts ?? currentHarness?.efforts ?? [];
     const effortButtons = efforts.map((effort) => `
         <button type="button" class="launch-option${selection?.effort?.id === effort.id ? " selected" : ""}" data-launch-effort="${escapeHtml(effort.id)}">
           <span>${escapeHtml(effort.label)}</span>${preset.harness === currentHarness?.id && preset.effort === effort.id ? `<span class="launch-default-tag">default</span>` : ""}
@@ -509,6 +509,10 @@ export function createGoalLaunchView({ state, api, post, paint, showToast, allAr
           <div class="model-row">
             <input data-model-field="label" data-set="${escapeHtml(name)}" data-index="${index}" value="${escapeHtml(model.label ?? "")}" placeholder="Display label (Opus 4.6)" aria-label="Model label">
             <input class="mono" data-model-field="args" data-set="${escapeHtml(name)}" data-index="${index}" value="${escapeHtml(model.args ?? "")}" placeholder="Exact arguments (--model claude-opus-4-6)" aria-label="Model arguments">
+            <select data-model-field="effortSet" data-set="${escapeHtml(name)}" data-index="${index}" aria-label="Model effort set">
+              <option value="">Harness efforts</option>
+              ${effortSetNames.map((effortSet) => `<option value="${escapeHtml(effortSet)}"${model.effortSet === effortSet ? " selected" : ""}>${escapeHtml(effortSet)} efforts</option>`).join("")}
+            </select>
             <button class="quiet-button" type="button" data-remove-model data-set="${escapeHtml(name)}" data-index="${index}" aria-label="Remove option">✕</button>
           </div>`).join("")}
         </div>

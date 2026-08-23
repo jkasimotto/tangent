@@ -40,6 +40,7 @@ import { serveStaticAsset } from "./static-assets.mjs";
 import { createStateEvents } from "./state-events.mjs";
 import { createBrainRoutes } from "./brain-routes.mjs";
 import { createPipelineRoutes } from "./pipeline-routes.mjs";
+import { createAgentRoutes } from "./agent-routes.mjs";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -3771,6 +3772,43 @@ const pipelineRoutes = createPipelineRoutes({
   append: appendPipelineSteps,
   edit: editPipelineStep,
 });
+const agentRoutes = createAgentRoutes({
+  /** Returns every live non-process session with its delivery state. */
+  async list() {
+    return (await listSessions())
+      .filter((session) => !["process", "service", "command"].includes(session.kind ?? ""))
+      .map((session) => ({
+        name: session.name,
+        area: session.area,
+        kind: session.kind,
+        goal: session.goalTitle ?? null,
+        state: session.state,
+        stateDetail: session.stateDetail ?? null,
+        stateQuestion: session.stateQuestion ?? "",
+        queued: (messageQueues.get(session.name) ?? []).length,
+      }));
+  },
+  /** Delivers or queues one normalized cross-agent message. */
+  async send(body) {
+    const text = normalizeMessage(body.text);
+    const sessions = await listSessions();
+    const target = resolveSession(String(body.to ?? ""), sessions);
+    const live = sessions.find((session) => session.name === target);
+    const decision = deliveryDecision(live ?? null);
+    if (decision.action === "refuse") return { status: live ? 409 : 404, error: decision.error };
+    const sender = sessions.find((session) => session.name === String(body.from ?? ""));
+    const entry = { from: sender?.name ?? "unknown sender", area: sender?.area ?? null, text, queuedAt: new Date().toISOString() };
+    if (decision.action === "deliver" && !(messageQueues.get(live.name) ?? []).length) {
+      deliverAgentMessage(live.name, entry).catch((error) => console.error("agent message:", error.message ?? error));
+      await logAgentMessage({ event: "sent", to: live.name, from: entry.from, text, disposition: "delivered" });
+      return { status: 200, value: { status: "delivered", to: live.name } };
+    }
+    queueAgentMessage(live.name, entry);
+    const reason = decision.action === "queue" ? decision.reason : "messages queued ahead";
+    await logAgentMessage({ event: "sent", to: live.name, from: entry.from, text, disposition: "queued", reason });
+    return { status: 200, value: { status: "queued", to: live.name, reason, position: messageQueues.get(live.name).length } };
+  },
+});
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
@@ -3796,66 +3834,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (await brainRoutes.handle(req, res, url)) return;
     if (await pipelineRoutes.handle(req, res, url)) return;
-    // The live agents, for `tangent agent list`: every non-process session
-    // with its refined state and any queued message count.
-    if (url.pathname === "/api/agents" && req.method === "GET") {
-      const sessions = await listSessions();
-      const agents = sessions
-        .filter((session) => !["process", "service", "command"].includes(session.kind ?? ""))
-        .map((session) => ({
-          name: session.name,
-          area: session.area,
-          kind: session.kind,
-          goal: session.goalTitle ?? null,
-          state: session.state,
-          stateDetail: session.stateDetail ?? null,
-          stateQuestion: session.stateQuestion ?? "",
-          queued: (messageQueues.get(session.name) ?? []).length,
-        }));
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ agents }));
-      return;
-    }
-    // Sends one cross-agent message. The server stamps the sender banner and
-    // owns delivery timing; agent-messages.mjs owns the rules.
-    if (url.pathname === "/api/agents/send" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      try {
-        const text = normalizeMessage(body.text);
-        const sessions = await listSessions();
-        const target = resolveSession(String(body.to ?? ""), sessions);
-        const live = sessions.find((session) => session.name === target);
-        const decision = deliveryDecision(live ?? null);
-        if (decision.action === "refuse") {
-          res.writeHead(live ? 409 : 404, { "content-type": "application/json" });
-          res.end(JSON.stringify({ error: decision.error }));
-          return;
-        }
-        // The sender is the claimed session when it is live; its area rides
-        // along. A claim that names no live session is stamped as unknown
-        // rather than trusted.
-        const sender = sessions.find((session) => session.name === String(body.from ?? ""));
-        const entry = { from: sender?.name ?? "unknown sender", area: sender?.area ?? null, text, queuedAt: new Date().toISOString() };
-        if (decision.action === "deliver" && !(messageQueues.get(live.name) ?? []).length) {
-          deliverAgentMessage(live.name, entry).catch((err) => console.error("agent message:", err.message ?? err));
-          await logAgentMessage({ event: "sent", to: live.name, from: entry.from, text, disposition: "delivered" });
-          res.writeHead(200, { "content-type": "application/json" });
-          res.end(JSON.stringify({ status: "delivered", to: live.name }));
-          return;
-        }
-        queueAgentMessage(live.name, entry);
-        const reason = decision.action === "queue" ? decision.reason : "messages queued ahead";
-        await logAgentMessage({ event: "sent", to: live.name, from: entry.from, text, disposition: "queued", reason });
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ status: "queued", to: live.name, reason, position: messageQueues.get(live.name).length }));
-        return;
-      } catch (error) {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: String(error.message ?? error) }));
-        return;
-      }
-    }
+    if (await agentRoutes.handle(req, res, url)) return;
     // The frontend must target the same orchestrator session the server
     // special-cases, so the name ships as a tiny script instead of being
     // hardcoded twice.

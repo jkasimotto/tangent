@@ -6,8 +6,6 @@
 // extractor. The server and the browser both load it, the tests run it
 // without a DOM. It is a plain script that registers a global, the same
 // shape as area-map-core.js and go-to-core.js.
-(function (root) {
-  "use strict";
 
   /** The look's fixed reach: 12 hours, in milliseconds (Decision 4). */
   const CLOSE_WINDOW_MS = 43_200_000;
@@ -72,5 +70,4 @@
     CLOSE_WINDOW_MS,
     windowCloses, areaCloses, closerLabel, closeMomentLabel, wontDoReason,
   };
-  root.AgentShellWhatHappened = api;
-})(typeof globalThis !== "undefined" ? globalThis : this);
+export default api;

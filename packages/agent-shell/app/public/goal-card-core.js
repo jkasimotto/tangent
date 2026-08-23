@@ -8,8 +8,6 @@
 // long it has waited for him. No DOM, no clock of its own; the caller passes
 // `now`. It is a plain script that registers a global, the same shape as
 // area-map-core.js, so the browser and the tests load one copy.
-(function (root) {
-  "use strict";
 
   const MINUTE = 60_000;
   const HOUR = 3_600_000;
@@ -197,5 +195,4 @@
     return Math.min(1, Math.max(0.05, Math.sqrt(elapsed / max)));
   }
 
-  root.AgentShellGoalCard = { durationLabel, goalCardFacts, factsSegments, factsBarShares, elapsedLengthShare, elapsedLabel };
-})(typeof globalThis !== "undefined" ? globalThis : this);
+export default { durationLabel, goalCardFacts, factsSegments, factsBarShares, elapsedLengthShare, elapsedLabel };

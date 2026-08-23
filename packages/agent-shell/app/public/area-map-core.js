@@ -6,8 +6,6 @@
 // render the desk and the Area map, and the tests run it without either. It
 // is a plain script that registers a global, the same shape as
 // document-comments.js, so both sides load one copy.
-(function (root) {
-  "use strict";
 
   /**
    * Prefixes that always count as a Document kind. Any other prefix counts
@@ -211,5 +209,4 @@
     goalIsOpen, goalAttentionRank, orderGoals, orderDocuments,
     isInside, parentOf, childrenOf, subAreaOf, deskPanels, orderPanels,
   };
-  root.AgentShellAreaMap = api;
-})(typeof globalThis !== "undefined" ? globalThis : this);
+export default api;

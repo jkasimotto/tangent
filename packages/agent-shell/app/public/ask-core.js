@@ -13,8 +13,6 @@
 // It is a plain script that registers a global, the same shape as
 // goal-card-core.js, so the browser and the tests load one copy. Pure:
 // no DOM, no fetch, no clock.
-(function (root) {
-  "use strict";
 
   /** The action verbs a row may carry. Anything else refuses the ask. */
   const ACTION_KINDS = new Set([
@@ -218,7 +216,7 @@
     });
   }
 
-  root.AgentShellAsk = {
+export default {
     makeAsk,
     askFromPlanRow,
     askFromBrainDialog,
@@ -229,4 +227,3 @@
     DIALOG_QUESTION,
     RESULT_QUESTION,
   };
-})(typeof globalThis !== "undefined" ? globalThis : this);

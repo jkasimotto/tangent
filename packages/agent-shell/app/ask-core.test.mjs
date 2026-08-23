@@ -6,9 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-await import("./public/ask-core.js");
-
-const core = globalThis.AgentShellAsk;
+import core from "./public/ask-core.js";
 
 /** The brain payload shape the desk reads, with the fields a test needs. */
 function brain(overrides = {}) {

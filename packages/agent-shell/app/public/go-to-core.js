@@ -5,8 +5,6 @@
 // brings Julian back to the exact screen a Document or a brain opened over.
 // The browser loads it beside shell.js, the tests run it without a DOM. It is
 // a plain script that registers a global, the same shape as area-map-core.js.
-(function (root) {
-  "use strict";
 
   /**
    * The state keys that identify one screen. A return point copies exactly
@@ -135,5 +133,4 @@
     normalizedSearchText, fileSlug, matchRows,
     returnPointFrom, returnPointLabel,
   };
-  root.AgentShellGoTo = api;
-})(typeof globalThis !== "undefined" ? globalThis : this);
+export default api;

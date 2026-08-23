@@ -4,6 +4,10 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
+import documentComments from "./public/document-comments.js";
+import { browserBundle } from "./test-browser-bundle.mjs";
+
+const shellBundle = await browserBundle();
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -33,14 +37,7 @@ async function loadShell() {
     /** Empty body: these tests only exercise pure rendering, not the polled state. */
     async json() { return {}; },
   });
-  window.eval(comments);
-  window.eval(highlight);
-  window.eval(goToCore);
-  window.eval(goalCardCore);
-  window.eval(askCore);
-  window.eval(mapCore);
-  window.eval(mapView);
-  window.eval(script);
+  window.eval(shellBundle);
   return window;
 }
 
@@ -93,7 +90,7 @@ test("an unlabeled fence renders as a plain escaped code block with no language 
 
 test("a fenced block never becomes a CriticMarkup comment, and content around it still can", async () => {
   const window = await loadShell();
-  const comments = window.AgentShellDocumentComments;
+  const comments = documentComments;
   const withFence = "# T\n\n```\n{>>Julian: fenced, not a comment<<}\n```\n\nReal text.\n";
   assert.equal(comments.parseComments(withFence).length, 0);
   const commented = comments.insertComment(withFence, { kind: "selection", quote: "Real text" }, "Say more").text;
@@ -138,7 +135,7 @@ test("heading lookalikes inside fenced blocks stay out of the outline and never 
 
 test("a section comment lands under the real heading, never on a fenced lookalike", async () => {
   const window = await loadShell();
-  const comments = window.AgentShellDocumentComments;
+  const comments = documentComments;
   const doc = ["# Title", "", "```markdown", "## State", "```", "", "## State", "", "text"].join("\n");
   const out = comments.insertComment(doc, { kind: "section", heading: "State" }, "Note").text;
   const lines = out.split("\n");

@@ -1,8 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-await import("./public/go-to-core.js");
-
-const core = globalThis.AgentShellGoTo;
+import core from "./public/go-to-core.js";
 
 /** Builds one finder row with the fields the ranker reads. */
 function row(fields) {

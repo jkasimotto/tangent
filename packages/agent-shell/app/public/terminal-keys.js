@@ -1,5 +1,3 @@
-(function (root) {
-  "use strict";
 
   // xterm sends a bare carriage return for Shift+Enter, so an agent harness
   // sends the message and a shell runs the line. Meta+Enter (ESC CR) is the
@@ -21,5 +19,4 @@
     return SHIFT_ENTER;
   }
 
-  root.AgentShellTerminalKeys = { terminalKeySequence };
-})(window);
+export default { terminalKeySequence };

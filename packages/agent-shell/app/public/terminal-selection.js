@@ -1,5 +1,3 @@
-(function (root) {
-  "use strict";
 
   /** Keeps a completed xterm selection stable across terminal repaints. */
   function preserveTerminalSelection({ terminal, host, clipboard, defer = (callback) => setTimeout(callback, 0) }) {
@@ -59,7 +57,7 @@
       rememberSelection();
     };
     host.addEventListener("mousedown", beginSelection, true);
-    root.document.addEventListener("mouseup", finishSelection, true);
+    host.ownerDocument.addEventListener("mouseup", finishSelection, true);
 
     /**
      * Copies the remembered selection on Command-C. xterm holds one custom
@@ -86,10 +84,9 @@
       dispose() {
         selectionDisposable?.dispose();
         host.removeEventListener("mousedown", beginSelection, true);
-        root.document.removeEventListener("mouseup", finishSelection, true);
+        host.ownerDocument.removeEventListener("mouseup", finishSelection, true);
       },
     };
   }
 
-  root.AgentShellTerminalSelection = { preserveTerminalSelection };
-})(window);
+export default { preserveTerminalSelection };

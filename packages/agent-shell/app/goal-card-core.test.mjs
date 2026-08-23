@@ -1,9 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-await import("./public/goal-card-core.js");
-
-const core = globalThis.AgentShellGoalCard;
+import core from "./public/goal-card-core.js";
 const MINUTE = 60_000;
 const HOUR = 3_600_000;
 const DAY = 86_400_000;

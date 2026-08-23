@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-await import("./public/document-comments.js");
-const comments = globalThis.AgentShellDocumentComments;
+import comments from "./public/document-comments.js";
 
 const DOCUMENT = "---\ntype: document\n---\n\n# Title\n\nIntro para with some words here.\n\n## Part two\n\nMore text.\n\n`{>>not a comment<<}`\n";
 

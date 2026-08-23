@@ -4,6 +4,11 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
+import documentComments from "./public/document-comments.js";
+import areaMapView from "./public/area-map.js";
+import { browserBundle } from "./test-browser-bundle.mjs";
+
+const shellBundle = await browserBundle();
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // shell.js reads its search normalizer from this script, as the page does.
@@ -70,11 +75,6 @@ test("the live shell restores context, defines work with an agent, and organizes
   const { window } = dom;
   // jsdom has no 2d canvas; the Area map renders its outline without one.
   window.HTMLCanvasElement.prototype.getContext = () => null;
-  window.eval(goToCore);
-  window.eval(goalCardCore);
-  window.eval(askCore);
-  window.eval(mapCore);
-  window.eval(mapView);
   const goalFile = "otto/tangent/goal-ux-product-vision.md";
   const goal = {
     mtime: 1,
@@ -331,7 +331,7 @@ test("the live shell restores context, defines work with an agent, and organizes
     return jsonResponse(vault);
   };
 
-  window.eval(script);
+  window.eval(shellBundle);
   await settle(window);
 
   assert.ok(window.document.querySelector(".work-page"), "the desk shows the Work page");
@@ -814,12 +814,7 @@ test("the Agent Shell menu owns refresh, reload, and rebuild, and a dead server 
     if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
     return jsonResponse({ areas: [], map: [], documents: [] });
   };
-
-  window.eval(goToCore);
-  window.eval(goalCardCore);
-  window.eval(askCore);
-  window.eval(mapCore);
-  window.eval(script);
+  window.eval(shellBundle);
   await settle(window);
   assert.ok(window.document.querySelector(".work-page"), "the desk shows the Work page");
   assert.equal(window.document.querySelector("#shell-menu").hidden, true);
@@ -926,12 +921,7 @@ test("checked Goals start one shared agent that owns them in checked order", asy
       documents: [],
     });
   };
-
-  window.eval(goToCore);
-  window.eval(goalCardCore);
-  window.eval(askCore);
-  window.eval(mapCore);
-  window.eval(script);
+  window.eval(shellBundle);
   await settle(window);
   assert.ok(window.document.querySelector(".work-page"), "the desk shows the Work page");
 
@@ -1060,12 +1050,7 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
       documents: [],
     });
   };
-
-  window.eval(goToCore);
-  window.eval(goalCardCore);
-  window.eval(askCore);
-  window.eval(mapCore);
-  window.eval(script);
+  window.eval(shellBundle);
   await settle(window);
   click(window, `[data-launch-for='${goal.file}']`);
   await settle(window);
@@ -1264,12 +1249,7 @@ test("the Area card brain icon starts, shows, and resumes the Area brain", async
       documents: [],
     });
   };
-
-  window.eval(goToCore);
-  window.eval(goalCardCore);
-  window.eval(askCore);
-  window.eval(mapCore);
-  window.eval(script);
+  window.eval(shellBundle);
   await settle(window);
   // No brain: the icon is dim and clicking it opens the brain popover, seeded with Fable, not the Area default.
   /** Reads the Area card's brain icon, which the shell redraws on every paint. */
@@ -1396,12 +1376,7 @@ test("background polls never rebuild the screen under an editing surface or a re
     await poll();
     await settle(window);
   };
-
-  window.eval(goToCore);
-  window.eval(goalCardCore);
-  window.eval(askCore);
-  window.eval(mapCore);
-  window.eval(script);
+  window.eval(shellBundle);
   await settle(window);
   assert.ok(poll, "the shell polls the server");
 
@@ -1468,7 +1443,7 @@ test("comments render as red blocks, save through the base-hash path with re-anc
     readFile(path.join(here, "public", "document-comments.js"), "utf8"),
   ]);
   await import("./public/document-comments.js");
-  const helper = globalThis.AgentShellDocumentComments;
+  const helper = documentComments;
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
   const { window } = dom;
   window.setInterval = () => 0;
@@ -1513,12 +1488,7 @@ test("comments render as red blocks, save through the base-hash path with re-anc
       documents: [doc],
     });
   };
-  window.eval(commentsScript);
-  window.eval(goToCore);
-  window.eval(goalCardCore);
-  window.eval(askCore);
-  window.eval(mapCore);
-  window.eval(script);
+  window.eval(shellBundle);
   await settle(window);
   await openDocumentViaGoTo(window, doc.title);
   await settle(window);
@@ -1603,7 +1573,7 @@ test("comments render as red blocks, save through the base-hash path with re-anc
     readFile(path.join(here, "public", "document-comments.js"), "utf8"),
   ]);
   await import("./public/document-comments.js");
-  const helper = globalThis.AgentShellDocumentComments;
+  const helper = documentComments;
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
   const { window } = dom;
   window.setInterval = () => 0;
@@ -1648,12 +1618,7 @@ test("comments render as red blocks, save through the base-hash path with re-anc
       documents: [doc],
     });
   };
-  window.eval(commentsScript);
-  window.eval(goToCore);
-  window.eval(goalCardCore);
-  window.eval(askCore);
-  window.eval(mapCore);
-  window.eval(script);
+  window.eval(shellBundle);
   await settle(window);
   await openDocumentViaGoTo(window, doc.title);
   await settle(window);
@@ -1781,12 +1746,7 @@ test("a sub-Area with open work nests as a section of its ancestor's desk panel,
       documents: [],
     });
   };
-  window.eval(goToCore);
-  window.eval(goalCardCore);
-  window.eval(askCore);
-  window.eval(mapCore);
-  window.eval(mapView);
-  window.eval(script);
+  window.eval(shellBundle);
   await settle(window);
 
   assert.equal(window.document.querySelectorAll(".area-desk-panel").length, 1, "embedded-js and storm-response fold into one panel");
@@ -1856,12 +1816,7 @@ test("desk panels order by recent work, not path: working now first, then most r
       documents: [],
     });
   };
-  window.eval(goToCore);
-  window.eval(goalCardCore);
-  window.eval(askCore);
-  window.eval(mapCore);
-  window.eval(mapView);
-  window.eval(script);
+  window.eval(shellBundle);
   await settle(window);
 
   const headers = [...window.document.querySelectorAll(".area-desk-panel .area-desk-header h2")].map((node) => node.textContent);
@@ -1879,12 +1834,8 @@ test("the Area map holds stored node positions on reload, simulates only new nod
   const { window } = dom;
   window.HTMLCanvasElement.prototype.getContext = () => null;
   for (const script of d3) window.eval(script);
-  window.eval(goToCore);
-  window.eval(goalCardCore);
-  window.eval(askCore);
-  window.eval(mapCore);
-  window.eval(mapView);
-  const view = window.AgentShellAreaMapView;
+  window.eval(shellBundle);
+  const view = window.areaMapView;
   const host = window.document.createElement("div");
   window.document.body.append(host);
   const now = 1_700_000_000_000;
@@ -1948,7 +1899,7 @@ test("a second comment lands on the words Julian selected, and the reader holds 
     readFile(path.join(here, "public", "area-map-core.js"), "utf8"),
   ]);
   await import("./public/document-comments.js");
-  const helper = globalThis.AgentShellDocumentComments;
+  const helper = documentComments;
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
   const { window } = dom;
   window.setInterval = () => 0;
@@ -1981,12 +1932,7 @@ test("a second comment lands on the words Julian selected, and the reader holds 
       documents: [doc],
     });
   };
-  window.eval(commentsScript);
-  window.eval(goToCore);
-  window.eval(goalCardCore);
-  window.eval(askCore);
-  window.eval(mapCore);
-  window.eval(script);
+  window.eval(shellBundle);
   await settle(window);
   await openDocumentViaGoTo(window, doc.title);
   await settle(window);
@@ -2091,13 +2037,7 @@ test("What happened shows an Area's closed work from the last 12 hours, one over
       recentCloses,
     });
   };
-  window.eval(goToCore);
-  window.eval(goalCardCore);
-  window.eval(askCore);
-  window.eval(mapCore);
-  window.eval(mapView);
-  window.eval(whatHappenedCore);
-  window.eval(script);
+  window.eval(shellBundle);
   await settle(window);
 
   const panels = [...window.document.querySelectorAll(".area-desk-panel")];

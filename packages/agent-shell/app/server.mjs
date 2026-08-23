@@ -17,21 +17,12 @@ import { createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area
 import { commandSession, programsSnapshot, saveLocalProgram, saveRoutine, setRoutinePaused } from "./programs.mjs";
 import { documentHash, markdownTitle, safeMarkdownPath, wikiLinks } from "./vault-documents.mjs";
 import { rationaleDossierContract } from "./rationale-dossier.mjs";
-import "./public/document-comments.js";
-import "./public/area-map-core.js";
-import "./public/what-happened-core.js";
+import documentComments from "./public/document-comments.js";
+import areaMapCore from "./public/area-map-core.js";
+import whatHappenedCore from "./public/what-happened-core.js";
 import { createVaultGitReader, fileTimes } from "./area-map.mjs";
 import { createFingerprintCache } from "./vault-index-cache.mjs";
 
-// The comment parser is shared with the browser, so it is a plain script that
-// registers a global (see public/document-comments.js).
-const documentComments = globalThis.AgentShellDocumentComments;
-// The Area map facts (kind, recency, desk grouping) are shared the same way
-// (see public/area-map-core.js and the design contract design-area-map).
-const areaMapCore = globalThis.AgentShellAreaMap;
-// The What happened look's window and closer facts, shared the same way
-// (see public/what-happened-core.js and design-done-goals-timeline).
-const whatHappenedCore = globalThis.AgentShellWhatHappened;
 import { classifyStaticPane, parseContextFill, stabilizeStaticPane, staticSinceOf } from "./pane-state.mjs";
 import { appendSteps, currentStep, endPipeline, goalBindingGoneFromSnapshot, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, readAllPipelines, readPipeline, stepGoneFromSnapshot, validateSteps, writePipeline } from "./pipeline-record.mjs";
 import { newContinuationRecord, readAllContinuations, readContinuation, writeContinuation } from "./continuation-record.mjs";

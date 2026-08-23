@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import selectionApi from "./public/terminal-selection.js";
 import { JSDOM } from "jsdom";
-
-const here = path.dirname(fileURLToPath(import.meta.url));
 
 /** Creates a focused xterm double for selection lifecycle tests. */
 function terminalDouble() {
@@ -52,14 +48,12 @@ function terminalDouble() {
 }
 
 test("completed terminal selections survive repaints and Command-C copies the original text", async () => {
-  const source = await readFile(path.join(here, "public", "terminal-selection.js"), "utf8");
   const dom = new JSDOM("<div id='host'></div>", { runScripts: "outside-only" });
   const { window } = dom;
   const terminal = terminalDouble();
   const copied = [];
   const deferred = [];
-  window.eval(source);
-  const selection = window.AgentShellTerminalSelection.preserveTerminalSelection({
+  const selection = selectionApi.preserveTerminalSelection({
     terminal,
     host: window.document.querySelector("#host"),
     clipboard: {

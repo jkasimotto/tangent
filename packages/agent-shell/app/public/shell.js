@@ -1,3 +1,14 @@
+import terminalKeys from "./terminal-keys.js";
+import terminalSelectionApi from "./terminal-selection.js";
+import documentComments from "./document-comments.js";
+import codeHighlight from "./code-highlight.js";
+import areaMapCore from "./area-map-core.js";
+import goalCardCore from "./goal-card-core.js";
+import askCore from "./ask-core.js";
+import goToCore from "./go-to-core.js";
+import whatHappenedCore from "./what-happened-core.js";
+import areaMapView from "./area-map.js";
+
 const savedGoal = localStorage.getItem("agent-shell.current-goal") || "";
 const requestedLocation = new URLSearchParams(location.search);
 const requestedView = requestedLocation.get("view");
@@ -333,7 +344,7 @@ function markdownToHtml(text, options = {}) {
   /** Removes comment markup from one line, leaving an open and a close marker for each mark. */
   const stripComments = (value, fileLine) => {
     if (!comments.length) return value;
-    const tokens = window.AgentShellDocumentComments.commentTokensOnLine(comments, fileLine);
+    const tokens = documentComments.commentTokensOnLine(comments, fileLine);
     if (!tokens.length) return value;
     let out = "";
     let cursor = 0;
@@ -374,7 +385,7 @@ function markdownToHtml(text, options = {}) {
         body.push(stripComments(lines[index], index + lineOffset));
         index += 1;
       }
-      const highlighter = window.AgentShellCodeHighlight;
+      const highlighter = codeHighlight;
       const language = highlighter?.normalizeLanguage(lang);
       const code = highlighter ? highlighter.highlightHtml(body.join("\n"), lang) : escapeHtml(body.join("\n"));
       const label = lang ? `<div class="markdown-code-lang">${escapeHtml(lang)}</div>` : "";
@@ -1067,7 +1078,7 @@ const SEARCH_FILLER = new Set(["a", "an", "and", "built", "did", "do", "for", "i
 
 // Normalizes conversational wording for forgiving local search. The work
 // search, the Go to finder, and the tests share one copy (see go-to-core.js).
-const normalizedSearchText = window.AgentShellGoTo.normalizedSearchText;
+const normalizedSearchText = goToCore.normalizedSearchText;
 
 /** Extracts the meaningful terms from one conversational query. */
 function searchTerms(query) {
@@ -1177,7 +1188,7 @@ function panelActivity(record) {
 function deskAreas() {
   const trees = filteredGoalTrees(goalTrees().filter((tree) => goalTreeState(tree) !== "closed"));
   const descriptions = state.workFilter === "inactive" ? [] : describeWorkSessions();
-  const core = window.AgentShellAreaMap;
+  const core = areaMapCore;
   const areaList = areas();
   const byPath = new Map(areaList.map((area) => [area.path, area]));
   /** One Area's own open Goal trees and definition sessions, not its descendants'. */
@@ -1234,7 +1245,7 @@ function goalWorkFinished(goal) {
  * Describe-work sessions ask even under a brain: they answer to Julian.
  */
 function fallbackAsks() {
-  const ask = window.AgentShellAsk;
+  const ask = askCore;
   const goalAsks = allGoals().flatMap((goal) => {
     if (["done", "dropped", "deferred"].includes(goal.status)) return [];
     if (coveredByBrainRecord(goal.area)) return [];
@@ -1311,7 +1322,7 @@ async function enableDockBadge() {
  * associates a brain with its Area and finds it there (Julian's answer 4).
  */
 function askGroups() {
-  const ask = window.AgentShellAsk;
+  const ask = askCore;
   return (state.brains ?? [])
     .filter((brain) => brain.status === "running" || brain.status === "stopped")
     .map((brain) => {
@@ -1340,7 +1351,7 @@ function forYouItems() {
  */
 function areaForYouGroups(areaPath) {
   if (!coveredByBrainRecord(areaPath)) return [];
-  const core = window.AgentShellAreaMap;
+  const core = areaMapCore;
   return askGroups().filter((group) => core.isInside(group.area, areaPath));
 }
 
@@ -1579,7 +1590,7 @@ function deskPipelineControls(goal, pipeline) {
  * so the bar and the agent-count fact stay in step (design-compact-work-desk).
  */
 function deskGoalFactsData(goal) {
-  const core = window.AgentShellGoalCard;
+  const core = goalCardCore;
   const now = Date.now();
   const sessions = sessionsForGoal(goal);
   const facts = core ? core.goalCardFacts({ goal, sessions, pipeline: pipelineRecordForGoal(goal), now, handoffNeedsYou: goalNeedsYou(goal) }) : null;
@@ -1592,7 +1603,7 @@ function deskGoalFactsData(goal) {
  * Goal runs or waits is now the bar (design-compact-work-desk).
  */
 function deskGoalFacts(facts, names, now) {
-  const core = window.AgentShellGoalCard;
+  const core = goalCardCore;
   if (!core || !facts) return "";
   const segment = core.factsSegments(facts, now, names).find((item) => item.kind === "agents");
   if (!segment) return "";
@@ -1606,7 +1617,7 @@ function deskGoalFacts(facts, names, now) {
  * that moved this text to the hover only took it too far).
  */
 function deskGoalElapsed(facts, now) {
-  const core = window.AgentShellGoalCard;
+  const core = goalCardCore;
   if (!core || !facts) return "";
   const label = core.elapsedLabel(facts, now);
   if (!label) return "";
@@ -1625,7 +1636,7 @@ function deskGoalElapsed(facts, now) {
  * and the start time; a Goal nobody has started draws no bar.
  */
 function deskGoalBar(goal, facts, now, maxElapsedMs) {
-  const core = window.AgentShellGoalCard;
+  const core = goalCardCore;
   if (!core || !facts) return "";
   const shares = core.factsBarShares(facts, now, { waitsForBrain: goalCoveredByBrain(goal) });
   if (!shares) return "";
@@ -1922,8 +1933,7 @@ function whatHappenedOverlay() {
         <p class="what-happened-empty">Loading the vault…</p>
       </div>`;
   }
-  const core = window.AgentShellWhatHappened;
-  const areaMapCore = window.AgentShellAreaMap;
+  const core = whatHappenedCore;
   const now = Date.now();
   const closes = core.windowCloses(core.areaCloses(state.vault.recentCloses ?? [], area, areaMapCore.isInside), now);
   const timezoneOffset = new Date().getTimezoneOffset();
@@ -1940,7 +1950,7 @@ function whatHappenedOverlay() {
 
 /** One What happened row: time, mark and word, title, closer (design-done-goals-timeline Decision 3). */
 function whatHappenedRow(close, panelArea, now, timezoneOffset) {
-  const core = window.AgentShellWhatHappened;
+  const core = whatHappenedCore;
   const goal = goalByFile(close.file);
   const directory = close.file.split("/").slice(0, -1).join("/");
   const foreign = directory !== panelArea ? `<small class="what-happened-area">${escapeHtml(humanName(directory.split("/").pop()))}</small>` : "";
@@ -1961,8 +1971,7 @@ function whatHappenedRow(close, panelArea, now, timezoneOffset) {
 function whatHappenedRenderKey() {
   if (!state.whatHappened) return null;
   const { area, anchor } = state.whatHappened;
-  const core = window.AgentShellWhatHappened;
-  const areaMapCore = window.AgentShellAreaMap;
+  const core = whatHappenedCore;
   const closes = state.vault ? core.windowCloses(core.areaCloses(state.vault.recentCloses ?? [], area, areaMapCore.isInside), Date.now()) : [];
   const first = closes[0] ?? null;
   return [area, anchor.top, anchor.right, first?.file ?? null, first?.at ?? null];
@@ -2114,7 +2123,7 @@ function goalAttention(goal) {
 /** Desk order of Goal trees by their root's attention, then latest change (design-area-map Decision 2). */
 function orderedGoalTrees(trees) {
   const byRoot = new Map(trees.map((tree) => [tree.root.file, tree]));
-  return window.AgentShellAreaMap.orderGoals(trees.map((tree) => tree.root), goalAttention).map((root) => byRoot.get(root.file));
+  return areaMapCore.orderGoals(trees.map((tree) => tree.root), goalAttention).map((root) => byRoot.get(root.file));
 }
 
 /** Fetches the stored map state of one Area once; the map mounts again when it arrives. */
@@ -2133,7 +2142,7 @@ function loadMapState(area) {
  * only hands it the current facts and the shell's routes.
  */
 function mountAreaMap(host) {
-  const view = window.AgentShellAreaMapView;
+  const view = areaMapView;
   const area = host.dataset.areaMap;
   if (!view || !area || !state.vault) return;
   loadMapState(area);
@@ -3209,7 +3218,7 @@ function mountTerminal(host, sessionName) {
   terminal.loadAddon(terminalFit);
   terminal.open(host);
   loadTerminalWebgl(terminal);
-  terminalSelection = window.AgentShellTerminalSelection?.preserveTerminalSelection({
+  terminalSelection = terminalSelectionApi?.preserveTerminalSelection({
     terminal,
     host,
     clipboard: navigator.clipboard,
@@ -3237,7 +3246,7 @@ function mountTerminal(host, sessionName) {
   // xterm holds one custom key handler. Agent Shell's own key translations
   // come first, then the selection module gets the keys it owns.
   terminal.attachCustomKeyEventHandler((event) => {
-    const keys = window.AgentShellTerminalKeys?.terminalKeySequence(event) ?? "";
+    const keys = terminalKeys?.terminalKeySequence(event) ?? "";
     if (!keys) return terminalSelection?.handleKeyEvent(event) ?? true;
     terminalSelection?.noteInput();
     if (terminalSocket?.readyState === WebSocket.OPEN) terminalSocket.send(keys);
@@ -3522,7 +3531,7 @@ function restoreScreenScroll(positions) {
 // showed. Back and Esc put it all back (design-find-a-document-by-title
 // Decision 5).
 
-const returnPointLabel = window.AgentShellGoTo.returnPointLabel;
+const returnPointLabel = goToCore.returnPointLabel;
 
 /** Captures the screen Julian is on, so the reader or the brain view can bring him back. */
 function captureReturnPoint() {
@@ -3536,7 +3545,7 @@ function captureReturnPoint() {
   // Same reason: the What happened look anchors to a fixed pixel position too.
   state.whatHappened = null;
   const positions = rememberScreenScroll();
-  return window.AgentShellGoTo.returnPointFrom(state, { screen: positions.screen, inner: [...positions.inner] });
+  return goToCore.returnPointFrom(state, { screen: positions.screen, inner: [...positions.inner] });
 }
 
 /** Puts back the scroll positions one return point captured. */
@@ -3757,7 +3766,7 @@ function brainStateWord(brain) {
  */
 function goToRows() {
   if (!state.vault) return null;
-  const core = window.AgentShellAreaMap;
+  const core = areaMapCore;
   const rows = [];
   for (const record of state.vault.documents ?? []) {
     if (record.kind !== "document" && !(record.kind === "note" && !record.missing)) continue;
@@ -3788,7 +3797,7 @@ function goToRows() {
       session: brain.session,
     });
   }
-  return window.AgentShellGoTo.matchRows(rows, state.goTo.query, GO_TO_LIMIT);
+  return goToCore.matchRows(rows, state.goTo.query, GO_TO_LIMIT);
 }
 
 /** Opens the finder over the current screen, or closes it when ⌘K repeats. */
@@ -4439,7 +4448,7 @@ function noteInComposer(message) {
 
 /** Applies the composer to one Document text: the new markup, or why it cannot be placed. */
 function composerResult(document, composer) {
-  const helper = window.AgentShellDocumentComments;
+  const helper = documentComments;
   if (composer.editing) {
     const match = (document.comments ?? []).find((comment) => comment.markup === composer.editing.markup && comment.line === composer.editing.line)
       ?? (document.comments ?? []).find((comment) => comment.markup === composer.editing.markup);
@@ -4514,7 +4523,7 @@ async function removeComment(index) {
   const comment = (state.document?.comments ?? [])[index];
   if (!comment) return;
   const previous = state.document.text;
-  const text = window.AgentShellDocumentComments.removeComment(previous, comment);
+  const text = documentComments.removeComment(previous, comment);
   const result = await saveDocumentText(text, "removed a comment");
   if (result.status === 409) return showToast("The Document changed since it was opened. Open it again, then remove the comment.");
   if (!result.ok) return showToast(result.data.error || "The comment did not save.");
@@ -5697,3 +5706,7 @@ void (async () => {
   if (requestedDocument) await openDocument(requestedDocument);
 })();
 window.setInterval(() => refresh(), 2500);
+
+// DOM-level exports keep tests on the module boundary instead of rebuilding
+// the old order-dependent browser globals.
+export { areaMapView, enableDockBadge, fallbackAsks, forYouItems, markdownHeadings, markdownToHtml, refresh };

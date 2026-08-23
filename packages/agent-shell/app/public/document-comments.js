@@ -11,8 +11,6 @@
 // Marks can nest, share, and come in pieces, so a second comment always lands on
 // the words that were selected. The parser is a scanner with a stack of open
 // marks; every comment keeps the source range of each piece of its mark.
-(function (root) {
-  "use strict";
 
   const AUTHOR = "Julian";
   const MARK_OPEN = "{==";
@@ -556,5 +554,4 @@
     return { text: removeComment(text, matches[0]), comment: matches[0] };
   }
 
-  root.AgentShellDocumentComments = { AUTHOR, parseComments, insertComment, removeComment, replaceCommentText, resolveComment, commentMarkup, commentTokensOnLine, visibleLine };
-})(typeof window !== "undefined" ? window : globalThis);
+export default { AUTHOR, parseComments, insertComment, removeComment, replaceCommentText, resolveComment, commentMarkup, commentTokensOnLine, visibleLine };

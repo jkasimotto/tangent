@@ -4,8 +4,6 @@
 // the whole thing, covering the languages the vault actually uses. An
 // unknown language tag still renders as plain escaped code, which keeps the
 // monospace block styling from shell.css.
-(function (root) {
-  "use strict";
 
   /** Escapes text before it enters rendered HTML. */
   function escapeHtml(value) {
@@ -115,5 +113,4 @@
       .join("");
   }
 
-  root.AgentShellCodeHighlight = { highlightHtml, normalizeLanguage };
-})(typeof window !== "undefined" ? window : globalThis);
+export default { highlightHtml, normalizeLanguage };

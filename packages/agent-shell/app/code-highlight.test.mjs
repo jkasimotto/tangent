@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-await import("./public/code-highlight.js");
-const highlight = globalThis.AgentShellCodeHighlight;
+import highlight from "./public/code-highlight.js";
 
 test("known fence tags normalize through their aliases; unknown tags resolve to null", () => {
   assert.equal(highlight.normalizeLanguage("js"), "javascript");

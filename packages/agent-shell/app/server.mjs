@@ -1061,12 +1061,11 @@ function withFrontmatterLine(text, key, value) {
  * Rewrites the mechanical fields that the server owns in a Goal file.
  */
 async function writeGoalBinding(file, { status, session, waitingOn }) {
-  const abs = path.join(TREES_ROOT, file);
-  let text = await readFile(abs, "utf8");
+  let text = await readFile(path.join(TREES_ROOT, file), "utf8");
   text = withFrontmatterLine(text, "status", status);
   text = withFrontmatterLine(text, "session", session);
   if (waitingOn !== undefined) text = withFrontmatterLine(text, "waiting_on", waitingOn);
-  await writeFile(abs, text);
+  await vaultRepository.writeMarkdown(file, text);
 }
 
 /**
@@ -1116,7 +1115,7 @@ async function editGoalFile(file, { status, session, title, doneWhen, state, und
     const decision = `### Won't do\n\n${oneLine(wontDoReason)}`;
     text = replaceNoteSection(text, "State", [decision, previousState].filter(Boolean).join("\n\n"));
   }
-  await writeFile(abs, text);
+  await vaultRepository.writeMarkdown(file, text);
 }
 
 /** Collapses user-entered multiline text into one readable line. */
@@ -1199,7 +1198,7 @@ async function setAreaStatus(area, status, tmuxSession) {
   const absolute = path.join(TREES_ROOT, file);
   const text = await readFile(absolute, "utf8").catch(() => emptyAreaNote(area));
   const next = withFrontmatterLine(text, "status", status);
-  await writeFile(absolute, next, "utf8");
+  await vaultRepository.writeMarkdown(file, next);
   await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", file]).catch(() => {});
   await vaultCommit([file], `update: ${area} area ${status === "done" ? "done" : "reopened"}`, area, tmuxSession);
   const openGoals = (await readAreaGoalsDeep(area)).filter((goal) => !["done", "dropped", "deferred"].includes(goal.status));
@@ -1233,7 +1232,7 @@ async function addGoalToArea(area, slug) {
     const count = goalLinkOrder(current).length;
     const next = [current, `${count + 1}. [[goal-${slug}]]`].filter(Boolean).join("\n");
     text = replaceNoteSection(text, "Goals", next);
-    await writeFile(absolute, text);
+    await vaultRepository.writeMarkdown(file, text);
   }
   return file;
 }
@@ -1254,7 +1253,7 @@ async function createGoalSet(area, { goal, subgoals = [], description = "", sour
   ].map((record) => ({ ...record, file: `${area}/goal-${record.slug}.md` }));
 
   for (const record of records) {
-    await writeFile(path.join(TREES_ROOT, record.file), renderNewGoal(record));
+    await vaultRepository.writeMarkdown(record.file, renderNewGoal(record));
   }
   const noteFile = await addGoalToArea(area, goalSlug);
   const changed = [...records.map((record) => record.file), noteFile];
@@ -1293,7 +1292,7 @@ async function saveWorkIdea(area, description) {
   const current = noteSection(text, "Ideas and open questions");
   const next = [current, `- Idea: ${oneLine(description)}`].filter(Boolean).join("\n");
   text = replaceNoteSection(text, "Ideas and open questions", next);
-  await writeFile(absolute, text);
+  await vaultRepository.writeMarkdown(file, text);
   await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", file]).catch(() => {});
   await vaultCommit([file], `note: ${area} captures an idea from Agent Shell`, area, null);
   return file;
@@ -4227,7 +4226,7 @@ const server = http.createServer(async (req, res) => {
       }
       const absolute = path.join(TREES_ROOT, "harnesses.md");
       const text = await readFile(absolute, "utf8").catch(() => "");
-      await writeFile(absolute, upsertHarnessRegistry(text, registry));
+      await vaultRepository.writeMarkdown("harnesses.md", upsertHarnessRegistry(text, registry));
       await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", "harnesses.md"]).catch(() => {});
       await vaultCommit(["harnesses.md"], "update: harness registry from Agent Shell", "machine", null);
       res.writeHead(200, { "content-type": "application/json" });
@@ -4274,7 +4273,7 @@ const server = http.createServer(async (req, res) => {
       const absolute = path.join(TREES_ROOT, file);
       const text = await readFile(absolute, "utf8").catch(() => emptyAreaNote(area));
       const ref = { harness: resolved.harness, ...(resolved.model ? { model: resolved.model } : {}), ...(resolved.effort ? { effort: resolved.effort } : {}) };
-      await writeFile(absolute, upsertEnvironmentLaunch(text, ref));
+      await vaultRepository.writeMarkdown(file, upsertEnvironmentLaunch(text, ref));
       await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", file]).catch(() => {});
       await vaultCommit([file], `update: ${area} default launch ${resolved.label}`, area, null);
       res.writeHead(200, { "content-type": "application/json" });

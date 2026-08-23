@@ -50,6 +50,7 @@ import { projectDesk } from "./desk-projection.mjs";
 import { createShellControlRoutes } from "./shell-control-routes.mjs";
 import { createShellStateRoutes } from "./shell-state-routes.mjs";
 import { createVoiceRoutes } from "./voice-routes.mjs";
+import { createGoalQueryRoutes } from "./goal-query-routes.mjs";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -3964,6 +3965,70 @@ const voiceRoutes = createVoiceRoutes({
   nameHints: voiceNameHints,
   route: routeAndExecute,
 });
+const goalQueryRoutes = createGoalQueryRoutes({
+  /** Lists summarized Goals in one Area or the whole vault. */
+  async list(area) {
+    const allAreas = flattenAreaPaths(await readTree(TREES_ROOT));
+    if (area && !allAreas.includes(area)) return { status: 404, error: `no area "${area}"` };
+    const goals = [];
+    for (const one of area ? [area] : allAreas) goals.push(...(await readAreaGoals(one)).map(goalSummary));
+    return { status: 200, value: { goals } };
+  },
+  /** Finds one complete Goal by slug. */
+  async show(slug) {
+    for (const area of flattenAreaPaths(await readTree(TREES_ROOT))) {
+      const goal = (await readAreaGoals(area)).find((item) => item.slug === slug);
+      if (goal) return { status: 200, value: { goal } };
+    }
+    return { status: 404, error: `no goal ${slug}` };
+  },
+  /** Owns or releases a set of Goals for one live session. */
+  async ownership(body, releasing) {
+    const session = String(body.session ?? "").trim();
+    const slugs = (Array.isArray(body.slugs) ? body.slugs : []).map(String).filter(Boolean);
+    const verb = releasing ? "release" : "own";
+    if (!session || !slugs.length) return { status: 400, error: `${verb} needs a session name and at least one goal slug` };
+    const liveSessions = await listSessions();
+    const live = new Set(liveSessions.map((item) => item.name));
+    if (!releasing && !live.has(session)) return { status: 404, error: `no tmux session "${session}"; run this inside the agent's session or pass --session` };
+    const bySlug = new Map([...(await goalsByFile()).values()].map((goal) => [goal.slug, goal]));
+    const resolved = [];
+    for (const slug of slugs) {
+      const goal = bySlug.get(slug);
+      if (!goal) return { status: 404, error: `no goal ${slug}` };
+      if (!releasing && ["done", "dropped"].includes(goal.status)) return { status: 409, error: `goal ${slug} is ${goal.status}` };
+      if (goal.session && goal.session !== session && live.has(goal.session)) return { status: 409, error: `goal ${slug} is owned by ${goal.session}` };
+      resolved.push(goal);
+    }
+    try {
+      for (const goal of resolved) {
+        const target = releasing ? { status: "open", session: null } : { status: "active", session };
+        if (goal.status === target.status && (goal.session ?? null) === target.session) continue;
+        if (releasing && goal.status !== "active") continue;
+        await writeGoalBinding(goal.file, target);
+        await vaultCommit([goal.file], `update: ${goal.area} goal ${goal.slug} ${releasing ? "released" : `owned by ${session}`}`, goal.area, releasing ? null : session);
+      }
+      if (!releasing && resolved.length) await adoptGoalSession(liveSessions, session, resolved[0]);
+      return { status: 200, value: { ok: true, session, slugs: resolved.map((goal) => goal.slug) } };
+    } catch (error) {
+      return { status: 500, error: String(error.stderr ?? error.message ?? error) };
+    }
+  },
+  /** Builds the Goal, prompt, command, and context launch brief. */
+  async brief(file) {
+    const goal = (await goalsByFile()).get(file);
+    if (!goal) return { status: 404, error: `no goal file ${file}` };
+    return {
+      status: 200,
+      value: {
+        goal,
+        markdown: await goalPrompt(goal.area, goal),
+        agent: await agentCmdForArea(goal.area).then(withDefaultModel).catch(() => ""),
+        context: await goalContext(goal.area, goal),
+      },
+    };
+  },
+});
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
@@ -3986,122 +4051,7 @@ const server = http.createServer(async (req, res) => {
     if (await documentRoutes.handle(req, res, url)) return;
     if (await shellControlRoutes.handle(req, res, url)) return;
     if (await voiceRoutes.handle(req, res, url)) return;
-    // Goal listing for `tangent goal list [<area>]`: one Area's own Goals, or every
-    // Area's Goals across the vault when no area is given.
-    if (url.pathname === "/api/goals" && req.method === "GET") {
-      const area = url.searchParams.get("area");
-      const allAreas = flattenAreaPaths(await readTree(TREES_ROOT));
-      if (area && !allAreas.includes(area)) {
-        res.writeHead(404, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: `no area "${area}"` }));
-        return;
-      }
-      const areas = area ? [area] : allAreas;
-      const goals = [];
-      for (const one of areas) goals.push(...(await readAreaGoals(one)).map(goalSummary));
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ goals }));
-      return;
-    }
-    // Slug lookup across the whole vault for `tangent goal show/done/wont-do <slug>`.
-    if (url.pathname === "/api/goals/show" && req.method === "GET") {
-      const slug = url.searchParams.get("slug") ?? "";
-      let found = null;
-      for (const area of flattenAreaPaths(await readTree(TREES_ROOT))) {
-        found = (await readAreaGoals(area)).find((goal) => goal.slug === slug);
-        if (found) break;
-      }
-      if (!found) {
-        res.writeHead(404, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: `no goal ${slug}` }));
-        return;
-      }
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ goal: found }));
-      return;
-    }
-    // Ownership lane for agents (`tangent goal own|release`): a session claims
-    // the Goals it will work, or hands them back. Ownership is the Goal's
-    // existing session binding, so the desk and the reconcile pass need no new
-    // machinery. A Goal is never pulled away from another live session.
-    if ((url.pathname === "/api/goals/own" || url.pathname === "/api/goals/release") && req.method === "POST") {
-      const releasing = url.pathname === "/api/goals/release";
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const session = String(body.session ?? "").trim();
-      const slugs = (Array.isArray(body.slugs) ? body.slugs : []).map(String).filter(Boolean);
-      if (!session || !slugs.length) {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: `${releasing ? "release" : "own"} needs a session name and at least one goal slug` }));
-        return;
-      }
-      const liveSessions = await listSessions();
-      const live = new Set(liveSessions.map((s) => s.name));
-      if (!releasing && !live.has(session)) {
-        res.writeHead(404, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: `no tmux session "${session}"; run this inside the agent's session or pass --session` }));
-        return;
-      }
-      const resolved = [];
-      const allAreas = flattenAreaPaths(await readTree(TREES_ROOT));
-      for (const slug of slugs) {
-        let found = null;
-        for (const area of allAreas) {
-          found = (await readAreaGoals(area)).find((goal) => goal.slug === slug);
-          if (found) break;
-        }
-        if (!found) {
-          res.writeHead(404, { "content-type": "application/json" });
-          res.end(JSON.stringify({ error: `no goal ${slug}` }));
-          return;
-        }
-        if (!releasing && ["done", "dropped"].includes(found.status)) {
-          res.writeHead(409, { "content-type": "application/json" });
-          res.end(JSON.stringify({ error: `goal ${slug} is ${found.status}` }));
-          return;
-        }
-        if (found.session && found.session !== session && live.has(found.session)) {
-          res.writeHead(409, { "content-type": "application/json" });
-          res.end(JSON.stringify({ error: `goal ${slug} is owned by ${found.session}` }));
-          return;
-        }
-        resolved.push(found);
-      }
-      try {
-        for (const goal of resolved) {
-          const target = releasing ? { status: "open", session: null } : { status: "active", session };
-          if (goal.status === target.status && (goal.session ?? null) === target.session) continue;
-          if (releasing && goal.status !== "active") continue;
-          await writeGoalBinding(goal.file, target);
-          await vaultCommit([goal.file], `update: ${goal.area} goal ${goal.slug} ${releasing ? "released" : `owned by ${session}`}`, goal.area, releasing ? null : session);
-        }
-        if (!releasing && resolved.length) await adoptGoalSession(liveSessions, session, resolved[0]);
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: true, session, slugs: resolved.map((goal) => goal.slug) }));
-      } catch (err) {
-        res.writeHead(500, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
-      }
-      return;
-    }
-    if (url.pathname === "/api/goals/brief" && req.method === "GET") {
-      const file = url.searchParams.get("file") ?? "";
-      const goal = (await goalsByFile()).get(file);
-      if (!goal) {
-        res.writeHead(404, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: `no goal file ${file}` }));
-        return;
-      }
-      const context = await goalContext(goal.area, goal);
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({
-        goal,
-        markdown: await goalPrompt(goal.area, goal),
-        agent: await agentCmdForArea(goal.area).then(withDefaultModel).catch(() => ""),
-        context,
-      }));
-      return;
-    }
+    if (await goalQueryRoutes.handle(req, res, url)) return;
     if (url.pathname === "/api/work/describe" && req.method === "POST") {
       let body = {};
       try { body = JSON.parse(await readBody(req)); } catch {}

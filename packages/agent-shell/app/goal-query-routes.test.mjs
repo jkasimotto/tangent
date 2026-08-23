@@ -1,0 +1,37 @@
+import assert from "node:assert/strict";
+import { Readable } from "node:stream";
+import test from "node:test";
+import { createGoalQueryRoutes } from "./goal-query-routes.mjs";
+
+/** Creates a request double. */
+function request(method, body = {}) {
+  const stream = Readable.from([JSON.stringify(body)]);
+  stream.method = method;
+  return stream;
+}
+
+/** Creates a response recorder. */
+function response() {
+  return {
+    /** Records status. */
+    writeHead(status) { this.status = status; },
+    /** Records JSON. */
+    end(body) { this.body = JSON.parse(body); },
+  };
+}
+
+test("Goal query routes preserve operation status and payloads", async () => {
+  const routes = createGoalQueryRoutes({
+    /** Lists one Goal. */
+    async list(area) { return { status: 200, value: { goals: [{ area }] } }; },
+    /** Rejects an unknown Goal. */
+    async show(slug) { return { status: 404, error: `no goal ${slug}` }; },
+  });
+  const listed = response();
+  await routes.handle(request("GET"), listed, new URL("http://shell/api/goals?area=otto"));
+  assert.equal(listed.body.goals[0].area, "otto");
+  const shown = response();
+  await routes.handle(request("GET"), shown, new URL("http://shell/api/goals/show?slug=missing"));
+  assert.equal(shown.status, 404);
+  assert.equal(shown.body.error, "no goal missing");
+});

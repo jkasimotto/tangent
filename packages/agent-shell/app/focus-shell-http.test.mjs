@@ -129,7 +129,6 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.match(shellScript, /What happens next\?/);
   assert.match(shellScript, /data-mark-wont-do/);
   assert.match(shellScript, /data-toggle-awake/);
-  assert.match(shellScript, /data-open-vision/);
   assert.match(shellScript, /data-describe-work/);
   assert.doesNotMatch(shellScript, /data-share-context/);
   assert.match(shellScript, /\/api\/work\/describe/);
@@ -205,24 +204,6 @@ test("the context-first shell is default and keeps the user's understanding with
   }).then((response) => response.json());
   assert.equal(movePreview.changedPaths.length, 2);
 
-  const vision = await fetch(`${base}/vision`).then((response) => response.text());
-  assert.match(vision, /Agent Shell — product vision/i);
-  assert.match(vision, /Human limit/);
-  assert.match(vision, /Model limit/);
-
-  const visionScript = await fetch(`${base}/vision.js`).then((response) => response.text());
-  assert.match(visionScript, /Keep the native agent chat whole/);
-  assert.match(visionScript, /Native agent surface/);
-  assert.match(visionScript, /Define work through a native conversation/);
-  assert.match(visionScript, /data-describe-form/);
-  assert.match(visionScript, /Give durable Areas one clear home/);
-  assert.match(visionScript, /Keep operational programs near their areas/);
-  assert.match(visionScript, /Daily remediation run/);
-  assert.match(visionScript, /Path preview/);
-  assert.match(visionScript, /Keep Mac awake/);
-  assert.match(visionScript, /Design Document: Live Edit Collaboration/);
-  assert.match(visionScript, /Read one Document at a time/);
-  assert.doesNotMatch(visionScript, /Two-minute context|What changed|Review execution plan|Read what will happen/);
 
   const brief = await fetch(`${base}/api/goals/brief?file=otto%2Ftest%2Fgoal-prove-it.md`).then((response) => response.json());
   assert.equal(brief.goal.title, "Prove it");

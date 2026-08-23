@@ -11,8 +11,9 @@
 // hears about the lines Tangent hides once per plan change and never again
 // (impl-the-for-you-row-shows-only-direct-asks). `newBrain` does not set it.
 
-import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import path from "node:path";
+import { readJsonObject, walkJsonFiles, writeJsonObject } from "./json-store.mjs";
 
 export const BRAIN_SCHEMA = "area-brain.v1";
 
@@ -26,7 +27,7 @@ export function brainPath(root, area) {
 
 /** Reads one brain record, or null when the file is missing or unparsable. */
 export async function readBrain(root, area) {
-  return readRecordFile(brainPath(root, area));
+  return readJsonObject(brainPath(root, area));
 }
 
 /** Reads every brain record under the root; empty when the root is missing. */
@@ -34,7 +35,7 @@ export async function readAllBrains(root) {
   const files = await walkJsonFiles(root);
   const records = [];
   for (const file of files) {
-    const record = await readRecordFile(file);
+    const record = await readJsonObject(file);
     if (record && record.schema === BRAIN_SCHEMA) records.push(record);
   }
   return records;
@@ -44,11 +45,7 @@ export async function readAllBrains(root) {
 export async function writeBrain(root, record) {
   const target = brainPath(root, record.area);
   record.updatedAt = new Date().toISOString();
-  await mkdir(path.dirname(target), { recursive: true });
-  const tmp = `${target}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(record, null, 2)}\n`, "utf8");
-  await rename(tmp, target);
-  return record;
+  return writeJsonObject(target, record);
 }
 
 /** Deletes one brain record; a missing file is not an error. */
@@ -176,39 +173,4 @@ export function latestHandover(record) {
 /** Lowercases and dashes a name the way tmux session names are built. */
 function normName(s) {
   return String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-}
-
-/** Reads one JSON file, or null when missing or unparsable. */
-async function readRecordFile(file) {
-  let text;
-  try {
-    text = await readFile(file, "utf8");
-  } catch (error) {
-    if (error?.code === "ENOENT") return null;
-    throw error;
-  }
-  try {
-    const parsed = JSON.parse(text);
-    return parsed && typeof parsed === "object" ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Lists every brain.json under a directory, sorted for stable output. */
-async function walkJsonFiles(dir) {
-  let entries;
-  try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch (error) {
-    if (error?.code === "ENOENT") return [];
-    throw error;
-  }
-  const files = [];
-  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) files.push(...await walkJsonFiles(full));
-    else if (entry.isFile() && entry.name === "brain.json") files.push(full);
-  }
-  return files;
 }

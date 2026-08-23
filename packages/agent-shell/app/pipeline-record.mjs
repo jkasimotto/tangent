@@ -5,8 +5,9 @@
 // what comes next, what the whole pipeline's status is), so the rules are
 // unit-testable without a live shell.
 
-import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import path from "node:path";
+import { readJsonObject, walkJsonFiles, writeJsonObject } from "./json-store.mjs";
 
 export const PIPELINE_SCHEMA = "agent-pipeline.v1";
 
@@ -20,7 +21,7 @@ export function pipelinePath(root, area, slug) {
 
 /** Reads one pipeline record, or null when the file is missing or unparsable. */
 export async function readPipeline(root, area, slug) {
-  return readRecordFile(pipelinePath(root, area, slug));
+  return readJsonObject(pipelinePath(root, area, slug));
 }
 
 /** Reads every pipeline record under the root; empty when the root is missing. */
@@ -28,8 +29,8 @@ export async function readAllPipelines(root) {
   const files = await walkJsonFiles(root);
   const records = [];
   for (const file of files) {
-    const record = await readRecordFile(file);
-    if (record) records.push(record);
+    const record = await readJsonObject(file);
+    if (record?.schema === PIPELINE_SCHEMA) records.push(record);
   }
   return records;
 }
@@ -41,11 +42,7 @@ export async function readAllPipelines(root) {
 export async function writePipeline(root, record) {
   const target = pipelinePath(root, record.area, record.slug);
   record.updatedAt = new Date().toISOString();
-  await mkdir(path.dirname(target), { recursive: true });
-  const tmp = `${target}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(record, null, 2)}\n`, "utf8");
-  await rename(tmp, target);
-  return record;
+  return writeJsonObject(target, record);
 }
 
 /** Deletes one pipeline record; a missing file is not an error. */
@@ -261,39 +258,4 @@ function normalizeStep(step, index) {
     handover: null,
     handoverSource: null
   };
-}
-
-/** Parses one record file, or null when it is missing or not valid JSON. */
-async function readRecordFile(file) {
-  let text;
-  try {
-    text = await readFile(file, "utf8");
-  } catch (error) {
-    if (error?.code === "ENOENT") return null;
-    throw error;
-  }
-  try {
-    const parsed = JSON.parse(text);
-    return parsed && typeof parsed === "object" ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-/** Lists every .json file under a directory, sorted; empty when it is missing. */
-async function walkJsonFiles(dir) {
-  let entries;
-  try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch (error) {
-    if (error?.code === "ENOENT") return [];
-    throw error;
-  }
-  const files = [];
-  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) files.push(...await walkJsonFiles(full));
-    else if (entry.isFile() && entry.name.endsWith(".json")) files.push(full);
-  }
-  return files;
 }

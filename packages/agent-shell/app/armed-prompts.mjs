@@ -14,8 +14,9 @@
 // server.mjs), so a step that was still booting when the process stopped
 // gets its prompt from the new process instead.
 
-import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import path from "node:path";
+import { readJsonObject, walkJsonFiles, writeJsonObject } from "./json-store.mjs";
 
 export const ARMED_PROMPT_SCHEMA = "armed-prompt.v1";
 
@@ -26,13 +27,9 @@ export function armedPromptPath(root, session) {
 
 /** Writes one session's armed-prompt record atomically. */
 export async function writeArmedPrompt(root, session, fields) {
-  await mkdir(root, { recursive: true });
   const record = { schema: ARMED_PROMPT_SCHEMA, session, armedAt: new Date().toISOString(), ...fields };
   const target = armedPromptPath(root, session);
-  const tmp = `${target}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(record, null, 2)}\n`, "utf8");
-  await rename(tmp, target);
-  return record;
+  return writeJsonObject(target, record);
 }
 
 /** Removes one session's armed-prompt record; a missing file is not an error. */
@@ -46,22 +43,10 @@ export async function clearArmedPrompt(root, session) {
  * record cannot hide the rest.
  */
 export async function readAllArmedPrompts(root) {
-  let entries;
-  try {
-    entries = await readdir(root, { withFileTypes: true });
-  } catch (error) {
-    if (error?.code === "ENOENT") return [];
-    throw error;
-  }
   const records = [];
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-    try {
-      const parsed = JSON.parse(await readFile(path.join(root, entry.name), "utf8"));
-      if (parsed?.schema === ARMED_PROMPT_SCHEMA && parsed.session) records.push(parsed);
-    } catch {
-      // half-written or foreign: skip it, never block the others
-    }
+  for (const file of await walkJsonFiles(root)) {
+    const parsed = await readJsonObject(file);
+    if (parsed?.schema === ARMED_PROMPT_SCHEMA && parsed.session) records.push(parsed);
   }
   return records;
 }

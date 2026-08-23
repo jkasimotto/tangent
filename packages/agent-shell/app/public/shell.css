@@ -613,10 +613,6 @@ details.more-work .area-work-list { margin-top: 18px; }
 .area-path button + button::before { color: #4e5660; content: "/"; }
 .goal-title { margin: 0; font-size: clamp(38px, 4.2vw, 56px); font-weight: 680; letter-spacing: -.048em; line-height: 1.04; }
 .goal-detail-label { margin: 0 0 8px; color: #7d8792; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 760; letter-spacing: .12em; text-transform: uppercase; }
-.vision-link { display: flex; align-items: center; gap: 8px; margin-top: 19px; padding: 0; border: 0; background: transparent; color: var(--blue); cursor: pointer; font-size: 14px; font-weight: 660; }
-.vision-link:hover { color: #c9e4ff; }
-.vision-link span { transition: transform 120ms ease; }
-.vision-link:hover span { transform: translateX(3px); }
 
 .brief-card {
   margin-top: 34px;
@@ -1188,4 +1184,3 @@ li .document-comment { margin: 8px 0 10px; }
 /* Beside the map the tree is narrow: the name wins, the path truncates. */
 .area-layout:has(.area-map-screen) .area-row > span:first-child { flex: none; max-width: 100%; }
 .area-layout:has(.area-map-screen) .area-row small { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
-

@@ -5002,7 +5002,6 @@ document.addEventListener("click", async (event) => {
     return paint(true);
   }
   if (target.closest("[data-create-manually]")) return switchDescribeToManualCreate();
-  if (target.closest("[data-open-vision]")) return window.location.assign("/vision");
   if (target.closest("[data-cancel-create]")) return cancelCreate();
   if (target.closest("[data-cancel-describe]")) return cancelDescribe();
   const removeSource = target.closest("[data-remove-describe-source]");

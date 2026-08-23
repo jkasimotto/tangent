@@ -4900,8 +4900,6 @@ const server = http.createServer(async (req, res) => {
     let filePath;
     if (url.pathname === "/" || url.pathname === "/index.html") {
       filePath = path.join(here, "public", "shell.html");
-    } else if (url.pathname === "/vision" || url.pathname === "/vision/") {
-      filePath = path.join(here, "public", "vision.html");
     } else if (url.pathname.startsWith("/vendor/d3/")) {
       const rel = url.pathname.slice("/vendor/d3/".length);
       const roots = {

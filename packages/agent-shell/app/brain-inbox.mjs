@@ -14,8 +14,8 @@
 // The server owns which brain reads which inbox. This module owns the record
 // shape, the unread question, and the text a brain sees.
 
-import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { readJsonObject, walkJsonFiles, writeJsonObject } from "./json-store.mjs";
 
 export const INBOX_SCHEMA = "area-brain-inbox.v1";
 
@@ -37,27 +37,14 @@ export function newInbox(area) {
  * empty inbox, so a caller can always append to what it gets back.
  */
 export async function readInbox(root, area) {
-  const file = inboxPath(root, area);
-  let text;
-  try {
-    text = await readFile(file, "utf8");
-  } catch (error) {
-    if (error?.code === "ENOENT") return newInbox(area);
-    throw error;
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    return newInbox(area);
-  }
+  const parsed = await readJsonObject(inboxPath(root, area));
   if (!parsed || typeof parsed !== "object" || parsed.schema !== INBOX_SCHEMA) return newInbox(area);
   return { ...newInbox(area), ...parsed, area, notices: Array.isArray(parsed.notices) ? parsed.notices : [] };
 }
 
 /** Reads every inbox under the root; empty when the root is missing. */
 export async function readAllInboxes(root) {
-  const files = await walkInboxFiles(root);
+  const files = (await walkJsonFiles(root)).filter((file) => path.basename(file) === "inbox.json");
   const records = [];
   for (const file of files) {
     const area = path.relative(root, path.dirname(file)).split(path.sep).join("/");
@@ -70,11 +57,7 @@ export async function readAllInboxes(root) {
 /** Writes one inbox with mkdir -p and an atomic tmp + rename. */
 export async function writeInbox(root, record) {
   const target = inboxPath(root, record.area);
-  await mkdir(path.dirname(target), { recursive: true });
-  const tmp = `${target}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tmp, `${JSON.stringify(record, null, 2)}\n`, "utf8");
-  await rename(tmp, target);
-  return record;
+  return writeJsonObject(target, record);
 }
 
 /**
@@ -191,22 +174,4 @@ export function noticeBlock(notices, max = DIGEST_MAX_CHARS) {
     used += line.length + 1;
   }
   return lines.join("\n");
-}
-
-/** Lists every inbox.json under a directory, sorted for stable output. */
-async function walkInboxFiles(dir) {
-  let entries;
-  try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch (error) {
-    if (error?.code === "ENOENT") return [];
-    throw error;
-  }
-  const files = [];
-  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) files.push(...await walkInboxFiles(full));
-    else if (entry.isFile() && entry.name === "inbox.json") files.push(full);
-  }
-  return files;
 }

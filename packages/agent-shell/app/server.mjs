@@ -44,6 +44,7 @@ import { createAgentRoutes } from "./agent-routes.mjs";
 import { createVaultRepository } from "./vault-repository.mjs";
 import { pipelineExecution, soloExecution } from "./execution-record.mjs";
 import { createAreaRoutes } from "./area-routes.mjs";
+import { createProgramRoutes } from "./program-routes.mjs";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -3840,6 +3841,55 @@ const areaRoutes = createAreaRoutes({
     return moved;
   },
 });
+const programRoutes = createProgramRoutes({
+  /** Returns programs with live and recurring-scheduler status. */
+  async list() {
+    const payload = await programsSnapshot({ treesRoot: TREES_ROOT, sessions: await listProgramSessions() });
+    return { ...payload, scheduler: await recurringSchedulerStatus() };
+  },
+  /** Creates one local program or committed routine. */
+  async create(body) {
+    if (body.type !== "routine") {
+      return saveLocalProgram({ treesRoot: TREES_ROOT, area: body.area, type: body.type, name: body.name, command: body.command, cwd: body.cwd });
+    }
+    const created = await saveRoutine({
+      treesRoot: TREES_ROOT,
+      area: body.area,
+      name: body.name,
+      time: body.time,
+      cwd: body.cwd,
+      model: body.model,
+      prompt: body.prompt,
+    });
+    await runVaultGit(["add", "--", created.file]);
+    await vaultCommit([created.file], `add: ${created.area} routine ${created.name}`, created.area, null);
+    return created;
+  },
+  /** Applies one control action to a configured program. */
+  async control(body) {
+    const snapshot = await programsSnapshot({ treesRoot: TREES_ROOT, sessions: await listProgramSessions() });
+    const program = snapshot.programs.find((item) => item.id === body.id);
+    if (!program) throw new Error("The program no longer exists.");
+    const action = String(body.action ?? "");
+    if (program.type === "process") {
+      if (!["start", "stop", "restart", "close"].includes(action)) throw new Error("Choose Start, Stop, Restart, or Close.");
+      await runLocalTangent(["process", action, program.name, "--area", program.area]);
+    } else if (program.type === "command") {
+      await controlCommand(program, action);
+    } else if (["pause", "resume"].includes(action)) {
+      const changed = await setRoutinePaused({ treesRoot: TREES_ROOT, source: program.source, paused: action === "pause" });
+      await runVaultGit(["add", "--", changed.file]);
+      await vaultCommit([changed.file], `update: ${program.area} routine ${program.name} ${action}d`, program.area, null);
+    } else if (action === "run") {
+      await runLocalTangent(["threads", "recur", "run", program.name]);
+    } else if (["stop", "close"].includes(action)) {
+      if (program.session) await execFileAsync("tmux", ["kill-session", "-t", `=${program.sessionName}`]);
+    } else {
+      throw new Error("Choose Run, Pause, Stop, or Close.");
+    }
+    return { ok: true };
+  },
+});
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
@@ -3867,85 +3917,13 @@ const server = http.createServer(async (req, res) => {
     if (await pipelineRoutes.handle(req, res, url)) return;
     if (await agentRoutes.handle(req, res, url)) return;
     if (await areaRoutes.handle(req, res, url)) return;
+    if (await programRoutes.handle(req, res, url)) return;
     // The frontend must target the same orchestrator session the server
     // special-cases, so the name ships as a tiny script instead of being
     // hardcoded twice.
     if (url.pathname === "/config.js") {
       res.writeHead(200, { "content-type": "text/javascript", "cache-control": "no-cache" });
       res.end(`window.CHAT_SESSION = ${JSON.stringify(CHAT_SESSION)};\n`);
-      return;
-    }
-    if (url.pathname === "/api/programs" && req.method === "GET") {
-      const payload = await programsSnapshot({ treesRoot: TREES_ROOT, sessions: await listProgramSessions() });
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ...payload, scheduler: await recurringSchedulerStatus() }));
-      return;
-    }
-    if (url.pathname === "/api/programs/new" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      try {
-        let created;
-        if (body.type === "routine") {
-          created = await saveRoutine({
-            treesRoot: TREES_ROOT,
-            area: body.area,
-            name: body.name,
-            time: body.time,
-            cwd: body.cwd,
-            model: body.model,
-            prompt: body.prompt,
-          });
-          await runVaultGit(["add", "--", created.file]);
-          await vaultCommit([created.file], `add: ${created.area} routine ${created.name}`, created.area, null);
-        } else {
-          created = await saveLocalProgram({
-            treesRoot: TREES_ROOT,
-            area: body.area,
-            type: body.type,
-            name: body.name,
-            command: body.command,
-            cwd: body.cwd,
-          });
-        }
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify(created));
-      } catch (error) {
-        res.writeHead(409, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: String(error.message ?? error) }));
-      }
-      return;
-    }
-    if (url.pathname === "/api/programs/control" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      try {
-        const snapshot = await programsSnapshot({ treesRoot: TREES_ROOT, sessions: await listProgramSessions() });
-        const program = snapshot.programs.find((item) => item.id === body.id);
-        if (!program) throw new Error("The program no longer exists.");
-        const action = String(body.action ?? "");
-        if (program.type === "process") {
-          if (!["start", "stop", "restart", "close"].includes(action)) throw new Error("Choose Start, Stop, Restart, or Close.");
-          await runLocalTangent(["process", action, program.name, "--area", program.area]);
-        } else if (program.type === "command") {
-          await controlCommand(program, action);
-        } else if (["pause", "resume"].includes(action)) {
-          const changed = await setRoutinePaused({ treesRoot: TREES_ROOT, source: program.source, paused: action === "pause" });
-          await runVaultGit(["add", "--", changed.file]);
-          await vaultCommit([changed.file], `update: ${program.area} routine ${program.name} ${action}d`, program.area, null);
-        } else if (action === "run") {
-          await runLocalTangent(["threads", "recur", "run", program.name]);
-        } else if (["stop", "close"].includes(action)) {
-          if (program.session) await execFileAsync("tmux", ["kill-session", "-t", `=${program.sessionName}`]);
-        } else {
-          throw new Error("Choose Run, Pause, Stop, or Close.");
-        }
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: true }));
-      } catch (error) {
-        res.writeHead(409, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: String(error.stderr ?? error.message ?? error) }));
-      }
       return;
     }
     // The launcher's index: per-area entries for search plus the unified map.

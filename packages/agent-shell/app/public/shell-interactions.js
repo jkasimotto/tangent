@@ -632,9 +632,10 @@ export function createShellInteractions({ state, api, post, paint, refresh, show
 
   /** Confirms and then stops the selected live session. */
   function confirmStop() {
-    const describing = state.view === "describe-agent";
     const goal = currentGoal();
-    const session = describing ? describeWorkSession() : sessionForGoal(goal);
+    const selectedConversation = describeWorkSession();
+    const describing = Boolean(selectedConversation) && (state.view === "describe-agent" || !goal);
+    const session = describing ? selectedConversation : sessionForGoal(goal);
     if (!session || (!describing && !goal)) return;
     const shell = session.state === "shell";
     const pipeline = describing ? null : pipelineForGoal(goal);

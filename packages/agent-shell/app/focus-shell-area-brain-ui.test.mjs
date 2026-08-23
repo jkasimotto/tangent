@@ -33,6 +33,11 @@ test("the Area card brain icon starts, shows, and resumes the Area brain", async
         sessions = [{ name: session, area: "otto/dnd", kind: "brain", brain: "otto/dnd", generation, state: "working", phase: "orchestrate", command: "claude" }];
         return jsonResponse({ session, generation, brain });
       }
+      if (pathname === "/api/kill/dnd-brain") {
+        brain = { ...brain, status: "stopped", live: false, state: null, latestHandover: "Wave 1 dispatched.\nNext: review.", updatedAt: "t-stopped" };
+        sessions = [];
+        return jsonResponse({ ok: true, brainEnded: true });
+      }
       return jsonResponse({ ok: true });
     }
     if (pathname === "/api/sessions") return jsonResponse({ boot: "boot-1", caffeinate: false, sessions, pipelines: [], brains: brain ? [brain] : [] });
@@ -103,14 +108,15 @@ test("the Area card brain icon starts, shows, and resumes the Area brain", async
   await settle(window);
   assert.equal(window.document.querySelector("[data-launch-popover]"), null);
   assert.ok(window.document.querySelector("#describe-work-terminal[data-session='dnd-brain']"));
-  click(window, "#back-button");
+  click(window, "#secondary-action");
+  assert.match(window.document.querySelector("#modal-title").textContent, /Stop .*\?/);
+  click(window, "[data-modal-confirm]");
+  await settle(window);
+  await settle(window);
+  assert.ok(posts.some((entry) => entry.path === "/api/kill/dnd-brain"), "Stop agent kills the selected brain session");
+  assert.equal(brain.status, "stopped");
   await settle(window);
   // The brain stopped: the icon is dim again, and the popover offers Resume with the old instruction.
-  brain = { ...brain, status: "stopped", live: false, state: null, latestHandover: "Wave 1 dispatched.\nNext: review.", updatedAt: "t-stopped" };
-  sessions = [];
-  click(window, "#menu-refresh");
-  await settle(window);
-  await settle(window);
   assert.ok(icon().classList.contains("stopped"), `stopped icon, got ${icon().className}`);
   click(window, "[data-brain-area='otto/dnd']");
   await settle(window);

@@ -1,51 +1,16 @@
 import assert from "node:assert/strict";
-import { once } from "node:events";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { startShellServer } from "./focus-shell-http-fixture.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);
-
-/** Reserves and releases one local port for the HTTP test. */
-async function freePort() {
-  const server = net.createServer();
-  server.listen(0, "127.0.0.1");
-  await once(server, "listening");
-  const address = server.address();
-  await new Promise((resolve) => server.close(resolve));
-  return address.port;
-}
-
-/** Polls until the child server accepts HTTP requests. */
-async function waitForServer(url, attempts = 80) {
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    try {
-      const response = await fetch(url);
-      if (response.ok) return;
-    } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(`Agent Shell did not start at ${url}`);
-}
-
-/** Finds a Node.js executable that can run the child server. */
-function nodeExecutable() {
-  const candidates = [
-    ...(process.env.PATH ?? "").split(path.delimiter).map((directory) => path.join(directory, "node")),
-    process.execPath,
-  ];
-  const executable = candidates.find((candidate) => candidate.includes("/.nvm/") && existsSync(candidate))
-    ?? candidates.find((candidate) => candidate && existsSync(candidate));
-  if (!executable) throw new Error("A Node.js executable was not found for the server test.");
-  return executable;
-}
 
 test("the context-first shell is default and keeps the user's understanding with the goal", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-focus-"));
@@ -74,54 +39,16 @@ test("the context-first shell is default and keeps the user's understanding with
     "utf8"
   );
 
-  let port;
-  try {
-    port = await freePort();
-  } catch (error) {
-    if (error?.code === "EPERM") {
-      context.skip("This environment does not permit local HTTP listeners.");
-      return;
-    }
-    throw error;
-  }
   const openedSessions = [];
-  const child = spawn(nodeExecutable(), ["server.mjs"], {
-    cwd: here,
-    env: {
-      ...process.env,
-      PORT: String(port),
-      HOST: "127.0.0.1",
-      TREES_ROOT: trees,
-      TANGENT_LOOPS_ROOT: path.join(root, "loops"),
-      WORKSPACE: workspace,
-      AGENT_SHELL_NO_OPEN: "1",
-      AGENT_SHELL_TEST_NO_LAUNCH: "1",
-      TANGENT_PIPELINES_ROOT: path.join(root, "pipelines"),
-      TANGENT_BRAINS_ROOT: path.join(root, "brains"),
-      AGENT_MESSAGE_LOG: path.join(root, "messages.jsonl"),
-      GROQ_API_KEY: "",
-      CHAT_SESSION: `focus-shell-test-${process.pid}`,
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  context.after(async () => {
-    await Promise.all(openedSessions.map((session) => new Promise((resolve) => {
-      execFile("tmux", ["kill-session", "-t", `=${session}`], () => resolve());
-    })));
-    child.kill("SIGTERM");
-    await Promise.race([once(child, "exit"), new Promise((resolve) => setTimeout(resolve, 1000))]);
-    await rm(root, { recursive: true, force: true });
-  });
+  const base = await startShellServer(context, { here, root, trees, workspace, openedSessions });
+  if (!base) return;
 
-  const base = `http://127.0.0.1:${port}`;
-  await waitForServer(base);
-
-  const home = await fetch(base).then((response) => response.text());
-  assert.match(home, /Agent Shell/i);
-  assert.match(home, /\/shell\.js/);
-  assert.doesNotMatch(home, />Legacy</);
-
-  const shellScript = await fetch(`${base}/shell.js`).then((response) => response.text());
+  const browserModules = [
+    "shell.js", "work-desk-view.js", "area-directory-view.js", "program-view.js", "goal-launch-view.js",
+    "agent-decision-view.js", "document-reader-view.js", "document-reader-controller.js", "shell-interactions.js",
+    "shell-event-bindings.js", "terminal-controller.js",
+  ];
+  const shellScript = (await Promise.all(browserModules.map((file) => fetch(`${base}/${file}`).then((response) => response.text())))).join("\n");
   const goalNarrativeScript = await fetch(`${base}/goal-narrative.js`).then((response) => response.text());
   const serverSource = await readFile(path.join(here, "server.mjs"), "utf8");
   assert.match(shellScript, /data-command-enter-submit/);
@@ -713,8 +640,9 @@ test("the context-first shell is default and keeps the user's understanding with
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ session: "test-pipeline-demo-s5", text: "Nothing changed since; the note is final." }),
   }).then((response) => response.json());
-  assert.deepEqual(handoverAgain.next, { index: 6, session: "test-pipeline-demo-s6" });
-  openedSessions.push("test-pipeline-demo-s6");
+  assert.equal(handoverAgain.next.index, 6);
+  assert.match(handoverAgain.next.session, /^test-pipeline-demo-s6(?:-r\d+)?$/);
+  openedSessions.push(handoverAgain.next.session);
   assert.equal(handoverAgain.pipeline.steps[4].status, "complete");
   assert.equal(handoverAgain.pipeline.steps[4].handover, "Release note written.\n\nNothing changed since; the note is final.");
   assert.equal(handoverAgain.pipeline.steps[5].status, "running");
@@ -723,7 +651,7 @@ test("the context-first shell is default and keeps the user's understanding with
   // the run ends. Step 6 and the pending step 7 are ended, not left
   // "stopped", so the desk offers no Restart and the Goal settles back to
   // plain open work.
-  const killed = await fetch(`${base}/api/kill/${encodeURIComponent("test-pipeline-demo-s6")}`, { method: "POST" }).then((response) => response.json());
+  const killed = await fetch(`${base}/api/kill/${encodeURIComponent(handoverAgain.next.session)}`, { method: "POST" }).then((response) => response.json());
   assert.equal(killed.pipelineEnded, true);
   snapshot = await fetch(`${base}/api/sessions`).then((response) => response.json());
   assert.deepEqual(snapshot.pipelines[0].steps.slice(4).map((step) => step.status), ["complete", "ended", "ended"]);

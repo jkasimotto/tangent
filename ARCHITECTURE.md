@@ -81,3 +81,5 @@ There is no combined browser shell. ADR-0019 deleted the former launcher, shell 
 Usage and Eval keep standalone local UI servers: `tangent usage ui` and `tangent eval ui`. These servers use `@tangent/ui-server`.
 
 API-only Usage consumers can install `@tangent/usage-core`. It does not require Svelte, Vite, browser assets, provider loaders, or SQLite, and its `schema` export is the canonical Usage type surface.
+
+The Agent Shell browser uses dependency-injected ES-module factories. Product modules own the Work desk and search, Area directory, Programs, Goal creation and launch editing, agent and decision screens, Document rendering and comments, terminal lifecycle, navigation interactions, and event binding. `public/shell.js` composes those factories and owns active-screen selection plus refresh and paint coordination.

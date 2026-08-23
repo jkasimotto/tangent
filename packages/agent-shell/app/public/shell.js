@@ -1188,7 +1188,8 @@ function deskAreas() {
     const openGoalCount = areaTrees.reduce((count, tree) => count + tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status)).length, 0);
     openCounts.set(area.path, Math.max(openGoalCount, areaDescriptions.length ? 1 : 0));
   }
-  const panelDefs = core.deskPanels(openCounts);
+  const projectedPanels = state.workFilter === "all" ? state.vault?.desk?.panels : null;
+  const panelDefs = projectedPanels?.length ? projectedPanels : core.deskPanels(openCounts);
   const covered = new Set(panelDefs.flatMap((panel) => [panel.path, ...panel.sections]));
   const panels = panelDefs.map((panel) => {
     const area = byPath.get(panel.path);
@@ -2100,6 +2101,8 @@ function areaGoalRow(goal) {
 
 /** The desk's word for one Goal: waiting (needs Julian), working (an agent runs), or ready. */
 function goalAttention(goal) {
+  const projected = state.vault?.desk?.attention?.[goal.file];
+  if (projected) return projected;
   const session = sessionForGoal(goal);
   if (goalNeedsYou(goal) || ["waiting", "shell"].includes(session?.state)) return "waiting";
   if (session) return "working";

@@ -46,6 +46,7 @@ import { pipelineExecution, soloExecution } from "./execution-record.mjs";
 import { createAreaRoutes } from "./area-routes.mjs";
 import { createProgramRoutes } from "./program-routes.mjs";
 import { createDocumentRoutes } from "./document-routes.mjs";
+import { projectDesk } from "./desk-projection.mjs";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -3892,7 +3893,11 @@ const programRoutes = createProgramRoutes({
   },
 });
 const documentRoutes = createDocumentRoutes({
-  vault: vaultIndex,
+  /** Returns the vault index with its server-owned desk projection. */
+  async vault() {
+    const [vault, sessions] = await Promise.all([vaultIndex(), listSessions()]);
+    return { ...vault, desk: projectDesk(vault, sessions) };
+  },
   readMap: readMapState,
   writeMap: writeMapState,
   validArea: validAreaPath,

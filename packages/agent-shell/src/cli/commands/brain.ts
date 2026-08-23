@@ -151,7 +151,7 @@ Examples:
   tangent brain handover "Wave 1 dispatched: area-map runs step 2 (tangent-area-map-s2). Waiting: nothing. Next: review area-map when it completes."
   tangent brain status otto/tangent
 
-Create plan, decision, test, and approval requests with `tangent brain request`.
+Create plan, decision, test, and approval requests with \`tangent brain request\`.
 Their answers return to this brain as durable notices. Existing For Julian
 plan rows remain visible only for legacy runs during migration.
 `);

@@ -756,7 +756,7 @@ function renderScreen() {
   else if (state.view === "describe") screen.innerHTML = renderDescribeCapture();
   else if (state.view === "describe-agent") screen.innerHTML = renderDescribeWorkAgent(describeSession);
   else if (state.view === "areas") screen.innerHTML = renderAreas();
-  else if (state.view === "prompts") screen.innerHTML = renderPromptBestiary({ goals: allGoals(), brains: state.brains, inspector: state.promptInspector });
+  else if (state.view === "prompts") screen.innerHTML = renderPromptBestiary({ goals: allGoals(), brains: state.brains, inspector: state.promptInspector, selection: state.bestiarySelection });
   else if (state.view === "area-edit") screen.innerHTML = renderAreaEditor();
   else if (state.view === "program-detail") screen.innerHTML = renderProgramDetail(currentProgram());
   else if (state.view === "program-create") screen.innerHTML = renderProgramCreate();
@@ -1035,14 +1035,17 @@ function showPrompts() {
 /** Loads one Goal's exact current execution prompt. */
 async function loadGoalPrompt(file, mode = "goal") {
   if (!file) return showToast("Choose a Goal first.");
-  state.promptInspector = { loading: true, title: "", text: "", error: "" };
+  state.bestiarySelection = mode === "pipeline"
+    ? { lifecycle: "brain-pipeline", transition: "nextAssignment" }
+    : { lifecycle: "brain-solo", transition: "assignment" };
+  state.promptInspector = { loading: true, title: "", text: "", error: "", file, area: "" };
   paint(true);
   try {
     const brief = await api(`/api/goals/brief?file=${encodeURIComponent(file)}&mode=${encodeURIComponent(mode)}`);
     const label = mode === "pipeline" ? "Pipeline step" : mode === "collaborate" ? "Collaboration" : "Goal assignment";
-    state.promptInspector = { loading: false, title: `${label} · ${brief.goal.title}`, text: brief.markdown, error: "" };
+    state.promptInspector = { loading: false, title: `${label} · ${brief.goal.title}`, text: brief.markdown, error: "", file, area: "" };
   } catch (error) {
-    state.promptInspector = { loading: false, title: "", text: "", error: error.message };
+    state.promptInspector = { loading: false, title: "", text: "", error: error.message, file, area: "" };
   }
   paint(true);
 }
@@ -1050,27 +1053,40 @@ async function loadGoalPrompt(file, mode = "goal") {
 /** Loads one live brain generation's exact current opening prompt. */
 async function loadBrainPrompt(area) {
   if (!area) return showToast("Choose a brain first.");
-  state.promptInspector = { loading: true, title: "", text: "", error: "" };
+  state.bestiarySelection = { lifecycle: "plan", transition: "work" };
+  state.promptInspector = { loading: true, title: "", text: "", error: "", file: "", area };
   paint(true);
   try {
     const result = await api(`/api/brains/show?area=${encodeURIComponent(area)}`);
-    state.promptInspector = { loading: false, title: `Brain generation · ${area}`, text: result.prompt, error: "" };
+    state.promptInspector = { loading: false, title: `Brain generation · ${area}`, text: result.prompt, error: "", file: "", area };
   } catch (error) {
-    state.promptInspector = { loading: false, title: "", text: "", error: error.message };
+    state.promptInspector = { loading: false, title: "", text: "", error: error.message, file: "", area };
   }
   paint(true);
 }
 
 /** Closes the exact prompt preview without leaving the bestiary. */
 function closePromptPreview() {
-  state.promptInspector = { loading: false, title: "", text: "", error: "" };
+  state.promptInspector = { ...state.promptInspector, loading: false, title: "", text: "", error: "" };
+  paint(true);
+}
+
+/** Selects one canonical lifecycle and resets its boundary selection. */
+function selectBestiaryLifecycle(lifecycle) {
+  state.bestiarySelection = { lifecycle, transition: "" };
+  paint(true);
+}
+
+/** Selects one boundary inside the current canonical lifecycle. */
+function selectBestiaryTransition(transition) {
+  state.bestiarySelection = { ...state.bestiarySelection, transition };
   paint(true);
 }
 
 bindShellEvents({
   state, post, paint, refresh, showToast, screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction,
   shellMenu, goToButton, goToLayer, goToInput, modalLayer, terminalFit: terminalController.fit, KEYMAP, shortcutMatches,
-  shortcutKbd, toggleShellMenu, confirmRebuild, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, loadGoalPrompt, loadBrainPrompt, closePromptPreview, showAreasAt,
+  shortcutKbd, toggleShellMenu, confirmRebuild, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, loadGoalPrompt, loadBrainPrompt, closePromptPreview, selectBestiaryLifecycle, selectBestiaryTransition, showAreasAt,
   showDecision, showCreate, showDescribe, showProgramCreate, selectProgram, openProgramSession, controlProgram,
   performProgramAction, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelCreate, cancelDescribe, currentProgram,
   programAreaDirectory, selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain,

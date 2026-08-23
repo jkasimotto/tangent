@@ -32,7 +32,8 @@ export function createShellState(storage = globalThis.localStorage, href = globa
     harnessDraft: null, harnessReturnView: "work", query: "", workFilter: storage.getItem("agent-shell.work-filter") || "all",
     caffeinate: false, decisionReturnView: "agent", agentReturnView: "work", offline: false, rebuilding: false,
     updateAvailable: false, bootId: "", loading: true, error: "", renderedKey: "",
-    promptInspector: { loading: false, title: "", text: "", error: "" },
+    promptInspector: { loading: false, title: "", text: "", error: "", file: "", area: "" },
+    bestiarySelection: { lifecycle: "plan", transition: "work" },
   };
   return { requestedArea, requestedDocument, state };
 }

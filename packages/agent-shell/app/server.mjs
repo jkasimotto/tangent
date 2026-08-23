@@ -45,6 +45,7 @@ import { forJulianSectionText, parseForJulian, removeForJulianLine, restoreForJu
 import { createSourceChangeMonitor } from "./source-change-monitor.mjs";
 import { promptArrived, splitPrompt, squash } from "./prompt-delivery.mjs";
 import { clearArmedPrompt, readAllArmedPrompts, writeArmedPrompt } from "./armed-prompts.mjs";
+import { createRuntimeScheduler } from "./runtime-scheduler.mjs";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -1516,7 +1517,6 @@ const ECHO_MS = 1200; // time for a TUI to draw what was typed into it
 const RETRY_MS = 2500; // extra boot time before typing the prompt again
 const TYPE_ATTEMPTS = 3;
 const armedSessions = new Map(); // session -> { phase, submit, document, prompt }
-let armTimer = null;
 
 /** The pane's foreground command, "" when the session is gone. */
 async function paneCommand(session) {
@@ -1686,24 +1686,7 @@ async function armSession(name, phase = "execute", submit = false, document = ""
   } catch (err) {
     console.error("armed prompt persist:", err.message ?? err);
   }
-  if (armTimer) return;
-  let running = false;
-  armTimer = setInterval(async () => {
-    if (running) return;
-    running = true;
-    try {
-      await tickArmedSessions();
-    } catch (err) {
-      console.error("arm watch:", err.message ?? err);
-    } finally {
-      running = false;
-      if (!armedSessions.size) {
-        clearInterval(armTimer);
-        armTimer = null;
-      }
-    }
-  }, ARM_POLL_MS);
-  armTimer.unref();
+  runtimeScheduler.wake();
 }
 
 /**
@@ -1736,7 +1719,6 @@ async function rearmPersistedPrompts() {
 const MESSAGE_POLL_MS = 2000;
 const MESSAGE_LOG = process.env.AGENT_MESSAGE_LOG ?? path.join(os.homedir(), ".tangent", "agent-shell-messages.jsonl");
 const messageQueues = new Map(); // target session -> [{ from, area, text, queuedAt }]
-let messageTimer = null;
 
 /** Appends one messaging event to the audit log; failures only log. */
 async function logAgentMessage(entry) {
@@ -1795,25 +1777,23 @@ function queueAgentMessage(target, entry) {
   const queue = messageQueues.get(target) ?? [];
   queue.push(entry);
   messageQueues.set(target, queue);
-  if (messageTimer) return;
-  let running = false;
-  messageTimer = setInterval(async () => {
-    if (running) return;
-    running = true;
-    try {
-      await tickMessageQueues();
-    } catch (err) {
-      console.error("message queue:", err.message ?? err);
-    } finally {
-      running = false;
-      if (!messageQueues.size) {
-        clearInterval(messageTimer);
-        messageTimer = null;
-      }
-    }
-  }, MESSAGE_POLL_MS);
-  messageTimer.unref();
+  runtimeScheduler.wake();
 }
+
+const runtimeScheduler = createRuntimeScheduler([
+  {
+    name: "armed prompts", intervalMs: ARM_POLL_MS,
+    /** Runs only while at least one session waits for its harness. */
+    active: () => armedSessions.size > 0,
+    run: tickArmedSessions,
+  },
+  {
+    name: "message queue", intervalMs: MESSAGE_POLL_MS,
+    /** Runs only while at least one target has queued messages. */
+    active: () => messageQueues.size > 0,
+    run: tickMessageQueues,
+  },
+]);
 
 /**
  * Primes a session sitting at its shell: the area's suggested launch command

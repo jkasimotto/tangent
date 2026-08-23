@@ -37,6 +37,7 @@ import { clearArmedPrompt, readAllArmedPrompts, writeArmedPrompt } from "./armed
 import { createRuntimeScheduler } from "./runtime-scheduler.mjs";
 import { attachTerminalTransport } from "./terminal-transport.mjs";
 import { serveStaticAsset } from "./static-assets.mjs";
+import { createStateEvents } from "./state-events.mjs";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -47,6 +48,7 @@ const HOST = process.env.HOST ?? "127.0.0.1";
 // notice that a rebuilt server is live and offer one explicit reload.
 const BOOT_ID = randomUUID();
 const sourceChanges = createSourceChangeMonitor({ root: path.join(here, "..", "..", "..") });
+const stateEvents = createStateEvents();
 let agentCmd = process.env.AGENT_CMD ?? "claude";
 
 /**
@@ -1763,6 +1765,15 @@ function queueAgentMessage(target, entry) {
 }
 
 const runtimeScheduler = createRuntimeScheduler([
+  {
+    name: "goal reconciliation", intervalMs: 10_000,
+    /** Reconciles durable work independently of browser requests. */
+    active: () => true,
+    /** Reads one current session snapshot and repairs stale work bindings. */
+    async run() {
+      await reconcileGoals(await listSessions());
+    },
+  },
   {
     name: "armed prompts", intervalMs: ARM_POLL_MS,
     /** Runs only while at least one session waits for its harness. */
@@ -3735,9 +3746,17 @@ function voiceNameHints(ctx) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   try {
+    if (url.pathname === "/api/events" && req.method === "GET") {
+      stateEvents.connect(req, res);
+      return;
+    }
+    if (req.method === "POST") {
+      res.once("finish", () => {
+        if (res.statusCode < 400) stateEvents.changed(url.pathname);
+      });
+    }
     if (url.pathname === "/api/sessions") {
       const sessions = await listSessions();
-      reconcileGoals(sessions); // throttled fire-and-forget
       const pipelines = await pipelinesView(sessions).catch(() => []);
       const brains = await brainsView(sessions).catch(() => []);
       res.writeHead(200, { "content-type": "application/json" });
@@ -4876,6 +4895,7 @@ server.listen(PORT, HOST, () => {
   console.log(`agent-shell: http://${HOST}:${PORT}`);
   console.log(`  orchestrator session "${CHAT_SESSION}" runs: ${agentCmd}`);
   console.log(`  workspace: ${WORKSPACE}`);
+  runtimeScheduler.wake();
   if (!process.env.AGENT_SHELL_NO_OPEN) openStandaloneWindow();
   // The message queue died with the last process; the notices did not.
   /** Reports a failed flush without stopping the server. */

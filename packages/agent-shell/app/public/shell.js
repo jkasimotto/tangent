@@ -5705,7 +5705,13 @@ void (async () => {
   await refresh({ initial: true });
   if (requestedDocument) await openDocument(requestedDocument);
 })();
-window.setInterval(() => refresh(), 2500);
+// Mutations and reconciliation push invalidations. The slow timer is only a
+// recovery path for a suspended browser or a dropped event stream.
+if (typeof EventSource === "function") {
+  const events = new EventSource("/api/events");
+  events.addEventListener("changed", () => void refresh());
+}
+window.setInterval(() => refresh(), 30_000);
 
 // DOM-level exports keep tests on the module boundary instead of rebuilding
 // the old order-dependent browser globals.

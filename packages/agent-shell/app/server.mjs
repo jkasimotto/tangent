@@ -38,6 +38,7 @@ import { createRuntimeScheduler } from "./runtime-scheduler.mjs";
 import { attachTerminalTransport } from "./terminal-transport.mjs";
 import { serveStaticAsset } from "./static-assets.mjs";
 import { createStateEvents } from "./state-events.mjs";
+import { createBrainRoutes } from "./brain-routes.mjs";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -3743,6 +3744,25 @@ function voiceNameHints(ctx) {
   return [...new Set([...ctx.sessions.map((s) => s.name), ...areaNames])];
 }
 
+const brainRoutes = createBrainRoutes({
+  start: startBrain,
+  handover: handoverBrain,
+  normalizeMessage,
+  verdict: clearRowWithVerdict,
+  undoVerdict: restoreVerdictLine,
+  reply: noteReplySubject,
+  /** Finds one enriched brain record by Area or session. */
+  async show(area, session) {
+    const brains = await brainsView(await listSessions()).catch(() => []);
+    return brains.find((item) => (area && item.area === area) || (session && item.session === session)) ?? null;
+  },
+  /** Returns the plan lines that the parser could not classify. */
+  async unparsed(brain) {
+    return unparsedForJulianLines(await brainPlanText(brain)).map((item) => item.line);
+  },
+  prompt: brainPrompt,
+});
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   try {
@@ -3765,78 +3785,7 @@ const server = http.createServer(async (req, res) => {
       );
       return;
     }
-    // Julian starts, resumes, or reattaches the one brain of an Area.
-    if (url.pathname === "/api/brains/start" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const result = await startBrain(String(body.area ?? ""), {
-        instruction: String(body.instruction ?? ""),
-        choice: body.choice && typeof body.choice === "object" ? body.choice : null,
-        command: typeof body.command === "string" ? body.command : "",
-        resume: Boolean(body.resume),
-      });
-      res.writeHead(result.status, { "content-type": "application/json" });
-      res.end(JSON.stringify(result.status === 200 ? { session: result.session, generation: result.generation, reattached: Boolean(result.reattached), brain: result.brain } : { error: result.error }));
-      return;
-    }
-    // The brain hands its facts to a fresh copy of itself.
-    if (url.pathname === "/api/brains/handover" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      let text;
-      try {
-        text = normalizeMessage(body.text);
-      } catch (error) {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: String(error.message ?? error) }));
-        return;
-      }
-      const result = await handoverBrain(String(body.session ?? ""), text);
-      res.writeHead(result.status, { "content-type": "application/json" });
-      res.end(JSON.stringify(result.status === 200 ? { status: result.state, session: result.session, generation: result.generation, previous: result.previous } : { error: result.error }));
-      return;
-    }
-    // One brain record by Area or by session, with its live state.
-    if (url.pathname === "/api/brains/show" && req.method === "GET") {
-      const area = url.searchParams.get("area") ?? "";
-      const session = url.searchParams.get("session") ?? "";
-      const sessions = await listSessions();
-      const brains = await brainsView(sessions).catch(() => []);
-      const brain = brains.find((item) => (area && item.area === area) || (session && item.session === session)) ?? null;
-      // The lines Tangent parsed nothing from travel with the record, so
-      // `tangent brain status` can print what the desk does not show.
-      const unparsed = brain ? unparsedForJulianLines(await brainPlanText(brain)).map((item) => item.line) : [];
-      res.writeHead(brain ? 200 : 404, { "content-type": "application/json" });
-      res.end(JSON.stringify(brain ? { brain: { ...brain, forJulianUnparsed: unparsed }, prompt: await brainPrompt(brain) } : { error: area ? `no brain on ${area}` : "this session is not a brain" }));
-      return;
-    }
-    // Julian answered one row with Accept or Reject: the line leaves the plan and the brain hears the verdict.
-    if (url.pathname === "/api/brains/verdict" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const result = await clearRowWithVerdict(String(body.area ?? ""), String(body.line ?? ""), String(body.verdict ?? ""));
-      res.writeHead(result.status, { "content-type": "application/json" });
-      res.end(JSON.stringify(result.status === 200 ? { ok: true, line: result.line, removedText: result.removedText, index: result.index, target: result.target, verdict: result.verdict } : { error: result.error }));
-      return;
-    }
-    // The undo of that answer: the row goes back and the verdict is withdrawn.
-    if (url.pathname === "/api/brains/verdict/undo" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const result = await restoreVerdictLine(String(body.area ?? ""), String(body.line ?? ""), Number(body.index ?? 0));
-      res.writeHead(result.status, { "content-type": "application/json" });
-      res.end(JSON.stringify(result.status === 200 ? { ok: true } : { error: result.error }));
-      return;
-    }
-    // Julian pressed Reply on one row: the brain is told its subject before he opens its terminal.
-    if (url.pathname === "/api/brains/reply" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const result = await noteReplySubject(String(body.area ?? ""), String(body.subject ?? ""));
-      res.writeHead(result.status, { "content-type": "application/json" });
-      res.end(JSON.stringify(result.status === 200 ? { ok: true } : { error: result.error }));
-      return;
-    }
+    if (await brainRoutes.handle(req, res, url)) return;
     // A step agent hands facts to the next step (the server advances the
     // line), or, with body.continue, to a fresh copy of itself on the same
     // step or Goal (design-worker-context-handover D4).

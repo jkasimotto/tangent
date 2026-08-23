@@ -48,6 +48,7 @@ import { createProgramRoutes } from "./program-routes.mjs";
 import { createDocumentRoutes } from "./document-routes.mjs";
 import { projectDesk } from "./desk-projection.mjs";
 import { createShellControlRoutes } from "./shell-control-routes.mjs";
+import { createShellStateRoutes } from "./shell-state-routes.mjs";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -3941,6 +3942,28 @@ const shellControlRoutes = createShellControlRoutes({
     }
   },
 });
+const shellStateRoutes = createShellStateRoutes({
+  chatSession: CHAT_SESSION,
+  /** Returns one coherent live shell snapshot. */
+  async snapshot() {
+    const sessions = await listSessions();
+    const [pipelines, brains] = await Promise.all([
+      pipelinesView(sessions).catch(() => []),
+      brainsView(sessions).catch(() => []),
+    ]);
+    return {
+      agent: agentCmd,
+      boot: BOOT_ID,
+      sourceChanged: sourceChanges.changed,
+      caffeinate: caffeinateProc !== null,
+      voice: Boolean(GROQ_KEY),
+      sessions,
+      pipelines,
+      brains,
+      contextHandoverTokens: CONTEXT_HANDOVER_TOKENS,
+    };
+  },
+});
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
@@ -3954,16 +3977,7 @@ const server = http.createServer(async (req, res) => {
         if (res.statusCode < 400) stateEvents.changed(url.pathname);
       });
     }
-    if (url.pathname === "/api/sessions") {
-      const sessions = await listSessions();
-      const pipelines = await pipelinesView(sessions).catch(() => []);
-      const brains = await brainsView(sessions).catch(() => []);
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(
-        JSON.stringify({ agent: agentCmd, boot: BOOT_ID, sourceChanged: sourceChanges.changed, caffeinate: caffeinateProc !== null, voice: Boolean(GROQ_KEY), sessions, pipelines, brains, contextHandoverTokens: CONTEXT_HANDOVER_TOKENS })
-      );
-      return;
-    }
+    if (await shellStateRoutes.handle(req, res, url)) return;
     if (await brainRoutes.handle(req, res, url)) return;
     if (await pipelineRoutes.handle(req, res, url)) return;
     if (await agentRoutes.handle(req, res, url)) return;
@@ -3971,14 +3985,6 @@ const server = http.createServer(async (req, res) => {
     if (await programRoutes.handle(req, res, url)) return;
     if (await documentRoutes.handle(req, res, url)) return;
     if (await shellControlRoutes.handle(req, res, url)) return;
-    // The frontend must target the same orchestrator session the server
-    // special-cases, so the name ships as a tiny script instead of being
-    // hardcoded twice.
-    if (url.pathname === "/config.js") {
-      res.writeHead(200, { "content-type": "text/javascript", "cache-control": "no-cache" });
-      res.end(`window.CHAT_SESSION = ${JSON.stringify(CHAT_SESSION)};\n`);
-      return;
-    }
     // Goal listing for `tangent goal list [<area>]`: one Area's own Goals, or every
     // Area's Goals across the vault when no area is given.
     if (url.pathname === "/api/goals" && req.method === "GET") {

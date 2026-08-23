@@ -51,6 +51,7 @@ import { createShellControlRoutes } from "./shell-control-routes.mjs";
 import { createShellStateRoutes } from "./shell-state-routes.mjs";
 import { createVoiceRoutes } from "./voice-routes.mjs";
 import { createGoalQueryRoutes } from "./goal-query-routes.mjs";
+import { createLaunchRoutes } from "./launch-routes.mjs";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -4029,6 +4030,84 @@ const goalQueryRoutes = createGoalQueryRoutes({
     };
   },
 });
+const launchRoutes = createLaunchRoutes({
+  /** Opens one validated work-definition session. */
+  async describe(body) {
+    const area = String(body.area ?? "");
+    const description = String(body.description ?? "").trim().slice(0, 12_000);
+    if (!area || !flattenAreaPaths(await readTree(TREES_ROOT)).includes(area)) return { status: 404, error: `no area "${area}"` };
+    if (!description) return { status: 400, error: "describe the work before you open an agent" };
+    const chosen = await requestedLaunch(body);
+    if (chosen.error) return { status: 400, error: chosen.error };
+    try {
+      const sources = await sourceDocuments(body.sources);
+      const result = await spawnDescribeWorkSession(area, description, sources, { session: String(body.session ?? ""), launch: body.launch !== false, command: chosen.command, label: chosen.label });
+      return { status: result.status, ...(result.status === 200 ? { value: result } : { error: result.error }) };
+    } catch (error) { return { status: 500, error: String(error.stderr ?? error.message ?? error) }; }
+  },
+  /** Returns the raw harness registry. */
+  async readHarnesses() {
+    const registry = await harnessRegistry();
+    return registry.error ? { status: 500, error: registry.error } : { status: 200, value: { registry } };
+  },
+  /** Validates and commits a replacement harness registry. */
+  async writeHarnesses(body) {
+    const registry = { version: 1, modelSets: body.modelSets ?? {}, ...(body.effortSets && Object.keys(body.effortSets).length ? { effortSets: body.effortSets } : {}), harnesses: body.harnesses ?? [] };
+    const problem = validateHarnessRegistry(registry);
+    if (problem) return { status: 400, error: problem };
+    const text = await readFile(path.join(TREES_ROOT, "harnesses.md"), "utf8").catch(() => "");
+    await vaultRepository.writeMarkdown("harnesses.md", upsertHarnessRegistry(text, registry));
+    await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", "harnesses.md"]).catch(() => {});
+    await vaultCommit(["harnesses.md"], "update: harness registry from Agent Shell", "machine", null);
+    return { status: 200, value: { ok: true } };
+  },
+  /** Returns named launch choices and the Area default. */
+  async options(area) {
+    const registry = await harnessRegistry();
+    if (registry.error) return { status: 500, error: registry.error };
+    return { status: 200, value: {
+      harnesses: registry.harnesses.map((harness) => ({ id: harness.id, label: harness.label || harness.id, command: harness.command, models: harnessModels(registry, harness).map((model) => ({ id: model.id, label: model.label || model.id, args: model.args })), efforts: harnessEfforts(registry, harness).map((effort) => ({ id: effort.id, label: effort.label || effort.id, args: effort.args })) })),
+      default: await launchForArea(area),
+    } };
+  },
+  /** Commits one Area's explicit default launch. */
+  async saveDefault(body) {
+    const area = String(body.area ?? "");
+    const registry = await harnessRegistry();
+    const resolved = registry.error ? registry : resolveLaunch(registry, body.launch ?? {});
+    if (resolved.error || !area) return { status: 400, error: resolved.error || "an area is required" };
+    const file = areaNoteFile(area);
+    const text = await readFile(path.join(TREES_ROOT, file), "utf8").catch(() => emptyAreaNote(area));
+    const ref = { harness: resolved.harness, ...(resolved.model ? { model: resolved.model } : {}), ...(resolved.effort ? { effort: resolved.effort } : {}) };
+    await vaultRepository.writeMarkdown(file, upsertEnvironmentLaunch(text, ref));
+    await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", file]).catch(() => {});
+    await vaultCommit([file], `update: ${area} default launch ${resolved.label}`, area, null);
+    return { status: 200, value: { label: resolved.label, command: resolved.command } };
+  },
+  /** Starts a Goal agent in collaboration mode. */
+  async collaborate(body) {
+    const chosen = await requestedLaunch(body);
+    if (chosen.error) return { status: 400, error: chosen.error };
+    try {
+      const [focus] = await sourceDocuments(body.document ? [body.document] : []);
+      const result = await startGoal(String(body.file ?? ""), { phase: "collaborate", launch: body.launch === true, document: focus?.file ?? "", command: chosen.command, label: chosen.label, extraFiles: Array.isArray(body.extraFiles) ? body.extraFiles.map(String) : [] });
+      return { status: result.status, ...(result.status === 200 ? { value: result } : { error: result.error }) };
+    } catch (error) { return { status: 500, error: String(error.stderr ?? error.message ?? error) }; }
+  },
+  /** Starts a Goal agent or a validated pipeline. */
+  async start(body) {
+    try {
+      if (Array.isArray(body.steps) && body.steps.length) {
+        const result = await startPipeline(String(body.file ?? ""), { steps: body.steps, extraFiles: Array.isArray(body.extraFiles) ? body.extraFiles.map(String) : [] });
+        return { status: result.status, ...(result.status === 200 ? { value: { session: result.session, pipeline: result.pipeline, warnings: result.warnings ?? [] } } : { error: result.error }) };
+      }
+      const chosen = await requestedLaunch(body);
+      if (chosen.error) return { status: 400, error: chosen.error };
+      const result = await startGoal(String(body.file ?? ""), { phase: "execute", approved: body.approved === true, launch: body.launch === true, command: chosen.command, label: chosen.label, extraFiles: Array.isArray(body.extraFiles) ? body.extraFiles.map(String) : [] });
+      return { status: result.status, ...(result.status === 200 ? { value: { session: result.session, reattached: Boolean(result.reattached), primed: Boolean(result.primed) } } : { error: result.error }) };
+    } catch (error) { return { status: 500, error: String(error.stderr ?? error.message ?? error) }; }
+  },
+});
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
@@ -4052,197 +4131,7 @@ const server = http.createServer(async (req, res) => {
     if (await shellControlRoutes.handle(req, res, url)) return;
     if (await voiceRoutes.handle(req, res, url)) return;
     if (await goalQueryRoutes.handle(req, res, url)) return;
-    if (url.pathname === "/api/work/describe" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const area = String(body.area ?? "");
-      const description = String(body.description ?? "").trim().slice(0, 12_000);
-      if (!area || !flattenAreaPaths(await readTree(TREES_ROOT)).includes(area)) {
-        res.writeHead(404, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: `no area "${area}"` }));
-        return;
-      }
-      if (!description) {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: "describe the work before you open an agent" }));
-        return;
-      }
-      const chosenDescribe = await requestedLaunch(body);
-      if (chosenDescribe.error) {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: chosenDescribe.error }));
-        return;
-      }
-      try {
-        const sources = await sourceDocuments(body.sources);
-        const result = await spawnDescribeWorkSession(area, description, sources, {
-          session: String(body.session ?? ""),
-          launch: body.launch !== false,
-          command: chosenDescribe.command,
-          label: chosenDescribe.label,
-        });
-        res.writeHead(result.status, { "content-type": "application/json" });
-        res.end(JSON.stringify(result.status === 200 ? result : { error: result.error }));
-      } catch (error) {
-        res.writeHead(500, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: String(error.stderr ?? error.message ?? error) }));
-      }
-      return;
-    }
-    // The registry for the harness editor: read the raw structure, and
-    // write a validated replacement back into the harnesses Document.
-    if (url.pathname === "/api/harnesses" && req.method === "GET") {
-      const registry = await harnessRegistry();
-      if (registry.error) {
-        res.writeHead(500, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: registry.error }));
-        return;
-      }
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ registry }));
-      return;
-    }
-    if (url.pathname === "/api/harnesses" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const registry = { version: 1, modelSets: body.modelSets ?? {}, ...(body.effortSets && Object.keys(body.effortSets).length ? { effortSets: body.effortSets } : {}), harnesses: body.harnesses ?? [] };
-      const problem = validateHarnessRegistry(registry);
-      if (problem) {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: problem }));
-        return;
-      }
-      const absolute = path.join(TREES_ROOT, "harnesses.md");
-      const text = await readFile(absolute, "utf8").catch(() => "");
-      await vaultRepository.writeMarkdown("harnesses.md", upsertHarnessRegistry(text, registry));
-      await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", "harnesses.md"]).catch(() => {});
-      await vaultCommit(["harnesses.md"], "update: harness registry from Agent Shell", "machine", null);
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ ok: true }));
-      return;
-    }
-    // Launch choices for the Start work surface: the registry's named
-    // harnesses and models, and the Area's resolved default launch.
-    if (url.pathname === "/api/launch/options" && req.method === "GET") {
-      const area = url.searchParams.get("area") ?? "";
-      const registry = await harnessRegistry();
-      if (registry.error) {
-        res.writeHead(500, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: registry.error }));
-        return;
-      }
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({
-        harnesses: registry.harnesses.map((harness) => ({
-          id: harness.id,
-          label: harness.label || harness.id,
-          command: harness.command,
-          models: harnessModels(registry, harness).map((model) => ({ id: model.id, label: model.label || model.id, args: model.args })),
-          efforts: harnessEfforts(registry, harness).map((effort) => ({ id: effort.id, label: effort.label || effort.id, args: effort.args })),
-        })),
-        default: await launchForArea(area),
-      }));
-      return;
-    }
-    // Saves one picker selection as the Area's durable default launch.
-    // Only this explicit action writes a declaration; picking never does.
-    if (url.pathname === "/api/launch/default" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const area = String(body.area ?? "");
-      const registry = await harnessRegistry();
-      const resolved = registry.error ? registry : resolveLaunch(registry, body.launch ?? {});
-      if (resolved.error || !area) {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: resolved.error || "an area is required" }));
-        return;
-      }
-      const file = areaNoteFile(area);
-      const absolute = path.join(TREES_ROOT, file);
-      const text = await readFile(absolute, "utf8").catch(() => emptyAreaNote(area));
-      const ref = { harness: resolved.harness, ...(resolved.model ? { model: resolved.model } : {}), ...(resolved.effort ? { effort: resolved.effort } : {}) };
-      await vaultRepository.writeMarkdown(file, upsertEnvironmentLaunch(text, ref));
-      await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", file]).catch(() => {});
-      await vaultCommit([file], `update: ${area} default launch ${resolved.label}`, area, null);
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(JSON.stringify({ label: resolved.label, command: resolved.command }));
-      return;
-    }
-    if (url.pathname === "/api/goals/agent" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      const chosen = await requestedLaunch(body);
-      if (chosen.error) {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: chosen.error }));
-        return;
-      }
-      try {
-        const [focus] = await sourceDocuments(body.document ? [body.document] : []);
-        const result = await startGoal(String(body.file ?? ""), {
-          phase: "collaborate",
-          launch: body.launch === true,
-          document: focus?.file ?? "",
-          command: chosen.command,
-          label: chosen.label,
-          extraFiles: Array.isArray(body.extraFiles) ? body.extraFiles.map(String) : [],
-        });
-        res.writeHead(result.status, { "content-type": "application/json" });
-        res.end(JSON.stringify(result.status === 200 ? result : { error: result.error }));
-      } catch (err) {
-        res.writeHead(500, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
-      }
-      return;
-    }
-    // The one spawn path: the visible start-agent action for a Goal. With
-    // `steps`, it starts a pipeline whose first step is spawned the same way.
-    if (url.pathname === "/api/goals/start" && req.method === "POST") {
-      let body = {};
-      try { body = JSON.parse(await readBody(req)); } catch {}
-      if (Array.isArray(body.steps) && body.steps.length) {
-        try {
-          const result = await startPipeline(String(body.file ?? ""), {
-            steps: body.steps,
-            extraFiles: Array.isArray(body.extraFiles) ? body.extraFiles.map(String) : [],
-          });
-          res.writeHead(result.status, { "content-type": "application/json" });
-          res.end(JSON.stringify(result.status === 200 ? { session: result.session, pipeline: result.pipeline, warnings: result.warnings ?? [] } : { error: result.error }));
-        } catch (err) {
-          res.writeHead(500, { "content-type": "application/json" });
-          res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
-        }
-        return;
-      }
-      const chosen = await requestedLaunch(body);
-      if (chosen.error) {
-        res.writeHead(400, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: chosen.error }));
-        return;
-      }
-      try {
-        const result = await startGoal(String(body.file ?? ""), {
-          phase: "execute",
-          approved: body.approved === true,
-          launch: body.launch === true,
-          command: chosen.command,
-          label: chosen.label,
-          extraFiles: Array.isArray(body.extraFiles) ? body.extraFiles.map(String) : [],
-        });
-        res.writeHead(result.status, { "content-type": "application/json" });
-        res.end(
-          JSON.stringify(
-            result.status === 200
-              ? { session: result.session, reattached: Boolean(result.reattached), primed: Boolean(result.primed) }
-              : { error: result.error }
-          )
-        );
-      } catch (err) {
-        res.writeHead(500, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: String(err.stderr ?? err.message ?? err) }));
-      }
-      return;
-    }
+    if (await launchRoutes.handle(req, res, url)) return;
     if (url.pathname === "/api/goals/understanding" && req.method === "POST") {
       let body = {};
       try { body = JSON.parse(await readBody(req)); } catch {}

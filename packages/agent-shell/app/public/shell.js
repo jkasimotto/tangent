@@ -14,6 +14,8 @@ import { shellDom } from "./shell-dom.js";
 import { startRefreshLifecycle } from "./refresh-lifecycle.js";
 import { FENCE_OPEN, fenceCloser, frontmatterLineCount, markdownHeadingAnchor, markdownHeadings, markdownTableAlignments, markdownTableCells, visibleMarkdown } from "./markdown-structure.js";
 import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
+import { buildGoToRows } from "./go-to-rows.js";
+import { currentBriefFields, storyEntries } from "./goal-narrative.js";
 
 const { api, post } = createApiClient();
 const { requestedArea, requestedDocument, state } = createShellState();
@@ -300,24 +302,6 @@ function commentComposerHtml(composer) {
   </form>`;
 }
 
-/** Returns the compact fact that restores the selected Goal. */
-function currentBriefFields(goal) {
-  let wanted = goal.doneWhen || "No clear result is recorded yet.";
-  for (const line of String(goal.currentBrief ?? "").split("\n")) {
-    const item = line.match(/^\s*[-*]?\s*You wanted\s*:\s*(.+)$/i);
-    if (item) wanted = cleanText(item[1]);
-  }
-  return { wanted };
-}
-
-/** Parses the intentionally short Story so far section into ordered moments. */
-function storyEntries(text) {
-  const source = String(text ?? "").trim();
-  if (!source) return [];
-  const matches = [...source.matchAll(/^###\s+(.+)\n+([\s\S]*?)(?=^###\s+|$)/gm)];
-  if (!matches.length) return [{ title: "Latest", body: clip(source, 320) }];
-  return matches.slice(-5).map((match) => ({ title: cleanText(match[1]), body: clip(match[2], 320) }));
-}
 
 // The launch popover's target when it chooses the agent for a describe-work
 // conversation instead of a Goal. Never collides with a goal file path.
@@ -3531,52 +3515,12 @@ function toggleShellMenu(open = shellMenu.hidden) {
 // it never repaints, and Back or Esc returns to it exactly
 // (design-find-a-document-by-title).
 
-const GO_TO_LIMIT = 12;
-
-/** The finder's word for a brain's state, from the desk label without its prefix. */
-function brainStateWord(brain) {
-  const label = brainStateLabel(brain).replace(/^Brain /, "");
-  return label.charAt(0).toLowerCase() + label.slice(1);
-}
-
 /**
  * The finder's rows for the typed query: every Document, every Area note that
  * exists, and every Area brain. Null while the vault is still loading.
  */
 function goToRows() {
-  if (!state.vault) return null;
-  const core = areaMapCore;
-  const rows = [];
-  for (const record of state.vault.documents ?? []) {
-    if (record.kind !== "document" && !(record.kind === "note" && !record.missing)) continue;
-    rows.push({
-      key: record.file,
-      kind: record.kind,
-      kindLabel: record.kind === "note" ? "Area note" : core.kindLabel(record.docKind ?? "page"),
-      name: record.title,
-      area: record.area,
-      areaLabel: areaLabel(record.area),
-      detail: "",
-      changedAt: Number(record.changedAt ?? record.mtime ?? 0),
-      live: false,
-      file: record.file,
-    });
-  }
-  for (const brain of state.brains ?? []) {
-    rows.push({
-      key: `brain:${brain.area}`,
-      kind: "brain",
-      kindLabel: "Brain",
-      name: areaLabel(brain.area),
-      area: brain.area,
-      areaLabel: areaLabel(brain.area),
-      detail: `${brainStateWord(brain)} · generation ${brain.generation}`,
-      changedAt: Date.parse(brain.updatedAt) || 0,
-      live: Boolean(brain.live),
-      session: brain.session,
-    });
-  }
-  return goToCore.matchRows(rows, state.goTo.query, GO_TO_LIMIT);
+  return buildGoToRows({ vault: state.vault, brains: state.brains, query: state.goTo.query, areaLabel, brainStateLabel });
 }
 
 /** Opens the finder over the current screen, or closes it when ⌘K repeats. */

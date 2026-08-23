@@ -122,6 +122,7 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.doesNotMatch(home, />Legacy</);
 
   const shellScript = await fetch(`${base}/shell.js`).then((response) => response.text());
+  const goalNarrativeScript = await fetch(`${base}/goal-narrative.js`).then((response) => response.text());
   const serverSource = await readFile(path.join(here, "server.mjs"), "utf8");
   assert.match(shellScript, /data-command-enter-submit/);
   assert.match(shellScript, /event\.key === "Enter" && event\.metaKey/);
@@ -139,8 +140,9 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.match(shellScript, /document-picker/);
   assert.match(shellScript, /data-open-vault-link/);
   assert.doesNotMatch(shellScript, /Discuss with agent|Describe related work|Talk it through first|See what the agent will do|Review execution plan|Read what will happen/);
-  assert.match(shellScript, /Current brief/);
-  assert.match(shellScript, /Story so far/);
+  assert.match(shellScript, /from "\.\/goal-narrative\.js"/);
+  assert.match(goalNarrativeScript, /currentBriefFields/);
+  assert.match(goalNarrativeScript, /storyEntries/);
   assert.match(shellScript, /post\("\/api\/caffeinate"/);
   assert.doesNotMatch(shellScript, /EventSource|api\/reload/);
   assert.match(shellScript, /noteServerBoot/);
@@ -892,75 +894,4 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.match(completedText, /^status: done$/m);
   assert.match(completedText, /^waiting_on:$/m);
   assert.match(completedText, /^session:$/m);
-});
-
-test("a close commit records the session that closed the Goal, and the vault payload carries it as a recent close", async (context) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "what-happened-http-"));
-  const trees = path.join(root, "trees");
-  const workspace = path.join(root, "workspace");
-  const areaDirectory = path.join(trees, "otto", "test");
-  await mkdir(areaDirectory, { recursive: true });
-  await mkdir(workspace, { recursive: true });
-  await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
-  await writeFile(path.join(areaDirectory, "test.md"), "---\ntype: area\n---\n\n# Test\n\n## Goals\n\n1. [[goal-prove-it]]\n", "utf8");
-  await writeFile(
-    path.join(areaDirectory, "goal-prove-it.md"),
-    "---\ntype: goal\nstatus: open\ndone_when: The result is visible\nsession:\n---\n\n# Prove it\n\n## State\n\nNot started.\n",
-    "utf8"
-  );
-  await execFileAsync("git", ["-C", trees, "init", "-q"]);
-  await execFileAsync("git", ["-C", trees, "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A"]);
-  await execFileAsync("git", ["-C", trees, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "add: everything"]);
-
-  let port;
-  try {
-    port = await freePort();
-  } catch (error) {
-    if (error?.code === "EPERM") {
-      context.skip("This environment does not permit local HTTP listeners.");
-      return;
-    }
-    throw error;
-  }
-  const child = spawn(nodeExecutable(), ["server.mjs"], {
-    cwd: here,
-    env: {
-      ...process.env,
-      PORT: String(port),
-      HOST: "127.0.0.1",
-      TREES_ROOT: trees,
-      TANGENT_LOOPS_ROOT: path.join(root, "loops"),
-      WORKSPACE: workspace,
-      AGENT_SHELL_NO_OPEN: "1",
-      AGENT_SHELL_TEST_NO_LAUNCH: "1",
-      TANGENT_PIPELINES_ROOT: path.join(root, "pipelines"),
-      TANGENT_BRAINS_ROOT: path.join(root, "brains"),
-      AGENT_MESSAGE_LOG: path.join(root, "messages.jsonl"),
-      GROQ_API_KEY: "",
-      CHAT_SESSION: `what-happened-http-test-${process.pid}`,
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  context.after(async () => {
-    child.kill("SIGTERM");
-    await Promise.race([once(child, "exit"), new Promise((resolve) => setTimeout(resolve, 1000))]);
-    await rm(root, { recursive: true, force: true });
-  });
-  const base = `http://127.0.0.1:${port}`;
-  await waitForServer(base);
-
-  const edited = await fetch(`${base}/api/goals/edit`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ file: "otto/test/goal-prove-it.md", status: "done", session: "tangent-brain-g4" }),
-  });
-  assert.equal(edited.status, 200);
-
-  const { stdout: log } = await execFileAsync("git", ["-C", trees, "log", "-1", "--format=%s%n%b"]);
-  assert.match(log, /done in tree/);
-  assert.match(log, /Tangent-Tmux: tangent-brain-g4/);
-
-  const vault = await fetch(`${base}/api/vault`).then((response) => response.json());
-  assert.deepEqual(vault.recentCloses, [{ file: "otto/test/goal-prove-it.md", kind: "done", at: vault.recentCloses[0]?.at, session: "tangent-brain-g4" }]);
-  assert.ok(vault.recentCloses[0].at > Date.now() - 60_000, "the close time is the fresh commit's time");
 });

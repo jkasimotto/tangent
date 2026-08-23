@@ -8,12 +8,19 @@ export type Args = {
 export type ParseArgsOptions = {
   repeatable?: string[];
   allowInlineValues?: boolean;
+  boolean?: string[];
 };
 
-/** Parses a CLI argv array into a typed Args map. */
+/**
+ * Parses a CLI argv array into a typed Args map. A flag whose key is listed
+ * in `boolean` never consumes the next token as its value, so a positional
+ * argument after it stays positional: `handover --continue "facts"` keeps
+ * the facts in `_` instead of swallowing them into the flag.
+ */
 export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Args {
   const args: Args = { _: [] };
   const repeatable = new Set(options.repeatable || []);
+  const booleanKeys = new Set(options.boolean || []);
   const allowInlineValues = options.allowInlineValues ?? true;
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -28,9 +35,11 @@ export function parseArgs(argv: string[], options: ParseArgsOptions = {}): Args 
     const key = inlineIndex >= 0 ? raw.slice(0, inlineIndex) : raw;
     const value = inlineIndex >= 0
       ? raw.slice(inlineIndex + 1)
-      : argv[index + 1] && !argv[index + 1]!.startsWith("--")
-        ? argv[++index]!
-        : true;
+      : booleanKeys.has(key)
+        ? true
+        : argv[index + 1] && !argv[index + 1]!.startsWith("--")
+          ? argv[++index]!
+          : true;
 
     if (!repeatable.has(key)) {
       args[key] = value;

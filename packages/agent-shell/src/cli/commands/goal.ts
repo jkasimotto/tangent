@@ -6,7 +6,10 @@ import { goalCommandSpec } from "../spec.js";
 
 /** Dispatches `tangent goal` subcommands. */
 export async function runGoalCli(argv = process.argv.slice(2)): Promise<void> {
-  const args = parseArgs(argv, { repeatable: ["source", "subgoal-title", "subgoal-done-when", "step", "launch", "continue-from"] });
+  // "continue" is boolean so the reminder's printed command works verbatim:
+  // `handover --continue "<facts>"` must keep the facts positional, never
+  // swallow them as the flag's value (ADR-0028).
+  const args = parseArgs(argv, { repeatable: ["source", "subgoal-title", "subgoal-done-when", "step", "launch", "continue-from"], boolean: ["continue"] });
   const subcommand = args._[0];
   if (!subcommand) return help();
   // "done" and "wont-do" handle --help themselves, to restate that status is written on

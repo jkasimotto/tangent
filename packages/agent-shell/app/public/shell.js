@@ -8,6 +8,9 @@ import askCore from "./ask-core.js";
 import goToCore from "./go-to-core.js";
 import whatHappenedCore from "./what-happened-core.js";
 import areaMapView from "./area-map.js";
+import { createApiClient } from "./api-client.js";
+
+const { api, post } = createApiClient();
 
 const savedGoal = localStorage.getItem("agent-shell.current-goal") || "";
 const requestedLocation = new URLSearchParams(location.search);
@@ -579,23 +582,6 @@ function showToast(message, action = null) {
   toast.classList.add("show");
   window.clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => toast.classList.remove("show"), action ? 8000 : 3200);
-}
-
-/** Calls a JSON API and converts non-success replies into errors. */
-async function api(path, options = {}) {
-  const response = await fetch(path, options);
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || `Agent Shell returned ${response.status}.`);
-  return data;
-}
-
-/** Posts one JSON object to the Agent Shell server. */
-function post(path, body) {
-  return api(path, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
 }
 
 /** Returns every indexed goal once. */

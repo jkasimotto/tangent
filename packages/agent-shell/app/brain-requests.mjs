@@ -30,11 +30,12 @@ export function createBrainRequest(record, input, now = new Date().toISOString()
   const question = String(input.question ?? "").trim();
   const detail = String(input.detail ?? "").trim();
   const options = Array.isArray(input.options) ? input.options.map(String).map((item) => item.trim()).filter(Boolean) : [];
+  const goal = String(input.goal ?? "").trim() || null;
   if (!REQUEST_KINDS.has(kind)) throw new Error("kind must be plan, decision, test, or approval");
   if (!subject) throw new Error("subject is required");
   if (!question.endsWith("?")) throw new Error("question must end with ?");
   if (kind === "decision" && options.length < 2) throw new Error("a decision needs at least two options");
-  const request = { id: randomUUID(), kind, subject, question, detail, options, status: "open", createdAt: now, answeredAt: null, answer: null };
+  const request = { id: randomUUID(), kind, subject, question, detail, options, goal, status: "open", createdAt: now, answeredAt: null, answer: null };
   record.requests.push(request);
   return request;
 }

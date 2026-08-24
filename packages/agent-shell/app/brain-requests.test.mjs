@@ -20,6 +20,14 @@ test("a durable plan approval unlocks execution", async () => {
   assert.equal((await readBrainRequests(root, "otto/tangent")).requests[0].answer, "approve");
 });
 
+test("a test request records the Goal file it is about", async () => {
+  const record = await readBrainRequests("/missing", "otto/tangent");
+  const withGoal = createBrainRequest(record, { kind: "test", subject: "Ramp faces", question: "Pass?", detail: "Drag the pole.", goal: "otto/dnd/goal-x.md" });
+  assert.equal(withGoal.goal, "otto/dnd/goal-x.md");
+  const withoutGoal = createBrainRequest(record, { kind: "test", subject: "Ramp faces", question: "Pass?", detail: "Drag the pole." });
+  assert.equal(withoutGoal.goal, null);
+});
+
 test("decisions need choices and reject unknown answers", async () => {
   const record = await readBrainRequests("/missing", "otto/tangent");
   assert.throws(() => createBrainRequest(record, { kind: "decision", subject: "Behavior", question: "Which?", options: ["One"] }), /at least two/);

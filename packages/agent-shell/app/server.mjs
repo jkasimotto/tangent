@@ -3658,6 +3658,15 @@ const brainRoutes = createBrainRoutes({
     try {
       const request = answerBrainRequest(record, id, answer);
       await writeBrainRequests(BRAINS_ROOT, record);
+      if (request.kind === "test" && request.answer === "pass" && request.goal) {
+        const byFile = await goalsByFile();
+        if (byFile.has(request.goal)) {
+          const changed = await cascadeGoalDone(request.goal, byFile);
+          if (!changed.includes(request.goal)) changed.unshift(request.goal);
+          const goal = byFile.get(request.goal);
+          await vaultCommit(changed, `update: ${goal.area} goal ${goal.slug} done in tree`, goal.area, brain.session);
+        }
+      }
       await notifyBrain(brain.area, `Julian answered ${request.kind} request "${request.subject}": ${request.answer}`);
       return { status: 200, request };
     } catch (error) { return { status: 400, error: String(error.message ?? error) }; }

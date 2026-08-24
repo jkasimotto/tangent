@@ -28,6 +28,10 @@ The design must satisfy these conditions:
 - Project setup does not become a universal recipe language.
 - Arbitrary agent-authored shell commands never become review buttons.
 
+The central variation is per work item, not per target type. One agent can need `plz cdev`. Another can need a JavaScript server or an existing link.
+
+Tangent must tell the work agent which outcome to produce. The agent must choose the setup steps from the repository and the completed work.
+
 Non-goals:
 
 - Prove arbitrary product behavior inside Agent Shell.
@@ -35,6 +39,13 @@ Non-goals:
 - Create a deployment platform.
 - Open windows automatically after background work finishes.
 - Add a target taxonomy to Julian's product vocabulary.
+
+### Reader model
+
+- Target reader: Julian, who chooses the product contract.
+- Reader task: decide who prepares each result and what Tangent must guarantee before review.
+- Safe assumptions: Julian knows Goals, workers, brains, Programs, and the current `For you` view.
+- Must establish: preparation happens inside the final work turn, and the steps remain specific to that work.
 
 ## Observed current system
 
@@ -61,6 +72,24 @@ Workers report facts through `tangent handover`. The brain chooses the next tran
 The prompt already uses preparation before publication for Agent Shell changes. The brain runs `tangent shell rebuild` before it creates the visible Request.
 
 This precedent has the correct order. The Tangent-specific command is not a general solution.
+
+### Where preparation happens
+
+Preparation is the last outcome of the normal work assignment. It occurs before the worker calls `tangent handover`.
+
+Agent Shell adds the preparation contract in `pipelineStepPrompt` for the last planned step. The brain does not compose project-specific setup commands.
+
+If the brain appends a step later, the new last worker receives the contract. This worker verifies the prepared result again before handover.
+
+The assignment does not prescribe commands. It tells the worker to start required services, wait, open the exact target, and verify the completed revision.
+
+The worker uses repository instructions and normal tools to choose the commands. These commands can include `plz cdev`, a JavaScript server, or no setup.
+
+The worker reports the prepared target, expected result, source revision, and each process that must stay alive.
+
+The brain reads this handover. It publishes the ready result and Request only after the handover proves that preparation succeeded.
+
+If preparation fails, the worker reports the error. The brain delegates repair work instead of publishing a Request that Julian cannot use.
 
 ### Programs
 
@@ -188,6 +217,8 @@ This is the selected design. Existing Goal work records preparation. The ready r
 
 The Request stays a direct ask with its existing lifecycle. The brain remains the only Request publisher.
 
+The final work assignment owns the first preparation attempt. A separate setup worker is only a repair path.
+
 This option depends on the approved ready-Goal and result revision model. That model is not implemented yet.
 
 ### D. Add a Review Environment object
@@ -249,6 +280,16 @@ The server derives Area ownership, timestamps, current Program state, and Goal i
 
 The worker reports facts through the current handover. The brain calls the result publication boundary after it accepts those facts.
 
+Every final work assignment adds one standard outcome:
+
+> Before you hand over completed work, prepare it for Julian to review. Use the repository instructions and your normal tools.
+>
+> Start each required service. Wait until the target works. Open the exact target and verify the completed revision.
+>
+> Report the target, expected result, source revision, and each process that must stay running.
+
+This instruction is the variable setup mechanism. Tangent does not store or interpret the worker's commands as a recipe.
+
 Ready publication must be idempotent for one Goal and result revision. A second content revision supersedes the earlier open acceptance Request.
 
 Operational repair can update `verifiedAt` and the locator only while source identity stays unchanged. It cannot change reviewed content under an open Request.
@@ -281,21 +322,22 @@ Load-bearing invariants:
 
 ## Complete workflow
 
-1. The final worker finishes the result and proof.
-2. The worker reads Area resources and lists Programs.
-3. The worker starts each required Program through Tangent.
-4. The worker exercises the proposed Review action against the reviewed source.
-5. The worker reports the result revision, action, steps, expected behavior, verification time, and Program references.
-6. The brain publishes the ready result through one idempotent server operation.
-7. The brain creates an acceptance Request that references that result revision.
-8. The ready Goal appears in current work and Recent results.
-9. The open Request appears in `For you` with Review, Details, Approve, and I want these changes.
-10. Julian selects Review. Agent Shell verifies safe adapter input and current known dependencies.
-11. If the handoff remains usable, Agent Shell opens the target.
-12. If a known dependency is stale, Tangent notifies the brain and keeps the Request open.
-13. Julian approves or supplies required change text.
-14. Approval moves that exact ready Goal to done.
-15. Requested changes return the Goal to open and retain the result in Recent results.
+1. The work agent finishes the result and proof.
+2. The same agent reads the repository instructions and decides what this result needs.
+3. The agent runs the project-specific commands.
+4. If a service must stay alive, the agent runs it as a Program.
+5. The agent waits for the real target, opens it, and verifies the completed revision.
+6. The agent reports the result revision, target, expected behavior, verification time, and Program references.
+7. The brain publishes the ready result through one idempotent server operation.
+8. The brain creates an acceptance Request that references that result revision.
+9. The ready Goal appears in current work and Recent results.
+10. The open Request appears in `For you` with Review, Details, Approve, and I want these changes.
+11. Julian selects Review. Agent Shell verifies safe adapter input and current known dependencies.
+12. If the handoff remains usable, Agent Shell opens the target.
+13. If a known dependency is stale, Tangent notifies the brain and keeps the Request open.
+14. Julian approves or supplies required change text.
+15. Approval moves that exact ready Goal to done.
+16. Requested changes return the Goal to open and retain the result in Recent results.
 
 ## Failure and repair semantics
 
@@ -382,6 +424,9 @@ No time-to-live can make an arbitrary product result valid. The UI shows verific
 
 ## Decisions
 
+- Make preparation a required outcome of the final work assignment.
+- Let the work agent choose the project-specific commands from local evidence.
+- Keep the commands out of Tangent's stored review model.
 - Prepare before publishing the Request.
 - Keep Request lifecycle independent and unchanged by preparation.
 - Store Review on the Goal-owned result revision.

@@ -3,7 +3,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
-import { withAssigneesFrontmatter, withPeopleSection } from "../packages/agent-shell/app/human-assignees.mjs";
+import { peopleFromAreaNote, withAssigneesFrontmatter, withPeopleSection } from "../packages/agent-shell/app/human-assignees.mjs";
 
 const plannedRules = Array.from({ length: 10 }, (_, index) => {
   const rule = 40 + index;
@@ -36,15 +36,21 @@ export const goalManifest = [
 ];
 
 export const rosterManifest = [
-  { file: "neara/pgande/pgande.md", people: ["Troy", "Rit", "Dan", "Brida", "Will", "Sahan", "Sami", "Julian"] },
-  { file: "neara/onboarding/onboarding.md", people: ["Julian"] },
+  {
+    file: "neara/pgande/pgande.md",
+    before: ["Troy", "Rit", "Dan", "Brida", "Will", "Sahan", "Sami", "Julian (me)"],
+    people: ["Troy", "Rit", "Dan", "Brida", "Will", "Sahan", "Sami", "Julian"],
+  },
+  { file: "neara/onboarding/onboarding.md", before: null, people: ["Julian"] },
 ];
 
 /** Applies one manifest entry or recognizes its exact migrated state. */
 export function migrateGoalText(text, entry) {
   const expectedField = `assignees: [${entry.assignees.join(", ")}]`;
   if (!text.includes(entry.owner)) {
-    if (text.includes(expectedField) && !/^Owner:/m.test(text)) return { text, changed: false };
+    const fieldCount = (text.match(/^assignees:.*$/gm) ?? []).length;
+    const replacementExists = !entry.replacement || text.includes(entry.replacement);
+    if (fieldCount === 1 && text.includes(expectedField) && !/^Owner:/m.test(text) && replacementExists) return { text, changed: false };
     throw new Error(`${entry.file}: expected owner clause not found`);
   }
   if ((text.match(new RegExp(entry.owner.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) ?? []).length !== 1) {
@@ -52,6 +58,19 @@ export function migrateGoalText(text, entry) {
   }
   const replaced = text.replace(entry.owner, entry.replacement).replace(/\n{3,}/g, "\n\n");
   return { text: withAssigneesFrontmatter(replaced, entry.assignees), changed: true };
+}
+
+/** Applies one roster migration only from its reviewed source or target state. */
+export function migrateRosterText(text, entry) {
+  const hasSection = /^## People\s*$/m.test(text);
+  const current = hasSection ? peopleFromAreaNote(text) : null;
+  if (JSON.stringify(current) === JSON.stringify(entry.people)) return { text, changed: false };
+  if (JSON.stringify(current) !== JSON.stringify(entry.before)) {
+    throw new Error(`${entry.file}: expected people roster not found`);
+  }
+  let next = withPeopleSection(text, entry.people);
+  if (entry.file.endsWith("pgande.md")) next = next.replace(/Named by Julian[^\n]*\n\n/, "");
+  return { text: next, changed: next !== text };
 }
 
 /** Runs the explicit migration against one vault root. */
@@ -69,11 +88,10 @@ export async function migrateNeara(treesRoot, { write = false } = {}) {
   for (const entry of rosterManifest) {
     const absolute = path.join(treesRoot, entry.file);
     const current = await readFile(absolute, "utf8");
-    let next = withPeopleSection(current, entry.people);
-    if (entry.file.endsWith("pgande.md")) next = next.replace(/Named by Julian[^\n]*\n\n/, "");
-    if (next !== current) {
+    const result = migrateRosterText(current, entry);
+    if (result.changed) {
       changes.push({ file: entry.file, people: entry.people });
-      if (write) await writeFile(absolute, next, "utf8");
+      if (write) await writeFile(absolute, result.text, "utf8");
     }
   }
   return changes;

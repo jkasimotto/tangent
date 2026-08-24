@@ -56,7 +56,7 @@ import { createGoalQueryRoutes } from "./goal-query-routes.mjs";
 import { changeGoalDependencies, dependencyPromptLines, dependencySlugs, projectGoalDependencies, writeDependencySlugs } from "./goal-dependencies.mjs";
 import { createLaunchRoutes } from "./launch-routes.mjs";
 import { createWorkMutationRoutes } from "./work-mutation-routes.mjs";
-import { assigneesFromFrontmatter, nearestRosterArea, peopleFromAreaNote, projectAssignees, validateAssignees, withAssigneesFrontmatter, withPeopleSection } from "./human-assignees.mjs";
+import { assigneesFromFrontmatter, nearestRosterArea, peopleFromAreaNote, projectAssignees, validateAssignees, validatePeople, withAssigneesFrontmatter, withPeopleSection } from "./human-assignees.mjs";
 import { recordActionTelemetry } from "./action-telemetry.mjs";
 import { createMessageDelivery } from "./message-delivery.mjs";
 import { createRebuildOperations, readRebuildOperation, rebuildIsActive } from "./rebuild-operation.mjs";
@@ -4203,7 +4203,7 @@ const workMutationRoutes = createWorkMutationRoutes({
     const area = String(body.area ?? "");
     if (!await areaExists(area)) return { status: 404, error: `no area "${area}"` };
     let people;
-    try { people = validateAssignees(body.people, (Array.isArray(body.people) ? body.people : []).map(String)); }
+    try { people = validatePeople(body.people); }
     catch (error) { return { status: 400, error: error.message }; }
     try {
       const allAreas = flattenAreaPaths(await readTree(TREES_ROOT));

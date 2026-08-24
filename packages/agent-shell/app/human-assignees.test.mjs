@@ -8,6 +8,7 @@ import {
   personKey,
   projectAssignees,
   validateAssignees,
+  validatePeople,
   withAssigneesFrontmatter,
   withPeopleSection,
 } from "./human-assignees.mjs";
@@ -32,6 +33,12 @@ test("assignees are validated as a set and stored in roster order", () => {
   assert.deepEqual(validateAssignees(["Brida", "Dan"], ["Julian", "Dan", "Brida"]), ["Dan", "Brida"]);
   assert.throws(() => validateAssignees(["Dan", "dan"], ["Dan"]), /more than once/);
   assert.throws(() => validateAssignees(["Troy"], []), /no people roster/);
+});
+
+test("people names cannot corrupt the flat assignee list", () => {
+  assert.deepEqual(validatePeople([" Mary  Jane "]), ["Mary  Jane"]);
+  assert.throws(() => validatePeople(["Smith, John"]), /cannot contain commas/);
+  assert.throws(() => validatePeople(["Dan", " dan "]), /duplicate name/);
 });
 
 test("projection keeps one Goal with two labels and explicit unassigned data", () => {

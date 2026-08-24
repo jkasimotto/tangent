@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { goalManifest, migrateGoalText } from "./migrate-neara-assignees.mjs";
+import { goalManifest, migrateGoalText, migrateRosterText, rosterManifest } from "./migrate-neara-assignees.mjs";
 
 test("the reviewed 13-file inventory remains the first migration set", () => {
   assert.deepEqual(goalManifest.slice(0, 13).map((entry) => entry.file), [
@@ -35,4 +35,19 @@ test("migration preserves prose, writes the field, and is idempotent", () => {
 test("migration stops on source drift", () => {
   const entry = goalManifest[0];
   assert.throws(() => migrateGoalText("---\ntype: goal\n---\n", entry), /expected owner clause/);
+});
+
+test("roster migration is idempotent and refuses to overwrite later edits", () => {
+  const entry = rosterManifest[0];
+  const source = `# PG&E\n\n## People\n\n${entry.before.map((name) => `- ${name}`).join("\n")}\n\n## Work\n`;
+  const first = migrateRosterText(source, entry);
+  assert.equal(first.changed, true);
+  assert.deepEqual(migrateRosterText(first.text, entry), { text: first.text, changed: false });
+  assert.throws(() => migrateRosterText(first.text.replace("- Julian\n", "- Julian\n- Alex\n"), entry), /expected people roster/);
+});
+
+test("a partial migrated Goal does not count as idempotent", () => {
+  const entry = goalManifest.find((item) => item.replacement);
+  const partial = `---\ntype: goal\nassignees: [${entry.assignees.join(", ")}]\n---\n\n# Goal\n`;
+  assert.throws(() => migrateGoalText(partial, entry), /expected owner clause/);
 });

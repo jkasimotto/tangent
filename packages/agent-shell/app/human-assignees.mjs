@@ -5,6 +5,22 @@ export function normalizePersonName(value) {
   return String(value ?? "").trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
 }
 
+/** Validates and canonicalizes names that can be stored in a flat list. */
+export function validatePeople(values) {
+  if (!Array.isArray(values)) throw new Error("people must be a list");
+  const people = values.map((value) => String(value).trim()).filter(Boolean);
+  const normalized = new Set();
+  for (const name of people) {
+    if (/[\[\],\r\n]/.test(name)) {
+      throw new Error(`The person name "${name}" cannot contain commas, brackets, or line breaks.`);
+    }
+    const key = normalizePersonName(name);
+    if (normalized.has(key)) throw new Error(`The People section contains the duplicate name "${name}".`);
+    normalized.add(key);
+  }
+  return people;
+}
+
 /** Reads the strict bullet list from an Area note's People section. */
 export function peopleFromAreaNote(text) {
   const match = String(text ?? "").match(/^## People[ \t]*\n([\s\S]*?)(?=^## |(?![\s\S]))/m);
@@ -22,7 +38,7 @@ export function peopleFromAreaNote(text) {
     normalized.add(key);
     people.push(name);
   }
-  return people;
+  return validatePeople(people);
 }
 
 /** Reads a flat frontmatter array such as `[Dan, Brida]`. */
@@ -42,19 +58,20 @@ export function personKey(rosterArea, name) {
 
 /** Validates a set of requested names and returns it in roster order. */
 export function validateAssignees(requested, roster) {
+  const validRoster = validatePeople(roster);
   const values = Array.isArray(requested) ? requested.map((name) => String(name).trim()).filter(Boolean) : [];
-  const rosterByName = new Map(roster.map((name) => [normalizePersonName(name), name]));
+  const rosterByName = new Map(validRoster.map((name) => [normalizePersonName(name), name]));
   const seen = new Set();
   for (const name of values) {
     const normalized = normalizePersonName(name);
     if (seen.has(normalized)) throw new Error(`The assignee "${name}" occurs more than once.`);
     seen.add(normalized);
     if (!rosterByName.has(normalized)) {
-      const valid = roster.length ? roster.join(", ") : "none (this Area has no people roster)";
+      const valid = validRoster.length ? validRoster.join(", ") : "none (this Area has no people roster)";
       throw new Error(`Unknown assignee "${name}". Valid people: ${valid}.`);
     }
   }
-  return roster.filter((name) => seen.has(normalizePersonName(name)));
+  return validRoster.filter((name) => seen.has(normalizePersonName(name)));
 }
 
 /** Projects labels and roster-scoped keys for one Goal. */

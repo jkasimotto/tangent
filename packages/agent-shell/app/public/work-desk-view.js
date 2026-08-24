@@ -4,6 +4,30 @@ import askCore from "./ask-core.js";
 import goToCore from "./go-to-core.js";
 import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
 
+/** Normalizes a roster label in the same way as the server projection. */
+export function normalizePersonLabel(value) {
+  return String(value ?? "").trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
+}
+
+/** True when one Goal matches a human-responsibility filter. */
+export function goalMatchesPerson(goal, filter) {
+  if (filter === "all") return true;
+  if (filter === "mine") return goal.assignees?.some((name) => normalizePersonLabel(name) === "julian");
+  if (filter === "unassigned") return !goal.assignees?.length;
+  return goal.assigneeKeys?.includes(filter);
+}
+
+/** Keeps matching Goals and a nonmatching root only as ancestor context. */
+export function filterGoalTreesByPerson(trees, filter) {
+  if (filter === "all") return trees;
+  return trees.flatMap((tree) => {
+    const matches = tree.goals.filter((goal) => goalMatchesPerson(goal, filter));
+    if (!matches.length) return [];
+    const goals = tree.root && !matches.includes(tree.root) ? [tree.root, ...matches] : matches;
+    return [{ ...tree, goals, personGoals: matches }];
+  });
+}
+
 /** Creates the work desk from shell, launch, Area, and Program capabilities. */
 export function createWorkDeskView({ shell, launch, areaModel, programs, chrome }) {
   const { state, api, post, paint, refresh, showToast, openModal, captureReturnPoint, saveDescribeSession } = shell;
@@ -86,16 +110,17 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   /** Applies the selected session-presence filter without splitting Goal trees. */
   function filteredGoalTrees(trees) {
     const readyForYou = new Set((state.brains ?? []).flatMap((brain) => (brain.forJulian ?? []).filter((row) => row.kind === "test").map((row) => row.file)));
-    /** Returns whether a Goal tree belongs in the current-work view. */
-    const isCurrent = (tree) => goalTreeIsActive(tree) || tree.goals.some((goal) => goalNeedsYou(goal) || readyForYou.has(goal.file));
-    const byActivity = state.workFilter === "active" ? trees.filter(isCurrent)
-      : state.workFilter === "inactive" ? trees.filter((tree) => !isCurrent(tree)) : trees;
-    if (state.personFilter === "all") return byActivity;
-    /** True when one Goal matches the selected human responsibility. */
-    const matches = (goal) => state.personFilter === "mine" ? goal.assignees?.includes("Julian")
-      : state.personFilter === "unassigned" ? !goal.assignees?.length
-        : goal.assigneeKeys?.includes(state.personFilter);
-    return byActivity.filter((tree) => tree.goals.some(matches));
+    const byPerson = filterGoalTreesByPerson(trees, state.personFilter);
+    /** Returns whether matching work, excluding ancestor-only context, is current. */
+    const isCurrent = (tree) => {
+      const goals = tree.personGoals ?? tree.goals;
+      return goals.some((goal) => {
+        if (sessionForGoal(goal) || goalNeedsYou(goal) || readyForYou.has(goal.file)) return true;
+        return Boolean(pipelineRecordForGoal(goal)?.steps?.some((step) => ["running", "stopped"].includes(step.status)));
+      });
+    };
+    return state.workFilter === "active" ? byPerson.filter(isCurrent)
+      : state.workFilter === "inactive" ? byPerson.filter((tree) => !isCurrent(tree)) : byPerson;
   }
 
   /** Human responsibility labels never replace the Goal's agent state. */
@@ -1322,6 +1347,14 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
   /** Renders the complete area-first work desk. */
   function renderWork() {
+    const people = new Map();
+    for (const area of areas()) for (const name of area.roster ?? []) {
+      const key = `${area.rosterArea}::${normalizePersonLabel(name)}`;
+      people.set(key, name);
+    }
+    const validPersonFilters = new Set(["all", "unassigned", ...people.keys()]);
+    if ([...people.values()].some((name) => normalizePersonLabel(name) === "julian")) validPersonFilters.add("mine");
+    if (!validPersonFilters.has(state.personFilter)) state.personFilter = "all";
     const query = state.query.trim();
     const records = filteredDeskAreas(query);
     const maxElapsedMs = 0;
@@ -1332,12 +1365,11 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       ? `<section class="area-desk-grid" aria-label="Work by Area">${records.map((record, position) => deskAreaPanel(record, position, maxElapsedMs)).join("")}</section>`
       : `<div class="empty-state">${emptyCopy}</div>`}`;
 
-    const people = new Map();
-    for (const area of areas()) for (const name of area.roster ?? []) {
-      const key = `${area.rosterArea}::${name.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US")}`;
-      people.set(key, name);
-    }
-    const personOptions = [["all", "All people"], ["mine", "Mine"], ...[...people].sort((left, right) => left[1].localeCompare(right[1])), ["unassigned", "Unassigned"]];
+    const labels = new Map();
+    for (const [, name] of people) labels.set(name, (labels.get(name) ?? 0) + 1);
+    const namedOptions = [...people].map(([key, name]) => [key, labels.get(name) > 1 ? `${name} — ${key.split("::")[0]}` : name]);
+    const personOptions = [["all", "All people"], ...(namedOptions.some(([, label]) => label === "Julian" || label.startsWith("Julian — ")) ? [["mine", "Mine"]] : []), ...namedOptions.sort((left, right) => left[1].localeCompare(right[1])), ["unassigned", "Unassigned"]];
+    const selectedPerson = personOptions.some(([value]) => value === state.personFilter) ? state.personFilter : "all";
     return `
       <section class="work-page">
         <div class="work-tools">
@@ -1351,7 +1383,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
           <div class="work-filter" role="group" aria-label="Choose current or planned work">
             ${[["active", "Current"], ["inactive", "Planned"]].map(([filter, label]) => `<button type="button" data-work-filter="${filter}" aria-pressed="${state.workFilter === filter}">${label}</button>`).join("")}
           </div>
-          <label><span class="visually-hidden">Person</span><select id="work-person-filter" aria-label="Filter work by person">${personOptions.map(([value, label]) => `<option value="${escapeHtml(value)}" ${state.personFilter === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label>
+          <label><span class="visually-hidden">Person</span><select id="work-person-filter" aria-label="Filter work by person">${personOptions.map(([value, label]) => `<option value="${escapeHtml(value)}" ${selectedPerson === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label>
         </div>
         ${content}
         ${launchPopover()}

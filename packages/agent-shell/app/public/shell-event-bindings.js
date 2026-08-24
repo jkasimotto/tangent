@@ -774,6 +774,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   });
 
   document.addEventListener("change", async (event) => {
+    if (event.target.matches("#new-goal-area")) {
+      state.createArea = event.target.value || "";
+      return paint(true);
+    }
     if (event.target.matches("#area-person-filter")) {
       state.personFilter = event.target.value || "all";
       localStorage.setItem("agent-shell.person-filter", state.personFilter);

@@ -1,6 +1,7 @@
 import areaMapCore from "./area-map-core.js";
 import areaMapView from "./area-map.js";
 import { clip, escapeHtml } from "./text-format.js";
+import { filterGoalTreesByPerson, normalizePersonLabel } from "./work-desk-view.js";
 
 /** Creates the Area directory from owned shell, Work, Document, and Program ports. */
 export function createAreaDirectoryView({ shell, documents, work, programs }) {
@@ -212,18 +213,14 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
     const problems = state.programs.errors.filter((item) => item.area === area.path);
     const done = area.status === "done";
     const current = clip(area.current ?? "", 240);
-    /** True when one Goal matches the shared human responsibility filter. */
-    const personMatches = (goal) => state.personFilter === "all" ? true
-      : state.personFilter === "mine" ? goal.assignees?.includes("Julian")
-        : state.personFilter === "unassigned" ? !goal.assignees?.length
-          : goal.assigneeKeys?.includes(state.personFilter);
-    const planned = goalTrees().filter((tree) => tree.path === area.path && goalTreeState(tree) !== "closed" && !goalTreeIsActive(tree) && tree.goals.some(personMatches));
-    const rosterPeople = (area.roster ?? []).map((name) => {
-      const goal = (area.goals ?? []).find((item) => item.assignees?.includes(name));
-      const key = goal ? goal.assigneeKeys[goal.assignees.indexOf(name)] : `${area.rosterArea}::${name.toLocaleLowerCase("en-US")}`;
-      return [key, name];
-    });
-    const personOptions = [["all", "All people"], ["mine", "Mine"], ...rosterPeople, ["unassigned", "Unassigned"]];
+    const rosterPeople = (area.roster ?? []).map((name) => [`${area.rosterArea}::${normalizePersonLabel(name)}`, name]);
+    const personOptions = [["all", "All people"], ...(rosterPeople.some(([, name]) => normalizePersonLabel(name) === "julian") ? [["mine", "Mine"]] : []), ...rosterPeople, ["unassigned", "Unassigned"]];
+    const selectedPerson = personOptions.some(([value]) => value === state.personFilter) ? state.personFilter : "all";
+    const planned = filterGoalTreesByPerson(goalTrees().filter((tree) => tree.path === area.path), selectedPerson)
+      .filter((tree) => {
+        const matchingTree = { ...tree, goals: tree.personGoals ?? tree.goals };
+        return goalTreeState(matchingTree) !== "closed" && !goalTreeIsActive(matchingTree);
+      });
     const documents = areaDocuments(area.path);
     const brain = brainForAreaCard(area.path);
     const brainClass = brainKind(brain);
@@ -243,7 +240,7 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
           </div>
         </header>
         <section class="area-workspace-section" aria-labelledby="area-not-started">
-          <div class="area-section-heading"><div><p class="kicker">Work</p><h3 id="area-not-started" tabindex="-1">Not started</h3></div><label><span class="visually-hidden">Person</span><select id="area-person-filter" aria-label="Filter Area work by person">${personOptions.map(([value, label]) => `<option value="${escapeHtml(value)}" ${state.personFilter === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label><span>${planned.length}</span></div>
+          <div class="area-section-heading"><div><p class="kicker">Work</p><h3 id="area-not-started" tabindex="-1">Not started</h3></div><label><span class="visually-hidden">Person</span><select id="area-person-filter" aria-label="Filter Area work by person">${personOptions.map(([value, label]) => `<option value="${escapeHtml(value)}" ${selectedPerson === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label><span>${planned.length}</span></div>
           ${planned.length ? `<div class="area-planned-list">${planned.map((tree) => goalTreeCard(tree)).join("")}</div>` : `<p class="memory-empty">No not-started work exists in this Area.</p>`}
         </section>
         ${documentSection(area.path, documents)}

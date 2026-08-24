@@ -18,7 +18,7 @@ function describe(base, body) {
   }).then(async (response) => ({ status: response.status, body: await response.json() }));
 }
 
-test("Describe work reaches a stopped or live Area brain and never opens a work-definition session", async (context) => {
+test("Describe work reaches stopped, live, or stale Area brains and never opens a work-definition session", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "describe-work-brain-"));
   const trees = path.join(root, "trees");
   const brains = path.join(root, "brains");
@@ -92,6 +92,17 @@ save();
   assert.equal(live.status, 200);
   assert.equal(live.body.route, "brain-opened");
   assert.equal(live.body.session, resumed.body.session);
+
+  const staleTmux = JSON.parse(await readFile(fakeTmuxState, "utf8"));
+  delete staleTmux.sessions[live.body.session];
+  await writeFile(fakeTmuxState, JSON.stringify(staleTmux), "utf8");
+  const started = await describe(base, { area: "otto/tangent/child", description: "Restart the stale recorded brain." });
+  assert.equal(started.status, 200);
+  assert.equal(started.body.route, "brain-started");
+  assert.notEqual(started.body.session, live.body.session);
+  const tmuxAfterStart = JSON.parse(await readFile(fakeTmuxState, "utf8"));
+  assert.equal(tmuxAfterStart.sessions[started.body.session].options["@tangent_kind"], "brain");
+  assert.equal(Object.values(tmuxAfterStart.sessions).some((session) => session.options["@tangent_kind"] === "work-definition"), false);
 
   const plain = await describe(base, { area: "otto/plain", description: "Keep the existing behavior here." });
   assert.equal(plain.status, 200);

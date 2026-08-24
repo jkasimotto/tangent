@@ -14,6 +14,7 @@ import {
   goalBindingGoneFromSnapshot,
   newPipeline,
   nextPendingStep,
+  reclaimLiveSteps,
   pipelineFinished,
   pipelinePath,
   pipelineStatus,
@@ -262,6 +263,18 @@ test("stepStartedWithinGrace reproduces the race: a step started after a stale s
   // reaped once the grace period passes.
   const laterReconcile = Date.parse(startedAt) + RECONCILE_GRACE_MS + 1;
   assert.equal(stepStartedWithinGrace(step, laterReconcile), false);
+});
+
+test("a stopped step returns to running when its exact session is live", () => {
+  const record = recordWith(["complete", "stopped", "stopped"]);
+  record.steps[1].session = "worker-live";
+  record.steps[1].endedAt = "2026-08-25T00:00:00.000Z";
+  record.steps[2].session = "worker-gone";
+  assert.equal(reclaimLiveSteps(record, new Set(["worker-live"])), true);
+  assert.equal(record.steps[1].status, "running");
+  assert.equal(record.steps[1].endedAt, null);
+  assert.equal(record.steps[2].status, "stopped");
+  assert.equal(reclaimLiveSteps(record, new Set(["worker-live"])), false);
 });
 
 test("reconcile against a stale sessions snapshot leaves a just-started step and its Goal binding alone", () => {

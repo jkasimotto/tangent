@@ -25,11 +25,11 @@ import { createVaultGitReader, fileTimes } from "./area-map.mjs";
 import { createPaneObserver } from "./pane-observer.mjs";
 import { mapWithConcurrency } from "./bounded-work.mjs";
 import { createObservationCache } from "./observation-cache.mjs";
-import { appendSteps, currentStep, endPipeline, goalBindingGoneFromSnapshot, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, readAllPipelines, readPipeline, stepGoneFromSnapshot, validateSteps, writePipeline } from "./pipeline-record.mjs";
+import { appendSteps, currentStep, endPipeline, goalBindingGoneFromSnapshot, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, readAllPipelines, readPipeline, reclaimLiveSteps, stepGoneFromSnapshot, validateSteps, writePipeline } from "./pipeline-record.mjs";
 import { newContinuationRecord, readAllContinuations, readContinuation, writeContinuation } from "./continuation-record.mjs";
 import { contextReminderText, contextRepeatText, continuationSection, continuationSessionName, reminderDue } from "./context-handover.mjs";
 import { normalizeMessage } from "./agent-messages.mjs";
-import { beginGeneration, brainForArea, brainOwnsArea, brainRecordForArea, brainSessionName, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, recordHandover, validateInstruction, writeBrain } from "./brain-record.mjs";
+import { beginGeneration, brainForArea, brainOwnsArea, brainRecordForArea, brainSessionName, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, reclaimStoppedBrain, recordHandover, validateInstruction, writeBrain } from "./brain-record.mjs";
 import { appendNotice, inboxesForBrain, markDelivered, mergeNotices, noticeBlock, noticeDigest, readAllInboxes, readInbox, writeInbox } from "./brain-inbox.mjs";
 import { forJulianSectionText, parseForJulian, removeForJulianLine, restoreForJulianLine, unparsedForJulianLines } from "./for-julian.mjs";
 import { createCommitChangeMonitor } from "./commit-change-monitor.mjs";
@@ -2635,7 +2635,7 @@ async function reconcilePipelines(sessions) {
   const byName = new Map(sessions.map((item) => [item.name, item]));
   const now = Date.now();
   for (const record of await readAllPipelines(PIPELINES_ROOT)) {
-    let changed = false;
+    let changed = reclaimLiveSteps(record, byName);
     for (const step of record.steps) {
       const key = `${record.goal}#${step.index}#${step.session}`;
       if (step.status !== "running" || !step.session) {
@@ -3110,14 +3110,23 @@ async function startBrainUnlocked(area, { instruction = "", choice = null, comma
   return spawnBrainSession(record);
 }
 
+/** Returns the calling brain and repairs a false stopped state after a session restart race. */
+async function liveBrainForSession(sessionName) {
+  const record = (await readAllBrains(BRAINS_ROOT)).find((item) => item.session === sessionName);
+  if (!record || record.status === "ended") return null;
+  const live = await execFileAsync("tmux", ["has-session", "-t", "=" + sessionName]).then(() => true, () => false);
+  if (!live) return null;
+  if (reclaimStoppedBrain(record)) await writeBrain(BRAINS_ROOT, record);
+  return record.status === "running" ? record : null;
+}
+
 /**
  * The brain hands over to itself: record the facts, start the next
  * generation, and end this session once the new one is primed. On a failed
  * spawn the old session stays alive and hears the error.
  */
 async function handoverBrain(sessionName, text) {
-  const records = await readAllBrains(BRAINS_ROOT);
-  const record = records.find((item) => item.status === "running" && item.session === sessionName);
+  const record = await liveBrainForSession(sessionName);
   if (!record) return { status: 404, error: "this session is not a running brain" };
   const previous = sessionName;
   recordHandover(record, text);
@@ -3841,7 +3850,7 @@ const brainRoutes = createBrainRoutes({
   reply: noteReplySubject,
   /** Creates a request only for the calling live brain session. */
   async createRequest(session, input) {
-    const brain = (await readAllBrains(BRAINS_ROOT)).find((item) => item.session === session && item.status === "running");
+    const brain = await liveBrainForSession(session);
     if (!brain) return { status: 403, error: "only a live brain can create a request" };
     const record = await readBrainRequests(BRAINS_ROOT, brain.area);
     try {
@@ -4238,8 +4247,7 @@ const launchRoutes = createLaunchRoutes({
       if (caller) {
         const goal = (await goalsByFile()).get(String(body.file ?? ""));
         if (!goal) return { status: 404, error: `no goal file ${String(body.file ?? "")}` };
-        const brains = await readAllBrains(BRAINS_ROOT);
-        const callerBrain = brains.find((item) => item.session === caller && item.status === "running");
+        const callerBrain = await liveBrainForSession(caller);
         if (!callerBrain) return { status: 403, error: "workers cannot start agents; report to the controlling brain with tangent handover" };
         const controller = await nearestLiveBrainForArea(goal.area);
         if (!controller || controller.session !== caller) return { status: 403, error: `${caller} does not control ${goal.area}` };
@@ -4297,8 +4305,7 @@ const workMutationRoutes = createWorkMutationRoutes({
     if (!String(goal.title ?? "").trim() || !String(goal.doneWhen ?? "").trim()) return { status: 400, error: "the Goal needs a name and a done condition" };
     const caller = String(body.caller ?? "").trim();
     if (caller) {
-      const brains = await readAllBrains(BRAINS_ROOT);
-      const callerBrain = brains.find((item) => item.session === caller && item.status === "running");
+      const callerBrain = await liveBrainForSession(caller);
       if (!callerBrain) return { status: 403, error: "workers cannot create Goals; report to the controlling brain with tangent handover" };
       const controller = await nearestLiveBrainForArea(area);
       if (!controller || controller.session !== caller) return { status: 403, error: `${caller} does not control ${area}` };

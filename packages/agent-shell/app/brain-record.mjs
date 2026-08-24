@@ -127,6 +127,15 @@ export function endBrain(record, status, now = new Date().toISOString()) {
   return record;
 }
 
+/** Restores a stopped record when its exact generation session is still live. */
+export function reclaimStoppedBrain(record) {
+  if (record?.status !== "stopped" || !record.session) return false;
+  record.status = "running";
+  const entry = currentGeneration(record);
+  if (entry?.session === record.session) entry.endedAt = null;
+  return true;
+}
+
 /** The tmux session name for one generation of an Area's brain. */
 export function brainSessionName(area, generation) {
   const leaf = String(area).split("/").filter(Boolean).pop() ?? "area";

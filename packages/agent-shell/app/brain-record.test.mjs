@@ -18,6 +18,7 @@ import {
   newBrain,
   readAllBrains,
   readBrain,
+  reclaimStoppedBrain,
   recordHandover,
   validateInstruction,
   writeBrain
@@ -117,6 +118,21 @@ test("endBrain sets ended or stopped and closes the generation", () => {
   endBrain(record, "ended");
   assert.equal(record.status, "ended");
   assert.throws(() => endBrain(record, "paused"), /unknown brain end status/);
+});
+
+test("only a stopped brain can reclaim its exact live generation", () => {
+  const stopped = sampleBrain();
+  beginGeneration(stopped, "tangent-brain-g32");
+  endBrain(stopped, "stopped");
+  assert.equal(reclaimStoppedBrain(stopped), true);
+  assert.equal(stopped.status, "running");
+  assert.equal(currentGeneration(stopped).endedAt, null);
+
+  const ended = sampleBrain();
+  beginGeneration(ended, "tangent-brain-g33");
+  endBrain(ended, "ended");
+  assert.equal(reclaimStoppedBrain(ended), false);
+  assert.equal(ended.status, "ended");
 });
 
 test("brainSessionName follows the leaf and generation rule", () => {

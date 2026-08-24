@@ -151,6 +151,18 @@ export function currentStep(record) {
     ?? null;
 }
 
+/** Restores stopped steps whose exact sessions are present in the live snapshot. */
+export function reclaimLiveSteps(record, liveSessions) {
+  let changed = false;
+  for (const step of record?.steps ?? []) {
+    if (step.status !== "stopped" || !step.session || !liveSessions.has(step.session)) continue;
+    step.status = "running";
+    step.endedAt = null;
+    changed = true;
+  }
+  return changed;
+}
+
 /** First pending step after the given index, else null. */
 export function nextPendingStep(record, afterIndex) {
   const steps = record?.steps ?? [];

@@ -176,6 +176,21 @@ export function nextPendingStep(record, afterIndex) {
 export const RECONCILE_GRACE_MS = 30_000;
 
 /**
+ * Whether a sessions snapshot can testify that a specific session ended. An
+ * empty snapshot cannot: every wrong-world failure (a test's isolated tmux
+ * socket, a sandbox that cannot reach the socket, a dead tmux server) shows
+ * zero sessions at once, while a genuinely ended session disappears from a
+ * world that still holds the others. Absence-based transitions (stopping
+ * steps, reopening Goals, ending brains, clearing armed prompts) must never
+ * run on a snapshot this function rejects; on 2026-08-24 a test-spawned
+ * server did exactly that against the real records and repeatedly reported
+ * live workers as stopped.
+ */
+export function snapshotCanJudgeAbsence(sessions) {
+  return Array.isArray(sessions) && sessions.length > 0;
+}
+
+/**
  * True while `at` (an epoch ms, or NaN/undefined) is recent enough that a
  * sessions snapshot taken around `now` cannot be trusted to include
  * whatever tmux session it caused.

@@ -25,7 +25,7 @@ import { createVaultGitReader, fileTimes } from "./area-map.mjs";
 import { createPaneObserver } from "./pane-observer.mjs";
 import { mapWithConcurrency } from "./bounded-work.mjs";
 import { createObservationCache } from "./observation-cache.mjs";
-import { appendSteps, currentStep, endPipeline, goalBindingGoneFromSnapshot, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, readAllPipelines, readPipeline, reclaimLiveSteps, stepGoneFromSnapshot, validateSteps, writePipeline } from "./pipeline-record.mjs";
+import { appendSteps, currentStep, endPipeline, goalBindingGoneFromSnapshot, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, readAllPipelines, readPipeline, reclaimLiveSteps, snapshotCanJudgeAbsence, stepGoneFromSnapshot, validateSteps, writePipeline } from "./pipeline-record.mjs";
 import { newContinuationRecord, readAllContinuations, readContinuation, writeContinuation } from "./continuation-record.mjs";
 import { contextReminderText, contextRepeatText, continuationSection, continuationSessionName, reminderDue } from "./context-handover.mjs";
 import { normalizeMessage } from "./agent-messages.mjs";
@@ -1687,7 +1687,11 @@ async function armSession(name, phase = "execute", submit = false, document = ""
 async function rearmPersistedPrompts() {
   const records = await readAllArmedPrompts(ARMED_ROOT);
   if (!records.length) return;
-  const live = new Set((await listSessions()).map((session) => session.name));
+  const sessions = await listSessions();
+  // An empty snapshot cannot say these sessions died (snapshotCanJudgeAbsence):
+  // keep every record; the next boot that sees a real world sweeps them.
+  if (!snapshotCanJudgeAbsence(sessions)) return;
+  const live = new Set(sessions.map((session) => session.name));
   for (const record of records) {
     if (!live.has(record.session)) {
       await clearArmedPrompt(ARMED_ROOT, record.session).catch(() => {});
@@ -1971,6 +1975,10 @@ const warnedUnlinkedSessions = new Set();
  */
 async function reconcileGoals(sessions) {
   if (reconciling || Date.now() - lastReconcile < 10_000) return;
+  // An empty snapshot is a wrong-world signal, never proof that a session
+  // ended (snapshotCanJudgeAbsence): judging against one marked live workers
+  // stopped when a test-spawned server reconciled the real records.
+  if (!snapshotCanJudgeAbsence(sessions)) return;
   reconciling = true;
   lastReconcile = Date.now();
   try {

@@ -15,6 +15,7 @@ import {
   newPipeline,
   nextPendingStep,
   reclaimLiveSteps,
+  snapshotCanJudgeAbsence,
   pipelineFinished,
   pipelinePath,
   pipelineStatus,
@@ -275,6 +276,16 @@ test("a stopped step returns to running when its exact session is live", () => {
   assert.equal(record.steps[1].endedAt, null);
   assert.equal(record.steps[2].status, "stopped");
   assert.equal(reclaimLiveSteps(record, new Set(["worker-live"])), false);
+});
+
+test("an empty sessions snapshot can never testify that a session ended", () => {
+  // A wrong world (a test's isolated tmux socket, a sandbox, a dead tmux
+  // server) shows zero sessions; a real world holds at least the other
+  // sessions. Absence-based transitions must refuse the empty snapshot.
+  assert.equal(snapshotCanJudgeAbsence([]), false);
+  assert.equal(snapshotCanJudgeAbsence(null), false);
+  assert.equal(snapshotCanJudgeAbsence(undefined), false);
+  assert.equal(snapshotCanJudgeAbsence([{ name: "unrelated" }]), true);
 });
 
 test("reconcile against a stale sessions snapshot leaves a just-started step and its Goal binding alone", () => {

@@ -67,11 +67,57 @@ test("the shared Person menu obeys keyboard and focus behavior", async () => {
   button.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
   assert.equal(button.getAttribute("aria-expanded"), "true");
   assert.equal(window.document.activeElement.dataset.personValue, "all");
+  assert.equal(window.document.querySelector("#work-person-filter-menu").getAttribute("aria-label"), "Filter work by person");
+  assert.equal(window.document.querySelector("[data-person-value='all']").getAttribute("aria-checked"), "true");
+  assert.equal(window.document.querySelector("[data-person-value='mine']").textContent.trim(), "Mine");
   window.document.activeElement.dispatchEvent(new window.KeyboardEvent("keydown", { key: "End", bubbles: true }));
+  assert.equal(window.document.activeElement.dataset.personValue, "unassigned");
+  window.document.activeElement.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Home", bubbles: true }));
+  assert.equal(window.document.activeElement.dataset.personValue, "all");
+  window.document.activeElement.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
   assert.equal(window.document.activeElement.dataset.personValue, "unassigned");
   window.document.activeElement.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   assert.equal(window.document.activeElement, button);
   assert.equal(button.getAttribute("aria-expanded"), "false");
   assert.match(window.document.querySelector("[data-person-value*='a person']").getAttribute("aria-label"), /very long complete name/);
+  dom.window.close();
+});
+
+test("the shared Person menu selects with keys, closes on Tab and outside click, and handles a missing roster", async () => {
+  const html = await readFile(path.join(here, "public", "shell.html"), "utf8");
+  const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
+  const { window } = dom;
+  window.setInterval = () => 0;
+  window.HTMLCanvasElement.prototype.getContext = () => null;
+  window.fetch = async (url) => {
+    const pathname = new URL(url, window.location.href).pathname;
+    if (pathname === "/api/sessions") return jsonResponse({ sessions: [], pipelines: [], brains: [] });
+    if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
+    return jsonResponse({ areas: [{ path: "one", name: "one", roster: [], goals: [], documents: [] }], map: [], documents: [] });
+  };
+  window.localStorage.setItem("agent-shell.person-filter", "stale::person");
+  window.eval(shellBundle);
+  await settle(window);
+  let button = window.document.querySelector("#work-person-filter");
+  assert.match(button.textContent, /Person\s*All/);
+  assert.deepEqual([...window.document.querySelectorAll("[data-person-value]")].map((item) => item.dataset.personValue), ["all", "unassigned"]);
+  assert.equal(window.document.querySelector("[data-person-value='mine']"), null);
+
+  button.dispatchEvent(new window.KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
+  assert.equal(window.document.activeElement.dataset.personValue, "unassigned");
+  window.document.activeElement.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  await settle(window);
+  button = window.document.querySelector("#work-person-filter");
+  assert.match(button.textContent, /Person\s*Unassigned/);
+  assert.equal(button.getAttribute("aria-expanded"), "false");
+  assert.equal(window.document.activeElement, button);
+
+  button.click();
+  const selected = window.document.querySelector("[data-person-value='unassigned']");
+  selected.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+  assert.equal(button.getAttribute("aria-expanded"), "false");
+  button.click();
+  window.document.body.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  assert.equal(button.getAttribute("aria-expanded"), "false");
   dom.window.close();
 });

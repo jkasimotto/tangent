@@ -17,6 +17,7 @@ test("the selected Area reduces a Goal tree to Julian's branch", async () => {
   const mine = goal("goal-mine.md", "Julian branch", ["Julian"], 1);
   const other = goal("goal-other.md", "Dan branch", ["Dan"], 1);
   root.subgoals = [mine.slug, other.slug];
+  mine.dependsOn = [{ file: root.file, title: root.title, status: "open" }];
   const goals = [root, mine, other];
   window.fetch = async (url) => {
     const pathname = new URL(url, window.location.href).pathname;
@@ -35,7 +36,7 @@ test("the selected Area reduces a Goal tree to Julian's branch", async () => {
   filter.value = "mine";
   filter.dispatchEvent(new window.Event("change", { bubbles: true }));
   await settle(window);
-  const text = window.document.querySelector(".area-planned-list").textContent;
+  const text = window.document.querySelector(".area-work-graph").textContent;
   assert.match(text, /Shared result/);
   assert.match(text, /Julian branch/);
   assert.doesNotMatch(text, /Dan branch/);

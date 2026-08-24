@@ -145,7 +145,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       state.areaSelection = area.dataset.selectArea;
       localStorage.setItem("agent-shell.last-area", state.areaSelection);
       paint(true);
-      return window.setTimeout(() => document.querySelector("#area-not-started")?.focus(), 0);
+      return window.setTimeout(() => document.querySelector("#area-work-heading")?.focus(), 0);
     }
     const kindOnly = target.closest("[data-area-kind-only]");
     if (kindOnly) {
@@ -184,10 +184,36 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (openArea) {
       if (state.view === "document" && state.document?.file) state.mapSelectFile = state.document.file;
       state.areaSelection = openArea.dataset.openArea;
+      state.areaHistory = false;
       localStorage.setItem("agent-shell.last-area", state.areaSelection);
       state.view = "areas";
       state.whatHappened = null;
       revealArea(state.areaSelection);
+      return paint(true);
+    }
+    const openHistory = target.closest("[data-open-history]");
+    if (openHistory) {
+      state.areaSelection = openHistory.dataset.openHistory;
+      state.areaHistory = true;
+      state.view = "areas";
+      state.whatHappened = null;
+      revealArea(state.areaSelection);
+      return paint(true);
+    }
+    if (target.closest("[data-close-area-history]")) { state.areaHistory = false; return paint(true); }
+    if (target.closest("[data-area-work-reset]")) {
+      state.areaWorkQuery = "";
+      state.areaWorkScope = "";
+      state.areaWorkState = "all";
+      state.personFilter = "all";
+      state.areaWorkLimits.set(state.areaSelection, { frontier: 12, successors: 12 });
+      return paint(true);
+    }
+    const moreWork = target.closest("[data-area-work-more]");
+    if (moreWork) {
+      const limits = state.areaWorkLimits.get(state.areaSelection) ?? { frontier: 12, successors: 12 };
+      limits[moreWork.dataset.areaWorkMore] += 12;
+      state.areaWorkLimits.set(state.areaSelection, limits);
       return paint(true);
     }
     const markAreaDone = target.closest("[data-mark-area-done]");
@@ -744,11 +770,12 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       saveDescribeDraft();
       return;
     }
-    if (["area-search", "area-document-search"].includes(event.target.id)) {
+    if (["area-search", "area-document-search", "area-work-search"].includes(event.target.id)) {
       const id = event.target.id;
       const cursor = event.target.selectionStart;
       if (id === "area-search") state.areaQuery = event.target.value;
-      else state.areaDocumentQuery = event.target.value;
+      else if (id === "area-document-search") state.areaDocumentQuery = event.target.value;
+      else state.areaWorkQuery = event.target.value;
       if (id === "area-search" && state.areaQuery.trim()) {
         const query = state.areaQuery.trim().toLowerCase();
         for (const area of state.vault?.areas ?? []) {
@@ -783,6 +810,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       localStorage.setItem("agent-shell.person-filter", state.personFilter);
       return paint(true);
     }
+    if (event.target.id === "area-work-scope") { state.areaWorkScope = event.target.value; return paint(true); }
+    if (event.target.id === "area-work-state") { state.areaWorkState = event.target.value; return paint(true); }
     if (event.target.matches("#work-person-filter")) {
       state.personFilter = event.target.value || "all";
       localStorage.setItem("agent-shell.person-filter", state.personFilter);

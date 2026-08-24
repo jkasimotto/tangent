@@ -1,7 +1,7 @@
 import test from "node:test";
 import { assert, readFile, path, JSDOM, shellBundle, here, settle, click, jsonResponse } from "./focus-shell-ui-fixture.mjs";
 
-test("the Area browser focuses search and leads with planned work and filterable Documents", async () => {
+test("the Area browser focuses search and leads with ready work and filterable Documents", async () => {
   const html = await readFile(path.join(here, "public", "shell.html"), "utf8");
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/?view=areas&area=otto/tangent" });
   const { window } = dom;
@@ -44,7 +44,8 @@ test("the Area browser focuses search and leads with planned work and filterable
 
   assert.equal(window.document.querySelector(".surface-heading"), null);
   assert.equal(window.document.activeElement.id, "area-search");
-  assert.match(window.document.querySelector("#area-not-started").closest(".area-workspace-section").textContent, /Build the Area browser/);
+  assert.match(window.document.querySelector("#area-work-heading").closest(".area-workspace-section").textContent, /Build the Area browser/);
+  assert.doesNotMatch(window.document.querySelector("#area-work-heading").closest(".area-workspace-section").textContent, /Not started/);
   assert.ok(window.document.querySelector("[data-brain-area='otto/tangent']"));
   assert.equal(window.document.querySelector("[data-launch-for='__brain__'][data-brain-area='otto/tangent']").textContent.trim(), "Set brain agent and effort");
   assert.equal(window.document.querySelectorAll(".area-documents .document-row").length, 2);

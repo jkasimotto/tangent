@@ -781,7 +781,7 @@ async function buildVaultIndex() {
       const o = bySlug.get(slug);
       if (!o || seen.has(slug)) return;
       seen.add(slug);
-      goals.push({ ...o, depth });
+      goals.push({ ...o, depth, order: goals.length });
       for (const c of o.subgoals) dive(c, depth + 1);
     };
     for (const s of [...roots, ...unlinked]) dive(s, 0);
@@ -843,7 +843,7 @@ async function buildVaultIndex() {
   // with its own clock so rows age out between vault commits
   // (design-done-goals-timeline, Decision 6).
   const recentCloses = whatHappenedCore.windowCloses(gitCloses, Date.now());
-  return { areas: out, map: groups, documents: records, recentCloses };
+  return { areas: out, map: groups, documents: records, recentCloses, closes: gitCloses };
 }
 
 /**

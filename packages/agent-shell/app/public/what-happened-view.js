@@ -33,7 +33,7 @@ export function createWhatHappenedView({ state, areaLabel, goalByFile, humanName
     const now = Date.now();
     const closes = whatHappenedCore.windowCloses(whatHappenedCore.areaCloses(state.vault.recentCloses ?? [], area, areaMapCore.isInside), now);
     const body = closes.length ? closes.map((close) => row(close, area, now, new Date().getTimezoneOffset())).join("") : `<p class="what-happened-empty">Nothing was marked done or won't do in the last 12 hours.</p>`;
-    return `<div class="what-happened" data-what-happened role="dialog" aria-label="${escapeHtml(label)}" style="${style}"><header class="what-happened-header"><strong>What happened · last 12 hours</strong><small>esc</small></header>${body}<button class="what-happened-all" type="button" data-open-area="${escapeHtml(area)}">Everything ever done: Show done on the Area map →</button></div>`;
+    return `<div class="what-happened" data-what-happened role="dialog" aria-label="${escapeHtml(label)}" style="${style}"><header class="what-happened-header"><strong>What happened · last 12 hours</strong><small>esc</small></header>${body}<button class="what-happened-all" type="button" data-open-history="${escapeHtml(area)}">See all finished work →</button></div>`;
   }
 
   /** Returns the overlay's stable render-key contribution. */

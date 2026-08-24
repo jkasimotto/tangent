@@ -10,7 +10,10 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
   /** Reads the machine-wide registry; an absent block is an empty registry. */
   async function registry() {
     const text = await readFile(path.join(root, "harnesses.md"), "utf8").catch(() => "");
-    return parseHarnessRegistry(text) ?? { modelSets: {}, effortSets: {}, harnesses: [] };
+    const parsed = parseHarnessRegistry(text) ?? { modelSets: {}, effortSets: {}, harnesses: [] };
+    if (parsed.error) return parsed;
+    const error = validateHarnessRegistry(parsed);
+    return error ? { error: `harness registry is invalid: ${error}` } : parsed;
   }
 
   /** Resolves the inherited launch declaration for one Area. */

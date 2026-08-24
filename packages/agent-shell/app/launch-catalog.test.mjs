@@ -41,6 +41,29 @@ test("launch catalog reports broken durable declarations without substitution", 
   await assert.rejects(catalog.commandForArea("otto"), /not valid JSON/);
 });
 
+test("launch catalog rejects incomplete registry choices instead of listing guessed ids", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "tangent-launch-catalog-invalid-options-"));
+  await writeFile(path.join(root, "harnesses.md"), [
+    "```tangent.harnesses.v1",
+    JSON.stringify({
+      version: 1,
+      modelSets: { broken: [{ args: "--model missing-id" }] },
+      effortSets: {},
+      harnesses: [{ id: "codex", command: "codex", modelSet: "broken" }],
+    }),
+    "```",
+  ].join("\n"));
+  const catalog = createLaunchCatalog({
+    root,
+    /** Supplies no Area declarations for this registry-only failure. */
+    readAreaNote: async () => "",
+  });
+
+  const options = await catalog.options("elsewhere", "all");
+  assert.match(options.error, /model option.*has no id/);
+  assert.equal(options.harnesses, undefined);
+});
+
 test("launch catalog lists inherited codex defaults and model-specific efforts from one snapshot", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "tangent-launch-catalog-options-"));
   await mkdir(path.join(root, "otto", "tangent"), { recursive: true });
@@ -67,4 +90,31 @@ test("launch catalog lists inherited codex defaults and model-specific efforts f
   assert.equal(options.brainDefault.command, "codex --model gpt-sol -c effort=low");
   assert.deepEqual(options.harnesses[0].models[0].efforts.map((effort) => effort.id), ["low", "ultra"]);
   assert.equal(options.harnesses[0].models[0].efforts[1].command, "codex --model gpt-sol -c effort=ultra");
+});
+
+test("launch catalog reports non-otto inherited defaults without an otto fallback", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "tangent-launch-catalog-non-otto-"));
+  await mkdir(path.join(root, "client", "product"), { recursive: true });
+  await writeFile(path.join(root, "harnesses.md"), [
+    "```tangent.harnesses.v1",
+    JSON.stringify({
+      version: 1,
+      modelSets: { local: [{ id: "small", args: "--model small" }] },
+      effortSets: {},
+      harnesses: [{ id: "local", command: "agent", modelSet: "local" }],
+    }),
+    "```",
+  ].join("\n"));
+  const declaration = "```tangent.environment.v1\n{\"defaults\":{\"launch\":{\"harness\":\"local\",\"model\":\"small\"},\"brain\":{\"harness\":\"local\",\"model\":\"small\"}}}\n```";
+  const catalog = createLaunchCatalog({
+    root,
+    /** Makes the child inherit both defaults from its non-otto parent Area. */
+    readAreaNote: async (area) => area === "client" ? declaration : "",
+  });
+
+  const options = await catalog.options("client/product", "all");
+  assert.equal(options.workDefault.command, "agent --model small");
+  assert.equal(options.brainDefault.command, "agent --model small");
+  assert.equal(options.workDefault.source, "client");
+  assert.equal(options.brainDefault.source, "client");
 });

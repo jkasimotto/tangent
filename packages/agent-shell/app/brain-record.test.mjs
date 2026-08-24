@@ -8,6 +8,7 @@ import {
   BRAIN_SCHEMA,
   beginGeneration,
   brainForArea,
+  brainOwnsArea,
   brainPath,
   brainSessionName,
   currentGeneration,
@@ -135,4 +136,8 @@ test("brainForArea finds the nearest running ancestor and ignores ended brains",
   assert.equal(brainForArea(records, "otto/dnd"), parent);
   assert.equal(brainForArea([ended], "otto/dnd"), null);
   assert.equal(brainForArea(records, "neara"), null);
+  assert.equal(brainOwnsArea(records, "otto/tangent", "otto/tangent/sub"), true);
+  assert.equal(brainOwnsArea(records, "otto", "otto/tangent/sub"), false, "the child cuts its territory out of the parent");
+  endBrain(child, "stopped");
+  assert.equal(brainOwnsArea(records, "otto", "otto/tangent/sub"), true, "ownership returns to the nearest running ancestor");
 });

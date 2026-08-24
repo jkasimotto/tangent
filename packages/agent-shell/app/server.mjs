@@ -27,7 +27,7 @@ import { appendSteps, currentStep, endPipeline, goalBindingGoneFromSnapshot, new
 import { newContinuationRecord, readAllContinuations, readContinuation, writeContinuation } from "./continuation-record.mjs";
 import { contextReminderText, contextRepeatText, continuationSection, continuationSessionName, reminderDue } from "./context-handover.mjs";
 import { normalizeMessage } from "./agent-messages.mjs";
-import { beginGeneration, brainForArea, brainRecordForArea, brainSessionName, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, recordHandover, validateInstruction, writeBrain } from "./brain-record.mjs";
+import { beginGeneration, brainForArea, brainOwnsArea, brainRecordForArea, brainSessionName, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, recordHandover, validateInstruction, writeBrain } from "./brain-record.mjs";
 import { appendNotice, inboxesForBrain, markDelivered, mergeNotices, noticeBlock, noticeDigest, readAllInboxes, readInbox, writeInbox } from "./brain-inbox.mjs";
 import { forJulianSectionText, parseForJulian, removeForJulianLine, restoreForJulianLine, unparsedForJulianLines } from "./for-julian.mjs";
 import { createCommitChangeMonitor } from "./commit-change-monitor.mjs";
@@ -2177,7 +2177,7 @@ async function handoverPipelineStep(sessionName, text) {
     if (!live) return { status: 404, error: "this session is not a running worker assignment" };
     const goal = (await goalsByFile()).get(live.goal);
     if (!goal) return { status: 404, error: "this worker has no Goal" };
-    const controller = brainForArea(await readAllBrains(BRAINS_ROOT), goal.area);
+    const controller = await nearestLiveBrainForArea(goal.area);
     if (!controller) return { status: 409, error: "a solo legacy Goal has no brain; use its existing session controls" };
     await notifyBrain(goal.area, `Goal ${goal.slug}: worker reported and waits for your command. Handover: ${brainMessageExcerpt(text)}`);
     return { status: 200, state: "reported", next: null, pipeline: null };
@@ -2377,7 +2377,7 @@ async function completePipelineStep(record, step, text, source) {
     await notifyBrain(record.area, `Goal ${record.slug}: pipeline complete (${record.steps.length} steps; step ${step.index} ${stepWord}, ${step.label || "agent"}). Last handover: ${brainMessageExcerpt(step.handover)}`);
     return { status: 200, state: "complete", next: null, pipeline: record };
   }
-  const controller = brainForArea(await readAllBrains(BRAINS_ROOT), record.area);
+  const controller = await nearestLiveBrainForArea(record.area);
   if (controller && source === "agent") {
     await notifyBrain(record.area, `Goal ${record.slug}: step ${step.index} of ${record.steps.length} ${stepWord} (${step.label || "agent"}). Step ${next.index} is ready and waits for your command. Handover: ${brainMessageExcerpt(step.handover)}`);
     return { status: 200, state: "reported", next: { index: next.index, session: null }, pipeline: record };
@@ -2416,7 +2416,7 @@ async function controlPipeline(goalFile, action, index) {
   const live = step.session ? sessions.find((item) => item.name === step.session) : null;
   if (action === "advance") {
     if (step.status !== "pending") return { status: 409, error: `step ${step.index} is ${step.status}; advance needs a pending step` };
-    const controller = brainForArea(await readAllBrains(BRAINS_ROOT), record.area);
+    const controller = await nearestLiveBrainForArea(record.area);
     if (!controller) return { status: 409, error: `no live brain controls ${record.area}` };
     return startPipelineStep(record, step.index);
   }
@@ -2609,14 +2609,7 @@ function brainMessageExcerpt(text) {
 
 /** The running brain that covers an Area whose session is live, or null. */
 async function liveBrainForArea(area) {
-  const record = brainForArea(await readAllBrains(BRAINS_ROOT), area);
-  if (!record?.session) return null;
-  try {
-    await execFileAsync("tmux", ["has-session", "-t", "=" + record.session]);
-    return record;
-  } catch {
-    return null;
-  }
+  return nearestLiveBrainForArea(area);
 }
 
 /** The closest ancestor brain whose recorded session is currently live. */
@@ -2625,12 +2618,20 @@ async function nearestLiveBrainForArea(area) {
   const parts = String(area ?? "").split("/").filter(Boolean);
   for (let count = parts.length; count > 0; count -= 1) {
     const candidate = parts.slice(0, count).join("/");
-    const record = records.find((item) => item.area === candidate && item.status === "running" && item.session);
+    const record = records.find((item) => item.area === candidate && item.session);
     if (!record) continue;
     const live = await execFileAsync("tmux", ["has-session", "-t", "=" + record.session]).then(() => true, () => false);
     if (live) return record;
   }
   return null;
+}
+
+/** Running brain records whose current sessions exist in this snapshot. */
+async function liveBrainRecords(sessions = null) {
+  const live = new Set((sessions ?? await listSessions()).map((session) => session.name));
+  return (await readAllBrains(BRAINS_ROOT))
+    .filter((record) => record.session && live.has(record.session))
+    .map((record) => ({ ...record, status: "running" }));
 }
 
 // ---- the brain's notice inbox ----
@@ -2674,8 +2675,9 @@ async function recordBrainNotice(area, text) {
 }
 
 /** Every notice no generation of one brain has read, oldest first. */
-async function unreadBrainNotices(area) {
-  return mergeNotices(inboxesForBrain(await readAllInboxes(BRAINS_ROOT), area));
+async function unreadBrainNotices(area, records = null) {
+  const owners = records ?? await liveBrainRecords();
+  return mergeNotices(inboxesForBrain(await readAllInboxes(BRAINS_ROOT), area, (eventArea) => eventArea === area || brainOwnsArea(owners, area, eventArea)));
 }
 
 /**
@@ -2727,7 +2729,8 @@ function releaseBrainNotices(notices) {
 async function notifyBrain(area, text) {
   try {
     const message = normalizeMessage(text);
-    const owner = brainRecordForArea(await readAllBrains(BRAINS_ROOT), area);
+    const records = await readAllBrains(BRAINS_ROOT);
+    const owner = brainRecordForArea(records, area);
     if (!owner) return false;
     const notice = await recordBrainNotice(area, message);
     const record = await liveBrainForArea(area);
@@ -2767,7 +2770,7 @@ function describedWorkNotice(area, description, sources) {
  * point: a later start error leaves the description unread on disk.
  */
 async function describeWorkToBrain(owner, area, description, sources, launchOverride = null) {
-  owner = brainRecordForArea(await readAllBrains(BRAINS_ROOT), area) ?? owner;
+  owner = await nearestLiveBrainForArea(area) ?? brainRecordForArea(await readAllBrains(BRAINS_ROOT), area) ?? owner;
   const live = owner.status === "running" && owner.session
     ? await execFileAsync("tmux", ["has-session", "-t", "=" + owner.session]).then(() => true, () => false)
     : false;
@@ -2804,10 +2807,9 @@ async function describeWorkToBrain(owner, area, description, sources, launchOver
  * generation's session still reaches the live generation.
  */
 async function flushBrainNotices(sessions = null, reason = "unread notices after a server start") {
-  const live = new Set((sessions ?? await listSessions()).map((session) => session.name));
-  for (const record of await readAllBrains(BRAINS_ROOT)) {
-    if (record.status !== "running" || !record.session || !live.has(record.session)) continue;
-    const unread = (await unreadBrainNotices(record.area)).filter((notice) => !noticesOnTheirWay.has(noticeKey(notice)));
+  const records = await liveBrainRecords(sessions);
+  for (const record of records) {
+    const unread = (await unreadBrainNotices(record.area, records)).filter((notice) => !noticesOnTheirWay.has(noticeKey(notice)));
     if (!unread.length) continue;
     const text = unread.length === 1 ? unread[0].text : noticeDigest(unread);
     const notices = unread.map((notice) => ({ area: notice.area, id: notice.id }));
@@ -2863,7 +2865,8 @@ async function brainPrompt(record) {
     ...documents.map((doc) => `- Document: ${path.join(TREES_ROOT, doc.file)}`),
   ];
   const allGoals = [...(await goalsByFile()).values()];
-  const dependencyLines = dependencyPromptLines(allGoals, (goal) => goal.area === area || goal.area.startsWith(`${area}/`));
+  const liveOwners = await liveBrainRecords();
+  const dependencyLines = dependencyPromptLines(allGoals, (goal) => brainOwnsArea(liveOwners, area, goal.area));
   const dependencySection = dependencyLines.length
     ? `## Dependencies\n\nThese facts are advisory. Consider them when you plan and allocate work. Tangent does not block, reorder, start, or close Goals from these facts.\n\n${dependencyLines.join("\n")}\n\n`
     : "";
@@ -2879,6 +2882,7 @@ async function brainPrompt(record) {
       : "") +
     `## How to work\n\n` +
     `${harnessRule}\n\n` +
+    `You own ${area} and its descendants that have no more-specific live brain. For each work Area, Tangent selects the exact live brain and then its ancestors. Do not act on work inside a more-specific live brain's territory. If that child stops, its work returns to the nearest live ancestor.\n\n` +
     `You orchestrate work; you do not perform it. Never investigate the repository, design a solution, write an implementation or solution Document, edit product code, run the work's tests, or review an implementation yourself. Delegate every investigation, design, implementation, test, and review to a worker, even when the task looks small. Your own writes are limited to Tangent's orchestration records: the Area plan, Goals and dependencies, Requests, messages, verdict and status facts from worker reports, and your brain handover. You can read Area context, worker reports, and their result Documents to choose the next orchestration action. Do not turn that reading into your own design or implementation.\n\n` +
     `On takeover, run \`tangent agent list\` and sweep every running step's pane: a session shown as "needs decision" or "draft" carries an \`asks:\` line with the question, and it is stuck waiting on a person, not idle. Answer it or message the worker (\`tangent agent send <session> "..."\`) before anything else.\n\n` +
     `Read the plan first when it exists, then the Area notes from nearest to farthest, then the worker-produced Documents that affect allocation. When a code or product question needs investigation, assign it to a worker.\n\n` +
@@ -2921,7 +2925,8 @@ async function spawnBrainSession(record) {
   // sweep does not queue them a second time; if the message never arrives
   // they are let go, stay unread, and the sweep queues them for whichever
   // generation is live.
-  const unread = await unreadBrainNotices(record.area);
+  const otherOwners = (await liveBrainRecords()).filter((item) => item.area !== record.area);
+  const unread = await unreadBrainNotices(record.area, [...otherOwners, record]);
   entry.notices = unread.map((notice) => ({ area: notice.area, id: notice.id, text: notice.text, createdAt: notice.createdAt }));
   await writeBrain(BRAINS_ROOT, record);
   holdBrainNotices(unread);
@@ -2950,12 +2955,30 @@ async function spawnBrainSession(record) {
  * Starts a brain on an Area from Julian's instruction, resumes a stopped or
  * ended one, or reattaches to the one that runs. One brain per Area.
  */
-async function startBrain(area, { instruction = "", choice = null, command = "", resume = false } = {}) {
+const brainStarts = new Map();
+
+/** Serializes exact-Area starts so concurrent requests share one lifecycle. */
+async function startBrain(area, options = {}) {
+  const earlier = brainStarts.get(area);
+  const run = earlier
+    ? earlier.then(
+      (result) => result.status === 200 ? startBrainUnlocked(area, { resume: Boolean(options.resume) }) : startBrainUnlocked(area, options),
+      () => startBrainUnlocked(area, options),
+    )
+    : startBrainUnlocked(area, options);
+  brainStarts.set(area, run);
+  try {
+    return await run;
+  } finally {
+    if (brainStarts.get(area) === run) brainStarts.delete(area);
+  }
+}
+
+/** Performs one exact-Area start, resume, or reattachment. */
+async function startBrainUnlocked(area, { instruction = "", choice = null, command = "", resume = false } = {}) {
   if (!area || !existsSync(path.join(TREES_ROOT, area))) return { status: 404, error: `no Area ${area || "(none)"}` };
-  const overlap = (await readAllBrains(BRAINS_ROOT)).find((record) => record.area !== area && record.status === "running" && (area.startsWith(`${record.area}/`) || record.area.startsWith(`${area}/`)));
-  if (overlap) return { status: 409, error: `brain ${overlap.area} already controls overlapping work; stop or transfer it before starting ${area}` };
   const existing = await readBrain(BRAINS_ROOT, area);
-  if (existing?.status === "running" && existing.session) {
+  if (existing?.session) {
     const live = await execFileAsync("tmux", ["has-session", "-t", "=" + existing.session]).then(() => true, () => false);
     if (live && (choice || command)) {
       return { status: 409, error: `the ${existing.area} brain is already live on ${existing.label || existing.command}; refresh to send this draft to that brain` };
@@ -3147,7 +3170,7 @@ async function reconcileContextHandovers(sessions) {
     if (!level) continue;
     const now = new Date().toISOString();
     await execution.saveReminder(session.name, { firstAt: reminders?.firstAt ?? (level === "first" ? now : null), repeatAt: level === "repeat" ? now : reminders?.repeatAt ?? null });
-    const controller = brainForArea(await readAllBrains(BRAINS_ROOT), area);
+    const controller = await nearestLiveBrainForArea(area);
     const brainControlledText = level === "first"
       ? `Your context is nearly full. At the next natural pause, report your files, checks, unresolved facts, and first next action to the brain with: tangent handover "<facts>". The brain will decide whether a fresh worker continues.`
       : `Your context is well past the handover threshold. Report to the brain now with: tangent handover "<facts>".`;
@@ -4127,7 +4150,7 @@ const launchRoutes = createLaunchRoutes({
         const brains = await readAllBrains(BRAINS_ROOT);
         const callerBrain = brains.find((item) => item.session === caller && item.status === "running");
         if (!callerBrain) return { status: 403, error: "workers cannot start agents; report to the controlling brain with tangent handover" };
-        const controller = brainForArea(brains, goal.area);
+        const controller = await nearestLiveBrainForArea(goal.area);
         if (!controller || controller.session !== caller) return { status: 403, error: `${caller} does not control ${goal.area}` };
         if (!hasApprovedPlan(await readBrainRequests(BRAINS_ROOT, controller.area))) return { status: 409, error: "Julian must approve the brain's plan before it starts workers" };
       }
@@ -4187,7 +4210,7 @@ const workMutationRoutes = createWorkMutationRoutes({
       const brains = await readAllBrains(BRAINS_ROOT);
       const callerBrain = brains.find((item) => item.session === caller && item.status === "running");
       if (!callerBrain) return { status: 403, error: "workers cannot create Goals; report to the controlling brain with tangent handover" };
-      const controller = brainForArea(brains, area);
+      const controller = await nearestLiveBrainForArea(area);
       if (!controller || controller.session !== caller) return { status: 403, error: `${caller} does not control ${area}` };
       const requestRecord = await readBrainRequests(BRAINS_ROOT, callerBrain.area);
       if (!hasApprovedPlan(requestRecord)) return { status: 409, error: "Julian must approve the brain's plan before it creates Goals" };

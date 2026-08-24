@@ -2,7 +2,7 @@
 
 Start here when changing architecture, package boundaries, or agent workflow.
 
-Agent Shell is the daily product for work with coding agents. Its current local implementation lives in `packages/agent-shell/app/`. A live Area brain controls managed work in its subtree. Julian approves the brain's Goal and worker plan before agent-originated execution starts. Workers report through one handover route, and the brain owns later transitions and requests. See ADR-0029.
+Agent Shell is the daily product for work with coding agents. Its current local implementation lives in `packages/agent-shell/app/`. The nearest live Area brain controls managed work: the exact Area first, then its ancestors. A live child brain owns its subtree until it stops. Julian approves the brain's Goal and worker plan before agent-originated execution starts. Workers report through one handover route, and the brain owns later transitions and requests. See ADR-0029.
 
 Human CLI defaults are `setup`, `status`, `process`, `trigger`, `usage`, `rollup`, `search`, `eval`, `mark`, `doctor`, and `completion`.
 `tangent process` runs configured processes from inherited, ignored `.processes.json` files in Tangent Areas. Managed processes use Area-bound tmux sessions so they remain visible and inspectable in the hierarchy.

@@ -29,16 +29,27 @@ test("a parent Area owns descendant current work without a separate sub-Area sec
   };
   const embeddedGoal = {
     mtime: 4, area: "neara/hackathon/embedded-js", slug: "release-deploy", file: "neara/hackathon/embedded-js/goal-release-deploy.md",
-    title: "Release and deploy", status: "open", doneWhen: "Deployed.", changedAt: now - 100 * DAY, waitingOn: "", depth: 0,
+    title: "Release and deploy", status: "open", doneWhen: "Deployed.", changedAt: now - 100 * DAY, waitingOn: "", session: "embedded--working", depth: 0,
   };
+  const brainStarts = [];
   window.fetch = async (url, options = {}) => {
     const pathname = new URL(url, window.location.href).pathname;
-    if (options.method === "POST") return jsonResponse({ ok: true });
+    if (options.method === "POST") {
+      if (pathname === "/api/brains/start") {
+        const body = JSON.parse(options.body);
+        brainStarts.push(body);
+        return jsonResponse({ session: "embedded-js-brain", generation: 1, brain: { area: body.area, status: "running" } });
+      }
+      return jsonResponse({ ok: true });
+    }
     if (pathname === "/api/sessions") {
       return jsonResponse({
         boot: "boot-1", caffeinate: false, pipelines: [],
-        sessions: [{ name: "neara--brain", area: "neara", kind: "brain", state: "working", command: "codex" }, { name: "storm--working", goal: workingGoal.file, state: "working", command: "codex" }],
-        brains: [{ area: "neara", status: "running", live: true, session: "neara--brain", generation: 2, state: "working" }],
+        sessions: [{ name: "neara--brain", area: "neara", kind: "brain", state: "working", command: "codex" }, { name: "embedded--working", goal: embeddedGoal.file, state: "working", command: "codex" }, { name: "storm--working", goal: workingGoal.file, state: "working", command: "codex" }],
+        brains: [
+          { area: "neara", status: "running", live: true, session: "neara--brain", generation: 2, state: "working" },
+          { area: "neara/hackathon/embedded-js/storm-response", status: "running", live: false, session: "storm-response-brain", generation: 1 },
+        ],
       });
     }
     if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
@@ -66,6 +77,20 @@ test("a parent Area owns descendant current work without a separate sub-Area sec
   assert.equal(panel.querySelector(".desk-subarea"), null, "a descendant does not become another card");
   assert.match(panel.querySelector("[data-work-area$='/storm-response'] h3").textContent, /Storm Response/);
 
+  const staleBrain = panel.querySelector("[data-work-area$='/storm-response'] [data-open-area-brain]");
+  assert.equal(staleBrain.textContent, "Resume brain");
+  assert.equal(staleBrain.getAttribute("aria-label"), "Resume brain for Neara / Hackathon / Embedded Js / Storm Response");
+  const childBrain = panel.querySelector("[data-work-area$='/embedded-js'] [data-open-area-brain]");
+  assert.equal(childBrain.textContent, "Start brain");
+  assert.equal(childBrain.getAttribute("data-open-area-brain"), "neara/hackathon/embedded-js");
+  assert.equal(childBrain.getAttribute("aria-label"), "Start brain for Neara / Hackathon / Embedded Js");
+  childBrain.click();
+  childBrain.click();
+  await settle(window);
+  assert.equal(brainStarts.length, 1, "repeated activation starts the exact Area once");
+  assert.equal(brainStarts[0].area, "neara/hackathon/embedded-js");
+  assert.equal(brainStarts[0].instruction, "Work with Julian to understand, plan, and dispatch new work for this Area.");
+
   const titles = [...panel.querySelectorAll("[data-work-area$='/storm-response'] .desk-goal-main strong")].map((node) => node.textContent);
-  assert.deepEqual(titles, ["Needs you goal", "Working goal"], "Current contains live and directly waiting descendant Goals");
+  assert.deepEqual(titles, ["Working goal"], "a saved exact brain record keeps its fallback ask out of the Goal rows");
 });

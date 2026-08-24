@@ -113,6 +113,9 @@ test("a brain reads its own Area and every Area under it, oldest notice first", 
   const merged = mergeNotices(mine);
   assert.deepEqual(merged.map((notice) => notice.area), ["otto/tangent/search", "otto/tangent"]);
   assert.equal(merged[0].text, "Goal beta: step 1 stopped.");
+
+  const withoutChildTerritory = inboxesForBrain(all, "otto/tangent", (area) => area !== "otto/tangent/search");
+  assert.deepEqual(withoutChildTerritory.map((record) => record.area), ["otto/tangent"], "a live child cuts its inbox territory out of the parent");
 });
 
 test("many notices become one flat line and one numbered block, both cut when long", () => {

@@ -244,12 +244,13 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   }
 
   /** Opens the Area brain, or starts the missing session before opening it. */
-  async function openOrStartBrain(area) {
+  async function openOrStartBrain(area, trigger = null) {
     const existing = brainForAreaCard(area);
     const live = brainSessions().find((session) => session.area === area || session.name === existing?.session);
     if (live) return openBrainSession(live.name);
     if (openingBrains.has(area)) return;
     openingBrains.add(area);
+    if (trigger) trigger.disabled = true;
     showToast(existing ? "Resuming brain…" : "Starting brain…");
     try {
       const result = await post("/api/brains/start", existing
@@ -261,8 +262,10 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       void refresh();
     } catch (error) {
       showToast(error.message);
+      trigger?.focus();
     } finally {
       openingBrains.delete(area);
+      if (trigger?.isConnected) trigger.disabled = false;
     }
   }
 
@@ -1285,8 +1288,10 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const count = trees.reduce((total, tree) => total + tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status)).length, 0);
     if (!count && !descriptions.length) return "";
     const workWord = state.workFilter === "inactive" ? "Planned work" : "Current work";
+    const brain = brainForAreaCard(area.path);
+    const brainAction = root ? "" : `<button class="work-area-brain" type="button" data-open-area-brain="${escapeHtml(area.path)}" aria-label="${brain?.live ? "Open" : brain ? "Resume" : "Start"} brain for ${escapeHtml(areaLabel(area.path))}">${brain?.live ? "Open brain" : brain ? "Resume brain" : "Start brain"}</button>`;
     return `<section class="work-area-section${root ? " root" : ""}" data-work-area="${escapeHtml(area.path)}">
-      <header><h3><button type="button" data-open-area="${escapeHtml(area.path)}">${escapeHtml(humanName(area.name))}</button></h3><span>${workWord} ${count}</span>${deskSelectionBar(area.path, trees)}</header>
+      <header><h3><button type="button" data-open-area="${escapeHtml(area.path)}">${escapeHtml(humanName(area.name))}</button></h3><span>${workWord} ${count}</span>${brainAction}${deskSelectionBar(area.path, trees)}</header>
       ${descriptions.map(deskDefinitionRow).join("")}
       ${orderedGoalTrees(trees).map((tree) => deskGoalGroup(tree, maxElapsedMs)).join("")}
     </section>`;

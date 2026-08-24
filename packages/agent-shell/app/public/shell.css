@@ -583,11 +583,15 @@ summary:focus-visible {
 .work-area-section { position: relative; padding: 13px 0 15px 18px; border-bottom: 1px solid #292f36; }
 .work-area-section:last-child { border-bottom: 0; }
 .work-area-section::before { position: absolute; top: 25px; left: -1px; width: 12px; border-top: 1px solid #46505c; content: ""; }
-.work-area-section > header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
+.work-area-section > header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; margin-bottom: 8px; }
 .work-area-section > header h3 { margin: 0; font-size: 13px; }
 .work-area-section > header h3 button { padding: 0; border: 0; background: transparent; color: #b8c0c9; cursor: pointer; font: inherit; font-weight: 680; }
 .work-area-section > header h3 button:hover { color: #fff; }
 .work-area-section > header span { color: #737d88; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; }
+.work-area-section > header h3 + span { margin-left: auto; }
+.work-area-brain { flex: none; padding: 2px 0; border: 0; background: transparent; color: #9ebbe0; cursor: pointer; font-size: 11px; font-weight: 690; white-space: nowrap; }
+.work-area-brain:hover { color: #fff; }
+.work-area-brain:disabled { color: #657486; cursor: wait; }
 .work-area-section .desk-goal { padding: 6px 0; }
 .work-area-section .desk-goal-group + .desk-goal-group { margin-top: 5px; padding-top: 5px; }
 .work-area-section .desk-goal-line1 strong { white-space: normal; }

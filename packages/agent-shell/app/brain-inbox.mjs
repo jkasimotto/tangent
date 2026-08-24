@@ -118,9 +118,9 @@ export function pruneDelivered(record, keep = KEPT_DELIVERED) {
  * The inboxes one brain reads: its own Area and every Area under it. A brain
  * on a parent Area covers its children, so their notices are its notices.
  */
-export function inboxesForBrain(records, area) {
+export function inboxesForBrain(records, area, ownsArea = null) {
   const prefix = `${area}/`;
-  return records.filter((record) => record.area === area || record.area.startsWith(prefix));
+  return records.filter((record) => (record.area === area || record.area.startsWith(prefix)) && (!ownsArea || ownsArea(record.area)));
 }
 
 /** Notices from several inboxes as one list, oldest first, each with its Area. */

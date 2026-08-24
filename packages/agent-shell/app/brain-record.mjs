@@ -148,6 +148,11 @@ export function brainForArea(records, area) {
   return null;
 }
 
+/** True when this brain is the nearest running owner of an Area. */
+export function brainOwnsArea(records, brainArea, area) {
+  return brainForArea(records, area)?.area === brainArea;
+}
+
 /**
  * The nearest brain record for an Area, whatever its status: the record on
  * the Area itself or on its closest ancestor. A stopped or ended brain still

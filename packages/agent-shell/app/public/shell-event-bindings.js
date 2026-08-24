@@ -64,7 +64,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       return window.setTimeout(() => document.querySelector(`#${buttonId}`)?.focus(), 0);
     }
     const areaBrain = target.closest("[data-open-area-brain]");
-    if (areaBrain) return openOrStartBrain(areaBrain.dataset.openAreaBrain);
+    if (areaBrain) return openOrStartBrain(areaBrain.dataset.openAreaBrain, areaBrain);
     if (target.closest("[data-rebuild-dismiss]")) {
       if (state.rebuild?.id) localStorage.setItem("agent-shell.dismissed-rebuild", state.rebuild.id);
       state.rebuild = null;

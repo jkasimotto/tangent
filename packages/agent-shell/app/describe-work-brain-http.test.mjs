@@ -132,6 +132,25 @@ save();
   assert.equal((await readBrain(brains, "otto/tangent")).command, "claude --model fable");
   assert.equal(Object.values(tmuxAfterStart.sessions).some((session) => session.options["@tangent_kind"] === "work-definition"), false);
 
+  /** Starts the exact child brain through the public lifecycle route. */
+  const startChild = () => fetch(`${base}/api/brains/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ area: "otto/tangent/child", instruction: "Own child work.", choice: { harness: "codex", model: "sol" } }),
+  }).then((response) => response.json());
+  const childStarts = await Promise.all([startChild(), startChild()]);
+  assert.equal(childStarts[0].session, "child-brain");
+  assert.equal(childStarts[1].session, "child-brain");
+  assert.equal(childStarts.filter((result) => result.reattached).length, 1, "concurrent exact starts share one child brain");
+
+  const childOwned = await describe(base, { area: "otto/tangent/child", description: "The nearest child brain owns this." });
+  assert.equal(childOwned.status, 200);
+  assert.equal(childOwned.body.brainArea, "otto/tangent/child");
+  await fetch(`${base}/api/kill/${encodeURIComponent("child-brain")}`, { method: "POST" });
+  const parentOwnedAgain = await describe(base, { area: "otto/tangent/child", description: "Ownership returns after the child stops." });
+  assert.equal(parentOwnedAgain.status, 200);
+  assert.equal(parentOwnedAgain.body.brainArea, "otto/tangent");
+
   const plain = await describe(base, {
     area: "otto/plain",
     description: "Keep the existing behavior here.",

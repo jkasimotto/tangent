@@ -65,8 +65,17 @@ export function bindShellEvents({ state, post, paint, refresh, showToast, screen
     }
     const completeGoal = target.closest("[data-complete-goal]");
     if (completeGoal) {
-      rememberGoal(completeGoal.dataset.completeGoal);
-      return confirmComplete();
+      const file = completeGoal.dataset.completeGoal;
+      rememberGoal(file);
+      try {
+        await post("/api/goals/edit", { file, status: "done" });
+        await refresh();
+        paint(true);
+        showToast("The work is complete.");
+      } catch (error) {
+        showToast(`Could not complete the Goal: ${error.message}`);
+      }
+      return;
     }
     const wontDoGoal = target.closest("[data-wont-do-goal]");
     if (wontDoGoal) {

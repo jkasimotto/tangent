@@ -710,8 +710,6 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.ok(posts.some((entry) => entry.path === "/api/goals/edit" && entry.body.file === goal.file && entry.body.status === "dropped" && entry.body.reason === "A smaller goal replaced this work."));
 
   click(window, `[data-complete-goal='${subgoal.file}']`);
-  assert.match(window.document.querySelector("#modal-title").textContent, /Mark “Use cases” complete/);
-  click(window, "[data-modal-confirm]");
   await settle(window);
   assert.ok(posts.some((entry) => entry.path === "/api/goals/edit" && entry.body.file === subgoal.file && entry.body.status === "done"));
   assert.ok(window.document.querySelector(".work-page"), "the desk shows the Work page");

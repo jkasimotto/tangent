@@ -46,7 +46,7 @@ test("the Area browser focuses search and leads with planned work and filterable
   assert.equal(window.document.activeElement.id, "area-search");
   assert.match(window.document.querySelector("#area-not-started").closest(".area-workspace-section").textContent, /Build the Area browser/);
   assert.ok(window.document.querySelector("[data-brain-area='otto/tangent']"));
-  assert.equal(window.document.querySelector("[data-launch-for='brain'][data-brain-area='otto/tangent']").textContent.trim(), "Set brain agent and effort");
+  assert.equal(window.document.querySelector("[data-launch-for='__brain__'][data-brain-area='otto/tangent']").textContent.trim(), "Set brain agent and effort");
   assert.equal(window.document.querySelectorAll(".area-documents .document-row").length, 2);
 
   let areaSearch = window.document.querySelector("#area-search");

@@ -9,7 +9,7 @@ test("the bestiary covers prompts, routing events, and common agent lifecycles",
   assert.ok(LIFECYCLES.every((item) => item.transitions.length >= 3));
 });
 
-test("the bestiary leads with a selectable canonical lifecycle", () => {
+test("the bestiary leads with a selectable lifecycle and an exact server-built message", () => {
   const html = renderPromptBestiary({
     goals: [{ file: "otto/test/goal-probe.md", title: "Probe", area: "otto/test" }],
     brains: [{ area: "otto/test", generation: 2 }],
@@ -20,9 +20,8 @@ test("the bestiary leads with a selectable canonical lifecycle", () => {
   assert.match(html, /data-bestiary-lifecycle="brain-pipeline" aria-pressed="true"/);
   assert.match(html, /data-bestiary-transition="handover" aria-pressed="true"/);
   assert.match(html, /Only the brain classifies the report/);
-  assert.match(html, /Message sent/);
-  assert.match(html, /tangent handover/);
-  assert.match(html, /&lt;paths&gt;/);
+  assert.match(html, /Exact messages agents receive/);
+  assert.match(html, /same server function used when it launches the agent/);
   assert.match(html, /data-load-goal-prompt/);
   assert.match(html, /data-load-brain-prompt/);
   assert.match(html, /goal-probe\.md/);
@@ -30,11 +29,12 @@ test("the bestiary leads with a selectable canonical lifecycle", () => {
   assert.match(html, /Legacy encounters/);
 });
 
-test("the canonical brain boundary shows its prompt without live data", () => {
+test("the brain boundary never invents prompt text without a live brain", () => {
   const html = renderPromptBestiary({ selection: { mode: "messages", lifecycle: "plan", transition: "work" } });
-  assert.match(html, /# Brain for &lt;area&gt;/);
-  assert.match(html, /Julian's instruction/);
-  assert.match(html, /&lt;durable-worker-and-user-notices&gt;/);
+  assert.match(html, /Choose a Brain/);
+  assert.match(html, /Show brain prompt/);
+  assert.doesNotMatch(html, /# Brain for &lt;area&gt;/);
+  assert.doesNotMatch(html, /Request one plan approval/);
 });
 
 test("a live Goal states whether a brain controls it", () => {

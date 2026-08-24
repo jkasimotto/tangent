@@ -28,7 +28,7 @@ Dependencies: `@tangent/core` (arg parsing, help rendering), `@tangent/agent-run
 - `human-assignees.mjs`: Area roster parsing, Goal assignee validation, stable person keys, and Markdown field updates;
 - record modules: the only readers and writers of pipelines, brains, inboxes, requests, continuations, armed prompts, and rebuild state.
 
-The browser entry `app/public/shell.js` composes feature ports. `shell-coordinator.js` owns cross-feature navigation. Views and controllers receive cohesive `shell`, `work`, `areas`, `programs`, `launch`, `documents`, and chrome records. A record groups one authority; it is not a generic service locator. Browser capabilities must not be attached to functions.
+The browser entry `app/public/shell.js` composes feature ports. `shell-coordinator.js` owns cross-feature navigation. Views and controllers receive cohesive `shell`, `work`, `areas`, `programs`, `launch`, `documents`, and chrome records. A record groups one authority; it is not a generic service locator. Browser capabilities must not be attached to functions. Gateway admission limits duplicate and total controller work. Telemetry does not publish projection invalidations.
 
 Private module and controller-loopback contracts can change with all in-repository callers. The public loopback URL, Vault Markdown, Git provenance, tmux bindings, and persisted workflow schemas remain compatible. See ADR-0031 and ADR-0032.
 

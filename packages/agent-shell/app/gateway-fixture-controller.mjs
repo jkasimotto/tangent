@@ -13,6 +13,13 @@ const server = http.createServer((request, response) => {
     // Deliberately reproduce an event loop that cannot serve HTTP or IPC.
     for (;;) { /* test fixture: supervisor must terminate this process */ }
   }
+  if (request.url?.startsWith("/api/slow")) {
+    setTimeout(() => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: true, boot }));
+    }, 100);
+    return;
+  }
   response.writeHead(200, { "content-type": "application/json" });
   response.end(JSON.stringify({ ok: true, boot }));
 });

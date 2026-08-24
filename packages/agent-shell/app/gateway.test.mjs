@@ -32,7 +32,7 @@ async function waitForHealth(base, predicate, attempts = 100) {
 }
 
 /** Starts the gateway with a deliberately controllable IPC child. */
-async function startGateway(context, port) {
+async function startGateway(context, port, environment = {}) {
   const errors = [];
   const child = spawn(process.execPath, ["gateway.mjs"], {
     cwd: here,
@@ -50,6 +50,7 @@ async function startGateway(context, port) {
       TANGENT_CONTROLLER_STABLE_MS: "100",
       TANGENT_GATEWAY_WATCHDOG_TIMEOUT_MS: "3000",
       CHAT_SESSION: `gateway-test-${process.pid}`,
+      ...environment,
     },
     stdio: ["ignore", "ignore", "pipe"],
   });
@@ -97,6 +98,86 @@ test("gateway keeps health and cached sessions available across a stuck controll
   const mutationResult = await blockedMutation;
   if (mutationResult instanceof Response) assert.equal(mutationResult.status, 503);
   assert.match(gateway.errors.join(""), /terminating controller/);
+});
+
+test("gateway rejects duplicate reads while one controller request is active", async (context) => {
+  let port;
+  try {
+    port = await freePort();
+  } catch (error) {
+    if (error?.code === "EPERM") return context.skip("local listeners are not permitted");
+    throw error;
+  }
+  await startGateway(context, port);
+  const base = `http://127.0.0.1:${port}`;
+  await waitForHealth(base, (health) => health.controller.state === "ready");
+
+  const first = fetch(`${base}/api/slow`);
+  await waitForHealth(base, (health) => health.proxy.active === 1 && health.proxy.reads === 1);
+  const duplicate = await fetch(`${base}/api/slow`);
+  assert.equal(duplicate.status, 429);
+  assert.equal(duplicate.headers.get("retry-after"), "1");
+  assert.match((await duplicate.json()).error, /already running/);
+  assert.equal((await first).status, 200);
+  await waitForHealth(base, (health) => health.proxy.active === 0 && health.proxy.reads === 0);
+  assert.equal((await fetch(`${base}/api/slow`)).status, 200, "admission is released after completion");
+});
+
+test("gateway rejects controller work above its configured capacity", async (context) => {
+  let port;
+  try {
+    port = await freePort();
+  } catch (error) {
+    if (error?.code === "EPERM") return context.skip("local listeners are not permitted");
+    throw error;
+  }
+  await startGateway(context, port, { TANGENT_GATEWAY_CONTROLLER_REQUESTS: "2" });
+  const base = `http://127.0.0.1:${port}`;
+  await waitForHealth(base, (health) => health.controller.state === "ready");
+
+  const first = fetch(`${base}/api/slow?request=1`);
+  const second = fetch(`${base}/api/slow?request=2`);
+  await waitForHealth(base, (health) => health.proxy.active === 2);
+  const excess = await fetch(`${base}/api/slow?request=3`);
+  assert.equal(excess.status, 503);
+  assert.equal(excess.headers.get("retry-after"), "1");
+  assert.match((await excess.json()).error, /capacity is full/);
+  assert.deepEqual(await Promise.all([first.then((response) => response.status), second.then((response) => response.status)]), [200, 200]);
+  await waitForHealth(base, (health) => health.proxy.active === 0);
+  assert.equal((await fetch(`${base}/api/slow?request=4`)).status, 200, "capacity is released after completion");
+});
+
+test("gateway telemetry does not create a browser refresh feedback loop", async (context) => {
+  let port;
+  try {
+    port = await freePort();
+  } catch (error) {
+    if (error?.code === "EPERM") return context.skip("local listeners are not permitted");
+    throw error;
+  }
+  await startGateway(context, port);
+  const base = `http://127.0.0.1:${port}`;
+  await waitForHealth(base, (health) => health.controller.state === "ready");
+
+  const events = await fetch(`${base}/api/events`);
+  const reader = events.body.getReader();
+  const decoder = new TextDecoder();
+  assert.match(decoder.decode((await reader.read()).value), /event: ready/);
+  const nextEvent = reader.read();
+  assert.equal((await fetch(`${base}/api/telemetry/action`, { method: "POST" })).status, 200);
+  const stayedQuiet = await Promise.race([
+    nextEvent.then(() => false),
+    new Promise((resolve) => setTimeout(() => resolve(true), 100)),
+  ]);
+  assert.equal(stayedQuiet, true, "telemetry must not invalidate the projection that produced it");
+
+  assert.equal((await fetch(`${base}/api/change`, { method: "POST" })).status, 200);
+  const changed = await Promise.race([
+    nextEvent,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("mutation invalidation was not delivered")), 1000)),
+  ]);
+  assert.match(decoder.decode(changed.value), /event: changed/);
+  await reader.cancel();
 });
 
 test("a second gateway exits instead of competing for the public port", async (context) => {

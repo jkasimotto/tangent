@@ -123,6 +123,41 @@ allocation a finite attempt budget. A regression fixture uses the exact long
 step-3 collision. The previously pending command then completed in 1.34
 seconds and kept the same server process alive.
 
+### Live cutover exposed browser request amplification
+
+The first gateway deployment preserved every live tmux session and kept the
+same gateway boot while replacing a controller that exited with `SIGABRT`.
+That proved the failure boundary, but the controller before replacement used
+about 132 to 175 percent CPU. Its resident memory reached 1.85 GB, and a macOS
+sample reported 4.2 GB physical memory with a 4.6 GB peak. The replacement
+showed the same load while the native UI was open. Closing only the UI reduced
+controller CPU to about 0 to 3.5 percent.
+
+The browser could start a new whole-projection refresh from server events,
+recovery polling, rebuild polling, and mutation reconciliation without sharing
+an in-flight refresh. Each refresh requested `/api/vault`, `/api/sessions`, and
+`/api/programs`. The live `/api/vault` response was 16,211,139 bytes. Its Area
+projection was 7.7 MB and its Document projection was 6.9 MB. Derived
+`searchText` accounted for 12.9 MB across duplicated copies; it included
+complete Markdown bodies even though the browser's current finders use titles,
+paths, Area text, and explicit Goal fields. The live `/api/sessions` response
+was another 1.54 MB, including 163 pipeline records.
+
+The first gateway version also published a browser invalidation after every
+successful controller POST. Browser API telemetry uses a POST after every
+refresh request. That formed the direct loop: refresh, telemetry, invalidation,
+refresh. Excluding telemetry from mutation invalidation stopped the sustained
+load. Five live samples after the fix were 0, 0, 0, 2.5, and 53 percent CPU;
+the last sample was the bounded ten-second reconciliation pass. Controller
+memory stayed between 58 and 101 MB.
+
+The implementation also admits only one active gateway read for an exact path,
+caps all active controller requests at 64, and removes unused derived search
+strings from the vault projection. The live response fell from 16.21 MB to
+3.12 MB and completed in 0.32 seconds. These controls address both request
+multiplication and per-request cost. The gateway health response reports
+current proxy admission use.
+
 The mutation path also performed work far outside the requested Goal:
 
 - `controlPipeline` calls `goalsByFile`, which walks every Area and reads every
@@ -176,6 +211,11 @@ Within this envelope:
 - queue and socket backpressure reject excess work explicitly;
 - gateway health, static assets, and existing terminal transport do not wait
   for vault projection or pane classification;
+- telemetry cannot invalidate the projection refresh that produced it;
+- the gateway admits one active read for an exact path and at most 64 active
+  controller requests;
+- vault metadata does not duplicate complete Markdown bodies in hidden search
+  fields;
 - restart delay grows after repeated failure and resets only after a stable
   generation.
 
@@ -366,6 +406,10 @@ contain the demonstrated outage.
     current; it must not rebuild the whole vault synchronously.
 11. Give the public listener one owner. A native app or LaunchAgent may ensure
     that owner exists, but neither may run an unconditional child restart loop.
+12. Exclude telemetry from browser invalidation and reject duplicate or
+    over-capacity controller requests at the gateway.
+13. Keep complete Document text behind the targeted Document endpoint. Do not
+    duplicate it in whole-vault metadata fields that the browser does not use.
 
 ## Migration and compatibility
 

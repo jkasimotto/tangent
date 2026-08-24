@@ -48,6 +48,13 @@ Agent Shell has two local processes with different failure domains.
   refresh retains the last valid snapshot. Pane classification and independent
   message targets make bounded parallel progress while preserving per-target
   order.
+- The gateway admits one active read for an exact path and at most 64
+  controller requests. It returns a retryable overload response instead of
+  queuing duplicate projection work. Telemetry POSTs do not publish state
+  invalidations because a projection refresh produces telemetry.
+- Vault responses omit derived `searchText`. Complete Markdown remains
+  available from the targeted Document endpoint; it is not duplicated across
+  Area, map, and Document metadata projections.
 - Every integration test that invokes real tmux uses a private socket and
   kills only that socket on process exit. Tests cannot observe, load, or delete
   the user's live sessions.

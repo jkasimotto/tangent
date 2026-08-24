@@ -29,6 +29,7 @@ const CONTROLLER_STABLE_MS = Number(process.env.TANGENT_CONTROLLER_STABLE_MS ?? 
 const RESTART_BASE_MS = Number(process.env.TANGENT_CONTROLLER_RESTART_BASE_MS ?? 250);
 const RESTART_MAX_MS = Number(process.env.TANGENT_CONTROLLER_RESTART_MAX_MS ?? 10_000);
 const MAX_SNAPSHOT_BYTES = Number(process.env.TANGENT_GATEWAY_SNAPSHOT_MAX_BYTES ?? 8 * 1024 * 1024);
+const MAX_CONTROLLER_REQUESTS = Number(process.env.TANGENT_GATEWAY_CONTROLLER_REQUESTS ?? 64);
 
 startEventLoopWatchdog({
   timeoutMs: Number(process.env.TANGENT_GATEWAY_WATCHDOG_TIMEOUT_MS ?? 15_000),
@@ -41,6 +42,8 @@ let restartAttempt = 0;
 let restartTimer = null;
 let shuttingDown = false;
 let sessionSnapshot = null;
+let activeControllerRequests = 0;
+const activeReadPaths = new Set();
 
 /** Returns exponential controller restart delay with a fixed upper bound. */
 export function controllerRestartDelay(attempt, baseMs = RESTART_BASE_MS, maxMs = RESTART_MAX_MS) {
@@ -187,58 +190,92 @@ function proxyController(request, response, operationId) {
     unavailable(request, response, operationId);
     return;
   }
+  const readPath = request.method === "GET" || request.method === "HEAD" ? request.url : null;
+  if (activeControllerRequests >= MAX_CONTROLLER_REQUESTS) {
+    response.setHeader("retry-after", "1");
+    sendJson(response, 503, { error: "Agent Shell controller request capacity is full; retry shortly.", operationId });
+    return;
+  }
+  if (readPath && activeReadPaths.has(readPath)) {
+    response.setHeader("retry-after", "1");
+    sendJson(response, 429, { error: "An identical Agent Shell read is already running; retry shortly.", operationId });
+    return;
+  }
+  activeControllerRequests += 1;
+  if (readPath) activeReadPaths.add(readPath);
+  let admitted = true;
+  /** Releases this request's total and exact-read admission once. */
+  const releaseAdmission = () => {
+    if (!admitted) return;
+    admitted = false;
+    activeControllerRequests = Math.max(0, activeControllerRequests - 1);
+    if (readPath) activeReadPaths.delete(readPath);
+  };
   let settled = false;
-  const upstream = http.request({
-    host: "127.0.0.1",
-    port: generation.port,
-    method: request.method,
-    path: request.url,
-    headers: {
-      ...proxyHeaders(request.headers),
-      host: `127.0.0.1:${generation.port}`,
-      "x-tangent-operation-id": operationId,
-    },
-  }, (incoming) => {
-    incoming.on("error", (error) => upstream.destroy(error));
-    const isSessions = request.method === "GET" && request.url?.startsWith("/api/sessions") && incoming.statusCode === 200;
-    if (!isSessions) {
-      response.writeHead(incoming.statusCode ?? 502, proxyHeaders(incoming.headers));
-      incoming.pipe(response);
-      incoming.on("end", () => {
-        settled = true;
-        clearTimeout(deadline);
-        if (request.method === "POST" && (incoming.statusCode ?? 500) < 400) stateEvents.changed(new URL(request.url, "http://localhost").pathname);
-      });
-      return;
-    }
-    const chunks = [];
-    let bytes = 0;
-    incoming.on("data", (chunk) => {
-      bytes += chunk.length;
-      if (bytes > MAX_SNAPSHOT_BYTES) {
-        incoming.destroy(new Error(`session snapshot exceeds ${MAX_SNAPSHOT_BYTES} bytes`));
+  let deadline;
+  let upstream;
+  try {
+    upstream = http.request({
+      host: "127.0.0.1",
+      port: generation.port,
+      method: request.method,
+      path: request.url,
+      headers: {
+        ...proxyHeaders(request.headers),
+        host: `127.0.0.1:${generation.port}`,
+        "x-tangent-operation-id": operationId,
+      },
+    }, (incoming) => {
+      incoming.on("error", (error) => upstream.destroy(error));
+      incoming.on("aborted", () => upstream.destroy(new Error("controller response aborted")));
+      const isSessions = request.method === "GET" && request.url?.startsWith("/api/sessions") && incoming.statusCode === 200;
+      if (!isSessions) {
+        response.writeHead(incoming.statusCode ?? 502, proxyHeaders(incoming.headers));
+        incoming.pipe(response);
+        incoming.on("end", () => {
+          settled = true;
+          clearTimeout(deadline);
+          releaseAdmission();
+          const pathname = new URL(request.url, "http://localhost").pathname;
+          if (request.method === "POST" && pathname !== "/api/telemetry/action" && (incoming.statusCode ?? 500) < 400) stateEvents.changed(pathname);
+        });
         return;
       }
-      chunks.push(chunk);
+      const chunks = [];
+      let bytes = 0;
+      incoming.on("data", (chunk) => {
+        bytes += chunk.length;
+        if (bytes > MAX_SNAPSHOT_BYTES) {
+          incoming.destroy(new Error(`session snapshot exceeds ${MAX_SNAPSHOT_BYTES} bytes`));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      incoming.on("end", () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(deadline);
+        releaseAdmission();
+        try {
+          const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+          sessionSnapshot = { value, capturedAt: new Date().toISOString() };
+          sendSessionSnapshot(response, value, { stale: false, operationId });
+        } catch (error) {
+          console.error("[gateway] session snapshot:", error?.message ?? error);
+          unavailable(request, response, operationId);
+        }
+      });
     });
-    incoming.on("end", () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(deadline);
-      try {
-        const value = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-        sessionSnapshot = { value, capturedAt: new Date().toISOString() };
-        sendSessionSnapshot(response, value, { stale: false, operationId });
-      } catch (error) {
-        console.error("[gateway] session snapshot:", error?.message ?? error);
-        unavailable(request, response, operationId);
-      }
-    });
-  });
-  const deadline = setTimeout(() => upstream.destroy(new Error(`controller response deadline ${CONTROLLER_RESPONSE_TIMEOUT_MS}ms`)), CONTROLLER_RESPONSE_TIMEOUT_MS);
+  } catch (error) {
+    releaseAdmission();
+    throw error;
+  }
+  deadline = setTimeout(() => upstream.destroy(new Error(`controller response deadline ${CONTROLLER_RESPONSE_TIMEOUT_MS}ms`)), CONTROLLER_RESPONSE_TIMEOUT_MS);
   deadline.unref();
+  upstream.once("close", releaseAdmission);
   upstream.on("error", (error) => {
     clearTimeout(deadline);
+    releaseAdmission();
     if (settled) return;
     settled = true;
     console.error(`[gateway] ${request.method} ${request.url} operation=${operationId}:`, error?.message ?? error);
@@ -246,6 +283,9 @@ function proxyController(request, response, operationId) {
     else response.destroy(error);
   });
   request.on("aborted", () => upstream.destroy());
+  response.on("close", () => {
+    if (!settled) upstream.destroy();
+  });
   request.pipe(upstream);
 }
 
@@ -263,6 +303,7 @@ const server = http.createServer(async (request, response) => {
         pid: process.pid,
         controller: controllerStatus(),
         sessions: { cached: Boolean(sessionSnapshot), capturedAt: sessionSnapshot?.capturedAt ?? null },
+        proxy: { active: activeControllerRequests, limit: MAX_CONTROLLER_REQUESTS, reads: activeReadPaths.size },
       });
       return;
     }

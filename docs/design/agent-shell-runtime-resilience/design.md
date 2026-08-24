@@ -45,7 +45,17 @@ The implementation is protected against a working envelope of 200 retained
 sessions, 50 panes being observed, 25 attached terminals, and a burst of 100
 queued messages. Those numbers are a regression envelope, not a product cap.
 Within it, one observation cycle is shared by every caller, tmux subprocesses
-are bounded, and adding browser tabs does not multiply vault or pane scans.
+are bounded, and concurrent browser invalidations do not multiply vault or
+pane scans. The gateway permits one active read of an exact path and at most
+64 controller requests. Excess work gets an immediate retryable response.
+Telemetry never publishes a state invalidation because a refresh produces
+telemetry and would otherwise create a feedback loop.
+
+The vault wire projection excludes derived search strings. The browser already
+searches the visible Area, Goal, Document title, and path fields directly, so
+sending complete Markdown bodies as hidden `searchText` duplicated work without
+adding behavior. The live response fell from 16.21 MB to 3.12 MB without
+changing the Document read endpoint.
 
 ## Session lifetime
 
@@ -96,6 +106,9 @@ instead of creating an `EADDRINUSE` restart storm.
    bodies, queues, retries, and restart attempts all have explicit capacity and
    time budgets. Overload returns a visible delayed or busy result; it never
    creates an unbounded process fan-out or retry loop.
+6. **Bound refresh amplification.** Telemetry cannot invalidate the projection
+   that produced it. The gateway rejects duplicate or over-capacity controller
+   work, and projections carry only fields the browser consumes.
 
 ## Representative flow
 

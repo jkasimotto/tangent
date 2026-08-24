@@ -514,7 +514,6 @@ async function readAreaDocuments(area) {
         file, area, kind: "document", title: markdownTitle(text, name.slice(0, -3)),
         mtime: info.mtimeMs, hash: documentHash(text), links: wikiLinks(text),
         commentCount: documentComments.parseComments(text).length,
-        searchText: `${file}\n${text}`.toLowerCase(),
       });
     } catch {}
   }
@@ -715,16 +714,6 @@ async function buildVaultIndex() {
       .map((slug) => bySlug.get(slug))
       .filter(Boolean)
       .map((subgoal) => ({ file: subgoal.file, title: subgoal.title, doneWhen: subgoal.doneWhen, status: subgoal.status }));
-    goal.searchText = [
-      goal.area,
-      goal.title,
-      goal.doneWhen,
-      goal.stateText,
-      goal.currentBrief,
-      goal.storyText,
-      ...goal.assignees,
-      ...why.flatMap((parent) => [parent.title, parent.doneWhen]),
-    ].filter(Boolean).join("\n").toLowerCase();
   }
   const out = [];
   const records = [];
@@ -736,7 +725,7 @@ async function buildVaultIndex() {
     records.push({ file: noteFile, area: n.path, kind: "note", title: markdownTitle(note, n.name), links: wikiLinks(note), mtime: noteMtime ?? 0, missing: noteMtime === null });
     for (const o of own) {
       const text = await readFile(path.join(TREES_ROOT, o.file), "utf8").catch(() => "");
-      records.push({ file: o.file, area: o.area, kind: "goal", title: o.title, status: o.status, links: wikiLinks(text), searchText: o.searchText, mtime: o.mtime, goal: o });
+      records.push({ file: o.file, area: o.area, kind: "goal", title: o.title, status: o.status, links: wikiLinks(text), mtime: o.mtime, goal: o });
     }
     records.push(...documents);
   }
@@ -803,11 +792,6 @@ async function buildVaultIndex() {
       }
     }
     document.goalHistory = history;
-    document.searchText = [
-      document.searchText,
-      document.area,
-      ...history.flatMap((goal) => [goal.title, goal.doneWhen]),
-    ].filter(Boolean).join("\n").toLowerCase();
   }
 
   for (const { n, note, own, documents } of entries) {

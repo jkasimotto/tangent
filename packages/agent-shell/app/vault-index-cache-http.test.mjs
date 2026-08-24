@@ -153,6 +153,13 @@ test("a Document opens and saves in under a second on a vault of realistic size"
     `an unchanged vault must not be indexed again per request (${report})`,
   );
 
+  const vault = await timed(`${base}/api/vault`);
+  assert.equal(vault.status, 200);
+  assert.ok(vault.body.documents.every((item) => !("searchText" in item)), "Document bodies stay out of the vault projection");
+  assert.ok(vault.body.areas.every((item) => (item.documents ?? []).every((document) => !("searchText" in document))), "Area summaries do not duplicate Document bodies");
+  assert.ok(vault.body.areas.every((item) => (item.goals ?? []).every((goal) => !("searchText" in goal))), "Area summaries do not duplicate derived Goal search text");
+  assert.ok(vault.body.map.every((item) => (item.goals ?? []).every((goal) => !("searchText" in goal))), "Map summaries do not duplicate derived Goal search text");
+
   // A save answers in under a second and the read after it carries the new text.
   const resolved = cold.body.text.replace(/\{>>Julian: check this line<<\}\n?/, "");
   const save = await timed(`${base}/api/document`, {

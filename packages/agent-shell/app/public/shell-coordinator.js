@@ -651,7 +651,8 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   }
 
   /** Opens one confirmation modal with an explicit effect. */
-  function openModal({ kicker = "", title, copy, field = null, confirmLabel, danger = false, onConfirm }) {
+  function openModal({ kicker = "", title, copy, field = null, confirmLabel, danger = false, wide = false, onConfirm }) {
+    modalLayer.querySelector(".modal")?.classList.toggle("request-surface", wide);
     modalKicker.textContent = kicker;
     modalTitle.textContent = title;
     modalCopy.textContent = copy;
@@ -671,6 +672,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   /** Closes the confirmation modal without acting. */
   function closeModal() {
     modalLayer.hidden = true;
+    modalLayer.querySelector(".modal")?.classList.remove("request-surface");
     modalField.hidden = true;
     modalField.innerHTML = "";
     modalConfirm = null;

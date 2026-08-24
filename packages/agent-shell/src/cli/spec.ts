@@ -47,6 +47,7 @@ export const brainCommandSpec: CliCommandSpec = {
         { name: "kind", takesValue: true, description: "plan, decision, test, or approval" },
         { name: "subject", takesValue: true, description: "Short request subject" },
         { name: "question", takesValue: true, description: "The question, ending in ?" },
+        { name: "proposal", takesValue: true, description: "The exact transition that Approve applies" },
         { name: "detail", takesValue: true, description: "At most two short sentences that Julian needs to answer" },
         { name: "option", takesValue: true, description: "Decision choice; repeat for each choice" },
         { name: "goal", takesValue: true, description: "Goal slug this request is about; approval of a test request closes this Goal" },

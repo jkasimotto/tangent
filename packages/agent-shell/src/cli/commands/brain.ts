@@ -24,9 +24,10 @@ async function requestCommand(args: Args): Promise<void> {
   const subject = stringArg(args.subject)?.trim() || "";
   const question = stringArg(args.question)?.trim() || "";
   const detail = stringArg(args.detail)?.trim() || "";
+  const proposal = stringArg(args.proposal)?.trim() || "";
   const goalSlug = stringArg(args.goal)?.trim() || "";
   const goal = goalSlug ? (await requireGoal(server, goalSlug)).file : "";
-  const result = await postJson(server, "/api/brains/requests", { session, kind, subject, question, detail, options: stringsArg(args.option), goal });
+  const result = await postJson(server, "/api/brains/requests", { session, kind, subject, question, proposal, detail, options: stringsArg(args.option), goal });
   console.log(`asked Julian: ${String(result.request?.id ?? "request recorded")}`);
 }
 

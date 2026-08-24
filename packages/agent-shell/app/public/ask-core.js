@@ -25,6 +25,7 @@
     "accept",
     "reject",
     "reply",
+    "open-request",
     "request-answer",
   ]);
 
@@ -52,9 +53,9 @@
    * The only constructor of an ask. Returns the frozen ask, or null when the
    * input is not a direct ask: no Area, no subject, no question, a question
    * that does not end in `?`, no action, or an action in an unknown verb.
-   * Shape: { area, subject, detail, question, actions, source }.
+   * Shape: { area, subject, context, proposal, detail, question, actions, source }.
    */
-  function makeAsk({ area, subject, detail = "", question, actions, source = "" }) {
+  function makeAsk({ area, subject, context = "", proposal = "", detail = "", question, actions, source = "" }) {
     if (!filled(area) || !filled(subject)) return null;
     if (!filled(question) || !question.trim().endsWith("?")) return null;
     if (!Array.isArray(actions) || !actions.length) return null;
@@ -62,6 +63,8 @@
     return Object.freeze({
       area: area.trim(),
       subject: subject.trim(),
+      context: String(context ?? "").trim(),
+      proposal: String(proposal ?? "").trim(),
       detail: String(detail ?? "").trim(),
       question: question.trim(),
       actions: Object.freeze(actions.map((action) => Object.freeze({ kind: action.kind, label: action.label, arg: action.arg }))),
@@ -144,14 +147,23 @@
   /** One durable brain request. These records replace Markdown control lines. */
   function askFromRequest(brain, request) {
     if (!brain || !request || request.status !== "open") return null;
+    const legacyChoices = !request.proposal && request.kind === "decision" ? request.options ?? [] : [];
+    const answers = legacyChoices.length
+      ? legacyChoices.map((answer) => ({ kind: "request-answer", label: answer, arg: { area: brain.area, id: request.id, answer } }))
+      : [
+          { kind: "request-answer", label: "Approve", arg: { area: brain.area, id: request.id, answer: "approve" } },
+          { kind: "request-answer", label: "I want these changes", arg: { area: brain.area, id: request.id, answer: "changes" } },
+        ];
     return makeAsk({
       area: brain.area,
       subject: request.subject,
+      context: String(request.detail ?? "").split(/(?<=[.!?])\s+/)[0],
+      proposal: request.proposal,
       detail: request.detail,
       question: request.question,
       actions: [
-        { kind: "request-answer", label: "Approve", arg: { area: brain.area, id: request.id, answer: "approve" } },
-        { kind: "request-answer", label: "I want these changes", arg: { area: brain.area, id: request.id, answer: "changes" } },
+        { kind: "open-request", label: "Open", arg: { area: brain.area, id: request.id } },
+        ...answers,
       ],
       source: `request:${request.kind}`,
     });

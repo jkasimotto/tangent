@@ -15,7 +15,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain, brainForAreaCard,
     openBrainSession, openOrStartBrain, toggleBrainPopover, saveDescribeDraft, saveDescribeSession, describeWorkSession,
     openDescribeSession, addDescribeSource, switchDescribeToManualCreate, selectionForArea, startSelectedGoals,
-    openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, enableDockBadge, sendVerdict,
+    openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, enableDockBadge, openRequest, sendVerdict,
     replyAboutRow, renderWork, describeLaunchArea, describeWorkSessions,
   } = work;
   const {
@@ -282,6 +282,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       event.stopPropagation();
       return sendVerdict(verdictRow.dataset.verdictArea, verdictRow.dataset.verdictLine, verdictRow.dataset.verdict);
     }
+    const requestRow = target.closest("[data-open-request-id]");
+    if (requestRow) return openRequest(requestRow.dataset.openRequestArea, requestRow.dataset.openRequestId);
     const replyRow = target.closest("[data-reply-subject]");
     if (replyRow) {
       event.stopPropagation();

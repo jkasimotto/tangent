@@ -29,6 +29,7 @@ export function createBrainRequest(record, input, now = new Date().toISOString()
   const subject = String(input.subject ?? "").trim();
   const question = String(input.question ?? "").trim();
   const detail = String(input.detail ?? "").trim();
+  const proposal = String(input.proposal ?? "").trim();
   const options = Array.isArray(input.options) ? input.options.map(String).map((item) => item.trim()).filter(Boolean) : [];
   const goal = String(input.goal ?? "").trim() || null;
   if (!REQUEST_KINDS.has(kind)) throw new Error("kind must be plan, decision, test, or approval");
@@ -37,8 +38,9 @@ export function createBrainRequest(record, input, now = new Date().toISOString()
   if (!question.endsWith("?")) throw new Error("question must end with ?");
   if (question.length > 160) throw new Error("question must be 160 characters or fewer");
   if (detail.length > 300) throw new Error("detail must be 300 characters or fewer; put full evidence in the plan");
-  if (kind === "decision" && options.length < 2) throw new Error("a decision needs at least two options");
-  const request = { id: randomUUID(), kind, subject, question, detail, options, goal, status: "open", createdAt: now, answeredAt: null, answer: null };
+  if (!proposal) throw new Error("proposal is required");
+  if (proposal.length > 200) throw new Error("proposal must be 200 characters or fewer");
+  const request = { id: randomUUID(), kind, subject, question, proposal, detail, options, goal, status: "open", createdAt: now, answeredAt: null, answer: null, note: null, response: null };
   record.requests.push(request);
   return request;
 }
@@ -50,12 +52,14 @@ export function answerBrainRequest(record, id, answer, note = "", now = new Date
   if (request.status !== "open") throw new Error("request is already answered");
   const value = String(answer ?? "").trim();
   const responseNote = String(note ?? "").trim();
-  if (!["approve", "changes"].includes(value)) throw new Error("answer must be approve or changes");
+  const legacyChoices = !request.proposal && request.kind === "decision" ? request.options ?? [] : [];
+  if (!["approve", "changes", ...legacyChoices].includes(value)) throw new Error("answer must approve, request changes, or select a listed legacy choice");
   if (value === "changes" && !responseNote) throw new Error("requested changes need text");
   request.status = "answered";
   request.answer = value;
   request.note = responseNote || null;
   request.answeredAt = now;
+  request.response = { answer: value, text: responseNote || null, answeredAt: now };
   return request;
 }
 

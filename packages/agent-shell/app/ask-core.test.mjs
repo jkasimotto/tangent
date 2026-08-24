@@ -38,14 +38,16 @@ test("the exports are the constructor, the five builders, and the three fixed qu
   ]);
 });
 
-test("all structured requests expose the same two answers", () => {
+test("new Requests share two answers and stored choices keep their answers", () => {
   const owner = brain();
-  const plan = core.askFromRequest(owner, { id: "p1", kind: "plan", subject: "Work plan", detail: "2 Goals", question: "Approve this plan?", status: "open" });
-  assert.deepEqual(plan.actions.map((action) => [action.label, action.arg.answer]), [["Approve", "approve"], ["I want these changes", "changes"]]);
-  const testAsk = core.askFromRequest(owner, { id: "t1", kind: "test", subject: "Reload", detail: "Press it", question: "Did it reload?", status: "open" });
-  assert.deepEqual(testAsk.actions.map((action) => action.label), ["Approve", "I want these changes"]);
+  const plan = core.askFromRequest(owner, { id: "p1", kind: "plan", subject: "Work plan", proposal: "Start two Goals.", detail: "2 Goals", question: "Approve this plan?", status: "open" });
+  assert.deepEqual(plan.actions.slice(1).map((action) => [action.label, action.arg.answer]), [["Approve", "approve"], ["I want these changes", "changes"]]);
+  const testAsk = core.askFromRequest(owner, { id: "t1", kind: "test", subject: "Reload", proposal: "Close the Goal.", detail: "Press it", question: "Approve this result?", status: "open" });
+  assert.deepEqual(testAsk.actions.slice(1).map((action) => action.label), ["Approve", "I want these changes"]);
   const decision = core.askFromRequest(owner, { id: "d1", kind: "decision", subject: "Behavior", detail: "One-way door", question: "Which behavior?", options: ["Keep", "Change"], status: "open" });
-  assert.deepEqual(decision.actions.map((action) => action.arg.answer), ["approve", "changes"]);
+  assert.deepEqual(decision.actions.slice(1).map((action) => action.arg.answer), ["Keep", "Change"]);
+  assert.equal(plan.proposal, "Start two Goals.");
+  assert.equal(plan.context, "2 Goals");
   assert.equal(core.askFromRequest(owner, { id: "x", kind: "plan", subject: "Old", question: "Old?", status: "answered" }), null);
 });
 

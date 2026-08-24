@@ -749,15 +749,9 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   function askGroups() {
     const ask = askCore;
     return (state.brains ?? [])
-      .filter((brain) => brain.status === "running" && brain.live)
       .map((brain) => {
-        const rows = (brain.forJulian ?? [])
-          .filter((row) => !state.verdictLines.has(row.line))
-          .map((row) => ask.askFromPlanRow(brain, row));
-        // A brain stuck at its own dialog cannot write a plan line about being
-        // stuck, so Tangent asks for it.
         const requests = (brain.requests ?? []).map((request) => ask.askFromRequest(brain, request));
-        const asks = [...requests, ask.askFromBrainDialog(brain), ...rows].filter(Boolean);
+        const asks = requests.filter(Boolean);
         return { area: brain.area, brain, stopped: !brain.live, asks };
       })
       .filter((group) => group.asks.length);
@@ -782,11 +776,12 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   }
 
   /** The verbs that open something; the first one a row carries is its main button. */
-  const ASK_PRIMARY_ACTIONS = ["open-document", "open-brain", "open-run", "reveal-goal", "select-definition", "answer"];
+  const ASK_PRIMARY_ACTIONS = ["open-request", "open-document", "open-brain", "open-run", "reveal-goal", "select-definition", "answer"];
 
   /** Carries one action's verb and its argument to the click delegation. */
   function askActionAttributes(ask, action) {
     const arg = action.arg ?? {};
+    if (action.kind === "open-request") return `data-open-request-area="${escapeHtml(arg.area ?? ask.area)}" data-open-request-id="${escapeHtml(arg.id ?? "")}"`;
     if (action.kind === "open-document") return `data-open-document="${escapeHtml(arg.file ?? "")}"`;
     if (action.kind === "open-brain") return `data-open-brain="${escapeHtml(arg.session ?? "")}"`;
     if (action.kind === "open-run") return `data-open-goal-run="${escapeHtml(arg.file ?? "")}"`;
@@ -807,17 +802,28 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * is not an ask can be drawn here.
    */
   function askRow(ask) {
-    const detail = ask.detail ? `<details class="attention-detail"><summary>Details</summary><p>${escapeHtml(ask.detail)}</p></details>` : "";
-    const text = `<span><strong>${escapeHtml(ask.subject)}</strong><span class="attention-question">${escapeHtml(ask.question)}</span>${detail}</span>`;
+    const context = ask.context ? `<small class="attention-context">${escapeHtml(ask.context)}</small>` : "";
+    const proposal = ask.proposal ? `<span class="attention-proposal"><b>Proposed:</b> ${escapeHtml(ask.proposal)}</span>` : "";
+    const text = `<span><strong>${escapeHtml(ask.subject)}</strong>${context}${proposal}<span class="attention-question">${escapeHtml(ask.question)}</span></span>`;
     const primary = ask.actions.find((action) => ASK_PRIMARY_ACTIONS.includes(action.kind));
     const rest = ask.actions.filter((action) => action !== primary);
     const buttons = rest.length
-      ? `<span class="attention-row-actions">${rest.map((action) => `<button class="attention-tried${action.kind === "reply" ? " attention-reply" : ""}" type="button" ${askActionAttributes(ask, action)}>${escapeHtml(action.label)}</button>`).join("")}</span>`
+      ? `<span class="attention-row-actions${rest.length > 2 ? " choices" : ""}">${rest.map((action) => `<button class="attention-tried${action.kind === "reply" ? " attention-reply" : ""}" type="button" ${askActionAttributes(ask, action)}>${escapeHtml(action.label)}</button>`).join("")}</span>`
       : "";
     const head = primary
       ? `<button type="button" ${askActionAttributes(ask, primary)}>${text}<span>${escapeHtml(primary.label)} <b aria-hidden="true">→</b></span></button>`
       : text;
     return `<div class="attention-row">${head}${buttons}</div>`;
+  }
+
+  /** Opens the complete Request away from its compact index row. */
+  function openRequest(area, id) {
+    const request = (state.brains ?? []).find((brain) => brain.area === area)?.requests?.find((item) => item.id === id);
+    if (!request) return showToast("This Request is no longer open.");
+    const copy = [request.proposal ? `Proposed transition\n${request.proposal}` : "", request.question, request.detail].filter(Boolean).join("\n\n");
+    /** Closes the read-only Request detail. */
+    const closeRequest = async () => {};
+    openModal({ kicker: "Request", title: request.subject, copy, wide: true, confirmLabel: "Close", onConfirm: closeRequest });
   }
 
   /** One live brain group's asks and its direct reply action. */
@@ -1336,5 +1342,5 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     `;
   }
 
-  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, fallbackAsks, forgetVerdictLines, sendVerdict, replyAboutRow, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups, renderWork };
+  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, fallbackAsks, forgetVerdictLines, openRequest, sendVerdict, replyAboutRow, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups, renderWork };
 }

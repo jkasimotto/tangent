@@ -52,15 +52,14 @@ test("the Shell menu owns recovery while offline refresh preserves the screen", 
   click(window, "#back-button");
   assert.equal(window.document.querySelector("#menu-update").hidden, false);
   click(window, "#menu-update");
-  assert.match(window.document.querySelector("#modal-copy").textContent, /abc1234  Improve reload — Julian/);
-  assert.match(window.document.querySelector("[data-modal-confirm]").textContent, /Reload with 1 commit/);
-  click(window, "[data-modal-cancel]");
+  assert.match(window.document.querySelector("#update-panel-copy").textContent, /abc1234  Improve reload — Julian/);
+  assert.match(window.document.querySelector("[data-rebuild-start]").textContent, /Rebuild and restart/);
+  click(window, "[data-rebuild-dismiss]");
   offline = true;
   await window.refresh();
   assert.ok(window.document.querySelector(".work-page"));
   assert.match(window.document.querySelector("#status-pill").textContent, /Server offline/);
   offline = false;
-  boot = "boot-2";
   await window.refresh();
   assert.equal(window.document.querySelector("#back-button").classList.contains("has-update"), true);
   click(window, "#back-button");
@@ -74,7 +73,7 @@ test("the Shell menu owns recovery while offline refresh preserves the screen", 
   posts.length = 0;
   click(window, "#back-button");
   click(window, "#menu-update");
-  click(window, "[data-modal-confirm]");
+  click(window, "[data-rebuild-start]");
   await settle(window);
   assert.ok(posts.includes("/api/shell/rebuild"), "the pending-change action rebuilds on its first click");
   dom.window.close();

@@ -945,7 +945,6 @@ function editingSurfaceOnScreen() {
 
 /** Refreshes the vault, program, and session projections from the server. */
 async function refresh({ initial = false } = {}) {
-  const requestedRebuild = state.rebuilding;
   try {
     const [vault, sessionPayload, programs] = await Promise.all([api("/api/vault"), api("/api/sessions"), api("/api/programs")]);
     state.vault = vault;
@@ -970,7 +969,7 @@ async function refresh({ initial = false } = {}) {
     state.loading = false;
     state.error = "";
     state.offline = false;
-    noteServerBoot(sessionPayload.boot || "", requestedRebuild);
+    noteServerBoot(sessionPayload.boot || "");
     if (state.view === "program-session" && !currentProgram()?.session) {
       disposeTerminal();
       state.view = currentProgram() ? "program-detail" : "areas";
@@ -1008,15 +1007,14 @@ async function refresh({ initial = false } = {}) {
  * Tracks the server process identity across polls. Only pending commits own
  * the blue update dot; a process restart by itself is not a source change.
  */
-function noteServerBoot(boot, requestedRebuild = false) {
+function noteServerBoot(boot) {
   if (!boot) return;
   if (!state.bootId) {
     state.bootId = boot;
     return;
   }
   if (boot === state.bootId) return;
-  if (requestedRebuild) return location.reload();
-  state.bootId = boot;
+  location.reload();
 }
 
 /** Keeps the quiet connection pill and the menu's update hint current. */

@@ -4,18 +4,22 @@ import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { answerBrainRequest, brainRequestAnswerNotice, createBrainRequest, hasApprovedPlan, openBrainRequests, readBrainRequests, writeBrainRequests } from "./brain-requests.mjs";
+import { answerBrainRequest, brainRequestAnswerNotice, createBrainRequest, openBrainRequests, readBrainRequests, requestIsApproved, writeBrainRequests } from "./brain-requests.mjs";
 
-test("a durable plan approval unlocks execution", async () => {
+test("each durable approval stays attached to its own proposal", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "brain-requests-"));
   const record = await readBrainRequests(root, "otto/tangent");
   const request = createBrainRequest(record, { kind: "plan", subject: "Work plan", question: "Approve this plan?", proposal: "Start the two planned Goals.", detail: "Two Goals" });
   assert.equal(openBrainRequests(record).length, 1);
-  assert.equal(hasApprovedPlan(record), false);
+  assert.equal(requestIsApproved(record, request.id), false);
   answerBrainRequest(record, request.id, "approve");
-  assert.equal(hasApprovedPlan(record), true);
-  createBrainRequest(record, { kind: "plan", subject: "Revised plan", question: "Approve this plan?", proposal: "Start the three planned Goals.", detail: "Three Goals" });
-  assert.equal(hasApprovedPlan(record), false, "a newer plan needs its own approval");
+  assert.equal(requestIsApproved(record, request.id), true);
+  const newer = createBrainRequest(record, { kind: "plan", subject: "Unrelated plan", question: "Approve this plan?", proposal: "Start an unrelated Goal.", detail: "One Goal" });
+  assert.equal(requestIsApproved(record, request.id), true, "a newer Request does not revoke an earlier approval");
+  assert.equal(requestIsApproved(record, newer.id), false, "the newer proposal needs its own answer");
+  answerBrainRequest(record, newer.id, "changes", "Use a smaller Goal.");
+  assert.equal(requestIsApproved(record, newer.id), false, "requested changes apply to the newer proposal only");
+  assert.equal(requestIsApproved(record, request.id), true);
   await writeBrainRequests(root, record);
   assert.equal((await readBrainRequests(root, "otto/tangent")).requests[0].answer, "approve");
 });

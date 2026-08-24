@@ -40,7 +40,7 @@ import { attachTerminalTransport } from "./terminal-transport.mjs";
 import { serveStaticAsset } from "./static-assets.mjs";
 import { createStateEvents } from "./state-events.mjs";
 import { createBrainRoutes } from "./brain-routes.mjs";
-import { answerBrainRequest, brainRequestAnswerNotice, createBrainRequest, hasApprovedPlan, openBrainRequests, readBrainRequests, writeBrainRequests } from "./brain-requests.mjs";
+import { answerBrainRequest, brainRequestAnswerNotice, createBrainRequest, openBrainRequests, readBrainRequests, writeBrainRequests } from "./brain-requests.mjs";
 import { createPipelineRoutes } from "./pipeline-routes.mjs";
 import { createAgentRoutes } from "./agent-routes.mjs";
 import { createVaultRepository } from "./vault-repository.mjs";
@@ -4243,7 +4243,6 @@ const launchRoutes = createLaunchRoutes({
         if (!callerBrain) return { status: 403, error: "workers cannot start agents; report to the controlling brain with tangent handover" };
         const controller = await nearestLiveBrainForArea(goal.area);
         if (!controller || controller.session !== caller) return { status: 403, error: `${caller} does not control ${goal.area}` };
-        if (!hasApprovedPlan(await readBrainRequests(BRAINS_ROOT, controller.area))) return { status: 409, error: "Julian must approve the brain's plan before it starts workers" };
       }
       if (Array.isArray(body.steps) && body.steps.length) {
         const result = await startPipeline(String(body.file ?? ""), { steps: body.steps, extraFiles: Array.isArray(body.extraFiles) ? body.extraFiles.map(String) : [] });
@@ -4303,12 +4302,11 @@ const workMutationRoutes = createWorkMutationRoutes({
       if (!callerBrain) return { status: 403, error: "workers cannot create Goals; report to the controlling brain with tangent handover" };
       const controller = await nearestLiveBrainForArea(area);
       if (!controller || controller.session !== caller) return { status: 403, error: `${caller} does not control ${area}` };
-      const requestRecord = await readBrainRequests(BRAINS_ROOT, callerBrain.area);
-      if (!hasApprovedPlan(requestRecord)) return { status: 409, error: "Julian must approve the brain's plan before it creates Goals" };
     }
     const subgoals = (Array.isArray(body.subgoals) ? body.subgoals.slice(0, 8) : []).map((item) => ({ title: String(item?.title ?? "").trim(), doneWhen: String(item?.doneWhen ?? "").trim(), state: "Not started." })).filter((item) => item.title || item.doneWhen);
     if (subgoals.some((item) => !item.title || !item.doneWhen)) return { status: 400, error: "each Subgoal needs a name and a done condition" };
     const own = String(body.own ?? "").trim();
+    if (caller && own && caller !== own) return { status: 409, error: `${caller} cannot create a Goal owned by live session ${own}` };
     let assignees;
     try { assignees = validateAssignees(body.assignees, (await applicableRoster(area)).people); }
     catch (error) { return { status: 400, error: error.message }; }

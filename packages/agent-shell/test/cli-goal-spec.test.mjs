@@ -12,7 +12,7 @@ test("tangent goal start takes a slug and repeatable step, launch, and continue-
   const start = subcommand("start");
   assert.ok(start, "goal spec has a start subcommand");
   assert.equal(start.args, "<slug>");
-  assert.deepEqual(optionNames(start), ["step", "launch", "continue-from", "server", "json"]);
+  assert.deepEqual(optionNames(start), ["step", "launch", "continue-from", "session", "server", "json"]);
   for (const name of ["step", "launch", "continue-from"]) {
     const option = start.options.find((entry) => entry.name === name);
     assert.equal(option.takesValue, true, `${name} takes a value`);
@@ -58,6 +58,37 @@ test("tangent goal create accepts repeatable human assignees without changing ag
   assert.ok(optionNames(create).includes("assignee"));
   assert.match(create.options.find((entry) => entry.name === "assignee").description, /repeatable/);
   assert.ok(optionNames(create).includes("own"), "agent ownership remains a separate option");
+});
+
+test("goal mutations accept an explicit caller outside tmux", async (context) => {
+  const { runGoalCli } = await import("../dist/cli/index.js");
+  const previousTmux = process.env.TMUX;
+  delete process.env.TMUX;
+  const requests = [];
+  const previousFetch = globalThis.fetch;
+  const previousLog = console.log;
+  console.log = () => {};
+  globalThis.fetch = async (input, init = {}) => {
+    const url = new URL(String(input));
+    requests.push({ path: url.pathname, body: init.body ? JSON.parse(String(init.body)) : null });
+    if (url.pathname === "/api/tree") return Response.json({ areas: [{ path: "otto/test", children: [] }] });
+    if (url.pathname === "/api/goals/show") return Response.json({ goal: { slug: "proof", file: "otto/test/goal-proof.md", area: "otto/test", status: "open" } });
+    if (url.pathname === "/api/goals/create") return Response.json({ file: "otto/test/goal-proof.md", files: [] });
+    if (url.pathname === "/api/goals/start") return Response.json({ session: "worker-proof" });
+    return Response.json({ error: `unexpected ${url.pathname}` }, { status: 404 });
+  };
+  context.after(() => {
+    globalThis.fetch = previousFetch;
+    console.log = previousLog;
+    if (previousTmux === undefined) delete process.env.TMUX;
+    else process.env.TMUX = previousTmux;
+  });
+
+  await runGoalCli(["create", "--area", "otto/test", "--title", "Proof", "--done-when", "The proof passes.", "--session", "tangent-brain-test"]);
+  await runGoalCli(["start", "proof", "--session", "tangent-brain-test"]);
+
+  assert.equal(requests.find((request) => request.path === "/api/goals/create").body.caller, "tangent-brain-test");
+  assert.equal(requests.find((request) => request.path === "/api/goals/start").body.caller, "tangent-brain-test");
 });
 
 test("tangent brain has handover and status; tangent area gains create", async () => {

@@ -117,7 +117,7 @@ export const goalCommandSpec: CliCommandSpec = {
         { name: "subgoal-title", takesValue: true, description: "Subgoal title; pair with --subgoal-done-when, repeatable" },
         { name: "subgoal-done-when", takesValue: true, description: "Subgoal done condition; pairs with --subgoal-title, repeatable" },
         { name: "own", description: "Take ownership in the same step; the calling agent's session becomes the Goal's session" },
-        { name: "session", takesValue: true, description: "Owning session name for --own; defaults to the tmux session this command runs in" },
+        { name: "session", takesValue: true, description: "Caller session, and owning session for --own; defaults to the current tmux session when available" },
         serverOption,
         jsonOption
       ]
@@ -170,6 +170,7 @@ export const goalCommandSpec: CliCommandSpec = {
         { name: "step", takesValue: true, description: "One step's instruction, in your words; repeatable, steps run in order" },
         { name: "launch", takesValue: true, description: "Harness for the step at the same position as <harness[/model[/effort]]>; repeatable; missing means the Area default" },
         { name: "continue-from", takesValue: true, description: "Step number whose session the step at the same position continues, or - for a fresh session; repeatable" },
+        { name: "session", takesValue: true, description: "Caller session; defaults to the current tmux session when available" },
         serverOption,
         jsonOption
       ]

@@ -57,8 +57,9 @@ async function createCommand(args: Args): Promise<void> {
   if (subgoalTitles.length !== subgoalDoneConditions.length) {
     throw new Error("Each --subgoal-title needs one --subgoal-done-when in the same position.");
   }
+  const explicitSession = stringArg(args.session);
   const own = booleanArg(args.own) ? await requireSession(args, "tangent goal create --own") : "";
-  const caller = await currentTmuxSession();
+  const caller = explicitSession || (await currentTmuxSession());
   const result = await postJson(server, "/api/goals/create", {
     area,
     description: stringArg(args.description)?.trim() || "",
@@ -103,7 +104,7 @@ async function startCommand(args: Args): Promise<void> {
   const server = resolveServerUrl(stringArg(args.server));
   const slug = requiredString(args._[1], "tangent goal start requires <slug>.");
   const goal = await requireGoal(server, slug);
-  const caller = await currentTmuxSession();
+  const caller = stringArg(args.session) || (await currentTmuxSession());
   const steps = pipelineSteps(args);
   const result = steps.length
     ? await postJson(server, "/api/goals/start", { file: goal.file, steps, ...(caller ? { caller } : {}) })

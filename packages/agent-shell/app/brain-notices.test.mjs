@@ -113,12 +113,13 @@ async function post(base, route, body) {
 }
 
 /** Runs one Goal as a single-step pipeline and hands its last step over. */
-async function completeOnePipeline(base, area, title, handover) {
-  const goal = await post(base, "/api/goals/create", { area, goal: { title, doneWhen: "The step handed over." } });
+async function completeOnePipeline(base, area, title, handover, caller = "") {
+  const goal = await post(base, "/api/goals/create", { area, goal: { title, doneWhen: "The step handed over." }, ...(caller ? { caller } : {}) });
   assert.ok(goal.file, `goal ${title} was created`);
   const started = await post(base, "/api/goals/start", {
     file: goal.file,
     steps: [{ instruction: "Implement the Goal.", command: "sleep 300" }],
+    ...(caller ? { caller } : {}),
   });
   assert.ok(started.session, `pipeline for ${title} started: ${JSON.stringify(started)}`);
   const finished = await post(base, "/api/goals/handover", { session: started.session, text: handover });
@@ -157,7 +158,7 @@ test("a brain notice survives a server restart and reaches the next generation a
 
   // The brain session runs no agent, so nothing can be typed into it. The
   // notice is written to disk all the same.
-  const step = await completeOnePipeline(base, `otto/${leaf}`, "Notice demo", "Implemented the probe. Unresolved: none.");
+  const step = await completeOnePipeline(base, `otto/${leaf}`, "Notice demo", "Implemented the probe. Unresolved: none.", brain.session);
   sessions.push(step);
   const afterHandover = await waitFor("the notice on disk", async () => {
     const inbox = await readInbox(brains, `otto/${leaf}`);

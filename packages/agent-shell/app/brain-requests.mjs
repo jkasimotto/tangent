@@ -79,9 +79,8 @@ export function openBrainRequests(record) {
   return record.requests.filter((request) => request.status === "open");
 }
 
-/** True only when the newest plan request has an approval answer. */
-export function hasApprovedPlan(record) {
-  const plans = record.requests.filter((request) => request.kind === "plan");
-  const latest = plans[plans.length - 1];
-  return Boolean(latest && latest.status === "answered" && latest.answer === "approve");
+/** True only when the named Request has its own approval answer. */
+export function requestIsApproved(record, id) {
+  const request = record.requests.find((item) => item.id === id);
+  return Boolean(request && request.status === "answered" && request.answer === "approve");
 }

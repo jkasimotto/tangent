@@ -191,6 +191,22 @@ export function createWorkDeskView({ state, api, post, paint, refresh, showToast
     paint(true);
   }
 
+  /** Opens the Area brain, or starts the missing session before opening it. */
+  async function openOrStartBrain(area) {
+    const existing = brainForAreaCard(area);
+    const live = brainSessions().find((session) => session.area === area || session.name === existing?.session);
+    if (live) return openBrainSession(live.name);
+    try {
+      const result = await post("/api/brains/start", existing
+        ? { area, resume: true }
+        : { area, instruction: "Work with Julian to understand, plan, and dispatch new work for this Area." });
+      await refresh();
+      openBrainSession(result.session);
+    } catch (error) {
+      showToast(error.message);
+    }
+  }
+
   /** Opens or closes the brain popover for one Area card; a live brain opens its terminal instead. */
   function toggleBrainPopover(button) {
     const area = button.dataset.brainArea;
@@ -1304,5 +1320,5 @@ export function createWorkDeskView({ state, api, post, paint, refresh, showToast
     `;
   }
 
-  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, toggleBrainPopover, startBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, fallbackAsks, forgetVerdictLines, sendVerdict, replyAboutRow, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups, renderWork };
+  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, fallbackAsks, forgetVerdictLines, sendVerdict, replyAboutRow, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups, renderWork };
 }

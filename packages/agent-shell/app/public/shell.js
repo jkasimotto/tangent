@@ -393,7 +393,7 @@ const workDeskView = createWorkDeskView({
 const {
   allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile,
   currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions,
-  brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, toggleBrainPopover, startBrain,
+  brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain,
   humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel,
   goalNeedsYou, goalWorkFinished, workCard, goalTreeCard,
   fallbackAsks, forgetVerdictLines, sendVerdict, replyAboutRow, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups, renderWork,
@@ -1173,7 +1173,7 @@ bindShellEvents({
   openDocument, navigateDocumentHistory, openVaultLink, openDocumentHeading, openCommentComposer, setCommentScope,
   editComment, cancelCommentComposer, submitCommentComposer, removeComment, stepComment, saveVisibleIdea, notifyDocumentComments, refreshDocument,
   leaveReader, toggleAwake, closeModal, modalConfirm: getModalConfirm, updateSelectionCommentButton, preferredArea,
-  areaLabel, programById: { enableDockBadge, areaIsFolded, saveExpandedAreas, revealArea, setAreaStatus, openReaderAgent, sendVerdict, replyAboutRow, launchOptionsFor, pipelineRecordForGoal, loadLaunchStep, renderWork, describeLaunchArea, describeWorkSessions },
+  areaLabel, programById: { enableDockBadge, areaIsFolded, saveExpandedAreas, revealArea, setAreaStatus, openReaderAgent, openOrStartBrain, sendVerdict, replyAboutRow, launchOptionsFor, pipelineRecordForGoal, loadLaunchStep, renderWork, describeLaunchArea, describeWorkSessions },
   DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
 });
 

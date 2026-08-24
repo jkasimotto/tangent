@@ -63,6 +63,18 @@ test("parses current Document flowcharts with quoted multiline labels and common
   assert.deepEqual(bidirectional.edges.map(({ from, to }) => [from, to]), [["J", "B"], ["B", "J"], ["B", "G"]]);
 });
 
+test("keeps connector-like text and delimiters inside quoted edge labels", () => {
+  const source = `flowchart LR
+  A -->|"reads | writes<br/>without loss"| B
+  B -- "retry --> stop<br>keep source" --> C`;
+  const parsed = parseMermaidDiagram(source);
+  assert.equal(parsed.ok, true);
+  assert.deepEqual(parsed.edges.map(({ from, to, label }) => [from, to, label]), [
+    ["A", "B", "reads | writes\nwithout loss"],
+    ["B", "C", "retry --> stop\nkeep source"],
+  ]);
+});
+
 test("supports directions, common shapes, labels, groups, cycles, and state markers", () => {
   for (const direction of ["LR", "RL", "TB", "TD", "BT"]) {
     const parsed = parseMermaidDiagram(`graph ${direction}\nA[rect] --> B(round)\nB --> C([stadium])\nC --> D[(data)]\nD --> E((circle))\nE --> F{choice}\nF --> A`);
@@ -107,13 +119,31 @@ test("wraps long node labels without losing their text", () => {
   assert.equal(labels.map((label) => label.textContent).join("").replace(/\s/g, ""), "Deskpopover:steplist~/.tangent/agent-shell/pipelines/area/slug.json");
 });
 
-test("renders explicit label breaks as separate safe SVG text lines", () => {
+test("renders explicit node, edge, subgraph, and state label breaks as safe SVG text lines", () => {
   const dom = new JSDOM("<!doctype html><body></body>");
-  const source = "flowchart LR\nA[\"first line<br/>second line\"] --> B";
-  const svg = renderMermaidSvg(dom.window.document, parseMermaidDiagram(source));
-  const spans = [...svg.querySelector(".diagram-node text").querySelectorAll("tspan")];
-  assert.deepEqual(spans.map((span) => span.textContent), ["first line", "second line"]);
-  assert.equal(svg.querySelector("br, foreignObject"), null);
+  const flowchart = `flowchart LR
+subgraph group ["group first<br/>group second"]
+A["node first<br/>node second"] -->|"edge first<br/>edge second"| B
+end`;
+  const flowSvg = renderMermaidSvg(dom.window.document, parseMermaidDiagram(flowchart));
+  assert.deepEqual([...flowSvg.querySelectorAll(".diagram-node tspan")].map((span) => span.textContent), ["node first", "node second", "B"]);
+  assert.deepEqual([...flowSvg.querySelectorAll(".diagram-edge tspan")].map((span) => span.textContent), ["edge first", "edge second"]);
+  assert.deepEqual([...flowSvg.querySelectorAll(".diagram-group tspan")].map((span) => span.textContent), ["group first", "group second"]);
+  const state = parseMermaidDiagram("stateDiagram-v2\nOpen --> Closed: first line<br>second line");
+  const stateSvg = renderMermaidSvg(dom.window.document, state);
+  assert.deepEqual([...stateSvg.querySelectorAll(".diagram-edge tspan")].map((span) => span.textContent), ["first line", "second line"]);
+  assert.equal(flowSvg.querySelector("br, foreignObject"), null);
+  assert.equal(stateSvg.querySelector("br, foreignObject"), null);
+});
+
+test("applies the dark Document theme to diagram text, edges, and arrowheads", async () => {
+  const css = await readFile(path.join(here, "public", "shell.css"), "utf8");
+  const dom = new JSDOM(`<!doctype html><style>${css}</style><div class="markdown-diagram"></div>`);
+  const svg = renderMermaidSvg(dom.window.document, parseMermaidDiagram("flowchart LR\nA --> B"));
+  dom.window.document.querySelector(".markdown-diagram").append(svg);
+  assert.equal(dom.window.getComputedStyle(svg.querySelector(".diagram-node text")).fill, "#dce4eb");
+  assert.equal(dom.window.getComputedStyle(svg.querySelector(".diagram-edge path")).stroke, "#8294a6");
+  assert.equal(dom.window.getComputedStyle(svg.querySelector("marker path")).fill, "#8294a6");
 });
 
 test("mount renders valid diagrams and keeps readable source with actionable failures", () => {

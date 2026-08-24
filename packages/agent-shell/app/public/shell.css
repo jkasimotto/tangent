@@ -1232,7 +1232,7 @@ details.more-work .area-work-list { margin-top: 18px; }
 .diagram-node-marker circle { fill: #9cb9d6; stroke: none; }
 .diagram-node text, .diagram-edge text, .diagram-group text { fill: #dce4eb; font: 13px ui-sans-serif, system-ui, sans-serif; }
 .diagram-edge path { fill: none; stroke: #8294a6; stroke-width: 1.6; }
-.diagram-edge marker path { fill: #8294a6; }
+.markdown-diagram marker path { fill: #8294a6; }
 .diagram-edge text { paint-order: stroke; stroke: var(--surface-soft); stroke-width: 6px; stroke-linejoin: round; text-anchor: middle; }
 .diagram-group rect { fill: rgba(120, 145, 170, .05); stroke: #536474; stroke-dasharray: 5 4; }
 .diagram-group text { fill: var(--quiet); font-size: 12px; }

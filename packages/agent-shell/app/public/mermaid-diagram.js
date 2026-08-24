@@ -24,6 +24,16 @@ function textLabel(value) {
   return label;
 }
 
+/** Finds syntax outside a quoted text label. */
+function indexOutsideQuotes(value, syntax, offset) {
+  let quoted = false;
+  for (let index = offset; index <= value.length - syntax.length; index += 1) {
+    if (value[index] === '"') { quoted = !quoted; continue; }
+    if (!quoted && value.startsWith(syntax, index)) return index;
+  }
+  return -1;
+}
+
 /** Reads one supported flowchart node token. */
 function flowNode(token) {
   const value = token.trim();
@@ -66,7 +76,7 @@ function flowConnector(value, offset = 0) {
       while (value[end] === " ") end += 1;
       if (value[end] === "|") {
         if (bidirectional) return { invalid: true };
-        const close = value.indexOf("|", end + 1);
+        const close = indexOutsideQuotes(value, "|", end + 1);
         if (close < 0) return { invalid: true };
         label = textLabel(value.slice(end + 1, close));
         if (label == null) return { invalid: true };
@@ -75,7 +85,7 @@ function flowConnector(value, offset = 0) {
       return { start: index, end, label, bidirectional };
     }
     if (value.startsWith("--", index) && /\s/.test(value[index + 2] ?? "")) {
-      const close = value.indexOf("-->", index + 2);
+      const close = indexOutsideQuotes(value, "-->", index + 2);
       if (close < 0) continue;
       if (!/\s/.test(value[close - 1] ?? "")) return { invalid: true };
       const label = textLabel(value.slice(index + 2, close));
@@ -237,10 +247,10 @@ function labelLines(value, limit = 24) {
   return lines.length ? lines : [""];
 }
 
-/** Adds a centered multi-line text label. */
-function appendLabel(document, parent, value, x, y, limit) {
+/** Adds an aligned multi-line text label. */
+function appendLabel(document, parent, value, x, y, limit, anchor = "middle") {
   const lines = labelLines(value, limit);
-  const label = svgElement(document, "text", { x, y: y - ((lines.length - 1) * 9), "text-anchor": "middle" });
+  const label = svgElement(document, "text", { x, y: y - ((lines.length - 1) * 9), "text-anchor": anchor });
   lines.forEach((line, index) => {
     const span = svgElement(document, "tspan", { x, dy: index ? 18 : 0 });
     span.textContent = line;
@@ -277,11 +287,13 @@ export function renderMermaidSvg(document, model) {
   for (const group of model.groups) {
     const points = group.members.map((id) => positions.get(id)).filter(Boolean);
     if (!points.length) continue;
-    const x = Math.min(...points.map((p) => p.x)) - 100, y = Math.min(...points.map((p) => p.y)) - 58;
+    const groupLabelLines = labelLines(group.label, 24).length;
+    const x = Math.min(...points.map((p) => p.x)) - 100, y = Math.min(...points.map((p) => p.y)) - 40 - (groupLabelLines * 18);
     const right = Math.max(...points.map((p) => p.x)) + 100, bottom = Math.max(...points.map((p) => p.y)) + 55;
     const element = svgElement(document, "g", { class: "diagram-group" });
     element.append(svgElement(document, "rect", { x, y, width: right - x, height: bottom - y, rx: 12 }));
-    const label = svgElement(document, "text", { x: x + 14, y: y + 22 }); label.textContent = group.label; element.append(label); svg.append(element);
+    appendLabel(document, element, group.label, x + 14, y + 22, 24, "start");
+    svg.append(element);
   }
   for (const edge of model.edges) {
     const from = positions.get(edge.from), to = positions.get(edge.to);

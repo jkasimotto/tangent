@@ -12,7 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { doneCascade } from "./goal-cascade.mjs";
 import { noteResource } from "./area-agent-command.mjs";
-import { harnessEfforts, harnessModels, modelEfforts, resolveLaunch } from "./launch-environment.mjs";
+import { resolveLaunch } from "./launch-environment.mjs";
 import { createLaunchCatalog } from "./launch-catalog.mjs";
 import { createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
 import { commandSession, programsSnapshot, saveLocalProgram } from "./programs.mjs";
@@ -2912,16 +2912,15 @@ async function flushBrainNotices(sessions = null, reason = "unread notices after
   }
 }
 
-/**
- * The registry model ids one harness offers, or the standard three
- * (fable-5, sonnet-5, opus-5) when the harness is not in the registry
- * (the profile and legacy fallbacks never resolve through it).
- */
-async function areaHarnessModelIds(harnessId) {
-  const registry = await launchCatalog.registry();
-  const entry = !registry.error ? (registry.harnesses ?? []).find((item) => item.id === harnessId) : null;
-  const ids = entry ? harnessModels(registry, entry).map((model) => model.id) : [];
-  return ids.length ? ids : ["fable-5", "sonnet-5", "opus-5"];
+/** The bounded discovery contract; installed help and the launch catalog own all dynamic details. */
+function brainCommandContext(area) {
+  return (
+    `Before every Tangent mutation, run \`tangent <noun> --help\` and copy its installed syntax. ` +
+    `Brain commands: area, brain, goal, document, agent, idea, vault, shell, harness, and handover. ` +
+    `Before you select \`--launch\`, run \`tangent harness list --area ${area}\`. ` +
+    `It reports the resolved defaults and valid harness, model, and effort ids. ` +
+    `The exact invocation catalog is \`${path.join(TREES_ROOT, "harnesses.md")}\`. Read it when you need command arguments. Never guess a Tangent command or launch id.`
+  );
 }
 
 /**
@@ -2937,13 +2936,6 @@ async function brainPrompt(record) {
   const documents = (await readAreaDocuments(area)).filter((doc) => doc.file !== record.planFile);
   const planPath = path.join(TREES_ROOT, record.planFile);
   const handover = latestHandover(record);
-  const harness = (await areaHarnessId(area)) ?? "claude";
-  const modelIds = await areaHarnessModelIds(harness);
-  /** The wanted model id when the harness offers it, else its first model. */
-  const pickModel = (id) => (modelIds.includes(id) ? id : modelIds[0]);
-  const designModel = pickModel("fable-5");
-  const implementModel = pickModel("sonnet-5");
-  const harnessRule = `Every --launch in this Area is ${harness}/<model>; models: ${modelIds.join(", ")}; never another harness unless Julian says so.`;
   const sourceLines = [
     `- Plan: ${planPath} (yours; create it if it does not exist)`,
     `- Area folder: ${path.join(TREES_ROOT, area)}`,
@@ -2967,20 +2959,20 @@ async function brainPrompt(record) {
       ? `## Notices you have not read\n\nTangent recorded these while no generation of this brain was reading. Each one is an agent event under this Area. Read them before you plan, and act on the ones that need it.\n\n${noticeBlock(notices)}\n\n`
       : "") +
     `## How to work\n\n` +
-    `${harnessRule}\n\n` +
+    `${brainCommandContext(area)}\n\n` +
     `You own ${area} and its descendants that have no more-specific live brain. For each work Area, Tangent selects the exact live brain and then its ancestors. Do not act on work inside a more-specific live brain's territory. If that child stops, its work returns to the nearest live ancestor.\n\n` +
     `You orchestrate work; you do not perform it. Never investigate the repository, design a solution, write an implementation or solution Document, edit product code, run the work's tests, or review an implementation yourself. Delegate every investigation, design, implementation, test, and review to a worker, even when the task looks small. Your own writes are limited to Tangent's orchestration records: the Area plan, Goals and dependencies, Requests, messages, verdict and status facts from worker reports, and your brain handover. You can read Area context, worker reports, and their result Documents to choose the next orchestration action. Do not turn that reading into your own design or implementation.\n\n` +
     `On takeover, run \`tangent agent list\` and sweep every running step's pane: a session shown as "needs decision" or "draft" carries an \`asks:\` line with the question, and it is stuck waiting on a person, not idle. Answer it or message the worker (\`tangent agent send <session> "..."\`) before anything else.\n\n` +
     `Read the plan first when it exists, then the Area notes from nearest to farthest, then the worker-produced Documents that affect allocation. When a code or product question needs investigation, assign it to a worker.\n\n` +
-    `Before you create a Goal or start a worker, write the orchestration proposal in the plan: the proposed Goals, boundaries, dependencies, assignments, and user-visible results. Do not design their solutions. Commit the proposal with \`tangent vault commit\`. Then create one short approval Request. Pass \`--proposal "<exact transition that approval applies>"\`. Use a subject of eight words or fewer. Use a question of twelve words or fewer. Use no more than two short sentences in the detail. Do not paste handovers, commit lists, test logs, or implementation narratives into the Request. The plan holds that evidence. Wait for the durable approval notice. A changed Goal boundary or larger scope needs a new Request. A retry, model change, or review pass inside the approved boundary does not. Julian can also comment in the plan. Read comments with \`tangent document comments <file>\`. Resolve a comment only after the work is done.\n\n` +
-    `Split the work into Goals: a Goal is a result with a clear finish. Create a sub-Area only for a durable subject Julian will return to (\`tangent area create <parent> <name>\`). Give each Goal a description a fresh agent can start from: intent, what Julian decided, and the Documents and code that matter (\`tangent goal create --area ${area} --title "..." --done-when "..." --description "..." --source <vault-file>\`). Record prerequisites with \`tangent goal depend <goal> --on <prerequisite>\`; remove them with \`tangent goal undepend <goal> --on <prerequisite>\`. Dependencies inform your plan and allocation, but they do not enforce execution order.\n\n` +
-    `Start each leaf Goal as a pipeline, for example: \`tangent goal start <slug> --step "/design this Goal" --launch ${harness}/${designModel} --step "/impl the design at <path>" --launch ${harness}/${designModel} --step "implement the solution" --launch ${harness}/${implementModel} --step "review the implementation against the design and solution; fix what is wrong" --launch ${harness}/${designModel}\`. Judge each Goal: when the work is small and clear, one implementer step is enough; when it is hard or vague, raise the implementer to Opus or Fable and keep the design step. Fable plans, designs, decomposes, and reviews; Sonnet is the workhorse. Run one implementing pipeline per repository at a time; design and review steps may run in parallel. \`tangent agent list\` shows what runs and \`tangent goal list ${area}\` shows the Goals.\n\n` +
-    `Tangent sends you durable worker reports. Read the handover and the files. You alone choose the next transition. Start a pending approved assignment with \`tangent brain advance <goal> <step>\`. When a review asks for changes, append an assignment. When a result is good, note it in the plan and start what its completion unblocked. Workers do not choose successors.\n\n` +
+    `Before you create a Goal or start a worker, write the orchestration proposal in the plan: the proposed Goals, boundaries, dependencies, assignments, and user-visible results. Do not design their solutions. Use the installed vault help to commit the proposal. Then create one short approval Request through the installed brain help. Its proposal states the exact transition that approval applies. Use a subject of eight words or fewer. Use a question of twelve words or fewer. Use no more than two short sentences in the detail. Do not paste handovers, commit lists, test logs, or implementation narratives into the Request. The plan holds that evidence. Wait for the durable approval notice. A changed Goal boundary or larger scope needs a new Request. A retry, model change, or review pass inside the approved boundary does not. Julian can also comment in the plan. Read and resolve comments through the installed document help. Resolve a comment only after the work is done.\n\n` +
+    `Split the work into Goals: a Goal is a result with a clear finish. Create a sub-Area only for a durable subject Julian will return to. Give each Goal a description a fresh agent can start from: intent, what Julian decided, and the Documents and code that matter. Record prerequisites through the installed goal help. Dependencies inform your plan and allocation, but they do not enforce execution order.\n\n` +
+    `Start each leaf Goal as a pipeline through the installed goal help. Choose its steps and catalog launch ids from the approved plan and the work's difficulty. Run one implementing pipeline per repository at a time; design and review steps may run in parallel. \`tangent agent list\` shows what runs and \`tangent goal list ${area}\` shows the Goals.\n\n` +
+    `Tangent sends you durable worker reports. Read the handover and the files. You alone choose the next transition. Use the installed brain help to start a pending approved assignment. When a review asks for changes, append an assignment through the installed goal help. When a result is good, note it in the plan and start what its completion unblocked. Workers do not choose successors.\n\n` +
     `Ask Julian only through structured requests. The kind is internal routing metadata. It never changes the two answers. Use kind plan before new work starts. Use kind test only for a finished Goal. Use kind approval for other proposed transitions. Put one recommended transition in the question. The answer returns to this brain as a durable notice. Julian started this brain to get the approved Goals ready for his acceptance. When a Goal's final review passes and its done condition holds, write the verdict into the Goal State. Then create a short Test request. State only what Julian must open and see. Keep the Goal open until Julian approves that Request.\n\n` +
     `## Requests for Julian\n\n` +
     `Create requests with \`tangent brain request\`. Do not use plan Markdown as a control protocol. Every Request uses Approve or I want these changes. The second answer includes Julian's required text. Every answer returns to this brain. State one direct question. Include only the facts that Julian needs to answer it. For a visible result, state what to open and what success looks like. Do not report internal proof unless it changes Julian's answer. If a visible Agent Shell change needs validation, run \`tangent shell rebuild\` before you create the Request. Document comments remain a separate direct lane and arrive here as durable notices.\n\n` +
     `## When to hand over\n\n` +
-    `Before every handover, sweep \`tangent goal list ${area}\` and \`tangent agent list\`. Add a Test request for each reviewed Goal that is ready for Julian. Do not mark it done before he accepts. In the same sweep, check \`tangent agent list\` for a running step showing "needs decision" or "draft" and answer it; do not hand over a step sitting stuck on a question the next generation has to notice all over again. Then, at a natural pause, after a wave is dispatched or a batch of results is processed, and always when Tangent reminds you, write the plan status and run \`tangent brain handover "<facts>"\`: what runs (Goal, step, session), what waits and why, decisions taken, what the next generation should do first. Facts, no narrative. A fresh copy of you starts from the plan and those facts, and this session ends.`
+    `Before every handover, sweep \`tangent goal list ${area}\` and \`tangent agent list\`. Add a Test request for each reviewed Goal that is ready for Julian. Do not mark it done before he accepts. In the same sweep, check \`tangent agent list\` for a running step showing "needs decision" or "draft" and answer it; do not hand over a step sitting stuck on a question the next generation has to notice all over again. Then, at a natural pause, after a wave is dispatched or a batch of results is processed, and always when Tangent reminds you, write the plan status and use the installed brain help to hand over: what runs (Goal, step, session), what waits and why, decisions taken, what the next generation should do first. Facts, no narrative. A fresh copy of you starts from the plan and those facts, and this session ends.`
   );
 }
 
@@ -4215,14 +4207,10 @@ const launchRoutes = createLaunchRoutes({
     if (saved.error) return { status: 400, error: saved.error };
     return { status: 200, value: { ok: true } };
   },
-  /** Returns named launch choices and the Area default. */
+  /** Returns named launch choices and the requested Area defaults. */
   async options(area, kind = "launch") {
-    const registry = await launchCatalog.registry();
-    if (registry.error) return { status: 500, error: registry.error };
-    return { status: 200, value: {
-      harnesses: registry.harnesses.map((harness) => ({ id: harness.id, label: harness.label || harness.id, command: harness.command, models: harnessModels(registry, harness).map((model) => ({ id: model.id, label: model.label || model.id, args: model.args, efforts: modelEfforts(registry, harness, model).map((effort) => ({ id: effort.id, label: effort.label || effort.id, args: effort.args })) })), efforts: harnessEfforts(registry, harness).map((effort) => ({ id: effort.id, label: effort.label || effort.id, args: effort.args })) })),
-      default: kind === "brain" ? await launchCatalog.forBrain(area) : await launchCatalog.forArea(area),
-    } };
+    const catalog = await launchCatalog.options(area, kind);
+    return catalog.error ? { status: 500, error: catalog.error } : { status: 200, value: catalog };
   },
   /** Commits one Area's explicit default launch. */
   async saveDefault(body) {

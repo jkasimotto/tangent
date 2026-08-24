@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
-  inheritedBrainLaunch, inheritedLaunch, parseHarnessRegistry, resolveLaunch, upsertEnvironmentLaunch, upsertHarnessRegistry,
+  harnessEfforts, harnessModels, inheritedBrainLaunch, inheritedLaunch, modelEfforts, parseHarnessRegistry, resolveLaunch, upsertEnvironmentLaunch, upsertHarnessRegistry,
   validateHarnessRegistry,
 } from "./launch-environment.mjs";
 
@@ -35,6 +35,56 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
     if (declared) return declared;
     const fable = resolveLaunch(current, { harness: "claude", model: "fable-5" });
     return fable.error ? inheritedLaunch(area, readAreaNote, current) : { ...fable, source: null };
+  }
+
+  /** Returns one registry snapshot with exact commands and the requested Area defaults. */
+  async function options(area = "", kind = "launch") {
+    const current = await registry();
+    if (current.error) return current;
+    /** Composes one accepted catalog choice from the validated snapshot. */
+    const launchFor = (harness, model = null, effort = null) => resolveLaunch(current, {
+      harness: harness.id,
+      ...(model ? { model: model.id } : {}),
+      ...(effort ? { effort: effort.id } : {}),
+    });
+    const harnesses = current.harnesses.map((harness) => ({
+      id: harness.id,
+      label: harness.label || harness.id,
+      command: harness.command,
+      models: harnessModels(current, harness).map((model) => ({
+        id: model.id,
+        label: model.label || model.id,
+        args: model.args,
+        command: launchFor(harness, model).command,
+        efforts: modelEfforts(current, harness, model).map((effort) => ({
+          id: effort.id,
+          label: effort.label || effort.id,
+          args: effort.args,
+          command: launchFor(harness, model, effort).command,
+        })),
+      })),
+      efforts: harnessEfforts(current, harness).map((effort) => ({
+        id: effort.id,
+        label: effort.label || effort.id,
+        args: effort.args,
+        command: launchFor(harness, null, effort).command,
+      })),
+    }));
+    const workDefault = area ? await inheritedLaunch(area, readAreaNote, current) : null;
+    let brainDefault = null;
+    if (area) {
+      brainDefault = await inheritedBrainLaunch(area, readAreaNote, current);
+      if (!brainDefault) {
+        const fable = resolveLaunch(current, { harness: "claude", model: "fable-5" });
+        brainDefault = fable.error ? workDefault : { ...fable, source: null };
+      }
+    }
+    return {
+      source: path.join(root, "harnesses.md"),
+      ...(area ? { area } : {}),
+      harnesses,
+      ...(kind === "all" ? { workDefault, brainDefault } : { default: kind === "brain" ? brainDefault : workDefault }),
+    };
   }
 
   /** Resolves an edited command or explicit registry choice from one request. */
@@ -87,5 +137,5 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
     return { label: resolved.label, command: resolved.command };
   }
 
-  return { commandForArea, forArea, forBrain, registry, requested, saveDefault, saveRegistry };
+  return { commandForArea, forArea, forBrain, options, registry, requested, saveDefault, saveRegistry };
 }

@@ -13,6 +13,22 @@ export const handoverCommandSpec: CliCommandSpec = {
   ]
 };
 
+export const harnessCommandSpec: CliCommandSpec = {
+  name: "harness",
+  description: "List the machine harness catalog and resolved Area launch defaults",
+  subcommands: [
+    {
+      name: "list",
+      description: "List valid harness, model, and effort ids; with --area, include its resolved work and brain defaults",
+      options: [
+        { name: "area", takesValue: true, description: "Area whose inherited work and brain defaults to resolve" },
+        serverOption,
+        jsonOption
+      ]
+    }
+  ]
+};
+
 export const areaCommandSpec: CliCommandSpec = {
   name: "area",
   description: "List, inspect, and create Tangent tree Areas",

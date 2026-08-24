@@ -35,17 +35,13 @@ async function waitForServer(url, attempts = 80) {
   throw new Error(`Agent Shell did not start at ${url}`);
 }
 
-test("the brain prompt names the Area's resolved harness and uses it in every example launch", async (context) => {
+test("the brain prompt gives bounded authoritative command and harness discovery", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-brain-prompt-"));
   const trees = path.join(root, "trees");
   const ottoArea = path.join(trees, "otto", "probeotto");
-  const salesArea = path.join(trees, "sales", "probesales");
   await mkdir(ottoArea, { recursive: true });
-  await mkdir(salesArea, { recursive: true });
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
   await writeFile(path.join(ottoArea, "probeotto.md"), "---\ntype: area\n---\n\n# Probe otto\n", "utf8");
-  await writeFile(path.join(trees, "sales", "sales.md"), "---\ntype: area\n---\n\n# Sales\n", "utf8");
-  await writeFile(path.join(salesArea, "probesales.md"), "---\ntype: area\n---\n\n# Probe sales\n", "utf8");
 
   let port;
   try {
@@ -88,8 +84,6 @@ test("the brain prompt names the Area's resolved harness and uses it in every ex
   const base = `http://127.0.0.1:${port}`;
   await waitForServer(base);
 
-  // No harnesses.md registry: otto/** falls back to claude-otto, everything
-  // else to plain claude (design-goal-launch-environments profile fallback).
   const ottoBrain = await fetch(`${base}/api/brains/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -97,21 +91,14 @@ test("the brain prompt names the Area's resolved harness and uses it in every ex
   }).then((response) => response.json());
   openedSessions.push(ottoBrain.session);
   const ottoShow = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(ottoBrain.session)}`).then((response) => response.json());
-  assert.match(ottoShow.prompt, /Every --launch in this Area is claude-otto\/<model>/);
-  assert.match(ottoShow.prompt, /claude-otto\//);
-  assert.doesNotMatch(ottoShow.prompt, /claude\//, "an otto/** brain prompt never launches plain claude");
-
-  // A non-otto Area resolves the other half of the same fallback: plain
-  // claude, proving the harness is genuinely resolved, not hard-coded.
-  const salesBrain = await fetch(`${base}/api/brains/start`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ area: "sales/probesales", instruction: "Get the probe Area done." }),
-  }).then((response) => response.json());
-  openedSessions.push(salesBrain.session);
-  const salesShow = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(salesBrain.session)}`).then((response) => response.json());
-  assert.match(salesShow.prompt, /Every --launch in this Area is claude\/<model>/);
-  assert.doesNotMatch(salesShow.prompt, /claude-otto\//);
+  assert.match(ottoShow.prompt, /Before every Tangent mutation, run `tangent <noun> --help`/);
+  assert.match(ottoShow.prompt, /tangent harness list --area otto\/probeotto/);
+  assert.match(ottoShow.prompt, new RegExp(path.join(trees, "harnesses\\.md").replaceAll("/", "\\/")));
+  assert.doesNotMatch(ottoShow.prompt, /tangent goal start <slug> --step/, "the prompt does not copy pipeline syntax");
+  assert.doesNotMatch(ottoShow.prompt, /Every --launch in this Area is/, "the prompt does not copy a resolved catalog snapshot");
+  const guidance = ottoShow.prompt.match(/Before every Tangent mutation,[\s\S]*?Never guess a Tangent command or launch id\./)?.[0] ?? "";
+  assert.ok(guidance, "the command guidance is one detectable block");
+  assert.ok(guidance.split(/\s+/).length <= 100, `command guidance stays bounded: ${guidance.split(/\s+/).length} words`);
 });
 
 test("the brain prompt keeps reviewed Goals open until Julian accepts the Test", async (context) => {

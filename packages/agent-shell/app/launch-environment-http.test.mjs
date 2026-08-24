@@ -118,6 +118,13 @@ test("launch options resolve the registry, and saving writes an Area default", a
   assert.equal(options.default.command, "CLAUDE_CONFIG_DIR=~/.claude-otto claude --model claude-opus-4-6");
   assert.equal(options.default.label, "Claude · Otto · Opus 4.6");
   assert.equal(options.default.source, "otto/test");
+  assert.equal(options.source, path.join(trees, "harnesses.md"));
+  assert.equal(options.harnesses[0].models[0].command, "CLAUDE_CONFIG_DIR=~/.claude-otto claude --model claude-opus-4-6");
+
+  const catalog = await fetch(`${base}/api/launch/options?area=otto/test&kind=all`).then((response) => response.json());
+  assert.equal(catalog.workDefault.command, "CLAUDE_CONFIG_DIR=~/.claude-otto claude --model claude-opus-4-6");
+  assert.equal(catalog.brainDefault.command, "CLAUDE_CONFIG_DIR=~/.claude-otto claude --model claude-opus-4-6");
+  assert.equal(catalog.default, undefined, "the catalog labels both defaults instead of inventing one generic default");
 
   // A legacy area without a declaration keeps the profile fallback.
   const fallback = await fetch(`${base}/api/launch/options?area=otto`).then((response) => response.json());

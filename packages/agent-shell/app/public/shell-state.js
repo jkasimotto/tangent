@@ -25,6 +25,7 @@ export function createShellState(storage = globalThis.localStorage, href = globa
     expandedAreas: new Set(storedJson("agent-shell.expanded-areas") || []),
     collapsedDeskSections: new Set(storedJson("agent-shell.collapsed-desk-sections") || []),
     mapStates: new Map(), mapSelectFile: "", showDoneAreas: storage.getItem("agent-shell.show-done-areas") === "1", areaEdit: null,
+    areaQuery: "", areaDocumentQuery: "", areaDocumentPeriod: "any", areaDocumentOrder: "newest", areaDocumentOnly: "", areaDocumentExcluded: new Set(),
     programId: "", programDraft: { type: "process", area: "", name: "", command: "", cwd: "" },
     launch: { area: "", options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", continueFrom: null, steps: [], active: 0, record: null },
     pipelines: [], brains: [], brainDraft: null, agentSessionName: null,

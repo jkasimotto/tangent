@@ -11,6 +11,20 @@ export function createAreaDirectoryView({ state, api, post, paint, showToast, sc
       .sort((left, right) => left.path.localeCompare(right.path));
   }
 
+  /** Areas that match the browser query, plus their ancestors for context. */
+  function filteredAreas() {
+    const source = areas();
+    const query = state.areaQuery.trim().toLowerCase();
+    if (!query) return source;
+    const keep = new Set();
+    for (const area of source) {
+      if (!`${humanName(area.name)} ${area.path}`.toLowerCase().includes(query)) continue;
+      const parts = area.path.split("/");
+      for (let count = 1; count <= parts.length; count += 1) keep.add(parts.slice(0, count).join("/"));
+    }
+    return source.filter((area) => keep.has(area.path));
+  }
+
   /** Every Area the vault knows, done ones included. */
   function allAreas() {
     return [...(state.vault?.areas ?? [])].filter((area) => area.path);
@@ -54,7 +68,7 @@ export function createAreaDirectoryView({ state, api, post, paint, showToast, sc
 
   /** Builds the collapsible Area tree. */
   function areaTreeRows() {
-    const areaItems = areas();
+    const areaItems = filteredAreas();
     const byPath = new Map(areaItems.map((area) => [area.path, area]));
     const relevant = new Set(areaItems.map((area) => area.path));
     const children = new Map();
@@ -70,7 +84,7 @@ export function createAreaDirectoryView({ state, api, post, paint, showToast, sc
       const area = byPath.get(path);
       const childPaths = children.get(path) || [];
       const expandable = childPaths.length > 0;
-      const expanded = expandable && state.expandedAreas.has(path);
+      const expanded = expandable && (Boolean(state.areaQuery.trim()) || state.expandedAreas.has(path));
       const selected = selectedArea()?.path === path;
       const row = `
         <div class="area-tree-row ${selected ? "selected" : ""}" style="--area-depth:${depth}">
@@ -189,6 +203,13 @@ export function createAreaDirectoryView({ state, api, post, paint, showToast, sc
     const problems = state.programs.errors.filter((item) => item.area === area.path);
     const done = area.status === "done";
     const current = clip(area.current ?? "", 240);
+    const planned = goalTrees().filter((tree) => tree.path === area.path && goalTreeState(tree) !== "closed" && !goalTreeIsActive(tree));
+    const documents = areaDocuments(area.path);
+    const brain = brainForAreaCard(area.path);
+    const brainClass = brainKind(brain);
+    const brainAction = brain?.live
+      ? `<button class="primary-button area-brain ${escapeHtml(brainClass)}" type="button" data-open-brain="${escapeHtml(brain.session)}" data-brain-area="${escapeHtml(area.path)}">Open brain</button>`
+      : `<button class="primary-button area-brain ${escapeHtml(brainClass)}" type="button" data-launch-for="__brain__" data-brain-area="${escapeHtml(area.path)}">${brain ? "Resume brain" : "Start brain"}</button>`;
     return `
       <section class="area-contents area-map-screen ${done ? "area-done" : ""}">
         <header class="area-contents-heading">
@@ -199,27 +220,42 @@ export function createAreaDirectoryView({ state, api, post, paint, showToast, sc
             ${current ? `<p class="area-current">${escapeHtml(current)}</p>` : ""}
           </div>
           <div class="area-contents-actions">
-            <button class="quiet-button" type="button" data-describe-area="${escapeHtml(area.path)}">Describe work</button>
-            <button class="quiet-button" type="button" data-new-area>Add nested Area</button>
-            ${area.path.split("/").length > 1 ? `<button class="quiet-button" type="button" data-rename-area>Rename or move</button>` : ""}
-            <span class="area-contents-actions-spacer"></span>
-            ${done
-              ? `<button class="quiet-button" type="button" data-reopen-area="${escapeHtml(area.path)}">Reopen</button>`
-              : `<button class="quiet-button" type="button" data-mark-area-done="${escapeHtml(area.path)}">Mark done</button>`}
+            <span class="area-brain-state ${escapeHtml(brainKind(brain))}">${escapeHtml(brainStateLabel(brain))}</span>
+            ${brainAction}
           </div>
         </header>
-        <div class="area-map-host" data-area-map="${escapeHtml(area.path)}"></div>
-        <section class="area-content-section">
-          <div class="memory-heading">
-            <div><p class="kicker">Programs</p><h3>${programs.length} ${programs.length === 1 ? "Program" : "Programs"}</h3></div>
-            <button class="quiet-button" type="button" data-new-program>New program</button>
-          </div>
-          ${programs.length
-            ? `<div class="program-list">${programs.map(programRow).join("")}</div>`
-            : `<p class="memory-empty">No Programs exist in this Area. Servers, commands, and daily agents belong here.</p>`}
-          ${problems.length ? `<details class="program-errors"><summary>${problems.length} configuration ${problems.length === 1 ? "problem" : "problems"}</summary>${problems.map((item) => `<p>${escapeHtml(item.file)} — ${escapeHtml(item.error)}</p>`).join("")}</details>` : ""}
+        <section class="area-workspace-section" aria-labelledby="area-not-started">
+          <div class="area-section-heading"><div><p class="kicker">Work</p><h3 id="area-not-started" tabindex="-1">Not started</h3></div><span>${planned.length}</span></div>
+          ${planned.length ? `<div class="area-planned-list">${planned.map((tree) => goalTreeCard(tree)).join("")}</div>` : `<p class="memory-empty">No not-started work exists in this Area.</p>`}
         </section>
+        ${documentSection(area.path, documents)}
+        <details class="area-more"><summary>More</summary>
+          <details><summary>Relationship map</summary><div class="area-map-host" data-area-map="${escapeHtml(area.path)}"></div></details>
+          <details><summary>Programs · ${programs.length}</summary><section class="area-content-section"><div class="memory-heading"><h3>Programs</h3><button class="quiet-button" type="button" data-new-program>New program</button></div>${programs.length ? `<div class="program-list">${programs.map(programRow).join("")}</div>` : `<p class="memory-empty">No Programs exist in this Area.</p>`}${problems.length ? `<div class="program-errors">${problems.map((item) => `<p>${escapeHtml(item.file)} — ${escapeHtml(item.error)}</p>`).join("")}</div>` : ""}</section></details>
+          <details><summary>Area settings</summary><div class="area-settings-actions"><button class="quiet-button" type="button" data-new-area>Add nested Area</button>${area.path.split("/").length > 1 ? `<button class="quiet-button" type="button" data-rename-area>Rename or move</button>` : ""}${done ? `<button class="quiet-button" type="button" data-reopen-area="${escapeHtml(area.path)}">Reopen</button>` : `<button class="quiet-button" type="button" data-mark-area-done="${escapeHtml(area.path)}">Mark done</button>`}</div></details>
+        </details>
       </section>`;
+  }
+
+  /** Applies the Area's Document query, type, date, and order controls. */
+  function areaDocuments(path) {
+    const query = state.areaDocumentQuery.trim().toLowerCase();
+    const cutoffDays = { today: 1, week: 7, month: 30 }[state.areaDocumentPeriod];
+    const cutoff = cutoffDays ? Date.now() - cutoffDays * 86_400_000 : 0;
+    const documents = (state.vault?.documents ?? []).filter((item) => item.kind === "document" && item.area === path)
+      .filter((item) => !query || `${item.title} ${item.file}`.toLowerCase().includes(query))
+      .filter((item) => !state.areaDocumentOnly || (item.docKind ?? "page") === state.areaDocumentOnly)
+      .filter((item) => !state.areaDocumentExcluded.has(item.docKind ?? "page"))
+      .filter((item) => !cutoff || Number(item.changedAt ?? item.mtime ?? 0) >= cutoff);
+    const direction = state.areaDocumentOrder === "oldest" ? 1 : -1;
+    return documents.sort((left, right) => direction * (Number(left.changedAt ?? left.mtime ?? 0) - Number(right.changedAt ?? right.mtime ?? 0)));
+  }
+
+  /** Renders the filtered Document inventory for one Area. */
+  function documentSection(path, documents) {
+    const kinds = [...new Set((state.vault?.documents ?? []).filter((item) => item.kind === "document" && item.area === path).map((item) => item.docKind ?? "page"))].sort();
+    const controls = kinds.map((kind) => `<span class="area-kind-control"><button type="button" data-area-kind-only="${escapeHtml(kind)}" aria-pressed="${state.areaDocumentOnly === kind}">Only ${escapeHtml(humanName(kind))}</button><button type="button" data-area-kind-exclude="${escapeHtml(kind)}" aria-pressed="${state.areaDocumentExcluded.has(kind)}" aria-label="Exclude ${escapeHtml(humanName(kind))}">×</button></span>`).join("");
+    return `<section class="area-workspace-section area-documents" aria-labelledby="area-documents-heading"><div class="area-section-heading"><div><p class="kicker">Knowledge</p><h3 id="area-documents-heading">Documents</h3></div><span>${documents.length}</span></div><div class="area-document-tools"><input id="area-document-search" type="search" value="${escapeHtml(state.areaDocumentQuery)}" placeholder="Filter Documents" aria-label="Filter Documents"><select id="area-document-period" aria-label="Modified date"><option value="any" ${state.areaDocumentPeriod === "any" ? "selected" : ""}>Any time</option><option value="today" ${state.areaDocumentPeriod === "today" ? "selected" : ""}>Today</option><option value="week" ${state.areaDocumentPeriod === "week" ? "selected" : ""}>7 days</option><option value="month" ${state.areaDocumentPeriod === "month" ? "selected" : ""}>30 days</option></select><select id="area-document-order" aria-label="Document order"><option value="newest" ${state.areaDocumentOrder === "newest" ? "selected" : ""}>Newest first</option><option value="oldest" ${state.areaDocumentOrder === "oldest" ? "selected" : ""}>Oldest first</option></select></div><div class="area-kind-filters">${controls}${kinds.length ? `<button class="area-filter-reset" type="button" data-area-kind-reset>Reset</button>` : ""}</div>${documents.length ? `<div class="document-list">${documents.map((item) => `<button class="document-row" type="button" data-open-document="${escapeHtml(item.file)}"><span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(humanName(item.docKind ?? "page"))} · ${escapeHtml(item.file)}</small></span><span>${item.changedAt || item.mtime ? new Date(item.changedAt ?? item.mtime).toLocaleDateString() : ""}</span></button>`).join("")}</div>` : `<p class="memory-empty">No Documents match these filters.</p>`}</section>`;
   }
 
   /** Renders the Area hierarchy and the contents of the selected Area. */
@@ -227,12 +263,9 @@ export function createAreaDirectoryView({ state, api, post, paint, showToast, sc
     const selected = selectedArea();
     const rows = areaTreeRows();
     return `
-      <section class="areas-page">
-        <header class="surface-heading">
-          <div><p class="kicker">Areas</p><h1>Where work belongs</h1><p>Choose an Area. Change it only when you need to.</p></div>
-        </header>
+      <section class="areas-page area-browser-page">
         <div class="area-layout">
-          <div class="area-browser">${rows || `<div class="empty-state">No areas exist.</div>`}</div>
+          <aside class="area-browser"><label class="area-search-label" for="area-search">Find an Area</label><input id="area-search" type="search" value="${escapeHtml(state.areaQuery)}" placeholder="Type an Area name or path" autocomplete="off">${rows || `<div class="empty-state">No Areas match “${escapeHtml(state.areaQuery)}”.</div>`}</aside>
           ${selected ? areaContents(selected) : ""}
         </div>
       </section>`;

@@ -230,6 +230,11 @@ export function createShellInteractions({ state, api, post, paint, refresh, show
     state.areaEdit = null;
     state.view = "areas";
     paint(true);
+    window.setTimeout(() => {
+      const input = document.querySelector("#area-search");
+      input?.focus();
+      input?.select();
+    }, 0);
   }
 
   /** Opens area creation under the selected area. */

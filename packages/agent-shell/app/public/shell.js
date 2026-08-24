@@ -1180,6 +1180,11 @@ bindShellEvents({
 void (async () => {
   await refresh({ initial: true });
   if (requestedDocument) await openDocument(requestedDocument);
+  else if (state.view === "areas") window.setTimeout(() => {
+    const input = document.querySelector("#area-search");
+    input?.focus();
+    input?.select();
+  }, 0);
 })();
 // Mutations and reconciliation push invalidations. The slow timer is only a
 // recovery path for a suspended browser or a dropped event stream.

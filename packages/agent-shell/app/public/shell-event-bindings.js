@@ -106,6 +106,26 @@ export function bindShellEvents({ state, post, paint, refresh, showToast, screen
     if (area) {
       state.areaSelection = area.dataset.selectArea;
       localStorage.setItem("agent-shell.last-area", state.areaSelection);
+      paint(true);
+      return window.setTimeout(() => document.querySelector("#area-not-started")?.focus(), 0);
+    }
+    const kindOnly = target.closest("[data-area-kind-only]");
+    if (kindOnly) {
+      state.areaDocumentOnly = state.areaDocumentOnly === kindOnly.dataset.areaKindOnly ? "" : kindOnly.dataset.areaKindOnly;
+      state.areaDocumentExcluded.delete(kindOnly.dataset.areaKindOnly);
+      return paint(true);
+    }
+    const kindExclude = target.closest("[data-area-kind-exclude]");
+    if (kindExclude) {
+      const kind = kindExclude.dataset.areaKindExclude;
+      state.areaDocumentOnly = state.areaDocumentOnly === kind ? "" : state.areaDocumentOnly;
+      if (state.areaDocumentExcluded.has(kind)) state.areaDocumentExcluded.delete(kind);
+      else state.areaDocumentExcluded.add(kind);
+      return paint(true);
+    }
+    if (target.closest("[data-area-kind-reset]")) {
+      state.areaDocumentOnly = "";
+      state.areaDocumentExcluded.clear();
       return paint(true);
     }
     const openArea = target.closest("[data-open-area]");
@@ -650,6 +670,17 @@ export function bindShellEvents({ state, post, paint, refresh, showToast, screen
       saveDescribeDraft();
       return;
     }
+    if (["area-search", "area-document-search"].includes(event.target.id)) {
+      const id = event.target.id;
+      const cursor = event.target.selectionStart;
+      if (id === "area-search") state.areaQuery = event.target.value;
+      else state.areaDocumentQuery = event.target.value;
+      paint(true);
+      const input = document.querySelector(`#${id}`);
+      input?.focus();
+      input?.setSelectionRange(cursor, cursor);
+      return;
+    }
     if (event.target.id !== "work-search") return;
     state.query = event.target.value;
     const cursor = event.target.selectionStart;
@@ -660,6 +691,12 @@ export function bindShellEvents({ state, post, paint, refresh, showToast, screen
   });
 
   document.addEventListener("change", async (event) => {
+    if (event.target.id === "area-document-period" || event.target.id === "area-document-order") {
+      if (event.target.id === "area-document-period") state.areaDocumentPeriod = event.target.value;
+      else state.areaDocumentOrder = event.target.value;
+      paint(true);
+      return;
+    }
     if (event.target.matches?.("select[data-launch-continue]")) {
       state.launch.continueFrom = event.target.value ? Number(event.target.value) : null;
       return;
@@ -777,6 +814,27 @@ export function bindShellEvents({ state, post, paint, refresh, showToast, screen
   });
 
   document.addEventListener("keydown", (event) => {
+    if (event.target.id === "area-search") {
+      const rows = [...screen.querySelectorAll("[data-select-area]")];
+      const selected = rows.findIndex((row) => row.dataset.selectArea === state.areaSelection);
+      if (event.key === "Escape" && state.areaQuery) {
+        event.preventDefault();
+        state.areaQuery = "";
+        paint(true);
+        return window.setTimeout(() => document.querySelector("#area-search")?.focus(), 0);
+      }
+      if (["ArrowDown", "ArrowUp"].includes(event.key) && rows.length) {
+        event.preventDefault();
+        const next = event.key === "ArrowDown" ? Math.min(rows.length - 1, selected + 1) : Math.max(0, selected < 0 ? 0 : selected - 1);
+        rows[next].focus();
+        return;
+      }
+      if (event.key === "Enter" && rows.length) {
+        event.preventDefault();
+        rows[Math.max(0, selected)]?.click();
+        return;
+      }
+    }
     if (shortcutMatches(event, KEYMAP.goTo)) {
       event.preventDefault();
       return openGoTo();

@@ -54,6 +54,14 @@ test("cross-Area dependencies stay counted at portals and expose boundary Goals"
   assert.deepEqual(result.frontier.map((item) => [item.path, item.dependencyCount]), [["otto/team/a", 1], ["otto/team/b", 1]]);
 });
 
+test("cross-Area boundary details use the same twelve-item disclosure limit", () => {
+  const sources = Array.from({ length: 20 }, (_, index) => goal(`otto/team/a/goal-${index}.md`, `Source ${index}`, "otto/team/a"));
+  const targets = sources.map((source, index) => goal(`otto/team/b/goal-${index}.md`, `Target ${index}`, "otto/team/b", [], [{ file: source.file, title: source.title, status: "open" }]));
+  const result = core.project({ scope: "otto/team", goals: [...sources, ...targets], areaPaths: ["otto/team/a", "otto/team/b"] });
+  assert.equal(result.boundaryEdges.length, 12);
+  assert.equal(result.boundaryHidden, 8);
+});
+
 test("cycles and zero-ready graphs explain why no Goal is ready", () => {
   const a = goal("otto/team/goal-a.md", "A", "otto/team");
   const b = goal("otto/team/goal-b.md", "B", "otto/team");

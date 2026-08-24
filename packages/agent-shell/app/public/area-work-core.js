@@ -122,12 +122,14 @@ function project({ scope, goals, areaPaths, filters = {}, limits = {} }) {
   const successorLimit = Math.max(PAGE_SIZE, Number(limits.successors ?? PAGE_SIZE) * successorDepth);
   const successors = allSuccessors.slice(0, successorLimit).map((goal) => ({ kind: "goal", goal, fact: facts.get(goal.file) }));
   const deeperSuccessors = successorLayers.length > successorDepth;
+  const boundaryLimit = Math.max(PAGE_SIZE, Number(limits.boundaries ?? PAGE_SIZE));
+  const visibleBoundaryEdges = boundaryEdges.slice(0, boundaryLimit);
   const emptyReason = open.length && !open.some((goal) => facts.get(goal.file).kind === "ready")
     ? (open.some((goal) => facts.get(goal.file).kind === "error") ? "No Goal is ready because the dependency graph has an error."
       : open.some((goal) => facts.get(goal.file).kind === "broken") ? "No Goal is ready because a prerequisite will not be done."
       : "No Goal is ready because every Goal has an unfinished prerequisite.") : "";
   return { openCount: open.length, readyCount: open.filter((goal) => facts.get(goal.file).kind === "ready").length, matchCount: matches.length,
     frontier, frontierHidden: allFrontier.length - frontier.length, successors, successorHidden: allSuccessors.length - successors.length,
-    deeperSuccessors, successorDepth, boundaryEdges, emptyReason, reduced };
+    deeperSuccessors, successorDepth, boundaryEdges: visibleBoundaryEdges, boundaryHidden: boundaryEdges.length - visibleBoundaryEdges.length, emptyReason, reduced };
 }
 export default { PAGE_SIZE, cycleFiles, isInside, matchesPerson, project, readiness, stableGoals };

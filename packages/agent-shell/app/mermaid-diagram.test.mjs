@@ -72,6 +72,15 @@ test("creates labels as SVG text without HTML, links, events, or resource URLs",
   assert.equal([...svg.querySelectorAll("*")].some((node) => [...node.attributes].some((attribute) => /url\((?!#)/i.test(attribute.value))), false);
 });
 
+test("wraps long node labels without losing their text", () => {
+  const dom = new JSDOM("<!doctype html><body></body>");
+  const source = "flowchart LR\nA[Desk popover: step list] --> B[(~/.tangent/agent-shell/pipelines/area/slug.json)]";
+  const svg = renderMermaidSvg(dom.window.document, parseMermaidDiagram(source));
+  const labels = [...svg.querySelectorAll(".diagram-node text")];
+  assert.ok(labels.some((label) => label.querySelectorAll("tspan").length > 1));
+  assert.equal(labels.map((label) => label.textContent).join("").replace(/\s/g, ""), "Deskpopover:steplist~/.tangent/agent-shell/pipelines/area/slug.json");
+});
+
 test("mount renders valid diagrams and keeps readable source with actionable failures", () => {
   const dom = new JSDOM(`<main>
     <div data-mermaid-diagram><pre><code>flowchart LR\nA --&gt; B</code></pre></div>

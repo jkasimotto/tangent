@@ -188,7 +188,7 @@ test("a brain notice survives a server restart and reaches the next generation a
   assert.match(show.prompt, /## Notices you have not read/);
   assert.match(show.prompt, /pipeline complete/);
   assert.match(show.prompt, /Implemented the probe/);
-  assert.match(show.prompt, /No message is lost/, "the prompt says notices wait on disk");
+  assert.match(show.prompt, /Tangent recorded these while no generation of this brain was reading/, "the prompt says notices wait on disk");
 
   const read = await readInbox(brains, `otto/${leaf}`);
   assert.equal(unreadNotices(read).length, 0, "generation 2 read it, so it is not repeated");

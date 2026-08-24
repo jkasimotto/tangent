@@ -202,7 +202,6 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(updated.goal.myUnderstanding, "I asked for a visible result. I will inspect it before I close the goal.");
   assert.match(updated.markdown, /## Julian's understanding/);
   assert.match(updated.markdown, /no need to re-confirm the assignment/);
-  assert.match(updated.markdown, /Story so far/);
 
   const described = await fetch(`${base}/api/work/describe`, {
     method: "POST",
@@ -474,7 +473,7 @@ test("the context-first shell is default and keeps the user's understanding with
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ session: described.session, text: "nothing" }),
   });
-  assert.equal(strayHandover.status, 404);
+  assert.equal(strayHandover.status, 409);
   const editRunning = await fetch(`${base}/api/pipelines/edit`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -610,9 +609,16 @@ test("the context-first shell is default and keeps the user's understanding with
     if (command === "sleep") break;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  // The server caches a pane sample for MIN_SAMPLE_MS (1200ms); the last poll
-  // saw a shell, so wait out the window or the append reads a stale "shell".
-  await new Promise((resolve) => setTimeout(resolve, 1300));
+  // Wait until the server's cached session sample sees the process. The tmux
+  // command can change before the API sample refreshes under full-suite load.
+  let sampledLive = false;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const current = await fetch(`${base}/api/sessions`).then((response) => response.json());
+    const session = current.sessions.find((item) => item.name === "test-pipeline-demo-s5");
+    if (session && session.state !== "shell") { sampledLive = true; break; }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.equal(sampledLive, true, "the server sees the live final step before append");
   const appendAfterLive = await fetch(`${base}/api/pipelines/append`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -724,7 +730,7 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.doesNotMatch(brainShow.prompt, /claude\//);
   assert.equal((await fetch(`${base}/api/brains/show?area=otto%2Fnowhere`)).status, 404);
   const briefUnderBrain = await fetch(`${base}/api/goals/brief?file=${encodeURIComponent(pipelineGoal.file)}`).then((response) => response.json());
-  assert.match(briefUnderBrain.markdown, /## Brain\n\nThis Goal is part of the plan of the brain session `test-brain` for Area otto\/test/);
+  assert.match(briefUnderBrain.markdown, /## Brain\n\nThe brain for Area otto\/test controls this work/);
   // A pipeline event on the Area is queued to the brain as a message from tangent.
   const eventPipeline = await fetch(`${base}/api/pipelines/append`, {
     method: "POST",

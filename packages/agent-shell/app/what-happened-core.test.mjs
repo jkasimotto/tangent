@@ -1,10 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-await import("./public/what-happened-core.js");
-await import("./public/area-map-core.js");
-
-const core = globalThis.AgentShellWhatHappened;
-const areaMap = globalThis.AgentShellAreaMap;
+import core from "./public/what-happened-core.js";
+import areaMap from "./public/area-map-core.js";
 const HOUR = 3_600_000;
 
 test("CLOSE_WINDOW_MS is 12 hours", () => {

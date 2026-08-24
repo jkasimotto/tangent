@@ -140,6 +140,35 @@ function svgElement(document, name, attributes = {}) {
   return element;
 }
 
+/** Splits a label into short SVG lines without discarding long path segments. */
+function labelLines(value, limit = 24) {
+  const lines = [];
+  let current = "";
+  for (const word of String(value).split(/\s+/).filter(Boolean)) {
+    const pieces = word.length > limit ? word.match(new RegExp(`.{1,${limit}}`, "g")) : [word];
+    for (const piece of pieces) {
+      if (current && current.length + piece.length + 1 > limit) { lines.push(current); current = ""; }
+      current = current ? `${current} ${piece}` : piece;
+      if (current.length === limit) { lines.push(current); current = ""; }
+    }
+  }
+  if (current || !lines.length) lines.push(current);
+  return lines;
+}
+
+/** Adds a centered multi-line text label. */
+function appendLabel(document, parent, value, x, y, limit) {
+  const lines = labelLines(value, limit);
+  const label = svgElement(document, "text", { x, y: y - ((lines.length - 1) * 9), "text-anchor": "middle" });
+  lines.forEach((line, index) => {
+    const span = svgElement(document, "tspan", { x, dy: index ? 18 : 0 });
+    span.textContent = line;
+    label.append(span);
+  });
+  parent.append(label);
+  return lines.length;
+}
+
 /** Builds a safe SVG diagram directly from the parsed graph model. */
 export function renderMermaidSvg(document, model) {
   const ranks = graphRanks(model);
@@ -155,10 +184,10 @@ export function renderMermaidSvg(document, model) {
   const positions = new Map();
   for (const [rank, nodes] of byRank) nodes.forEach((node, lane) => {
     const logicalRank = reverse ? maxRank - rank : rank;
-    positions.set(node.id, horizontal ? { x: 110 + logicalRank * 230, y: 85 + lane * 120 } : { x: 110 + lane * 230, y: 85 + logicalRank * 130 });
+    positions.set(node.id, horizontal ? { x: 120 + logicalRank * 290, y: 95 + lane * 150 } : { x: 120 + lane * 290, y: 95 + logicalRank * 160 });
   });
-  const width = Math.max(260, ...[...positions.values()].map((point) => point.x + 120));
-  const height = Math.max(170, ...[...positions.values()].map((point) => point.y + 75));
+  const width = Math.max(280, ...[...positions.values()].map((point) => point.x + 130));
+  const height = Math.max(190, ...[...positions.values()].map((point) => point.y + 85));
   const svg = svgElement(document, "svg", { viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": `${model.kind === "state" ? "State" : "Flowchart"} diagram` });
   const title = svgElement(document, "title"); title.textContent = model.kind === "state" ? "State diagram" : "Flowchart diagram"; svg.append(title);
   const defs = svgElement(document, "defs");
@@ -175,9 +204,13 @@ export function renderMermaidSvg(document, model) {
   }
   for (const edge of model.edges) {
     const from = positions.get(edge.from), to = positions.get(edge.to);
+    const dx = to.x - from.x, dy = to.y - from.y;
+    const length = Math.hypot(dx, dy) || 1;
+    const start = { x: from.x + (dx / length) * 96, y: from.y + (dy / length) * 42 };
+    const end = { x: to.x - (dx / length) * 96, y: to.y - (dy / length) * 42 };
     const element = svgElement(document, "g", { class: "diagram-edge" });
-    element.append(svgElement(document, "path", { d: `M ${from.x} ${from.y} L ${to.x} ${to.y}`, "marker-end": "url(#diagram-arrow)" }));
-    if (edge.label) { const label = svgElement(document, "text", { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 - 8 }); label.textContent = edge.label; element.append(label); }
+    element.append(svgElement(document, "path", { d: `M ${start.x} ${start.y} L ${end.x} ${end.y}`, "marker-end": "url(#diagram-arrow)" }));
+    if (edge.label) appendLabel(document, element, edge.label, (from.x + to.x) / 2, (from.y + to.y) / 2 - 10, 22);
     svg.append(element);
   }
   for (const node of model.nodes) {
@@ -188,7 +221,7 @@ export function renderMermaidSvg(document, model) {
     else if (node.shape === "circle") element.append(svgElement(document, "circle", { cx: point.x, cy: point.y, r: 46 }));
     else if (node.shape === "cylinder") element.append(svgElement(document, "path", { d: `M ${point.x - 88} ${point.y - 25} C ${point.x - 88} ${point.y - 43}, ${point.x + 88} ${point.y - 43}, ${point.x + 88} ${point.y - 25} L ${point.x + 88} ${point.y + 25} C ${point.x + 88} ${point.y + 43}, ${point.x - 88} ${point.y + 43}, ${point.x - 88} ${point.y + 25} Z M ${point.x - 88} ${point.y - 25} C ${point.x - 88} ${point.y - 7}, ${point.x + 88} ${point.y - 7}, ${point.x + 88} ${point.y - 25}` }));
     else element.append(svgElement(document, "rect", { x: point.x - 88, y: point.y - 34, width: 176, height: 68, rx: ["rounded", "stadium"].includes(node.shape) ? 34 : 7 }));
-    if (node.label) { const label = svgElement(document, "text", { x: point.x, y: point.y + 5, "text-anchor": "middle" }); label.textContent = node.label; element.append(label); }
+    if (node.label) appendLabel(document, element, node.label, point.x, point.y + 5, 22);
     svg.append(element);
   }
   return svg;

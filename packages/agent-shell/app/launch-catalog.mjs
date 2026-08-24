@@ -30,14 +30,14 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
     return launch.command;
   }
 
-  /** Resolves the inherited brain launch, then Fable, then the Area work default. */
+  /** Resolves the inherited brain launch, then the declared Area work default. */
   async function forBrain(area) {
     const current = await registry();
     if (current.error) return { error: current.error };
     const declared = await inheritedBrainLaunch(area, readAreaNote, current);
     if (declared) return declared;
-    const fable = resolveLaunch(current, { harness: "claude", model: "fable-5" });
-    return fable.error ? inheritedLaunch(area, readAreaNote, current) : { ...fable, source: null };
+    const work = await inheritedLaunch(area, readAreaNote, current, { fallback: false });
+    return work ?? { error: `${area}: no brain or work launch is declared` };
   }
 
   /** Returns one registry snapshot with exact commands and the requested Area defaults. */
@@ -76,11 +76,7 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
     const workDefault = area ? await inheritedLaunch(area, readAreaNote, current) : null;
     let brainDefault = null;
     if (area) {
-      brainDefault = await inheritedBrainLaunch(area, readAreaNote, current);
-      if (!brainDefault) {
-        const fable = resolveLaunch(current, { harness: "claude", model: "fable-5" });
-        brainDefault = fable.error ? workDefault : { ...fable, source: null };
-      }
+      brainDefault = await forBrain(area);
     }
     return {
       source: path.join(root, "harnesses.md"),

@@ -92,6 +92,34 @@ test("launch catalog lists inherited codex defaults and model-specific efforts f
   assert.equal(options.harnesses[0].models[0].efforts[1].command, "codex --model gpt-sol -c effort=ultra");
 });
 
+test("brain launch resolution uses brain, then work, then a named Area error", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "tangent-launch-catalog-brain-"));
+  await writeFile(path.join(root, "harnesses.md"), [
+    "```tangent.harnesses.v1",
+    JSON.stringify({
+      version: 1,
+      harnesses: [
+        { id: "work", command: "work-agent" },
+        { id: "brain", command: "brain-agent" },
+      ],
+    }),
+    "```",
+  ].join("\n"));
+  const notes = new Map([
+    ["declared", "```tangent.environment.v1\n{\"defaults\":{\"launch\":{\"harness\":\"work\"},\"brain\":{\"harness\":\"brain\"}}}\n```"],
+    ["work-only", "```tangent.environment.v1\n{\"defaults\":{\"launch\":{\"harness\":\"work\"}}}\n```"],
+  ]);
+  /** Reads one Area note from the launch-resolution fixture. */
+  const readAreaNote = async (area) => notes.get(area) ?? "";
+  const catalog = createLaunchCatalog({ root, readAreaNote });
+
+  assert.equal((await catalog.forBrain("declared/child")).command, "brain-agent");
+  assert.equal((await catalog.forBrain("work-only/child")).command, "work-agent");
+  assert.deepEqual(await catalog.forBrain("undeclared/child"), {
+    error: "undeclared/child: no brain or work launch is declared",
+  });
+});
+
 test("launch catalog reports non-otto inherited defaults without an otto fallback", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "tangent-launch-catalog-non-otto-"));
   await mkdir(path.join(root, "client", "product"), { recursive: true });

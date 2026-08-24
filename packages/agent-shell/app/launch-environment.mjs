@@ -210,10 +210,10 @@ export async function inheritedBrainLaunch(area, readAreaNote, registry) {
 
 /**
  * Resolves the inherited default launch for one Area: the nearest ancestor
- * with an environment default wins, then a legacy `- Agent:` resource line,
- * then the profile fallback (otto/** runs claude-otto, the rest claude).
+ * with an environment default wins, then a legacy `- Agent:` resource line.
+ * Callers can suppress the legacy profile fallback when a declaration is required.
  */
-export async function inheritedLaunch(area, readAreaNote, registry) {
+export async function inheritedLaunch(area, readAreaNote, registry, { fallback = true } = {}) {
   for (const candidate of areaAncestors(area)) {
     const note = await readAreaNote(candidate);
     const environment = parseEnvironmentBlock(note);
@@ -226,6 +226,7 @@ export async function inheritedLaunch(area, readAreaNote, registry) {
     const legacy = noteResource(note, "Agent");
     if (legacy) return { command: legacy, label: null, harness: null, model: null, source: candidate };
   }
-  const fallback = String(area ?? "").split("/")[0] === "otto" ? "claude-otto" : "claude";
-  return { command: fallback, label: null, harness: null, model: null, source: null };
+  if (!fallback) return null;
+  const fallbackCommand = String(area ?? "").split("/")[0] === "otto" ? "claude-otto" : "claude";
+  return { command: fallbackCommand, label: null, harness: null, model: null, source: null };
 }

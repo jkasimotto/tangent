@@ -39,9 +39,13 @@ test("the brain prompt gives bounded authoritative command and harness discovery
   const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-brain-prompt-"));
   const trees = path.join(root, "trees");
   const ottoArea = path.join(trees, "otto", "probeotto");
+  const emptyArea = path.join(trees, "otto", "probeempty");
   await mkdir(ottoArea, { recursive: true });
+  await mkdir(emptyArea, { recursive: true });
+  await writeFile(path.join(trees, "harnesses.md"), "```tangent.harnesses.v1\n{\"version\":1,\"harnesses\":[{\"id\":\"codex\",\"command\":\"codex\"},{\"id\":\"brain\",\"command\":\"brain-agent\"}]}\n```\n", "utf8");
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
-  await writeFile(path.join(ottoArea, "probeotto.md"), "---\ntype: area\n---\n\n# Probe otto\n", "utf8");
+  await writeFile(path.join(ottoArea, "probeotto.md"), "---\ntype: area\n---\n\n# Probe otto\n\n```tangent.environment.v1\n{\"defaults\":{\"launch\":{\"harness\":\"codex\"},\"brain\":{\"harness\":\"brain\"}}}\n```\n", "utf8");
+  await writeFile(path.join(emptyArea, "probeempty.md"), "---\ntype: area\n---\n\n# Probe empty\n", "utf8");
 
   let port;
   try {
@@ -93,12 +97,24 @@ test("the brain prompt gives bounded authoritative command and harness discovery
   const ottoShow = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(ottoBrain.session)}`).then((response) => response.json());
   assert.match(ottoShow.prompt, /Before every Tangent mutation, run `tangent <noun> --help`/);
   assert.match(ottoShow.prompt, /tangent harness list --area otto\/probeotto/);
+  assert.match(ottoShow.prompt, /resolved work harness for this Area is `codex`/);
+  assert.doesNotMatch(ottoShow.prompt, /resolved work harness for this Area is `claude`/);
   assert.match(ottoShow.prompt, new RegExp(path.join(trees, "harnesses\\.md").replaceAll("/", "\\/")));
   assert.doesNotMatch(ottoShow.prompt, /tangent goal start <slug> --step/, "the prompt does not copy pipeline syntax");
   assert.doesNotMatch(ottoShow.prompt, /Every --launch in this Area is/, "the prompt does not copy a resolved catalog snapshot");
   const guidance = ottoShow.prompt.match(/Before every Tangent mutation,[\s\S]*?Never guess a Tangent command or launch id\./)?.[0] ?? "";
   assert.ok(guidance, "the command guidance is one detectable block");
   assert.ok(guidance.split(/\s+/).length <= 100, `command guidance stays bounded: ${guidance.split(/\s+/).length} words`);
+
+  const emptyBrain = await fetch(`${base}/api/brains/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ area: "otto/probeempty", instruction: "Get the empty Area done.", command: "brain-agent" }),
+  }).then((response) => response.json());
+  openedSessions.push(emptyBrain.session);
+  const emptyShow = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(emptyBrain.session)}`).then((response) => response.json());
+  assert.match(emptyShow.prompt, /No work harness is declared for Area `otto\/probeempty`/);
+  assert.doesNotMatch(emptyShow.prompt, /work harness.*`claude/);
 });
 
 test("the brain prompt keeps reviewed Goals open until Julian accepts the Test", async (context) => {
@@ -153,7 +169,7 @@ test("the brain prompt keeps reviewed Goals open until Julian accepts the Test",
   const brain = await fetch(`${base}/api/brains/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ area: "otto/probesweep", instruction: "Get the probe Area done." }),
+    body: JSON.stringify({ area: "otto/probesweep", instruction: "Get the probe Area done.", command: "brain-agent" }),
   }).then((response) => response.json());
   openedSessions.push(brain.session);
   const show = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(brain.session)}`).then((response) => response.json());
@@ -235,7 +251,7 @@ test("the brain prompt uses structured plan, decision, test, and approval reques
   const brain = await fetch(`${base}/api/brains/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ area: `otto/${leaf}`, instruction: "Get the probe Area done." }),
+    body: JSON.stringify({ area: `otto/${leaf}`, instruction: "Get the probe Area done.", command: "brain-agent" }),
   }).then((response) => response.json());
   openedSessions.push(brain.session);
   const show = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(brain.session)}`).then((response) => response.json());

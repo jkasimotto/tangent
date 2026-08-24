@@ -2913,12 +2913,16 @@ async function flushBrainNotices(sessions = null, reason = "unread notices after
 }
 
 /** The bounded discovery contract; installed help and the launch catalog own all dynamic details. */
-function brainCommandContext(area) {
+async function brainCommandContext(area) {
+  const workLaunch = await launchCatalog.forArea(area);
+  const workHarness = workLaunch.harness
+    ? `The resolved work harness for this Area is \`${workLaunch.harness}\`.`
+    : `No work harness is declared for Area \`${area}\`.`;
   return (
     `Before every Tangent mutation, run \`tangent <noun> --help\` and copy its installed syntax. ` +
     `Brain commands: area, brain, goal, document, agent, idea, vault, shell, harness, and handover. ` +
     `Before you select \`--launch\`, run \`tangent harness list --area ${area}\`. ` +
-    `It reports the resolved defaults and valid harness, model, and effort ids. ` +
+    `It reports the resolved defaults and valid harness, model, and effort ids. ${workHarness} ` +
     `The exact invocation catalog is \`${path.join(TREES_ROOT, "harnesses.md")}\`. Read it when you need command arguments. Never guess a Tangent command or launch id.`
   );
 }
@@ -2959,7 +2963,7 @@ async function brainPrompt(record) {
       ? `## Notices you have not read\n\nTangent recorded these while no generation of this brain was reading. Each one is an agent event under this Area. Read them before you plan, and act on the ones that need it.\n\n${noticeBlock(notices)}\n\n`
       : "") +
     `## How to work\n\n` +
-    `${brainCommandContext(area)}\n\n` +
+    `${await brainCommandContext(area)}\n\n` +
     `You own ${area} and its descendants that have no more-specific live brain. For each work Area, Tangent selects the exact live brain and then its ancestors. Do not act on work inside a more-specific live brain's territory. If that child stops, its work returns to the nearest live ancestor.\n\n` +
     `You orchestrate work; you do not perform it. Never investigate the repository, design a solution, write an implementation or solution Document, edit product code, run the work's tests, or review an implementation yourself. Delegate every investigation, design, implementation, test, and review to a worker, even when the task looks small. Your own writes are limited to Tangent's orchestration records: the Area plan, Goals and dependencies, Requests, messages, verdict and status facts from worker reports, and your brain handover. You can read Area context, worker reports, and their result Documents to choose the next orchestration action. Do not turn that reading into your own design or implementation.\n\n` +
     `On takeover, run \`tangent agent list\` and sweep every running step's pane: a session shown as "needs decision" or "draft" carries an \`asks:\` line with the question, and it is stuck waiting on a person, not idle. Answer it or message the worker (\`tangent agent send <session> "..."\`) before anything else.\n\n` +

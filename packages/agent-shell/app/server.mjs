@@ -12,7 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { doneCascade } from "./goal-cascade.mjs";
 import { noteResource } from "./area-agent-command.mjs";
-import { harnessEfforts, harnessModels, modelEfforts } from "./launch-environment.mjs";
+import { harnessEfforts, harnessModels, modelEfforts, resolveLaunch } from "./launch-environment.mjs";
 import { createLaunchCatalog } from "./launch-catalog.mjs";
 import { createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
 import { commandSession, programsSnapshot, saveLocalProgram } from "./programs.mjs";

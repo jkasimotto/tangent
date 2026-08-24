@@ -118,6 +118,31 @@ summary:focus-visible {
 .prompt-bestiary h1 { margin: 4px 0 10px; font-size: clamp(30px, 3vw, 44px); letter-spacing: -.04em; }
 .prompt-bestiary h2 { margin: 0; color: #e5e9ed; font-size: 19px; }
 .prompt-bestiary-intro > p:last-child { max-width: 760px; margin: 0; color: var(--muted); font-size: 15px; line-height: 1.6; }
+.model-modes { display: flex; gap: 7px; margin-top: 20px; }
+.model-modes button { padding: 8px 12px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 700; }
+.model-modes button[aria-pressed="true"] { border-color: #618bb8; background: #192634; color: #eaf2fa; }
+.model-layout { display: grid; grid-template-columns: minmax(500px, 1fr) minmax(300px, 390px); overflow: hidden; border: 1px solid var(--line); border-radius: 15px; background: #101318; }
+.concept-map { display: grid; gap: 0; min-width: 0; }
+.concept-band { display: grid; grid-template-columns: 130px minmax(0, 1fr); border-top: 1px solid var(--line); }
+.concept-band:first-child { border-top: 0; }
+.concept-band > header { padding: 18px 14px; border-right: 1px solid var(--line); background: #0d1014; color: var(--quiet); font-size: 10px; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
+.concept-band > div { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding: 12px; }
+.concept-band button { display: grid; align-content: start; gap: 6px; min-width: 0; padding: 13px; border: 1px solid #2b333d; border-radius: 9px; background: #14181e; color: var(--text); cursor: pointer; text-align: left; }
+.concept-band button:hover { border-color: #47617c; background: #182029; }
+.concept-band button[aria-pressed="true"] { border-color: #618bb8; background: #192634; box-shadow: 0 0 0 2px rgba(97, 139, 184, .12); }
+.concept-band button strong { font-size: 13px; }
+.concept-band button small { color: var(--quiet); font-size: 10px; line-height: 1.45; }
+.concept-map-note { margin: 0; padding: 14px 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.concept-inspector { min-width: 0; padding: 24px; border-left: 1px solid var(--line); background: #12161b; }
+.concept-inspector h2 { margin: 4px 0 18px; font-size: 25px; }
+.concept-inspector dl { display: grid; margin: 0; }
+.concept-inspector dl > div { padding: 10px 0; border-top: 1px solid #272c32; }
+.concept-inspector dt { margin-bottom: 4px; color: var(--quiet); font-size: 10px; font-weight: 720; text-transform: uppercase; }
+.concept-inspector dd { margin: 0; color: #c5ccd3; font-size: 12px; line-height: 1.5; }
+.concept-examples { margin-top: 22px; padding: 15px; border: 1px solid #2b3743; border-radius: 9px; background: #0d1217; }
+.concept-examples > strong { font-size: 14px; }
+.concept-examples ul { display: grid; gap: 5px; margin: 10px 0 0; padding-left: 18px; color: var(--muted); font-size: 11px; }
+.concept-examples > p:last-child { margin: 8px 0 0; color: var(--quiet); font-size: 11px; }
 .bestiary-layout { display: grid; grid-template-columns: 260px minmax(420px, 1fr) minmax(320px, 420px); align-items: start; min-height: 640px; overflow: hidden; border: 1px solid var(--line); border-radius: 15px; background: #101318; }
 .lifecycle-index { display: grid; align-content: start; min-width: 0; border-right: 1px solid var(--line); background: #0d1014; }
 .lifecycle-index > div { padding: 20px 18px 14px; }
@@ -194,6 +219,8 @@ summary:focus-visible {
 .prompt-species-card dd { margin: 0; color: #c6ccd2; }
 
 @media (max-width: 1180px) {
+  .model-layout { grid-template-columns: 1fr; }
+  .concept-inspector { border-top: 1px solid var(--line); border-left: 0; }
   .bestiary-layout { grid-template-columns: 220px minmax(420px, 1fr); }
   .transition-inspector { grid-column: 1 / -1; min-height: 0; border-top: 1px solid var(--line); border-left: 0; }
   .prompt-species-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -201,6 +228,9 @@ summary:focus-visible {
 @media (max-width: 760px) {
   .prompt-bestiary { padding: 28px 16px 70px; }
   .bestiary-layout { grid-template-columns: 1fr; }
+  .concept-band { grid-template-columns: 1fr; }
+  .concept-band > header { border-right: 0; border-bottom: 1px solid var(--line); }
+  .concept-band > div { grid-template-columns: 1fr; }
   .lifecycle-index { border-right: 0; border-bottom: 1px solid var(--line); }
   .lifecycle-stage { padding: 18px; }
   .actor-strip { display: none; }

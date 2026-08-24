@@ -33,7 +33,7 @@ export function createShellState(storage = globalThis.localStorage, href = globa
     caffeinate: false, decisionReturnView: "agent", agentReturnView: "work", offline: false, rebuilding: false, rebuild: null,
     updateAvailable: false, pendingCommits: [], deployedCommit: "", currentCommit: "", bootId: "", loading: true, error: "", renderedKey: "",
     promptInspector: { loading: false, title: "", text: "", error: "", file: "", area: "" },
-    bestiarySelection: { lifecycle: "plan", transition: "work" },
+    bestiarySelection: { mode: "model", concept: "area", lifecycle: "plan", transition: "work" },
   };
   return { requestedArea, requestedDocument, state };
 }

@@ -659,7 +659,7 @@ function updateHeader() {
         : isAreas
           ? "Organize Areas"
         : isPrompts
-          ? "Agent prompt bestiary"
+          ? "Tangent model"
         : isAreaEdit
           ? "Review the path before it changes"
         : (isProgramDetail || isProgramSession) && program
@@ -777,7 +777,7 @@ function renderScreen() {
   else if (state.view === "describe") screen.innerHTML = renderDescribeCapture();
   else if (state.view === "describe-agent") screen.innerHTML = renderDescribeWorkAgent(describeSession);
   else if (state.view === "areas") screen.innerHTML = renderAreas();
-  else if (state.view === "prompts") screen.innerHTML = renderPromptBestiary({ goals: allGoals(), brains: state.brains, inspector: state.promptInspector, selection: state.bestiarySelection });
+  else if (state.view === "prompts") screen.innerHTML = renderPromptBestiary({ goals: allGoals(), brains: state.brains, sessions: state.sessions, pipelines: state.pipelines, programs: state.programs.programs, asks: forYouItems(), inspector: state.promptInspector, selection: state.bestiarySelection });
   else if (state.view === "area-edit") screen.innerHTML = renderAreaEditor();
   else if (state.view === "program-detail") screen.innerHTML = renderProgramDetail(currentProgram());
   else if (state.view === "program-create") screen.innerHTML = renderProgramCreate();
@@ -1093,8 +1093,8 @@ function showPrompts() {
 async function loadGoalPrompt(file, mode = "goal") {
   if (!file) return showToast("Choose a Goal first.");
   state.bestiarySelection = mode === "pipeline"
-    ? { lifecycle: "brain-pipeline", transition: "nextAssignment" }
-    : { lifecycle: "brain-solo", transition: "assignment" };
+    ? { ...state.bestiarySelection, mode: "messages", lifecycle: "brain-pipeline", transition: "nextAssignment" }
+    : { ...state.bestiarySelection, mode: "messages", lifecycle: "brain-solo", transition: "assignment" };
   state.promptInspector = { loading: true, title: "", text: "", error: "", file, area: "" };
   paint(true);
   try {
@@ -1110,7 +1110,7 @@ async function loadGoalPrompt(file, mode = "goal") {
 /** Loads one live brain generation's exact current opening prompt. */
 async function loadBrainPrompt(area) {
   if (!area) return showToast("Choose a brain first.");
-  state.bestiarySelection = { lifecycle: "plan", transition: "work" };
+  state.bestiarySelection = { ...state.bestiarySelection, mode: "messages", lifecycle: "plan", transition: "work" };
   state.promptInspector = { loading: true, title: "", text: "", error: "", file: "", area };
   paint(true);
   try {
@@ -1130,7 +1130,7 @@ function closePromptPreview() {
 
 /** Selects one canonical lifecycle and resets its boundary selection. */
 function selectBestiaryLifecycle(lifecycle) {
-  state.bestiarySelection = { lifecycle, transition: "" };
+  state.bestiarySelection = { ...state.bestiarySelection, lifecycle, transition: "" };
   paint(true);
 }
 
@@ -1140,10 +1140,22 @@ function selectBestiaryTransition(transition) {
   paint(true);
 }
 
+/** Selects the concept map, lifecycle guide, or exact message contracts. */
+function selectModelMode(mode) {
+  state.bestiarySelection = { ...state.bestiarySelection, mode };
+  paint(true);
+}
+
+/** Selects one canonical concept without changing current Tangent data. */
+function selectModelConcept(concept) {
+  state.bestiarySelection = { ...state.bestiarySelection, concept };
+  paint(true);
+}
+
 bindShellEvents({
   state, post, paint, refresh, showToast, screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction,
   shellMenu, goToButton, goToLayer, goToInput, modalLayer, terminalFit: terminalController.fit, KEYMAP, shortcutMatches,
-  shortcutKbd, toggleShellMenu, confirmRebuild, reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, loadGoalPrompt, loadBrainPrompt, closePromptPreview, selectBestiaryLifecycle, selectBestiaryTransition, showAreasAt,
+  shortcutKbd, toggleShellMenu, confirmRebuild, reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, loadGoalPrompt, loadBrainPrompt, closePromptPreview, selectBestiaryLifecycle, selectBestiaryTransition, selectModelMode, selectModelConcept, showAreasAt,
   showDecision, showCreate, showDescribe, showProgramCreate, selectProgram, openProgramSession, controlProgram,
   performProgramAction, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelCreate, cancelDescribe, currentProgram,
   programAreaDirectory, selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain,

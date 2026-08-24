@@ -6,7 +6,7 @@ import os from "node:os";
 import { createHash, randomUUID } from "node:crypto";
 import { appendFile, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { execFile, spawn } from "node:child_process";
+import { execFile, fork, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -59,6 +59,7 @@ import { recordActionTelemetry } from "./action-telemetry.mjs";
 import { createMessageDelivery } from "./message-delivery.mjs";
 import { createRebuildOperations, readRebuildOperation, rebuildIsActive } from "./rebuild-operation.mjs";
 import { readJson, sendJson } from "./http-json.mjs";
+import { createVaultProjectionController } from "./vault-projection-controller.mjs";
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -886,15 +887,54 @@ async function vaultFingerprint(dir = TREES_ROOT, rel = "") {
  * The vault index every Document, Goal, and map request reads, built once per
  * vault change instead of once per request. See vault-index-cache.mjs for why.
  */
-const recoveryVaultIndex = Object.freeze({ areas: [], map: [], documents: [], recentCloses: [] });
-/**
- * Recovery guard: vault projection currently enters an unbounded regexp/string
- * path and starves the HTTP and terminal event loop. Keep the unsafe projection
- * out of the web process until indexing moves to the isolated controller.
- */
-async function vaultIndex() {
-  return recoveryVaultIndex;
+/** Builds one complete projection in a disposable process. */
+function buildVaultIndexInWorker({ signal }) {
+  return new Promise((resolve, reject) => {
+    const child = fork(fileURLToPath(import.meta.url), ["--vault-index-worker"], {
+      env: { ...process.env, AGENT_SHELL_INDEX_WORKER: "1" },
+      serialization: "advanced",
+      stdio: ["ignore", "ignore", "pipe", "ipc"],
+    });
+    let stderr = "";
+    child.stderr?.on("data", (chunk) => { stderr = (stderr + chunk).slice(-4000); });
+    let settled = false;
+    /** Settles once and stops the disposable worker. */
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", aborted);
+      if (child.connected) child.disconnect();
+      if (!child.killed) child.kill();
+      if (error) reject(error);
+      else resolve(value);
+    };
+    /** Stops an index build that exceeded the controller deadline. */
+    const aborted = () => finish(signal.reason ?? new Error("Vault projection was cancelled."));
+    signal.addEventListener("abort", aborted, { once: true });
+    child.once("message", (message) => {
+      if (message?.type === "vault-projection") finish(null, message.value);
+      else if (message?.type === "vault-projection-error") finish(new Error(message.error));
+    });
+    child.once("error", (error) => finish(error));
+    child.once("exit", (code, exitSignal) => {
+      if (!settled) finish(new Error(`Vault projection worker exited ${exitSignal ?? code}.${stderr ? ` ${stderr.trim()}` : ""}`));
+    });
+  });
 }
+
+if (process.env.AGENT_SHELL_INDEX_WORKER === "1") {
+  try {
+    const value = await buildVaultIndex();
+    await new Promise((resolve) => process.send?.({ type: "vault-projection", value }, resolve));
+    process.exit(0);
+  } catch (error) {
+    await new Promise((resolve) => process.send?.({ type: "vault-projection-error", error: String(error?.stack ?? error) }, resolve));
+    process.exit(1);
+  }
+}
+
+const vaultProjection = createVaultProjectionController({ fingerprint: vaultFingerprint, build: buildVaultIndexInWorker });
+const vaultIndex = vaultProjection.get;
 
 /** True for a vault-relative Area path with no traversal. */
 function validAreaPath(area) {
@@ -3838,7 +3878,7 @@ const documentRoutes = createDocumentRoutes({
   /** Returns the vault index with its server-owned desk projection. */
   async vault() {
     const [vault, sessions] = await Promise.all([vaultIndex(), listSessions()]);
-    return { ...vault, desk: projectDesk(vault, sessions) };
+    return { ...vault, projection: await vaultProjection.status(), desk: projectDesk(vault, sessions) };
   },
   readMap: readMapState,
   writeMap: writeMapState,

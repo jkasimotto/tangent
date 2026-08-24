@@ -18,6 +18,7 @@
 
 /** Opening characters typed alone as a probe: short enough that no composer collapses them. */
 export const PROBE_CHARS = 24;
+export const TYPE_CHUNK_CHARS = 4_000;
 const TAIL_CHARS = 40;
 
 /** Whitespace-free comparison form, so wrapping and stripped newlines cannot hide a match. */
@@ -37,6 +38,13 @@ const PASTED_MARKERS = [
 /** Splits a prompt into the probe typed first and the remainder typed after it. */
 export function splitPrompt(prompt) {
   return { probe: prompt.slice(0, PROBE_CHARS), rest: prompt.slice(PROBE_CHARS) };
+}
+
+/** Splits literal terminal input below tmux's command-size ceiling. */
+export function typeChunks(text) {
+  const chunks = [];
+  for (let offset = 0; offset < text.length; offset += TYPE_CHUNK_CHARS) chunks.push(text.slice(offset, offset + TYPE_CHUNK_CHARS));
+  return chunks;
 }
 
 /** True when the visible pane shows the whole prompt was taken into the composer. */

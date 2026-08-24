@@ -32,7 +32,7 @@ import { beginGeneration, brainForArea, brainRecordForArea, brainSessionName, cu
 import { appendNotice, inboxesForBrain, markDelivered, mergeNotices, noticeBlock, noticeDigest, readAllInboxes, readInbox, writeInbox } from "./brain-inbox.mjs";
 import { forJulianSectionText, parseForJulian, removeForJulianLine, restoreForJulianLine, unparsedForJulianLines } from "./for-julian.mjs";
 import { createCommitChangeMonitor } from "./commit-change-monitor.mjs";
-import { promptArrived, splitPrompt, squash } from "./prompt-delivery.mjs";
+import { promptArrived, splitPrompt, squash, typeChunks } from "./prompt-delivery.mjs";
 import { clearArmedPrompt, readAllArmedPrompts, writeArmedPrompt } from "./armed-prompts.mjs";
 import { createRuntimeScheduler } from "./runtime-scheduler.mjs";
 import { attachTerminalTransport } from "./terminal-transport.mjs";
@@ -3610,7 +3610,9 @@ function stripAddress(utterance, address) {
  */
 async function typeInto(session, text, submit) {
   // "=name:" exact session, active pane — send-keys rejects bare "=name".
-  await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "-l", "--", text]);
+  for (const chunk of typeChunks(text)) {
+    await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "-l", "--", chunk]);
+  }
   if (submit) {
     await sleep(150);
     await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "Enter"]);

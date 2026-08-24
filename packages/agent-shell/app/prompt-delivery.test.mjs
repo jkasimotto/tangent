@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { PROBE_CHARS, promptArrived, splitPrompt } from "./prompt-delivery.mjs";
+import { PROBE_CHARS, TYPE_CHUNK_CHARS, promptArrived, splitPrompt, typeChunks } from "./prompt-delivery.mjs";
 
 const PROMPT =
   "# Work with Julian\n\nThis session covers the complete Goal and all linked Documents.\n\n" +
@@ -24,6 +24,14 @@ test("the probe is the first 24 characters", () => {
   const { probe, rest } = splitPrompt(PROMPT);
   assert.equal(probe.length, PROBE_CHARS);
   assert.equal(probe + rest, PROMPT);
+});
+
+test("literal terminal input is chunked without losing or reordering text", () => {
+  const input = "brain prompt ".repeat(2_000);
+  const chunks = typeChunks(input);
+  assert.ok(chunks.length > 1);
+  assert.ok(chunks.every((chunk) => chunk.length <= TYPE_CHUNK_CHARS));
+  assert.equal(chunks.join(""), input);
 });
 
 test("a short prompt is delivered when its tail is visible", () => {

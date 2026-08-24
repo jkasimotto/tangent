@@ -24,5 +24,5 @@ Agent Shell is a capability-owned modular monolith.
 
 - A low argument count is not sufficient by itself. Each constructor record must have one owner and lifecycle.
 - No dependency-injection container or generic service bag is allowed.
-- `server.mjs` remains the process composition root while complete capabilities move out of it. New launch, message-delivery, or pane-observation behavior belongs to its owner, not back in the root.
+- `server.mjs` remains the workflow-controller composition root while complete capabilities move out of it. ADR-0032 adds a separate stable process edge; it does not move workflow ownership into the gateway. New launch, message-delivery, or pane-observation behavior belongs to its owner, not back in either root.
 - Existing stored records need no migration for this change.

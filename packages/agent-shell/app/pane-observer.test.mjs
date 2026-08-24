@@ -35,3 +35,23 @@ test("pane observer leaves process sessions out of agent classification", async 
   assert.equal(running.state, "service");
   assert.equal(stopped.state, "stopped");
 });
+
+test("pane observer bounds capture fan-out for a large session snapshot", async () => {
+  let active = 0;
+  let peak = 0;
+  const observer = createPaneObserver({
+    /** Records how many synthetic tmux captures overlap. */
+    runTmux: async () => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setImmediate(resolve));
+      active -= 1;
+      return { stdout: "working" };
+    },
+    shellCommands: new Set(["zsh"]),
+    concurrency: 8,
+  });
+  const sessions = Array.from({ length: 200 }, (_, index) => ({ name: `agent-${index}`, command: "claude", kind: "goal" }));
+  assert.equal((await observer.enrich(sessions)).length, 200);
+  assert.equal(peak, 8);
+});

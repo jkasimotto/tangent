@@ -21,6 +21,12 @@ Observable success:
   live agent.
 - Ambiguous sessions remain visible as orphaned and are not auto-deleted.
 - Runtime status identifies the failed layer and the last valid snapshot.
+- With 200 retained sessions, 50 observed agent panes, 25 attached terminals,
+  and 100 queued messages, all fan-out remains bounded and one observation is
+  shared by concurrent callers.
+- A second launcher cannot compete for port 4321 or restart in a tight loop.
+- A CLI mutation that loses its connection can discover whether it committed;
+  it does not require an unsafe blind retry.
 
 Non-goals:
 
@@ -56,16 +62,20 @@ near 101 percent CPU.
 A macOS process sample placed the main thread inside
 `String.prototype.replace`, regular-expression execution, string flattening,
 allocation, and garbage collection. The JavaScript function was not
-symbolized, so the exact expression is unknown.
+symbolized in that first sample. Later stage tracing identified the exact
+session-name allocator loop described below.
 
 Restarting Agent Shell produced one successful snapshot, then the same loop.
 Disabling the always-active reconciliation task removed one trigger. Repeated
 `/api/sessions` requests still triggered the CPU loop. Removing vault-wide
-For-Julian enrichment from the polling snapshot restored stable responses:
+For-Julian enrichment from the polling snapshot reduced the coupled workload:
 five requests completed in 0.03 to 0.38 seconds and CPU stayed near idle.
+The complete For-Julian contract is restored in the replaceable, cached
+controller snapshot.
 
-These facts establish two independent unbounded paths in the presentation
-process. They do not prove which regular expression is defective.
+These facts established that unrelated projection work amplified a controller
+failure in the public process. They were diagnostic guards, not the final root
+cause or acceptable feature removals.
 
 ### Completed sessions are preserved by policy
 
@@ -91,6 +101,88 @@ teardown. The leaked names in the live server include test fixture prefixes and
 plain zsh panes. A failed or interrupted teardown leaves fixtures in the user's
 tmux namespace. Test isolation cannot rely only on successful cleanup.
 
+### `brain advance` reproduced a complete visible failure
+
+On 2026-08-24 at 19:14 AEST, the exact pending command
+`tangent brain advance standards-architecture-names-shapes-and-ownershi 3`
+was run twice under observation. Both calls blocked for about 20 seconds. The
+event-loop watchdog then terminated the server, the CLI returned only `fetch
+failed`, and the native app started a replacement. The durable pipeline still
+showed step 3 as pending, so neither attempt partially committed.
+
+Stage tracing stopped immediately after the live-session snapshot. A process
+sample showed the main thread spending its time in string normalization and
+`Set` lookup. The exact defect was the pipeline session-name collision loop:
+it appended `-r2`, then truncated the complete string to 60 characters. For a
+60-character occupied name, truncation removed the retry suffix, so every
+iteration tested the same name forever. The same unbounded pattern also
+existed in continuation naming.
+
+The implementation now reserves suffix space before truncation and gives name
+allocation a finite attempt budget. A regression fixture uses the exact long
+step-3 collision. The previously pending command then completed in 1.34
+seconds and kept the same server process alive.
+
+The mutation path also performed work far outside the requested Goal:
+
+- `controlPipeline` calls `goalsByFile`, which walks every Area and reads every
+  Goal.
+- `startPipelineStep` repeats that complete scan.
+- `goalPrompt` repeats the scan for dependency prose and requests the complete
+  vault Document projection for one Goal's sources.
+
+A six-second sample of the public server during the failure spent its main
+thread in regular-expression replacement, string flattening, lowercasing,
+internalization, `Set` lookup, allocation, and garbage collection. Combined
+with causal stage tracing, this identified name allocation as the incident
+loop. The vault-wide scans were separate amplification risks and are removed
+from this mutation path.
+
+The HTTP tests inspected for this incident allocate random ports. A live test
+server existed on another port during the reproduction and did not own 4321.
+The claim that those tests caused the port collision was false. The tests do,
+however, still share the user's default tmux server and can add leaked sessions
+to the live observation load.
+
+### Startup and terminal recovery amplify controller failure
+
+The native app starts a server after a one-second probe failure. Every child
+exit schedules another start after 150 ms without first probing port 4321 and
+without a retry budget. If another server still owns the port, each child exits
+with `EADDRINUSE` and the app creates a tight restart storm. An installed
+LaunchAgent plist is a second possible owner; it was present but unloaded
+during the reproduction.
+
+The browser terminal writes `[session ended]` on every WebSocket close and
+never reconnects. A server restart therefore looks like the tmux session died
+even when tmux still owns the live agent. The CLI uses an unbounded `fetch` and
+does not attach an operation ID, deadline, or structured layer to errors.
+
+### Capacity envelope
+
+The initial regression envelope is 200 retained sessions, 50 panes requiring
+active classification, 25 terminal WebSockets, and a burst of 100 queued
+messages. It is approximately ten times the 17-session live snapshot observed
+during the incident. It is a test workload, not a hard maximum.
+
+Within this envelope:
+
+- concurrent readers share one versioned session observation;
+- no more than eight pane-capture operations run concurrently;
+- a stalled tmux command, controller call, request body, or client command has
+  a deadline and a named error;
+- per-target ordering is preserved while independent message targets make
+  bounded parallel progress;
+- queue and socket backpressure reject excess work explicitly;
+- gateway health, static assets, and existing terminal transport do not wait
+  for vault projection or pane classification;
+- restart delay grows after repeated failure and resets only after a stable
+  generation.
+
+Structural tests enforce coalescing, concurrency, bounds, retry state, and
+isolation. A local load test records latency and event-loop delay without using
+fragile wall-clock assertions as the only correctness signal.
+
 ## Relevant architecture decisions
 
 - ADR-0023 makes each pipeline step a real tmux conversation and defines
@@ -113,46 +205,47 @@ tmux namespace. Test isolation cannot rely only on successful cleanup.
 Authorities:
 
 - Vault Markdown owns Area, Goal, Document, and Goal status facts.
-- Pipeline, brain, inbox, request, continuation, and cleanup records own their
-  workflow transitions.
+- Pipeline, brain, inbox, request, and continuation records own their workflow
+  transitions.
 - Tmux owns current process and pane existence only.
 - The controller owns commands and derived projections.
-- The gateway owns connectivity and the last complete published snapshot.
+- The gateway owns connectivity and the last complete session response.
 
-The current system confuses an observed process with retained work evidence.
-A completed tmux process has no durable authority after its handover is stored.
-The new cleanup record makes partial completion explicit and retryable.
+Process recovery has no authority to change tmux session lifetime. Existing
+workflow transitions retain their current explicit lifetime behavior.
 
 ### API
 
 Gateway-to-controller calls need operation IDs, deadlines, and structured
-outcomes. Queries return a snapshot version and observation time. Mutations
-return accepted, completed, conflicted, or unavailable with the operation ID.
-The gateway never retries a mutation automatically. The controller deduplicates
-an explicitly retried operation ID.
+outcomes. Mutations return accepted, completed, conflicted, or unavailable
+with the operation ID. The gateway never retries a mutation automatically. An
+exact advance retry for an already-running live step returns the committed
+result; other uncertain mutations require a state read before retry.
 
-The controller publishes complete snapshots. The gateway never merges fields
-from two controller versions. On controller failure it serves the last version
-with `stale: true`, `observedAt`, and controller health.
+The gateway caches complete successful session responses. It never publishes a
+partial response. On controller failure it serves the last response with stale
+metadata, capture time, and controller health.
 
 ### Operations
 
-The supervisor checks a heartbeat generated from each child's event loop. A
-process that stops heartbeats is restarted after a small fixed budget. OS
+The gateway checks a heartbeat generated from the controller event loop. A
+controller that stops heartbeats is restarted after a bounded delay. The native
+launcher validates gateway identity, re-probes, and backs off separately. OS
 process existence alone is not health, as the failed Node process remained
 alive and bound to its port.
 
 Required diagnostics:
 
 - gateway and controller boot IDs;
-- current and last published snapshot versions;
+- current controller boot and last session-response capture time;
 - event-loop delay and heartbeat age;
 - controller operation duration by capability;
 - vault index build duration and input counts;
 - pane sample count and duration;
-- cleanup queue depth, oldest age, retries, and last error;
-- exact run ID, Goal file, pipeline step, brain generation, and session name in
-  every lifecycle log.
+- exact Goal file, pipeline step, brain generation, and session name in every
+  lifecycle log;
+- public port owner, controller PID and boot ID, restart attempt and delay,
+  request operation ID, response deadline, and whether a snapshot was stale.
 
 Every scan has an input count, size bound, deadline, and cancellation signal.
 Regular-expression parsers reject or truncate inputs above their documented
@@ -170,9 +263,8 @@ keeps the last terminal frame during reconnect. It shows a compact delayed
 state with retry progress. It shows an explicit terminal error when tmux attach
 fails. Empty black content is not a state.
 
-Natural cleanup removes completed workers from active Work views. Historical
-evidence comes from the handover, captured final tail, and provider transcript,
-not a hidden live session.
+This change does not add automatic session cleanup. Retained sessions remain
+visible and inexpensive within the capacity envelope.
 
 ## Candidate designs
 
@@ -200,13 +292,13 @@ Rejected because it does not satisfy the primary failure-isolation contract.
 For:
 
 - Keeps terminal streaming independent from application CPU work.
-- Preserves one package, one local product, and one supervisor.
+- Preserves one package and one local product.
 - Allows cached stale reads while control work restarts.
 - Reuses ADR-0031 capabilities inside the controller.
 
 Against:
 
-- Adds IPC, snapshot versioning, health, and child restart behavior.
+- Adds IPC heartbeats, private HTTP proxying, health, and child restart behavior.
 - Requires explicit partial-success and retry semantics for commands.
 
 Selected. The demonstrated failure justifies this operational boundary.
@@ -236,84 +328,71 @@ session still owns an authorized final action. An unindexed path can be a move,
 test fixture, or damaged record. Reconciliation also lacks the exact causal
 event that made cleanup safe.
 
-### Keep every session until Julian stops it
+### Keep existing explicit session lifetime
 
-This is the current behavior. It avoids accidental destruction but turns every
-successful run into an operating-system leak. The handover and provider
-transcript already preserve the useful result.
+Selected for this resilience change. Recovery never destroys tmux work. The
+capacity envelope and bounded observation make retained sessions safe without
+inferring that a completed record authorizes deletion.
 
 ### Persist cleanup from the completion transition
 
-Selected. The same application operation that persists completion knows the
+Deferred. The same application operation that persists completion knows the
 exact session and causal event. It writes `cleanup-pending` before attempting
-the idempotent tmux end. Restart can resume it. Ambiguous sessions never enter
-this flow.
+the idempotent tmux end, but this changes visible pipeline and append behavior.
+It requires a separate product decision and migration; it is not needed to
+contain the demonstrated outage.
 
 ## Decisions
 
-1. Run a gateway and controller as sibling child processes under one
-   LaunchAgent supervisor.
+1. Let the native app or one optional LaunchAgent ensure the gateway exists.
+   The gateway alone starts and supervises the controller.
 2. Keep terminal attachment in the gateway. Do not proxy terminal bytes through
    the controller.
-3. Publish versioned complete snapshots from controller to gateway. Serve the
-   last snapshot with explicit staleness during controller failure.
+3. Cache complete successful session responses in the gateway. Serve the last
+   response with explicit staleness during controller failure.
 4. Put all vault scans, projections, pane classification, reconciliation,
    message delivery, and workflow mutation in the controller.
-5. Add durable, idempotent cleanup state to managed run records. Persist the
-   lifecycle transition before ending tmux.
-6. Auto-clean only sessions with a stable run ID whose tmux metadata and owner
-   record agree.
-7. Capture a bounded final pane tail before cleanup. Do not preserve a process
-   as history.
-8. Keep current brains alive. Clean a brain only after a confirmed replacement,
-   explicit stop, or recorded terminal failure.
-9. Run tmux integration tests on a separate tmux socket. End that test server
+5. Never end a tmux session as part of gateway or controller recovery.
+6. Bound session observation, pane capture, tmux subprocesses, message queues,
+   terminal sockets, request bodies, response waits, and restart attempts.
+7. Run tmux integration tests on a separate tmux socket. End that test server
    even when individual fixtures fail.
-10. Amend ADR-0031 during implementation because the demonstrated isolation
-    requirement changes its process-boundary conclusion.
+8. Record ADR-0032 and clarify ADR-0031's controller composition-root scope.
+9. Treat the capacity envelope as a regression workload. Keep concurrency and
+    queue limits configurable for diagnostics, but do not expose a user-facing
+    session cap.
+10. Resolve one Goal and its prompt context with targeted reads. A mutation may
+    use a shared complete projection only when the projection is already
+    current; it must not rebuild the whole vault synchronously.
+11. Give the public listener one owner. A native app or LaunchAgent may ensure
+    that owner exists, but neither may run an unconditional child restart loop.
 
 ## Migration and compatibility
 
-The gateway and controller first read every current durable schema. A new
-managed-run or cleanup schema can be added without rewriting vault Markdown.
-
-Existing tmux sessions are adopted only when all available facts agree:
-
-- Tangent kind and Area options are present.
-- The referenced pipeline, brain, continuation, or Goal record exists.
-- That record names the same session in a live state.
-
-Adopted sessions receive a run ID. A mismatch becomes orphaned and remains
-alive. Done Goals and completed steps can be offered as a one-time reviewed
-cleanup set. Migration must not bulk-kill them without positive identity.
+The gateway and controller read every current durable schema unchanged. No
+tmux metadata or vault migration is required. Existing sessions remain alive.
 
 The browser, CLI, gateway, and controller ship together. Their private HTTP and
-IPC shapes can change atomically. The gateway rejects a controller with an
-unsupported protocol version and reports the mismatch in the app.
+IPC shapes can change atomically. IPC carries only ready and heartbeat facts;
+the controller HTTP listener is loopback and ephemeral.
 
 ## Risks, assumptions, and open questions
 
-- Unknown: the exact CPU-looping expression. Implementation must retain a
-  reproducible snapshot fixture and profile each projection stage before the
-  temporary recovery guards are removed.
-- Risk: controller restart during a mutation. Operation IDs and persisted
-  transition-before-effect rules prevent duplicate workflow changes.
-- Risk: ending a session before its CLI response paints. Cleanup can execute
-  after the response is committed, with a short bounded delay. The durable
-  cleanup record remains authoritative during that delay.
+- Risk: other suffix allocators can repeat the same truncate-after-append
+  defect. All runtime name allocation must use the bounded shared allocator;
+  the exact 60-character collision remains a regression fixture.
+- Risk: controller restart during a mutation. The gateway never retries it.
+  The CLI names uncertainty and the operation ID; exact pipeline advance retry
+  is idempotent, and other callers must inspect state first.
 - Risk: stale snapshots hide a new work transition. The app labels staleness
   and mutation routes fail closed while the controller is unavailable.
-- Assumption: provider-native transcripts remain available for conversation
-  history. The final pane tail covers providers or shells where no transcript
-  can be resolved.
-- Open implementation choice: Node child-process IPC or a local Unix socket.
-  Child IPC is simpler under one supervisor. A Unix socket makes independent
-  restarts clearer. A spike must compare restart behavior before the contract
-  is fixed.
+- Decision resolved: Node child-process IPC carries readiness and heartbeats;
+  private loopback HTTP carries controller requests and responses.
 
 ## Sources
 
 - `packages/agent-shell/app/server.mjs`
+- `packages/agent-shell/app/gateway.mjs`
 - `packages/agent-shell/app/runtime-scheduler.mjs`
 - `packages/agent-shell/app/terminal-transport.mjs`
 - `packages/agent-shell/app/pane-observer.mjs`
@@ -323,6 +402,7 @@ unsupported protocol version and reports the mismatch in the app.
 - `docs/decisions/ADR-0024-area-brain.md`
 - `docs/decisions/ADR-0028-worker-context-continuation.md`
 - `docs/decisions/ADR-0031-agent-shell-capability-ownership.md`
+- `docs/decisions/ADR-0032-agent-shell-resilient-runtime.md`
 - `docs/design/agent-shell-architecture-boundaries.md`
 - Live `tmux list-sessions`, `tmux capture-pane`, HTTP probes, LaunchAgent
   status, and macOS process samples collected on 2026-08-24.

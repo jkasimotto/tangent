@@ -15,6 +15,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { readInbox } from "./brain-inbox.mjs";
+import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
+
+isolateTmuxTests();
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 

@@ -67,9 +67,9 @@ A Decide ask must end with a question mark or the line does not parse. Tangent p
 
 ## Server contract
 
-Every command but `vault commit` and `study` is a thin HTTP client to the running Agent Shell server (default `http://127.0.0.1:4321`, overridable via `--server` or `TANGENT_SHELL_URL`, loopback-only). `vault commit` writes the vault's git history directly; `study` spawns a local interactive session directly. `--json` prints machine-readable output on read commands. Server-unreachable errors name the fix ("Agent Shell is not running..."); unknown Area/Goal errors suggest the nearest existing path or slug. Non-2xx responses surface the server's own `error` text.
+Every command but `vault commit` and `study` is a thin HTTP client to the running Agent Shell gateway (default `http://127.0.0.1:4321`, overridable via `--server` or `TANGENT_SHELL_URL`, loopback-only). `vault commit` writes the vault's git history directly; `study` spawns a local interactive session directly. `--json` prints machine-readable output on read commands. Requests have a 20-second default response deadline and carry an operation ID. Gateway-unreachable errors name the fix ("Agent Shell is not running..."). A mutation that loses its response says that it may have committed and tells the caller to inspect state before retrying. Unknown Area/Goal errors suggest the nearest existing path or slug. Non-2xx responses surface the controller's own `error` text.
 
-Endpoints in `packages/agent-shell/app/server.mjs` used by this package:
+Public endpoints enter through `packages/agent-shell/app/gateway.mjs` and are handled by the controller routes composed in `server.mjs`:
 
 - Read: `GET /api/tree`, `GET /api/areas/show?area=<path>`, `GET /api/goals[?area=<path>]`, `GET /api/goals/show?slug=<slug>`, `GET /api/ideas[?area=<path>]`, `GET /api/document/comments?file=<path>`, `GET /api/sessions`. The sessions snapshot includes `deployedCommit`, `currentCommit`, `pendingCommits`, and the last `rebuild` operation. The blue update indicator appears only when the pending commit list is non-empty.
 - `POST /api/shell/rebuild` starts one rebuild and returns its operation. A concurrent request returns 409.

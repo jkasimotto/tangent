@@ -1,0 +1,124 @@
+import assert from "node:assert/strict";
+import { once } from "node:events";
+import net from "node:net";
+import path from "node:path";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import test from "node:test";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+
+/** Reserves one loopback port for a gateway fixture. */
+async function freePort() {
+  const server = net.createServer();
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const address = server.address();
+  await new Promise((resolve) => server.close(resolve));
+  return address.port;
+}
+
+/** Polls gateway health until its predicate holds. */
+async function waitForHealth(base, predicate, attempts = 100) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const response = await fetch(`${base}/api/health`);
+      const health = await response.json();
+      if (response.ok && predicate(health)) return health;
+    } catch {}
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error("gateway health condition was not reached");
+}
+
+/** Starts the gateway with a deliberately controllable IPC child. */
+async function startGateway(context, port) {
+  const errors = [];
+  const child = spawn(process.execPath, ["gateway.mjs"], {
+    cwd: here,
+    env: {
+      ...process.env,
+      HOST: "127.0.0.1",
+      PORT: String(port),
+      AGENT_SHELL_NO_OPEN: "1",
+      AGENT_SHELL_CONTROLLER_ENTRY: path.join(here, "gateway-fixture-controller.mjs"),
+      TANGENT_CONTROLLER_HEARTBEAT_TIMEOUT_MS: "300",
+      TANGENT_CONTROLLER_READY_TIMEOUT_MS: "1000",
+      TANGENT_CONTROLLER_RESPONSE_TIMEOUT_MS: "3000",
+      TANGENT_CONTROLLER_RESTART_BASE_MS: "20",
+      TANGENT_CONTROLLER_RESTART_MAX_MS: "100",
+      TANGENT_CONTROLLER_STABLE_MS: "100",
+      TANGENT_GATEWAY_WATCHDOG_TIMEOUT_MS: "3000",
+      CHAT_SESSION: `gateway-test-${process.pid}`,
+    },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  child.stderr.on("data", (chunk) => errors.push(chunk.toString()));
+  context.after(async () => {
+    if (child.exitCode === null) child.kill("SIGTERM");
+    await Promise.race([once(child, "exit"), new Promise((resolve) => setTimeout(resolve, 2500))]);
+  });
+  child.once("exit", (code, signal) => {
+    if (code) errors.push(`gateway exited ${code}/${signal ?? ""}`);
+  });
+  return { child, errors };
+}
+
+test("gateway keeps health and cached sessions available across a stuck controller", async (context) => {
+  let port;
+  try {
+    port = await freePort();
+  } catch (error) {
+    if (error?.code === "EPERM") return context.skip("local listeners are not permitted");
+    throw error;
+  }
+  const gateway = await startGateway(context, port);
+  const base = `http://127.0.0.1:${port}`;
+  const first = await waitForHealth(base, (health) => health.controller.state === "ready");
+  const initialSessions = await fetch(`${base}/api/sessions`);
+  assert.equal(initialSessions.headers.get("x-tangent-stale"), "0");
+  assert.equal((await initialSessions.json()).sessions[0].name, "durable-agent");
+
+  const blockedMutation = fetch(`${base}/api/block`, { method: "POST" }).catch((error) => error);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const responsiveHealth = await Promise.race([
+    fetch(`${base}/api/health`).then((response) => response.json()),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("gateway health blocked with controller")), 500)),
+  ]);
+  assert.equal(responsiveHealth.boot, first.boot);
+
+  const staleSessions = await fetch(`${base}/api/sessions`);
+  assert.equal(staleSessions.status, 200);
+  assert.equal(staleSessions.headers.get("x-tangent-stale"), "1");
+  assert.equal((await staleSessions.json()).sessions[0].name, "durable-agent");
+
+  const replacement = await waitForHealth(base, (health) => health.controller.state === "ready" && health.controller.boot !== first.controller.boot);
+  assert.equal(replacement.boot, first.boot, "the public gateway generation stays alive");
+  const mutationResult = await blockedMutation;
+  if (mutationResult instanceof Response) assert.equal(mutationResult.status, 503);
+  assert.match(gateway.errors.join(""), /terminating controller/);
+});
+
+test("a second gateway exits instead of competing for the public port", async (context) => {
+  let port;
+  try {
+    port = await freePort();
+  } catch (error) {
+    if (error?.code === "EPERM") return context.skip("local listeners are not permitted");
+    throw error;
+  }
+  await startGateway(context, port);
+  const base = `http://127.0.0.1:${port}`;
+  await waitForHealth(base, (health) => health.controller.state === "ready");
+  const second = spawn(process.execPath, ["gateway.mjs"], {
+    cwd: here,
+    env: { ...process.env, HOST: "127.0.0.1", PORT: String(port), AGENT_SHELL_NO_OPEN: "1" },
+    stdio: "ignore",
+  });
+  const exited = await Promise.race([
+    once(second, "exit"),
+    new Promise((_, reject) => setTimeout(() => reject(new Error("competing gateway did not exit")), 1500)),
+  ]);
+  assert.equal(exited[0], 0);
+  assert.equal((await fetch(`${base}/api/health`).then((response) => response.json())).service, "tangent-agent-shell-gateway");
+});

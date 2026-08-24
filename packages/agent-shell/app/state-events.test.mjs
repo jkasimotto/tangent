@@ -3,24 +3,34 @@ import { EventEmitter } from "node:events";
 import test from "node:test";
 import { createStateEvents } from "./state-events.mjs";
 
-test("state events connect, invalidate, and disconnect clients", () => {
-  const events = createStateEvents();
+/** Creates the writable response surface needed by the event-hub fixture. */
+function fixtureResponse() {
+  const response = new EventEmitter();
+  Object.assign(response, {
+    destroyed: false, writableEnded: false, writableNeedDrain: false, writes: [], status: 0,
+    /** Records the fixture response status. */
+    writeHead(status) { this.status = status; },
+    /** Records one fixture event write. */
+    write(value) { this.writes.push(value); return !this.writableNeedDrain; },
+    /** Ends the fixture response. */
+    end(value = "") { if (value) this.writes.push(value); this.writableEnded = true; },
+  });
+  return response;
+}
+
+test("state event hub caps clients and skips backpressured duplicates", () => {
+  const hub = createStateEvents({ maxClients: 1, heartbeatMs: 60_000 });
   const request = new EventEmitter();
-  const writes = [];
-  const response = {
-    /** Records the stream headers. */
-    writeHead(status, headers) { writes.push({ status, headers }); },
-    /** Records one stream event. */
-    write(value) { writes.push(value); },
-  };
-
-  events.connect(request, response);
-  events.changed("/api/goals/create");
+  const first = fixtureResponse();
+  assert.equal(hub.connect(request, first), true);
+  first.writableNeedDrain = true;
+  hub.changed("one");
+  hub.changed("two");
+  assert.equal(first.writes.length, 1, "only the ready event is buffered");
+  const second = fixtureResponse();
+  assert.equal(hub.connect(new EventEmitter(), second), false);
+  assert.equal(second.status, 503);
   request.emit("close");
-  events.changed("ignored");
-
-  assert.equal(writes[0].status, 200);
-  assert.match(writes[1], /event: ready/);
-  assert.match(writes[2], /api\/goals\/create/);
-  assert.equal(writes.length, 3);
+  assert.equal(hub.size(), 0);
+  hub.close();
 });

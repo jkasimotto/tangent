@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
+import { mapWithConcurrency } from "./bounded-work.mjs";
 import { classifyStaticPane, parseContextFill, stabilizeStaticPane, staticSinceOf } from "./pane-state.mjs";
 
 /** Owns passive tmux pane samples and their derived agent state. */
-export function createPaneObserver({ runTmux, shellCommands, minSampleMs = 1200, waitStableMs = 8_000, now = Date.now }) {
+export function createPaneObserver({ runTmux, shellCommands, minSampleMs = 1200, waitStableMs = 8_000, concurrency = 8, now = Date.now }) {
   const samples = new Map();
 
   /** Hashes one visible pane for prompt-readiness sampling. */
@@ -64,7 +65,7 @@ export function createPaneObserver({ runTmux, shellCommands, minSampleMs = 1200,
   /** Adds observed state to sessions and forgets panes that no longer exist. */
   async function enrich(sessions) {
     const at = now();
-    const enriched = await Promise.all(sessions.map(async (session) => {
+    const enriched = await mapWithConcurrency(sessions, concurrency, async (session) => {
       if (["process", "service", "command"].includes(session.kind)) {
         return { ...session, state: shellCommands.has(session.command) ? "stopped" : "service", stateDetail: null, stateQuestion: "", context: null };
       }
@@ -74,7 +75,7 @@ export function createPaneObserver({ runTmux, shellCommands, minSampleMs = 1200,
       } catch {
         return { ...session, state: null, stateDetail: null, stateQuestion: "", context: null };
       }
-    }));
+    });
     const live = new Set(sessions.map((session) => session.name));
     for (const name of samples.keys()) if (!live.has(name)) samples.delete(name);
     return enriched;

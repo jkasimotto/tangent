@@ -57,3 +57,18 @@ test("an initial build is aborted at its deadline", async () => {
   await assert.rejects(controller.get(), /exceeded 5 ms/);
   assert.equal((await controller.status()).error, "Vault projection exceeded 5 ms.");
 });
+
+test("an explicit mutation invalidation makes the next reader wait for a coherent projection", async () => {
+  let value = "before";
+  const controller = createVaultProjectionController({
+    /** Returns the mutable fixture identity. */
+    fingerprint: async () => value,
+    /** Returns the projection for the current fixture identity. */
+    build: async () => ({ value }),
+  });
+  assert.deepEqual(await controller.get(), { value: "before" });
+  value = "after";
+  controller.invalidate();
+  assert.deepEqual(await controller.get(), { value: "after" });
+  assert.equal((await controller.status()).invalidated, false);
+});

@@ -23,6 +23,8 @@ import areaMapCore from "./public/area-map-core.js";
 import whatHappenedCore from "./public/what-happened-core.js";
 import { createVaultGitReader, fileTimes } from "./area-map.mjs";
 import { createPaneObserver } from "./pane-observer.mjs";
+import { mapWithConcurrency } from "./bounded-work.mjs";
+import { createObservationCache } from "./observation-cache.mjs";
 import { appendSteps, currentStep, endPipeline, goalBindingGoneFromSnapshot, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, readAllPipelines, readPipeline, stepGoneFromSnapshot, validateSteps, writePipeline } from "./pipeline-record.mjs";
 import { newContinuationRecord, readAllContinuations, readContinuation, writeContinuation } from "./continuation-record.mjs";
 import { contextReminderText, contextRepeatText, continuationSection, continuationSessionName, reminderDue } from "./context-handover.mjs";
@@ -58,14 +60,31 @@ import { assigneesFromFrontmatter, nearestRosterArea, peopleFromAreaNote, projec
 import { recordActionTelemetry } from "./action-telemetry.mjs";
 import { createMessageDelivery } from "./message-delivery.mjs";
 import { createRebuildOperations, readRebuildOperation, rebuildIsActive } from "./rebuild-operation.mjs";
-import { readJson, sendJson } from "./http-json.mjs";
+import { HttpError, readJson, sendJson } from "./http-json.mjs";
 import { createVaultProjectionController } from "./vault-projection-controller.mjs";
+import { startEventLoopWatchdog } from "./event-loop-watchdog.mjs";
+import { uniqueSessionName } from "./session-names.mjs";
+import { withDefaultModel } from "./agent-command.mjs";
 
-const execFileAsync = promisify(execFile);
+const rawExecFileAsync = promisify(execFile);
+const TMUX_COMMAND_TIMEOUT_MS = Number(process.env.TANGENT_TMUX_COMMAND_TIMEOUT_MS ?? 10_000);
+const TMUX_COMMAND_MAX_BYTES = Number(process.env.TANGENT_TMUX_COMMAND_MAX_BYTES ?? 8 * 1024 * 1024);
+
+/** Gives every tmux subprocess a hard lifetime and output budget. */
+function execFileAsync(file, args, options = {}) {
+  return rawExecFileAsync(file, args, file === "tmux"
+    ? { timeout: TMUX_COMMAND_TIMEOUT_MS, maxBuffer: TMUX_COMMAND_MAX_BYTES, ...options }
+    : options);
+}
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 const PORT = Number(process.env.PORT ?? 4321);
 const HOST = process.env.HOST ?? "127.0.0.1";
+const IS_CONTROLLER = process.env.AGENT_SHELL_CONTROLLER === "1";
+if (process.env.AGENT_SHELL_INDEX_WORKER !== "1") startEventLoopWatchdog({
+  timeoutMs: Number(process.env.TANGENT_CONTROLLER_WATCHDOG_TIMEOUT_MS ?? 15_000),
+  heartbeatMs: 1_000,
+});
 // A fresh id per server process. The frontend compares it across polls to
 // notice that a rebuilt server is live and offer one explicit reload.
 const BOOT_ID = randomUUID();
@@ -87,17 +106,21 @@ const rebuildOperations = createRebuildOperations({
 const stateEvents = createStateEvents();
 let agentCmd = process.env.AGENT_CMD ?? "claude";
 
-/**
- * claude persists the last /model choice across sessions, so a fresh
- * session silently reopens on whatever model was used last (fable, say).
- * Pin claude launches to the default model unless the command already
- * picks one explicitly.
- */
-function withDefaultModel(cmd) {
-  const launchesClaude = cmd.split(/\s+/)[0].includes("claude");
-  if (!launchesClaude || cmd.includes("--model")) return cmd;
-  return `${cmd} --model default`;
+/** Emits causal stage timings for a mutation that can cross process boundaries. */
+function traceOperation(name, fields = {}) {
+  const id = randomUUID();
+  const startedAt = Date.now();
+  let previousAt = startedAt;
+  /** Writes one bounded JSON line that survives a later watchdog exit. */
+  const write = (stage, extra = {}) => {
+    const at = Date.now();
+    console.error(`[runtime] ${JSON.stringify({ operation: name, id, stage, elapsedMs: at - startedAt, stageMs: at - previousAt, ...fields, ...extra })}`);
+    previousAt = at;
+  };
+  write("started");
+  return { id, mark: write };
 }
+
 const CHAT_SESSION = process.env.CHAT_SESSION ?? "orchestrator";
 const WORKSPACE = process.env.WORKSPACE ?? path.join(here, "workspace");
 const TREES_ROOT = process.env.TREES_ROOT ?? path.join(os.homedir(), ".tangent", "trees");
@@ -166,9 +189,9 @@ if (!existsSync(WORKSPACE)) mkdirSync(WORKSPACE, { recursive: true });
  * field is the tangent tree area the session belongs to, read from the
  * tmux user option `@tangent_area` that the agent sets at creation time.
  */
-async function listSessions() {
+async function loadSessions() {
   try {
-    const { stdout } = await execFileAsync("tmux", [
+    const { stdout } = await runTmuxObservation([
       "list-sessions",
       "-F",
       "#{session_name}\t#{session_path}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{@tangent_area}\t#{@tangent_kind}\t#{@tangent_goal}\t#{@tangent_process}\t#{pane_current_command}\t#{@tangent_phase}\t#{@tangent_work_title}\t#{@tangent_launch}\t#{@tangent_pipeline}\t#{@tangent_step}\t#{@tangent_brain}\t#{@tangent_generation}",
@@ -201,27 +224,23 @@ async function listSessions() {
         };
       });
     return await paneObserver.enrich(await withGoalInfo(sessions));
-  } catch {
-    return []; // no tmux server running yet
+  } catch (error) {
+    if (isNoTmuxServer(error)) return [];
+    throw error;
   }
 }
 
-/** Reads only the tmux facts Programs needs, without sampling agent screens. */
+/** Reads one coalesced session observation, preserving its last valid value. */
+async function listSessions(options) {
+  return sessionObservation.get(options);
+}
+
+/** Reuses the shared observation for the subset of facts Programs needs. */
 async function listProgramSessions() {
-  try {
-    const { stdout } = await execFileAsync("tmux", [
-      "list-sessions",
-      "-F",
-      "#{session_name}\t#{session_path}\t#{@tangent_area}\t#{@tangent_kind}\t#{@tangent_process}\t#{pane_current_command}",
-    ]);
-    return stdout.trim().split("\n").filter(Boolean).map((line) => {
-      const [name, cwd, area, kind, processName, command] = line.split("\t");
-      const stopped = SHELL_CMDS.has(command);
-      return { name, cwd, area: area || null, kind: kind || null, process: processName || null, command, state: stopped ? "stopped" : "service" };
-    });
-  } catch {
-    return [];
-  }
+  return (await listSessions()).map(({ name, cwd, area, kind, process: processName, command, state }) => ({
+    name, cwd, area, kind, process: processName, command,
+    state: ["process", "service", "command"].includes(kind) ? state : SHELL_CMDS.has(command) ? "stopped" : "service",
+  }));
 }
 
 // ---- agent state via screen diff ----
@@ -234,8 +253,28 @@ async function listProgramSessions() {
 const SHELL_CMDS = new Set(["zsh", "bash", "fish", "sh", "dash", "tcsh", "nu"]);
 const paneObserver = createPaneObserver({
   /** Runs one tmux observation command. */
-  runTmux: (args) => execFileAsync("tmux", args),
+  runTmux: runTmuxObservation,
   shellCommands: SHELL_CMDS,
+  concurrency: Number(process.env.TANGENT_PANE_OBSERVATION_CONCURRENCY ?? 8),
+});
+
+const TMUX_OBSERVATION_TIMEOUT_MS = Number(process.env.TANGENT_TMUX_OBSERVATION_TIMEOUT_MS ?? 2_500);
+const TMUX_OBSERVATION_MAX_BYTES = Number(process.env.TANGENT_TMUX_OBSERVATION_MAX_BYTES ?? 4 * 1024 * 1024);
+
+/** Runs passive tmux observation with a hard time and output budget. */
+function runTmuxObservation(args) {
+  return execFileAsync("tmux", args, { timeout: TMUX_OBSERVATION_TIMEOUT_MS, maxBuffer: TMUX_OBSERVATION_MAX_BYTES });
+}
+
+/** Distinguishes an empty tmux server from an unhealthy observation command. */
+function isNoTmuxServer(error) {
+  const detail = `${error?.stderr ?? ""} ${error?.message ?? ""}`.toLowerCase();
+  return detail.includes("no server running") || detail.includes("failed to connect to server") || (detail.includes("error connecting to") && detail.includes("no such file"));
+}
+
+const sessionObservation = createObservationCache({
+  load: loadSessions,
+  ttlMs: Number(process.env.TANGENT_SESSION_OBSERVATION_TTL_MS ?? 500),
 });
 
 /**
@@ -1271,19 +1310,53 @@ function areaNoteFiles(area) {
 }
 
 /** The deterministic source set that one goal supplies to an agent. */
-async function goalContext(area, o) {
+async function goalContext(area, o, trace = null) {
   const notes = areaNoteFiles(area);
-  const index = await vaultIndex();
-  const goalRecord = index.documents.find((record) => record.file === o.file);
-  const linked = index.documents.filter((d) => d.kind === "document" && (
-    d.backlinks.includes(o.file) || goalRecord?.links.some((target) => linkTargetsRecord(target, d))
-  ));
+  trace?.mark("area notes resolved", { notes: notes.length });
+  const linked = await goalContextDocuments(area, o, trace);
   return {
     goalFile: path.join(TREES_ROOT, o.file),
     notes,
     documents: linked.map((d) => path.join(TREES_ROOT, d.file)),
     commentCounts: linked.map((d) => d.commentCount ?? 0),
   };
+}
+
+const GOAL_CONTEXT_MAX_DOCUMENTS = 64;
+const GOAL_CONTEXT_MAX_BYTES = 512_000;
+
+/**
+ * Reads only the bounded Document metadata needed to start one Goal.
+ *
+ * A mutation must not build the complete vault search/map projection merely
+ * to name its source files. Only explicit links from the Goal are safe on the
+ * mutation path. Reverse-link discovery stays in the background projection.
+ */
+async function goalContextDocuments(area, goal, trace = null) {
+  const goalText = await readFile(path.join(TREES_ROOT, goal.file), "utf8").catch(() => "");
+  trace?.mark("goal source read", { characters: goalText.length });
+  const goalLinks = wikiLinks(goalText);
+  trace?.mark("goal links parsed", { links: goalLinks.length });
+  const candidates = [...new Set(goalLinks.map((target) => {
+    const stem = target.replace(/\.md$/i, "");
+    return `${stem.includes("/") ? stem : `${area}/${stem}`}.md`;
+  }))].slice(0, GOAL_CONTEXT_MAX_DOCUMENTS);
+  const linked = [];
+  for (const file of candidates) {
+    const safe = safeMarkdownPath(TREES_ROOT, file);
+    if (!safe || /\/(?:goal|outcome)-[^/]+\.md$/.test(safe.relative)) continue;
+    const info = await stat(safe.absolute).catch(() => null);
+    if (!info || info.size > GOAL_CONTEXT_MAX_BYTES) continue;
+    const text = await readFile(safe.absolute, "utf8").catch(() => null);
+    if (text == null) continue;
+    trace?.mark("linked document read", { file: safe.relative, characters: text.length });
+    linked.push({
+      file: safe.relative,
+      title: markdownTitle(text, path.basename(safe.relative, ".md")),
+      commentCount: documentComments.parseComments(text).length,
+    });
+  }
+  return linked;
 }
 
 /** Builds the first message for a conversation that defines new work. */
@@ -1314,14 +1387,17 @@ function describeWorkPrompt(area, description, sources = []) {
  * harness. Markdown keeps the contract readable in both the shell and the
  * agent composer.
  */
-async function goalPrompt(area, o, extras = [], continuationEntries = []) {
-  const context = await goalContext(area, o);
-  const allGoals = [...(await goalsByFile()).values()];
-  projectGoalDependencies(allGoals);
-  const projectedGoal = allGoals.find((goal) => goal.file === o.file) ?? o;
+async function goalPrompt(area, o, extras = [], continuationEntries = [], trace = null) {
+  const context = await goalContext(area, o, trace);
+  trace?.mark("goal context ready", { documents: context.documents.length });
+  const areaGoals = await readAreaGoals(area);
+  trace?.mark("area goals ready", { goals: areaGoals.length });
+  projectGoalDependencies(areaGoals);
+  const projectedGoal = areaGoals.find((goal) => goal.file === o.file) ?? o;
   const dependencyLines = [
     ...(projectedGoal.dependsOn ?? []).map((goal) => `- Depends on ${goal.title} (${goal.file}).`),
     ...(projectedGoal.requiredBy ?? []).map((goal) => `- Required by ${goal.title} (${goal.file}).`),
+    ...(projectedGoal.unresolvedDependencies ?? []).map((slug) => `- Depends on Goal ${slug} outside this Area.`),
   ];
   const sources = [
     `- Goal: ${context.goalFile}`,
@@ -1330,6 +1406,7 @@ async function goalPrompt(area, o, extras = [], continuationEntries = []) {
   ];
   const openComments = context.commentCounts.some(Boolean);
   const brain = await liveBrainForArea(area);
+  trace?.mark("controlling brain resolved");
   const brainSection = brain
     ? `## Brain\n\n` +
       `The brain for Area ${brain.area} controls this work. Do the assignment. Do not create, start, close, or re-plan Goals. Do not contact Julian or choose another agent. Report only to the brain with the handover command below.\n\n`
@@ -1373,14 +1450,16 @@ async function goalPrompt(area, o, extras = [], continuationEntries = []) {
  * instruction, every earlier handover verbatim (facts from earlier agents),
  * and how to hand over when done. Guidance, not a schema.
  */
-async function pipelineStepPrompt(area, o, record, index, extras = [], sessionName = "") {
-  const assignment = await goalPrompt(area, o, extras);
+async function pipelineStepPrompt(area, o, record, index, extras = [], sessionName = "", trace = null) {
+  const assignment = await goalPrompt(area, o, extras, [], trace);
+  trace?.mark("assignment rendered", { characters: assignment.length });
   const step = record.steps[index - 1];
   const total = record.steps.length;
   const earlier = record.steps
     .filter((item) => item.index < index && item.handover)
     .map((item) => `### Handover from step ${item.index} (${item.label || "agent"}, ${item.status})\n\n${item.handover}`);
   const brain = await liveBrainForArea(area);
+  trace?.mark("step controller resolved");
   const decisionLine = brain
     ? `If you need a decision, test, correction, fresh context, or another agent, include that fact in the same handover. The brain decides the next action.`
     : `If a real decision needs Julian, ask him here; this legacy pipeline waits.`;
@@ -1655,13 +1734,8 @@ const messages = createMessageDelivery({
 const runtimeScheduler = createRuntimeScheduler([
   {
     name: "goal reconciliation", intervalMs: 10_000,
-    /**
-     * Recovery guard: reconciliation currently performs unbounded synchronous
-     * work on the HTTP event loop. A pathological vault/session snapshot can
-     * otherwise block terminal streaming and blank every live brain pane.
-     * Keep it out of the web process until reconciliation has its own worker.
-     */
-    active: () => false,
+    /** Keeps durable repair live inside the replaceable controller. */
+    active: () => true,
     /** Reads one current session snapshot and repairs stale work bindings. */
     async run() {
       await reconcileGoals(await listSessions());
@@ -1766,8 +1840,9 @@ async function spawnDescribeWorkSession(area, description, sources, { session: r
  * Both the launch line and the opening prompt follow the type-but-never-submit
  * rule, so the harness, the model, and the words all stay the user's call.
  */
-async function spawnGoalSession(area, slug, { phase = "execute", approved = false, launch = false, document = "", command = "", label = "", extraSlugs = [], pipeline = null, continuation = null, onPrimed = null } = {}) {
+async function spawnGoalSession(area, slug, { phase = "execute", approved = false, launch = false, document = "", command = "", label = "", extraSlugs = [], pipeline = null, continuation = null, onPrimed = null, trace = null } = {}) {
   const areaGoals = await readAreaGoals(area);
+  trace?.mark("spawn area goals ready", { goals: areaGoals.length });
   const o = areaGoals.find((t) => t.slug === slug);
   if (!o) return { status: 404, error: `no goal "${slug}" on ${area}` };
   if (["done", "dropped"].includes(o.status)) return { status: 409, error: `goal is ${o.status}` };
@@ -1779,7 +1854,9 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
     command = inherited.command;
     if (!label && inherited.label) label = inherited.label;
   }
+  trace?.mark("launch resolved");
   const sessions = await listSessions();
+  trace?.mark("spawn sessions ready", { sessions: sessions.length });
   // Extra Goals ride along in the same session: same Area only, still open,
   // never pulled away from another live session's ownership.
   const liveNames = new Set(sessions.map((s) => s.name));
@@ -1795,10 +1872,11 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
   // is up. AGENT_SHELL_TEST_NO_LAUNCH leaves the pane at its shell so tests
   // can prove binding without a harness.
   const stepPrompt = pipeline
-    ? await pipelineStepPrompt(area, o, pipeline.record, pipeline.index, ownExtras, pipeline.sessionName)
+    ? await pipelineStepPrompt(area, o, pipeline.record, pipeline.index, ownExtras, pipeline.sessionName, trace)
     : continuation
       ? await goalPrompt(area, o, ownExtras, continuation.entries)
       : "";
+  trace?.mark("step prompt ready", { characters: stepPrompt.length });
   if ((pipeline || continuation) && process.env.AGENT_SHELL_TEST_NO_LAUNCH === "1") launch = false;
   // Starting a Goal that already has a session re-primes it: a pane left
   // at a shell (the agent was stopped to do ordinary work) gets the launch
@@ -1829,6 +1907,7 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
   // No command: tmux runs the login shell, so aliases (claude-otto) resolve
   // and the session outlives whatever agent is started in it.
   await execFileAsync("tmux", ["new-session", "-d", "-s", phaseName, "-c", dir]);
+  trace?.mark("tmux session created", { session: phaseName });
   await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_area", area]);
   await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_goal", o.file]);
   await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_kind", "goal"]);
@@ -1846,6 +1925,7 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
   } catch (err) {
     console.error("goal binding:", err.message ?? err);
   }
+  trace?.mark("goal binding persisted", { session: phaseName });
   /**
    * Primes the new pane after its login shell finishes drawing. onPrimed, when
    * given, is the swap contract's confirmation callback (design-worker-context-handover
@@ -1868,6 +1948,7 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
   };
   if (launch) await primeNewSession();
   else primeNewSession();
+  trace?.mark("session primed", { session: phaseName, awaited: launch });
   return { status: 200, session: phaseName };
 }
 
@@ -1946,8 +2027,10 @@ const goalInfoCache = new Map(); // file -> { at, info }
  * cache: the sessions poll runs every 2s and goal files rarely change.
  */
 async function withGoalInfo(sessions) {
-  return Promise.all(
-    sessions.map(async (s) => {
+  return mapWithConcurrency(
+    sessions,
+    Number(process.env.TANGENT_GOAL_INFO_CONCURRENCY ?? 16),
+    async (s) => {
       if (!s.goal) return s;
       let hit = goalInfoCache.get(s.goal);
       if (!hit || Date.now() - hit.at > 3000) {
@@ -1968,7 +2051,7 @@ async function withGoalInfo(sessions) {
         goalInfoCache.set(s.goal, hit);
       }
       return { ...s, ...hit.info };
-    })
+    }
   );
 }
 
@@ -1987,6 +2070,14 @@ async function goalsByFile() {
     for (const o of await readAreaGoals(area)) map.set(o.file, o);
   }
   return map;
+}
+
+/** Reads one Goal from its own Area without walking the complete vault. */
+async function goalByFile(file) {
+  const relative = String(file ?? "").replaceAll("\\", "/");
+  const area = path.posix.dirname(relative);
+  if (!validAreaPath(area) || !/\/(?:goal|outcome)-[a-z0-9-]+\.md$/.test(`/${relative}`)) return null;
+  return (await readAreaGoals(area)).find((goal) => goal.file === relative) ?? null;
 }
 
 /**
@@ -2015,13 +2106,9 @@ async function startGoal(file, options = {}) {
 
 /** The tmux session name for one step; restarts get the smallest free suffix. */
 function pipelineStepSessionName(record, index, liveNames) {
-  const base = normName(`${record.area.split("/").pop()}--${record.slug}`).slice(0, 60);
-  const stepName = index === 1 ? base : normName(`${base}--s${index}`).slice(0, 60);
-  if (!liveNames.has(stepName)) return stepName;
-  for (let k = 2; ; k += 1) {
-    const candidate = normName(`${stepName}-r${k}`).slice(0, 60);
-    if (!liveNames.has(candidate)) return candidate;
-  }
+  const base = normName(`${record.area.split("/").pop()}--${record.slug}`);
+  const suffix = index === 1 ? "" : `-s${index}`;
+  return uniqueSessionName(base, suffix, liveNames, 60);
 }
 
 /** Resolves one step's launch to an exact command, or returns the error. */
@@ -2065,25 +2152,28 @@ async function launchHarnessWarnings(area, steps) {
  * delivered into an earlier step's live session when the step continues it.
  * The Goal binds to whichever session now works it.
  */
-async function startPipelineStep(record, index) {
+async function startPipelineStep(record, index, trace = null) {
   const step = record.steps[index - 1];
   if (!step) return { status: 404, error: `no step ${index}` };
   if (step.status !== "pending") return { status: 409, error: `step ${index} is ${step.status}` };
   const resolved = await resolveStepLaunch(step);
+  trace?.mark("step launch resolved");
   if (resolved.error) return { status: 409, error: `step ${index}: ${resolved.error}` };
   step.command = resolved.command;
   step.label = resolved.label;
-  const byFile = await goalsByFile();
+  const byFile = new Map((await readAreaGoals(record.area)).map((goal) => [goal.file, goal]));
+  trace?.mark("step area goals ready", { goals: byFile.size });
   const o = byFile.get(record.goal);
   if (!o) return { status: 404, error: `no goal file ${record.goal}` };
   const sessions = await listSessions();
+  trace?.mark("step sessions ready", { sessions: sessions.length });
   const liveNames = new Set(sessions.map((item) => item.name));
   const extraSlugs = (record.extraFiles ?? []).map((extra) => byFile.get(extra)).filter((extra) => extra && extra.area === o.area).map((extra) => extra.slug);
   const source = step.continueFrom ? record.steps[step.continueFrom - 1] : null;
   if (source?.session && liveNames.has(source.session)) {
     const goals = await readAreaGoals(record.area);
     const extras = extraSlugs.map((extraSlug) => goals.find((goal) => goal.slug === extraSlug)).filter(Boolean);
-    const prompt = await pipelineStepPrompt(record.area, o, record, index, extras, source.session);
+    const prompt = await pipelineStepPrompt(record.area, o, record, index, extras, source.session, trace);
     messages.queue(source.session, { from: "tangent", area: record.area, text: prompt, banner: false, queuedAt: new Date().toISOString() });
     await execFileAsync("tmux", ["set-option", "-t", "=" + source.session + ":", "@tangent_step", String(index)]).catch(() => {});
     if (o.status !== "active" || o.session !== source.session) {
@@ -2102,6 +2192,7 @@ async function startPipelineStep(record, index) {
       label: step.label,
       extraSlugs,
       pipeline: { record, index, sessionName },
+      trace,
     });
     if (result.status !== 200) return result;
     step.session = result.session;
@@ -2110,6 +2201,7 @@ async function startPipelineStep(record, index) {
   step.startedAt = new Date().toISOString();
   step.endedAt = null;
   await writePipeline(PIPELINES_ROOT, record);
+  trace?.mark("pipeline step persisted", { session: step.session });
   return { status: 200, session: step.session, index, pipeline: record };
 }
 
@@ -2405,20 +2497,30 @@ async function paneLastMessage(sessionName) {
 
 /** Restart, skip, end, or send-on one step at Julian's explicit action. */
 async function controlPipeline(goalFile, action, index) {
-  const byFile = await goalsByFile();
-  const o = byFile.get(goalFile);
+  const trace = action === "advance" ? traceOperation("pipeline advance", { goal: goalFile, step: Number(index) }) : null;
+  const o = await goalByFile(goalFile);
+  trace?.mark("goal resolved");
   if (!o) return { status: 404, error: `no goal file ${goalFile}` };
   const record = await readPipeline(PIPELINES_ROOT, o.area, o.slug);
+  trace?.mark("pipeline read");
   if (!record) return { status: 404, error: "no pipeline on this goal" };
   const step = record.steps[Number(index) - 1];
   if (!step) return { status: 404, error: `no step ${index}` };
-  const sessions = await listSessions();
+  const sessions = await listSessions({ fresh: true });
+  trace?.mark("control sessions ready", { sessions: sessions.length });
   const live = step.session ? sessions.find((item) => item.name === step.session) : null;
   if (action === "advance") {
+    // A caller can lose the HTTP response after the durable transition. The
+    // exact retry is an idempotent status read, not a second agent launch.
+    if (step.status === "running" && live) {
+      trace?.mark("advance already committed", { session: step.session });
+      return { status: 200, session: step.session, index: step.index, pipeline: record, repeated: true };
+    }
     if (step.status !== "pending") return { status: 409, error: `step ${step.index} is ${step.status}; advance needs a pending step` };
     const controller = await nearestLiveBrainForArea(record.area);
+    trace?.mark("advance controller resolved", { controller: controller?.session ?? null });
     if (!controller) return { status: 409, error: `no live brain controls ${record.area}` };
-    return startPipelineStep(record, step.index);
+    return startPipelineStep(record, step.index, trace);
   }
   if (action === "restart") {
     if (!(step.status === "stopped" || (step.status === "running" && !live))) return { status: 409, error: `step ${step.index} is ${step.status}; restart needs a stopped step` };
@@ -2903,8 +3005,7 @@ async function spawnBrainSession(record) {
   const sessions = await listSessions();
   const names = new Set(sessions.map((item) => item.name));
   const generation = (record.generations?.length ?? 0) + 1;
-  let name = brainSessionName(record.area, generation);
-  for (let k = 2; names.has(name); k += 1) name = `${brainSessionName(record.area, generation).slice(0, 55)}-r${k}`;
+  const name = uniqueSessionName(brainSessionName(record.area, generation), "", names, 60);
   const directory = (await areaDirectory(record.area)) ?? path.join(TREES_ROOT, record.area);
   try {
     await execFileAsync("tmux", ["new-session", "-d", "-s", name, "-c", directory]);
@@ -3042,9 +3143,13 @@ async function handoverBrain(sessionName, text) {
     messages.queue(previous, { from: "tangent", area: null, text: `Handover recorded, but the next generation could not start: ${started.error}. You are still the brain.`, queuedAt: new Date().toISOString() });
     return started;
   }
-  setTimeout(() => {
-    execFileAsync("tmux", ["kill-session", "-t", "=" + previous]).catch(() => {});
-  }, 1500).unref();
+  // spawnBrainSession does not return until the replacement has been created
+  // and its initial prompt attempt has settled. Complete the swap before the
+  // mutation response so a caller can never observe a successful handover
+  // while the old generation is still live. Expire any observation that may
+  // have been populated while the replacement was starting.
+  await execFileAsync("tmux", ["kill-session", "-t", "=" + previous]);
+  sessionObservation.invalidate();
   return { status: 200, state: "started", session: started.session, generation: started.generation, previous, brain: record };
 }
 
@@ -3949,9 +4054,10 @@ const shellStateRoutes = createShellStateRoutes({
     const sessions = await listSessions();
     const [pipelines, brains, revisions, rebuild] = await Promise.all([
       pipelinesView(sessions).catch(() => []),
-      // Keep terminal discovery independent from vault-wide document indexing.
-      // The richer brain route still computes For-Julian items on demand.
-      brainsView(sessions, { includeForJulian: false }).catch(() => []),
+      // Projection work runs in the replaceable controller and is cached; the
+      // public gateway and terminal path remain independent while the shell
+      // snapshot keeps its complete For-Julian contract.
+      brainsView(sessions).catch(() => []),
       commitChanges.status().catch(() => ({ deployedCommit: commitChanges.deployedCommit, currentCommit: commitChanges.deployedCommit, commits: [] })),
       rebuildOperations.current().catch(() => null),
     ]);
@@ -3966,6 +4072,7 @@ const shellStateRoutes = createShellStateRoutes({
       caffeinate: caffeinateProc !== null,
       voice: Boolean(GROQ_KEY),
       sessions,
+      runtime: { sessions: sessionObservation.status() },
       pipelines,
       brains,
       contextHandoverTokens: CONTEXT_HANDOVER_TOKENS,
@@ -4341,7 +4448,13 @@ function serverError(error) {
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
+  const operationId = String(req.headers["x-tangent-operation-id"] ?? randomUUID()).slice(0, 128);
+  res.setHeader("x-tangent-operation-id", operationId);
   try {
+    if (url.pathname === "/api/health" && req.method === "GET") {
+      sendJson(res, 200, { ok: true, service: "tangent-agent-shell-controller", role: IS_CONTROLLER ? "controller" : "standalone", boot: BOOT_ID, pid: process.pid });
+      return;
+    }
     if (url.pathname === "/api/events" && req.method === "GET") {
       stateEvents.connect(req, res);
       return;
@@ -4354,7 +4467,13 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === "POST") {
       res.once("finish", () => {
-        if (res.statusCode < 400) stateEvents.changed(url.pathname);
+        if (res.statusCode < 400) {
+          sessionObservation.invalidate();
+          if (["/api/areas", "/api/goals", "/api/idea", "/api/document", "/api/pipelines", "/api/brains", "/api/launch", "/api/work"].some((prefix) => url.pathname.startsWith(prefix))) {
+            vaultProjection.invalidate();
+          }
+          stateEvents.changed(url.pathname);
+        }
       });
     }
     if (await shellStateRoutes.handle(req, res, url)) return;
@@ -4371,25 +4490,50 @@ const server = http.createServer(async (req, res) => {
     if (await workMutationRoutes.handle(req, res, url)) return;
     await serveStaticAsset(url, res, here);
   } catch (error) {
-    console.error(`request ${req.method} ${url.pathname}:`, error?.stack ?? error);
-    if (!res.headersSent) sendJson(res, 500, { error: "Agent Shell could not complete the request." });
+    console.error(`request ${req.method} ${url.pathname} operation=${operationId}:`, error?.stack ?? error);
+    if (!res.headersSent) sendJson(res, error instanceof HttpError ? error.status : 500, { error: error instanceof HttpError ? error.message : "Agent Shell could not complete the request.", operationId });
     else res.end();
   }
 });
 
-attachTerminalTransport(server, {
-  port: PORT,
-  workspace: WORKSPACE,
-  chatSession: CHAT_SESSION,
-  chatCommand: withDefaultModel(agentCmd),
+server.headersTimeout = Number(process.env.TANGENT_HTTP_HEADERS_TIMEOUT_MS ?? 10_000);
+server.requestTimeout = Number(process.env.TANGENT_HTTP_REQUEST_TIMEOUT_MS ?? 30_000);
+server.keepAliveTimeout = Number(process.env.TANGENT_HTTP_KEEPALIVE_TIMEOUT_MS ?? 5_000);
+server.maxRequestsPerSocket = Number(process.env.TANGENT_HTTP_MAX_REQUESTS_PER_SOCKET ?? 1_000);
+server.on("clientError", (error, socket) => {
+  console.error("agent-shell client error:", error?.code ?? error?.message ?? error);
+  if (socket.writable) socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+});
+server.on("error", (error) => {
+  console.error("agent-shell listener error:", error?.code ?? error?.message ?? error);
+  // A handled listen error must still end this generation so its supervisor
+  // can probe the actual owner and back off. Remaining alive would be a
+  // healthy-looking process with no public listener.
+  if (!server.listening) setImmediate(() => process.exit(1));
 });
 
+if (!IS_CONTROLLER) {
+  attachTerminalTransport(server, {
+    port: PORT,
+    workspace: WORKSPACE,
+    chatSession: CHAT_SESSION,
+    chatCommand: withDefaultModel(agentCmd),
+  });
+}
+
 server.listen(PORT, HOST, () => {
-  console.log(`agent-shell: http://${HOST}:${PORT}`);
+  const address = server.address();
+  const listeningPort = typeof address === "object" && address ? address.port : PORT;
+  console.log(`agent-shell controller: http://${HOST}:${listeningPort}`);
   console.log(`  orchestrator session "${CHAT_SESSION}" runs: ${agentCmd}`);
   console.log(`  workspace: ${WORKSPACE}`);
+  if (IS_CONTROLLER && process.send) {
+    process.send({ type: "agent-shell-ready", port: listeningPort, boot: BOOT_ID, pid: process.pid });
+    const heartbeat = setInterval(() => process.send?.({ type: "agent-shell-heartbeat", boot: BOOT_ID, at: Date.now() }), 1_000);
+    heartbeat.unref();
+  }
   runtimeScheduler.wake();
-  if (!process.env.AGENT_SHELL_NO_OPEN) openStandaloneWindow();
+  if (!IS_CONTROLLER && !process.env.AGENT_SHELL_NO_OPEN) openStandaloneWindow();
   // The message queue died with the last process; the notices did not.
   /** Reports a failed flush without stopping the server. */
   const flushFailed = (err) => console.error("brain notices:", err.message ?? err);
@@ -4398,6 +4542,8 @@ server.listen(PORT, HOST, () => {
   // harness had not left the shell yet.
   rearmPersistedPrompts().catch((err) => console.error("armed prompts:", err.message ?? err));
 });
+
+if (IS_CONTROLLER) process.once("disconnect", () => process.exit(0));
 
 /**
  * Opens (or focuses) the native "Agent Shell" app (a WKWebView wrapper built

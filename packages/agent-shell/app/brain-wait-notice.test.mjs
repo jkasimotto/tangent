@@ -19,6 +19,9 @@ import { fileURLToPath } from "node:url";
 
 import { readInbox, unreadNotices } from "./brain-inbox.mjs";
 import { newPipeline, writePipeline } from "./pipeline-record.mjs";
+import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
+
+isolateTmuxTests();
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 

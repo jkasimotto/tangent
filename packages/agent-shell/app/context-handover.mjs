@@ -3,6 +3,8 @@
 // derived name, and the prompt section a continued session reads. No fs, no
 // tmux, no HTTP; the server owns time, spawning, and records.
 
+import { boundedSessionName } from "./session-names.mjs";
+
 /** Same normalization pipelineStepSessionName (server.mjs) uses for tmux names. */
 function normName(value) {
   return String(value).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
@@ -61,17 +63,18 @@ export function contextRepeatText({ usedTokens, thresholdTokens, subject }) {
 
 /**
  * The fresh session's derived name: strip `current`'s generation suffix to
- * get the stem, then `<stem>--g<n>` for the smallest n >= 2 not already
- * live, sliced to 60 characters exactly like pipelineStepSessionName. The
+ * get the stem, then `<stem>-g<n>` for the smallest n >= 2 not already live.
+ * The base is truncated first so the generation suffix stays inside 60 characters. The
  * caller passes its own (already live) name as part of `current`'s lineage,
  * so a second continuation naturally lands on g3, not a repeat of g2.
  */
 export function continuationSessionName(current, liveNames) {
   const stem = stemOf(current);
-  for (let n = 2; ; n += 1) {
-    const candidate = normName(`${stem}--g${n}`).slice(0, 60);
+  for (let generation = 2; generation <= liveNames.size + 2; generation += 1) {
+    const candidate = boundedSessionName(normName(stem), `-g${generation}`, 60);
     if (!liveNames.has(candidate)) return candidate;
   }
+  throw new Error("could not allocate a continuation session name");
 }
 
 /**

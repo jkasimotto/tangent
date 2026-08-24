@@ -26,3 +26,10 @@ test("API client uses a server error message when available", async () => {
   }));
   await assert.rejects(client.api("/api/example"), /conflict/);
 });
+
+test("API client aborts a stalled request at its response deadline", async () => {
+  const client = createApiClient((_path, options) => new Promise((_resolve, reject) => {
+    options.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+  }), null, 10);
+  await assert.rejects(client.api("/api/stalled"), /10ms response deadline/);
+});

@@ -5,6 +5,7 @@
 // loopback-only, overridable via --server or TANGENT_SHELL_URL.
 
 import { runProcess } from "@tangent/agent-runtime/process";
+import { randomUUID } from "node:crypto";
 
 const DEFAULT_SERVER_URL = "http://127.0.0.1:4321";
 
@@ -49,10 +50,30 @@ export function resolveServerUrl(explicit: string | undefined): URL {
 /** One request against the Agent Shell server, returning its status and parsed JSON body without throwing on a non-2xx response. */
 async function vaultRequest(server: URL, path: string, init?: RequestInit): Promise<{ status: number; body: Record<string, any> }> {
   let response: Response;
+  const method = String(init?.method ?? "GET").toUpperCase();
+  const operationId = randomUUID();
+  const timeoutMs = Math.max(1_000, Number(process.env.TANGENT_SHELL_TIMEOUT_MS) || 20_000);
+  const controller = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort(new Error(`Agent Shell request timed out after ${timeoutMs}ms`));
+  }, timeoutMs);
+  timeout.unref?.();
+  const callerSignal = init?.signal;
+  /** Propagates a caller cancellation into the request-owned deadline signal. */
+  const callerAborted = () => controller.abort(callerSignal?.reason);
+  if (callerSignal?.aborted) callerAborted();
+  else callerSignal?.addEventListener("abort", callerAborted, { once: true });
+  const headers = new Headers(init?.headers);
+  headers.set("x-tangent-operation-id", operationId);
   try {
-    response = await fetch(new URL(path, server), init);
+    response = await fetch(new URL(path, server), { ...init, headers, signal: controller.signal });
   } catch (error) {
-    throw connectionError(server, error);
+    throw connectionError(server, path, method, operationId, error, timedOut ? timeoutMs : null);
+  } finally {
+    clearTimeout(timeout);
+    callerSignal?.removeEventListener("abort", callerAborted);
   }
   const body = (await response.json().catch(() => ({}))) as Record<string, any>;
   return { status: response.status, body };
@@ -123,14 +144,30 @@ export async function requireGoal(server: URL, slug: string): Promise<GoalSummar
 function isConnectionRefused(error: unknown): boolean {
   const cause = error instanceof Error ? (error as Error & { cause?: unknown }).cause : undefined;
   const code = cause && typeof cause === "object" && "code" in cause ? String((cause as { code?: unknown }).code) : "";
-  return code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "ECONNRESET";
+  return code === "ECONNREFUSED" || code === "ENOTFOUND";
 }
 
-/** Turns a refused connection into the actionable "start the Agent Shell" error; passes other errors through. */
-function connectionError(server: URL, error: unknown): Error {
-  if (isConnectionRefused(error)) {
-    return new Error(`Agent Shell is not running at ${server.origin}. Start it: cd packages/agent-shell/app && npm start`);
+/** Returns the transport code nested under Node's fetch error. */
+function transportCode(error: unknown): string {
+  const cause = error instanceof Error ? (error as Error & { cause?: unknown }).cause : undefined;
+  return cause && typeof cause === "object" && "code" in cause ? String((cause as { code?: unknown }).code) : "";
+}
+
+/** Turns transport failures into layer-specific, retry-safe CLI errors. */
+function connectionError(server: URL, path: string, method: string, operationId: string, error: unknown, timeoutMs: number | null): Error {
+  const mutation = method !== "GET" && method !== "HEAD";
+  const uncertain = mutation ? ` The operation may have completed; inspect its status before retrying. Operation ID: ${operationId}.` : "";
+  if (timeoutMs !== null) {
+    return new Error(`Agent Shell ${method} ${path} exceeded its ${timeoutMs}ms response deadline.${uncertain}`);
   }
+  if (isConnectionRefused(error)) {
+    return new Error(`Agent Shell is not running at ${server.origin}. Start it: cd packages/agent-shell && npm start`);
+  }
+  const code = transportCode(error);
+  if (["ECONNRESET", "EPIPE", "ETIMEDOUT", "UND_ERR_SOCKET", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT"].includes(code) || (error instanceof TypeError && error.message === "fetch failed")) {
+    return new Error(`Agent Shell ${method} ${path} lost its local transport${code ? ` (${code})` : ""}.${uncertain}`);
+  }
+  if (error instanceof Error && error.name === "AbortError") return new Error(`Agent Shell ${method} ${path} was cancelled.${uncertain}`);
   return error instanceof Error ? error : new Error(String(error));
 }
 

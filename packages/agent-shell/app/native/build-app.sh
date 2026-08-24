@@ -37,5 +37,6 @@ osascript -e "tell application \"$APP_NAME\" to quit" >/dev/null 2>&1 || true
 rm -rf "$HOME/Applications/$APP_NAME.app"
 ditto "$APP" "$HOME/Applications/$APP_NAME.app"
 echo "installed: ~/Applications/$APP_NAME.app"
+bash install-launch-agent.sh
 open "$HOME/Applications/$APP_NAME.app"
 echo "reopened: $APP_NAME"

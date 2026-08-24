@@ -11,6 +11,9 @@ import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
+
+isolateTmuxTests();
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);

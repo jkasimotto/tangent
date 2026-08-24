@@ -10,6 +10,9 @@ import { fileURLToPath } from "node:url";
 
 import { readPipeline } from "./pipeline-record.mjs";
 import { readContinuation } from "./continuation-record.mjs";
+import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
+
+isolateTmuxTests();
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -157,7 +160,7 @@ test("worker context handover: the swap contract, its refusals, and the reminder
   }).then((response) => response.json());
   const step1Session = started.session;
   openedSessions.push(step1Session);
-  assert.ok(step1Session, "step 1 got a session");
+  assert.ok(step1Session, `step 1 got a session: ${JSON.stringify(started)}`);
 
   const continued = await fetch(`${base}/api/goals/handover`, {
     method: "POST",

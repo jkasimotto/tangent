@@ -1,9 +1,9 @@
 // Agent Shell — native macOS app.
 //
 // A WKWebView window over the local agent-shell server (http://localhost:4321).
-// The app ensures the server is running (starts it via a login shell when it is
-// not), then loads the UI. Quitting the app leaves the server and its tmux
-// sessions running; that is the design, sessions survive the window.
+// The app ensures the stable gateway is running (normally through launchd,
+// with a login-shell fallback), then loads the UI. Quitting the app leaves the
+// gateway and tmux sessions running; sessions survive the window by design.
 //
 // Why native instead of a Safari web app or Chrome app window: the browser
 // owned chords like cmd+w and needed Shortcuts/AppleScript glue to focus the
@@ -18,9 +18,11 @@ import WebKit
 
 let serverPort = 4321
 let serverURL = URL(string: "http://localhost:\(serverPort)/")!
+let serverHealthURL = URL(string: "http://localhost:\(serverPort)/api/health")!
 let serverDir = ("~/Projects/otto-tangent/packages/agent-shell/app" as NSString).expandingTildeInPath
-let prototypesDir = (serverDir as NSString).deletingLastPathComponent
-let repoDir = (prototypesDir as NSString).deletingLastPathComponent
+let agentShellDir = (serverDir as NSString).deletingLastPathComponent
+let packagesDir = (agentShellDir as NSString).deletingLastPathComponent
+let repoDir = (packagesDir as NSString).deletingLastPathComponent
 let reviewedRuntime = (repoDir as NSString).appendingPathComponent("packages/agent-shell/dist/index.js")
 let serverLog = ("~/.tangent/agent-shell.log" as NSString).expandingTildeInPath
 
@@ -28,6 +30,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
   var window: NSWindow!
   var webView: WKWebView!
   var serverProcess: Process?
+  var serverStartedAt: Date?
+  var serverRestartAttempt = 0
+  var serverRestartWork: DispatchWorkItem?
+  var serverLaunchInFlight = false
+  var launchctlProcess: Process?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     buildMenu()
@@ -83,39 +90,93 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKUIDelegate, WKNaviga
   }
 
   func probeServer(_ done: @escaping (Bool) -> Void) {
-    var req = URLRequest(url: serverURL)
+    var req = URLRequest(url: serverHealthURL)
     req.timeoutInterval = 1
-    URLSession.shared.dataTask(with: req) { _, response, _ in
-      let up = (response as? HTTPURLResponse) != nil
+    URLSession.shared.dataTask(with: req) { data, response, _ in
+      let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+      let payload = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+      let service = payload?["service"] as? String ?? ""
+      let up = status == 200 && service == "tangent-agent-shell-gateway"
       DispatchQueue.main.async { done(up) }
     }.resume()
   }
 
-  // AGENT_SHELL_NO_OPEN stops the server from running `open -a "Agent Shell"`
-  // back at this app. The login shell picks up nvm's node.
+  // Prefer the installed LaunchAgent: launchd owns gateway availability and
+  // throttles crashes while the app is closed. A source-checkout fallback
+  // keeps development usable before that job is installed.
   func startServer() {
+    if serverProcess?.isRunning == true || serverLaunchInFlight { return }
+    serverLaunchInFlight = true
+    let managed = Process()
+    managed.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+    managed.arguments = ["kickstart", "-k", "gui/\(getuid())/com.tangent.agent-shell"]
+    managed.terminationHandler = { [weak self] process in
+      DispatchQueue.main.async {
+        guard let self = self, self.launchctlProcess === process else { return }
+        self.launchctlProcess = nil
+        self.serverLaunchInFlight = false
+        if process.terminationStatus != 0 { self.startFallbackServer() }
+      }
+    }
+    do {
+      try managed.run()
+      launchctlProcess = managed
+    } catch {
+      launchctlProcess = nil
+      serverLaunchInFlight = false
+      startFallbackServer()
+    }
+  }
+
+  // AGENT_SHELL_NO_OPEN stops the fallback gateway from opening this app.
+  // The login shell picks up nvm's node when no LaunchAgent is installed.
+  func startFallbackServer() {
     if serverProcess?.isRunning == true { return }
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/bin/zsh")
     p.arguments = ["-lc",
-      "if [ ! -f '\(reviewedRuntime)' ]; then cd '\(repoDir)' && npm run build -w @tangent/agent-runtime && npm run build -w @tangent/repo && npm run build -w @tangent/agent-shell; fi; cd '\(serverDir)' && AGENT_SHELL_NO_OPEN=1 exec node server.mjs >> '\(serverLog)' 2>&1"]
+      "if [ ! -f '\(reviewedRuntime)' ]; then cd '\(repoDir)' && npm run build -w @tangent/agent-runtime && npm run build -w @tangent/repo && npm run build -w @tangent/agent-shell; fi; cd '\(serverDir)' && AGENT_SHELL_NO_OPEN=1 exec node gateway.mjs >> '\(serverLog)' 2>&1"]
     p.terminationHandler = { [weak self] process in
       DispatchQueue.main.async {
         guard let self = self, self.serverProcess === process else { return }
         self.serverProcess = nil
-        // Keep the server available after an unexpected exit while the app is
-        // alive; tmux sessions are independent and remain untouched.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-          self.startServer()
-        }
+        let lifetime = self.serverStartedAt.map { Date().timeIntervalSince($0) } ?? 0
+        self.serverStartedAt = nil
+        self.serverRestartAttempt = lifetime >= 30 ? 0 : self.serverRestartAttempt + 1
+        self.scheduleServerRecovery()
       }
     }
     do {
       try p.run()
       serverProcess = p
+      serverStartedAt = Date()
     } catch {
       serverProcess = nil
+      serverStartedAt = nil
+      serverRestartAttempt += 1
+      scheduleServerRecovery()
     }
+  }
+
+  // Re-probes before every restart. Exponential delay prevents an occupied
+  // port or bad build from becoming a process-creation storm.
+  func scheduleServerRecovery() {
+    if serverRestartWork != nil { return }
+    let exponent = min(serverRestartAttempt, 7)
+    let delay = min(30.0, 0.25 * pow(2.0, Double(exponent)))
+    let work = DispatchWorkItem { [weak self] in
+      guard let self = self else { return }
+      self.serverRestartWork = nil
+      self.probeServer { up in
+        if up {
+          self.serverRestartAttempt = 0
+        } else {
+          self.startServer()
+        }
+      }
+    }
+    serverRestartWork = work
+    DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
   }
 
   func pollUntilUp(deadline: Date) {

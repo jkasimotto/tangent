@@ -7,6 +7,9 @@ import path from "node:path";
 import { execFile, spawn } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
+
+isolateTmuxTests();
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 

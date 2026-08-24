@@ -21,7 +21,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
-    "start": "node app/server.mjs",
+    "start": "node app/gateway.mjs",
     "test": "npm run build -w @tangent/core && npm run build -w @tangent/agent-runtime && npm run build -w @tangent/repo && npm run build && node --test test/*.test.mjs",
     "test:app": "node --test app/*.test.mjs"
   },

@@ -17,9 +17,9 @@ flowchart LR
   Gateway -->|attach only| Tmux[(tmux sessions)]
   Controller[Controller process<br/>workflows and projections] --> Vault[(vault and records)]
   Controller -->|start, observe, end| Tmux
-  Supervisor[LaunchAgent supervisor] --> Gateway
-  Supervisor --> Controller
-  Controller -->|versioned snapshots| Gateway
+  Launcher[Native app or LaunchAgent] -->|health probe and backoff| Gateway
+  Gateway -->|spawn and heartbeat| Controller
+  Controller -->|complete HTTP responses| Gateway
 ```
 
 The gateway owns port 4321, static assets, server events, and terminal
@@ -28,57 +28,35 @@ walks the vault, parses Documents, reconciles records, or classifies every
 pane. Terminal attachment talks directly to tmux and stays available when the
 controller is slow or restarting.
 
-The controller owns the application capabilities from ADR-0031. It builds one
-cached projection from vault changes, tmux observations, and persisted workflow
-records. It publishes a versioned snapshot to the gateway. Commands use RPC
-with an operation ID and a deadline. A failed deadline returns an explicit
-error. It cannot block the gateway event loop.
+The controller owns the application capabilities from ADR-0031. It builds
+cached projections from vault changes, tmux observations, and persisted
+workflow records. The gateway caches each complete successful session response.
+Commands use private loopback HTTP with an operation ID and a deadline. A
+failed deadline returns an explicit error. It cannot block the gateway event
+loop.
 
-The supervisor starts both processes. It checks event-loop heartbeats and
-restarts either child independently. Tmux sessions and durable records remain
-outside both processes, so a restart does not end agent work.
+The native app or one optional LaunchAgent ensures the gateway exists. It
+validates the health identity, probes before every launch, and backs off. The
+gateway starts the controller, checks its event-loop heartbeat, and restarts it
+with exponential delay. Tmux sessions and durable records remain outside both
+processes, so a restart does not end agent work.
 
-## Managed session lifetime
+The implementation is protected against a working envelope of 200 retained
+sessions, 50 panes being observed, 25 attached terminals, and a burst of 100
+queued messages. Those numbers are a regression envelope, not a product cap.
+Within it, one observation cycle is shared by every caller, tmux subprocesses
+are bounded, and adding browser tabs does not multiply vault or pane scans.
 
-Only sessions created by Tangent are eligible for automatic cleanup. Each has
-a stable run ID, owner kind, and owner record. Tangent never infers ownership
-from a session name.
+## Session lifetime
 
-```mermaid
-stateDiagram-v2
-  [*] --> Starting
-  Starting --> Running: prompt confirmed
-  Starting --> CleanupPending: launch failed
-  Running --> CleanupPending: durable completion event
-  Running --> Orphaned: owner record is missing or conflicts
-  CleanupPending --> Ended: tail captured and tmux session ended
-  CleanupPending --> CleanupPending: retry
-  Orphaned --> Running: owner repaired
-  Orphaned --> Ended: Julian confirms cleanup
-```
+Controller or gateway recovery never ends a tmux session. Existing explicit
+workflow transitions keep their current lifetime behavior. This resilience
+change does not infer completion, adopt old sessions, or introduce automatic
+cleanup. That restraint is deliberate: the capacity envelope proves retained
+sessions remain cheap, while a mistaken cleanup is destructive.
 
-A completion event is explicit:
-
-- A pipeline step hands over successfully.
-- A solo worker reports completion to its brain.
-- A brain hands over after the next generation is ready.
-- Julian stops work, or closes the Goal through an authorized flow.
-- A launch fails after it creates a session.
-
-The controller first persists the handover, next-step state, notice, and
-`cleanup-pending` state. It then captures a bounded final pane tail and ends the
-exact tmux session. Cleanup is idempotent and resumes after controller restart.
-The worker does not remain alive merely because a Goal or pipeline record is
-complete.
-
-Brains are different. A current brain remains alive between messages. It ends
-only on self-handover after the replacement is ready, explicit stop, or a
-recorded terminal failure.
-
-Unmanaged sessions and inconsistent sessions enter `orphaned`. Tangent shows
-them for repair or confirmed cleanup. It does not destroy them automatically.
-Tests use a separate tmux socket and always destroy that isolated server at
-suite end.
+Tests are different. Every real-tmux integration test uses a private socket
+and destroys only that test server at process exit, including failed fixtures.
 
 ## User-visible behavior
 
@@ -94,6 +72,13 @@ A terminal displays its last frame until a replacement connection produces a
 new frame. A reconnect indicator names the affected layer. A black pane with
 no explanation is never a valid loading or error state.
 
+CLI commands have a response deadline and report the failed layer. Mutations
+carry an operation ID, and a lost response explicitly says the operation may
+have committed and must be inspected before retry. Pipeline advance treats an
+exact retry of an already-running live step as success. Startup has one
+public-port owner; a second launcher probes the existing gateway and backs off
+instead of creating an `EADDRINUSE` restart storm.
+
 ## Important decisions
 
 1. **Use process isolation.** The demonstrated CPU loop blocked HTTP and every
@@ -102,34 +87,32 @@ no explanation is never a valid loading or error state.
 2. **Serve cached projections.** `/api/sessions` must not rebuild the vault or
    rescan all panes. The controller publishes changes. The gateway returns the
    last complete version in bounded time.
-3. **Clean up from explicit lifecycle events.** Goal status alone is not enough
-   authority. The managed run record names the exact session and durable event
-   that permits cleanup.
-4. **Preserve evidence, not processes.** Before cleanup, Tangent stores a
-   bounded final pane tail and links to the provider transcript when known.
-   Completed tmux sessions are not an archive.
-5. **Quarantine ambiguity.** Missing records, old unmarked sessions, and
-   ownership conflicts require repair or Julian's confirmation. Automatic
-   cleanup applies only to positively identified managed sessions.
+3. **Never couple recovery to session cleanup.** Process supervision may kill
+   only Agent Shell processes. Existing tmux sessions and durable records are
+   outside the recovery boundary.
+4. **Retain last-known-good state.** A tmux timeout or controller restart makes
+   the session projection stale, not empty. The response labels that state.
+5. **Bound work, not session count.** Pane capture, message delivery, request
+   bodies, queues, retries, and restart attempts all have explicit capacity and
+   time budgets. Overload returns a visible delayed or busy result; it never
+   creates an unbounded process fan-out or retry loop.
 
 ## Representative flow
 
 An implementation agent runs pipeline step 2 and calls `tangent goal handover`.
 The controller writes the handover and marks step 2 complete. It creates step 3
-or notifies the brain, then records cleanup for step 2. The cleanup worker saves
-the last pane tail and ends only step 2's session. The gateway continues to
-stream the brain throughout this work. If the controller loops, the supervisor
-restarts it and retries the cleanup record.
+or notifies the brain. The gateway continues to stream the brain throughout
+this work. If the controller loops, the gateway serves its cached projection,
+restarts the controller, and leaves every tmux session intact.
 
 ## Risks and unknowns
 
-- The IPC format and snapshot schema become durable enough for independent
-  process restart. They need version checks, but not long-term external API
-  compatibility.
-- Existing sessions have no stable run ID. Migration must classify them as
-  managed only when their tmux options and durable records agree. All others
-  start as orphaned.
-- The exact regular expression that caused the 2026-08-24 CPU loop is still
-  unknown. Process isolation removes its product-wide effect. Profiling and
-  input bounds are still required to remove the loop itself.
-
+- Gateway/controller IPC is limited to readiness and heartbeats. Private
+  controller HTTP and cached response shapes can change atomically.
+- The reproduced `brain advance` failure was an infinite retry loop in session
+  naming: appending a retry suffix and then truncating it repeatedly produced
+  the same occupied 60-character name. Name allocation must reserve suffix
+  space and terminate after a bounded number of attempts. The same path also
+  performed unnecessary vault-wide projection; targeted reads remove that
+  amplification risk. Process isolation still protects terminals from future
+  unknown controller loops.

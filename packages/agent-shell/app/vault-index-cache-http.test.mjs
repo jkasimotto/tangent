@@ -20,8 +20,11 @@ import os from "node:os";
 import path from "node:path";
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
+import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+
+isolateTmuxTests();
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);

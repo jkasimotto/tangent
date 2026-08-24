@@ -20,6 +20,9 @@ import { fileURLToPath } from "node:url";
 
 import { readAllArmedPrompts } from "./armed-prompts.mjs";
 import { PROBE_CHARS, promptArrived, squash } from "./prompt-delivery.mjs";
+import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
+
+isolateTmuxTests();
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);

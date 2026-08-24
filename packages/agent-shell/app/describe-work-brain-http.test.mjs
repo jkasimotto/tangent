@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -23,6 +23,35 @@ test("Describe work reaches a stopped or live Area brain and never opens a work-
   const trees = path.join(root, "trees");
   const brains = path.join(root, "brains");
   const workspace = path.join(root, "workspace");
+  const fakeBin = path.join(root, "bin");
+  const fakeTmuxState = path.join(root, "fake-tmux.json");
+  await mkdir(fakeBin, { recursive: true });
+  await writeFile(path.join(fakeBin, "tmux"), `#!/usr/bin/env node
+const fs = require("node:fs");
+const file = process.env.FAKE_TMUX_STATE;
+const args = process.argv.slice(2);
+const state = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : { sessions: {}, commands: [] };
+state.commands.push(args);
+const value = (flag) => args[args.indexOf(flag) + 1];
+const save = () => fs.writeFileSync(file, JSON.stringify(state));
+if (args[0] === "new-session") state.sessions[value("-s")] = { name: value("-s"), cwd: value("-c"), options: {} };
+else if (args[0] === "set-option") {
+  const session = state.sessions[String(value("-t")).replace(/^=/, "")];
+  if (session) session.options[args[args.indexOf("-t") + 2]] = args[args.indexOf("-t") + 3] ?? "";
+} else if (args[0] === "has-session") {
+  if (!state.sessions[String(value("-t")).replace(/^=/, "")]) process.exitCode = 1;
+} else if (args[0] === "kill-session") delete state.sessions[String(value("-t")).replace(/^=/, "")];
+else if (args[0] === "list-sessions") {
+  const format = value("-F") ?? "#{session_name}";
+  for (const session of Object.values(state.sessions)) {
+    const fields = { session_name: session.name, session_path: session.cwd, session_windows: "1", session_attached: "0", session_created: "1", pane_current_command: "zsh" };
+    const line = format.replace(/#\{([^}]+)\}/g, (_, key) => key.startsWith("@") ? (session.options[key] ?? "") : (fields[key] ?? ""));
+    process.stdout.write(line + "\\n");
+  }
+}
+save();
+`, "utf8");
+  await chmod(path.join(fakeBin, "tmux"), 0o755);
   for (const area of ["otto/tangent/child", "otto/plain"]) await mkdir(path.join(trees, area), { recursive: true });
   await mkdir(workspace, { recursive: true });
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
@@ -38,8 +67,10 @@ test("Describe work reaches a stopped or live Area brain and never opens a work-
   }), "stopped");
   await writeBrain(brains, record);
 
-  const openedSessions = [];
-  const base = await startShellServer(context, { here, root, trees, workspace, openedSessions });
+  const base = await startShellServer(context, {
+    here, root, trees, workspace,
+    env: { PATH: `${fakeBin}${path.delimiter}${process.env.PATH}`, FAKE_TMUX_STATE: fakeTmuxState },
+  });
   if (!base) return;
 
   const resumed = await describe(base, {
@@ -50,11 +81,9 @@ test("Describe work reaches a stopped or live Area brain and never opens a work-
   assert.equal(resumed.status, 200);
   assert.equal(resumed.body.route, "brain-resumed");
   assert.equal(resumed.body.brainArea, "otto/tangent");
-  openedSessions.push(resumed.body.session);
-
-  const sessionsAfterResume = (await fetch(`${base}/api/sessions`).then((response) => response.json())).sessions;
-  assert.equal(sessionsAfterResume.find((session) => session.name === resumed.body.session)?.kind, "brain");
-  assert.equal(sessionsAfterResume.some((session) => session.kind === "work-definition" && session.area === "otto/tangent/child"), false);
+  const tmuxAfterResume = JSON.parse(await readFile(fakeTmuxState, "utf8"));
+  assert.equal(tmuxAfterResume.sessions[resumed.body.session].options["@tangent_kind"], "brain");
+  assert.equal(Object.values(tmuxAfterResume.sessions).some((session) => session.options["@tangent_kind"] === "work-definition"), false);
   const inbox = JSON.parse(await readFile(path.join(brains, "otto", "tangent", "child", "inbox.json"), "utf8"));
   assert.match(inbox.notices[0].text, /Route this exact description to the controlling brain\./);
   assert.match(inbox.notices[0].text, /otto\/tangent\/design-context\.md/);
@@ -67,7 +96,6 @@ test("Describe work reaches a stopped or live Area brain and never opens a work-
   const plain = await describe(base, { area: "otto/plain", description: "Keep the existing behavior here." });
   assert.equal(plain.status, 200);
   assert.equal(plain.body.route, "work-definition-opened");
-  openedSessions.push(plain.body.session);
-  const sessionsAfterPlain = (await fetch(`${base}/api/sessions`).then((response) => response.json())).sessions;
-  assert.equal(sessionsAfterPlain.find((session) => session.name === plain.body.session)?.kind, "work-definition");
+  const tmuxAfterPlain = JSON.parse(await readFile(fakeTmuxState, "utf8"));
+  assert.equal(tmuxAfterPlain.sessions[plain.body.session].options["@tangent_kind"], "work-definition");
 });

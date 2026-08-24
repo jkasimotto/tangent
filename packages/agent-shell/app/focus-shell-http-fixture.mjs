@@ -37,7 +37,7 @@ function nodeExecutable() {
 }
 
 /** Starts and cleans up one isolated Agent Shell server for an HTTP capability suite. */
-export async function startShellServer(context, { here, root, trees, workspace, openedSessions = [] }) {
+export async function startShellServer(context, { here, root, trees, workspace, openedSessions = [], env = {} }) {
   let port;
   try {
     port = await freePort();
@@ -56,6 +56,7 @@ export async function startShellServer(context, { here, root, trees, workspace, 
       AGENT_SHELL_TEST_NO_LAUNCH: "1", TANGENT_PIPELINES_ROOT: path.join(root, "pipelines"),
       TANGENT_BRAINS_ROOT: path.join(root, "brains"), AGENT_MESSAGE_LOG: path.join(root, "messages.jsonl"),
       GROQ_API_KEY: "", CHAT_SESSION: `focus-shell-test-${process.pid}`,
+      ...env,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

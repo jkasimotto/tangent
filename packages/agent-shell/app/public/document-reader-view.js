@@ -1,16 +1,6 @@
 import { markdownHeadings } from "./markdown-structure.js";
 import { escapeHtml } from "./text-format.js";
-
-/** The closest ancestor brain whose session is live in the browser snapshot. */
-export function activeBrainForArea(brains, area) {
-  const parts = String(area ?? "").split("/").filter(Boolean);
-  for (let count = parts.length; count > 0; count -= 1) {
-    const candidate = parts.slice(0, count).join("/");
-    const brain = (brains ?? []).find((item) => item.area === candidate && item.status === "running" && item.live);
-    if (brain) return brain;
-  }
-  return null;
-}
+import { activeBrainForArea } from "./brain-ownership.js";
 
 /** Creates the document reader view product boundary. */
 export function createDocumentReaderView({ state, markdownToHtml, currentGoal, goalByFile, sessionsForGoal, areaLabel, areaPath, humanName }) {

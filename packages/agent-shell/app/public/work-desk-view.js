@@ -2,6 +2,7 @@ import areaMapCore from "./area-map-core.js";
 import goalCardCore from "./goal-card-core.js";
 import askCore from "./ask-core.js";
 import goToCore from "./go-to-core.js";
+import { activeBrainForArea } from "./brain-ownership.js";
 import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
 import { personMenu } from "./person-menu.js";
 
@@ -232,6 +233,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
   /** Opens the brain's terminal in the same view as a describe-work agent. */
   function openBrainSession(name) {
+    if (state.view === "describe-agent" && state.describeSessionName === name) return;
     const session = brainSessions().find((item) => item.name === name);
     if (!session) return showToast("The brain session is not live.");
     state.describeReturn = captureReturnPoint();
@@ -1194,6 +1196,10 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const selected = selectable && state.goalSelection.includes(goal.file);
     const { facts, now } = deskGoalFactsData(goal);
     const elapsed = deskGoalElapsed(facts, now);
+    const brain = activeBrainForArea(state.brains, goal.area);
+    const brainAction = brain
+      ? `<button class="desk-brain-action" type="button" data-open-brain="${escapeHtml(brain.session)}" title="Open ${escapeHtml(areaLabel(brain.area))} brain" aria-label="Open brain for Goal ${escapeHtml(goal.title)}, ${escapeHtml(areaLabel(brain.area))}">Open brain</button>`
+      : "";
     return `
       <article class="desk-goal ${subgoal ? "subgoal" : "root-goal"} ${action.kind}${selected ? " selected" : ""}" data-goal-anchor="${escapeHtml(goal.file)}">
         ${selectable ? `<label class="desk-select" title="Select for one shared agent"><input type="checkbox" data-check-goal="${escapeHtml(goal.file)}" ${selected ? "checked" : ""} aria-label="Select ${escapeHtml(goal.title)} for one shared agent"></label>` : ""}
@@ -1202,6 +1208,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
           <div class="desk-goal-line2">
             <span class="desk-goal-status"><span class="desk-state ${action.kind}">${escapeHtml(action.state)}</span>${elapsed ? `<i aria-hidden="true">·</i>${elapsed}` : ""}</span>
             <span class="desk-goal-actions">
+              ${brainAction}
               ${action.action === "Start agent"
                 ? `<span class="desk-split"><button class="desk-action" type="button" ${route}>Start agent</button>${launchToggle("▾")}</span>`
                 : action.action

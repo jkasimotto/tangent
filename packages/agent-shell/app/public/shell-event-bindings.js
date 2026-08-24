@@ -1082,6 +1082,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       paint(true);
       return;
     }
+    if (event.key === "Escape" && state.view === "describe-agent") {
+      event.preventDefault();
+      return cancelDescribe();
+    }
     if (event.key === "Escape" && state.goalSelection.length) {
       event.preventDefault();
       state.goalSelection = [];

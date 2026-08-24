@@ -531,6 +531,8 @@ summary:focus-visible {
 .desk-selection-bar { display: flex; align-items: center; gap: 8px; }
 .desk-selection-bar kbd { margin-left: 4px; padding: 0 3px; border: 1px solid #3c434c; border-radius: 2px; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; color: #98a1ac; }
 .desk-action, .desk-icon-action { padding: 4px 7px; border: 1px solid #3c434c; border-radius: 2px; background: #1a1e23; color: #cbd1d7; cursor: pointer; font-size: 10px; font-weight: 690; }
+.desk-brain-action { padding: 4px 0; border: 0; background: transparent; color: #9aa9bc; cursor: pointer; font-size: 10px; font-weight: 650; white-space: nowrap; }
+.desk-brain-action:hover { color: #fff; }
 .desk-action:hover, .desk-icon-action:hover { border-color: #68727e; color: #fff; }
 .desk-action { color: var(--blue); }
 .desk-goal.waiting .desk-action { border-color: #665735; color: var(--amber); }

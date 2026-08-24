@@ -73,8 +73,11 @@ export function createWorkDeskView({ state, api, post, paint, refresh, showToast
 
   /** Applies the selected session-presence filter without splitting Goal trees. */
   function filteredGoalTrees(trees) {
-    if (state.workFilter === "active") return trees.filter(goalTreeIsActive);
-    if (state.workFilter === "inactive") return trees.filter((tree) => !goalTreeIsActive(tree));
+    const readyForYou = new Set((state.brains ?? []).flatMap((brain) => (brain.forJulian ?? []).filter((row) => row.kind === "test").map((row) => row.file)));
+    /** Returns whether a Goal tree belongs in the current-work view. */
+    const isCurrent = (tree) => goalTreeIsActive(tree) || tree.goals.some((goal) => goalNeedsYou(goal) || readyForYou.has(goal.file));
+    if (state.workFilter === "active") return trees.filter(isCurrent);
+    if (state.workFilter === "inactive") return trees.filter((tree) => !isCurrent(tree));
     return trees;
   }
 
@@ -550,7 +553,7 @@ export function createWorkDeskView({ state, api, post, paint, refresh, showToast
     const goals = trees.flatMap((tree) => tree.goals).filter((goal) => !["done", "dropped", "deferred"].includes(goal.status));
     const sessions = [...goals.map(sessionForGoal).filter(Boolean), ...descriptions];
     // One list, one number: the Area pill counts the same asks the card shows.
-    const waiting = forYouItems().filter((ask) => ask.area === path).length;
+    const waiting = forYouItems().filter((ask) => ask.area === path || ask.area.startsWith(`${path}/`)).length;
     const working = sessions.filter((session) => session.state === "working").length;
     if (waiting) return { kind: "waiting", label: `${waiting} ${waiting === 1 ? "item needs" : "items need"} you` };
     if (working) return { kind: "working", label: `${working} ${working === 1 ? "agent" : "agents"} working` };
@@ -583,15 +586,14 @@ export function createWorkDeskView({ state, api, post, paint, refresh, showToast
   }
 
   /**
-   * Groups the Areas with open work into desk panels, sub-Areas nested inside
-   * as sections (design-area-map Decision 1). An Area needs its own Goal
+   * Groups the Areas with open work into stable subject panels. Descendant
+   * Areas contribute Goal rows with path provenance instead of separate cards.
+   * An Area needs its own Goal
    * trees or a live "Describe work" session to earn a panel or a section this
    * way. An Area with only Documents and no goal-bearing ancestor already on
    * the desk still gets its own flat panel, as before Decision 1: the desk
    * must not go quiet on a subject that has notes but no open Goal yet.
-   * Panels order by recent work, not path (recently-worked-areas-sort-to-
-   * the-top): an Area with an agent working now first, then most recent
-   * Goal or vault activity.
+   * Panels keep hierarchy order. Runtime activity never moves a subject.
    */
   function deskAreas() {
     const trees = filteredGoalTrees(goalTrees().filter((tree) => goalTreeState(tree) !== "closed"));
@@ -610,7 +612,7 @@ export function createWorkDeskView({ state, api, post, paint, refresh, showToast
       const openGoalCount = areaTrees.reduce((count, tree) => count + tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status)).length, 0);
       openCounts.set(area.path, Math.max(openGoalCount, areaDescriptions.length ? 1 : 0));
     }
-    const projectedPanels = state.workFilter === "all" ? state.vault?.desk?.panels : null;
+    const projectedPanels = null;
     const panelDefs = projectedPanels?.length ? projectedPanels : core.deskPanels(openCounts);
     const covered = new Set(panelDefs.flatMap((panel) => [panel.path, ...panel.sections]));
     const panels = panelDefs.map((panel) => {
@@ -725,15 +727,14 @@ export function createWorkDeskView({ state, api, post, paint, refresh, showToast
 
   /**
    * The brain-written asks, grouped by Area in brain record order. One group:
-   * { area, brain, stopped, asks }. Only a record that has not ended makes a
-   * group; an ended brain's rows leave the card with it. A group with no ask
-   * is left out, and a stopped brain says nothing about its own state: Julian
-   * associates a brain with its Area and finds it there (Julian's answer 4).
+   * { area, brain, stopped, asks }. Only a running brain can ask Julian for
+   * anything. Stopping it ends that authority immediately; its durable record
+   * remains available for a later Resume from the Area card.
    */
   function askGroups() {
     const ask = askCore;
     return (state.brains ?? [])
-      .filter((brain) => brain.status === "running" || brain.status === "stopped")
+      .filter((brain) => brain.status === "running" && brain.live)
       .map((brain) => {
         const rows = (brain.forJulian ?? [])
           .filter((row) => !state.verdictLines.has(row.line))
@@ -803,15 +804,9 @@ export function createWorkDeskView({ state, api, post, paint, refresh, showToast
     return `<div class="attention-row">${head}${buttons}</div>`;
   }
 
-  /**
-   * One group's markup inside a For-you list: its header (Area label or "For
-   * you", plus the one way to reach the brain) and its asks. A stopped brain's
-   * asks stay standing; the header says it stopped and offers Resume.
-   */
+  /** One live brain group's asks and its direct reply action. */
   function forYouGroupMarkup(group, label) {
-    const reach = group.brain.live
-      ? `<button class="attention-tried" type="button" data-open-brain="${escapeHtml(group.brain.session ?? "")}">Reply to brain</button>`
-      : `<span class="for-you-stopped">Brain stopped</span><button class="attention-tried" type="button" data-launch-for="${BRAIN_LAUNCH_TARGET}" data-brain-area="${escapeHtml(group.area)}">Resume</button>`;
+    const reach = `<button class="attention-tried" type="button" data-open-brain="${escapeHtml(group.brain.session ?? "")}">Reply to brain</button>`;
     return `
       <div class="for-you-group${group.stopped ? " stopped" : ""}">
         <header><span>${escapeHtml(label)}</span>${reach}</header>
@@ -1221,7 +1216,7 @@ export function createWorkDeskView({ state, api, post, paint, refresh, showToast
       return `
         <div class="desk-program ${programIsLive(program) ? "live" : ""}">
           <button type="button" data-select-program="${escapeHtml(program.id)}">
-            <span aria-hidden="true">${program.type === "process" ? "SERVER" : program.type === "command" ? "COMMAND" : "AGENT"}</span>
+            <span aria-hidden="true">${program.type === "process" ? "SERVER" : program.type === "command" ? "COMMAND" : "TRIGGER"}</span>
             <strong>${escapeHtml(program.label)}</strong>
             <em>${escapeHtml(programState(program))}</em>
           </button>
@@ -1233,11 +1228,13 @@ export function createWorkDeskView({ state, api, post, paint, refresh, showToast
   /** Renders one stable Area landmark with work and knowledge together. */
   function deskAreaPanel(record, position, maxElapsedMs = 0) {
     const { area, trees, descriptions, sections, programs } = record;
-    const status = deskAreaState(area.path, trees, descriptions);
+    const allTrees = [...trees, ...sections.flatMap((section) => section.trees)];
+    const allDescriptions = [...descriptions, ...sections.flatMap((section) => section.descriptions)];
+    const status = deskAreaState(area.path, allTrees, allDescriptions);
     const parentPath = area.path.split("/").slice(0, -1).join("/");
     const parent = areaParts(area.path).slice(0, -1).join(" / ") || "Top level";
-    const openGoalCount = trees.reduce((count, tree) => count + tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status)).length, 0);
-    const goalSectionTitle = state.workFilter === "all" ? "Goal work" : `${humanName(state.workFilter)} work`;
+    const openGoalCount = allTrees.reduce((count, tree) => count + tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status)).length, 0);
+    const goalSectionTitle = state.workFilter === "inactive" ? "Planned work" : "Current work";
     return `
       <article class="area-desk-panel ${status.kind}" data-desk-area="${escapeHtml(area.path)}" style="--desk-order:${position}">
         <header class="area-desk-header">
@@ -1252,9 +1249,9 @@ export function createWorkDeskView({ state, api, post, paint, refresh, showToast
           ${descriptions.length ? `<section class="area-desk-section definitions"><div class="area-desk-section-heading"><h3>Dispatches</h3><span>${descriptions.length}</span></div>${descriptions.map(deskDefinitionRow).join("")}</section>` : ""}
           <section class="area-desk-section goals">
             <div class="area-desk-section-heading"><h3>${goalSectionTitle}</h3><span>${openGoalCount}</span>${deskSelectionBar(area.path, trees)}</div>
-            ${trees.length ? orderedGoalTrees(trees).map((tree) => deskGoalGroup(tree, maxElapsedMs)).join("") : `<p class="desk-empty">No active Goals.</p>`}
+            ${allTrees.length ? orderedGoalTrees(trees).map((tree) => deskGoalGroup(tree, maxElapsedMs)).join("") : `<p class="desk-empty">No active Goals.</p>`}
+            ${sections.flatMap((section) => orderedGoalTrees(section.trees).map((tree) => `<div class="desk-descendant-goal"><small>${escapeHtml(areaLabel(section.area.path))}</small>${deskGoalGroup(tree, maxElapsedMs)}</div>`)).join("")}
           </section>
-          ${sections.map((section) => deskAreaSection(section, maxElapsedMs)).join("")}
           ${programs.length ? `<section class="area-desk-section programs">
             <div class="area-desk-section-heading"><h3>Programs</h3><span>${programs.length}</span></div>
             ${deskProgramShelf(programs)}
@@ -1312,13 +1309,14 @@ export function createWorkDeskView({ state, api, post, paint, refresh, showToast
     return `
       <section class="work-page">
         <div class="work-tools">
+          <button class="work-area-browser" type="button" data-show-areas>Browse Areas</button>
           <label class="search-field">
             <span class="search-icon" aria-hidden="true">⌕</span>
             <input id="work-search" type="search" value="${escapeHtml(state.query)}" placeholder="Filter work and Areas" autocomplete="off" />
             ${shortcutKbd("findWork")}
           </label>
-          <div class="work-filter" role="group" aria-label="Filter work by live session">
-            ${["all", "active", "inactive"].map((filter) => `<button type="button" data-work-filter="${filter}" aria-pressed="${state.workFilter === filter}">${humanName(filter)}</button>`).join("")}
+          <div class="work-filter" role="group" aria-label="Choose current or planned work">
+            ${[["active", "Current"], ["inactive", "Planned"]].map(([filter, label]) => `<button type="button" data-work-filter="${filter}" aria-pressed="${state.workFilter === filter}">${label}</button>`).join("")}
           </div>
         </div>
         ${content}

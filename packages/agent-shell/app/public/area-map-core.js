@@ -166,27 +166,24 @@
   }
 
   /**
-   * Desk panels (design Decision 1). An Area is a panel when it has open
-   * Goals of its own and no ancestor is a panel. Every descendant with open
-   * Goals becomes an indented section of the nearest panel above it. Areas
-   * without open work anywhere are left out. `openCounts` maps area path to
-   * the number of open Goals stored directly in it. Returns
+   * Desk panels. Each durable subject (the first Area below the namespace)
+   * owns the current work in its subtree. Descendants remain provenance, not
+   * peer panels. Areas without open work anywhere are left out. `openCounts`
+   * maps each Area path to its direct open-work count. Returns
    * [{ path, sections: [path, ...] }] in path order.
    */
   function deskPanels(openCounts) {
     const paths = [...openCounts.keys()].sort();
     const withWork = new Set(paths.filter((path) => (openCounts.get(path) ?? 0) > 0));
-    const panels = [];
+    const panels = new Map();
     for (const path of paths) {
       if (!withWork.has(path)) continue;
-      const ancestorPanel = panels.find((panel) => isInside(path, panel.path) && path !== panel.path);
-      if (ancestorPanel) {
-        ancestorPanel.sections.push(path);
-        continue;
-      }
-      panels.push({ path, sections: [] });
+      const parts = path.split("/");
+      const root = parts.length > 1 && openCounts.has(parts.slice(0, 2).join("/")) ? parts.slice(0, 2).join("/") : path;
+      if (!panels.has(root)) panels.set(root, { path: root, sections: [] });
+      if (path !== root) panels.get(root).sections.push(path);
     }
-    return panels;
+    return [...panels.values()];
   }
 
   /**
@@ -196,10 +193,8 @@
    * `activityOf(panel)` returns `{ working, mtime }` for one panel record.
    */
   function orderPanels(panels, activityOf) {
-    return [...panels].sort((left, right) => {
-      const l = activityOf(left), r = activityOf(right);
-      return (r.working ? 1 : 0) - (l.working ? 1 : 0) || (r.mtime ?? 0) - (l.mtime ?? 0);
-    });
+    void activityOf;
+    return [...panels].sort((left, right) => String(left.area?.path ?? left.path).localeCompare(String(right.area?.path ?? right.path)));
   }
 
   const api = {

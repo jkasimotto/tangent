@@ -4,6 +4,8 @@ Date: 2026-08-22
 
 Status: accepted. Amends ADR-0025 (line shapes, clearing verbs, endpoints).
 
+Amended 2026-08-24: a Test can target an open reviewed Goal. Accept marks that Goal done and removes the Test. Reject keeps the Goal open.
+
 ## Context
 
 The `For you` card must equal "what waits on Julian". On 2026-08-22 it showed three rows and none needed him: a `Try it` line for a feature he had already tried and rejected, a `Brain` question, and a row for an idle agent session that needed nothing. When the card lies once, he stops reading it, and the real asks die on a surface he no longer trusts.

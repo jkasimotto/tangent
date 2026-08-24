@@ -11,4 +11,8 @@ The package is `src/cli/` and nothing else. The root `tangent` CLI lazily loads 
 
 Dependencies: `@tangent/core` (arg parsing, help rendering), `@tangent/agent-runtime` (`runProcess` for `tmux display-message`), `@tangent/repo` (git for `vault commit`). The package does not import browser code, Eval, Usage, Rollup, Search, or Threads.
 
+The browser has one Area-based Work destination. Stable subject panels contain current work from their complete subtree. A separate Planned view keeps unstarted Goals available. Command-K filters Documents by Area and kind and can show the links inside that result set. A reviewed Goal stays open until Julian accepts its Test request.
+
+The browser Programs projection also reads root-owned trigger state from `~/.tangent/agent-shell/triggers/state.json`. Trigger scheduling and launching remain in the root CLI so they work while this server is closed; the server delegates Check now and Acknowledge controls back to `tangent trigger` (ADR-0030).
+
 The Reviewed build engine that used to live here was deleted in ADR-0023; pipelines replaced it.

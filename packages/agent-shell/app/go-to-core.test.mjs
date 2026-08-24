@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import core from "./public/go-to-core.js";
+import { buildGoToRows } from "./public/go-to-rows.js";
 
 /** Builds one finder row with the fields the ranker reads. */
 function row(fields) {
@@ -127,4 +128,22 @@ test("returnPointLabel names the captured screen", () => {
   assert.equal(core.returnPointLabel({ state: { view: "describe-agent" } }, { brain: true }), "Brain");
   assert.equal(core.returnPointLabel({ state: { view: "areas" } }), "Areas");
   assert.equal(core.returnPointLabel({ state: { view: "nowhere" } }), "Work");
+});
+
+test("the finder filters Documents by an Area subtree and kind", () => {
+  const vault = { documents: [
+    { file: "otto/dnd/design-map.md", kind: "document", docKind: "design", title: "Map", area: "otto/dnd", changedAt: 3 },
+    { file: "otto/dnd/players/reference-player.md", kind: "document", docKind: "reference", title: "Player", area: "otto/dnd/players", changedAt: 2 },
+    { file: "otto/tangent/design-shell.md", kind: "document", docKind: "design", title: "Shell", area: "otto/tangent", changedAt: 1 },
+  ] };
+  const rows = buildGoToRows({
+    vault,
+    area: "otto/dnd",
+    kind: "design",
+    /** Returns the fixture Area label. */
+    areaLabel: (value) => value,
+    /** Returns an empty fixture brain label. */
+    brainStateLabel: () => "",
+  });
+  assert.deepEqual(rows.map((item) => item.name), ["Map"]);
 });

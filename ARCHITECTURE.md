@@ -49,9 +49,11 @@ product-ui -> product-ui-data, ui-* packages
 product-server -> product-core/API routes, product-ui assets, ui-server
 ```
 
-Human-facing root commands include `setup`, `status`, `process`, `usage`, `rollup`, `search`, `eval`, `mark`, `doctor`, and `completion`.
+Human-facing root commands include `setup`, `status`, `process`, `trigger`, `usage`, `rollup`, `search`, `eval`, `mark`, `doctor`, and `completion`.
 
 The root-owned `process` command resolves inherited `.processes.json` definitions. It manages Area-bound tmux sessions and composes the personal tree. It is not reusable.
+
+The root-owned `trigger` command discovers Area-local trigger definitions in the same manifests. A fast probe reports `idle`, `work`, or `attention`; durable machine-local state coalesces intervals, prevents overlapping agents, and deduplicates conditions. One optional per-user LaunchAgent wakes the CLI while Agent Shell is closed. Agent Shell only projects and controls this state. See ADR-0030.
 
 Raw, debug, and CI commands remain callable but hidden from default help.
 

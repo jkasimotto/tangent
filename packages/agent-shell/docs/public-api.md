@@ -7,6 +7,8 @@ Public import paths:
 
 Both export the same surface: `runAreaCli`, `runBrainCli`, `runGoalCli`, `runIdeaCli`, `runDocumentCli`, `runAgentCli`, `runShellCli`, `runStudyCli`, `runVaultCli`, and their help specs `areaCommandSpec`, `brainCommandSpec`, `goalCommandSpec`, `ideaCommandSpec`, `documentCommandSpec`, `agentCommandSpec`, `shellCommandSpec`, `studyCommandSpec`, `vaultCommandSpec`, plus `STUDY_CONTRACT` and `STUDY_CONTRACT_VERSION` (the partner's system prompt and its version). The root `tangent` CLI lazily loads `@tangent/agent-shell/cli` for the `area`, `brain`, `goal`, `idea`, `document`, `agent`, `shell`, `study`, and `vault` nouns, the same way `usage`/`eval`/`rollup`/`search` are loaded. Nothing else is exported; the Reviewed build engine was removed in ADR-0023.
 
+The root package, not this package's import surface, owns `tangent trigger list|check|acknowledge|install`. Agent Shell reads its durable state for Programs and delegates manual controls to that CLI (ADR-0030).
+
 ## Vault CLI
 
 - `tangent area list|show <area>`: lists or shows one Area's Purpose/Resources, own Goals, and ideas.
@@ -52,7 +54,7 @@ Under a brain, durable request records are the source of new plan, decision, tes
 - `- Decide: <one question that fits no Document, ending with ?>`
 - `- Test [[<goal-slug>]]: <where to go, what to press, what he sees>.`
 
-A Decide ask must end with a question mark or the line does not parse. Tangent puts the fixed question `Accept it?` under every Test row, and shows a Test row only while its Goal is `done`. `Decision`, `Try it`, and `Brain` still parse as aliases of Decide (with a target), Test, and Decide (without one). Every line of the section that becomes no row is reported by `unparsedForJulianLines`, printed by `tangent brain status`, and sent to the brain once per plan change.
+A Decide ask must end with a question mark or the line does not parse. Tangent puts the fixed question `Accept it?` under every Test row. A Test stays visible while its reviewed Goal is `open` or `done`. Accept marks an open Goal done and removes the Test. Reject removes the Test and keeps the Goal open. `Decision`, `Try it`, and `Brain` still parse as aliases of Decide (with a target), Test, and Decide (without one). Every line of the section that becomes no row is reported by `unparsedForJulianLines`, printed by `tangent brain status`, and sent to the brain once per plan change.
 
 - `tangent shell rebuild [--server <url>] [--timeout <seconds>]`: prints the commits between the running server's deployed revision and repository `HEAD`, posts `POST /api/shell/rebuild`, then polls `GET /api/sessions` every 500 ms until `boot` changes. The rebuild has one durable operation record at `~/.tangent/agent-shell-rebuild.json`. The record captures the target commit and reports `building`, `restarting`, `reconnecting`, `succeeded`, or `failed`. A build error leaves the current server running. Default timeout 240 s; the failure names the rebuild log. The brain runs it before it writes a Test line. Uncommitted filesystem edits do not advertise an update.
 

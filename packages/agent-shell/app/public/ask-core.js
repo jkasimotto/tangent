@@ -106,12 +106,12 @@
   /**
    * One resolved `## For Julian` plan row as an ask. Returns null for a row
    * Tangent must not show: an unresolved target, or a Test row whose Goal is
-   * not done, so a landed-then-reopened Goal stops asking by itself.
+   * neither open nor done.
    */
   function askFromPlanRow(brain, row) {
     if (!brain || !row || row.missing) return null;
     if (row.kind === "test") {
-      if (row.goalStatus !== "done") return null;
+      if (!["open", "done"].includes(row.goalStatus)) return null;
       const subject = row.title ?? row.target ?? "";
       return makeAsk({
         area: brain.area,

@@ -57,8 +57,8 @@ export function parseProcessManifest(text: string, manifestPath: string): Proces
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${manifestPath}: expected an object`);
   const keys = Object.keys(value);
-  if (keys.some((key) => !["scripts", "commands"].includes(key))) {
-    throw new Error(`${manifestPath}: only "scripts" and "commands" are supported`);
+  if (keys.some((key) => !["scripts", "commands", "triggers"].includes(key))) {
+    throw new Error(`${manifestPath}: only "scripts", "commands", and "triggers" are supported`);
   }
   /** Parses one optional name-to-command field. */
   const parseCommands = (field: "scripts" | "commands"): Record<string, ProcessManifestEntry> => {
@@ -84,8 +84,8 @@ export function parseProcessManifest(text: string, manifestPath: string): Proces
   };
   const scripts = parseCommands("scripts");
   const commands = parseCommands("commands");
-  if (!Object.keys(scripts).length && !Object.keys(commands).length) {
-    throw new Error(`${manifestPath}: declare at least one script or command`);
+  if (!Object.keys(scripts).length && !Object.keys(commands).length && !(value as Record<string, unknown>).triggers) {
+    throw new Error(`${manifestPath}: declare at least one script, command, or trigger`);
   }
   return { scripts, commands };
 }

@@ -3,6 +3,7 @@ import { completeCommand, completionScript, renderCommandHelp, type CliCommandSp
 import { dataCommandSpec, devCommandSpec, doctorCommandSpec, openCommandSpec, runOpenCommand, runProductStatusCommand, runSetupCommand, setupCommandSpec, statusCommandSpec } from "./product.js";
 import { requiredProductModule } from "./module-loader.js";
 import { runProcessCommand } from "./processes.js";
+import { runTriggerCommand } from "./triggers.js";
 
 type ProductRunner = (argv: string[]) => Promise<void>;
 
@@ -46,6 +47,16 @@ const tangentCommandSpec: CliCommandSpec = {
         { name: "stop", description: "Stop a process but keep its visible session", args: "<name>", options: [{ name: "area", takesValue: true, description: "Tangent Area path" }] },
         { name: "restart", description: "Restart a named process", args: "<name>", options: [{ name: "area", takesValue: true, description: "Tangent Area path" }] },
         { name: "close", description: "Close a process session and remove its row", args: "<name>", options: [{ name: "area", takesValue: true, description: "Tangent Area path" }] }
+      ]
+    },
+    {
+      name: "trigger",
+      description: "Check Area conditions and launch visible agents when work appears",
+      subcommands: [
+        { name: "list", description: "List Area triggers and their durable state", options: [{ name: "json", description: "Print machine-readable JSON" }] },
+        { name: "check", description: "Check due triggers, or one named trigger", args: "[area:name|name]", options: [{ name: "force", description: "Check even when the interval is not due" }] },
+        { name: "acknowledge", description: "Acknowledge the current attention condition", args: "<area:name|name>" },
+        { name: "install", description: "Install the per-user macOS wake-up that checks due triggers every minute" }
       ]
     },
     productCommandSpec("usage", "Inspect coding-agent activity"),
@@ -106,6 +117,11 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
 
   if (app === "process") {
     await runProcessCommand(rest);
+    return;
+  }
+
+  if (app === "trigger") {
+    await runTriggerCommand(rest);
     return;
   }
 

@@ -805,6 +805,21 @@ export function bindShellEvents({ state, post, paint, refresh, showToast, screen
     if (row) return chooseGoToRow(state.goTo?.rows[Number(row.dataset.goToRow)]);
   });
 
+  for (const id of ["go-to-area", "go-to-kind"]) document.querySelector(`#${id}`).addEventListener("change", (event) => {
+    if (!state.goTo) return;
+    state.goTo[id === "go-to-area" ? "area" : "kind"] = event.target.value;
+    state.goTo.selected = 0;
+    renderGoToList();
+  });
+  document.querySelector("#go-to-view").addEventListener("click", (event) => {
+    if (!state.goTo) return;
+    state.goTo.view = state.goTo.view === "list" ? "graph" : "list";
+    event.currentTarget.textContent = state.goTo.view === "list" ? "Graph" : "List";
+    event.currentTarget.setAttribute("aria-pressed", String(state.goTo.view === "graph"));
+    state.goTo.selected = 0;
+    renderGoToList();
+  });
+
   workTab.addEventListener("click", showWork);
   areasTab.addEventListener("click", showAreas);
   promptsTab.addEventListener("click", showPrompts);
@@ -816,7 +831,7 @@ export function bindShellEvents({ state, post, paint, refresh, showToast, screen
     showWork({ focus: true });
   });
 
-  secondaryAction.addEventListener("click", confirmStop);
+  secondaryAction.addEventListener("click", () => confirmStop({ immediate: true }));
 
   shellMenu.addEventListener("click", async (event) => {
     const item = event.target.closest("button");

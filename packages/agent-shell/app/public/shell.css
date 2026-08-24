@@ -311,7 +311,9 @@ summary:focus-visible {
 .work-intro-actions { display: flex; flex: none; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
 .work-intro-button { flex: none; margin-bottom: 5px; }
 
-.work-tools { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; gap: 12px; margin: 0 0 32px; }
+.work-tools { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: stretch; gap: 12px; margin: 0 0 32px; }
+.work-area-browser { padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 3px; background: #111419; color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 690; }
+.work-area-browser:hover { color: var(--text); border-color: #526171; }
 
 .search-field {
   display: flex;
@@ -442,6 +444,8 @@ summary:focus-visible {
 .desk-subarea.collapsed { padding-bottom: 14px; }
 
 .desk-goal-group + .desk-goal-group { margin-top: 10px; padding-top: 10px; border-top: 1px solid #292e35; }
+.desk-descendant-goal { margin-top: 12px; padding-top: 10px; border-top: 1px solid #292e35; }
+.desk-descendant-goal > small { display: block; margin-bottom: 5px; color: #69737e; font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 /* Two lines, nothing else: title with step and status, then the bar with
    the agent count and the actions (design-compact-work-desk Decision 3). */
 .desk-goal { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 3px; padding: 5px 0; }
@@ -1166,6 +1170,15 @@ details.more-work .area-work-list { margin-top: 18px; }
 .go-to-layer[hidden] { display: none; }
 .go-to { width: min(640px, 100%); padding: 18px 20px 14px; border: 1px solid var(--line-strong); border-radius: 16px; background: var(--surface-raised); box-shadow: 0 28px 80px rgba(0, 0, 0, .48); }
 .go-to input { width: 100%; margin-top: 8px; padding: 12px 14px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--bg); color: var(--text); font-size: 18px; }
+.go-to-filters { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; margin-top: 10px; }
+.go-to-filters label { display: grid; gap: 3px; color: var(--quiet); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.go-to-filters select, .go-to-filters button { min-width: 0; padding: 8px 9px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--bg); color: var(--text); }
+.go-to-graph { display: block; padding: 0; }
+.go-to-graph svg { display: block; width: 100%; max-height: 56vh; }
+.go-to-graph line { stroke: #536274; stroke-width: 1.5; }
+.go-to-graph circle { fill: #202832; stroke: #7891ad; cursor: pointer; }
+.go-to-graph g:hover circle, .go-to-graph g:focus circle { fill: #2e3d4d; stroke: #b7d3f2; outline: none; }
+.go-to-graph text { fill: #cdd5dd; font-size: 10px; text-anchor: middle; }
 .go-to-hint { margin: 8px 0 0; color: var(--quiet); font-size: 12px; }
 #go-to-list { margin: 12px 0 0; padding: 0; list-style: none; display: grid; gap: 2px; max-height: 60vh; overflow: auto; }
 #go-to-list li { display: grid; grid-template-columns: 84px minmax(0, 1fr); column-gap: 14px; align-items: baseline; padding: 9px 10px; border-radius: 8px; cursor: pointer; }

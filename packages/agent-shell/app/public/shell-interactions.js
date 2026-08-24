@@ -1,7 +1,7 @@
-import { escapeHtml } from "./text-format.js";
+import { clip, escapeHtml } from "./text-format.js";
 
 /** Creates this browser boundary with explicit shell-owned dependencies. */
-export function createShellInteractions({ state, api, post, paint, refresh, showToast, screen, backButton, shellMenu, goToLayer, goToInput, goToList, modalLayer, modalKicker, modalTitle, modalCopy, modalField, modalActions, buildGoToRows, goToCore, areaLabel, humanName, goalByFile, currentGoal, sessionForGoal, describeWorkSession, stopSession, currentProgram, programById, programIsLive, programAreaDirectory, preferredArea, allAreas, areaParent, launchOptionsFor, launchSelection, launchRequestFields, syncLaunchDraft, commitActiveStep, pipelineForGoal, pipelineRecordForGoal, brainForAreaCard, brainStateLabel, agentReference, rememberScreenScroll, restoreReturnPoint, captureReturnPoint, restoreReturnScroll, disposeTerminal, mountTerminal, saveDescribeDraft, saveDescribeSession, syncDescribeDraft, openDocument, refreshDocument, rememberDocumentPosition, DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET }) {
+export function createShellInteractions({ state, api, post, actionTelemetry, paint, refresh, showToast, screen, backButton, shellMenu, goToLayer, goToInput, goToList, modalLayer, modalKicker, modalTitle, modalCopy, modalField, modalActions, buildGoToRows, goToCore, areaLabel, humanName, goalByFile, currentGoal, sessionForGoal, describeWorkSession, stopSession, currentProgram, programById, programIsLive, programAreaDirectory, preferredArea, allAreas, areaParent, launchOptionsFor, launchSelection, launchRequestFields, syncLaunchDraft, commitActiveStep, pipelineForGoal, pipelineRecordForGoal, brainForAreaCard, brainStateLabel, agentReference, rememberScreenScroll, restoreReturnPoint, captureReturnPoint, restoreReturnScroll, disposeTerminal, mountTerminal, saveDescribeDraft, saveDescribeSession, syncDescribeDraft, openDocument, refreshDocument, rememberDocumentPosition, DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET }) {
   const agentName = humanName.agentName;
   const describeWorkSessions = humanName.describeWorkSessions;
   const describeLaunchArea = humanName.describeLaunchArea;
@@ -35,7 +35,7 @@ export function createShellInteractions({ state, api, post, paint, refresh, show
    * exists, and every Area brain. Null while the vault is still loading.
    */
   function goToRows() {
-    return buildGoToRows({ vault: state.vault, brains: state.brains, query: state.goTo.query, areaLabel, brainStateLabel });
+    return buildGoToRows({ vault: state.vault, brains: state.brains, query: state.goTo.query, area: state.goTo.area, kind: state.goTo.kind, view: state.goTo.view, areaLabel, brainStateLabel });
   }
 
   /** Opens the finder over the current screen, or closes it when ⌘K repeats. */
@@ -43,8 +43,15 @@ export function createShellInteractions({ state, api, post, paint, refresh, show
     if (!modalLayer.hidden) return;
     if (state.goTo) return closeGoTo();
     if (!shellMenu.hidden) toggleShellMenu(false);
-    state.goTo = { query: "", selected: 0, rows: [], returnFocus: document.activeElement };
+    state.goTo = { query: "", area: "", kind: "", view: "list", selected: 0, rows: [], returnFocus: document.activeElement };
     goToInput.value = "";
+    const areaSelect = document.querySelector("#go-to-area");
+    const kindSelect = document.querySelector("#go-to-kind");
+    areaSelect.innerHTML = `<option value="">All Areas</option>${(state.vault?.areas ?? []).filter((item) => item.path).sort((a, b) => a.path.localeCompare(b.path)).map((item) => `<option value="${escapeHtml(item.path)}">${escapeHtml(areaLabel(item.path))}</option>`).join("")}`;
+    const kinds = [...new Set((state.vault?.documents ?? []).filter((item) => item.kind === "document").map((item) => item.docKind ?? "page"))].sort();
+    kindSelect.innerHTML = `<option value="">All kinds</option>${kinds.map((kind) => `<option value="${escapeHtml(kind)}">${escapeHtml(kind)}</option>`).join("")}`;
+    document.querySelector("#go-to-view").textContent = "Graph";
+    document.querySelector("#go-to-view").setAttribute("aria-pressed", "false");
     goToLayer.hidden = false;
     renderGoToList();
     goToInput.focus();
@@ -72,6 +79,20 @@ export function createShellInteractions({ state, api, post, paint, refresh, show
       return;
     }
     state.goTo.rows = rows;
+    if (state.goTo.view === "graph") {
+      const documents = rows.filter((row) => row.kind !== "brain");
+      state.goTo.rows = documents;
+      if (!documents.length) {
+        goToList.innerHTML = `<li class="go-to-empty">No Documents match these filters.</li>`;
+        return;
+      }
+      const byStem = new Map(documents.map((row, index) => [String(row.file).split("/").pop().replace(/\.md$/i, ""), { row, index }]));
+      const width = 560, height = Math.max(260, Math.ceil(documents.length / 4) * 120);
+      const points = documents.map((row, index) => ({ row, x: 70 + (index % 4) * 140, y: 55 + Math.floor(index / 4) * 120 }));
+      const edges = points.flatMap((point) => (point.row.links ?? []).map((target) => [point, byStem.get(String(target).split("/").pop().replace(/\.md$/i, ""))]).filter(([, hit]) => hit).map(([from, hit]) => [from, points[hit.index]]));
+      goToList.innerHTML = `<li class="go-to-graph"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Dependencies between filtered Documents">${edges.map(([a, b]) => `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" />`).join("")}${points.map((point, index) => `<g data-go-to-row="${index}" tabindex="0" role="button"><circle cx="${point.x}" cy="${point.y}" r="25"/><text x="${point.x}" y="${point.y + 40}">${escapeHtml(clip(point.row.name, 18))}</text></g>`).join("")}</svg></li>`;
+      return;
+    }
     state.goTo.selected = rows.length ? Math.min(Math.max(state.goTo.selected, 0), rows.length - 1) : 0;
     if (!rows.length) {
       goToList.innerHTML = `<li class="go-to-empty">Nothing is named “${escapeHtml(state.goTo.query)}”.</li>`;
@@ -647,15 +668,62 @@ export function createShellInteractions({ state, api, post, paint, refresh, show
   }
 
   /** Confirms and then stops the selected live session. */
-  function confirmStop() {
-    const goal = currentGoal();
-    const describing = state.view === "describe-agent";
-    const session = stopSession();
-    if (!session || (!describing && !goal)) return;
+  function confirmStop({ immediate = false } = {}) {
+    actionTelemetry.record("stop", `handler-enter:${state.view}`);
+    let goal;
+    let describing;
+    let session;
+    try {
+      goal = currentGoal();
+      describing = state.view === "describe-agent";
+      session = stopSession();
+      actionTelemetry.record("stop", session ? `target:${session.name}` : "target:none");
+    } catch (error) {
+      actionTelemetry.record("stop", `resolve-error:${error?.name ?? "Error"}`);
+      showToast("Stop agent failed before it found the session. The failure was logged.");
+      return;
+    }
+    if (!session || (!describing && !goal)) {
+      actionTelemetry.record("stop", `guard-rejected:${describing ? "describe" : "goal"}`);
+      showToast("Stop agent could not find the displayed session. The failure was logged.");
+      return;
+    }
     const shell = session.state === "shell";
     const pipeline = describing ? null : pipelineForGoal(goal);
     const stepsLeft = pipeline ? pipeline.steps.filter((step) => step.status === "pending").length : 0;
     const returnToDocument = !describing && state.view === "agent" && state.agentReturnView === "document" && Boolean(state.document);
+    /** Stops the resolved session and leaves its durable work intact. */
+    const stopSelectedSession = async () => {
+      actionTelemetry.record("stop", `confirm:${session.name}`);
+      try {
+        await post(`/api/kill/${encodeURIComponent(session.name)}`, {});
+        actionTelemetry.record("stop", `kill-succeeded:${session.name}`);
+      } catch (error) {
+        actionTelemetry.record("stop", `kill-failed:${session.name}:${error?.name ?? "Error"}`);
+        showToast("Agent Shell could not stop the session. The failure was logged.");
+        return false;
+      }
+      if (describing) {
+        state.describeSessionName = "";
+        saveDescribeSession();
+        await refresh();
+        restoreReturnPoint(state.describeReturn);
+        showToast("The conversation ended. Saved work stays in Tangent.");
+        return true;
+      }
+      state.view = returnToDocument ? "document" : "work";
+      await refresh();
+      paint(true);
+      if (returnToDocument) await refreshDocument();
+      showToast(shell ? "The session closed." : "The agent stopped. The work stays open.");
+      return true;
+    };
+    if (immediate) {
+      actionTelemetry.record("stop", `immediate:${session.name}`);
+      void stopSelectedSession();
+      return;
+    }
+    actionTelemetry.record("stop", `modal-open:${session.name}`);
     openModal({
       kicker: shell ? "Open session" : "Live agent",
       title: shell ? "Close this session?" : `Stop ${agentName(session)}?`,
@@ -669,29 +737,20 @@ export function createShellInteractions({ state, api, post, paint, refresh, show
       confirmLabel: shell ? "Close session" : "Stop agent",
       danger: true,
       /** Stops only the live run and preserves the goal. */
-      onConfirm: async () => {
-        await post(`/api/kill/${encodeURIComponent(session.name)}`, {});
-        if (describing) {
-          state.describeSessionName = "";
-          saveDescribeSession();
-          await refresh();
-          restoreReturnPoint(state.describeReturn);
-          showToast("The conversation ended. Saved work stays in Tangent.");
-          return;
-        }
-        state.view = returnToDocument ? "document" : "work";
-        await refresh();
-        paint(true);
-        if (returnToDocument) await refreshDocument();
-        showToast(shell ? "The session closed." : "The agent stopped. The work stays open.");
-      },
+      onConfirm: stopSelectedSession,
     });
   }
 
   /** Confirms semantic completion separately from ending a run. */
   function confirmComplete() {
+    actionTelemetry.record("goal-close", `complete-handler:${state.currentFile || "none"}`);
     const goal = currentGoal();
-    if (!goal) return;
+    if (!goal) {
+      actionTelemetry.record("goal-close", "complete-goal-not-found");
+      showToast("Agent Shell could not find the displayed Goal. The failure was logged.");
+      return;
+    }
+    actionTelemetry.record("goal-close", `complete-modal:${goal.file}`);
     openModal({
       kicker: "Complete work",
       title: `Mark “${goal.title}” complete?`,
@@ -699,7 +758,15 @@ export function createShellInteractions({ state, api, post, paint, refresh, show
       confirmLabel: "Mark complete",
       /** Marks the complete goal done after explicit approval. */
       onConfirm: async () => {
-        await post("/api/goals/edit", { file: goal.file, status: "done" });
+        actionTelemetry.record("goal-close", `complete-confirm:${goal.file}`);
+        try {
+          await post("/api/goals/edit", { file: goal.file, status: "done" });
+          actionTelemetry.record("goal-close", `complete-succeeded:${goal.file}`);
+        } catch (error) {
+          actionTelemetry.record("goal-close", `complete-failed:${goal.file}:${error?.name ?? "Error"}`);
+          showToast("Agent Shell could not complete the Goal. The failure was logged.");
+          return false;
+        }
         state.view = "work";
         await refresh();
         paint(true);
@@ -710,8 +777,14 @@ export function createShellInteractions({ state, api, post, paint, refresh, show
 
   /** Requires a recallable reason before the selected goal closes as dropped. */
   function confirmWontDo() {
+    actionTelemetry.record("goal-close", `wont-do-handler:${state.currentFile || "none"}`);
     const goal = currentGoal();
-    if (!goal) return;
+    if (!goal) {
+      actionTelemetry.record("goal-close", "wont-do-goal-not-found");
+      showToast("Agent Shell could not find the displayed Goal. The failure was logged.");
+      return;
+    }
+    actionTelemetry.record("goal-close", `wont-do-modal:${goal.file}`);
     openModal({
       kicker: "Won't do",
       title: `Mark “${goal.title}” won't do?`,
@@ -726,11 +799,20 @@ export function createShellInteractions({ state, api, post, paint, refresh, show
       onConfirm: async () => {
         const reason = modalField.querySelector("[data-modal-input]")?.value.trim() || "";
         if (!reason) {
+          actionTelemetry.record("goal-close", `wont-do-reason-missing:${goal.file}`);
           showToast("Give a brief reason before you mark this work won't do.");
           modalField.querySelector("[data-modal-input]")?.focus();
           return false;
         }
-        await post("/api/goals/edit", { file: goal.file, status: "dropped", reason });
+        actionTelemetry.record("goal-close", `wont-do-confirm:${goal.file}`);
+        try {
+          await post("/api/goals/edit", { file: goal.file, status: "dropped", reason });
+          actionTelemetry.record("goal-close", `wont-do-succeeded:${goal.file}`);
+        } catch (error) {
+          actionTelemetry.record("goal-close", `wont-do-failed:${goal.file}:${error?.name ?? "Error"}`);
+          showToast("Agent Shell could not mark the Goal won't do. The failure was logged.");
+          return false;
+        }
         state.view = "work";
         await refresh();
         paint(true);

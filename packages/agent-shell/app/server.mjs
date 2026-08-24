@@ -2988,11 +2988,11 @@ async function brainPrompt(record) {
     `Split the work into Goals: a Goal is a result with a clear finish. Create a sub-Area only for a durable subject Julian will return to (\`tangent area create <parent> <name>\`). Give each Goal a description a fresh agent can start from: intent, what Julian decided, and the Documents and code that matter (\`tangent goal create --area ${area} --title "..." --done-when "..." --description "..." --source <vault-file>\`). Record prerequisites with \`tangent goal depend <goal> --on <prerequisite>\`; remove them with \`tangent goal undepend <goal> --on <prerequisite>\`. Dependencies inform your plan and allocation, but they do not enforce execution order.\n\n` +
     `Start each leaf Goal as a pipeline, for example: \`tangent goal start <slug> --step "/design this Goal" --launch ${harness}/${designModel} --step "/impl the design at <path>" --launch ${harness}/${designModel} --step "implement the solution" --launch ${harness}/${implementModel} --step "review the implementation against the design and solution; fix what is wrong" --launch ${harness}/${designModel}\`. Judge each Goal: when the work is small and clear, one implementer step is enough; when it is hard or vague, raise the implementer to Opus or Fable and keep the design step. Fable plans, designs, decomposes, and reviews; Sonnet is the workhorse. Run one implementing pipeline per repository at a time; design and review steps may run in parallel. \`tangent agent list\` shows what runs and \`tangent goal list ${area}\` shows the Goals.\n\n` +
     `Tangent sends you durable worker reports. Read the handover and the files. You alone choose the next transition. Start a pending approved assignment with \`tangent brain advance <goal> <step>\`. When a review asks for changes, append an assignment. When a result is good, note it in the plan and start what its completion unblocked. Workers do not choose successors.\n\n` +
-    `Ask Julian only through structured requests. Use kind decision with repeated --option values for user behavior, user-facing choices, one-way doors, and material scope changes. Use kind test with exact test steps. Use kind approval only when policy requires an explicit final approval. The answer returns to this brain as a durable notice. Julian started this brain to get the approved Goals done. When a Goal's final review passes and its done condition holds, write the verdict into the Goal State and close it in the same turn. A finished Goal left waiting is a brain failure.\n\n` +
+    `Ask Julian only through structured requests. Use kind decision with repeated --option values for user behavior, user-facing choices, one-way doors, and material scope changes. Use kind test with exact test steps. Use kind approval only when policy requires an explicit final approval. The answer returns to this brain as a durable notice. Julian started this brain to get the approved Goals ready for his acceptance. When a Goal's final review passes and its done condition holds, write the verdict into the Goal State and create a Test request with exact validation steps. Keep the Goal open until Julian accepts that Test.\n\n` +
     `## Requests for Julian\n\n` +
     `Create requests with \`tangent brain request\`. Do not use plan Markdown as a control protocol. Plan reviews use Approve plan and Request changes. Tests use Pass and Needs work. Decisions use the option names you supply. Each request must state what waits for the answer. If a visible Agent Shell change needs a test, run \`tangent shell rebuild\` before you create the test request. Document comments are a separate direct lane and still arrive here as durable notices.\n\n` +
     `## When to hand over\n\n` +
-    `Before every handover, sweep \`tangent goal list ${area}\` and \`tangent agent list\` for any Goal whose pipeline finished and close it (\`tangent goal done <slug>\` or \`tangent goal wont-do <slug> --reason "..."\`); a finished Goal left waiting is a failure, never something to hand off to the next generation. In the same sweep, check \`tangent agent list\` for a running step showing "needs decision" or "draft" and answer it; do not hand over a step sitting stuck on a question the next generation has to notice all over again. Then, at a natural pause, after a wave is dispatched or a batch of results is processed, and always when Tangent reminds you, write the plan status and run \`tangent brain handover "<facts>"\`: what runs (Goal, step, session), what waits and why, decisions taken, what the next generation should do first. Facts, no narrative. A fresh copy of you starts from the plan and those facts, and this session ends.`
+    `Before every handover, sweep \`tangent goal list ${area}\` and \`tangent agent list\`. Add a Test request for each reviewed Goal that is ready for Julian. Do not mark it done before he accepts. In the same sweep, check \`tangent agent list\` for a running step showing "needs decision" or "draft" and answer it; do not hand over a step sitting stuck on a question the next generation has to notice all over again. Then, at a natural pause, after a wave is dispatched or a batch of results is processed, and always when Tangent reminds you, write the plan status and run \`tangent brain handover "<facts>"\`: what runs (Goal, step, session), what waits and why, decisions taken, what the next generation should do first. Facts, no narrative. A fresh copy of you starts from the plan and those facts, and this session ends.`
   );
 }
 
@@ -3331,6 +3331,13 @@ async function clearRowWithVerdict(area, line, verdict) {
   const { text, removed, index, removedText } = removeForJulianLine(current.text, line);
   if (!removed) return { status: 404, error: "the plan has no such line" };
   const past = verdict === "accept" ? "accepted" : "rejected";
+  if (row.kind === "test" && verdict === "accept") {
+    const byFile = await goalsByFile();
+    const goal = [...byFile.values()].find((item) => item.slug === row.target);
+    if (!goal) return { status: 404, error: `no goal ${row.target}` };
+    const changed = await cascadeGoalDone(goal.file, byFile);
+    if (changed.length) await vaultCommit(changed, `update: ${goal.area} goal ${goal.slug} accepted`, goal.area, null);
+  }
   await writeVaultDocument(current, text, `update: ${area} plan ${row.target} ${past}`);
   await notifyBrain(area, `Julian ${past} ${row.target}`);
   return { status: 200, line: row.line, removedText, index, target: row.target, verdict };
@@ -3350,6 +3357,14 @@ async function restoreVerdictLine(area, line, index) {
   const text = restoreForJulianLine(current.text, line, index);
   const row = parseForJulian(text).find((item) => item.line.trimEnd() === String(line).trimEnd());
   const target = row?.target ?? "row";
+  if (row?.kind === "test") {
+    const byFile = await goalsByFile();
+    const goal = [...byFile.values()].find((item) => item.slug === row.target);
+    if (goal?.status === "done") {
+      await editGoalFile(goal.file, { status: "open" });
+      await vaultCommit([goal.file], `update: ${goal.area} goal ${goal.slug} acceptance withdrawn`, goal.area, null);
+    }
+  }
   await writeVaultDocument(current, text, `update: ${area} plan restore ${target}`);
   await notifyBrain(area, `Julian withdrew his verdict on ${target}; the line is back`);
   return { status: 200 };
@@ -3946,6 +3961,10 @@ const programRoutes = createProgramRoutes({
       await runLocalTangent(["process", action, program.name, "--area", program.area]);
     } else if (program.type === "command") {
       await controlCommand(program, action);
+    } else if (program.type === "trigger") {
+      if (action === "check") await runLocalTangent(["trigger", "check", `${program.area}:${program.name}`, "--force"]);
+      else if (action === "acknowledge") await runLocalTangent(["trigger", "acknowledge", `${program.area}:${program.name}`]);
+      else throw new Error("Choose Check now or Acknowledge.");
     } else {
       throw new Error("Choose Start, Run, Stop, Restart, or Close.");
     }
@@ -4316,6 +4335,10 @@ const workMutationRoutes = createWorkMutationRoutes({
     if (body.status !== undefined) {
       if (!["open", "done", "dropped"].includes(body.status)) return { status: 400, error: `status must be open, done, or dropped, got "${body.status}"` };
       fields.status = body.status;
+      if (body.status === "done" && body.session) {
+        const brain = (await readAllBrains(BRAINS_ROOT)).find((item) => item.session === String(body.session));
+        if (brain) return { status: 409, error: "a brain cannot mark a Goal done before Julian accepts its Test" };
+      }
       if (body.status === "dropped") {
         const reason = oneLine(body.reason);
         if (!reason) return { status: 400, error: "give a brief reason before you mark this goal won't do" };

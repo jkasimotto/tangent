@@ -19,6 +19,13 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
 
   /** Describes one program's current state in plain language. */
   function programState(program) {
+    if (program.type === "trigger") {
+      if (program.paused) return "Paused";
+      if (program.session && !["stopped", "shell"].includes(program.session.state)) return "Agent running";
+      if (program.runtime?.error) return "Check failed";
+      if (program.runtime?.lastOutcome?.status === "attention" && program.runtime.acknowledgedKey !== program.runtime.lastOutcome.key) return "Needs attention";
+      return program.runtime?.lastCheckedAt ? "Waiting" : "Not checked";
+    }
     if (!program.session) return "Not running";
     if (["stopped", "shell"].includes(program.session.state)) return "Stopped · log kept";
     return "Running";
@@ -34,7 +41,7 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
 
   /** Names the kind of one program for a reader. */
   function programKind(program) {
-    return program.type === "process" ? "Server or watcher" : "Command";
+    return program.type === "process" ? "Server or watcher" : program.type === "trigger" ? "Trigger" : "Command";
   }
 
   /**
@@ -42,6 +49,7 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
    * must not be a hidden feature, so the row carries it beside the state.
    */
   function programRowControl(program) {
+    if (program.type === "trigger") return program.available && !program.paused ? { action: "check", label: "Check now" } : null;
     if (programIsLive(program)) return { action: "stop", label: "Stop" };
     if (!program.available) return null;
     return program.type === "process" ? { action: "start", label: "Start" } : { action: "run", label: "Run" };
@@ -80,6 +88,13 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
         live ? `<button class="danger-button" type="button" data-program-action="stop">Stop…</button>` : `<button class="primary-button" type="button" data-program-action="run">Run…</button>`,
         retained && !live ? `<button class="quiet-button" type="button" data-program-action="close">Remove saved log…</button>` : "",
       ].join("");
+    } else if (program.type === "trigger") {
+      const attention = program.runtime?.lastOutcome?.status === "attention" && program.runtime.acknowledgedKey !== program.runtime.lastOutcome.key;
+      actions = [
+        retained ? `<button class="secondary-button" type="button" data-open-program-session>Open session</button>` : "",
+        !program.paused ? `<button class="primary-button" type="button" data-program-action="check">Check now</button>` : "",
+        attention ? `<button class="secondary-button" type="button" data-program-action="acknowledge">Acknowledge</button>` : "",
+      ].join("");
     }
     return `
       <article class="program-detail">
@@ -90,6 +105,7 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
         <dl class="program-facts">
           <div><dt>Command</dt><dd><code>${escapeHtml(program.command)}</code></dd></div>
           <div><dt>Folder</dt><dd><code>${escapeHtml(program.cwd || "No area folder is recorded")}</code></dd></div>
+          ${program.type === "trigger" ? `<div><dt>Cadence</dt><dd>${escapeHtml(program.every)}</dd></div><div><dt>Instructions</dt><dd><code>${escapeHtml(program.instructions)}</code></dd></div><div><dt>Last check</dt><dd>${escapeHtml(localMoment(program.runtime?.lastCheckedAt))}</dd></div>${program.runtime?.lastOutcome?.status === "attention" ? `<div><dt>Attention</dt><dd>${escapeHtml(program.runtime.lastOutcome.message)}</dd></div>` : ""}${program.runtime?.error ? `<div><dt>Error</dt><dd>${escapeHtml(program.runtime.error)}</dd></div>` : ""}` : ""}
           ${program.session ? `<div><dt>Session</dt><dd><code>${escapeHtml(program.sessionName)}</code></dd></div>` : ""}
         </dl>
         <div class="program-actions">${actions}</div>

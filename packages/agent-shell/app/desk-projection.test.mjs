@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { projectDesk } from "./desk-projection.mjs";
 
-test("desk projection owns panels, ordering, and Goal attention", () => {
+test("desk projection keeps stable Area ordering and owns Goal attention", () => {
   const vault = {
     areas: [
       { path: "otto/a", goals: [{ file: "otto/a/goal-one.md", status: "open", changedAt: 10 }], documents: [] },
@@ -11,7 +11,7 @@ test("desk projection owns panels, ordering, and Goal attention", () => {
   };
   const sessions = [{ name: "two", area: "otto/b", goal: "otto/b/goal-two.md", state: "working" }];
   const desk = projectDesk(vault, sessions);
-  assert.deepEqual(desk.panels.map((panel) => panel.path), ["otto/b", "otto/a"]);
+  assert.deepEqual(desk.panels.map((panel) => panel.path), ["otto/a", "otto/b"]);
   assert.equal(desk.attention["otto/a/goal-one.md"], "ready");
   assert.equal(desk.attention["otto/b/goal-two.md"], "working");
 });

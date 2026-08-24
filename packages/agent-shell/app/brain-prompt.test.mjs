@@ -111,7 +111,7 @@ test("the brain prompt names the Area's resolved harness and uses it in every ex
   assert.doesNotMatch(salesShow.prompt, /claude-otto\//);
 });
 
-test("the brain prompt tells the brain to close finished Goals itself, not leave them waiting", async (context) => {
+test("the brain prompt keeps reviewed Goals open until Julian accepts the Test", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-brain-sweep-"));
   const trees = path.join(root, "trees");
   const area = path.join(trees, "otto", "probesweep");
@@ -168,9 +168,9 @@ test("the brain prompt tells the brain to close finished Goals itself, not leave
   openedSessions.push(brain.session);
   const show = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(brain.session)}`).then((response) => response.json());
 
-  assert.match(show.prompt, /run `tangent goal done <slug>` in that same turn/, "run goal done in the same turn a review passes");
+  assert.match(show.prompt, /Keep the Goal open until Julian accepts that Test/, "the user accepts a reviewed Goal before it becomes done");
   assert.match(show.prompt, /Before every handover, sweep `tangent goal list otto\/probesweep` and `tangent agent list`/, "sweep goal list and agent list before every handover");
-  assert.match(show.prompt, /a failure of the brain, not a question for Julian/, "a finished Goal left waiting is a failure, not a question for Julian");
+  assert.match(show.prompt, /Add a Test request for each reviewed Goal/, "reviewed Goals become direct validation requests");
 });
 
 test("a pipeline step under a brain has one handover route and never chooses the next agent", async () => {

@@ -3,6 +3,7 @@ import goalCardCore from "./goal-card-core.js";
 import askCore from "./ask-core.js";
 import goToCore from "./go-to-core.js";
 import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
+import { personMenu } from "./person-menu.js";
 
 /** Normalizes a roster label in the same way as the server projection. */
 export function normalizePersonLabel(value) {
@@ -1358,7 +1359,10 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const query = state.query.trim();
     const records = filteredDeskAreas(query);
     const maxElapsedMs = 0;
-    const emptyCopy = query
+    const personLabel = state.personFilter === "mine" ? "Mine" : state.personFilter === "unassigned" ? "Unassigned" : people.get(state.personFilter);
+    const emptyCopy = state.personFilter !== "all" && !query
+      ? `No work is assigned to ${escapeHtml(personLabel ?? "All")}.`
+      : query
       ? `No ${state.workFilter === "active" ? "current" : "planned"} work matches “${escapeHtml(query)}”.`
       : `No ${state.workFilter === "active" ? "work is active" : "unstarted Goals"}.`;
     const content = `${!query && state.workFilter === "active" ? deskAttentionQueue() : ""}${records.length
@@ -1368,7 +1372,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const labels = new Map();
     for (const [, name] of people) labels.set(name, (labels.get(name) ?? 0) + 1);
     const namedOptions = [...people].map(([key, name]) => [key, labels.get(name) > 1 ? `${name} — ${key.split("::")[0]}` : name]);
-    const personOptions = [["all", "All people"], ...(namedOptions.some(([, label]) => label === "Julian" || label.startsWith("Julian — ")) ? [["mine", "Mine"]] : []), ...namedOptions.sort((left, right) => left[1].localeCompare(right[1])), ["unassigned", "Unassigned"]];
+    const personOptions = [["all", "All"], ...(namedOptions.some(([, label]) => label === "Julian" || label.startsWith("Julian — ")) ? [["mine", "Mine"]] : []), ...namedOptions.sort((left, right) => left[1].localeCompare(right[1])), ["unassigned", "Unassigned"]];
     const selectedPerson = personOptions.some(([value]) => value === state.personFilter) ? state.personFilter : "all";
     return `
       <section class="work-page">
@@ -1383,7 +1387,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
           <div class="work-filter" role="group" aria-label="Choose current or planned work">
             ${[["active", "Current"], ["inactive", "Planned"]].map(([filter, label]) => `<button type="button" data-work-filter="${filter}" aria-pressed="${state.workFilter === filter}">${label}</button>`).join("")}
           </div>
-          <label><span class="visually-hidden">Person</span><select id="work-person-filter" aria-label="Filter work by person">${personOptions.map(([value, label]) => `<option value="${escapeHtml(value)}" ${selectedPerson === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label>
+          ${personMenu({ id: "work-person-filter", options: personOptions, selected: selectedPerson, label: "Filter work by person" })}
         </div>
         ${content}
         ${launchPopover()}

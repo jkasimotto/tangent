@@ -40,6 +40,29 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   const awakeButton = document.querySelector("#awake-button");
   document.addEventListener("click", async (event) => {
     const target = event.target;
+    for (const menu of document.querySelectorAll("[data-person-menu]")) {
+      if (menu.contains(target)) continue;
+      menu.querySelector("[data-person-menu-button]")?.setAttribute("aria-expanded", "false");
+      const popover = menu.querySelector("[role='menu']");
+      if (popover) popover.hidden = true;
+    }
+    const personButton = target.closest?.("[data-person-menu-button]");
+    if (personButton) {
+      const popover = personButton.parentElement.querySelector("[role='menu']");
+      const opening = popover.hidden;
+      popover.hidden = !opening;
+      personButton.setAttribute("aria-expanded", String(opening));
+      if (opening) popover.querySelector("[aria-checked='true']")?.focus();
+      return;
+    }
+    const personItem = target.closest?.("[data-person-value]");
+    if (personItem) {
+      const buttonId = personItem.closest("[data-person-menu]").querySelector("[data-person-menu-button]").id;
+      state.personFilter = personItem.dataset.personValue || "all";
+      localStorage.setItem("agent-shell.person-filter", state.personFilter);
+      paint(true);
+      return window.setTimeout(() => document.querySelector(`#${buttonId}`)?.focus(), 0);
+    }
     const areaBrain = target.closest("[data-open-area-brain]");
     if (areaBrain) return openOrStartBrain(areaBrain.dataset.openAreaBrain);
     if (target.closest("[data-rebuild-dismiss]")) {
@@ -817,18 +840,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       state.createArea = event.target.value || "";
       return paint(true);
     }
-    if (event.target.matches("#area-person-filter")) {
-      state.personFilter = event.target.value || "all";
-      localStorage.setItem("agent-shell.person-filter", state.personFilter);
-      return paint(true);
-    }
     if (event.target.id === "area-work-scope") { state.areaWorkScope = event.target.value; return paint(true); }
     if (event.target.id === "area-work-state") { state.areaWorkState = event.target.value; return paint(true); }
-    if (event.target.matches("#work-person-filter")) {
-      state.personFilter = event.target.value || "all";
-      localStorage.setItem("agent-shell.person-filter", state.personFilter);
-      return paint(true);
-    }
     if (event.target.id === "area-document-period" || event.target.id === "area-document-order") {
       if (event.target.id === "area-document-period") state.areaDocumentPeriod = event.target.value;
       else state.areaDocumentOrder = event.target.value;
@@ -967,6 +980,29 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   });
 
   document.addEventListener("keydown", (event) => {
+    const personMenu = event.target.closest?.("[data-person-menu]");
+    if (personMenu) {
+      const button = personMenu.querySelector("[data-person-menu-button]");
+      const popover = personMenu.querySelector("[role='menu']");
+      const items = [...popover.querySelectorAll("[role='menuitemradio']")];
+      const current = items.indexOf(event.target);
+      if (event.target === button && ["Enter", " ", "ArrowDown", "ArrowUp"].includes(event.key)) {
+        event.preventDefault();
+        popover.hidden = false;
+        button.setAttribute("aria-expanded", "true");
+        const row = event.key === "ArrowDown" ? items[0] : event.key === "ArrowUp" ? items.at(-1) : popover.querySelector("[aria-checked='true']");
+        row?.focus();
+        return;
+      }
+      if (!popover.hidden && current >= 0) {
+        if (event.key === "Tab") { popover.hidden = true; button.setAttribute("aria-expanded", "false"); return; }
+        if (event.key === "Escape") { event.preventDefault(); popover.hidden = true; button.setAttribute("aria-expanded", "false"); button.focus(); return; }
+        if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.target.click(); return; }
+        const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1
+          : event.key === "ArrowDown" ? (current + 1) % items.length : event.key === "ArrowUp" ? (current - 1 + items.length) % items.length : -1;
+        if (next >= 0) { event.preventDefault(); items[next].focus(); return; }
+      }
+    }
     if (event.target.id === "area-search") {
       const rows = [...screen.querySelectorAll("[data-select-area]")];
       const selected = rows.findIndex((row) => row.dataset.selectArea === state.areaSelection);

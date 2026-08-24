@@ -925,6 +925,11 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
     // No other global shortcut fires while the finder holds the keyboard.
     if (state.goTo) return;
+    if (event.key === "Enter" && event.metaKey && !modalLayer.hidden && event.target.closest?.("[data-modal-input]")) {
+      event.preventDefault();
+      modalLayer.querySelector("[data-modal-confirm]")?.click();
+      return;
+    }
     if (event.key === "Enter" && event.metaKey) {
       const form = event.target.closest?.("[data-command-enter-submit]");
       if (form) {

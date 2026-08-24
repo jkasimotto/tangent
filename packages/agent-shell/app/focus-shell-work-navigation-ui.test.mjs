@@ -324,6 +324,14 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.ok(rows[0].querySelector("[data-open-request-id]"), "Open enters the full Request surface");
   assert.doesNotMatch(rows[0].textContent, /opened Request surface/, "the compact row does not contain full detail");
 
+  click(window, "[data-verdict='changes']");
+  const changesInput = window.document.querySelector("[data-modal-input]");
+  changesInput.value = "Use one copy-paste command.";
+  assert.match(window.document.querySelector("[data-modal-confirm]").textContent, /Send changes.*⌘↵/, "the send action shows its shortcut");
+  changesInput.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true }));
+  await settle(window);
+  assert.deepEqual(posts.at(-1), { path: "/api/brains/requests/answer", body: { area: liveEditGoal.area, id: "request-1", answer: "changes", note: "Use one copy-paste command." } });
+
   assert.equal(window.forYouItems().length, 2, "the durable Request plus the one fallback ask left");
   assert.equal(window.document.querySelector(".attention-queue > header > span").textContent, "2", "the card's number is that one list");
   const brainGoalCard = window.document.querySelector(`[data-goal-anchor="${liveEditGoal.file}"]`);

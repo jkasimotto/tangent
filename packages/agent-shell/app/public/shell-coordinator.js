@@ -662,7 +662,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
       : "";
     modalActions.innerHTML = `
       <button class="quiet-button" type="button" data-modal-cancel>Cancel</button>
-      <button class="${danger ? "danger-button" : "primary-button"}" type="button" data-modal-confirm>${escapeHtml(confirmLabel)}</button>
+      <button class="${danger ? "danger-button" : "primary-button"}" type="button" data-modal-confirm>${escapeHtml(confirmLabel)}${field ? " <kbd>⌘↵</kbd>" : ""}</button>
     `;
     modalConfirm = onConfirm;
     modalLayer.hidden = false;

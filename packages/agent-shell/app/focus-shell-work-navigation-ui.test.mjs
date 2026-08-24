@@ -373,12 +373,11 @@ test("the live shell restores context, defines work with an agent, and organizes
   await settle(window);
   assert.equal(dockBadges.at(-1), 5, "the Dock badge counts what the brain asked too");
 
-  // A Test row stops asking the moment its Goal is no longer done: nothing
-  // Julian already answered can go stale on the card.
+  // A Test row remains the acceptance boundary while its reviewed Goal is open.
   brainRowsForJulian = brainRowsForJulian.map((row) => (row.kind === "test" ? { ...row, goalStatus: "open" } : row));
   await window.refresh();
   await settle(window);
-  assert.equal(window.forYouItems().length, 4, "a Test row whose Goal reopened is not shown");
+  assert.equal(window.forYouItems().length, 5, "an open reviewed Goal keeps its Test row until Julian answers");
   brainRowsForJulian = brainRowsForJulian.map((row) => (row.kind === "test" ? { ...row, goalStatus: "done" } : row));
   await window.refresh();
   await settle(window);
@@ -403,17 +402,14 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.equal(posts.at(-1).body.verdict, "reject");
   assert.equal(posts.at(-1).body.line, testLine);
 
-  // A stopped brain keeps the rows it already wrote, offers Resume, and still
-  // does not hand its Area back to the fallback.
+  // Stopping a brain removes its asks. Resume remains on the Area card; a dead
+  // brain cannot keep asking Julian for an answer.
   brainLive = false;
   await window.refresh();
   await settle(window);
   const stoppedGroup = window.document.querySelector(".attention-queue .for-you-group.stopped");
-  assert.ok(stoppedGroup, "the stopped brain keeps its group");
-  assert.match(stoppedGroup.querySelector("header").textContent, /Brain stopped/);
-  assert.equal(stoppedGroup.querySelector("[data-brain-area]").dataset.brainArea, liveEditGoal.area, "the header offers Resume");
+  assert.equal(stoppedGroup, null, "the stopped brain leaves no stale ask group");
   assert.ok(!window.forYouItems().some((ask) => ask.question === "Accept the result?"), "a stopped brain's Area does not feed the fallback as well");
-  assert.ok(!stoppedGroup.textContent.includes("Reply"), "a stopped brain has no terminal to reply into");
   brainLive = true;
 
   liveEditBrainStarted = false;
@@ -429,20 +425,19 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.match(window.document.querySelector(".area-desk-panel:nth-child(2)").textContent, /Tangent/);
   assert.equal(window.document.querySelector(".area-desk-panel:nth-child(2) .area-desk-section.documents"), null, "the Documents section left the work tab");
   assert.equal(window.document.querySelectorAll(".desk-goal.subgoal").length, 1);
-  assert.equal(window.document.querySelector("[data-work-filter='all']").getAttribute("aria-pressed"), "true");
+  assert.equal(window.document.querySelector("[data-work-filter='active']").getAttribute("aria-pressed"), "true");
   click(window, "[data-work-filter='active']");
   assert.equal(window.localStorage.getItem("agent-shell.work-filter"), "active");
-  assert.equal(window.document.querySelectorAll(".area-desk-panel").length, 1);
-  assert.match(window.document.querySelector(".area-desk-panel").textContent, /UX Product Vision/);
-  assert.match(window.document.querySelector(".area-desk-panel").textContent, /Waiting/, "the pill is one word now; the duration is on the facts line");
+  assert.equal(window.document.querySelectorAll(".area-desk-panel").length, 2, "Current includes live work and reviewed work awaiting acceptance");
+  assert.match(window.document.querySelector("#screen").textContent, /UX Product Vision/);
+  assert.match(window.document.querySelector("#screen").textContent, /Waiting/, "the pill is one word now; the duration is on the facts line");
   assert.equal(window.document.querySelectorAll(".desk-goal.subgoal").length, 1);
-  assert.doesNotMatch(window.document.querySelector("#screen").textContent, /Define Live Edit collaboration/);
+  assert.match(window.document.querySelector("#screen").textContent, /Define Live Edit collaboration/, "Current keeps reviewed work that awaits acceptance");
   click(window, "[data-work-filter='inactive']");
-  assert.equal(window.document.querySelectorAll(".area-desk-panel").length, 1);
-  assert.match(window.document.querySelector(".area-desk-section.goals h3").textContent, /Inactive work/);
-  assert.match(window.document.querySelector(".area-desk-panel").textContent, /Define Live Edit collaboration/);
+  assert.equal(window.document.querySelectorAll(".area-desk-panel").length, 0);
+  assert.match(window.document.querySelector("#screen").textContent, /No unstarted Goals/);
   assert.doesNotMatch(window.document.querySelector("#screen").textContent, /UX Product Vision/);
-  click(window, "[data-work-filter='all']");
+  click(window, "[data-work-filter='active']");
   // The Area square on the desk carries the Area's Programs beside its Goals and Documents.
   const tangentPanel = [...window.document.querySelectorAll(".area-desk-panel")].find((panel) => panel.textContent.includes("Tangent"));
   const deskProgram = tangentPanel.querySelector(".desk-program");

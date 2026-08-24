@@ -13,7 +13,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   } = prompts;
   const {
     selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain, brainForAreaCard,
-    openBrainSession, toggleBrainPopover, saveDescribeDraft, saveDescribeSession, describeWorkSession,
+    openBrainSession, openOrStartBrain, toggleBrainPopover, saveDescribeDraft, saveDescribeSession, describeWorkSession,
     openDescribeSession, addDescribeSource, switchDescribeToManualCreate, selectionForArea, startSelectedGoals,
     openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, enableDockBadge, sendVerdict,
     replyAboutRow, renderWork, describeLaunchArea, describeWorkSessions,
@@ -40,6 +40,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   const awakeButton = document.querySelector("#awake-button");
   document.addEventListener("click", async (event) => {
     const target = event.target;
+    const areaBrain = target.closest("[data-open-area-brain]");
+    if (areaBrain) return openOrStartBrain(areaBrain.dataset.openAreaBrain);
     if (target.closest("[data-rebuild-dismiss]")) {
       if (state.rebuild?.id) localStorage.setItem("agent-shell.dismissed-rebuild", state.rebuild.id);
       state.rebuild = null;
@@ -149,6 +151,20 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (kindOnly) {
       state.areaDocumentOnly = state.areaDocumentOnly === kindOnly.dataset.areaKindOnly ? "" : kindOnly.dataset.areaKindOnly;
       state.areaDocumentExcluded.delete(kindOnly.dataset.areaKindOnly);
+      return paint(true);
+    }
+    const kindToggle = target.closest("[data-area-kind-toggle]");
+    if (kindToggle) {
+      const kind = kindToggle.dataset.areaKindToggle;
+      if (state.areaDocumentOnly) {
+        const included = new Set([state.areaDocumentOnly]);
+        if (kind === state.areaDocumentOnly) included.delete(kind);
+        else included.add(kind);
+        const allKinds = new Set((state.vault?.documents ?? []).filter((item) => item.kind === "document" && item.area === state.areaSelection).map((item) => item.docKind ?? "page"));
+        state.areaDocumentOnly = "";
+        state.areaDocumentExcluded = new Set([...allKinds].filter((item) => !included.has(item)));
+      } else if (state.areaDocumentExcluded.has(kind)) state.areaDocumentExcluded.delete(kind);
+      else state.areaDocumentExcluded.add(kind);
       return paint(true);
     }
     const kindExclude = target.closest("[data-area-kind-exclude]");
@@ -711,6 +727,15 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       const cursor = event.target.selectionStart;
       if (id === "area-search") state.areaQuery = event.target.value;
       else state.areaDocumentQuery = event.target.value;
+      if (id === "area-search" && state.areaQuery.trim()) {
+        const query = state.areaQuery.trim().toLowerCase();
+        for (const area of state.vault?.areas ?? []) {
+          if (!`${area.name} ${area.path}`.toLowerCase().includes(query)) continue;
+          const parts = area.path.split("/");
+          for (let count = 1; count < parts.length; count += 1) state.expandedAreas.add(parts.slice(0, count).join("/"));
+        }
+        saveExpandedAreas();
+      }
       paint(true);
       const input = document.querySelector(`#${id}`);
       input?.focus();
@@ -816,6 +841,21 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (row) return chooseGoToRow(state.goTo?.rows[Number(row.dataset.goToRow)]);
   });
 
+  for (const id of ["go-to-area", "go-to-kind"]) document.querySelector(`#${id}`).addEventListener("change", (event) => {
+    if (!state.goTo) return;
+    state.goTo[id === "go-to-area" ? "area" : "kind"] = event.target.value;
+    state.goTo.selected = 0;
+    renderGoToList();
+  });
+  document.querySelector("#go-to-view").addEventListener("click", (event) => {
+    if (!state.goTo) return;
+    state.goTo.view = state.goTo.view === "list" ? "graph" : "list";
+    event.currentTarget.textContent = state.goTo.view === "list" ? "Graph" : "List";
+    event.currentTarget.setAttribute("aria-pressed", String(state.goTo.view === "graph"));
+    state.goTo.selected = 0;
+    renderGoToList();
+  });
+
   workTab.addEventListener("click", showWork);
   areasTab.addEventListener("click", showAreas);
   promptsTab.addEventListener("click", showPrompts);
@@ -827,7 +867,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     showWork({ focus: true });
   });
 
-  secondaryAction.addEventListener("click", confirmStop);
+  secondaryAction.addEventListener("click", () => confirmStop({ immediate: true }));
 
   shellMenu.addEventListener("click", async (event) => {
     const item = event.target.closest("button");

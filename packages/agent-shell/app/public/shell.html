@@ -16,7 +16,7 @@
       <button id="back-button" class="bar-button back-button" type="button" aria-haspopup="menu">Agent Shell</button>
       <nav class="primary-tabs" aria-label="Agent Shell sections">
         <button id="work-tab" class="primary-tab" type="button">Work</button>
-        <button id="areas-tab" class="primary-tab" type="button">Areas</button>
+        <button id="areas-tab" class="primary-tab" type="button" hidden>Areas</button>
         <button id="prompts-tab" class="primary-tab" type="button">Model</button>
       </nav>
       <div id="bar-context" class="bar-context" aria-live="polite"></div>
@@ -60,6 +60,11 @@
       <section class="go-to" role="dialog" aria-modal="true" aria-labelledby="go-to-title">
         <p id="go-to-title" class="kicker">Go to</p>
         <input id="go-to-input" type="text" role="combobox" aria-expanded="true" aria-controls="go-to-list" aria-autocomplete="list" autocomplete="off" spellcheck="false" placeholder="Type a name" />
+        <div class="go-to-filters">
+          <label><span>Area</span><select id="go-to-area"><option value="">All Areas</option></select></label>
+          <label><span>Kind</span><select id="go-to-kind"><option value="">All kinds</option></select></label>
+          <button id="go-to-view" type="button" aria-pressed="false">Graph</button>
+        </div>
         <p class="go-to-hint">↑↓ choose · ↵ open · esc close</p>
         <ul id="go-to-list" role="listbox" aria-label="Documents and brains"></ul>
       </section>

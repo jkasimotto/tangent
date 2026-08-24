@@ -76,10 +76,10 @@ test("a Test row asks the fixed question and carries both verdicts", () => {
   assert.equal(ask.source, "plan");
 });
 
-test("a Test row stops asking when its Goal is no longer done", () => {
+test("a Test row asks while its reviewed Goal is open or done", () => {
   const done = row({ kind: "test", goalStatus: "done", title: "Find a document" });
   assert.ok(core.askFromPlanRow(brain(), done));
-  assert.equal(core.askFromPlanRow(brain(), { ...done, goalStatus: "open" }), null);
+  assert.ok(core.askFromPlanRow(brain(), { ...done, goalStatus: "open" }));
   assert.equal(core.askFromPlanRow(brain(), { ...done, goalStatus: null }), null);
 });
 

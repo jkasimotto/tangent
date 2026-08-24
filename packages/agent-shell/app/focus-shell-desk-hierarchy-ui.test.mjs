@@ -1,7 +1,7 @@
 import test from "node:test";
 import { assert, readFile, path, JSDOM, documentComments, areaMapView, shellBundle, here, goToCore, goalCardCore, askCore, settle, click, submit, openDocumentViaGoTo, jsonResponse } from "./focus-shell-ui-fixture.mjs";
 
-test("a sub-Area with open work nests as a section of its ancestor's desk panel, and Goals order needs-you, working, ready by latest change", async () => {
+test("a parent Area owns descendant current work without a separate sub-Area section", async () => {
   const [html, script, mapCore, mapView] = await Promise.all([
     readFile(path.join(here, "public", "shell.html"), "utf8"),
     readFile(path.join(here, "public", "shell.js"), "utf8"),
@@ -57,13 +57,10 @@ test("a sub-Area with open work nests as a section of its ancestor's desk panel,
 
   assert.equal(window.document.querySelectorAll(".area-desk-panel").length, 1, "embedded-js and storm-response fold into one panel");
   const panel = window.document.querySelector(".area-desk-panel");
-  assert.match(panel.querySelector(".area-desk-header h2").textContent, /Embedded/);
-  assert.match(panel.querySelector(".area-desk-section.goals").textContent, /Release and deploy/);
+  assert.match(panel.querySelector(".area-desk-header h2").textContent, /Hackathon/);
+  assert.equal(panel.querySelector(".desk-subarea"), null, "a descendant does not become another work container");
+  assert.match(panel.querySelector(".desk-descendant-goal > small").textContent, /Storm Response/);
 
-  const section = panel.querySelector(".desk-subarea");
-  assert.ok(section, "storm-response renders as a nested section");
-  assert.match(section.querySelector(".desk-subarea-toggle strong").textContent, /Storm Response/);
-
-  const titles = [...section.querySelectorAll(".desk-goal-main strong")].map((node) => node.textContent);
-  assert.deepEqual(titles, ["Needs you goal", "Working goal", "Old ready goal"], "needs-you, then working, then ready by latest change, not authored order");
+  const titles = [...panel.querySelectorAll(".desk-descendant-goal .desk-goal-main strong")].map((node) => node.textContent);
+  assert.deepEqual(titles, ["Needs you goal", "Working goal"], "Current contains live and directly waiting descendant Goals");
 });

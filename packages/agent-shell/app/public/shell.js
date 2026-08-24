@@ -391,7 +391,7 @@ const workDeskView = createWorkDeskView({
 const {
   allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile,
   currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions,
-  brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, toggleBrainPopover, startBrain,
+  brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain,
   humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel,
   goalNeedsYou, goalWorkFinished, workCard, goalTreeCard,
   fallbackAsks, forgetVerdictLines, sendVerdict, replyAboutRow, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups, renderWork,
@@ -470,7 +470,7 @@ const {
 } = documentReaderController;
 
 const shellCoordinator = createShellCoordinator({
-  shell: { state, api, post, paint, refresh, showToast },
+  shell: { state, api, post, actionTelemetry, paint, refresh, showToast },
   chrome: {
     screen, backButton, shellMenu, goToLayer, goToInput, goToList, modalLayer, modalKicker, modalTitle, modalCopy,
     modalField, modalActions, buildGoToRows, goToCore, rememberScreenScroll, restoreReturnPoint, captureReturnPoint,
@@ -682,26 +682,24 @@ function updateHeader() {
               ? `${areaLabel(goal.area)} · ${goal.title}${goalSession ? ` · ${stateLabel(goal, goalSession)}` : ""}`
               : "";
 
-  const topLevel = isWork
+  const topLevel = isWork || isAreas || isAreaEdit || isProgramDetail || isProgramCreate || isProgramSession || (isCreate && state.createReturnView === "areas")
     ? "work"
     : isPrompts
       ? "prompts"
-    : isAreas || isAreaEdit || isProgramDetail || isProgramCreate || isProgramSession || (isCreate && state.createReturnView === "areas")
-      ? "areas"
       : "";
   const attentionCount = forYouItems().length;
   workTab.textContent = attentionCount ? `Work · ${attentionCount}` : "Work";
   workTab.classList.toggle("active", topLevel === "work");
   workTab.classList.toggle("has-attention", attentionCount > 0);
-  areasTab.classList.toggle("active", topLevel === "areas");
+  areasTab.classList.toggle("active", false);
   promptsTab.classList.toggle("active", topLevel === "prompts");
-  for (const [button, active] of [[workTab, topLevel === "work"], [areasTab, topLevel === "areas"], [promptsTab, topLevel === "prompts"]]) {
+  for (const [button, active] of [[workTab, topLevel === "work"], [areasTab, false], [promptsTab, topLevel === "prompts"]]) {
     if (active) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   }
 
   secondaryAction.hidden = !session || ["work", "create", "describe", "areas", "prompts", "area-edit", "program-detail", "program-create", "program-session", "document"].includes(state.view);
-  secondaryAction.textContent = session?.state === "shell" ? "Close session…" : "Stop agent…";
+  secondaryAction.textContent = session?.state === "shell" ? "Close session" : "Stop agent";
 
   if (state.view === "agent" && session?.state === "waiting") {
     findButton.hidden = false;
@@ -726,9 +724,7 @@ function updateHeader() {
  */
 function updateLiveProgramCount() {
   const live = state.programs.liveCount;
-  areasTab.textContent = live ? `Areas · ${live}` : "Areas";
-  areasTab.title = live ? `${live} ${live === 1 ? "Program is" : "Programs are"} running` : "";
-  areasTab.classList.toggle("has-live", live > 0);
+  workTab.title = live ? `${live} ${live === 1 ? "Program is" : "Programs are"} running` : "";
 }
 
 /** Refreshes live agent state without replacing the terminal. */
@@ -1178,7 +1174,7 @@ bindShellEvents({
   },
   work: {
     selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain, brainForAreaCard,
-    openBrainSession, toggleBrainPopover, saveDescribeDraft, saveDescribeSession, describeWorkSession,
+    openBrainSession, openOrStartBrain, toggleBrainPopover, saveDescribeDraft, saveDescribeSession, describeWorkSession,
     openDescribeSession, addDescribeSource, switchDescribeToManualCreate, selectionForArea, startSelectedGoals,
     openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, enableDockBadge, sendVerdict,
     replyAboutRow, renderWork, describeLaunchArea, describeWorkSessions,

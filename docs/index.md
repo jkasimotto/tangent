@@ -4,8 +4,9 @@ Start here when changing architecture, package boundaries, or agent workflow.
 
 Agent Shell is the daily product for work with coding agents. Its current local implementation lives in `packages/agent-shell/app/`. A live Area brain controls managed work in its subtree. Julian approves the brain's Goal and worker plan before agent-originated execution starts. Workers report through one handover route, and the brain owns later transitions and requests. See ADR-0029.
 
-Human CLI defaults are `setup`, `status`, `process`, `usage`, `rollup`, `search`, `eval`, `mark`, `doctor`, and `completion`.
+Human CLI defaults are `setup`, `status`, `process`, `trigger`, `usage`, `rollup`, `search`, `eval`, `mark`, `doctor`, and `completion`.
 `tangent process` runs configured processes from inherited, ignored `.processes.json` files in Tangent Areas. Managed processes use Area-bound tmux sessions so they remain visible and inspectable in the hierarchy.
+`tangent trigger` checks condition probes from the same Area manifests and launches one visible agent for a new work key. Its durable state and optional per-user LaunchAgent do not require Agent Shell to remain open (ADR-0030).
 Raw/debug/CI surfaces such as `governance`, `data export`, and `data archive` stay callable but hidden from default help.
 
 Architecture:
@@ -31,6 +32,7 @@ Decisions:
 - decisions/ADR-0024-area-brain.md
 - decisions/ADR-0025-brain-writes-what-needs-julian.md
 - decisions/ADR-0031-agent-shell-capability-ownership.md
+- decisions/ADR-0030-area-triggers.md
 - ui/adr/0001-ui-package-split.md
 - ui/adr/0002-react-vite-ui-stack.md
 - ui/adr/0006-svelte-usage-ui.md

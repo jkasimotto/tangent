@@ -24,12 +24,16 @@ export function createBrainRoutes(operations) {
   /** Starts, resumes, or reattaches an Area brain. */
   async function start(request, response) {
     const body = await readJson(request);
+    const area = String(body.area ?? "");
+    const resume = Boolean(body.resume);
+    console.info(`[brain start] requested area=${JSON.stringify(area)} mode=${resume ? "resume" : "start"}`);
     const result = await operations.start(String(body.area ?? ""), {
       instruction: String(body.instruction ?? ""),
       choice: body.choice && typeof body.choice === "object" ? body.choice : null,
       command: typeof body.command === "string" ? body.command : "",
-      resume: Boolean(body.resume),
+      resume,
     });
+    console.info(`[brain start] result area=${JSON.stringify(area)} status=${result.status} session=${JSON.stringify(result.session ?? "")} error=${JSON.stringify(result.error ?? "")}`);
     sendJson(response, result.status, result.status === 200
       ? { session: result.session, generation: result.generation, reattached: Boolean(result.reattached), brain: result.brain }
       : { error: result.error });

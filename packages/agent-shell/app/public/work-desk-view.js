@@ -6,6 +6,7 @@ import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
 
 /** Creates the work desk view product boundary. */
 export function createWorkDeskView({ state, api, post, paint, refresh, showToast, captureReturnPoint, saveDescribeSession, launchSelection, launchRequestFields, syncLaunchDraft, preferredArea, launchOptionsFor, pipelineForGoal, pipelineRecordForGoal, areas, orderedGoalTrees, programRowControl, programIsLive, programState, localMoment, shortcutKbd, launchPopover, whatHappenedOverlay, DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET }) {
+  const openingBrains = new Set();
   /** Returns every Goal represented in the current desk projection. */
   function allGoals() {
     const byFile = new Map();
@@ -196,14 +197,21 @@ export function createWorkDeskView({ state, api, post, paint, refresh, showToast
     const existing = brainForAreaCard(area);
     const live = brainSessions().find((session) => session.area === area || session.name === existing?.session);
     if (live) return openBrainSession(live.name);
+    if (openingBrains.has(area)) return;
+    openingBrains.add(area);
+    showToast(existing ? "Resuming brain…" : "Starting brain…");
     try {
       const result = await post("/api/brains/start", existing
         ? { area, resume: true }
         : { area, instruction: "Work with Julian to understand, plan, and dispatch new work for this Area." });
-      await refresh();
+      state.sessions = [...state.sessions.filter((session) => session.name !== result.session), { name: result.session, area, kind: "brain", state: "shell" }];
+      if (result.brain) state.brains = [...(state.brains ?? []).filter((brain) => brain.area !== area), { ...result.brain, live: true }];
       openBrainSession(result.session);
+      void refresh();
     } catch (error) {
       showToast(error.message);
+    } finally {
+      openingBrains.delete(area);
     }
   }
 

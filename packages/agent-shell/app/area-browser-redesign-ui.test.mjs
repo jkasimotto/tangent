@@ -15,6 +15,8 @@ test("the Area browser focuses search and leads with planned work and filterable
   ];
   const posts = [];
   let sessions = [];
+  let holdSessionRefresh = false;
+  let releaseSessionRefresh;
   let brain = { area: "otto/tangent", instruction: "Run this Area.", status: "running", generation: 1, session: "missing-brain", live: true, state: "working" };
   window.fetch = async (url, options = {}) => {
     const pathname = new URL(url, window.location.href).pathname;
@@ -25,7 +27,10 @@ test("the Area browser focuses search and leads with planned work and filterable
       brain = { ...brain, generation: 2, session: "tangent-brain-g2", live: true };
       return jsonResponse({ session: "tangent-brain-g2", generation: 2, brain });
     }
-    if (pathname === "/api/sessions") return jsonResponse({ boot: "boot-1", caffeinate: false, sessions, pipelines: [], brains: [brain] });
+    if (pathname === "/api/sessions") {
+      if (holdSessionRefresh) await new Promise((resolve) => { releaseSessionRefresh = resolve; });
+      return jsonResponse({ boot: "boot-1", caffeinate: false, sessions, pipelines: [], brains: [brain] });
+    }
     if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
     if (pathname === "/api/map-state") return jsonResponse({ state: {} });
     return jsonResponse({
@@ -67,10 +72,14 @@ test("the Area browser focuses search and leads with planned work and filterable
   click(window, "[data-toggle-area='otto']");
   assert.equal(window.document.querySelector("[data-select-area='otto/tangent']"), null, "a manual collapse stays collapsed");
 
+  holdSessionRefresh = true;
+  click(window, "[data-open-area-brain='otto/tangent']");
   click(window, "[data-open-area-brain='otto/tangent']");
   await settle(window);
-  await settle(window);
   assert.equal(posts.at(-1).body.resume, true, "a stale live brain resumes instead of showing an error");
+  assert.equal(posts.length, 1, "a second click cannot start a duplicate generation");
   assert.ok(window.document.querySelector("#describe-work-terminal[data-session='tangent-brain-g2']"));
+  releaseSessionRefresh();
+  await settle(window);
   dom.window.close();
 });

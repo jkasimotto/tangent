@@ -662,7 +662,13 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         state.view = "describe-agent";
         state.renderedKey = "";
         paint(true);
-        showToast("The agent opened with the Area, your description, and the selected Documents.");
+        const messages = {
+          "brain-opened": "Your description reached the Area brain.",
+          "brain-resumed": "Your description reached the resumed Area brain.",
+          "brain-started": "Your description reached the restarted Area brain.",
+          "work-definition-opened": "The agent opened with the Area, your description, and the selected Documents.",
+        };
+        showToast(messages[opened.route] ?? messages["work-definition-opened"]);
       } catch (error) {
         submitButton.disabled = false;
         submitButton.innerHTML = `Start agent <kbd>⌘↵</kbd>`;

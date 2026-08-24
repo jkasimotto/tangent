@@ -2683,6 +2683,43 @@ async function notifyBrain(area, text) {
   }
 }
 
+/** The durable brain notice created by Describe work. */
+function describedWorkNotice(area, description, sources) {
+  const documents = sources.length
+    ? sources.map((source) => `- ${source.file}`).join("\n")
+    : "- None selected.";
+  return `Julian described work on Area ${area}.\n\nDescription:\n${description}\n\nSelected Documents:\n${documents}`;
+}
+
+/**
+ * Records described work for the controlling brain, then opens its live
+ * generation or starts its next generation. The inbox write is the commit
+ * point: a later start error leaves the description unread on disk.
+ */
+async function describeWorkToBrain(owner, area, description, sources) {
+  const message = describedWorkNotice(area, description, sources);
+  const notice = await recordBrainNotice(area, message);
+  const live = owner.status === "running" && owner.session
+    ? await execFileAsync("tmux", ["has-session", "-t", "=" + owner.session]).then(() => true, () => false)
+    : false;
+  if (live) {
+    const notices = [{ area, id: notice.id }];
+    holdBrainNotices(notices);
+    messages.queue(owner.session, {
+      from: "tangent", area: null, text: message, notices,
+      generation: owner.generation ?? null, queuedAt: new Date().toISOString(),
+    });
+    await messages.log({ event: "sent", to: owner.session, from: "tangent", text: message, disposition: "queued", reason: "described work" });
+    return { status: 200, session: owner.session, generation: owner.generation, brainArea: owner.area, route: "brain-opened" };
+  }
+  const route = owner.status === "running" ? "brain-started" : "brain-resumed";
+  const started = await startBrain(owner.area, { resume: true });
+  if (started.status !== 200) {
+    return { status: started.status, error: `Your description was saved for the ${owner.area} brain, but the brain did not start: ${started.error}` };
+  }
+  return { ...started, brainArea: owner.area, route };
+}
+
 /**
  * Queues every unread notice that is not already on its way, for the brains
  * that run right now. The server calls this when it starts (the memory queue
@@ -3924,12 +3961,17 @@ const launchRoutes = createLaunchRoutes({
     const description = String(body.description ?? "").trim().slice(0, 12_000);
     if (!area || !flattenAreaPaths(await readTree(TREES_ROOT)).includes(area)) return { status: 404, error: `no area "${area}"` };
     if (!description) return { status: 400, error: "describe the work before you open an agent" };
-    const chosen = await launchCatalog.requested(body);
-    if (chosen.error) return { status: 400, error: chosen.error };
     try {
       const sources = await sourceDocuments(body.sources);
+      const owner = brainRecordForArea(await readAllBrains(BRAINS_ROOT), area);
+      if (owner) {
+        const result = await describeWorkToBrain(owner, area, description, sources);
+        return { status: result.status, ...(result.status === 200 ? { value: result } : { error: result.error }) };
+      }
+      const chosen = await launchCatalog.requested(body);
+      if (chosen.error) return { status: 400, error: chosen.error };
       const result = await spawnDescribeWorkSession(area, description, sources, { session: String(body.session ?? ""), launch: body.launch !== false, command: chosen.command, label: chosen.label });
-      return { status: result.status, ...(result.status === 200 ? { value: result } : { error: result.error }) };
+      return { status: result.status, ...(result.status === 200 ? { value: { ...result, route: "work-definition-opened" } } : { error: result.error }) };
     } catch (error) { return { status: 500, error: String(error.stderr ?? error.message ?? error) }; }
   },
   /** Returns the raw harness registry. */

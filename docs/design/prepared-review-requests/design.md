@@ -1,151 +1,139 @@
-# Prepared review requests
+---
+type: document
+status: proposed
+---
+
+# Prepared results
 
 Date: 2026-08-25
 
-Tangent should ask Julian to review a result only after an agent has prepared
-the review environment. The agent goes to the right checkout, starts or reuses
-the required processes, checks the route, and gives the Request one action that
-opens the result. Julian should arrive at the thing to judge, not at setup
-instructions.
+Goal: [[goal-make-completed-work-directly-testable]].
 
-Detailed investigation and alternatives: [design record](design-record.md)
+Detailed investigation: [repository record](design-record.md). Vault copy: [[design-record-make-completed-work-directly-testable]].
 
-## The model
+## Recommendation
 
-`For you` means **work that is ready for Julian now**. A Request remains the
-brain's durable question; it is not a Goal and does not become a second work
-item. The only new distinction is whether the Request's handoff is ready.
+Tangent must prepare the finished result before it asks Julian to review it.
+
+The prepared handoff belongs to the result, not the Request. The Request asks Julian to accept that exact result revision.
+
+This keeps the product model small:
+
+- `For you` contains open Requests that Julian can answer now.
+- A Request is one durable ask. It remains `open`, `answered`, `withdrawn`, or `superseded`.
+- A Goal becomes `ready` after its result, proof, and Review action exist.
+- `ready` belongs to the Goal. It does not become a second Request state.
+- `Recent results` recalls finished results and opens their output. It is not a list of Request receipts.
 
 ```mermaid
 flowchart LR
-  Goal[Goal remains in review] --> Brain[Area brain]
-  Brain -->|delegates preparation when needed| Agent[setup agent]
-  Agent -->|checkout + process + health check + exact target| Request[Request: ready]
-  Request --> ForYou[For you]
-  ForYou -->|Review| Target[working page, app, file, or session]
-  ForYou -->|Approve / changes| Answer[Request answered]
-  Answer --> Recent[Recent results]
-  Answer -->|test approved| Done[Goal done]
+    Work[Agent finishes and verifies result] --> Ready[Goal ready<br/>result + proof + Review]
+    Ready --> Request[Open Request<br/>accept this result?]
+    Request --> ForYou[For you]
+    ForYou -->|Review| Output[Exact prepared target]
+    ForYou -->|Approve| Done[Goal done]
+    ForYou -->|Changes + text| Returned[Goal open<br/>result retained]
+    Ready --> Recent[Recent results]
 ```
 
-A Request has three useful states:
+Preparation remains ordinary Goal work. A failed server start or missing file does not create a half-ready Request.
 
-- `preparing`: recorded, but not shown in `For you` because Julian cannot act
-  yet;
-- `ready`: its question and any promised review target have been checked, so
-  it appears in `For you`;
-- `answered`: Julian's answer is durable, the row leaves `For you`, and a
-  compact receipt appears in `Recent results`.
-
-`ready` exists to protect the meaning of `For you`. Process startup and route
-checks can fail or take time. An open question is not necessarily an actionable
-question. Plan and text-only decision Requests can be ready immediately;
-visible Test Requests normally pass through preparation.
-
-Request state and Goal state stay independent. A Goal can remain open and
-reviewed while its Test Request is preparing or ready. Only approval of that
-Goal-bound Test Request closes the Goal, as it does now. A failed setup changes
-the Request, not the Goal.
+The current Goal row shows `Preparing review` while an agent repairs the handoff. The row names the brain as the recovery owner.
 
 ## What Julian sees
 
-A ready Test row should be shorter than today's modal and make the prepared
-handoff primary:
+A finished result has one primary action: `Review`.
 
 ```text
-Polez · Test
+Polez · Ready to validate
 Class-like dim enums
-Schema editor is running from branch enums.
+Schema editor is open on the reviewed commit.
 
-[ Review → ]                         [Approve] [I want changes]
+[ Review → ]       Accept this result?  [Approve] [I want these changes]
+                    [Details]
 ```
 
-`Review` opens the exact target supplied by the preparation agent. For a web
-result this is the checked URL; for another result it can reveal a file or open
-an existing Tangent session. Tangent does not open a browser merely because a
-Request became ready: that can steal focus, open several tabs, or launch while
-Julian is away. One click performs the handoff and preserves user intent.
+`Review` opens the exact target. `Details` shows the result identity, proof, numbered steps, and expected behavior.
 
-The detail view shows only useful confidence:
+The answer actions stay separate from `Review`. Opening the result never accepts it.
 
-- what is ready and what Julian should judge;
-- the target and checkout/branch when that identity matters;
-- process state and a clear `Retry setup` route when preparation failed;
-- `Open setup session` for diagnosis, not a pasted command recipe.
+Tangent opens nothing at result readiness. Julian controls the focus change and can receive several results without tab noise.
 
-While preparation runs, it belongs with the Goal's current activity, for
-example `Preparing review…`; it does not increment the `For you` count. A
-failed preparation appears on the Goal and goes back to the brain to recover.
-It does not ask Julian to become the operator unless the failure requires a
-real decision or permission.
+If a known dependency stops, the row stays in `For you`. `Review` becomes `Repair review`, and the brain receives the failure.
 
-`Recent results` is a small, collapsible receipt list below `For you`. It keeps
-recent answered Requests long enough to confirm what just disappeared, reopen
-the reviewed target, and see whether Julian approved or requested changes. It
-is not a permanent inbox or a second history system; the durable Request record
-remains the source of truth.
+Repair prepares the same result again. It does not answer the Request or change the Goal state.
 
-## How agents prepare without a rigid framework
+## One Review action, several safe openers
 
-The brain owns the handoff, but delegates setup like any other substantive
-work. The default brain guidance becomes:
+Julian sees one concept. Agent Shell uses a small set of safe adapters at the system boundary.
 
-> Before a visible Test Request becomes ready, delegate whatever preparation
-> makes the result directly reviewable. Reuse the Area's Resources and named
-> Programs. Ask the worker to verify the exact target and report it. If no
-> setup is useful, make the Request ready directly.
+| Result | Review action | Preparation evidence |
+|---|---|---|
+| Web | Open the exact HTTP route | The agent reached the route and verified the visible state |
+| Native app | Focus an app or open its deep link | The agent opened the same target and verified the app state |
+| File | Open the exact file or Tangent Document | The agent verified the file, viewer, and reviewed revision |
+| No setup | Open the result, Document, or Tangent session | The agent exercised that action before publication |
 
-This is guidance, not a mandatory pipeline stage. The Area remains the place
-for local knowledge:
+Review actions cannot contain shell text. The server accepts only typed URLs, scoped files, Tangent identities, and declared application targets.
 
-- `Resources` identifies the repository or worktree.
-- A Program names a repeatable server, watcher, or command.
-- Ordinary Area prose can explain product-specific review details that an
-  agent needs.
+Any long-lived server or watcher must be a Program. Programs own commands, working folders, sessions, and live state.
 
-For the enum example, the brain can delegate: use the recorded worktree, start
-the existing development Program (or run the repository's documented command),
-wait for health, navigate to the schema editor, and report the exact URL. The
-worker marks the Request ready with that URL and the live Program identity.
-Nothing in Agent Shell needs to understand Polez, enum schemas, npm scripts, or
-route construction.
+The result stores only Program references. It never copies Program state or embeds a setup recipe.
 
-Programs are preferred when the operation is reusable because Tangent can show
-and reuse their live state. They are not required. A worker may perform a
-one-off setup in its visible session and report the same checked handoff. This
-keeps the feature useful before every Area has polished Programs.
+If no Program exists, the agent adds one through the Program boundary. It does not leave an untracked background process behind.
+
+Programs do not store routes, review steps, or expected behavior. Those facts belong to the result that the agent verified.
+
+## Who prepares the result
+
+The agent that finishes or reviews the work prepares the first handoff. This agent already knows the checkout, result, and proof.
+
+The brain publishes the ready result and its Request after it reads the handover. A worker does not mutate Request state.
+
+If preparation needs separate work, the brain delegates a repair assignment. This is an exception, not a mandatory pipeline stage.
+
+The worker must report these facts:
+
+- the exact source revision and checkout.
+- the Review action.
+- the numbered steps and expected behavior.
+- the verification time.
+- each required Program.
+
+Agent Shell validates the action and references. The agent remains responsible for the claim that the product state is correct.
+
+## Runtime rules
+
+A result revision locks the code or artifact that Julian will judge. A Request identifies that revision.
+
+A repair can update the location or verification time only while result content stays identical. A content change creates a new result revision.
+
+Program liveness is always derived from Programs. A running tmux session is not proof that an HTTP route or native screen is usable.
+
+Agent Shell must not restart a stale Program and immediately claim success. A worker must verify the restored target before `Review` returns.
+
+Answering a Request does not stop shared Programs. Program lifetime remains an Area decision.
 
 ## Decisions to challenge
 
-1. **One Request model, with readiness.** Do not add a separate Review, Demo,
-   Environment, or Approval object. The material fact is whether Julian can act
-   on the existing Request.
-2. **The brain coordinates; a worker prepares.** This preserves the brain's
-   orchestration boundary and leaves project-specific judgment with an agent
-   that can inspect the repository.
-3. **Area knowledge plus Programs, not a review-recipe DSL.** Tangent records
-   the resulting handoff, not a universal setup workflow. Add structure later
-   only for repeated variation that Programs cannot express.
-4. **One-click opening, not automatic opening.** Readiness may occur in the
-   background or in batches. Julian chooses when Tangent takes focus.
-5. **A checked target, not setup prose, is the contract.** Instructions can be
-   supporting detail, but a visible Test is not ready if its promised target
-   has not been reached and checked.
-6. **Recent results is a receipt, not work state.** It prevents the current
-   “the row vanished; did that register?” problem without diluting `For you`.
+1. **Prepare the result before the Request.** Existing Goal and pipeline state already records preparation. A `preparing` Request adds duplicate lifecycle state.
+2. **Put Review on the result.** Recent results and ready Goals need output access despite failed Request creation or delivery.
+3. **Require Programs for long-lived dependencies.** An agent shell with an unmanaged background server cannot provide reliable liveness or repair.
+4. **Use one Review action with constrained adapters.** Do not expose arbitrary shell commands or create user-facing target types.
+5. **Let the finishing agent prepare first.** A mandatory setup worker adds latency and loses useful checkout context.
+6. **Keep Recent results result-based.** An answered Request is an event. The finished output is the thing Julian needs to recall.
 
-## Risks and unknowns
+## Material product decision
 
-- A URL health check does not prove the feature is usable. The preparation
-  agent must check the review route at the same level a competent handoff
-  requires; Tangent should record its claim, not pretend to verify arbitrary
-  product semantics.
-- A process can die after readiness. Agent Shell should derive current Program
-  liveness when it can and change the action to `Repair review` if the known
-  dependency stops. Unknown one-off dependencies can only fail when opened.
-- Worktrees can become stale or disappear. The handoff keeps the checkout
-  identity needed to diagnose that case, but the Goal and Area remain the
-  authorities for source and repository ownership.
-- The first version should support web URLs, files, and Tangent sessions. A
-  generic shell command as a user-facing launch target would create a new
-  execution and permission surface and is intentionally excluded.
+The local opener is the one new privilege boundary. This design recommends typed adapters for URLs, scoped files, Tangent targets, and declared apps.
+
+A URL-only first version is safer, but it fails the native and file cases that this design must cover.
+
+Julian must decide whether a deliberate `Review` click can use the controlled local opener. It never authorizes arbitrary commands.
+
+## Risks
+
+- A prepared target can become stale. Tangent can prove Program state, but only an agent can verify product behavior.
+- Some native apps cannot reopen an exact screen. Those results stay in preparation until an agent creates a reliable focus or deep-link action.
+- A missing Program blocks publication for process-backed reviews. The Program creation path must be available to workers.
+- The approved ready-Goal and Recent-results model is not implemented yet. This design depends on that model and must not add a competing shortcut.

@@ -869,6 +869,26 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   }
 
   /**
+   * Keeps every live Area brain one click away from the Work screen. This is
+   * independent of the Goal filter: an Area with no matching Goal still has
+   * active orchestration that Julian may need to enter.
+   */
+  function activeBrainsStrip() {
+    const brains = (state.brains ?? []).filter((brain) => brain.status === "running" && brain.live);
+    if (!brains.length) return "";
+    return `
+      <section class="active-brains" aria-labelledby="active-brains-heading">
+        <header><span aria-hidden="true">🧠</span><h2 id="active-brains-heading">Active brains</h2><b>${brains.length}</b></header>
+        <div class="active-brain-list">${brains.map((brain) => `
+          <button class="active-brain ${brainKind(brain)}" type="button" data-open-brain="${escapeHtml(brain.session ?? "")}" title="Open the ${escapeHtml(areaLabel(brain.area))} brain">
+            <span><strong>${escapeHtml(areaLabel(brain.area))}</strong><small>Generation ${brain.generation}</small></span>
+            <em>${escapeHtml(brainStateLabel(brain).replace(/^Brain\s+/, ""))}</em>
+            <b aria-hidden="true">→</b>
+          </button>`).join("")}</div>
+      </section>`;
+  }
+
+  /**
    * Drops from `state.verdictLines` every line the server no longer lists, once
    * the plan commit has landed. A line is hidden only while its press is in
    * flight; a line the brain writes again later is shown again.
@@ -1327,6 +1347,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
             ${[["active", "Current"], ["inactive", "Planned"]].map(([filter, label]) => `<button type="button" data-work-filter="${filter}" aria-pressed="${state.workFilter === filter}">${label}</button>`).join("")}
           </div>
         </div>
+        ${activeBrainsStrip()}
         ${content}
         ${launchPopover()}
         ${whatHappenedOverlay()}
@@ -1334,5 +1355,5 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     `;
   }
 
-  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, fallbackAsks, forgetVerdictLines, sendVerdict, replyAboutRow, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups, renderWork };
+  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, fallbackAsks, forgetVerdictLines, sendVerdict, replyAboutRow, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups, activeBrainsStrip, renderWork };
 }

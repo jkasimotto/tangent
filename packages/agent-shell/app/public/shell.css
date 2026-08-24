@@ -337,6 +337,25 @@ summary:focus-visible {
 .work-filter button:hover { color: var(--text); }
 .work-filter button[aria-pressed="true"] { background: #27313d; color: #e7eaed; box-shadow: inset 0 0 0 1px #46586d; }
 
+.active-brains { display: flex; align-items: stretch; gap: 14px; margin: 0 0 24px; padding: 12px 14px; border: 1px solid #34445a; border-left: 4px solid var(--blue); background: #121821; }
+.active-brains > header { display: flex; flex: none; align-items: center; gap: 8px; padding-right: 14px; border-right: 1px solid #2d3949; }
+.active-brains > header h2 { margin: 0; font-size: 13px; white-space: nowrap; }
+.active-brains > header b { color: var(--blue); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.active-brain-list { display: flex; min-width: 0; flex: 1; gap: 8px; overflow-x: auto; }
+.active-brain { display: grid; grid-template-columns: minmax(110px, 1fr) auto auto; align-items: center; gap: 12px; min-width: 230px; padding: 8px 10px; border: 1px solid #34445a; border-radius: 3px; background: #171e28; color: inherit; cursor: pointer; text-align: left; }
+.active-brain:hover { border-color: #59779d; background: #1b2531; }
+.active-brain > span { display: grid; min-width: 0; gap: 2px; }
+.active-brain strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.active-brain small { color: #738194; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .05em; text-transform: uppercase; }
+.active-brain em { color: var(--blue); font-size: 11px; font-style: normal; white-space: nowrap; }
+.active-brain.waiting em { color: var(--amber); }
+.active-brain > b { color: #8095ae; font-weight: 500; }
+
+@media (max-width: 760px) {
+  .active-brains { display: grid; }
+  .active-brains > header { padding: 0 0 10px; border-right: 0; border-bottom: 1px solid #2d3949; }
+}
+
 .attention-queue {
   margin: 0 0 34px;
   border: 1px solid #51462f;

@@ -39,8 +39,17 @@ test("tangent goal handover takes the facts and an optional session", () => {
 test("goal help still lists the vault commands beside start and handover", () => {
   assert.deepEqual(
     goalCommandSpec.subcommands.map((entry) => entry.name),
-    ["create", "list", "show", "own", "release", "start", "append", "handover", "done", "wont-do"]
+    ["create", "list", "show", "depend", "undepend", "own", "release", "start", "append", "handover", "done", "wont-do"]
   );
+});
+
+test("tangent goal depend and undepend take repeatable prerequisites", () => {
+  for (const name of ["depend", "undepend"]) {
+    const command = subcommand(name);
+    assert.equal(command.args, "<slug>");
+    assert.deepEqual(optionNames(command), ["on", "server", "json"]);
+    assert.match(command.options[0].description, /repeatable/);
+  }
 });
 
 test("tangent brain has handover and status; tangent area gains create", async () => {

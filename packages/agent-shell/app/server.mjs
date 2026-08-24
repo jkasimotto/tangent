@@ -52,6 +52,7 @@ import { createShellControlRoutes } from "./shell-control-routes.mjs";
 import { createShellStateRoutes } from "./shell-state-routes.mjs";
 import { createVoiceRoutes } from "./voice-routes.mjs";
 import { createGoalQueryRoutes } from "./goal-query-routes.mjs";
+import { changeGoalDependencies, dependencyPromptLines, dependencySlugs, projectGoalDependencies, writeDependencySlugs } from "./goal-dependencies.mjs";
 import { createLaunchRoutes } from "./launch-routes.mjs";
 import { createWorkMutationRoutes } from "./work-mutation-routes.mjs";
 import { recordActionTelemetry } from "./action-telemetry.mjs";
@@ -746,6 +747,7 @@ async function readAreaGoals(area) {
       due: fm.due || null,
       session: fm.session || null,
       subgoals: subgoalsOrder(text),
+      dependencySlugs: dependencySlugs(text),
     });
   }
   return goals;
@@ -783,6 +785,7 @@ async function buildVaultIndex() {
     entries.push({ n, note, own, documents });
     for (const o of own) if (!bySlug.has(o.slug)) bySlug.set(o.slug, o);
   }
+  projectGoalDependencies(entries.flatMap(({ own }) => own));
   const linked = new Set([...bySlug.values()].flatMap((o) => o.subgoals));
   const parentBySlug = new Map();
   for (const goal of bySlug.values()) {
@@ -1279,7 +1282,17 @@ function ideasFromNote(text) {
 
 /** Reduces one readAreaGoals() entry to the compact shape the tangent goal CLI lists. */
 function goalSummary(goal) {
-  return { slug: goal.slug, file: goal.file, area: goal.area, title: goal.title, status: goal.status, doneWhen: goal.doneWhen };
+  return {
+    slug: goal.slug,
+    file: goal.file,
+    area: goal.area,
+    title: goal.title,
+    status: goal.status,
+    doneWhen: goal.doneWhen,
+    dependsOn: goal.dependsOn ?? [],
+    requiredBy: goal.requiredBy ?? [],
+    unresolvedDependencies: goal.unresolvedDependencies ?? [],
+  };
 }
 
 /** Saves a natural work description as an idea without creating goals. */
@@ -1387,6 +1400,13 @@ function describeWorkPrompt(area, description, sources = []) {
  */
 async function goalPrompt(area, o, extras = [], continuationEntries = []) {
   const context = await goalContext(area, o);
+  const allGoals = [...(await goalsByFile()).values()];
+  projectGoalDependencies(allGoals);
+  const projectedGoal = allGoals.find((goal) => goal.file === o.file) ?? o;
+  const dependencyLines = [
+    ...(projectedGoal.dependsOn ?? []).map((goal) => `- Depends on ${goal.title} (${goal.file}).`),
+    ...(projectedGoal.requiredBy ?? []).map((goal) => `- Required by ${goal.title} (${goal.file}).`),
+  ];
   const sources = [
     `- Goal: ${context.goalFile}`,
     ...context.notes.map((note, index) => `- Area note ${index + 1}: ${note}`),
@@ -1409,6 +1429,9 @@ async function goalPrompt(area, o, extras = [], continuationEntries = []) {
     `## Done when\n\n${o.doneWhen || "Read the Goal file for the done condition."}\n\n` +
     (o.myUnderstanding ? `## Julian's understanding\n\n${o.myUnderstanding}\n\n` : "") +
     `## Sources\n\n${sources.join("\n")}\n\n` +
+    (dependencyLines.length
+      ? `## Dependencies\n\nThese facts are advisory. They do not block or reorder this work.\n\n${dependencyLines.join("\n")}\n\n`
+      : "") +
     alsoOwned +
     brainSection +
     `## How to work\n\n` +
@@ -2942,11 +2965,17 @@ async function brainPrompt(record) {
     ...notes.map((note, index) => `- Area note ${index + 1}: ${note}`),
     ...documents.map((doc) => `- Document: ${path.join(TREES_ROOT, doc.file)}`),
   ];
+  const allGoals = [...(await goalsByFile()).values()];
+  const dependencyLines = dependencyPromptLines(allGoals, (goal) => goal.area === area || goal.area.startsWith(`${area}/`));
+  const dependencySection = dependencyLines.length
+    ? `## Dependencies\n\nThese facts are advisory. Consider them when you plan and allocate work. Tangent does not block, reorder, start, or close Goals from these facts.\n\n${dependencyLines.join("\n")}\n\n`
+    : "";
   return (
     `# Brain for ${area}\n\n` +
     `You are the brain of the Area ${area}: the one long-lived agent that plans and dispatches its work. Julian started you with the instruction below and will mostly leave you alone. This is generation ${generation} of this brain${handover ? "; the earlier generation handed over the facts under Handover" : ""}.\n\n` +
     `## Julian's instruction\n\n${record.instruction}\n\n` +
     `## Sources\n\n${sourceLines.join("\n")}\n\n` +
+    dependencySection +
     (handover ? `## Handover from generation ${generation - 1}\n\n${handover}\n\n` : "") +
     (notices.length
       ? `## Notices you have not read\n\nTangent recorded these while no generation of this brain was reading. Each one is an agent event under this Area. Read them before you plan, and act on the ones that need it.\n\n${noticeBlock(notices)}\n\n`
@@ -2956,7 +2985,7 @@ async function brainPrompt(record) {
     `On takeover, run \`tangent agent list\` and sweep every running step's pane: a session shown as "needs decision" or "draft" carries an \`asks:\` line with the question, and it is stuck waiting on a person, not idle. Answer it or message the worker (\`tangent agent send <session> "..."\`) before anything else.\n\n` +
     `Read the plan first when it exists, then the Area notes from nearest to farthest, then the Documents that matter. Look at the Area's repository when code answers a question better than a guess.\n\n` +
     `Before you create a Goal or start a worker, write the proposed result, Goals and done conditions, agent count, assignments, dependencies, parallel work, and known risks in the plan. Commit it with \`tangent vault commit\`. Then request one approval with \`tangent brain request --kind plan --subject "Work plan" --question "Approve this plan?" --detail "<short Goals, agents, and order summary>"\`. Wait for the durable approval notice. A changed Goal boundary or larger scope needs a new plan request. A retry, model change, or review pass inside the approved boundary does not. Julian may also comment in the plan; \`tangent document comments <file>\` lists comments and \`tangent document resolve\` closes one after the work is done.\n\n` +
-    `Split the work into Goals: a Goal is a result with a clear finish. Create a sub-Area only for a durable subject Julian will return to (\`tangent area create <parent> <name>\`). Give each Goal a description a fresh agent can start from: intent, what Julian decided, and the Documents and code that matter (\`tangent goal create --area ${area} --title "..." --done-when "..." --description "..." --source <vault-file>\`).\n\n` +
+    `Split the work into Goals: a Goal is a result with a clear finish. Create a sub-Area only for a durable subject Julian will return to (\`tangent area create <parent> <name>\`). Give each Goal a description a fresh agent can start from: intent, what Julian decided, and the Documents and code that matter (\`tangent goal create --area ${area} --title "..." --done-when "..." --description "..." --source <vault-file>\`). Record prerequisites with \`tangent goal depend <goal> --on <prerequisite>\`; remove them with \`tangent goal undepend <goal> --on <prerequisite>\`. Dependencies inform your plan and allocation, but they do not enforce execution order.\n\n` +
     `Start each leaf Goal as a pipeline, for example: \`tangent goal start <slug> --step "/design this Goal" --launch ${harness}/${designModel} --step "/impl the design at <path>" --launch ${harness}/${designModel} --step "implement the solution" --launch ${harness}/${implementModel} --step "review the implementation against the design and solution; fix what is wrong" --launch ${harness}/${designModel}\`. Judge each Goal: when the work is small and clear, one implementer step is enough; when it is hard or vague, raise the implementer to Opus or Fable and keep the design step. Fable plans, designs, decomposes, and reviews; Sonnet is the workhorse. Run one implementing pipeline per repository at a time; design and review steps may run in parallel. \`tangent agent list\` shows what runs and \`tangent goal list ${area}\` shows the Goals.\n\n` +
     `Tangent sends you durable worker reports. Read the handover and the files. You alone choose the next transition. Start a pending approved assignment with \`tangent brain advance <goal> <step>\`. When a review asks for changes, append an assignment. When a result is good, note it in the plan and start what its completion unblocked. Workers do not choose successors.\n\n` +
     `Ask Julian only through structured requests. Use kind decision with repeated --option values for user behavior, user-facing choices, one-way doors, and material scope changes. Use kind test with exact test steps. Use kind approval only when policy requires an explicit final approval. The answer returns to this brain as a durable notice. Julian started this brain to get the approved Goals done. When a Goal's final review passes and its done condition holds, write the verdict into the Goal State and close it in the same turn. A finished Goal left waiting is a brain failure.\n\n` +
@@ -4008,17 +4037,40 @@ const goalQueryRoutes = createGoalQueryRoutes({
   async list(area) {
     const allAreas = flattenAreaPaths(await readTree(TREES_ROOT));
     if (area && !allAreas.includes(area)) return { status: 404, error: `no area "${area}"` };
-    const goals = [];
-    for (const one of area ? [area] : allAreas) goals.push(...(await readAreaGoals(one)).map(goalSummary));
-    return { status: 200, value: { goals } };
+    const allGoals = [];
+    for (const one of allAreas) allGoals.push(...await readAreaGoals(one));
+    projectGoalDependencies(allGoals);
+    return { status: 200, value: { goals: allGoals.filter((goal) => !area || goal.area === area).map(goalSummary) } };
   },
   /** Finds one complete Goal by slug. */
   async show(slug) {
-    for (const area of flattenAreaPaths(await readTree(TREES_ROOT))) {
-      const goal = (await readAreaGoals(area)).find((item) => item.slug === slug);
-      if (goal) return { status: 200, value: { goal } };
-    }
+    const goals = [...(await goalsByFile()).values()];
+    projectGoalDependencies(goals);
+    const matches = goals.filter((goal) => goal.slug === slug);
+    if (matches.length === 1) return { status: 200, value: { goal: matches[0] } };
+    if (matches.length > 1) return { status: 409, error: `goal ${slug} is ambiguous: ${matches.map((goal) => goal.file).join(", ")}` };
     return { status: 404, error: `no goal ${slug}` };
+  },
+  /** Adds or removes advisory prerequisite links on one Goal. */
+  async dependencies(body, removing) {
+    const slug = String(body.slug ?? "").trim();
+    const on = (Array.isArray(body.on) ? body.on : []).map(String).map((item) => item.trim()).filter(Boolean);
+    if (!slug || !on.length) return { status: 400, error: `${removing ? "undepend" : "depend"} needs a goal slug and at least one prerequisite` };
+    const goals = [...(await goalsByFile()).values()];
+    const result = changeGoalDependencies(goals, slug, on, removing);
+    if (result.error) {
+      const status = result.error.startsWith("no goal") ? 404 : 409;
+      return { status, error: result.error };
+    }
+    if (!result.changed) return { status: 200, value: { ok: true, slug, dependsOn: result.slugs, changed: false } };
+    try {
+      const text = await readFile(path.join(TREES_ROOT, result.goal.file), "utf8");
+      await vaultRepository.writeMarkdown(result.goal.file, writeDependencySlugs(text, result.slugs));
+      await vaultCommit([result.goal.file], `update: ${result.goal.area} goal ${result.goal.slug} dependencies`, result.goal.area, null);
+      return { status: 200, value: { ok: true, slug, dependsOn: result.slugs, changed: true } };
+    } catch (error) {
+      return { status: 500, error: String(error.stderr ?? error.message ?? error) };
+    }
   },
   /** Owns or releases a set of Goals for one live session. */
   async ownership(body, releasing) {

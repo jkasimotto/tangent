@@ -122,6 +122,26 @@ export const goalCommandSpec: CliCommandSpec = {
     { name: "list", description: "List Goals, optionally scoped to one Area", args: "[area]", options: [serverOption, jsonOption] },
     { name: "show", description: "Show one Goal's status, done condition, and state", args: "<slug>", options: [serverOption, jsonOption] },
     {
+      name: "depend",
+      description: "Record advisory Goal prerequisites without blocking or reordering work",
+      args: "<slug>",
+      options: [
+        { name: "on", takesValue: true, description: "Prerequisite Goal slug; repeatable" },
+        serverOption,
+        jsonOption
+      ]
+    },
+    {
+      name: "undepend",
+      description: "Remove advisory Goal prerequisites",
+      args: "<slug>",
+      options: [
+        { name: "on", takesValue: true, description: "Prerequisite Goal slug; repeatable" },
+        serverOption,
+        jsonOption
+      ]
+    },
+    {
       name: "own",
       description: "Take ownership of one or more Goals; they flip to active on this session. Never steals from a live session.",
       args: "<slug...>",

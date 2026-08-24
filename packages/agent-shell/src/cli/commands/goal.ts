@@ -9,7 +9,7 @@ export async function runGoalCli(argv = process.argv.slice(2)): Promise<void> {
   // "continue" is boolean so the reminder's printed command works verbatim:
   // `handover --continue "<facts>"` must keep the facts positional, never
   // swallow them as the flag's value (ADR-0028).
-  const args = parseArgs(argv, { repeatable: ["source", "subgoal-title", "subgoal-done-when", "step", "launch", "continue-from"], boolean: ["continue"] });
+  const args = parseArgs(argv, { repeatable: ["source", "subgoal-title", "subgoal-done-when", "step", "launch", "continue-from", "on"], boolean: ["continue"] });
   const subcommand = args._[0];
   if (!subcommand) return help();
   // "done" and "wont-do" handle --help themselves, to restate that status is written on
@@ -19,12 +19,31 @@ export async function runGoalCli(argv = process.argv.slice(2)): Promise<void> {
   if (subcommand === "show") return args.help ? help() : showCommand(args);
   if (subcommand === "own") return args.help ? help() : ownershipCommand(args, "own");
   if (subcommand === "release") return args.help ? help() : ownershipCommand(args, "release");
+  if (subcommand === "depend") return args.help ? help() : dependencyCommand(args, false);
+  if (subcommand === "undepend") return args.help ? help() : dependencyCommand(args, true);
   if (subcommand === "start") return args.help ? help() : startCommand(args);
   if (subcommand === "append") return args.help ? help() : appendCommand(args);
   if (subcommand === "handover") return args.help ? help() : handoverCommand(args);
   if (subcommand === "done") return doneCommand(args);
   if (subcommand === "wont-do") return wontDoCommand(args);
   throw new Error(`Unknown goal command: ${subcommand}. Try "tangent goal --help".`);
+}
+
+/** Adds or removes advisory prerequisite links for one Goal. */
+async function dependencyCommand(args: Args, removing: boolean): Promise<void> {
+  const server = resolveServerUrl(stringArg(args.server));
+  const slug = requiredString(args._[1], `tangent goal ${removing ? "undepend" : "depend"} requires <slug>.`);
+  await requireGoal(server, slug);
+  const on = stringsArg(args.on).map((item) => item.trim()).filter(Boolean);
+  if (!on.length) throw new Error(`tangent goal ${removing ? "undepend" : "depend"} requires --on <prerequisite>.`);
+  for (const prerequisite of on) await requireGoal(server, prerequisite);
+  const result = await postJson(server, `/api/goals/${removing ? "undepend" : "depend"}`, { slug, on });
+  if (booleanArg(args.json)) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  const dependencies = Array.isArray(result.dependsOn) ? result.dependsOn.join(", ") : "";
+  console.log(`${slug} depends on: ${dependencies || "nothing"}${result.changed === false ? " (unchanged)" : ""}`);
 }
 
 /** Handles `tangent goal create`. */

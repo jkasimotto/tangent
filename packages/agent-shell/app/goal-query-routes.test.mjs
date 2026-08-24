@@ -50,3 +50,20 @@ test("Goal brief routes carry the requested prompt mode and pipeline step", asyn
   assert.deepEqual(received, ["otto/goal-x.md", "pipeline", 3]);
   assert.equal(result.body.markdown, "prompt");
 });
+
+test("Goal dependency routes preserve mutation direction", async () => {
+  const calls = [];
+  const routes = createGoalQueryRoutes({
+    /** Captures dependency mutation arguments. */
+    async dependencies(body, remove) {
+      calls.push({ body, remove });
+      return { status: 200, value: { ok: true } };
+    },
+  });
+  for (const [path, remove] of [["depend", false], ["undepend", true]]) {
+    const result = response();
+    await routes.handle(request("POST", { slug: "ship", on: ["api"] }), result, new URL(`http://shell/api/goals/${path}`));
+    assert.equal(result.status, 200);
+    assert.equal(calls.at(-1).remove, remove);
+  }
+});

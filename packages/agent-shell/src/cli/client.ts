@@ -26,6 +26,9 @@ export type GoalSummary = {
   title: string;
   status: string;
   doneWhen: string;
+  dependsOn?: Array<{ file: string; title: string; doneWhen: string; status: string }>;
+  requiredBy?: Array<{ file: string; title: string; doneWhen: string; status: string }>;
+  unresolvedDependencies?: string[];
 };
 
 /** Resolves the Agent Shell server URL, rejecting anything but a loopback HTTP address. */

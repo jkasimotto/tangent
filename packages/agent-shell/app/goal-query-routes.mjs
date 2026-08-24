@@ -7,6 +7,8 @@ export function createGoalQueryRoutes(operations) {
     ["GET /api/goals/show", show],
     ["POST /api/goals/own", own],
     ["POST /api/goals/release", release],
+    ["POST /api/goals/depend", depend],
+    ["POST /api/goals/undepend", undepend],
     ["GET /api/goals/brief", brief],
   ]);
 
@@ -36,6 +38,16 @@ export function createGoalQueryRoutes(operations) {
   /** Releases Goals from the calling session. */
   async function release(request, response) {
     sendResult(response, await operations.ownership(await readJson(request), true));
+  }
+
+  /** Adds prerequisites to one Goal. */
+  async function depend(request, response) {
+    sendResult(response, await operations.dependencies(await readJson(request), false));
+  }
+
+  /** Removes prerequisites from one Goal. */
+  async function undepend(request, response) {
+    sendResult(response, await operations.dependencies(await readJson(request), true));
   }
 
   /** Returns the complete launch brief for one Goal file. */

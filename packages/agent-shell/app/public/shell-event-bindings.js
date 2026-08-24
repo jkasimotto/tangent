@@ -206,12 +206,24 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       state.areaWorkScope = "";
       state.areaWorkState = "all";
       state.personFilter = "all";
-      state.areaWorkLimits.set(state.areaSelection, { frontier: 12, successors: 12 });
+      state.areaWorkLimits.set(state.areaSelection, { frontier: 12, successors: 12, successorDepth: 1 });
+      return paint(true);
+    }
+    if (target.closest("[data-area-work-deeper]")) {
+      const limits = state.areaWorkLimits.get(state.areaSelection) ?? { frontier: 12, successors: 12, successorDepth: 1 };
+      limits.successorDepth += 1;
+      state.areaWorkLimits.set(state.areaSelection, limits);
+      return paint(true);
+    }
+    if (target.closest("[data-area-work-frontier]")) {
+      const limits = state.areaWorkLimits.get(state.areaSelection) ?? { frontier: 12, successors: 12, successorDepth: 1 };
+      limits.successorDepth = 1;
+      state.areaWorkLimits.set(state.areaSelection, limits);
       return paint(true);
     }
     const moreWork = target.closest("[data-area-work-more]");
     if (moreWork) {
-      const limits = state.areaWorkLimits.get(state.areaSelection) ?? { frontier: 12, successors: 12 };
+      const limits = state.areaWorkLimits.get(state.areaSelection) ?? { frontier: 12, successors: 12, successorDepth: 1 };
       limits[moreWork.dataset.areaWorkMore] += 12;
       state.areaWorkLimits.set(state.areaSelection, limits);
       return paint(true);

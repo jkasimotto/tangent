@@ -25,11 +25,38 @@ function matchesPerson(goal, person) {
   if (person === "unassigned") return !(goal.assignees ?? []).length;
   return (goal.assigneeKeys ?? []).includes(person);
 }
+/** Returns the files that participate in a dependency cycle. */
+function cycleFiles(goals) {
+  const files = new Set(goals.map((goal) => goal.file));
+  const edges = new Map(goals.map((goal) => [goal.file, (goal.dependsOn ?? []).map((item) => item.file).filter((file) => files.has(file))]));
+  const visiting = [];
+  const active = new Set();
+  const visited = new Set();
+  const cyclic = new Set();
+  /** Visits one dependency path and records its repeated active section. */
+  const visit = (file) => {
+    if (active.has(file)) {
+      const start = visiting.indexOf(file);
+      for (const item of visiting.slice(start)) cyclic.add(item);
+      return;
+    }
+    if (visited.has(file)) return;
+    active.add(file);
+    visiting.push(file);
+    for (const next of edges.get(file) ?? []) visit(next);
+    visiting.pop();
+    active.delete(file);
+    visited.add(file);
+  };
+  for (const file of edges.keys()) visit(file);
+  return cyclic;
+}
 /** Projects a bounded ready-first graph for one selected Area. */
 function project({ scope, goals, areaPaths, filters = {}, limits = {} }) {
   const open = goals.filter((goal) => isInside(goal.area, scope) && !CLOSED.has(goal.status));
   const byFile = new Map(goals.map((goal) => [goal.file, goal]));
   const facts = new Map(goals.map((goal) => [goal.file, readiness(goal, byFile)]));
+  for (const file of cycleFiles(goals)) facts.set(file, { kind: "error", blockers: ["dependency cycle"] });
   const query = String(filters.query ?? "").trim().toLowerCase();
   const targetScope = filters.scope || scope;
   const reduced = (filters.person && filters.person !== "all") || (filters.state && filters.state !== "all") || query || targetScope !== scope;
@@ -53,19 +80,54 @@ function project({ scope, goals, areaPaths, filters = {}, limits = {} }) {
   if (reduced) for (const goal of matches) keepPrerequisites(goal, goal.title);
   const directReady = stableGoals(open.filter((goal) => goal.area === scope && facts.get(goal.file).kind === "ready"));
   const depth = scope.split("/").length + 1;
+  /** Assigns a Goal to the selected Area or one direct child Area. */
+  const lane = (goal) => {
+    const child = areaPaths.find((path) => path.startsWith(`${scope}/`) && path.split("/").length === depth && isInside(goal.area, path));
+    return child ?? scope;
+  };
+  const boundaryEdges = [];
+  const seenBoundary = new Set();
+  for (const goal of open) for (const prerequisite of goal.dependsOn ?? []) {
+    const source = byFile.get(prerequisite.file);
+    if (!source || !isInside(source.area, scope) || lane(source) === lane(goal)) continue;
+    const key = `${source.file}->${goal.file}`;
+    if (seenBoundary.has(key)) continue;
+    seenBoundary.add(key);
+    boundaryEdges.push({ from: source, to: goal, fromLane: lane(source), toLane: lane(goal) });
+  }
   const portals = areaPaths.filter((path) => path.startsWith(`${scope}/`) && path.split("/").length === depth).sort().map((path) => {
     const childGoals = open.filter((goal) => isInside(goal.area, path));
     const ready = stableGoals(childGoals.filter((goal) => facts.get(goal.file).kind === "ready"));
-    return { kind: "portal", path, title: path.split("/").pop(), openCount: childGoals.length, readyCount: ready.length, preview: ready[0] ?? null };
+    return { kind: "portal", path, title: path.split("/").pop(), openCount: childGoals.length, readyCount: ready.length, preview: ready[0] ?? null,
+      dependencyCount: boundaryEdges.filter((edge) => edge.fromLane === path || edge.toLane === path).length };
   }).filter((portal) => portal.openCount);
   const allFrontier = reduced
-    ? [...context.values(), ...matches].map((goal) => ({ kind: goal.neededBy ? "context" : "goal", goal, fact: facts.get(goal.file) ?? readiness(goal, byFile) }))
+    ? [...stableGoals(context.values()), ...matches].map((goal) => ({ kind: goal.neededBy ? "context" : "goal", goal, fact: facts.get(goal.file) ?? readiness(goal, byFile) }))
     : [...directReady.map((goal) => ({ kind: "goal", goal, fact: facts.get(goal.file) })), ...portals];
   const frontier = allFrontier.slice(0, Math.max(PAGE_SIZE, Number(limits.frontier ?? PAGE_SIZE)));
   const readyFiles = new Set(frontier.filter((item) => item.kind === "goal" && item.fact.kind === "ready").map((item) => item.goal.file));
-  const allSuccessors = stableGoals(open.filter((goal) => (goal.dependsOn ?? []).some((item) => readyFiles.has(item.file))));
-  const successors = allSuccessors.slice(0, Math.max(PAGE_SIZE, Number(limits.successors ?? PAGE_SIZE))).map((goal) => ({ kind: "goal", goal, fact: facts.get(goal.file) }));
+  const successorDepth = Math.max(1, Number(limits.successorDepth ?? 1));
+  const successorLayers = [];
+  let previous = readyFiles;
+  const reached = new Set(readyFiles);
+  for (let level = 1; level <= successorDepth + 1 && previous.size; level += 1) {
+    const layer = stableGoals(open.filter((goal) => !reached.has(goal.file) && (goal.dependsOn ?? []).some((item) => previous.has(item.file))));
+    if (!layer.length) break;
+    successorLayers.push(layer);
+    previous = new Set(layer.map((goal) => goal.file));
+    for (const file of previous) reached.add(file);
+  }
+  const shownLayers = successorLayers.slice(0, successorDepth);
+  const allSuccessors = shownLayers.flat();
+  const successorLimit = Math.max(PAGE_SIZE, Number(limits.successors ?? PAGE_SIZE) * successorDepth);
+  const successors = allSuccessors.slice(0, successorLimit).map((goal) => ({ kind: "goal", goal, fact: facts.get(goal.file) }));
+  const deeperSuccessors = successorLayers.length > successorDepth;
+  const emptyReason = open.length && !open.some((goal) => facts.get(goal.file).kind === "ready")
+    ? (open.some((goal) => facts.get(goal.file).kind === "error") ? "No Goal is ready because the dependency graph has an error."
+      : open.some((goal) => facts.get(goal.file).kind === "broken") ? "No Goal is ready because a prerequisite will not be done."
+      : "No Goal is ready because every Goal has an unfinished prerequisite.") : "";
   return { openCount: open.length, readyCount: open.filter((goal) => facts.get(goal.file).kind === "ready").length, matchCount: matches.length,
-    frontier, frontierHidden: allFrontier.length - frontier.length, successors, successorHidden: allSuccessors.length - successors.length, reduced };
+    frontier, frontierHidden: allFrontier.length - frontier.length, successors, successorHidden: allSuccessors.length - successors.length,
+    deeperSuccessors, successorDepth, boundaryEdges, emptyReason, reduced };
 }
-export default { PAGE_SIZE, isInside, matchesPerson, project, readiness, stableGoals };
+export default { PAGE_SIZE, cycleFiles, isInside, matchesPerson, project, readiness, stableGoals };

@@ -1388,6 +1388,13 @@ li .document-comment { margin: 8px 0 10px; }
 .area-work-portal em { grid-column: 1 / -1; color: var(--muted); font-size: 12px; font-style: normal; }
 .area-work-portal b { grid-column: 2; grid-row: 1; align-self: center; font-size: 11px; color: var(--accent); }
 .area-work-more { width: 100%; padding: 10px; border: 0; border-top: 1px solid var(--line); background: transparent; color: var(--accent); }
+.area-work-reason { margin: 0 0 12px; padding: 10px 12px; border-left: 3px solid var(--danger); background: color-mix(in srgb, var(--danger) 8%, transparent); }
+.area-work-boundaries { margin-top: 14px; }
+.area-work-boundaries h4 { margin: 0 0 8px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+.area-work-boundary { border-top: 1px solid var(--line); padding: 8px 0; }
+.area-work-boundary summary { cursor: pointer; color: var(--muted); }
+.area-work-boundary div { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 8px; align-items: center; margin-top: 8px; }
+.area-work-boundary button { min-width: 0; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); text-align: left; }
 .area-history-day { margin-top: 22px; }
 .area-history-day h4 { margin: 0 0 8px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
 .area-history-day button { width: 100%; display: grid; grid-template-columns: 82px 88px minmax(0, 1fr) auto; gap: 12px; padding: 10px 8px; text-align: left; border: 0; border-top: 1px solid var(--line); background: transparent; color: var(--text); }

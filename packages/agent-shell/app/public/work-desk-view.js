@@ -503,46 +503,22 @@ export function createWorkDeskView({ state, api, post, paint, refresh, showToast
     return terms.reduce((score, term) => score + 1 + (strong.includes(term) ? 4 : 0), 0) + Number(record.mtime || 0) / 1e15;
   }
 
-  /** Renders one Document result with the Goal history that explains it. */
-  function documentSearchCard(document) {
-    const history = document.goalHistory ?? [];
-    const trail = history.length ? history.map((goal) => goal.title).join(" → ") : areaLabel(document.area);
-    return `
-      <button class="search-result-card document-result" type="button" data-open-document="${escapeHtml(document.file)}">
-        <span><span class="search-result-kind">Document</span><strong>${escapeHtml(document.title)}</strong><small>${escapeHtml(trail)}</small></span>
-        <span aria-hidden="true">→</span>
-      </button>`;
-  }
-
-  /** Renders mixed results without hiding Documents behind Goal pages. */
-  function searchResults(query) {
+  /** Filters the existing work desk without changing its information hierarchy. */
+  function filteredDeskAreas(query) {
     const terms = searchTerms(query);
-    const goals = allGoals()
-      .map((goal) => ({ goal, score: searchScore(goal, terms, goal.title) }))
-      .filter((item) => item.score > 0)
-      .sort((left, right) => right.score - left.score)
-      .map((item) => item.goal);
-    const documents = (state.vault?.documents ?? [])
-      .filter((document) => document.kind === "document")
-      .map((document) => ({ document, score: searchScore(document, terms, `${document.title} ${(document.goalHistory ?? []).map((goal) => goal.title).join(" ")}`) }))
-      .filter((item) => item.score > 0)
-      .sort((left, right) => right.score - left.score)
-      .map((item) => item.document);
-    const matchingAreas = areas()
-      .map((area) => ({ area, score: searchScore({ ...area, searchText: `${area.path} ${area.purpose} ${area.body}` }, terms, areaLabel(area.path)) }))
-      .filter((item) => item.score > 0)
-      .sort((left, right) => right.score - left.score)
-      .map((item) => item.area);
-    const deskRecords = new Map(deskAreas().map((record) => [record.area.path, record]));
-    const matchingAreaPanels = matchingAreas.map((area) => deskRecords.get(area.path)).filter(Boolean);
-    const count = goals.length + documents.length + matchingAreas.length;
-    if (!count) return `<div class="empty-state">No Goals, Documents, or Areas match “${escapeHtml(query)}”.</div>`;
-    const maxElapsedMs = deskMaxElapsedMs(matchingAreaPanels, Date.now());
-    return `
-      ${matchingAreaPanels.length ? `<section class="area-desk-grid search-area-results" aria-label="Matching Areas">${matchingAreaPanels.map((record, position) => deskAreaPanel(record, position, maxElapsedMs)).join("")}</section>` : ""}
-      ${documents.length ? `<section class="work-section"><div class="section-heading"><h2>Documents</h2><span>${documents.length}</span></div><div class="search-result-list">${documents.map(documentSearchCard).join("")}</div></section>` : ""}
-      ${goals.length ? workSection("Goals", goals, "", String(goals.length)) : ""}
-      ${matchingAreas.length && !matchingAreaPanels.length ? `<section class="work-section"><div class="section-heading"><h2>Areas</h2><span>${matchingAreas.length}</span></div><div class="search-result-list">${matchingAreas.map((area) => `<button class="search-result-card" type="button" data-open-area="${escapeHtml(area.path)}"><span><span class="search-result-kind">Area</span><strong>${escapeHtml(areaLabel(area.path))}</strong><small>${escapeHtml(clip(area.purpose || area.path, 160))}</small></span><span aria-hidden="true">→</span></button>`).join("")}</div></section>` : ""}`;
+    if (!terms.length) return deskAreas();
+    return deskAreas().filter((record) => {
+      const parts = [record, ...record.sections];
+      const searchText = parts.flatMap((part) => [
+        part.area?.path,
+        part.area?.name,
+        part.area?.purpose,
+        part.area?.body,
+        ...part.trees.flatMap((tree) => tree.goals.flatMap((goal) => [goal.title, goal.doneWhen, goal.currentBrief, goal.stateText, goal.storyText])),
+        ...part.descriptions.flatMap((session) => [session.workTitle, session.description]),
+      ]).join(" ");
+      return searchScore({ searchText }, terms, record.area?.path) > 0;
+    });
   }
 
   /** Returns one compact, explicit state for an Area on the Work desk. */
@@ -1300,23 +1276,21 @@ export function createWorkDeskView({ state, api, post, paint, refresh, showToast
   /** Renders the complete area-first work desk. */
   function renderWork() {
     const query = state.query.trim();
-    let content;
-    if (query) {
-      content = searchResults(query);
-    } else {
-      const records = deskAreas();
-      const maxElapsedMs = deskMaxElapsedMs(records, Date.now());
-      content = `${state.workFilter === "all" ? deskAttentionQueue() : ""}${records.length
-        ? `<section class="area-desk-grid" aria-label="Work by Area">${records.map((record, position) => deskAreaPanel(record, position, maxElapsedMs)).join("")}</section>`
-        : `<div class="empty-state">No ${state.workFilter === "all" ? "active Areas contain Goals or Documents" : `${state.workFilter} work`}.</div>`}`;
-    }
+    const records = filteredDeskAreas(query);
+    const maxElapsedMs = deskMaxElapsedMs(records, Date.now());
+    const emptyCopy = query
+      ? `No ${state.workFilter === "active" ? "current" : "planned"} work matches “${escapeHtml(query)}”.`
+      : `No ${state.workFilter === "active" ? "work is active" : "unstarted Goals"}.`;
+    const content = `${!query && state.workFilter === "active" ? deskAttentionQueue() : ""}${records.length
+      ? `<section class="area-desk-grid" aria-label="Work by Area">${records.map((record, position) => deskAreaPanel(record, position, maxElapsedMs)).join("")}</section>`
+      : `<div class="empty-state">${emptyCopy}</div>`}`;
 
     return `
       <section class="work-page">
         <div class="work-tools">
           <label class="search-field">
             <span class="search-icon" aria-hidden="true">⌕</span>
-            <input id="work-search" type="search" value="${escapeHtml(state.query)}" placeholder="Find a Goal, Document, or Area" autocomplete="off" />
+            <input id="work-search" type="search" value="${escapeHtml(state.query)}" placeholder="Filter work and Areas" autocomplete="off" />
             ${shortcutKbd("findWork")}
           </label>
           <div class="work-filter" role="group" aria-label="Filter work by live session">

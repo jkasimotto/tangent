@@ -498,14 +498,16 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.match(window.document.querySelector(".desk-subgoal-disclosure > summary").textContent, /To do that1 Subgoal/);
 
   const search = window.document.querySelector("#work-search");
-  search.value = "when we landed the pgande megabranch we built the viz input thing";
+  search.value = "tangent";
   search.dispatchEvent(new window.Event("input", { bubbles: true }));
-  assert.match(window.document.querySelector("#screen").textContent, /Tangent product design/);
-  assert.match(window.document.querySelector("#screen").textContent, /Land the PG&E megabranch → Land Viz Input/);
+  assert.equal(window.document.querySelectorAll(".area-desk-panel").length, 1, "typing filters the existing Area desk");
+  assert.match(window.document.querySelector(".area-desk-panel").textContent, /Tangent/);
+  assert.equal(window.document.querySelector(".document-result"), null, "work filtering never switches to Document results");
+  assert.ok(window.document.querySelector(".work-filter"), "Current and Planned remain visible while filtering");
   const joinedAreaSearch = window.document.querySelector("#work-search");
   joinedAreaSearch.value = "liveedit";
   joinedAreaSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
-  const matchingAreaPanel = window.document.querySelector(".search-area-results .area-desk-panel");
+  const matchingAreaPanel = window.document.querySelector(".area-desk-panel");
   assert.ok(matchingAreaPanel);
   assert.match(matchingAreaPanel.textContent, /Live Edit/);
   assert.match(matchingAreaPanel.textContent, /Define Live Edit collaboration/);

@@ -1,5 +1,5 @@
 import test from "node:test";
-import { assert, readFile, path, JSDOM, shellBundle, here, settle, click, submit, jsonResponse } from "./focus-shell-ui-fixture.mjs";
+import { assert, readFile, path, JSDOM, shellBundle, here, settle, click, submit, openDocumentViaGoTo, jsonResponse } from "./focus-shell-ui-fixture.mjs";
 
 /** Builds one Goal for the Work projection. */
 function goal(area, slug, title, assignees = ["Julian"]) {
@@ -53,12 +53,25 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
   const alpha = goal("otto/alpha", "alpha-current", "Alpha current");
   const child = goal("otto/alpha/child", "alpha-planned", "Alpha child planned");
   const beta = goal("otto/beta", "beta-current", "Beta current");
+  const childProgram = {
+    id: "process:otto/alpha/child:preview", area: "otto/alpha/child", type: "process",
+    label: "Child preview", command: "npm run preview", available: true, session: null,
+  };
+  const programOnly = {
+    id: "command:otto/delta:audit", area: "otto/delta", type: "command",
+    label: "Delta audit", command: "npm run audit", available: true, session: null,
+  };
+  const alphaDocument = {
+    file: "otto/alpha/focus-notes.md", area: "otto/alpha", kind: "document",
+    title: "Alpha focus notes", searchText: "alpha focus notes", mtime: 1,
+  };
   let vault = {
     areas: [
       { path: "otto", name: "otto", goals: [], roster: ["Julian"], rosterArea: "otto" },
       { path: "otto/alpha", name: "alpha", goals: [alpha], roster: ["Julian"], rosterArea: "otto/alpha" },
       { path: "otto/alpha/child", name: "child", goals: [child], roster: ["Julian"], rosterArea: "otto/alpha/child" },
       { path: "otto/beta", name: "beta", goals: [beta], roster: ["Julian"], rosterArea: "otto/beta" },
+      { path: "otto/delta", name: "delta", goals: [], roster: [], rosterArea: "otto/delta" },
       { path: "otto/gamma", name: "gamma", goals: [], roster: [], rosterArea: "otto/gamma" },
     ],
     map: [
@@ -66,7 +79,7 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
       { path: child.area, name: "child", goals: [child] },
       { path: beta.area, name: "beta", goals: [beta] },
     ],
-    documents: [],
+    documents: [alphaDocument],
   };
   const brains = [brain("otto/alpha", "Alpha"), brain("otto/beta", "Beta")];
   const sessions = [
@@ -77,7 +90,8 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
   window.fetch = async (url) => {
     const pathname = new URL(url, window.location.href).pathname;
     if (pathname === "/api/sessions") return jsonResponse({ boot: "focus-boot", sessions, pipelines: [], brains });
-    if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
+    if (pathname === "/api/programs") return jsonResponse({ programs: [childProgram, programOnly], errors: [], areas: [], liveCount: 0 });
+    if (pathname === "/api/document") return jsonResponse({ ...alphaDocument, text: "# Alpha focus notes\n\nFocused context stays exact.", hash: "alpha-focus" });
     return jsonResponse(vault);
   };
 
@@ -96,13 +110,48 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
   const childChoice = window.document.querySelector('[data-area-focus-path="otto/alpha/child"]');
   childChoice.checked = true;
   childChoice.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.equal(window.document.activeElement.dataset.areaFocusPath, "otto/alpha/child", "a checkbox change keeps the native keyboard path active");
   const alphaChoice = window.document.querySelector('[data-area-focus-path="otto/alpha"]');
   alphaChoice.checked = true;
   alphaChoice.dispatchEvent(new window.Event("change", { bubbles: true }));
+  const betaSearch = window.document.querySelector("#area-focus-search");
+  betaSearch.value = "beta";
+  betaSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
+  const betaChoice = window.document.querySelector('[data-area-focus-path="otto/beta"]');
+  betaChoice.checked = true;
+  betaChoice.dispatchEvent(new window.Event("change", { bubbles: true }));
   assert.ok(window.document.querySelector('[data-desk-area="otto/beta"]'), "staged changes do not rebuild or scope Work");
   submit(window, "[data-area-focus-form]");
 
   assert.ok(window.document.querySelector('[data-desk-area="otto/alpha"]'));
+  assert.ok(window.document.querySelector('[data-desk-area="otto/beta"]'), "independent selected roots remain visible together");
+  const panelPaths = [...window.document.querySelectorAll("[data-desk-area]")].map((panel) => panel.dataset.deskArea);
+  assert.equal(new Set(panelPaths).size, panelPaths.length, "multiple roots do not duplicate Area panels");
+  assert.equal(window.document.querySelectorAll('[data-program-area="otto/alpha/child"] .desk-program').length, 1, "a selected parent includes its descendant Program once");
+  assert.equal(window.document.querySelector(".attention-focus-count").textContent, "2 shown in Focus · 0 outside Focus");
+  assert.deepEqual(JSON.parse(window.localStorage.getItem("agent-shell.area-focus.v1")), {
+    schema: "agent-shell.area-focus.v1", areas: ["otto/alpha", "otto/beta"],
+  });
+
+  click(window, "[data-change-area-focus]");
+  const cancelSearch = window.document.querySelector("#area-focus-search");
+  cancelSearch.value = "beta";
+  cancelSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
+  const cancelBeta = window.document.querySelector('[data-area-focus-path="otto/beta"]');
+  cancelBeta.checked = false;
+  cancelBeta.dispatchEvent(new window.Event("change", { bubbles: true }));
+  click(window, "[data-cancel-area-focus]");
+  assert.ok(window.document.querySelector('[data-desk-area="otto/beta"]'), "Cancel keeps the applied multi-Area scope");
+
+  click(window, "[data-change-area-focus]");
+  const changeSearch = window.document.querySelector("#area-focus-search");
+  changeSearch.value = "beta";
+  changeSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
+  const changeBeta = window.document.querySelector('[data-area-focus-path="otto/beta"]');
+  changeBeta.checked = false;
+  changeBeta.dispatchEvent(new window.Event("change", { bubbles: true }));
+  submit(window, "[data-area-focus-form]");
+
   assert.equal(window.document.querySelector('[data-desk-area="otto/beta"]'), null);
   assert.match(window.document.querySelector(".area-focus-summary").textContent, /Focus:\s*Alpha/);
   assert.equal(window.document.querySelector(".attention-queue > header > span").textContent, "2 total");
@@ -128,6 +177,18 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
   assert.equal(window.document.querySelector('[data-person-value="mine"]').getAttribute("aria-checked"), "true");
   assert.equal(window.document.querySelector("#screen").scrollTop, 137, "worker Escape restores the Work scroll position");
 
+  await openDocumentViaGoTo(window, alphaDocument.title);
+  assert.ok(window.document.querySelector(".document-reader"));
+  click(window, "#back-button");
+  assert.match(window.document.querySelector(".area-focus-summary").textContent, /Alpha/);
+  assert.equal(window.document.querySelector("#work-search").value, "alpha", "Document Back restores the focused Work query");
+
+  click(window, `[data-open-goal-run="${alpha.file}"]`);
+  click(window, "#back-button");
+  await settle(window);
+  assert.match(window.document.querySelector(".area-focus-summary").textContent, /Alpha/);
+  assert.equal(window.document.querySelector("#work-search").value, "alpha", "worker Back restores focused Work");
+
   click(window, '[data-work-filter="inactive"]');
   const workSearch = window.document.querySelector("#work-search");
   assert.ok(window.document.querySelector('[data-desk-area="otto/alpha"]'));
@@ -150,6 +211,18 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
   assert.ok(window.document.querySelector('[data-desk-area="otto/beta"]'), "Clear restores complete Work inside the remaining filters");
 
   click(window, "[data-open-area-focus]");
+  const programSearch = window.document.querySelector("#area-focus-search");
+  programSearch.value = "delta";
+  programSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
+  const deltaChoice = window.document.querySelector('[data-area-focus-path="otto/delta"]');
+  deltaChoice.checked = true;
+  deltaChoice.dispatchEvent(new window.Event("change", { bubbles: true }));
+  submit(window, "[data-area-focus-form]");
+  assert.equal(window.document.querySelectorAll('[data-program-area="otto/delta"] .desk-program').length, 1, "a Program-only Focus renders its relevant work");
+  assert.equal(window.document.querySelector('[data-desk-area="otto/delta"] .area-focus-empty'), null, "a visible Program is not an empty Focus");
+  click(window, "[data-clear-area-focus]");
+
+  click(window, "[data-open-area-focus]");
   const pickerSearch = window.document.querySelector("#area-focus-search");
   pickerSearch.value = "gamma";
   pickerSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
@@ -169,5 +242,26 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
   assert.equal(window.localStorage.getItem("agent-shell.area-focus.v1"), null, "the stale final root clears on refresh");
   assert.equal(window.document.querySelector(".area-focus-summary"), null);
   assert.ok(window.document.querySelector('[data-desk-area="otto/beta"]'), "stale Focus recovery restores complete Work");
+
+  click(window, '[data-work-filter="active"]');
+  click(window, '[data-person-value="all"]');
+  click(window, "[data-open-area-focus]");
+  const awaySearch = window.document.querySelector("#area-focus-search");
+  awaySearch.value = "otto/alpha";
+  awaySearch.dispatchEvent(new window.Event("input", { bubbles: true }));
+  const awayChoice = window.document.querySelector('[data-area-focus-path="otto/alpha"]');
+  awayChoice.checked = true;
+  awayChoice.dispatchEvent(new window.Event("change", { bubbles: true }));
+  submit(window, "[data-area-focus-form]");
+  click(window, `[data-open-goal-run="${alpha.file}"]`);
+  vault = {
+    ...vault,
+    areas: vault.areas.filter((area) => !area.path.startsWith("otto/alpha")),
+  };
+  await window.refresh();
+  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  await settle(window);
+  assert.equal(window.localStorage.getItem("agent-shell.area-focus.v1"), null, "return cannot restore a Focus root removed while the worker was open");
+  assert.equal(window.document.querySelector(".area-focus-summary"), null, "stale return context restores complete Work");
   dom.window.close();
 });

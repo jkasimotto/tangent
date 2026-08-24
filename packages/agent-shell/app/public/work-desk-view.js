@@ -156,7 +156,9 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   function persistAreaFocus() {
     const saved = writeAreaFocus(localStorage, state.areaFocus);
     state.areaFocusStorageError = !saved;
-    if (!saved) showToast("Area Focus is applied for this tab, but it will reset after reload.");
+    if (!saved) showToast(state.areaFocus.length
+      ? "Area Focus changed only for this tab. Reload can restore the prior Work scope."
+      : "Focus cleared only for this tab. Reload can restore the prior Focus.");
   }
 
   /** Opens a staged copy of the applied Area Focus. */
@@ -177,11 +179,12 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   function toggleAreaFocusDraft(path, selected) {
     const picker = state.areaFocusPicker;
     if (!picker) return;
+    const scrollTop = document.querySelector(".area-focus-options")?.scrollTop ?? 0;
     const paths = new Set(picker.areas);
     if (selected) paths.add(path);
     else paths.delete(path);
     picker.areas = [...paths].sort((left, right) => left.localeCompare(right));
-    refreshAreaFocusPicker();
+    refreshAreaFocusPicker({ focusPath: path, scrollTop });
   }
 
   /** Filters the open picker while leaving the Work projection untouched. */
@@ -192,14 +195,23 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   }
 
   /** Replaces only the picker after a staged edit. */
-  function refreshAreaFocusPicker({ focus = false, cursor = 0 } = {}) {
+  function refreshAreaFocusPicker({ focus = false, focusPath = "", cursor = 0, scrollTop = 0 } = {}) {
     const picker = document.querySelector("[data-area-focus-picker]");
     if (!picker || !state.areaFocusPicker) return;
     picker.outerHTML = areaFocusPickerMarkup();
-    if (!focus) return;
-    const input = document.querySelector("#area-focus-search");
-    input?.focus();
-    input?.setSelectionRange(cursor, cursor);
+    const options = document.querySelector(".area-focus-options");
+    if (options) options.scrollTop = scrollTop;
+    if (focusPath) {
+      const checkbox = [...document.querySelectorAll("[data-area-focus-path]")]
+        .find((input) => input.dataset.areaFocusPath === focusPath);
+      checkbox?.focus();
+      return;
+    }
+    if (focus) {
+      const input = document.querySelector("#area-focus-search");
+      input?.focus();
+      input?.setSelectionRange(cursor, cursor);
+    }
   }
 
   /** Applies every staged Area change in one Work rebuild. */
@@ -237,7 +249,6 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       <p class="area-focus-result-count" aria-live="polite">${records.length} ${records.length === 1 ? "Area" : "Areas"}</p>
       <div class="area-focus-options">${records.length ? records.map((area) => `<label><input type="checkbox" data-area-focus-path="${escapeHtml(area.path)}" ${selected.has(area.path) ? "checked" : ""}><span><strong>${escapeHtml(humanName(area.name))}</strong><small>${escapeHtml(area.path)}</small></span></label>`).join("") : `<p>No Areas match “${escapeHtml(picker.query)}”.</p>`}</div>
       <p class="area-focus-selected">Selected: ${labels.length ? escapeHtml(labels.join(", ")) : "All Areas"}</p>
-      ${state.areaFocusStorageError ? `<p class="area-focus-storage-note">Reload persistence is unavailable in this browser.</p>` : ""}
       <footer><button class="quiet-button" type="button" data-cancel-area-focus>Cancel</button><button class="primary-button" type="submit">${escapeHtml(action)}</button></footer>
     </form>`;
   }
@@ -251,7 +262,8 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const control = roots.length
       ? `<div class="area-focus-summary" aria-label="Area Focus: ${escapeHtml(accessible)}"><span><b>Focus:</b> ${escapeHtml(short)}</span><button type="button" data-change-area-focus>Change</button><button type="button" data-clear-area-focus>Clear</button></div>`
       : `<button class="area-focus-open" type="button" data-open-area-focus>Focus Areas</button>`;
-    return `<div class="area-focus-control">${control}${areaFocusPickerMarkup()}</div>`;
+    const storageNote = state.areaFocusStorageError ? `<p class="area-focus-storage-note">Area Focus persistence is unavailable in this browser.</p>` : "";
+    return `<div class="area-focus-control">${control}${storageNote}${areaFocusPickerMarkup()}</div>`;
   }
 
   /** Expands the ancestors of one area so the selected row stays visible. */
@@ -715,6 +727,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
         part.area?.body,
         ...part.trees.flatMap((tree) => tree.goals.flatMap((goal) => [goal.title, goal.doneWhen, goal.currentBrief, goal.stateText, goal.storyText])),
         ...part.descriptions.flatMap((session) => [session.workTitle, session.description]),
+        ...(part.programs ?? []).flatMap((program) => [program.label, program.command, program.type]),
       ]).join(" ");
       return searchScore({ searchText }, terms, record.area?.path) > 0;
     });
@@ -782,12 +795,13 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const workOf = (path) => ({
       trees: trees.filter((tree) => tree.path === path),
       descriptions: descriptions.filter((session) => session.area === path),
+      programs: state.programs.programs.filter((program) => program.area === path),
     });
     const openCounts = new Map();
     for (const area of areaList) {
-      const { trees: areaTrees, descriptions: areaDescriptions } = workOf(area.path);
+      const { trees: areaTrees, descriptions: areaDescriptions, programs: areaPrograms } = workOf(area.path);
       const openGoalCount = areaTrees.reduce((count, tree) => count + tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status)).length, 0);
-      openCounts.set(area.path, Math.max(openGoalCount, areaDescriptions.length ? 1 : 0));
+      openCounts.set(area.path, Math.max(openGoalCount, areaDescriptions.length ? 1 : 0, roots.length ? areaPrograms.length : 0));
     }
     const liveBrainAreas = (state.brains ?? [])
       .filter((brain) => brain.status === "running" && brain.live)
@@ -801,7 +815,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       const sections = panel.sections
         .map((path) => ({ area: byPath.get(path), ...workOf(path) }))
         .filter((section) => section.area);
-      const programs = state.programs.programs.filter((program) => program.area === panel.path);
+      const programs = own.programs;
       const brain = (state.brains ?? []).find((item) => item.area === panel.path && item.status === "running" && item.live) ?? null;
       const focusRoot = roots.includes(panel.path);
       const focusHasWork = !focusRoot || trees.some((tree) => core.isInside(tree.path, panel.path))
@@ -1429,6 +1443,16 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     }).join("")}</div>`;
   }
 
+  /** Renders Programs once under the Area that owns them. */
+  function deskProgramSection(area, programs, { root = false } = {}) {
+    if (!programs?.length) return "";
+    const title = root ? "Programs" : `${humanName(area.name)} · Programs`;
+    return `<section class="area-desk-section programs" data-program-area="${escapeHtml(area.path)}">
+      <div class="area-desk-section-heading"><h3>${escapeHtml(title)}</h3><span>${programs.length}</span></div>
+      ${deskProgramShelf(programs)}
+    </section>`;
+  }
+
   /** One compact Area section inside its controlling work group. */
   function deskAreaWorkSection(part, maxElapsedMs = 0, { root = false } = {}) {
     const { area, trees, descriptions } = part;
@@ -1450,8 +1474,10 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const allTrees = [...trees, ...sections.flatMap((section) => section.trees)];
     const allDescriptions = [...descriptions, ...sections.flatMap((section) => section.descriptions)];
     const status = deskAreaState(area.path, allTrees, allDescriptions);
-    const rootPart = { area, trees, descriptions };
+    const rootPart = { area, trees, descriptions, programs };
     const workSections = [deskAreaWorkSection(rootPart, maxElapsedMs, { root: true }), ...sections.map((section) => deskAreaWorkSection(section, maxElapsedMs))].filter(Boolean).join("");
+    const programSections = [deskProgramSection(area, programs, { root: true }), ...sections.map((section) => deskProgramSection(section.area, section.programs))].filter(Boolean).join("");
+    const body = `${workSections}${programSections}`;
     return `
       <article class="area-desk-panel work-group ${status.kind}" data-desk-area="${escapeHtml(area.path)}" style="--desk-order:${position}">
         <header class="area-desk-header">
@@ -1461,11 +1487,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
         </header>
         ${areaForYouSection(area.path)}
         ${focusRoot && !focusHasWork ? `<p class="area-focus-empty">No ${state.workFilter === "active" ? "current" : "planned"} work matches in this Focus.</p>` : ""}
-        ${workSections ? `<div class="area-desk-body">${workSections}
-          ${programs.length ? `<section class="area-desk-section programs">
-            <div class="area-desk-section-heading"><h3>Programs</h3><span>${programs.length}</span></div>
-            ${deskProgramShelf(programs)}
-          </section>` : ""}</div>` : ""}
+        ${body ? `<div class="area-desk-body">${body}</div>` : ""}
       </article>`;
   }
 

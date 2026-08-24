@@ -858,6 +858,14 @@ function restoreScreenScroll(positions) {
 
 const returnPointLabel = goToCore.returnPointLabel;
 
+/** Removes stale Focus roots from the current vault and updates the local preference. */
+function reconcileCurrentAreaFocus() {
+  const reconciled = reconcileAreaFocus(state.areaFocus, (state.vault?.areas ?? []).map((area) => area.path));
+  if (JSON.stringify(reconciled) === JSON.stringify(state.areaFocus)) return;
+  state.areaFocus = reconciled;
+  if (!writeAreaFocus(localStorage, state.areaFocus)) state.areaFocusStorageError = true;
+}
+
 /** Captures the screen Julian is on, so the reader or the brain view can bring him back. */
 function captureReturnPoint() {
   // A repaint replaces the textarea, so the typed description must be stored first.
@@ -894,6 +902,7 @@ function restoreReturnPoint(point) {
   const previousSession = state.describeSessionName;
   const previousGoal = state.currentFile;
   Object.assign(state, point.state);
+  reconcileCurrentAreaFocus();
   if (state.describeSessionName !== previousSession) saveDescribeSession();
   if (state.currentFile && state.currentFile !== previousGoal) localStorage.setItem("agent-shell.current-goal", state.currentFile);
   if (point.state.view === "document") {
@@ -988,11 +997,7 @@ async function refresh({ initial = false } = {}) {
     state.updateAvailable = Boolean(sessionPayload.sourceChanged);
     state.rebuild = sessionPayload.rebuild || null;
     state.rebuilding = ["building", "restarting", "reconnecting"].includes(state.rebuild?.phase);
-    const reconciledFocus = reconcileAreaFocus(state.areaFocus, (state.vault?.areas ?? []).map((area) => area.path));
-    if (JSON.stringify(reconciledFocus) !== JSON.stringify(state.areaFocus)) {
-      state.areaFocus = reconciledFocus;
-      if (!writeAreaFocus(localStorage, state.areaFocus)) state.areaFocusStorageError = true;
-    }
+    reconcileCurrentAreaFocus();
     state.loading = false;
     state.error = "";
     state.offline = false;

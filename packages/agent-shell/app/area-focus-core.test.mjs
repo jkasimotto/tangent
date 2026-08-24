@@ -60,8 +60,8 @@ test("unknown, damaged, and unavailable storage safely restores complete Work", 
 
 test("Area moves rewrite roots and stale Area deletion cannot trap Work", () => {
   assert.deepEqual(
-    rewriteAreaFocus(["otto/tangent", "neara/pgande"], "otto/tangent", "otto/tools/tangent"),
-    ["neara/pgande", "otto/tools/tangent"],
+    rewriteAreaFocus(["otto/tangent", "otto/other/child", "neara/pgande"], "otto", "home/otto"),
+    ["home/otto/other/child", "home/otto/tangent", "neara/pgande"],
   );
   assert.deepEqual(
     reconcileAreaFocus(["neara/pgande", "otto/tools/tangent"], ["otto", "otto/tools", "otto/tools/tangent"]),

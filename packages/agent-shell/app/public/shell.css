@@ -1017,10 +1017,18 @@ details.more-work .area-work-list { margin-top: 18px; }
 .document-picker-popover button.selected { color: #e3f0ff; }
 .document-picker-popover button small { color: var(--blue); font-size: 10px; font-weight: 670; }
 .document-reader-actions { display: flex; flex: none; align-items: center; gap: 5px; }
-.reader-agent-action, .reader-notify-brain, .document-outline-menu > summary { padding: 7px 9px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 640; }
-.reader-agent-action:hover, .reader-notify-brain:hover:not(:disabled), .document-outline-menu > summary:hover, .document-outline-menu[open] > summary { background: var(--surface-raised); color: var(--text); }
+.reader-agent-action, .reader-notify-brain, .reader-brain-actions > summary, .document-outline-menu > summary { padding: 7px 9px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 640; }
+.reader-agent-action:hover, .reader-notify-brain:hover:not(:disabled), .reader-brain-actions > summary:hover, .reader-brain-actions[open] > summary, .document-outline-menu > summary:hover, .document-outline-menu[open] > summary { background: var(--surface-raised); color: var(--text); }
 .reader-notify-brain { color: var(--blue); }
 .reader-notify-brain:disabled { color: #555d66; cursor: default; }
+.reader-brain-actions { position: relative; }
+.reader-brain-actions > summary { display: flex; align-items: center; gap: 7px; color: var(--blue); list-style: none; }
+.reader-brain-actions > summary::-webkit-details-marker { display: none; }
+.reader-brain-actions > summary i { color: var(--quiet); font-size: 10px; font-style: normal; }
+.reader-brain-actions-popover { position: absolute; top: calc(100% + 9px); right: 0; z-index: 40; display: grid; width: 220px; padding: 8px; border: 1px solid var(--line-strong); border-radius: 13px; background: #171b20; box-shadow: 0 18px 52px rgba(0, 0, 0, .46); }
+.reader-brain-actions-popover button { width: 100%; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; font-size: 13px; line-height: 1.35; text-align: left; }
+.reader-brain-actions-popover button:hover:not(:disabled) { background: #20252b; color: var(--text); }
+.reader-brain-actions-popover button:disabled { color: #555d66; cursor: default; }
 .document-outline-menu { position: relative; display: none; }
 .document-outline-menu > summary { list-style: none; }
 .document-outline-menu > summary::-webkit-details-marker { display: none; }

@@ -132,7 +132,13 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
         <div class="document-reader-actions">
           ${documentOutlineMenu()}
           ${documentCommentControls()}
-          <button class="reader-notify-brain" type="button" data-notify-document-comments title="${escapeHtml(notifyTitle)}" ${brain && comments ? "" : "disabled"}>${escapeHtml(notifyLabel)}</button>
+          ${brain ? `<details class="reader-brain-actions">
+            <summary title="${escapeHtml(notifyLabel)}"><span>${escapeHtml(notifyLabel)}</span><i aria-hidden="true">⌄</i></summary>
+            <div class="reader-brain-actions-popover" role="group" aria-label="Brain actions">
+              <button class="reader-notify-brain" type="button" data-notify-document-comments title="${escapeHtml(notifyTitle)}" ${comments ? "" : "disabled"}>Tell brain I added comments</button>
+              <button type="button" data-open-brain="${escapeHtml(brain.session)}">Go to brain</button>
+            </div>
+          </details>` : `<button class="reader-notify-brain" type="button" title="${escapeHtml(notifyTitle)}" disabled>${escapeHtml(notifyLabel)}</button>`}
           ${goal ? `<button class="reader-agent-action" type="button" data-open-reader-agent>Open agent</button>` : ""}
         </div>
       </header>`;

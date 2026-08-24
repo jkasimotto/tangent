@@ -72,6 +72,13 @@ test("a failed goal-file stage logs the paths and the git error, and goal creati
       TREES_ROOT: trees,
       TANGENT_LOOPS_ROOT: path.join(root, "loops"),
       WORKSPACE: path.join(root, "workspace"),
+      // Every durable-state root must leave ~/.tangent alone: a test server
+      // reconciling the real records against its isolated tmux once marked
+      // live pipeline workers stopped (2026-08-24).
+      TANGENT_PIPELINES_ROOT: path.join(root, "pipelines"),
+      TANGENT_BRAINS_ROOT: path.join(root, "brains"),
+      TANGENT_ARMED_ROOT: path.join(root, "armed"),
+      AGENT_MESSAGE_LOG: path.join(root, "messages.jsonl"),
       AGENT_SHELL_NO_OPEN: "1",
       GROQ_API_KEY: "",
       CHAT_SESSION: `goal-stage-test-${process.pid}`,

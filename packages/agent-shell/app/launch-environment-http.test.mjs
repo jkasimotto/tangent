@@ -98,6 +98,13 @@ test("launch options resolve the registry, and saving writes an Area default", a
       TREES_ROOT: trees,
       TANGENT_LOOPS_ROOT: path.join(root, "loops"),
       WORKSPACE: path.join(root, "workspace"),
+      // Every durable-state root must leave ~/.tangent alone: this file's
+      // server once reconciled the real pipeline records against its
+      // isolated tmux and marked live workers stopped (2026-08-24).
+      TANGENT_PIPELINES_ROOT: path.join(root, "pipelines"),
+      TANGENT_BRAINS_ROOT: path.join(root, "brains"),
+      TANGENT_ARMED_ROOT: path.join(root, "armed"),
+      AGENT_MESSAGE_LOG: path.join(root, "messages.jsonl"),
       AGENT_SHELL_NO_OPEN: "1",
       GROQ_API_KEY: "",
       CHAT_SESSION: `launch-test-${process.pid}`,

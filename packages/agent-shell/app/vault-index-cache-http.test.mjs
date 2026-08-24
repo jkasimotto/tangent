@@ -73,6 +73,17 @@ async function timed(url, init) {
   return { ms: performance.now() - start, status: response.status, body };
 }
 
+/** Polls a vault refresh while requiring every response to retain known Areas. */
+async function waitForArea(base, area, attempts = 40) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const response = await timed(`${base}/api/vault`);
+    assert.ok(response.body.areas.some((entry) => entry.path === "otto/tangent"), "a refresh must retain the last successful projection");
+    if (response.body.areas.some((entry) => entry.path === area)) return response;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`vault projection did not publish ${area}`);
+}
+
 test("a Document opens and saves in under a second on a vault of realistic size", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "vault-index-cache-"));
   const trees = path.join(root, "trees");
@@ -161,11 +172,11 @@ test("a Document opens and saves in under a second on a vault of realistic size"
   assert.match(afterEdit.body.comments[0].text, /a second look/);
 
   // A directory with no file in it is an Area too, so a new one and a renamed
-  // one both show on the next read.
+  // one both show after the isolated refresh publishes a complete snapshot.
   await mkdir(path.join(trees, "otto", "fresh"), { recursive: true });
-  const added = await timed(`${base}/api/vault`);
+  const added = await waitForArea(base, "otto/fresh");
   assert.ok(added.body.areas.some((entry) => entry.path === "otto/fresh"), "a new empty Area directory is not hidden by the cache");
   await rename(path.join(trees, "otto", "fresh"), path.join(trees, "otto", "renamed"));
-  const renamed = await timed(`${base}/api/vault`);
+  const renamed = await waitForArea(base, "otto/renamed");
   assert.ok(renamed.body.areas.some((entry) => entry.path === "otto/renamed"), "a renamed empty Area directory is not hidden by the cache");
 });

@@ -22,8 +22,6 @@ import documentComments from "./public/document-comments.js";
 import areaMapCore from "./public/area-map-core.js";
 import whatHappenedCore from "./public/what-happened-core.js";
 import { createVaultGitReader, fileTimes } from "./area-map.mjs";
-import { createFingerprintCache } from "./vault-index-cache.mjs";
-
 import { createPaneObserver } from "./pane-observer.mjs";
 import { appendSteps, currentStep, endPipeline, goalBindingGoneFromSnapshot, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, readAllPipelines, readPipeline, stepGoneFromSnapshot, validateSteps, writePipeline } from "./pipeline-record.mjs";
 import { newContinuationRecord, readAllContinuations, readContinuation, writeContinuation } from "./continuation-record.mjs";
@@ -888,7 +886,15 @@ async function vaultFingerprint(dir = TREES_ROOT, rel = "") {
  * The vault index every Document, Goal, and map request reads, built once per
  * vault change instead of once per request. See vault-index-cache.mjs for why.
  */
-const vaultIndex = createFingerprintCache({ fingerprint: vaultFingerprint, build: buildVaultIndex });
+const recoveryVaultIndex = Object.freeze({ areas: [], map: [], documents: [], recentCloses: [] });
+/**
+ * Recovery guard: vault projection currently enters an unbounded regexp/string
+ * path and starves the HTTP and terminal event loop. Keep the unsafe projection
+ * out of the web process until indexing moves to the isolated controller.
+ */
+async function vaultIndex() {
+  return recoveryVaultIndex;
+}
 
 /** True for a vault-relative Area path with no traversal. */
 function validAreaPath(area) {

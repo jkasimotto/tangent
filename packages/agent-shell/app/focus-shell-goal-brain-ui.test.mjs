@@ -28,7 +28,10 @@ test("Goal cards open their nearest live brain and preserve Work context", async
       this.open = (host) => { this.element = host.appendChild(window.document.createElement("textarea")); };
       this.focus = () => { terminalFocusCount += 1; this.element.focus(); };
       this.onData = () => {};
-      this.onSelectionChange = () => ({});
+      this.onSelectionChange = () => ({
+        /** Ends the selection subscription. */
+        dispose() {},
+      });
       this.hasSelection = () => false;
       this.getSelection = () => "";
       this.getSelectionPosition = () => null;

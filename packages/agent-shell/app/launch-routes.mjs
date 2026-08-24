@@ -27,7 +27,7 @@ export function createLaunchRoutes(operations) {
   /** Validates and saves the harness registry. */
   async function writeHarnesses(request, response) { sendResult(response, await operations.writeHarnesses(await readJson(request))); }
   /** Returns launch options for one Area. */
-  async function options(_request, response, url) { sendResult(response, await operations.options(url.searchParams.get("area") ?? "")); }
+  async function options(_request, response, url) { sendResult(response, await operations.options(url.searchParams.get("area") ?? "", url.searchParams.get("kind") ?? "launch")); }
   /** Saves an Area's default launch. */
   async function saveDefault(request, response) { sendResult(response, await operations.saveDefault(await readJson(request))); }
   /** Starts an agent in collaboration mode. */

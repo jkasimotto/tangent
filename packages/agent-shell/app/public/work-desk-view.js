@@ -236,6 +236,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       state.launchAnchor = null;
       return paint(true);
     }
+    state.launchTarget = BRAIN_LAUNCH_TARGET;
     launchOptionsFor(area);
     state.launch.record = null;
     state.launch.steps = [];
@@ -244,12 +245,11 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     state.launch.editing = false;
     state.launch.instruction = "";
     state.launch.continueFrom = null;
-    // Fable plans by default; the picker shows it selected when the registry
-    // has it, and the server falls back to the Area default when it does not.
-    state.launch.choice = brain?.launch ?? { harness: "claude", model: "fable-5", effort: null };
+    // A prior brain retains its runtime. A new brain is seeded asynchronously
+    // from the nearest explicit Area brain default (then the server fallback).
+    state.launch.choice = brain?.launch ?? null;
     state.brainDraft = { area, instruction: brain?.instruction ?? "" };
     const rect = button.getBoundingClientRect();
-    state.launchTarget = BRAIN_LAUNCH_TARGET;
     state.launchAnchor = { top: Math.round(rect.bottom + 8), right: Math.round(rect.right) };
     state.launch.open = false;
     return paint(true);

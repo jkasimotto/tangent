@@ -2851,20 +2851,13 @@ async function startBrain(area, { instruction = "", choice = null, command = "",
   }
   const invalid = validateInstruction(instruction);
   if (invalid) return { status: 400, error: invalid };
-  // Fable plans by default; the picker, an edited command, or the Area
-  // default (when the registry has no Fable) replace it.
+  // An explicit choice wins; otherwise the nearest Area brain default wins,
+  // with Fable and then the general Area launch retained as fallbacks.
   let launch = await launchCatalog.requested({ choice, command });
   let ref = command ? null : choice;
   if (!launch.error && !launch.command) {
-    const registry = await launchCatalog.registry();
-    const fable = registry.error ? { error: registry.error } : resolveLaunch(registry, { harness: "claude", model: "fable-5" });
-    if (!fable.error) {
-      launch = fable;
-      ref = { harness: "claude", model: "fable-5", effort: null };
-    } else {
-      launch = await launchCatalog.forArea(area);
-      ref = launch.harness ? { harness: launch.harness, model: launch.model ?? null, effort: launch.effort ?? null } : null;
-    }
+    launch = await launchCatalog.forBrain(area);
+    ref = launch.harness ? { harness: launch.harness, model: launch.model ?? null, effort: launch.effort ?? null } : null;
   }
   if (launch.error) return { status: 409, error: launch.error };
   const leaf = area.split("/").pop();
@@ -3951,17 +3944,18 @@ const launchRoutes = createLaunchRoutes({
     return { status: 200, value: { ok: true } };
   },
   /** Returns named launch choices and the Area default. */
-  async options(area) {
+  async options(area, kind = "launch") {
     const registry = await launchCatalog.registry();
     if (registry.error) return { status: 500, error: registry.error };
     return { status: 200, value: {
       harnesses: registry.harnesses.map((harness) => ({ id: harness.id, label: harness.label || harness.id, command: harness.command, models: harnessModels(registry, harness).map((model) => ({ id: model.id, label: model.label || model.id, args: model.args, efforts: modelEfforts(registry, harness, model).map((effort) => ({ id: effort.id, label: effort.label || effort.id, args: effort.args })) })), efforts: harnessEfforts(registry, harness).map((effort) => ({ id: effort.id, label: effort.label || effort.id, args: effort.args })) })),
-      default: await launchCatalog.forArea(area),
+      default: kind === "brain" ? await launchCatalog.forBrain(area) : await launchCatalog.forArea(area),
     } };
   },
   /** Commits one Area's explicit default launch. */
   async saveDefault(body) {
-    const saved = await launchCatalog.saveDefault(String(body.area ?? ""), body.launch ?? {});
+    const kind = body.kind === "brain" ? "brain" : "launch";
+    const saved = await launchCatalog.saveDefault(String(body.area ?? ""), body.launch ?? {}, kind);
     return saved.error ? { status: 400, error: saved.error } : { status: 200, value: saved };
   },
   /** Starts a Goal agent in collaboration mode. */

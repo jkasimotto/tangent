@@ -176,7 +176,7 @@ export function upsertHarnessRegistry(text, registry) {
  * existing environment block in place, or appends a Development environment
  * section with a fresh block. Only the explicit save action calls this.
  */
-export function upsertEnvironmentLaunch(text, ref) {
+export function upsertEnvironmentLaunch(text, ref, kind = "launch") {
   const existing = fencedBlock(text, "tangent.environment.v1");
   let environment = { version: 1 };
   if (existing !== null) {
@@ -186,12 +186,26 @@ export function upsertEnvironmentLaunch(text, ref) {
       // A malformed block is replaced by a valid one that keeps only defaults.
     }
   }
-  environment.defaults = { ...(environment.defaults ?? {}), launch: ref };
+  environment.defaults = { ...(environment.defaults ?? {}), [kind]: ref };
   const block = "```tangent.environment.v1\n" + JSON.stringify(environment, null, 2) + "\n```";
   if (existing !== null) {
     return String(text).replace(/```tangent\.environment\.v1\s*\n[\s\S]*?\n```/, block);
   }
   return `${String(text ?? "").trimEnd()}\n\n## Development environment\n\nThe default launch for new work in this Area.\n\n${block}\n`;
+}
+
+/** Resolves the nearest explicit brain launch, without applying a machine fallback. */
+export async function inheritedBrainLaunch(area, readAreaNote, registry) {
+  for (const candidate of areaAncestors(area)) {
+    const note = await readAreaNote(candidate);
+    const environment = parseEnvironmentBlock(note);
+    if (environment?.error) return { error: `${candidate}: ${environment.error}` };
+    const ref = environment?.defaults?.brain;
+    if (!ref) continue;
+    const resolved = resolveLaunch(registry, ref);
+    return resolved.error ? { error: `${candidate}: ${resolved.error}` } : { ...resolved, source: candidate };
+  }
+  return null;
 }
 
 /**

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   fencedBlock,
   harnessModels,
+  inheritedBrainLaunch,
   inheritedLaunch,
   launchLabel,
   modelEfforts,
@@ -106,6 +107,22 @@ test("area environment defaults win over legacy Agent lines and inherit", async 
   assert.equal(legacy.label, null);
 });
 
+test("brain defaults inherit independently and the nearest Area wins", async () => {
+  const notes = new Map([
+    ["otto", '```tangent.environment.v1\n{"defaults":{"launch":{"harness":"claude-otto"},"brain":{"harness":"codex","model":"luna"}}}\n```'],
+    ["otto/launcher", '```tangent.environment.v1\n{"defaults":{"brain":{"harness":"claude-otto","model":"opus-4-6"}}}\n```'],
+  ]);
+  /** Reads one Area note from the inheritance fixture. */
+  const readNote = async (area) => notes.get(area) ?? "";
+  const inherited = await inheritedBrainLaunch("otto/tangent", readNote, registry);
+  assert.equal(inherited.command, "codex --model gpt-5.6-luna");
+  assert.equal(inherited.source, "otto");
+  const overridden = await inheritedBrainLaunch("otto/launcher/client", readNote, registry);
+  assert.equal(overridden.command, "CLAUDE_CONFIG_DIR=~/.claude-otto claude --model claude-opus-4-6");
+  assert.equal(overridden.source, "otto/launcher");
+  assert.equal(await inheritedBrainLaunch("work/empty", readNote, registry), null);
+});
+
 test("keeps the profile fallback when nothing declares a launch", async () => {
   /** Test note reader with no declarations. */
   const readNote = async () => "";
@@ -143,6 +160,15 @@ test("saving a default keeps other environment keys in the block", () => {
   const environment = parseEnvironmentBlock(saved);
   assert.equal(environment.paneConfigurations.length, 1);
   assert.deepEqual(environment.defaults.launch, { harness: "pi-code" });
+});
+
+test("saving a brain default preserves the work default", () => {
+  const work = upsertEnvironmentLaunch("# Tangent\n", { harness: "codex", model: "luna" });
+  const brain = upsertEnvironmentLaunch(work, { harness: "codex", model: "luna", effort: "high" }, "brain");
+  assert.deepEqual(parseEnvironmentBlock(brain).defaults, {
+    launch: { harness: "codex", model: "luna" },
+    brain: { harness: "codex", model: "luna", effort: "high" },
+  });
 });
 
 test("registry validation names duplicates and broken references", () => {

@@ -137,7 +137,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     }
     if (!state.launch.options && !state.launch.loading) {
       state.launch.loading = true;
-      api(`/api/launch/options?area=${encodeURIComponent(area)}`)
+      api(`/api/launch/options?area=${encodeURIComponent(area)}${state.launchTarget === BRAIN_LAUNCH_TARGET ? "&kind=brain" : ""}`)
         .then((options) => { state.launch.options = options; })
         .catch((error) => { state.launch.options = { harnesses: [], default: { error: error.message } }; })
         .finally(() => { state.launch.loading = false; paint(true); });
@@ -393,7 +393,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
         <div class="action-row start-actions">
           <button class="primary-button" type="button" data-launch-start>${escapeHtml(startLabel)}</button>
           ${brainResumes ? `<button class="quiet-button" type="button" data-brain-start-over>Start over</button>` : ""}
-          ${canSave ? `<button class="quiet-button" type="button" data-launch-save>Save as Area default</button>` : ""}
+          ${canSave ? `<button class="quiet-button" type="button" data-launch-save>Save as ${braining ? "brain" : "Area"} default</button>` : ""}
           <button class="quiet-button" type="button" data-launch-close>${state.launchTarget ? "Close" : "Back"}</button>
         </div>
         <button class="quiet-button launch-registry-link" type="button" data-open-harnesses>Edit harnesses and models…</button>
@@ -413,11 +413,12 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     try {
       const saved = await post("/api/launch/default", {
         area,
+        ...(state.launchTarget === BRAIN_LAUNCH_TARGET ? { kind: "brain" } : {}),
         launch: { harness: selection.harness.id, ...(selection.model ? { model: selection.model.id } : {}), ...(selection.effort ? { effort: selection.effort.id } : {}) },
       });
       state.launch.options = null;
       launchOptionsFor(area);
-      showToast(`${saved.label} is now the default for ${areaLabel(area)}.`);
+      showToast(`${saved.label} is now the ${state.launchTarget === BRAIN_LAUNCH_TARGET ? "brain " : ""}default for ${areaLabel(area)}.`);
       paint(true);
     } catch (error) {
       showToast(error.message);

@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
-  inheritedLaunch, parseHarnessRegistry, resolveLaunch, upsertEnvironmentLaunch, upsertHarnessRegistry,
+  inheritedBrainLaunch, inheritedLaunch, parseHarnessRegistry, resolveLaunch, upsertEnvironmentLaunch, upsertHarnessRegistry,
   validateHarnessRegistry,
 } from "./launch-environment.mjs";
 
@@ -25,6 +25,16 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
     const launch = await forArea(area);
     if (launch.error) throw new Error(launch.error);
     return launch.command;
+  }
+
+  /** Resolves the inherited brain launch, then Fable, then the Area work default. */
+  async function forBrain(area) {
+    const current = await registry();
+    if (current.error) return { error: current.error };
+    const declared = await inheritedBrainLaunch(area, readAreaNote, current);
+    if (declared) return declared;
+    const fable = resolveLaunch(current, { harness: "claude", model: "fable-5" });
+    return fable.error ? inheritedLaunch(area, readAreaNote, current) : { ...fable, source: null };
   }
 
   /** Resolves an edited command or explicit registry choice from one request. */
@@ -59,7 +69,7 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
   }
 
   /** Resolves and persists one Area's explicit default launch. */
-  async function saveDefault(area, ref) {
+  async function saveDefault(area, ref, kind = "launch") {
     if (!repository || !commit || !areaFile || !emptyAreaNote) throw new Error("launch catalog is read-only");
     const current = await registry();
     const resolved = current.error ? current : resolveLaunch(current, ref ?? {});
@@ -71,11 +81,11 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
       ...(resolved.model ? { model: resolved.model } : {}),
       ...(resolved.effort ? { effort: resolved.effort } : {}),
     };
-    await repository.writeMarkdown(file, upsertEnvironmentLaunch(text, stored));
+    await repository.writeMarkdown(file, upsertEnvironmentLaunch(text, stored, kind));
     await stage?.(file);
-    await commit([file], `update: ${area} default launch ${resolved.label}`, area, null);
+    await commit([file], `update: ${area} default ${kind === "brain" ? "brain " : ""}launch ${resolved.label}`, area, null);
     return { label: resolved.label, command: resolved.command };
   }
 
-  return { commandForArea, forArea, registry, requested, saveDefault, saveRegistry };
+  return { commandForArea, forArea, forBrain, registry, requested, saveDefault, saveRegistry };
 }

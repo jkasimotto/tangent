@@ -247,11 +247,11 @@ test("the brain prompt uses structured plan, decision, test, and approval reques
 
   assert.match(show.prompt, /## Requests for Julian/, "the prompt names the request contract");
   assert.match(show.prompt, /tangent brain request --kind plan/, "the plan approval is explicit");
-  assert.match(show.prompt, /kind decision/, "user decisions use a structured request");
+  assert.match(show.prompt, /kind is internal routing metadata/, "request kinds do not change the user contract");
   assert.match(show.prompt, /kind test/, "tests use a structured request");
   assert.match(show.prompt, /kind approval/, "one-way approvals use a structured request");
-  assert.match(show.prompt, /Plan reviews use Approve plan and Request changes/, "plan actions are stable");
-  assert.match(show.prompt, /Tests use Pass and Needs work/, "test actions are stable");
+  assert.match(show.prompt, /Every Request uses Approve or I want these changes/, "all requests use one answer pair");
+  assert.match(show.prompt, /Do not paste handovers, commit lists, test logs, or implementation narratives/, "requests exclude agent narration");
   assert.doesNotMatch(show.prompt, /## For Julian/, "Markdown is not the new control protocol");
   assert.doesNotMatch(show.prompt, /launchctl kickstart/, "the rebuild rule is one command, not a launchctl recipe");
 });

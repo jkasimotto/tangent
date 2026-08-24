@@ -42,7 +42,7 @@ const TRANSITIONS = {
   }),
   plan: transition("Plan request", "Area brain", "Julian", "brain-request", {
     trigger: "The brain has written the proposed Goals, agents, order, dependencies, and risks.",
-    payload: "A plan request with subject, question, summary, and the answers Approve plan and Request changes.",
+    payload: "A short plan request with the answers Approve and I want these changes.",
     knows: "Julian can read the linked plan Document for the full work split.",
     next: "Julian approves the displayed plan version or requests changes.",
     state: "A durable request remains open until Julian answers it.",
@@ -51,7 +51,7 @@ const TRANSITIONS = {
     layers: ["Request kind: plan", "Plan subject", "Goals and agents summary", "Question", "Valid answers"],
   }),
   planAnswer: transition("Plan answer", "Julian", "Area brain", "brain-notice", {
-    trigger: "Julian selects Approve plan or Request changes.",
+    trigger: "Julian selects Approve or I want these changes.",
     payload: "The named answer and its request identity.",
     knows: "The brain owns the plan Document and proposed work boundary.",
     next: "Approval permits managed Goal creation and launch. A change request returns the brain to planning.",
@@ -122,16 +122,16 @@ const TRANSITIONS = {
   }),
   testRequest: transition("Test request", "Area brain", "Julian", "brain-request", {
     trigger: "The result needs Julian to verify user-visible behavior.",
-    payload: "Exact test steps, expected result, affected Goal, and the answers Pass and Needs work.",
+    payload: "The visible action, expected result, affected Goal, and the two shared answers.",
     knows: "The brain has rebuilt the visible Agent Shell change when required.",
     next: "Julian tests the result and returns a verdict to the brain.",
     state: "A durable test request remains open.",
     delivery: "The test appears as a direct ask. Idle session state cannot create it by inference.",
     source: "brain-requests.mjs: request kind test",
-    layers: ["Request kind: test", "Exact steps", "Expected result", "Affected Goal", "Pass and Needs work"],
+    layers: ["Request kind: test", "Visible action", "Expected result", "Affected Goal", "Approve or I want these changes"],
   }),
   testAnswer: transition("Test answer", "Julian", "Area brain", "brain-notice", {
-    trigger: "Julian selects Pass or Needs work.",
+    trigger: "Julian selects Approve or I want these changes.",
     payload: "The verdict, optional feedback, request identity, and answer time.",
     knows: "The brain knows the Goal, review state, and work that waits.",
     next: "Pass can allow closure. Needs work causes a correction assignment.",
@@ -306,7 +306,7 @@ Run tangent handover "<facts>". Report to the brain. Do not choose the next work
   if (item.species === "handover") return `tangent handover "Files changed: <paths>. Commits: <commits>. Checks: <commands-and-results>. Complete: <completed-work>. Unresolved: <remaining-work>. Decision or test needed: <need-or-none>."`;
   if (item.species === "brain-request") {
     const kind = item.label.startsWith("Plan") ? "plan" : item.label.startsWith("Decision") ? "decision" : "test";
-    const options = kind === "plan" ? "Approve plan | Request changes" : kind === "test" ? "Pass | Needs work" : "<named-options>";
+    const options = "Approve | I want these changes";
     return `<brain-request>
   <kind>${kind}</kind>
   <subject><subject-text></subject>

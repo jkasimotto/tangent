@@ -392,6 +392,9 @@ summary:focus-visible {
 /* The question is the only part of a row Julian must read, so it carries the
    accent and sits on its own line under the facts. */
 .attention-items .attention-question { margin-top: 3px; color: var(--amber); font-size: 12.5px; font-weight: 700; line-height: 1.35; }
+.attention-detail { margin-top: 8px; color: #a79776; font-size: 11px; }
+.attention-detail > summary { width: fit-content; cursor: pointer; color: #a79776; font-weight: 700; }
+.attention-detail > p { max-width: 78ch; margin: 8px 0 0; color: #b8aa8c; line-height: 1.55; white-space: pre-wrap; }
 .attention-row-actions { display: flex; align-items: center; gap: 6px; }
 .attention-row-actions .attention-tried { margin-left: 0; }
 .for-you-group > header { display: flex; align-items: center; gap: 12px; padding: 12px 18px 8px; border-top: 1px solid #383124; color: #a79776; font-size: 11px; font-weight: 690; letter-spacing: .045em; text-transform: uppercase; }

@@ -32,3 +32,18 @@ test("brain routes dispatch by method and path", async () => {
   assert.equal(output.body.session, "otto/tangent-brain");
   assert.equal(await routes.handle(request("GET"), response(), new URL("http://shell/api/unknown")), false);
 });
+
+test("the answer route sends typed changes to the brain operation", async () => {
+  let received;
+  const routes = createBrainRoutes({
+    /** Records the complete answer payload from the route. */
+    async answerRequest(area, id, answer, note) {
+      received = { area, id, answer, note };
+      return { status: 200, request: { id, answer, note } };
+    },
+  });
+  const output = response();
+  await routes.handle(request("POST", { area: "otto/tangent", id: "r1", answer: "changes", note: "Use less text." }), output, new URL("http://shell/api/brains/requests/answer"));
+  assert.deepEqual(received, { area: "otto/tangent", id: "r1", answer: "changes", note: "Use less text." });
+  assert.equal(output.status, 200);
+});

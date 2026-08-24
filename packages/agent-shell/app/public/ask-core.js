@@ -85,22 +85,13 @@
     return String(file ?? "").split("/").pop().replace(/\.md$/i, "");
   }
 
-  /** The Accept and Reject verbs of one plan line, in the order they are drawn. */
+  /** The Accept and Reject verbs of one legacy plan line. */
   function verdictActions(brain, row) {
     const arg = { area: brain.area, line: row.line };
     return [
       { kind: "accept", label: "Accept", arg },
       { kind: "reject", label: "Reject", arg },
     ];
-  }
-
-  /**
-   * The Reply verb, which names the subject to the brain before its terminal
-   * opens. A stopped brain has no terminal, so it carries no Reply.
-   */
-  function replyActions(brain, subject) {
-    if (!brain.live) return [];
-    return [{ kind: "reply", label: "Reply", arg: { area: brain.area, session: brain.session ?? "", subject } }];
   }
 
   /**
@@ -118,7 +109,7 @@
         subject,
         detail: row.text,
         question: TEST_QUESTION,
-        actions: [...verdictActions(brain, row), ...replyActions(brain, subject)],
+        actions: verdictActions(brain, row),
         source: "plan",
       });
     }
@@ -145,7 +136,6 @@
       actions: [
         { kind: "open-document", label: "Read", arg: { file: row.file } },
         ...verdictActions(brain, row),
-        ...replyActions(brain, subject),
       ],
       source: "plan",
     });
@@ -154,19 +144,15 @@
   /** One durable brain request. These records replace Markdown control lines. */
   function askFromRequest(brain, request) {
     if (!brain || !request || request.status !== "open") return null;
-    const answers = request.kind === "plan"
-      ? [["approve", "Approve plan"], ["request-changes", "Request changes"]]
-      : request.kind === "test"
-        ? [["pass", "Pass"], ["needs-work", "Needs work"]]
-        : request.kind === "approval"
-          ? [["approve", "Approve"], ["reject", "Reject"]]
-          : (request.options ?? []).map((option) => [option, option]);
     return makeAsk({
       area: brain.area,
       subject: request.subject,
       detail: request.detail,
       question: request.question,
-      actions: answers.map(([answer, label]) => ({ kind: "request-answer", label, arg: { area: brain.area, id: request.id, answer } })),
+      actions: [
+        { kind: "request-answer", label: "Approve", arg: { area: brain.area, id: request.id, answer: "approve" } },
+        { kind: "request-answer", label: "I want these changes", arg: { area: brain.area, id: request.id, answer: "changes" } },
+      ],
       source: `request:${request.kind}`,
     });
   }

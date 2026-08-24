@@ -33,7 +33,10 @@ export function createBrainRequest(record, input, now = new Date().toISOString()
   const goal = String(input.goal ?? "").trim() || null;
   if (!REQUEST_KINDS.has(kind)) throw new Error("kind must be plan, decision, test, or approval");
   if (!subject) throw new Error("subject is required");
+  if (subject.length > 80) throw new Error("subject must be 80 characters or fewer");
   if (!question.endsWith("?")) throw new Error("question must end with ?");
+  if (question.length > 160) throw new Error("question must be 160 characters or fewer");
+  if (detail.length > 300) throw new Error("detail must be 300 characters or fewer; put full evidence in the plan");
   if (kind === "decision" && options.length < 2) throw new Error("a decision needs at least two options");
   const request = { id: randomUUID(), kind, subject, question, detail, options, goal, status: "open", createdAt: now, answeredAt: null, answer: null };
   record.requests.push(request);
@@ -41,18 +44,17 @@ export function createBrainRequest(record, input, now = new Date().toISOString()
 }
 
 /** Validates and records Julian's answer to one open request. */
-export function answerBrainRequest(record, id, answer, now = new Date().toISOString()) {
+export function answerBrainRequest(record, id, answer, note = "", now = new Date().toISOString()) {
   const request = record.requests.find((item) => item.id === id);
   if (!request) throw new Error("request not found");
   if (request.status !== "open") throw new Error("request is already answered");
   const value = String(answer ?? "").trim();
-  const allowed = request.kind === "plan" ? ["approve", "request-changes"]
-    : request.kind === "test" ? ["pass", "needs-work"]
-      : request.kind === "approval" ? ["approve", "reject"]
-        : request.options;
-  if (!allowed.includes(value)) throw new Error(`answer must be one of: ${allowed.join(", ")}`);
+  const responseNote = String(note ?? "").trim();
+  if (!["approve", "changes"].includes(value)) throw new Error("answer must be approve or changes");
+  if (value === "changes" && !responseNote) throw new Error("requested changes need text");
   request.status = "answered";
   request.answer = value;
+  request.note = responseNote || null;
   request.answeredAt = now;
   return request;
 }

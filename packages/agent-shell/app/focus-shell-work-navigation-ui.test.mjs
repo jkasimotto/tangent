@@ -315,8 +315,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   // the brain's asks plus the fallback asks of the Areas without a brain.
   const group = window.document.querySelector(".attention-queue .for-you-group:not(.fallback)");
   assert.ok(group, "the brain's Area gets its own group");
-  assert.match(group.querySelector("header").textContent, /Reply to brain/, "the group header answers the brain in one press");
-  assert.equal(group.querySelector("[data-open-brain]").dataset.openBrain, "live-edit-brain");
+  assert.doesNotMatch(group.querySelector("header").textContent, /Reply to brain/, "the group header has no second answer lane");
   const rows = [...group.querySelectorAll(".attention-items > *")];
   assert.equal(rows.length, 4, "the brain's own dialog, then its three plan rows");
   assert.match(rows[0].textContent, /Do you want the audit to start now\?/, "a brain stuck at its own dialog is an ask");
@@ -327,11 +326,11 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.equal(rows[1].querySelector("[data-open-document]").dataset.openDocument, liveEditDesign.file, "Read opens the Document Julian answers in");
   assert.match(rows[1].textContent, /Accept/);
   assert.match(rows[1].textContent, /Reject/);
-  assert.match(rows[1].textContent, /Reply/, "a Decide row carries a reply affordance");
+  assert.doesNotMatch(rows[1].textContent, /Reply/, "a Decide row has no second answer lane");
 
   assert.equal(rows[2].querySelector(".attention-question").textContent, "Accept it?", "Tangent asks the Test row's question, not the brain");
   assert.match(rows[2].textContent, /press Cmd\+K, type a title, press Enter\./);
-  assert.match(rows[2].textContent, /Reply/, "a Test row carries a reply affordance too");
+  assert.doesNotMatch(rows[2].textContent, /Reply/, "a Test row has no second answer lane");
 
   assert.match(rows[3].textContent, /Brain asks/);
   assert.equal(rows[3].querySelector(".attention-question").textContent, "should the audit cover the Usage UI too?");
@@ -356,7 +355,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   const areaRows = [...areaGroup.querySelectorAll(".attention-items > *")];
   assert.equal(areaRows.length, 4, "the Area panel shows the same rows as the desk card");
   assert.equal(areaRows[1].querySelector("[data-open-document]").dataset.openDocument, liveEditDesign.file, "Read on the Area panel opens the same Document");
-  assert.equal(areaGroup.querySelector("[data-open-brain]").dataset.openBrain, "live-edit-brain", "Reply to brain also works from the Area panel");
+  assert.equal(areaGroup.querySelector("header [data-open-brain]"), null, "the Area panel header has no Reply to brain lane");
 
   // With an agent on it, the pane is static because the brain has not read it
   // yet: the row states the fact and keeps the amber that means "you" off.

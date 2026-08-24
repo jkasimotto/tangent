@@ -47,9 +47,9 @@ export const brainCommandSpec: CliCommandSpec = {
         { name: "kind", takesValue: true, description: "plan, decision, test, or approval" },
         { name: "subject", takesValue: true, description: "Short request subject" },
         { name: "question", takesValue: true, description: "The question, ending in ?" },
-        { name: "detail", takesValue: true, description: "The plan, test steps, or decision effects" },
+        { name: "detail", takesValue: true, description: "At most two short sentences that Julian needs to answer" },
         { name: "option", takesValue: true, description: "Decision choice; repeat for each choice" },
-        { name: "goal", takesValue: true, description: "Goal slug this request is about; a test request with this set auto-closes the Goal on Pass" },
+        { name: "goal", takesValue: true, description: "Goal slug this request is about; approval of a test request closes this Goal" },
         { name: "session", takesValue: true, description: "Brain session; defaults to the current tmux session" },
         serverOption
       ]

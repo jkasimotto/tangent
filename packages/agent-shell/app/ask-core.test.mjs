@@ -38,14 +38,14 @@ test("the exports are the constructor, the five builders, and the three fixed qu
   ]);
 });
 
-test("structured requests expose the approved plan, test, and decision actions", () => {
+test("all structured requests expose the same two answers", () => {
   const owner = brain();
   const plan = core.askFromRequest(owner, { id: "p1", kind: "plan", subject: "Work plan", detail: "2 Goals", question: "Approve this plan?", status: "open" });
-  assert.deepEqual(plan.actions.map((action) => [action.label, action.arg.answer]), [["Approve plan", "approve"], ["Request changes", "request-changes"]]);
+  assert.deepEqual(plan.actions.map((action) => [action.label, action.arg.answer]), [["Approve", "approve"], ["I want these changes", "changes"]]);
   const testAsk = core.askFromRequest(owner, { id: "t1", kind: "test", subject: "Reload", detail: "Press it", question: "Did it reload?", status: "open" });
-  assert.deepEqual(testAsk.actions.map((action) => action.label), ["Pass", "Needs work"]);
+  assert.deepEqual(testAsk.actions.map((action) => action.label), ["Approve", "I want these changes"]);
   const decision = core.askFromRequest(owner, { id: "d1", kind: "decision", subject: "Behavior", detail: "One-way door", question: "Which behavior?", options: ["Keep", "Change"], status: "open" });
-  assert.deepEqual(decision.actions.map((action) => action.arg.answer), ["Keep", "Change"]);
+  assert.deepEqual(decision.actions.map((action) => action.arg.answer), ["approve", "changes"]);
   assert.equal(core.askFromRequest(owner, { id: "x", kind: "plan", subject: "Old", question: "Old?", status: "answered" }), null);
 });
 
@@ -72,7 +72,7 @@ test("a Test row asks the fixed question and carries both verdicts", () => {
   assert.equal(ask.question, core.TEST_QUESTION);
   assert.equal(ask.subject, "Find a document");
   assert.equal(ask.detail, "press Cmd+K, type a title.");
-  assert.deepEqual(kinds(ask), ["accept", "reject", "reply"]);
+  assert.deepEqual(kinds(ask), ["accept", "reject"]);
   assert.equal(ask.source, "plan");
 });
 
@@ -93,11 +93,11 @@ test("a targeted Decide leads with its Document, and its facts read as one line"
   assert.equal(ask.subject, "design-x");
   assert.equal(ask.detail, "Unblocks: the audit · 2 comments left");
   assert.equal(ask.question, "Which one?");
-  assert.deepEqual(kinds(ask), ["open-document", "accept", "reject", "reply"]);
+  assert.deepEqual(kinds(ask), ["open-document", "accept", "reject"]);
   assert.equal(ask.actions[0].arg.file, "otto/tangent/design-x.md");
 });
 
-test("a stopped brain's rows keep their verdicts but lose Reply, which needs a terminal", () => {
+test("a stopped brain's rows keep their verdicts", () => {
   const ask = core.askFromPlanRow(brain({ live: false }), row());
   assert.deepEqual(kinds(ask), ["open-document", "accept", "reject"]);
 });

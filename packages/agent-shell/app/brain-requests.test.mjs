@@ -32,5 +32,24 @@ test("decisions need choices and reject unknown answers", async () => {
   const record = await readBrainRequests("/missing", "otto/tangent");
   assert.throws(() => createBrainRequest(record, { kind: "decision", subject: "Behavior", question: "Which?", options: ["One"] }), /at least two/);
   const request = createBrainRequest(record, { kind: "decision", subject: "Behavior", question: "Which?", options: ["One", "Two"] });
-  assert.throws(() => answerBrainRequest(record, request.id, "Three"), /One, Two/);
+  assert.throws(() => answerBrainRequest(record, request.id, "Three"), /approve or changes/);
+});
+
+test("all requests use approval or typed changes", async () => {
+  const record = await readBrainRequests("/missing", "otto/tangent");
+  const request = createBrainRequest(record, { kind: "test", subject: "Diagrams", question: "Do diagrams render?", detail: "Open one Document." });
+  assert.throws(() => answerBrainRequest(record, request.id, "changes"), /need text/);
+  const answered = answerBrainRequest(record, request.id, "changes", "Labels overlap.");
+  assert.equal(answered.answer, "changes");
+  assert.equal(answered.note, "Labels overlap.");
+});
+
+test("a request cannot contain an agent report", async () => {
+  const record = await readBrainRequests("/missing", "otto/tangent");
+  assert.throws(() => createBrainRequest(record, {
+    kind: "test",
+    subject: "Diagrams",
+    question: "Do diagrams render?",
+    detail: "x".repeat(301),
+  }), /300 characters/);
 });

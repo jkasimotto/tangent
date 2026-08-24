@@ -6,7 +6,7 @@ import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
 
 /** Creates the work desk from shell, launch, Area, and Program capabilities. */
 export function createWorkDeskView({ shell, launch, areaModel, programs, chrome }) {
-  const { state, api, post, paint, refresh, showToast, captureReturnPoint, saveDescribeSession } = shell;
+  const { state, api, post, paint, refresh, showToast, openModal, captureReturnPoint, saveDescribeSession } = shell;
   const {
     launchSelection, launchRequestFields, syncLaunchDraft, preferredArea, launchOptionsFor, pipelineForGoal,
     pipelineRecordForGoal, launchPopover, DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
@@ -807,7 +807,8 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * is not an ask can be drawn here.
    */
   function askRow(ask) {
-    const text = `<span><strong>${escapeHtml(ask.subject)}</strong>${ask.detail ? `<small>${escapeHtml(ask.detail)}</small>` : ""}<span class="attention-question">${escapeHtml(ask.question)}</span></span>`;
+    const detail = ask.detail ? `<details class="attention-detail"><summary>Details</summary><p>${escapeHtml(ask.detail)}</p></details>` : "";
+    const text = `<span><strong>${escapeHtml(ask.subject)}</strong><span class="attention-question">${escapeHtml(ask.question)}</span>${detail}</span>`;
     const primary = ask.actions.find((action) => ASK_PRIMARY_ACTIONS.includes(action.kind));
     const rest = ask.actions.filter((action) => action !== primary);
     const buttons = rest.length
@@ -821,10 +822,9 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
   /** One live brain group's asks and its direct reply action. */
   function forYouGroupMarkup(group, label) {
-    const reach = `<button class="attention-tried" type="button" data-open-brain="${escapeHtml(group.brain.session ?? "")}">Reply to brain</button>`;
     return `
       <div class="for-you-group${group.stopped ? " stopped" : ""}">
-        <header><span>${escapeHtml(label)}</span>${reach}</header>
+        <header><span>${escapeHtml(label)}</span></header>
         <div class="attention-items">${group.asks.map(askRow).join("")}</div>
       </div>`;
   }
@@ -892,12 +892,28 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * line back and withdraws the verdict, so a mis-press costs one click and
    * never leaves the brain acting on an answer Julian took back.
    */
-  async function sendVerdict(area, line, verdict) {
+  async function sendVerdict(area, line, verdict, note = "") {
+    if (line.startsWith("request:") && verdict === "changes" && !note) {
+      openModal({
+        kicker: "Changes",
+        title: "What must change?",
+        copy: "The brain receives this text with the returned work.",
+        field: { label: "Required changes", placeholder: "State the change that you want." },
+        confirmLabel: "Send changes",
+        /** Sends the required text with the rejected proposal. */
+        onConfirm: async () => {
+          const text = document.querySelector("[data-modal-input]")?.value.trim() || "";
+          if (!text) throw new Error("State the change that you want.");
+          return sendVerdict(area, line, verdict, text);
+        },
+      });
+      return;
+    }
     state.verdictLines.add(line);
     paint(true);
     try {
       if (line.startsWith("request:")) {
-        await post("/api/brains/requests/answer", { area, id: line.slice("request:".length), answer: verdict });
+        await post("/api/brains/requests/answer", { area, id: line.slice("request:".length), answer: verdict, note });
         showToast("Answer sent to the brain.");
         await refresh();
         return;

@@ -311,9 +311,11 @@ summary:focus-visible {
 .work-intro-actions { display: flex; flex: none; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
 .work-intro-button { flex: none; margin-bottom: 5px; }
 
-.work-tools { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: stretch; gap: 12px; margin: 0 0 32px; }
+.work-tools { display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: stretch; gap: 12px; margin: 0 0 32px; }
 .work-area-browser { padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 3px; background: #111419; color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 690; }
 .work-area-browser:hover { color: var(--text); border-color: #526171; }
+.work-describe { padding: 0 14px; border: 1px solid var(--line-strong); border-radius: 3px; background: #111419; color: var(--muted); cursor: pointer; font-size: 12px; font-weight: 690; }
+.work-describe:hover { color: var(--text); border-color: #526171; }
 
 .search-field {
   display: flex;
@@ -401,7 +403,7 @@ summary:focus-visible {
 .attention-reply:hover { color: var(--amber); border-color: #665735; }
 .area-for-you { border-bottom: 1px solid #2b3037; background: #17150f; }
 
-.area-desk-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; align-items: start; }
+.area-desk-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; align-items: start; }
 .area-desk-panel { min-width: 0; border: 1px solid #373d45; border-top: 3px solid #626b76; border-radius: 2px; background: #111419; }
 .area-desk-panel.waiting { border-top-color: var(--amber); }
 .area-desk-panel.working { border-top-color: var(--blue); }
@@ -546,6 +548,37 @@ summary:focus-visible {
 .area-desk-actions { display: flex; gap: 4px; padding: 10px 13px; background: #0f1215; }
 .area-desk-actions button { padding: 6px 8px; border: 0; background: transparent; color: #7f8994; cursor: pointer; font-size: 11px; font-weight: 670; }
 .area-desk-actions button:hover { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
+
+/* A Work group follows the controlling brain's Area. Areas and Goals are
+   rows inside that shallow hierarchy, not nested dashboard cards. */
+.work-group { border: 0; border-top: 1px solid #46505c; background: transparent; }
+.work-group.waiting, .work-group.working, .work-group.ready { border-top-color: #46505c; }
+.work-group > .area-desk-header { display: flex; min-height: 0; gap: 16px; padding: 14px 2px 12px; border-bottom: 0; background: transparent; }
+.work-group > .area-desk-header h2 { min-width: 0; margin: 0; font-size: 20px; letter-spacing: -.025em; }
+.work-group > .area-desk-header .area-desk-state { margin-left: auto; }
+.work-group-brain { padding: 4px 0 4px 8px; border: 0; background: transparent; color: #9ebbe0; cursor: pointer; font-size: 11px; font-weight: 690; white-space: nowrap; }
+.work-group-brain:hover { color: #fff; }
+.work-group > .area-desk-body { display: grid; gap: 0; padding-left: 18px; border-left: 1px solid #343c46; }
+.work-area-section { position: relative; padding: 13px 0 15px 18px; border-bottom: 1px solid #292f36; }
+.work-area-section:last-child { border-bottom: 0; }
+.work-area-section::before { position: absolute; top: 25px; left: -1px; width: 12px; border-top: 1px solid #46505c; content: ""; }
+.work-area-section > header { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
+.work-area-section > header h3 { margin: 0; font-size: 13px; }
+.work-area-section > header h3 button { padding: 0; border: 0; background: transparent; color: #b8c0c9; cursor: pointer; font: inherit; font-weight: 680; }
+.work-area-section > header h3 button:hover { color: #fff; }
+.work-area-section > header span { color: #737d88; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; }
+.work-area-section .desk-goal { padding: 6px 0; }
+.work-area-section .desk-goal-group + .desk-goal-group { margin-top: 5px; padding-top: 5px; }
+.work-area-section .desk-goal-line1 strong { white-space: normal; }
+.work-area-section .desk-goal-line2 { min-height: 24px; }
+.desk-action-menu { position: relative; }
+.desk-action-menu > summary { display: grid; width: 24px; height: 24px; place-items: center; border: 1px solid #3c434c; border-radius: 2px; background: #1a1e23; color: #9aa5b1; cursor: pointer; font-size: 10px; list-style: none; }
+.desk-action-menu > summary::-webkit-details-marker { display: none; }
+.desk-action-menu[open] > summary { border-color: #68727e; color: #fff; }
+.desk-action-menu > div { position: absolute; z-index: 12; top: calc(100% + 5px); right: 0; display: grid; min-width: 170px; padding: 5px; border: 1px solid #46505c; border-radius: 3px; background: #171b20; box-shadow: 0 10px 28px rgba(0, 0, 0, .35); }
+.desk-action-menu > div button { padding: 7px 9px; border: 0; border-radius: 2px; background: transparent; color: #c8ced5; cursor: pointer; font-size: 11px; text-align: left; white-space: nowrap; }
+.desk-action-menu > div button:hover { background: #242a31; color: #fff; }
+.desk-action-menu > div button.complete { color: var(--green); }
 
 .work-section { margin-top: 40px; }
 .work-section + .work-section { padding-top: 38px; border-top: 1px solid var(--line); }

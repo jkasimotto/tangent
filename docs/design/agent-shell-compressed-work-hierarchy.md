@@ -1,6 +1,6 @@
 # Compressed Work hierarchy
 
-Status: proposed
+Status: accepted and implemented
 
 Date: 2026-08-24
 

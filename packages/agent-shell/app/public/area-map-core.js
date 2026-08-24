@@ -172,17 +172,20 @@
    * maps each Area path to its direct open-work count. Returns
    * [{ path, sections: [path, ...] }] in path order.
    */
-  function deskPanels(openCounts) {
+  function deskPanels(openCounts, groupRoots = []) {
     const paths = [...openCounts.keys()].sort();
     const withWork = new Set(paths.filter((path) => (openCounts.get(path) ?? 0) > 0));
+    const roots = [...groupRoots].filter((path) => openCounts.has(path)).sort();
     const panels = new Map();
     for (const path of paths) {
       if (!withWork.has(path)) continue;
       const parts = path.split("/");
-      const root = parts.length > 1 && openCounts.has(parts.slice(0, 2).join("/")) ? parts.slice(0, 2).join("/") : path;
+      const controllingRoot = roots.filter((candidate) => isInside(path, candidate)).sort((left, right) => right.length - left.length)[0];
+      const root = controllingRoot ?? (parts.length > 1 && openCounts.has(parts.slice(0, 2).join("/")) ? parts.slice(0, 2).join("/") : path);
       if (!panels.has(root)) panels.set(root, { path: root, sections: [] });
       if (path !== root) panels.get(root).sections.push(path);
     }
+    for (const root of roots) if (!panels.has(root)) panels.set(root, { path: root, sections: [] });
     return [...panels.values()];
   }
 

@@ -35,7 +35,11 @@ test("a parent Area owns descendant current work without a separate sub-Area sec
     const pathname = new URL(url, window.location.href).pathname;
     if (options.method === "POST") return jsonResponse({ ok: true });
     if (pathname === "/api/sessions") {
-      return jsonResponse({ boot: "boot-1", caffeinate: false, pipelines: [], sessions: [{ name: "storm--working", goal: workingGoal.file, state: "working", command: "codex" }] });
+      return jsonResponse({
+        boot: "boot-1", caffeinate: false, pipelines: [],
+        sessions: [{ name: "neara--brain", area: "neara", kind: "brain", state: "working", command: "codex" }, { name: "storm--working", goal: workingGoal.file, state: "working", command: "codex" }],
+        brains: [{ area: "neara", status: "running", live: true, session: "neara--brain", generation: 2, state: "working" }],
+      });
     }
     if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
     return jsonResponse({
@@ -57,10 +61,11 @@ test("a parent Area owns descendant current work without a separate sub-Area sec
 
   assert.equal(window.document.querySelectorAll(".area-desk-panel").length, 1, "embedded-js and storm-response fold into one panel");
   const panel = window.document.querySelector(".area-desk-panel");
-  assert.match(panel.querySelector(".area-desk-header h2").textContent, /Hackathon/);
-  assert.equal(panel.querySelector(".desk-subarea"), null, "a descendant does not become another work container");
-  assert.match(panel.querySelector(".desk-descendant-goal > small").textContent, /Storm Response/);
+  assert.match(panel.querySelector(".area-desk-header h2").textContent, /Neara/);
+  assert.match(panel.querySelector("[data-open-brain]").textContent, /Open brain/);
+  assert.equal(panel.querySelector(".desk-subarea"), null, "a descendant does not become another card");
+  assert.match(panel.querySelector("[data-work-area$='/storm-response'] h3").textContent, /Storm Response/);
 
-  const titles = [...panel.querySelectorAll(".desk-descendant-goal .desk-goal-main strong")].map((node) => node.textContent);
+  const titles = [...panel.querySelectorAll("[data-work-area$='/storm-response'] .desk-goal-main strong")].map((node) => node.textContent);
   assert.deepEqual(titles, ["Needs you goal", "Working goal"], "Current contains live and directly waiting descendant Goals");
 });

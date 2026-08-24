@@ -25,7 +25,7 @@ The browser entry `app/public/shell.js` composes feature ports. `shell-coordinat
 
 Private module and loopback contracts can change with all in-repository callers. Vault Markdown, Git provenance, tmux bindings, and persisted workflow schemas remain compatible. See ADR-0031.
 
-The browser has one Area-based Work destination. Stable subject panels contain current work from their complete subtree. A separate Planned view keeps unstarted Goals available. Command-K filters Documents by Area and kind and can show the links inside that result set. A reviewed Goal stays open until Julian accepts its Test request.
+The browser has one Area-based Work destination. A live controlling brain's Area is the shallow group root for work in its complete subtree; uncovered work falls back to the stable durable-subject root. Descendant Areas and Goals render as compact rows inside that group rather than peer cards. A separate Planned view keeps unstarted Goals available. Command-K filters Documents by Area and kind and can show the links inside that result set. A reviewed Goal stays open until Julian accepts its Test request.
 
 The browser Programs projection also reads root-owned trigger state from `~/.tangent/agent-shell/triggers/state.json`. Trigger scheduling and launching remain in the root CLI so they work while this server is closed; the server delegates Check now and Acknowledge controls back to `tangent trigger` (ADR-0030).
 

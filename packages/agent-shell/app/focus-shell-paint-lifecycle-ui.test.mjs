@@ -56,6 +56,7 @@ test("background polls never rebuild the screen under an editing surface or a re
   };
   window.eval(shellBundle);
   await settle(window);
+  click(window, "[data-work-filter='inactive']");
   assert.ok(poll, "the shell polls the server");
 
   // Defining a pipeline: the typed instruction and the popover survive a poll, focused or not.
@@ -77,13 +78,13 @@ test("background polls never rebuild the screen under an editing surface or a re
   click(window, "[data-launch-close]");
   await settle(window);
   assert.equal(window.document.querySelector("[data-launch-popover]"), null);
-  // With the popover closed, the deferred vault change reaches the desk.
+  // With the popover closed, a change to hidden Goal prose does not churn the compact row.
   const deskBefore = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
   await vaultChangesAndPolls();
-  assert.notEqual(window.document.querySelector(`[data-goal-anchor='${goal.file}']`), deskBefore, "the desk repaints once nothing is being edited");
+  assert.equal(window.document.querySelector(`[data-goal-anchor='${goal.file}']`), deskBefore, "hidden prose does not rebuild an unchanged compact row");
 
   // Describing work: the form survives a poll while Julian reads elsewhere on the page.
-  click(window, "[data-describe-area]");
+  click(window, "[data-describe-work]");
   const form = window.document.querySelector("[data-describe-work-form]");
   assert.ok(form);
   const description = window.document.querySelector("#describe-work");

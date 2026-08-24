@@ -76,7 +76,11 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
   /** True when any open Goal in one complete Goal tree owns a live session. */
   function goalTreeIsActive(tree) {
-    return tree.goals.some((goal) => !["done", "dropped", "deferred"].includes(goal.status) && Boolean(sessionForGoal(goal)));
+    return tree.goals.some((goal) => {
+      if (["done", "dropped", "deferred"].includes(goal.status)) return false;
+      if (sessionForGoal(goal)) return true;
+      return Boolean(pipelineRecordForGoal(goal)?.steps?.some((step) => ["running", "stopped"].includes(step.status)));
+    });
   }
 
   /** Applies the selected session-presence filter without splitting Goal trees. */
@@ -564,7 +568,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const waiting = forYouItems().filter((ask) => ask.area === path || ask.area.startsWith(`${path}/`)).length;
     const working = sessions.filter((session) => session.state === "working").length;
     if (waiting) return { kind: "waiting", label: `${waiting} ${waiting === 1 ? "item needs" : "items need"} you` };
-    if (working) return { kind: "working", label: `${working} ${working === 1 ? "agent" : "agents"} working` };
+    if (working) return { kind: "working", label: `${working} working` };
     const ready = goals.filter((goal) => !sessionForGoal(goal)).length;
     if (ready) return { kind: "ready", label: `${ready} ${ready === 1 ? "Goal" : "Goals"} ready` };
     return { kind: "quiet", label: "Reference Area" };
@@ -620,8 +624,10 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       const openGoalCount = areaTrees.reduce((count, tree) => count + tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status)).length, 0);
       openCounts.set(area.path, Math.max(openGoalCount, areaDescriptions.length ? 1 : 0));
     }
-    const projectedPanels = null;
-    const panelDefs = projectedPanels?.length ? projectedPanels : core.deskPanels(openCounts);
+    const liveBrainAreas = (state.brains ?? [])
+      .filter((brain) => brain.status === "running" && brain.live)
+      .map((brain) => brain.area);
+    const panelDefs = core.deskPanels(openCounts, liveBrainAreas);
     const covered = new Set(panelDefs.flatMap((panel) => [panel.path, ...panel.sections]));
     const panels = panelDefs.map((panel) => {
       const area = byPath.get(panel.path);
@@ -630,7 +636,8 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
         .map((path) => ({ area: byPath.get(path), ...workOf(path) }))
         .filter((section) => section.area);
       const programs = state.programs.programs.filter((program) => program.area === panel.path);
-      return { area, trees: own.trees, descriptions: own.descriptions, sections, programs };
+      const brain = (state.brains ?? []).find((item) => item.area === panel.path && item.status === "running" && item.live) ?? null;
+      return { area, trees: own.trees, descriptions: own.descriptions, sections, programs, brain };
     }).filter((record) => record.area);
     if (state.workFilter === "all") {
       for (const area of areaList) {
@@ -869,26 +876,6 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   }
 
   /**
-   * Keeps every live Area brain one click away from the Work screen. This is
-   * independent of the Goal filter: an Area with no matching Goal still has
-   * active orchestration that Julian may need to enter.
-   */
-  function activeBrainsStrip() {
-    const brains = (state.brains ?? []).filter((brain) => brain.status === "running" && brain.live);
-    if (!brains.length) return "";
-    return `
-      <section class="active-brains" aria-labelledby="active-brains-heading">
-        <header><span aria-hidden="true">🧠</span><h2 id="active-brains-heading">Active brains</h2><b>${brains.length}</b></header>
-        <div class="active-brain-list">${brains.map((brain) => `
-          <button class="active-brain ${brainKind(brain)}" type="button" data-open-brain="${escapeHtml(brain.session ?? "")}" title="Open the ${escapeHtml(areaLabel(brain.area))} brain">
-            <span><strong>${escapeHtml(areaLabel(brain.area))}</strong><small>Generation ${brain.generation}</small></span>
-            <em>${escapeHtml(brainStateLabel(brain).replace(/^Brain\s+/, ""))}</em>
-            <b aria-hidden="true">→</b>
-          </button>`).join("")}</div>
-      </section>`;
-  }
-
-  /**
    * Drops from `state.verdictLines` every line the server no longer lists, once
    * the plan commit has landed. A line is hidden only while its press is in
    * flight; a line the brain writes again later is shown again.
@@ -1004,7 +991,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     return { ...line, state: "Ready", action: `Open step ${step.index}`, kind: "ready", route: "run" };
   }
 
-  /** Restart, Skip, Stop work, and Send-to-next, only when they apply. */
+  /** Rare pipeline actions shown inside the Goal action menu, only when valid. */
   function deskPipelineControls(goal, pipeline) {
     const step = pipeline.steps.find((item) => item.status === "running" || item.status === "stopped");
     if (!step) return "";
@@ -1013,13 +1000,13 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     if (stopped) {
       // A step whose session died on its own. Julian's own Stop agent already
       // ends the run, so Stop work here is the same exit for a crashed step.
-      return `<button class="desk-action" type="button" data-pipeline-control="restart" data-pipeline-goal="${escapeHtml(goal.file)}" data-pipeline-step="${step.index}">Restart step ${step.index}</button>`
-        + (last ? "" : `<button class="desk-action" type="button" data-pipeline-control="skip" data-pipeline-goal="${escapeHtml(goal.file)}" data-pipeline-step="${step.index}">Skip to step ${step.index + 1}</button>`)
-        + `<button class="desk-action" type="button" data-pipeline-control="end" data-pipeline-goal="${escapeHtml(goal.file)}" data-pipeline-step="${step.index}" title="End the run; the Goal stays open with its handovers">Stop work</button>`;
+      return `<button type="button" data-pipeline-control="restart" data-pipeline-goal="${escapeHtml(goal.file)}" data-pipeline-step="${step.index}">Restart step ${step.index}</button>`
+        + (last ? "" : `<button type="button" data-pipeline-control="skip" data-pipeline-goal="${escapeHtml(goal.file)}" data-pipeline-step="${step.index}">Skip to step ${step.index + 1}</button>`)
+        + `<button type="button" data-pipeline-control="end" data-pipeline-goal="${escapeHtml(goal.file)}" data-pipeline-step="${step.index}" title="End the run; the Goal stays open with its handovers">End work</button>`;
     }
     const idleLong = step.state === "waiting" && (step.stateDetail === "idle" || step.stateDetail === null) && step.idleSince && Date.now() - step.idleSince >= PIPELINE_SEND_AFTER_MS;
     if (idleLong && !last) {
-      return `<button class="desk-action" type="button" data-pipeline-control="send" data-pipeline-goal="${escapeHtml(goal.file)}" data-pipeline-step="${step.index}" title="Use the agent's last message as its handover">Send to step ${step.index + 1}</button>`;
+      return `<button type="button" data-pipeline-control="send" data-pipeline-goal="${escapeHtml(goal.file)}" data-pipeline-step="${step.index}" title="Use the agent's last message as its handover">Send to step ${step.index + 1}</button>`;
     }
     return "";
   }
@@ -1115,25 +1102,14 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     return max;
   }
 
-  /**
-   * The fixed `End · Won't do · Done` row. Every action stays visible and in
-   * the same place: one that does not apply is disabled, never removed, so
-   * Done never moves under the cursor (design-goal-cards Decision 4).
-   */
+  /** Valid lifecycle actions inside the Goal's contextual menu. */
   function deskGoalSecondaryActions(goal, liveSession) {
     const open = !["done", "dropped", "deferred"].includes(goal.status);
-    const buttons = [
-      liveSession
-        ? `<button class="desk-icon-action" type="button" data-stop-goal="${escapeHtml(goal.file)}" aria-label="End the agent run for ${escapeHtml(goal.title)}">End</button>`
-        : `<button class="desk-icon-action" type="button" disabled title="No live agent to end">End</button>`,
-      open
-        ? `<button class="desk-icon-action" type="button" data-wont-do-goal="${escapeHtml(goal.file)}" aria-label="Mark ${escapeHtml(goal.title)} won't do">Won't do</button>`
-        : `<button class="desk-icon-action" type="button" disabled title="This Goal is closed">Won't do</button>`,
-      open
-        ? `<button class="desk-icon-action complete" type="button" data-complete-goal="${escapeHtml(goal.file)}" aria-label="Mark ${escapeHtml(goal.title)} complete">Done</button>`
-        : `<button class="desk-icon-action complete" type="button" disabled title="This Goal is closed">Done</button>`,
-    ];
-    return `<span class="desk-secondary-actions">${buttons.join(`<i aria-hidden="true">·</i>`)}</span>`;
+    return [
+      liveSession ? `<button type="button" data-stop-goal="${escapeHtml(goal.file)}">End work</button>` : "",
+      open ? `<button type="button" data-wont-do-goal="${escapeHtml(goal.file)}">Won't do</button>` : "",
+      open ? `<button class="complete" type="button" data-complete-goal="${escapeHtml(goal.file)}">Done</button>` : "",
+    ].filter(Boolean).join("");
   }
 
   /**
@@ -1155,35 +1131,27 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const controls = pipeline ? deskPipelineControls(goal, pipeline) : "";
     const selectable = action.action === "Start agent";
     const selected = selectable && state.goalSelection.includes(goal.file);
-    const { facts, names, now } = deskGoalFactsData(goal);
+    const { facts, now } = deskGoalFactsData(goal);
+    const elapsed = deskGoalElapsed(facts, now);
     return `
       <article class="desk-goal ${subgoal ? "subgoal" : "root-goal"} ${action.kind}${selected ? " selected" : ""}" data-goal-anchor="${escapeHtml(goal.file)}">
         ${selectable ? `<label class="desk-select" title="Select for one shared agent"><input type="checkbox" data-check-goal="${escapeHtml(goal.file)}" ${selected ? "checked" : ""} aria-label="Select ${escapeHtml(goal.title)} for one shared agent"></label>` : ""}
         <div class="desk-goal-main">
-          <div class="desk-goal-line1">
-            <strong title="${escapeHtml(goal.title)}">${escapeHtml(goal.title)}</strong>
-            <span class="desk-goal-status">
-              ${action.stepLine ? `<small class="desk-step-line" title="${escapeHtml(action.stepTitle)}">${escapeHtml(action.stepLine)}</small><i aria-hidden="true">·</i>` : ""}
-              ${action.fill ? `<small class="desk-fill" title="Carried context">${escapeHtml(action.fill)}</small><i aria-hidden="true">·</i>` : ""}
-              <span class="desk-state ${action.kind}">${escapeHtml(action.state)}</span>
-            </span>
-          </div>
+          <div class="desk-goal-line1"><strong title="${escapeHtml(goal.title)}">${escapeHtml(goal.title)}</strong></div>
           <div class="desk-goal-line2">
-            <span class="desk-goal-bar-group">
-              ${deskGoalBar(goal, facts, now, maxElapsedMs)}
-              ${deskGoalElapsed(facts, now)}
-              ${deskGoalFacts(facts, names, now)}
-            </span>
+            <span class="desk-goal-status"><span class="desk-state ${action.kind}">${escapeHtml(action.state)}</span>${elapsed ? `<i aria-hidden="true">·</i>${elapsed}` : ""}</span>
             <span class="desk-goal-actions">
               ${action.action === "Start agent"
                 ? `<span class="desk-split"><button class="desk-action" type="button" ${route}>Start agent</button>${launchToggle("▾")}</span>`
                 : action.action
-                  ? (record ? `<span class="desk-split"><button class="desk-action" type="button" ${route}>${escapeHtml(action.action)}</button>${launchToggle("▾")}</span>` : `<button class="desk-action" type="button" ${route}>${escapeHtml(action.action)}</button>`)
-                  : record ? launchToggle("Steps ▾") : ""}
-              ${deskGoalSecondaryActions(goal, liveSession)}
+                  ? `<button class="desk-action" type="button" ${route}>${pipeline?.steps?.length > 1 ? `Open step ${pipeline.steps.find((step) => step.status === "running" || step.status === "stopped")?.index ?? pipeline.steps.find((step) => step.status === "pending")?.index ?? 1}` : "Open"}</button>`
+                  : ""}
+              <details class="desk-action-menu"><summary aria-label="Actions for ${escapeHtml(goal.title)}">▾</summary><div role="menu">
+                ${record ? `<button type="button" data-launch-for="${escapeHtml(goal.file)}">Steps and agents…</button>` : ""}
+                ${controls}${deskGoalSecondaryActions(goal, liveSession)}
+              </div></details>
             </span>
           </div>
-          ${controls ? `<div class="desk-goal-line3"><span class="desk-pipeline-controls">${controls}</span></div>` : ""}
         </div>
       </article>`;
   }
@@ -1253,42 +1221,40 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     }).join("")}</div>`;
   }
 
-  /** Renders one stable Area landmark with work and knowledge together. */
+  /** One compact Area section inside its controlling work group. */
+  function deskAreaWorkSection(part, maxElapsedMs = 0, { root = false } = {}) {
+    const { area, trees, descriptions } = part;
+    const count = trees.reduce((total, tree) => total + tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status)).length, 0);
+    if (!count && !descriptions.length) return "";
+    const workWord = state.workFilter === "inactive" ? "Planned work" : "Current work";
+    return `<section class="work-area-section${root ? " root" : ""}" data-work-area="${escapeHtml(area.path)}">
+      <header><h3><button type="button" data-open-area="${escapeHtml(area.path)}">${escapeHtml(humanName(area.name))}</button></h3><span>${workWord} ${count}</span>${deskSelectionBar(area.path, trees)}</header>
+      ${descriptions.map(deskDefinitionRow).join("")}
+      ${orderedGoalTrees(trees).map((tree) => deskGoalGroup(tree, maxElapsedMs)).join("")}
+    </section>`;
+  }
+
+  /** Renders one shallow brain-owned subject group with compact Area sections. */
   function deskAreaPanel(record, position, maxElapsedMs = 0) {
-    const { area, trees, descriptions, sections, programs } = record;
+    const { area, trees, descriptions, sections, programs, brain } = record;
     const allTrees = [...trees, ...sections.flatMap((section) => section.trees)];
     const allDescriptions = [...descriptions, ...sections.flatMap((section) => section.descriptions)];
     const status = deskAreaState(area.path, allTrees, allDescriptions);
-    const parentPath = area.path.split("/").slice(0, -1).join("/");
-    const parent = areaParts(area.path).slice(0, -1).join(" / ") || "Top level";
-    const openGoalCount = allTrees.reduce((count, tree) => count + tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status)).length, 0);
-    const goalSectionTitle = state.workFilter === "inactive" ? "Planned work" : "Current work";
+    const rootPart = { area, trees, descriptions };
+    const workSections = [deskAreaWorkSection(rootPart, maxElapsedMs, { root: true }), ...sections.map((section) => deskAreaWorkSection(section, maxElapsedMs))].filter(Boolean).join("");
     return `
-      <article class="area-desk-panel ${status.kind}" data-desk-area="${escapeHtml(area.path)}" style="--desk-order:${position}">
+      <article class="area-desk-panel work-group ${status.kind}" data-desk-area="${escapeHtml(area.path)}" style="--desk-order:${position}">
         <header class="area-desk-header">
-          <span class="area-desk-index" aria-hidden="true">${String(position + 1).padStart(2, "0")}</span>
-          <div>${parentPath ? `<small>${areaPath(parentPath)}</small>` : `<small>${escapeHtml(parent)}</small>`}<h2><button type="button" data-open-area="${escapeHtml(area.path)}" title="Open the ${escapeHtml(humanName(area.name))} Area map">${escapeHtml(humanName(area.name))}</button></h2></div>
+          <h2><button type="button" data-open-area="${escapeHtml(area.path)}">${escapeHtml(humanName(area.name))}</button></h2>
           <span class="area-desk-state ${status.kind}">${escapeHtml(status.label)}</span>
-          <button class="area-desk-what-happened" type="button" data-what-happened-for="${escapeHtml(area.path)}" aria-haspopup="dialog" aria-expanded="${state.whatHappened?.area === area.path}">What happened</button>
-          ${deskBrainButton(area.path)}
+          ${brain ? `<button class="work-group-brain" type="button" data-open-brain="${escapeHtml(brain.session ?? "")}">Open brain <span aria-hidden="true">→</span></button>` : ""}
         </header>
         ${areaForYouSection(area.path)}
-        <div class="area-desk-body">
-          ${descriptions.length ? `<section class="area-desk-section definitions"><div class="area-desk-section-heading"><h3>Dispatches</h3><span>${descriptions.length}</span></div>${descriptions.map(deskDefinitionRow).join("")}</section>` : ""}
-          <section class="area-desk-section goals">
-            <div class="area-desk-section-heading"><h3>${goalSectionTitle}</h3><span>${openGoalCount}</span>${deskSelectionBar(area.path, trees)}</div>
-            ${allTrees.length ? orderedGoalTrees(trees).map((tree) => deskGoalGroup(tree, maxElapsedMs)).join("") : `<p class="desk-empty">No active Goals.</p>`}
-            ${sections.flatMap((section) => orderedGoalTrees(section.trees).map((tree) => `<div class="desk-descendant-goal"><small>${escapeHtml(areaLabel(section.area.path))}</small>${deskGoalGroup(tree, maxElapsedMs)}</div>`)).join("")}
-          </section>
+        ${workSections ? `<div class="area-desk-body">${workSections}
           ${programs.length ? `<section class="area-desk-section programs">
             <div class="area-desk-section-heading"><h3>Programs</h3><span>${programs.length}</span></div>
             ${deskProgramShelf(programs)}
-          </section>` : ""}
-        </div>
-        <footer class="area-desk-actions">
-          <button type="button" data-describe-area="${escapeHtml(area.path)}">Describe work here</button>
-          <button type="button" data-open-area="${escapeHtml(area.path)}">Organize Area</button>
-        </footer>
+          </section>` : ""}</div>` : ""}
       </article>`;
   }
 
@@ -1326,7 +1292,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   function renderWork() {
     const query = state.query.trim();
     const records = filteredDeskAreas(query);
-    const maxElapsedMs = deskMaxElapsedMs(records, Date.now());
+    const maxElapsedMs = 0;
     const emptyCopy = query
       ? `No ${state.workFilter === "active" ? "current" : "planned"} work matches “${escapeHtml(query)}”.`
       : `No ${state.workFilter === "active" ? "work is active" : "unstarted Goals"}.`;
@@ -1338,6 +1304,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       <section class="work-page">
         <div class="work-tools">
           <button class="work-area-browser" type="button" data-show-areas>Browse Areas</button>
+          <button class="work-describe" type="button" data-describe-work>Describe work</button>
           <label class="search-field">
             <span class="search-icon" aria-hidden="true">⌕</span>
             <input id="work-search" type="search" value="${escapeHtml(state.query)}" placeholder="Filter work and Areas" autocomplete="off" />
@@ -1347,13 +1314,11 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
             ${[["active", "Current"], ["inactive", "Planned"]].map(([filter, label]) => `<button type="button" data-work-filter="${filter}" aria-pressed="${state.workFilter === filter}">${label}</button>`).join("")}
           </div>
         </div>
-        ${activeBrainsStrip()}
         ${content}
         ${launchPopover()}
-        ${whatHappenedOverlay()}
       </section>
     `;
   }
 
-  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, fallbackAsks, forgetVerdictLines, sendVerdict, replyAboutRow, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups, activeBrainsStrip, renderWork };
+  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, fallbackAsks, forgetVerdictLines, sendVerdict, replyAboutRow, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups, renderWork };
 }

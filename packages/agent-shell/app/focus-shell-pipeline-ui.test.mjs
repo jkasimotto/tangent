@@ -93,6 +93,7 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   };
   window.eval(shellBundle);
   await settle(window);
+  click(window, "[data-work-filter='inactive']");
   click(window, `[data-launch-for='${goal.file}']`);
   await settle(window);
   await settle(window);
@@ -136,24 +137,24 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
     { instruction: "Review the design and update it", continueFrom: 1, launch: { harness: "claude", model: "fable-5", effort: null } },
   ]);
 
-  // The desk shows step 1 of 2 with a chip per step; step 2 is not startable by hand.
+  // The desk compresses pipeline mechanics into Open plus one action menu.
   click(window, "#work-tab");
+  click(window, "[data-work-filter='active']");
   await settle(window);
   const row = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
   assert.match(row.querySelector(".desk-state").textContent, /^Working$/);
-  assert.equal(row.querySelector(".desk-step-line").textContent, "Step 1 of 2");
-  assert.match(row.querySelector(".desk-step-line").title, /Codex · Sol · High/);
+  assert.match(row.querySelector("[data-open-goal-run]").textContent, /Open step 1/);
   assert.equal(row.querySelector(".desk-step"), null, "the step chips left the card");
-  assert.equal(row.querySelector(".desk-goal-facts").textContent, "1 agent", "the step session counts as one agent");
+  assert.equal(row.querySelector(".desk-goal-facts"), null, "agent count is not repeated on the Goal");
   assert.equal(row.querySelector("[data-check-goal]"), null);
   assert.equal(row.querySelector("[data-pipeline-control]"), null);
-  assert.match(row.querySelector("[data-stop-goal]").textContent, /^End$/);
+  assert.match(row.querySelector("[data-stop-goal]").textContent, /^End work$/);
 
   // The running pipeline row keeps a ▾ that opens the step list: history is
   // fixed, the pending step edits in place, and a draft row appends.
   const stepsToggle = row.querySelector("[data-launch-for]");
   assert.ok(stepsToggle, "a running pipeline row offers its steps");
-  assert.equal(stepsToggle.title, "Add or edit steps");
+  assert.match(stepsToggle.textContent, /Steps and agents/);
   click(window, `[data-goal-anchor='${goal.file}'] [data-launch-for]`);
   await settle(window);
   await settle(window);
@@ -175,7 +176,7 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   assert.equal(popover(), null, "the popover closed after the append");
   assert.equal(posts.filter((entry) => entry.path === "/api/goals/start").length, 1, "an append never restarts the pipeline");
   const grownRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
-  assert.equal(grownRow.querySelector(".desk-step-line").textContent, "Step 1 of 3");
+  assert.match(grownRow.querySelector("[data-open-goal-run]").textContent, /Open step 1/);
 
   // The step session dies: the row offers Restart and Skip; Skip advances the line
   // and the latest handover shows under the chips.
@@ -186,7 +187,7 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   await settle(window);
   const stoppedRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
   assert.match(stoppedRow.querySelector(".desk-state").textContent, /^Stopped$/);
-  assert.equal(stoppedRow.querySelector(".desk-step-line").textContent, "Step 1 of 3");
+  assert.equal(stoppedRow.querySelector("[data-open-goal-run]"), null, "a dead session is not offered as Open");
   assert.equal(stoppedRow.querySelector("[data-stop-goal]"), null);
   assert.ok(stoppedRow.querySelector("[data-pipeline-control='restart']"));
   click(window, `[data-goal-anchor='${goal.file}'] [data-pipeline-control='skip']`);
@@ -200,15 +201,16 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   // Step 2 died too. Stop work ends the run: the row settles back to a plain
   // open Goal and no Restart lingers.
   assert.match(afterRow.querySelector(".desk-state").textContent, /^Stopped$/);
-  assert.equal(afterRow.querySelector(".desk-step-line").textContent, "Step 2 of 3");
+  assert.equal(afterRow.querySelector("[data-open-goal-run]"), null, "the stopped next step is controlled from the menu");
   const stopWork = afterRow.querySelector("[data-pipeline-control='end']");
   assert.ok(stopWork, "a stopped step offers Stop work");
-  assert.equal(stopWork.textContent, "Stop work");
+  assert.equal(stopWork.textContent, "End work");
   click(window, `[data-goal-anchor='${goal.file}'] [data-pipeline-control='end']`);
   await settle(window);
   await settle(window);
   const endPost = posts.filter((entry) => entry.path === "/api/pipelines/control").at(-1);
   assert.deepEqual(endPost.body, { goal: goal.file, action: "end", step: 2 });
+  click(window, "[data-work-filter='inactive']");
   const endedRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
   assert.match(endedRow.querySelector(".desk-state").textContent, /Ready/);
   assert.equal(endedRow.querySelector("[data-pipeline-control]"), null, "nothing offers Restart after Stop work");

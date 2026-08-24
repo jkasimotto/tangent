@@ -450,7 +450,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   await settle(window);
   assert.ok(posts.some((entry) => entry.path === "/api/programs/control" && entry.body.id === "process:otto/tangent:shell" && entry.body.action === "stop"));
   assert.equal(window.document.querySelector("#work-tab").getAttribute("aria-current"), "page");
-  assert.equal(window.document.querySelector("#areas-tab").hidden, false);
+  assert.equal(window.document.querySelector("#areas-tab").hidden, true);
   // Programs live inside the Area card now: the top bar carries no Programs tab.
   assert.equal(window.document.querySelector("#programs-button"), null);
 
@@ -460,17 +460,16 @@ test("the live shell restores context, defines work with an agent, and organizes
   click(window, "#back-button");
   assert.ok(window.document.querySelector(".work-page"), "the desk shows the Work page");
 
-  // The Goal row carries facts, not prose: no done condition, no Docs chip,
-  // and the three secondary actions always in the same place.
+  // The Goal row carries only decision-relevant facts and one action menu.
   const goalRow = window.document.querySelector(`[data-goal-anchor='${goalFile}']`);
   assert.doesNotMatch(goalRow.textContent, /One calm surface/, "the done condition left the card");
   assert.equal(goalRow.querySelector(".desk-docs-chip"), null, "the Docs chip left the card");
-  assert.match(goalRow.querySelector("[data-stop-goal]").textContent, /^End$/);
+  assert.match(goalRow.querySelector("[data-stop-goal]").textContent, /^End work$/);
   const handoffRow = window.document.querySelector(`[data-goal-anchor='${liveEditGoal.file}']`);
   assert.equal(handoffRow.querySelector(".desk-goal-handoff"), null, "the handoff line left the card");
   assert.match(handoffRow.querySelector(".desk-state").textContent, /Waiting/, "the state pill says the Goal waits for Julian; the duration moved off the card");
   assert.equal(handoffRow.querySelector("[data-stop-goal]"), null);
-  assert.equal(handoffRow.querySelector(".desk-secondary-actions button:disabled").textContent, "End", "a Goal with no agent still shows End, disabled");
+  assert.equal(handoffRow.querySelector("[data-stop-goal]"), null, "invalid actions are omitted instead of disabled");
   assert.equal(window.document.querySelector("[data-view-goal]"), null);
 
   click(window, `[data-stop-goal='${goalFile}']`);
@@ -510,7 +509,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   clearedSearch.value = "";
   clearedSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
 
-  click(window, "[data-describe-area]");
+  click(window, "[data-describe-work]");
   const describeArea = window.document.querySelector("#describe-area");
   describeArea.value = "otto/dnd";
   describeArea.dispatchEvent(new window.Event("input", { bubbles: true }));
@@ -540,7 +539,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.equal(window.localStorage.getItem("agent-shell.describe-session"), "dnd--describe-scene-flow");
 
   click(window, "#back-button");
-  assert.equal(window.document.querySelector("[data-describe-area]").textContent.trim(), "Describe work here");
+  assert.equal(window.document.querySelector("[data-describe-work]").textContent.trim(), "Describe work");
   const workDefinition = window.document.querySelector(".desk-definition");
   assert.ok(workDefinition, window.document.querySelector("#screen").textContent);
   assert.match(workDefinition.closest(".area-desk-panel").textContent, /D&D/);
@@ -550,7 +549,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   click(window, "[data-select-work-definition='dnd--describe-scene-flow']");
   assert.ok(window.document.querySelector(".agent-page"));
   click(window, "#back-button");
-  click(window, "[data-describe-area]");
+  click(window, "[data-describe-work]");
   assert.ok(window.document.querySelector("[data-describe-work-form]"));
   assert.equal(window.document.querySelector("#describe-work").value, "");
   const secondDescription = window.document.querySelector("#describe-work");
@@ -564,7 +563,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.match(window.document.querySelector("#screen").textContent, /Make the scene flow reliable/);
   assert.match(window.document.querySelector("#screen").textContent, /Define ladder authoring/);
   assert.match(window.document.querySelector("#screen").textContent, /Agent working/);
-  click(window, "[data-describe-area]");
+  click(window, "[data-describe-work]");
   const manualArea = window.document.querySelector("#describe-area");
   manualArea.value = "neara/hackathon/live-edit";
   manualArea.dispatchEvent(new window.Event("input", { bubbles: true }));
@@ -674,7 +673,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   // The Area card carries the Programs of the selected Area.
   click(window, "[data-select-area='otto/dnd']");
   const programSection = [...window.document.querySelectorAll(".area-content-section")].at(-1);
-  assert.match(programSection.textContent, /1 Program/);
+  assert.match(programSection.textContent, /Programs/);
   assert.match(programSection.textContent, /npm run dev:hmr/);
   assert.match(programSection.querySelector(".program-state").textContent, /Not running/);
   click(window, "[data-new-program]");
@@ -688,7 +687,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.match(window.document.querySelector("#screen").textContent, /npm run dev:hmr/);
   assert.match(window.document.querySelector("#screen").textContent, /Start/);
   assert.equal(window.document.querySelector("#back-button").textContent, "Areas");
-  assert.equal(window.document.querySelector("#areas-tab").getAttribute("aria-current"), "page");
+  assert.equal(window.document.querySelector("#areas-tab").hidden, true);
   click(window, "#back-button");
   assert.ok(window.document.querySelector("[data-select-program]"));
 

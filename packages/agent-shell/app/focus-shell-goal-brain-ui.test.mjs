@@ -19,6 +19,29 @@ test("Goal cards open their nearest live brain and preserve Work context", async
   const { window } = dom;
   window.setInterval = () => 0;
   window.HTMLCanvasElement.prototype.getContext = () => null;
+  let terminalFocusCount = 0;
+  window.Terminal = class {
+    constructor() {
+      this.cols = 80;
+      this.rows = 24;
+      this.loadAddon = () => {};
+      this.open = (host) => { this.element = host.appendChild(window.document.createElement("textarea")); };
+      this.focus = () => { terminalFocusCount += 1; this.element.focus(); };
+      this.onData = () => {};
+      this.onSelectionChange = () => ({});
+      this.hasSelection = () => false;
+      this.getSelection = () => "";
+      this.getSelectionPosition = () => null;
+      this.attachCustomKeyEventHandler = () => {};
+      this.dispose = () => {};
+    }
+  };
+  window.FitAddon = { FitAddon: class { constructor() { this.fit = () => {}; } } };
+  window.ResizeObserver = class { constructor() { this.observe = () => {}; this.disconnect = () => {}; } };
+  window.WebSocket = class {
+    static OPEN = 1;
+    constructor() { this.readyState = 0; this.close = () => {}; this.send = () => {}; }
+  };
 
   const parent = goal("otto/tangent", "parent", "Parent result");
   const subgoal = goal("otto/tangent", "subgoal", "Child step", { depth: 1, parent });
@@ -79,6 +102,8 @@ test("Goal cards open their nearest live brain and preserve Work context", async
   rootAction.focus();
   await user.keyboard("{Enter}");
   assert.ok(window.document.querySelector("#describe-work-terminal[data-session='tangent-brain']"));
+  assert.equal(terminalFocusCount, 1, "opening from a Goal card focuses the terminal");
+  assert.equal(window.document.activeElement.tagName, "TEXTAREA");
   click(window, "#back-button");
   assert.equal(window.document.querySelector("#work-search").value, "");
 

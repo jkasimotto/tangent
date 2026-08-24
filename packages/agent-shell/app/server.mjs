@@ -1609,8 +1609,13 @@ const messages = createMessageDelivery({
 const runtimeScheduler = createRuntimeScheduler([
   {
     name: "goal reconciliation", intervalMs: 10_000,
-    /** Reconciles durable work independently of browser requests. */
-    active: () => true,
+    /**
+     * Recovery guard: reconciliation currently performs unbounded synchronous
+     * work on the HTTP event loop. A pathological vault/session snapshot can
+     * otherwise block terminal streaming and blank every live brain pane.
+     * Keep it out of the web process until reconciliation has its own worker.
+     */
+    active: () => false,
     /** Reads one current session snapshot and repairs stale work bindings. */
     async run() {
       await reconcileGoals(await listSessions());
@@ -3236,9 +3241,9 @@ async function noteReplySubject(area, subject) {
 }
 
 /** Every brain record with its current session's live state, for the desk. */
-async function brainsView(sessions) {
+async function brainsView(sessions, { includeForJulian = true } = {}) {
   const byName = new Map(sessions.map((item) => [item.name, item]));
-  const index = await vaultIndex();
+  const index = includeForJulian ? await vaultIndex() : null;
   const records = await readAllBrains(BRAINS_ROOT);
   return Promise.all(records.map(async (record) => {
     const live = record.session ? byName.get(record.session) : null;
@@ -3250,7 +3255,7 @@ async function brainsView(sessions) {
       stateQuestion: live?.stateQuestion ?? "",
       idleSince: live?.idleSince ?? null,
       latestHandover: latestHandover(record),
-      forJulian: await forJulianItems(record, index),
+      forJulian: includeForJulian ? await forJulianItems(record, index) : [],
       requests: openBrainRequests(await readBrainRequests(BRAINS_ROOT, record.area)),
     };
   }));
@@ -3875,7 +3880,9 @@ const shellStateRoutes = createShellStateRoutes({
     const sessions = await listSessions();
     const [pipelines, brains, revisions, rebuild] = await Promise.all([
       pipelinesView(sessions).catch(() => []),
-      brainsView(sessions).catch(() => []),
+      // Keep terminal discovery independent from vault-wide document indexing.
+      // The richer brain route still computes For-Julian items on demand.
+      brainsView(sessions, { includeForJulian: false }).catch(() => []),
       commitChanges.status().catch(() => ({ deployedCommit: commitChanges.deployedCommit, currentCommit: commitChanges.deployedCommit, commits: [] })),
       rebuildOperations.current().catch(() => null),
     ]);

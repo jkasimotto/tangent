@@ -21,6 +21,7 @@ import { createGoalLaunchView } from "./goal-launch-view.js";
 import { createAgentDecisionView } from "./agent-decision-view.js";
 import { createDocumentReaderView } from "./document-reader-view.js";
 import { createDocumentReaderController } from "./document-reader-controller.js";
+import { mountMermaidDiagrams } from "./mermaid-diagram.js";
 import { createShellCoordinator } from "./shell-coordinator.js";
 import { bindShellEvents } from "./shell-event-bindings.js";
 import { createTerminalController } from "./terminal-controller.js";
@@ -219,6 +220,11 @@ function markdownToHtml(text, options = {}) {
       while (index < lines.length && !closeFence.test(stripComments(lines[index], index + lineOffset).trimEnd())) {
         body.push(stripComments(lines[index], index + lineOffset));
         index += 1;
+      }
+      if (lang.toLowerCase() === "mermaid") {
+        const source = escapeHtml(body.join("\n"));
+        html.push(`<div class="markdown-diagram" data-mermaid-diagram data-line="${fileLine}"><pre><code>${source}</code></pre></div>${tail}`);
+        continue;
       }
       const highlighter = codeHighlight;
       const language = highlighter?.normalizeLanguage(lang);
@@ -799,7 +805,10 @@ function renderScreen() {
 
   updateHeader();
   restoreScreenScroll(scrollPositions);
-  if (state.view === "document") bindDocumentReader();
+  if (state.view === "document") {
+    bindDocumentReader();
+    mountMermaidDiagrams(screen.querySelector(".document-content"));
+  }
   const host = screen.querySelector("[data-session]");
   if (host) mountTerminal(host, host.dataset.session);
   const mapHost = screen.querySelector("[data-area-map]");

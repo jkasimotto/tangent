@@ -20,7 +20,7 @@ test("process manifests validate their deliberately small schema", () => {
   assert.throws(() => parseProcessManifest("{", "/bad"), /invalid JSON/);
   assert.throws(() => parseProcessManifest('{"scripts":{"Bad name":"x"}}', "/bad"), /invalid program name/);
   assert.throws(() => parseProcessManifest('{"scripts":{"dev":""}}', "/bad"), /non-empty string/);
-  assert.throws(() => parseProcessManifest('{"scripts":{},"cwd":"x"}', "/bad"), /only "scripts" and "commands"/);
+  assert.throws(() => parseProcessManifest('{"scripts":{},"cwd":"x"}', "/bad"), /only "scripts", "commands", and "triggers"/);
 });
 
 test("process manifests can hold on-demand commands beside managed processes", () => {

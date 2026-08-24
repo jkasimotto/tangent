@@ -78,6 +78,8 @@ summary:focus-visible {
 .bar-button:hover { background: var(--surface-raised); color: var(--text); }
 .back-button::before { content: ""; }
 .back-button.has-back::before { content: "←"; margin-right: 8px; }
+.back-button > span, .back-button > small { display: block; }
+.back-button > small { color: var(--quiet); font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; line-height: 1.2; text-align: left; }
 .find-button { justify-self: end; }
 .find-button kbd { margin-left: 8px; color: var(--quiet); font-family: inherit; font-size: 12px; font-weight: 500; }
 .back-button kbd { margin-left: 8px; color: var(--quiet); font-family: inherit; font-size: 12px; font-weight: 500; }

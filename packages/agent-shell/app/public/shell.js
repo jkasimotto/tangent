@@ -631,7 +631,7 @@ function updateHeader() {
   const program = currentProgram();
   const isTopLevel = isWork || isAreas || isPrompts;
   backButton.classList.toggle("has-back", !isTopLevel);
-  backButton.textContent = isTopLevel
+  const backLabel = isTopLevel
     ? "Agent Shell"
     : isCreate
       ? state.createReturnView === "areas" ? "Areas" : "Work"
@@ -648,6 +648,10 @@ function updateHeader() {
         : state.view === "document"
           ? returnPointLabel(state.documentReturn, { brain: returnsToBrain() })
           : "Agent";
+  const deployedRevision = String(state.deployedCommit || "").slice(0, 7);
+  backButton.innerHTML = isTopLevel && deployedRevision
+    ? `<span>Agent Shell</span><small>[${escapeHtml(deployedRevision)}]</small>`
+    : escapeHtml(backLabel);
   // The reader is the one view Esc leaves, so its Back button prints the key.
   if (state.view === "document") backButton.innerHTML = `${escapeHtml(backButton.textContent)} <kbd>esc</kbd>`;
   barContext.textContent = isCreate

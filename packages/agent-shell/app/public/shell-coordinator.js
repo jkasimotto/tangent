@@ -1,13 +1,27 @@
 import { escapeHtml } from "./text-format.js";
 
-/** Creates this browser boundary with explicit shell-owned dependencies. */
-export function createShellInteractions({ state, api, post, paint, refresh, showToast, screen, backButton, shellMenu, goToLayer, goToInput, goToList, modalLayer, modalKicker, modalTitle, modalCopy, modalField, modalActions, buildGoToRows, goToCore, areaLabel, humanName, goalByFile, currentGoal, sessionForGoal, describeWorkSession, stopSession, currentProgram, programById, programIsLive, programAreaDirectory, preferredArea, allAreas, areaParent, launchOptionsFor, launchSelection, launchRequestFields, syncLaunchDraft, commitActiveStep, pipelineForGoal, pipelineRecordForGoal, brainForAreaCard, brainStateLabel, agentReference, rememberScreenScroll, restoreReturnPoint, captureReturnPoint, restoreReturnScroll, disposeTerminal, mountTerminal, saveDescribeDraft, saveDescribeSession, syncDescribeDraft, openDocument, refreshDocument, rememberDocumentPosition, DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET }) {
-  const agentName = humanName.agentName;
-  const describeWorkSessions = humanName.describeWorkSessions;
-  const describeLaunchArea = humanName.describeLaunchArea;
-  const { areas, revealArea, selectedArea, updateStatusPill } = humanName;
-  const documentGoal = humanName.documentGoal;
-  const { launchStepDraft, launchStepRequest, launchDraftRows } = commitActiveStep;
+/** Coordinates navigation between capability-owned browser features. */
+export function createShellCoordinator({ shell, chrome, work, areasFeature, programs, launch, documents }) {
+  const { state, api, post, paint, refresh, showToast } = shell;
+  const {
+    screen, backButton, shellMenu, goToLayer, goToInput, goToList, modalLayer, modalKicker, modalTitle, modalCopy,
+    modalField, modalActions, buildGoToRows, goToCore, rememberScreenScroll, restoreReturnPoint, captureReturnPoint,
+    restoreReturnScroll, disposeTerminal, mountTerminal, updateStatusPill,
+  } = chrome;
+  const {
+    areaLabel, humanName, agentName, goalByFile, currentGoal, sessionForGoal, describeWorkSession,
+    describeWorkSessions, stopSession, brainForAreaCard, brainStateLabel, agentReference, saveDescribeDraft,
+    saveDescribeSession, describeLaunchArea,
+  } = work;
+  const { allAreas, areaParent, preferredArea, areas, revealArea, selectedArea } = areasFeature;
+  const { currentProgram, programById, programIsLive, programAreaDirectory } = programs;
+  const {
+    launchOptionsFor, launchSelection, launchRequestFields, syncLaunchDraft, commitActiveStep, launchStepDraft,
+    launchStepRequest, launchDraftRows, pipelineForGoal, pipelineRecordForGoal, syncDescribeDraft,
+    DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
+  } = launch;
+  const { openDocument, refreshDocument, rememberDocumentPosition, documentGoal } = documents;
+  let modalConfirm = null;
 
   /** Opens, closes, or toggles the shell menu. */
   function toggleShellMenu(open = shellMenu.hidden) {

@@ -1,8 +1,15 @@
 import { currentBriefFields, storyEntries } from "./goal-narrative.js";
 import { clip, escapeHtml } from "./text-format.js";
 
-/** Creates the goal launch view product boundary. */
-export function createGoalLaunchView({ state, api, post, paint, showToast, allAreas, areaLabel, areaPath, humanName, agentName, describeLaunchArea, goalByFile, currentGoal, sessionForGoal, brainForAreaCard, brainStateLabel, brainKind, launchPopover, DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET }) {
+/** Creates Goal launch and creation from shell, Area, Work, and overlay ports. */
+export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
+  const { state, api, post, paint, showToast } = shell;
+  const { allAreas, areaLabel, areaPath } = areaModel;
+  const {
+    humanName, agentName, describeLaunchArea, goalByFile, currentGoal, sessionForGoal, brainForAreaCard,
+    brainStateLabel, brainKind,
+  } = work;
+  const { launchPopover, DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET } = overlays;
   /** Returns the Areas that can own newly created work. */
   function selectableAreas() {
     return (state.vault?.areas ?? [])

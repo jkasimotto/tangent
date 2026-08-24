@@ -4,8 +4,16 @@ import askCore from "./ask-core.js";
 import goToCore from "./go-to-core.js";
 import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
 
-/** Creates the work desk view product boundary. */
-export function createWorkDeskView({ state, api, post, paint, refresh, showToast, captureReturnPoint, saveDescribeSession, launchSelection, launchRequestFields, syncLaunchDraft, preferredArea, launchOptionsFor, pipelineForGoal, pipelineRecordForGoal, areas, orderedGoalTrees, programRowControl, programIsLive, programState, localMoment, shortcutKbd, launchPopover, whatHappenedOverlay, DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET }) {
+/** Creates the work desk from shell, launch, Area, and Program capabilities. */
+export function createWorkDeskView({ shell, launch, areaModel, programs, chrome }) {
+  const { state, api, post, paint, refresh, showToast, captureReturnPoint, saveDescribeSession } = shell;
+  const {
+    launchSelection, launchRequestFields, syncLaunchDraft, preferredArea, launchOptionsFor, pipelineForGoal,
+    pipelineRecordForGoal, launchPopover, DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
+  } = launch;
+  const { areas, orderedGoalTrees } = areaModel;
+  const { programRowControl, programIsLive, programState, localMoment } = programs;
+  const { shortcutKbd, whatHappenedOverlay } = chrome;
   /** Returns every Goal represented in the current desk projection. */
   function allGoals() {
     const byFile = new Map();

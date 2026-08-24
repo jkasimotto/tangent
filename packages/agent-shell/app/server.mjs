@@ -12,7 +12,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { doneCascade } from "./goal-cascade.mjs";
 import { noteResource } from "./area-agent-command.mjs";
-import { harnessEfforts, harnessModels, inheritedLaunch, modelEfforts, parseHarnessRegistry, resolveLaunch, upsertEnvironmentLaunch, upsertHarnessRegistry, validateHarnessRegistry } from "./launch-environment.mjs";
+import { harnessEfforts, harnessModels, modelEfforts } from "./launch-environment.mjs";
+import { createLaunchCatalog } from "./launch-catalog.mjs";
 import { createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
 import { commandSession, programsSnapshot, saveLocalProgram } from "./programs.mjs";
 import { documentHash, markdownTitle, safeMarkdownPath, wikiLinks } from "./vault-documents.mjs";
@@ -23,11 +24,11 @@ import whatHappenedCore from "./public/what-happened-core.js";
 import { createVaultGitReader, fileTimes } from "./area-map.mjs";
 import { createFingerprintCache } from "./vault-index-cache.mjs";
 
-import { classifyStaticPane, parseContextFill, stabilizeStaticPane, staticSinceOf } from "./pane-state.mjs";
+import { createPaneObserver } from "./pane-observer.mjs";
 import { appendSteps, currentStep, endPipeline, goalBindingGoneFromSnapshot, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, readAllPipelines, readPipeline, stepGoneFromSnapshot, validateSteps, writePipeline } from "./pipeline-record.mjs";
 import { newContinuationRecord, readAllContinuations, readContinuation, writeContinuation } from "./continuation-record.mjs";
 import { contextReminderText, contextRepeatText, continuationSection, continuationSessionName, reminderDue } from "./context-handover.mjs";
-import { deliveryDecision, messageBanner, normalizeMessage } from "./agent-messages.mjs";
+import { normalizeMessage } from "./agent-messages.mjs";
 import { beginGeneration, brainForArea, brainRecordForArea, brainSessionName, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, recordHandover, validateInstruction, writeBrain } from "./brain-record.mjs";
 import { appendNotice, inboxesForBrain, markDelivered, mergeNotices, noticeBlock, noticeDigest, readAllInboxes, readInbox, writeInbox } from "./brain-inbox.mjs";
 import { forJulianSectionText, parseForJulian, removeForJulianLine, restoreForJulianLine, unparsedForJulianLines } from "./for-julian.mjs";
@@ -56,6 +57,7 @@ import { changeGoalDependencies, dependencyPromptLines, dependencySlugs, project
 import { createLaunchRoutes } from "./launch-routes.mjs";
 import { createWorkMutationRoutes } from "./work-mutation-routes.mjs";
 import { recordActionTelemetry } from "./action-telemetry.mjs";
+import { createMessageDelivery } from "./message-delivery.mjs";
 import { createRebuildOperations, readRebuildOperation, rebuildIsActive } from "./rebuild-operation.mjs";
 import { readJson, sendJson } from "./http-json.mjs";
 
@@ -86,60 +88,6 @@ const stateEvents = createStateEvents();
 let agentCmd = process.env.AGENT_CMD ?? "claude";
 
 /**
- * Reads the machine-wide harness registry from the vault root Document
- * (~/.tangent/trees/harnesses.md). An empty registry is valid: launches
- * then rely on legacy `- Agent:` lines and the profile fallback.
- */
-async function harnessRegistry() {
-  const text = await readFile(path.join(TREES_ROOT, "harnesses.md"), "utf8").catch(() => "");
-  return parseHarnessRegistry(text) ?? { modelSets: {}, effortSets: {}, harnesses: [] };
-}
-
-/**
- * The default launch for one Area, resolved through the harness registry
- * (design contract: design-goal-launch-environments). The nearest Area
- * environment default wins, then a legacy `- Agent:` line, then the profile
- * fallback (otto/** runs claude-otto, other Areas plain claude). Returns
- * { command, label, harness, model, source } or { error } — a broken
- * declaration blocks the launch instead of substituting another command.
- */
-async function launchForArea(area) {
-  const registry = await harnessRegistry();
-  if (registry.error) return { error: registry.error };
-  return inheritedLaunch(area, areaNote, registry);
-}
-
-/**
- * The launch command a Goal session pre-types for the user to accept or
- * edit. It is a suggestion, not a policy: editing the line is how one Run
- * uses any other harness or model. The switchable agentCmd only ever
- * applies to the orchestrator session.
- */
-async function agentCmdForArea(area) {
-  const launch = await launchForArea(area);
-  if (launch.error) throw new Error(launch.error);
-  return launch.command;
-}
-
-/**
- * Resolves an explicit per-run launch choice from a request body: an exact
- * edited `command` wins, then a `choice: { harness, model }` registry
- * reference. (`launch` stays the existing press-Enter boolean.) Empty
- * fields mean "use the Area default". Errors name the id that failed.
- */
-async function requestedLaunch(body) {
-  if (typeof body.command === "string" && body.command.trim()) {
-    return { command: body.command.trim(), label: "Edited command" };
-  }
-  if (body.choice && typeof body.choice === "object") {
-    const registry = await harnessRegistry();
-    if (registry.error) return { error: registry.error };
-    return resolveLaunch(registry, body.choice);
-  }
-  return { command: "", label: "" };
-}
-
-/**
  * claude persists the last /model choice across sessions, so a fresh
  * session silently reopens on whatever model was used last (fable, say).
  * Pin claude launches to the default model unless the command already
@@ -156,6 +104,16 @@ const TREES_ROOT = process.env.TREES_ROOT ?? path.join(os.homedir(), ".tangent",
 /** Runs one Git command for the vault repository boundary. */
 const runRepositoryGit = (args) => execFileAsync("git", args);
 const vaultRepository = createVaultRepository({ root: TREES_ROOT, runGit: runRepositoryGit });
+const launchCatalog = createLaunchCatalog({
+  root: TREES_ROOT,
+  readAreaNote: areaNote,
+  repository: vaultRepository,
+  commit: vaultCommit,
+  /** Stages exactly one launch-owned vault file before its provenance commit. */
+  stage: (file) => execFileAsync("git", ["-C", TREES_ROOT, "add", "--", file]).catch(() => {}),
+  areaFile: areaNoteFile,
+  emptyAreaNote,
+});
 /** Per-file git times and agent runs for the vault, cached by HEAD (design-area-map Decision 9, design-goal-cards Decision 1). */
 const vaultGit = createVaultGitReader(TREES_ROOT);
 /**
@@ -242,7 +200,7 @@ async function listSessions() {
           isChat: name === CHAT_SESSION,
         };
       });
-    return await withAgentStates(await withGoalInfo(sessions));
+    return await paneObserver.enrich(await withGoalInfo(sessions));
   } catch {
     return []; // no tmux server running yet
   }
@@ -274,118 +232,11 @@ async function listProgramSessions() {
 // covers every harness without hooks; a later refinement can split "waiting"
 // into idle-at-prompt vs blocked-on-question with a cheap LLM call.
 const SHELL_CMDS = new Set(["zsh", "bash", "fish", "sh", "dash", "tcsh", "nu"]);
-const MIN_SAMPLE_MS = 1200; // a repaint window; closer polls can't show a diff
-const WAIT_STABLE_MS = 8_000; // generic static panes must remain quiet before demanding attention
-const paneSamples = new Map(); // session name -> { hash, at, state }
-
-/**
- * Hashes the visible pane content of a session's active pane, the raw signal
- * for the working/waiting screen diff.
- */
-async function screenHash(name) {
-  // "=name:" is an exact session match; capture-pane rejects bare "=name".
-  const { stdout } = await execFileAsync("tmux", ["capture-pane", "-p", "-t", "=" + name + ":"]);
-  return createHash("sha1").update(stdout).digest("hex");
-}
-
-/**
- * The cursor position of a session's active pane, for the empty-composer
- * test. Reads are passive; a failure degrades to (0,0), which classifies as
- * plain waiting rather than idle, so delivery stays conservative.
- */
-async function paneCursor(name) {
-  try {
-    const { stdout } = await execFileAsync("tmux", ["display-message", "-p", "-t", "=" + name + ":", "#{cursor_x} #{cursor_y}"]);
-    const [x, y] = stdout.trim().split(/\s+/).map(Number);
-    return { cursorX: Number.isFinite(x) ? x : 0, cursorY: Number.isFinite(y) ? y : 0 };
-  } catch {
-    return { cursorX: 0, cursorY: 0 };
-  }
-}
-
-/**
- * Classifies one session by comparing the pane hash against the previous
- * poll's sample in `paneSamples`. Polls closer than MIN_SAMPLE_MS return the
- * cached sample, so extra clients cannot mask repaints. A static screen is
- * refined by pane-state.mjs into detail: "decision" (a dialog waits on a
- * choice, with its question), "idle" (empty composer), "draft" (unsent
- * composer text), or null (static but unrecognized). The wire state stays
- * working|waiting|shell; detail rides beside it as stateDetail.
- */
-async function classifyState(name, command, now) {
-  const prev = paneSamples.get(name);
-  if (SHELL_CMDS.has(command)) {
-    const shellSince = prev?.state === "shell" ? prev.staticSince ?? now : now;
-    paneSamples.set(name, { hash: "", at: now, state: "shell", detail: null, question: "", staticSince: shellSince, context: null });
-    return { state: "shell", detail: null, question: "", idleSince: null, waitingSince: shellSince, context: null };
-  }
-  if (prev && now - prev.at < MIN_SAMPLE_MS) {
-    const cachedWait = prev.state === "waiting" || prev.state === "shell" ? prev.staticSince ?? null : null;
-    return { state: prev.state, detail: prev.detail ?? null, question: prev.question ?? "", idleSince: prev.idleSince ?? null, waitingSince: cachedWait, context: prev.context ?? null };
-  }
-  const { stdout: text } = await execFileAsync("tmux", ["capture-pane", "-p", "-t", "=" + name + ":"]);
-  const hash = createHash("sha1").update(text).digest("hex");
-  const context = parseContextFill(text);
-  let state = !prev || prev.state === "shell" || hash !== prev.hash ? "working" : "waiting";
-  let detail = null;
-  let question = "";
-  let quietSince = null;
-  if (state === "waiting") {
-    const classified = classifyStaticPane({ text, ...(await paneCursor(name)) });
-    const stable = stabilizeStaticPane({
-      classification: classified,
-      quietSince: prev?.hash === hash ? prev?.quietSince : null,
-      now,
-      thresholdMs: WAIT_STABLE_MS,
-    });
-    const refined = stable.classification;
-    quietSince = stable.quietSince;
-    if (refined.kind === "working") state = "working";
-    else if (refined.kind !== "waiting") {
-      detail = refined.kind;
-      question = refined.question ?? "";
-    }
-  }
-  // idleSince: when the pane first went quiet at an empty composer, kept
-  // while it stays so; the desk uses it to offer "send on" after a while.
-  const idleSince = state === "waiting" && (detail === "idle" || detail === null) ? (prev?.idleSince ?? now) : null;
-  // staticSince: when the pane stopped changing, whatever the detail. It is
-  // the start of "waiting for you" on the Goal card; quietSince covers only
-  // the unrecognized static pane and its stable-wait delay.
-  const staticSince = staticSinceOf({ previous: prev, hash, now });
-  paneSamples.set(name, { hash, at: now, state, detail, question, idleSince, quietSince, staticSince, context });
-  return { state, detail, question, idleSince, waitingSince: state === "waiting" ? staticSince : null, context };
-}
-
-/**
- * Attaches a `state` field to each session for the sidebar chips and drops
- * samples of sessions that no longer exist. Capture failures degrade to
- * state null rather than hiding the session.
- *
- * Program sessions skip the screen diff.
- * skip the screen diff: a quiet server would read as a waiting agent. The
- * pane command is signal enough — a shell means the command exited.
- */
-async function withAgentStates(sessions) {
-  const now = Date.now();
-  const out = await Promise.all(
-    sessions.map(async (s) => {
-      if (s.kind === "process" || s.kind === "service" || s.kind === "command") {
-        return { ...s, state: SHELL_CMDS.has(s.command) ? "stopped" : "service", stateDetail: null, stateQuestion: "", context: null };
-      }
-      try {
-        const { state, detail, question, idleSince, waitingSince, context } = await classifyState(s.name, s.command, now);
-        return { ...s, state, stateDetail: detail, stateQuestion: question, idleSince: idleSince ?? null, waitingSince: waitingSince ?? null, context: context ?? null };
-      } catch {
-        return { ...s, state: null, stateDetail: null, stateQuestion: "", context: null };
-      }
-    })
-  );
-  for (const name of paneSamples.keys()) {
-    if (!sessions.some((s) => s.name === name)) paneSamples.delete(name);
-  }
-  return out;
-}
+const paneObserver = createPaneObserver({
+  /** Runs one tmux observation command. */
+  runTmux: (args) => execFileAsync("tmux", args),
+  shellCommands: SHELL_CMDS,
+});
 
 /**
  * Reads one labelled line from an Area note's `## Resources` section, the
@@ -1554,7 +1405,7 @@ async function waitForHarnessReady(session) {
     if (SHELL_CMDS.has(await paneCommand(session))) return false;
     let hash;
     try {
-      hash = await screenHash(session);
+      hash = await paneObserver.hash(session);
     } catch {
       return false; // session gone
     }
@@ -1726,67 +1577,15 @@ async function rearmPersistedPrompts() {
 
 const MESSAGE_POLL_MS = 2000;
 const MESSAGE_LOG = process.env.AGENT_MESSAGE_LOG ?? path.join(os.homedir(), ".tangent", "agent-shell-messages.jsonl");
-const messageQueues = new Map(); // target session -> [{ from, area, text, queuedAt }]
-
-/** Appends one messaging event to the audit log; failures only log. */
-async function logAgentMessage(entry) {
-  try {
-    await appendFile(MESSAGE_LOG, JSON.stringify({ at: new Date().toISOString(), ...entry }) + "\n");
-  } catch (err) {
-    console.error("agent message log:", err.message ?? err);
-  }
-}
-
-/** Types one stamped message into its target composer and audits the result. */
-async function deliverAgentMessage(target, entry) {
-  // A context reminder is rebuilt at delivery time (entry.render), so the
-  // fill number Julian's agent sees is current, not the one at queue time.
-  const body = typeof entry.render === "function" ? entry.render() ?? entry.text : entry.text;
-  const text = entry.banner === false ? body : messageBanner(entry.from, entry.area, body);
-  const arrived = await typePromptWhenReady(target, text, true, entry.banner === false ? "pipeline step" : "agent message");
-  await logAgentMessage({ event: arrived ? "delivered" : "not delivered", to: target, from: entry.from, area: entry.area, text: body, banner: entry.banner !== false, queuedAt: entry.queuedAt });
-  // A brain notice is persisted before it is queued. It counts as read only
-  // here, after the whole text showed in the composer. Otherwise it stays
-  // unread on disk and the next sweep queues it again.
-  if (!entry.notices?.length) return;
-  if (arrived) await markBrainNoticesDelivered(entry.notices, target, entry.generation ?? null);
-  else releaseBrainNotices(entry.notices);
-}
-
-/**
- * One queue pass: delivers to every queued target whose composer is empty,
- * and drops (with an audit entry) messages whose target session died.
- * At-most-once by design; there is no retry beyond the queue itself.
- */
-async function tickMessageQueues() {
-  if (!messageQueues.size) return;
-  const sessions = await listSessions();
-  for (const [target, queue] of [...messageQueues.entries()]) {
-    const live = sessions.find((session) => session.name === target);
-    if (!live) {
-      messageQueues.delete(target);
-      for (const entry of queue) {
-        await logAgentMessage({ event: "dropped", to: target, from: entry.from, text: entry.text, reason: "session ended" });
-        // A brain notice is not lost with its queue entry: it stays unread on
-        // disk, and the next generation or the next sweep picks it up.
-        if (entry.notices?.length) releaseBrainNotices(entry.notices);
-      }
-      continue;
-    }
-    if (deliveryDecision(live).action !== "deliver") continue;
-    const entry = queue.shift();
-    if (!queue.length) messageQueues.delete(target);
-    await deliverAgentMessage(target, entry);
-  }
-}
-
-/** Queues one message and keeps the delivery timer running while any wait. */
-function queueAgentMessage(target, entry) {
-  const queue = messageQueues.get(target) ?? [];
-  queue.push(entry);
-  messageQueues.set(target, queue);
-  runtimeScheduler.wake();
-}
+const messages = createMessageDelivery({
+  file: MESSAGE_LOG,
+  sessions: listSessions,
+  /** Delivers a complete message through the prompt transport. */
+  deliverText: (target, text, label) => typePromptWhenReady(target, text, true, label),
+  notices: { delivered: markBrainNoticesDelivered, released: releaseBrainNotices },
+  /** The scheduler is constructed below; delivery begins only after this callback runs. */
+  wake: () => runtimeScheduler.wake(),
+});
 
 const runtimeScheduler = createRuntimeScheduler([
   {
@@ -1807,8 +1606,8 @@ const runtimeScheduler = createRuntimeScheduler([
   {
     name: "message queue", intervalMs: MESSAGE_POLL_MS,
     /** Runs only while at least one target has queued messages. */
-    active: () => messageQueues.size > 0,
-    run: tickMessageQueues,
+    active: messages.active,
+    run: messages.tick,
   },
 ]);
 
@@ -1822,7 +1621,7 @@ async function primeGoalSession(session, area, phase = "execute", { launch = fal
   const { stdout } = await execFileAsync("tmux", ["display-message", "-p", "-t", "=" + session + ":", "#{pane_current_command}"]);
   if (!SHELL_CMDS.has(stdout.trim())) return false;
   await armSession(session, phase, launch, document, prompt, extraFiles, onTyped);
-  await typeInto(session, withDefaultModel(command || (await agentCmdForArea(area))), false);
+  await typeInto(session, withDefaultModel(command || (await launchCatalog.commandForArea(area))), false);
   if (launch) {
     await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "Enter"]);
     await sleep(250);
@@ -1835,7 +1634,7 @@ async function primeDescribeWorkSession(session, area, prompt, { launch = true, 
   const { stdout } = await execFileAsync("tmux", ["display-message", "-p", "-t", "=" + session + ":", "#{pane_current_command}"]);
   if (!SHELL_CMDS.has(stdout.trim())) return false;
   await armSession(session, "define", launch, "", prompt, [], onTyped);
-  await typeInto(session, withDefaultModel(command || (await agentCmdForArea(area))), false);
+  await typeInto(session, withDefaultModel(command || (await launchCatalog.commandForArea(area))), false);
   if (launch) {
     await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "Enter"]);
     await sleep(250);
@@ -1905,7 +1704,7 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
   // Resolve the launch before any tmux action: a declaration that does not
   // resolve blocks the start and names itself, it never gets substituted.
   if (!command) {
-    const inherited = await launchForArea(area);
+    const inherited = await launchCatalog.forArea(area);
     if (inherited.error) return { status: 409, error: inherited.error };
     command = inherited.command;
     if (!label && inherited.label) label = inherited.label;
@@ -2158,7 +1957,7 @@ function pipelineStepSessionName(record, index, liveNames) {
 /** Resolves one step's launch to an exact command, or returns the error. */
 async function resolveStepLaunch(step) {
   if (!step.launch) return step.command ? { command: step.command, label: step.label || "Edited command" } : { error: `step ${step.index}: no command` };
-  const registry = await harnessRegistry();
+  const registry = await launchCatalog.registry();
   if (registry.error) return { error: registry.error };
   return resolveLaunch(registry, step.launch);
 }
@@ -2171,7 +1970,7 @@ async function resolveStepLaunch(step) {
  * arguments, so callers skip rather than compare against a guess.
  */
 async function areaHarnessId(area) {
-  const launch = await launchForArea(area);
+  const launch = await launchCatalog.forArea(area);
   if (launch.error) return null;
   if (launch.harness) return launch.harness;
   const command = String(launch.command ?? "").trim();
@@ -2215,7 +2014,7 @@ async function startPipelineStep(record, index) {
     const goals = await readAreaGoals(record.area);
     const extras = extraSlugs.map((extraSlug) => goals.find((goal) => goal.slug === extraSlug)).filter(Boolean);
     const prompt = await pipelineStepPrompt(record.area, o, record, index, extras, source.session);
-    queueAgentMessage(source.session, { from: "tangent", area: record.area, text: prompt, banner: false, queuedAt: new Date().toISOString() });
+    messages.queue(source.session, { from: "tangent", area: record.area, text: prompt, banner: false, queuedAt: new Date().toISOString() });
     await execFileAsync("tmux", ["set-option", "-t", "=" + source.session + ":", "@tangent_step", String(index)]).catch(() => {});
     if (o.status !== "active" || o.session !== source.session) {
       await writeGoalBinding(o.file, { status: "active", session: source.session });
@@ -2334,21 +2133,6 @@ async function swappedAwayNaming(sessionName) {
   return null;
 }
 
-/**
- * Moves a session's queued messages to a fresh name, dropping any
- * context-reminder entry: a fresh session does not need the old reminder,
- * and its own fill will earn it a fresh one if it also fills up (swap
- * contract rule 2, design-worker-context-handover). A brain answer in
- * flight survives the move.
- */
-function retargetMessageQueue(oldName, newName) {
-  const queue = messageQueues.get(oldName);
-  if (!queue) return;
-  messageQueues.delete(oldName);
-  const kept = queue.filter((entry) => entry.kind !== "context-reminder");
-  if (kept.length) messageQueues.set(newName, [...(messageQueues.get(newName) ?? []), ...kept]);
-}
-
 /** The carried-context clause for a continuation notice: exact tokens and percent, or "unknown carried context". */
 function carriedContextClause(fill) {
   if (!fill) return "unknown carried context";
@@ -2421,7 +2205,7 @@ async function continueWorkerSession(sessionName, text) {
       save: (value) => writePipeline(PIPELINES_ROOT, value),
     });
     await execution.continueTo(entry);
-    retargetMessageQueue(sessionName, next);
+    messages.retarget(sessionName, next);
 
     const byFile = await goalsByFile();
     const o = byFile.get(record.goal);
@@ -2441,9 +2225,9 @@ async function continueWorkerSession(sessionName, text) {
       }
       execFileAsync("tmux", ["kill-session", "-t", "=" + next]).catch(() => {});
       execution.failContinuation(entry).catch(() => {});
-      retargetMessageQueue(next, sessionName);
+      messages.retarget(next, sessionName);
       if (o) writeGoalBinding(o.file, { status: "active", session: sessionName }).then(() => vaultCommit([o.file], `update: ${record.area} goal ${record.slug} continuation failed, back to ${sessionName}`, record.area, sessionName)).catch(() => {});
-      queueAgentMessage(sessionName, { from: "tangent", area: record.area, text: `Continuation recorded, but the fresh session could not start: the prompt never arrived. You still work this step.`, queuedAt: new Date().toISOString() });
+      messages.queue(sessionName, { from: "tangent", area: record.area, text: `Continuation recorded, but the fresh session could not start: the prompt never arrived. You still work this step.`, queuedAt: new Date().toISOString() });
     };
     const result = await spawnGoalSession(record.area, record.slug, {
       phase: "execute", launch: true, command: step.command, label: step.label, extraSlugs,
@@ -2451,8 +2235,8 @@ async function continueWorkerSession(sessionName, text) {
     });
     if (result.status !== 200) {
       await execution.failContinuation(entry);
-      retargetMessageQueue(next, sessionName);
-      queueAgentMessage(sessionName, { from: "tangent", area: record.area, text: `Continuation recorded, but the fresh session could not start: ${result.error}. You still work this step.`, queuedAt: new Date().toISOString() });
+      messages.retarget(next, sessionName);
+      messages.queue(sessionName, { from: "tangent", area: record.area, text: `Continuation recorded, but the fresh session could not start: ${result.error}. You still work this step.`, queuedAt: new Date().toISOString() });
       return { status: result.status, error: result.error };
     }
     return { status: 200, session: next };
@@ -2472,7 +2256,7 @@ async function continueWorkerSession(sessionName, text) {
     save: (value) => writeContinuation(CONTINUATIONS_ROOT, value),
   });
   await execution.continueTo(entry);
-  retargetMessageQueue(sessionName, next);
+  messages.retarget(sessionName, next);
 
   let settled = false;
   /** Settles a solo Goal continuation after its replacement prompt arrives or fails. */
@@ -2489,17 +2273,17 @@ async function continueWorkerSession(sessionName, text) {
     }
     execFileAsync("tmux", ["kill-session", "-t", "=" + next]).catch(() => {});
     execution.failContinuation(entry).catch(() => {});
-    retargetMessageQueue(next, sessionName);
+    messages.retarget(next, sessionName);
     writeGoalBinding(o.file, { status: "active", session: sessionName }).then(() => vaultCommit([o.file], `update: ${o.area} goal ${o.slug} continuation failed, back to ${sessionName}`, o.area, sessionName)).catch(() => {});
-    queueAgentMessage(sessionName, { from: "tangent", area: o.area, text: `Continuation recorded, but the fresh session could not start: the prompt never arrived. You still work this Goal.`, queuedAt: new Date().toISOString() });
+    messages.queue(sessionName, { from: "tangent", area: o.area, text: `Continuation recorded, but the fresh session could not start: the prompt never arrived. You still work this Goal.`, queuedAt: new Date().toISOString() });
   };
   const result = await spawnGoalSession(o.area, o.slug, {
     phase: "execute", launch: true, continuation: { sessionName: next, entries: record.continuations }, onPrimed,
   });
   if (result.status !== 200) {
     await execution.failContinuation(entry);
-    retargetMessageQueue(next, sessionName);
-    queueAgentMessage(sessionName, { from: "tangent", area: o.area, text: `Continuation recorded, but the fresh session could not start: ${result.error}. You still work this Goal.`, queuedAt: new Date().toISOString() });
+    messages.retarget(next, sessionName);
+    messages.queue(sessionName, { from: "tangent", area: o.area, text: `Continuation recorded, but the fresh session could not start: ${result.error}. You still work this Goal.`, queuedAt: new Date().toISOString() });
     return { status: result.status, error: result.error };
   }
   return { status: 200, session: next };
@@ -2635,13 +2419,13 @@ async function appendPipelineSteps(goalFile, steps) {
     await writePipeline(PIPELINES_ROOT, record);
     return { status: 200, state: "queued", after: currentStep(record)?.index ?? last.index, added: added.map((step) => step.index), pipeline: record, warnings };
   }
-  const sessions = last.status === "complete" && last.session ? await withAgentStates(await listSessions()) : [];
+  const sessions = last.status === "complete" && last.session ? await listSessions() : [];
   const live = sessions.find((session) => session.name === last.session && session.state !== "shell");
   if (live) {
     last.status = "running";
     last.endedAt = null;
     await writePipeline(PIPELINES_ROOT, record);
-    queueAgentMessage(last.session, { from: "tangent", area: record.area, text: handoverAgainMessage(last, added), banner: false, queuedAt: new Date().toISOString() });
+    messages.queue(last.session, { from: "tangent", area: record.area, text: handoverAgainMessage(last, added), banner: false, queuedAt: new Date().toISOString() });
     return { status: 200, state: "asked", after: last.index, session: last.session, added: added.map((step) => step.index), pipeline: record, warnings };
   }
   await writePipeline(PIPELINES_ROOT, record);
@@ -2878,12 +2662,12 @@ async function notifyBrain(area, text) {
     const notice = await recordBrainNotice(area, message);
     const record = await liveBrainForArea(area);
     if (!record) {
-      await logAgentMessage({ event: "kept", to: `${owner.area} brain`, from: "tangent", text: message, reason: "no live brain; waits for the next generation" });
+      await messages.log({ event: "kept", to: `${owner.area} brain`, from: "tangent", text: message, reason: "no live brain; waits for the next generation" });
       return false;
     }
     const notices = [{ area, id: notice.id }];
     holdBrainNotices(notices);
-    queueAgentMessage(record.session, {
+    messages.queue(record.session, {
       from: "tangent",
       area: null,
       text: message,
@@ -2891,7 +2675,7 @@ async function notifyBrain(area, text) {
       generation: record.generation ?? null,
       queuedAt: new Date().toISOString(),
     });
-    await logAgentMessage({ event: "sent", to: record.session, from: "tangent", text: message, disposition: "queued", reason: "brain event" });
+    await messages.log({ event: "sent", to: record.session, from: "tangent", text: message, disposition: "queued", reason: "brain event" });
     return true;
   } catch (err) {
     console.error("brain notify:", err.message ?? err);
@@ -2915,7 +2699,7 @@ async function flushBrainNotices(sessions = null, reason = "unread notices after
     const text = unread.length === 1 ? unread[0].text : noticeDigest(unread);
     const notices = unread.map((notice) => ({ area: notice.area, id: notice.id }));
     holdBrainNotices(notices);
-    queueAgentMessage(record.session, {
+    messages.queue(record.session, {
       from: "tangent",
       area: null,
       text,
@@ -2923,7 +2707,7 @@ async function flushBrainNotices(sessions = null, reason = "unread notices after
       generation: record.generation ?? null,
       queuedAt: new Date().toISOString(),
     });
-    await logAgentMessage({ event: "sent", to: record.session, from: "tangent", text, disposition: "queued", reason });
+    await messages.log({ event: "sent", to: record.session, from: "tangent", text, disposition: "queued", reason });
   }
 }
 
@@ -2933,7 +2717,7 @@ async function flushBrainNotices(sessions = null, reason = "unread notices after
  * (the profile and legacy fallbacks never resolve through it).
  */
 async function areaHarnessModelIds(harnessId) {
-  const registry = await harnessRegistry();
+  const registry = await launchCatalog.registry();
   const entry = !registry.error ? (registry.harnesses ?? []).find((item) => item.id === harnessId) : null;
   const ids = entry ? harnessModels(registry, entry).map((model) => model.id) : [];
   return ids.length ? ids : ["fable-5", "sonnet-5", "opus-5"];
@@ -3069,16 +2853,16 @@ async function startBrain(area, { instruction = "", choice = null, command = "",
   if (invalid) return { status: 400, error: invalid };
   // Fable plans by default; the picker, an edited command, or the Area
   // default (when the registry has no Fable) replace it.
-  let launch = await requestedLaunch({ choice, command });
+  let launch = await launchCatalog.requested({ choice, command });
   let ref = command ? null : choice;
   if (!launch.error && !launch.command) {
-    const registry = await harnessRegistry();
+    const registry = await launchCatalog.registry();
     const fable = registry.error ? { error: registry.error } : resolveLaunch(registry, { harness: "claude", model: "fable-5" });
     if (!fable.error) {
       launch = fable;
       ref = { harness: "claude", model: "fable-5", effort: null };
     } else {
-      launch = await launchForArea(area);
+      launch = await launchCatalog.forArea(area);
       ref = launch.harness ? { harness: launch.harness, model: launch.model ?? null, effort: launch.effort ?? null } : null;
     }
   }
@@ -3114,7 +2898,7 @@ async function handoverBrain(sessionName, text) {
   await writeBrain(BRAINS_ROOT, record);
   const started = await spawnBrainSession(record);
   if (started.status !== 200) {
-    queueAgentMessage(previous, { from: "tangent", area: null, text: `Handover recorded, but the next generation could not start: ${started.error}. You are still the brain.`, queuedAt: new Date().toISOString() });
+    messages.queue(previous, { from: "tangent", area: null, text: `Handover recorded, but the next generation could not start: ${started.error}. You are still the brain.`, queuedAt: new Date().toISOString() });
     return started;
   }
   setTimeout(() => {
@@ -3199,7 +2983,7 @@ async function reconcileBrains(sessions) {
     entry.remindedAt = new Date().toISOString();
     await writeBrain(BRAINS_ROOT, record);
     const minutes = Math.round((now - Date.parse(entry.startedAt)) / 60_000);
-    queueAgentMessage(record.session, { from: "tangent", area: null, text: `You have run ${minutes} minutes in this generation. At the next natural pause, write the plan status and run tangent brain handover "<facts>".`, queuedAt: new Date().toISOString() });
+    messages.queue(record.session, { from: "tangent", area: null, text: `You have run ${minutes} minutes in this generation. At the next natural pause, write the plan status and run tangent brain handover "<facts>".`, queuedAt: new Date().toISOString() });
   }
 }
 
@@ -3249,7 +3033,7 @@ async function reconcileContextHandovers(sessions) {
     const brainControlledText = level === "first"
       ? `Your context is nearly full. At the next natural pause, report your files, checks, unresolved facts, and first next action to the brain with: tangent handover "<facts>". The brain will decide whether a fresh worker continues.`
       : `Your context is well past the handover threshold. Report to the brain now with: tangent handover "<facts>".`;
-    queueAgentMessage(session.name, {
+    messages.queue(session.name, {
       from: "tangent",
       area,
       kind: "context-reminder",
@@ -3260,7 +3044,7 @@ async function reconcileContextHandovers(sessions) {
       // read at queue time (design touchpoint 1).
       /** Rebuilds the reminder with the latest pane context at delivery time. */
       render: () => {
-        const fill = paneSamples.get(session.name)?.context;
+        const fill = paneObserver.context(session.name);
         if (!fill) return null;
         if (controller) return brainControlledText;
         return level === "first"
@@ -3863,7 +3647,7 @@ const agentRoutes = createAgentRoutes({
         state: session.state,
         stateDetail: session.stateDetail ?? null,
         stateQuestion: session.stateQuestion ?? "",
-        queued: (messageQueues.get(session.name) ?? []).length,
+        queued: messages.queuedCount(session.name),
       }));
   },
   /** Delivers or queues one normalized cross-agent message. */
@@ -3872,19 +3656,11 @@ const agentRoutes = createAgentRoutes({
     const sessions = await listSessions();
     const target = resolveSession(String(body.to ?? ""), sessions);
     const live = sessions.find((session) => session.name === target);
-    const decision = deliveryDecision(live ?? null);
-    if (decision.action === "refuse") return { status: live ? 409 : 404, error: decision.error };
     const sender = sessions.find((session) => session.name === String(body.from ?? ""));
     const entry = { from: sender?.name ?? "unknown sender", area: sender?.area ?? null, text, queuedAt: new Date().toISOString() };
-    if (decision.action === "deliver" && !(messageQueues.get(live.name) ?? []).length) {
-      deliverAgentMessage(live.name, entry).catch((error) => console.error("agent message:", error.message ?? error));
-      await logAgentMessage({ event: "sent", to: live.name, from: entry.from, text, disposition: "delivered" });
-      return { status: 200, value: { status: "delivered", to: live.name } };
-    }
-    queueAgentMessage(live.name, entry);
-    const reason = decision.action === "queue" ? decision.reason : "messages queued ahead";
-    await logAgentMessage({ event: "sent", to: live.name, from: entry.from, text, disposition: "queued", reason });
-    return { status: 200, value: { status: "queued", to: live.name, reason, position: messageQueues.get(live.name).length } };
+    const result = await messages.dispatch(live ?? null, entry);
+    if (result.status !== 200) return { status: result.status, error: result.error };
+    return { status: 200, value: { status: result.state, to: result.to, ...(result.reason ? { reason: result.reason, position: result.position } : {}) } };
   },
 });
 const areaRoutes = createAreaRoutes({
@@ -4121,7 +3897,7 @@ const goalQueryRoutes = createGoalQueryRoutes({
       value: {
         goal,
         markdown,
-        agent: await agentCmdForArea(goal.area).then(withDefaultModel).catch(() => ""),
+        agent: await launchCatalog.commandForArea(goal.area).then(withDefaultModel).catch(() => ""),
         context: await goalContext(goal.area, goal),
       },
     };
@@ -4134,7 +3910,7 @@ const launchRoutes = createLaunchRoutes({
     const description = String(body.description ?? "").trim().slice(0, 12_000);
     if (!area || !flattenAreaPaths(await readTree(TREES_ROOT)).includes(area)) return { status: 404, error: `no area "${area}"` };
     if (!description) return { status: 400, error: "describe the work before you open an agent" };
-    const chosen = await requestedLaunch(body);
+    const chosen = await launchCatalog.requested(body);
     if (chosen.error) return { status: 400, error: chosen.error };
     try {
       const sources = await sourceDocuments(body.sources);
@@ -4144,46 +3920,32 @@ const launchRoutes = createLaunchRoutes({
   },
   /** Returns the raw harness registry. */
   async readHarnesses() {
-    const registry = await harnessRegistry();
+    const registry = await launchCatalog.registry();
     return registry.error ? { status: 500, error: registry.error } : { status: 200, value: { registry } };
   },
   /** Validates and commits a replacement harness registry. */
   async writeHarnesses(body) {
-    const registry = { version: 1, modelSets: body.modelSets ?? {}, ...(body.effortSets && Object.keys(body.effortSets).length ? { effortSets: body.effortSets } : {}), harnesses: body.harnesses ?? [] };
-    const problem = validateHarnessRegistry(registry);
-    if (problem) return { status: 400, error: problem };
-    const text = await readFile(path.join(TREES_ROOT, "harnesses.md"), "utf8").catch(() => "");
-    await vaultRepository.writeMarkdown("harnesses.md", upsertHarnessRegistry(text, registry));
-    await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", "harnesses.md"]).catch(() => {});
-    await vaultCommit(["harnesses.md"], "update: harness registry from Agent Shell", "machine", null);
+    const saved = await launchCatalog.saveRegistry(body);
+    if (saved.error) return { status: 400, error: saved.error };
     return { status: 200, value: { ok: true } };
   },
   /** Returns named launch choices and the Area default. */
   async options(area) {
-    const registry = await harnessRegistry();
+    const registry = await launchCatalog.registry();
     if (registry.error) return { status: 500, error: registry.error };
     return { status: 200, value: {
       harnesses: registry.harnesses.map((harness) => ({ id: harness.id, label: harness.label || harness.id, command: harness.command, models: harnessModels(registry, harness).map((model) => ({ id: model.id, label: model.label || model.id, args: model.args, efforts: modelEfforts(registry, harness, model).map((effort) => ({ id: effort.id, label: effort.label || effort.id, args: effort.args })) })), efforts: harnessEfforts(registry, harness).map((effort) => ({ id: effort.id, label: effort.label || effort.id, args: effort.args })) })),
-      default: await launchForArea(area),
+      default: await launchCatalog.forArea(area),
     } };
   },
   /** Commits one Area's explicit default launch. */
   async saveDefault(body) {
-    const area = String(body.area ?? "");
-    const registry = await harnessRegistry();
-    const resolved = registry.error ? registry : resolveLaunch(registry, body.launch ?? {});
-    if (resolved.error || !area) return { status: 400, error: resolved.error || "an area is required" };
-    const file = areaNoteFile(area);
-    const text = await readFile(path.join(TREES_ROOT, file), "utf8").catch(() => emptyAreaNote(area));
-    const ref = { harness: resolved.harness, ...(resolved.model ? { model: resolved.model } : {}), ...(resolved.effort ? { effort: resolved.effort } : {}) };
-    await vaultRepository.writeMarkdown(file, upsertEnvironmentLaunch(text, ref));
-    await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", file]).catch(() => {});
-    await vaultCommit([file], `update: ${area} default launch ${resolved.label}`, area, null);
-    return { status: 200, value: { label: resolved.label, command: resolved.command } };
+    const saved = await launchCatalog.saveDefault(String(body.area ?? ""), body.launch ?? {});
+    return saved.error ? { status: 400, error: saved.error } : { status: 200, value: saved };
   },
   /** Starts a Goal agent in collaboration mode. */
   async collaborate(body) {
-    const chosen = await requestedLaunch(body);
+    const chosen = await launchCatalog.requested(body);
     if (chosen.error) return { status: 400, error: chosen.error };
     try {
       const [focus] = await sourceDocuments(body.document ? [body.document] : []);
@@ -4209,7 +3971,7 @@ const launchRoutes = createLaunchRoutes({
         const result = await startPipeline(String(body.file ?? ""), { steps: body.steps, extraFiles: Array.isArray(body.extraFiles) ? body.extraFiles.map(String) : [] });
         return { status: result.status, ...(result.status === 200 ? { value: { session: result.session, pipeline: result.pipeline, warnings: result.warnings ?? [] } } : { error: result.error }) };
       }
-      const chosen = await requestedLaunch(body);
+      const chosen = await launchCatalog.requested(body);
       if (chosen.error) return { status: 400, error: chosen.error };
       const result = await startGoal(String(body.file ?? ""), { phase: "execute", approved: body.approved === true, launch: body.launch === true, command: chosen.command, label: chosen.label, extraFiles: Array.isArray(body.extraFiles) ? body.extraFiles.map(String) : [] });
       return { status: result.status, ...(result.status === 200 ? { value: { session: result.session, reattached: Boolean(result.reattached), primed: Boolean(result.primed) } } : { error: result.error }) };
@@ -4375,8 +4137,10 @@ const server = http.createServer(async (req, res) => {
     if (await launchRoutes.handle(req, res, url)) return;
     if (await workMutationRoutes.handle(req, res, url)) return;
     await serveStaticAsset(url, res, here);
-  } catch {
-    res.writeHead(404).end("not found");
+  } catch (error) {
+    console.error(`request ${req.method} ${url.pathname}:`, error?.stack ?? error);
+    if (!res.headersSent) sendJson(res, 500, { error: "Agent Shell could not complete the request." });
+    else res.end();
   }
 });
 

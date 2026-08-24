@@ -2,8 +2,16 @@ import areaMapCore from "./area-map-core.js";
 import areaMapView from "./area-map.js";
 import { clip, escapeHtml } from "./text-format.js";
 
-/** Creates the area directory view product boundary. */
-export function createAreaDirectoryView({ state, api, post, paint, showToast, screen, openDocument, selectGoal, allGoals, goalTrees, goalTreeState, goalTreeIsActive, goalByFile, goalNeedsYou, goalWorkFinished, sessionForGoal, brainForAreaCard, brainStateLabel, brainKind, humanName, areaLabel, areaPath, agentName, ageText, deskBrainButton, workCard, goalTreeCard, programRow, programKind, programIsLive }) {
+/** Creates the Area directory from owned shell, Work, Document, and Program ports. */
+export function createAreaDirectoryView({ shell, documents, work, programs }) {
+  const { state, api, post, paint, showToast, screen } = shell;
+  const { openDocument } = documents;
+  const {
+    selectGoal, allGoals, goalTrees, goalTreeState, goalTreeIsActive, goalByFile, goalNeedsYou, goalWorkFinished,
+    sessionForGoal, brainForAreaCard, brainStateLabel, brainKind, humanName, areaLabel, areaPath, agentName, ageText,
+    deskBrainButton, workCard, goalTreeCard,
+  } = work;
+  const { programRow, programKind, programIsLive } = programs;
   /** Returns the Areas visible to the directory. */
   function areas() {
     return [...(state.vault?.areas ?? [])]

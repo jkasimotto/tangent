@@ -1,7 +1,14 @@
 import { markdownHeadingAnchor } from "./markdown-structure.js";
 
-/** Creates this browser boundary with explicit shell-owned dependencies. */
-export function createDocumentReaderController({ state, api, post, paint, showToast, screen, documentComments, markdownHeadings, documentOutlineItems, documentGoal, renderDocumentArticle, goalByFile, currentGoal, sessionsForGoal, humanName, areaLabel, agentReference, decodeLink, vaultLinkRecord, revealArea, captureReturnPoint, restoreReturnPoint, selectGoal, showWorkAt, openGoalAgent }) {
+/** Creates the Document controller from shell, rendering, Work, and navigation ports. */
+export function createDocumentReaderController({ shell, rendering, work, navigation }) {
+  const { state, api, post, paint, showToast, screen } = shell;
+  const { documentComments, markdownHeadings, documentOutlineItems, documentGoal, renderDocumentArticle } = rendering;
+  const { goalByFile, currentGoal, sessionsForGoal, humanName, areaLabel, agentReference } = work;
+  const {
+    decodeLink, vaultLinkRecord, revealArea, captureReturnPoint, restoreReturnPoint, selectGoal, showWorkAt,
+    openGoalAgent,
+  } = navigation;
   /** Stores the current reader position for later navigation. */
   function rememberDocumentPosition() {
     const scroll = screen.querySelector(".document-reader-scroll");

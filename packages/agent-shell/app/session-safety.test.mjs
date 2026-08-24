@@ -7,21 +7,22 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 test("background Goal reconciliation cannot stop an agent session", async () => {
-  const source = await readFile(path.join(here, "server.mjs"), "utf8");
+  const [source, controls] = await Promise.all([
+    readFile(path.join(here, "server.mjs"), "utf8"),
+    readFile(path.join(here, "shell-control-routes.mjs"), "utf8"),
+  ]);
   const reconcile = source.match(/async function reconcileGoals\(sessions\) \{[\s\S]*?\n\}\n\nconst goalInfoCache/)?.[0] ?? "";
   assert.match(reconcile, /preserved session/);
   assert.doesNotMatch(reconcile, /kill-session|cascadeGoalDone/);
-  assert.match(source, /url\.pathname\.startsWith\("\/api\/kill\/"\)/);
+  assert.match(controls, /url\.pathname\.startsWith\("\/api\/kill\/"\)/);
   assert.match(source, /"kill-session", "-t", "=" \+ name/);
 });
 
-test("classifyState reads context fill from the pane and withAgentStates carries it", async () => {
-  const source = await readFile(path.join(here, "server.mjs"), "utf8");
-  const classifyState = source.match(/async function classifyState\([\s\S]*?\n\}\n/)?.[0] ?? "";
-  assert.match(classifyState, /parseContextFill\(text\)/);
-  const withAgentStates = source.match(/async function withAgentStates\([\s\S]*?\n\}\n/)?.[0] ?? "";
-  assert.match(withAgentStates, /context: context \?\? null/);
-  assert.match(withAgentStates, /context: null/);
+test("the pane observer owns context parsing and session enrichment", async () => {
+  const source = await readFile(path.join(here, "pane-observer.mjs"), "utf8");
+  assert.match(source, /parseContextFill\(text\)/);
+  assert.match(source, /context: observed\.context \?\? null/);
+  assert.match(source, /context: null/);
 });
 
 test("a context-handover swap kills the old session directly, never through endPipelineForSession", async () => {

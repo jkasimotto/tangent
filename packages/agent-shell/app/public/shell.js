@@ -21,7 +21,7 @@ import { createGoalLaunchView } from "./goal-launch-view.js";
 import { createAgentDecisionView } from "./agent-decision-view.js";
 import { createDocumentReaderView } from "./document-reader-view.js";
 import { createDocumentReaderController } from "./document-reader-controller.js";
-import { createShellInteractions } from "./shell-interactions.js";
+import { createShellCoordinator } from "./shell-coordinator.js";
 import { bindShellEvents } from "./shell-event-bindings.js";
 import { createTerminalController } from "./terminal-controller.js";
 import { createActionTelemetry } from "./action-telemetry.js";
@@ -367,28 +367,26 @@ function showToast(message, action = null) {
 const terminalController = createTerminalController({ state, showToast });
 const { disposeTerminal, mountTerminal } = terminalController;
 
+/** Defers reading a feature function until the circular view graph is assembled. */
+function forward(read) {
+  return (...args) => read()(...args);
+}
+
 const workDeskView = createWorkDeskView({
-  state, api, post,
-  /** Repaints the active screen. */ paint: (...args) => paint(...args),
-  /** Refreshes shell data. */ refresh: (...args) => refresh(...args), showToast,
-  /** Captures navigation state. */ captureReturnPoint: (...args) => captureReturnPoint(...args), saveDescribeSession,
-  /** Reads launch selection. */ launchSelection: (...args) => launchSelection(...args),
-  /** Reads launch request fields. */ launchRequestFields: (...args) => launchRequestFields(...args),
-  /** Synchronizes launch state. */ syncLaunchDraft: (...args) => syncLaunchDraft(...args),
-  /** Chooses an Area. */ preferredArea: (...args) => preferredArea(...args),
-  /** Returns launch options. */ launchOptionsFor: (...args) => launchOptionsFor(...args),
-  /** Returns a Goal pipeline. */ pipelineForGoal: (...args) => pipelineForGoal(...args),
-  /** Returns a pipeline record. */ pipelineRecordForGoal: (...args) => pipelineRecordForGoal(...args),
-  /** Returns Areas. */ areas: (...args) => areas(...args),
-  /** Orders Goal trees. */ orderedGoalTrees: (...args) => orderedGoalTrees(...args),
-  /** Renders Program controls. */ programRowControl: (...args) => programRowControl(...args),
-  /** Tests Program liveness. */ programIsLive: (...args) => programIsLive(...args),
-  /** Describes Program state. */ programState: (...args) => programState(...args),
-  /** Formats local time. */ localMoment: (...args) => localMoment(...args),
-  shortcutKbd,
-  /** Renders the launch popover. */ launchPopover: (...args) => launchPopover(...args),
-  /** Renders the run overlay. */ whatHappenedOverlay: (...args) => whatHappenedOverlay(...args),
-  DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
+  shell: { state, api, post, paint, refresh, showToast, captureReturnPoint, saveDescribeSession },
+  launch: {
+    launchSelection: forward(() => launchSelection), launchRequestFields: forward(() => launchRequestFields),
+    syncLaunchDraft: forward(() => syncLaunchDraft), preferredArea: forward(() => preferredArea),
+    launchOptionsFor: forward(() => launchOptionsFor), pipelineForGoal: forward(() => pipelineForGoal),
+    pipelineRecordForGoal: forward(() => pipelineRecordForGoal), launchPopover: forward(() => launchPopover),
+    DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
+  },
+  areaModel: { areas: forward(() => areas), orderedGoalTrees: forward(() => orderedGoalTrees) },
+  programs: {
+    programRowControl: forward(() => programRowControl), programIsLive: forward(() => programIsLive),
+    programState: forward(() => programState), localMoment: forward(() => localMoment),
+  },
+  chrome: { shortcutKbd, whatHappenedOverlay: forward(() => whatHappenedOverlay) },
 });
 const {
   allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile,
@@ -409,15 +407,17 @@ const {
 } = programView;
 
 const areaDirectoryView = createAreaDirectoryView({
-  state, api, post,
-  /** Repaints the active screen. */ paint: (...args) => paint(...args), showToast, screen,
-  /** Opens a Document. */ openDocument: (...args) => openDocument(...args),
-  /** Selects a Goal. */ selectGoal: (...args) => selectGoal(...args), allGoals, goalTrees, goalTreeState,
-  goalTreeIsActive, goalByFile, goalNeedsYou, goalWorkFinished, sessionForGoal, brainForAreaCard, brainStateLabel, brainKind, humanName,
-  areaLabel, areaPath, agentName, ageText, deskBrainButton, workCard, goalTreeCard,
-  /** Renders a Program row. */ programRow: (...args) => programRow(...args),
-  /** Returns Program kind. */ programKind: (...args) => programKind(...args),
-  /** Tests Program liveness. */ programIsLive: (...args) => programIsLive(...args),
+  shell: { state, api, post, paint, showToast, screen },
+  documents: { openDocument: forward(() => openDocument) },
+  work: {
+    selectGoal: forward(() => selectGoal), allGoals, goalTrees, goalTreeState, goalTreeIsActive, goalByFile,
+    goalNeedsYou, goalWorkFinished, sessionForGoal, brainForAreaCard, brainStateLabel, brainKind, humanName, areaLabel,
+    areaPath, agentName, ageText, deskBrainButton, workCard, goalTreeCard,
+  },
+  programs: {
+    programRow: forward(() => programRow), programKind: forward(() => programKind),
+    programIsLive: forward(() => programIsLive),
+  },
 });
 const {
   areas, allAreas, areaIsFolded, setAreaStatus, selectedArea, areaParent, areaTreeRows, areaProgramMark,
@@ -426,10 +426,10 @@ const {
 } = areaDirectoryView;
 
 const goalLaunchView = createGoalLaunchView({
-  state, api, post,
-  /** Repaints the active screen. */ paint: (...args) => paint(...args), showToast, allAreas, areaLabel, areaPath, humanName,
-  agentName, describeLaunchArea, goalByFile, currentGoal, sessionForGoal, brainForAreaCard, brainStateLabel, brainKind,
-  /** Renders the launch popover. */ launchPopover: (...args) => launchPopover(...args), DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
+  shell: { state, api, post, paint, showToast },
+  areaModel: { allAreas, areaLabel, areaPath },
+  work: { humanName, agentName, describeLaunchArea, goalByFile, currentGoal, sessionForGoal, brainForAreaCard, brainStateLabel, brainKind },
+  overlays: { launchPopover: forward(() => launchPopover), DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET },
 });
 const {
   selectableAreas, preferredArea, areaOptions, renderCreate, renderDescribeCapture, describeSourcesBlock,
@@ -451,13 +451,14 @@ const {
 } = documentReaderView;
 
 const documentReaderController = createDocumentReaderController({
-  state, api, post,
-  /** Repaints the active screen. */ paint: (...args) => paint(...args), showToast, screen, documentComments, markdownHeadings,
-  documentOutlineItems, documentGoal, renderDocumentArticle, goalByFile, currentGoal, sessionsForGoal, humanName,
-  areaLabel, agentReference, decodeLink, vaultLinkRecord, revealArea, captureReturnPoint, restoreReturnPoint,
-  /** Selects a Goal. */ selectGoal: (...args) => selectGoal(...args),
-  /** Opens work at a location. */ showWorkAt: (...args) => showWorkAt(...args),
-  /** Opens the Goal agent. */ openGoalAgent: (...args) => openGoalAgent(...args),
+  shell: { state, api, post, paint, showToast, screen },
+  rendering: { documentComments, markdownHeadings, documentOutlineItems, documentGoal, renderDocumentArticle },
+  work: { goalByFile, currentGoal, sessionsForGoal, humanName, areaLabel, agentReference },
+  navigation: {
+    decodeLink, vaultLinkRecord, revealArea, captureReturnPoint, restoreReturnPoint,
+    selectGoal: forward(() => selectGoal), showWorkAt: forward(() => showWorkAt),
+    openGoalAgent: forward(() => openGoalAgent),
+  },
 });
 const {
   rememberDocumentPosition, restoreDocumentPosition, updateDocumentTrail, openDocument, navigateDocumentHistory,
@@ -468,21 +469,26 @@ const {
   stepComment, saveVisibleIdea, notifyDocumentComments,
 } = documentReaderController;
 
-const shellInteractions = createShellInteractions({
-  state, api, post,
-  /** Repaints the active screen. */ paint: (...args) => paint(...args),
-  /** Refreshes shell data. */ refresh: (...args) => refresh(...args), showToast, screen,
-  backButton, shellMenu, goToLayer, goToInput, goToList, modalLayer, modalKicker, modalTitle, modalCopy, modalField,
-  modalActions, buildGoToRows, goToCore, areaLabel,
-  humanName: Object.assign((...args) => humanName(...args), {
-    agentName, describeWorkSessions, describeLaunchArea, areas, revealArea, selectedArea, updateStatusPill, documentGoal,
-  }), goalByFile, currentGoal, sessionForGoal,
-  describeWorkSession, stopSession, currentProgram, programById, programIsLive, programAreaDirectory, preferredArea, allAreas, areaParent,
-  launchOptionsFor, launchSelection, launchRequestFields, syncLaunchDraft,
-  commitActiveStep: Object.assign((...args) => commitActiveStep(...args), { launchStepDraft, launchStepRequest, launchDraftRows }), pipelineForGoal,
-  pipelineRecordForGoal, brainForAreaCard, brainStateLabel, agentReference, rememberScreenScroll, restoreReturnPoint, captureReturnPoint,
-  restoreReturnScroll, disposeTerminal, mountTerminal, saveDescribeDraft, saveDescribeSession, syncDescribeDraft,
-  openDocument, refreshDocument, rememberDocumentPosition, DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
+const shellCoordinator = createShellCoordinator({
+  shell: { state, api, post, paint, refresh, showToast },
+  chrome: {
+    screen, backButton, shellMenu, goToLayer, goToInput, goToList, modalLayer, modalKicker, modalTitle, modalCopy,
+    modalField, modalActions, buildGoToRows, goToCore, rememberScreenScroll, restoreReturnPoint, captureReturnPoint,
+    restoreReturnScroll, disposeTerminal, mountTerminal, updateStatusPill,
+  },
+  work: {
+    areaLabel, humanName, agentName, goalByFile, currentGoal, sessionForGoal, describeWorkSession,
+    describeWorkSessions, stopSession, brainForAreaCard, brainStateLabel, agentReference, saveDescribeDraft,
+    saveDescribeSession, describeLaunchArea,
+  },
+  areasFeature: { allAreas, areaParent, preferredArea, areas, revealArea, selectedArea },
+  programs: { currentProgram, programById, programIsLive, programAreaDirectory },
+  launch: {
+    launchOptionsFor, launchSelection, launchRequestFields, syncLaunchDraft, commitActiveStep, launchStepDraft,
+    launchStepRequest, launchDraftRows, pipelineForGoal, pipelineRecordForGoal, syncDescribeDraft,
+    DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
+  },
+  documents: { openDocument, refreshDocument, rememberDocumentPosition, documentGoal },
 });
 const {
   toggleShellMenu, goToRows, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWorkAt, confirmRebuild, reloadChanges,
@@ -492,7 +498,7 @@ const {
   openDescribeSession, cancelDescribe, showDecision, selectionForArea, startPipeline, savePipelineStep,
   appendPipelineSteps, startSelectedGoals, openGoalAgent, openReaderAgent, launchOpenSession, openModal, closeModal, getModalConfirm,
   confirmStop, confirmComplete, confirmWontDo,
-} = shellInteractions;
+} = shellCoordinator;
 
 const whatHappenedView = createWhatHappenedView({ state, areaLabel, goalByFile, humanName });
 
@@ -1159,22 +1165,43 @@ function selectModelConcept(concept) {
 }
 
 bindShellEvents({
-  state, post, paint, refresh, showToast, screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction,
-  shellMenu, goToButton, goToLayer, goToInput, modalLayer, terminalFit: terminalController.fit, KEYMAP, shortcutMatches,
-  shortcutKbd, toggleShellMenu, confirmRebuild, reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, loadGoalPrompt, loadBrainPrompt, closePromptPreview, selectBestiaryLifecycle, selectBestiaryTransition, selectModelMode, selectModelConcept, showAreasAt,
-  showDecision, showCreate, showDescribe, showProgramCreate, selectProgram, openProgramSession, controlProgram,
-  performProgramAction, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelCreate, cancelDescribe, currentProgram,
-  programAreaDirectory, selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain,
-  brainForAreaCard, openBrainSession, toggleBrainPopover, syncDescribeDraft, saveDescribeDraft, saveDescribeSession,
-  describeWorkSession, openDescribeSession, addDescribeSource, switchDescribeToManualCreate, launchSelection,
-  launchRequestFields, syncLaunchDraft, activateLaunchStep, removeLaunchStep, addLaunchStep, launchIsPipeline,
-  saveLaunchDefault, showHarnessEditor, saveHarnesses, startPipeline, savePipelineStep, appendPipelineSteps,
-  selectionForArea, startSelectedGoals, openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo,
-  openDocument, navigateDocumentHistory, openVaultLink, openDocumentHeading, openCommentComposer, setCommentScope,
-  editComment, cancelCommentComposer, submitCommentComposer, removeComment, stepComment, saveVisibleIdea, notifyDocumentComments, refreshDocument,
-  leaveReader, toggleAwake, closeModal, modalConfirm: getModalConfirm, updateSelectionCommentButton, preferredArea,
-  areaLabel, programById: { enableDockBadge, areaIsFolded, saveExpandedAreas, revealArea, setAreaStatus, openReaderAgent, sendVerdict, replyAboutRow, launchOptionsFor, pipelineRecordForGoal, loadLaunchStep, renderWork, describeLaunchArea, describeWorkSessions },
-  DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
+  shell: { state, post, paint, refresh, showToast },
+  chrome: {
+    screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction, shellMenu, goToButton, goToLayer,
+    goToInput, modalLayer, terminalFit: terminalController.fit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu,
+    confirmRebuild, reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts,
+    showDecision, showCreate, showDescribe, toggleAwake, closeModal, modalConfirm: getModalConfirm,
+  },
+  prompts: {
+    loadGoalPrompt, loadBrainPrompt, closePromptPreview, selectBestiaryLifecycle, selectBestiaryTransition,
+    selectModelMode, selectModelConcept,
+  },
+  work: {
+    selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain, brainForAreaCard,
+    openBrainSession, toggleBrainPopover, saveDescribeDraft, saveDescribeSession, describeWorkSession,
+    openDescribeSession, addDescribeSource, switchDescribeToManualCreate, selectionForArea, startSelectedGoals,
+    openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, enableDockBadge, sendVerdict,
+    replyAboutRow, renderWork, describeLaunchArea, describeWorkSessions,
+  },
+  areas: {
+    showAreasAt, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelCreate, cancelDescribe, areaIsFolded,
+    saveExpandedAreas, revealArea, setAreaStatus, preferredArea, areaLabel,
+  },
+  programs: {
+    showProgramCreate, selectProgram, openProgramSession, controlProgram, performProgramAction, currentProgram,
+    programAreaDirectory,
+  },
+  launch: {
+    syncDescribeDraft, launchSelection, launchRequestFields, syncLaunchDraft, activateLaunchStep, removeLaunchStep,
+    addLaunchStep, launchIsPipeline, saveLaunchDefault, showHarnessEditor, saveHarnesses, startPipeline,
+    savePipelineStep, appendPipelineSteps, launchOptionsFor, pipelineRecordForGoal, loadLaunchStep,
+    DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
+  },
+  documents: {
+    openDocument, navigateDocumentHistory, openVaultLink, openDocumentHeading, openCommentComposer, setCommentScope,
+    editComment, cancelCommentComposer, submitCommentComposer, removeComment, stepComment, saveVisibleIdea,
+    notifyDocumentComments, refreshDocument, leaveReader, updateSelectionCommentButton, openReaderAgent,
+  },
 });
 
 void (async () => {

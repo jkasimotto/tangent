@@ -1,7 +1,43 @@
-/** Creates this browser boundary with explicit shell-owned dependencies. */
-export function bindShellEvents({ state, post, paint, refresh, showToast, screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction, shellMenu, goToButton, goToLayer, goToInput, modalLayer, terminalFit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu, confirmRebuild, reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, loadGoalPrompt, loadBrainPrompt, closePromptPreview, selectBestiaryLifecycle, selectBestiaryTransition, selectModelMode, selectModelConcept, showAreasAt, showDecision, showCreate, showDescribe, showProgramCreate, selectProgram, openProgramSession, controlProgram, performProgramAction, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelCreate, cancelDescribe, currentProgram, programAreaDirectory, selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain, brainForAreaCard, openBrainSession, toggleBrainPopover, syncDescribeDraft, saveDescribeDraft, saveDescribeSession, describeWorkSession, openDescribeSession, addDescribeSource, switchDescribeToManualCreate, launchSelection, launchRequestFields, syncLaunchDraft, activateLaunchStep, removeLaunchStep, addLaunchStep, launchIsPipeline, saveLaunchDefault, showHarnessEditor, saveHarnesses, startPipeline, savePipelineStep, appendPipelineSteps, selectionForArea, startSelectedGoals, openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, openDocument, navigateDocumentHistory, openVaultLink, openDocumentHeading, openCommentComposer, setCommentScope, editComment, cancelCommentComposer, submitCommentComposer, removeComment, stepComment, saveVisibleIdea, notifyDocumentComments, refreshDocument, leaveReader, toggleAwake, closeModal, modalConfirm, updateSelectionCommentButton, preferredArea, areaLabel, programById, DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET }) {
+/** Binds browser events through capability-owned feature ports. */
+export function bindShellEvents({ shell, chrome, prompts, work, areas, programs, launch, documents }) {
+  const { state, post, paint, refresh, showToast } = shell;
+  const {
+    screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction, shellMenu, goToButton, goToLayer,
+    goToInput, modalLayer, terminalFit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu, confirmRebuild,
+    reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, showDecision,
+    showCreate, showDescribe, toggleAwake, closeModal, modalConfirm,
+  } = chrome;
+  const {
+    loadGoalPrompt, loadBrainPrompt, closePromptPreview, selectBestiaryLifecycle, selectBestiaryTransition,
+    selectModelMode, selectModelConcept,
+  } = prompts;
+  const {
+    selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain, brainForAreaCard,
+    openBrainSession, toggleBrainPopover, saveDescribeDraft, saveDescribeSession, describeWorkSession,
+    openDescribeSession, addDescribeSource, switchDescribeToManualCreate, selectionForArea, startSelectedGoals,
+    openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, enableDockBadge, sendVerdict,
+    replyAboutRow, renderWork, describeLaunchArea, describeWorkSessions,
+  } = work;
+  const {
+    showAreasAt, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelCreate, cancelDescribe, areaIsFolded,
+    saveExpandedAreas, revealArea, setAreaStatus, preferredArea, areaLabel,
+  } = areas;
+  const {
+    showProgramCreate, selectProgram, openProgramSession, controlProgram, performProgramAction, currentProgram,
+    programAreaDirectory,
+  } = programs;
+  const {
+    syncDescribeDraft, launchSelection, launchRequestFields, syncLaunchDraft, activateLaunchStep, removeLaunchStep,
+    addLaunchStep, launchIsPipeline, saveLaunchDefault, showHarnessEditor, saveHarnesses, startPipeline,
+    savePipelineStep, appendPipelineSteps, launchOptionsFor, pipelineRecordForGoal, loadLaunchStep,
+    DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
+  } = launch;
+  const {
+    openDocument, navigateDocumentHistory, openVaultLink, openDocumentHeading, openCommentComposer, setCommentScope,
+    editComment, cancelCommentComposer, submitCommentComposer, removeComment, stepComment, saveVisibleIdea,
+    notifyDocumentComments, refreshDocument, leaveReader, updateSelectionCommentButton, openReaderAgent,
+  } = documents;
   const awakeButton = document.querySelector("#awake-button");
-  const { enableDockBadge, areaIsFolded, saveExpandedAreas, revealArea, setAreaStatus, openReaderAgent, sendVerdict, replyAboutRow, launchOptionsFor, pipelineRecordForGoal, loadLaunchStep, renderWork, describeLaunchArea, describeWorkSessions } = programById;
   document.addEventListener("click", async (event) => {
     const target = event.target;
     if (target.closest("[data-rebuild-dismiss]")) {

@@ -45,7 +45,7 @@ test("the context-first shell is default and keeps the user's understanding with
 
   const browserModules = [
     "shell.js", "work-desk-view.js", "area-directory-view.js", "program-view.js", "goal-launch-view.js",
-    "agent-decision-view.js", "document-reader-view.js", "document-reader-controller.js", "shell-interactions.js",
+    "agent-decision-view.js", "document-reader-view.js", "document-reader-controller.js", "shell-coordinator.js",
     "shell-event-bindings.js", "terminal-controller.js",
   ];
   const shellScript = (await Promise.all(browserModules.map((file) => fetch(`${base}/${file}`).then((response) => response.text())))).join("\n");

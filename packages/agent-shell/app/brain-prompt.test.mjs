@@ -171,6 +171,11 @@ test("the brain prompt keeps reviewed Goals open until Julian accepts the Test",
   assert.match(show.prompt, /Keep the Goal open until Julian approves that Request/, "the user approves a reviewed Goal before it becomes done");
   assert.match(show.prompt, /Before every handover, sweep `tangent goal list otto\/probesweep` and `tangent agent list`/, "sweep goal list and agent list before every handover");
   assert.match(show.prompt, /Add a Test request for each reviewed Goal/, "reviewed Goals become direct validation requests");
+  assert.match(show.prompt, /You orchestrate work; you do not perform it/, "the brain is an orchestration interface, not a worker");
+  assert.match(show.prompt, /Delegate every investigation, design, implementation, test, and review to a worker, even when the task looks small/, "all substantive work is delegated");
+  assert.match(show.prompt, /Your own writes are limited to Tangent's orchestration records/, "the brain only writes orchestration state");
+  assert.match(show.prompt, /Do not design their solutions/, "the Area plan does not become a brain-authored design");
+  assert.doesNotMatch(show.prompt, /Look at the Area's repository when code answers a question better than a guess/, "the brain does not investigate code itself");
 });
 
 test("a pipeline step under a brain has one handover route and never chooses the next agent", async () => {

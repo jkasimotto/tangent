@@ -30,7 +30,7 @@ export function createShellState(storage = globalThis.localStorage, href = globa
     launch: { area: "", options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", continueFrom: null, steps: [], active: 0, record: null },
     pipelines: [], brains: [], brainDraft: null, agentSessionName: null,
     verdictLines: new Set(), goalSelection: [], goTo: null, launchTarget: "", launchAnchor: null, whatHappened: null,
-    harnessDraft: null, harnessReturnView: "work", query: "", workFilter: storage.getItem("agent-shell.work-filter") === "inactive" ? "inactive" : "active",
+    harnessDraft: null, harnessReturnView: "work", query: "", workFilter: storage.getItem("agent-shell.work-filter") === "inactive" ? "inactive" : "active", personFilter: storage.getItem("agent-shell.person-filter") || "all",
     caffeinate: false, decisionReturnView: "agent", agentReturnView: "work", offline: false, rebuilding: false, rebuild: null,
     updateAvailable: false, pendingCommits: [], deployedCommit: "", currentCommit: "", bootId: "", loading: true, error: "", renderedKey: "",
     promptInspector: { loading: false, title: "", text: "", error: "", file: "", area: "" },

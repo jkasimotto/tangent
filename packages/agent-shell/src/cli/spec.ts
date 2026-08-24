@@ -113,6 +113,7 @@ export const goalCommandSpec: CliCommandSpec = {
         { name: "done-when", takesValue: true, description: "Done condition (required)" },
         { name: "description", takesValue: true, description: "Why this Goal exists" },
         { name: "source", takesValue: true, description: "Vault-relative source Document; repeatable" },
+        { name: "assignee", takesValue: true, description: "Person from the Area roster; repeatable" },
         { name: "subgoal-title", takesValue: true, description: "Subgoal title; pair with --subgoal-done-when, repeatable" },
         { name: "subgoal-done-when", takesValue: true, description: "Subgoal done condition; pairs with --subgoal-title, repeatable" },
         { name: "own", description: "Take ownership in the same step; the calling agent's session becomes the Goal's session" },

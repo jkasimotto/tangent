@@ -129,9 +129,10 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
 
   /** Renders one Area Goal with its current brief. */
   function areaGoalRow(goal) {
+    const people = goal.assignees?.length ? goal.assignees.join(" + ") : "Unassigned";
     return `
       <button type="button" data-select-goal="${escapeHtml(goal.file)}">
-        <span class="area-goal-main"><strong>${escapeHtml(goal.title)}</strong><small>${escapeHtml(clip(goal.doneWhen, 150))}</small></span>
+        <span class="area-goal-main"><strong>${escapeHtml(people)} · ${escapeHtml(goal.title)}</strong><small>${escapeHtml(clip(goal.doneWhen, 150))}</small></span>
         <span class="area-goal-brief"><em>Current brief</em><small>${escapeHtml(currentBriefFields(goal).wanted)}</small></span>
       </button>`;
   }
@@ -211,7 +212,18 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
     const problems = state.programs.errors.filter((item) => item.area === area.path);
     const done = area.status === "done";
     const current = clip(area.current ?? "", 240);
-    const planned = goalTrees().filter((tree) => tree.path === area.path && goalTreeState(tree) !== "closed" && !goalTreeIsActive(tree));
+    /** True when one Goal matches the shared human responsibility filter. */
+    const personMatches = (goal) => state.personFilter === "all" ? true
+      : state.personFilter === "mine" ? goal.assignees?.includes("Julian")
+        : state.personFilter === "unassigned" ? !goal.assignees?.length
+          : goal.assigneeKeys?.includes(state.personFilter);
+    const planned = goalTrees().filter((tree) => tree.path === area.path && goalTreeState(tree) !== "closed" && !goalTreeIsActive(tree) && tree.goals.some(personMatches));
+    const rosterPeople = (area.roster ?? []).map((name) => {
+      const goal = (area.goals ?? []).find((item) => item.assignees?.includes(name));
+      const key = goal ? goal.assigneeKeys[goal.assignees.indexOf(name)] : `${area.rosterArea}::${name.toLocaleLowerCase("en-US")}`;
+      return [key, name];
+    });
+    const personOptions = [["all", "All people"], ["mine", "Mine"], ...rosterPeople, ["unassigned", "Unassigned"]];
     const documents = areaDocuments(area.path);
     const brain = brainForAreaCard(area.path);
     const brainClass = brainKind(brain);
@@ -231,14 +243,14 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
           </div>
         </header>
         <section class="area-workspace-section" aria-labelledby="area-not-started">
-          <div class="area-section-heading"><div><p class="kicker">Work</p><h3 id="area-not-started" tabindex="-1">Not started</h3></div><span>${planned.length}</span></div>
+          <div class="area-section-heading"><div><p class="kicker">Work</p><h3 id="area-not-started" tabindex="-1">Not started</h3></div><label><span class="visually-hidden">Person</span><select id="area-person-filter" aria-label="Filter Area work by person">${personOptions.map(([value, label]) => `<option value="${escapeHtml(value)}" ${state.personFilter === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label><span>${planned.length}</span></div>
           ${planned.length ? `<div class="area-planned-list">${planned.map((tree) => goalTreeCard(tree)).join("")}</div>` : `<p class="memory-empty">No not-started work exists in this Area.</p>`}
         </section>
         ${documentSection(area.path, documents)}
         <details class="area-more"><summary>More</summary>
           <details><summary>Relationship map</summary><div class="area-map-host" data-area-map="${escapeHtml(area.path)}"></div></details>
           <details><summary>Programs · ${programs.length}</summary><section class="area-content-section"><div class="memory-heading"><h3>Programs</h3><button class="quiet-button" type="button" data-new-program>New program</button></div>${programs.length ? `<div class="program-list">${programs.map(programRow).join("")}</div>` : `<p class="memory-empty">No Programs exist in this Area.</p>`}${problems.length ? `<div class="program-errors">${problems.map((item) => `<p>${escapeHtml(item.file)} — ${escapeHtml(item.error)}</p>`).join("")}</div>` : ""}</section></details>
-          <details><summary>Area settings</summary><div class="area-settings-actions"><button class="quiet-button" type="button" data-launch-for="__brain__" data-brain-area="${escapeHtml(area.path)}">Set brain agent and effort</button><button class="quiet-button" type="button" data-new-area>Add nested Area</button>${area.path.split("/").length > 1 ? `<button class="quiet-button" type="button" data-rename-area>Rename or move</button>` : ""}${done ? `<button class="quiet-button" type="button" data-reopen-area="${escapeHtml(area.path)}">Reopen</button>` : `<button class="quiet-button" type="button" data-mark-area-done="${escapeHtml(area.path)}">Mark done</button>`}</div></details>
+          <details><summary>Area settings</summary><form class="area-people-form" data-area-people-form><label><span>People <small>One name per line</small></span><textarea name="people" class="short-textarea">${escapeHtml((area.roster ?? []).join("\n"))}</textarea></label><input type="hidden" name="area" value="${escapeHtml(area.path)}"><button class="quiet-button" type="submit">Save people</button></form><div class="area-settings-actions"><button class="quiet-button" type="button" data-launch-for="__brain__" data-brain-area="${escapeHtml(area.path)}">Set brain agent and effort</button><button class="quiet-button" type="button" data-new-area>Add nested Area</button>${area.path.split("/").length > 1 ? `<button class="quiet-button" type="button" data-rename-area>Rename or move</button>` : ""}${done ? `<button class="quiet-button" type="button" data-reopen-area="${escapeHtml(area.path)}">Reopen</button>` : `<button class="quiet-button" type="button" data-mark-area-done="${escapeHtml(area.path)}">Mark done</button>`}</div></details>
         </details>
       </section>`;
   }

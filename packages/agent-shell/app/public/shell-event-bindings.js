@@ -557,6 +557,19 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       event.preventDefault();
       return submitCommentComposer();
     }
+    if (event.target.matches("[data-area-people-form]")) {
+      event.preventDefault();
+      const fields = new FormData(event.target);
+      const area = fields.get("area")?.toString() || "";
+      const people = fields.get("people")?.toString().split("\n").map((name) => name.trim()).filter(Boolean) || [];
+      try {
+        await post("/api/areas/people", { area, people });
+        await refresh();
+        paint(true);
+        showToast("The people roster is saved.");
+      } catch (error) { showToast(error.message); }
+      return;
+    }
     if (event.target.matches("[data-area-form]")) {
       event.preventDefault();
       const edit = state.areaEdit;
@@ -623,7 +636,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         return;
       }
       try {
-        const created = await post("/api/goals/new", { area, title, doneWhen, state: startingPoint });
+        const assignees = fields.getAll("assignee").map((name) => name.toString());
+        const created = await post("/api/goals/new", { area, title, doneWhen, state: startingPoint, assignees });
         localStorage.setItem("agent-shell.last-area", area);
         await refresh();
         selectGoal(created.file);
@@ -760,6 +774,16 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   });
 
   document.addEventListener("change", async (event) => {
+    if (event.target.matches("#area-person-filter")) {
+      state.personFilter = event.target.value || "all";
+      localStorage.setItem("agent-shell.person-filter", state.personFilter);
+      return paint(true);
+    }
+    if (event.target.matches("#work-person-filter")) {
+      state.personFilter = event.target.value || "all";
+      localStorage.setItem("agent-shell.person-filter", state.personFilter);
+      return paint(true);
+    }
     if (event.target.id === "area-document-period" || event.target.id === "area-document-order") {
       if (event.target.id === "area-document-period") state.areaDocumentPeriod = event.target.value;
       else state.areaDocumentOrder = event.target.value;

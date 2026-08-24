@@ -19,13 +19,20 @@ Dependencies: `@tangent/core` (arg parsing, help rendering), `@tangent/agent-run
 - `message-delivery.mjs`: cross-agent queue order, delivery, audit, retargeting, and brain-notice settlement;
 - `pane-observer.mjs`: tmux pane samples and derived agent state;
 - `vault-repository.mjs`: safe atomic Markdown writes and exact-path provenance commits;
+- `human-assignees.mjs`: Area roster parsing, Goal assignee validation, stable person keys, and Markdown field updates;
 - record modules: the only readers and writers of pipelines, brains, inboxes, requests, continuations, armed prompts, and rebuild state.
 
 The browser entry `app/public/shell.js` composes feature ports. `shell-coordinator.js` owns cross-feature navigation. Views and controllers receive cohesive `shell`, `work`, `areas`, `programs`, `launch`, `documents`, and chrome records. A record groups one authority; it is not a generic service locator. Browser capabilities must not be attached to functions.
 
 Private module and loopback contracts can change with all in-repository callers. Vault Markdown, Git provenance, tmux bindings, and persisted workflow schemas remain compatible. See ADR-0031.
 
-The browser has one Area-based Work destination. A live controlling brain's Area is the shallow group root for work in its complete subtree; uncovered work falls back to the stable durable-subject root. Descendant Areas and Goals render as compact rows inside that group rather than peer cards. A separate Planned view keeps unstarted Goals available. Command-K filters Documents by Area and kind and can show the links inside that result set. A reviewed Goal stays open until Julian accepts its Test request.
+The browser has one Area-based Work destination. A live controlling brain's Area is the shallow group root for work in its complete subtree.
+
+Uncovered work uses the stable durable-subject root. Descendant Areas and Goals appear as compact rows instead of peer cards.
+
+A separate Planned view keeps unstarted Goals available. The Work and selected-Area surfaces show assignee labels and filter with roster-scoped person keys.
+
+Human assignment does not change a Goal session, status, pipeline, or tmux binding. A reviewed Goal stays open until Julian accepts its Test request.
 
 The browser Programs projection also reads root-owned trigger state from `~/.tangent/agent-shell/triggers/state.json`. Trigger scheduling and launching remain in the root CLI so they work while this server is closed; the server delegates Check now and Acknowledge controls back to `tangent trigger` (ADR-0030).
 

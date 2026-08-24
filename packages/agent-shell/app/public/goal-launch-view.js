@@ -36,6 +36,8 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
 
   /** Renders the fast path for one known goal. */
   function renderCreate() {
+    const selectedArea = state.createArea || preferredArea();
+    const roster = selectableAreas().find((area) => area.path === selectedArea)?.roster ?? [];
     return `
       <article class="create-page">
         <p class="kicker">New goal</p>
@@ -46,9 +48,10 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
           <label>
             <span>Area</span>
             <select id="new-goal-area" name="area" required>
-              ${areaOptions(state.createArea || preferredArea())}
+              ${areaOptions(selectedArea)}
             </select>
           </label>
+          ${roster.length ? `<fieldset><legend>People <small>Optional</small></legend>${roster.map((name) => `<label><input type="checkbox" name="assignee" value="${escapeHtml(name)}"> <span>${escapeHtml(name)}</span></label>`).join("")}</fieldset>` : `<p class="form-note">This Area has no people roster. The Goal will be unassigned.</p>`}
           <label>
             <span>Name</span>
             <input id="new-goal-title" name="title" type="text" required autocomplete="off" placeholder="A short name for this result" />

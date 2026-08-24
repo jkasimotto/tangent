@@ -52,6 +52,14 @@ test("tangent goal depend and undepend take repeatable prerequisites", () => {
   }
 });
 
+test("tangent goal create accepts repeatable human assignees without changing agent ownership", () => {
+  const create = subcommand("create");
+  assert.ok(create);
+  assert.ok(optionNames(create).includes("assignee"));
+  assert.match(create.options.find((entry) => entry.name === "assignee").description, /repeatable/);
+  assert.ok(optionNames(create).includes("own"), "agent ownership remains a separate option");
+});
+
 test("tangent brain has handover and status; tangent area gains create", async () => {
   const { brainCommandSpec, areaCommandSpec } = await import("../dist/cli/index.js");
   const handover = brainCommandSpec.subcommands.find((entry) => entry.name === "handover");

@@ -88,9 +88,19 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const readyForYou = new Set((state.brains ?? []).flatMap((brain) => (brain.forJulian ?? []).filter((row) => row.kind === "test").map((row) => row.file)));
     /** Returns whether a Goal tree belongs in the current-work view. */
     const isCurrent = (tree) => goalTreeIsActive(tree) || tree.goals.some((goal) => goalNeedsYou(goal) || readyForYou.has(goal.file));
-    if (state.workFilter === "active") return trees.filter(isCurrent);
-    if (state.workFilter === "inactive") return trees.filter((tree) => !isCurrent(tree));
-    return trees;
+    const byActivity = state.workFilter === "active" ? trees.filter(isCurrent)
+      : state.workFilter === "inactive" ? trees.filter((tree) => !isCurrent(tree)) : trees;
+    if (state.personFilter === "all") return byActivity;
+    /** True when one Goal matches the selected human responsibility. */
+    const matches = (goal) => state.personFilter === "mine" ? goal.assignees?.includes("Julian")
+      : state.personFilter === "unassigned" ? !goal.assignees?.length
+        : goal.assigneeKeys?.includes(state.personFilter);
+    return byActivity.filter((tree) => tree.goals.some(matches));
+  }
+
+  /** Human responsibility labels never replace the Goal's agent state. */
+  function assigneeLabel(goal) {
+    return goal.assignees?.length ? goal.assignees.join(" + ") : "Unassigned";
   }
 
   /** Stores the expansion state of the Area tree. */
@@ -416,7 +426,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       <button class="work-card ${className} ${depth ? "nested" : ""}" style="--goal-depth: ${depth}" type="button" data-select-goal="${escapeHtml(goal.file)}">
         <span>
           ${grouped ? "" : `<span class="work-area">${escapeHtml(areaLabel(goal.area))}</span>`}
-          <span class="work-title">${escapeHtml(goal.title)}</span>
+          <span class="work-title">${escapeHtml(assigneeLabel(goal))} · ${escapeHtml(goal.title)}</span>
           <span class="work-goal">${escapeHtml(clip(goal.doneWhen, 180))}</span>
         </span>
         <span class="work-state">${escapeHtml(label || stateLabel(goal, session))}</span>
@@ -609,7 +619,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    */
   function deskAreas() {
     const trees = filteredGoalTrees(goalTrees().filter((tree) => goalTreeState(tree) !== "closed"));
-    const descriptions = state.workFilter === "inactive" ? [] : describeWorkSessions();
+    const descriptions = state.workFilter === "inactive" || state.personFilter !== "all" ? [] : describeWorkSessions();
     const core = areaMapCore;
     const areaList = areas();
     const byPath = new Map(areaList.map((area) => [area.path, area]));
@@ -1159,7 +1169,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       <article class="desk-goal ${subgoal ? "subgoal" : "root-goal"} ${action.kind}${selected ? " selected" : ""}" data-goal-anchor="${escapeHtml(goal.file)}">
         ${selectable ? `<label class="desk-select" title="Select for one shared agent"><input type="checkbox" data-check-goal="${escapeHtml(goal.file)}" ${selected ? "checked" : ""} aria-label="Select ${escapeHtml(goal.title)} for one shared agent"></label>` : ""}
         <div class="desk-goal-main">
-          <div class="desk-goal-line1"><strong title="${escapeHtml(goal.title)}">${escapeHtml(goal.title)}</strong></div>
+          <div class="desk-goal-line1"><strong title="${escapeHtml(goal.title)}">${escapeHtml(goal.title)}</strong><small>${escapeHtml(assigneeLabel(goal))}</small></div>
           <div class="desk-goal-line2">
             <span class="desk-goal-status"><span class="desk-state ${action.kind}">${escapeHtml(action.state)}</span>${elapsed ? `<i aria-hidden="true">·</i>${elapsed}` : ""}</span>
             <span class="desk-goal-actions">
@@ -1322,6 +1332,12 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       ? `<section class="area-desk-grid" aria-label="Work by Area">${records.map((record, position) => deskAreaPanel(record, position, maxElapsedMs)).join("")}</section>`
       : `<div class="empty-state">${emptyCopy}</div>`}`;
 
+    const people = new Map();
+    for (const area of areas()) for (const name of area.roster ?? []) {
+      const key = `${area.rosterArea}::${name.trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US")}`;
+      people.set(key, name);
+    }
+    const personOptions = [["all", "All people"], ["mine", "Mine"], ...[...people].sort((left, right) => left[1].localeCompare(right[1])), ["unassigned", "Unassigned"]];
     return `
       <section class="work-page">
         <div class="work-tools">
@@ -1335,6 +1351,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
           <div class="work-filter" role="group" aria-label="Choose current or planned work">
             ${[["active", "Current"], ["inactive", "Planned"]].map(([filter, label]) => `<button type="button" data-work-filter="${filter}" aria-pressed="${state.workFilter === filter}">${label}</button>`).join("")}
           </div>
+          <label><span class="visually-hidden">Person</span><select id="work-person-filter" aria-label="Filter work by person">${personOptions.map(([value, label]) => `<option value="${escapeHtml(value)}" ${state.personFilter === value ? "selected" : ""}>${escapeHtml(label)}</option>`).join("")}</select></label>
         </div>
         ${content}
         ${launchPopover()}

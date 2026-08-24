@@ -89,7 +89,8 @@ test("the brain hears about the lines Tangent does not show, once per plan chang
   const trees = path.join(root, "trees");
   const area = `otto/${leaf}`;
   await mkdir(path.join(trees, "otto", leaf), { recursive: true });
-  await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
+  await writeFile(path.join(trees, "harnesses.md"), '```tangent.harnesses.v1\n{"version":1,"harnesses":[{"id":"test","command":"true"}]}\n```\n', "utf8");
+  await writeFile(path.join(trees, "otto", "otto.md"), '---\ntype: area\n---\n\n# Otto\n\n```tangent.environment.v1\n{"version":1,"defaults":{"launch":{"harness":"test"}}}\n```\n', "utf8");
   await writeFile(path.join(trees, "otto", leaf, `${leaf}.md`), `---\ntype: area\n---\n\n# ${leaf}\n`, "utf8");
   await writeFile(path.join(trees, "otto", leaf, "design-probe.md"), "# Probe design\n\nA question.\n", "utf8");
 

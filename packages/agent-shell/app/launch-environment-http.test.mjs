@@ -121,6 +121,13 @@ test("launch options resolve the registry, and saving writes an Area default", a
     body: JSON.stringify({ area: "otto/missing", kind: "work", mode: "launch", launch: { harness: "pi-code" } }),
   });
   assert.equal(missingArea.status, 404);
+  const unknownKind = await fetch(`${base}/api/launch/default`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ area: "otto/test", kind: "agent", mode: "launch", launch: { harness: "pi-code" } }),
+  });
+  assert.equal(unknownKind.status, 400);
+  assert.match((await unknownKind.json()).error, /unknown default kind "agent"/);
 
   // The declared default resolves through the registry with display labels.
   const options = await fetch(`${base}/api/launch/options?area=otto/test`).then((response) => response.json());
@@ -285,4 +292,27 @@ test("launch options resolve the registry, and saving writes an Area default", a
   }).then((response) => response.json());
   assert.equal(reopened.session, session);
   assert.equal(reopened.reattached, true);
+
+  // A live Goal session keeps its recorded launch after its Area default is
+  // removed from the registry. Reattachment must not resolve that new error.
+  const registryWithoutDefault = await fetch(`${base}/api/harnesses`).then((response) => response.json());
+  registryWithoutDefault.registry.harnesses = registryWithoutDefault.registry.harnesses.filter((harness) => harness.id !== "pi-code");
+  assert.equal((await fetch(`${base}/api/harnesses`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(registryWithoutDefault.registry),
+  })).status, 200);
+  const removedDefault = await fetch(`${base}/api/launch/options?area=otto/test`).then((response) => response.json());
+  assert.match(removedDefault.default.error, /otto: unknown harness "pi-code"/);
+  const reattachedAfterRemoval = await fetch(`${base}/api/goals/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file: "otto/test/goal-prove-launch.md" }),
+  });
+  assert.equal(reattachedAfterRemoval.status, 200);
+  assert.equal((await reattachedAfterRemoval.json()).reattached, true);
+  const recordedCommand = await new Promise((resolve) => {
+    execFile("tmux", ["show-options", "-t", session, "-v", "@tangent_launch_command"], (_error, stdout) => resolve((stdout ?? "").trim()));
+  });
+  assert.equal(recordedCommand, "CLAUDE_CONFIG_DIR=~/.claude-otto claude --model claude-opus-4-6");
 });

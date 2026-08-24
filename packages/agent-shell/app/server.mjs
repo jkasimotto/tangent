@@ -1830,15 +1830,6 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
   const o = areaGoals.find((t) => t.slug === slug);
   if (!o) return { status: 404, error: `no goal "${slug}" on ${area}` };
   if (["done", "dropped"].includes(o.status)) return { status: 409, error: `goal is ${o.status}` };
-  // Resolve the launch before any tmux action: a declaration that does not
-  // resolve blocks the start and names itself, it never gets substituted.
-  if (!command) {
-    const inherited = await launchCatalog.forArea(area);
-    if (inherited.error) return { status: 409, error: inherited.error };
-    command = inherited.command;
-    if (!label && inherited.label) label = inherited.label;
-  }
-  trace?.mark("launch resolved");
   const sessions = await listSessions();
   trace?.mark("spawn sessions ready", { sessions: sessions.length });
   // Extra Goals ride along in the same session: same Area only, still open,
@@ -1868,11 +1859,26 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
   // A pipeline step or a continuation always forces a fresh session: there
   // is never a reason to reattach to an old, about-to-be-killed one.
   const existing = (pipeline || continuation) ? null : [o.session, phaseName, baseName].find((n) => n && sessions.some((s) => s.name === n));
+  const live = existing ? sessions.find((session) => session.name === existing) : null;
+  const existingAtShell = Boolean(live && SHELL_CMDS.has(live.command));
+  if (!command && existingAtShell) {
+    command = await execFileAsync("tmux", ["show-options", "-t", existing, "-v", "@tangent_launch_command"])
+      .then(({ stdout }) => stdout.trim(), () => "");
+  }
+  // A new launch, including one in an existing shell pane, resolves after the
+  // saved Area edit. An agent that already runs keeps its recorded launch.
+  if (!command && (!existing || existingAtShell)) {
+    const inherited = await launchCatalog.forArea(area);
+    if (inherited.error) return { status: 409, error: inherited.error };
+    command = inherited.command;
+    if (!label && inherited.label) label = inherited.label;
+  }
+  trace?.mark("launch resolved", { reattachedRunningAgent: Boolean(existing && !existingAtShell) });
   if (existing) {
     await execFileAsync("tmux", ["set-option", "-t", existing, "@tangent_phase", phase]);
     if (document) await execFileAsync("tmux", ["set-option", "-t", existing, "@tangent_document", document]);
-    if (label) await execFileAsync("tmux", ["set-option", "-t", existing, "@tangent_launch", label]);
-    const live = sessions.find((s) => s.name === existing);
+    if (existingAtShell && label) await execFileAsync("tmux", ["set-option", "-t", existing, "@tangent_launch", label]);
+    if (existingAtShell && command) await execFileAsync("tmux", ["set-option", "-t", existing, "@tangent_launch_command", command]);
     let primed = false;
     if (approved && phase === "execute" && live && !SHELL_CMDS.has(live.command)) {
       if (live.state === "working") return { status: 409, error: "the agent is still working; wait before you approve another assignment" };
@@ -1896,6 +1902,7 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
   await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_goal", o.file]);
   await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_kind", "goal"]);
   await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_phase", phase]);
+  await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_launch_command", command]);
   if (document) await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_document", document]);
   if (label) await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_launch", label]);
   if (pipeline) {
@@ -3107,8 +3114,8 @@ async function startBrainUnlocked(area, { instruction = "", choice = null, comma
   }
   const invalid = validateInstruction(instruction);
   if (invalid) return { status: 400, error: invalid };
-  // An explicit choice wins; otherwise the nearest Area brain default wins,
-  // with Fable and then the general Area launch retained as fallbacks.
+  // An explicit choice wins. Otherwise the nearest Brain declaration wins,
+  // followed only by a declared Work launch for the target Area.
   let launch = await launchCatalog.requested({ choice, command });
   let ref = command ? null : choice;
   if (!launch.error && !launch.command) {
@@ -4247,7 +4254,9 @@ const launchRoutes = createLaunchRoutes({
   async saveDefault(body) {
     const area = String(body.area ?? "");
     if (!validAreaPath(area) || !await areaExists(area)) return { status: 404, error: `no area "${area}"` };
-    const kind = body.kind === "brain" ? "brain" : "launch";
+    const requestedKind = String(body.kind ?? "work");
+    if (!["work", "launch", "brain"].includes(requestedKind)) return { status: 400, error: `unknown default kind "${requestedKind}"` };
+    const kind = requestedKind === "brain" ? "brain" : "launch";
     const saved = await launchCatalog.saveDefault(area, body.launch ?? {}, kind, String(body.mode ?? "launch"));
     return saved.error ? { status: 400, error: saved.error } : { status: 200, value: saved };
   },

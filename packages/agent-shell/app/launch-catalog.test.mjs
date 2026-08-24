@@ -120,6 +120,25 @@ test("brain launch resolution uses brain, then work, then a named Area error", a
   });
 });
 
+test("a removed Brain harness blocks the declared Work fallback", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "tangent-launch-catalog-removed-brain-"));
+  await writeFile(path.join(root, "harnesses.md"), [
+    "```tangent.harnesses.v1",
+    JSON.stringify({ version: 1, harnesses: [{ id: "work", command: "work-agent" }] }),
+    "```",
+  ].join("\n"));
+  /** Reads a valid Work choice and a Brain choice removed from the registry. */
+  const readAreaNote = async (area) => area === "otto"
+    ? '```tangent.environment.v1\n{"defaults":{"launch":{"harness":"work"},"brain":{"harness":"removed"}}}\n```'
+    : "";
+  const catalog = createLaunchCatalog({ root, readAreaNote });
+
+  assert.match((await catalog.forBrain("otto/tangent")).error, /otto: unknown harness "removed"/);
+  const options = await catalog.options("otto/tangent", "all");
+  assert.equal(options.workDefault.command, "work-agent");
+  assert.match(options.brainDefault.error, /otto: unknown harness "removed"/);
+});
+
 test("catalog options expose independent local declarations and inherited sources", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "tangent-launch-catalog-declarations-"));
   await writeFile(path.join(root, "harnesses.md"), [

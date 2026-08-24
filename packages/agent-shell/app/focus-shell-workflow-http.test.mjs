@@ -401,7 +401,7 @@ test("the context-first shell is default and keeps the user's understanding with
     harnesses: [{ id: "fake", label: "Fake", command: "fake-agent", modelSet: "fake", effortSet: "fake" }],
   }, null, 2) + "\n```\n", "utf8");
   const options = await fetch(`${base}/api/launch/options?area=otto%2Ftest`).then((response) => response.json());
-  assert.deepEqual(options.harnesses[0].efforts, [{ id: "high", label: "High", args: "--effort high" }]);
+  assert.deepEqual(options.harnesses[0].efforts, [{ id: "high", label: "High", args: "--effort high", command: "fake-agent --effort high" }]);
   assert.match(serverSource, /## Your step/);
   assert.match(serverSource, /## When you finish/);
   assert.match(serverSource, /tangent goal handover/);
@@ -691,8 +691,9 @@ test("the context-first shell is default and keeps the user's understanding with
   // record under the brains root, and every Goal prompt on the Area names it.
   assert.match(serverSource, /# Brain for \$\{area\}/);
   assert.match(serverSource, /tangent brain handover/);
-  assert.match(serverSource, /Sonnet is the workhorse/);
-  assert.match(serverSource, /Every --launch in this Area is \$\{harness\}/);
+  assert.match(serverSource, /The resolved work harness for this Area is/);
+  assert.match(serverSource, /Choose its steps and catalog launch ids from the approved plan/);
+  assert.doesNotMatch(serverSource, /Sonnet is the workhorse/);
   const emptyBrain = await fetch(`${base}/api/brains/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -727,10 +728,10 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(brainAgain.session, "test-brain");
   const brainShow = await fetch(`${base}/api/brains/show?session=test-brain`).then((response) => response.json());
   assert.equal(brainShow.brain.area, "otto/test");
-  // otto/test resolves to claude-otto (profile fallback); the prompt states
-  // it in plain words and every example launch uses it, never plain claude.
-  assert.match(brainShow.prompt, /Every --launch in this Area is claude-otto\/<model>/);
-  assert.doesNotMatch(brainShow.prompt, /claude\//);
+  // The Work profile fallback remains valid for work, but it is not a declared
+  // Work launch. Brain guidance names that distinction and never invents ids.
+  assert.match(brainShow.prompt, /No work harness is declared for Area `otto\/test`/);
+  assert.doesNotMatch(brainShow.prompt, /Every --launch in this Area is/);
   assert.equal((await fetch(`${base}/api/brains/show?area=otto%2Fnowhere`)).status, 404);
   const briefUnderBrain = await fetch(`${base}/api/goals/brief?file=${encodeURIComponent(pipelineGoal.file)}`).then((response) => response.json());
   assert.match(briefUnderBrain.markdown, /## Brain\n\nThe brain for Area otto\/test controls this work/);

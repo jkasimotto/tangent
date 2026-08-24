@@ -75,13 +75,28 @@ test("the Area browser focuses search and leads with ready work and filterable D
 
   click(window, "[data-default-agent-edit='work']");
   click(window, "[data-launch-harness='claude']");
+  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  assert.equal(posts.filter((item) => item.path === "/api/launch/default").length, 0, "Escape keeps both declarations unchanged");
+  assert.equal(window.document.querySelector("[data-launch-popover]"), null);
+  click(window, "[data-default-agents-area='otto/tangent']");
+  await settle(window);
+
+  click(window, "[data-default-agent-edit='work']");
+  click(window, "[data-launch-harness='claude']");
   assert.equal(posts.filter((item) => item.path === "/api/launch/default").length, 0, "a choice stays local until Save");
   click(window, "[data-launch-save]");
   await settle(window);
   assert.deepEqual(posts.at(-1).body, { area: "otto/tangent", kind: "work", mode: "launch", launch: { harness: "claude" } });
 
+  click(window, "[data-default-agent-edit='work']");
+  click(window, "[data-launch-harness='codex']");
+  click(window, "[data-launch-effort='high']");
+  click(window, "[data-launch-save]");
+  await settle(window);
+  assert.deepEqual(posts.at(-1).body, { area: "otto/tangent", kind: "work", mode: "launch", launch: { harness: "codex", model: "sol", effort: "high" } });
+
   click(window, "[data-default-agent-mode='work']");
-  assert.equal(posts.filter((item) => item.path === "/api/launch/default").length, 1);
+  assert.equal(posts.filter((item) => item.path === "/api/launch/default").length, 2);
   click(window, "[data-launch-save]");
   await settle(window);
   assert.deepEqual(posts.at(-1).body, { area: "otto/tangent", kind: "brain", mode: "work" });

@@ -108,6 +108,13 @@ test("the Area card brain icon starts, shows, and resumes the Area brain", async
   await settle(window);
   assert.equal(window.document.querySelector("[data-launch-popover]"), null);
   assert.ok(window.document.querySelector("#describe-work-terminal[data-session='dnd-brain']"));
+  // A refresh can briefly omit the live row while the selected tmux terminal
+  // remains mounted. Stop must still target that terminal's exact session.
+  sessions = [];
+  window.dispatchEvent(new window.Event("focus"));
+  await settle(window);
+  assert.ok(window.document.querySelector("#describe-work-terminal[data-session='dnd-brain']"), "the selected terminal survives a transient session gap");
+  assert.equal(window.document.querySelector("#secondary-action").hidden, false, "Stop remains available for the mounted terminal");
   click(window, "#secondary-action");
   assert.match(window.document.querySelector("#modal-title").textContent, /Stop .*\?/);
   click(window, "[data-modal-confirm]");

@@ -1,7 +1,7 @@
 import { escapeHtml } from "./text-format.js";
 
 /** Creates this browser boundary with explicit shell-owned dependencies. */
-export function createShellInteractions({ state, api, post, paint, refresh, showToast, screen, backButton, shellMenu, goToLayer, goToInput, goToList, modalLayer, modalKicker, modalTitle, modalCopy, modalField, modalActions, buildGoToRows, goToCore, areaLabel, humanName, goalByFile, currentGoal, sessionForGoal, describeWorkSession, currentProgram, programById, programIsLive, programAreaDirectory, preferredArea, allAreas, areaParent, launchOptionsFor, launchSelection, launchRequestFields, syncLaunchDraft, commitActiveStep, pipelineForGoal, pipelineRecordForGoal, brainForAreaCard, brainStateLabel, agentReference, rememberScreenScroll, restoreReturnPoint, captureReturnPoint, restoreReturnScroll, disposeTerminal, mountTerminal, saveDescribeDraft, saveDescribeSession, syncDescribeDraft, openDocument, refreshDocument, rememberDocumentPosition, DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET }) {
+export function createShellInteractions({ state, api, post, paint, refresh, showToast, screen, backButton, shellMenu, goToLayer, goToInput, goToList, modalLayer, modalKicker, modalTitle, modalCopy, modalField, modalActions, buildGoToRows, goToCore, areaLabel, humanName, goalByFile, currentGoal, sessionForGoal, describeWorkSession, stopSession, currentProgram, programById, programIsLive, programAreaDirectory, preferredArea, allAreas, areaParent, launchOptionsFor, launchSelection, launchRequestFields, syncLaunchDraft, commitActiveStep, pipelineForGoal, pipelineRecordForGoal, brainForAreaCard, brainStateLabel, agentReference, rememberScreenScroll, restoreReturnPoint, captureReturnPoint, restoreReturnScroll, disposeTerminal, mountTerminal, saveDescribeDraft, saveDescribeSession, syncDescribeDraft, openDocument, refreshDocument, rememberDocumentPosition, DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET }) {
   const agentName = humanName.agentName;
   const describeWorkSessions = humanName.describeWorkSessions;
   const describeLaunchArea = humanName.describeLaunchArea;
@@ -642,9 +642,8 @@ export function createShellInteractions({ state, api, post, paint, refresh, show
   /** Confirms and then stops the selected live session. */
   function confirmStop() {
     const goal = currentGoal();
-    const selectedConversation = describeWorkSession();
-    const describing = Boolean(selectedConversation) && (state.view === "describe-agent" || !goal);
-    const session = describing ? selectedConversation : sessionForGoal(goal);
+    const describing = state.view === "describe-agent";
+    const session = stopSession();
     if (!session || (!describing && !goal)) return;
     const shell = session.state === "shell";
     const pipeline = describing ? null : pipelineForGoal(goal);

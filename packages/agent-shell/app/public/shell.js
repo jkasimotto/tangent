@@ -477,7 +477,7 @@ const shellInteractions = createShellInteractions({
   humanName: Object.assign((...args) => humanName(...args), {
     agentName, describeWorkSessions, describeLaunchArea, areas, revealArea, selectedArea, updateStatusPill, documentGoal,
   }), goalByFile, currentGoal, sessionForGoal,
-  describeWorkSession, currentProgram, programById, programIsLive, programAreaDirectory, preferredArea, allAreas, areaParent,
+  describeWorkSession, stopSession, currentProgram, programById, programIsLive, programAreaDirectory, preferredArea, allAreas, areaParent,
   launchOptionsFor, launchSelection, launchRequestFields, syncLaunchDraft,
   commitActiveStep: Object.assign((...args) => commitActiveStep(...args), { launchStepDraft, launchStepRequest, launchDraftRows }), pipelineForGoal,
   pipelineRecordForGoal, brainForAreaCard, brainStateLabel, agentReference, rememberScreenScroll, restoreReturnPoint, captureReturnPoint,
@@ -591,12 +591,33 @@ function renderKey() {
   ]);
 }
 
+/**
+ * Returns the session controlled by the visible Stop action. The terminal's
+ * selected tmux name remains authoritative while live-session refreshes are in
+ * flight, so a transiently missing row cannot make the button inert.
+ */
+function stopSession() {
+  if (state.view !== "describe-agent") return sessionForGoal(currentGoal());
+  const live = describeWorkSession();
+  if (live) return live;
+  const name = state.describeSessionName;
+  if (!name) return null;
+  const brain = (state.brains ?? []).find((item) => item.session === name);
+  return {
+    name,
+    kind: brain ? "brain" : "describe",
+    area: brain?.area ?? "",
+    generation: brain?.generation ?? null,
+    state: brain?.state ?? "working",
+  };
+}
+
 /** Updates shell chrome for the current view and live session. */
 function updateHeader() {
   const goal = currentGoal();
   const goalSession = sessionForGoal(goal);
   const describeSession = describeWorkSession();
-  const session = state.view === "describe-agent" ? describeSession : goalSession;
+  const session = stopSession();
   const isWork = state.view === "work";
   const isCreate = state.view === "create";
   const isDescribe = state.view === "describe";
@@ -739,7 +760,7 @@ function renderScreen() {
   if (["program-detail", "program-session"].includes(state.view) && !currentProgram()) state.view = "areas";
   if (state.view === "program-session" && !currentProgram()?.session) state.view = "program-detail";
   if (state.view === "agent" && !session) state.view = state.agentReturnView === "document" && state.document ? "document" : "work";
-  if (state.view === "describe-agent" && !describeSession) {
+  if (state.view === "describe-agent" && !describeSession && !state.describeSessionName) {
     state.describeSessionName = "";
     saveDescribeSession();
     state.view = "work";

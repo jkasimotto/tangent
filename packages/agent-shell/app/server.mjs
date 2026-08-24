@@ -40,7 +40,7 @@ import { attachTerminalTransport } from "./terminal-transport.mjs";
 import { serveStaticAsset } from "./static-assets.mjs";
 import { createStateEvents } from "./state-events.mjs";
 import { createBrainRoutes } from "./brain-routes.mjs";
-import { answerBrainRequest, createBrainRequest, hasApprovedPlan, openBrainRequests, readBrainRequests, writeBrainRequests } from "./brain-requests.mjs";
+import { answerBrainRequest, brainRequestAnswerNotice, createBrainRequest, hasApprovedPlan, openBrainRequests, readBrainRequests, writeBrainRequests } from "./brain-requests.mjs";
 import { createPipelineRoutes } from "./pipeline-routes.mjs";
 import { createAgentRoutes } from "./agent-routes.mjs";
 import { createVaultRepository } from "./vault-repository.mjs";
@@ -3684,12 +3684,7 @@ const brainRoutes = createBrainRoutes({
           await vaultCommit(changed, `update: ${goal.area} goal ${goal.slug} done in tree`, goal.area, brain.session);
         }
       }
-      const response = request.answer === "approve"
-        ? "approved"
-        : request.answer === "changes"
-          ? `wants these changes: ${request.note}`
-          : `selected "${request.answer}"`;
-      await notifyBrain(brain.area, `Julian ${response} for "${request.subject}".`);
+      await notifyBrain(brain.area, brainRequestAnswerNotice(request));
       return { status: 200, request };
     } catch (error) { return { status: 400, error: String(error.message ?? error) }; }
   },

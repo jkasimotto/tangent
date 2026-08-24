@@ -168,7 +168,7 @@ test("the brain prompt keeps reviewed Goals open until Julian accepts the Test",
   openedSessions.push(brain.session);
   const show = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(brain.session)}`).then((response) => response.json());
 
-  assert.match(show.prompt, /Keep the Goal open until Julian accepts that Test/, "the user accepts a reviewed Goal before it becomes done");
+  assert.match(show.prompt, /Keep the Goal open until Julian approves that Request/, "the user approves a reviewed Goal before it becomes done");
   assert.match(show.prompt, /Before every handover, sweep `tangent goal list otto\/probesweep` and `tangent agent list`/, "sweep goal list and agent list before every handover");
   assert.match(show.prompt, /Add a Test request for each reviewed Goal/, "reviewed Goals become direct validation requests");
 });
@@ -246,7 +246,7 @@ test("the brain prompt uses structured plan, decision, test, and approval reques
   const show = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(brain.session)}`).then((response) => response.json());
 
   assert.match(show.prompt, /## Requests for Julian/, "the prompt names the request contract");
-  assert.match(show.prompt, /tangent brain request --kind plan/, "the plan approval is explicit");
+  assert.match(show.prompt, /create one short approval Request/, "the plan approval is explicit");
   assert.match(show.prompt, /kind is internal routing metadata/, "request kinds do not change the user contract");
   assert.match(show.prompt, /kind test/, "tests use a structured request");
   assert.match(show.prompt, /kind approval/, "one-way approvals use a structured request");

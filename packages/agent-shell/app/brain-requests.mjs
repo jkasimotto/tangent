@@ -63,6 +63,17 @@ export function answerBrainRequest(record, id, answer, note = "", now = new Date
   return request;
 }
 
+/** Builds the complete durable answer that the work owner receives next. */
+export function brainRequestAnswerNotice(request) {
+  if (!request?.response) throw new Error("request has no response");
+  const answer = request.response.answer === "approve"
+    ? "approved"
+    : request.response.answer === "changes"
+      ? `wants these changes: ${request.response.text}`
+      : `selected "${request.response.answer}"`;
+  return `Julian ${answer} for "${request.subject}".`;
+}
+
 /** Returns the requests that still need Julian's answer. */
 export function openBrainRequests(record) {
   return record.requests.filter((request) => request.status === "open");

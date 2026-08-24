@@ -4,7 +4,7 @@ import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { answerBrainRequest, createBrainRequest, hasApprovedPlan, openBrainRequests, readBrainRequests, writeBrainRequests } from "./brain-requests.mjs";
+import { answerBrainRequest, brainRequestAnswerNotice, createBrainRequest, hasApprovedPlan, openBrainRequests, readBrainRequests, writeBrainRequests } from "./brain-requests.mjs";
 
 test("a durable plan approval unlocks execution", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "brain-requests-"));
@@ -40,6 +40,7 @@ test("all requests use approval or typed changes", async () => {
   const answered = answerBrainRequest(record, request.id, "changes", "Labels overlap.");
   assert.equal(answered.answer, "changes");
   assert.equal(answered.note, "Labels overlap.");
+  assert.equal(brainRequestAnswerNotice(answered), 'Julian wants these changes: Labels overlap. for "Diagrams".');
 });
 
 test("a request cannot contain an agent report", async () => {

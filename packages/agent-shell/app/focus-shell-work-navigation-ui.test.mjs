@@ -147,6 +147,7 @@ test("the live shell restores context, defines work with an agent, and organizes
     { kind: "decide", target: null, text: "should the audit cover the Usage UI too?", unblocks: null, line: freeDecideLine, index: 3, file: null, title: "should the audit cover the Usage UI too?", commentCount: 0, missing: false, goalStatus: null },
   ];
   let brainLive = true;
+  const brainRequests = [{ id: "request-1", kind: "decision", subject: "Audit scope", question: "Approve the proposed audit scope?", proposal: "Audit Agent Shell and Usage UI.", detail: "The full proposal can be several paragraphs.\nIt belongs on the opened Request surface.", status: "open" }];
   const describeSessions = [];
 
   window.localStorage.setItem("agent-shell.current-goal", goalFile);
@@ -223,7 +224,7 @@ test("the live shell restores context, defines work with an agent, and organizes
           ...(liveEditBrainStarted ? [{ name: "live-edit-brain", area: liveEditGoal.area, kind: "brain", state: "waiting", command: "claude" }] : []),
         ],
         brains: liveEditBrainStarted
-          ? [{ area: liveEditGoal.area, session: "live-edit-brain", status: brainLive ? "running" : "stopped", live: brainLive, generation: 1, state: brainLive ? "waiting" : null, stateDetail: brainLive ? "decision" : null, stateQuestion: "Do you want the audit to start now?", forJulian: brainRowsForJulian }]
+          ? [{ area: liveEditGoal.area, session: "live-edit-brain", status: brainLive ? "running" : "stopped", live: brainLive, generation: 1, state: brainLive ? "waiting" : null, stateDetail: brainLive ? "decision" : null, stateQuestion: "Do you want the audit to start now?", forJulian: brainRowsForJulian, requests: brainRequests }]
           : [],
       });
     }
@@ -317,28 +318,14 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.ok(group, "the brain's Area gets its own group");
   assert.doesNotMatch(group.querySelector("header").textContent, /Reply to brain/, "the group header has no second answer lane");
   const rows = [...group.querySelectorAll(".attention-items > *")];
-  assert.equal(rows.length, 4, "the brain's own dialog, then its three plan rows");
-  assert.match(rows[0].textContent, /Do you want the audit to start now\?/, "a brain stuck at its own dialog is an ask");
+  assert.equal(rows.length, 1, "only the durable Request appears");
+  assert.equal(rows[0].querySelector(".attention-question").textContent, "Approve the proposed audit scope?");
+  assert.deepEqual([...rows[0].querySelectorAll("[data-verdict]")].map((button) => button.textContent), ["Approve", "I want these changes"]);
+  assert.ok(rows[0].querySelector("[data-open-request-id]"), "Open enters the full Request surface");
+  assert.doesNotMatch(rows[0].textContent, /opened Request surface/, "the compact row does not contain full detail");
 
-  assert.match(rows[1].textContent, /design-live-edit-collaboration/, "the Decide row leads with the Document's file name");
-  assert.match(rows[1].textContent, /Unblocks: the audit · 2 comments left/);
-  assert.equal(rows[1].querySelector(".attention-question").textContent, "which of the 3 questions first?", "the brain's own question is the question");
-  assert.equal(rows[1].querySelector("[data-open-document]").dataset.openDocument, liveEditDesign.file, "Read opens the Document Julian answers in");
-  assert.match(rows[1].textContent, /Accept/);
-  assert.match(rows[1].textContent, /Reject/);
-  assert.doesNotMatch(rows[1].textContent, /Reply/, "a Decide row has no second answer lane");
-
-  assert.equal(rows[2].querySelector(".attention-question").textContent, "Accept it?", "Tangent asks the Test row's question, not the brain");
-  assert.match(rows[2].textContent, /press Cmd\+K, type a title, press Enter\./);
-  assert.doesNotMatch(rows[2].textContent, /Reply/, "a Test row has no second answer lane");
-
-  assert.match(rows[3].textContent, /Brain asks/);
-  assert.equal(rows[3].querySelector(".attention-question").textContent, "should the audit cover the Usage UI too?");
-  assert.match(rows[3].textContent, /Answer/, "a question with no Document is answered in the brain's terminal");
-  assert.equal(rows[3].querySelector("[data-reply-subject]").dataset.replySubject, "should the audit cover the Usage UI too?");
-
-  assert.equal(window.forYouItems().length, 5, "the brain's four asks plus the one fallback ask left");
-  assert.equal(window.document.querySelector(".attention-queue > header > span").textContent, "5", "the card's number is that one list");
+  assert.equal(window.forYouItems().length, 2, "the durable Request plus the one fallback ask left");
+  assert.equal(window.document.querySelector(".attention-queue > header > span").textContent, "2", "the card's number is that one list");
   const brainGoalCard = window.document.querySelector(`[data-goal-anchor="${liveEditGoal.file}"]`);
   assert.ok(brainGoalCard, "the brain's Area still shows its Goal");
   assert.equal(brainGoalCard.classList.contains("waiting"), false, "a brain-run Goal keeps no amber");
@@ -353,8 +340,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.ok(areaGroup, "the Area panel gets the brain's group directly under its header");
   assert.equal(areaPanel.querySelector(".area-desk-header + .area-for-you"), areaPanel.querySelector(".area-for-you"), "the group sits right after the header, before Goal work");
   const areaRows = [...areaGroup.querySelectorAll(".attention-items > *")];
-  assert.equal(areaRows.length, 4, "the Area panel shows the same rows as the desk card");
-  assert.equal(areaRows[1].querySelector("[data-open-document]").dataset.openDocument, liveEditDesign.file, "Read on the Area panel opens the same Document");
+  assert.equal(areaRows.length, 1, "the Area panel shows the same Request as the desk card");
   assert.equal(areaGroup.querySelector("header [data-open-brain]"), null, "the Area panel header has no Reply to brain lane");
 
   // With an agent on it, the pane is static because the brain has not read it
@@ -370,36 +356,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   reviewAgentStarted = beforeAgent;
   await window.refresh();
   await settle(window);
-  assert.equal(dockBadges.at(-1), 5, "the Dock badge counts what the brain asked too");
-
-  // A Test row remains the acceptance boundary while its reviewed Goal is open.
-  brainRowsForJulian = brainRowsForJulian.map((row) => (row.kind === "test" ? { ...row, goalStatus: "open" } : row));
-  await window.refresh();
-  await settle(window);
-  assert.equal(window.forYouItems().length, 5, "an open reviewed Goal keeps its Test row until Julian answers");
-  brainRowsForJulian = brainRowsForJulian.map((row) => (row.kind === "test" ? { ...row, goalStatus: "done" } : row));
-  await window.refresh();
-  await settle(window);
-
-  // Accept answers the Test row: it goes now, the plan follows, and the brain
-  // hears the verdict.
-  click(window, "[data-verdict='accept']");
-  await settle(window);
-  assert.equal(posts.at(-1).path, "/api/brains/verdict");
-  assert.equal(posts.at(-1).body.line, decideLine, "the first Accept on the card answers the first row");
-  assert.equal(posts.at(-1).body.verdict, "accept");
-  assert.equal(window.document.querySelectorAll(".attention-queue .for-you-group:not(.fallback) .attention-items > *").length, 3, "the row goes at once on the desk card");
-  assert.equal(window.document.querySelectorAll(".area-for-you .for-you-group .attention-items > *").length, 3, "and on the Area panel too");
-  await window.refresh();
-  await settle(window);
-  assert.equal(window.document.querySelectorAll(".attention-queue .for-you-group:not(.fallback) .attention-items > *").length, 3, "and stays gone after the poll");
-
-  // Reject is an answer too, and it travels the same way.
-  click(window, "[data-verdict='reject']");
-  await settle(window);
-  assert.equal(posts.at(-1).path, "/api/brains/verdict");
-  assert.equal(posts.at(-1).body.verdict, "reject");
-  assert.equal(posts.at(-1).body.line, testLine);
+  assert.equal(dockBadges.at(-1), 2, "the Dock badge counts the Request too");
 
   // Stopping a brain removes its asks. Resume remains on the Area card; a dead
   // brain cannot keep asking Julian for an answer.
@@ -407,8 +364,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   await window.refresh();
   await settle(window);
   const stoppedGroup = window.document.querySelector(".attention-queue .for-you-group.stopped");
-  assert.equal(stoppedGroup, null, "the stopped brain leaves no stale ask group");
-  assert.ok(!window.forYouItems().some((ask) => ask.question === "Accept the result?"), "a stopped brain's Area does not feed the fallback as well");
+  assert.ok(stoppedGroup, "a durable Request remains visible while its brain is stopped");
   brainLive = true;
 
   liveEditBrainStarted = false;

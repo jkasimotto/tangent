@@ -5,6 +5,7 @@ import goToCore from "./go-to-core.js";
 import { activeBrainForArea } from "./brain-ownership.js";
 import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
 import { personMenu } from "./person-menu.js";
+import { isInAreaFocus, normalizeAreaFocus, reconcileAreaFocus, writeAreaFocus } from "./area-focus-core.js";
 
 /** Normalizes a roster label in the same way as the server projection. */
 export function normalizePersonLabel(value) {
@@ -37,7 +38,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     launchSelection, launchRequestFields, syncLaunchDraft, preferredArea, launchOptionsFor, pipelineForGoal,
     pipelineRecordForGoal, launchPopover, DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
   } = launch;
-  const { areas, orderedGoalTrees } = areaModel;
+  const { areas, allAreas, orderedGoalTrees } = areaModel;
   const { programRowControl, programIsLive, programState, localMoment } = programs;
   const { shortcutKbd, whatHappenedOverlay } = chrome;
   const openingBrains = new Set();
@@ -133,6 +134,124 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   /** Stores the expansion state of the Area tree. */
   function saveExpandedAreas() {
     localStorage.setItem("agent-shell.expanded-areas", JSON.stringify([...state.expandedAreas].sort()));
+  }
+
+  /** Returns the normalized Area roots that currently scope Work. */
+  function areaFocusRoots() {
+    return normalizeAreaFocus(state.areaFocus);
+  }
+
+  /** Returns the complete Area records that the Focus picker can select. */
+  function focusAreaRecords() {
+    return allAreas().filter((area) => area.path).sort((left, right) => left.path.localeCompare(right.path));
+  }
+
+  /** Returns the short labels for selected Area roots. */
+  function areaFocusLabels(paths = areaFocusRoots()) {
+    const byPath = new Map(focusAreaRecords().map((area) => [area.path, area]));
+    return paths.map((path) => humanName(byPath.get(path)?.name ?? path.split("/").at(-1)));
+  }
+
+  /** Stores the applied Focus without changing any durable work record. */
+  function persistAreaFocus() {
+    const saved = writeAreaFocus(localStorage, state.areaFocus);
+    state.areaFocusStorageError = !saved;
+    if (!saved) showToast("Area Focus is applied for this tab, but it will reset after reload.");
+  }
+
+  /** Opens a staged copy of the applied Area Focus. */
+  function openAreaFocusPicker() {
+    state.areaFocusPicker = { query: "", areas: [...areaFocusRoots()] };
+    paint(true);
+    window.setTimeout(() => document.querySelector("#area-focus-search")?.focus(), 0);
+  }
+
+  /** Closes the picker without applying its staged selection. */
+  function cancelAreaFocusPicker() {
+    state.areaFocusPicker = null;
+    paint(true);
+    window.setTimeout(() => document.querySelector(areaFocusRoots().length ? "[data-change-area-focus]" : "[data-open-area-focus]")?.focus(), 0);
+  }
+
+  /** Adds or removes one staged Area root without changing the Work projection. */
+  function toggleAreaFocusDraft(path, selected) {
+    const picker = state.areaFocusPicker;
+    if (!picker) return;
+    const paths = new Set(picker.areas);
+    if (selected) paths.add(path);
+    else paths.delete(path);
+    picker.areas = [...paths].sort((left, right) => left.localeCompare(right));
+    refreshAreaFocusPicker();
+  }
+
+  /** Filters the open picker while leaving the Work projection untouched. */
+  function updateAreaFocusQuery(query, cursor = query.length) {
+    if (!state.areaFocusPicker) return;
+    state.areaFocusPicker.query = query;
+    refreshAreaFocusPicker({ focus: true, cursor });
+  }
+
+  /** Replaces only the picker after a staged edit. */
+  function refreshAreaFocusPicker({ focus = false, cursor = 0 } = {}) {
+    const picker = document.querySelector("[data-area-focus-picker]");
+    if (!picker || !state.areaFocusPicker) return;
+    picker.outerHTML = areaFocusPickerMarkup();
+    if (!focus) return;
+    const input = document.querySelector("#area-focus-search");
+    input?.focus();
+    input?.setSelectionRange(cursor, cursor);
+  }
+
+  /** Applies every staged Area change in one Work rebuild. */
+  function applyAreaFocus() {
+    if (!state.areaFocusPicker) return;
+    state.areaFocus = reconcileAreaFocus(state.areaFocusPicker.areas, focusAreaRecords().map((area) => area.path));
+    state.areaFocusPicker = null;
+    persistAreaFocus();
+    paint(true);
+    window.setTimeout(() => document.querySelector(state.areaFocus.length ? "[data-change-area-focus]" : "[data-open-area-focus]")?.focus(), 0);
+  }
+
+  /** Clears the local scope and restores the complete Work projection. */
+  function clearAreaFocus() {
+    state.areaFocus = [];
+    state.areaFocusPicker = null;
+    persistAreaFocus();
+    paint(true);
+    window.setTimeout(() => document.querySelector("[data-open-area-focus]")?.focus(), 0);
+  }
+
+  /** Renders the staged searchable multi-Area picker. */
+  function areaFocusPickerMarkup() {
+    const picker = state.areaFocusPicker;
+    if (!picker) return "";
+    const query = goToCore.normalizedSearchText(picker.query);
+    const records = focusAreaRecords().filter((area) => !query || goToCore.normalizedSearchText(`${area.name} ${area.path}`).includes(query));
+    const selected = new Set(picker.areas);
+    const normalized = normalizeAreaFocus(picker.areas);
+    const labels = areaFocusLabels(picker.areas);
+    const action = normalized.length ? `Focus on ${normalized.length} ${normalized.length === 1 ? "Area" : "Areas"}` : "Show all Areas";
+    return `<form class="area-focus-picker" data-area-focus-picker data-area-focus-form role="dialog" aria-labelledby="area-focus-title">
+      <header><div><p class="kicker">Work scope</p><h2 id="area-focus-title">Focus Areas</h2></div><button type="button" data-cancel-area-focus aria-label="Close Area Focus picker">×</button></header>
+      <label class="area-focus-search" for="area-focus-search">Find an Area<input id="area-focus-search" type="search" value="${escapeHtml(picker.query)}" placeholder="Type an Area name or path" autocomplete="off"></label>
+      <p class="area-focus-result-count" aria-live="polite">${records.length} ${records.length === 1 ? "Area" : "Areas"}</p>
+      <div class="area-focus-options">${records.length ? records.map((area) => `<label><input type="checkbox" data-area-focus-path="${escapeHtml(area.path)}" ${selected.has(area.path) ? "checked" : ""}><span><strong>${escapeHtml(humanName(area.name))}</strong><small>${escapeHtml(area.path)}</small></span></label>`).join("") : `<p>No Areas match “${escapeHtml(picker.query)}”.</p>`}</div>
+      <p class="area-focus-selected">Selected: ${labels.length ? escapeHtml(labels.join(", ")) : "All Areas"}</p>
+      ${state.areaFocusStorageError ? `<p class="area-focus-storage-note">Reload persistence is unavailable in this browser.</p>` : ""}
+      <footer><button class="quiet-button" type="button" data-cancel-area-focus>Cancel</button><button class="primary-button" type="submit">${escapeHtml(action)}</button></footer>
+    </form>`;
+  }
+
+  /** Renders the applied Focus summary or the control that opens the picker. */
+  function areaFocusControl() {
+    const roots = areaFocusRoots();
+    const labels = areaFocusLabels(roots);
+    const short = labels.length > 2 ? `${labels.slice(0, 2).join(" + ")} +${labels.length - 2}` : labels.join(" + ");
+    const accessible = roots.map((path, index) => `${labels[index]}, ${path}`).join("; ");
+    const control = roots.length
+      ? `<div class="area-focus-summary" aria-label="Area Focus: ${escapeHtml(accessible)}"><span><b>Focus:</b> ${escapeHtml(short)}</span><button type="button" data-change-area-focus>Change</button><button type="button" data-clear-area-focus>Clear</button></div>`
+      : `<button class="area-focus-open" type="button" data-open-area-focus>Focus Areas</button>`;
+    return `<div class="area-focus-control">${control}${areaFocusPickerMarkup()}</div>`;
   }
 
   /** Expands the ancestors of one area so the selected row stays visible. */
@@ -649,10 +768,15 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * Panels keep hierarchy order. Runtime activity never moves a subject.
    */
   function deskAreas() {
-    const trees = filteredGoalTrees(goalTrees().filter((tree) => goalTreeState(tree) !== "closed"));
-    const descriptions = state.workFilter === "inactive" || state.personFilter !== "all" ? [] : describeWorkSessions();
+    const roots = areaFocusRoots();
+    /** True when one projected record stays inside the applied scope. */
+    const inFocus = (path) => isInAreaFocus(path, roots);
+    const trees = filteredGoalTrees(goalTrees().filter((tree) => goalTreeState(tree) !== "closed"))
+      .filter((tree) => inFocus(tree.path));
+    const descriptions = (state.workFilter === "inactive" || state.personFilter !== "all" ? [] : describeWorkSessions())
+      .filter((session) => inFocus(session.area));
     const core = areaMapCore;
-    const areaList = areas();
+    const areaList = (roots.length ? allAreas() : areas()).filter((area) => inFocus(area.path));
     const byPath = new Map(areaList.map((area) => [area.path, area]));
     /** One Area's own open Goal trees and definition sessions, not its descendants'. */
     const workOf = (path) => ({
@@ -667,8 +791,9 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     }
     const liveBrainAreas = (state.brains ?? [])
       .filter((brain) => brain.status === "running" && brain.live)
-      .map((brain) => brain.area);
-    const panelDefs = core.deskPanels(openCounts, liveBrainAreas);
+      .map((brain) => brain.area)
+      .filter(inFocus);
+    const panelDefs = core.deskPanels(openCounts, roots.length ? [...roots, ...liveBrainAreas] : liveBrainAreas);
     const covered = new Set(panelDefs.flatMap((panel) => [panel.path, ...panel.sections]));
     const panels = panelDefs.map((panel) => {
       const area = byPath.get(panel.path);
@@ -678,7 +803,12 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
         .filter((section) => section.area);
       const programs = state.programs.programs.filter((program) => program.area === panel.path);
       const brain = (state.brains ?? []).find((item) => item.area === panel.path && item.status === "running" && item.live) ?? null;
-      return { area, trees: own.trees, descriptions: own.descriptions, sections, programs, brain };
+      const focusRoot = roots.includes(panel.path);
+      const focusHasWork = !focusRoot || trees.some((tree) => core.isInside(tree.path, panel.path))
+        || descriptions.some((session) => core.isInside(session.area, panel.path))
+        || liveBrainAreas.some((path) => core.isInside(path, panel.path))
+        || state.programs.programs.some((program) => core.isInside(program.area, panel.path));
+      return { area, trees: own.trees, descriptions: own.descriptions, sections, programs, brain, focusRoot, focusHasWork };
     }).filter((record) => record.area);
     if (state.workFilter === "all") {
       for (const area of areaList) {
@@ -903,10 +1033,16 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * header is the length of that one list.
    */
   function deskAttentionQueue() {
-    const groups = askGroups();
-    const fallback = fallbackAsks();
-    const count = groups.reduce((total, group) => total + group.asks.length, 0) + fallback.length;
-    if (!count) return "";
+    const roots = areaFocusRoots();
+    const completeGroups = askGroups();
+    const completeFallback = fallbackAsks();
+    const total = completeGroups.reduce((count, group) => count + group.asks.length, 0) + completeFallback.length;
+    if (!total && !roots.length) return "";
+    const groups = roots.length
+      ? completeGroups.map((group) => ({ ...group, asks: group.asks.filter((ask) => isInAreaFocus(ask.area, roots)) })).filter((group) => group.asks.length)
+      : completeGroups;
+    const fallback = roots.length ? completeFallback.filter((ask) => isInAreaFocus(ask.area, roots)) : completeFallback;
+    const shown = groups.reduce((count, group) => count + group.asks.length, 0) + fallback.length;
     const enableBadge = typeof navigator.setAppBadge === "function"
       && window.__agentShellNativeDockBadge !== true
       && typeof Notification !== "undefined"
@@ -915,10 +1051,14 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const fallbackMarkup = fallbackAskGroups(fallback)
       .map((group) => `<div class="for-you-group fallback"><header><span>${escapeHtml(areaLabel(group.area))} · no brain</span></header><div class="attention-items">${group.asks.map(askRow).join("")}</div></div>`)
       .join("");
+    const scopeCopy = roots.length
+      ? `<p class="attention-focus-count">${shown} shown in Focus · ${total - shown} outside Focus</p>`
+      : "";
+    const empty = roots.length && !shown ? `<p class="attention-focus-empty">No direct asks in Focus.</p>` : "";
     return `
       <section class="attention-queue" aria-labelledby="attention-heading">
-        <header><p class="kicker">Attention</p><h2 id="attention-heading">For you</h2>${enableBadge ? `<button class="attention-badge-button" type="button" data-enable-dock-badge>Show in Dock</button>` : ""}<span>${count}</span></header>
-        ${groupMarkup}${fallbackMarkup}
+        <header><p class="kicker">Attention</p><h2 id="attention-heading">For you</h2>${enableBadge ? `<button class="attention-badge-button" type="button" data-enable-dock-badge>Show in Dock</button>` : ""}<span>${roots.length ? `${total} total` : total}</span></header>
+        ${scopeCopy}${empty}${groupMarkup}${fallbackMarkup}
       </section>`;
   }
 
@@ -1306,7 +1446,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
   /** Renders one shallow brain-owned subject group with compact Area sections. */
   function deskAreaPanel(record, position, maxElapsedMs = 0) {
-    const { area, trees, descriptions, sections, programs, brain } = record;
+    const { area, trees, descriptions, sections, programs, brain, focusRoot, focusHasWork } = record;
     const allTrees = [...trees, ...sections.flatMap((section) => section.trees)];
     const allDescriptions = [...descriptions, ...sections.flatMap((section) => section.descriptions)];
     const status = deskAreaState(area.path, allTrees, allDescriptions);
@@ -1320,6 +1460,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
           ${brain ? `<button class="work-group-brain" type="button" data-open-brain="${escapeHtml(brain.session ?? "")}">Open brain <span aria-hidden="true">→</span></button>` : ""}
         </header>
         ${areaForYouSection(area.path)}
+        ${focusRoot && !focusHasWork ? `<p class="area-focus-empty">No ${state.workFilter === "active" ? "current" : "planned"} work matches in this Focus.</p>` : ""}
         ${workSections ? `<div class="area-desk-body">${workSections}
           ${programs.length ? `<section class="area-desk-section programs">
             <div class="area-desk-section-heading"><h3>Programs</h3><span>${programs.length}</span></div>
@@ -1372,11 +1513,13 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const records = filteredDeskAreas(query);
     const maxElapsedMs = 0;
     const personLabel = state.personFilter === "mine" ? "Mine" : state.personFilter === "unassigned" ? "Unassigned" : people.get(state.personFilter);
+    const roots = areaFocusRoots();
+    const focusNames = areaFocusLabels(roots).join(" + ");
     const emptyCopy = state.personFilter !== "all" && !query
-      ? `No work is assigned to ${escapeHtml(personLabel ?? "All")}.`
+      ? `${roots.length ? `Area Focus (${escapeHtml(focusNames)}): ` : ""}No work is assigned to ${escapeHtml(personLabel ?? "All")}.`
       : query
-      ? `No ${state.workFilter === "active" ? "current" : "planned"} work matches “${escapeHtml(query)}”.`
-      : `No ${state.workFilter === "active" ? "work is active" : "unstarted Goals"}.`;
+      ? `${roots.length ? `Area Focus (${escapeHtml(focusNames)}): ` : ""}No ${state.workFilter === "active" ? "current" : "planned"} work matches “${escapeHtml(query)}”.`
+      : `${roots.length ? `Area Focus (${escapeHtml(focusNames)}): ` : ""}No ${state.workFilter === "active" ? "work is active" : "unstarted Goals"}.`;
     const content = `${!query && state.workFilter === "active" ? deskAttentionQueue() : ""}${records.length
       ? `<section class="area-desk-grid" aria-label="Work by Area">${records.map((record, position) => deskAreaPanel(record, position, maxElapsedMs)).join("")}</section>`
       : `<div class="empty-state">${emptyCopy}</div>`}`;
@@ -1388,9 +1531,11 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const selectedPerson = personOptions.some(([value]) => value === state.personFilter) ? state.personFilter : "all";
     return `
       <section class="work-page">
-        <div class="work-tools">
+        ${roots.length ? areaFocusControl() : ""}
+        <div class="work-tools${roots.length ? " focused" : ""}">
           <button class="work-area-browser" type="button" data-show-areas>Browse Areas</button>
           <button class="work-describe" type="button" data-describe-work>Describe work</button>
+          ${roots.length ? "" : areaFocusControl()}
           <label class="search-field">
             <span class="search-icon" aria-hidden="true">⌕</span>
             <input id="work-search" type="search" value="${escapeHtml(state.query)}" placeholder="Filter work and Areas" autocomplete="off" />
@@ -1407,5 +1552,5 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     `;
   }
 
-  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, fallbackAsks, forgetVerdictLines, openRequest, sendVerdict, replyAboutRow, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups, renderWork };
+  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, fallbackAsks, forgetVerdictLines, openRequest, sendVerdict, replyAboutRow, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, renderWork };
 }

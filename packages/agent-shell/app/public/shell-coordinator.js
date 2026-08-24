@@ -1,4 +1,5 @@
 import { clip, escapeHtml } from "./text-format.js";
+import { rewriteAreaFocus, writeAreaFocus } from "./area-focus-core.js";
 
 /** Coordinates navigation between capability-owned browser features. */
 export function createShellCoordinator({ shell, chrome, work, areasFeature, programs, launch, documents }) {
@@ -236,6 +237,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   async function openGoalRun(file) {
     const goal = rememberGoal(file);
     if (!goal) return;
+    state.agentReturn = state.view === "work" ? captureReturnPoint() : null;
     state.agentSessionName = null;
     state.document = null;
     state.documentTrail = [];
@@ -373,6 +375,8 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
       const moved = await post("/api/areas/move", { area: edit.area, parent: edit.parent, name: edit.name });
       state.currentFile = movedPath(state.currentFile, moved.source, moved.destination);
       state.areaSelection = moved.destination;
+      state.areaFocus = rewriteAreaFocus(state.areaFocus, moved.source, moved.destination);
+      if (!writeAreaFocus(localStorage, state.areaFocus)) state.areaFocusStorageError = true;
       localStorage.setItem("agent-shell.last-area", movedPath(localStorage.getItem("agent-shell.last-area") || "", moved.source, moved.destination));
       if (state.currentFile) localStorage.setItem("agent-shell.current-goal", state.currentFile);
       state.areaEdit = null;
@@ -591,10 +595,12 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   async function openGoalAgent({ returnView = "work" } = {}) {
     const goal = currentGoal();
     if (!goal) return;
+    const returnPoint = returnView === "work" && state.view === "work" ? captureReturnPoint() : null;
     try {
       await post("/api/goals/agent", { file: goal.file, launch: true, ...launchRequestFields() });
       await refresh();
       state.agentReturnView = returnView;
+      state.agentReturn = returnPoint;
       state.view = "agent";
       state.renderedKey = "";
       paint(true);
@@ -619,6 +625,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
       }
       if (!sessionForGoal(currentGoal())) throw new Error("The agent session did not open.");
       state.agentReturnView = "document";
+      state.agentReturn = null;
       state.view = "agent";
       state.renderedKey = "";
       paint(true);

@@ -107,6 +107,9 @@ test("returnPointFrom copies the identifying keys, the scroll, and the reader's 
     view: "document",
     currentFile: "otto/tangent/goal-x.md",
     areaSelection: "otto/tangent",
+    areaFocus: ["otto/tangent"],
+    personFilter: "mine",
+    collapsedDeskSections: new Set(["otto/tangent/nested"]),
     describeDraft: { description: "not copied" },
     document: { file: "otto/tangent/design-x.md" },
     documentTrail: ["otto/tangent/design-x.md"],
@@ -116,6 +119,13 @@ test("returnPointFrom copies the identifying keys, the scroll, and the reader's 
   assert.deepEqual(Object.keys(point.state).sort(), [...core.RETURN_POINT_KEYS].sort());
   assert.equal(point.state.view, "document");
   assert.equal(point.state.areaSelection, "otto/tangent");
+  assert.deepEqual(point.state.areaFocus, ["otto/tangent"]);
+  assert.equal(point.state.personFilter, "mine");
+  assert.deepEqual([...point.state.collapsedDeskSections], ["otto/tangent/nested"]);
+  reader.areaFocus.push("otto/other");
+  reader.collapsedDeskSections.clear();
+  assert.deepEqual(point.state.areaFocus, ["otto/tangent"], "the return point snapshots Focus");
+  assert.deepEqual([...point.state.collapsedDeskSections], ["otto/tangent/nested"], "the return point snapshots expansion");
   assert.equal("describeDraft" in point.state, false);
   assert.equal(point.scroll, scroll);
   assert.deepEqual(point.document, { file: "otto/tangent/design-x.md", trail: ["otto/tangent/design-x.md"], trailIndex: 0 });

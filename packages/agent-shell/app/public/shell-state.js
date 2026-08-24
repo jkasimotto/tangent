@@ -1,3 +1,5 @@
+import { readAreaFocus } from "./area-focus-core.js";
+
 /** Creates Agent Shell's restored browser state and request context. */
 export function createShellState(storage = globalThis.localStorage, href = globalThis.location.href) {
   /** Reads one optional JSON value from local storage. */
@@ -13,6 +15,7 @@ export function createShellState(storage = globalThis.localStorage, href = globa
   const initialView = requestedDocument ? "document" : requestedView === "prompts" ? "prompts" : ["areas", "programs"].includes(requestedView) ? "areas" : "work";
   const storedDescribeDraft = storedJson("agent-shell.describe-draft");
   const savedDescribeSession = storage.getItem("agent-shell.describe-session") || storedDescribeDraft?.session || "";
+  const storedAreaFocus = readAreaFocus(storage);
   const state = {
     vault: null,
     programs: { programs: [], errors: [], areas: [], liveCount: 0 },
@@ -24,6 +27,7 @@ export function createShellState(storage = globalThis.localStorage, href = globa
     areaSelection: requestedArea || storage.getItem("agent-shell.last-area") || "", createArea: "", createReturnView: "work",
     expandedAreas: new Set(storedJson("agent-shell.expanded-areas") || []),
     collapsedDeskSections: new Set(storedJson("agent-shell.collapsed-desk-sections") || []),
+    areaFocus: storedAreaFocus.areas, areaFocusPicker: null, areaFocusStorageError: storedAreaFocus.error,
     mapStates: new Map(), mapSelectFile: "", showDoneAreas: storage.getItem("agent-shell.show-done-areas") === "1", areaEdit: null,
     areaQuery: "", areaDocumentQuery: "", areaDocumentPeriod: "any", areaDocumentOrder: "newest", areaDocumentOnly: "", areaDocumentExcluded: new Set(),
     areaWorkQuery: "", areaWorkScope: "", areaWorkState: "all", areaWorkLimits: new Map(), areaHistory: false,
@@ -33,7 +37,7 @@ export function createShellState(storage = globalThis.localStorage, href = globa
     pipelines: [], brains: [], brainDraft: null, agentSessionName: null,
     verdictLines: new Set(), goalSelection: [], goTo: null, launchTarget: "", launchAnchor: null, whatHappened: null,
     harnessDraft: null, harnessReturnView: "work", query: "", workFilter: storage.getItem("agent-shell.work-filter") === "inactive" ? "inactive" : "active", personFilter: storage.getItem("agent-shell.person-filter") || "all",
-    caffeinate: false, decisionReturnView: "agent", agentReturnView: "work", offline: false, rebuilding: false, rebuild: null,
+    caffeinate: false, decisionReturnView: "agent", agentReturnView: "work", agentReturn: null, offline: false, rebuilding: false, rebuild: null,
     updateAvailable: false, pendingCommits: [], deployedCommit: "", currentCommit: "", bootId: "", loading: true, error: "", renderedKey: "",
     promptInspector: { loading: false, title: "", text: "", error: "", file: "", area: "" },
     bestiarySelection: { mode: "model", concept: "area", lifecycle: "plan", transition: "work" },

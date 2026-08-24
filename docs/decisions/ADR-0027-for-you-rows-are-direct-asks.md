@@ -6,6 +6,8 @@ Status: accepted. Amends ADR-0025 (line shapes, clearing verbs, endpoints).
 
 Amended 2026-08-24: a Test can target an open reviewed Goal. Accept marks that Goal done and removes the Test. Reject keeps the Goal open.
 
+Amended 2026-08-25: Work can show a labeled Area Focus subset. The complete total and Dock badge still use the authoritative list.
+
 ## Context
 
 The `For you` card must equal "what waits on Julian". On 2026-08-22 it showed three rows and none needed him: a `Try it` line for a feature he had already tried and rejected, a `Brain` question, and a row for an idle agent session that needed nothing. When the card lies once, he stops reading it, and the real asks die on a surface he no longer trusts.
@@ -33,3 +35,4 @@ Design contract: `~/.tangent/trees/otto/tangent/design-the-for-you-row-shows-onl
 - New endpoints `POST /api/brains/verdict` and `POST /api/brains/verdict/undo` replace `tried`, `tried/undo`, `decision-done`, and `decision-done/undo`. `GET /api/brains/show` gains `forJulianUnparsed`; the brains payload gains `stateQuestion`.
 - `classifyStaticPane` reads a running background shell as work, after the dialog sweep, so a pane that asks while its shell runs is still an ask.
 - The Dock badge, the Work tab count, and the Area pill all read `forYouItems()`, so the number is one list everywhere.
+- Area Focus filters only the rows that Work shows. Work labels the shown count, complete total, and count outside Focus.

@@ -5,7 +5,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction, shellMenu, goToButton, goToLayer,
     goToInput, modalLayer, terminalFit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu, confirmRebuild,
     reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, showDecision,
-    showCreate, showDescribe, toggleAwake, closeModal, modalConfirm,
+    showCreate, showDescribe, toggleAwake, closeModal, modalConfirm, restoreReturnPoint,
   } = chrome;
   const {
     loadGoalPrompt, loadBrainPrompt, closePromptPreview, selectBestiaryLifecycle, selectBestiaryTransition,
@@ -16,7 +16,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     openBrainSession, openOrStartBrain, toggleBrainPopover, saveDescribeDraft, saveDescribeSession, describeWorkSession,
     openDescribeSession, addDescribeSource, switchDescribeToManualCreate, selectionForArea, startSelectedGoals,
     openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, enableDockBadge, openRequest, sendVerdict,
-    replyAboutRow, renderWork, describeLaunchArea, describeWorkSessions,
+    replyAboutRow, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery,
+    applyAreaFocus, clearAreaFocus, renderWork, describeLaunchArea, describeWorkSessions,
   } = work;
   const {
     showAreasAt, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelCreate, cancelDescribe, areaIsFolded,
@@ -38,8 +39,25 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     notifyDocumentComments, refreshDocument, leaveReader, updateSelectionCommentButton, openReaderAgent,
   } = documents;
   const awakeButton = document.querySelector("#awake-button");
+
+  /** Returns from one worker agent to its exact Work or Document context. */
+  function leaveGoalAgent() {
+    if (state.agentReturnView === "document" && state.document) {
+      state.view = "document";
+      state.renderedKey = "";
+      paint(true);
+      return refreshDocument();
+    }
+    const point = state.agentReturn;
+    state.agentReturn = null;
+    return point ? restoreReturnPoint(point) : showWork();
+  }
+
   document.addEventListener("click", async (event) => {
     const target = event.target;
+    if (target.closest?.("[data-open-area-focus], [data-change-area-focus]")) return openAreaFocusPicker();
+    if (target.closest?.("[data-cancel-area-focus]")) return cancelAreaFocusPicker();
+    if (target.closest?.("[data-clear-area-focus]")) return clearAreaFocus();
     for (const menu of document.querySelectorAll("[data-person-menu]")) {
       if (menu.contains(target)) continue;
       menu.querySelector("[data-person-menu-button]")?.setAttribute("aria-expanded", "false");
@@ -626,6 +644,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   });
 
   document.addEventListener("submit", async (event) => {
+    if (event.target.matches("[data-area-focus-form]")) {
+      event.preventDefault();
+      return applyAreaFocus();
+    }
     if (event.target.matches("[data-comment-composer]")) {
       event.preventDefault();
       return submitCommentComposer();
@@ -768,6 +790,9 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   });
 
   document.addEventListener("input", (event) => {
+    if (event.target.id === "area-focus-search") {
+      return updateAreaFocusQuery(event.target.value, event.target.selectionStart);
+    }
     if (event.target.id === "comment-text" && state.commentComposer) {
       state.commentComposer.text = event.target.value;
       return;
@@ -848,6 +873,9 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   });
 
   document.addEventListener("change", async (event) => {
+    if (event.target.matches("[data-area-focus-path]")) {
+      return toggleAreaFocusDraft(event.target.dataset.areaFocusPath, event.target.checked);
+    }
     if (event.target.matches("#new-goal-area")) {
       state.createArea = event.target.value || "";
       return paint(true);
@@ -882,13 +910,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (state.view === "create") return cancelCreate();
     if (state.view === "describe" || state.view === "describe-agent") return cancelDescribe();
     if (state.view === "agent") {
-      if (state.agentReturnView === "document" && state.document) {
-        state.view = "document";
-        state.renderedKey = "";
-        paint(true);
-        return refreshDocument();
-      }
-      return showWork();
+      return leaveGoalAgent();
     }
     if (state.view === "document") return leaveReader();
     if (state.view === "decision") {
@@ -992,6 +1014,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   });
 
   document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && state.areaFocusPicker) {
+      event.preventDefault();
+      return cancelAreaFocusPicker();
+    }
     const personMenu = event.target.closest?.("[data-person-menu]");
     if (personMenu) {
       const button = personMenu.querySelector("[data-person-menu-button]");
@@ -1098,6 +1124,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (event.key === "Escape" && state.view === "describe-agent") {
       event.preventDefault();
       return cancelDescribe();
+    }
+    if (event.key === "Escape" && state.view === "agent") {
+      event.preventDefault();
+      return leaveGoalAgent();
     }
     if (event.key === "Escape" && state.goalSelection.length) {
       event.preventDefault();

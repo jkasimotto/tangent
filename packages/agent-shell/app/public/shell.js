@@ -26,6 +26,7 @@ import { createShellCoordinator } from "./shell-coordinator.js";
 import { bindShellEvents } from "./shell-event-bindings.js";
 import { createTerminalController } from "./terminal-controller.js";
 import { createActionTelemetry } from "./action-telemetry.js";
+import { reconcileAreaFocus, writeAreaFocus } from "./area-focus-core.js";
 import { renderPromptBestiary } from "./prompt-bestiary.js";
 
 const actionTelemetry = createActionTelemetry();
@@ -389,7 +390,7 @@ const workDeskView = createWorkDeskView({
     pipelineRecordForGoal: forward(() => pipelineRecordForGoal), launchPopover: forward(() => launchPopover),
     DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
   },
-  areaModel: { areas: forward(() => areas), orderedGoalTrees: forward(() => orderedGoalTrees) },
+  areaModel: { areas: forward(() => areas), allAreas: forward(() => allAreas), orderedGoalTrees: forward(() => orderedGoalTrees) },
   programs: {
     programRowControl: forward(() => programRowControl), programIsLive: forward(() => programIsLive),
     programState: forward(() => programState), localMoment: forward(() => localMoment),
@@ -402,7 +403,8 @@ const {
   brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain,
   humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel,
   goalNeedsYou, goalWorkFinished, workCard, goalTreeCard,
-  fallbackAsks, forgetVerdictLines, openRequest, sendVerdict, replyAboutRow, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups, renderWork,
+  fallbackAsks, forgetVerdictLines, openRequest, sendVerdict, replyAboutRow, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups,
+  openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, renderWork,
 } = workDeskView;
 
 const programView = createProgramView({
@@ -587,6 +589,7 @@ function renderKey() {
     state.areaSelection,
     state.goalSelection,
     [...state.expandedAreas].sort(),
+    [state.workFilter, state.personFilter, state.areaFocus, [...state.collapsedDeskSections].sort(), Boolean(state.areaFocusPicker)],
     // The card's durations count up, so a repaint is due once a minute even
     // when nothing else changed.
     Math.floor(Date.now() / 60_000),
@@ -985,6 +988,11 @@ async function refresh({ initial = false } = {}) {
     state.updateAvailable = Boolean(sessionPayload.sourceChanged);
     state.rebuild = sessionPayload.rebuild || null;
     state.rebuilding = ["building", "restarting", "reconnecting"].includes(state.rebuild?.phase);
+    const reconciledFocus = reconcileAreaFocus(state.areaFocus, (state.vault?.areas ?? []).map((area) => area.path));
+    if (JSON.stringify(reconciledFocus) !== JSON.stringify(state.areaFocus)) {
+      state.areaFocus = reconciledFocus;
+      if (!writeAreaFocus(localStorage, state.areaFocus)) state.areaFocusStorageError = true;
+    }
     state.loading = false;
     state.error = "";
     state.offline = false;
@@ -1178,7 +1186,7 @@ bindShellEvents({
   chrome: {
     screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction, shellMenu, goToButton, goToLayer,
     goToInput, modalLayer, terminalFit: terminalController.fit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu,
-    confirmRebuild, reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts,
+    confirmRebuild, reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, restoreReturnPoint,
     showDecision, showCreate, showDescribe, toggleAwake, closeModal, modalConfirm: getModalConfirm,
   },
   prompts: {
@@ -1190,7 +1198,8 @@ bindShellEvents({
     openBrainSession, openOrStartBrain, toggleBrainPopover, saveDescribeDraft, saveDescribeSession, describeWorkSession,
     openDescribeSession, addDescribeSource, switchDescribeToManualCreate, selectionForArea, startSelectedGoals,
     openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, enableDockBadge, openRequest, sendVerdict,
-    replyAboutRow, renderWork, describeLaunchArea, describeWorkSessions,
+    replyAboutRow, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery,
+    applyAreaFocus, clearAreaFocus, renderWork, describeLaunchArea, describeWorkSessions,
   },
   areas: {
     showAreasAt, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelCreate, cancelDescribe, areaIsFolded,

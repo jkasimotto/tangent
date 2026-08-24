@@ -14,7 +14,8 @@
   const RETURN_POINT_KEYS = [
     "view", "currentFile", "agentSessionName", "agentReturnView", "decisionReturnView",
     "describeSessionName", "createReturnView", "harnessReturnView",
-    "programId", "areaSelection", "query", "workFilter",
+    "programId", "areaSelection", "query", "workFilter", "personFilter",
+    "areaFocus", "collapsedDeskSections",
   ];
 
   /** The Back button word for each captured view. */
@@ -108,7 +109,10 @@
    */
   function returnPointFrom(state, scroll) {
     const copied = {};
-    for (const key of RETURN_POINT_KEYS) copied[key] = state[key];
+    for (const key of RETURN_POINT_KEYS) {
+      const value = state[key];
+      copied[key] = value instanceof Set ? new Set(value) : Array.isArray(value) ? [...value] : value;
+    }
     const inReader = state.view === "document" && Boolean(state.document);
     return {
       state: copied,

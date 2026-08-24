@@ -1726,7 +1726,11 @@ const runtimeScheduler = createRuntimeScheduler([
     active: () => true,
     /** Reads one current session snapshot and repairs stale work bindings. */
     async run() {
-      await reconcileGoals(await listSessions());
+      const sessions = await listSessions();
+      // The snapshot's own capture time bounds what it can testify about: a
+      // step or binding created after the capture is invisible to it, so
+      // absence is judged against loadedAt, never against the clock now.
+      await reconcileGoals(sessions, sessionObservation.status().loadedAt || Date.now());
     },
   },
   {
@@ -1973,7 +1977,7 @@ const warnedUnlinkedSessions = new Set();
  * stops a tmux session. Goal files can move or change while another agent
  * works, so only an explicit user action has authority to end a Run.
  */
-async function reconcileGoals(sessions) {
+async function reconcileGoals(sessions, snapshotAt = Date.now()) {
   if (reconciling || Date.now() - lastReconcile < 10_000) return;
   // An empty snapshot is a wrong-world signal, never proof that a session
   // ended (snapshotCanJudgeAbsence): judging against one marked live workers
@@ -1983,7 +1987,6 @@ async function reconcileGoals(sessions) {
   lastReconcile = Date.now();
   try {
     const live = new Set(sessions.map((s) => s.name));
-    const now = Date.now();
     const byFile = new Map();
     for (const area of flattenAreaPaths(await readTree(TREES_ROOT))) {
       for (const t of await readAreaGoals(area)) byFile.set(t.file, t);
@@ -1991,14 +1994,14 @@ async function reconcileGoals(sessions) {
     for (const t of byFile.values()) {
       // The Goal file's own mtime is when its binding was last written: a
       // binding fresher than the sessions snapshot above is not stopped.
-      if (!goalBindingGoneFromSnapshot(t, live, now)) continue;
+      if (!goalBindingGoneFromSnapshot(t, live, snapshotAt)) continue;
       await writeGoalBinding(t.file, { status: "open", session: null });
       await vaultCommit([t.file], `update: ${t.area} goal ${t.slug} back to open, session ended`, t.area, null);
       if (!(await pipelineStepForSession(t.session))) {
         await notifyBrain(t.area, `Goal ${t.slug}: its session ${t.session} ended without a pipeline; the Goal is open again.`);
       }
     }
-    await reconcilePipelines(sessions);
+    await reconcilePipelines(sessions, snapshotAt);
     await reconcileBrains(sessions);
     await reconcileContextHandovers(sessions);
     for (const s of sessions) {
@@ -2673,11 +2676,12 @@ async function pipelinesView(sessions) {
 }
 
 /** Marks running steps whose session is gone as stopped. */
-async function reconcilePipelines(sessions) {
+async function reconcilePipelines(sessions, snapshotAt = Date.now()) {
   const byName = new Map(sessions.map((item) => [item.name, item]));
   const now = Date.now();
   for (const record of await readAllPipelines(PIPELINES_ROOT)) {
     let changed = reclaimLiveSteps(record, byName);
+    const stopped = [];
     for (const step of record.steps) {
       const key = `${record.goal}#${step.index}#${step.session}`;
       if (step.status !== "running" || !step.session) {
@@ -2688,14 +2692,16 @@ async function reconcilePipelines(sessions) {
       const live = byName.get(step.session);
       if (!live) {
         // The step may have started after this sessions snapshot was taken:
-        // its tmux session exists but this list predates it.
-        if (!stepGoneFromSnapshot(step, byName, now)) continue;
+        // its tmux session exists but this list predates it. Absence is
+        // judged against the snapshot's capture time, so a stale list can
+        // never outvote an attempt that started after it was captured.
+        if (!stepGoneFromSnapshot(step, byName, snapshotAt)) continue;
         step.status = "stopped";
         step.endedAt = new Date().toISOString();
         changed = true;
         idleNoticed.delete(key);
         waitNoticed.delete(key);
-        await notifyBrain(record.area, `Goal ${record.slug}: step ${step.index} of ${record.steps.length} stopped (its session ended without a handover). Restart, skip, or end it on the desk, or start it again with tangent goal start.`);
+        stopped.push(step.index);
         continue;
       }
       // One idle notice per step session: the brain decides whether to send
@@ -2717,7 +2723,18 @@ async function reconcilePipelines(sessions) {
         await notifyBrain(record.area, `Goal ${record.slug}: step ${step.index} of ${record.steps.length} (${step.label || "agent"}, session ${step.session}) has sat at ${kind} for ${Math.round(BRAIN_WAIT_NOTICE_MS / 60_000)} minutes without an answer.${question}`);
       }
     }
-    if (changed) await writePipeline(PIPELINES_ROOT, record);
+    if (!changed) continue;
+    // A restart, handover, or continuation may have rewritten this record
+    // while this pass held its copy; writing the copy back would resurrect
+    // the replaced attempt and stop it on the next pass. Drop the changes
+    // instead: the next pass re-judges the fresh record. Stop notices only
+    // follow a write that landed, so a dropped stop is never announced.
+    const fresh = await readPipeline(PIPELINES_ROOT, record.area, record.slug);
+    if (!fresh || fresh.updatedAt !== record.updatedAt) continue;
+    await writePipeline(PIPELINES_ROOT, record);
+    for (const index of stopped) {
+      await notifyBrain(record.area, `Goal ${record.slug}: step ${index} of ${record.steps.length} stopped (its session ended without a handover). Restart, skip, or end it on the desk, or start it again with tangent goal start.`);
+    }
   }
 }
 const idleNoticed = new Set();

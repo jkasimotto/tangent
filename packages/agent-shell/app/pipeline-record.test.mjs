@@ -278,6 +278,20 @@ test("a stopped step returns to running when its exact session is live", () => {
   assert.equal(reclaimLiveSteps(record, new Set(["worker-live"])), false);
 });
 
+test("a snapshot captured before a replacement attempt started never judges it gone", () => {
+  // The worker was restarted or replaced under the same Goal and step
+  // identity after this snapshot was captured: the snapshot cannot see the
+  // new session, and however old the wall clock says the pass is, judging
+  // absence against the capture time keeps the live attempt authoritative.
+  const startedAt = "2026-08-24T21:00:00.000Z";
+  const capturedBeforeStart = Date.parse(startedAt) - 5 * 60_000;
+  const oldSnapshot = new Set(["some-other-session"]);
+  const step = { index: 1, status: "running", session: "worker-replacement", startedAt };
+  assert.equal(stepGoneFromSnapshot(step, oldSnapshot, capturedBeforeStart), false);
+  const goal = { status: "active", session: "worker-replacement", mtime: Date.parse(startedAt) };
+  assert.equal(goalBindingGoneFromSnapshot(goal, oldSnapshot, capturedBeforeStart), false);
+});
+
 test("an empty sessions snapshot can never testify that a session ended", () => {
   // A wrong world (a test's isolated tmux socket, a sandbox, a dead tmux
   // server) shows zero sessions; a real world holds at least the other

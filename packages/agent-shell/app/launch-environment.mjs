@@ -177,20 +177,34 @@ export function upsertHarnessRegistry(text, registry) {
  * section with a fresh block. Only the explicit save action calls this.
  */
 export function upsertEnvironmentLaunch(text, ref, kind = "launch") {
+  return updateEnvironmentDefault(text, { kind, mode: "launch", launch: ref });
+}
+
+/**
+ * Updates one Area default without changing the other default or environment
+ * fields. Inherit removes the local key. A Brain can explicitly follow Work.
+ */
+export function updateEnvironmentDefault(text, { kind = "launch", mode = "launch", launch = null } = {}) {
   const existing = fencedBlock(text, "tangent.environment.v1");
   let environment = { version: 1 };
   if (existing !== null) {
     try {
       environment = JSON.parse(existing);
-    } catch {
-      // A malformed block is replaced by a valid one that keeps only defaults.
+    } catch (error) {
+      throw new Error(`environment block is not valid JSON: ${error.message}`);
     }
   }
-  environment.defaults = { ...(environment.defaults ?? {}), [kind]: ref };
+  const defaults = { ...(environment.defaults ?? {}) };
+  if (mode === "inherit") delete defaults[kind];
+  else if (mode === "work" && kind === "brain") defaults.brain = "work";
+  else if (mode === "launch") defaults[kind] = launch;
+  else throw new Error(`invalid ${kind} default mode "${mode}"`);
+  environment.defaults = defaults;
   const block = "```tangent.environment.v1\n" + JSON.stringify(environment, null, 2) + "\n```";
   if (existing !== null) {
     return String(text).replace(/```tangent\.environment\.v1\s*\n[\s\S]*?\n```/, block);
   }
+  if (mode === "inherit") return String(text ?? "");
   return `${String(text ?? "").trimEnd()}\n\n## Development environment\n\nThe default launch for new work in this Area.\n\n${block}\n`;
 }
 
@@ -202,8 +216,14 @@ export async function inheritedBrainLaunch(area, readAreaNote, registry) {
     if (environment?.error) return { error: `${candidate}: ${environment.error}` };
     const ref = environment?.defaults?.brain;
     if (!ref) continue;
+    if (ref === "work") {
+      const work = await inheritedLaunch(area, readAreaNote, registry, { fallback: false });
+      if (!work) return { error: `${candidate}: brain follows Work, but ${area} has no declared work launch` };
+      if (work.error) return work;
+      return { ...work, source: candidate, workSource: work.source, via: "work" };
+    }
     const resolved = resolveLaunch(registry, ref);
-    return resolved.error ? { error: `${candidate}: ${resolved.error}` } : { ...resolved, source: candidate };
+    return resolved.error ? { error: `${candidate}: ${resolved.error}` } : { ...resolved, source: candidate, via: "brain" };
   }
   return null;
 }

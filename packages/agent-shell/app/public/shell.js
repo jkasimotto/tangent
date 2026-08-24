@@ -320,6 +320,8 @@ function commentComposerHtml(composer) {
 const DESCRIBE_LAUNCH_TARGET = "__describe__";
 /** The launch popover target while Julian gives an Area brain its instruction. */
 const BRAIN_LAUNCH_TARGET = "__brain__";
+/** The launch popover target while an Area edits its two durable defaults. */
+const DEFAULT_AGENTS_TARGET = "__default_agents__";
 
 /** The Area a describe-work launch applies to, read live from the form. */
 function describeLaunchArea() {
@@ -435,14 +437,14 @@ const goalLaunchView = createGoalLaunchView({
   shell: { state, api, post, paint, showToast },
   areaModel: { allAreas, areaLabel, areaPath },
   work: { humanName, agentName, describeLaunchArea, goalByFile, currentGoal, sessionForGoal, brainForAreaCard, brainStateLabel, brainKind },
-  overlays: { launchPopover: forward(() => launchPopover), DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET },
+  overlays: { launchPopover: forward(() => launchPopover), DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET, DEFAULT_AGENTS_TARGET },
 });
 const {
   selectableAreas, preferredArea, areaOptions, renderCreate, renderDescribeCapture, describeSourcesBlock,
   launchOptionsFor, launchSelection, launchRequestFields, launchStepDraft, syncLaunchDraft, commitActiveStep,
   activateLaunchStep, loadLaunchStep, addLaunchStep, removeLaunchStep, launchStepLabel, launchStepRequest,
   launchIsPipeline, pipelineForGoal, pipelineRecordForGoal, launchDraftRows, launchStepList, launchPickerBlock,
-  saveLaunchDefault, showHarnessEditor, harnessSlug, saveHarnesses, renderHarnessEditor,
+  toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, harnessSlug, saveHarnesses, renderHarnessEditor,
 } = goalLaunchView;
 
 const agentDecisionView = createAgentDecisionView({ state, agentName, areaLabel, currentBriefFields, storyEntries });
@@ -527,17 +529,19 @@ function launchPopover() {
   if (!state.launchTarget) return "";
   const describing = state.launchTarget === DESCRIBE_LAUNCH_TARGET;
   const braining = state.launchTarget === BRAIN_LAUNCH_TARGET;
-  const goal = describing || braining ? null : goalByFile(state.launchTarget);
-  if (!describing && !braining && !goal) return "";
+  const settings = state.launchTarget === DEFAULT_AGENTS_TARGET;
+  const goal = describing || braining || settings ? null : goalByFile(state.launchTarget);
+  if (!describing && !braining && !settings && !goal) return "";
   if (braining && !state.brainDraft?.area) return "";
-  const area = describing ? describeLaunchArea() : braining ? state.brainDraft.area : goal.area;
+  if (settings && !state.defaultAgents.area) return "";
+  const area = describing ? describeLaunchArea() : braining ? state.brainDraft.area : settings ? state.defaultAgents.area : goal.area;
   launchOptionsFor(area);
   const anchor = state.launchAnchor ?? { top: 120, right: window.innerWidth - 16 };
   const width = Math.min(640, window.innerWidth - 32);
   const left = Math.max(16, anchor.right - width);
   return `
-    <div class="launch-popover" data-launch-popover role="dialog" aria-label="Choose agent and model" style="top:${anchor.top}px;left:${left}px;width:${width}px;max-height:calc(100vh - ${anchor.top + 16}px)">
-      <header class="launch-popover-header"><small>${escapeHtml(areaLabel(area))}</small><strong>${describing ? "Describe work" : braining ? "Brain" : escapeHtml(goal.title)}</strong></header>
+    <div class="launch-popover" data-launch-popover role="dialog" aria-label="${settings ? "Default agents" : "Choose agent and model"}" style="top:${anchor.top}px;left:${left}px;width:${width}px;max-height:calc(100vh - ${anchor.top + 16}px)">
+      <header class="launch-popover-header"><small>${escapeHtml(areaLabel(area))}</small><strong>${describing ? "Describe work" : braining ? "Brain" : settings ? "Default agents" : escapeHtml(goal.title)}</strong></header>
       ${launchPickerBlock()}
     </div>
   `;
@@ -592,12 +596,12 @@ function renderKey() {
     state.programs.programs.map((item) => [item.id, item.paused, item.lastRunAt, item.nextRunAt, item.session?.state]),
     vaultRenderProjection(),
     goal ? [goal.file, goal.status, goal.mtime, goal.stateText, goal.currentBrief, goal.storyText, goal.why, goal.subgoalItems, goal.documents] : null,
-    [state.launch.area, state.launch.open, state.launch.editing, state.launch.command, state.launch.choice, state.launch.loading, Boolean(state.launch.options), state.launch.options?.default?.label ?? null, state.launch.options?.default?.command ?? null, state.launch.instruction, state.launch.continueFrom, state.launch.active, state.launch.steps, state.launch.record?.updatedAt ?? null],
+    [state.launch.area, state.launch.kind, state.launch.open, state.launch.editing, state.launch.command, state.launch.choice, state.launch.loading, state.launch.options, state.launch.instruction, state.launch.continueFrom, state.launch.active, state.launch.steps, state.launch.record?.updatedAt ?? null],
     (state.pipelines ?? []).map((item) => [item.goal, item.status, item.updatedAt, item.steps.map((step) => [step.status, step.live, step.state, step.idleSince, step.waitingSince])]),
     (state.brains ?? []).map((item) => [item.area, item.status, item.generation, item.session, item.live, item.state, item.stateDetail, item.stateQuestion, item.updatedAt, (item.forJulian ?? []).map((row) => [row.line, row.commentCount, row.missing, row.goalStatus])]),
     [...state.verdictLines],
     state.brainDraft,
-    [state.launchTarget, state.launchAnchor, Boolean(state.harnessDraft)],
+    [state.launchTarget, state.launchAnchor, state.defaultAgents, Boolean(state.harnessDraft)],
     whatHappenedRenderKey(),
     state.sessions.map((item) => [item.name, item.goal, item.kind, item.area, item.state, item.stateDetail, item.stateQuestion, item.phase, item.command, item.created, item.workTitle, item.launchLabel, item.waitingSince]),
   ]);
@@ -788,7 +792,7 @@ function renderScreen() {
   else if (state.view === "create") screen.innerHTML = renderCreate();
   else if (state.view === "describe") screen.innerHTML = renderDescribeCapture();
   else if (state.view === "describe-agent") screen.innerHTML = renderDescribeWorkAgent(describeSession);
-  else if (state.view === "areas") screen.innerHTML = renderAreas();
+  else if (state.view === "areas") screen.innerHTML = renderAreas() + launchPopover();
   else if (state.view === "prompts") screen.innerHTML = renderPromptBestiary({ goals: allGoals(), brains: state.brains, sessions: state.sessions, pipelines: state.pipelines, programs: state.programs.programs, asks: forYouItems(), inspector: state.promptInspector, selection: state.bestiarySelection });
   else if (state.view === "area-edit") screen.innerHTML = renderAreaEditor();
   else if (state.view === "program-detail") screen.innerHTML = renderProgramDetail(currentProgram());
@@ -1198,7 +1202,7 @@ bindShellEvents({
   },
   launch: {
     syncDescribeDraft, launchSelection, launchRequestFields, syncLaunchDraft, activateLaunchStep, removeLaunchStep,
-    addLaunchStep, launchIsPipeline, saveLaunchDefault, showHarnessEditor, saveHarnesses, startPipeline,
+    addLaunchStep, launchIsPipeline, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, saveHarnesses, startPipeline,
     savePipelineStep, appendPipelineSteps, launchOptionsFor, pipelineRecordForGoal, loadLaunchStep,
     DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
   },

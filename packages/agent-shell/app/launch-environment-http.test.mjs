@@ -64,12 +64,17 @@ test("launch options resolve the registry, and saving writes an Area default", a
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
   await writeFile(
     path.join(areaDirectory, "test.md"),
-    `---\ntype: area\n---\n\n# Test\n\n## Goals\n\n1. [[goal-prove-launch]]\n\n## Development environment\n\n\`\`\`tangent.environment.v1\n{"defaults": {"launch": {"harness": "claude-otto", "model": "opus-4-6"}}}\n\`\`\`\n\n## Resources\n\n- Repository: ${workspace}\n`,
+    `---\ntype: area\n---\n\n# Test\n\n## Goals\n\n1. [[goal-prove-launch]]\n2. [[goal-default-pipeline]]\n\n## Development environment\n\n\`\`\`tangent.environment.v1\n{"defaults": {"launch": {"harness": "claude-otto", "model": "opus-4-6"}}}\n\`\`\`\n\n## Resources\n\n- Repository: ${workspace}\n`,
     "utf8"
   );
   await writeFile(
     path.join(areaDirectory, "goal-prove-launch.md"),
     "---\ntype: goal\nstatus: open\ndone_when: The launch is proven\nsession:\n---\n\n# Prove launch\n\n## State\n\nNot started.\n",
+    "utf8"
+  );
+  await writeFile(
+    path.join(areaDirectory, "goal-default-pipeline.md"),
+    "---\ntype: goal\nstatus: open\ndone_when: Default pipeline launches are stable\nsession:\n---\n\n# Default pipeline\n\n## State\n\nNot started.\n",
     "utf8"
   );
 
@@ -110,6 +115,13 @@ test("launch options resolve the registry, and saving writes an Area default", a
   const base = `http://127.0.0.1:${port}`;
   await waitForServer(base);
 
+  const missingArea = await fetch(`${base}/api/launch/default`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ area: "otto/missing", kind: "work", mode: "launch", launch: { harness: "pi-code" } }),
+  });
+  assert.equal(missingArea.status, 404);
+
   // The declared default resolves through the registry with display labels.
   const options = await fetch(`${base}/api/launch/options?area=otto/test`).then((response) => response.json());
   assert.deepEqual(options.harnesses.map((harness) => harness.label), ["Claude · Otto", "Pi Code"]);
@@ -125,6 +137,60 @@ test("launch options resolve the registry, and saving writes an Area default", a
   assert.equal(catalog.workDefault.command, "CLAUDE_CONFIG_DIR=~/.claude-otto claude --model claude-opus-4-6");
   assert.equal(catalog.brainDefault.command, "CLAUDE_CONFIG_DIR=~/.claude-otto claude --model claude-opus-4-6");
   assert.equal(catalog.default, undefined, "the catalog labels both defaults instead of inventing one generic default");
+  assert.deepEqual(catalog.declarations, {
+    work: { mode: "launch", launch: { harness: "claude-otto", model: "opus-4-6" } },
+    brain: { mode: "inherit" },
+  });
+
+  // Omitted pipeline launches become the current Work reference before the
+  // record is written. Appended steps take the same snapshot at append time.
+  const pipelineStarted = await fetch(`${base}/api/goals/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file: "otto/test/goal-default-pipeline.md", steps: [{ instruction: "First step" }] }),
+  });
+  assert.equal(pipelineStarted.status, 200);
+  const pipelineStartBody = await pipelineStarted.json();
+  openedSessions.push(pipelineStartBody.session);
+  assert.deepEqual(pipelineStartBody.pipeline.steps[0].launch, { harness: "claude-otto", model: "opus-4-6", effort: null });
+  const appended = await fetch(`${base}/api/pipelines/append`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ goal: "otto/test/goal-default-pipeline.md", steps: [{ instruction: "Second step" }] }),
+  });
+  assert.equal(appended.status, 200);
+  const appendedBody = await appended.json();
+  assert.deepEqual(appendedBody.pipeline.steps[1].launch, { harness: "claude-otto", model: "opus-4-6", effort: null });
+
+  // Work and Brain persist independently. Follow Work is an explicit Brain
+  // policy, while Use inherited removes only the selected local key.
+  /** Saves one default on the fixture Area. */
+  const saveDefault = (body) => fetch(`${base}/api/launch/default`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ area: "otto/test", ...body }),
+  });
+  assert.equal((await saveDefault({ kind: "work", mode: "launch", launch: { harness: "pi-code" } })).status, 200);
+  let savedOptions = await fetch(`${base}/api/launch/options?area=otto/test&kind=all`).then((response) => response.json());
+  assert.equal(savedOptions.workDefault.command, "pi-code");
+  assert.equal(savedOptions.brainDefault.command, "pi-code");
+  const stablePipeline = await fetch(`${base}/api/sessions`).then((response) => response.json());
+  assert.deepEqual(stablePipeline.pipelines.find((item) => item.goal === "otto/test/goal-default-pipeline.md").steps[1].launch, { harness: "claude-otto", model: "opus-4-6", effort: null });
+
+  assert.equal((await saveDefault({ kind: "brain", mode: "launch", launch: { harness: "claude-otto", model: "opus-4-6" } })).status, 200);
+  savedOptions = await fetch(`${base}/api/launch/options?area=otto/test&kind=all`).then((response) => response.json());
+  assert.equal(savedOptions.workDefault.command, "pi-code");
+  assert.match(savedOptions.brainDefault.command, /claude-otto/);
+  assert.equal((await saveDefault({ kind: "brain", mode: "work" })).status, 200);
+  savedOptions = await fetch(`${base}/api/launch/options?area=otto/test&kind=all`).then((response) => response.json());
+  assert.equal(savedOptions.declarations.brain.mode, "work");
+  assert.equal(savedOptions.brainDefault.command, "pi-code");
+  assert.equal((await saveDefault({ kind: "brain", mode: "inherit" })).status, 200);
+  assert.equal((await saveDefault({ kind: "work", mode: "inherit" })).status, 200);
+  savedOptions = await fetch(`${base}/api/launch/options?area=otto/test&kind=all`).then((response) => response.json());
+  assert.deepEqual(savedOptions.declarations, { work: { mode: "inherit" }, brain: { mode: "inherit" } });
+  assert.equal(savedOptions.workDefault.command, "claude-otto");
+  assert.match(savedOptions.brainDefault.error, /no brain or work launch is declared/);
 
   // A legacy area without a declaration keeps the profile fallback.
   const fallback = await fetch(`${base}/api/launch/options?area=otto`).then((response) => response.json());
@@ -154,6 +220,8 @@ test("launch options resolve the registry, and saving writes an Area default", a
   const after = await fetch(`${base}/api/launch/options?area=otto`).then((response) => response.json());
   assert.equal(after.default.command, "pi-code");
   assert.equal(after.default.label, "Pi Code");
+  const inheritedAfter = await fetch(`${base}/api/launch/options?area=otto/test`).then((response) => response.json());
+  assert.equal(inheritedAfter.default.command, "pi-code");
 
   // The harness editor round trip: read the registry, save a change, and
   // see the new option in the next launch options without a restart.

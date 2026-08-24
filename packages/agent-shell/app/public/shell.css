@@ -1065,6 +1065,15 @@ details.more-work .area-work-list { margin-top: 18px; }
 .launch-command .quiet-button { flex-shrink: 0; padding: 4px 9px; font-size: 12px; }
 .launch-registry-link { justify-self: start; padding: 2px 0; font-size: 12px; }
 .launch-registry-link:hover { background: transparent; text-decoration: underline; }
+.default-agent-rows { display: grid; gap: 9px; }
+.default-agent-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 12px; border: 1px solid var(--line); border-radius: 10px; }
+.default-agent-value { display: grid; gap: 3px; min-width: 0; }
+.default-agent-value strong { font-size: 13px; }
+.default-agent-value span { overflow: hidden; color: var(--text); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.default-agent-value small { color: var(--quiet); font-size: 11px; }
+.default-agent-actions { display: flex; flex-wrap: wrap; justify-content: end; gap: 4px; }
+.default-agent-editor { display: grid; gap: 14px; padding-top: 4px; border-top: 1px solid var(--line); }
+.default-agent-editor > p { margin: 0; color: var(--muted); font-size: 13px; }
 
 /* Split Start-agent control and its anchored agent chooser. */
 .desk-split { display: inline-flex; }

@@ -28,7 +28,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   } = programs;
   const {
     syncDescribeDraft, launchSelection, launchRequestFields, syncLaunchDraft, activateLaunchStep, removeLaunchStep,
-    addLaunchStep, launchIsPipeline, saveLaunchDefault, showHarnessEditor, saveHarnesses, startPipeline,
+    addLaunchStep, launchIsPipeline, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, saveHarnesses, startPipeline,
     savePipelineStep, appendPipelineSteps, launchOptionsFor, pipelineRecordForGoal, loadLaunchStep,
     DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
   } = launch;
@@ -86,7 +86,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (state.launchTarget) syncLaunchDraft();
     if (!shellMenu.hidden && !target.closest?.("#shell-menu") && !backButton.contains(target)) toggleShellMenu(false);
     // A click outside the agent chooser closes it; the clicked control still runs.
-    if (state.launchTarget && !target.closest?.("[data-launch-popover]") && !target.closest?.("[data-launch-for]")) {
+    if (state.launchTarget && !target.closest?.("[data-launch-popover]") && !target.closest?.("[data-launch-for]") && !target.closest?.("[data-default-agents-area]")) {
       state.launchTarget = "";
       state.launchAnchor = null;
       paint(true);
@@ -427,11 +427,23 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       state.launch.open = false;
       return paint(true);
     }
+    const defaultAgents = target.closest("[data-default-agents-area]");
+    if (defaultAgents) return toggleDefaultAgents(defaultAgents);
     if (target.closest("[data-launch-close]")) {
       state.launch.open = false;
       state.launch.editing = false;
       state.launchTarget = "";
       state.launchAnchor = null;
+      state.defaultAgents = { area: "", editing: "", mode: "" };
+      return paint(true);
+    }
+    const defaultAgentEdit = target.closest("[data-default-agent-edit]");
+    if (defaultAgentEdit) return editDefaultAgent(defaultAgentEdit.dataset.defaultAgentEdit);
+    const defaultAgentMode = target.closest("[data-default-agent-mode]");
+    if (defaultAgentMode) return setDefaultAgentMode(defaultAgentMode.dataset.defaultAgentKind, defaultAgentMode.dataset.defaultAgentMode);
+    if (target.closest("[data-default-agents-cancel]")) {
+      state.defaultAgents = { ...state.defaultAgents, editing: "", mode: "" };
+      state.launch.choice = null;
       return paint(true);
     }
     const launchHarness = target.closest("[data-launch-harness]");
@@ -1073,6 +1085,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       if (state.view === "describe") syncDescribeDraft();
       state.launchTarget = "";
       state.launchAnchor = null;
+      state.defaultAgents = { area: "", editing: "", mode: "" };
       paint(true);
       return;
     }

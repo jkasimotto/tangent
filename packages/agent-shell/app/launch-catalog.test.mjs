@@ -120,6 +120,30 @@ test("brain launch resolution uses brain, then work, then a named Area error", a
   });
 });
 
+test("catalog options expose independent local declarations and inherited sources", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "tangent-launch-catalog-declarations-"));
+  await writeFile(path.join(root, "harnesses.md"), [
+    "```tangent.harnesses.v1",
+    JSON.stringify({ version: 1, harnesses: [{ id: "work", command: "work-agent" }, { id: "brain", command: "brain-agent" }] }),
+    "```",
+  ].join("\n"));
+  const notes = new Map([
+    ["otto", '```tangent.environment.v1\n{"defaults":{"launch":{"harness":"work"},"brain":{"harness":"brain"}}}\n```'],
+    ["otto/tangent", '```tangent.environment.v1\n{"defaults":{"brain":"work"}}\n```'],
+  ]);
+  /** Reads one Area note from the local-declaration fixture. */
+  const readAreaNote = async (area) => notes.get(area) ?? "";
+  const catalog = createLaunchCatalog({ root, readAreaNote });
+
+  const options = await catalog.options("otto/tangent", "all");
+  assert.deepEqual(options.declarations.work, { mode: "inherit" });
+  assert.deepEqual(options.declarations.brain, { mode: "work" });
+  assert.equal(options.workDefault.source, "otto");
+  assert.equal(options.brainDefault.source, "otto/tangent");
+  assert.equal(options.brainDefault.workSource, "otto");
+  assert.equal(options.brainDefault.command, "work-agent");
+});
+
 test("launch catalog reports non-otto inherited defaults without an otto fallback", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "tangent-launch-catalog-non-otto-"));
   await mkdir(path.join(root, "client", "product"), { recursive: true });

@@ -20,6 +20,21 @@ test("the Area browser focuses search and leads with ready work and filterable D
   let brain = { area: "otto/tangent", instruction: "Run this Area.", status: "running", generation: 1, session: "missing-brain", live: true, state: "working" };
   window.fetch = async (url, options = {}) => {
     const pathname = new URL(url, window.location.href).pathname;
+    if (pathname === "/api/launch/options") return jsonResponse({
+      area: "otto/tangent",
+      harnesses: [
+        { id: "codex", label: "Codex", command: "codex", models: [{ id: "sol", label: "Sol", args: "--model sol", efforts: [{ id: "high", label: "High", args: "--effort high" }] }] },
+        { id: "claude", label: "Claude", command: "claude", models: [] },
+      ],
+      workDefault: { harness: "codex", model: "sol", effort: "high", command: "codex --model sol --effort high", label: "Codex · Sol · High", source: "otto" },
+      brainDefault: { harness: "codex", model: "sol", effort: "high", command: "codex --model sol --effort high", label: "Codex · Sol · High", source: "otto/tangent", workSource: "otto", via: "work" },
+      declarations: { work: { mode: "inherit" }, brain: { mode: "work" } },
+    });
+    if (options.method === "POST" && pathname === "/api/launch/default") {
+      const body = JSON.parse(options.body);
+      posts.push({ path: pathname, body });
+      return jsonResponse({ label: body.mode === "launch" ? "Claude" : "Codex · Sol · High", command: body.mode === "launch" ? "claude" : "codex --model sol --effort high" });
+    }
     if (options.method === "POST" && pathname === "/api/brains/start") {
       const body = JSON.parse(options.body);
       posts.push({ path: pathname, body });
@@ -47,8 +62,36 @@ test("the Area browser focuses search and leads with ready work and filterable D
   assert.match(window.document.querySelector("#area-work-heading").closest(".area-workspace-section").textContent, /Build the Area browser/);
   assert.doesNotMatch(window.document.querySelector("#area-work-heading").closest(".area-workspace-section").textContent, /Not started/);
   assert.ok(window.document.querySelector("[data-brain-area='otto/tangent']"));
-  assert.equal(window.document.querySelector("[data-launch-for='__brain__'][data-brain-area='otto/tangent']").textContent.trim(), "Set brain agent and effort");
+  assert.equal(window.document.querySelector("[data-default-agents-area='otto/tangent']").textContent.trim(), "Default agents");
   assert.equal(window.document.querySelectorAll(".area-documents .document-row").length, 2);
+
+  click(window, "[data-default-agents-area='otto/tangent']");
+  await settle(window);
+  const defaultRows = window.document.querySelectorAll("[data-default-agent-row]");
+  assert.equal(defaultRows.length, 2);
+  assert.match(defaultRows[0].textContent, /Work.*Codex · Sol · High.*Inherited from Otto/s);
+  assert.match(defaultRows[1].textContent, /Brain.*Codex · Sol · High.*Follows Work on this Area/s);
+  assert.equal(window.document.querySelector("[data-launch-start]"), null, "the settings editor cannot start an agent");
+
+  click(window, "[data-default-agent-edit='work']");
+  click(window, "[data-launch-harness='claude']");
+  assert.equal(posts.filter((item) => item.path === "/api/launch/default").length, 0, "a choice stays local until Save");
+  click(window, "[data-launch-save]");
+  await settle(window);
+  assert.deepEqual(posts.at(-1).body, { area: "otto/tangent", kind: "work", mode: "launch", launch: { harness: "claude" } });
+
+  click(window, "[data-default-agent-mode='work']");
+  assert.equal(posts.filter((item) => item.path === "/api/launch/default").length, 1);
+  click(window, "[data-launch-save]");
+  await settle(window);
+  assert.deepEqual(posts.at(-1).body, { area: "otto/tangent", kind: "brain", mode: "work" });
+
+  click(window, "[data-default-agent-mode='inherit'][data-default-agent-kind='brain']");
+  click(window, "[data-launch-save]");
+  await settle(window);
+  assert.deepEqual(posts.at(-1).body, { area: "otto/tangent", kind: "brain", mode: "inherit" });
+  assert.equal(posts.some((item) => item.path === "/api/brains/start"), false);
+  click(window, "[data-launch-close]");
 
   let areaSearch = window.document.querySelector("#area-search");
   areaSearch.value = "dnd";
@@ -79,7 +122,7 @@ test("the Area browser focuses search and leads with ready work and filterable D
   click(window, "[data-open-area-brain='otto/tangent']");
   await settle(window);
   assert.equal(posts.at(-1).body.resume, true, "a stale live brain resumes instead of showing an error");
-  assert.equal(posts.length, 1, "a second click cannot start a duplicate generation");
+  assert.equal(posts.filter((item) => item.path === "/api/brains/start").length, 1, "a second click cannot start a duplicate generation");
   assert.ok(window.document.querySelector("#describe-work-terminal[data-session='tangent-brain-g2']"));
   releaseSessionRefresh();
   await settle(window);

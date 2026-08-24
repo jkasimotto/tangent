@@ -9,7 +9,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     humanName, agentName, describeLaunchArea, goalByFile, currentGoal, sessionForGoal, brainForAreaCard,
     brainStateLabel, brainKind,
   } = work;
-  const { launchPopover, DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET } = overlays;
+  const { launchPopover, DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET, DEFAULT_AGENTS_TARGET } = overlays;
   /** Returns the Areas that can own newly created work. */
   function selectableAreas() {
     return (state.vault?.areas ?? [])
@@ -152,12 +152,13 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
    * Selecting a different Goal in the same Area keeps the loaded options.
    */
   function launchOptionsFor(area) {
-    if (state.launch.area !== area) {
-      state.launch = { area, options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", continueFrom: null, steps: [], active: 0, record: null };
-    }
+    const kind = state.launchTarget === BRAIN_LAUNCH_TARGET ? "brain" : state.launchTarget === DEFAULT_AGENTS_TARGET ? "all" : "launch";
+    if (state.launch.area !== area || (state.launch.kind && state.launch.kind !== kind)) {
+      state.launch = { area, kind, options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", continueFrom: null, steps: [], active: 0, record: null };
+    } else state.launch.kind = kind;
     if (!state.launch.options && !state.launch.loading) {
       state.launch.loading = true;
-      api(`/api/launch/options?area=${encodeURIComponent(area)}${state.launchTarget === BRAIN_LAUNCH_TARGET ? "&kind=brain" : ""}`)
+      api(`/api/launch/options?area=${encodeURIComponent(area)}${kind === "launch" ? "" : `&kind=${kind}`}`)
         .then((options) => { state.launch.options = options; })
         .catch((error) => { state.launch.options = { harnesses: [], default: { error: error.message } }; })
         .finally(() => { state.launch.loading = false; paint(true); });
@@ -172,7 +173,10 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
   function launchSelection() {
     const options = state.launch.options;
     if (!options) return null;
-    const preset = options.default && !options.default.error ? options.default : null;
+    const settingsDefault = state.launchTarget === DEFAULT_AGENTS_TARGET
+      ? state.defaultAgents.editing === "brain" ? options.brainDefault : options.workDefault
+      : null;
+    const preset = (settingsDefault ?? options.default) && !(settingsDefault ?? options.default).error ? (settingsDefault ?? options.default) : null;
     const choice = state.launch.choice ?? (preset?.harness ? { harness: preset.harness, model: preset.model, effort: preset.effort ?? null } : null);
     const harness = choice ? (options.harnesses ?? []).find((entry) => entry.id === choice.harness) : null;
     if (!harness) {
@@ -327,7 +331,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
 
   /** The step list above the picker: rows, add, remove; describe mode has none. */
   function launchStepList() {
-    if (state.launchTarget === DESCRIBE_LAUNCH_TARGET || state.launchTarget === BRAIN_LAUNCH_TARGET) return "";
+    if ([DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET, DEFAULT_AGENTS_TARGET].includes(state.launchTarget)) return "";
     const record = state.launch.record;
     const steps = commitActiveStep();
     const fixed = record ? record.steps.length : 0;
@@ -363,8 +367,12 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
   function launchPickerBlock() {
     const options = state.launch.options;
     if (!options) return "";
+    const settings = state.launchTarget === DEFAULT_AGENTS_TARGET;
     const selection = launchSelection();
-    const preset = options.default && !options.default.error ? options.default : {};
+    const presetCandidate = settings
+      ? state.defaultAgents.editing === "brain" ? options.brainDefault : options.workDefault
+      : options.default;
+    const preset = presetCandidate && !presetCandidate.error ? presetCandidate : {};
     const currentHarness = selection?.harness ?? null;
     const harnessButtons = (options.harnesses ?? []).map((harness) => `
       <button type="button" class="launch-option${currentHarness?.id === harness.id ? " selected" : ""}" data-launch-harness="${escapeHtml(harness.id)}">
@@ -383,7 +391,9 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
           <span>${escapeHtml(effort.label)}</span>${preset.harness === currentHarness?.id && preset.effort === effort.id ? `<span class="launch-default-tag">default</span>` : ""}
         </button>`).join("");
     const command = selection?.command ?? "";
-    const commandZone = state.launch.editing
+    const commandZone = settings
+      ? `<div class="launch-command"><code>${escapeHtml(command)}</code></div>`
+      : state.launch.editing
       ? `<div class="launch-command"><input id="launch-command-input" type="text" spellcheck="false" value="${escapeHtml(state.launch.command || command)}"><button class="quiet-button" type="button" data-launch-reset>Reset</button></div>
          <p class="form-note">The edited command applies to this run only.</p>`
       : `<div class="launch-command"><code>${escapeHtml(command)}</code>${selection?.edited ? `<span class="launch-default-tag">edited</span>` : ""}<button class="quiet-button" type="button" data-launch-edit>Edit command</button></div>`;
@@ -392,45 +402,142 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     const brain = braining ? brainForAreaCard(state.brainDraft?.area) : null;
     const brainResumes = Boolean(brain && !brain.live);
     const record = state.launch.record;
-    const stepCount = describing || braining ? 1 : commitActiveStep().length;
+    const stepCount = describing || braining || settings ? 1 : commitActiveStep().length;
     const drafts = record ? launchDraftRows().length : 0;
     const startLabel = braining
       ? (brainResumes ? "Resume brain" : "Start brain")
       : record
       ? (state.launch.active < record.steps.length ? `Save step ${state.launch.active + 1}` : drafts > 1 ? `Add ${drafts} steps` : `Add step ${record.steps.length + 1}`)
       : stepCount > 1 ? `Start ${stepCount} steps` : `Start ${selection ? (selection.label || "agent") : "agent"}`;
-    const canSave = Boolean(state.launch.choice && selection?.harness && !selection?.edited);
     const brainZone = braining ? `
         <label class="brain-instruction"><span>What should this Area get done?</span><textarea id="brain-instruction" rows="5" placeholder="The instruction the brain plans and dispatches from. It splits the work into Goals, starts agents in dependency order, reviews what comes back, and asks you only for real decisions.">${escapeHtml(state.brainDraft?.instruction ?? "")}</textarea></label>
         ${brainResumes ? `<p class="form-note">A brain ran here before (generation ${brain.generation}, ${escapeHtml(brainStateLabel(brain).toLowerCase())}). Resume continues from its plan and handover. Start over begins a new brain from the instruction above.</p>` : ""}` : "";
-    const stepZone = describing || braining ? "" : `
+    const stepZone = describing || braining || settings ? "" : `
         <label class="launch-instruction"><span>Step ${state.launch.active + 1} does</span><textarea id="launch-instruction" rows="2" placeholder="${stepCount > 1 || record ? "What this agent does" : "What this agent does (optional for one step)"}">${escapeHtml(state.launch.instruction ?? "")}</textarea></label>
         ${state.launch.active > 0 ? `<label class="launch-continue"><span>Session</span><select data-launch-continue><option value="">Fresh session</option>${Array.from({ length: state.launch.active }, (_, k) => `<option value="${k + 1}"${state.launch.continueFrom === k + 1 ? " selected" : ""}>Continue step ${k + 1}</option>`).join("")}</select></label>` : ""}`;
+    const settingsRows = settings ? defaultAgentRows(options) : "";
+    const settingsMode = state.defaultAgents.mode;
+    const showChoices = !settings || (state.defaultAgents.editing && settingsMode === "launch");
+    const settingsEditor = settings && state.defaultAgents.editing ? `
+      <section class="default-agent-editor" aria-label="Edit ${escapeHtml(state.defaultAgents.editing)} default">
+        <p>${settingsMode === "launch" ? `Choose the harness, model, and effort for ${state.defaultAgents.editing === "brain" ? "Brain" : "Work"}.` : settingsMode === "work" ? "Brain will follow the Work default of this Area." : `The ${state.defaultAgents.editing === "brain" ? "Brain" : "Work"} default will inherit from the nearest parent Area.`}</p>
+      </section>` : "";
+    const settingsActions = settings ? `
+      <div class="action-row start-actions">
+        ${state.defaultAgents.editing ? `<button class="primary-button" type="button" data-launch-save ${settingsMode === "launch" && !selection?.harness ? "disabled" : ""}>Save</button><button class="quiet-button" type="button" data-default-agents-cancel>Cancel</button>` : ""}
+        <button class="quiet-button" type="button" data-launch-close>Close</button>
+      </div>` : "";
     return `
       <div class="launch-picker">
+        ${settingsRows}
         ${launchStepList()}
         ${brainZone}
-        ${(options.harnesses ?? []).length ? `
+        ${settingsEditor}
+        ${showChoices && (options.harnesses ?? []).length ? `
         <div class="launch-columns">
           <div class="launch-col"><p class="launch-col-title">Harness</p>${harnessButtons}</div>
           <div class="launch-col"><p class="launch-col-title">Model</p>${modelButtons}</div>
           ${efforts.length ? `<div class="launch-col"><p class="launch-col-title">Effort</p>${effortButtons}</div>` : ""}
-        </div>` : `<p class="launch-none">No harness registry. Add one at <code>~/.tangent/trees/harnesses.md</code>.</p>`}
-        ${commandZone}
+        </div>` : showChoices ? `<p class="launch-none">No harness registry. Add one at <code>~/.tangent/trees/harnesses.md</code>.</p>` : ""}
+        ${showChoices ? commandZone : ""}
         ${stepZone}
-        <div class="action-row start-actions">
+        ${settingsActions || `<div class="action-row start-actions">
           <button class="primary-button" type="button" data-launch-start>${escapeHtml(startLabel)}</button>
           ${brainResumes ? `<button class="quiet-button" type="button" data-brain-start-over>Start over</button>` : ""}
-          ${canSave ? `<button class="quiet-button" type="button" data-launch-save>Save as ${braining ? "brain" : "Area"} default</button>` : ""}
           <button class="quiet-button" type="button" data-launch-close>${state.launchTarget ? "Close" : "Back"}</button>
-        </div>
+        </div>`}
         <button class="quiet-button launch-registry-link" type="button" data-open-harnesses>Edit harnesses and models…</button>
       </div>
     `;
   }
 
+  /** Renders the effective Work and Brain values with their local edit actions. */
+  function defaultAgentRows(options) {
+    /** Renders one independent default row. */
+    const row = (kind, title, effective) => {
+      const declaration = options.declarations?.[kind] ?? { mode: "inherit" };
+      const local = declaration.mode !== "inherit";
+      let source;
+      if (local) source = declaration.mode === "work" ? "Follows Work on this Area" : "Set on this Area";
+      else if (kind === "brain" && effective?.via === "work") source = `Inherited from ${areaLabel(effective.source)} · Follows Work`;
+      else if (kind === "brain" && effective?.via === "work-fallback") {
+        source = effective.source === options.area ? "Follows Work on this Area" : effective.source ? `Follows Work inherited from ${areaLabel(effective.source)}` : "No declared fallback";
+      } else if (effective?.source === options.area) source = "Set on this Area";
+      else source = effective?.source ? `Inherited from ${areaLabel(effective.source)}` : kind === "work" ? "Profile fallback" : "No declared fallback";
+      const value = effective?.error ? effective.error : effective?.label || effective?.command || "Not set";
+      return `<div class="default-agent-row" data-default-agent-row="${kind}">
+        <div class="default-agent-value"><strong>${title}</strong><span>${escapeHtml(value)}</span><small>${escapeHtml(source)}</small></div>
+        <div class="default-agent-actions">
+          <button class="quiet-button" type="button" data-default-agent-edit="${kind}">Change</button>
+          ${kind === "brain" ? `<button class="quiet-button" type="button" data-default-agent-mode="work" data-default-agent-kind="brain">Follow work</button>` : ""}
+          ${local ? `<button class="quiet-button" type="button" data-default-agent-mode="inherit" data-default-agent-kind="${kind}">Use inherited</button>` : ""}
+        </div>
+      </div>`;
+    };
+    return `<div class="default-agent-rows">${row("work", "Work", options.workDefault)}${row("brain", "Brain", options.brainDefault)}</div>`;
+  }
+
+  /** Opens the durable defaults editor for one Area without starting work. */
+  function toggleDefaultAgents(button) {
+    const area = button.dataset.defaultAgentsArea;
+    if (state.launchTarget === DEFAULT_AGENTS_TARGET && state.defaultAgents.area === area) {
+      state.launchTarget = "";
+      state.launchAnchor = null;
+      return paint(true);
+    }
+    state.launchTarget = DEFAULT_AGENTS_TARGET;
+    state.defaultAgents = { area, editing: "", mode: "" };
+    launchOptionsFor(area);
+    const rect = button.getBoundingClientRect();
+    state.launchAnchor = { top: Math.round(rect.bottom + 8), right: Math.round(rect.right) };
+    return paint(true);
+  }
+
+  /** Starts an exact launch edit from the local declaration or effective value. */
+  function editDefaultAgent(kind) {
+    const options = state.launch.options;
+    const declaration = options?.declarations?.[kind];
+    const effective = kind === "brain" ? options?.brainDefault : options?.workDefault;
+    const launch = declaration?.mode === "launch" ? declaration.launch : effective;
+    state.defaultAgents = { ...state.defaultAgents, editing: kind, mode: "launch" };
+    state.launch.choice = launch?.harness ? { harness: launch.harness, model: launch.model ?? null, effort: launch.effort ?? null } : null;
+    state.launch.command = "";
+    state.launch.editing = false;
+    paint(true);
+  }
+
+  /** Selects Follow Work or inheritance as a draft until Save. */
+  function setDefaultAgentMode(kind, mode) {
+    state.defaultAgents = { ...state.defaultAgents, editing: kind, mode };
+    state.launch.choice = null;
+    state.launch.command = "";
+    paint(true);
+  }
+
   /** Saves the current picker selection as the Area's durable default. */
   async function saveLaunchDefault() {
+    const settings = state.launchTarget === DEFAULT_AGENTS_TARGET;
+    if (settings) {
+      const { area, editing: kind, mode } = state.defaultAgents;
+      const selection = launchSelection();
+      if (!area || !kind || !mode || (mode === "launch" && !selection?.harness)) return;
+      try {
+        const saved = await post("/api/launch/default", {
+          area,
+          kind,
+          mode,
+          ...(mode === "launch" ? { launch: { harness: selection.harness.id, ...(selection.model ? { model: selection.model.id } : {}), ...(selection.effort ? { effort: selection.effort.id } : {}) } } : {}),
+        });
+        state.defaultAgents = { area, editing: "", mode: "" };
+        state.launch.options = null;
+        launchOptionsFor(area);
+        showToast(`${kind === "brain" ? "Brain" : "Work"} now uses ${saved.label || saved.command}.`);
+        paint(true);
+      } catch (error) {
+        showToast(error.message);
+      }
+      return;
+    }
     const area = state.launchTarget === DESCRIBE_LAUNCH_TARGET
       ? describeLaunchArea()
       : state.launchTarget === BRAIN_LAUNCH_TARGET
@@ -503,7 +610,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     }
     try {
       await post("/api/harnesses", draft);
-      state.launch = { area: "", options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", continueFrom: null, steps: [], active: 0, record: null };
+      state.launch = { area: "", kind: "", options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", continueFrom: null, steps: [], active: 0, record: null };
       state.view = state.harnessReturnView;
       state.harnessDraft = null;
       paint(true);
@@ -606,5 +713,5 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
 
   /** Renders the complete native agent terminal without a second chat. */
 
-  return { selectableAreas, preferredArea, areaOptions, renderCreate, renderDescribeCapture, describeSourcesBlock, launchOptionsFor, launchSelection, launchRequestFields, launchStepDraft, syncLaunchDraft, commitActiveStep, activateLaunchStep, loadLaunchStep, addLaunchStep, removeLaunchStep, launchStepLabel, launchStepRequest, launchIsPipeline, pipelineForGoal, pipelineRecordForGoal, launchDraftRows, launchStepList, launchPickerBlock, saveLaunchDefault, showHarnessEditor, harnessSlug, saveHarnesses, renderHarnessEditor };
+  return { selectableAreas, preferredArea, areaOptions, renderCreate, renderDescribeCapture, describeSourcesBlock, launchOptionsFor, launchSelection, launchRequestFields, launchStepDraft, syncLaunchDraft, commitActiveStep, activateLaunchStep, loadLaunchStep, addLaunchStep, removeLaunchStep, launchStepLabel, launchStepRequest, launchIsPipeline, pipelineForGoal, pipelineRecordForGoal, launchDraftRows, launchStepList, launchPickerBlock, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, harnessSlug, saveHarnesses, renderHarnessEditor };
 }

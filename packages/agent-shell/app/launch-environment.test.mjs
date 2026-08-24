@@ -11,6 +11,7 @@ import {
   parseEnvironmentBlock,
   parseHarnessRegistry,
   resolveLaunch,
+  updateEnvironmentDefault,
   upsertEnvironmentLaunch,
   upsertHarnessRegistry,
   validateHarnessRegistry,
@@ -123,6 +124,20 @@ test("brain defaults inherit independently and the nearest Area wins", async () 
   assert.equal(await inheritedBrainLaunch("work/empty", readNote, registry), null);
 });
 
+test("an explicit Brain follow-work declaration stops Brain inheritance", async () => {
+  const notes = new Map([
+    ["otto", '```tangent.environment.v1\n{"defaults":{"launch":{"harness":"claude-otto"},"brain":{"harness":"codex","model":"luna"}}}\n```'],
+    ["otto/tangent", '```tangent.environment.v1\n{"defaults":{"launch":{"harness":"pi-code"},"brain":"work"}}\n```'],
+  ]);
+  /** Reads one Area note from the follow-work fixture. */
+  const readNote = async (area) => notes.get(area) ?? "";
+  const resolved = await inheritedBrainLaunch("otto/tangent/client", readNote, registry);
+  assert.equal(resolved.command, "pi-code");
+  assert.equal(resolved.source, "otto/tangent");
+  assert.equal(resolved.workSource, "otto/tangent");
+  assert.equal(resolved.via, "work");
+});
+
 test("keeps the profile fallback when nothing declares a launch", async () => {
   /** Test note reader with no declarations. */
   const readNote = async () => "";
@@ -169,6 +184,25 @@ test("saving a brain default preserves the work default", () => {
     launch: { harness: "codex", model: "luna" },
     brain: { harness: "codex", model: "luna", effort: "high" },
   });
+});
+
+test("default persistence can follow Work or remove one local key", () => {
+  const exact = upsertEnvironmentLaunch("# Tangent\n", { harness: "codex", model: "luna" });
+  const follows = updateEnvironmentDefault(exact, { kind: "brain", mode: "work" });
+  assert.deepEqual(parseEnvironmentBlock(follows).defaults, {
+    launch: { harness: "codex", model: "luna" },
+    brain: "work",
+  });
+  const inherited = updateEnvironmentDefault(follows, { kind: "launch", mode: "inherit" });
+  assert.deepEqual(parseEnvironmentBlock(inherited).defaults, { brain: "work" });
+  assert.equal(updateEnvironmentDefault("# Tangent\n", { kind: "launch", mode: "inherit" }), "# Tangent\n");
+});
+
+test("default persistence does not replace a malformed environment block", () => {
+  assert.throws(
+    () => updateEnvironmentDefault("```tangent.environment.v1\n{bad\n```", { kind: "brain", mode: "work" }),
+    /not valid JSON/
+  );
 });
 
 test("registry validation names duplicates and broken references", () => {

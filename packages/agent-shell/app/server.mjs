@@ -2103,6 +2103,27 @@ async function resolveStepLaunch(step) {
   return resolveLaunch(registry, step.launch);
 }
 
+/** Copies the current Work default into each step that omitted a launch. */
+async function materializeDefaultStepLaunches(area, steps) {
+  if (!Array.isArray(steps) || steps.every((step) => step?.launch || String(step?.command ?? "").trim())) return { steps };
+  const launch = await launchCatalog.forArea(area);
+  if (launch.error) return { error: launch.error };
+  return {
+    steps: steps.map((step) => {
+      if (step?.launch || String(step?.command ?? "").trim()) return step;
+      if (launch.harness) return {
+        ...step,
+        launch: {
+          harness: launch.harness,
+          ...(launch.model ? { model: launch.model } : {}),
+          ...(launch.effort ? { effort: launch.effort } : {}),
+        },
+      };
+      return { ...step, command: launch.command, label: launch.label || launch.command };
+    }),
+  };
+}
+
 /**
  * The Area's resolved harness id in plain words: the registry harness id
  * when the default resolves through the registry, else the bare command
@@ -2199,6 +2220,9 @@ async function startPipeline(file, { steps, extraFiles = [] } = {}) {
   if (o.session && sessions.some((item) => item.name === o.session)) {
     return { status: 409, error: `goal is owned by live session ${o.session}` };
   }
+  const materialized = await materializeDefaultStepLaunches(o.area, steps);
+  if (materialized.error) return { status: 409, error: materialized.error };
+  steps = materialized.steps;
   const error = validateSteps(steps);
   if (error) return { status: 400, error };
   const sameArea = extraFiles.map(String).filter((extra) => byFile.get(extra)?.area === o.area);
@@ -2558,6 +2582,9 @@ async function appendPipelineSteps(goalFile, steps) {
   if (["done", "dropped"].includes(o.status)) return { status: 409, error: `goal is ${o.status}` };
   const record = await readPipeline(PIPELINES_ROOT, o.area, o.slug);
   if (!record) return { status: 404, error: "no pipeline on this goal" };
+  const materialized = await materializeDefaultStepLaunches(o.area, steps);
+  if (materialized.error) return { status: 409, error: materialized.error };
+  steps = materialized.steps;
   const finished = pipelineFinished(record);
   const last = record.steps[record.steps.length - 1];
   let added;
@@ -4218,8 +4245,10 @@ const launchRoutes = createLaunchRoutes({
   },
   /** Commits one Area's explicit default launch. */
   async saveDefault(body) {
+    const area = String(body.area ?? "");
+    if (!validAreaPath(area) || !await areaExists(area)) return { status: 404, error: `no area "${area}"` };
     const kind = body.kind === "brain" ? "brain" : "launch";
-    const saved = await launchCatalog.saveDefault(String(body.area ?? ""), body.launch ?? {}, kind);
+    const saved = await launchCatalog.saveDefault(area, body.launch ?? {}, kind, String(body.mode ?? "launch"));
     return saved.error ? { status: 400, error: saved.error } : { status: 200, value: saved };
   },
   /** Starts a Goal agent in collaboration mode. */

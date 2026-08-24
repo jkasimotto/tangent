@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
-  harnessEfforts, harnessModels, inheritedBrainLaunch, inheritedLaunch, modelEfforts, parseHarnessRegistry, resolveLaunch, upsertEnvironmentLaunch, upsertHarnessRegistry,
+  harnessEfforts, harnessModels, inheritedBrainLaunch, inheritedLaunch, modelEfforts, parseEnvironmentBlock, parseHarnessRegistry, resolveLaunch, updateEnvironmentDefault, upsertHarnessRegistry,
   validateHarnessRegistry,
 } from "./launch-environment.mjs";
 
@@ -37,7 +37,20 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
     const declared = await inheritedBrainLaunch(area, readAreaNote, current);
     if (declared) return declared;
     const work = await inheritedLaunch(area, readAreaNote, current, { fallback: false });
-    return work ?? { error: `${area}: no brain or work launch is declared` };
+    return work ? { ...work, via: "work-fallback" } : { error: `${area}: no brain or work launch is declared` };
+  }
+
+  /** Returns the defaults declared directly on one Area. */
+  async function declarations(area) {
+    if (!area) return { work: { mode: "inherit" }, brain: { mode: "inherit" } };
+    const environment = parseEnvironmentBlock(await readAreaNote(area));
+    if (environment?.error) return { error: `${area}: ${environment.error}` };
+    const work = environment?.defaults?.launch;
+    const brain = environment?.defaults?.brain;
+    return {
+      work: work ? { mode: "launch", launch: work } : { mode: "inherit" },
+      brain: brain === "work" ? { mode: "work" } : brain ? { mode: "launch", launch: brain } : { mode: "inherit" },
+    };
   }
 
   /** Returns one registry snapshot with exact commands and the requested Area defaults. */
@@ -73,6 +86,8 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
         command: launchFor(harness, null, effort).command,
       })),
     }));
+    const local = area ? await declarations(area) : null;
+    if (local?.error) return local;
     const workDefault = area ? await inheritedLaunch(area, readAreaNote, current) : null;
     let brainDefault = null;
     if (area) {
@@ -82,7 +97,7 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
       source: path.join(root, "harnesses.md"),
       ...(area ? { area } : {}),
       harnesses,
-      ...(kind === "all" ? { workDefault, brainDefault } : { default: kind === "brain" ? brainDefault : workDefault }),
+      ...(kind === "all" ? { workDefault, brainDefault, declarations: local } : { default: kind === "brain" ? brainDefault : workDefault }),
     };
   }
 
@@ -118,23 +133,43 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
   }
 
   /** Resolves and persists one Area's explicit default launch. */
-  async function saveDefault(area, ref, kind = "launch") {
+  async function saveDefault(area, ref, kind = "launch", mode = "launch") {
     if (!repository || !commit || !areaFile || !emptyAreaNote) throw new Error("launch catalog is read-only");
     const current = await registry();
-    const resolved = current.error ? current : resolveLaunch(current, ref ?? {});
-    if (resolved.error || !area) return { error: resolved.error || "an area is required" };
+    if (current.error || !area) return { error: current.error || "an area is required" };
+    if (!["launch", "brain"].includes(kind)) return { error: `unknown default kind "${kind}"` };
+    if (!["launch", "inherit", "work"].includes(mode) || (mode === "work" && kind !== "brain")) {
+      return { error: `invalid ${kind} default mode "${mode}"` };
+    }
+    const chosen = mode === "launch" ? resolveLaunch(current, ref ?? {}) : null;
+    if (chosen?.error) return { error: chosen.error };
     const file = areaFile(area);
     const text = await readFile(path.join(root, file), "utf8").catch(() => emptyAreaNote(area));
-    const stored = {
-      harness: resolved.harness,
-      ...(resolved.model ? { model: resolved.model } : {}),
-      ...(resolved.effort ? { effort: resolved.effort } : {}),
-    };
-    await repository.writeMarkdown(file, upsertEnvironmentLaunch(text, stored, kind));
+    const stored = chosen ? {
+      harness: chosen.harness,
+      ...(chosen.model ? { model: chosen.model } : {}),
+      ...(chosen.effort ? { effort: chosen.effort } : {}),
+    } : null;
+    let next;
+    try { next = updateEnvironmentDefault(text, { kind, mode, launch: stored }); }
+    catch (error) { return { error: error.message }; }
+    /** Reads the proposed target note and current notes for its ancestors. */
+    const nextReader = async (candidate) => candidate === area ? next : readAreaNote(candidate);
+    let effective;
+    if (kind === "brain") {
+      effective = await inheritedBrainLaunch(area, nextReader, current);
+      if (!effective) {
+        const work = await inheritedLaunch(area, nextReader, current, { fallback: false });
+        effective = work ? { ...work, via: "work-fallback" } : { error: `${area}: no brain or work launch is declared` };
+      }
+    } else effective = await inheritedLaunch(area, nextReader, current);
+    if (effective?.error) return { error: effective.error };
+    await repository.writeMarkdown(file, next);
     await stage?.(file);
-    await commit([file], `update: ${area} default ${kind === "brain" ? "brain " : ""}launch ${resolved.label}`, area, null);
-    return { label: resolved.label, command: resolved.command };
+    const description = mode === "inherit" ? "inherits" : mode === "work" ? "follows work" : chosen.label;
+    await commit([file], `update: ${area} default ${kind === "brain" ? "brain" : "work"} launch ${description}`, area, null);
+    return { label: effective.label, command: effective.command, mode };
   }
 
-  return { commandForArea, forArea, forBrain, options, registry, requested, saveDefault, saveRegistry };
+  return { commandForArea, declarations, forArea, forBrain, options, registry, requested, saveDefault, saveRegistry };
 }

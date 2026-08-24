@@ -1,5 +1,6 @@
 const SVG_NS = "http://www.w3.org/2000/svg";
 const DIRECTIONS = new Set(["LR", "RL", "TB", "TD", "BT"]);
+const HTML_BREAK = /<br\s*\/?\s*>/gi;
 
 /** Returns a parse failure that the reader can explain without hiding source. */
 function failure(kind, detail, line = 0) {
@@ -8,7 +9,19 @@ function failure(kind, detail, line = 0) {
 
 /** Rejects Mermaid features whose model can carry active content or styling. */
 function forbiddenLine(line) {
-  return /^(?:%%\{|click\b|linkStyle\b|classDef\b|class\b|style\b|accTitle\b|accDescr\b)|<\/?[a-z][^>]*>|(?:https?:)?\/\//i.test(line);
+  return /^(?:%%\{|click\b|linkStyle\b|classDef\b|class\b|style\b|accTitle\b|accDescr\b)|(?:https?:)?\/\//i.test(line);
+}
+
+/** Converts the supported Mermaid text-label syntax to plain text. */
+function textLabel(value) {
+  let label = String(value).trim();
+  const startsQuoted = label.startsWith('"');
+  const endsQuoted = label.endsWith('"');
+  if (startsQuoted !== endsQuoted) return null;
+  if (startsQuoted) label = label.slice(1, -1);
+  label = label.replace(HTML_BREAK, "\n");
+  if (/<\/?[a-z][^>]*>/i.test(label)) return null;
+  return label;
 }
 
 /** Reads one supported flowchart node token. */
@@ -26,9 +39,77 @@ function flowNode(token) {
   ];
   for (const [pattern, shape] of patterns) {
     const match = value.match(pattern);
-    if (match) return { id: match[1], label: match[2] ?? match[1], shape };
+    if (match) {
+      const label = match[2] == null ? match[1] : textLabel(match[2]);
+      return label == null ? null : { id: match[1], label, shape };
+    }
   }
   return null;
+}
+
+/** Finds the next supported flowchart connector outside a node token. */
+function flowConnector(value, offset = 0) {
+  let depth = 0;
+  let quoted = false;
+  for (let index = offset; index < value.length; index += 1) {
+    const character = value[index];
+    if (character === '"') { quoted = !quoted; continue; }
+    if (quoted) continue;
+    if ("[({".includes(character)) { depth += 1; continue; }
+    if ("])}".includes(character)) { depth = Math.max(0, depth - 1); continue; }
+    if (depth) continue;
+    const bidirectional = value.startsWith("<-->", index);
+    const directed = value.startsWith("-->", index);
+    if (bidirectional || directed) {
+      let end = index + (bidirectional ? 4 : 3);
+      let label = "";
+      while (value[end] === " ") end += 1;
+      if (value[end] === "|") {
+        if (bidirectional) return { invalid: true };
+        const close = value.indexOf("|", end + 1);
+        if (close < 0) return { invalid: true };
+        label = textLabel(value.slice(end + 1, close));
+        if (label == null) return { invalid: true };
+        end = close + 1;
+      }
+      return { start: index, end, label, bidirectional };
+    }
+    if (value.startsWith("--", index) && /\s/.test(value[index + 2] ?? "")) {
+      const close = value.indexOf("-->", index + 2);
+      if (close < 0) continue;
+      if (!/\s/.test(value[close - 1] ?? "")) return { invalid: true };
+      const label = textLabel(value.slice(index + 2, close));
+      if (!label) return { invalid: true };
+      return { start: index, end: close + 3, label, bidirectional: false };
+    }
+  }
+  return null;
+}
+
+/** Parses one node statement or a chain of supported flowchart edges. */
+function flowStatement(value) {
+  let connector = flowConnector(value);
+  if (!connector) {
+    const node = flowNode(value);
+    return node ? { nodes: [node], edges: [] } : null;
+  }
+  if (connector.invalid) return null;
+  let node = flowNode(value.slice(0, connector.start));
+  if (!node) return null;
+  const nodes = [node];
+  const edges = [];
+  while (connector) {
+    const next = flowConnector(value, connector.end);
+    if (next?.invalid) return null;
+    const target = flowNode(value.slice(connector.end, next?.start ?? value.length));
+    if (!target) return null;
+    nodes.push(target);
+    edges.push({ from: node.id, to: target.id, label: connector.label });
+    if (connector.bidirectional) edges.push({ from: target.id, to: node.id, label: connector.label });
+    node = target;
+    connector = next;
+  }
+  return { nodes, edges };
 }
 
 /** Parses the supported Mermaid subset into a text-only graph model. */
@@ -65,7 +146,9 @@ export function parseMermaidDiagram(source) {
       if (group) return failure("unsupported", "Nested subgraphs are not supported.", index + 1);
       const match = line.match(/^subgraph\s+([\w.-]+)(?:\s*\[([^\n]+)\]|\s+(.+))?$/i);
       if (!match) return failure("invalid", "The subgraph header is not valid.", index + 1);
-      group = { id: match[1], label: (match[2] ?? match[3] ?? match[1]).trim(), members: [] };
+      const label = textLabel(match[2] ?? match[3] ?? match[1]);
+      if (label == null) return failure("unsupported", "This subgraph label is not supported.", index + 1);
+      group = { id: match[1], label, members: [] };
       groups.push(group);
       continue;
     }
@@ -83,21 +166,15 @@ export function parseMermaidDiagram(source) {
       const to = endpoint(match[2], "to");
       addNode({ id: from, label: match[1] === "[*]" ? "" : match[1], shape: match[1] === "[*]" ? "marker" : "rounded" });
       addNode({ id: to, label: match[2] === "[*]" ? "" : match[2], shape: match[2] === "[*]" ? "marker" : "rounded" });
-      edges.push({ from, to, label: match[3]?.trim() ?? "" });
+      const label = match[3] == null ? "" : textLabel(match[3]);
+      if (label == null) return failure("unsupported", "This state label is not supported.", index + 1);
+      edges.push({ from, to, label });
       continue;
     }
-    const edge = line.match(/^(.+?)\s*(?:--\s+(.+?)\s+-->|-->\s*(?:\|([^|]+)\|\s*)?)\s*(.+)$/);
-    if (edge) {
-      const from = flowNode(edge[1]);
-      const to = flowNode(edge[4]);
-      if (!from || !to) return failure("invalid", "An edge endpoint is not valid.", index + 1);
-      addNode(from); addNode(to);
-      edges.push({ from: from.id, to: to.id, label: (edge[2] ?? edge[3] ?? "").trim() });
-      continue;
-    }
-    const node = flowNode(line);
-    if (!node) return failure("unsupported", "This flowchart statement is not supported.", index + 1);
-    addNode(node);
+    const statement = flowStatement(line);
+    if (!statement) return failure("unsupported", "This flowchart statement is not supported.", index + 1);
+    for (const node of statement.nodes) addNode(node);
+    edges.push(...statement.edges);
   }
   if (group) return failure("invalid", "The subgraph has no end.", lines.length);
   if (!nodes.size) return failure("invalid", "The diagram has no nodes.");
@@ -143,17 +220,21 @@ function svgElement(document, name, attributes = {}) {
 /** Splits a label into short SVG lines without discarding long path segments. */
 function labelLines(value, limit = 24) {
   const lines = [];
-  let current = "";
-  for (const word of String(value).split(/\s+/).filter(Boolean)) {
-    const pieces = word.length > limit ? word.match(new RegExp(`.{1,${limit}}`, "g")) : [word];
-    for (const piece of pieces) {
-      if (current && current.length + piece.length + 1 > limit) { lines.push(current); current = ""; }
-      current = current ? `${current} ${piece}` : piece;
-      if (current.length === limit) { lines.push(current); current = ""; }
+  for (const explicitLine of String(value).split("\n")) {
+    let current = "";
+    const words = explicitLine.split(/\s+/).filter(Boolean);
+    if (!words.length) { lines.push(""); continue; }
+    for (const word of words) {
+      const pieces = word.length > limit ? word.match(new RegExp(`.{1,${limit}}`, "g")) : [word];
+      for (const piece of pieces) {
+        if (current && current.length + piece.length + 1 > limit) { lines.push(current); current = ""; }
+        current = current ? `${current} ${piece}` : piece;
+        if (current.length === limit) { lines.push(current); current = ""; }
+      }
     }
+    if (current) lines.push(current);
   }
-  if (current || !lines.length) lines.push(current);
-  return lines;
+  return lines.length ? lines : [""];
 }
 
 /** Adds a centered multi-line text label. */
@@ -238,9 +319,11 @@ export function mountMermaidDiagrams(root) {
       host.classList.add("diagram-failed");
       const message = host.ownerDocument.createElement("p");
       message.className = "diagram-message";
-      message.textContent = parsed.kind === "unsupported"
-        ? "This diagram uses unsupported Mermaid syntax. Open Edit and use a flowchart or simple state diagram."
-        : "This diagram could not render. Open Edit, correct the diagram syntax, then save.";
+      const location = parsed.line ? `Line ${parsed.line}: ` : "";
+      const action = parsed.kind === "unsupported"
+        ? "Open Edit and use supported Mermaid syntax."
+        : "Open Edit, correct the diagram syntax, then save.";
+      message.textContent = `${location}${parsed.detail} ${action}`;
       host.prepend(message);
       continue;
     }

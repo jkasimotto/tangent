@@ -35,11 +35,32 @@ const REAL_STATE = `stateDiagram-v2
   Answering --> Open: cancel
   Open --> Resolved: complete answer saved`;
 
+const CURRENT_DOCUMENT_FLOWCHARTS = [
+  `flowchart LR
+  T["DataTable<br/>name column = code"] --> H["enums() holder<br/>field: dt_grades"]
+  H --> V["row holder<br/>fields: a, b, c, d"]`,
+  `flowchart LR
+  ST -->|assessed| SU["Setup: complete data"] --> R["pure Rules"] --> A["Assessments"] --> UI["UI, PDF, autodesign"]`,
+  `flowchart LR
+  J[Julian] <--> B[Area brain<br/>intent, policy, exceptions]
+  B --> G[Approved work graph]`,
+];
+
 test("parses real vault flowcharts and state diagrams", () => {
   for (const source of REAL_FLOWCHARTS) assert.equal(parseMermaidDiagram(source).ok, true, source);
   const state = parseMermaidDiagram(REAL_STATE);
   assert.equal(state.ok, true);
   assert.equal(state.kind, "state");
+});
+
+test("parses current Document flowcharts with quoted multiline labels and common connectors", () => {
+  const [multiline, chained, bidirectional] = CURRENT_DOCUMENT_FLOWCHARTS.map((source) => parseMermaidDiagram(source));
+  assert.equal(multiline.ok, true);
+  assert.equal(multiline.nodes[0].label, "DataTable\nname column = code");
+  assert.deepEqual(chained.edges.map(({ from, to, label }) => [from, to, label]), [
+    ["ST", "SU", "assessed"], ["SU", "R", ""], ["R", "A", ""], ["A", "UI", ""],
+  ]);
+  assert.deepEqual(bidirectional.edges.map(({ from, to }) => [from, to]), [["J", "B"], ["B", "J"], ["B", "G"]]);
 });
 
 test("supports directions, common shapes, labels, groups, cycles, and state markers", () => {
@@ -56,8 +77,13 @@ test("fails closed for malformed or active Mermaid features", () => {
     "flowchart LR\nsubgraph one\nsubgraph two\nend\nend",
     "flowchart LR\nclick A https://example.com",
     "flowchart LR\nA[<img onerror=alert(1)>]",
+    "flowchart LR\nA[\"<span>HTML label</span>\"] --> B",
     "flowchart LR\n%%{init: {'htmlLabels': true}}%%\nA --> B",
     "flowchart LR\nA --x B",
+    "flowchart LR\nA --x B --> C",
+    "flowchart LR\nA <-->|label| B",
+    "flowchart LR\n<br>A --> B",
+    "flowchart LR\nA[\"unclosed label] --> B",
   ];
   for (const source of cases) assert.equal(parseMermaidDiagram(source).ok, false, source);
 });
@@ -81,16 +107,27 @@ test("wraps long node labels without losing their text", () => {
   assert.equal(labels.map((label) => label.textContent).join("").replace(/\s/g, ""), "Deskpopover:steplist~/.tangent/agent-shell/pipelines/area/slug.json");
 });
 
+test("renders explicit label breaks as separate safe SVG text lines", () => {
+  const dom = new JSDOM("<!doctype html><body></body>");
+  const source = "flowchart LR\nA[\"first line<br/>second line\"] --> B";
+  const svg = renderMermaidSvg(dom.window.document, parseMermaidDiagram(source));
+  const spans = [...svg.querySelector(".diagram-node text").querySelectorAll("tspan")];
+  assert.deepEqual(spans.map((span) => span.textContent), ["first line", "second line"]);
+  assert.equal(svg.querySelector("br, foreignObject"), null);
+});
+
 test("mount renders valid diagrams and keeps readable source with actionable failures", () => {
   const dom = new JSDOM(`<main>
     <div data-mermaid-diagram><pre><code>flowchart LR\nA --&gt; B</code></pre></div>
     <div data-mermaid-diagram><pre><code>sequenceDiagram\nA-&gt;&gt;B: hi</code></pre></div>
+    <div data-mermaid-diagram><pre><code>flowchart LR\nA --&gt; B\nC --x D</code></pre></div>
   </main>`);
   mountMermaidDiagrams(dom.window.document.querySelector("main"));
   const hosts = dom.window.document.querySelectorAll("[data-mermaid-diagram]");
   assert.equal(hosts[0].querySelectorAll("svg").length, 1);
   assert.equal(hosts[1].querySelector("code").textContent, "sequenceDiagram\nA->>B: hi");
-  assert.match(hosts[1].querySelector(".diagram-message").textContent, /Open Edit/);
+  assert.match(hosts[1].querySelector(".diagram-message").textContent, /Line 1.*Only flowcharts and simple state diagrams are supported.*Open Edit/);
+  assert.match(hosts[2].querySelector(".diagram-message").textContent, /Line 3.*This flowchart statement is not supported.*Open Edit/);
 });
 
 test("Markdown integration branches only Mermaid fences and preserves line, headings, code, and comments", async () => {

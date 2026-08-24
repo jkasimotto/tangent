@@ -12,6 +12,7 @@ export function bindShellEvents({ state, post, paint, refresh, showToast, screen
       return;
     }
     if (target.closest("[data-rebuild-retry]")) return confirmRebuild();
+    if (target.closest("[data-rebuild-start]")) return confirmRebuild({ immediate: true });
     if (target.closest("[data-rebuild-log]")) {
       const log = state.rebuild?.log || "~/.tangent/agent-shell-rebuild.log";
       await navigator.clipboard?.writeText?.(log);

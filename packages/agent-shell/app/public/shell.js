@@ -1061,12 +1061,16 @@ function renderUpdatePanel(phase = state.rebuild?.phase) {
     return;
   }
   const count = operation.commits?.length || 0;
-  const titles = { building: `Building ${count || "the deployed"} commit${count === 1 ? "" : "s"}`, restarting: "Restarting Tangent", reconnecting: "Reconnecting to Tangent", failed: "Build failed" };
+  const titles = { ready: `${count || "No new"} commit${count === 1 ? "" : "s"} ready`, building: `Building ${count || "the deployed"} commit${count === 1 ? "" : "s"}`, restarting: "Restarting Tangent", reconnecting: "Reconnecting to Tangent", failed: "Build failed" };
   panel.querySelector("#update-panel-title").textContent = titles[phase] || "Updating Tangent";
-  panel.querySelector("#update-panel-copy").textContent = phase === "failed"
+  panel.querySelector("#update-panel-copy").textContent = phase === "ready"
+    ? `Agent sessions keep running in tmux.\n\nCommits included:\n${count ? operation.commits.map((commit) => `${commit.shortHash}  ${commit.subject} — ${commit.author}`).join("\n") : "No new commits. The deployed commit will be rebuilt."}`
+    : phase === "failed"
     ? operation.error || "The build did not complete. The current Agent Shell is still available."
     : "Agent sessions keep running in tmux. You can continue to use this screen.";
-  panel.querySelector("#update-panel-actions").innerHTML = phase === "failed"
+  panel.querySelector("#update-panel-actions").innerHTML = phase === "ready"
+    ? `<button class="quiet-button" type="button" data-rebuild-dismiss>Cancel</button><button class="primary-button" type="button" data-rebuild-start>Rebuild and restart</button>`
+    : phase === "failed"
     ? `<button class="quiet-button" type="button" data-rebuild-log>Copy log path</button><button class="primary-button" type="button" data-rebuild-retry>Try again</button><button class="quiet-button" type="button" data-rebuild-dismiss>Dismiss</button>`
     : `<button class="quiet-button" type="button" data-rebuild-dismiss>Hide</button>`;
   panel.hidden = false;

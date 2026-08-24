@@ -136,7 +136,8 @@ export function createShellInteractions({ state, api, post, paint, refresh, show
   /** Runs the advertised pending-change reload without a hidden second step. */
   async function reloadChanges() {
     toggleShellMenu(false);
-    confirmRebuild();
+    state.rebuild = { phase: "ready", commits: state.pendingCommits ?? [], targetCommit: state.currentCommit };
+    updateStatusPill();
   }
 
   /** Human-readable commits included by the next rebuild. */
@@ -149,8 +150,9 @@ export function createShellInteractions({ state, api, post, paint, refresh, show
   }
 
   /** Rebuilds from the permanent recovery action after explicit confirmation. */
-  function confirmRebuild() {
+  function confirmRebuild({ immediate = false } = {}) {
     toggleShellMenu(false);
+    if (immediate) return rebuildShell();
     openModal({
       kicker: "Agent Shell",
       title: "Rebuild and restart Agent Shell?",

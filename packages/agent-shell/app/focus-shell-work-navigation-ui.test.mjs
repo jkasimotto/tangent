@@ -378,6 +378,10 @@ test("the live shell restores context, defines work with an agent, and organizes
   liveEditBrainStarted = false;
   await window.refresh();
   await settle(window);
+  const tangentRoot = window.document.querySelector('[data-work-area="otto/tangent"]');
+  const tangentBrainAction = tangentRoot.querySelector('[data-open-area-brain="otto/tangent"]');
+  assert.equal(tangentBrainAction.textContent, "Start brain", "a root Work header can start its exact Area brain");
+  assert.equal(tangentBrainAction.getAttribute("aria-label"), "Start brain for Otto / Tangent");
 
   window.__agentShellNativeDockBadge = true;
   notificationPermission = "denied";

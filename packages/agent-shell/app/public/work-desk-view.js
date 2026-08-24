@@ -1289,7 +1289,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     if (!count && !descriptions.length) return "";
     const workWord = state.workFilter === "inactive" ? "Planned work" : "Current work";
     const brain = brainForAreaCard(area.path);
-    const brainAction = root ? "" : `<button class="work-area-brain" type="button" data-open-area-brain="${escapeHtml(area.path)}" aria-label="${brain?.live ? "Open" : brain ? "Resume" : "Start"} brain for ${escapeHtml(areaLabel(area.path))}">${brain?.live ? "Open brain" : brain ? "Resume brain" : "Start brain"}</button>`;
+    const brainAction = root && brain?.live ? "" : `<button class="work-area-brain" type="button" data-open-area-brain="${escapeHtml(area.path)}" aria-label="${brain?.live ? "Open" : brain ? "Resume" : "Start"} brain for ${escapeHtml(areaLabel(area.path))}">${brain?.live ? "Open brain" : brain ? "Resume brain" : "Start brain"}</button>`;
     return `<section class="work-area-section${root ? " root" : ""}" data-work-area="${escapeHtml(area.path)}">
       <header><h3><button type="button" data-open-area="${escapeHtml(area.path)}">${escapeHtml(humanName(area.name))}</button></h3><span>${workWord} ${count}</span>${brainAction}${deskSelectionBar(area.path, trees)}</header>
       ${descriptions.map(deskDefinitionRow).join("")}

@@ -2696,13 +2696,17 @@ function describedWorkNotice(area, description, sources) {
  * generation or starts its next generation. The inbox write is the commit
  * point: a later start error leaves the description unread on disk.
  */
-async function describeWorkToBrain(owner, area, description, sources) {
-  const message = describedWorkNotice(area, description, sources);
-  const notice = await recordBrainNotice(area, message);
+async function describeWorkToBrain(owner, area, description, sources, launchOverride = null) {
+  owner = brainRecordForArea(await readAllBrains(BRAINS_ROOT), area) ?? owner;
   const live = owner.status === "running" && owner.session
     ? await execFileAsync("tmux", ["has-session", "-t", "=" + owner.session]).then(() => true, () => false)
     : false;
   if (live) {
+    if (launchOverride) {
+      return { status: 409, error: `the ${owner.area} brain is already live on ${owner.label || owner.command}; refresh to send this draft to that brain` };
+    }
+    const message = describedWorkNotice(area, description, sources);
+    const notice = await recordBrainNotice(area, message);
     const notices = [{ area, id: notice.id }];
     holdBrainNotices(notices);
     messages.queue(owner.session, {
@@ -2710,14 +2714,16 @@ async function describeWorkToBrain(owner, area, description, sources) {
       generation: owner.generation ?? null, queuedAt: new Date().toISOString(),
     });
     await messages.log({ event: "sent", to: owner.session, from: "tangent", text: message, disposition: "queued", reason: "described work" });
-    return { status: 200, session: owner.session, generation: owner.generation, brainArea: owner.area, route: "brain-opened" };
+    return { status: 200, session: owner.session, generation: owner.generation, brainArea: owner.area, route: "brain-opened", launchLabel: owner.label || owner.command };
   }
+  const message = describedWorkNotice(area, description, sources);
+  await recordBrainNotice(area, message);
   const route = owner.status === "running" ? "brain-started" : "brain-resumed";
-  const started = await startBrain(owner.area, { resume: true });
+  const started = await startBrain(owner.area, { resume: true, ...(launchOverride ?? {}) });
   if (started.status !== 200) {
     return { status: started.status, error: `Your description was saved for the ${owner.area} brain, but the brain did not start: ${started.error}` };
   }
-  return { ...started, brainArea: owner.area, route };
+  return { ...started, brainArea: owner.area, route, launchLabel: started.brain?.label || started.brain?.command };
 }
 
 /**
@@ -2880,10 +2886,21 @@ async function startBrain(area, { instruction = "", choice = null, command = "",
   const existing = await readBrain(BRAINS_ROOT, area);
   if (existing?.status === "running" && existing.session) {
     const live = await execFileAsync("tmux", ["has-session", "-t", "=" + existing.session]).then(() => true, () => false);
+    if (live && (choice || command)) {
+      return { status: 409, error: `the ${existing.area} brain is already live on ${existing.label || existing.command}; refresh to send this draft to that brain` };
+    }
     if (live) return { status: 200, session: existing.session, generation: existing.generation, brain: existing, reattached: true };
   }
   if (resume) {
     if (!existing) return { status: 404, error: "no brain to resume on this Area" };
+    if (choice || command) {
+      const launch = await launchCatalog.requested({ choice, command });
+      if (launch.error) return { status: 409, error: launch.error };
+      existing.launch = command ? null : choice;
+      existing.command = launch.command;
+      existing.label = command ? launch.command : launch.label || launch.command;
+      await writeBrain(BRAINS_ROOT, existing);
+    }
     return spawnBrainSession(existing);
   }
   const invalid = validateInstruction(instruction);
@@ -2905,7 +2922,7 @@ async function startBrain(area, { instruction = "", choice = null, command = "",
       instruction,
       launch: ref,
       command: launch.command,
-      label: launch.label ?? "",
+      label: command ? launch.command : launch.label ?? "",
       planFile: `${area}/plan-${leaf}.md`,
     });
   } catch (error) {
@@ -3651,14 +3668,14 @@ const brainRoutes = createBrainRoutes({
     } catch (error) { return { status: 400, error: String(error.message ?? error) }; }
   },
   /** Records Julian's request answer and delivers it to the brain inbox. */
-  async answerRequest(area, id, answer) {
+  async answerRequest(area, id, answer, note) {
     const brain = await brainOfArea(area);
     if (!brain) return { status: 404, error: `no brain on ${area}` };
     const record = await readBrainRequests(BRAINS_ROOT, brain.area);
     try {
-      const request = answerBrainRequest(record, id, answer);
+      const request = answerBrainRequest(record, id, answer, note);
       await writeBrainRequests(BRAINS_ROOT, record);
-      if (request.kind === "test" && request.answer === "pass" && request.goal) {
+      if (request.kind === "test" && request.answer === "approve" && request.goal) {
         const byFile = await goalsByFile();
         if (byFile.has(request.goal)) {
           const changed = await cascadeGoalDone(request.goal, byFile);
@@ -3667,7 +3684,8 @@ const brainRoutes = createBrainRoutes({
           await vaultCommit(changed, `update: ${goal.area} goal ${goal.slug} done in tree`, goal.area, brain.session);
         }
       }
-      await notifyBrain(brain.area, `Julian answered ${request.kind} request "${request.subject}": ${request.answer}`);
+      const response = request.answer === "approve" ? "approved" : `wants these changes: ${request.note}`;
+      await notifyBrain(brain.area, `Julian ${response} for "${request.subject}".`);
       return { status: 200, request };
     } catch (error) { return { status: 400, error: String(error.message ?? error) }; }
   },
@@ -3974,7 +3992,15 @@ const launchRoutes = createLaunchRoutes({
       const sources = await sourceDocuments(body.sources);
       const owner = brainRecordForArea(await readAllBrains(BRAINS_ROOT), area);
       if (owner) {
-        const result = await describeWorkToBrain(owner, area, description, sources);
+        const hasLaunchOverride = Boolean(body.choice || String(body.command ?? "").trim());
+        const launchOverride = hasLaunchOverride
+          ? { choice: body.choice ?? null, command: String(body.command ?? "") }
+          : null;
+        if (launchOverride) {
+          const chosen = await launchCatalog.requested(launchOverride);
+          if (chosen.error) return { status: 400, error: chosen.error };
+        }
+        const result = await describeWorkToBrain(owner, area, description, sources, launchOverride);
         return { status: result.status, ...(result.status === 200 ? { value: result } : { error: result.error }) };
       }
       const chosen = await launchCatalog.requested(body);

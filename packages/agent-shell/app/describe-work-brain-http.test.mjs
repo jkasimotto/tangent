@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { endBrain, newBrain, writeBrain } from "./brain-record.mjs";
+import { endBrain, newBrain, readBrain, writeBrain } from "./brain-record.mjs";
 import { startShellServer } from "./focus-shell-http-fixture.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -58,6 +58,11 @@ save();
   await writeFile(path.join(trees, "otto", "tangent", "tangent.md"), `---\ntype: area\n---\n\n# Tangent\n\n## Resources\n\n- Repository: ${workspace}\n`, "utf8");
   await writeFile(path.join(trees, "otto", "tangent", "child", "child.md"), "---\ntype: area\n---\n\n# Child\n", "utf8");
   await writeFile(path.join(trees, "otto", "plain", "plain.md"), `---\ntype: area\n---\n\n# Plain\n\n## Resources\n\n- Repository: ${workspace}\n`, "utf8");
+  await writeFile(path.join(trees, "harnesses.md"), [
+    "```tangent.harnesses.v1",
+    JSON.stringify({ version: 1, modelSets: { claude: [{ id: "fable", label: "Fable", args: "--model fable" }], codex: [{ id: "sol", label: "Sol", args: "--model sol" }] }, harnesses: [{ id: "claude", label: "Claude", command: "claude", modelSet: "claude" }, { id: "codex", label: "Codex", command: "codex", modelSet: "codex" }] }),
+    "```",
+  ].join("\n"), "utf8");
   await writeFile(path.join(trees, "otto", "tangent", "design-context.md"), "---\ntype: document\n---\n\n# Context\n", "utf8");
   const record = endBrain(newBrain({
     area: "otto/tangent",
@@ -77,12 +82,18 @@ save();
     area: "otto/tangent/child",
     description: "Route this exact description to the controlling brain.",
     sources: ["otto/tangent/design-context.md"],
+    choice: { harness: "codex", model: "sol" },
   });
   assert.equal(resumed.status, 200);
   assert.equal(resumed.body.route, "brain-resumed");
   assert.equal(resumed.body.brainArea, "otto/tangent");
   const tmuxAfterResume = JSON.parse(await readFile(fakeTmuxState, "utf8"));
   assert.equal(tmuxAfterResume.sessions[resumed.body.session].options["@tangent_kind"], "brain");
+  assert.equal(tmuxAfterResume.sessions[resumed.body.session].options["@tangent_launch"], "Codex · Sol");
+  assert.equal(resumed.body.launchLabel, "Codex · Sol");
+  const resumedRecord = await readBrain(brains, "otto/tangent");
+  assert.deepEqual(resumedRecord.launch, { harness: "codex", model: "sol" });
+  assert.equal(resumedRecord.command, "codex --model sol");
   assert.equal(Object.values(tmuxAfterResume.sessions).some((session) => session.options["@tangent_kind"] === "work-definition"), false);
   const inbox = JSON.parse(await readFile(path.join(brains, "otto", "tangent", "child", "inbox.json"), "utf8"));
   assert.match(inbox.notices[0].text, /Route this exact description to the controlling brain\./);
@@ -93,20 +104,42 @@ save();
   assert.equal(live.body.route, "brain-opened");
   assert.equal(live.body.session, resumed.body.session);
 
+  const inboxBeforeConflict = JSON.parse(await readFile(path.join(brains, "otto", "tangent", "inbox.json"), "utf8"));
+  const conflict = await describe(base, {
+    area: "otto/tangent",
+    description: "Keep this draft when the brain became live.",
+    choice: { harness: "claude", model: "fable" },
+  });
+  assert.equal(conflict.status, 409);
+  assert.match(conflict.body.error, /already live on Codex · Sol/);
+  const inboxAfterConflict = JSON.parse(await readFile(path.join(brains, "otto", "tangent", "inbox.json"), "utf8"));
+  assert.equal(inboxAfterConflict.notices.length, inboxBeforeConflict.notices.length);
+
   const staleTmux = JSON.parse(await readFile(fakeTmuxState, "utf8"));
   delete staleTmux.sessions[live.body.session];
   await writeFile(fakeTmuxState, JSON.stringify(staleTmux), "utf8");
-  const started = await describe(base, { area: "otto/tangent/child", description: "Restart the stale recorded brain." });
+  const started = await describe(base, {
+    area: "otto/tangent/child",
+    description: "Restart the stale recorded brain.",
+    choice: { harness: "claude", model: "fable" },
+  });
   assert.equal(started.status, 200);
   assert.equal(started.body.route, "brain-started");
   assert.notEqual(started.body.session, live.body.session);
   const tmuxAfterStart = JSON.parse(await readFile(fakeTmuxState, "utf8"));
   assert.equal(tmuxAfterStart.sessions[started.body.session].options["@tangent_kind"], "brain");
+  assert.equal(tmuxAfterStart.sessions[started.body.session].options["@tangent_launch"], "Claude · Fable");
+  assert.equal((await readBrain(brains, "otto/tangent")).command, "claude --model fable");
   assert.equal(Object.values(tmuxAfterStart.sessions).some((session) => session.options["@tangent_kind"] === "work-definition"), false);
 
-  const plain = await describe(base, { area: "otto/plain", description: "Keep the existing behavior here." });
+  const plain = await describe(base, {
+    area: "otto/plain",
+    description: "Keep the existing behavior here.",
+    choice: { harness: "codex", model: "sol" },
+  });
   assert.equal(plain.status, 200);
   assert.equal(plain.body.route, "work-definition-opened");
   const tmuxAfterPlain = JSON.parse(await readFile(fakeTmuxState, "utf8"));
   assert.equal(tmuxAfterPlain.sessions[plain.body.session].options["@tangent_kind"], "work-definition");
+  assert.equal(tmuxAfterPlain.sessions[plain.body.session].options["@tangent_launch"], "Codex · Sol");
 });

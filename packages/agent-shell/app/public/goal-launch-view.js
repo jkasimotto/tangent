@@ -74,10 +74,17 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
   /** Renders natural-language capture before a work-definition conversation. */
   function renderDescribeCapture() {
     const draft = state.describeDraft;
-    launchOptionsFor(draft?.area || preferredArea());
+    const area = draft?.area || preferredArea();
+    const brain = controllingBrainForArea(area);
+    launchOptionsFor(area);
     const selection = launchSelection();
-    const startLabel = selection?.label ? `Start ${selection.label}` : "Start agent";
-    const chooserOpen = state.launchTarget === DESCRIBE_LAUNCH_TARGET;
+    const recipient = brain?.label && brain.label !== "Edited command" ? brain.label : brain?.command || "brain";
+    const startLabel = brain?.live
+      ? `Send to ${recipient} brain`
+      : selection?.label
+        ? `${brain ? "Resume" : "Start"} ${selection.label}${brain ? " brain" : ""}`
+        : brain ? "Resume brain" : "Start agent";
+    const chooserOpen = !brain?.live && state.launchTarget === DESCRIBE_LAUNCH_TARGET;
     return `
       <article class="create-page describe-page">
         <p class="kicker">Describe work</p>
@@ -98,7 +105,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
           <div class="create-actions">
             <span class="desk-split describe-launch-split">
               <button class="primary-button" type="submit">${escapeHtml(startLabel)} <kbd>⌘↵</kbd></button>
-              <button class="primary-button describe-launch-toggle${chooserOpen ? " open" : ""}" type="button" data-launch-for="${DESCRIBE_LAUNCH_TARGET}" title="Choose agent or model" aria-label="Choose the agent for this conversation" aria-expanded="${chooserOpen}">▾</button>
+              ${brain?.live ? "" : `<button class="primary-button describe-launch-toggle${chooserOpen ? " open" : ""}" type="button" data-launch-for="${DESCRIBE_LAUNCH_TARGET}" title="Choose agent or model" aria-label="Choose the agent for this conversation" aria-expanded="${chooserOpen}">▾</button>`}
             </span>
             <button class="quiet-button" type="button" data-create-manually>Create Goal manually</button>
             <button class="quiet-button" type="button" data-save-idea>Save as an idea</button>
@@ -109,6 +116,16 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
       </article>
       ${launchPopover()}
     `;
+  }
+
+  /** The nearest brain record that controls an Area, whatever its state. */
+  function controllingBrainForArea(area) {
+    const parts = String(area ?? "").split("/").filter(Boolean);
+    for (let count = parts.length; count > 0; count -= 1) {
+      const brain = brainForAreaCard(parts.slice(0, count).join("/"));
+      if (brain) return brain;
+    }
+    return null;
   }
 
   /** Shows the Documents that will inform and remain linked to new work. */
@@ -162,14 +179,22 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     const effort = (model?.efforts ?? harness.efforts ?? []).find((entry) => entry.id === choice.effort) ?? null;
     const edited = Boolean(state.launch.command.trim());
     const command = edited ? state.launch.command.trim() : [harness.command, model?.args, effort?.args].filter(Boolean).join(" ");
-    const label = edited ? "Edited command" : [harness.label, model?.label, effort?.label].filter(Boolean).join(" · ");
+    const label = edited ? command : [harness.label, model?.label, effort?.label].filter(Boolean).join(" · ");
     return { harness, model, effort, command, label, edited };
   }
 
   /** Explicit per-run launch fields for a start request, or nothing. */
-  function launchRequestFields() {
+  function launchRequestFields(describing = false) {
     const selection = launchSelection();
     if (!selection) return {};
+    if (describing) {
+      const brain = controllingBrainForArea(describeLaunchArea());
+      if (brain?.live) return {};
+      if (selection.edited) return { command: selection.command };
+      return selection.harness
+        ? { choice: { harness: selection.harness.id, ...(selection.model ? { model: selection.model.id } : {}), ...(selection.effort ? { effort: selection.effort.id } : {}) } }
+        : selection.command ? { command: selection.command } : {};
+    }
     if (selection.edited) return { command: selection.command };
     if (state.launch.choice && selection.harness) {
       return { choice: { harness: selection.harness.id, ...(selection.model ? { model: selection.model.id } : {}), ...(selection.effort ? { effort: selection.effort.id } : {}) } };
@@ -249,7 +274,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
   /** The label one draft row shows in the step list. */
   function launchStepLabel(row) {
     const options = state.launch.options;
-    if (row.command?.trim()) return "Edited command";
+    if (row.command?.trim()) return row.command.trim();
     const harness = row.choice ? (options?.harnesses ?? []).find((entry) => entry.id === row.choice.harness) : null;
     if (!harness) return options?.default && !options.default.error ? (options.default.label || options.default.command || "Area default") : "Area default";
     const model = (harness.models ?? []).find((entry) => entry.id === row.choice.model);

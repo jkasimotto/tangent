@@ -650,7 +650,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
           description,
           sources,
           launch: true,
-          ...launchRequestFields(),
+          ...launchRequestFields(true),
         });
         state.describeSessionName = opened.session;
         state.describeDraft = null;
@@ -671,7 +671,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         showToast(messages[opened.route] ?? messages["work-definition-opened"]);
       } catch (error) {
         submitButton.disabled = false;
-        submitButton.innerHTML = `Start agent <kbd>⌘↵</kbd>`;
+        paint(true);
         showToast(error.message);
       }
       return;

@@ -4,8 +4,13 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { bootWorkTable } from "./work-table-harness.mjs";
 import { workTableFixture } from "./work-table-fixture.mjs";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
 
 /** The fixture with the launch ids the server records at start time. */
 function withLaunches(fixture) {
@@ -63,4 +68,32 @@ test("a row with no route shows no launch", async () => {
 
   assert.equal(cell.querySelector(".desk-launch-ref"), null);
   assert.equal(cell.textContent.includes("codex/luna/low"), false);
+});
+
+// The launch text is the widest thing the Action column ever holds, and it sits
+// left of the `▾` menu. If the column cannot hold it, the inline-flex row of
+// actions takes its max-content width and pushes the menu out of the cell:
+// measured 3.5 px at 1440 px and 41 px at the 959 px breakpoint, where the menu
+// left the table. Two rules hold the alignment, and this test pins both: the
+// numbers must add up, and the actions row must be allowed to shrink.
+test("the Action column holds the launch text, so every row's menu sits on one x", async () => {
+  const css = await readFile(path.join(here, "public", "shell.css"), "utf8");
+  /** Reads one declared pixel length off the rule that starts with `selector`. */
+  const pixelsOf = (selector, property) => {
+    const rule = css.split("\n").find((line) => line.trimStart().startsWith(`${selector} {`));
+    assert.ok(rule, `${selector} has a rule`);
+    const match = new RegExp(`${property}:\\s*(\\d+)px`).exec(rule);
+    assert.ok(match, `${selector} declares a pixel ${property}`);
+    return Number(match[1]);
+  };
+  const column = pixelsOf(".work-col-action", "width");
+  const launch = pixelsOf(".desk-launch-ref", "max-width");
+  const gap = pixelsOf(".desk-goal-actions", "gap");
+  const menu = pixelsOf(".desk-action-menu > summary", "width");
+  const padding = Number(/\.work-row > \* \{[^}]*padding:\s*\d+px\s+(\d+)px/.exec(css)[1]);
+
+  assert.ok(launch + gap + menu + padding * 2 <= column, `the launch text, the gap, the menu and the cell padding fit ${column}px`);
+  assert.ok(launch >= 141, "the widest launch in the registry, claude-otto/sonnet-5/xhigh, is 141px and is never clipped");
+  const shrink = css.split("\n").find((line) => line.startsWith(".work-cell-action .desk-goal-actions {"));
+  assert.match(shrink, /max-width:\s*100%/, "the actions row may shrink, or the ellipsis on the launch text never runs");
 });

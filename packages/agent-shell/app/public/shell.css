@@ -475,7 +475,7 @@ summary:focus-visible {
    not `.desk-action`: the state colour rules below turn every `.desk-action`
    amber on a waiting row, and 25 characters of amber monospace shouts. The
    State pill and the time bar already carry that signal. */
-.desk-launch-ref { max-width: 150px; overflow: hidden; padding: 4px 0; border: 0; background: transparent; color: #79828d; cursor: pointer; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 760; text-overflow: ellipsis; white-space: nowrap; }
+.desk-launch-ref { max-width: 144px; overflow: hidden; padding: 4px 0; border: 0; background: transparent; color: #79828d; cursor: pointer; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 760; text-overflow: ellipsis; white-space: nowrap; }
 .desk-launch-ref:hover, .desk-launch-ref:focus-visible { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
 .desk-icon-action.complete:hover { color: var(--green); }
 
@@ -529,7 +529,7 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-col-work { width: auto; min-width: 280px; }
 .work-col-state { width: 156px; }
 .work-col-time { width: 150px; }
-.work-col-action { width: 184px; }
+.work-col-action { width: 196px; }
 
 .work-group-row > .work-group-head { box-sizing: border-box; height: 32px; padding: 0 10px; border-bottom: 1px solid #2b3037; background: #14171b; font-weight: 400; line-height: 1.1; text-align: left; }
 .work-group-head { display: table-cell; }
@@ -585,7 +585,13 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-no-time { color: #7c8590; }
 .work-cell-action { text-align: right; }
 .work-cell-action .desk-action { white-space: nowrap; }
-.work-cell-action .desk-goal-actions { justify-content: flex-end; }
+/* `max-width` is what makes the ellipsis on `.desk-launch-ref` work. The row
+   of actions is an inline-flex box, so without it the box takes its max-content
+   width, the launch text never shrinks, and a long launch pushes the `▾` menu
+   out of the cell: measured 3.5 px at full width and 41 px at the 959 px
+   breakpoint, where the menu left the table. The `▾` of every row must sit on
+   one x-position. */
+.work-cell-action .desk-goal-actions { max-width: 100%; justify-content: flex-end; }
 .work-row.waiting .desk-action { border-color: #665735; color: var(--amber); }
 .work-row.fact .desk-action { border-color: #3c434c; color: #cbd1d7; }
 .work-row.definition .work-row-title { color: #e2d7bd; }

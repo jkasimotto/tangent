@@ -3207,8 +3207,37 @@ async function answeredRequestLines(record) {
     .map((request) => `- ${noticeMessage(brainRequestAnswerNotice(request))}${request.goal ? ` (Goal ${request.goal})` : ""}`);
 }
 
-/** How many Area Documents the prompt names before it points at the folder. */
-const BRAIN_PROMPT_DOCUMENTS = 40;
+/**
+ * How many Area Documents the prompt names before it points at the folder. A
+ * brain allocates work; it does not read the Area's whole library. Eight names
+ * fit the recent work, and the Area folder line above them carries the rest.
+ */
+const BRAIN_PROMPT_DOCUMENTS = 8;
+
+/**
+ * Rationale dossiers are written for the study tutor at Goal finish. They
+ * record why finished code looks the way it does, so they never inform the
+ * next allocation, and on a busy Area they are the newest files on disk. They
+ * stay out of the named list and stay findable in the Area folder.
+ */
+const BRAIN_PROMPT_SKIPPED_DOCUMENTS = /^rationale-/;
+
+/**
+ * Dates Julian's instruction for the generation that reads it. The record
+ * carries one instruction, typed when Julian started this brain, and nothing
+ * updates it later. Generation 1 reads it as today's order and that is right.
+ * A later generation was reading a standing purpose as if Julian had just
+ * typed it, and acted on checkpoints it passed days before, so every
+ * generation after the first sees the date and where its current state is.
+ */
+function instructionAge(record, generation) {
+  if (generation <= 1) return "";
+  const day = String(record.createdAt ?? "").slice(0, 10);
+  const state = latestHandover(record) ? "the handover below" : "the plan";
+  return `Julian typed this on ${day || "the day"} when he started this brain, and has not changed it since. ` +
+    `It is this Area's standing purpose, not a new task for you, and a checkpoint it names is probably already done. ` +
+    `Your current state is ${state}.\n\n`;
+}
 
 /**
  * The first message of one brain generation: instruction, sources, the
@@ -3224,16 +3253,20 @@ async function brainPrompt(record) {
   const documents = (await readAreaDocuments(area)).filter((doc) => doc.file !== record.planFile);
   const planPath = path.join(TREES_ROOT, record.planFile);
   const handover = latestHandover(record);
-  const recent = [...documents].sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
+  const recent = [...documents]
+    .filter((doc) => !BRAIN_PROMPT_SKIPPED_DOCUMENTS.test(path.basename(doc.file)))
+    .sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0));
   const named = recent.slice(0, BRAIN_PROMPT_DOCUMENTS);
-  const rest = recent.length - named.length;
+  const rest = documents.length - named.length;
   const sourceLines = [
     `- Plan: ${planPath} (yours; create it if it does not exist)`,
     `- Area folder: ${path.join(TREES_ROOT, area)}`,
     ...notes.map((note, index) => `- Area note ${index + 1}: ${note}`),
     named.length
-      ? `- Documents in the Area folder, most recently changed first: ${named.map((doc) => path.basename(doc.file)).join(", ")}${rest > 0 ? `, and ${rest} more; list the folder for those` : ""}`
-      : `- Documents in the Area folder: none yet`,
+      ? `- Documents in the Area folder, ${named.length === 1 ? "the one changed most recently" : `the ${named.length} changed most recently`}: ${named.map((doc) => path.basename(doc.file)).join(", ")}${rest > 0 ? `. List the Area folder for the other ${rest}, rationale dossiers included` : ""}`
+      : documents.length
+        ? `- Documents in the Area folder: ${documents.length} rationale ${documents.length === 1 ? "dossier" : "dossiers"} only; list the Area folder for them`
+        : `- Documents in the Area folder: none yet`,
   ];
   const allGoals = [...(await goalsByFile()).values()];
   const liveOwners = await liveBrainRecords();
@@ -3244,7 +3277,7 @@ async function brainPrompt(record) {
   return (
     `# Brain for ${area}\n\n` +
     `You are the brain of Area ${area}: Tangent's long-lived router for this Area's work. You organize worker agents through Tangent commands and never do the work yourself. Julian started you with the instruction below and will mostly leave you alone. This is generation ${generation} of this brain${handover ? "; the earlier generation handed over the facts under Handover" : ""}.\n\n` +
-    `## Julian's instruction\n\n${record.instruction}\n\n` +
+    `## Julian's instruction\n\n${instructionAge(record, generation)}${record.instruction}\n\n` +
     `## Sources\n\n${sourceLines.join("\n")}\n\n` +
     dependencySection +
     (handover ? `## Handover from generation ${generation - 1}\n\n${handover}\n\n` : "") +

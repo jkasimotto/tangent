@@ -397,7 +397,11 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     // A prior brain retains its runtime. A new brain is seeded asynchronously
     // from the nearest explicit Area brain default (then the server fallback).
     state.launch.choice = brain?.launch ?? null;
-    state.brainDraft = { area, instruction: brain?.instruction ?? "" };
+    // Start over begins a new brain, so the box starts empty. Prefilling it
+    // with the stopped brain's instruction let an instruction Julian typed for
+    // an earlier brain become the new one's, and its first generation then read
+    // an old order as today's. Resume never reads this box.
+    state.brainDraft = { area, instruction: "" };
     const rect = button.getBoundingClientRect();
     state.launchAnchor = { top: Math.round(rect.bottom + 8), right: Math.round(rect.right) };
     state.launch.open = false;

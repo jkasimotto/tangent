@@ -288,3 +288,129 @@ test("the brain prompt uses structured plan, decision, test, and approval reques
   assert.doesNotMatch(show.prompt, /## For Julian/, "Markdown is not the new control protocol");
   assert.doesNotMatch(show.prompt, /launchctl kickstart/, "the rebuild rule is one command, not a launchctl recipe");
 });
+
+test("the brain prompt names few Documents and dates an older instruction", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-brain-instruction-"));
+  const trees = path.join(root, "trees");
+  const area = path.join(trees, "otto", "probeage");
+  await mkdir(area, { recursive: true });
+  await writeFile(path.join(trees, "harnesses.md"), "```tangent.harnesses.v1\n{\"version\":1,\"harnesses\":[{\"id\":\"brain\",\"command\":\"brain-agent\"}]}\n```\n", "utf8");
+  await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
+  await writeFile(path.join(area, "probeage.md"), "---\ntype: area\n---\n\n# Probe age\n\n```tangent.environment.v1\n{\"defaults\":{\"brain\":{\"harness\":\"brain\"}}}\n```\n", "utf8");
+  // Twelve designs and three rationale dossiers: more than the prompt names,
+  // and the dossiers are the newest files on disk.
+  for (let index = 0; index < 12; index += 1) {
+    await writeFile(path.join(area, `design-probe-${index}.md`), `# Design ${index}\n`, "utf8");
+  }
+  for (let index = 0; index < 3; index += 1) {
+    await writeFile(path.join(area, `rationale-probe-${index}.md`), `# Rationale ${index}\n`, "utf8");
+  }
+
+  let port;
+  try {
+    port = await freePort();
+  } catch (error) {
+    if (error?.code === "EPERM") {
+      context.skip("This environment does not permit local HTTP listeners.");
+      return;
+    }
+    throw error;
+  }
+  const openedSessions = [];
+  const child = spawn(process.execPath, ["server.mjs"], {
+    cwd: here,
+    env: {
+      ...process.env,
+      PORT: String(port),
+      HOST: "127.0.0.1",
+      TREES_ROOT: trees,
+      TANGENT_LOOPS_ROOT: path.join(root, "loops"),
+      WORKSPACE: path.join(root, "workspace"),
+      AGENT_SHELL_NO_OPEN: "1",
+      AGENT_SHELL_TEST_NO_LAUNCH: "1",
+      TANGENT_PIPELINES_ROOT: path.join(root, "pipelines"),
+      TANGENT_BRAINS_ROOT: path.join(root, "brains"),
+      AGENT_MESSAGE_LOG: path.join(root, "messages.jsonl"),
+      GROQ_API_KEY: "",
+      CHAT_SESSION: `brain-instruction-test-${process.pid}`,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  context.after(async () => {
+    await Promise.all(openedSessions.map((session) => new Promise((resolve) => {
+      execFile("tmux", ["kill-session", "-t", `=${session}`], () => resolve());
+    })));
+    child.kill("SIGTERM");
+    await Promise.race([once(child, "exit"), new Promise((resolve) => setTimeout(resolve, 1000))]);
+    await rm(root, { recursive: true, force: true });
+  });
+  const base = `http://127.0.0.1:${port}`;
+  await waitForServer(base);
+
+  /** Reads the prompt Agent Shell rebuilds for one brain session. */
+  const promptFor = async (session) => {
+    const shown = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(session)}`).then((response) => response.json());
+    return shown.prompt;
+  };
+
+  const brain = await fetch(`${base}/api/brains/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ area: "otto/probeage", instruction: "Propose the document structure first.", command: "brain-agent" }),
+  }).then((response) => response.json());
+  assert.ok(brain.session, JSON.stringify(brain));
+  openedSessions.push(brain.session);
+  const first = await promptFor(brain.session);
+
+  const sources = first.slice(first.indexOf("## Sources"), first.indexOf("## Tangent commands"));
+  const documentLine = sources.split("\n").find((line) => line.startsWith("- Documents in the Area folder"));
+  assert.ok(documentLine, "the Sources block names the Area's Documents");
+  assert.equal(
+    (documentLine.match(/design-probe-\d+\.md/g) ?? []).length,
+    8,
+    `the prompt names eight Documents, not the whole folder: ${documentLine}`,
+  );
+  assert.doesNotMatch(documentLine, /rationale-probe/, "rationale dossiers stay out of the named list");
+  assert.match(documentLine, /List the Area folder for the other 7, rationale dossiers included/);
+
+  assert.ok(
+    first.includes("## Julian's instruction\n\nPropose the document structure first."),
+    "generation 1 reads Julian's instruction as today's order",
+  );
+
+  // Tangent paces a handover from a generation that took no action, so this
+  // generation files one Request before it hands over.
+  const acted = await fetch(`${base}/api/goals/create`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      area: "otto/probeage",
+      goal: { title: "Probe age case", doneWhen: "The structure is proposed." },
+      caller: brain.session,
+    }),
+  }).then((response) => response.json());
+  assert.ok(acted.file, JSON.stringify(acted));
+  // The server records the action after that response finishes. A handover
+  // refused for pacing rewrites the record, so wait for the flag to land
+  // rather than retrying the handover.
+  const recordFile = path.join(root, "brains", "otto", "probeage", "brain.json");
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const saved = JSON.parse(await readFile(recordFile, "utf8"));
+    if (saved.generations.at(-1)?.acted) break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+
+  const next = await fetch(`${base}/api/brains/handover`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session: brain.session, text: "Structure proposed and approved." }),
+  }).then((response) => response.json());
+  assert.equal(next.error, undefined, `the handover starts generation 2: ${JSON.stringify(next)}`);
+  openedSessions.push(next.session);
+  const second = await promptFor(next.session);
+
+  assert.match(second, /## Julian's instruction\n\nJulian typed this on \d{4}-\d{2}-\d{2} when he started this brain, and has not changed it since\./);
+  assert.match(second, /It is this Area's standing purpose, not a new task for you/);
+  assert.match(second, /Your current state is the handover below\./);
+  assert.ok(second.includes("Propose the document structure first."), "Julian's instruction stays intact for a later generation");
+});

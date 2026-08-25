@@ -11,7 +11,7 @@ test("background Goal reconciliation cannot stop an agent session", async () => 
     readFile(path.join(here, "server.mjs"), "utf8"),
     readFile(path.join(here, "shell-control-routes.mjs"), "utf8"),
   ]);
-  const reconcile = source.match(/async function reconcileGoals\(sessions\) \{[\s\S]*?\n\}\n\nconst goalInfoCache/)?.[0] ?? "";
+  const reconcile = source.match(/async function reconcileGoals\([^\n]*\) \{[\s\S]*?\n\}\n\nconst goalInfoCache/)?.[0] ?? "";
   assert.match(reconcile, /preserved session/);
   assert.doesNotMatch(reconcile, /kill-session|cascadeGoalDone/);
   assert.match(controls, /url\.pathname\.startsWith\("\/api\/kill\/"\)/);

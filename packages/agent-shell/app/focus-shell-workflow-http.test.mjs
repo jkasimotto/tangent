@@ -75,7 +75,8 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.match(goalNarrativeScript, /storyEntries/);
   assert.match(shellScript, /post\("\/api\/caffeinate"/);
   assert.doesNotMatch(shellScript, /EventSource|api\/reload/);
-  assert.match(shellScript, /noteServerBoot/);
+  assert.match(shellScript, /noteRuntimeIdentity/);
+  assert.doesNotMatch(shellScript, /noteServerBoot/);
   assert.match(shellScript, /api\/shell\/rebuild/);
   assert.match(shellScript, /data-goal-anchor/);
   assert.doesNotMatch(shellScript, /data-view-goal|Goal details/);

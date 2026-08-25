@@ -18,6 +18,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, enableDockBadge, openRequest, sendVerdict, dismissAsk,
     replyAboutRow, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery,
     applyAreaFocus, clearAreaFocus, renderWork, describeLaunchArea, describeWorkSessions,
+    goalGroupRoot, toggleSubgoals,
   } = work;
   const {
     showAreasAt, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelCreate, cancelDescribe, areaIsFolded,
@@ -51,6 +52,35 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const point = state.agentReturn;
     state.agentReturn = null;
     return point ? restoreReturnPoint(point) : showWork();
+  }
+
+  /**
+   * Arrow, Home, and End move between the Goal titles of the table the focused
+   * title belongs to. Enter and Space keep their native button behavior, so the
+   * table needs no ARIA grid and still works when this handler does not run
+   * (design-redesign-work-as-a-compact-table Decision 9).
+   */
+  function moveBetweenWorkRows(event) {
+    if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return false;
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return false;
+    const title = event.target.closest?.("[data-work-row-title]");
+    if (!title) return false;
+    const table = title.closest("table");
+    if (!table) return false;
+    const titles = [...table.querySelectorAll("[data-work-row-title]")].filter((button) => !button.closest("tr[hidden]"));
+    if (titles.length < 2) return false;
+    const index = titles.indexOf(title);
+    const next = event.key === "Home" ? 0
+      : event.key === "End" ? titles.length - 1
+      : event.key === "ArrowDown" ? Math.min(titles.length - 1, index + 1)
+      : Math.max(0, index - 1);
+    if (next === index) {
+      event.preventDefault();
+      return true;
+    }
+    event.preventDefault();
+    titles[next].focus();
+    return true;
   }
 
   document.addEventListener("click", async (event) => {
@@ -167,6 +197,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       saveExpandedAreas();
       return paint(true);
     }
+    const subgoalToggle = target.closest("[data-toggle-subgoals]");
+    if (subgoalToggle) return toggleSubgoals(subgoalToggle.dataset.toggleSubgoals);
     const deskSectionToggle = target.closest("[data-toggle-desk-section]");
     if (deskSectionToggle) {
       const area = deskSectionToggle.dataset.toggleDeskSection;
@@ -294,9 +326,21 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const checkGoal = target.closest("[data-check-goal]");
     if (checkGoal) {
       const file = checkGoal.dataset.checkGoal;
-      state.goalSelection = state.goalSelection.includes(file)
-        ? state.goalSelection.filter((item) => item !== file)
-        : [...state.goalSelection, file];
+      if (state.goalSelection.includes(file)) {
+        state.goalSelection = state.goalSelection.filter((item) => item !== file);
+        return paint(true);
+      }
+      // One agent owns one brain-owned Area group. Checking a Goal in another
+      // group replaces the selection and says so, instead of silently starting
+      // an agent across two groups (design-redesign-work-as-a-compact-table).
+      const group = goalGroupRoot(file);
+      const foreign = state.goalSelection.filter((item) => goalGroupRoot(item) !== group);
+      if (foreign.length) {
+        state.goalSelection = [file];
+        showToast(`Selection moved to ${areaLabel(group)}. ${foreign.length} ${foreign.length === 1 ? "Goal" : "Goals"} in another group cleared.`);
+        return paint(true);
+      }
+      state.goalSelection = [...state.goalSelection, file];
       return paint(true);
     }
     const startSelected = target.closest("[data-start-selected]");
@@ -1024,6 +1068,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
     // No other global shortcut fires while the finder holds the keyboard.
     if (state.goTo) return;
+    if (moveBetweenWorkRows(event)) return;
     if (event.key === "Enter" && event.metaKey && !modalLayer.hidden && event.target.closest?.("[data-modal-input]")) {
       event.preventDefault();
       modalLayer.querySelector("[data-modal-confirm]")?.click();

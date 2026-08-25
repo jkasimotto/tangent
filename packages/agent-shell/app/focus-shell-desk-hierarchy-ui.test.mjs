@@ -70,27 +70,22 @@ test("a parent Area owns descendant current work without a separate sub-Area sec
   window.eval(shellBundle);
   await settle(window);
 
-  assert.equal(window.document.querySelectorAll(".area-desk-panel").length, 1, "embedded-js and storm-response fold into one panel");
-  const panel = window.document.querySelector(".area-desk-panel");
-  assert.match(panel.querySelector(".area-desk-header h2").textContent, /Neara/);
-  assert.match(panel.querySelector("[data-open-brain]").textContent, /Open brain/);
-  assert.equal(panel.querySelector(".desk-subarea"), null, "a descendant does not become another card");
-  assert.match(panel.querySelector("[data-work-area$='/storm-response'] h3").textContent, /Storm Response/);
+  assert.equal(window.document.querySelectorAll(".work-table tbody").length, 1, "embedded-js and storm-response fold into one row group");
+  const group = window.document.querySelector(".work-table tbody");
+  assert.match(group.querySelector(".work-group-name button").textContent, /Neara/);
+  assert.match(group.querySelector(".work-group-brain .work-group-brain-long").textContent, /Open brain/);
+  assert.equal(group.querySelectorAll(".work-group-row").length, 1, "a descendant does not become a second group");
+  assert.equal(group.getAttribute("aria-labelledby"), group.querySelector(".work-group-head").id, "the row group is named by its header");
 
-  const staleBrain = panel.querySelector("[data-work-area$='/storm-response'] [data-open-area-brain]");
-  assert.equal(staleBrain.textContent, "Resume brain");
-  assert.equal(staleBrain.getAttribute("aria-label"), "Resume brain for Neara / Hackathon / Embedded Js / Storm Response");
-  const childBrain = panel.querySelector("[data-work-area$='/embedded-js'] [data-open-area-brain]");
-  assert.equal(childBrain.textContent, "Start brain");
-  assert.equal(childBrain.getAttribute("data-open-area-brain"), "neara/hackathon/embedded-js");
-  assert.equal(childBrain.getAttribute("aria-label"), "Start brain for Neara / Hackathon / Embedded Js");
-  childBrain.click();
-  childBrain.click();
-  await settle(window);
-  assert.equal(brainStarts.length, 1, "repeated activation starts the exact Area once");
-  assert.equal(brainStarts[0].area, "neara/hackathon/embedded-js");
-  assert.equal(brainStarts[0].instruction, "Work with Julian to understand, plan, and dispatch new work for this Area.");
+  const stormRows = [...group.querySelectorAll("tr[data-work-area$='/storm-response']")];
+  assert.ok(stormRows.length, "descendant Goals stay in the parent group");
+  assert.deepEqual([...new Set(stormRows.map((row) => row.querySelector(".work-row-path").textContent))], ["Storm Response"],
+    "a descendant row prints its own Area as quiet provenance instead of a heading");
+  assert.equal(group.querySelector("tr[data-work-area$='/embedded-js'] .work-row-path").textContent, "Embedded Js",
+    "a second descendant branch prints its own short name");
+  assert.equal(window.document.querySelectorAll(".work-group-brain").length, 1, "one brain route serves the whole group");
 
-  const titles = [...panel.querySelectorAll("[data-work-area$='/storm-response'] .desk-goal-main strong")].map((node) => node.textContent);
+  const titles = stormRows.map((row) => row.querySelector(".work-title").textContent);
   assert.deepEqual(titles, ["Working goal"], "a saved exact brain record keeps its fallback ask out of the Goal rows");
+  void brainStarts;
 });

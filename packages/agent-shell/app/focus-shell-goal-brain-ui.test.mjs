@@ -90,16 +90,17 @@ test("Goal cards open their nearest live brain and preserve Work context", async
 
   window.eval(shellBundle);
   await settle(window);
-  const rootAction = window.document.querySelector(`[data-goal-anchor='${parent.file}'] .desk-brain-action`);
-  const subgoalAction = window.document.querySelector(`[data-goal-anchor='${subgoal.file}'] .desk-brain-action`);
-  const nestedAction = window.document.querySelector(`[data-goal-anchor='${nested.file}'] .desk-brain-action`);
-  assert.equal(rootAction.textContent, "Open brain");
+  /** The one brain route of the row group that holds one Goal row. */
+  const groupBrain = (file) => window.document.querySelector(`[data-goal-anchor='${file}']`).closest("tbody").querySelector(".work-group-brain");
+  const rootAction = groupBrain(parent.file);
+  assert.equal(rootAction.querySelector(".work-group-brain-long").textContent, "Open brain");
   assert.equal(rootAction.dataset.openBrain, "tangent-brain");
-  assert.equal(rootAction.getAttribute("aria-label"), "Open brain for Goal Parent result, Otto / Tangent");
-  assert.equal(rootAction.title, "Open Otto / Tangent brain");
-  assert.equal(subgoalAction.dataset.openBrain, "tangent-brain", "Subgoals resolve from their own Area");
-  assert.equal(nestedAction.dataset.openBrain, "nested-brain", "the live child replaces the parent inside its subtree");
-  assert.equal(window.document.querySelector(`[data-goal-anchor='${orphan.file}'] .desk-brain-action`), null);
+  assert.equal(rootAction.getAttribute("aria-label"), "Open brain for Otto / Tangent");
+  assert.equal(groupBrain(subgoal.file), rootAction, "a Subgoal reads the same group route as its parent");
+  assert.equal(groupBrain(nested.file).dataset.openBrain, "nested-brain", "the live child owns its own row group");
+  assert.equal(groupBrain(orphan.file).dataset.openBrain, undefined, "an Area with no brain offers Start instead");
+  assert.equal(groupBrain(orphan.file).querySelector(".work-group-brain-long").textContent, "Start brain");
+  assert.equal(window.document.querySelector(".desk-brain-action"), null, "no row repeats the group's brain route");
 
   const user = userEvent.setup({ document: window.document });
   rootAction.focus();
@@ -113,14 +114,14 @@ test("Goal cards open their nearest live brain and preserve Work context", async
   const workSearch = window.document.querySelector("#work-search");
   workSearch.value = "parent";
   workSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
-  const filteredAction = window.document.querySelector(`[data-goal-anchor='${parent.file}'] .desk-brain-action`);
+  const filteredAction = groupBrain(parent.file);
   filteredAction.focus();
   await user.keyboard(" ");
   assert.ok(window.document.querySelector("#describe-work-terminal[data-session='tangent-brain']"));
   window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   assert.equal(window.document.querySelector("#work-search").value, "parent", "Escape restores the Work filter");
 
-  click(window, `[data-goal-anchor='${parent.file}'] .desk-brain-action`);
+  groupBrain(parent.file).click();
   const terminal = window.document.querySelector("#describe-work-terminal[data-session='tangent-brain']");
   const repeatedAction = window.document.createElement("button");
   repeatedAction.dataset.openBrain = "tangent-brain";
@@ -130,23 +131,24 @@ test("Goal cards open their nearest live brain and preserve Work context", async
   assert.equal(window.document.querySelector("#work-search").value, "parent", "a duplicate activation keeps the first return point");
 
   sessionProjection.splice(sessionProjection.findIndex((item) => item.name === "tangent-brain"), 1);
-  click(window, `[data-goal-anchor='${parent.file}'] .desk-brain-action`);
+  groupBrain(parent.file).click();
   assert.ok(window.document.querySelector(".work-page"), "a stale click keeps Work visible");
   assert.equal(window.document.querySelector("#toast").textContent, "The brain session is not live.");
 
   parentLive = false;
   await window.refresh();
   await settle(window);
-  assert.equal(window.document.querySelector(`[data-goal-anchor='${parent.file}'] .desk-brain-action`), null, "refresh removes an ended owner");
+  assert.equal(groupBrain(parent.file).dataset.openBrain, undefined, "refresh turns an ended owner back into Resume");
+  assert.equal(groupBrain(parent.file).querySelector(".work-group-brain-long").textContent, "Resume brain");
   childLive = false;
   sessionProjection = goalSessions;
   await window.refresh();
   await settle(window);
-  assert.equal(window.document.querySelector(`[data-goal-anchor='${nested.file}'] .desk-brain-action`), null);
+  assert.equal(groupBrain(nested.file).querySelector(".work-group-brain-long").textContent, "Resume brain");
   dom.window.close();
 });
 
-test("the Goal brain action wraps inside standard and narrow cards", async () => {
+test("the group brain action keeps one label per width and never wraps", async () => {
   const [html, css] = await Promise.all([
     readFile(path.join(here, "public", "shell.html"), "utf8"),
     readFile(path.join(here, "public", "shell.css"), "utf8"),
@@ -155,16 +157,17 @@ test("the Goal brain action wraps inside standard and narrow cards", async () =>
   const style = dom.window.document.createElement("style");
   style.textContent = css;
   dom.window.document.head.append(style);
-  const row = dom.window.document.createElement("article");
-  row.className = "desk-goal";
-  row.innerHTML = `<div class="desk-goal-main"><div class="desk-goal-line2"><span class="desk-goal-status">Working</span><span class="desk-goal-actions"><button class="desk-brain-action">Open brain</button><button class="desk-action">Open</button><details class="desk-action-menu"><summary>Actions</summary></details></span></div></div>`;
-  dom.window.document.body.append(row);
+  const button = dom.window.document.createElement("button");
+  button.className = "work-group-brain";
+  button.setAttribute("aria-label", "Open brain for Otto / Tangent");
+  button.innerHTML = `<span class="work-group-brain-long">Open brain</span><span class="work-group-brain-short">Brain</span>`;
+  dom.window.document.body.append(button);
 
-  for (const width of [560, 260]) {
-    row.style.width = `${width}px`;
-    assert.equal(dom.window.getComputedStyle(row.querySelector(".desk-goal-line2")).flexWrap, "wrap", `${width}px cards wrap their second line`);
-    assert.equal(dom.window.getComputedStyle(row.querySelector(".desk-goal-actions")).position, "", `${width}px actions stay in normal flow`);
-    assert.equal(dom.window.getComputedStyle(row.querySelector(".desk-brain-action")).whiteSpace, "nowrap", `${width}px keeps the short label intact`);
-  }
+  /** The computed style of one label span inside the group action. */
+  const styleOf = (selector) => dom.window.getComputedStyle(button.querySelector(selector));
+  assert.equal(dom.window.getComputedStyle(button).whiteSpace, "nowrap", "the group action never wraps");
+  assert.equal(styleOf(".work-group-brain-long").display, "inline", "the wide label is the visible one by default");
+  assert.equal(styleOf(".work-group-brain-short").display, "none", "the narrow label is hidden by default");
+  assert.equal(button.getAttribute("aria-label"), "Open brain for Otto / Tangent", "the accessible name names the Area at every width");
   dom.window.close();
 });

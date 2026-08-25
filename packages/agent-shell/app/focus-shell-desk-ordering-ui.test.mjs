@@ -58,9 +58,9 @@ test("current and planned work keep stable Area order", async () => {
   window.eval(shellBundle);
   await settle(window);
 
-  let headers = [...window.document.querySelectorAll(".area-desk-panel .area-desk-header h2")].map((node) => node.textContent);
+  let headers = [...window.document.querySelectorAll(".work-table .work-group-name button")].map((node) => node.textContent);
   assert.deepEqual(headers, ["D&D"], "Current shows only the Area with live work");
   click(window, "[data-work-filter='inactive']");
-  headers = [...window.document.querySelectorAll(".area-desk-panel .area-desk-header h2")].map((node) => node.textContent);
+  headers = [...window.document.querySelectorAll(".work-table .work-group-name button")].map((node) => node.textContent);
   assert.deepEqual(headers, ["Megabranch", "Standards", "Tangent"], "Planned work keeps stable path order instead of recent order");
 });

@@ -406,6 +406,7 @@ const {
   humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel,
   goalNeedsYou, goalWorkFinished, workCard, goalTreeCard,
   fallbackAsks, forgetVerdictLines, openRequest, sendVerdict, replyAboutRow, dismissAsk, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups,
+  goalGroupRoot, toggleSubgoals,
   openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, renderWork,
 } = workDeskView;
 
@@ -591,7 +592,7 @@ function renderKey() {
     state.areaSelection,
     state.goalSelection,
     [...state.expandedAreas].sort(),
-    [state.workFilter, state.areaFocus, [...state.collapsedDeskSections].sort(), Boolean(state.areaFocusPicker)],
+    [state.workFilter, state.areaFocus, [...state.collapsedDeskSections].sort(), [...state.collapsedGoalTrees].sort(), Boolean(state.areaFocusPicker)],
     // The card's durations count up, so a repaint is due once a minute even
     // when nothing else changed.
     Math.floor(Date.now() / 60_000),
@@ -795,6 +796,7 @@ function renderScreen() {
   screen.classList.toggle("review-screen", state.view === "document");
 
   const scrollPositions = rememberScreenScroll();
+  const focusKey = rememberScreenFocus();
   if (state.view === "work") screen.innerHTML = renderWork();
   else if (state.view === "create") screen.innerHTML = renderCreate();
   else if (state.view === "describe") screen.innerHTML = renderDescribeCapture();
@@ -816,6 +818,7 @@ function renderScreen() {
 
   updateHeader();
   restoreScreenScroll(scrollPositions);
+  restoreScreenFocus(focusKey);
   if (state.view === "document") {
     bindDocumentReader();
     mountMermaidDiagrams(screen.querySelector(".document-content"));
@@ -824,6 +827,26 @@ function renderScreen() {
   if (host) mountTerminal(host, host.dataset.session);
   const mapHost = screen.querySelector("[data-area-map]");
   if (mapHost) mountAreaMap(mapHost);
+}
+
+/**
+ * The stable identity of the focused control, if it carries one. A poll that
+ * changes any visible fact rebuilds the screen from strings, which would drop
+ * focus mid-scan; `data-focus-key` names the control across that rebuild
+ * (design-redesign-work-as-a-compact-table, "Polls and stable focus").
+ */
+function rememberScreenFocus() {
+  const active = document.activeElement;
+  if (!active || !screen.contains(active)) return "";
+  return active.dataset?.focusKey ?? "";
+}
+
+/** Puts focus back on the same control after a repaint of the same view. */
+function restoreScreenFocus(key) {
+  if (!key) return;
+  const selector = String(key).replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+  const target = screen.querySelector(`[data-focus-key="${selector}"]`);
+  if (target) target.focus({ preventScroll: true });
 }
 
 /** The elements that scroll inside the screen, by a selector stable across repaints. */
@@ -1288,6 +1311,7 @@ bindShellEvents({
     openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, enableDockBadge, openRequest, sendVerdict,
     replyAboutRow, dismissAsk, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery,
     applyAreaFocus, clearAreaFocus, renderWork, describeLaunchArea, describeWorkSessions,
+    goalGroupRoot, toggleSubgoals,
   },
   areas: {
     showAreasAt, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelCreate, cancelDescribe, areaIsFolded,

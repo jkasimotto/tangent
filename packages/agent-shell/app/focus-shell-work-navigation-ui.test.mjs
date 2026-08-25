@@ -271,17 +271,17 @@ test("the live shell restores context, defines work with an agent, and organizes
   await settle(window);
 
   assert.ok(window.document.querySelector(".work-page"), "the desk shows the Work page");
-  assert.equal(window.document.querySelectorAll(".area-desk-panel").length, 2);
-  assert.match(window.document.querySelector(".attention-queue h2").textContent, /For you/, "the card is named For you");
-  const fallbackRows = [...window.document.querySelectorAll(".attention-queue .attention-items > *")];
+  assert.equal(window.document.querySelectorAll(".work-table tbody").length, 2);
+  assert.match(window.document.querySelector(".attention-queue h2").textContent, /For you/, "the surface is named For you");
+  const fallbackRows = [...window.document.querySelectorAll(".ask-table .ask-row")];
   assert.equal(fallbackRows.length, 2, "with no brain, only the two Areas that ask something row");
-  assert.equal(window.document.querySelector(".for-you-group:not(.fallback)"), null, "no brain, no brain group");
-  assert.equal(window.document.querySelector(".area-for-you"), null, "no brain, no rows on any Area panel either");
+  assert.equal(window.document.querySelector(".ask-group:not(.fallback)"), null, "no brain, no brain group");
+  assert.equal(window.document.querySelectorAll(".ask-table").length, 1, "one question table, above the work table");
   for (const row of fallbackRows) {
-    assert.ok(row.querySelector(".attention-question"), "every row states the interaction it asks for");
-    assert.match(row.querySelector(".attention-question").textContent, /\?$/);
+    assert.ok(row.querySelector(".ask-question"), "every row states the interaction it asks for");
+    assert.match(row.querySelector(".ask-question").textContent, /\?$/);
   }
-  const questions = fallbackRows.map((row) => row.querySelector(".attention-question").textContent);
+  const questions = fallbackRows.map((row) => row.querySelector(".ask-question").textContent);
   assert.ok(questions.includes("Accept the result?"), "a finished Goal that waits on Julian asks him to accept it");
   assert.ok(questions.includes("Do you want to rewrite the vision section?"), "a session stopped at a dialog asks the dialog's own question");
   assert.ok(
@@ -314,12 +314,12 @@ test("the live shell restores context, defines work with an agent, and organizes
 
   // Under the brain, its own rows lead the card, and the count is one number:
   // the brain's asks plus the fallback asks of the Areas without a brain.
-  const group = window.document.querySelector(".attention-queue .for-you-group:not(.fallback)");
-  assert.ok(group, "the brain's Area gets its own group");
-  assert.doesNotMatch(group.querySelector("header").textContent, /Reply to brain/, "the group header has no second answer lane");
-  const rows = [...group.querySelectorAll(".attention-items > *")];
+  const group = window.document.querySelector(".ask-table .ask-group:not(.fallback)");
+  assert.ok(group, "the brain's Area gets its own row group");
+  assert.doesNotMatch(group.textContent, /Reply to brain/, "the group has no second answer lane");
+  const rows = [...group.querySelectorAll(".ask-row")];
   assert.equal(rows.length, 1, "only the durable Request appears");
-  assert.equal(rows[0].querySelector(".attention-question").textContent, "Approve the proposed audit scope?");
+  assert.equal(rows[0].querySelector(".ask-question").textContent, "Approve the proposed audit scope?");
   assert.deepEqual([...rows[0].querySelectorAll("[data-verdict]")].map((button) => button.textContent), ["Approve", "I want these changes"]);
   assert.ok(rows[0].querySelector("[data-open-request-id]"), "Open enters the full Request surface");
   assert.doesNotMatch(rows[0].textContent, /opened Request surface/, "the compact row does not contain full detail");
@@ -342,14 +342,13 @@ test("the live shell restores context, defines work with an agent, and organizes
   // The same rows, with the same actions, sit right on the Area's own panel:
   // Julian decides there without the desk-wide card
   // (goal-decisions-show-on-the-area-view-not-just-a-count).
-  const areaPanel = window.document.querySelector(`.area-desk-panel[data-desk-area="${liveEditGoal.area}"]`);
-  assert.ok(areaPanel, "the Live Edit Area has its own panel");
-  const areaGroup = areaPanel.querySelector(".area-for-you .for-you-group");
-  assert.ok(areaGroup, "the Area panel gets the brain's group directly under its header");
-  assert.equal(areaPanel.querySelector(".area-desk-header + .area-for-you"), areaPanel.querySelector(".area-for-you"), "the group sits right after the header, before Goal work");
-  const areaRows = [...areaGroup.querySelectorAll(".attention-items > *")];
-  assert.equal(areaRows.length, 1, "the Area panel shows the same Request as the desk card");
-  assert.equal(areaGroup.querySelector("header [data-open-brain]"), null, "the Area panel header has no Reply to brain lane");
+  const areaGroup = window.document.querySelector(`.work-table tbody[data-work-group="${liveEditGoal.area}"]`);
+  assert.ok(areaGroup, "the Live Edit Area has its own row group");
+  const askTable = window.document.querySelector(".ask-table");
+  assert.equal(window.document.querySelectorAll(".work-table .ask-row").length, 0, "no question repeats inside the work table");
+  assert.ok(askTable.compareDocumentPosition(window.document.querySelector(".work-table")) & window.Node.DOCUMENT_POSITION_FOLLOWING,
+    "the one question table sits above the work table");
+  assert.equal(window.document.querySelectorAll(`.ask-table .ask-row[data-ask-id^="request:"]`).length, 1, "the durable Request rows once");
 
   // With an agent on it, the pane is static because the brain has not read it
   // yet: the row states the fact and keeps the amber that means "you" off.
@@ -371,16 +370,16 @@ test("the live shell restores context, defines work with an agent, and organizes
   brainLive = false;
   await window.refresh();
   await settle(window);
-  const stoppedGroup = window.document.querySelector(".attention-queue .for-you-group.stopped");
+  const stoppedGroup = window.document.querySelector(".ask-table .ask-group.stopped");
   assert.ok(stoppedGroup, "a durable Request remains visible while its brain is stopped");
   brainLive = true;
 
   liveEditBrainStarted = false;
   await window.refresh();
   await settle(window);
-  const tangentRoot = window.document.querySelector('[data-work-area="otto/tangent"]');
+  const tangentRoot = window.document.querySelector('[data-work-group="otto/tangent"]');
   const tangentBrainAction = tangentRoot.querySelector('[data-open-area-brain="otto/tangent"]');
-  assert.equal(tangentBrainAction.textContent, "Start brain", "a root Work header can start its exact Area brain");
+  assert.equal(tangentBrainAction.querySelector(".work-group-brain-long").textContent, "Start brain", "a group header can start its exact Area brain");
   assert.equal(tangentBrainAction.getAttribute("aria-label"), "Start brain for Otto / Tangent");
 
   window.__agentShellNativeDockBadge = true;
@@ -389,25 +388,24 @@ test("the live shell restores context, defines work with an agent, and organizes
   await window.enableDockBadge();
   await settle(window);
   assert.deepEqual(dockBadges, [2]);
-  assert.match(window.document.querySelector(".area-desk-panel:nth-child(2)").textContent, /Tangent/);
-  assert.equal(window.document.querySelector(".area-desk-panel:nth-child(2) .area-desk-section.documents"), null, "the Documents section left the work tab");
+  assert.match(window.document.querySelectorAll(".work-table tbody")[1].textContent, /Tangent/);
+  assert.equal(window.document.querySelector(".area-desk-section.documents"), null, "the Documents section left the work tab");
   assert.equal(window.document.querySelectorAll(".desk-goal.subgoal").length, 1);
   assert.equal(window.document.querySelector("[data-work-filter='active']").getAttribute("aria-pressed"), "true");
   click(window, "[data-work-filter='active']");
   assert.equal(window.localStorage.getItem("agent-shell.work-filter"), "active");
-  assert.equal(window.document.querySelectorAll(".area-desk-panel").length, 2, "Current includes live work and reviewed work awaiting acceptance");
+  assert.equal(window.document.querySelectorAll(".work-table tbody").length, 2, "Current includes live work and reviewed work awaiting acceptance");
   assert.match(window.document.querySelector("#screen").textContent, /UX Product Vision/);
   assert.match(window.document.querySelector("#screen").textContent, /Waiting/, "the pill is one word now; the duration is on the facts line");
   assert.equal(window.document.querySelectorAll(".desk-goal.subgoal").length, 1);
   assert.match(window.document.querySelector("#screen").textContent, /Define Live Edit collaboration/, "Current keeps reviewed work that awaits acceptance");
   click(window, "[data-work-filter='inactive']");
-  assert.equal(window.document.querySelectorAll(".area-desk-panel").length, 0);
+  assert.equal(window.document.querySelectorAll(".work-table tbody").length, 0);
   assert.match(window.document.querySelector("#screen").textContent, /No unstarted Goals/);
   assert.doesNotMatch(window.document.querySelector("#screen").textContent, /UX Product Vision/);
   click(window, "[data-work-filter='active']");
   // The Area square on the desk carries the Area's Programs beside its Goals and Documents.
-  const tangentPanel = [...window.document.querySelectorAll(".area-desk-panel")].find((panel) => panel.textContent.includes("Tangent"));
-  const deskProgram = tangentPanel.querySelector(".desk-program");
+  const deskProgram = window.document.querySelector('.work-programs [data-program-area="otto/tangent"] .desk-program');
   assert.match(deskProgram.textContent, /Agent Shell/);
   assert.match(deskProgram.textContent, /Running/);
   assert.ok(deskProgram.classList.contains("live"));
@@ -452,23 +450,23 @@ test("the live shell restores context, defines work with an agent, and organizes
 
   click(window, "#back-button");
   assert.equal(window.document.querySelector("[data-new-goal]"), null);
-  assert.equal(window.document.querySelectorAll(".area-desk-panel").length, 2);
+  assert.equal(window.document.querySelectorAll(".work-table tbody").length, 2);
   assert.match(window.document.querySelector("#screen").textContent, /Define Live Edit collaboration/);
   assert.match(window.document.querySelector("#screen").textContent, /Waiting/, "the desk still says a Goal waits for Julian");
   assert.doesNotMatch(window.document.querySelector("#screen").textContent, /Already complete/);
-  assert.match(window.document.querySelector(".desk-subgoal-disclosure > summary").textContent, /To do that1 Subgoal/);
+  assert.match(window.document.querySelector("[data-toggle-subgoals]").getAttribute("aria-label"), /Hide 1 Subgoal of/);
 
   const search = window.document.querySelector("#work-search");
   search.value = "tangent";
   search.dispatchEvent(new window.Event("input", { bubbles: true }));
-  assert.equal(window.document.querySelectorAll(".area-desk-panel").length, 1, "typing filters the existing Area desk");
-  assert.match(window.document.querySelector(".area-desk-panel").textContent, /Tangent/);
+  assert.equal(window.document.querySelectorAll(".work-table tbody").length, 1, "typing filters the existing work table");
+  assert.match(window.document.querySelector(".work-table tbody").textContent, /Tangent/);
   assert.equal(window.document.querySelector(".document-result"), null, "work filtering never switches to Document results");
   assert.ok(window.document.querySelector(".work-filter"), "Current and Planned remain visible while filtering");
   const joinedAreaSearch = window.document.querySelector("#work-search");
   joinedAreaSearch.value = "liveedit";
   joinedAreaSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
-  const matchingAreaPanel = window.document.querySelector(".area-desk-panel");
+  const matchingAreaPanel = window.document.querySelector(".work-table tbody");
   assert.ok(matchingAreaPanel);
   assert.match(matchingAreaPanel.textContent, /Live Edit/);
   assert.match(matchingAreaPanel.textContent, /Define Live Edit collaboration/);
@@ -509,7 +507,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.equal(window.document.querySelector("[data-describe-work]").textContent.trim(), "Describe work");
   const workDefinition = window.document.querySelector(".desk-definition");
   assert.ok(workDefinition, window.document.querySelector("#screen").textContent);
-  assert.match(workDefinition.closest(".area-desk-panel").textContent, /D&D/);
+  assert.match(workDefinition.closest("tbody").textContent, /D&D/);
   assert.match(workDefinition.textContent, /Defining work/);
   assert.match(workDefinition.textContent, /Make the scene flow reliable/);
   assert.match(workDefinition.textContent, /Waiting for you/);

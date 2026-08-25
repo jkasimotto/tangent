@@ -158,7 +158,7 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
   assert.equal(window.document.querySelector(".attention-focus-count").textContent, "1 shown in Focus · 1 outside Focus");
   assert.equal(window.document.querySelector("#work-tab").textContent, "Work · 2");
   assert.equal(dockBadges.at(-1), 2, "the Dock badge keeps the complete For you total");
-  assert.equal(window.document.querySelectorAll(".attention-row").length >= 1, true);
+  assert.equal(window.document.querySelectorAll(".ask-row").length >= 1, true);
   assert.deepEqual(JSON.parse(window.localStorage.getItem("agent-shell.area-focus.v1")), {
     schema: "agent-shell.area-focus.v1", areas: ["otto/alpha"],
   });

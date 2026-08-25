@@ -1,8 +1,8 @@
 import areaMapCore from "./area-map-core.js";
 import goalCardCore from "./goal-card-core.js";
+import areaWorkCore from "./area-work-core.js";
 import askCore from "./ask-core.js";
 import goToCore from "./go-to-core.js";
-import { activeBrainForArea } from "./brain-ownership.js";
 import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
 import { isInAreaFocus, normalizeAreaFocus, reconcileAreaFocus, writeAreaFocus } from "./area-focus-core.js";
 import { readDismissedAskIds, writeDismissedAskIds } from "./ask-dismissal-core.js";
@@ -88,7 +88,13 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
   /** Applies the selected session-presence filter without splitting Goal trees. */
   function filteredGoalTrees(trees) {
-    const readyForYou = new Set((state.brains ?? []).flatMap((brain) => (brain.forJulian ?? []).filter((row) => row.kind === "test").map((row) => row.file)));
+    // A finished result stays in the live table until Julian accepts it, so an
+    // open Test keeps its Goal current, on the durable Request or the legacy
+    // plan line (design-redesign-work-as-a-compact-table, "Problem contract").
+    const readyForYou = new Set((state.brains ?? []).flatMap((brain) => [
+      ...(brain.forJulian ?? []).filter((row) => row.kind === "test").map((row) => row.file),
+      ...(brain.requests ?? []).filter((request) => request.status === "open" && request.kind === "test").map((request) => request.subjectRef?.goal ?? request.goal),
+    ]).filter(Boolean));
     /** Returns whether any Goal in the tree is current. */
     const isCurrent = (tree) => tree.goals.some((goal) => {
       if (sessionForGoal(goal) || goalNeedsYou(goal) || readyForYou.has(goal.file)) return true;
@@ -947,30 +953,6 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     return `data-verdict-area="${escapeHtml(arg.area ?? ask.area)}" data-verdict-line="${escapeHtml(arg.line ?? "")}" data-verdict="${escapeHtml(action.kind)}"`;
   }
 
-  /**
-   * One ask, whoever built it: who it is about, the facts under the name, and
-   * the question on a line of its own, because the question is the only part
-   * Julian must read. The first opening verb becomes the row's main button;
-   * the answering verbs sit beside it. There is one renderer, so nothing that
-   * is not an ask can be drawn here.
-   */
-  function askRow(ask) {
-    const context = ask.context ? `<small class="attention-context">${escapeHtml(ask.context)}</small>` : "";
-    const proposal = ask.proposal ? `<span class="attention-proposal"><b>Proposed:</b> ${escapeHtml(ask.proposal)}</span>` : "";
-    const text = `<span><strong>${escapeHtml(ask.subject)}</strong>${context}${proposal}<span class="attention-question">${escapeHtml(ask.question)}</span></span>`;
-    const primary = ask.actions.find((action) => ASK_PRIMARY_ACTIONS.includes(action.kind));
-    const rest = ask.actions.filter((action) => action !== primary);
-    const buttons = rest.length
-      ? `<span class="attention-row-actions${rest.length > 2 ? " choices" : ""}">${rest.map((action) => `<button class="attention-tried${action.kind === "reply" ? " attention-reply" : ""}" type="button" ${askActionAttributes(ask, action)}>${escapeHtml(action.label)}</button>`).join("")}</span>`
-      : "";
-    const head = primary
-      ? `<button type="button" ${askActionAttributes(ask, primary)}>${text}<span>${escapeHtml(primary.label)} <b aria-hidden="true">→</b></span></button>`
-      : text;
-    const dismissLabel = `Dismiss ${ask.subject}: ${ask.question} from For you`;
-    const edge = `<span class="attention-row-edge">${buttons}<button class="attention-dismiss" type="button" data-dismiss-ask="${escapeHtml(ask.id)}" aria-label="${escapeHtml(dismissLabel)}" title="Dismiss from For you"><span aria-hidden="true">×</span></button></span>`;
-    return `<div class="attention-row" data-ask-id="${escapeHtml(ask.id)}">${head}${edge}</div>`;
-  }
-
   /** Hides one exact attention event and offers a local Undo. */
   async function dismissAsk(id) {
     const item = forYouItems().find((ask) => ask.id === id);
@@ -1018,15 +1000,6 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     openModal({ kicker: "Request", title: request.subject, copy, wide: true, confirmLabel: "Close", onConfirm: closeRequest });
   }
 
-  /** One live brain group's asks and its direct reply action. */
-  function forYouGroupMarkup(group, label) {
-    return `
-      <div class="for-you-group${group.stopped ? " stopped" : ""}">
-        <header><span>${escapeHtml(label)}</span></header>
-        <div class="attention-items">${group.asks.map(askRow).join("")}</div>
-      </div>`;
-  }
-
   /** The fallback asks grouped by Area, so every row says which Area it is from. */
   function fallbackAskGroups(asks) {
     const byArea = new Map();
@@ -1034,24 +1007,50 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     return [...byArea].map(([area, items]) => ({ area, asks: items }));
   }
 
-  /**
-   * The For-you rows on one Area's own panel, directly under its brain line:
-   * Julian decides what the brain is asking without leaving the Area he is
-   * looking at (design-what-needs-julian-under-brains, goal-decisions-show-
-   * on-the-area-view-not-just-a-count). Empty when the Area has no brain of
-   * its own; the panel then stays as it was before this Goal.
-   */
-  function areaForYouSection(areaPath) {
-    const groups = areaForYouGroups(areaPath);
-    if (!groups.length) return "";
-    const markup = groups.map((group) => forYouGroupMarkup(group, group.area === areaPath ? "For you" : areaLabel(group.area))).join("");
-    return `<div class="area-for-you">${markup}</div>`;
+  /** The word for what one direct ask is: its kind, not its machine source. */
+  function askKindLabel(ask) {
+    const source = String(ask.source ?? "");
+    if (source.startsWith("request:")) {
+      const kind = source.slice("request:".length);
+      return kind === "decision" ? "Decide" : kind === "test" ? "Test" : kind === "approval" ? "Approve" : "Plan";
+    }
+    if (source === "plan") return "Plan";
+    if (source === "brain-dialog") return "Brain";
+    if (source === "stopped-step") return "Stopped";
+    if (source === "dialog") return "Dialog";
+    return "Result";
   }
 
   /**
-   * The For you card: what the brains asked, then what Tangent itself asks for
+   * One direct ask as a table row: Area and kind as facts, the question as the
+   * row header (it is the only part Julian must read), and the answer verbs in
+   * the Action cell. The first opening verb stays the row's main button, as it
+   * was on the card (design-the-for-you-row-shows-only-direct-asks).
+   */
+  function askTableRow(ask) {
+    const primary = ask.actions.find((action) => ASK_PRIMARY_ACTIONS.includes(action.kind));
+    const rest = ask.actions.filter((action) => action !== primary);
+    const context = ask.context ? `<small class="ask-context">${escapeHtml(ask.context)}</small>` : "";
+    const proposal = ask.proposal ? `<small class="ask-proposal"><b>Proposed:</b> ${escapeHtml(ask.proposal)}</small>` : "";
+    const question = primary
+      ? `<button class="ask-question" type="button" ${askActionAttributes(ask, primary)} title="${escapeHtml(primary.label)}">${escapeHtml(ask.question)}</button>`
+      : `<span class="ask-question">${escapeHtml(ask.question)}</span>`;
+    const answers = rest.map((action) => `<button class="ask-answer${action.kind === "reply" ? " ask-reply" : ""}" type="button" ${askActionAttributes(ask, action)}>${escapeHtml(action.label)}</button>`).join("");
+    const dismissLabel = `Dismiss ${ask.subject}: ${ask.question} from For you`;
+    return `<tr class="ask-row" data-ask-id="${escapeHtml(ask.id)}">
+      <td class="ask-cell-area">${escapeHtml(areaLabel(ask.area))}</td>
+      <td class="ask-cell-kind">${escapeHtml(askKindLabel(ask))}</td>
+      <th class="ask-cell-question" scope="row"><span class="ask-subject">${escapeHtml(ask.subject)}</span>${question}${context}${proposal}</th>
+      <td class="ask-cell-action"><span class="ask-actions${rest.length > 2 ? " choices" : ""}">${answers}<button class="ask-dismiss" type="button" data-dismiss-ask="${escapeHtml(ask.id)}" aria-label="${escapeHtml(dismissLabel)}" title="Dismiss from For you"><span aria-hidden="true">×</span></button></span></td>
+    </tr>`;
+  }
+
+  /**
+   * The For you table: what the brains asked, then what Tangent itself asks for
    * the Areas with no brain. Every row is a direct ask, and the number in the
-   * header is the length of that one list.
+   * header is the length of that one list. Rows of one Area share a row group,
+   * so a single Area never earns a repeated heading
+   * (design-redesign-work-as-a-compact-table Decision 2).
    */
   function deskAttentionQueue() {
     const roots = areaFocusRoots();
@@ -1068,10 +1067,10 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       && window.__agentShellNativeDockBadge !== true
       && typeof Notification !== "undefined"
       && Notification.permission !== "granted";
-    const groupMarkup = groups.map((group) => forYouGroupMarkup(group, areaLabel(group.area))).join("");
-    const fallbackMarkup = fallbackAskGroups(fallback)
-      .map((group) => `<div class="for-you-group fallback"><header><span>${escapeHtml(areaLabel(group.area))} · no brain</span></header><div class="attention-items">${group.asks.map(askRow).join("")}</div></div>`)
-      .join("");
+    const bodies = [
+      ...groups.map((group) => `<tbody class="ask-group${group.stopped ? " stopped" : ""}" data-ask-area="${escapeHtml(group.area)}">${group.asks.map(askTableRow).join("")}</tbody>`),
+      ...fallbackAskGroups(fallback).map((group) => `<tbody class="ask-group fallback" data-ask-area="${escapeHtml(group.area)}">${group.asks.map(askTableRow).join("")}</tbody>`),
+    ].join("");
     const scopeCopy = roots.length
       ? `<p class="attention-focus-count">${shown} shown in Focus · ${total - shown} outside Focus</p>`
       : "";
@@ -1079,7 +1078,8 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     return `
       <section class="attention-queue" aria-labelledby="attention-heading">
         <header><p class="kicker">Attention</p><h2 id="attention-heading">For you</h2>${enableBadge ? `<button class="attention-badge-button" type="button" data-enable-dock-badge>Show in Dock</button>` : ""}<span>${roots.length ? `${total} total` : total}</span></header>
-        ${scopeCopy}${empty}${groupMarkup}${fallbackMarkup}
+        ${scopeCopy}${empty}
+        ${bodies ? `<table class="ask-table"><caption class="visually-hidden">Direct questions for you</caption><colgroup><col class="ask-col-area"><col class="ask-col-kind"><col class="ask-col-question"><col class="ask-col-action"></colgroup><thead><tr><th scope="col" class="ask-head-area">Area</th><th scope="col" class="ask-head-kind">Kind</th><th scope="col" class="ask-head-question">Question</th><th scope="col" class="ask-head-action">Action</th></tr></thead>${bodies}</table>` : ""}
       </section>`;
   }
 
@@ -1178,7 +1178,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * prose (design-goal-cards Decision 4).
    */
   function deskGoalAction(goal) {
-    const line = { stepLine: "", stepTitle: "", fill: "" };
+    const line = { stepLine: "", stepShort: "", stepTitle: "", fill: "" };
     if (["done", "dropped", "deferred"].includes(goal.status)) {
       return { ...line, state: goal.status === "done" ? "Complete" : humanName(goal.status), action: "", kind: "complete", route: "" };
     }
@@ -1187,11 +1187,45 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     // Under a live brain a static pane waits for the brain, not for Julian: the
     // state stays as a fact, without the amber that means "you".
     const idle = goalCoveredByBrain(goal) ? "fact" : "waiting";
-    if (!session) return { ...line, state: goalNeedsYou(goal) ? "Waiting" : "Ready", action: "Start agent", kind: goalNeedsYou(goal) ? idle : "ready", route: "run" };
+    if (!session) {
+      const idleState = idleGoalState(goal);
+      if (idleState === "Ready for validation") return { ...line, state: idleState, action: "Review", kind: "ready", route: "goal" };
+      if (idleState === "Preparing validation") return { ...line, state: idleState, action: "Open", kind: "fact", route: "goal" };
+      return { ...line, state: idleState, action: "Start agent", kind: idleState === "Waiting" ? idle : "ready", route: "run" };
+    }
     if (session.state === "working") return { ...line, state: "Working", action: `Open ${agentName(session)}`, kind: "working", route: "run" };
     if (session.state === "waiting") return { ...line, state: "Waiting", action: `Open ${agentName(session)}`, kind: idle, route: "run" };
     if (session.state === "shell") return { ...line, state: "Stopped", action: "Open session", kind: idle, route: "run" };
-    return { ...line, state: "Ready", action: "Open agent", kind: "ready", route: "run" };
+    return { ...line, state: "Open", action: "Open agent", kind: "ready", route: "run" };
+  }
+
+  /** True when a brain holds an open Test for exactly this Goal, on either record. */
+  function goalHasOpenTest(goal) {
+    return (state.brains ?? []).some((brain) => [
+      ...(brain.requests ?? []).filter((request) => request.status === "open" && request.kind === "test")
+        .map((request) => request.subjectRef?.goal ?? request.goal),
+      ...(brain.forJulian ?? []).filter((row) => row.kind === "test").map((row) => row.file),
+    ].filter(Boolean).includes(goal.file));
+  }
+
+  /** True when agents ran on this Goal and none runs on it now. */
+  function goalRunEnded(goal) {
+    if (sessionForGoal(goal)) return false;
+    const pipeline = pipelineRecordForGoal(goal);
+    if (pipeline) return (pipeline.steps ?? []).every((step) => ["complete", "skipped"].includes(step.status));
+    return Boolean(goal.firstStartAt || (goal.agents ?? []).length);
+  }
+
+  /**
+   * The lifecycle word for a Goal with no live agent. `Ready for validation`
+   * belongs to a finished result Julian must accept, and to nothing else:
+   * dependency-free planned work reads `Open`, and its Startable fact lives in
+   * the readiness line (design-redesign-work-as-a-compact-table Decision 11).
+   */
+  function idleGoalState(goal) {
+    if (goal.status === "ready" || goalHasOpenTest(goal)) return "Ready for validation";
+    if (goalRunEnded(goal)) return "Preparing validation";
+    return goalNeedsYou(goal) ? "Waiting" : "Open";
   }
 
   /** The idle time (ms) after which an idle step is offered "Send to next". */
@@ -1205,14 +1239,14 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   function deskPipelineAction(goal, pipeline) {
     const step = pipeline.steps.find((item) => item.status === "running" || item.status === "stopped") ?? pipeline.steps.find((item) => item.status === "pending");
     if (!step) return deskGoalAction(goal);
-    const line = { stepLine: `Step ${step.index} of ${pipeline.steps.length}`, stepTitle: `${step.label || "agent"}: ${step.instruction ?? ""}`, fill: deskFillLabel(step.context) };
+    const line = { stepLine: `Step ${step.index} of ${pipeline.steps.length}`, stepShort: `${step.index}/${pipeline.steps.length}`, stepTitle: `${step.label || "agent"}: ${step.instruction ?? ""}`, fill: deskFillLabel(step.context) };
     const idle = goalCoveredByBrain(goal) ? "fact" : "waiting";
     if (step.status === "stopped" || (step.status === "running" && !step.live)) return { ...line, state: "Stopped", action: "", kind: idle, route: "" };
     if (step.status === "pending") return { ...line, state: "Not started", action: "", kind: idle, route: "" };
     if (step.state === "working") return { ...line, state: "Working", action: `Open step ${step.index}`, kind: "working", route: "run" };
     if (step.state === "waiting") return { ...line, state: "Waiting", action: `Open step ${step.index}`, kind: idle, route: "run" };
     if (step.state === "shell") return { ...line, state: "Stopped", action: `Open step ${step.index}`, kind: idle, route: "run" };
-    return { ...line, state: "Ready", action: `Open step ${step.index}`, kind: "ready", route: "run" };
+    return { ...line, state: "Open", action: `Open step ${step.index}`, kind: "ready", route: "run" };
   }
 
   /** Rare pipeline actions shown inside the Goal action menu, only when valid. */
@@ -1247,18 +1281,6 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const facts = core ? core.goalCardFacts({ goal, sessions, pipeline: pipelineRecordForGoal(goal), now, handoffNeedsYou: goalNeedsYou(goal) }) : null;
     const names = [...new Set([...(goal.agents ?? []), ...sessions.map((session) => session.name)])];
     return { facts, names, now };
-  }
-
-  /**
-   * The agent-count fact, the only text fact left on the card: how long the
-   * Goal runs or waits is now the bar (design-compact-work-desk).
-   */
-  function deskGoalFacts(facts, names, now) {
-    const core = goalCardCore;
-    if (!core || !facts) return "";
-    const segment = core.factsSegments(facts, now, names).find((item) => item.kind === "agents");
-    if (!segment) return "";
-    return `<span class="desk-goal-facts"><span title="${escapeHtml(segment.title)}">${escapeHtml(segment.text)}</span></span>`;
   }
 
   /**
@@ -1336,64 +1358,88 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     ].filter(Boolean).join("");
   }
 
+  // ---- The work table ----
+  // One semantic table holds every open Goal (design-redesign-work-as-a-
+  // compact-table). The lifecycle words, the readiness facts, the actions, the
+  // order, and the selection rule are the settled ones; the table changes only
+  // where each fact is drawn, so more work fits in one scan.
+
+  /** The five columns, in reading order. Their widths live in shell.css. */
+  const WORK_COLUMNS = [
+    { key: "select", label: "Select", hidden: true },
+    { key: "work", label: "Work" },
+    { key: "state", label: "State" },
+    { key: "time", label: "Time" },
+    { key: "action", label: "Action" },
+  ];
+
   /**
-   * Renders one Goal as a compact two-line card: title with step and status
-   * on line one, the bar with the agent count and the actions on line two,
-   * pipeline controls on a rare third line (design-compact-work-desk
-   * Decision 3). The kicker and the Documents chip are gone; a Subgoal reads
-   * from its indent and smaller title under the `To do that` disclosure.
+   * Every Goal's readiness fact, derived once for one paint. Work reuses the
+   * Area map's derivation instead of keeping a second dependency model
+   * (design-redesign-work-as-a-compact-table, "Data ownership").
    */
-  function deskGoalRow(goal, { subgoal = false, maxElapsedMs = 0 } = {}) {
-    const pipeline = pipelineForGoal(goal);
-    const record = pipelineRecordForGoal(goal);
-    const action = pipeline ? deskPipelineAction(goal, pipeline) : deskGoalAction(goal);
-    const liveSession = sessionForGoal(goal);
-    const launchTitle = record ? "Add or edit steps" : "Choose agent or model";
-    /** The ▾ that opens this Goal's launch popover: agent choice, or the step list once a pipeline exists. */
-    const launchToggle = (label) => `<button class="desk-action desk-launch-toggle${state.launchTarget === goal.file ? " open" : ""}" type="button" data-launch-for="${escapeHtml(goal.file)}" title="${launchTitle}" aria-label="${launchTitle} for ${escapeHtml(goal.title)}" aria-expanded="${state.launchTarget === goal.file}">${label}</button>`;
-    const route = `data-open-goal-run="${escapeHtml(goal.file)}"`;
-    const controls = pipeline ? deskPipelineControls(goal, pipeline) : "";
-    const selectable = action.action === "Start agent";
-    const selected = selectable && state.goalSelection.includes(goal.file);
-    const { facts, now } = deskGoalFactsData(goal);
-    const elapsed = deskGoalElapsed(facts, now);
-    const brain = activeBrainForArea(state.brains, goal.area);
-    const cleanup = ["done", "dropped"].includes(goal.status)
-      ? (state.goalCleanups ?? []).find((record) => record.goal === goal.file)
-      : null;
-    const cleanupFailure = cleanup?.failures?.[0];
-    const cleanupControl = cleanupFailure
-      ? `<button class="desk-action cleanup-error" type="button" data-retry-goal-cleanup="${escapeHtml(goal.file)}" title="${escapeHtml(cleanupFailure.error)}">Worker cleanup failed · Retry</button>`
-      : "";
-    const brainAction = brain
-      ? `<button class="desk-brain-action" type="button" data-open-brain="${escapeHtml(brain.session)}" title="Open ${escapeHtml(areaLabel(brain.area))} brain" aria-label="Open brain for Goal ${escapeHtml(goal.title)}, ${escapeHtml(areaLabel(brain.area))}">Open brain</button>`
-      : "";
-    return `
-      <article class="desk-goal ${subgoal ? "subgoal" : "root-goal"} ${action.kind}${selected ? " selected" : ""}" data-goal-anchor="${escapeHtml(goal.file)}">
-        ${selectable ? `<label class="desk-select" title="Select for one shared agent"><input type="checkbox" data-check-goal="${escapeHtml(goal.file)}" ${selected ? "checked" : ""} aria-label="Select ${escapeHtml(goal.title)} for one shared agent"></label>` : ""}
-        <div class="desk-goal-main">
-          <div class="desk-goal-line1"><strong title="${escapeHtml(goal.title)}">${escapeHtml(goal.title)}</strong></div>
-          <div class="desk-goal-line2">
-            <span class="desk-goal-status"><span class="desk-state ${action.kind}">${escapeHtml(action.state)}</span>${elapsed ? `<i aria-hidden="true">·</i>${elapsed}` : ""}</span>
-            <span class="desk-goal-actions">
-              ${cleanupControl}
-              ${brainAction}
-              ${action.action === "Start agent"
-                ? `<span class="desk-split"><button class="desk-action" type="button" ${route}>Start agent</button>${launchToggle("▾")}</span>`
-                : action.action
-                  ? `<button class="desk-action" type="button" ${route}>${pipeline?.steps?.length > 1 ? `Open step ${pipeline.steps.find((step) => step.status === "running" || step.status === "stopped")?.index ?? pipeline.steps.find((step) => step.status === "pending")?.index ?? 1}` : "Open"}</button>`
-                  : ""}
-              <details class="desk-action-menu"><summary aria-label="Actions for ${escapeHtml(goal.title)}">▾</summary><div role="menu">
-                ${record ? `<button type="button" data-launch-for="${escapeHtml(goal.file)}">Steps and agents…</button>` : ""}
-                ${controls}${deskGoalSecondaryActions(goal, liveSession)}
-              </div></details>
-            </span>
-          </div>
-        </div>
-      </article>`;
+  function readinessFacts() {
+    const goals = allGoals();
+    const byFile = new Map(goals.map((goal) => [goal.file, goal]));
+    const facts = new Map(goals.map((goal) => [goal.file, areaWorkCore.readiness(goal, byFile)]));
+    for (const file of areaWorkCore.cycleFiles(goals)) facts.set(file, { kind: "error", blockers: ["dependency cycle"] });
+    return facts;
   }
 
-  /** The checked Goal files that belong to one Area panel, in checked order. */
+  /** The readiness line of a planned row: what stops this Goal from starting. */
+  function readinessLabel(fact) {
+    if (!fact) return "";
+    if (fact.kind === "ready") return "Startable";
+    if (fact.kind === "blocked") return `Blocked by ${fact.blockers.length}`;
+    if (fact.kind === "broken") return "Broken dependency";
+    return "Dependency error";
+  }
+
+  /** A DOM id that survives every repaint of one Area group. */
+  function workGroupId(areaPath) {
+    return `work-group-${String(areaPath).replace(/[^a-z0-9]+/gi, "-")}`;
+  }
+
+  /**
+   * The Area group one Goal belongs to: the brain-owned or focused root that
+   * owns its subtree. Selection stays inside one such group.
+   */
+  function goalGroupRoot(file) {
+    const goal = goalByFile(file);
+    if (!goal) return "";
+    const roots = deskAreas().map((record) => record.area.path);
+    return roots.filter((path) => areaMapCore.isInside(goal.area, path)).sort((left, right) => right.length - left.length)[0] ?? goal.area;
+  }
+
+  /** The quiet descendant path a Work cell prints when a Goal sits below its group. */
+  function descendantPath(areaPath, groupPath) {
+    if (areaPath === groupPath) return "";
+    const rest = areaPath.startsWith(`${groupPath}/`) ? areaPath.slice(groupPath.length + 1) : areaPath;
+    return areaParts(rest).join(" / ");
+  }
+
+  /**
+   * The shortest provenance label for each descendant Area of one group: its
+   * own name while that name is unique inside the group, and the complete
+   * relative path when two branches share a name.
+   */
+  function descendantLabels(groupPath, areaPaths) {
+    const counts = new Map();
+    for (const path of areaPaths) {
+      if (path === groupPath) continue;
+      const tail = humanName(path.split("/").at(-1));
+      counts.set(tail, (counts.get(tail) ?? 0) + 1);
+    }
+    const labels = new Map();
+    for (const path of areaPaths) {
+      if (path === groupPath) continue;
+      const tail = humanName(path.split("/").at(-1));
+      labels.set(path, counts.get(tail) === 1 ? tail : descendantPath(path, groupPath));
+    }
+    return labels;
+  }
+
+  /** The Goals of one group whose row can be checked, in row order. */
   function selectedGoalFiles(trees) {
     const panelFiles = new Set(trees.flatMap((tree) => tree.goals.map((goal) => goal.file)));
     return state.goalSelection.filter((file) => panelFiles.has(file));
@@ -1402,7 +1448,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   /**
    * The one action for a checked set of Goals: start a single agent that owns
    * them all and works them in checked order. Renders only while something in
-   * this Area panel is checked; checking itself never starts anything.
+   * this group is checked; checking itself never starts anything.
    */
   function deskSelectionBar(areaPath, trees) {
     const selected = selectedGoalFiles(trees);
@@ -1419,27 +1465,170 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       </span>`;
   }
 
-  /** Renders a root Goal and visually distinct Subgoals as one group. */
-  function deskGoalGroup(tree, maxElapsedMs = 0) {
-    const subgoals = tree.goals.slice(1).filter((goal) => !["done", "dropped", "deferred"].includes(goal.status));
-    const expanded = subgoals.some((goal) => sessionForGoal(goal) || goalNeedsYou(goal));
-    return `
-      <section class="desk-goal-group">
-        ${deskGoalRow(tree.root, { maxElapsedMs })}
-        ${subgoals.length ? `<details class="desk-subgoal-disclosure" ${expanded ? "open" : ""}><summary><span>To do that</span><small>${subgoals.length} ${subgoals.length === 1 ? "Subgoal" : "Subgoals"}</small></summary><div class="desk-subgoals">${subgoals.map((goal) => deskGoalRow(goal, { subgoal: true, maxElapsedMs })).join("")}</div></details>` : ""}
-      </section>`;
+  /**
+   * The group header row: Area, aggregate state, Goal count, and the one brain
+   * route for every row below it. The Action column never repeats that route
+   * (design-redesign-work-as-a-compact-table Decision 4).
+   */
+  function workGroupHeaderRow(record) {
+    const { area, trees, descriptions, sections } = record;
+    const allTrees = [...trees, ...sections.flatMap((section) => section.trees)];
+    const allDescriptions = [...descriptions, ...sections.flatMap((section) => section.descriptions)];
+    const status = deskAreaState(area.path, allTrees, allDescriptions);
+    const count = allTrees.reduce((total, tree) => total + tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status)).length, 0);
+    const brain = brainForAreaCard(area.path);
+    const label = brain?.live ? "Open brain" : brain ? "Resume brain" : "Start brain";
+    // A live brain opens its own session; only a missing or stopped one goes
+    // through the start route, which is what Resume and Start mean.
+    const route = brain?.live
+      ? `data-open-brain="${escapeHtml(brain.session ?? "")}"`
+      : `data-open-area-brain="${escapeHtml(area.path)}"`;
+    const name = humanName(area.name);
+    return `<tr class="work-group-row">
+      <th class="work-group-head" colspan="${WORK_COLUMNS.length}" scope="colgroup" id="${workGroupId(area.path)}">
+        <span class="work-group-name"><button type="button" data-open-area="${escapeHtml(area.path)}" title="Open the ${escapeHtml(name)} Area map">${escapeHtml(name)}</button></span>
+        <span class="work-group-count">${count} ${count === 1 ? "Goal" : "Goals"}</span>
+        <span class="desk-state ${status.kind}">${escapeHtml(status.label)}</span>
+        ${deskSelectionBar(area.path, allTrees)}
+        <button class="work-group-brain" type="button" ${route} data-focus-key="brain:${escapeHtml(area.path)}" aria-label="${escapeHtml(label)} for ${escapeHtml(areaLabel(area.path))}"><span class="work-group-brain-long">${escapeHtml(label)}</span><span class="work-group-brain-short">Brain</span></button>
+      </th>
+    </tr>`;
   }
 
-  /** Renders one work-definition Run inside its durable Area. */
-  function deskDefinitionRow(session) {
+  /** The State cell: one lifecycle word, its step, and one planned readiness line. */
+  function workStateCell(goal, action, fact) {
+    const step = action.stepShort ? `<small class="work-step" title="${escapeHtml(action.stepTitle)}">${escapeHtml(action.stepShort)}</small>` : "";
+    const planned = state.workFilter === "inactive" && !["done", "dropped", "deferred"].includes(goal.status)
+      ? `<small class="work-readiness ${fact?.kind ?? "ready"}">${escapeHtml(readinessLabel(fact))}</small>`
+      : "";
+    return `<td class="work-cell-state"><span class="desk-state ${action.kind}">${escapeHtml(action.state)}</span>${step}${planned}</td>`;
+  }
+
+  /** The Time cell: the exact elapsed label, then the worked-against-waiting bar. */
+  function workTimeCell(goal, facts, now, maxElapsedMs) {
+    const elapsed = deskGoalElapsed(facts, now);
+    const bar = deskGoalBar(goal, facts, now, maxElapsedMs);
+    if (!elapsed && !bar) return `<td class="work-cell-time"><span class="work-no-time">—</span></td>`;
+    return `<td class="work-cell-time">${elapsed}${bar}</td>`;
+  }
+
+  /** The Action cell: the primary route, then the menu of rare and final actions. */
+  function workActionCell(goal, action, pipeline, record) {
+    const liveSession = sessionForGoal(goal);
+    const launchTitle = record ? "Add or edit steps" : "Choose agent or model";
+    const controls = pipeline ? deskPipelineControls(goal, pipeline) : "";
+    const cleanup = ["done", "dropped"].includes(goal.status)
+      ? (state.goalCleanups ?? []).find((item) => item.goal === goal.file)
+      : null;
+    const cleanupFailure = cleanup?.failures?.[0];
+    const cleanupControl = cleanupFailure
+      ? `<button class="desk-action cleanup-error" type="button" data-retry-goal-cleanup="${escapeHtml(goal.file)}" title="${escapeHtml(cleanupFailure.error)}">Worker cleanup failed · Retry</button>`
+      : "";
+    const route = action.route === "goal"
+      ? `data-open-close="${escapeHtml(goal.file)}"`
+      : `data-open-goal-run="${escapeHtml(goal.file)}"`;
+    const primary = action.action === "Start agent"
+      ? `<span class="desk-split"><button class="desk-action" type="button" ${route} data-focus-key="start:${escapeHtml(goal.file)}" aria-label="Start an agent on ${escapeHtml(goal.title)}">Start agent</button><button class="desk-action desk-launch-toggle${state.launchTarget === goal.file ? " open" : ""}" type="button" data-launch-for="${escapeHtml(goal.file)}" title="${launchTitle}" aria-label="${launchTitle} for ${escapeHtml(goal.title)}" aria-expanded="${state.launchTarget === goal.file}">▾</button></span>`
+      : action.action
+        ? `<button class="desk-action" type="button" ${route} data-focus-key="open:${escapeHtml(goal.file)}" aria-label="${escapeHtml(action.action)}: ${escapeHtml(goal.title)}">${escapeHtml(action.action)}</button>`
+        : "";
+    return `<td class="work-cell-action"><span class="desk-goal-actions">${cleanupControl}${primary}
+      <details class="desk-action-menu"><summary data-focus-key="menu:${escapeHtml(goal.file)}" aria-label="Actions for ${escapeHtml(goal.title)}">▾</summary><div role="menu">
+        ${record ? `<button type="button" data-launch-for="${escapeHtml(goal.file)}">Steps and agents…</button>` : ""}
+        ${controls}${deskGoalSecondaryActions(goal, liveSession)}
+      </div></details></span></td>`;
+  }
+
+  /**
+   * One Goal as one table row. The Goal title is the row header, so every
+   * state, time, and action cell carries the Goal's name for a screen reader.
+   * The Work cell also holds one narrow-width copy of the state and time
+   * facts; CSS shows exactly one copy at each width, so nothing is read twice.
+   */
+  function workGoalRow(goal, { groupPath, labels, fact, maxElapsedMs = 0, subgoal = false, parent = "", hidden = false, subgoalCount = 0, expanded = true } = {}) {
+    const pipeline = pipelineForGoal(goal);
+    const record = pipelineRecordForGoal(goal);
+    const projected = pipeline ? deskPipelineAction(goal, pipeline) : deskGoalAction(goal);
+    // Only a Startable Goal offers Start or a checkbox. A blocked, broken, or
+    // errored Goal opens instead, and its Area map holds the dependency detail
+    // (design-redesign-work-as-a-compact-table Decision 6).
+    const startable = projected.action === "Start agent" && (!fact || fact.kind === "ready");
+    const action = projected.action === "Start agent" && !startable
+      ? { ...projected, action: "Open", route: "goal" }
+      : projected;
+    const selectable = startable;
+    const selected = selectable && state.goalSelection.includes(goal.file);
+    const { facts, now } = deskGoalFactsData(goal);
+    const path = labels?.get(goal.area) ?? descendantPath(goal.area, groupPath);
+    const readiness = state.workFilter === "inactive" ? readinessLabel(fact) : "";
+    const compact = [action.state, action.stepShort, readiness, deskGoalElapsedText(facts, now)].filter(Boolean).join(" · ");
+    const disclosure = subgoalCount
+      ? `<button class="work-subgoal-toggle" type="button" data-toggle-subgoals="${escapeHtml(goal.file)}" aria-expanded="${expanded}" aria-label="${expanded ? "Hide" : "Show"} ${subgoalCount} ${subgoalCount === 1 ? "Subgoal" : "Subgoals"} of ${escapeHtml(goal.title)}"><span aria-hidden="true">${expanded ? "−" : "+"}</span>${subgoalCount}</button>`
+      : "";
+    return `<tr class="desk-goal work-row ${subgoal ? "subgoal" : "root-goal"} ${action.kind}${selected ? " selected" : ""}" data-goal-anchor="${escapeHtml(goal.file)}" data-work-area="${escapeHtml(goal.area)}"${subgoal ? ` data-subgoal-of="${escapeHtml(parent)}"` : ""}${hidden ? " hidden" : ""}>
+      <td class="work-cell-select desk-select">${selectable ? `<input type="checkbox" data-check-goal="${escapeHtml(goal.file)}" data-focus-key="check:${escapeHtml(goal.file)}" ${selected ? "checked" : ""} aria-label="Select ${escapeHtml(goal.title)} for one shared agent">` : ""}</td>
+      <th class="work-cell-work" scope="row">
+        <span class="work-cell-title">${disclosure}<button class="work-title" type="button" data-work-row-title data-open-close="${escapeHtml(goal.file)}" data-focus-key="title:${escapeHtml(goal.file)}" title="${escapeHtml(goal.title)}">${escapeHtml(goal.title)}</button></span>
+        ${path ? `<small class="work-row-path">${escapeHtml(path)}</small>` : ""}
+        <small class="work-cell-facts">${escapeHtml(compact)}</small>
+      </th>
+      ${workStateCell(goal, action, fact)}
+      ${workTimeCell(goal, facts, now, maxElapsedMs)}
+      ${workActionCell(goal, action, pipeline, record)}
+    </tr>`;
+  }
+
+  /** The elapsed text without its markup, for the narrow row's one-line facts. */
+  function deskGoalElapsedText(facts, now) {
+    const core = goalCardCore;
+    if (!core || !facts) return "";
+    return core.elapsedLabel(facts, now) ?? "";
+  }
+
+  /** One work-definition conversation as a table row of its own. */
+  function workDefinitionRow(session) {
     const name = agentName(session);
     const stateName = describeWorkStateLabel(session);
     const kind = session.state === "working" ? "working" : "waiting";
-    return `
-      <button class="desk-definition ${kind}" type="button" data-select-work-definition="${escapeHtml(session.name)}">
-        <span><small>Defining work</small><strong>${escapeHtml(session.workTitle || "Define new work")}</strong></span>
-        <span><em class="desk-state ${kind}">${escapeHtml(stateName)}</em><b>Open ${escapeHtml(name)} →</b></span>
-      </button>`;
+    return `<tr class="desk-definition work-row definition ${kind}">
+      <td class="work-cell-select"></td>
+      <th class="work-cell-work" scope="row">
+        <span class="work-cell-title"><button class="work-title" type="button" data-work-row-title data-select-work-definition="${escapeHtml(session.name)}" data-focus-key="definition:${escapeHtml(session.name)}">${escapeHtml(session.workTitle || "Define new work")}</button></span>
+        <small class="work-row-path">Defining work</small>
+        <small class="work-cell-facts">${escapeHtml(stateName)}</small>
+      </th>
+      <td class="work-cell-state"><span class="desk-state ${kind}">${escapeHtml(stateName)}</span></td>
+      <td class="work-cell-time"><span class="work-no-time">—</span></td>
+      <td class="work-cell-action"><span class="desk-goal-actions"><button class="desk-action" type="button" data-select-work-definition="${escapeHtml(session.name)}" aria-label="Open ${escapeHtml(name)} for ${escapeHtml(session.workTitle || "this description")}">Open ${escapeHtml(name)}</button></span></td>
+    </tr>`;
+  }
+
+  /** One brain-owned Area group as one row group of the work table. */
+  function workGroupBody(record, facts, maxElapsedMs) {
+    const { area, trees, descriptions, sections } = record;
+    const parts = [{ area, trees, descriptions }, ...sections];
+    const labels = descendantLabels(area.path, parts.map((part) => part.area.path));
+    const body = parts.flatMap((part) => [
+      ...part.descriptions.map((session) => workDefinitionRow(session)),
+      ...orderedGoalTrees(part.trees).map((tree) => workTreeRows(tree, area.path, labels, facts, maxElapsedMs)),
+    ]).join("");
+    // A focused Area stays on the screen with nothing in it, and says why, so
+    // Julian can see that his Focus is what emptied the table.
+    const empty = record.focusRoot && !record.focusHasWork
+      ? `<tr class="work-empty-row"><td class="area-focus-empty" colspan="${WORK_COLUMNS.length}">No ${state.workFilter === "active" ? "current" : "planned"} work matches in this Focus.</td></tr>`
+      : "";
+    return `<tbody class="work-group" data-work-group="${escapeHtml(area.path)}" data-desk-area="${escapeHtml(area.path)}" aria-labelledby="${workGroupId(area.path)}">
+      ${workGroupHeaderRow(record)}${body}${empty}
+    </tbody>`;
+  }
+
+  /** One Goal tree as adjacent rows: the parent, then its open Subgoals. */
+  function workTreeRows(tree, groupPath, labels, facts, maxElapsedMs) {
+    const subgoals = tree.goals.slice(1).filter((goal) => !["done", "dropped", "deferred"].includes(goal.status));
+    const expanded = !state.collapsedGoalTrees.has(tree.root.file);
+    const parentRow = workGoalRow(tree.root, { groupPath, labels, fact: facts.get(tree.root.file), maxElapsedMs, subgoalCount: subgoals.length, expanded });
+    const subgoalRows = subgoals.map((goal) => workGoalRow(goal, { groupPath, labels, fact: facts.get(goal.file), maxElapsedMs, subgoal: true, parent: tree.root.file, hidden: !expanded }));
+    return [parentRow, ...subgoalRows].join("");
   }
 
   /** Renders the Programs of one Area as a compact operational shelf. */
@@ -1468,86 +1657,65 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     </section>`;
   }
 
-  /** One compact Area section inside its controlling work group. */
-  function deskAreaWorkSection(part, maxElapsedMs = 0, { root = false } = {}) {
-    const { area, trees, descriptions } = part;
-    const count = trees.reduce((total, tree) => total + tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status)).length, 0);
-    if (!count && !descriptions.length) return "";
-    const workWord = state.workFilter === "inactive" ? "Planned work" : "Current work";
-    const brain = brainForAreaCard(area.path);
-    const brainAction = root && brain?.live ? "" : `<button class="work-area-brain" type="button" data-open-area-brain="${escapeHtml(area.path)}" aria-label="${brain?.live ? "Open" : brain ? "Resume" : "Start"} brain for ${escapeHtml(areaLabel(area.path))}">${brain?.live ? "Open brain" : brain ? "Resume brain" : "Start brain"}</button>`;
-    return `<section class="work-area-section${root ? " root" : ""}" data-work-area="${escapeHtml(area.path)}">
-      <header><h3><button type="button" data-open-area="${escapeHtml(area.path)}">${escapeHtml(humanName(area.name))}</button></h3><span>${workWord} ${count}</span>${brainAction}${deskSelectionBar(area.path, trees)}</header>
-      ${descriptions.map(deskDefinitionRow).join("")}
-      ${orderedGoalTrees(trees).map((tree) => deskGoalGroup(tree, maxElapsedMs)).join("")}
-    </section>`;
-  }
-
-  /** Renders one shallow brain-owned subject group with compact Area sections. */
-  function deskAreaPanel(record, position, maxElapsedMs = 0) {
-    const { area, trees, descriptions, sections, programs, brain, focusRoot, focusHasWork } = record;
-    const allTrees = [...trees, ...sections.flatMap((section) => section.trees)];
-    const allDescriptions = [...descriptions, ...sections.flatMap((section) => section.descriptions)];
-    const status = deskAreaState(area.path, allTrees, allDescriptions);
-    const rootPart = { area, trees, descriptions, programs };
-    const workSections = [deskAreaWorkSection(rootPart, maxElapsedMs, { root: true }), ...sections.map((section) => deskAreaWorkSection(section, maxElapsedMs))].filter(Boolean).join("");
-    const programSections = [deskProgramSection(area, programs, { root: true }), ...sections.map((section) => deskProgramSection(section.area, section.programs))].filter(Boolean).join("");
-    const body = `${workSections}${programSections}`;
-    return `
-      <article class="area-desk-panel work-group ${status.kind}" data-desk-area="${escapeHtml(area.path)}" style="--desk-order:${position}">
-        <header class="area-desk-header">
-          <h2><button type="button" data-open-area="${escapeHtml(area.path)}">${escapeHtml(humanName(area.name))}</button></h2>
-          <span class="area-desk-state ${status.kind}">${escapeHtml(status.label)}</span>
-          ${brain ? `<button class="work-group-brain" type="button" data-open-brain="${escapeHtml(brain.session ?? "")}">Open brain <span aria-hidden="true">→</span></button>` : ""}
-        </header>
-        ${areaForYouSection(area.path)}
-        ${focusRoot && !focusHasWork ? `<p class="area-focus-empty">No ${state.workFilter === "active" ? "current" : "planned"} work matches in this Focus.</p>` : ""}
-        ${body ? `<div class="area-desk-body">${body}</div>` : ""}
-      </article>`;
+  /**
+   * The Programs of every Area on the screen, in one shelf under the table.
+   * A Program is not work: it never earns a Goal row, and it keeps the plain
+   * operational controls it had on the Area panel.
+   */
+  function workProgramSections(records) {
+    const sections = records.flatMap((record) => [
+      deskProgramSection(record.area, record.programs, { root: true }),
+      ...record.sections.map((section) => deskProgramSection(section.area, section.programs)),
+    ]).filter(Boolean).join("");
+    if (!sections) return "";
+    return `<div class="work-programs">${sections}</div>`;
   }
 
   /**
-   * Renders one descendant Area with open work as an indented, collapsible
-   * section of its ancestor's desk panel (design-area-map Decision 1). The
-   * state pill stays visible even collapsed, so a live agent below cannot
-   * hide behind a closed section.
+   * Shows or hides one parent Goal's Subgoal rows. The state is local to the
+   * browser and survives a repaint, so a poll never reopens a chain Julian
+   * closed. The rows stay `<tr>` children of their row group; the disclosure
+   * hides them, it does not move them into another element.
    */
-  function deskAreaSection(section, maxElapsedMs = 0) {
-    const { area, trees, descriptions } = section;
-    const status = deskAreaState(area.path, trees, descriptions);
-    const openGoalCount = trees.reduce((count, tree) => count + tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status)).length, 0);
-    const expanded = !state.collapsedDeskSections.has(area.path);
-    return `
-      <section class="area-desk-section desk-subarea ${status.kind}${expanded ? "" : " collapsed"}">
-        <div class="desk-subarea-head">
-          <button class="desk-subarea-toggle" type="button" data-toggle-desk-section="${escapeHtml(area.path)}" aria-expanded="${expanded}" aria-label="${expanded ? "Collapse" : "Expand"} ${escapeHtml(humanName(area.name))}">
-            <span class="desk-subarea-caret" aria-hidden="true">${expanded ? "▾" : "▸"}</span>
-            <strong>${escapeHtml(humanName(area.name))}</strong>
-            <span class="desk-subarea-count">${openGoalCount} ${openGoalCount === 1 ? "Goal" : "Goals"}</span>
-            <span class="desk-subarea-state desk-state ${status.kind}">${escapeHtml(status.label)}</span>
-          </button>
-          <button class="desk-subarea-open" type="button" data-open-area="${escapeHtml(area.path)}" title="Open the ${escapeHtml(humanName(area.name))} Area map" aria-label="Open the ${escapeHtml(humanName(area.name))} Area map">Map ↗</button>
-        </div>
-        ${expanded ? `
-          <div class="desk-subarea-body">
-            ${descriptions.length ? descriptions.map(deskDefinitionRow).join("") : ""}
-            ${trees.length ? orderedGoalTrees(trees).map((tree) => deskGoalGroup(tree, maxElapsedMs)).join("") : ""}
-          </div>` : ""}
-      </section>`;
+  function toggleSubgoals(file) {
+    if (state.collapsedGoalTrees.has(file)) state.collapsedGoalTrees.delete(file);
+    else state.collapsedGoalTrees.add(file);
+    localStorage.setItem("agent-shell.collapsed-goal-trees", JSON.stringify([...state.collapsedGoalTrees]));
+    paint(true);
   }
 
-  /** Renders the complete area-first work desk. */
+  /** The complete work table: one caption, one header, one row group per Area. */
+  function workTable(records, maxElapsedMs) {
+    const facts = readinessFacts();
+    const bodies = records.map((record) => workGroupBody(record, facts, maxElapsedMs)).join("");
+    const rowCount = records.reduce((count, record) => count + [record, ...record.sections]
+      .reduce((inner, part) => inner + part.trees.reduce((goals, tree) => goals + tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status)).length, 0), 0), 0);
+    const word = state.workFilter === "inactive" ? "Planned work" : "Current work";
+    // The column group carries the widths. A narrow layout hides three cells,
+    // and a fixed table keeps reserving width for a column whose cells are all
+    // `display: none` unless a `<col>` states that width is zero.
+    return `<table class="work-table">
+      <caption class="work-caption"><span>${escapeHtml(word)}</span><span class="work-caption-count">${rowCount} ${rowCount === 1 ? "Goal" : "Goals"}</span><span class="work-keyboard-hint" aria-hidden="true">↑↓ rows · ↩ open</span></caption>
+      <colgroup>${WORK_COLUMNS.map((column) => `<col class="work-col-${column.key}">`).join("")}</colgroup>
+      <thead><tr>${WORK_COLUMNS.map((column) => `<th scope="col" class="work-head-${column.key}">${column.hidden ? `<span class="visually-hidden">${escapeHtml(column.label)}</span>` : escapeHtml(column.label)}</th>`).join("")}</tr></thead>
+      ${bodies}
+    </table>`;
+  }
+
+  /** Renders the complete Work screen: the direct-ask table, then the work table. */
   function renderWork() {
     const query = state.query.trim();
     const records = filteredDeskAreas(query);
-    const maxElapsedMs = 0;
+    // Every bar on this paint is scaled to the longest-elapsed Goal it draws
+    // (deskGoalBar, design-compact-work-desk Decision 2).
+    const maxElapsedMs = deskMaxElapsedMs(records, Date.now());
     const roots = areaFocusRoots();
     const focusNames = areaFocusLabels(roots).join(" + ");
     const emptyCopy = query
       ? `${roots.length ? `Area Focus (${escapeHtml(focusNames)}): ` : ""}No ${state.workFilter === "active" ? "current" : "planned"} work matches “${escapeHtml(query)}”.`
       : `${roots.length ? `Area Focus (${escapeHtml(focusNames)}): ` : ""}No ${state.workFilter === "active" ? "work is active" : "unstarted Goals"}.`;
     const content = `${!query && state.workFilter === "active" ? deskAttentionQueue() : ""}${records.length
-      ? `<section class="area-desk-grid" aria-label="Work by Area">${records.map((record, position) => deskAreaPanel(record, position, maxElapsedMs)).join("")}</section>`
+      ? `${workTable(records, maxElapsedMs)}${workProgramSections(records)}`
       : `<div class="empty-state">${emptyCopy}</div>`}`;
 
     return `
@@ -1572,5 +1740,5 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     `;
   }
 
-  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, fallbackAsks, forgetVerdictLines, openRequest, sendVerdict, replyAboutRow, dismissAsk, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, renderWork };
+  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, fallbackAsks, forgetVerdictLines, openRequest, sendVerdict, replyAboutRow, dismissAsk, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups, goalGroupRoot, toggleSubgoals, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, renderWork };
 }

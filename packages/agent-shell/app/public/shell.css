@@ -26,7 +26,11 @@
 
 * { box-sizing: border-box; }
 
-html, body { width: 100%; min-width: 760px; height: 100%; margin: 0; }
+/* 320px, not 760px: a 760px floor made every screen scroll sideways below it,
+   which is where 200% zoom on a laptop and a 390px phone both land. Work must
+   read at those widths without two-dimensional scrolling
+   (design-redesign-work-as-a-compact-table, "Narrow-width behavior"). */
+html, body { width: 100%; min-width: 320px; height: 100%; margin: 0; }
 
 body {
   overflow: hidden;
@@ -409,81 +413,18 @@ summary:focus-visible {
 .attention-badge-button + span { margin-left: 4px; }
 .attention-focus-count { margin: 0; padding: 9px 18px; border-bottom: 1px solid #383124; color: #c7b78f; font-size: 11px; font-weight: 680; }
 .attention-focus-empty { margin: 0; padding: 18px; color: #a79776; }
-.attention-items { display: grid; }
-.attention-items button { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 22px; width: 100%; padding: 13px 18px; border: 0; border-top: 1px solid #2c281f; background: transparent; color: inherit; cursor: pointer; text-align: left; }
-.attention-items button:first-child { border-top: 0; }
-.attention-items button:hover { background: #201d15; }
-.attention-items button > span:first-child { display: grid; min-width: 0; gap: 2px; }
-.attention-items small { color: #a79776; font-size: 11px; font-weight: 680; letter-spacing: .025em; }
-.attention-items strong { font-size: 15px; line-height: 1.35; }
-.attention-items button > span:last-child { color: var(--amber); font-size: 12px; font-weight: 680; white-space: nowrap; }
-.attention-items b { margin-left: 4px; font-weight: 500; }
-.attention-items .attention-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 22px; width: 100%; padding: 13px 18px; border-top: 1px solid #2c281f; }
-.attention-items .attention-row:first-child { border-top: 0; }
-.attention-items .attention-row > span:first-child { display: grid; min-width: 0; gap: 2px; }
-/* A Decision row's Read action is a button nested inside .attention-row: the
-   row already carries the padding and top border, so the nested button
-   drops its own to avoid doubling them. */
-.attention-items .attention-row > button:first-child { padding: 0; border: 0; }
-.attention-items .attention-row > button:first-child:hover { background: transparent; }
-.attention-row-edge { display: flex; align-items: center; gap: 8px; justify-self: end; }
-.attention-items .attention-dismiss { display: inline-grid; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #8f846d; cursor: pointer; font-size: 19px; font-weight: 450; line-height: 1; place-items: center; }
-.attention-items .attention-dismiss > span:last-child { color: inherit; font-size: inherit; font-weight: inherit; }
-.attention-items .attention-dismiss:hover { background: rgba(231, 198, 128, .08); color: var(--amber); }
-.attention-items .attention-dismiss:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
-/* The question is the only part of a row Julian must read, so it carries the
-   accent and sits on its own line under the facts. */
-.attention-items .attention-question { margin-top: 3px; color: var(--amber); font-size: 12.5px; font-weight: 700; line-height: 1.35; }
-.attention-items .attention-context { max-width: 78ch; color: #b8aa8c; font-size: 12px; font-weight: 600; line-height: 1.45; }
-.attention-proposal { margin-top: 5px; color: #e7dfcf; font-size: 13px; line-height: 1.4; }
-.attention-proposal b { color: var(--amber); }
-.attention-detail { margin-top: 8px; color: #a79776; font-size: 11px; }
-.attention-detail > summary { width: fit-content; cursor: pointer; color: #a79776; font-weight: 700; }
-.attention-detail > p { max-width: 78ch; margin: 8px 0 0; color: #b8aa8c; line-height: 1.55; white-space: pre-wrap; }
-.attention-row-actions { display: flex; align-items: center; gap: 6px; }
-.attention-row-actions.choices { display: grid; width: min(480px, 42vw); }
-.attention-row-actions.choices .attention-tried { width: 100%; white-space: normal; text-align: left; }
-.attention-row-actions .attention-tried { margin-left: 0; }
-.for-you-group > header { display: flex; align-items: center; gap: 12px; padding: 12px 18px 8px; border-top: 1px solid #383124; color: #a79776; font-size: 11px; font-weight: 690; letter-spacing: .045em; text-transform: uppercase; }
-.for-you-group:first-of-type > header { border-top: 0; }
-.for-you-group.stopped > header, .for-you-stopped { color: #7d7566; }
-.attention-tried { margin-left: auto; padding: 4px 8px; border: 1px solid #665735; border-radius: 3px; background: transparent; color: var(--amber); font-size: 11px; font-weight: 680; line-height: 1.2; white-space: nowrap; cursor: pointer; }
-.attention-tried:hover { border-color: var(--amber); background: rgba(231, 198, 128, .08); }
-.attention-reply { color: #a79776; border-color: #46402f; }
-.attention-reply:hover { color: var(--amber); border-color: #665735; }
-.area-for-you { border-bottom: 1px solid #2b3037; background: #17150f; }
 .area-focus-empty { margin: 0; padding: 18px; color: var(--quiet); font-size: 13px; }
 
-.area-desk-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 28px; align-items: start; }
-.area-desk-panel { min-width: 0; border: 1px solid #373d45; border-top: 3px solid #626b76; border-radius: 2px; background: #111419; }
-.area-desk-panel.waiting { border-top-color: var(--amber); }
-.area-desk-panel.working { border-top-color: var(--blue); }
-.area-desk-panel.ready { border-top-color: #7f8995; }
-.area-desk-header { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: center; gap: 13px; min-height: 78px; padding: 15px 17px; border-bottom: 1px solid #343a42; background: #171a1f; }
-.area-desk-index { color: #68717c; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .06em; }
-.area-desk-header > div { min-width: 0; }
-.area-desk-header small { display: block; overflow: hidden; color: var(--quiet); font-size: 10px; font-weight: 690; letter-spacing: .075em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
-.area-desk-header h2 { margin: 2px 0 0; font-size: 25px; letter-spacing: -.035em; line-height: 1.1; }
-.area-desk-header h2 button { padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; letter-spacing: inherit; text-align: left; }
-.area-desk-header h2 button:hover { color: #fff; text-decoration: underline; text-decoration-color: #4e5660; text-underline-offset: 4px; }
-.area-desk-header small .area-path { gap: 5px; margin: 0; font-size: 10px; font-weight: 690; letter-spacing: .075em; }
-.area-desk-header small .area-path button + button::before { content: "/"; }
-.area-desk-state, .desk-state { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; font-weight: 700; white-space: nowrap; }
-.area-desk-state::before, .desk-state::before { width: 7px; height: 7px; border: 1px solid currentColor; border-radius: 50%; background: transparent; content: ""; }
-.area-desk-state.waiting, .desk-state.waiting { color: var(--amber); }
-.area-desk-state.waiting::before, .desk-state.waiting::before { background: var(--amber); }
-.area-desk-state.working, .desk-state.working { color: var(--blue); }
-.area-desk-state.working::before, .desk-state.working::before { background: var(--blue); }
+.desk-state { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.desk-state::before { width: 7px; height: 7px; border: 1px solid currentColor; border-radius: 50%; background: transparent; content: ""; }
+.desk-state.waiting { color: var(--amber); }
+.desk-state.waiting::before { background: var(--amber); }
+.desk-state.working { color: var(--blue); }
+.desk-state.working::before { background: var(--blue); }
 .desk-state.complete { color: var(--green); }
 .desk-state.complete::before { background: var(--green); }
 .desk-state.fact { color: var(--muted); }
 .desk-state.fact::before { background: var(--muted); }
-.area-desk-body { display: grid; }
-.area-desk-header:has(.area-brain) { grid-template-columns: 36px minmax(0, 1fr) auto auto; }
-.area-desk-header:has(.area-desk-what-happened) { grid-template-columns: 36px minmax(0, 1fr) auto auto; }
-.area-desk-header:has(.area-desk-what-happened):has(.area-brain) { grid-template-columns: 36px minmax(0, 1fr) auto auto auto; }
-.area-desk-what-happened { padding: 4px 8px; border: 1px solid transparent; border-radius: 3px; background: transparent; color: var(--quiet); cursor: pointer; font-size: 11px; font-weight: 690; white-space: nowrap; }
-.area-desk-what-happened:hover, .area-desk-what-happened[aria-expanded="true"] { border-color: #3c434c; background: var(--surface-raised); color: var(--text); }
 .area-brain { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 1px solid transparent; border-radius: 50%; background: transparent; color: inherit; cursor: pointer; font-size: 17px; line-height: 1; opacity: .38; filter: grayscale(1); transition: opacity .12s, filter .12s; }
 .area-brain:hover, .area-brain.open { border-color: #3c434c; opacity: .9; filter: none; }
 .area-brain.working, .area-brain.waiting, .area-brain.live { opacity: 1; filter: none; }
@@ -501,36 +442,8 @@ summary:focus-visible {
 .area-desk-section-heading span { color: #646d78; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .desk-empty { margin: 0; color: #6f7883; font-size: 13px; }
 
-.desk-subarea { padding: 14px 18px 14px 30px; border-left: 2px solid #373d45; background: #14171b; }
-.desk-subarea.waiting { border-left-color: var(--amber); }
-.desk-subarea.working { border-left-color: var(--blue); }
-.desk-subarea-head { display: flex; align-items: baseline; gap: 12px; }
-.desk-subarea-toggle { display: flex; flex: 1; min-width: 0; align-items: baseline; gap: 10px; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; text-align: left; }
-.desk-subarea-open { flex: none; padding: 0; border: 0; background: transparent; color: #69737e; cursor: pointer; font: inherit; font-size: 11px; font-weight: 600; }
-.desk-subarea-open:hover { color: #fff; }
-.desk-subarea-caret { width: 10px; color: #69737e; font-size: 11px; }
-.desk-subarea-toggle strong { color: #d7dbe0; font-size: 14px; }
-.desk-subarea-count { color: #646d78; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.desk-subarea-state { margin-left: auto; }
-.desk-subarea-body { display: grid; gap: 14px; margin-top: 14px; }
-.desk-subarea.collapsed { padding-bottom: 14px; }
 
-.desk-goal-group + .desk-goal-group { margin-top: 10px; padding-top: 10px; border-top: 1px solid #292e35; }
-.desk-descendant-goal { margin-top: 12px; padding-top: 10px; border-top: 1px solid #292e35; }
-.desk-descendant-goal > small { display: block; margin-bottom: 5px; color: #69737e; font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
-/* Two lines, nothing else: title with step and status, then the bar with
-   the agent count and the actions (design-compact-work-desk Decision 3). */
-.desk-goal { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 3px; padding: 5px 0; }
-.desk-goal-main { display: grid; min-width: 0; gap: 4px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }
-/* min-width: 0, or the grid sizes the line to the unclipped nowrap title
-   and the status spills past the panel instead of the title ellipsizing. */
-.desk-goal-line1 { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: 12px; }
-.desk-goal-main strong { min-width: 0; overflow: hidden; color: #e7eaed; font-size: 14px; font-weight: 640; line-height: 1.3; white-space: nowrap; text-overflow: ellipsis; }
-.desk-goal-status { display: inline-flex; flex: none; align-items: baseline; gap: 5px; white-space: nowrap; }
-.desk-goal-status i { color: #4d555f; font-style: normal; }
-.desk-step-line { color: #737d88; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 760; letter-spacing: .08em; text-transform: uppercase; }
 .desk-fill { color: #737d88; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 760; letter-spacing: .08em; text-transform: uppercase; }
-.desk-goal-line2 { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
 /* The bar: its drawn length (worked plus waiting) encodes elapsed time
    relative to the longest-elapsed Goal on the desk (Julian's word,
    2026-08-20: a bar that was always full made every running Goal look
@@ -539,25 +452,13 @@ summary:focus-visible {
    Decisions 1 and 2). Undrawn track stays the container's background. The
    elapsed-time text prints the same total elapsed time the bar's length
    encodes; the agent count is the only other fact left as text. */
-.desk-goal-bar-group { display: inline-flex; min-width: 0; align-items: center; gap: 8px; }
 .desk-goal-bar { display: inline-flex; width: 84px; height: 6px; overflow: hidden; border-radius: 3px; background: #262b31; flex: none; }
 .desk-goal-bar-worked { display: block; height: 100%; background: var(--blue); }
 .desk-goal-bar-wait { display: block; height: 100%; min-width: 3px; background: var(--amber); }
 .desk-goal-bar-wait.fact { background: var(--muted); }
 .desk-goal-elapsed { color: #98a1ac; font-size: 11px; white-space: nowrap; }
-.desk-goal-facts { color: #98a1ac; font-size: 11px; white-space: nowrap; }
 .desk-goal-actions { display: inline-flex; flex: none; align-items: center; gap: 8px; }
-.desk-goal-line3 { display: flex; justify-content: flex-end; }
-.desk-secondary-actions { display: inline-flex; align-items: center; gap: 0 3px; }
-.desk-secondary-actions i { color: #4d555f; font-size: 10px; font-style: normal; }
-.desk-secondary-actions .desk-icon-action { padding: 2px 3px; }
-.desk-secondary-actions .desk-icon-action:disabled { opacity: .35; cursor: default; }
-.desk-secondary-actions .desk-icon-action:disabled:hover { border-color: transparent; color: #7f8994; }
-.desk-pipeline-controls { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
-.desk-goal:has(.desk-select) { grid-template-columns: auto minmax(0, 1fr); }
-.desk-select { display: flex; align-items: flex-start; padding: 3px 2px 8px 0; cursor: pointer; }
 .desk-select input { width: 15px; height: 15px; margin: 0; accent-color: var(--blue); cursor: pointer; }
-.desk-goal.selected { background: rgba(94, 144, 255, .06); box-shadow: inset 2px 0 0 var(--blue); }
 .desk-selection-bar { display: flex; align-items: center; gap: 8px; }
 .desk-selection-bar kbd { margin-left: 4px; padding: 0 3px; border: 1px solid #3c434c; border-radius: 2px; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; color: #98a1ac; }
 .desk-action, .desk-icon-action { padding: 4px 7px; border: 1px solid #3c434c; border-radius: 2px; background: #1a1e23; color: #cbd1d7; cursor: pointer; font-size: 10px; font-weight: 690; }
@@ -569,25 +470,148 @@ summary:focus-visible {
 .desk-goal.fact .desk-action { border-color: #3c434c; color: #cbd1d7; }
 .desk-icon-action { border-color: transparent; background: transparent; color: #7f8994; }
 .desk-icon-action.complete:hover { color: var(--green); }
-.desk-subgoal-disclosure { margin: 11px 0 0 16px; }
-.desk-subgoal-disclosure > summary { display: flex; width: fit-content; align-items: baseline; gap: 8px; padding: 2px 4px; color: #7f8994; cursor: pointer; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .045em; list-style: none; text-transform: uppercase; }
-.desk-subgoal-disclosure > summary::-webkit-details-marker { display: none; }
-.desk-subgoal-disclosure > summary::before { display: inline-block; width: 10px; color: #69737e; content: "+"; }
-.desk-subgoal-disclosure[open] > summary::before { content: "−"; }
-.desk-subgoal-disclosure > summary small { color: #626b76; font: inherit; }
-.desk-subgoals { position: relative; display: grid; gap: 8px; margin: 8px 0 0; padding: 10px 0 1px 20px; border-left: 1px dashed #4b535d; }
-.desk-subgoals::before { position: absolute; top: 0; left: -3px; width: 5px; height: 5px; border-radius: 50%; background: #69737e; content: ""; }
-.desk-goal.subgoal .desk-goal-main strong { font-size: 13px; font-weight: 600; }
-.desk-goal.subgoal .desk-goal-bar { width: 68px; }
 
-.desk-definition { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 18px; width: 100%; padding: 11px 12px; border: 1px solid #3a4149; border-left: 3px solid var(--amber); border-radius: 1px; background: #171a1e; color: inherit; cursor: pointer; text-align: left; }
-.desk-definition.working { border-left-color: var(--blue); }
-.desk-definition:hover { background: #1d2126; }
-.desk-definition > span { display: grid; gap: 2px; }
-.desk-definition small { color: #7d8690; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 760; letter-spacing: .1em; text-transform: uppercase; }
-.desk-definition strong { font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
-.desk-definition em { justify-self: end; font-style: normal; }
-.desk-definition b { color: #b7bec6; font-size: 10px; font-weight: 680; }
+
+/* ---- The direct-ask table and the work table ----
+   One semantic table for questions, one for work
+   (design-redesign-work-as-a-compact-table). At 640 px and above the work
+   table shows five columns. Below 640 px the State and Time cells leave the
+   page with `display: none`, which also takes them out of the accessibility
+   tree, and the Work cell's own copy of those facts appears instead, so every
+   width reads each fact exactly once. Table display never changes: rows stay
+   `<tr>` children of their row group at every width. */
+
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+.ask-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.ask-table caption { text-align: left; }
+.ask-table thead th { box-sizing: border-box; padding: 7px 14px; border-bottom: 1px solid #383124; color: #a79776; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-align: left; text-transform: uppercase; }
+.ask-col-area { width: 148px; }
+.ask-col-kind { width: 82px; }
+.ask-col-action { width: 268px; }
+.ask-group + .ask-group .ask-row:first-child > * { border-top: 1px solid #4a4130; }
+.ask-row > * { padding: 9px 14px; border-top: 1px solid #2c281f; vertical-align: top; text-align: left; }
+.ask-group:first-of-type .ask-row:first-child > * { border-top: 0; }
+.ask-cell-area, .ask-cell-kind { overflow: hidden; color: #a79776; font-size: 11px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
+.ask-group.stopped .ask-cell-area, .ask-group.fallback .ask-cell-area { color: #7d7566; }
+.ask-cell-question { min-width: 0; font-weight: 400; }
+.ask-subject { display: block; overflow: hidden; color: #d9cfb8; font-size: 12px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
+.ask-question { display: block; max-width: 72ch; padding: 0; border: 0; background: transparent; color: var(--amber); cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 700; line-height: 1.35; text-align: left; }
+button.ask-question:hover { text-decoration: underline; text-underline-offset: 3px; }
+.ask-context, .ask-proposal { display: block; max-width: 72ch; color: #b8aa8c; font-size: 11px; font-weight: 500; line-height: 1.4; }
+.ask-proposal b { color: var(--amber); font-weight: 700; }
+.ask-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
+.ask-actions.choices { flex-direction: column; align-items: stretch; }
+.ask-answer { padding: 5px 8px; border: 1px solid #665735; border-radius: 3px; background: transparent; color: var(--amber); cursor: pointer; font-size: 11px; font-weight: 680; line-height: 1.2; min-height: 26px; }
+.ask-answer:hover { border-color: var(--amber); background: rgba(231, 198, 128, .08); }
+.ask-reply { border-color: #46402f; color: #a79776; }
+.ask-dismiss { display: inline-grid; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #8f846d; cursor: pointer; font-size: 18px; line-height: 1; place-items: center; }
+.ask-dismiss:hover { background: rgba(231, 198, 128, .08); color: var(--amber); }
+
+.work-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+/* A caption keeps `display: table-caption`. Any other display value drops it
+   out of the table box, and the browser then sizes it to one column. */
+.work-caption { padding: 0 4px 8px; color: #9fa7b0; font-size: 11px; font-weight: 760; letter-spacing: .1em; text-align: left; text-transform: uppercase; }
+.work-caption-count { margin-left: 12px; color: #646d78; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0; text-transform: none; }
+.work-keyboard-hint { float: right; color: #68717c; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em; text-transform: none; }
+.work-table thead th { box-sizing: border-box; height: 26px; padding: 0 10px; border-bottom: 1px solid #46505c; color: #8b949f; font-size: 10px; font-weight: 700; letter-spacing: .09em; text-align: left; text-transform: uppercase; }
+.work-col-select { width: 28px; }
+.work-head-select { padding-right: 0 !important; }
+.work-col-work { width: auto; min-width: 280px; }
+.work-col-state { width: 156px; }
+.work-col-time { width: 134px; }
+.work-col-action { width: 144px; }
+
+.work-group-row > .work-group-head { box-sizing: border-box; height: 32px; padding: 0 10px; border-bottom: 1px solid #2b3037; background: #14171b; font-weight: 400; line-height: 1.1; text-align: left; }
+.work-group-head { display: table-cell; }
+.work-group-head > * { vertical-align: middle; }
+.work-group-name button { padding: 0; border: 0; line-height: 1.1; background: transparent; color: #dfe3e8; cursor: pointer; font: inherit; font-size: 13px; font-weight: 720; letter-spacing: -.01em; }
+.work-group-name button:hover { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
+.work-group-count { margin-left: 10px; color: #646d78; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.work-group-head .desk-state { margin-left: 12px; }
+.work-group-head .desk-selection-bar { display: inline-flex; margin-left: 14px; }
+.work-group-brain { float: right; padding: 0; border: 0; background: transparent; color: #9ebbe0; cursor: pointer; font-size: 11px; font-weight: 690; white-space: nowrap; }
+.work-group-brain:hover { color: #fff; }
+.work-group-brain-short { display: none; }
+.work-group-brain-long { display: inline; }
+
+.work-row > * { box-sizing: border-box; height: 36px; padding: 3px 10px; border-bottom: 1px solid #23282e; vertical-align: middle; }
+.work-row:hover > * { background: #171a1e; }
+.work-row.selected > * { background: rgba(94, 144, 255, .06); }
+.work-row.selected > .work-cell-select { box-shadow: inset 2px 0 0 var(--blue); }
+.work-cell-select { padding-right: 0 !important; text-align: center; }
+.work-cell-select input { width: 15px; height: 15px; margin: 0; accent-color: var(--blue); cursor: pointer; }
+.work-cell-work { min-width: 0; font-weight: 400; text-align: left; }
+.work-cell-title { display: flex; min-width: 0; align-items: center; gap: 6px; }
+.work-title { min-width: 0; overflow: hidden; padding: 2px 0; border: 0; background: transparent; color: #e7eaed; cursor: pointer; font: inherit; font-size: 13px; font-weight: 640; line-height: 1.25; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.work-title:hover { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
+.work-row.subgoal .work-cell-work { padding-left: 30px; }
+.work-row.subgoal .work-title { color: #c3c9d0; font-size: 12.5px; font-weight: 560; }
+.work-subgoal-toggle { flex: none; min-width: 22px; padding: 1px 3px; border: 1px solid #3c434c; border-radius: 2px; background: transparent; color: #8b949f; cursor: pointer; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.work-subgoal-toggle:hover { border-color: #68727e; color: #fff; }
+.work-row-path { margin-left: 8px; color: #69737e; font-size: 10px; font-weight: 690; letter-spacing: .05em; text-transform: uppercase; }
+.work-cell-facts { display: none; }
+.work-cell-state .desk-state { font-size: 11px; }
+.work-step { margin-left: 6px; color: #737d88; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 760; }
+.work-readiness { display: block; color: #8b949f; font-size: 10px; font-weight: 690; letter-spacing: .03em; }
+.work-readiness.blocked, .work-readiness.broken, .work-readiness.error { color: #c9a55f; }
+.work-cell-time { white-space: nowrap; }
+.work-cell-time .desk-goal-bar { margin-left: 8px; vertical-align: middle; }
+.work-no-time { color: #4d555f; }
+.work-cell-action { text-align: right; }
+.work-cell-action .desk-goal-actions { justify-content: flex-end; }
+.work-row.waiting .desk-action { border-color: #665735; color: var(--amber); }
+.work-row.fact .desk-action { border-color: #3c434c; color: #cbd1d7; }
+.work-row.definition .work-title { color: #e2d7bd; }
+.work-programs { margin-top: 26px; display: grid; }
+
+.work-table :focus-visible, .ask-table :focus-visible { outline: 2px solid #8fc4ff; outline-offset: 1px; }
+
+@media (max-width: 959px) {
+  .work-col-state { width: 132px; }
+  .work-col-time { width: 74px; }
+  .work-col-action { width: 118px; }
+  .work-cell-time .desk-goal-bar { display: none; }
+}
+
+/* Three rows of tools on a phone: search, then scope, then the two capture
+   actions (design-redesign-work-as-a-compact-table, "Narrow-width behavior"). */
+@media (max-width: 479px) {
+  .work-tools { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .work-tools .search-field { grid-row: 1; grid-column: 1 / -1; }
+  .work-tools .work-filter { grid-row: 2; grid-column: 1; }
+  .work-tools > .area-focus-control { grid-row: 2; grid-column: 2; }
+  .work-tools .work-area-browser { grid-row: 3; grid-column: 1; }
+  .work-tools .work-describe { grid-row: 3; grid-column: 2; }
+  .work-page { padding-top: 24px; }
+}
+
+@media (max-width: 639px) {
+  /* Two properties, two jobs. `visibility: collapse` on the column takes its
+     width away without `display: none` on the cells, which would drop them
+     out of their row and slide every later cell into the wrong column.
+     `visibility: hidden` on the cells then takes their text out of the
+     accessibility tree, which a collapsed column alone does not do in Chrome.
+     Together each fact is drawn and read exactly once at this width. */
+  .work-col-select { width: 30px; }
+  .work-col-work { width: 62%; min-width: 0; }
+  .work-col-state, .work-col-time { width: auto; visibility: collapse; }
+  .work-col-action { width: 108px; }
+  .work-head-state, .work-head-time, .work-cell-state, .work-cell-time { visibility: hidden; }
+  .work-row > * { height: auto; padding: 6px 8px; }
+  .work-cell-facts { display: block; margin-top: 2px; color: #8b949f; font-size: 11px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+  .work-title { white-space: normal; }
+  .work-cell-action { vertical-align: top; }
+  .work-group-brain-long { display: none; }
+  .work-group-brain-short { display: inline; }
+  .work-keyboard-hint { display: none; }
+  .ask-col-area, .ask-col-kind { width: auto; visibility: collapse; }
+  .ask-head-area, .ask-head-kind, .ask-cell-area, .ask-cell-kind { visibility: hidden; }
+  .ask-col-question { width: 62%; }
+  .ask-col-action { width: 128px; }
+  .ask-actions { flex-direction: column; align-items: stretch; }
+  .ask-answer { min-height: 44px; }
+}
 
 .desk-programs { display: grid; gap: 1px; }
 .desk-program { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 9px; border-bottom: 1px dotted #3e454e; }
@@ -598,36 +622,7 @@ summary:focus-visible {
 .desk-program strong { overflow: hidden; color: #cdd2d7; font-size: 14px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
 .desk-program em { color: #68727d; font-size: 11px; font-style: normal; white-space: nowrap; }
 .desk-program.live em { color: var(--green); }
-.area-desk-actions { display: flex; gap: 4px; padding: 10px 13px; background: #0f1215; }
-.area-desk-actions button { padding: 6px 8px; border: 0; background: transparent; color: #7f8994; cursor: pointer; font-size: 11px; font-weight: 670; }
-.area-desk-actions button:hover { color: var(--text); text-decoration: underline; text-underline-offset: 3px; }
 
-/* A Work group follows the controlling brain's Area. Areas and Goals are
-   rows inside that shallow hierarchy, not nested dashboard cards. */
-.work-group { border: 0; border-top: 1px solid #46505c; background: transparent; }
-.work-group.waiting, .work-group.working, .work-group.ready { border-top-color: #46505c; }
-.work-group > .area-desk-header { display: flex; min-height: 0; gap: 16px; padding: 14px 2px 12px; border-bottom: 0; background: transparent; }
-.work-group > .area-desk-header h2 { min-width: 0; margin: 0; font-size: 20px; letter-spacing: -.025em; }
-.work-group > .area-desk-header .area-desk-state { margin-left: auto; }
-.work-group-brain { padding: 4px 0 4px 8px; border: 0; background: transparent; color: #9ebbe0; cursor: pointer; font-size: 11px; font-weight: 690; white-space: nowrap; }
-.work-group-brain:hover { color: #fff; }
-.work-group > .area-desk-body { display: grid; gap: 0; padding-left: 18px; border-left: 1px solid #343c46; }
-.work-area-section { position: relative; padding: 13px 0 15px 18px; border-bottom: 1px solid #292f36; }
-.work-area-section:last-child { border-bottom: 0; }
-.work-area-section::before { position: absolute; top: 25px; left: -1px; width: 12px; border-top: 1px solid #46505c; content: ""; }
-.work-area-section > header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; margin-bottom: 8px; }
-.work-area-section > header h3 { margin: 0; font-size: 13px; }
-.work-area-section > header h3 button { padding: 0; border: 0; background: transparent; color: #b8c0c9; cursor: pointer; font: inherit; font-weight: 680; }
-.work-area-section > header h3 button:hover { color: #fff; }
-.work-area-section > header span { color: #737d88; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; text-transform: uppercase; }
-.work-area-section > header h3 + span { margin-left: auto; }
-.work-area-brain { flex: none; padding: 2px 0; border: 0; background: transparent; color: #9ebbe0; cursor: pointer; font-size: 11px; font-weight: 690; white-space: nowrap; }
-.work-area-brain:hover { color: #fff; }
-.work-area-brain:disabled { color: #657486; cursor: wait; }
-.work-area-section .desk-goal { padding: 6px 0; }
-.work-area-section .desk-goal-group + .desk-goal-group { margin-top: 5px; padding-top: 5px; }
-.work-area-section .desk-goal-line1 strong { white-space: normal; }
-.work-area-section .desk-goal-line2 { min-height: 24px; }
 .desk-action-menu { position: relative; }
 .desk-action-menu > summary { display: grid; width: 24px; height: 24px; place-items: center; border: 1px solid #3c434c; border-radius: 2px; background: #1a1e23; color: #9aa5b1; cursor: pointer; font-size: 10px; list-style: none; }
 .desk-action-menu > summary::-webkit-details-marker { display: none; }
@@ -1368,7 +1363,6 @@ li .document-comment { margin: 8px 0 10px; }
 @media (max-width: 1100px) {
   .app-bar { grid-template-columns: auto 1fr auto; }
   .bar-context { display: none; }
-  .area-desk-grid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 1250px) {
@@ -1388,7 +1382,6 @@ li .document-comment { margin: 8px 0 10px; }
   .primary-tab { min-width: 60px; padding: 0 8px; }
   .work-page, .summary-page, .decision-page, .areas-page, .program-detail { width: calc(100% - 48px); }
   .work-page { padding-top: 40px; }
-  .area-desk-header { grid-template-columns: 30px minmax(0, 1fr) auto; }
   .work-card { grid-template-columns: 1fr; gap: 12px; }
   .work-state { justify-self: start; }
   .work-intro { align-items: flex-start; }
@@ -1411,7 +1404,6 @@ li .document-comment { margin: 8px 0 10px; }
 
 /* Reveal highlight */
 .desk-goal.flash { animation: desk-goal-flash 1.5s ease-out; }
-.area-desk-panel.flash { outline: 2px solid var(--blue, #6ea8ff); outline-offset: 2px; }
 @keyframes desk-goal-flash { 0% { background: #2a3547; } 100% { background: transparent; } }
 
 /* Agent Shell menu and connection pill */

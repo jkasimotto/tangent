@@ -477,7 +477,10 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   /** Opens a native agent with the complete Goal context. */
   /** The checked Goal files that belong to one Area, in checked order. */
   function selectionForArea(areaPath) {
-    return state.goalSelection.filter((file) => goalByFile(file)?.area === areaPath);
+    return state.goalSelection.filter((file) => {
+      const area = goalByFile(file)?.area ?? "";
+      return area === areaPath || area.startsWith(`${areaPath}/`);
+    });
   }
 
   /**

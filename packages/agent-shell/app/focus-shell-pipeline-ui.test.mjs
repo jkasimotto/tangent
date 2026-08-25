@@ -212,7 +212,9 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   assert.deepEqual(endPost.body, { goal: goal.file, action: "end", step: 2 });
   click(window, "[data-work-filter='inactive']");
   const endedRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
-  assert.match(endedRow.querySelector(".desk-state").textContent, /Ready/);
+  // End work removes the run record, so Tangent knows of no agent that ran:
+  // the row is a plain planned Goal again, never "Ready for validation".
+  assert.match(endedRow.querySelector(".desk-state").textContent, /^Open$/);
   assert.equal(endedRow.querySelector("[data-pipeline-control]"), null, "nothing offers Restart after Stop work");
 
   // A finished pipeline: the row is a plain Goal row again, and its ▾ opens
@@ -224,8 +226,10 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   await settle(window);
   await settle(window);
   const finishedRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
-  assert.match(finishedRow.querySelector(".desk-state").textContent, /Ready/);
-  assert.equal(finishedRow.querySelector("[data-launch-for]").title, "Add or edit steps");
+  // Every step ran and no Test exists yet, so the result is not offered for
+  // acceptance (design-redesign-work-as-a-compact-table Decision 11).
+  assert.match(finishedRow.querySelector(".desk-state").textContent, /^Preparing validation$/);
+  assert.equal(finishedRow.querySelector(".desk-action-menu [data-launch-for]").textContent, "Steps and agents…", "the finished run's steps stay one menu item away");
   click(window, `[data-goal-anchor='${goal.file}'] [data-launch-for]`);
   await settle(window);
   await settle(window);

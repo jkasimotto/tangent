@@ -26,6 +26,7 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
   /** Returns the exact command for one Area or throws its declaration error. */
   async function commandForArea(area) {
     const launch = await forArea(area);
+    if (!launch) throw new Error(`${area}: no work launch is declared`);
     if (launch.error) throw new Error(launch.error);
     return launch.command;
   }
@@ -36,7 +37,7 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
     if (current.error) return { error: current.error };
     const declared = await inheritedBrainLaunch(area, readAreaNote, current);
     if (declared) return declared;
-    const work = await inheritedLaunch(area, readAreaNote, current, { fallback: false });
+    const work = await inheritedLaunch(area, readAreaNote, current);
     return work ? { ...work, via: "work-fallback" } : { error: `${area}: no brain or work launch is declared` };
   }
 
@@ -159,11 +160,14 @@ export function createLaunchCatalog({ root, readAreaNote, repository = null, com
     if (kind === "brain") {
       effective = await inheritedBrainLaunch(area, nextReader, current);
       if (!effective) {
-        const work = await inheritedLaunch(area, nextReader, current, { fallback: false });
+        const work = await inheritedLaunch(area, nextReader, current);
         effective = work ? { ...work, via: "work-fallback" } : { error: `${area}: no brain or work launch is declared` };
       }
     } else effective = await inheritedLaunch(area, nextReader, current);
-    if (effective?.error) return { error: effective.error };
+    // Clearing a default can leave nothing declared anywhere above the Area.
+    // That is a valid state now: `not declared` is reported, never a guess.
+    if (!effective) effective = { label: null, command: null };
+    if (effective.error) return { error: effective.error };
     await repository.writeMarkdown(file, next);
     await stage?.(file);
     const description = mode === "inherit" ? "inherits" : mode === "work" ? "follows work" : chosen.label;

@@ -86,7 +86,7 @@ test("goal mutations accept an explicit caller outside tmux", async (context) =>
   });
 
   await runGoalCli(["create", "--area", "otto/test", "--title", "Proof", "--done-when", "The proof passes.", "--session", "tangent-brain-test"]);
-  await runGoalCli(["start", "proof", "--session", "tangent-brain-test"]);
+  await runGoalCli(["start", "proof", "--launch", "codex/sol/low", "--session", "tangent-brain-test"]);
 
   assert.equal(requests.find((request) => request.path === "/api/goals/create").body.caller, "tangent-brain-test");
   assert.equal(requests.find((request) => request.path === "/api/goals/start").body.caller, "tangent-brain-test");
@@ -128,13 +128,24 @@ test("each --step carries its own working directory, and a step without one keep
   const home = requests.filter((request) => request.path === "/api/goals/start").at(-1).body.steps[0].path;
   assert.equal(home, os.homedir(), "a leading ~ expands before the server sees it");
 
-  await runGoalCli(["start", "proof", "--session", "tangent-brain-test"]);
+  await runGoalCli(["start", "proof", "--launch", "codex/sol/low", "--session", "tangent-brain-test"]);
   const plain = requests.filter((request) => request.path === "/api/goals/start").at(-1).body;
   assert.equal(plain.steps, undefined, "a Goal started without steps is unchanged");
+  assert.deepEqual(plain.choice, { harness: "codex", model: "sol", effort: "low" }, "the solo form carries its own harness");
 
   await runGoalCli(["append", "proof", "--step", "Prove it.", "--path", "/tmp/arbitrary-worker"]);
   assert.equal(requests.find((request) => request.path === "/api/pipelines/append").body.steps[0].path, "/tmp/arbitrary-worker");
 
+  await assert.rejects(
+    () => runGoalCli(["start", "proof", "--session", "tangent-brain-test"]),
+    /needs --launch/,
+    "a Goal started with no harness named is refused, never given one"
+  );
+  await assert.rejects(
+    () => runGoalCli(["start", "proof", "--launch", "codex", "--launch", "pi-code", "--session", "tangent-brain-test"]),
+    /exactly one --launch/,
+    "two harnesses for one agent is a mistake, not a choice"
+  );
   await assert.rejects(
     () => runGoalCli(["start", "proof", "--path", "/tmp/arbitrary-worker", "--session", "tangent-brain-test"]),
     /--path belongs to a --step/,

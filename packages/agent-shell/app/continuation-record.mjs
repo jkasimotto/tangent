@@ -41,14 +41,20 @@ export async function writeContinuation(root, record) {
   return writeJsonObject(target, record);
 }
 
-/** Builds a fresh record with no continuations yet. */
-export function newContinuationRecord({ goal, area, slug, session, now = new Date().toISOString() }) {
+/**
+ * Builds a fresh record with no continuations yet. command and label are the
+ * launch the session runs; a fresh copy continues on that exact launch rather
+ * than on whatever the Area declares at the time of the handover.
+ */
+export function newContinuationRecord({ goal, area, slug, session, command = "", label = "", now = new Date().toISOString() }) {
   return {
     schema: CONTINUATION_SCHEMA,
     goal,
     area,
     slug,
     session,
+    command,
+    label,
     createdAt: now,
     updatedAt: now,
     continuations: [],

@@ -99,8 +99,9 @@ async function ownershipCommand(args: Args, verb: "own" | "release"): Promise<vo
 
 /**
  * Handles `tangent goal start <slug> [--step <instruction> --launch <harness[/model[/effort]]> --path <directory> --continue-from <n|->]...`.
- * Without --step it starts one agent on the Goal, the same as the desk's Start agent. With steps it
- * posts a pipeline to the same endpoint; the server records it and starts step 1.
+ * Without --step it starts one agent on the Goal, the same as the desk's Start agent, and its one
+ * --launch names that agent's harness. With steps it posts a pipeline to the same endpoint; the
+ * server records it and starts step 1.
  */
 async function startCommand(args: Args): Promise<void> {
   const server = resolveServerUrl(stringArg(args.server));
@@ -110,7 +111,7 @@ async function startCommand(args: Args): Promise<void> {
   const steps = pipelineSteps(args);
   const result = steps.length
     ? await postJson(server, "/api/goals/start", { file: goal.file, steps, ...(caller ? { caller } : {}) })
-    : await postJson(server, "/api/goals/start", { file: goal.file, approved: true, launch: true, ...(caller ? { caller } : {}) });
+    : await postJson(server, "/api/goals/start", { file: goal.file, approved: true, launch: true, choice: soloLaunch(args), ...(caller ? { caller } : {}) });
   if (booleanArg(args.json)) {
     console.log(JSON.stringify(result, null, 2));
     return;
@@ -119,6 +120,18 @@ async function startCommand(args: Args): Promise<void> {
   const session = result.session ? String(result.session) : "(no session)";
   if (steps.length) console.log(`started ${slug}: ${steps.length} step${steps.length === 1 ? "" : "s"}, step 1 in ${session}`);
   else console.log(`started ${slug} in ${session}`);
+}
+
+/**
+ * The one --launch of a start with no --step. It is required: Tangent supplies
+ * no harness of its own, so a worker that nobody named a harness for never starts.
+ */
+function soloLaunch(args: Args): { harness: string; model?: string; effort?: string } {
+  const launches = stringsArg(args.launch);
+  if (launches.length > 1) throw new Error("Starting a Goal without --step takes exactly one --launch.");
+  const launch = parseLaunch(launches[0]);
+  if (!launch) throw new Error("tangent goal start needs --launch <harness[/model[/effort]]>; Tangent never picks a harness for you. Run `tangent harness list --area <area>` for the valid ids.");
+  return launch;
 }
 
 /** Prints one line per step whose --launch harness differs from the Area's default; the server computes them. */
@@ -174,6 +187,8 @@ function pipelineSteps(args: Args, { appending = false } = {}): PipelineStepInpu
   // Without a --step there is nothing for a directory to belong to, and a
   // silently dropped --path would start the worker in the wrong repository.
   if (!instructions.length && paths.length) throw new Error("--path belongs to a --step; add --step \"<instruction>\" or start the Goal without --path.");
+  // No --step is the solo form; its single --launch belongs to the Goal, not to a step.
+  if (!instructions.length) return [];
   if (launches.length > instructions.length) throw new Error("More --launch values than --step values; each --launch pairs with the --step at the same position.");
   if (paths.length > instructions.length) throw new Error("More --path values than --step values; each --path pairs with the --step at the same position.");
   if (continues.length > instructions.length) throw new Error("More --continue-from values than --step values; each pairs with the --step at the same position.");

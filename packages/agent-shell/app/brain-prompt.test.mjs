@@ -104,8 +104,11 @@ test("the brain prompt gives bounded authoritative command and harness discovery
     assert.ok(ottoShow.prompt.includes(line), `the prompt carries the installed reference line: ${line}`);
   }
   assert.match(ottoShow.prompt, /tangent harness list --area otto\/probeotto/);
-  assert.match(ottoShow.prompt, /resolved work harness for this Area is `codex`/);
-  assert.doesNotMatch(ottoShow.prompt, /resolved work harness for this Area is `claude`/);
+  // Both declared defaults, in plain words: a brain chooses harnesses while it
+  // writes a plan, before any command runs.
+  assert.match(ottoShow.prompt, /declares the work harness `codex` and the brain harness `brain`/);
+  assert.match(ottoShow.prompt, /need an explicit `--launch`/);
+  assert.match(ottoShow.prompt, /Any harness, model, and effort in the catalog is a valid choice for a worker/);
   assert.match(ottoShow.prompt, new RegExp(path.join(trees, "harnesses\\.md").replaceAll("/", "\\/")));
   assert.doesNotMatch(ottoShow.prompt, /tangent goal start <slug> --step/, "the prompt does not copy pipeline syntax");
   assert.doesNotMatch(ottoShow.prompt, /Every --launch in this Area is/, "the prompt does not copy a resolved catalog snapshot");
@@ -132,7 +135,7 @@ test("the brain prompt gives bounded authoritative command and harness discovery
   }).then((response) => response.json());
   openedSessions.push(emptyBrain.session);
   const emptyShow = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(emptyBrain.session)}`).then((response) => response.json());
-  assert.match(emptyShow.prompt, /No work harness is declared for Area `otto\/probeempty`/);
+  assert.match(emptyShow.prompt, /Area `otto\/probeempty` declares no work harness and no brain harness\./);
   assert.doesNotMatch(emptyShow.prompt, /work harness.*`claude/);
 });
 

@@ -189,11 +189,11 @@ export const goalCommandSpec: CliCommandSpec = {
     },
     {
       name: "start",
-      description: "Start an agent on a Goal, or a pipeline of steps. Each --step pairs with the --launch, --path, and --continue-from in the same position.",
+      description: "Start an agent on a Goal, or a pipeline of steps. Each --step pairs with the --launch, --path, and --continue-from in the same position. Tangent never picks a harness, so every agent you start names its own --launch.",
       args: "<slug>",
       options: [
         { name: "step", takesValue: true, description: "One step's instruction, in your words; repeatable, steps run in order" },
-        { name: "launch", takesValue: true, description: "Harness for the step at the same position as <harness[/model[/effort]]>; repeatable; missing means the Area default" },
+        { name: "launch", takesValue: true, description: "Required harness as <harness[/model[/effort]]>; repeatable, one per --step at the same position, or exactly one for a Goal started without --step" },
         { name: "path", takesValue: true, description: "Any working directory for the step at the same position; repeatable; missing, or an empty --path=, means the Area repository" },
         { name: "continue-from", takesValue: true, description: "Step number whose session the step at the same position continues, or - for a fresh session; repeatable" },
         { name: "session", takesValue: true, description: "Caller session; defaults to the current tmux session when available" },
@@ -207,7 +207,7 @@ export const goalCommandSpec: CliCommandSpec = {
       args: "<slug>",
       options: [
         { name: "step", takesValue: true, description: "One new step's instruction, in your words; repeatable, steps run in order after the existing ones" },
-        { name: "launch", takesValue: true, description: "Harness for the step at the same position as <harness[/model[/effort]]>; repeatable; missing means the Area default" },
+        { name: "launch", takesValue: true, description: "Required harness for the step at the same position as <harness[/model[/effort]]>; repeatable, one per --step" },
         { name: "path", takesValue: true, description: "Any working directory for the step at the same position; repeatable; missing, or an empty --path=, means the Area repository" },
         { name: "continue-from", takesValue: true, description: "Step number whose session the step at the same position continues, or - for a fresh session; repeatable" },
         serverOption,

@@ -1866,6 +1866,16 @@ const runtimeScheduler = createRuntimeScheduler([
 ]);
 
 /**
+ * The launch command and label recorded on one live session. Both are empty
+ * when the session carries none, which is a refusal, never a reason to guess.
+ */
+async function sessionLaunch(session) {
+  const { stdout } = await execFileAsync("tmux", ["display-message", "-p", "-t", "=" + session + ":", "#{@tangent_launch_command}\t#{@tangent_launch}"]).catch(() => ({ stdout: "" }));
+  const [command = "", label = ""] = String(stdout).replace(/\n$/, "").split("\t");
+  return { command: command.trim(), label: label.trim() };
+}
+
+/**
  * Primes a session sitting at its shell: the area's suggested launch command
  * typed but not submitted, and the goal prompt armed to follow whatever
  * harness the user starts. A pane that is already running something is left
@@ -1992,11 +2002,11 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
   // A new launch, including one in an existing shell pane, resolves after the
   // saved Area edit. An explicit request still wins, while an agent that
   // already runs keeps its recorded launch.
+  // A new launch names its own harness or it does not happen. Tangent never
+  // supplies one: a worker that starts on a harness nobody named costs its
+  // whole run before the mistake is visible.
   if (!command && (!existing || existingAtShell)) {
-    const inherited = await launchCatalog.forArea(area);
-    if (inherited.error) return { status: 409, error: inherited.error };
-    command = inherited.command;
-    if (!label && inherited.label) label = inherited.label;
+    return { status: 409, error: `goal ${slug}: this start named no harness. Pass --launch <harness[/model[/effort]]>.\n${await launchHelpLines(area)}` };
   }
   trace?.mark("launch resolved", { reattachedRunningAgent: Boolean(existing && !existingAtShell) });
   if (existing) {
@@ -2245,25 +2255,38 @@ async function resolveStepLaunch(step) {
   return resolveLaunch(registry, step.launch);
 }
 
-/** Copies the current Work default into each step that omitted a launch. */
-async function materializeDefaultStepLaunches(area, steps) {
-  if (!Array.isArray(steps) || steps.every((step) => step?.launch || String(step?.command ?? "").trim())) return { steps };
+/** The Area's declared work default as `harness[/model[/effort]]`, or null when none resolves. */
+async function declaredWorkLaunch(area) {
   const launch = await launchCatalog.forArea(area);
-  if (launch.error) return { error: launch.error };
-  return {
-    steps: steps.map((step) => {
-      if (step?.launch || String(step?.command ?? "").trim()) return step;
-      if (launch.harness) return {
-        ...step,
-        launch: {
-          harness: launch.harness,
-          ...(launch.model ? { model: launch.model } : {}),
-          ...(launch.effort ? { effort: launch.effort } : {}),
-        },
-      };
-      return { ...step, command: launch.command, label: launch.label || launch.command };
-    }),
-  };
+  if (!launch || launch.error || !launch.harness) return null;
+  return [launch.harness, launch.model, launch.effort].filter(Boolean).join("/");
+}
+
+/**
+ * The two closing lines of every missing-launch refusal: what this Area
+ * declares, and where the valid ids are. A brain that reads the error can
+ * retry correctly without a second lookup.
+ */
+async function launchHelpLines(area) {
+  const declared = await declaredWorkLaunch(area);
+  const what = declared ? `declares the work default ${declared}` : "declares no work default";
+  return `${area} ${what}.\nRun \`tangent harness list --area ${area}\` for the valid ids.`;
+}
+
+/**
+ * Refuses a start whose steps do not each name a harness, naming every step
+ * that is missing one. Runs before anything is written, so a refused start
+ * leaves no record and no session behind. firstIndex is the step number of
+ * the first entry, so appended steps name themselves correctly.
+ */
+async function missingStepLaunches(area, steps, firstIndex = 1) {
+  const missing = (Array.isArray(steps) ? steps : [])
+    .map((step, position) => (step?.launch || String(step?.command ?? "").trim() ? 0 : firstIndex + position))
+    .filter(Boolean);
+  if (!missing.length) return null;
+  const named = missing.map((index) => `step ${index} has no --launch`);
+  const list = named.length === 1 ? named[0] : `${named.slice(0, -1).join(", ")}, and ${named[named.length - 1]}`;
+  return `${list}. Every step names its own harness.\nPass --launch <harness[/model[/effort]]> for each step.\n${await launchHelpLines(area)}`;
 }
 
 /**
@@ -2296,18 +2319,13 @@ function resolveStepPaths(steps, firstIndex = 1) {
 }
 
 /**
- * The Area's resolved harness id in plain words: the registry harness id
- * when the default resolves through the registry, else the bare command
- * from the profile or legacy fallback (a single word, no arguments). Null
- * when the Area's launch is broken or the fallback command carries
- * arguments, so callers skip rather than compare against a guess.
+ * The Area's declared harness id, or null when the Area declares nothing and
+ * when its declaration is broken. Callers skip the comparison rather than
+ * compare against a guess.
  */
 async function areaHarnessId(area) {
   const launch = await launchCatalog.forArea(area);
-  if (launch.error) return null;
-  if (launch.harness) return launch.harness;
-  const command = String(launch.command ?? "").trim();
-  return command && !command.includes(" ") ? command : null;
+  return launch && !launch.error && launch.harness ? launch.harness : null;
 }
 
 /**
@@ -2392,9 +2410,8 @@ async function startPipeline(file, { steps, extraFiles = [] } = {}) {
   if (o.session && sessions.some((item) => item.name === o.session)) {
     return { status: 409, error: `goal is owned by live session ${o.session}` };
   }
-  const materialized = await materializeDefaultStepLaunches(o.area, steps);
-  if (materialized.error) return { status: 409, error: materialized.error };
-  steps = materialized.steps;
+  const missing = await missingStepLaunches(o.area, steps);
+  if (missing) return { status: 400, error: missing };
   const located = resolveStepPaths(steps);
   if (located.error) return { status: 400, error: located.error };
   steps = located.steps;
@@ -2596,6 +2613,14 @@ async function continueWorkerSession(sessionName, text) {
   const o = byFile.get(soloHit.goal);
   if (!o) return { status: 404, error: "this session's Goal file could not be read" };
   const record = (await readContinuation(CONTINUATIONS_ROOT, o.area, o.slug)) ?? newContinuationRecord({ goal: o.file, area: o.area, slug: o.slug, session: sessionName });
+  // A fresh copy of a worker is the same worker: it continues on the launch
+  // this session runs, never on whatever the Area declares today.
+  const carried = await sessionLaunch(sessionName);
+  if (!carried.command) {
+    return { status: 409, error: `${sessionName}: this session records no launch command, so a fresh copy cannot continue on the same harness. Start the Goal again with an explicit --launch.` };
+  }
+  record.command = carried.command;
+  record.label = carried.label;
   const entry = { session: sessionName, next, facts: text, at, fill };
   const execution = soloExecution({
     record,
@@ -2626,7 +2651,7 @@ async function continueWorkerSession(sessionName, text) {
     messages.queue(sessionName, { from: "tangent", area: o.area, text: `Continuation recorded, but the fresh session could not start: the prompt never arrived. You still work this Goal.`, queuedAt: new Date().toISOString() });
   };
   const result = await spawnGoalSession(o.area, o.slug, {
-    phase: "execute", launch: true, continuation: { sessionName: next, entries: record.continuations }, onPrimed,
+    phase: "execute", launch: true, command: record.command, label: record.label, continuation: { sessionName: next, entries: record.continuations }, onPrimed,
   });
   if (result.status !== 200) {
     await execution.failContinuation(entry);
@@ -2760,9 +2785,8 @@ async function appendPipelineSteps(goalFile, steps) {
   if (["done", "dropped"].includes(o.status)) return { status: 409, error: `goal is ${o.status}` };
   const record = await readPipeline(PIPELINES_ROOT, o.area, o.slug);
   if (!record) return { status: 404, error: "no pipeline on this goal" };
-  const materialized = await materializeDefaultStepLaunches(o.area, steps);
-  if (materialized.error) return { status: 409, error: materialized.error };
-  steps = materialized.steps;
+  const missing = await missingStepLaunches(o.area, steps, record.steps.length + 1);
+  if (missing) return { status: 400, error: missing };
   const located = resolveStepPaths(steps, record.steps.length + 1);
   if (located.error) return { status: 400, error: located.error };
   steps = located.steps;
@@ -3141,11 +3165,20 @@ async function flushBrainNotices(sessions = null, reason = "unread notices after
  * the launch catalog owns the harness ids the same way.
  */
 async function brainCommandContext(area) {
-  const workLaunch = await launchCatalog.forArea(area);
   const reference = await installedCommandReference();
-  const workHarness = workLaunch.harness
-    ? `The resolved work harness for this Area is \`${workLaunch.harness}\`.`
-    : `No work harness is declared for Area \`${area}\`.`;
+  const work = await declaredWorkLaunch(area);
+  const brain = await launchCatalog.forBrain(area);
+  const brainLaunch = brain && !brain.error && brain.harness
+    ? [brain.harness, brain.model, brain.effort].filter(Boolean).join("/")
+    : null;
+  // A brain chooses harnesses while it writes a plan, before any command
+  // runs, so it needs both declared defaults in the prompt itself.
+  const workHarness =
+    `Area \`${area}\` ${work ? `declares the work harness \`${work}\`` : "declares no work harness"} and ` +
+    `${brainLaunch ? `the brain harness \`${brainLaunch}\`` : "no brain harness"}. ` +
+    "Every worker start names its own harness: `tangent goal start` and `tangent goal append` need an explicit `--launch`, " +
+    "because Tangent supplies none and refuses a start without one. " +
+    "Any harness, model, and effort in the catalog is a valid choice for a worker; the work default is only the default, not a rule.";
   const commands = reference
     ? `Generated from the installed CLI. Run \`tangent <noun> --help\` for a noun you have not used; its examples carry the flags.\n\n${reference}`
     : `Run \`tangent <noun> --help\` for the installed syntax. Nouns: ${BRAIN_COMMAND_NOUNS.join(", ")}.`;

@@ -92,10 +92,10 @@ test("never substitutes: unknown ids resolve to errors that name the id", () => 
   assert.match(resolveLaunch(registry, { harness: "codex", model: "opus-4-6" }).error, /unknown model "opus-4-6" for harness "codex"/);
 });
 
-test("area environment defaults win over legacy Agent lines and inherit", async () => {
+test("only declarations resolve; a legacy Agent line is not a declaration", async () => {
   const notes = new Map([
     ["otto", '```tangent.environment.v1\n{"defaults": {"launch": {"harness": "codex", "model": "luna"}}}\n```'],
-    ["otto/dnd", "## Resources\n\n- Agent: pi-code\n"],
+    ["work/legacy", "## Resources\n\n- Agent: pi-code\n"],
   ]);
   /** Test note reader backed by the fixture map. */
   const readNote = async (area) => notes.get(area) ?? "";
@@ -103,9 +103,7 @@ test("area environment defaults win over legacy Agent lines and inherit", async 
   assert.equal(inherited.command, "codex --model gpt-5.6-luna");
   assert.equal(inherited.label, "Codex · Luna");
   assert.equal(inherited.source, "otto");
-  const legacy = await inheritedLaunch("otto/dnd", readNote, registry);
-  assert.equal(legacy.command, "pi-code");
-  assert.equal(legacy.label, null);
+  assert.equal(await inheritedLaunch("work/legacy", readNote, registry), null);
 });
 
 test("brain defaults inherit independently and the nearest Area wins", async () => {
@@ -138,11 +136,11 @@ test("an explicit Brain follow-work declaration stops Brain inheritance", async 
   assert.equal(resolved.via, "work");
 });
 
-test("keeps the profile fallback when nothing declares a launch", async () => {
+test("nothing declared resolves to nothing, never to a profile guess", async () => {
   /** Test note reader with no declarations. */
   const readNote = async () => "";
-  assert.equal((await inheritedLaunch("otto/empty", readNote, registry)).command, "claude-otto");
-  assert.equal((await inheritedLaunch("work/empty", readNote, registry)).command, "claude");
+  assert.equal(await inheritedLaunch("otto/empty", readNote, registry), null);
+  assert.equal(await inheritedLaunch("work/empty", readNote, registry), null);
 });
 
 test("a broken declaration blocks resolution with the area named", async () => {

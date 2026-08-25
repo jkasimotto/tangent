@@ -254,6 +254,13 @@ test("worker context handover: the swap contract, its refusals, and the reminder
   const soloRecord = await readContinuation(continuationsRoot, "otto/test", "solo-continue");
   assert.equal(soloRecord.schema, "goal-continuation.v1");
   assert.equal(soloRecord.session, soloNext);
+  // A fresh copy is the same worker: it continues on the launch the dying
+  // session runs, never on whatever the Area declares at handover time.
+  assert.match(soloRecord.command, /claude-otto/);
+  const continuedCommand = await new Promise((resolve) => {
+    execFile("tmux", ["show-options", "-t", soloNext, "-v", "@tangent_launch_command"], (_error, stdout) => resolve((stdout ?? "").trim()));
+  });
+  assert.equal(continuedCommand, soloRecord.command);
   assert.equal(soloRecord.continuations.length, 1);
   assert.equal(soloRecord.continuations[0].session, soloSession);
   assert.equal(soloRecord.continuations[0].next, soloNext);

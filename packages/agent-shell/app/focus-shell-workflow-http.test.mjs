@@ -23,7 +23,7 @@ test("the context-first shell is default and keeps the user's understanding with
   await mkdir(areaDirectory, { recursive: true });
   await mkdir(workspace, { recursive: true });
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
-  await writeFile(path.join(areaDirectory, "test.md"), `---\ntype: area\n---\n\n# Test\n\n## Goals\n\n1. [[goal-prove-it]]\n2. [[outcome-connect-chosen-ramp-faces]]\n\n## Resources\n\n- Repository: ${workspace}\n`, "utf8");
+  await writeFile(path.join(areaDirectory, "test.md"), `---\ntype: area\n---\n\n# Test\n\n## Goals\n\n1. [[goal-prove-it]]\n2. [[outcome-connect-chosen-ramp-faces]]\n\n## Resources\n\n- Repository: ${workspace}\n\n## Development environment\n\n\`\`\`tangent.environment.v1\n{"defaults":{"launch":{"harness":"other"}}}\n\`\`\`\n`, "utf8");
   await writeFile(path.join(areaDirectory, ".processes.json"), '{"scripts":{"dev":"npm run dev"}}\n', "utf8");
   await writeFile(path.join(areaDirectory, "design-test.md"), "---\ntype: document\n---\n\n# Test design\n\nA useful result is visible.\n", "utf8");
   await writeFile(
@@ -399,7 +399,10 @@ test("the context-first shell is default and keeps the user's understanding with
     version: 1,
     modelSets: { fake: [{ id: "one", label: "One", args: "--model one" }] },
     effortSets: { fake: [{ id: "high", label: "High", args: "--effort high" }] },
-    harnesses: [{ id: "fake", label: "Fake", command: "fake-agent", modelSet: "fake", effortSet: "fake" }],
+    harnesses: [
+      { id: "fake", label: "Fake", command: "fake-agent", modelSet: "fake", effortSet: "fake" },
+      { id: "other", label: "Other", command: "other-agent" },
+    ],
   }, null, 2) + "\n```\n", "utf8");
   const options = await fetch(`${base}/api/launch/options?area=otto%2Ftest`).then((response) => response.json());
   assert.deepEqual(options.harnesses[0].efforts, [{ id: "high", label: "High", args: "--effort high", command: "fake-agent --effort high" }]);
@@ -447,11 +450,11 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(startedPipeline.pipeline.steps[0].command, "fake-agent --model one --effort high");
   assert.equal(startedPipeline.pipeline.steps[0].label, "Fake · One · High");
   assert.ok(existsSync(path.join(root, "pipelines", "otto", "test", "pipeline-demo.json")));
-  // otto/test's default harness is claude-otto (profile fallback); steps 1 and
-  // 2 named a different harness, so the server warns without blocking either.
+  // otto/test declares the harness `other`; steps 1 and 2 named a different
+  // one, so the server warns without blocking either.
   assert.equal(startedPipeline.warnings.length, 2);
-  assert.match(startedPipeline.warnings[0], /step 1: --launch fake\/one differs from otto\/test's default harness claude-otto\./);
-  assert.match(startedPipeline.warnings[1], /step 2: --launch fake\/one differs from otto\/test's default harness claude-otto\./);
+  assert.match(startedPipeline.warnings[0], /step 1: --launch fake\/one differs from otto\/test's default harness other\./);
+  assert.match(startedPipeline.warnings[1], /step 2: --launch fake\/one differs from otto\/test's default harness other\./);
   let goalText = await readFile(path.join(trees, pipelineGoal.file), "utf8");
   assert.match(goalText, /^status: active$/m);
   assert.match(goalText, /^session: test-pipeline-demo$/m);
@@ -692,8 +695,9 @@ test("the context-first shell is default and keeps the user's understanding with
   // record under the brains root, and every Goal prompt on the Area names it.
   assert.match(serverSource, /# Brain for \$\{area\}/);
   assert.match(serverSource, /tangent brain handover/);
-  assert.match(serverSource, /The resolved work harness for this Area is/);
-  assert.match(serverSource, /Choose its steps and catalog launch ids from the approved plan/);
+  assert.match(serverSource, /declares the work harness/);
+  assert.match(serverSource, /Every worker start names its own harness/);
+  assert.match(serverSource, /Choose its steps and launch ids from the approved plan/);
   assert.doesNotMatch(serverSource, /Sonnet is the workhorse/);
   const brainDefault = await fetch(`${base}/api/launch/default`, {
     method: "POST",
@@ -735,9 +739,10 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(brainAgain.session, "test-brain");
   const brainShow = await fetch(`${base}/api/brains/show?session=test-brain`).then((response) => response.json());
   assert.equal(brainShow.brain.area, "otto/test");
-  // The Work profile fallback remains valid for work, but it is not a declared
-  // Work launch. Brain guidance names that distinction and never invents ids.
-  assert.match(brainShow.prompt, /No work harness is declared for Area `otto\/test`/);
+  // A brain gets both declared defaults in plain words, and the rule that
+  // every worker start names its own harness.
+  assert.match(brainShow.prompt, /Area `otto\/test` declares the work harness `other` and the brain harness `fake\/one\/high`\./);
+  assert.match(brainShow.prompt, /need an explicit `--launch`/);
   assert.doesNotMatch(brainShow.prompt, /Every --launch in this Area is/);
   assert.equal((await fetch(`${base}/api/brains/show?area=otto%2Fnowhere`)).status, 404);
   const brainRequest = await fetch(`${base}/api/brains/requests`, {

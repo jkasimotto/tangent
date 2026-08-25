@@ -201,10 +201,13 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
         : selection.command ? { command: selection.command } : {};
     }
     if (selection.edited) return { command: selection.command };
-    if (state.launch.choice && selection.harness) {
+    // Send the selection the picker already shows, seeded or clicked. The
+    // server supplies no default, so a request that carries nothing is
+    // refused; and the harness on screen is the harness that starts.
+    if (selection.harness) {
       return { choice: { harness: selection.harness.id, ...(selection.model ? { model: selection.model.id } : {}), ...(selection.effort ? { effort: selection.effort.id } : {}) } };
     }
-    return {};
+    return selection.command ? { command: selection.command } : {};
   }
 
   // ---- pipeline drafts ----

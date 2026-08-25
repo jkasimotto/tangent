@@ -4,7 +4,7 @@
 // with exact arguments. The composed command is authoritative: this module
 // joins strings and never parses, translates, or rebuilds them.
 
-import { areaAncestors, noteResource } from "./area-agent-command.mjs";
+import { areaAncestors } from "./area-agent-command.mjs";
 
 /** Extracts the JSON payload of one fenced ```<tag> block, or null. */
 export function fencedBlock(text, tag) {
@@ -217,7 +217,7 @@ export async function inheritedBrainLaunch(area, readAreaNote, registry) {
     const ref = environment?.defaults?.brain;
     if (!ref) continue;
     if (ref === "work") {
-      const work = await inheritedLaunch(area, readAreaNote, registry, { fallback: false });
+      const work = await inheritedLaunch(area, readAreaNote, registry);
       if (!work) return { error: `${candidate}: brain follows Work, but ${area} has no declared work launch` };
       if (work.error) return work;
       return { ...work, source: candidate, workSource: work.source, via: "work" };
@@ -229,24 +229,21 @@ export async function inheritedBrainLaunch(area, readAreaNote, registry) {
 }
 
 /**
- * Resolves the inherited default launch for one Area: the nearest ancestor
- * with an environment default wins, then a legacy `- Agent:` resource line.
- * Callers can suppress the legacy profile fallback when a declaration is required.
+ * Resolves the declared default launch for one Area: the nearest ancestor
+ * with an environment default wins. Returns the declaration, an error that
+ * names the broken Area, or null when no ancestor declares one. It never
+ * substitutes a command of its own, so nothing in Tangent can start a worker
+ * on a harness that no Area named.
  */
-export async function inheritedLaunch(area, readAreaNote, registry, { fallback = true } = {}) {
+export async function inheritedLaunch(area, readAreaNote, registry) {
   for (const candidate of areaAncestors(area)) {
     const note = await readAreaNote(candidate);
     const environment = parseEnvironmentBlock(note);
     if (environment?.error) return { error: `${candidate}: ${environment.error}` };
     const ref = environment?.defaults?.launch;
-    if (ref) {
-      const resolved = resolveLaunch(registry, ref);
-      return resolved.error ? { error: `${candidate}: ${resolved.error}` } : { ...resolved, source: candidate };
-    }
-    const legacy = noteResource(note, "Agent");
-    if (legacy) return { command: legacy, label: null, harness: null, model: null, source: candidate };
+    if (!ref) continue;
+    const resolved = resolveLaunch(registry, ref);
+    return resolved.error ? { error: `${candidate}: ${resolved.error}` } : { ...resolved, source: candidate };
   }
-  if (!fallback) return null;
-  const fallbackCommand = String(area ?? "").split("/")[0] === "otto" ? "claude-otto" : "claude";
-  return { command: fallbackCommand, label: null, harness: null, model: null, source: null };
+  return null;
 }

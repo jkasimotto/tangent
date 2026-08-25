@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -49,8 +49,18 @@ test("a close commit records its session and appears in recent closes", async (c
   await mkdir(area, { recursive: true });
   await mkdir(workspace, { recursive: true });
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n");
-  await writeFile(path.join(area, "test.md"), "---\ntype: area\n---\n\n# Test\n\n## Goals\n\n1. [[goal-prove-it]]\n");
+  await writeFile(path.join(area, "test.md"), "---\ntype: area\n---\n\n# Test\n\n## Goals\n\n1. [[goal-prove-it]]\n2. [[goal-drop-it]]\n");
   await writeFile(path.join(area, "goal-prove-it.md"), "---\ntype: goal\nstatus: open\ndone_when: The result is visible\nsession:\n---\n\n# Prove it\n\n## State\n\nNot started.\n");
+  await writeFile(path.join(area, "goal-drop-it.md"), "---\ntype: goal\nstatus: open\ndone_when: The obsolete result is visible\nsession:\n---\n\n# Drop it\n\n## State\n\nNot started.\n");
+  const brains = path.join(root, "brains");
+  const brainArea = path.join(brains, "otto", "test");
+  await mkdir(brainArea, { recursive: true });
+  await writeFile(path.join(brainArea, "brain.json"), JSON.stringify({ schema: "area-brain.v1", area: "otto/test", status: "stopped", generation: 1, session: null, generations: [] }));
+  await writeFile(path.join(brainArea, "requests.json"), JSON.stringify({ schema: "area-brain-requests.v1", area: "otto/test", requests: [
+    { id: "goal-request", kind: "test", subject: "Prove it", question: "Accept it?", proposal: "Close it.", goal: "otto/test/goal-prove-it.md", status: "open" },
+    { id: "brain-request", kind: "decision", subject: "Other", question: "Approve it?", proposal: "Use it.", goal: null, status: "open" },
+    { id: "drop-request", kind: "approval", subject: "Drop it", question: "Approve it?", proposal: "Close it.", goal: "otto/test/goal-drop-it.md", status: "open" },
+  ] }));
   await execFileAsync("git", ["-C", trees, "init", "-q"]);
   await execFileAsync("git", ["-C", trees, "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A"]);
   await execFileAsync("git", ["-C", trees, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "add: everything"]);
@@ -71,4 +81,12 @@ test("a close commit records its session and appears in recent closes", async (c
   const vault = await fetch(`${base}/api/vault`).then((response) => response.json());
   assert.equal(vault.recentCloses[0].session, "tangent-brain-g4");
   assert.ok(vault.recentCloses[0].at > Date.now() - 60_000);
+  const requests = JSON.parse(await readFile(path.join(brainArea, "requests.json"), "utf8")).requests;
+  assert.deepEqual([requests[0].status, requests[0].closedReason], ["closed", "goal-done"], "the Goal-linked Request closes with its Goal");
+  assert.equal(requests[1].status, "open", "an unrelated live Request stays open");
+  assert.deepEqual(requests[1].subjectRef, { type: "brain", area: "otto/test", generation: null }, "the legacy live Request migrates additively");
+  const dropped = await fetch(`${base}/api/goals/edit`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ file: "otto/test/goal-drop-it.md", status: "dropped", reason: "The result is obsolete." }) });
+  assert.equal(dropped.status, 200);
+  const afterDrop = JSON.parse(await readFile(path.join(brainArea, "requests.json"), "utf8")).requests;
+  assert.deepEqual([afterDrop[2].status, afterDrop[2].closedReason], ["closed", "goal-dropped"], "the card and CLI mutation route closes a dropped Goal's Request");
 });

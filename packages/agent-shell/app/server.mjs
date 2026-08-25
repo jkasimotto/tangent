@@ -40,7 +40,7 @@ import { attachTerminalTransport } from "./terminal-transport.mjs";
 import { serveStaticAsset } from "./static-assets.mjs";
 import { createStateEvents } from "./state-events.mjs";
 import { createBrainRoutes } from "./brain-routes.mjs";
-import { answerBrainRequest, brainRequestAnswerNotice, createBrainRequest, openBrainRequests, readBrainRequests, writeBrainRequests } from "./brain-requests.mjs";
+import { answerBrainRequest, brainRequestAnswerNotice, closeBrainRequests, closeGoalRequests, createBrainRequest, dismissBrainRequest, handoverBrainRequests, openBrainRequests, readBrainRequests, withdrawBrainRequest, writeBrainRequests } from "./brain-requests.mjs";
 import { createPipelineRoutes } from "./pipeline-routes.mjs";
 import { createAgentRoutes } from "./agent-routes.mjs";
 import { createVaultRepository } from "./vault-repository.mjs";
@@ -155,6 +155,13 @@ const CONTINUATIONS_ROOT = process.env.TANGENT_CONTINUATIONS_ROOT ?? path.join(o
 // One JSON record per Area with a brain: Julian's instruction, the launch,
 // the generations, and their self-handovers (design-area-brain-solution).
 const BRAINS_ROOT = process.env.TANGENT_BRAINS_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "brains");
+
+// Persist the additive subject identity for pre-lifecycle Request records.
+// The v1 envelope stays readable, and no request status or answer changes.
+for (const brain of await readAllBrains(BRAINS_ROOT)) {
+  const requests = await readBrainRequests(BRAINS_ROOT, brain.area);
+  if (requests.requests.length) await writeBrainRequests(BRAINS_ROOT, requests);
+}
 // After this long in one generation the brain is reminded to hand over.
 const BRAIN_REFRESH_MS = Number(process.env.TANGENT_BRAIN_REFRESH_MINUTES ?? 90) * 60_000;
 // A running step idle this long without a handover is reported to the brain once.
@@ -1266,7 +1273,9 @@ async function vaultCommit(relPaths, message, area, tmuxSession) {
  */
 async function cascadeGoalDone(rootFile, byFile) {
   const changed = [];
+  const endedGoals = [];
   for (const goal of doneCascade(rootFile, byFile)) {
+    endedGoals.push(goal.file);
     if (goal.status !== "done" || goal.session || goal.waitingOn) {
       await writeGoalBinding(goal.file, { status: "done", session: null, waitingOn: null });
       changed.push(goal.file);
@@ -1278,6 +1287,33 @@ async function cascadeGoalDone(rootFile, byFile) {
     goal.session = null;
     goal.waitingOn = null;
   }
+  await closeRequestsForGoals(endedGoals, "goal-done");
+  return changed;
+}
+
+/** Closes open Requests in every brain store when their Goal subject ends. */
+async function closeRequestsForGoals(goalFiles, reason) {
+  const targets = new Set(goalFiles);
+  if (!targets.size) return [];
+  const closed = [];
+  for (const brain of await readAllBrains(BRAINS_ROOT)) {
+    const record = await readBrainRequests(BRAINS_ROOT, brain.area);
+    const changed = [...targets].flatMap((goal) => closeGoalRequests(record, goal, reason));
+    if (changed.length) {
+      await writeBrainRequests(BRAINS_ROOT, record);
+      closed.push(...changed);
+    }
+  }
+  return closed;
+}
+
+/** Closes or transfers the open Requests whose subject is one brain generation. */
+async function transitionBrainRequests(area, generation, transition, nextGeneration = null) {
+  const record = await readBrainRequests(BRAINS_ROOT, area);
+  const changed = transition === "handover"
+    ? handoverBrainRequests(record, area, generation, nextGeneration)
+    : closeBrainRequests(record, area, generation, transition);
+  if (changed.length) await writeBrainRequests(BRAINS_ROOT, record);
   return changed;
 }
 
@@ -3031,7 +3067,7 @@ async function brainPrompt(record) {
     `Tangent sends you durable worker reports. Read the handover and the files. You alone choose the next transition. Use the installed brain help to start a pending approved assignment. When a review asks for changes, append an assignment through the installed goal help. When a result is good, note it in the plan and start what its completion unblocked. Workers do not choose successors.\n\n` +
     `Ask Julian only through structured requests. The kind is internal routing metadata. It never changes the two answers. Use kind plan before new work starts. Use kind test only for a finished Goal. Use kind approval for other proposed transitions. Put one recommended transition in the question. The answer returns to this brain as a durable notice. Julian started this brain to get the approved Goals ready for his acceptance. When a Goal's final review passes and its done condition holds, write the verdict into the Goal State. Then create a short Test request. State only what Julian must open and see. Keep the Goal open until Julian approves that Request.\n\n` +
     `## Requests for Julian\n\n` +
-    `Create requests with \`tangent brain request\`. Do not use plan Markdown as a control protocol. Every Request uses Approve or I want these changes. The second answer includes Julian's required text. Every answer returns to this brain. State one direct question. Include only the facts that Julian needs to answer it. For a visible result, state what to open and what success looks like. Do not report internal proof unless it changes Julian's answer. If a visible Agent Shell change needs validation, run \`tangent shell rebuild\` before you create the Request. Document comments remain a separate direct lane and arrive here as durable notices.\n\n` +
+    `Create requests with \`tangent brain request\`. Withdraw an obsolete open Request with \`tangent brain withdraw <request-id>\`. Do not use plan Markdown as a control protocol. Every Request uses Approve or I want these changes. The second answer includes Julian's required text. Every answer returns to this brain. State one direct question. Include only the facts that Julian needs to answer it. For a visible result, state what to open and what success looks like. Do not report internal proof unless it changes Julian's answer. If a visible Agent Shell change needs validation, run \`tangent shell rebuild\` before you create the Request. Document comments remain a separate direct lane and arrive here as durable notices.\n\n` +
     `## When to hand over\n\n` +
     `Before every handover, sweep \`tangent goal list ${area}\` and \`tangent agent list\`. Add a Test request for each reviewed Goal that is ready for Julian. Do not mark it done before he accepts. In the same sweep, check \`tangent agent list\` for a running step showing "needs decision" or "draft" and answer it; do not hand over a step sitting stuck on a question the next generation has to notice all over again. Then, at a natural pause, after a wave is dispatched or a batch of results is processed, and always when Tangent reminds you, write the plan status and use the installed brain help to hand over: what runs (Goal, step, session), what waits and why, decisions taken, what the next generation should do first. Facts, no narrative. A fresh copy of you starts from the plan and those facts, and this session ends.`
   );
@@ -3177,7 +3213,12 @@ async function startBrainUnlocked(area, { instruction = "", choice = null, comma
   } catch (error) {
     return { status: 400, error: String(error.message ?? error) };
   }
-  return spawnBrainSession(record);
+  const replacedGeneration = existing?.generation ?? null;
+  const started = await spawnBrainSession(record);
+  if (started.status === 200 && replacedGeneration !== null) {
+    await transitionBrainRequests(area, replacedGeneration, "brain-replaced");
+  }
+  return started;
 }
 
 /** Returns the calling brain and repairs a false stopped state after a session restart race. */
@@ -3199,6 +3240,7 @@ async function handoverBrain(sessionName, text) {
   const record = await liveBrainForSession(sessionName);
   if (!record) return { status: 404, error: "this session is not a running brain" };
   const previous = sessionName;
+  const previousGeneration = record.generation;
   recordHandover(record, text);
   const launch = await refreshBrainLaunch(record);
   if (launch.error) return { status: 409, error: launch.error };
@@ -3208,6 +3250,7 @@ async function handoverBrain(sessionName, text) {
     messages.queue(previous, { from: "tangent", area: null, text: `Handover recorded, but the next generation could not start: ${started.error}. You are still the brain.`, queuedAt: new Date().toISOString() });
     return started;
   }
+  await transitionBrainRequests(record.area, previousGeneration, "handover", started.generation);
   // spawnBrainSession does not return until the replacement has been created
   // and its initial prompt attempt has settled. Complete the swap before the
   // mutation response so a caller can never observe a successful handover
@@ -3225,6 +3268,7 @@ async function endBrainForSession(sessionName) {
   if (!record) return null;
   endBrain(record, "ended");
   await writeBrain(BRAINS_ROOT, record);
+  await transitionBrainRequests(record.area, record.generation, "brain-ended");
   return record;
 }
 
@@ -3927,7 +3971,7 @@ const brainRoutes = createBrainRoutes({
     if (!brain) return { status: 403, error: "only a live brain can create a request" };
     const record = await readBrainRequests(BRAINS_ROOT, brain.area);
     try {
-      const request = createBrainRequest(record, input);
+      const request = createBrainRequest(record, { ...input, brainGeneration: brain.generation });
       await writeBrainRequests(BRAINS_ROOT, record);
       return { status: 200, request };
     } catch (error) { return { status: 400, error: String(error.message ?? error) }; }
@@ -3950,6 +3994,29 @@ const brainRoutes = createBrainRoutes({
         }
       }
       await notifyBrain(brain.area, brainRequestAnswerNotice(request));
+      return { status: 200, request };
+    } catch (error) { return { status: 400, error: String(error.message ?? error) }; }
+  },
+  /** Lets only the creating live brain withdraw its obsolete Request. */
+  async withdrawRequest(session, id, note) {
+    const brain = await liveBrainForSession(session);
+    if (!brain) return { status: 403, error: "only a live brain can withdraw a request" };
+    const record = await readBrainRequests(BRAINS_ROOT, brain.area);
+    try {
+      const request = withdrawBrainRequest(record, id, note);
+      await writeBrainRequests(BRAINS_ROOT, record);
+      return { status: 200, request };
+    } catch (error) { return { status: 400, error: String(error.message ?? error) }; }
+  },
+  /** Makes Julian's dismissal durable and tells the brain to stop waiting. */
+  async dismissRequest(area, id) {
+    const brain = await brainOfArea(area);
+    if (!brain) return { status: 404, error: `no brain on ${area}` };
+    const record = await readBrainRequests(BRAINS_ROOT, area);
+    try {
+      const request = dismissBrainRequest(record, id);
+      await writeBrainRequests(BRAINS_ROOT, record);
+      await notifyBrain(area, `Julian dismissed "${request.subject}". The Request is closed; do not wait for an answer.`);
       return { status: 200, request };
     } catch (error) { return { status: 400, error: String(error.message ?? error) }; }
   },
@@ -4485,6 +4552,7 @@ const workMutationRoutes = createWorkMutationRoutes({
     try {
       await editGoalFile(file, fields);
       if (fields.status === "dropped" && goal.session) await execFileAsync("tmux", ["kill-session", "-t", "=" + goal.session]).catch(() => {});
+      if (fields.status === "dropped") await closeRequestsForGoals([file], "goal-dropped");
       const changed = fields.status === "done" ? await cascadeGoalDone(file, await goalsByFile()) : [file];
       if (!changed.includes(file)) changed.unshift(file);
       const what = fields.status === "done" ? "done" : fields.status === "dropped" ? "marked won't do" : fields.status === "open" ? "reopened" : "edited";

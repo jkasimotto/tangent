@@ -81,6 +81,16 @@ export const brainCommandSpec: CliCommandSpec = {
       ]
     },
     {
+      name: "withdraw",
+      description: "Withdraw one obsolete open Request from Julian's desk.",
+      args: "<request-id>",
+      options: [
+        { name: "note", takesValue: true, description: "Short reason for the withdrawal" },
+        { name: "session", takesValue: true, description: "Brain session name; defaults to the tmux session this command runs in" },
+        serverOption
+      ]
+    },
+    {
       name: "status",
       description: "Show the brain of an Area, or of the session this command runs in: status, generation, instruction, latest handover",
       args: "[area]",

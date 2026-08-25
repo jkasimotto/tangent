@@ -1006,9 +1006,20 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   }
 
   /** Hides one exact attention event and offers a local Undo. */
-  function dismissAsk(id) {
+  async function dismissAsk(id) {
     const item = forYouItems().find((ask) => ask.id === id);
     if (!item) return;
+    if (item.source.startsWith("request:")) {
+      const action = item.actions.find((candidate) => candidate.kind === "open-request");
+      try {
+        await post("/api/brains/requests/dismiss", { area: item.area, id: action?.arg?.id ?? "" });
+        showToast("Dismissed. The brain was told.");
+        await refresh();
+      } catch (error) {
+        showToast(error.message);
+      }
+      return;
+    }
     const next = readDismissedAskIds(localStorage);
     next.add(id);
     if (!writeDismissedAskIds(localStorage, next)) {

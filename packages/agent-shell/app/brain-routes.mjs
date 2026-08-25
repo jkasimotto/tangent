@@ -11,6 +11,8 @@ export function createBrainRoutes(operations) {
     ["POST /api/brains/reply", reply],
     ["POST /api/brains/requests", createRequest],
     ["POST /api/brains/requests/answer", answerRequest],
+    ["POST /api/brains/requests/withdraw", withdrawRequest],
+    ["POST /api/brains/requests/dismiss", dismissRequest],
   ]);
 
   /** Handles one matching request and reports whether this router owned it. */
@@ -95,6 +97,20 @@ export function createBrainRoutes(operations) {
   async function answerRequest(request, response) {
     const body = await readJson(request);
     const result = await operations.answerRequest(String(body.area ?? ""), String(body.id ?? ""), String(body.answer ?? ""), String(body.note ?? ""));
+    sendJson(response, result.status, result.status === 200 ? { request: result.request } : { error: result.error });
+  }
+
+  /** Lets the creating live brain withdraw one obsolete Request. */
+  async function withdrawRequest(request, response) {
+    const body = await readJson(request);
+    const result = await operations.withdrawRequest(String(body.session ?? ""), String(body.id ?? ""), String(body.note ?? ""));
+    sendJson(response, result.status, result.status === 200 ? { request: result.request } : { error: result.error });
+  }
+
+  /** Records Julian's dismissal as a durable Request transition. */
+  async function dismissRequest(request, response) {
+    const body = await readJson(request);
+    const result = await operations.dismissRequest(String(body.area ?? ""), String(body.id ?? ""));
     sendJson(response, result.status, result.status === 200 ? { request: result.request } : { error: result.error });
   }
 

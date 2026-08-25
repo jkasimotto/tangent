@@ -14,8 +14,23 @@ export function brainRequestsPath(root, area) {
 export async function readBrainRequests(root, area) {
   const value = await readJsonObject(brainRequestsPath(root, area));
   return value?.schema === BRAIN_REQUESTS_SCHEMA
-    ? { ...value, area, requests: Array.isArray(value.requests) ? value.requests : [] }
+    ? { ...value, area, requests: Array.isArray(value.requests) ? value.requests.map((request) => normalizeRequestSubject(request, area)) : [] }
     : { schema: BRAIN_REQUESTS_SCHEMA, area, requests: [] };
+}
+
+/** Adds lifecycle identity to a stored pre-lifecycle Request without changing its answer contract. */
+function normalizeRequestSubject(request, area) {
+  const generation = Number.isInteger(request?.brainGeneration) ? request.brainGeneration : null;
+  const ownerRef = request?.ownerRef?.area ? request.ownerRef : { type: "brain", area, generation };
+  if (request?.subjectRef?.type === "goal" && request.subjectRef.goal) return { ...request, ownerRef };
+  if (request?.subjectRef?.type === "brain" && request.subjectRef.area) return { ...request, ownerRef };
+  return {
+    ...request,
+    ownerRef,
+    subjectRef: request?.goal
+      ? { type: "goal", goal: request.goal }
+      : { type: "brain", area, generation },
+  };
 }
 
 /** Writes one Area's request record atomically. */
@@ -40,9 +55,68 @@ export function createBrainRequest(record, input, now = new Date().toISOString()
   if (detail.length > 300) throw new Error("detail must be 300 characters or fewer; put full evidence in the plan");
   if (!proposal) throw new Error("proposal is required");
   if (proposal.length > 200) throw new Error("proposal must be 200 characters or fewer");
-  const request = { id: randomUUID(), kind, subject, question, proposal, detail, options, goal, status: "open", createdAt: now, answeredAt: null, answer: null, note: null, response: null };
+  const brainGeneration = Number.isInteger(input.brainGeneration) ? input.brainGeneration : null;
+  const subjectRef = goal
+    ? { type: "goal", goal }
+    : { type: "brain", area: record.area, generation: brainGeneration };
+  const ownerRef = { type: "brain", area: record.area, generation: brainGeneration };
+  const request = { id: randomUUID(), kind, subject, question, proposal, detail, options, goal, brainGeneration, ownerRef, subjectRef, status: "open", createdAt: now, answeredAt: null, answer: null, note: null, response: null };
   record.requests.push(request);
   return request;
+}
+
+/** Closes one open Request because its subject ended. */
+function closeRequest(request, reason, actor, now) {
+  request.status = "closed";
+  request.closedAt = now;
+  request.closedReason = reason;
+  request.closedBy = actor;
+  return request;
+}
+
+/** Closes every open Request linked to one Goal. */
+export function closeGoalRequests(record, goal, reason = "goal-ended", now = new Date().toISOString()) {
+  return record.requests
+    .filter((request) => request.status === "open" && (request.subjectRef?.type === "goal" ? request.subjectRef.goal === goal : request.goal === goal))
+    .map((request) => closeRequest(request, reason, "subject", now));
+}
+
+/** Closes every open Request owned by one brain generation. Legacy Requests close with that brain. */
+export function closeBrainRequests(record, area, generation, reason = "brain-ended", now = new Date().toISOString()) {
+  return record.requests
+    .filter((request) => request.status === "open" && request.ownerRef?.area === area
+      && (request.ownerRef.generation === null || request.ownerRef.generation === generation))
+    .map((request) => closeRequest(request, reason, "subject", now));
+}
+
+/** Hands open brain-subject Requests from one generation to its deliberate replacement. */
+export function handoverBrainRequests(record, area, fromGeneration, toGeneration) {
+  const moved = record.requests.filter((request) => request.status === "open" && request.ownerRef?.area === area
+    && (request.ownerRef.generation === null || request.ownerRef.generation === fromGeneration));
+  for (const request of moved) {
+    request.brainGeneration = toGeneration;
+    request.ownerRef = { type: "brain", area, generation: toGeneration };
+    if (request.subjectRef?.type === "brain") request.subjectRef = { type: "brain", area, generation: toGeneration };
+  }
+  return moved;
+}
+
+/** Lets the creating brain take back an obsolete open Request. */
+export function withdrawBrainRequest(record, id, note = "", now = new Date().toISOString()) {
+  const request = record.requests.find((item) => item.id === id);
+  if (!request) throw new Error("request not found");
+  if (request.status !== "open") throw new Error("request is not open");
+  closeRequest(request, "withdrawn", "brain", now);
+  request.note = String(note ?? "").trim() || null;
+  return request;
+}
+
+/** Records Julian's durable dismissal so the brain does not wait for an answer. */
+export function dismissBrainRequest(record, id, now = new Date().toISOString()) {
+  const request = record.requests.find((item) => item.id === id);
+  if (!request) throw new Error("request not found");
+  if (request.status !== "open") throw new Error("request is not open");
+  return closeRequest(request, "dismissed", "julian", now);
 }
 
 /** Validates and records Julian's answer to one open request. */

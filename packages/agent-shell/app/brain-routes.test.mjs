@@ -47,3 +47,19 @@ test("the answer route sends typed changes to the brain operation", async () => 
   assert.deepEqual(received, { area: "otto/tangent", id: "r1", answer: "changes", note: "Use less text." });
   assert.equal(output.status, 200);
 });
+
+test("withdraw and dismiss routes keep brain and Julian authority separate", async () => {
+  const received = [];
+  const routes = createBrainRoutes({
+    /** Records a brain-owned withdrawal. */
+    async withdrawRequest(session, id, note) { received.push({ kind: "withdraw", session, id, note }); return { status: 200, request: { id } }; },
+    /** Records Julian's durable dismissal. */
+    async dismissRequest(area, id) { received.push({ kind: "dismiss", area, id }); return { status: 200, request: { id } }; },
+  });
+  await routes.handle(request("POST", { session: "brain-g2", id: "r1", note: "Obsolete." }), response(), new URL("http://shell/api/brains/requests/withdraw"));
+  await routes.handle(request("POST", { area: "otto/tangent", id: "r2" }), response(), new URL("http://shell/api/brains/requests/dismiss"));
+  assert.deepEqual(received, [
+    { kind: "withdraw", session: "brain-g2", id: "r1", note: "Obsolete." },
+    { kind: "dismiss", area: "otto/tangent", id: "r2" },
+  ]);
+});

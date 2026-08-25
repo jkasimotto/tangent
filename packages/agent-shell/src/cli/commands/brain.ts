@@ -12,8 +12,19 @@ export async function runBrainCli(argv = process.argv.slice(2)): Promise<void> {
   if (subcommand === "handover") return handoverCommand(args);
   if (subcommand === "advance") return advanceCommand(args);
   if (subcommand === "request") return requestCommand(args);
+  if (subcommand === "withdraw") return withdrawCommand(args);
   if (subcommand === "status") return statusCommand(args);
   throw new Error(`Unknown brain command: ${subcommand}. Try "tangent brain handover <facts>" or "tangent brain status [area]".`);
+}
+
+/** Withdraws one obsolete Request owned by this live brain. */
+async function withdrawCommand(args: Args): Promise<void> {
+  const server = resolveServerUrl(stringArg(args.server));
+  const session = await requireSession(args, "tangent brain withdraw");
+  const id = String(args._[1] ?? "").trim();
+  if (!id) throw new Error("tangent brain withdraw needs <request-id>.");
+  await postJson(server, "/api/brains/requests/withdraw", { session, id, note: stringArg(args.note)?.trim() || "" });
+  console.log(`withdrew Request ${id}`);
 }
 
 /** Creates one structured request for Julian. */

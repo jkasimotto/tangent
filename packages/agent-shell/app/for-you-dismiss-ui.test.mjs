@@ -68,7 +68,9 @@ async function shellFixture({ storedDismissals = null, request = null } = {}) {
   window.fetch = async (url, options = {}) => {
     const pathname = new URL(url, window.location.href).pathname;
     if (options.method === "POST") {
-      posts.push({ path: pathname, body: JSON.parse(options.body || "{}") });
+      const body = JSON.parse(options.body || "{}");
+      posts.push({ path: pathname, body });
+      if (pathname === "/api/brains/requests/dismiss" && request?.id === body.id) request.status = "closed";
       return jsonResponse({ ok: true });
     }
     if (pathname === "/api/sessions") return jsonResponse({
@@ -131,7 +133,7 @@ test("a dismissal survives reload and a restarted attempt can ask again", async 
   assert.ok(reloaded.window.document.querySelector("[data-dismiss-ask]"));
 });
 
-test("a Request dismissal hides only that Request and does not answer it", async () => {
+test("a Request dismissal is durable and tells the brain without using an answer", async () => {
   const request = {
     id: "request-one",
     kind: "decision",
@@ -144,9 +146,11 @@ test("a Request dismissal hides only that Request and does not answer it", async
   const requestDismiss = window.document.querySelector('[data-ask-id^="request:"] [data-dismiss-ask]');
   assert.ok(requestDismiss);
   requestDismiss.click();
+  await settle(window);
   assert.equal(window.document.querySelector('[data-ask-id^="request:"]'), null);
   assert.equal(window.forYouItems().length, 1, "the stopped-step ask stays visible");
-  assert.deepEqual(posts, [], "dismissal does not answer or mutate the Request");
+  assert.deepEqual(posts, [{ path: "/api/brains/requests/dismiss", body: { area: goal.area, id: request.id } }]);
+  assert.equal(window.localStorage.getItem(ASK_DISMISSALS_KEY), null, "durable Request dismissal does not need a browser receipt");
 });
 
 test("another tab's dismissal receipt updates this tab and preserves concurrent receipts", async () => {

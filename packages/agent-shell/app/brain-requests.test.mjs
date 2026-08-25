@@ -4,7 +4,7 @@ import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { answerBrainRequest, brainRequestAnswerNotice, createBrainRequest, openBrainRequests, readBrainRequests, requestIsApproved, writeBrainRequests } from "./brain-requests.mjs";
+import { answerBrainRequest, brainRequestAnswerNotice, closeBrainRequests, closeGoalRequests, createBrainRequest, dismissBrainRequest, handoverBrainRequests, openBrainRequests, readBrainRequests, requestIsApproved, withdrawBrainRequest, writeBrainRequests } from "./brain-requests.mjs";
 
 test("each durable approval stays attached to its own proposal", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "brain-requests-"));
@@ -28,8 +28,56 @@ test("a test request records the Goal file it is about", async () => {
   const record = await readBrainRequests("/missing", "otto/tangent");
   const withGoal = createBrainRequest(record, { kind: "test", subject: "Ramp faces", question: "Approve this result?", proposal: "Close the Goal as done.", detail: "Drag the pole.", goal: "otto/dnd/goal-x.md" });
   assert.equal(withGoal.goal, "otto/dnd/goal-x.md");
+  assert.deepEqual(withGoal.subjectRef, { type: "goal", goal: "otto/dnd/goal-x.md" });
+  assert.deepEqual(withGoal.ownerRef, { type: "brain", area: "otto/tangent", generation: null });
   const withoutGoal = createBrainRequest(record, { kind: "test", subject: "Ramp faces", question: "Approve this result?", proposal: "Accept the result.", detail: "Drag the pole." });
   assert.equal(withoutGoal.goal, null);
+  assert.deepEqual(withoutGoal.subjectRef, { type: "brain", area: "otto/tangent", generation: null });
+});
+
+test("Goal closure closes only open Requests about that Goal", async () => {
+  const record = await readBrainRequests("/missing", "otto/tangent");
+  const closed = createBrainRequest(record, { kind: "test", subject: "A", question: "Accept A?", proposal: "Close A.", goal: "otto/a/goal-a.md" });
+  const other = createBrainRequest(record, { kind: "test", subject: "B", question: "Accept B?", proposal: "Close B.", goal: "otto/a/goal-b.md" });
+  assert.deepEqual(closeGoalRequests(record, "otto/a/goal-a.md", "goal-dropped", "2026-08-25T00:00:00.000Z"), [closed]);
+  assert.equal(closed.status, "closed");
+  assert.equal(closed.closedReason, "goal-dropped");
+  assert.equal(other.status, "open");
+});
+
+test("brain Requests hand over deliberately or close when their brain ends", async () => {
+  const record = await readBrainRequests("/missing", "otto/tangent");
+  const request = createBrainRequest(record, { kind: "decision", subject: "Choice", question: "Approve it?", proposal: "Use it.", brainGeneration: 3 });
+  const goalRequest = createBrainRequest(record, { kind: "test", subject: "Goal", question: "Accept it?", proposal: "Close it.", goal: "otto/tangent/goal-x.md", brainGeneration: 3 });
+  assert.deepEqual(handoverBrainRequests(record, record.area, 3, 4), [request, goalRequest]);
+  assert.deepEqual(request.subjectRef, { type: "brain", area: record.area, generation: 4 });
+  assert.deepEqual(request.ownerRef, { type: "brain", area: record.area, generation: 4 });
+  assert.deepEqual(goalRequest.subjectRef, { type: "goal", goal: "otto/tangent/goal-x.md" }, "handover preserves the Goal subject");
+  assert.deepEqual(closeBrainRequests(record, record.area, 4, "brain-ended", "2026-08-25T00:00:00.000Z"), [request, goalRequest]);
+  assert.equal(openBrainRequests(record).length, 0);
+});
+
+test("brain withdrawal and Julian dismissal are distinct durable transitions", async () => {
+  const record = await readBrainRequests("/missing", "otto/tangent");
+  const withdrawn = createBrainRequest(record, { kind: "approval", subject: "Old", question: "Approve old?", proposal: "Use old." });
+  const dismissed = createBrainRequest(record, { kind: "approval", subject: "No", question: "Approve no?", proposal: "Use no." });
+  withdrawBrainRequest(record, withdrawn.id, "Handled elsewhere.", "2026-08-25T00:00:00.000Z");
+  dismissBrainRequest(record, dismissed.id, "2026-08-25T00:01:00.000Z");
+  assert.deepEqual([withdrawn.status, withdrawn.closedReason, withdrawn.closedBy], ["closed", "withdrawn", "brain"]);
+  assert.deepEqual([dismissed.status, dismissed.closedReason, dismissed.closedBy], ["closed", "dismissed", "julian"]);
+});
+
+test("legacy records gain subject identity without losing live or answered state", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "brain-requests-legacy-"));
+  await writeBrainRequests(root, { schema: "area-brain-requests.v1", area: "otto/tangent", requests: [
+    { id: "goal", goal: "otto/tangent/goal-x.md", status: "open" },
+    { id: "brain", goal: null, status: "answered", answer: "approve" },
+  ] });
+  const record = await readBrainRequests(root, "otto/tangent");
+  assert.deepEqual(record.requests[0].subjectRef, { type: "goal", goal: "otto/tangent/goal-x.md" });
+  assert.deepEqual(record.requests[0].ownerRef, { type: "brain", area: "otto/tangent", generation: null });
+  assert.deepEqual(record.requests[1].subjectRef, { type: "brain", area: "otto/tangent", generation: null });
+  assert.deepEqual(record.requests.map((item) => item.status), ["open", "answered"]);
 });
 
 test("new requests need a concrete proposal", async () => {

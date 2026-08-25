@@ -16,11 +16,34 @@ export function createRefreshCoordinator(run, environment = globalThis) {
   let pending = false;
   let pendingOptions = {};
   let retryTimer = null;
+  let scheduled = null;
   let stopped = false;
 
   /** Keeps the stronger initial-load request when triggers overlap. */
   function mergeOptions(current, next) {
     return { ...current, ...next, initial: Boolean(current?.initial || next?.initial) };
+  }
+
+  /** Schedules one retry that absorbs every trigger received before it runs. */
+  function schedule(options, delay) {
+    if (scheduled) {
+      scheduled.options = mergeOptions(scheduled.options, options);
+      return scheduled.promise;
+    }
+    let resolveScheduled;
+    let rejectScheduled;
+    const promise = new Promise((resolve, reject) => {
+      resolveScheduled = resolve;
+      rejectScheduled = reject;
+    });
+    scheduled = { options, promise, resolve: resolveScheduled, reject: rejectScheduled };
+    retryTimer = environment.setTimeout(() => {
+      const next = scheduled;
+      retryTimer = null;
+      scheduled = null;
+      void request(next.options).then(next.resolve, next.reject);
+    }, delay);
+    return promise;
   }
 
   /** Starts one refresh or joins the current refresh. */
@@ -31,10 +54,7 @@ export function createRefreshCoordinator(run, environment = globalThis) {
       pendingOptions = mergeOptions(pendingOptions, options);
       return active;
     }
-    if (retryTimer !== null) {
-      environment.clearTimeout?.(retryTimer);
-      retryTimer = null;
-    }
+    if (scheduled) return schedule(options, 0);
     active = Promise.resolve().then(() => run(options));
     active.then((result) => {
       const delay = Number(result?.retryAfterMs);
@@ -45,27 +65,18 @@ export function createRefreshCoordinator(run, environment = globalThis) {
         const nextOptions = pendingOptions;
         pending = false;
         pendingOptions = {};
-        retryTimer = environment.setTimeout(() => {
-          retryTimer = null;
-          void request(nextOptions);
-        }, retryDelay ?? 0);
+        void schedule(nextOptions, retryDelay ?? 0);
         return;
       }
       if (retryDelay === null) return;
-      retryTimer = environment.setTimeout(() => {
-        retryTimer = null;
-        void request({ trigger: "retry" });
-      }, retryDelay);
+      void schedule({ trigger: "retry" }, retryDelay);
     }, () => {
       active = null;
       if (!pending || stopped) return;
       const nextOptions = pendingOptions;
       pending = false;
       pendingOptions = {};
-      retryTimer = environment.setTimeout(() => {
-        retryTimer = null;
-        void request(nextOptions);
-      }, 0);
+      void schedule(nextOptions, 0);
     });
     return active;
   }
@@ -77,6 +88,8 @@ export function createRefreshCoordinator(run, environment = globalThis) {
       stopped = true;
       pending = false;
       if (retryTimer !== null) environment.clearTimeout?.(retryTimer);
+      scheduled?.resolve();
+      scheduled = null;
       retryTimer = null;
     },
   };

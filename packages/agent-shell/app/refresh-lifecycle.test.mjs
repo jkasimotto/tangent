@@ -72,6 +72,34 @@ test("refresh coordinator owns one delayed retry", async () => {
   coordinator.stop();
 });
 
+test("triggers received during Retry-After join the scheduled retry", async () => {
+  const timers = [];
+  const options = [];
+  let cancellations = 0;
+  const environment = {
+    /** Captures the one retry timer. */
+    setTimeout(callback, delay) { timers.push({ callback, delay }); return timers.length; },
+    /** Records an invalid attempt to bypass Retry-After. */
+    clearTimeout() { cancellations += 1; },
+  };
+  const coordinator = createRefreshCoordinator(async (requestOptions) => {
+    options.push(requestOptions);
+    return options.length === 1 ? { retryAfterMs: 1_000 } : null;
+  }, environment);
+  await coordinator.request({ trigger: "event" });
+  const joined = coordinator.request({ trigger: "mutation", initial: true });
+  await Promise.resolve();
+  assert.equal(options.length, 1, "a new trigger must not start before Retry-After");
+  assert.equal(cancellations, 0);
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].delay, 1_000);
+  timers[0].callback();
+  await joined;
+  assert.equal(options.length, 2);
+  assert.deepEqual(options[1], { trigger: "mutation", initial: true });
+  coordinator.stop();
+});
+
 test("a pending trigger respects backpressure before its trailing refresh", async () => {
   const timers = [];
   let release;

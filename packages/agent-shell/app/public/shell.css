@@ -495,6 +495,7 @@ summary:focus-visible {
 .ask-cell-area, .ask-cell-kind { overflow: hidden; color: #a79776; font-size: 11px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
 .ask-group.stopped .ask-cell-area, .ask-group.fallback .ask-cell-area { color: #7d7566; }
 .ask-cell-question { min-width: 0; font-weight: 400; }
+.ask-cell-facts { display: none; }
 .ask-subject { display: block; overflow: hidden; color: #d9cfb8; font-size: 12px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
 .ask-question { display: block; max-width: 72ch; padding: 0; border: 0; background: transparent; color: var(--amber); cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 700; line-height: 1.35; text-align: left; }
 button.ask-question:hover { text-decoration: underline; text-underline-offset: 3px; }
@@ -621,10 +622,14 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
   .work-keyboard-hint { display: none; }
   .ask-col-area, .ask-col-kind { width: 0; }
   .ask-head-area, .ask-head-kind, .ask-cell-area, .ask-cell-kind { visibility: hidden; padding: 0; overflow: hidden; white-space: nowrap; }
+  .ask-cell-facts { display: block; margin-bottom: 3px; color: #a79776; font-size: 11px; font-weight: 680; }
   .ask-col-question { width: 62%; }
   .ask-col-action { width: 128px; }
   .ask-actions { flex-direction: column; align-items: stretch; }
   .ask-answer { min-height: 44px; }
+  /* The dismiss verb wraps below the question with the rest of the answers, so
+     it takes the same touch target and does not stretch across the column. */
+  .ask-dismiss { width: 44px; height: 44px; align-self: flex-end; }
 }
 
 .desk-programs { display: grid; gap: 1px; }

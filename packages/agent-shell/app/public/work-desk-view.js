@@ -1025,7 +1025,10 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * One direct ask as a table row: Area and kind as facts, the question as the
    * row header (it is the only part Julian must read), and the answer verbs in
    * the Action cell. The first opening verb stays the row's main button, as it
-   * was on the card (design-the-for-you-row-shows-only-direct-asks).
+   * was on the card (design-the-for-you-row-shows-only-direct-asks). The
+   * question cell also holds one narrow-width copy of the Area and kind,
+   * because their own cells hide below 640 px; CSS shows exactly one copy at
+   * each width, so nothing is read twice.
    */
   function askTableRow(ask) {
     const primary = ask.actions.find((action) => ASK_PRIMARY_ACTIONS.includes(action.kind));
@@ -1040,7 +1043,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     return `<tr class="ask-row" data-ask-id="${escapeHtml(ask.id)}">
       <td class="ask-cell-area">${escapeHtml(areaLabel(ask.area))}</td>
       <td class="ask-cell-kind">${escapeHtml(askKindLabel(ask))}</td>
-      <th class="ask-cell-question" scope="row"><span class="ask-subject">${escapeHtml(ask.subject)}</span>${question}${context}${proposal}</th>
+      <th class="ask-cell-question" scope="row"><small class="ask-cell-facts">${escapeHtml(`${areaLabel(ask.area)} \u00b7 ${askKindLabel(ask)}`)}</small><span class="ask-subject">${escapeHtml(ask.subject)}</span>${question}${context}${proposal}</th>
       <td class="ask-cell-action"><span class="ask-actions${rest.length > 2 ? " choices" : ""}">${answers}<button class="ask-dismiss" type="button" data-dismiss-ask="${escapeHtml(ask.id)}" aria-label="${escapeHtml(dismissLabel)}" title="Dismiss from For you"><span aria-hidden="true">×</span></button></span></td>
     </tr>`;
   }

@@ -79,6 +79,13 @@ test("the direct-ask table keeps questions out of the work table", async () => {
     assert.match(row.querySelector(".ask-question").textContent, /\?$/, "every row asks a real question");
   }
   assert.deepEqual(rows.map((row) => row.querySelector(".ask-cell-kind").textContent), ["Test", "Decide"]);
+  // Area and kind own a cell each at wide width. Below 640 px those cells are
+  // hidden, so the question cell carries one copy of the same two facts.
+  for (const row of rows) {
+    const facts = row.querySelector(".ask-cell-facts").textContent;
+    assert.match(facts, new RegExp(`${row.querySelector(".ask-cell-kind").textContent}$`), "the narrow copy ends with the kind");
+    assert.ok(facts.startsWith(row.querySelector(".ask-cell-area").textContent), "the narrow copy starts with the Area");
+  }
   assert.equal(document.querySelectorAll(".work-table .ask-row").length, 0, "no question repeats inside the work table");
   // A Test question and its Ready-for-validation Goal can both exist; only the
   // Test row answers it.

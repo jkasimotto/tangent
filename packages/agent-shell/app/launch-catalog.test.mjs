@@ -92,6 +92,36 @@ test("launch catalog lists inherited codex defaults and model-specific efforts f
   assert.equal(options.harnesses[0].models[0].efforts[1].command, "codex --model gpt-sol -c effort=ultra");
 });
 
+test("neara resolves its exact Work and Brain launch matrix", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "tangent-launch-catalog-neara-"));
+  await writeFile(path.join(root, "harnesses.md"), [
+    "```tangent.harnesses.v1",
+    JSON.stringify({
+      version: 1,
+      modelSets: { pi: [{ id: "glm-5-2", args: "--provider resetdata-glm --model zai/glm-5.2" }] },
+      effortSets: {
+        agy: [{ id: "high", args: "--effort high" }],
+        pi: [{ id: "minimal", args: "--thinking minimal" }],
+      },
+      harnesses: [
+        { id: "agyd", command: "agyd", effortSet: "agy" },
+        { id: "pi-code", command: "pi-code", modelSet: "pi", effortSet: "pi" },
+        { id: "claude", command: "claude" },
+      ],
+    }),
+    "```",
+  ].join("\n"));
+  const declaration = '```tangent.environment.v1\n{"defaults":{"launch":{"harness":"agyd","effort":"high"},"brain":{"harness":"pi-code","model":"glm-5-2","effort":"minimal"}}}\n```';
+  /** Reads the neara launch declaration from this focused fixture. */
+  const readAreaNote = async (area) => area === "neara" ? declaration : "";
+  const catalog = createLaunchCatalog({ root, readAreaNote });
+
+  const options = await catalog.options("neara", "all");
+  assert.equal(options.workDefault.command, "agyd --effort high");
+  assert.equal(options.brainDefault.command, "pi-code --provider resetdata-glm --model zai/glm-5.2 --thinking minimal");
+  assert.doesNotMatch(options.workDefault.command + options.brainDefault.command, /claude|sonnet/i);
+});
+
 test("brain launch resolution uses brain, then work, then a named Area error", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "tangent-launch-catalog-brain-"));
   await writeFile(path.join(root, "harnesses.md"), [

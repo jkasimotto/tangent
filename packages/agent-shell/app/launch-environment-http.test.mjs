@@ -300,8 +300,21 @@ test("launch options resolve the registry, and saving writes an Area default", a
   assert.equal(reopened.session, session);
   assert.equal(reopened.reattached, true);
 
-  // A live Goal session keeps its recorded launch after its Area default is
-  // removed from the registry. Reattachment must not resolve that new error.
+  // A Goal pane at its shell is a fresh start. It uses the current Area
+  // setting instead of the command that was recorded when the pane opened.
+  const restartedAtShell = await fetch(`${base}/api/goals/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file: "otto/test/goal-prove-launch.md" }),
+  });
+  assert.equal(restartedAtShell.status, 200);
+  const currentCommand = await new Promise((resolve) => {
+    execFile("tmux", ["show-options", "-t", session, "-v", "@tangent_launch_command"], (_error, stdout) => resolve((stdout ?? "").trim()));
+  });
+  assert.equal(currentCommand, "pi-code");
+
+  // A broken current setting blocks that fresh start. Tangent does not use
+  // the recorded command as a silent substitute.
   const registryWithoutDefault = await fetch(`${base}/api/harnesses`).then((response) => response.json());
   registryWithoutDefault.registry.harnesses = registryWithoutDefault.registry.harnesses.filter((harness) => harness.id !== "pi-code");
   assert.equal((await fetch(`${base}/api/harnesses`, {
@@ -316,10 +329,9 @@ test("launch options resolve the registry, and saving writes an Area default", a
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ file: "otto/test/goal-prove-launch.md" }),
   });
-  assert.equal(reattachedAfterRemoval.status, 200);
-  assert.equal((await reattachedAfterRemoval.json()).reattached, true);
+  assert.equal(reattachedAfterRemoval.status, 409);
   const recordedCommand = await new Promise((resolve) => {
     execFile("tmux", ["show-options", "-t", session, "-v", "@tangent_launch_command"], (_error, stdout) => resolve((stdout ?? "").trim()));
   });
-  assert.equal(recordedCommand, "CLAUDE_CONFIG_DIR=~/.claude-otto claude --model claude-opus-4-6");
+  assert.equal(recordedCommand, "pi-code");
 });

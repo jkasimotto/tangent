@@ -1869,12 +1869,9 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
   const existing = (pipeline || continuation) ? null : [o.session, phaseName, baseName].find((n) => n && sessions.some((s) => s.name === n));
   const live = existing ? sessions.find((session) => session.name === existing) : null;
   const existingAtShell = Boolean(live && SHELL_CMDS.has(live.command));
-  if (!command && existingAtShell) {
-    command = await execFileAsync("tmux", ["show-options", "-t", existing, "-v", "@tangent_launch_command"])
-      .then(({ stdout }) => stdout.trim(), () => "");
-  }
   // A new launch, including one in an existing shell pane, resolves after the
-  // saved Area edit. An agent that already runs keeps its recorded launch.
+  // saved Area edit. An explicit request still wins, while an agent that
+  // already runs keeps its recorded launch.
   if (!command && (!existing || existingAtShell)) {
     const inherited = await launchCatalog.forArea(area);
     if (inherited.error) return { status: 409, error: inherited.error };
@@ -3092,6 +3089,20 @@ async function spawnBrainSession(record) {
   return { status: 200, session: name, generation, brain: record };
 }
 
+/** Replaces a stopped brain's stale runtime with its current Area setting. */
+async function refreshBrainLaunch(record) {
+  const launch = await launchCatalog.forBrain(record.area);
+  if (launch.error) return launch;
+  record.launch = launch.harness ? {
+    harness: launch.harness,
+    model: launch.model ?? null,
+    effort: launch.effort ?? null,
+  } : null;
+  record.command = launch.command;
+  record.label = launch.label || launch.command;
+  return launch;
+}
+
 /**
  * Starts a brain on an Area from Julian's instruction, resumes a stopped or
  * ended one, or reattaches to the one that runs. One brain per Area.
@@ -3134,8 +3145,11 @@ async function startBrainUnlocked(area, { instruction = "", choice = null, comma
       existing.launch = command ? null : choice;
       existing.command = launch.command;
       existing.label = command ? launch.command : launch.label || launch.command;
-      await writeBrain(BRAINS_ROOT, existing);
+    } else {
+      const launch = await refreshBrainLaunch(existing);
+      if (launch.error) return { status: 409, error: launch.error };
     }
+    await writeBrain(BRAINS_ROOT, existing);
     return spawnBrainSession(existing);
   }
   const invalid = validateInstruction(instruction);
@@ -3186,6 +3200,8 @@ async function handoverBrain(sessionName, text) {
   if (!record) return { status: 404, error: "this session is not a running brain" };
   const previous = sessionName;
   recordHandover(record, text);
+  const launch = await refreshBrainLaunch(record);
+  if (launch.error) return { status: 409, error: launch.error };
   await writeBrain(BRAINS_ROOT, record);
   const started = await spawnBrainSession(record);
   if (started.status !== 200) {

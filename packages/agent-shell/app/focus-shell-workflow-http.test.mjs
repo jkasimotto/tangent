@@ -694,6 +694,12 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.match(serverSource, /The resolved work harness for this Area is/);
   assert.match(serverSource, /Choose its steps and catalog launch ids from the approved plan/);
   assert.doesNotMatch(serverSource, /Sonnet is the workhorse/);
+  const brainDefault = await fetch(`${base}/api/launch/default`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ area: "otto/test", kind: "brain", mode: "launch", launch: { harness: "fake", model: "one", effort: "high" } }),
+  });
+  assert.equal(brainDefault.status, 200);
   const emptyBrain = await fetch(`${base}/api/brains/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -795,6 +801,8 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(brainResume.generation, 3);
   openedSessions.push("test-brain-g3");
   assert.equal(brainResume.brain.instruction, "Get the test Area done.");
+  assert.deepEqual(brainResume.brain.launch, { harness: "fake", model: "one", effort: "high" });
+  assert.equal(brainResume.brain.command, "fake-agent --model one --effort high");
 
   const missingDropReason = await fetch(`${base}/api/goals/edit`, {
     method: "POST",

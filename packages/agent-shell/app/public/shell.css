@@ -535,6 +535,10 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-group-brain-short { display: none; }
 .work-group-brain-long { display: inline; }
 
+/* A closed Subgoal chain hides its rows with the `hidden` attribute. The rule
+   is explicit because `.work-row` styling sits at the same specificity as the
+   user-agent's `[hidden]` rule. */
+.work-row[hidden] { display: none; }
 .work-row > * { box-sizing: border-box; height: 36px; padding: 3px 10px; border-bottom: 1px solid #23282e; vertical-align: middle; }
 .work-row:hover > * { background: #171a1e; }
 .work-row.selected > * { background: rgba(94, 144, 255, .06); }

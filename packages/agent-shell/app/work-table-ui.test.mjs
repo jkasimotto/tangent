@@ -281,3 +281,27 @@ test("the row and group heights meet the measured density targets", async () => 
   assert.ok(Math.floor((714 - 3 * group) / row) >= 17, "17 Goal rows fit across three groups in the 714 px work region");
   assert.ok(Math.floor((714 - group) / row) >= 18, "18 Goal rows fit in one group in the 714 px work region");
 });
+
+// Julian's word 2026-08-26: every row's TIME bar must start at the same x. The
+// bar can only do that if the label before it sits in a box of its own width
+// instead of sharing the cell's flow, so this test pins the three numbers that
+// hold the column together: the label's width, the gap, and the bar's width
+// must fill the column's content box exactly.
+test("the Time column's label has a fixed width, so every bar starts at the same x", async () => {
+  const css = await readFile(path.join(here, "public", "shell.css"), "utf8");
+  /** Reads one declared pixel length off the rule that starts with `selector`. */
+  const pixelsOf = (selector, property) => {
+    const rule = css.split("\n").find((line) => line.trimStart().startsWith(`${selector} {`));
+    assert.ok(rule, `${selector} has a rule`);
+    const match = new RegExp(`${property}:\\s*(\\d+)px`).exec(rule);
+    assert.ok(match, `${selector} declares a pixel ${property}`);
+    return Number(match[1]);
+  };
+  const column = pixelsOf(".work-col-time", "width");
+  const label = pixelsOf(".work-cell-time .desk-goal-elapsed", "width");
+  const bar = pixelsOf(".work-cell-time .desk-goal-bar", "width");
+  const gap = pixelsOf(".work-cell-time .desk-goal-bar", "margin-left");
+  const cellPadding = 2 * 10;
+  assert.ok(label >= 52, `the label box holds the longest label durationLabel prints, not ${label}px`);
+  assert.equal(label + gap + bar, column - cellPadding, "label, gap and bar fill the Time column's content box");
+});

@@ -520,7 +520,7 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-head-select { padding-right: 0 !important; }
 .work-col-work { width: auto; min-width: 280px; }
 .work-col-state { width: 156px; }
-.work-col-time { width: 134px; }
+.work-col-time { width: 150px; }
 .work-col-action { width: 144px; }
 
 .work-group-row > .work-group-head { box-sizing: border-box; height: 32px; padding: 0 10px; border-bottom: 1px solid #2b3037; background: #14171b; font-weight: 400; line-height: 1.1; text-align: left; }
@@ -566,7 +566,14 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-readiness { display: block; color: #8b949f; font-size: 10px; font-weight: 690; letter-spacing: .03em; }
 .work-readiness.blocked, .work-readiness.broken, .work-readiness.error { color: #c9a55f; }
 .work-cell-time { white-space: nowrap; }
-.work-cell-time .desk-goal-bar { margin-left: 8px; vertical-align: middle; }
+/* The label sits in a fixed-width box, so every row's bar starts at the same
+   x whatever the text says ("<1m" against "17h 45m"). Tabular figures keep the
+   digits themselves in one column too. 54 px holds the longest label
+   durationLabel can print in practice ("365d 23h" measures 52 px at this
+   font); a longer one ellipses instead of pushing the bar. Label, gap and bar
+   add up to the column's content box (150 px less its 2 x 10 px padding). */
+.work-cell-time .desk-goal-elapsed { display: inline-block; width: 54px; overflow: hidden; font-variant-numeric: tabular-nums; text-overflow: ellipsis; vertical-align: middle; }
+.work-cell-time .desk-goal-bar { width: 68px; margin-left: 8px; vertical-align: middle; }
 .work-no-time { color: #7c8590; }
 .work-cell-action { text-align: right; }
 .work-cell-action .desk-action { white-space: nowrap; }

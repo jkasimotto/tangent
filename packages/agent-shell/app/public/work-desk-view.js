@@ -834,7 +834,8 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       if (["done", "dropped", "deferred"].includes(goal.status)) return [];
       if (coveredByBrainRecord(goal.area)) return [];
       const pipeline = pipelineForGoal(goal);
-      const stoppedStep = pipeline?.steps.find((step) => step.status === "stopped" || (step.status === "running" && !step.live));
+      const step = pipeline ? currentPipelineStep(pipeline) : null;
+      const stoppedStep = step && (step.status === "stopped" || (step.status === "running" && !step.live)) ? step : null;
       if (stoppedStep) return [ask.askFromStoppedStep(goal, stoppedStep)];
       const session = sessionForGoal(goal);
       if (session) {
@@ -1196,10 +1197,19 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       if (idleState === "Preparing validation") return { ...line, state: idleState, action: "Open", kind: "fact", route: "goal" };
       return { ...line, state: idleState, action: "Start agent", kind: idleState === "Waiting" ? idle : "ready", route: "run" };
     }
-    if (session.state === "working") return { ...line, state: "Working", action: `Open ${agentName(session)}`, kind: "working", route: "run" };
-    if (session.state === "waiting") return { ...line, state: "Waiting", action: `Open ${agentName(session)}`, kind: idle, route: "run" };
-    if (session.state === "shell") return { ...line, state: "Stopped", action: "Open session", kind: idle, route: "run" };
-    return { ...line, state: "Open", action: "Open agent", kind: "ready", route: "run" };
+    return { ...line, ...deskSessionAction(session, idle) };
+  }
+
+  /**
+   * The state pill and route of one live session, shared by the plain Goal row
+   * and the pipeline row. A session that is alive always carries a route: the
+   * pill says what it is doing, the action opens it.
+   */
+  function deskSessionAction(session, idle) {
+    if (session.state === "working") return { state: "Working", action: `Open ${agentName(session)}`, kind: "working", route: "run" };
+    if (session.state === "waiting") return { state: "Waiting", action: `Open ${agentName(session)}`, kind: idle, route: "run" };
+    if (session.state === "shell") return { state: "Stopped", action: "Open session", kind: idle, route: "run" };
+    return { state: "Open", action: "Open agent", kind: "ready", route: "run" };
   }
 
   /** True when a brain holds an open Test for exactly this Goal, on either record. */
@@ -1240,22 +1250,68 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * hover title: Julian reads the step in the launch popover, not on the card.
    */
   function deskPipelineAction(goal, pipeline) {
-    const step = pipeline.steps.find((item) => item.status === "running" || item.status === "stopped") ?? pipeline.steps.find((item) => item.status === "pending");
+    const steps = pipeline.steps ?? [];
+    const step = currentPipelineStep(pipeline);
     if (!step) return deskGoalAction(goal);
-    const line = { stepLine: `Step ${step.index} of ${pipeline.steps.length}`, stepShort: `${step.index}/${pipeline.steps.length}`, stepTitle: `${step.label || "agent"}: ${step.instruction ?? ""}`, fill: deskFillLabel(step.context) };
     const idle = goalCoveredByBrain(goal) ? "fact" : "waiting";
-    if (step.status === "stopped" || (step.status === "running" && !step.live)) return { ...line, state: "Stopped", action: "", kind: idle, route: "" };
-    if (step.status === "pending") return { ...line, state: "Not started", action: "", kind: idle, route: "" };
-    if (step.state === "working") return { ...line, state: "Working", action: `Open step ${step.index}`, kind: "working", route: "run" };
-    if (step.state === "waiting") return { ...line, state: "Waiting", action: `Open step ${step.index}`, kind: idle, route: "run" };
-    if (step.state === "shell") return { ...line, state: "Stopped", action: `Open step ${step.index}`, kind: idle, route: "run" };
-    return { ...line, state: "Open", action: `Open step ${step.index}`, kind: "ready", route: "run" };
+    const projected = { ...deskStepLine(step, steps.length), ...deskStepAction(step, idle) };
+    if (projected.action) return projected;
+    // No step offers a route. A record can still lag a session that is alive:
+    // a step relaunched by hand, or a reconcile that has not run yet. While
+    // any agent on this Goal lives, the card opens it instead of sitting
+    // inert (goal-every-goal-card-on-work-has-a-way-to-open-its-ag).
+    const session = sessionForGoal(goal);
+    if (!session) return projected;
+    const sessionStep = steps.find((item) => item.session === session.name);
+    return {
+      ...projected,
+      ...(sessionStep ? deskStepLine(sessionStep, steps.length) : {}),
+      fill: deskFillLabel(session.context),
+      ...deskSessionAction(session, idle),
+    };
+  }
+
+  /**
+   * The step a Goal card speaks for: the one Julian can act on now. A pipeline
+   * leaves earlier attempts behind it, so a stopped step 1 must never outrank a
+   * live step 2, which is what left a Goal reading `Stopped 1/2` with no way
+   * into its working agent (goal-every-goal-card-on-work-has-a-way-to-open-its-ag).
+   * Order: the live running step, then the newest attempt that ran, then the
+   * first step still to start.
+   */
+  function currentPipelineStep(pipeline) {
+    const steps = pipeline?.steps ?? [];
+    const attempted = steps.filter((step) => ["running", "stopped"].includes(step.status));
+    return attempted.filter((step) => step.status === "running" && step.live).at(-1)
+      ?? attempted.at(-1)
+      ?? steps.find((step) => step.status === "pending")
+      ?? null;
+  }
+
+  /** The small `Step N of M` line above the pill, and the step facts in its hover title. */
+  function deskStepLine(step, total) {
+    return {
+      stepLine: `Step ${step.index} of ${total}`,
+      stepShort: `${step.index}/${total}`,
+      stepTitle: `${step.label || "agent"}: ${step.instruction ?? ""}`,
+      fill: deskFillLabel(step.context),
+    };
+  }
+
+  /** The state pill and route of one pipeline step. An action of "" means no route. */
+  function deskStepAction(step, idle) {
+    if (step.status === "stopped" || (step.status === "running" && !step.live)) return { state: "Stopped", action: "", kind: idle, route: "" };
+    if (step.status === "pending") return { state: "Not started", action: "", kind: idle, route: "" };
+    if (step.state === "working") return { state: "Working", action: `Open step ${step.index}`, kind: "working", route: "run" };
+    if (step.state === "waiting") return { state: "Waiting", action: `Open step ${step.index}`, kind: idle, route: "run" };
+    if (step.state === "shell") return { state: "Stopped", action: `Open step ${step.index}`, kind: idle, route: "run" };
+    return { state: "Open", action: `Open step ${step.index}`, kind: "ready", route: "run" };
   }
 
   /** Rare pipeline actions shown inside the Goal action menu, only when valid. */
   function deskPipelineControls(goal, pipeline) {
-    const step = pipeline.steps.find((item) => item.status === "running" || item.status === "stopped");
-    if (!step) return "";
+    const step = currentPipelineStep(pipeline);
+    if (!step || step.status === "pending") return "";
     const last = step.index >= pipeline.steps.length;
     const stopped = step.status === "stopped" || (step.status === "running" && !step.live);
     if (stopped) {

@@ -1417,6 +1417,13 @@ li .document-comment { margin: 8px 0 10px; }
   .program-facts div { grid-template-columns: 1fr; gap: 5px; }
 }
 
+/* The bar is the widest fixed row on the page. At the 320 px floor its gaps and
+   paddings are what push it past the viewport, so they shrink instead of the
+   page scrolling sideways. This block follows the 900 px one that sets them. */
+@media (max-width: 479px) {
+  .app-bar { gap: 8px; padding: 0 8px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .001ms !important; }
 }

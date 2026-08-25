@@ -10,7 +10,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { execFile, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -473,4 +473,95 @@ test("an over-long Request answer still reaches the inbox and the next generatio
   const show = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(next.session)}`).then((response) => response.json());
   assert.match(show.prompt, /## Requests Julian answered/);
   assert.match(show.prompt, /Julian wants these changes: Its still so long/);
+});
+
+/**
+ * Paints one detached tmux pane that reads as an agent sitting at an empty
+ * composer: a bare `❯ ` prompt with the cursor at the home column. The server
+ * primes its own pane for a brain session and the harness command exits at
+ * once, so the name is taken and released in a race; the loop keeps trying
+ * until it owns the name.
+ */
+function makeIdleComposerPane(name, dir) {
+  const script = "clear; printf '\\342\\235\\257 '; exec sleep 600";
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    try { execFileSync("tmux", ["kill-session", "-t", `=${name}`], { stdio: "ignore" }); } catch {}
+    try {
+      execFileSync("tmux", ["new-session", "-d", "-s", name, "-c", dir, "bash", "-lc", script], { stdio: "ignore" });
+      return;
+    } catch {}
+  }
+  throw new Error(`could not take the pane name ${name}`);
+}
+
+/** Reads one pane's visible text; a pane that is gone reads as empty. */
+function capturePane(name) {
+  try {
+    return execFileSync("tmux", ["capture-pane", "-p", "-t", `${name}:`], { encoding: "utf8" });
+  } catch {
+    return "";
+  }
+}
+
+test("an over-long Request answer is typed into the live brain pane, not dropped", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-notice-live-"));
+  const leaf = `probelive${process.pid}`;
+  const trees = await makeTrees(root, leaf);
+  const sessions = [];
+  let port;
+  try {
+    port = await freePort();
+  } catch (error) {
+    if (error?.code === "EPERM") {
+      context.skip("This environment does not permit local HTTP listeners.");
+      return;
+    }
+    throw error;
+  }
+  const child = startServer(root, trees, port, "notice-live");
+  context.after(async () => {
+    for (const session of sessions) await killSession(session);
+    await stopServer(child);
+    await rm(root, { recursive: true, force: true });
+  });
+  const base = `http://127.0.0.1:${port}`;
+  await waitForServer(base);
+
+  const area = `otto/${leaf}`;
+  const brain = await post(base, "/api/brains/start", { area, instruction: "Get the probe Area done." });
+  sessions.push(brain.session);
+  // Let the server finish its own launch attempt before taking the pane name.
+  await new Promise((resolve) => setTimeout(resolve, 4000));
+  makeIdleComposerPane(brain.session, root);
+
+  const live = await waitFor("the brain pane to read as an idle composer", async () => {
+    const body = await fetch(`${base}/api/sessions`).then((response) => response.json()).catch(() => null);
+    const list = body?.sessions ?? body ?? [];
+    const found = (Array.isArray(list) ? list : []).find((session) => session.name === brain.session);
+    return found && found.state === "waiting" && (found.stateDetail === "idle" || found.stateDetail == null) ? found : null;
+  }, 200);
+  assert.equal(live.state, "waiting", "the brain pane waits at its composer");
+
+  const created = await post(base, "/api/brains/requests", {
+    session: brain.session,
+    kind: "decision",
+    subject: "Worker harness",
+    question: "Should the worker harness come from the Area?",
+    proposal: "Take the harness from the Area declaration.",
+    detail: "The fallback picks a harness nobody declared.",
+  });
+  assert.ok(created.request?.id, JSON.stringify(created));
+
+  // The exact shape that used to vanish: Julian pastes a whole brain prompt
+  // into the answer while the brain is live and waiting for it.
+  const marker = `LONGANSWER${process.pid}`;
+  const note = `${marker} ${"y".repeat(9000)}`;
+  const answered = await post(base, "/api/brains/requests/answer", { area, id: created.request.id, answer: "changes", note });
+  assert.equal(answered.request?.answer, "changes", JSON.stringify(answered));
+
+  const text = await waitFor("the answer typed into the live brain pane", async () => {
+    const pane = capturePane(brain.session);
+    return pane.includes(marker) ? pane : null;
+  }, 400);
+  assert.match(text, new RegExp(`Julian wants these changes: ${marker}`));
 });

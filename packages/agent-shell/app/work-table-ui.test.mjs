@@ -37,7 +37,7 @@ test("the work table states its rows and columns in the accessibility tree", asy
     assert.ok(header.id, "the group header has a stable id");
     assert.equal(group.getAttribute("aria-labelledby"), header.id, "the row group is named by that header");
     assert.equal(header.colSpan, columns.length, "the group header spans every column");
-    assert.equal(header.getAttribute("scope"), "colgroup");
+    assert.equal(header.getAttribute("scope"), "rowgroup", "the group header names its own row group, not every column of the table");
     assert.ok([...group.children].every((child) => child.tagName === "TR"), "every row-group child stays a row");
   }
 

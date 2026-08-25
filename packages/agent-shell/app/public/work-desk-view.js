@@ -1488,7 +1488,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       : `data-open-area-brain="${escapeHtml(area.path)}"`;
     const name = humanName(area.name);
     return `<tr class="work-group-row">
-      <th class="work-group-head" colspan="${WORK_COLUMNS.length}" scope="colgroup" id="${workGroupId(area.path)}">
+      <th class="work-group-head" colspan="${WORK_COLUMNS.length}" scope="rowgroup" id="${workGroupId(area.path)}">
         <span class="work-group-name"><button type="button" data-open-area="${escapeHtml(area.path)}" title="Open the ${escapeHtml(name)} Area map">${escapeHtml(name)}</button></span>
         <span class="work-group-count">${count} ${count === 1 ? "Goal" : "Goals"}</span>
         <span class="desk-state ${status.kind}">${escapeHtml(status.label)}</span>

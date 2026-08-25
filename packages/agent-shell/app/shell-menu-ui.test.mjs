@@ -71,7 +71,12 @@ test("the Shell menu owns recovery while offline refresh preserves the screen", 
   click(window, "#back-button");
   assert.equal(window.document.querySelector("#menu-update").hidden, false);
   click(window, "#menu-update");
-  assert.match(window.document.querySelector("#update-panel-copy").textContent, /abc1234  Improve reload — Julian/);
+  const commitRows = [...window.document.querySelectorAll("#update-panel-commits .update-commit")];
+  assert.equal(commitRows.length, 1, "each pending commit gets its own row");
+  assert.equal(commitRows[0].querySelector("code").textContent, "abc1234");
+  assert.equal(commitRows[0].querySelector(".update-commit-subject").textContent, "Improve reload");
+  assert.equal(commitRows[0].querySelector(".update-commit-author").textContent, "Julian");
+  assert.doesNotMatch(window.document.querySelector("#update-panel-copy").textContent, /abc1234/, "the copy paragraph never runs the commits together");
   assert.match(window.document.querySelector("[data-rebuild-start]").textContent, /Rebuild and restart/);
   click(window, "[data-rebuild-dismiss]");
   offline = true;

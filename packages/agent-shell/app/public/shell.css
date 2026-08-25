@@ -1454,6 +1454,13 @@ li .document-comment { margin: 8px 0 10px; }
 .update-panel .kicker { margin: 0; }
 .update-panel strong { font-size: 17px; }
 .update-panel > p:not(.kicker) { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.update-commits { display: grid; margin: 2px 0 0; padding: 0; list-style: none; max-height: 320px; overflow-y: auto; }
+.update-commits[hidden] { display: none; }
+.update-commit { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 1px 10px; padding: 7px 0; border-top: 1px solid var(--line); }
+.update-commit:first-child { padding-top: 0; border-top: 0; }
+.update-commit code { grid-column: 1; grid-row: 1; color: var(--quiet); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.update-commit-subject { grid-column: 2; grid-row: 1; overflow-wrap: anywhere; color: var(--text); font-size: 13px; line-height: 1.4; }
+.update-commit-author { grid-column: 2; grid-row: 2; color: var(--quiet); font-size: 12px; }
 .update-panel-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 
 /* ---- Area map (design contract: otto/tangent/design-area-map) ---- */

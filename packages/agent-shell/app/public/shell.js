@@ -1179,6 +1179,15 @@ function updateStatusPill() {
   renderUpdatePanel(phase);
 }
 
+/**
+ * One pending commit as its own row. The panel used to join every commit into
+ * a single paragraph, which wrapped into an unreadable run of hashes, so the
+ * hash, the subject, and the author each hold their own place in a grid row.
+ */
+function updateCommitRow(commit) {
+  return `<li class="update-commit"><code>${escapeHtml(commit.shortHash || commit.hash || "")}</code><span class="update-commit-subject">${escapeHtml(commit.subject || "")}</span><span class="update-commit-author">${escapeHtml(commit.author || "")}</span></li>`;
+}
+
 /** Shows durable rebuild progress without blocking the current screen. */
 function renderUpdatePanel(phase = state.rebuild?.phase) {
   const panel = document.querySelector("#update-panel");
@@ -1198,10 +1207,18 @@ function renderUpdatePanel(phase = state.rebuild?.phase) {
   const titles = { ready: `${count || "No new"} commit${count === 1 ? "" : "s"} ready`, building: `Building ${count || "the deployed"} commit${count === 1 ? "" : "s"}`, restarting: "Restarting Tangent", reconnecting: "Reconnecting to Tangent", failed: "Build failed" };
   panel.querySelector("#update-panel-title").textContent = titles[phase] || "Updating Tangent";
   panel.querySelector("#update-panel-copy").textContent = phase === "ready"
-    ? `Agent sessions keep running in tmux.\n\nCommits included:\n${count ? operation.commits.map((commit) => `${commit.shortHash}  ${commit.subject} — ${commit.author}`).join("\n") : "No new commits. The deployed commit will be rebuilt."}`
+    ? count
+      ? "Agent sessions keep running in tmux. Commits included:"
+      : "No new commits. The deployed commit will be rebuilt. Agent sessions keep running in tmux."
     : phase === "failed"
     ? operation.error || "The build did not complete. The current Agent Shell is still available."
     : "Agent sessions keep running in tmux. You can continue to use this screen.";
+  const commitList = panel.querySelector("#update-panel-commits");
+  if (commitList) {
+    const listed = phase === "ready" ? operation.commits ?? [] : [];
+    commitList.innerHTML = listed.map(updateCommitRow).join("");
+    commitList.hidden = !listed.length;
+  }
   panel.querySelector("#update-panel-actions").innerHTML = phase === "ready"
     ? `<button class="quiet-button" type="button" data-rebuild-dismiss>Cancel</button><button class="primary-button" type="button" data-rebuild-start>Rebuild and restart</button>`
     : phase === "failed"

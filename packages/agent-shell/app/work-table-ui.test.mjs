@@ -304,4 +304,11 @@ test("the Time column's label has a fixed width, so every bar starts at the same
   const cellPadding = 2 * 10;
   assert.ok(label >= 52, `the label box holds the longest label durationLabel prints, not ${label}px`);
   assert.equal(label + gap + bar, column - cellPadding, "label, gap and bar fill the Time column's content box");
+  // The label is a <span>. Width does nothing to an inline box, so the display
+  // that makes the 54px real is as load-bearing as the number itself.
+  assert.match(
+    css.split("\n").find((line) => line.trimStart().startsWith(".work-cell-time .desk-goal-elapsed {")),
+    /display:\s*inline-block/,
+    "the label box declares a display that honours its width",
+  );
 });

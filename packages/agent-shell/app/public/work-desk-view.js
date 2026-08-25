@@ -1603,6 +1603,13 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     </tr>`;
   }
 
+  /** True when one group has a row to show, or is a chosen Focus root that must say it has none. */
+  function workGroupHasRows(record) {
+    if (record.focusRoot) return true;
+    return [record, ...record.sections].some((part) => part.descriptions.length
+      || part.trees.some((tree) => tree.goals.some((goal) => !["done", "dropped", "deferred"].includes(goal.status))));
+  }
+
   /** One brain-owned Area group as one row group of the work table. */
   function workGroupBody(record, facts, maxElapsedMs) {
     const { area, trees, descriptions, sections } = record;
@@ -1687,8 +1694,11 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   /** The complete work table: one caption, one header, one row group per Area. */
   function workTable(records, maxElapsedMs) {
     const facts = readinessFacts();
-    const bodies = records.map((record) => workGroupBody(record, facts, maxElapsedMs)).join("");
-    const rowCount = records.reduce((count, record) => count + [record, ...record.sections]
+    // An Area with no row of its own does not earn a header. A chosen Focus
+    // root is the one exception: it says that the Focus is what emptied it.
+    const shown = records.filter(workGroupHasRows);
+    const bodies = shown.map((record) => workGroupBody(record, facts, maxElapsedMs)).join("");
+    const rowCount = shown.reduce((count, record) => count + [record, ...record.sections]
       .reduce((inner, part) => inner + part.trees.reduce((goals, tree) => goals + tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status)).length, 0), 0), 0);
     const word = state.workFilter === "inactive" ? "Planned work" : "Current work";
     // The column group carries the widths. A narrow layout hides three cells,

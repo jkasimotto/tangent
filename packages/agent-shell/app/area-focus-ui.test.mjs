@@ -205,7 +205,11 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
   returnedSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
   click(window, "[data-clear-area-focus]");
   assert.equal(window.localStorage.getItem("agent-shell.area-focus.v1"), null);
+  // Planned holds no Beta row, and an Area with no row earns no group header.
+  assert.equal(window.document.querySelector('[data-desk-area="otto/beta"]'), null, "an empty Area group does not render");
+  click(window, '[data-work-filter="active"]');
   assert.ok(window.document.querySelector('[data-desk-area="otto/beta"]'), "Clear restores complete Work inside the remaining filters");
+  click(window, '[data-work-filter="inactive"]');
 
   click(window, "[data-open-area-focus]");
   const programSearch = window.document.querySelector("#area-focus-search");
@@ -238,7 +242,9 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
   await settle(window);
   assert.equal(window.localStorage.getItem("agent-shell.area-focus.v1"), null, "the stale final root clears on refresh");
   assert.equal(window.document.querySelector(".area-focus-summary"), null);
+  click(window, '[data-work-filter="active"]');
   assert.ok(window.document.querySelector('[data-desk-area="otto/beta"]'), "stale Focus recovery restores complete Work");
+  click(window, '[data-work-filter="inactive"]');
 
   click(window, '[data-work-filter="active"]');
   click(window, "[data-open-area-focus]");

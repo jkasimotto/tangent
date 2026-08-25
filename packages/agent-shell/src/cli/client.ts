@@ -147,6 +147,15 @@ function isConnectionRefused(error: unknown): boolean {
   return code === "ECONNREFUSED" || code === "ENOTFOUND";
 }
 
+/**
+ * Returns whether a transport code means the sandbox around this session refused the
+ * connection outright. A sandboxed agent that cannot reach loopback fails every tangent
+ * command identically, so this must never read as a transient fault the agent can retry.
+ */
+function isSandboxDenial(code: string): boolean {
+  return code === "EPERM" || code === "EACCES";
+}
+
 /** Returns the transport code nested under Node's fetch error. */
 function transportCode(error: unknown): string {
   const cause = error instanceof Error ? (error as Error & { cause?: unknown }).cause : undefined;
@@ -164,6 +173,9 @@ function connectionError(server: URL, path: string, method: string, operationId:
     return new Error(`Agent Shell is not running at ${server.origin}. Start it: cd packages/agent-shell && npm start`);
   }
   const code = transportCode(error);
+  if (isSandboxDenial(code)) {
+    return new Error(`Agent Shell ${method} ${path} was denied by this session's sandbox (${code}). The connection to ${server.origin} never opened, so nothing changed and a retry fails the same way. Every tangent command needs loopback access; restart this session with network access enabled. Under Codex that is -c sandbox_workspace_write.network_access=true.`);
+  }
   if (["ECONNRESET", "EPIPE", "ETIMEDOUT", "UND_ERR_SOCKET", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT"].includes(code) || (error instanceof TypeError && error.message === "fetch failed")) {
     return new Error(`Agent Shell ${method} ${path} lost its local transport${code ? ` (${code})` : ""}.${uncertain}`);
   }

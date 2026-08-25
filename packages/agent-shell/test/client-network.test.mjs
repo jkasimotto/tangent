@@ -35,3 +35,20 @@ test("CLI warns when a mutation loses its response after dispatch", async (t) =>
   });
   assert.match(operationId, /^[0-9a-f-]{36}$/);
 });
+
+test("CLI names the sandbox when it denies the loopback connection", async (t) => {
+  const priorFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = priorFetch; });
+  /** Stands in for a seatbelt sandbox that refuses loopback connections. */
+  globalThis.fetch = async () => {
+    const error = new TypeError("fetch failed");
+    error.cause = Object.assign(new Error("connect EPERM 127.0.0.1:4321"), { code: "EPERM" });
+    throw error;
+  };
+  await assert.rejects(postJson(new URL("http://127.0.0.1:4321"), "/api/mutate", { value: 1 }), (error) => {
+    assert.match(error.message, /denied by this session's sandbox \(EPERM\)/);
+    assert.match(error.message, /network_access=true/);
+    assert.doesNotMatch(error.message, /may have completed/i);
+    return true;
+  });
+});

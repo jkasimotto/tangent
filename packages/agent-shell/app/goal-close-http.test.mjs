@@ -16,6 +16,18 @@ isolateTmuxTests();
 const here = path.dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);
 
+/** Runs tmux on this test file's private socket. */
+function tmux(args) {
+  return execFileAsync("tmux", args);
+}
+
+/** Creates one tagged tmux fixture. */
+async function taggedSession(name, kind, goal = "") {
+  await tmux(["new-session", "-d", "-s", name]);
+  await tmux(["set-option", "-t", name, "@tangent_kind", kind]);
+  if (goal) await tmux(["set-option", "-t", name, "@tangent_goal", goal]);
+}
+
 /** Reserves one local test port. */
 async function freePort() {
   const server = net.createServer();
@@ -69,12 +81,38 @@ test("a close commit records its session and appears in recent closes", async (c
     if (error?.code === "EPERM") return context.skip("This environment does not permit local HTTP listeners.");
     throw error;
   }
-  const child = spawn(nodeExecutable(), ["server.mjs"], { cwd: here, env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", TREES_ROOT: trees, TANGENT_LOOPS_ROOT: path.join(root, "loops"), WORKSPACE: workspace, AGENT_SHELL_NO_OPEN: "1", AGENT_SHELL_TEST_NO_LAUNCH: "1", TANGENT_PIPELINES_ROOT: path.join(root, "pipelines"), TANGENT_BRAINS_ROOT: path.join(root, "brains"), AGENT_MESSAGE_LOG: path.join(root, "messages.jsonl"), GROQ_API_KEY: "", CHAT_SESSION: `what-happened-http-test-${process.pid}` }, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(nodeExecutable(), ["server.mjs"], { cwd: here, env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", TREES_ROOT: trees, TANGENT_LOOPS_ROOT: path.join(root, "loops"), WORKSPACE: workspace, AGENT_SHELL_NO_OPEN: "1", AGENT_SHELL_TEST_NO_LAUNCH: "1", TANGENT_PIPELINES_ROOT: path.join(root, "pipelines"), TANGENT_CONTINUATIONS_ROOT: path.join(root, "continuations"), TANGENT_GOAL_CLEANUPS_ROOT: path.join(root, "goal-cleanups"), TANGENT_BRAINS_ROOT: path.join(root, "brains"), TANGENT_ARMED_ROOT: path.join(root, "armed"), AGENT_MESSAGE_LOG: path.join(root, "messages.jsonl"), GROQ_API_KEY: "", CHAT_SESSION: `what-happened-http-test-${process.pid}` }, stdio: ["ignore", "pipe", "pipe"] });
   context.after(async () => { child.kill("SIGTERM"); await Promise.race([once(child, "exit"), new Promise((resolve) => setTimeout(resolve, 1000))]); await rm(root, { recursive: true, force: true }); });
   const base = `http://127.0.0.1:${port}`;
   await waitForServer(base);
+  const doneWorker = `goal-close-worker-${process.pid}`;
+  const doneOldWorker = `goal-close-old-${process.pid}`;
+  const unrelated = `goal-close-unrelated-${process.pid}`;
+  const brainSession = `goal-close-brain-${process.pid}`;
+  await taggedSession(doneWorker, "goal", "otto/test/goal-prove-it.md");
+  await taggedSession(doneOldWorker, "goal", "otto/test/goal-prove-it.md");
+  await taggedSession(unrelated, "goal", "otto/test/goal-other.md");
+  await taggedSession(brainSession, "brain");
+  const pipelineDir = path.join(root, "pipelines", "otto", "test");
+  await mkdir(pipelineDir, { recursive: true });
+  await writeFile(path.join(pipelineDir, "prove-it.json"), JSON.stringify({
+    schema: "agent-pipeline.v1", goal: "otto/test/goal-prove-it.md", area: "otto/test", slug: "prove-it",
+    createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    steps: [
+      { index: 1, instruction: "Old", status: "running", session: doneOldWorker, continuations: [{ session: unrelated }] },
+      { index: 2, instruction: "Next", status: "pending", session: null },
+    ],
+  }));
   const edited = await fetch(`${base}/api/goals/edit`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ file: "otto/test/goal-prove-it.md", status: "done", session: "tangent-brain-g4" }) });
   assert.equal(edited.status, 200);
+  const liveAfterDone = (await tmux(["list-sessions", "-F", "#{session_name}"])).stdout.trim().split("\n");
+  assert.ok(!liveAfterDone.includes(doneWorker));
+  assert.ok(!liveAfterDone.includes(doneOldWorker), "a replaced exact-tagged worker is removed even with a blank Goal binding");
+  assert.ok(liveAfterDone.includes(unrelated), "an unrelated worker remains live");
+  assert.ok(liveAfterDone.includes(brainSession), "a brain remains live");
+  const pipelineAfterDone = JSON.parse(await readFile(path.join(pipelineDir, "prove-it.json"), "utf8"));
+  assert.deepEqual(pipelineAfterDone.steps.map((step) => step.status), ["ended", "ended"], "non-final pipeline state retires but history remains");
+  assert.equal(pipelineAfterDone.steps[0].continuations[0].session, unrelated, "stale continuation history remains unchanged");
   const { stdout: log } = await execFileAsync("git", ["-C", trees, "log", "-1", "--format=%s%n%b"]);
   assert.match(log, /done in tree/);
   assert.match(log, /Tangent-Tmux: tangent-brain-g4/);

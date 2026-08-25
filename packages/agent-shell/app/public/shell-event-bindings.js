@@ -162,6 +162,18 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       }
       return;
     }
+    const retryCleanup = target.closest("[data-retry-goal-cleanup]");
+    if (retryCleanup) {
+      try {
+        await post("/api/goals/cleanup", { file: retryCleanup.dataset.retryGoalCleanup });
+        await refresh();
+        paint(true);
+        showToast("The worker cleanup is complete.");
+      } catch (error) {
+        showToast(`Worker cleanup failed: ${error.message}`);
+      }
+      return;
+    }
     const wontDoGoal = target.closest("[data-wont-do-goal]");
     if (wontDoGoal) {
       rememberGoal(wontDoGoal.dataset.wontDoGoal);

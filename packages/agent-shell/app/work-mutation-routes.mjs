@@ -13,6 +13,7 @@ export function createWorkMutationRoutes(operations) {
     ["POST /api/areas/status", "areaStatus"],
     ["POST /api/areas/people", "areaPeople"],
     ["POST /api/goals/edit", "edit"],
+    ["POST /api/goals/cleanup", "cleanup"],
   ]);
 
   /** Handles one matching request and reports whether this router owned it. */

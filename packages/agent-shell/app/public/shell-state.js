@@ -38,7 +38,7 @@ export function createShellState(storage = globalThis.localStorage, href = globa
     pipelines: [], brains: [], brainDraft: null, agentSessionName: null,
     verdictLines: new Set(), dismissedAskIds: readDismissedAskIds(storage), goalSelection: [], goTo: null, launchTarget: "", launchAnchor: null, whatHappened: null,
     harnessDraft: null, harnessReturnView: "work", query: "", workFilter: storage.getItem("agent-shell.work-filter") === "inactive" ? "inactive" : "active", personFilter: storage.getItem("agent-shell.person-filter") || "all",
-    caffeinate: false, decisionReturnView: "agent", agentReturnView: "work", agentReturn: null, rebuilding: false, rebuild: null,
+    caffeinate: false, decisionReturnView: "agent", agentReturnView: "work", agentReturn: null, rebuilding: false, rebuild: null, goalCleanups: [],
     connection: {
       phase: "online", gatewayBoot: "", controllerBoot: "", lastSuccessAt: 0, lastFailureAt: null,
       retryAttempt: 0, nextRetryAt: null, eventStream: "unavailable", lastError: null,

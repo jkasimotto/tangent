@@ -6,14 +6,17 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-test("background Goal reconciliation cannot stop an agent session", async () => {
+test("background Goal reconciliation stops only exact closed-Goal workers", async () => {
   const [source, controls] = await Promise.all([
     readFile(path.join(here, "server.mjs"), "utf8"),
     readFile(path.join(here, "shell-control-routes.mjs"), "utf8"),
   ]);
   const reconcile = source.match(/async function reconcileGoals\([^\n]*\) \{[\s\S]*?\n\}\n\nconst goalInfoCache/)?.[0] ?? "";
-  assert.match(reconcile, /preserved session/);
+  const cleanup = source.match(/async function finishGoalExecutions\([^\n]*\) \{[\s\S]*?\n\}\n\n\/\*\* Marks one Goal/)?.[0] ?? "";
+  assert.match(reconcile, /finishGoalExecutions/);
   assert.doesNotMatch(reconcile, /kill-session|cascadeGoalDone/);
+  assert.match(cleanup, /live\.kind !== "goal" \|\| !targets\.has\(live\.goal\)/);
+  assert.match(cleanup, /"kill-session", "-t", `=\$\{name\}`/);
   assert.match(controls, /url\.pathname\.startsWith\("\/api\/kill\/"\)/);
   assert.match(source, /"kill-session", "-t", "=" \+ name/);
 });

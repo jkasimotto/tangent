@@ -65,6 +65,7 @@ import { createVaultProjectionController } from "./vault-projection-controller.m
 import { startEventLoopWatchdog } from "./event-loop-watchdog.mjs";
 import { uniqueSessionName } from "./session-names.mjs";
 import { withDefaultModel } from "./agent-command.mjs";
+import { clearGoalCleanup, readAllGoalCleanups, readGoalCleanup, writeGoalCleanup } from "./goal-cleanup-record.mjs";
 
 const rawExecFileAsync = promisify(execFile);
 const TMUX_COMMAND_TIMEOUT_MS = Number(process.env.TANGENT_TMUX_COMMAND_TIMEOUT_MS ?? 10_000);
@@ -155,6 +156,8 @@ const PIPELINES_ROOT = process.env.TANGENT_PIPELINES_ROOT ?? path.join(os.homedi
 // continuations: the same mechanism pipeline steps keep inline on the step
 // (design-worker-context-handover D6).
 const CONTINUATIONS_ROOT = process.env.TANGENT_CONTINUATIONS_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "continuations");
+// Recoverable failures from retiring workers of finished Goals.
+const GOAL_CLEANUPS_ROOT = process.env.TANGENT_GOAL_CLEANUPS_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "goal-cleanups");
 // One JSON record per Area with a brain: Julian's instruction, the launch,
 // the generations, and their self-handovers (design-area-brain-solution).
 const BRAINS_ROOT = process.env.TANGENT_BRAINS_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "brains");
@@ -1268,23 +1271,121 @@ async function vaultCommit(relPaths, message, area, tmuxSession) {
   await vaultRepository.commit(relPaths, message, area, tmuxSession);
 }
 
+/** Every historical session name that can lead to one Goal's live execution. */
+function goalExecutionCandidates(goalFile, goal, pipeline, continuation) {
+  const names = new Set(goal?.session ? [goal.session] : []);
+  for (const step of pipeline?.steps ?? []) {
+    if (step.session) names.add(step.session);
+    for (const entry of step.continuations ?? []) if (entry.session) names.add(entry.session);
+  }
+  if (continuation?.session) names.add(continuation.session);
+  for (const entry of continuation?.continuations ?? []) if (entry.session) names.add(entry.session);
+  return { names, pipeline };
+}
+
 /**
- * Marks one Goal and every Subgoal done, clearing bindings
- * and stopping their sessions. This is the shared mutation for both direct
- * tree-card flips and agent-authored done states found by reconciliation.
- * Returns only files changed by this pass, suitable for one atomic commit.
+ * Retires all live workers proven by fresh tmux metadata to belong to these Goals.
+ * Historical names find candidates but can never authorize a kill.
  */
+async function finishGoalExecutions({ goalFiles, reason, sessions = null }) {
+  const targets = new Set(goalFiles);
+  const byFile = await goalsByFile();
+  const candidates = new Set();
+  const pipelines = new Map();
+  const removed = [];
+  const alreadyAbsent = [];
+  const preserved = [];
+  const failures = [];
+  const previouslyRemoved = new Set();
+  const [allPipelines, allContinuations] = await Promise.all([readAllPipelines(PIPELINES_ROOT), readAllContinuations(CONTINUATIONS_ROOT)]);
+  const pipelineByGoal = new Map(allPipelines.map((record) => [record.goal, record]));
+  const continuationByGoal = new Map(allContinuations.map((record) => [record.goal, record]));
+  for (const goalFile of targets) {
+    const found = goalExecutionCandidates(goalFile, byFile.get(goalFile), pipelineByGoal.get(goalFile), continuationByGoal.get(goalFile));
+    for (const name of found.names) candidates.add(name);
+    if (found.pipeline) pipelines.set(goalFile, found.pipeline);
+    for (const name of (await readGoalCleanup(GOAL_CLEANUPS_ROOT, goalFile))?.removed ?? []) previouslyRemoved.add(name);
+  }
+  let observed;
+  try {
+    observed = sessions ?? await listSessions({ fresh: true });
+    if (sessions === null && sessionObservation.status().error) throw new Error(`tmux observation failed: ${sessionObservation.status().error}`);
+  } catch (error) {
+    failures.push({ goal: null, session: null, operation: "observe", error: String(error.message ?? error) });
+    observed = [];
+  }
+  for (const session of observed) if (targets.has(session.goal)) candidates.add(session.name);
+  const liveByName = new Map(observed.map((session) => [session.name, session]));
+  for (const name of candidates) {
+    const live = liveByName.get(name);
+    if (!live) { alreadyAbsent.push(name); continue; }
+    if (live.kind !== "goal" || !targets.has(live.goal)) {
+      preserved.push({ session: name, kind: live.kind, goal: live.goal, created: live.created });
+      continue;
+    }
+    try {
+      await execFileAsync("tmux", ["kill-session", "-t", `=${name}`]);
+      removed.push(name);
+      armedSessions.delete(name);
+      await clearArmedPrompt(ARMED_ROOT, name);
+    } catch (error) {
+      failures.push({ goal: live.goal, session: name, operation: "kill", error: String(error.stderr ?? error.message ?? error) });
+    }
+  }
+  sessionObservation.invalidate();
+  let after = [];
+  if (!failures.length) {
+    try {
+      after = await listSessions({ fresh: true });
+      if (sessionObservation.status().error) throw new Error(`tmux observation failed: ${sessionObservation.status().error}`);
+      for (const session of after) {
+        if (session.kind === "goal" && targets.has(session.goal)) failures.push({ goal: session.goal, session: session.name, operation: "verify", error: "worker session remains live" });
+      }
+    } catch (error) {
+      failures.push({ goal: null, session: null, operation: "verify", error: String(error.message ?? error) });
+    }
+  }
+  if (failures.length) {
+    for (const goalFile of targets) await writeGoalCleanup(GOAL_CLEANUPS_ROOT, goalFile, {
+      targetStatus: byFile.get(goalFile)?.status === "dropped" || reason === "goal-dropped" ? "dropped" : "done",
+      removed, failures: failures.filter((item) => !item.goal || item.goal === goalFile),
+    });
+    const result = { ok: false, removed, alreadyAbsent, preserved, releasedGoals: [], failures };
+    console.error("goal worker cleanup:", JSON.stringify({ goalFiles: [...targets], reason, ...result }));
+    return result;
+  }
+  for (const [goalFile, record] of pipelines) {
+    if (endPipeline(record).length) await writePipeline(PIPELINES_ROOT, record);
+    await clearGoalCleanup(GOAL_CLEANUPS_ROOT, goalFile);
+  }
+  for (const goalFile of targets) if (!pipelines.has(goalFile)) await clearGoalCleanup(GOAL_CLEANUPS_ROOT, goalFile);
+  const removedNames = new Set([...previouslyRemoved, ...removed, ...alreadyAbsent]);
+  const releasedGoals = [];
+  for (const goal of byFile.values()) {
+    if (targets.has(goal.file) || !goal.session || !removedNames.has(goal.session) || ["done", "dropped"].includes(goal.status)) continue;
+    await writeGoalBinding(goal.file, { status: "open", session: null });
+    releasedGoals.push(goal.file);
+  }
+  return { ok: true, removed, alreadyAbsent, preserved, releasedGoals, failures: [] };
+}
+
+/** Marks one Goal and every Subgoal done after their worker cleanup succeeds. */
 async function cascadeGoalDone(rootFile, byFile) {
   const changed = [];
   const endedGoals = [];
-  for (const goal of doneCascade(rootFile, byFile)) {
+  const cascade = doneCascade(rootFile, byFile);
+  const cleanup = await finishGoalExecutions({ goalFiles: cascade.map((goal) => goal.file), reason: "goal-done" });
+  if (!cleanup.ok) {
+    const error = new Error("Worker cleanup failed. Retry the Goal finish.");
+    error.cleanup = cleanup;
+    throw error;
+  }
+  changed.push(...cleanup.releasedGoals);
+  for (const goal of cascade) {
     endedGoals.push(goal.file);
     if (goal.status !== "done" || goal.session || goal.waitingOn) {
       await writeGoalBinding(goal.file, { status: "done", session: null, waitingOn: null });
       changed.push(goal.file);
-    }
-    if (goal.session) {
-      await execFileAsync("tmux", ["kill-session", "-t", "=" + goal.session]).catch(() => {});
     }
     goal.status = "done";
     goal.session = null;
@@ -2007,7 +2108,6 @@ async function adoptGoalSession(sessions, sessionName, goal) {
 
 let lastReconcile = 0;
 let reconciling = false;
-const warnedUnlinkedSessions = new Set();
 /**
  * Repairs Goal bindings after a session ends. This background pass never
  * stops a tmux session. Goal files can move or change while another agent
@@ -2027,7 +2127,15 @@ async function reconcileGoals(sessions, snapshotAt = Date.now()) {
     for (const area of flattenAreaPaths(await readTree(TREES_ROOT))) {
       for (const t of await readAreaGoals(area)) byFile.set(t.file, t);
     }
+    const closed = [...byFile.values()].filter((goal) => ["done", "dropped"].includes(goal.status));
+    const closedCleanup = closed.length ? await finishGoalExecutions({
+      goalFiles: closed.map((goal) => goal.file),
+      reason: "goal-done",
+      sessions,
+    }) : null;
+    if (closedCleanup?.releasedGoals.length) await vaultCommit(closedCleanup.releasedGoals, "update: release Goals from finished worker", closed[0].area, null);
     for (const t of byFile.values()) {
+      if (["done", "dropped"].includes(t.status)) continue;
       // The Goal file's own mtime is when its binding was last written: a
       // binding fresher than the sessions snapshot above is not stopped.
       if (!goalBindingGoneFromSnapshot(t, live, snapshotAt)) continue;
@@ -2040,17 +2148,14 @@ async function reconcileGoals(sessions, snapshotAt = Date.now()) {
     await reconcilePipelines(sessions, snapshotAt);
     await reconcileBrains(sessions);
     await reconcileContextHandovers(sessions);
+    const missingFinishedGoals = new Set();
     for (const s of sessions) {
       if (!s.goal) continue;
       const t = byFile.get(s.goal);
-      if (t && !["done", "dropped"].includes(t.status)) {
-        warnedUnlinkedSessions.delete(s.name);
-        continue;
-      }
-      if (warnedUnlinkedSessions.has(s.name)) continue;
-      warnedUnlinkedSessions.add(s.name);
-      console.warn(`preserved session ${s.name}: goal ${s.goal} is ${t ? t.status : "not indexed"}; only the user can stop it`);
+      if (t) continue;
+      if (s.kind === "goal") missingFinishedGoals.add(s.goal);
     }
+    for (const file of missingFinishedGoals) await finishGoalExecutions({ goalFiles: [file], reason: "goal-done", sessions });
   } catch (err) {
     console.error("goal reconcile:", err.message ?? err);
   } finally {
@@ -3985,6 +4090,15 @@ const brainRoutes = createBrainRoutes({
     if (!brain) return { status: 404, error: `no brain on ${area}` };
     const record = await readBrainRequests(BRAINS_ROOT, brain.area);
     try {
+      const pending = record.requests.find((item) => item.id === id);
+      if (pending?.kind === "test" && answer === "approve" && pending.goal) {
+        const byFile = await goalsByFile();
+        if (byFile.has(pending.goal)) {
+          const cascade = doneCascade(pending.goal, byFile);
+          const cleanup = await finishGoalExecutions({ goalFiles: cascade.map((goal) => goal.file), reason: "goal-done" });
+          if (!cleanup.ok) return { status: 503, value: { error: "Worker cleanup failed. Retry the approval.", cleanup } };
+        }
+      }
       const request = answerBrainRequest(record, id, answer, note);
       await writeBrainRequests(BRAINS_ROOT, record);
       if (request.kind === "test" && request.answer === "approve" && request.goal) {
@@ -4205,6 +4319,7 @@ const shellStateRoutes = createShellStateRoutes({
       currentCommit: revisions.currentCommit,
       pendingCommits: revisions.commits,
       rebuild,
+      goalCleanups: await readAllGoalCleanups(GOAL_CLEANUPS_ROOT),
       caffeinate: caffeinateProc !== null,
       voice: Boolean(GROQ_KEY),
       sessions,
@@ -4553,15 +4668,40 @@ const workMutationRoutes = createWorkMutationRoutes({
     for (const key of ["title", "doneWhen", "state"]) if (typeof body[key] === "string") fields[key] = body[key];
     if (!Object.keys(fields).length) return { status: 400, error: "nothing to edit" };
     try {
-      await editGoalFile(file, fields);
-      if (fields.status === "dropped" && goal.session) await execFileAsync("tmux", ["kill-session", "-t", "=" + goal.session]).catch(() => {});
-      if (fields.status === "dropped") await closeRequestsForGoals([file], "goal-dropped");
-      const changed = fields.status === "done" ? await cascadeGoalDone(file, await goalsByFile()) : [file];
+      let changed;
+      if (fields.status === "done") {
+        changed = await cascadeGoalDone(file, await goalsByFile());
+        const remaining = { ...fields };
+        delete remaining.status;
+        if (Object.keys(remaining).length) await editGoalFile(file, remaining);
+      } else if (fields.status === "dropped") {
+        const cleanup = await finishGoalExecutions({ goalFiles: [file], reason: "goal-dropped" });
+        if (!cleanup.ok) return { status: 503, value: { error: "Worker cleanup failed. Retry the Goal finish.", cleanup } };
+        await editGoalFile(file, fields);
+        changed = [file, ...cleanup.releasedGoals];
+        await closeRequestsForGoals([file], "goal-dropped");
+      } else {
+        await editGoalFile(file, fields);
+        changed = [file];
+      }
       if (!changed.includes(file)) changed.unshift(file);
       const what = fields.status === "done" ? "done" : fields.status === "dropped" ? "marked won't do" : fields.status === "open" ? "reopened" : "edited";
       await vaultCommit(changed, `update: ${goal.area} goal ${goal.slug} ${what} in tree`, goal.area, body.session ? String(body.session) : null);
       return { status: 200, value: { ok: true } };
-    } catch (error) { return serverError(error); }
+    } catch (error) {
+      if (error.cleanup) return { status: 503, value: { error: error.message, cleanup: error.cleanup } };
+      return serverError(error);
+    }
+  },
+  /** Retries one server-derived cleanup failure for an already-finished Goal. */
+  async cleanup(body) {
+    const file = String(body.file ?? "");
+    const goal = (await goalsByFile()).get(file);
+    if (!goal) return { status: 404, error: `no goal file ${file}` };
+    if (!["done", "dropped"].includes(goal.status)) return { status: 409, error: `goal is ${goal.status}` };
+    const cleanup = await finishGoalExecutions({ goalFiles: [file], reason: goal.status === "dropped" ? "goal-dropped" : "goal-done" });
+    if (cleanup.ok && cleanup.releasedGoals.length) await vaultCommit(cleanup.releasedGoals, `update: ${goal.area} release Goals from finished worker`, goal.area, null);
+    return cleanup.ok ? { status: 200, value: { cleanup } } : { status: 503, value: { error: "Worker cleanup failed. Retry the cleanup.", cleanup } };
   },
 });
 

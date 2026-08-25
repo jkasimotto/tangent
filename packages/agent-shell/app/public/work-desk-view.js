@@ -1392,6 +1392,13 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const { facts, now } = deskGoalFactsData(goal);
     const elapsed = deskGoalElapsed(facts, now);
     const brain = activeBrainForArea(state.brains, goal.area);
+    const cleanup = ["done", "dropped"].includes(goal.status)
+      ? (state.goalCleanups ?? []).find((record) => record.goal === goal.file)
+      : null;
+    const cleanupFailure = cleanup?.failures?.[0];
+    const cleanupControl = cleanupFailure
+      ? `<button class="desk-action cleanup-error" type="button" data-retry-goal-cleanup="${escapeHtml(goal.file)}" title="${escapeHtml(cleanupFailure.error)}">Worker cleanup failed · Retry</button>`
+      : "";
     const brainAction = brain
       ? `<button class="desk-brain-action" type="button" data-open-brain="${escapeHtml(brain.session)}" title="Open ${escapeHtml(areaLabel(brain.area))} brain" aria-label="Open brain for Goal ${escapeHtml(goal.title)}, ${escapeHtml(areaLabel(brain.area))}">Open brain</button>`
       : "";
@@ -1403,6 +1410,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
           <div class="desk-goal-line2">
             <span class="desk-goal-status"><span class="desk-state ${action.kind}">${escapeHtml(action.state)}</span>${elapsed ? `<i aria-hidden="true">·</i>${elapsed}` : ""}</span>
             <span class="desk-goal-actions">
+              ${cleanupControl}
               ${brainAction}
               ${action.action === "Start agent"
                 ? `<span class="desk-split"><button class="desk-action" type="button" ${route}>Start agent</button>${launchToggle("▾")}</span>`

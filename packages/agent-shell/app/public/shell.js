@@ -604,6 +604,7 @@ function renderKey() {
     [state.launch.area, state.launch.kind, state.launch.open, state.launch.editing, state.launch.command, state.launch.choice, state.launch.loading, state.launch.options, state.launch.instruction, state.launch.continueFrom, state.launch.active, state.launch.steps, state.launch.record?.updatedAt ?? null],
     (state.pipelines ?? []).map((item) => [item.goal, item.status, item.updatedAt, item.steps.map((step) => [step.status, step.session, step.startedAt, step.endedAt, step.live, step.state, step.idleSince, step.waitingSince])]),
     (state.brains ?? []).map((item) => [item.area, item.status, item.generation, item.session, item.live, item.state, item.stateDetail, item.stateQuestion, item.waitingSince, item.updatedAt, (item.forJulian ?? []).map((row) => [row.line, row.commentCount, row.missing, row.goalStatus]), (item.requests ?? []).map((request) => [request.id, request.status, request.subject, request.question, request.proposal, request.detail])]),
+    (state.goalCleanups ?? []).map((item) => [item.goal, item.lastAttemptAt, item.retryCount, item.failures]),
     [...state.verdictLines],
     [...state.dismissedAskIds].sort(),
     state.brainDraft,
@@ -1075,6 +1076,7 @@ async function performRefresh({ initial = false, trigger = initial ? "initial" :
     state.currentCommit = sessionPayload.currentCommit || "";
     state.updateAvailable = Boolean(sessionPayload.sourceChanged);
     state.rebuild = sessionPayload.rebuild || null;
+    state.goalCleanups = sessionPayload.goalCleanups || [];
     state.rebuilding = ["building", "restarting", "reconnecting"].includes(state.rebuild?.phase);
     const gatewayRuntime = sessionPayload.runtime?.gateway;
     noteRuntimeIdentity(gatewayRuntime?.boot || sessionPayload.boot || "", gatewayRuntime?.controller?.boot || sessionPayload.boot || "");

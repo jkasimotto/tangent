@@ -590,17 +590,19 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 }
 
 @media (max-width: 639px) {
-  /* Two properties, two jobs. `visibility: collapse` on the column takes its
-     width away without `display: none` on the cells, which would drop them
-     out of their row and slide every later cell into the wrong column.
-     `visibility: hidden` on the cells then takes their text out of the
-     accessibility tree, which a collapsed column alone does not do in Chrome.
-     Together each fact is drawn and read exactly once at this width. */
+  /* Two properties, two jobs. A zero-width `col` takes the column's width in a
+     fixed layout, which ignores what the cells contain. `visibility: hidden`
+     on the cells then takes their text out of the accessibility tree, so each
+     fact is drawn and read exactly once at this width. The cells stay
+     `table-cell`: `display: none` drops a cell out of its row, and every later
+     cell slides into the wrong column. `visibility: collapse` on the column
+     would say the same thing, but its engine support is uneven and it leaves
+     the text in Chrome's accessibility tree. */
   .work-col-select { width: 30px; }
   .work-col-work { width: 62%; min-width: 0; }
-  .work-col-state, .work-col-time { width: auto; visibility: collapse; }
+  .work-col-state, .work-col-time { width: 0; }
   .work-col-action { width: 108px; }
-  .work-head-state, .work-head-time, .work-cell-state, .work-cell-time { visibility: hidden; }
+  .work-head-state, .work-head-time, .work-cell-state, .work-cell-time { visibility: hidden; padding: 0; overflow: hidden; white-space: nowrap; }
   .work-row > * { height: auto; padding: 6px 8px; }
   .work-cell-facts { display: block; margin-top: 2px; color: #8b949f; font-size: 11px; font-weight: 500; letter-spacing: 0; text-transform: none; }
   .work-title { white-space: normal; }
@@ -608,8 +610,8 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
   .work-group-brain-long { display: none; }
   .work-group-brain-short { display: inline; }
   .work-keyboard-hint { display: none; }
-  .ask-col-area, .ask-col-kind { width: auto; visibility: collapse; }
-  .ask-head-area, .ask-head-kind, .ask-cell-area, .ask-cell-kind { visibility: hidden; }
+  .ask-col-area, .ask-col-kind { width: 0; }
+  .ask-head-area, .ask-head-kind, .ask-cell-area, .ask-cell-kind { visibility: hidden; padding: 0; overflow: hidden; white-space: nowrap; }
   .ask-col-question { width: 62%; }
   .ask-col-action { width: 128px; }
   .ask-actions { flex-direction: column; align-items: stretch; }

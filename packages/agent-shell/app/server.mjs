@@ -1306,10 +1306,11 @@ async function finishGoalExecutions({ goalFiles, reason, sessions = null }) {
     if (found.pipeline) pipelines.set(goalFile, found.pipeline);
     for (const name of (await readGoalCleanup(GOAL_CLEANUPS_ROOT, goalFile))?.removed ?? []) previouslyRemoved.add(name);
   }
+  for (const session of sessions ?? []) if (targets.has(session.goal)) candidates.add(session.name);
   let observed;
   try {
-    observed = sessions ?? await listSessions({ fresh: true });
-    if (sessions === null && sessionObservation.status().error) throw new Error(`tmux observation failed: ${sessionObservation.status().error}`);
+    observed = await listSessions({ fresh: true });
+    if (sessionObservation.status().error) throw new Error(`tmux observation failed: ${sessionObservation.status().error}`);
   } catch (error) {
     failures.push({ goal: null, session: null, operation: "observe", error: String(error.message ?? error) });
     observed = [];

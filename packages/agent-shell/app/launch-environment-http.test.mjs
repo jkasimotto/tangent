@@ -347,6 +347,15 @@ test("launch options resolve the registry, and saving writes an Area default", a
     execFile("tmux", ["show-options", "-t", session, "-v", "@tangent_launch"], (error, stdout) => resolve((stdout ?? "").trim()));
   });
   assert.equal(label, "Claude · Otto · Opus 4.6");
+  // The ids beside the label. Work prints these, because the label
+  // "Claude · Otto · Opus 4.6" does not say which part is the model
+  // (design-see-the-harness-model-effort-and-open-that-agent Decision 2).
+  const ref = await new Promise((resolve) => {
+    execFile("tmux", ["show-options", "-t", session, "-v", "@tangent_launch_ref"], (_error, stdout) => resolve((stdout ?? "").trim()));
+  });
+  assert.equal(ref, "claude-otto/opus-4-6");
+  const listed = await fetch(`${base}/api/sessions`).then((response) => response.json());
+  assert.equal(listed.sessions.find((item) => item.name === session).launchRef, "claude-otto/opus-4-6");
 
   // Reopening the Goal resumes the same session instead of rebuilding one.
   const reopened = await fetch(`${base}/api/goals/start`, {
@@ -369,6 +378,10 @@ test("launch options resolve the registry, and saving writes an Area default", a
     execFile("tmux", ["show-options", "-t", session, "-v", "@tangent_launch_command"], (_error, stdout) => resolve((stdout ?? "").trim()));
   });
   assert.equal(currentCommand, "pi-code");
+  const restartedRef = await new Promise((resolve) => {
+    execFile("tmux", ["show-options", "-t", session, "-v", "@tangent_launch_ref"], (_error, stdout) => resolve((stdout ?? "").trim()));
+  });
+  assert.equal(restartedRef, "pi-code", "a restart at the shell records the harness it actually started");
 
   // A start that names no harness is refused. Tangent uses neither the Area
   // default nor the recorded command as a silent substitute.

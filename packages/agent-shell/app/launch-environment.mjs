@@ -86,6 +86,16 @@ export function launchLabel(harness, model, effort) {
 }
 
 /**
+ * The id form of one launch, `harness/model/effort`, with empty parts dropped.
+ * The Work rows print this and not the display label: the harness `claude-otto`
+ * carries the label `Claude · Otto`, so a label reads `Claude · Otto · Opus 5 ·
+ * Medium` and no reader can tell which part is the model.
+ */
+export function launchRef(ref) {
+  return [ref?.harness, ref?.model, ref?.effort].filter(Boolean).join("/");
+}
+
+/**
  * Composes the exact command for one { harness, model?, effort? } launch
  * reference: harness command, then model args, then effort args. Never
  * substitutes: an id that does not resolve is an error that names it.

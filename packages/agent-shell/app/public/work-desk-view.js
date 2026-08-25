@@ -1193,7 +1193,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * prose (design-goal-cards Decision 4).
    */
   function deskGoalAction(goal) {
-    const line = { stepLine: "", stepShort: "", stepTitle: "", fill: "" };
+    const line = { stepLine: "", stepShort: "", stepTitle: "", fill: "", launch: "" };
     if (["done", "dropped", "deferred"].includes(goal.status)) {
       return { ...line, state: goal.status === "done" ? "Complete" : humanName(goal.status), action: "", kind: "complete", route: "" };
     }
@@ -1212,15 +1212,30 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   }
 
   /**
+   * The `harness/model/effort` text a row prints as its open control, from the
+   * ids the server recorded at start time. Never derived from a command or a
+   * display label: `agentName` cannot tell `claude` from `claude-otto`, and the
+   * label `Claude · Otto · Opus 5` hides which part is the model
+   * (design-see-the-harness-model-effort-and-open-that-agent Decision 5).
+   */
+  function launchRefText(launch) {
+    if (typeof launch === "string") return launch;
+    return [launch?.harness, launch?.model, launch?.effort].filter(Boolean).join("/");
+  }
+
+  /**
    * The state pill and route of one live session, shared by the plain Goal row
    * and the pipeline row. A session that is alive always carries a route: the
-   * pill says what it is doing, the action opens it.
+   * pill says what it is doing, the action opens it. `launch` is the text the
+   * action button shows; a session started before the ids were recorded has
+   * none, and keeps its verb.
    */
   function deskSessionAction(session, idle) {
-    if (session.state === "working") return { state: "Working", action: `Open ${agentName(session)}`, kind: "working", route: "run" };
-    if (session.state === "waiting") return { state: "Waiting", action: `Open ${agentName(session)}`, kind: idle, route: "run" };
-    if (session.state === "shell") return { state: "Stopped", action: "Open session", kind: idle, route: "run" };
-    return { state: "Open", action: "Open agent", kind: "ready", route: "run" };
+    const launch = launchRefText(session.launchRef);
+    if (session.state === "working") return { state: "Working", action: `Open ${agentName(session)}`, launch, kind: "working", route: "run" };
+    if (session.state === "waiting") return { state: "Waiting", action: `Open ${agentName(session)}`, launch, kind: idle, route: "run" };
+    if (session.state === "shell") return { state: "Stopped", action: "Open session", launch, kind: idle, route: "run" };
+    return { state: "Open", action: "Open agent", launch, kind: "ready", route: "run" };
   }
 
   /** True when a brain holds an open Test for exactly this Goal, on either record. */
@@ -1300,14 +1315,20 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     };
   }
 
-  /** The state pill and route of one pipeline step. An action of "" means no route. */
+  /**
+   * The state pill and route of one pipeline step. An action of "" means no
+   * route, and a step with no route shows no launch either: what you can read
+   * you can click (design-see-the-harness-model-effort-and-open-that-agent
+   * Decision 3).
+   */
   function deskStepAction(step, idle) {
-    if (step.status === "stopped" || (step.status === "running" && !step.live)) return { state: "Stopped", action: "", kind: idle, route: "" };
-    if (step.status === "pending") return { state: "Not started", action: "", kind: idle, route: "" };
-    if (step.state === "working") return { state: "Working", action: `Open step ${step.index}`, kind: "working", route: "run" };
-    if (step.state === "waiting") return { state: "Waiting", action: `Open step ${step.index}`, kind: idle, route: "run" };
-    if (step.state === "shell") return { state: "Stopped", action: `Open step ${step.index}`, kind: idle, route: "run" };
-    return { state: "Open", action: `Open step ${step.index}`, kind: "ready", route: "run" };
+    if (step.status === "stopped" || (step.status === "running" && !step.live)) return { state: "Stopped", action: "", launch: "", kind: idle, route: "" };
+    if (step.status === "pending") return { state: "Not started", action: "", launch: "", kind: idle, route: "" };
+    const launch = launchRefText(step.launch);
+    if (step.state === "working") return { state: "Working", action: `Open step ${step.index}`, launch, kind: "working", route: "run" };
+    if (step.state === "waiting") return { state: "Waiting", action: `Open step ${step.index}`, launch, kind: idle, route: "run" };
+    if (step.state === "shell") return { state: "Stopped", action: `Open step ${step.index}`, launch, kind: idle, route: "run" };
+    return { state: "Open", action: `Open step ${step.index}`, launch, kind: "ready", route: "run" };
   }
 
   /** Rare pipeline actions shown inside the Goal action menu, only when valid. */
@@ -1588,11 +1609,18 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const route = action.route === "goal"
       ? `data-open-close="${escapeHtml(goal.file)}"`
       : `data-open-goal-run="${escapeHtml(goal.file)}"`;
+    // The open control and the launch fact are one element: the button keeps
+    // its route and shows `claude-otto/opus-5/medium` instead of its verb, and
+    // the verb moves into the title and the accessible name
+    // (design-see-the-harness-model-effort-and-open-that-agent Decision 1).
+    const openLabel = action.launch ? `${action.action} on ${action.launch}` : action.action;
     const primary = action.action === "Start agent"
       ? `<span class="desk-split"><button class="desk-action" type="button" ${route} data-focus-key="start:${escapeHtml(goal.file)}" aria-label="Start an agent on ${escapeHtml(goal.title)}">Start agent</button><button class="desk-action desk-launch-toggle${state.launchTarget === goal.file ? " open" : ""}" type="button" data-launch-for="${escapeHtml(goal.file)}" title="${launchTitle}" aria-label="${launchTitle} for ${escapeHtml(goal.title)}" aria-expanded="${state.launchTarget === goal.file}">▾</button></span>`
-      : action.action
-        ? `<button class="desk-action" type="button" ${route} data-focus-key="open:${escapeHtml(goal.file)}" aria-label="${escapeHtml(action.action)}: ${escapeHtml(goal.title)}">${escapeHtml(action.action)}</button>`
-        : "";
+      : action.action && action.launch
+        ? `<button class="desk-launch-ref" type="button" ${route} data-focus-key="open:${escapeHtml(goal.file)}" title="${escapeHtml(openLabel)}" aria-label="${escapeHtml(openLabel)}: ${escapeHtml(goal.title)}">${escapeHtml(action.launch)}</button>`
+        : action.action
+          ? `<button class="desk-action" type="button" ${route} data-focus-key="open:${escapeHtml(goal.file)}" aria-label="${escapeHtml(action.action)}: ${escapeHtml(goal.title)}">${escapeHtml(action.action)}</button>`
+          : "";
     return `<td class="work-cell-action"><span class="desk-goal-actions">${cleanupControl}${primary}
       <details class="desk-action-menu"><summary data-focus-key="menu:${escapeHtml(goal.file)}" aria-label="Actions for ${escapeHtml(goal.title)}">▾</summary><div role="menu">
         ${record ? `<button type="button" data-launch-for="${escapeHtml(goal.file)}">Steps and agents…</button>` : ""}

@@ -469,6 +469,14 @@ summary:focus-visible {
 .desk-goal.waiting .desk-action { border-color: #665735; color: var(--amber); }
 .desk-goal.fact .desk-action { border-color: #3c434c; color: #cbd1d7; }
 .desk-icon-action { border-color: transparent; background: transparent; color: #7f8994; }
+/* The open control of a running row: the launch ids are the label, so the row
+   says which agent runs it without a second element
+   (design-see-the-harness-model-effort-and-open-that-agent). Its own class and
+   not `.desk-action`: the state colour rules below turn every `.desk-action`
+   amber on a waiting row, and 25 characters of amber monospace shouts. The
+   State pill and the time bar already carry that signal. */
+.desk-launch-ref { max-width: 150px; overflow: hidden; padding: 4px 0; border: 0; background: transparent; color: #79828d; cursor: pointer; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 760; text-overflow: ellipsis; white-space: nowrap; }
+.desk-launch-ref:hover, .desk-launch-ref:focus-visible { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
 .desk-icon-action.complete:hover { color: var(--green); }
 
 
@@ -521,7 +529,7 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-col-work { width: auto; min-width: 280px; }
 .work-col-state { width: 156px; }
 .work-col-time { width: 150px; }
-.work-col-action { width: 144px; }
+.work-col-action { width: 184px; }
 
 .work-group-row > .work-group-head { box-sizing: border-box; height: 32px; padding: 0 10px; border-bottom: 1px solid #2b3037; background: #14171b; font-weight: 400; line-height: 1.1; text-align: left; }
 .work-group-head { display: table-cell; }

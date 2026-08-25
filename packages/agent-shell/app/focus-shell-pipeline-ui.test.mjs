@@ -143,7 +143,10 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   await settle(window);
   const row = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
   assert.match(row.querySelector(".desk-state").textContent, /^Working$/);
-  assert.match(row.querySelector("[data-open-goal-run]").textContent, /Open step 1/);
+  // The open control is the step's launch, and the verb is its accessible name
+  // (design-see-the-harness-model-effort-and-open-that-agent Decision 1).
+  assert.equal(row.querySelector("[data-open-goal-run]").textContent, "codex/sol/high");
+  assert.match(row.querySelector("[data-open-goal-run]").getAttribute("aria-label"), /^Open step 1 on codex\/sol\/high:/);
   assert.equal(row.querySelector(".desk-step"), null, "the step chips left the card");
   assert.equal(row.querySelector(".desk-goal-facts"), null, "agent count is not repeated on the Goal");
   assert.equal(row.querySelector("[data-check-goal]"), null);
@@ -176,7 +179,7 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   assert.equal(popover(), null, "the popover closed after the append");
   assert.equal(posts.filter((entry) => entry.path === "/api/goals/start").length, 1, "an append never restarts the pipeline");
   const grownRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
-  assert.match(grownRow.querySelector("[data-open-goal-run]").textContent, /Open step 1/);
+  assert.equal(grownRow.querySelector("[data-open-goal-run]").textContent, "codex/sol/high");
 
   // The step session dies: the row offers Restart and Skip; Skip advances the line
   // and the latest handover shows under the chips.

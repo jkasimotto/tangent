@@ -612,7 +612,7 @@ function renderKey() {
     state.brainDraft,
     [state.launchTarget, state.launchAnchor, state.defaultAgents, Boolean(state.harnessDraft)],
     whatHappenedRenderKey(),
-    state.sessions.map((item) => [item.name, item.goal, item.kind, item.area, item.state, item.stateDetail, item.stateQuestion, item.phase, item.command, item.created, item.workTitle, item.launchLabel, item.waitingSince]),
+    state.sessions.map((item) => [item.name, item.goal, item.kind, item.area, item.state, item.stateDetail, item.stateQuestion, item.phase, item.command, item.created, item.workTitle, item.launchLabel, item.launchRef, item.waitingSince]),
   ]);
 }
 

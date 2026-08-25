@@ -12,7 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { doneCascade } from "./goal-cascade.mjs";
 import { noteResource } from "./area-agent-command.mjs";
-import { resolveLaunch } from "./launch-environment.mjs";
+import { launchRef, resolveLaunch } from "./launch-environment.mjs";
 import { createLaunchCatalog } from "./launch-catalog.mjs";
 import { createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
 import { commandSession, programsSnapshot, saveLocalProgram } from "./programs.mjs";
@@ -213,14 +213,14 @@ async function loadSessions() {
     const { stdout } = await runTmuxObservation([
       "list-sessions",
       "-F",
-      "#{session_name}\t#{session_path}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{@tangent_area}\t#{@tangent_kind}\t#{@tangent_goal}\t#{@tangent_process}\t#{pane_current_command}\t#{@tangent_phase}\t#{@tangent_work_title}\t#{@tangent_launch}\t#{@tangent_pipeline}\t#{@tangent_step}\t#{@tangent_brain}\t#{@tangent_generation}",
+      "#{session_name}\t#{session_path}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{@tangent_area}\t#{@tangent_kind}\t#{@tangent_goal}\t#{@tangent_process}\t#{pane_current_command}\t#{@tangent_phase}\t#{@tangent_work_title}\t#{@tangent_launch}\t#{@tangent_launch_ref}\t#{@tangent_pipeline}\t#{@tangent_step}\t#{@tangent_brain}\t#{@tangent_generation}",
     ]);
     const sessions = stdout
       .trim()
       .split("\n")
       .filter(Boolean)
       .map((line) => {
-        const [name, cwd, windows, attached, created, area, kind, goal, processName, command, phase, workTitle, launchLabel, pipeline, step, brain, generation] = line.split("\t");
+        const [name, cwd, windows, attached, created, area, kind, goal, processName, command, phase, workTitle, launchLabel, launchIds, pipeline, step, brain, generation] = line.split("\t");
         return {
           name,
           cwd,
@@ -235,6 +235,10 @@ async function loadSessions() {
           phase: phase || null,
           workTitle: workTitle || null,
           launchLabel: launchLabel || null,
+          // The ids, not the label: a Work row prints `claude-otto/opus-5/medium`.
+          // Empty on a session that started before this option existed; the row
+          // then keeps its verb until the session restarts.
+          launchRef: launchIds || null,
           pipeline: pipeline || null,
           step: step ? Number(step) : null,
           brain: brain || null,
@@ -1876,9 +1880,9 @@ const runtimeScheduler = createRuntimeScheduler([
  * when the session carries none, which is a refusal, never a reason to guess.
  */
 async function sessionLaunch(session) {
-  const { stdout } = await execFileAsync("tmux", ["display-message", "-p", "-t", "=" + session + ":", "#{@tangent_launch_command}\t#{@tangent_launch}"]).catch(() => ({ stdout: "" }));
-  const [command = "", label = ""] = String(stdout).replace(/\n$/, "").split("\t");
-  return { command: command.trim(), label: label.trim() };
+  const { stdout } = await execFileAsync("tmux", ["display-message", "-p", "-t", "=" + session + ":", "#{@tangent_launch_command}\t#{@tangent_launch}\t#{@tangent_launch_ref}"]).catch(() => ({ stdout: "" }));
+  const [command = "", label = "", ref = ""] = String(stdout).replace(/\n$/, "").split("\t");
+  return { command: command.trim(), label: label.trim(), ref: ref.trim() };
 }
 
 /**
@@ -1924,7 +1928,7 @@ function describeWorkTitle(description) {
 }
 
 /** Opens a native agent in the selected Area to define durable work. */
-async function spawnDescribeWorkSession(area, description, sources, { session: requested = "", launch = true, command = "", label = "" } = {}) {
+async function spawnDescribeWorkSession(area, description, sources, { session: requested = "", launch = true, command = "", label = "", ref = "" } = {}) {
   const sessions = await listSessions();
   const existing = requested
     ? sessions.find((item) => item.name === requested && item.kind === "work-definition" && item.area === area)
@@ -1949,6 +1953,7 @@ async function spawnDescribeWorkSession(area, description, sources, { session: r
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_phase", "define"]);
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_work_title", title]);
   if (label) await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_launch", label]);
+  if (ref) await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_launch_ref", ref]);
 
   /** Sends the captured description after the native agent is ready. */
   const prime = async () => {
@@ -1973,7 +1978,7 @@ async function spawnDescribeWorkSession(area, description, sources, { session: r
  * The path option gives the new pane one exact directory instead of the
  * Area repository; a pipeline step passes its own.
  */
-async function spawnGoalSession(area, slug, { phase = "execute", approved = false, launch = false, document = "", command = "", label = "", path: workingDirectory = "", extraSlugs = [], pipeline = null, continuation = null, onPrimed = null, trace = null } = {}) {
+async function spawnGoalSession(area, slug, { phase = "execute", approved = false, launch = false, document = "", command = "", label = "", ref = "", path: workingDirectory = "", extraSlugs = [], pipeline = null, continuation = null, onPrimed = null, trace = null } = {}) {
   const areaGoals = await readAreaGoals(area);
   trace?.mark("spawn area goals ready", { goals: areaGoals.length });
   const o = areaGoals.find((t) => t.slug === slug);
@@ -2024,6 +2029,7 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
     await execFileAsync("tmux", ["set-option", "-t", existing, "@tangent_phase", phase]);
     if (document) await execFileAsync("tmux", ["set-option", "-t", existing, "@tangent_document", document]);
     if (existingAtShell && label) await execFileAsync("tmux", ["set-option", "-t", existing, "@tangent_launch", label]);
+    if (existingAtShell && ref) await execFileAsync("tmux", ["set-option", "-t", existing, "@tangent_launch_ref", ref]);
     if (existingAtShell && command) await execFileAsync("tmux", ["set-option", "-t", existing, "@tangent_launch_command", command]);
     let primed = false;
     if (approved && phase === "execute" && live && !SHELL_CMDS.has(live.command)) {
@@ -2054,6 +2060,7 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
   await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_launch_command", command]);
   if (document) await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_document", document]);
   if (label) await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_launch", label]);
+  if (ref) await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_launch_ref", ref]);
   if (pipeline) {
     await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_pipeline", o.file]);
     await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_step", String(pipeline.index)]);
@@ -2270,7 +2277,7 @@ async function resolveStepLaunch(step) {
 async function declaredWorkLaunch(area) {
   const launch = await launchCatalog.forArea(area);
   if (!launch || launch.error || !launch.harness) return null;
-  return [launch.harness, launch.model, launch.effort].filter(Boolean).join("/");
+  return launchRef(launch);
 }
 
 /**
@@ -2395,6 +2402,7 @@ async function startPipelineStep(record, index, trace = null) {
       launch: true,
       command: step.command,
       label: step.label,
+      ref: launchRef(step.launch),
       path: step.path,
       extraSlugs,
       pipeline: { record, index, sessionName },
@@ -2606,7 +2614,7 @@ async function continueWorkerSession(sessionName, text) {
       // The fresh copy is the same step, so it keeps the step's own
       // directory. Without it the replacement would open in the Area
       // repository and quietly work the wrong tree.
-      phase: "execute", launch: true, command: step.command, label: step.label, path: step.path, extraSlugs,
+      phase: "execute", launch: true, command: step.command, label: step.label, ref: launchRef(step.launch), path: step.path, extraSlugs,
       pipeline: { record, index: step.index, sessionName: next }, onPrimed,
     });
     if (result.status !== 200) {
@@ -2662,7 +2670,7 @@ async function continueWorkerSession(sessionName, text) {
     messages.queue(sessionName, { from: "tangent", area: o.area, text: `Continuation recorded, but the fresh session could not start: the prompt never arrived. You still work this Goal.`, queuedAt: new Date().toISOString() });
   };
   const result = await spawnGoalSession(o.area, o.slug, {
-    phase: "execute", launch: true, command: record.command, label: record.label, continuation: { sessionName: next, entries: record.continuations }, onPrimed,
+    phase: "execute", launch: true, command: record.command, label: record.label, ref: carried.ref, continuation: { sessionName: next, entries: record.continuations }, onPrimed,
   });
   if (result.status !== 200) {
     await execution.failContinuation(entry);
@@ -3333,6 +3341,7 @@ async function spawnBrainSession(record) {
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_brain", record.area]);
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_generation", String(generation)]);
   if (record.label) await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_launch", record.label]);
+  if (launchRef(record.launch)) await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_launch_ref", launchRef(record.launch)]);
   const entry = beginGeneration(record, name);
   // The notices no generation read belong in this generation's first
   // message. They are kept on the record so the desk can show the message
@@ -4634,7 +4643,7 @@ const launchRoutes = createLaunchRoutes({
       }
       const chosen = await launchCatalog.requested(body);
       if (chosen.error) return { status: 400, error: chosen.error };
-      const result = await spawnDescribeWorkSession(area, description, sources, { session: String(body.session ?? ""), launch: body.launch !== false, command: chosen.command, label: chosen.label });
+      const result = await spawnDescribeWorkSession(area, description, sources, { session: String(body.session ?? ""), launch: body.launch !== false, command: chosen.command, label: chosen.label, ref: launchRef(chosen) });
       return { status: result.status, ...(result.status === 200 ? { value: { ...result, route: "work-definition-opened" } } : { error: result.error }) };
     } catch (error) { return { status: 500, error: String(error.stderr ?? error.message ?? error) }; }
   },
@@ -4670,7 +4679,7 @@ const launchRoutes = createLaunchRoutes({
     if (chosen.error) return { status: 400, error: chosen.error };
     try {
       const [focus] = await sourceDocuments(body.document ? [body.document] : []);
-      const result = await startGoal(String(body.file ?? ""), { phase: "collaborate", launch: body.launch === true, document: focus?.file ?? "", command: chosen.command, label: chosen.label, extraFiles: Array.isArray(body.extraFiles) ? body.extraFiles.map(String) : [] });
+      const result = await startGoal(String(body.file ?? ""), { phase: "collaborate", launch: body.launch === true, document: focus?.file ?? "", command: chosen.command, label: chosen.label, ref: launchRef(chosen), extraFiles: Array.isArray(body.extraFiles) ? body.extraFiles.map(String) : [] });
       return { status: result.status, ...(result.status === 200 ? { value: result } : { error: result.error }) };
     } catch (error) { return { status: 500, error: String(error.stderr ?? error.message ?? error) }; }
   },
@@ -4690,7 +4699,7 @@ const launchRoutes = createLaunchRoutes({
       }
       const chosen = await launchCatalog.requested(body);
       if (chosen.error) return { status: 400, error: chosen.error };
-      const result = await startGoal(String(body.file ?? ""), { phase: "execute", approved: body.approved === true, launch: body.launch === true, command: chosen.command, label: chosen.label, extraFiles: Array.isArray(body.extraFiles) ? body.extraFiles.map(String) : [] });
+      const result = await startGoal(String(body.file ?? ""), { phase: "execute", approved: body.approved === true, launch: body.launch === true, command: chosen.command, label: chosen.label, ref: launchRef(chosen), extraFiles: Array.isArray(body.extraFiles) ? body.extraFiles.map(String) : [] });
       return { status: result.status, ...(result.status === 200 ? { value: { session: result.session, reattached: Boolean(result.reattached), primed: Boolean(result.primed) } } : { error: result.error }) };
     } catch (error) { return { status: 500, error: String(error.stderr ?? error.message ?? error) }; }
   },

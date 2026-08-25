@@ -3146,7 +3146,7 @@ async function brainCommandContext(area) {
     ? `The resolved work harness for this Area is \`${workLaunch.harness}\`.`
     : `No work harness is declared for Area \`${area}\`.`;
   const commands = reference
-    ? `Generated from the installed CLI. Run \`tangent <noun> <subcommand> --help\` for the options of one you have not used.\n\n${reference}`
+    ? `Generated from the installed CLI. Run \`tangent <noun> --help\` for a noun you have not used; its examples carry the flags.\n\n${reference}`
     : `Run \`tangent <noun> --help\` for the installed syntax. Nouns: ${BRAIN_COMMAND_NOUNS.join(", ")}.`;
   return (
     `${commands}\n\n` +

@@ -97,6 +97,8 @@ test("the brain prompt gives bounded authoritative command and harness discovery
   openedSessions.push(ottoBrain.session);
   const ottoShow = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(ottoBrain.session)}`).then((response) => response.json());
   assert.match(ottoShow.prompt, /## Tangent commands\n\nGenerated from the installed CLI\./, "the command reference is generated, not hand-copied");
+  assert.match(ottoShow.prompt, /Run `tangent <noun> --help`/, "the prompt points at the help the CLI actually prints");
+  assert.doesNotMatch(ottoShow.prompt, /tangent <noun> <subcommand> --help/, "the CLI prints no per-subcommand help");
   const reference = await installedCommandReference();
   for (const line of reference.split("\n")) {
     assert.ok(ottoShow.prompt.includes(line), `the prompt carries the installed reference line: ${line}`);

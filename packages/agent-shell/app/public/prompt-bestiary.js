@@ -22,7 +22,7 @@ export const MODEL_CONCEPTS = [
   concept("run", "Run", "Runtime", "One agent session that works on a Goal or pipeline step.", "A Goal or pipeline step", "The session can work, wait, stop, or end.", ["Goal", "Pipeline", "Brain"]),
   concept("request", "Request", "Attention", "A durable question from a Brain to Julian.", "The Brain that created it", "It stays open until Julian answers it.", ["Brain", "Test", "Ask"]),
   concept("test", "Test", "Attention", "A Request that asks Julian to evaluate a reviewed result.", "The Brain that reviewed the Goal", "Pass can close the Goal. Needs work returns it to the Brain.", ["Request", "Goal", "Ask"]),
-  concept("ask", "Ask", "Attention", "One actionable row in For you.", "The source request or runtime fact", "It disappears when its source no longer needs an answer.", ["Request", "Test", "Run", "View"]),
+  concept("ask", "Ask", "Attention", "One actionable row in For you.", "The source request or runtime fact", "An answer, dismissal, or source lifecycle change removes it.", ["Request", "Test", "Run", "View"]),
   concept("view", "View", "Attention", "A projection of durable and runtime facts for one purpose.", "Agent Shell", "Current, Planned, and For you do not change stored object states.", ["Ask", "Goal", "Run"]),
 ];
 

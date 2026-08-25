@@ -439,6 +439,11 @@ summary:focus-visible {
    drops its own to avoid doubling them. */
 .attention-items .attention-row > button:first-child { padding: 0; border: 0; }
 .attention-items .attention-row > button:first-child:hover { background: transparent; }
+.attention-row-edge { display: flex; align-items: center; gap: 8px; justify-self: end; }
+.attention-items .attention-dismiss { display: inline-grid; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #8f846d; cursor: pointer; font-size: 19px; font-weight: 450; line-height: 1; place-items: center; }
+.attention-items .attention-dismiss > span:last-child { color: inherit; font-size: inherit; font-weight: inherit; }
+.attention-items .attention-dismiss:hover { background: rgba(231, 198, 128, .08); color: var(--amber); }
+.attention-items .attention-dismiss:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 /* The question is the only part of a row Julian must read, so it carries the
    accent and sits on its own line under the facts. */
 .attention-items .attention-question { margin-top: 3px; color: var(--amber); font-size: 12.5px; font-weight: 700; line-height: 1.35; }

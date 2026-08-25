@@ -3476,6 +3476,7 @@ async function brainsView(sessions, { includeForJulian = true } = {}) {
       stateDetail: live?.stateDetail ?? null,
       stateQuestion: live?.stateQuestion ?? "",
       idleSince: live?.idleSince ?? null,
+      waitingSince: live?.waitingSince ?? null,
       latestHandover: latestHandover(record),
       forJulian: includeForJulian ? await forJulianItems(record, index) : [],
       requests: openBrainRequests(await readBrainRequests(BRAINS_ROOT, record.area)),

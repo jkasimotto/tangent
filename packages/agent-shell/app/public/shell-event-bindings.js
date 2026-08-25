@@ -15,7 +15,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain, brainForAreaCard,
     openBrainSession, openOrStartBrain, toggleBrainPopover, saveDescribeDraft, saveDescribeSession, describeWorkSession,
     openDescribeSession, addDescribeSource, switchDescribeToManualCreate, selectionForArea, startSelectedGoals,
-    openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, enableDockBadge, openRequest, sendVerdict,
+    openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, enableDockBadge, openRequest, sendVerdict, dismissAsk,
     replyAboutRow, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery,
     applyAreaFocus, clearAreaFocus, renderWork, describeLaunchArea, describeWorkSessions,
   } = work;
@@ -122,6 +122,11 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
     if (target === awakeButton || target.closest("#awake-button")) return toggleAwake();
     if (target.closest("[data-enable-dock-badge]")) return enableDockBadge();
+    const dismissAskButton = target.closest("[data-dismiss-ask]");
+    if (dismissAskButton) {
+      event.stopPropagation();
+      return dismissAsk(dismissAskButton.dataset.dismissAsk);
+    }
     const goalPrompt = target.closest("[data-load-goal-prompt]");
     if (goalPrompt) return loadGoalPrompt(document.querySelector("[data-prompt-goal]")?.value ?? "", goalPrompt.dataset.loadGoalPrompt);
     if (target.closest("[data-load-brain-prompt]")) return loadBrainPrompt(document.querySelector("[data-prompt-brain]")?.value ?? "");

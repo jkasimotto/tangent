@@ -1,4 +1,5 @@
 import { readAreaFocus } from "./area-focus-core.js";
+import { readDismissedAskIds } from "./ask-dismissal-core.js";
 
 /** Creates Agent Shell's restored browser state and request context. */
 export function createShellState(storage = globalThis.localStorage, href = globalThis.location.href) {
@@ -35,7 +36,7 @@ export function createShellState(storage = globalThis.localStorage, href = globa
     launch: { area: "", kind: "", options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", continueFrom: null, steps: [], active: 0, record: null },
     defaultAgents: { area: "", editing: "", mode: "" },
     pipelines: [], brains: [], brainDraft: null, agentSessionName: null,
-    verdictLines: new Set(), goalSelection: [], goTo: null, launchTarget: "", launchAnchor: null, whatHappened: null,
+    verdictLines: new Set(), dismissedAskIds: readDismissedAskIds(storage), goalSelection: [], goTo: null, launchTarget: "", launchAnchor: null, whatHappened: null,
     harnessDraft: null, harnessReturnView: "work", query: "", workFilter: storage.getItem("agent-shell.work-filter") === "inactive" ? "inactive" : "active", personFilter: storage.getItem("agent-shell.person-filter") || "all",
     caffeinate: false, decisionReturnView: "agent", agentReturnView: "work", agentReturn: null, offline: false, rebuilding: false, rebuild: null,
     updateAvailable: false, pendingCommits: [], deployedCommit: "", currentCommit: "", bootId: "", loading: true, error: "", renderedKey: "",

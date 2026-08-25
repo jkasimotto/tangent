@@ -5,10 +5,10 @@
 // A row on the For you card exists only when it asks Julian something and
 // says what the answer is. That rule is structural here, not prose in a
 // prompt: `makeAsk` is the only way an ask exists, and it refuses anything
-// without a question that ends in `?` and at least one answer action. Every
-// source of rows (the brain's plan lines, a pane dialog, a stopped step, a
-// handover that names him) passes through one of the builders below, so a
-// machine state on its own can never make a row.
+// without an event identity, a question that ends in `?`, and at least one
+// answer action. Every source of rows (the brain's plan lines, a pane dialog,
+// a stopped step, a handover that names him) passes through one of the
+// builders below, so a machine state on its own can never make a row.
 //
 // It is a plain script that registers a global, the same shape as
 // goal-card-core.js, so the browser and the tests load one copy. Pure:
@@ -49,18 +49,27 @@
     return Boolean(action.arg) && typeof action.arg === "object";
   }
 
+  /** A stable, reversible identity for one actionable source event. */
+  function askIdentity(kind, ...parts) {
+    if (!filled(kind) || parts.some((part) => !filled(String(part ?? "")))) return "";
+    return [kind, ...parts].map((part) => encodeURIComponent(String(part).trim())).join(":");
+  }
+
   /**
    * The only constructor of an ask. Returns the frozen ask, or null when the
-   * input is not a direct ask: no Area, no subject, no question, a question
-   * that does not end in `?`, no action, or an action in an unknown verb.
-   * Shape: { area, subject, context, proposal, detail, question, actions, source }.
+   * input is not a direct ask: no event identity, no Area, no subject, no
+   * question, a question that does not end in `?`, no action, or an action in
+   * an unknown verb. Shape: { id, area, subject, context, proposal, detail,
+   * question, actions, source }.
    */
-  function makeAsk({ area, subject, context = "", proposal = "", detail = "", question, actions, source = "" }) {
+  function makeAsk({ id, area, subject, context = "", proposal = "", detail = "", question, actions, source = "" }) {
+    if (!filled(id)) return null;
     if (!filled(area) || !filled(subject)) return null;
     if (!filled(question) || !question.trim().endsWith("?")) return null;
     if (!Array.isArray(actions) || !actions.length) return null;
     if (!actions.every(validAction)) return null;
     return Object.freeze({
+      id: id.trim(),
       area: area.trim(),
       subject: subject.trim(),
       context: String(context ?? "").trim(),
@@ -108,6 +117,7 @@
       if (!["open", "done"].includes(row.goalStatus)) return null;
       const subject = row.title ?? row.target ?? "";
       return makeAsk({
+        id: askIdentity("plan", brain.area, row.line),
         area: brain.area,
         subject,
         detail: row.text,
@@ -119,6 +129,7 @@
     if (row.kind !== "decide") return null;
     if (!row.target) {
       return makeAsk({
+        id: askIdentity("plan", brain.area, row.line),
         area: brain.area,
         subject: "Brain asks",
         question: row.text,
@@ -132,6 +143,7 @@
       row.commentCount ? `${row.commentCount} ${row.commentCount === 1 ? "comment" : "comments"} left` : "",
     ].filter(Boolean).join(" · ");
     return makeAsk({
+      id: askIdentity("plan", brain.area, row.line),
       area: brain.area,
       subject,
       detail,
@@ -155,6 +167,7 @@
           { kind: "request-answer", label: "I want these changes", arg: { area: brain.area, id: request.id, answer: "changes" } },
         ];
     return makeAsk({
+      id: askIdentity("request", brain.area, request.id),
       area: brain.area,
       subject: request.subject,
       context: String(request.detail ?? "").split(/(?<=[.!?])\s+/)[0],
@@ -177,6 +190,7 @@
     if (!brain || !brain.live || brain.stateDetail !== "decision") return null;
     const { question, detail } = dialogAsk(brain.stateQuestion);
     return makeAsk({
+      id: askIdentity("brain-dialog", brain.session, brain.waitingSince || brain.stateQuestion || "dialog"),
       area: brain.area,
       subject: "Brain",
       detail,
@@ -190,6 +204,7 @@
   function askFromStoppedStep(goal, step) {
     if (!goal || !step) return null;
     return makeAsk({
+      id: askIdentity("stopped-step", goal.file, step.index, step.startedAt || step.session || step.endedAt || "attempt"),
       area: goal.area,
       subject: goal.title,
       question: `Step ${step.index} stopped. Restart or skip it?`,
@@ -206,6 +221,7 @@
     if (!session || session.stateDetail !== "decision") return null;
     const { question, detail } = dialogAsk(session.stateQuestion);
     return makeAsk({
+      id: askIdentity("dialog", session.name, session.waitingSince || session.stateQuestion || "dialog"),
       area: target?.area ?? session.area,
       subject: target?.title ?? session.workTitle ?? "Define new work",
       detail,
@@ -226,6 +242,7 @@
     const question = finished ? RESULT_QUESTION : text;
     if (!finished && !question.endsWith("?")) return null;
     return makeAsk({
+      id: askIdentity("handover", goal.file, goal.lastEndAt ?? text),
       area: goal.area,
       subject: goal.title,
       detail: finished ? text : "",
@@ -236,6 +253,7 @@
   }
 
 export default {
+    askIdentity,
     makeAsk,
     askFromRequest,
     askFromPlanRow,

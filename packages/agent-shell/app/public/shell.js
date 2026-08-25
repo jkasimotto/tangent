@@ -403,7 +403,7 @@ const {
   brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain,
   humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel,
   goalNeedsYou, goalWorkFinished, workCard, goalTreeCard,
-  fallbackAsks, forgetVerdictLines, openRequest, sendVerdict, replyAboutRow, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups,
+  fallbackAsks, forgetVerdictLines, openRequest, sendVerdict, replyAboutRow, dismissAsk, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups,
   openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, renderWork,
 } = workDeskView;
 
@@ -600,9 +600,10 @@ function renderKey() {
     vaultRenderProjection(),
     goal ? [goal.file, goal.status, goal.mtime, goal.stateText, goal.currentBrief, goal.storyText, goal.why, goal.subgoalItems, goal.documents] : null,
     [state.launch.area, state.launch.kind, state.launch.open, state.launch.editing, state.launch.command, state.launch.choice, state.launch.loading, state.launch.options, state.launch.instruction, state.launch.continueFrom, state.launch.active, state.launch.steps, state.launch.record?.updatedAt ?? null],
-    (state.pipelines ?? []).map((item) => [item.goal, item.status, item.updatedAt, item.steps.map((step) => [step.status, step.live, step.state, step.idleSince, step.waitingSince])]),
-    (state.brains ?? []).map((item) => [item.area, item.status, item.generation, item.session, item.live, item.state, item.stateDetail, item.stateQuestion, item.updatedAt, (item.forJulian ?? []).map((row) => [row.line, row.commentCount, row.missing, row.goalStatus])]),
+    (state.pipelines ?? []).map((item) => [item.goal, item.status, item.updatedAt, item.steps.map((step) => [step.status, step.session, step.startedAt, step.endedAt, step.live, step.state, step.idleSince, step.waitingSince])]),
+    (state.brains ?? []).map((item) => [item.area, item.status, item.generation, item.session, item.live, item.state, item.stateDetail, item.stateQuestion, item.waitingSince, item.updatedAt, (item.forJulian ?? []).map((row) => [row.line, row.commentCount, row.missing, row.goalStatus]), (item.requests ?? []).map((request) => [request.id, request.status, request.subject, request.question, request.proposal, request.detail])]),
     [...state.verdictLines],
+    [...state.dismissedAskIds].sort(),
     state.brainDraft,
     [state.launchTarget, state.launchAnchor, state.defaultAgents, Boolean(state.harnessDraft)],
     whatHappenedRenderKey(),
@@ -1203,7 +1204,7 @@ bindShellEvents({
     openBrainSession, openOrStartBrain, toggleBrainPopover, saveDescribeDraft, saveDescribeSession, describeWorkSession,
     openDescribeSession, addDescribeSource, switchDescribeToManualCreate, selectionForArea, startSelectedGoals,
     openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, enableDockBadge, openRequest, sendVerdict,
-    replyAboutRow, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery,
+    replyAboutRow, dismissAsk, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery,
     applyAreaFocus, clearAreaFocus, renderWork, describeLaunchArea, describeWorkSessions,
   },
   areas: {

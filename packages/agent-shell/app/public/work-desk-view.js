@@ -6,6 +6,7 @@ import { activeBrainForArea } from "./brain-ownership.js";
 import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
 import { personMenu } from "./person-menu.js";
 import { isInAreaFocus, normalizeAreaFocus, reconcileAreaFocus, writeAreaFocus } from "./area-focus-core.js";
+import { writeDismissedAskIds } from "./ask-dismissal-core.js";
 
 /** Normalizes a roster label in the same way as the server projection. */
 export function normalizePersonLabel(value) {
@@ -877,6 +878,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     ));
     return [...goalAsks, ...definitionAsks]
       .filter(Boolean)
+      .filter((item) => !state.dismissedAskIds.has(item.id))
       .sort((left, right) => left.area.localeCompare(right.area) || left.subject.localeCompare(right.subject));
   }
 
@@ -936,7 +938,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     return (state.brains ?? [])
       .map((brain) => {
         const requests = (brain.requests ?? []).map((request) => ask.askFromRequest(brain, request));
-        const asks = requests.filter(Boolean);
+        const asks = requests.filter(Boolean).filter((item) => !state.dismissedAskIds.has(item.id));
         return { area: brain.area, brain, stopped: !brain.live, asks };
       })
       .filter((group) => group.asks.length);
@@ -998,7 +1000,35 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const head = primary
       ? `<button type="button" ${askActionAttributes(ask, primary)}>${text}<span>${escapeHtml(primary.label)} <b aria-hidden="true">→</b></span></button>`
       : text;
-    return `<div class="attention-row">${head}${buttons}</div>`;
+    const dismissLabel = `Dismiss ${ask.subject}: ${ask.question} from For you`;
+    const edge = `<span class="attention-row-edge">${buttons}<button class="attention-dismiss" type="button" data-dismiss-ask="${escapeHtml(ask.id)}" aria-label="${escapeHtml(dismissLabel)}" title="Dismiss from For you"><span aria-hidden="true">×</span></button></span>`;
+    return `<div class="attention-row" data-ask-id="${escapeHtml(ask.id)}">${head}${edge}</div>`;
+  }
+
+  /** Hides one exact attention event and offers a local Undo. */
+  function dismissAsk(id) {
+    const item = forYouItems().find((ask) => ask.id === id);
+    if (!item) return;
+    const next = new Set(state.dismissedAskIds);
+    next.add(id);
+    if (!writeDismissedAskIds(localStorage, next)) {
+      showToast("The dismissal could not be saved.");
+      return;
+    }
+    state.dismissedAskIds = next;
+    paint(true);
+    /** Restores only the dismissed attention event. */
+    const undo = () => {
+      const restored = new Set(state.dismissedAskIds);
+      restored.delete(id);
+      if (!writeDismissedAskIds(localStorage, restored)) {
+        showToast("Undo could not be saved.");
+        return;
+      }
+      state.dismissedAskIds = restored;
+      paint(true);
+    };
+    showToast("Dismissed from For you.", { label: "Undo", run: undo });
   }
 
   /** Opens the complete Request away from its compact index row. */
@@ -1574,5 +1604,5 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     `;
   }
 
-  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, fallbackAsks, forgetVerdictLines, openRequest, sendVerdict, replyAboutRow, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, renderWork };
+  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, fallbackAsks, forgetVerdictLines, openRequest, sendVerdict, replyAboutRow, dismissAsk, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, renderWork };
 }

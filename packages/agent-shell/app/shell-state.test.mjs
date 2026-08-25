@@ -16,6 +16,7 @@ test("shell state restores URL navigation and durable browser choices", () => {
     "agent-shell.expanded-areas": '["otto"]',
     "agent-shell.work-filter": "active",
     "agent-shell.area-focus.v1": '{"schema":"agent-shell.area-focus.v1","areas":["otto/tangent"]}',
+    "agent-shell.ask-dismissals.v1": '{"schema":"agent-shell.ask-dismissals.v1","ids":["stopped-step:one"]}',
   }), "http://shell/?area=otto&document=otto/note.md");
   assert.equal(result.requestedDocument, "otto/note.md");
   assert.equal(result.state.view, "document");
@@ -24,10 +25,12 @@ test("shell state restores URL navigation and durable browser choices", () => {
   assert.deepEqual([...result.state.expandedAreas], ["otto"]);
   assert.equal(result.state.workFilter, "active");
   assert.deepEqual(result.state.areaFocus, ["otto/tangent"]);
+  assert.deepEqual([...result.state.dismissedAskIds], ["stopped-step:one"]);
 });
 
 test("shell state ignores damaged optional JSON", () => {
   const result = createShellState(storage({ "agent-shell.expanded-areas": "{" }), "http://shell/");
   assert.deepEqual([...result.state.expandedAreas], []);
+  assert.deepEqual([...result.state.dismissedAskIds], []);
   assert.equal(result.state.view, "work");
 });

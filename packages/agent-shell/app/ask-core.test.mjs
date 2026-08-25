@@ -23,8 +23,9 @@ function kinds(ask) {
   return ask.actions.map((action) => action.kind);
 }
 
-test("the exports are the constructor, the five builders, and the three fixed questions", () => {
+test("the exports are the identity, constructor, builders, and fixed questions", () => {
   assert.deepEqual(Object.keys(core), [
+    "askIdentity",
     "makeAsk",
     "askFromRequest",
     "askFromPlanRow",
@@ -52,8 +53,9 @@ test("new Requests share two answers and stored choices keep their answers", () 
 });
 
 test("makeAsk refuses anything that is not a direct ask", () => {
-  const good = { area: "otto/tangent", subject: "design-x", question: "Which one?", actions: [{ kind: "accept", label: "Accept", arg: {} }] };
+  const good = { id: "request:one", area: "otto/tangent", subject: "design-x", question: "Which one?", actions: [{ kind: "accept", label: "Accept", arg: {} }] };
   assert.ok(core.makeAsk(good), "the good shape builds");
+  assert.equal(core.makeAsk({ ...good, id: "" }), null, "no event identity");
   assert.equal(core.makeAsk({ ...good, area: " " }), null, "no Area");
   assert.equal(core.makeAsk({ ...good, subject: "" }), null, "no subject");
   assert.equal(core.makeAsk({ ...good, question: "" }), null, "no question");
@@ -65,7 +67,7 @@ test("makeAsk refuses anything that is not a direct ask", () => {
 });
 
 test("makeAsk freezes what it builds, so no caller can widen a row later", () => {
-  const ask = core.makeAsk({ area: "otto/tangent", subject: "x", question: "Which?", actions: [{ kind: "accept", label: "Accept", arg: {} }] });
+  const ask = core.makeAsk({ id: "request:x", area: "otto/tangent", subject: "x", question: "Which?", actions: [{ kind: "accept", label: "Accept", arg: {} }] });
   assert.throws(() => { "use strict"; ask.question = "Anything?"; }, TypeError);
 });
 
@@ -132,19 +134,21 @@ test("a brain that is not at a dialog, or is not live, asks nothing", () => {
 
 test("a stopped step asks whether to restart or skip it", () => {
   const goal = { area: "otto/tangent", file: "otto/tangent/goal-x.md", title: "Find a document" };
-  const ask = core.askFromStoppedStep(goal, { index: 2, status: "stopped" });
+  const ask = core.askFromStoppedStep(goal, { index: 2, status: "stopped", session: "find-document-s2", startedAt: "2026-08-25T01:00:00Z" });
   assert.equal(ask.question, "Step 2 stopped. Restart or skip it?");
   assert.equal(ask.subject, "Find a document");
   assert.deepEqual(kinds(ask), ["reveal-goal"]);
+  assert.equal(ask.id, core.askFromStoppedStep(goal, { index: 2, status: "running", live: false, session: "find-document-s2", startedAt: "2026-08-25T01:00:00Z" }).id, "reconciliation keeps the attempt identity");
+  assert.notEqual(ask.id, core.askFromStoppedStep(goal, { index: 2, status: "stopped", session: "find-document-s2-restart", startedAt: "2026-08-25T02:00:00Z" }).id, "a restarted attempt is a new event");
 });
 
 test("a session at a dialog asks it, under a Goal or while work is being defined", () => {
   const goal = { area: "otto/tangent", file: "otto/tangent/goal-x.md", title: "Find a document" };
   const action = { kind: "open-run", label: "Open Claude", arg: { file: goal.file } };
-  const onGoal = core.askFromDialogSession(goal, { stateDetail: "decision", stateQuestion: "Do you want to edit shell.js?" }, { action });
+  const onGoal = core.askFromDialogSession(goal, { name: "goal-x", waitingSince: 10, stateDetail: "decision", stateQuestion: "Do you want to edit shell.js?" }, { action });
   assert.equal(onGoal.subject, "Find a document");
   assert.equal(onGoal.question, "Do you want to edit shell.js?");
-  const defining = core.askFromDialogSession(null, { area: "otto/dnd", workTitle: "Make the scene flow reliable", stateDetail: "decision", stateQuestion: "❯ 1. Yes" }, { action: { kind: "select-definition", label: "Open", arg: { session: "s" } } });
+  const defining = core.askFromDialogSession(null, { name: "define-scene", waitingSince: 20, area: "otto/dnd", workTitle: "Make the scene flow reliable", stateDetail: "decision", stateQuestion: "❯ 1. Yes" }, { action: { kind: "select-definition", label: "Open", arg: { session: "s" } } });
   assert.equal(defining.area, "otto/dnd");
   assert.equal(defining.subject, "Make the scene flow reliable");
   assert.equal(defining.question, core.DIALOG_QUESTION);
@@ -153,8 +157,17 @@ test("a session at a dialog asks it, under a Goal or while work is being defined
 test("an idle, waiting, draft, or shell session never becomes an ask", () => {
   const action = { kind: "open-run", label: "Open", arg: {} };
   for (const stateDetail of ["idle", "draft", null, undefined]) {
-    assert.equal(core.askFromDialogSession(null, { area: "otto/dnd", workTitle: "x", state: "waiting", stateDetail }, { action }), null, String(stateDetail));
+    assert.equal(core.askFromDialogSession(null, { name: "define-x", area: "otto/dnd", workTitle: "x", state: "waiting", stateDetail }, { action }), null, String(stateDetail));
   }
+});
+
+test("a later dialog occurrence gets a new identity even when its words match", () => {
+  const action = { kind: "open-run", label: "Open", arg: {} };
+  const first = core.askFromDialogSession(null, { name: "run-x", area: "otto/dnd", stateDetail: "decision", stateQuestion: "Continue?", waitingSince: 10 }, { action });
+  const same = core.askFromDialogSession(null, { name: "run-x", area: "otto/dnd", stateDetail: "decision", stateQuestion: "Continue?", waitingSince: 10 }, { action });
+  const later = core.askFromDialogSession(null, { name: "run-x", area: "otto/dnd", stateDetail: "decision", stateQuestion: "Continue?", waitingSince: 20 }, { action });
+  assert.equal(first.id, same.id);
+  assert.notEqual(first.id, later.id);
 });
 
 test("a handover rows a finished Goal, and mid-work only when it asks", () => {

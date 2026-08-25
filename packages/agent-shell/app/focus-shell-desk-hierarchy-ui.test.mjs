@@ -85,7 +85,7 @@ test("a parent Area owns descendant current work without a separate sub-Area sec
     "a second descendant branch prints its own short name");
   assert.equal(window.document.querySelectorAll(".work-group-brain").length, 1, "one brain route serves the whole group");
 
-  const titles = stormRows.map((row) => row.querySelector(".work-title").textContent);
+  const titles = stormRows.map((row) => row.querySelector(".work-row-title").textContent);
   assert.deepEqual(titles, ["Working goal"], "a saved exact brain record keeps its fallback ask out of the Goal rows");
   void brainStarts;
 });

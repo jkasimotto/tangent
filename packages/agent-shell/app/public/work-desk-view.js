@@ -1568,8 +1568,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     return `<tr class="desk-goal work-row ${subgoal ? "subgoal" : "root-goal"} ${action.kind}${selected ? " selected" : ""}" data-goal-anchor="${escapeHtml(goal.file)}" data-work-area="${escapeHtml(goal.area)}"${subgoal ? ` data-subgoal-of="${escapeHtml(parent)}"` : ""}${hidden ? " hidden" : ""}>
       <td class="work-cell-select desk-select">${selectable ? `<input type="checkbox" data-check-goal="${escapeHtml(goal.file)}" data-focus-key="check:${escapeHtml(goal.file)}" ${selected ? "checked" : ""} aria-label="Select ${escapeHtml(goal.title)} for one shared agent">` : ""}</td>
       <th class="work-cell-work" scope="row">
-        <span class="work-cell-title">${disclosure}<button class="work-title" type="button" data-work-row-title data-open-close="${escapeHtml(goal.file)}" data-focus-key="title:${escapeHtml(goal.file)}" title="${escapeHtml(goal.title)}">${escapeHtml(goal.title)}</button></span>
-        ${path ? `<small class="work-row-path">${escapeHtml(path)}</small>` : ""}
+        <span class="work-cell-title">${disclosure}<button class="work-row-title" type="button" data-work-row-title data-open-close="${escapeHtml(goal.file)}" data-focus-key="title:${escapeHtml(goal.file)}" title="${escapeHtml(goal.title)}">${escapeHtml(goal.title)}</button>${path ? `<small class="work-row-path">${escapeHtml(path)}</small>` : ""}</span>
         <small class="work-cell-facts">${escapeHtml(compact)}</small>
       </th>
       ${workStateCell(goal, action, fact)}
@@ -1593,8 +1592,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     return `<tr class="desk-definition work-row definition ${kind}">
       <td class="work-cell-select"></td>
       <th class="work-cell-work" scope="row">
-        <span class="work-cell-title"><button class="work-title" type="button" data-work-row-title data-select-work-definition="${escapeHtml(session.name)}" data-focus-key="definition:${escapeHtml(session.name)}">${escapeHtml(session.workTitle || "Define new work")}</button></span>
-        <small class="work-row-path">Defining work</small>
+        <span class="work-cell-title"><button class="work-row-title" type="button" data-work-row-title data-select-work-definition="${escapeHtml(session.name)}" data-focus-key="definition:${escapeHtml(session.name)}">${escapeHtml(session.workTitle || "Define new work")}</button><small class="work-row-path">Defining work</small></span>
         <small class="work-cell-facts">${escapeHtml(stateName)}</small>
       </th>
       <td class="work-cell-state"><span class="desk-state ${kind}">${escapeHtml(stateName)}</span></td>

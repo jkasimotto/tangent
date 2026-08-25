@@ -547,13 +547,18 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-cell-select input { width: 15px; height: 15px; margin: 0; accent-color: var(--blue); cursor: pointer; }
 .work-cell-work { min-width: 0; font-weight: 400; text-align: left; }
 .work-cell-title { display: flex; min-width: 0; align-items: center; gap: 6px; }
-.work-title { min-width: 0; overflow: hidden; padding: 2px 0; border: 0; background: transparent; color: #e7eaed; cursor: pointer; font: inherit; font-size: 13px; font-weight: 640; line-height: 1.25; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
-.work-title:hover { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
+/* Its own class, not `.work-title`: that name already belongs to the Goal
+   card of the Areas screen, whose 18 px rule sits later in this file and would
+   win on every table row. */
+.work-row-title { min-width: 0; overflow: hidden; padding: 2px 0; border: 0; background: transparent; color: #e7eaed; cursor: pointer; font: inherit; font-size: 13px; font-weight: 640; line-height: 1.25; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+.work-row-title:hover { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
 .work-row.subgoal .work-cell-work { padding-left: 30px; }
-.work-row.subgoal .work-title { color: #c3c9d0; font-size: 12.5px; font-weight: 560; }
+.work-row.subgoal .work-row-title { color: #c3c9d0; font-size: 12.5px; font-weight: 560; }
 .work-subgoal-toggle { flex: none; min-width: 22px; padding: 1px 3px; border: 1px solid #3c434c; border-radius: 2px; background: transparent; color: #8b949f; cursor: pointer; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .work-subgoal-toggle:hover { border-color: #68727e; color: #fff; }
-.work-row-path { margin-left: 8px; color: #69737e; font-size: 10px; font-weight: 690; letter-spacing: .05em; text-transform: uppercase; }
+/* Provenance rides on the title line: the row keeps one line at wide width,
+   and the title, not the path, is what an over-long cell truncates. */
+.work-row-path { flex: none; margin-left: 2px; color: #69737e; font-size: 10px; font-weight: 690; letter-spacing: .05em; text-transform: uppercase; }
 .work-cell-facts { display: none; }
 .work-cell-state .desk-state { font-size: 11px; }
 .work-step { margin-left: 6px; color: #737d88; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 760; }
@@ -567,7 +572,7 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-cell-action .desk-goal-actions { justify-content: flex-end; }
 .work-row.waiting .desk-action { border-color: #665735; color: var(--amber); }
 .work-row.fact .desk-action { border-color: #3c434c; color: #cbd1d7; }
-.work-row.definition .work-title { color: #e2d7bd; }
+.work-row.definition .work-row-title { color: #e2d7bd; }
 .work-programs { margin-top: 26px; display: grid; }
 
 .work-table :focus-visible, .ask-table :focus-visible { outline: 2px solid #8fc4ff; outline-offset: 1px; }
@@ -609,7 +614,7 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
   .work-head-state, .work-head-time, .work-cell-state, .work-cell-time { visibility: hidden; padding: 0; overflow: hidden; white-space: nowrap; }
   .work-row > * { height: auto; padding: 6px 8px; }
   .work-cell-facts { display: block; margin-top: 2px; color: #8b949f; font-size: 11px; font-weight: 500; letter-spacing: 0; text-transform: none; }
-  .work-title { white-space: normal; }
+  .work-row-title { white-space: normal; }
   .work-cell-action { vertical-align: top; }
   .work-group-brain-long { display: none; }
   .work-group-brain-short { display: inline; }

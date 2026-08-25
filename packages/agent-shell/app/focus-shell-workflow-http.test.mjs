@@ -775,6 +775,9 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(brainHandover.status, "started");
   assert.equal(brainHandover.session, "test-brain-g2");
   assert.equal(brainHandover.generation, 2);
+  const handedOverBrain = await fetch(`${base}/api/brains/show?session=test-brain-g2`).then((response) => response.json());
+  assert.deepEqual(handedOverBrain.brain.launch, { harness: "fake", model: "one", effort: "high" });
+  assert.equal(handedOverBrain.brain.command, "fake-agent --model one --effort high", "handover refreshes the complete current Brain launch instead of keeping generation 1's explicit choice");
   openedSessions.push("test-brain-g2");
   await new Promise((resolve) => setTimeout(resolve, 1800));
   snapshot = await fetch(`${base}/api/sessions`).then((response) => response.json());

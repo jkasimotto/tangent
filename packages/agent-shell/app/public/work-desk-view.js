@@ -335,9 +335,9 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     return `<button class="area-brain ${kind}${open ? " open" : ""}" type="button" data-launch-for="${BRAIN_LAUNCH_TARGET}" data-brain-area="${escapeHtml(areaPath)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}" aria-expanded="${open}"><span aria-hidden="true">🧠</span></button>`;
   }
 
-  /** Opens the brain's terminal in the same view as a describe-work agent. */
+  /** Opens the brain's terminal in the shared session layer. */
   function openBrainSession(name) {
-    if (state.view === "describe-agent" && state.describeSessionName === name) return;
+    if (state.sessionPeek?.session === name) return;
     const session = brainSessions().find((item) => item.name === name);
     if (!session) return showToast("The brain session is not live.");
     openSessionLayer(session, "brain", captureReturnPoint());

@@ -168,12 +168,12 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
   focusedSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
   window.document.querySelector("#screen").scrollTop = 137;
   click(window, `[data-open-goal-run="${alpha.file}"]`);
-  assert.ok(window.document.querySelector(`#agent-terminal[data-session="${alpha.session}"]`));
-  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  assert.equal(window.document.querySelector("#session-layer-terminal").dataset.session, alpha.session);
+  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "j", metaKey: true, bubbles: true }));
   await settle(window);
   assert.match(window.document.querySelector(".area-focus-summary").textContent, /Alpha/);
   assert.equal(window.document.querySelector("#work-search").value, "alpha");
-  assert.equal(window.document.querySelector("#screen").scrollTop, 137, "worker Escape restores the Work scroll position");
+  assert.equal(window.document.querySelector("#screen").scrollTop, 137, "Command-J restores the Work scroll position");
 
   await openDocumentViaGoTo(window, alphaDocument.title);
   assert.ok(window.document.querySelector(".document-reader"));
@@ -194,8 +194,8 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
   assert.equal(window.document.querySelectorAll(`[data-open-goal-run="${child.file}"]`).length, 1, "overlapping staged roots do not duplicate descendant work");
 
   click(window, '[data-desk-area="otto/alpha"] [data-open-brain]');
-  assert.ok(window.document.querySelector("#describe-work-terminal[data-session='Alpha-brain']"));
-  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  assert.equal(window.document.querySelector("#session-layer-terminal").dataset.session, "Alpha-brain");
+  click(window, "#session-layer");
   assert.match(window.document.querySelector(".area-focus-summary").textContent, /Alpha/);
   assert.equal(window.document.querySelector("#work-search").value, "alpha");
   assert.equal(window.document.querySelector('[data-work-filter="inactive"]').getAttribute("aria-pressed"), "true");
@@ -261,7 +261,7 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
     areas: vault.areas.filter((area) => !area.path.startsWith("otto/alpha")),
   };
   await window.refresh();
-  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "j", metaKey: true, bubbles: true }));
   await settle(window);
   assert.equal(window.localStorage.getItem("agent-shell.area-focus.v1"), null, "return cannot restore a Focus root removed while the worker was open");
   assert.equal(window.document.querySelector(".area-focus-summary"), null, "stale return context restores complete Work");

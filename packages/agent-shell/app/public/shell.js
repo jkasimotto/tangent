@@ -848,6 +848,7 @@ function closeSessionLayer() {
   const point = state.sessionPeek?.returnPoint;
   state.sessionPeek = null;
   disposeTerminal();
+  sessionLayerTerminal.replaceChildren();
   sessionLayer.hidden = true;
   if (point) restoreReturnPoint(point);
   else paint(true);

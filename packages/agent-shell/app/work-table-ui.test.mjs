@@ -148,6 +148,7 @@ test("vim keys move the persistent Work cursor through brains and Goals and stay
   press(window, "j");
   await settle(window);
   assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, goals[0].dataset.workCursor, "j moves from the Area brain row to its first Goal");
+  assert.equal(document.activeElement.closest("[data-work-cursor]")?.dataset.workCursor, goals[0].dataset.workCursor, "cursor motion focuses the row so the browser keeps it visible");
   press(window, "k");
   await settle(window);
   assert.match(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor ?? "", /^area:/, "k moves back onto the Area brain row");
@@ -185,6 +186,47 @@ test("an Area brain row takes the cursor and Command-J enters its brain", async 
   press(window, "j", { metaKey: true });
   await settle(window);
   assert.equal(document.querySelector("#session-layer-terminal").dataset.session, "otto-tangent--brain");
+});
+
+test("Work keys expose their help and stay inert in text and terminal input", async () => {
+  const { window, document } = await bootWorkTable(workTableFixture());
+  const initial = document.querySelector("[data-work-cursor].cursor").dataset.workCursor;
+  press(window, "/");
+  assert.equal(document.activeElement.id, "work-search", "slash focuses the Work filter");
+  for (const key of ["j", "k", "g", "G", "b", "?"]) press(window, key);
+  assert.equal(document.querySelector("[data-work-cursor].cursor").dataset.workCursor, initial, "bare Work keys do nothing in the filter");
+  document.activeElement.blur();
+  press(window, "?");
+  assert.equal(document.querySelector("#modal-title").textContent, "Move around Work");
+  document.querySelector("[data-modal-confirm]").click();
+
+  const live = document.querySelector("[data-work-cursor='goal:otto/standards/goal-framework-docs.md']");
+  live.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+  press(window, "j", { metaKey: true });
+  await settle(window);
+  const terminalInput = document.querySelector("#session-layer-terminal");
+  terminalInput.dispatchEvent(new window.KeyboardEvent("keydown", { key: "k", bubbles: true, cancelable: true }));
+  assert.equal(document.querySelector("[data-work-cursor].cursor").dataset.workCursor, live.dataset.workCursor, "bare keys in the terminal do not move Work");
+});
+
+test("Command-J refuses a row with no live session and an outside click closes a live one", async () => {
+  const { window, document } = await bootWorkTable(workTableFixture());
+  const stopped = document.querySelector("[data-work-cursor='goal:otto/onboarding/goal-walkthrough.md']");
+  stopped.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+  press(window, "j", { metaKey: true });
+  assert.equal(document.querySelector("#session-layer").hidden, true, "enter never starts a missing session");
+  assert.match(document.querySelector("#toast").textContent, /no live session to enter/i);
+
+  const live = document.querySelector("[data-work-cursor='goal:otto/standards/goal-framework-docs.md']");
+  live.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+  press(window, "j", { metaKey: true });
+  await settle(window);
+  document.querySelector("#session-layer").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  assert.equal(document.querySelector("#session-layer").hidden, true);
+  assert.ok(document.querySelector("table.work-table"), "outside close leaves Work mounted");
 });
 
 test("Space checks a startable Goal, and Escape clears the selection", async () => {

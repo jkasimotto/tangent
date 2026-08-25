@@ -76,7 +76,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     state.workCursor = row.dataset.workCursor;
     localStorage.setItem("agent-shell.work-cursor", state.workCursor);
     paint(true);
-    if (focus) window.setTimeout(() => [...document.querySelectorAll("[data-work-cursor]")].find((item) => item.dataset.workCursor === state.workCursor)?.querySelector("[data-work-row-title], [data-work-cursor-control]")?.focus({ preventScroll: true }), 0);
+    if (focus) window.setTimeout(() => [...document.querySelectorAll("[data-work-cursor]")].find((item) => item.dataset.workCursor === state.workCursor)?.querySelector("[data-work-row-title], [data-work-cursor-control]")?.focus(), 0);
     return true;
   }
 
@@ -1143,7 +1143,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         event.preventDefault(); state.workPendingG = false;
         return setWorkCursor(event.key === "G" ? rows.at(-1) : rows[0]);
       }
-      if (event.key === "g") { state.workPendingG = true; window.setTimeout(() => { state.workPendingG = false; }, 650); return; }
+      if (event.key === "g") { event.preventDefault(); state.workPendingG = true; window.setTimeout(() => { state.workPendingG = false; }, 650); return; }
       state.workPendingG = false;
       if (event.key === "b") {
         event.preventDefault();

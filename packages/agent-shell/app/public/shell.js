@@ -581,8 +581,11 @@ function renderKey() {
     return JSON.stringify([state.view, describeSession?.name, state.describeReturn?.state.view, state.document?.hash]);
   }
   if (state.view === "program-session") {
+    // The signature stays narrow so the attached terminal survives a repaint.
+    // `paused` belongs in it because the toolbar's Pause and Resume control
+    // reads it, and nothing else on this view would redraw the change.
     const program = currentProgram();
-    return JSON.stringify([state.view, program?.id, program?.sessionName]);
+    return JSON.stringify([state.view, program?.id, program?.sessionName, program?.paused]);
   }
   return JSON.stringify([
     state.view,

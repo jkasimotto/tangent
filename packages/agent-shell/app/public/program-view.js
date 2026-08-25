@@ -20,8 +20,8 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
   /** Describes one program's current state in plain language. */
   function programState(program) {
     if (program.type === "trigger") {
+      if (program.session && !["stopped", "shell"].includes(program.session.state)) return program.paused ? "Agent running · Paused" : "Agent running";
       if (program.paused) return "Paused";
-      if (program.session && !["stopped", "shell"].includes(program.session.state)) return "Agent running";
       if (program.runtime?.error) return "Check failed";
       if (program.runtime?.lastOutcome?.status === "attention" && program.runtime.acknowledgedKey !== program.runtime.lastOutcome.key) return "Needs attention";
       return program.runtime?.lastCheckedAt ? "Waiting" : "Not checked";
@@ -45,19 +45,34 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
   }
 
   /**
-   * The one runtime control a program row offers. Stopping a runaway program
-   * must not be a hidden feature, so the row carries it beside the state.
+   * The runtime controls a program row offers. Stopping a runaway program and
+   * pausing a Trigger that keeps coming back must not be hidden features, so
+   * the row carries them beside the state. Stop ends the current run; Pause
+   * keeps the Trigger from firing again, so a Trigger offers both.
    */
-  function programRowControl(program) {
-    if (programIsLive(program)) return { action: "stop", label: "Stop" };
-    if (program.type === "trigger") return program.available && !program.paused ? { action: "check", label: "Check now" } : null;
-    if (!program.available) return null;
-    return program.type === "process" ? { action: "start", label: "Start" } : { action: "run", label: "Run" };
+  function programRowControls(program) {
+    const live = programIsLive(program);
+    const controls = live ? [{ action: "stop", label: "Stop" }] : [];
+    if (program.type === "trigger") {
+      if (program.paused) controls.push({ action: "resume", label: "Resume" });
+      else {
+        if (!live && program.available) controls.push({ action: "check", label: "Check now" });
+        controls.push({ action: "pause", label: "Pause" });
+      }
+      return controls;
+    }
+    if (live || !program.available) return controls;
+    controls.push(program.type === "process" ? { action: "start", label: "Start" } : { action: "run", label: "Run" });
+    return controls;
   }
 
-  /** Renders one compact program row with its state and one control. */
+  /** Renders one row control so every surface that lists Programs matches. */
+  function programRowControlButton(program, control) {
+    return `<button class="desk-icon-action" type="button" data-program-action="${control.action}" data-program-id="${escapeHtml(program.id)}" aria-label="${escapeHtml(control.label)} ${escapeHtml(program.label)}">${escapeHtml(control.label)}</button>`;
+  }
+
+  /** Renders one compact program row with its state and its controls. */
   function programRow(program) {
-    const control = programRowControl(program);
     return `
       <div class="program-row">
         <button class="program-open" type="button" data-select-program="${escapeHtml(program.id)}">
@@ -65,7 +80,7 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
         </button>
         <div class="program-row-controls">
           <span class="program-state ${programIsLive(program) ? "live" : ""}">${escapeHtml(programState(program))}</span>
-          ${control ? `<button class="desk-icon-action" type="button" data-program-action="${control.action}" data-program-id="${escapeHtml(program.id)}" aria-label="${escapeHtml(control.label)} ${escapeHtml(program.label)}">${escapeHtml(control.label)}</button>` : ""}
+          ${programRowControls(program).map((control) => programRowControlButton(program, control)).join("")}
         </div>
       </div>`;
   }
@@ -95,6 +110,7 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
         !program.paused && !live ? `<button class="primary-button" type="button" data-program-action="check">Check now</button>` : "",
         attention ? `<button class="secondary-button" type="button" data-program-action="acknowledge">Acknowledge</button>` : "",
         live ? `<button class="danger-button" type="button" data-program-action="stop">Stop…</button>` : "",
+        program.paused ? `<button class="primary-button" type="button" data-program-action="resume">Resume</button>` : `<button class="secondary-button" type="button" data-program-action="pause">Pause</button>`,
       ].join("");
     }
     return `
@@ -141,12 +157,12 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
   function renderProgramSession(program) {
     return `
       <section class="agent-page">
-        <div class="agent-toolbar"><div class="agent-context"><strong>${escapeHtml(program.label)}</strong><span>${escapeHtml(areaLabel(program.area))} · ${escapeHtml(programState(program))}</span></div><div class="agent-controls">${programIsLive(program) ? `<button class="danger-button" type="button" data-program-action="stop" data-program-id="${escapeHtml(program.id)}">Stop…</button>` : ""}<button class="quiet-button" type="button" data-back-program>Program details</button></div></div>
+        <div class="agent-toolbar"><div class="agent-context"><strong>${escapeHtml(program.label)}</strong><span>${escapeHtml(areaLabel(program.area))} · ${escapeHtml(programState(program))}</span></div><div class="agent-controls">${programIsLive(program) ? `<button class="danger-button" type="button" data-program-action="stop" data-program-id="${escapeHtml(program.id)}">Stop…</button>` : ""}${program.type === "trigger" ? `<button class="secondary-button" type="button" data-program-action="${program.paused ? "resume" : "pause"}" data-program-id="${escapeHtml(program.id)}">${program.paused ? "Resume" : "Pause"}</button>` : ""}<button class="quiet-button" type="button" data-back-program>Program details</button></div></div>
         <div class="terminal-wrap"><div class="terminal-host" data-session="${escapeHtml(program.sessionName)}"></div></div>
       </section>`;
   }
 
   /** Returns the areas a user can select when they define work. */
 
-  return { programById, currentProgram, programIsLive, programState, localMoment, programKind, programRowControl, programRow, renderProgramDetail, programAreaDirectory, renderProgramCreate, renderProgramSession };
+  return { programById, currentProgram, programIsLive, programState, localMoment, programKind, programRowControls, programRow, renderProgramDetail, programAreaDirectory, renderProgramCreate, renderProgramSession };
 }

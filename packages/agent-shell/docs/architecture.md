@@ -41,6 +41,6 @@ Uncovered work uses the stable durable-subject root. Descendant Areas and Goals 
 
 A separate Planned view keeps unstarted Goals available. Work carries no human-assignee concept: a Goal names a result, and session ownership (`goal own`/`goal release`) names the agent working it. A reviewed Goal stays open until Julian accepts its Test request.
 
-The browser Programs projection also reads root-owned trigger state from `~/.tangent/agent-shell/triggers/state.json`. Trigger scheduling and launching remain in the root CLI so they work while this server is closed; the server delegates Check now, Acknowledge, and Stop controls back to `tangent trigger` (ADR-0030).
+The browser Programs projection also reads root-owned trigger state from `~/.tangent/agent-shell/triggers/state.json`. Trigger scheduling and launching remain in the root CLI so they work while this server is closed; the server delegates Check now, Acknowledge, and Stop controls back to `tangent trigger` (ADR-0030). Pause and Resume stay with the server, because the paused flag lives in the Area `.processes.json` manifest that the server already writes, and that file has no second writer to race with.
 
 The Reviewed build engine that used to live here was deleted in ADR-0023; pipelines replaced it.

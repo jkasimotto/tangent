@@ -199,3 +199,28 @@ export async function saveLocalProgram({ treesRoot, area, type, name, command, c
   await rename(temporary, file);
   return { id: `${type}:${clean}:${slug}`, area: clean, name: slug };
 }
+
+/**
+ * Turns one Trigger's schedule off or on in its Area manifest. Stop ends the
+ * current run only, so this flag is the one thing that keeps a Trigger from
+ * firing again at its next interval. The manifest is the durable definition
+ * and Agent Shell already owns it, so the write happens here and not through
+ * the CLI; the CLI owns the trigger state file because the sweep writes it
+ * under a lock, and the manifest has no such second writer.
+ */
+export async function setTriggerPaused({ treesRoot, area, name, paused }) {
+  const clean = cleanAreaPath(area);
+  const file = path.join(absoluteAreaPath(treesRoot, clean), PROCESS_FILE);
+  let text;
+  try { text = await readFile(file, "utf8"); } catch { throw new Error("This area has no programs file."); }
+  parseProgramManifest(text, `${clean}/${PROCESS_FILE}`);
+  const manifest = JSON.parse(text);
+  const entry = manifest.triggers?.[name];
+  if (!entry || typeof entry !== "object") throw new Error("The trigger no longer exists.");
+  if (paused) entry.paused = true;
+  else delete entry.paused;
+  const temporary = `${file}.agent-shell-${process.pid}`;
+  await writeFile(temporary, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  await rename(temporary, file);
+  return { id: `trigger:${clean}:${name}`, paused: Boolean(paused) };
+}

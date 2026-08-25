@@ -332,11 +332,20 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     const program = programById(id);
     if (!program) return;
     await post("/api/programs/control", { id: program.id, action });
+    // A refresh already in flight when the control was pressed returns its own
+    // older reading, so Pause and Resume record the new value on the program
+    // the screen reads. The next refresh replaces it with the server's truth.
+    if (["pause", "resume"].includes(action)) program.paused = action === "pause";
     if (["stop", "close"].includes(action) && state.view === "program-session") state.view = "program-detail";
     await refresh();
     paint(true);
     if (action === "stop" && program.type === "trigger") return showToast("The agent stopped. The Trigger keeps its schedule.");
-    const messages = { start: "The process started.", restart: "The process restarted.", stop: "The program stopped.", close: "The saved session was removed.", run: "The command started." };
+    const messages = {
+      start: "The process started.", restart: "The process restarted.", stop: "The program stopped.",
+      close: "The saved session was removed.", run: "The command started.",
+      pause: "The Trigger is paused. It checks again only after you resume it.",
+      resume: "The Trigger is back on its schedule.",
+    };
     showToast(messages[action] || "The program changed.");
   }
 

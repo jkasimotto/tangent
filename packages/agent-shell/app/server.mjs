@@ -15,7 +15,7 @@ import { noteResource } from "./area-agent-command.mjs";
 import { launchRef, resolveLaunch } from "./launch-environment.mjs";
 import { createLaunchCatalog } from "./launch-catalog.mjs";
 import { createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
-import { commandSession, programsSnapshot, saveLocalProgram } from "./programs.mjs";
+import { commandSession, programsSnapshot, saveLocalProgram, setTriggerPaused } from "./programs.mjs";
 import { documentHash, markdownTitle, safeMarkdownPath, wikiLinks } from "./vault-documents.mjs";
 import { rationaleDossierContract } from "./rationale-dossier.mjs";
 import documentComments from "./public/document-comments.js";
@@ -4445,7 +4445,8 @@ const programRoutes = createProgramRoutes({
       if (action === "check") await runLocalTangent(["trigger", "check", `${program.area}:${program.name}`, "--force"]);
       else if (action === "acknowledge") await runLocalTangent(["trigger", "acknowledge", `${program.area}:${program.name}`]);
       else if (action === "stop") await runLocalTangent(["trigger", "stop", `${program.area}:${program.name}`]);
-      else throw new Error("Choose Check now, Acknowledge, or Stop.");
+      else if (action === "pause" || action === "resume") await setTriggerPaused({ treesRoot: TREES_ROOT, area: program.area, name: program.name, paused: action === "pause" });
+      else throw new Error("Choose Check now, Acknowledge, Stop, Pause, or Resume.");
     } else {
       throw new Error("Choose Start, Run, Stop, Restart, or Close.");
     }

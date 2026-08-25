@@ -55,6 +55,22 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   }
 
   /**
+   * Says how many Goals the filter left, through the one live region that
+   * outlives the repaint. A filter that empties the table takes the focused row
+   * with it; focus is already back in the filter input, so the count is the
+   * only fact a screen reader would otherwise lose
+   * (design-redesign-work-as-a-compact-table, "Polls and stable focus").
+   */
+  function announceWorkCount() {
+    const region = document.querySelector("#filter-count");
+    if (!region) return;
+    const count = document.querySelector(".work-table .work-caption-count")?.textContent
+      ?? document.querySelector(".work-page .empty-state")?.textContent
+      ?? "";
+    region.textContent = count.trim();
+  }
+
+  /**
    * Arrow, Home, and End move between the Goal titles of the table the focused
    * title belongs to. Enter and Space keep their native button behavior, so the
    * table needs no ARIA grid and still works when this handler does not run
@@ -893,6 +909,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const input = document.querySelector("#work-search");
     input?.focus();
     input?.setSelectionRange(cursor, cursor);
+    announceWorkCount();
   });
 
   document.addEventListener("change", async (event) => {

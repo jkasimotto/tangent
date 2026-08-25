@@ -94,6 +94,30 @@ test("the direct-ask table keeps questions out of the work table", async () => {
   assert.equal(online.querySelector("[data-verdict], [data-verdict-line]"), null, "the Goal row carries no verdict");
 });
 
+test("a filter keeps focus in its input and says how many Goals are left", async () => {
+  const { window, document } = await bootWorkTable(workTableFixture());
+  assert.equal(titles(document).length, 7);
+  const search = document.querySelector("#work-search");
+  search.focus();
+  search.value = "walkthrough";
+  search.dispatchEvent(new window.Event("input", { bubbles: true }));
+  await settle(window);
+
+  assert.equal(document.activeElement.id, "work-search", "a filter that removes the focused row keeps focus in the filter");
+  assert.deepEqual(titles(document).map((button) => button.textContent), ["Redesign the onboarding walkthrough"]);
+  const region = document.querySelector("#filter-count");
+  assert.equal(region.getAttribute("aria-live"), "polite", "the count lives in a polite region");
+  assert.equal(region.textContent, "1 Goal", "the region states the result count");
+
+  // The repaint replaced the input, so the second keystroke goes to the new one.
+  const refreshed = document.querySelector("#work-search");
+  refreshed.value = "zzzznothing";
+  refreshed.dispatchEvent(new window.Event("input", { bubbles: true }));
+  await settle(window);
+  assert.equal(titles(document).length, 0);
+  assert.match(document.querySelector("#filter-count").textContent, /No current work matches/, "an empty result says so");
+});
+
 test("arrows, Home, End, and Enter move and open without leaving the table", async () => {
   const { window, document } = await bootWorkTable(workTableFixture());
   const rows = titles(document);

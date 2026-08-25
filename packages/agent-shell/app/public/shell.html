@@ -71,6 +71,9 @@
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <!-- Outlives every repaint, so a filter result announces. A live region
+         created by the same paint that fills it announces nothing. -->
+    <p id="filter-count" class="visually-hidden" role="status" aria-live="polite"></p>
   </div>
 
   <script src="/vendor/xterm/xterm.js"></script>

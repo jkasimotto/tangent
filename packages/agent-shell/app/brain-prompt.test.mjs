@@ -333,6 +333,9 @@ test("the brain prompt names few Documents and dates an older instruction", asyn
       AGENT_MESSAGE_LOG: path.join(root, "messages.jsonl"),
       GROQ_API_KEY: "",
       CHAT_SESSION: `brain-instruction-test-${process.pid}`,
+      // A fixed zone ten hours ahead of UTC, so the date the prompt prints is
+      // decided by the code under test and not by the clock the suite runs on.
+      TZ: "Australia/Brisbane",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -413,4 +416,15 @@ test("the brain prompt names few Documents and dates an older instruction", asyn
   assert.match(second, /It is this Area's standing purpose, not a new task for you/);
   assert.match(second, /Your current state is the handover below\./);
   assert.ok(second.includes("Propose the document structure first."), "Julian's instruction stays intact for a later generation");
+
+  // The date is the one Julian saw when he typed the instruction. This
+  // timestamp is 6am on the 20th where the server runs and still the 19th in
+  // UTC, so a prompt built from the raw timestamp prints the day before the
+  // one he lived, and tells a brain that this morning's order is yesterday's.
+  const stamped = JSON.parse(await readFile(recordFile, "utf8"));
+  stamped.createdAt = "2026-08-19T20:00:00.000Z";
+  await writeFile(recordFile, JSON.stringify(stamped), "utf8");
+  const dated = await promptFor(next.session);
+  assert.match(dated, /Julian typed this on 2026-08-20 when he started this brain/);
+  assert.doesNotMatch(dated, /Julian typed this on 2026-08-19/, "the prompt dates the instruction on Julian's clock, not UTC");
 });

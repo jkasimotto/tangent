@@ -3251,7 +3251,13 @@ const BRAIN_PROMPT_SKIPPED_DOCUMENTS = /^rationale-/;
  */
 function instructionAge(record, generation) {
   if (generation <= 1) return "";
-  const day = String(record.createdAt ?? "").slice(0, 10);
+  // The day Julian saw on his own clock, not the UTC slice of the timestamp.
+  // A brain he starts before 10am here is stamped the previous UTC day, and a
+  // line whose whole job is to place the instruction in time must not be a
+  // day out: a generation that reads "typed yesterday" about this morning's
+  // order discounts an instruction that is in fact new.
+  const started = new Date(record.createdAt ?? "");
+  const day = Number.isNaN(started.getTime()) ? "" : started.toLocaleDateString("en-CA");
   const state = latestHandover(record) ? "the handover below" : "the plan";
   return `Julian typed this on ${day || "the day"} when he started this brain, and has not changed it since. ` +
     `It is this Area's standing purpose, not a new task for you, and a checkpoint it names is probably already done. ` +

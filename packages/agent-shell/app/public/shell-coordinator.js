@@ -8,7 +8,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   const {
     screen, backButton, shellMenu, goToLayer, goToInput, goToList, modalLayer, modalKicker, modalTitle, modalCopy,
     modalField, modalActions, buildGoToRows, goToCore, rememberScreenScroll, restoreReturnPoint, captureReturnPoint,
-    restoreReturnScroll, disposeTerminal, mountTerminal, updateStatusPill,
+    restoreReturnScroll, disposeTerminal, mountTerminal, updateStatusPill, openSessionLayer,
   } = chrome;
   const {
     areaLabel, humanName, agentName, goalByFile, currentGoal, sessionForGoal, describeWorkSession,
@@ -247,9 +247,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     const session = sessionForGoal(goal);
     if (!session) return openGoalAgent({ returnView: "work" });
     state.agentReturnView = "work";
-    state.view = "agent";
-    state.renderedKey = "";
-    paint(true);
+    openSessionLayer(session, "agent", state.agentReturn ?? captureReturnPoint());
   }
 
   /** Returns to the work list and optionally focuses search. */
@@ -322,9 +320,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   function openProgramSession() {
     const program = currentProgram();
     if (!program?.session) return showToast("This program has no live or saved session.");
-    state.view = "program-session";
-    state.renderedKey = "";
-    paint(true);
+    openSessionLayer({ name: program.sessionName ?? program.session.name ?? program.session }, "program", captureReturnPoint());
   }
 
   /** Executes one already-confirmed program control. */
@@ -474,13 +470,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   function openDescribeSession(name) {
     const session = describeWorkSessions().find((item) => item.name === name);
     if (!session) return;
-    state.describeReturn = captureReturnPoint();
-    state.describeSessionName = session.name;
-    state.document = null;
-    saveDescribeSession();
-    state.view = "describe-agent";
-    state.renderedKey = "";
-    paint(true);
+    openSessionLayer(session, session.kind === "brain" ? "brain" : "definition", captureReturnPoint());
   }
 
   /** Returns from work definition to the exact screen that opened it. */
@@ -535,10 +525,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
       state.goalSelection = [];
       await refresh();
       rememberGoal(targetFile);
-      state.agentReturnView = "work";
-      state.view = "agent";
-      state.renderedKey = "";
-      paint(true);
+      openSessionLayer(sessionForGoal(currentGoal()), "agent", captureReturnPoint());
       showToast(steps.length > 1 ? `Started ${steps.length} steps; step 1 is ${result.pipeline?.steps?.[0]?.label || "running"}.` : "The agent started.");
     } catch (error) {
       showToast(error.message);
@@ -609,9 +596,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
       state.goalSelection = state.goalSelection.filter((file) => !files.includes(file));
       await refresh();
       state.agentReturnView = "work";
-      state.view = "agent";
-      state.renderedKey = "";
-      paint(true);
+      openSessionLayer(sessionForGoal(currentGoal()), "agent", captureReturnPoint());
       const what = files.length === 1 ? "The agent opened with this Goal" : `The agent opened with ${files.length} Goals`;
       showToast(start.label ? `${what} on ${start.label}.` : `${what}.`);
     } catch (error) {
@@ -630,9 +615,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
       await refresh();
       state.agentReturnView = returnView;
       state.agentReturn = returnPoint;
-      state.view = "agent";
-      state.renderedKey = "";
-      paint(true);
+      openSessionLayer(sessionForGoal(currentGoal()), "agent", returnPoint ?? captureReturnPoint());
       showToast(`The agent opened with this Goal and its linked Documents${start.label ? ` on ${start.label}` : ""}.`);
     } catch (error) {
       showToast(error.message);
@@ -656,9 +639,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
       if (!sessionForGoal(currentGoal())) throw new Error("The agent session did not open.");
       state.agentReturnView = "document";
       state.agentReturn = null;
-      state.view = "agent";
-      state.renderedKey = "";
-      paint(true);
+      openSessionLayer(sessionForGoal(currentGoal()), "agent", captureReturnPoint());
       showToast("The agent opened with this Goal and all linked Documents.");
     } catch (error) {
       showToast(error.message);
@@ -679,9 +660,9 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
       await post(endpoint, body);
       await refresh();
       state.agentReturnView = "work";
-      state.view = session.phase === "collaborate" ? "agent" : "work";
-      state.renderedKey = "";
-      paint(true);
+      const opened = sessionForGoal(currentGoal());
+      if (opened) openSessionLayer(opened, "agent", captureReturnPoint());
+      else paint(true);
       showToast(start.label ? `The agent started on ${start.label}.` : "The agent started.");
     } catch (error) {
       showToast(error.message);

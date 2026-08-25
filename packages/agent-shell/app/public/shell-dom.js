@@ -4,6 +4,7 @@ export function shellDom(document = globalThis.document) {
     "screen", "back-button", "work-tab", "areas-tab", "prompts-tab", "bar-context", "find-button", "secondary-action",
     "modal-layer", "modal-kicker", "modal-title", "modal-copy", "modal-field", "modal-actions", "toast",
     "status-pill", "awake-button", "shell-menu", "go-to-button", "go-to-layer", "go-to-input", "go-to-list",
+    "session-layer", "session-layer-title", "session-layer-terminal",
   ];
   return Object.fromEntries(ids.map((id) => [id, document.querySelector(`#${id}`)]));
 }

@@ -47,6 +47,13 @@
 
     <main id="screen" class="screen" aria-live="polite"></main>
 
+    <div id="session-layer" class="session-layer" hidden>
+      <section class="session-surface" role="dialog" aria-modal="true" aria-label="Agent session">
+        <header class="session-layer-header"><button type="button" data-close-session-layer>Work <kbd>⌘J</kbd></button><span id="session-layer-title"></span></header>
+        <div id="session-layer-terminal" class="terminal-host session-layer-terminal"></div>
+      </section>
+    </div>
+
     <div id="modal-layer" class="modal-layer" hidden>
       <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
         <p id="modal-kicker" class="kicker"></p>

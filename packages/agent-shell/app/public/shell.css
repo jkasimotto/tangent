@@ -518,6 +518,16 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .ask-dismiss:hover { background: rgba(231, 198, 128, .08); color: var(--amber); }
 
 .work-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.work-row.cursor > *, .work-group-row.cursor > * { background: rgba(94, 144, 255, .09); }
+.work-row.cursor > :first-child, .work-group-row.cursor > :first-child { box-shadow: inset 3px 0 0 var(--blue); }
+.work-row.cursor .work-cell-title::before, .work-group-row.cursor .work-group-name::before { content: "▸"; margin-right: 6px; color: #8fb5ff; }
+
+.session-layer { position: fixed; inset: 0; z-index: 80; display: grid; padding: 38px; background: rgba(5, 7, 10, .68); place-items: stretch; }
+.session-layer[hidden] { display: none; }
+.session-surface { display: grid; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid #46586d; border-radius: 7px; background: #0d1014; box-shadow: 0 20px 70px #000; grid-template-rows: 36px minmax(0, 1fr); }
+.session-layer-header { display: flex; align-items: center; gap: 14px; padding: 0 10px; border-bottom: 1px solid #252b33; color: var(--quiet); font-size: 11px; }
+.session-layer-header button { border: 0; background: transparent; color: #dbe6f5; cursor: pointer; }
+.session-layer-terminal { min-height: 0; }
 /* A caption keeps `display: table-caption`. Any other display value drops it
    out of the table box, and the browser then sizes it to one column. */
 .work-caption { padding: 0 4px 8px; color: #9fa7b0; font-size: 11px; font-weight: 760; letter-spacing: .1em; text-align: left; text-transform: uppercase; }
@@ -1199,6 +1209,7 @@ details.more-work .area-work-list { margin-top: 18px; }
 .live-state.shell { color: var(--muted); }
 .terminal-wrap { position: relative; height: 100%; min-height: 0; padding: 14px 18px 18px; }
 .terminal-host { position: absolute; inset: 14px 18px 18px; overflow: hidden; }
+.session-layer-terminal { position: relative; inset: auto; width: auto; height: auto; margin: 14px 18px 18px; }
 .terminal-host .xterm { height: 100%; }
 
 /* Next step */

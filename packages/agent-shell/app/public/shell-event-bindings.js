@@ -5,7 +5,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction, shellMenu, goToButton, goToLayer,
     goToInput, modalLayer, terminalFit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu, confirmRebuild,
     reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, showDecision,
-    showCreate, showDescribe, toggleAwake, closeModal, modalConfirm, restoreReturnPoint,
+    showCreate, showDescribe, toggleAwake, openModal, closeModal, modalConfirm, restoreReturnPoint, openSessionLayer, closeSessionLayer,
   } = chrome;
   const {
     loadGoalPrompt, loadBrainPrompt, closePromptPreview, selectBestiaryLifecycle, selectBestiaryTransition,
@@ -70,6 +70,48 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     region.textContent = count.trim();
   }
 
+  /** Stores and paints one cursor row, then optionally gives its control focus. */
+  function setWorkCursor(row, focus = true) {
+    if (!row?.dataset.workCursor) return false;
+    state.workCursor = row.dataset.workCursor;
+    localStorage.setItem("agent-shell.work-cursor", state.workCursor);
+    paint(true);
+    if (focus) window.setTimeout(() => [...document.querySelectorAll("[data-work-cursor]")].find((item) => item.dataset.workCursor === state.workCursor)?.querySelector("[data-work-row-title], [data-work-cursor-control]")?.focus({ preventScroll: true }), 0);
+    return true;
+  }
+
+  /** Returns the visible rows that participate in Work cursor movement. */
+  function visibleCursorRows(selector = "[data-work-cursor]") {
+    return [...screen.querySelectorAll(selector)].filter((row) => !row.hidden);
+  }
+
+  /** Resolves the stored cursor, with the first visible row as its fallback. */
+  function cursorRow() {
+    return visibleCursorRows().find((row) => row.dataset.workCursor === state.workCursor) ?? visibleCursorRows()[0] ?? null;
+  }
+
+  /** Opens the live session owned by the cursor row without starting work. */
+  function enterCursorSession() {
+    const row = cursorRow();
+    if (!row) return showToast("There is no Work row to enter.");
+    setWorkCursor(row, false);
+    const value = row.dataset.workCursor;
+    if (value.startsWith("goal:")) {
+      const session = sessionForGoal(rememberGoal(value.slice(5)));
+      return session ? openSessionLayer(session, "agent") : showToast("This Goal has no live session to enter.");
+    }
+    if (value.startsWith("definition:")) {
+      const session = describeWorkSessions().find((item) => item.name === value.slice(11));
+      return session ? openSessionLayer(session, "definition") : showToast("This row has no live session to enter.");
+    }
+    const brain = brainForAreaCard(row.dataset.workArea);
+    const session = state.sessions.find((item) => item.name === brain?.session && brain?.live);
+    return session ? openSessionLayer(session, "brain") : showToast("This Area has no live brain to enter.");
+  }
+
+  /** Lets the shared modal close its informational key sheet. */
+  function closeKeySheet() { return true; }
+
   /**
    * Arrow, Home, and End move between the Goal titles of the table the focused
    * title belongs to. Enter and Space keep their native button behavior, so the
@@ -101,6 +143,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
 
   document.addEventListener("click", async (event) => {
     const target = event.target;
+    const cursor = target.closest?.("[data-work-cursor]");
+    if (cursor && state.view === "work") setWorkCursor(cursor, false);
     if (target.closest?.("[data-open-area-focus], [data-change-area-focus]")) return openAreaFocusPicker();
     if (target.closest?.("[data-cancel-area-focus]")) return cancelAreaFocusPicker();
     if (target.closest?.("[data-clear-area-focus]")) return clearAreaFocus();
@@ -428,11 +472,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       state.agentSessionName = openSession.dataset.openSession;
       const goal = rememberGoal(openSession.dataset.openSessionGoal);
       if (!goal) return;
-      state.document = null;
-      state.agentReturnView = "work";
-      state.view = "agent";
-      state.renderedKey = "";
-      return paint(true);
+      const session = state.sessions.find((item) => item.name === state.agentSessionName);
+      return session ? openSessionLayer(session, "agent") : showToast("This session is not live.");
     }
     const pipelineControl = target.closest("[data-pipeline-control]");
     if (pipelineControl) {
@@ -642,17 +683,14 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
     if (target.closest("[data-launch-open-session]")) return launchOpenSession();
     if (target.closest("[data-open-agent]")) {
-      state.agentReturnView = "work";
-      state.view = "agent";
-      state.renderedKey = "";
-      return paint(true);
+      const session = sessionForGoal(currentGoal());
+      return session ? openSessionLayer(session, "agent") : showToast("This session is not live.");
     }
     if (target.closest("[data-toggle-awake]")) return toggleAwake();
     if (target.closest("[data-stop-agent]")) return confirmStop();
     if (target.closest("[data-keep-working]")) {
-      state.view = "agent";
-      state.renderedKey = "";
-      return paint(true);
+      const session = sessionForGoal(currentGoal());
+      return session ? openSessionLayer(session, "agent") : showToast("This session is not live.");
     }
     if (target.closest("[data-finish-run]")) {
       const goal = currentGoal();
@@ -809,9 +847,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         saveDescribeDraft();
         await refresh();
         if (!describeWorkSession()) throw new Error("The agent session did not open.");
-        state.view = "describe-agent";
-        state.renderedKey = "";
-        paint(true);
+        openSessionLayer(describeWorkSession(), opened.route?.startsWith("brain-") ? "brain" : "definition");
         const messages = {
           "brain-opened": "Your description reached the Area brain.",
           "brain-resumed": "Your description reached the resumed Area brain.",
@@ -1053,7 +1089,15 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (event.target === modalLayer) closeModal();
   });
 
+  document.querySelector("#session-layer").addEventListener("click", (event) => {
+    if (event.target === event.currentTarget || event.target.closest?.("[data-close-session-layer]")) closeSessionLayer();
+  });
+
   document.addEventListener("keydown", (event) => {
+    if (shortcutMatches(event, KEYMAP.session)) {
+      event.preventDefault();
+      return state.sessionPeek ? closeSessionLayer() : state.view === "work" ? enterCursorSession() : showToast("Return to Work to choose a session.");
+    }
     if (event.key === "Escape" && state.areaFocusPicker) {
       event.preventDefault();
       return cancelAreaFocusPicker();
@@ -1085,6 +1129,35 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
     // No other global shortcut fires while the finder holds the keyboard.
     if (state.goTo) return;
+    const textEntry = event.target.closest?.("input, textarea, select, [contenteditable='true'], .terminal-host");
+    if (state.view === "work" && !textEntry && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      const rows = visibleCursorRows();
+      const current = cursorRow();
+      if (event.key === "j" || event.key === "k") {
+        event.preventDefault();
+        const found = rows.indexOf(current);
+        const index = found < 0 ? (event.key === "j" ? -1 : 1) : found;
+        return setWorkCursor(rows[event.key === "j" ? Math.min(rows.length - 1, index + 1) : Math.max(0, index - 1)]);
+      }
+      if (event.key === "G" || (event.key === "g" && state.workPendingG)) {
+        event.preventDefault(); state.workPendingG = false;
+        return setWorkCursor(event.key === "G" ? rows.at(-1) : rows[0]);
+      }
+      if (event.key === "g") { state.workPendingG = true; window.setTimeout(() => { state.workPendingG = false; }, 650); return; }
+      state.workPendingG = false;
+      if (event.key === "b") {
+        event.preventDefault();
+        const area = current?.dataset.workArea ?? "";
+        const brain = (state.brains ?? []).filter((item) => item.live && (area === item.area || area.startsWith(`${item.area}/`))).sort((a, b) => b.area.length - a.area.length)[0];
+        const session = state.sessions.find((item) => item.name === brain?.session);
+        return session ? openSessionLayer(session, "brain") : showToast("This Area has no live brain to enter.");
+      }
+      if (event.key === "/") { event.preventDefault(); return document.querySelector("#work-search")?.focus(); }
+      if (event.key === "?") {
+        event.preventDefault();
+        return openModal({ kicker: "Work keys", title: "Move around Work", copy: "j/k rows · gg/G first/last · b brain · / filter · ⌘J session", confirmLabel: "Close", onConfirm: closeKeySheet });
+      }
+    }
     if (moveBetweenWorkRows(event)) return;
     if (event.key === "Enter" && event.metaKey && !modalLayer.hidden && event.target.closest?.("[data-modal-input]")) {
       event.preventDefault();

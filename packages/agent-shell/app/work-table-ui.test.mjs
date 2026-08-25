@@ -141,6 +141,52 @@ test("arrows, Home, End, and Enter move and open without leaving the table", asy
   assert.ok(document.querySelector(".document-reader, .work-page"), "Enter or a click on the title opens the Goal, never an agent");
 });
 
+test("vim keys move the persistent Work cursor through brains and Goals and stay inert in the filter", async () => {
+  const { window, document } = await bootWorkTable(workTableFixture());
+  const goals = [...document.querySelectorAll("tr.work-row:not(.definition)")].filter((row) => !row.hidden);
+  assert.equal(document.querySelectorAll("[data-work-cursor].cursor").length, 1);
+  press(window, "j");
+  await settle(window);
+  assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, goals[0].dataset.workCursor, "j moves from the Area brain row to its first Goal");
+  press(window, "k");
+  await settle(window);
+  assert.match(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor ?? "", /^area:/, "k moves back onto the Area brain row");
+  press(window, "G");
+  await settle(window);
+  assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, goals.at(-1).dataset.workCursor);
+  const filter = document.querySelector("#work-search");
+  filter.focus();
+  press(window, "j");
+  assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, goals.at(-1).dataset.workCursor, "a bare key in the filter does not move the cursor");
+});
+
+test("Command-J opens and closes the one session layer without destroying Work", async () => {
+  const { window, document } = await bootWorkTable(workTableFixture());
+  const row = document.querySelector("[data-work-cursor='goal:otto/standards/goal-framework-docs.md']");
+  row.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+  press(window, "j", { metaKey: true });
+  await settle(window);
+  assert.equal(document.querySelector("#session-layer").hidden, false);
+  assert.ok(document.querySelector("table.work-table"), "Work remains mounted below the session");
+  assert.equal(document.querySelector("#session-layer-terminal").dataset.session, "standards--docs");
+  press(window, "j", { metaKey: true });
+  await settle(window);
+  assert.equal(document.querySelector("#session-layer").hidden, true);
+  assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, row.dataset.workCursor);
+});
+
+test("an Area brain row takes the cursor and Command-J enters its brain", async () => {
+  const { window, document } = await bootWorkTable(workTableFixture());
+  const row = document.querySelector("[data-work-cursor='area:otto/tangent']");
+  row.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+  assert.ok(document.querySelector("[data-work-cursor='area:otto/tangent']").classList.contains("cursor"), "the visible cursor sits on the Area brain row");
+  press(window, "j", { metaKey: true });
+  await settle(window);
+  assert.equal(document.querySelector("#session-layer-terminal").dataset.session, "otto-tangent--brain");
+});
+
 test("Space checks a startable Goal, and Escape clears the selection", async () => {
   const { window, document, posts } = await bootWorkTable(plannedWorkFixture(), { workFilter: "inactive" });
   const startable = [...document.querySelectorAll("tr.work-row")].filter((row) => row.querySelector("[data-check-goal]"));

@@ -153,12 +153,11 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
       </article>`;
   }
 
-  /** Renders the retained tmux surface for one program. */
+  /** Renders retained session controls for compatibility; the shell mounts terminals only in the session layer. */
   function renderProgramSession(program) {
     return `
       <section class="agent-page">
         <div class="agent-toolbar"><div class="agent-context"><strong>${escapeHtml(program.label)}</strong><span>${escapeHtml(areaLabel(program.area))} · ${escapeHtml(programState(program))}</span></div><div class="agent-controls">${programIsLive(program) ? `<button class="danger-button" type="button" data-program-action="stop" data-program-id="${escapeHtml(program.id)}">Stop…</button>` : ""}${program.type === "trigger" ? `<button class="secondary-button" type="button" data-program-action="${program.paused ? "resume" : "pause"}" data-program-id="${escapeHtml(program.id)}">${program.paused ? "Resume" : "Pause"}</button>` : ""}<button class="quiet-button" type="button" data-back-program>Program details</button></div></div>
-        <div class="terminal-wrap"><div class="terminal-host" data-session="${escapeHtml(program.sessionName)}"></div></div>
       </section>`;
   }
 

@@ -15,7 +15,7 @@
     "view", "currentFile", "agentSessionName", "agentReturnView", "decisionReturnView",
     "describeSessionName", "createReturnView", "harnessReturnView",
     "programId", "areaSelection", "query", "workFilter",
-    "areaFocus", "collapsedDeskSections",
+    "areaFocus", "collapsedDeskSections", "workCursor",
   ];
 
   /** The Back button word for each captured view. */

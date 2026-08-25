@@ -9,7 +9,7 @@ import { readDismissedAskIds, writeDismissedAskIds } from "./ask-dismissal-core.
 
 /** Creates the work desk from shell, launch, Area, and Program capabilities. */
 export function createWorkDeskView({ shell, launch, areaModel, programs, chrome }) {
-  const { state, api, post, paint, refresh, showToast, openModal, captureReturnPoint, saveDescribeSession } = shell;
+  const { state, api, post, paint, refresh, showToast, openModal, captureReturnPoint, saveDescribeSession, openSessionLayer } = shell;
   const {
     launchSelection, launchRequestFields, syncLaunchDraft, preferredArea, launchOptionsFor, pipelineForGoal,
     pipelineRecordForGoal, launchPopover, DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
@@ -340,13 +340,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     if (state.view === "describe-agent" && state.describeSessionName === name) return;
     const session = brainSessions().find((item) => item.name === name);
     if (!session) return showToast("The brain session is not live.");
-    state.describeReturn = captureReturnPoint();
-    state.describeSessionName = session.name;
-    state.document = null;
-    saveDescribeSession();
-    state.view = "describe-agent";
-    state.renderedKey = "";
-    paint(true);
+    openSessionLayer(session, "brain", captureReturnPoint());
   }
 
   /** Opens the Area brain, or starts the missing session before opening it. */
@@ -1566,9 +1560,10 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       ? `data-open-brain="${escapeHtml(brain.session ?? "")}"`
       : `data-open-area-brain="${escapeHtml(area.path)}"`;
     const name = humanName(area.name);
-    return `<tr class="work-group-row">
+    const cursor = `area:${area.path}`;
+    return `<tr class="work-group-row${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${escapeHtml(area.path)}">
       <th class="work-group-head" colspan="${WORK_COLUMNS.length}" scope="rowgroup" id="${workGroupId(area.path)}">
-        <span class="work-group-name"><button type="button" data-open-area="${escapeHtml(area.path)}" title="Open the ${escapeHtml(name)} Area map">${escapeHtml(name)}</button></span>
+        <span class="work-group-name"><button type="button" data-work-cursor-control data-focus-key="area:${escapeHtml(area.path)}" data-open-area="${escapeHtml(area.path)}" title="Open the ${escapeHtml(name)} Area map">${escapeHtml(name)}</button></span>
         <span class="work-group-count">${count} ${count === 1 ? "Goal" : "Goals"}</span>
         <span class="desk-state ${status.kind}">${escapeHtml(status.label)}</span>
         ${deskSelectionBar(area.path, allTrees)}
@@ -1654,7 +1649,8 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const disclosure = subgoalCount
       ? `<button class="work-subgoal-toggle" type="button" data-toggle-subgoals="${escapeHtml(goal.file)}" aria-expanded="${expanded}" aria-label="${expanded ? "Hide" : "Show"} ${subgoalCount} ${subgoalCount === 1 ? "Subgoal" : "Subgoals"} of ${escapeHtml(goal.title)}"><span aria-hidden="true">${expanded ? "−" : "+"}</span>${subgoalCount}</button>`
       : "";
-    return `<tr class="desk-goal work-row ${subgoal ? "subgoal" : "root-goal"} ${action.kind}${selected ? " selected" : ""}" data-goal-anchor="${escapeHtml(goal.file)}" data-work-area="${escapeHtml(goal.area)}"${subgoal ? ` data-subgoal-of="${escapeHtml(parent)}"` : ""}${hidden ? " hidden" : ""}>
+    const cursor = `goal:${goal.file}`;
+    return `<tr class="desk-goal work-row ${subgoal ? "subgoal" : "root-goal"} ${action.kind}${selected ? " selected" : ""}${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-goal-anchor="${escapeHtml(goal.file)}" data-work-area="${escapeHtml(goal.area)}"${subgoal ? ` data-subgoal-of="${escapeHtml(parent)}"` : ""}${hidden ? " hidden" : ""}>
       <td class="work-cell-select desk-select">${selectable ? `<input type="checkbox" data-check-goal="${escapeHtml(goal.file)}" data-focus-key="check:${escapeHtml(goal.file)}" ${selected ? "checked" : ""} aria-label="Select ${escapeHtml(goal.title)} for one shared agent">` : ""}</td>
       <th class="work-cell-work" scope="row">
         <span class="work-cell-title">${disclosure}<button class="work-row-title" type="button" data-work-row-title data-open-close="${escapeHtml(goal.file)}" data-focus-key="title:${escapeHtml(goal.file)}" title="${escapeHtml(goal.title)}">${escapeHtml(goal.title)}</button>${path ? `<small class="work-row-path">${escapeHtml(path)}</small>` : ""}</span>
@@ -1678,7 +1674,8 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const name = agentName(session);
     const stateName = describeWorkStateLabel(session);
     const kind = session.state === "working" ? "working" : "waiting";
-    return `<tr class="desk-definition work-row definition ${kind}">
+    const cursor = `definition:${session.name}`;
+    return `<tr class="desk-definition work-row definition ${kind}${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${escapeHtml(session.area ?? "")}">
       <td class="work-cell-select"></td>
       <th class="work-cell-work" scope="row">
         <span class="work-cell-title"><button class="work-row-title" type="button" data-work-row-title data-select-work-definition="${escapeHtml(session.name)}" data-focus-key="definition:${escapeHtml(session.name)}">${escapeHtml(session.workTitle || "Define new work")}</button><small class="work-row-path">Defining work</small></span>
@@ -1798,7 +1795,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     // and a fixed table keeps reserving width for a column whose cells are all
     // `display: none` unless a `<col>` states that width is zero.
     return `<table class="work-table">
-      <caption class="work-caption"><span>${escapeHtml(word)}</span><span class="work-caption-count">${rowCount} ${rowCount === 1 ? "Goal" : "Goals"}</span><span class="work-keyboard-hint" aria-hidden="true">↑↓ rows · ↩ open</span></caption>
+      <caption class="work-caption"><span>${escapeHtml(word)}</span><span class="work-caption-count">${rowCount} ${rowCount === 1 ? "Goal" : "Goals"}</span><span class="work-keyboard-hint" aria-hidden="true">j k rows · ⌘J session · ? keys</span></caption>
       <colgroup>${WORK_COLUMNS.map((column) => `<col class="work-col-${column.key}">`).join("")}</colgroup>
       <thead><tr>${WORK_COLUMNS.map((column) => `<th scope="col" class="work-head-${column.key}">${column.hidden ? `<span class="visually-hidden">${escapeHtml(column.label)}</span>` : escapeHtml(column.label)}</th>`).join("")}</tr></thead>
       ${bodies}

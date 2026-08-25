@@ -2,28 +2,6 @@ import { escapeHtml } from "./text-format.js";
 
 /** Creates the agent decision view product boundary. */
 export function createAgentDecisionView({ state, agentName, areaLabel, currentBriefFields, storyEntries }) {
-  /** Renders the terminal surface for an active Goal agent. */
-  function renderAgent(goal, session) {
-    return `
-      <section class="agent-page">
-        <div class="terminal-wrap">
-          <div id="agent-terminal" class="terminal-host" data-session="${escapeHtml(session.name)}"></div>
-        </div>
-      </section>
-    `;
-  }
-
-  /** Renders the native conversation that defines new work. */
-  function renderDescribeWorkAgent(session) {
-    return `
-      <section class="agent-page">
-        <div class="terminal-wrap">
-          <div id="describe-work-terminal" class="terminal-host" data-session="${escapeHtml(session.name)}"></div>
-        </div>
-      </section>
-    `;
-  }
-
   /** Renders explicit run and goal decisions after an agent returns. */
   function renderDecision(goal, session) {
     const name = agentName(session);
@@ -45,5 +23,5 @@ export function createAgentDecisionView({ state, agentName, areaLabel, currentBr
 
   /** Returns the newest open linked Goal that owns the complete Document review. */
 
-  return { renderAgent, renderDescribeWorkAgent, renderDecision };
+  return { renderDecision };
 }

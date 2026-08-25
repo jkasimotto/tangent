@@ -44,6 +44,7 @@ const {
   "modal-actions": modalActions, toast, "status-pill": statusPill, "awake-button": awakeButton,
   "shell-menu": shellMenu, "go-to-button": goToButton, "go-to-layer": goToLayer,
   "go-to-input": goToInput, "go-to-list": goToList,
+  "session-layer": sessionLayer, "session-layer-title": sessionLayerTitle, "session-layer-terminal": sessionLayerTerminal,
 } = shellDom();
 
 /**
@@ -53,6 +54,7 @@ const {
 const KEYMAP = {
   goTo: { key: "k", label: "⌘K" },
   findWork: { key: "/", label: "⌘/" },
+  session: { key: "j", label: "⌘J" },
 };
 
 /** True when the event is this binding: ⌘ plus the key, no other modifier. */
@@ -385,7 +387,7 @@ function forward(read) {
 }
 
 const workDeskView = createWorkDeskView({
-  shell: { state, api, post, paint, refresh, showToast, openModal: forward(() => openModal), captureReturnPoint, saveDescribeSession },
+  shell: { state, api, post, paint, refresh, showToast, openModal: forward(() => openModal), captureReturnPoint, saveDescribeSession, openSessionLayer: forward(() => openSessionLayer) },
   launch: {
     launchSelection: forward(() => launchSelection), launchRequestFields: forward(() => launchRequestFields),
     syncLaunchDraft: forward(() => syncLaunchDraft), preferredArea: forward(() => preferredArea),
@@ -417,7 +419,7 @@ const programView = createProgramView({
 });
 const {
   programById, currentProgram, programIsLive, programState, localMoment, programKind, programRowControls,
-  programRow, renderProgramDetail, programAreaDirectory, renderProgramCreate, renderProgramSession,
+  programRow, renderProgramDetail, programAreaDirectory, renderProgramCreate,
 } = programView;
 
 const areaDirectoryView = createAreaDirectoryView({
@@ -454,7 +456,7 @@ const {
 } = goalLaunchView;
 
 const agentDecisionView = createAgentDecisionView({ state, agentName, areaLabel, currentBriefFields, storyEntries });
-const { renderAgent, renderDescribeWorkAgent, renderDecision } = agentDecisionView;
+const { renderDecision } = agentDecisionView;
 
 const documentReaderView = createDocumentReaderView({
   state, markdownToHtml, currentGoal, goalByFile, sessionsForGoal, areaLabel, areaPath, humanName,
@@ -488,7 +490,7 @@ const shellCoordinator = createShellCoordinator({
   chrome: {
     screen, backButton, shellMenu, goToLayer, goToInput, goToList, modalLayer, modalKicker, modalTitle, modalCopy,
     modalField, modalActions, buildGoToRows, goToCore, rememberScreenScroll, restoreReturnPoint, captureReturnPoint,
-    restoreReturnScroll, disposeTerminal, mountTerminal, updateStatusPill,
+    restoreReturnScroll, disposeTerminal, mountTerminal, updateStatusPill, openSessionLayer: forward(() => openSessionLayer),
   },
   work: {
     areaLabel, humanName, agentName, goalByFile, currentGoal, sessionForGoal, describeWorkSession,
@@ -573,22 +575,8 @@ function renderKey() {
   if (state.view === "document") {
     return JSON.stringify([state.view, state.document?.file, state.document?.hash, state.documentTrailIndex, state.documentTrail.length, commentComposerKey()]);
   }
-  if (state.view === "agent") {
-    return JSON.stringify([state.view, goal?.file, session?.name, state.agentReturnView, state.document?.hash]);
-  }
-  if (state.view === "describe-agent") {
-    const describeSession = describeWorkSession();
-    return JSON.stringify([state.view, describeSession?.name, state.describeReturn?.state.view, state.document?.hash]);
-  }
-  if (state.view === "program-session") {
-    // The signature stays narrow so the attached terminal survives a repaint.
-    // `paused` belongs in it because the toolbar's Pause and Resume control
-    // reads it, and nothing else on this view would redraw the change.
-    const program = currentProgram();
-    return JSON.stringify([state.view, program?.id, program?.sessionName, program?.paused]);
-  }
   return JSON.stringify([
-    state.view,
+    state.view, state.workCursor,
     state.query,
     state.caffeinate,
     state.document ? [state.document.file, state.document.hash, state.documentTrailIndex, state.documentTrail.length] : null,
@@ -618,6 +606,20 @@ function renderKey() {
     whatHappenedRenderKey(),
     state.sessions.map((item) => [item.name, item.goal, item.kind, item.area, item.state, item.stateDetail, item.stateQuestion, item.phase, item.command, item.created, item.workTitle, item.launchLabel, item.launchRef, item.waitingSince]),
   ]);
+}
+
+/** Makes stale stored cursor identities resolve to one visible row. */
+function reconcileWorkCursor() {
+  const rows = [...screen.querySelectorAll("[data-work-cursor]")].filter((row) => !row.hidden);
+  if (!rows.length) return;
+  let row = rows.find((item) => item.dataset.workCursor === state.workCursor);
+  if (!row) {
+    row = rows[0];
+    state.workCursor = row.dataset.workCursor;
+    localStorage.setItem("agent-shell.work-cursor", state.workCursor);
+  }
+  for (const item of rows) item.classList.toggle("cursor", item === row);
+  if (!state.sessionPeek && document.activeElement === document.body) row.querySelector("[data-work-row-title], [data-work-cursor-control]")?.focus({ preventScroll: true });
 }
 
 /**
@@ -794,10 +796,10 @@ function renderScreen() {
     saveDescribeSession();
     state.view = "work";
   }
-  if (!["agent", "describe-agent", "program-session"].includes(state.view)) disposeTerminal();
+  if (!state.sessionPeek) disposeTerminal();
 
   screen.classList.remove("split-screen");
-  screen.classList.toggle("terminal-screen", ["agent", "describe-agent", "program-session"].includes(state.view));
+  screen.classList.remove("terminal-screen");
   screen.classList.toggle("review-screen", state.view === "document");
 
   const scrollPositions = rememberScreenScroll();
@@ -805,15 +807,12 @@ function renderScreen() {
   if (state.view === "work") screen.innerHTML = renderWork();
   else if (state.view === "create") screen.innerHTML = renderCreate();
   else if (state.view === "describe") screen.innerHTML = renderDescribeCapture();
-  else if (state.view === "describe-agent") screen.innerHTML = renderDescribeWorkAgent(describeSession);
   else if (state.view === "areas") screen.innerHTML = renderAreas() + launchPopover();
   else if (state.view === "prompts") screen.innerHTML = renderPromptBestiary({ goals: allGoals(), brains: state.brains, sessions: state.sessions, pipelines: state.pipelines, programs: state.programs.programs, asks: forYouItems(), inspector: state.promptInspector, selection: state.bestiarySelection });
   else if (state.view === "area-edit") screen.innerHTML = renderAreaEditor();
   else if (state.view === "program-detail") screen.innerHTML = renderProgramDetail(currentProgram());
   else if (state.view === "program-create") screen.innerHTML = renderProgramCreate();
-  else if (state.view === "program-session") screen.innerHTML = renderProgramSession(currentProgram());
   else if (state.view === "harnesses") screen.innerHTML = renderHarnessEditor();
-  else if (state.view === "agent") screen.innerHTML = renderAgent(goal, session);
   else if (state.view === "decision" && session) screen.innerHTML = renderDecision(goal, session);
   else if (state.view === "document") screen.innerHTML = renderDocument();
   else {
@@ -824,14 +823,44 @@ function renderScreen() {
   updateHeader();
   restoreScreenScroll(scrollPositions);
   restoreScreenFocus(focusKey);
+  if (state.view === "work") reconcileWorkCursor();
   if (state.view === "document") {
     bindDocumentReader();
     mountMermaidDiagrams(screen.querySelector(".document-content"));
   }
   const host = screen.querySelector("[data-session]");
   if (host) mountTerminal(host, host.dataset.session);
+  renderSessionLayer();
   const mapHost = screen.querySelector("[data-area-map]");
   if (mapHost) mountAreaMap(mapHost);
+}
+
+/** Opens the one presentation used by every live session. */
+function openSessionLayer(session, kind = "agent", returnPoint = null) {
+  if (!session?.name) return showToast("This row has nothing live to enter.");
+  state.sessionPeek = { session: session.name, kind, returnPoint: returnPoint ?? captureReturnPoint() };
+  state.renderedKey = "";
+  paint(true);
+}
+
+/** Returns to the exact screen and row below the session. */
+function closeSessionLayer() {
+  const point = state.sessionPeek?.returnPoint;
+  state.sessionPeek = null;
+  disposeTerminal();
+  sessionLayer.hidden = true;
+  if (point) restoreReturnPoint(point);
+  else paint(true);
+}
+
+/** Keeps the terminal above the current screen without replacing that screen. */
+function renderSessionLayer() {
+  const peek = state.sessionPeek;
+  sessionLayer.hidden = !peek;
+  if (!peek) return;
+  sessionLayerTitle.textContent = peek.kind === "brain" ? "Area brain" : peek.kind === "program" ? "Program session" : "Agent session";
+  sessionLayerTerminal.dataset.session = peek.session;
+  mountTerminal(sessionLayerTerminal, peek.session);
 }
 
 /**
@@ -1311,7 +1340,7 @@ bindShellEvents({
     screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction, shellMenu, goToButton, goToLayer,
     goToInput, modalLayer, terminalFit: terminalController.fit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu,
     confirmRebuild, reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, restoreReturnPoint,
-    showDecision, showCreate, showDescribe, toggleAwake, closeModal, modalConfirm: getModalConfirm,
+    showDecision, showCreate, showDescribe, toggleAwake, openModal, closeModal, modalConfirm: getModalConfirm, openSessionLayer, closeSessionLayer,
   },
   prompts: {
     loadGoalPrompt, loadBrainPrompt, closePromptPreview, selectBestiaryLifecycle, selectBestiaryTransition,

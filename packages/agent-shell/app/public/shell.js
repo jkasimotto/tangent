@@ -395,7 +395,7 @@ const workDeskView = createWorkDeskView({
   },
   areaModel: { areas: forward(() => areas), allAreas: forward(() => allAreas), orderedGoalTrees: forward(() => orderedGoalTrees) },
   programs: {
-    programRowControl: forward(() => programRowControl), programIsLive: forward(() => programIsLive),
+    programRowControls: forward(() => programRowControls), programIsLive: forward(() => programIsLive),
     programState: forward(() => programState), localMoment: forward(() => localMoment),
   },
   chrome: { shortcutKbd, whatHappenedOverlay: forward(() => whatHappenedOverlay) },
@@ -416,7 +416,7 @@ const programView = createProgramView({
   /** Returns Area options. */ areaOptions: (...args) => areaOptions(...args),
 });
 const {
-  programById, currentProgram, programIsLive, programState, localMoment, programKind, programRowControl,
+  programById, currentProgram, programIsLive, programState, localMoment, programKind, programRowControls,
   programRow, renderProgramDetail, programAreaDirectory, renderProgramCreate, renderProgramSession,
 } = programView;
 
@@ -492,6 +492,7 @@ const shellCoordinator = createShellCoordinator({
   },
   work: {
     areaLabel, humanName, agentName, goalByFile, currentGoal, sessionForGoal, describeWorkSession,
+    goalTrees, filteredGoalTrees,
     describeWorkSessions, stopSession, brainForAreaCard, brainStateLabel, agentReference, saveDescribeDraft,
     saveDescribeSession, describeLaunchArea,
   },

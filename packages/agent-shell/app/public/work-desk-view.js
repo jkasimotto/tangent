@@ -15,7 +15,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     pipelineRecordForGoal, launchPopover, DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
   } = launch;
   const { areas, allAreas, orderedGoalTrees } = areaModel;
-  const { programRowControl, programIsLive, programState, localMoment } = programs;
+  const { programRowControls, programIsLive, programState, localMoment } = programs;
   const { shortcutKbd, whatHappenedOverlay } = chrome;
   const openingBrains = new Set();
   /** Returns every Goal represented in the current desk projection. */
@@ -1696,8 +1696,10 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     // A live brain earns its Area a header with no row under it, so Work
     // shows that the brain is alive even when it dispatched no agent
     // (design-active-brains-show-on-work-even-with-no-agents). Planned work
-    // is about unstarted Goals, so that filter does not force the group.
-    if (state.workFilter === "active" && record.brain?.live) return true;
+    // is about unstarted Goals, so that filter alone does not force the group.
+    // Every other filter does, "all" included: that view shows more than
+    // Current, so it must not be the one place a live brain disappears.
+    if (state.workFilter !== "inactive" && record.brain?.live) return true;
     return [record, ...record.sections].some((part) => part.descriptions.length
       || part.trees.some((tree) => tree.goals.some((goal) => !["done", "dropped", "deferred"].includes(goal.status))));
   }
@@ -1733,7 +1735,6 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   /** Renders the Programs of one Area as a compact operational shelf. */
   function deskProgramShelf(programs) {
     return `<div class="desk-programs">${programs.map((program) => {
-      const control = programRowControl(program);
       return `
         <div class="desk-program ${programIsLive(program) ? "live" : ""}">
           <button type="button" data-select-program="${escapeHtml(program.id)}">
@@ -1741,7 +1742,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
             <strong>${escapeHtml(program.label)}</strong>
             <em>${escapeHtml(programState(program))}</em>
           </button>
-          ${control ? `<button class="desk-icon-action" type="button" data-program-action="${control.action}" data-program-id="${escapeHtml(program.id)}" aria-label="${escapeHtml(control.label)} ${escapeHtml(program.label)}">${escapeHtml(control.label)}</button>` : ""}
+          ${programRowControls(program).map((control) => `<button class="desk-icon-action" type="button" data-program-action="${control.action}" data-program-id="${escapeHtml(program.id)}" aria-label="${escapeHtml(control.label)} ${escapeHtml(program.label)}">${escapeHtml(control.label)}</button>`).join("")}
         </div>`;
     }).join("")}</div>`;
   }

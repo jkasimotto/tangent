@@ -12,6 +12,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   } = chrome;
   const {
     areaLabel, humanName, agentName, goalByFile, currentGoal, sessionForGoal, describeWorkSession,
+    goalTrees, filteredGoalTrees,
     describeWorkSessions, stopSession, brainForAreaCard, brainStateLabel, agentReference, saveDescribeDraft,
     saveDescribeSession, describeLaunchArea,
   } = work;

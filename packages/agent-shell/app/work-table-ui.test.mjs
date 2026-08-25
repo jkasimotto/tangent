@@ -371,3 +371,44 @@ test("an Area Focus that excludes the brain's Area hides its group", async () =>
     "a live brain outside the Focus stays hidden");
   assert.ok(document.querySelector("tbody.work-group[data-work-group='otto/standards']"), "the focused Area stays");
 });
+
+test("an Area whose Goals are all unstarted still shows its live brain on Current", async () => {
+  const { document } = await bootWorkTable(withBrainOnlyArea(workTableFixture(), { planned: true }));
+  const group = document.querySelector("tbody.work-group[data-work-group='otto/quiet']");
+  assert.ok(group, "a planned Goal gives no current row, so the live brain is what keeps the group");
+  assert.equal(group.querySelectorAll("tr.work-row").length, 0, "an unstarted Goal stays off the Current table");
+  const header = groupHeader(document, "otto/quiet");
+  assert.match(header.querySelector(".desk-state").textContent, /^Brain working$/);
+  assert.match(header.querySelector(".work-group-count").textContent, /^0 Goals$/,
+    "the count follows the filtered rows, as it does for every group");
+
+  const stopped = await bootWorkTable(withBrainOnlyArea(workTableFixture(), { planned: true, live: false }));
+  assert.equal(stopped.document.querySelector("tbody.work-group[data-work-group='otto/quiet']"), null,
+    "the same Area with a stopped brain leaves Current, so the live brain is what earns the group");
+
+  const planned = await bootWorkTable(withBrainOnlyArea(workTableFixture(), { planned: true }), { workFilter: "inactive" });
+  const plannedGroup = planned.document.querySelector("tbody.work-group[data-work-group='otto/quiet']");
+  assert.equal(plannedGroup.querySelectorAll("tr.work-row").length, 1, "the same Goal is a row on Planned work");
+});
+
+test("a live brain keeps its group when opening a Goal widens the filter to all work", async () => {
+  // Opening a Goal that the current filter hides makes the coordinator switch
+  // the Work filter to "all" (shell-coordinator, selectGoal). That view shows
+  // more than Current, so it must not be the one place a live brain vanishes.
+  // The Work table carries no reveal route of its own, so the proof clicks the
+  // same `data-reveal-goal` attribute the For-you rows, the Areas view, and a
+  // Document's Goal link all use.
+  const { window, document } = await bootWorkTable(withBrainOnlyArea(workTableFixture(), { planned: true }));
+  assert.ok(document.querySelector("tbody.work-group[data-work-group='otto/quiet']"), "the live brain holds the group on Current");
+
+  const reveal = document.createElement("button");
+  reveal.dataset.revealGoal = "otto/quiet/goal-quiet-plan.md";
+  document.body.append(reveal);
+  reveal.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+
+  assert.equal(document.querySelector("[data-work-filter='active']").getAttribute("aria-pressed"), "false",
+    "neither chip is pressed, so the table is showing all work");
+  assert.ok(document.querySelector("tbody.work-group[data-work-group='otto/quiet']"),
+    "the live brain still states itself when the table widens to all work");
+});

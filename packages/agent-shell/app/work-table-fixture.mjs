@@ -107,6 +107,23 @@ export function withDirectAsks(fixture) {
 }
 
 /**
+ * Adds one Area whose brain is live and whose Goals are none. It is the case
+ * Julian could not see: the brain thinks or waits, and no worker agent runs
+ * (design-active-brains-show-on-work-even-with-no-agents). Pass `live: false`
+ * for the same Area with a stopped brain.
+ */
+export function withBrainOnlyArea(fixture, { state = "working", live = true } = {}) {
+  const areas = [...fixture.vault.areas, { path: "otto/quiet", name: "quiet", goals: [], documents: [] }];
+  const record = live
+    ? brain("otto/quiet", 4, state)
+    : { ...brain("otto/quiet", 4, state), status: "stopped", live: false };
+  const sessions = live
+    ? [...fixture.sessions, { name: "otto-quiet--brain", area: "otto/quiet", kind: "brain", state, command: "claude" }]
+    : fixture.sessions;
+  return { ...fixture, vault: { ...fixture.vault, areas }, sessions, brains: [...fixture.brains, record] };
+}
+
+/**
  * The planned fixture: one Goal that can start, one that two prerequisites
  * block, one whose prerequisite will not be done, and one whose dependency
  * reference does not resolve. It proves the four readiness facts stay apart

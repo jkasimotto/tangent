@@ -9,7 +9,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { bootWorkTable, press, settle } from "./work-table-harness.mjs";
-import { workTableFixture, withDirectAsks, plannedWorkFixture } from "./work-table-fixture.mjs";
+import { workTableFixture, withDirectAsks, plannedWorkFixture, withBrainOnlyArea } from "./work-table-fixture.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -311,4 +311,63 @@ test("the Time column's label has a fixed width, so every bar starts at the same
     /display:\s*inline-block/,
     "the label box declares a display that honours its width",
   );
+});
+
+// Julian's word 2026-08-26: "any active brains should show in the work screen
+// even if they dont have agents." A live brain earns its Area one group header
+// and no row, and the header says which brain state it is
+// (otto/tangent/design-active-brains-show-on-work-even-with-no-agents).
+
+/** Returns the group header of one Area path, or null. */
+function groupHeader(document, area) {
+  return document.querySelector(`tbody.work-group[data-work-group='${area}'] tr.work-group-row > th`);
+}
+
+test("an Area whose brain is live keeps its group with no Goal row under it", async () => {
+  const { document } = await bootWorkTable(withBrainOnlyArea(workTableFixture()));
+  const group = document.querySelector("tbody.work-group[data-work-group='otto/quiet']");
+  assert.ok(group, "the live brain earns its Area a group");
+  assert.equal(group.querySelectorAll("tr.work-row").length, 0, "a brain-only group renders no data row");
+  assert.equal(group.querySelectorAll("tr").length, 1, "the header line is the whole group");
+  assert.equal(document.querySelectorAll("table.work-table tbody").length, 4, "the brain-only group joins the three Goal-bearing groups, it does not replace one");
+});
+
+test("the brain-only group header states the brain's state and opens that brain", async () => {
+  const working = await bootWorkTable(withBrainOnlyArea(workTableFixture()));
+  const header = groupHeader(working.document, "otto/quiet");
+  assert.match(header.querySelector(".desk-state").textContent, /^Brain working$/);
+  assert.equal(header.querySelector(".desk-state").className, "desk-state working", "a working brain takes the working colour");
+  const button = header.querySelector(".work-group-brain");
+  assert.match(button.textContent, /Open brain/);
+  assert.equal(button.dataset.openBrain, "otto-quiet--brain", "the button carries the live brain session");
+
+  const waiting = await bootWorkTable(withBrainOnlyArea(workTableFixture(), { state: "waiting" }));
+  const pill = groupHeader(waiting.document, "otto/quiet").querySelector(".desk-state");
+  assert.match(pill.textContent, /^Brain waiting for you$/);
+  assert.equal(pill.className, "desk-state waiting", "a waiting brain takes the waiting colour");
+});
+
+test("a stopped brain earns no group, and Planned work shows no brain-only group", async () => {
+  const stopped = await bootWorkTable(withBrainOnlyArea(workTableFixture(), { live: false }));
+  assert.equal(stopped.document.querySelector("tbody.work-group[data-work-group='otto/quiet']"), null,
+    "only a running, live brain puts its Area on Work");
+
+  const planned = await bootWorkTable(withBrainOnlyArea(plannedWorkFixture(), {}), { workFilter: "inactive" });
+  assert.equal(planned.document.querySelector("tbody.work-group[data-work-group='otto/quiet']"), null,
+    "Planned work is about unstarted Goals, so a live brain does not force a group there");
+});
+
+test("working agents and items for Julian still outrank the brain word", async () => {
+  const { document } = await bootWorkTable(withDirectAsks(withBrainOnlyArea(workTableFixture())));
+  assert.match(groupHeader(document, "otto/standards").querySelector(".desk-state").textContent, /^2 working$/,
+    "an Area whose agents work reports the agents, not its brain");
+  assert.match(groupHeader(document, "otto/tangent").querySelector(".desk-state").textContent, /items need you$/,
+    "an Area with direct asks still reports them first");
+});
+
+test("an Area Focus that excludes the brain's Area hides its group", async () => {
+  const { document } = await bootWorkTable(withBrainOnlyArea(workTableFixture()), { areaFocus: ["otto/standards"] });
+  assert.equal(document.querySelector("tbody.work-group[data-work-group='otto/quiet']"), null,
+    "a live brain outside the Focus stays hidden");
+  assert.ok(document.querySelector("tbody.work-group[data-work-group='otto/standards']"), "the focused Area stays");
 });

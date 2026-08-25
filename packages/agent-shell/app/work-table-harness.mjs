@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { JSDOM } from "jsdom";
 import { browserBundle } from "./test-browser-bundle.mjs";
+import { AREA_FOCUS_KEY, AREA_FOCUS_SCHEMA } from "./public/area-focus-core.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const bundle = await browserBundle();
@@ -26,13 +27,14 @@ export async function settle(window, turns = 3) {
  * Renders the Work screen for one fixture and returns its window. `posts`
  * collects every mutation the page sends, so an action proof needs no server.
  */
-export async function bootWorkTable(fixture, { workFilter = "active", width = 1440 } = {}) {
+export async function bootWorkTable(fixture, { workFilter = "active", width = 1440, areaFocus = [] } = {}) {
   const html = await readFile(path.join(here, "public", "shell.html"), "utf8");
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
   const { window } = dom;
   window.setInterval = () => 0;
   window.HTMLCanvasElement.prototype.getContext = () => null;
   window.localStorage.setItem("agent-shell.work-filter", workFilter);
+  if (areaFocus.length) window.localStorage.setItem(AREA_FOCUS_KEY, JSON.stringify({ schema: AREA_FOCUS_SCHEMA, areas: areaFocus }));
   Object.defineProperty(window, "innerWidth", { value: width, configurable: true });
   const posts = [];
   window.fetch = async (url, options = {}) => {

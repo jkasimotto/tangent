@@ -715,6 +715,13 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const working = sessions.filter((session) => session.state === "working").length;
     if (waiting) return { kind: "waiting", label: `${waiting} ${waiting === 1 ? "item needs" : "items need"} you` };
     if (working) return { kind: "working", label: `${working} working` };
+    // A live brain outranks the Goal count. A brain that waits while its
+    // agents work says nothing new, so ranks 1 and 2 stay in front; a brain
+    // that thinks or waits with no agent is the case Julian cannot see
+    // otherwise (design-active-brains-show-on-work-even-with-no-agents).
+    // "Reference Area" is the wrong word for an Area that thinks.
+    const brain = brainForAreaCard(path);
+    if (brain?.live) return { kind: brainKind(brain), label: brainStateLabel(brain) };
     const ready = goals.filter((goal) => !sessionForGoal(goal)).length;
     if (ready) return { kind: "ready", label: `${ready} ${ready === 1 ? "Goal" : "Goals"} ready` };
     return { kind: "quiet", label: "Reference Area" };
@@ -1663,6 +1670,11 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   /** True when one group has a row to show, or is a chosen Focus root that must say it has none. */
   function workGroupHasRows(record) {
     if (record.focusRoot) return true;
+    // A live brain earns its Area a header with no row under it, so Work
+    // shows that the brain is alive even when it dispatched no agent
+    // (design-active-brains-show-on-work-even-with-no-agents). Planned work
+    // is about unstarted Goals, so that filter does not force the group.
+    if (state.workFilter === "active" && record.brain?.live) return true;
     return [record, ...record.sections].some((part) => part.descriptions.length
       || part.trees.some((tree) => tree.goals.some((goal) => !["done", "dropped", "deferred"].includes(goal.status))));
   }

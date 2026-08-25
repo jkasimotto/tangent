@@ -739,6 +739,12 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.match(brainShow.prompt, /No work harness is declared for Area `otto\/test`/);
   assert.doesNotMatch(brainShow.prompt, /Every --launch in this Area is/);
   assert.equal((await fetch(`${base}/api/brains/show?area=otto%2Fnowhere`)).status, 404);
+  const brainRequest = await fetch(`${base}/api/brains/requests`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session: "test-brain", kind: "decision", subject: "Live choice", question: "Approve this choice?", proposal: "Use the live choice." }),
+  }).then((response) => response.json());
+  assert.equal(brainRequest.request.ownerRef.generation, 1);
   const briefUnderBrain = await fetch(`${base}/api/goals/brief?file=${encodeURIComponent(pipelineGoal.file)}`).then((response) => response.json());
   assert.match(briefUnderBrain.markdown, /## Brain\n\nThe brain for Area otto\/test controls this work/);
   // A pipeline event on the Area is queued to the brain as a message from tangent.
@@ -787,12 +793,17 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(snapshot.brains[0].status, "running");
   assert.equal(snapshot.brains[0].latestHandover, "Wave 1 dispatched: pipeline-demo runs step 9. Next: wait for it.");
   assert.equal(snapshot.brains[0].generations[0].handover, "Wave 1 dispatched: pipeline-demo runs step 9. Next: wait for it.");
+  let durableRequests = JSON.parse(await readFile(path.join(root, "brains", "otto", "test", "requests.json"), "utf8")).requests;
+  assert.deepEqual(durableRequests[0].ownerRef, { type: "brain", area: "otto/test", generation: 2 }, "handover transfers the open Request to the replacement generation");
+  assert.deepEqual(durableRequests[0].subjectRef, { type: "brain", area: "otto/test", generation: 2 });
   // Stop agent on the brain ends it; Resume starts generation 3 from the record.
   const brainKilled = await fetch(`${base}/api/kill/${encodeURIComponent("test-brain-g2")}`, { method: "POST" }).then((response) => response.json());
   assert.equal(brainKilled.brainEnded, true);
   snapshot = await fetch(`${base}/api/sessions`).then((response) => response.json());
   assert.equal(snapshot.brains[0].status, "ended");
   assert.equal(snapshot.brains[0].live, false);
+  durableRequests = JSON.parse(await readFile(path.join(root, "brains", "otto", "test", "requests.json"), "utf8")).requests;
+  assert.deepEqual([durableRequests[0].status, durableRequests[0].closedReason], ["closed", "brain-ended"], "explicit brain end closes its open Requests");
   const briefWithoutBrain = await fetch(`${base}/api/goals/brief?file=${encodeURIComponent(pipelineGoal.file)}`).then((response) => response.json());
   assert.doesNotMatch(briefWithoutBrain.markdown, /## Brain/);
   const brainResume = await fetch(`${base}/api/brains/start`, {
@@ -806,6 +817,37 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(brainResume.brain.instruction, "Get the test Area done.");
   assert.deepEqual(brainResume.brain.launch, { harness: "fake", model: "one", effort: "high" });
   assert.equal(brainResume.brain.command, "fake-agent --model one --effort high");
+
+  const resumedRequest = await fetch(`${base}/api/brains/requests`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session: "test-brain-g3", kind: "approval", subject: "Resumed choice", question: "Approve resumed choice?", proposal: "Use the resumed choice." }),
+  }).then((response) => response.json());
+  assert.equal(resumedRequest.request.ownerRef.generation, 3, "resume creates Requests under the surviving subject generation");
+
+  await new Promise((resolve, reject) => execFile("tmux", ["kill-session", "-t", "=test-brain-g3"], (error, stdout, stderr) => (error ? reject(new Error(stderr || error.message)) : resolve())));
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    snapshot = await fetch(`${base}/api/sessions`).then((response) => response.json());
+    if (snapshot.brains[0].status === "stopped") break;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.equal(snapshot.brains[0].status, "stopped");
+  const brainReplacement = await fetch(`${base}/api/brains/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ area: "otto/test", instruction: "Replace the stopped brain." }),
+  }).then((response) => response.json());
+  assert.equal(brainReplacement.session, "test-brain");
+  openedSessions.push(brainReplacement.session);
+  durableRequests = JSON.parse(await readFile(path.join(root, "brains", "otto", "test", "requests.json"), "utf8")).requests;
+  assert.deepEqual([durableRequests[1].status, durableRequests[1].closedReason], ["closed", "brain-replaced"], "a new brain closes Requests owned by the replaced generation");
+
+  const replacementRequest = await fetch(`${base}/api/brains/requests`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ session: brainReplacement.session, kind: "decision", subject: "Surviving choice", question: "Approve surviving choice?", proposal: "Keep this choice open." }),
+  }).then((response) => response.json());
+  assert.equal(replacementRequest.request.status, "open", "a Request for the live replacement remains open");
 
   const missingDropReason = await fetch(`${base}/api/goals/edit`, {
     method: "POST",

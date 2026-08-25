@@ -10,6 +10,10 @@
 // hash of the plan's `## For Julian` section at the last sweep, so a brain
 // hears about the lines Tangent hides once per plan change and never again
 // (impl-the-for-you-row-shows-only-direct-asks). `newBrain` does not set it.
+//
+// It adds one more, `waitingStreak`: how many handovers in a row this brain
+// made from a pure waiting state. brain-pacing.mjs reads it to pace the next
+// such handover. `newBrain` does not set it; absent means zero.
 
 import { rm } from "node:fs/promises";
 import path from "node:path";
@@ -107,6 +111,12 @@ export function beginGeneration(record, session, now = new Date().toISOString())
   record.session = session;
   record.status = "running";
   return entry;
+}
+
+/** Counts one accepted handover into (or out of) the waiting streak. */
+export function countWaitingHandover(record, acted) {
+  record.waitingStreak = acted ? 0 : Math.max(Number(record.waitingStreak) || 0, 0) + 1;
+  return record.waitingStreak;
 }
 
 /** Records the current generation's self-handover text and end time. */

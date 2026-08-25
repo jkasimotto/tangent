@@ -67,7 +67,8 @@ async function createCommand(args: Args): Promise<void> {
   const parent = await requireArea(server, requiredString(args._[1], "tangent area create requires <parent> <name>."));
   const name = args._.slice(2).map(String).join(" ").trim();
   if (!name) throw new Error("tangent area create requires <name> after the parent Area.");
-  const created = await postJson(server, "/api/areas/new", { parent, name });
+  const caller = await currentTmuxSession();
+  const created = await postJson(server, "/api/areas/new", { parent, name, ...(caller ? { caller } : {}) });
   if (booleanArg(args.json)) {
     console.log(JSON.stringify(created, null, 2));
     return;

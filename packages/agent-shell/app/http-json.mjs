@@ -7,7 +7,12 @@ export class HttpError extends Error {
   }
 }
 
-/** Reads one bounded JSON object; malformed and empty bodies become {}. */
+/**
+ * Reads one bounded JSON object; malformed and empty bodies become {}. The
+ * parsed body is also kept on the request as `parsedBody`, so a composition
+ * root can judge a finished request (who called it, what it named) without
+ * every route handler passing the body back out.
+ */
 export async function readJson(request, { maxBytes = 2 * 1024 * 1024 } = {}) {
   const chunks = [];
   let bytes = 0;
@@ -19,13 +24,19 @@ export async function readJson(request, { maxBytes = 2 * 1024 * 1024 } = {}) {
     }
     chunks.push(chunk);
   }
-  if (!chunks.length) return {};
+  if (!chunks.length) return remember(request, {});
   try {
     const value = JSON.parse(Buffer.concat(chunks.map((chunk) => Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))).toString("utf8"));
-    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    return remember(request, value && typeof value === "object" && !Array.isArray(value) ? value : {});
   } catch {
-    return {};
+    return remember(request, {});
   }
+}
+
+/** Keeps the parsed body on the request and returns it. */
+function remember(request, value) {
+  request.parsedBody = value;
+  return value;
 }
 
 /** Sends one JSON response. */

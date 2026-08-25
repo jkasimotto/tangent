@@ -29,7 +29,8 @@ import { appendSteps, currentStep, endPipeline, goalBindingGoneFromSnapshot, new
 import { newContinuationRecord, readAllContinuations, readContinuation, writeContinuation } from "./continuation-record.mjs";
 import { contextReminderText, contextRepeatText, continuationSection, continuationSessionName, reminderDue } from "./context-handover.mjs";
 import { noticeMessage, normalizeMessage } from "./agent-messages.mjs";
-import { beginGeneration, brainForArea, brainOwnsArea, brainRecordForArea, brainSessionName, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, reclaimStoppedBrain, recordHandover, validateInstruction, writeBrain } from "./brain-record.mjs";
+import { beginGeneration, brainForArea, brainOwnsArea, brainRecordForArea, brainSessionName, countWaitingHandover, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, reclaimStoppedBrain, recordHandover, validateInstruction, writeBrain } from "./brain-record.mjs";
+import { createBrainPacing } from "./brain-pacing.mjs";
 import { appendNotice, inboxesForBrain, markDelivered, mergeNotices, noticeBlock, noticeDigest, readAllInboxes, readInbox, writeInbox } from "./brain-inbox.mjs";
 import { forJulianSectionText, parseForJulian, removeForJulianLine, restoreForJulianLine, unparsedForJulianLines } from "./for-julian.mjs";
 import { createCommitChangeMonitor } from "./commit-change-monitor.mjs";
@@ -170,6 +171,11 @@ for (const brain of await readAllBrains(BRAINS_ROOT)) {
 }
 // After this long in one generation the brain is reminded to hand over.
 const BRAIN_REFRESH_MS = Number(process.env.TANGENT_BRAIN_REFRESH_MINUTES ?? 90) * 60_000;
+// The rungs a waiting brain climbs before it may replace itself, in ms.
+// Empty keeps the module's own ladder; a test names its own short one.
+const BRAIN_WAITING_BACKOFF_MS = String(process.env.TANGENT_BRAIN_WAITING_BACKOFF_MS ?? "")
+  .split(",").map((rung) => Number(rung.trim())).filter((rung) => Number.isFinite(rung) && rung >= 0);
+const brainPacing = createBrainPacing(BRAIN_WAITING_BACKOFF_MS.length ? { ladder: BRAIN_WAITING_BACKOFF_MS } : {});
 // A running step idle this long without a handover is reported to the brain once.
 const BRAIN_IDLE_NOTICE_MS = Number(process.env.TANGENT_BRAIN_IDLE_MINUTES ?? 10) * 60_000;
 // A running step's pane sitting this long at a decision menu or an unsent
@@ -3467,16 +3473,43 @@ async function liveBrainForSession(sessionName) {
   return record.status === "running" ? record : null;
 }
 
+/** The session a mutation names as its caller, whatever the route calls that field. */
+function actingSession(body) {
+  for (const key of ["session", "caller", "from"]) {
+    const value = body?.[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+/** What Tangent tells a brain whose waiting handover is too early. */
+function pacedHandoverText(pace) {
+  const minutes = Math.max(1, Math.round(pace.waitMs / 60_000));
+  const clock = new Date(pace.until).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  return `Tangent paces a waiting brain. This generation has taken no action, and it would be waiting handover number ${pace.streak + 1} in a row, so the next one is due in about ${minutes} ${minutes === 1 ? "minute" : "minutes"} (${clock}). `
+    + `These facts were not recorded; run the same handover again when you wake. Do not retry it now, and do not invent work to fill the time. End your turn now. Tangent types into this session when the pause ends, and sooner if Julian answers a Request, a worker reports, or an agent messages you. That message is your wake-up; hand over then if there is still nothing to do.`;
+}
+
 /**
  * The brain hands over to itself: record the facts, start the next
  * generation, and end this session once the new one is primed. On a failed
  * spawn the old session stays alive and hears the error.
+ *
+ * A generation that did nothing is paced first: it must live out the backoff
+ * rung its lineage has reached before it may replace itself, so an Area with
+ * no work cannot burn a fresh generation every minute (brain-pacing.mjs).
  */
 async function handoverBrain(sessionName, text) {
   const record = await liveBrainForSession(sessionName);
   if (!record) return { status: 404, error: "this session is not a running brain" };
+  const pace = brainPacing.judge(record, currentGeneration(record));
+  if (pace.waitMs > 0) {
+    brainPacing.hold(sessionName, pace.until);
+    return { status: 429, error: pacedHandoverText(pace) };
+  }
   const previous = sessionName;
   const previousGeneration = record.generation;
+  countWaitingHandover(record, pace.acted);
   recordHandover(record, text);
   const launch = await refreshBrainLaunch(record);
   if (launch.error) return { status: 409, error: launch.error };
@@ -3493,6 +3526,7 @@ async function handoverBrain(sessionName, text) {
   // while the old generation is still live. Expire any observation that may
   // have been populated while the replacement was starting.
   await execFileAsync("tmux", ["kill-session", "-t", "=" + previous]);
+  brainPacing.forget(previous);
   sessionObservation.invalidate();
   return { status: 200, state: "started", session: started.session, generation: started.generation, previous, brain: record };
 }
@@ -3504,8 +3538,14 @@ async function endBrainForSession(sessionName) {
   if (!record) return null;
   endBrain(record, "ended");
   await writeBrain(BRAINS_ROOT, record);
+  brainPacing.forget(sessionName);
   await transitionBrainRequests(record.area, record.generation, "brain-ended");
   return record;
+}
+
+/** The wake-up one brain gets when its paced wait is over. */
+function wakeFromPaceText(record) {
+  return `Your paced wait is over. Sweep tangent goal list ${record.area} and tangent agent list, read anything new, and act on it. If nothing changed, run tangent brain handover "<facts>" now; Tangent accepts it and paces the next generation longer.`;
 }
 
 /** Reports a failed notice sweep without stopping the reconcile pass. */
@@ -3567,6 +3607,13 @@ async function reconcileBrains(sessions) {
     if (!live.has(record.session)) {
       endBrain(record, "stopped");
       await writeBrain(BRAINS_ROOT, record);
+      brainPacing.forget(record.session);
+      continue;
+    }
+    // A paced generation is asleep, not late: it hears nothing until its
+    // pause ends, and then it hears that the pause ended.
+    if (brainPacing.due(record.session, now)) {
+      messages.queue(record.session, { from: "tangent", area: record.area, text: wakeFromPaceText(record), queuedAt: new Date().toISOString() });
       continue;
     }
     const entry = currentGeneration(record);
@@ -4825,6 +4872,13 @@ const server = http.createServer(async (req, res) => {
       res.once("finish", () => {
         if (res.statusCode < 400) {
           sessionObservation.invalidate();
+          // Every brain write reaches the server as a mutation naming the
+          // brain's own session: a Goal created or started, a Request filed,
+          // a message sent, an Area added, a comment resolved. One such call
+          // is the difference between a generation that worked and one that
+          // only waited, and only the second is paced. The handover itself is
+          // not an action, and neither is any GET.
+          if (url.pathname !== "/api/brains/handover") brainPacing.noteAction(actingSession(req.parsedBody));
           if (["/api/areas", "/api/goals", "/api/idea", "/api/document", "/api/pipelines", "/api/brains", "/api/launch", "/api/work"].some((prefix) => url.pathname.startsWith(prefix))) {
             vaultProjection.invalidate();
           }

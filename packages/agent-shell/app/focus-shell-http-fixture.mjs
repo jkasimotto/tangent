@@ -56,6 +56,9 @@ export async function startShellServer(context, { here, root, trees, workspace, 
       AGENT_SHELL_TEST_NO_LAUNCH: "1", TANGENT_PIPELINES_ROOT: path.join(root, "pipelines"),
       TANGENT_BRAINS_ROOT: path.join(root, "brains"), AGENT_MESSAGE_LOG: path.join(root, "messages.jsonl"),
       GROQ_API_KEY: "", CHAT_SESSION: `focus-shell-test-${process.pid}`,
+      // These tests hand a brain over to prove the swap, not the pacing of an
+      // idle brain; brain-pacing.test.mjs owns the ladder.
+      TANGENT_BRAIN_WAITING_BACKOFF_MS: "0",
       ...env,
     },
     stdio: ["ignore", "pipe", "pipe"],

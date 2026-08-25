@@ -1,7 +1,7 @@
 import { renderCommandHelp } from "@tangent/core";
 import { booleanArg, parseArgs, requiredString, stringArg, type Args } from "@tangent/core/cli";
 
-import { postJson, requireArea, resolveServerUrl, vaultFetch } from "../client.js";
+import { currentTmuxSession, postJson, requireArea, resolveServerUrl, vaultFetch } from "../client.js";
 import { ideaCommandSpec } from "../spec.js";
 
 /** Dispatches `tangent idea` subcommands. */
@@ -21,7 +21,8 @@ async function addCommand(args: Args): Promise<void> {
   const area = await requireArea(server, areaArg);
   const description = args._.slice(2).join(" ").trim();
   if (!description) throw new Error("tangent idea add requires idea text after the area.");
-  const result = await postJson(server, "/api/idea/new", { area, description });
+  const caller = await currentTmuxSession();
+  const result = await postJson(server, "/api/idea/new", { area, description, ...(caller ? { caller } : {}) });
   console.log(`idea saved: ${result.file}`);
 }
 

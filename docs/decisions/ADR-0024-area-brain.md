@@ -6,6 +6,8 @@ Status: accepted.
 
 Amended 2026-08-24: a passing agent review makes a Goal ready for Julian. The brain writes a Test request and keeps the Goal open. Accepting that Test marks the Goal done. A brain cannot mark the Goal done directly.
 
+Amended 2026-08-26: Tangent paces a brain that hands over with nothing done. A generation counts as having acted when one mutation route names its session as the caller (a Goal created or started, a Request filed or withdrawn, a message sent, an Area added, a comment resolved); reading and the handover itself do not count. A generation that acted hands over at once and clears the streak. A generation that only waited must first live out the rung its lineage has reached: one minute, then two, five, ten, twenty, and thirty for a sustained streak (`TANGENT_BRAIN_WAITING_BACKOFF_MS` names another ladder for tests). An early handover is refused with 429, its facts are not recorded, the generation stays live and asleep, and the reconcile sweep wakes it when the pause ends. A notice, an answer, or a message still reaches it at once. Before this, the otto/tangent brain replaced itself about every 50 seconds while it waited: 170 generations between 14:07 and 17:59 on 2026-08-25 that did nothing.
+
 ## Context
 
 Pipelines (ADR-0023) let Julian compose an assembly line of agents on one Goal and be interrupted only for decisions. Between Goals he was still the planner and dispatcher: how the work splits, what can start, which model each part deserves, when a finished part needs a fix pass. Those decisions kept him in the loop every hour, and when he stepped away the Area stopped moving.

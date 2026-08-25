@@ -152,7 +152,8 @@ async function appendCommand(args: Args): Promise<void> {
   const goal = await requireGoal(server, slug);
   const steps = pipelineSteps(args, { appending: true });
   if (!steps.length) throw new Error("tangent goal append needs at least one --step.");
-  const result = await postJson(server, "/api/pipelines/append", { goal: goal.file, steps });
+  const caller = stringArg(args.session) || (await currentTmuxSession());
+  const result = await postJson(server, "/api/pipelines/append", { goal: goal.file, steps, ...(caller ? { caller } : {}) });
   if (booleanArg(args.json)) {
     console.log(JSON.stringify(result, null, 2));
     return;

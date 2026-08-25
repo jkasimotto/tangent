@@ -1,7 +1,7 @@
 import { renderCommandHelp } from "@tangent/core";
 import { booleanArg, parseArgs, stringArg, stringsArg, type Args } from "@tangent/core/cli";
 
-import { currentTmuxSession, postJson, requireGoal, resolveServerUrl, vaultFetch } from "../client.js";
+import { currentTmuxSession, postJson, postJsonResult, requireGoal, resolveServerUrl, vaultFetch } from "../client.js";
 import { brainCommandSpec } from "../spec.js";
 
 /** Dispatches `tangent brain` subcommands. */
@@ -50,7 +50,8 @@ async function advanceCommand(args: Args): Promise<void> {
   if (!slug) throw new Error("tangent brain advance needs <goal> <step>.");
   if (!Number.isInteger(step) || step < 1) throw new Error("tangent brain advance needs a positive step number.");
   const goal = await requireGoal(server, slug);
-  const result = await postJson(server, "/api/pipelines/control", { goal: goal.file, action: "advance", step });
+  const caller = await currentTmuxSession();
+  const result = await postJson(server, "/api/pipelines/control", { goal: goal.file, action: "advance", step, ...(caller ? { caller } : {}) });
   console.log(`started ${slug} step ${step} in ${String(result.next?.session ?? "(no session)")}`);
 }
 
@@ -63,8 +64,14 @@ async function handoverCommand(args: Args): Promise<void> {
   const session = await requireSession(args, "tangent brain handover");
   const text = args._.slice(1).map(String).join(" ").trim();
   if (!text) throw new Error("tangent brain handover needs the facts as text.");
-  const result = await postJson(server, "/api/brains/handover", { session, text });
-  console.log(`handed over; generation ${result.generation} started (${result.session}); this session ends now`);
+  const { status, body } = await postJsonResult(server, "/api/brains/handover", { session, text });
+  // A paced refusal is Tangent's answer, not a failure: print it and stop.
+  if (status === 429) {
+    console.log(String(body.error ?? "Tangent paced this handover. Wait."));
+    return;
+  }
+  if (status < 200 || status >= 300) throw new Error(String(body.error || `Agent Shell returned ${status}.`));
+  console.log(`handed over; generation ${body.generation} started (${body.session}); this session ends now`);
 }
 
 /** Handles `tangent brain status [area]`. */

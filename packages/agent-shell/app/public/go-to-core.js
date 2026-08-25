@@ -14,7 +14,7 @@
   const RETURN_POINT_KEYS = [
     "view", "currentFile", "agentSessionName", "agentReturnView", "decisionReturnView",
     "describeSessionName", "createReturnView", "harnessReturnView",
-    "programId", "areaSelection", "query", "workFilter", "personFilter",
+    "programId", "areaSelection", "query", "workFilter",
     "areaFocus", "collapsedDeskSections",
   ];
 

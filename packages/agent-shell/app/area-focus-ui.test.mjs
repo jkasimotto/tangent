@@ -2,9 +2,9 @@ import test from "node:test";
 import { assert, readFile, path, JSDOM, shellBundle, here, settle, click, submit, openDocumentViaGoTo, jsonResponse } from "./focus-shell-ui-fixture.mjs";
 
 /** Builds one Goal for the Work projection. */
-function goal(area, slug, title, assignees = ["Julian"]) {
+function goal(area, slug, title) {
   return {
-    area, slug, title, assignees, assigneeKeys: assignees.map((name) => `${area}::${name.toLowerCase()}`),
+    area, slug, title,
     file: `${area}/goal-${slug}.md`, status: "active", session: `${slug}-worker`, depth: 0,
     doneWhen: "The result works.", stateText: "In progress.", currentBrief: "", storyText: "", documents: [],
     why: [], subgoalItems: [], subgoals: [], mtime: 1,
@@ -67,12 +67,12 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
   };
   let vault = {
     areas: [
-      { path: "otto", name: "otto", goals: [], roster: ["Julian"], rosterArea: "otto" },
-      { path: "otto/alpha", name: "alpha", goals: [alpha], roster: ["Julian"], rosterArea: "otto/alpha" },
-      { path: "otto/alpha/child", name: "child", goals: [child], roster: ["Julian"], rosterArea: "otto/alpha/child" },
-      { path: "otto/beta", name: "beta", goals: [beta], roster: ["Julian"], rosterArea: "otto/beta" },
-      { path: "otto/delta", name: "delta", goals: [], roster: [], rosterArea: "otto/delta" },
-      { path: "otto/gamma", name: "gamma", goals: [], roster: [], rosterArea: "otto/gamma" },
+      { path: "otto", name: "otto", goals: [] },
+      { path: "otto/alpha", name: "alpha", goals: [alpha] },
+      { path: "otto/alpha/child", name: "child", goals: [child] },
+      { path: "otto/beta", name: "beta", goals: [beta] },
+      { path: "otto/delta", name: "delta", goals: [] },
+      { path: "otto/gamma", name: "gamma", goals: [] },
     ],
     map: [
       { path: alpha.area, name: "alpha", goals: [alpha] },
@@ -163,7 +163,6 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
     schema: "agent-shell.area-focus.v1", areas: ["otto/alpha"],
   });
 
-  click(window, '[data-person-value="mine"]');
   const focusedSearch = window.document.querySelector("#work-search");
   focusedSearch.value = "alpha";
   focusedSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
@@ -174,7 +173,6 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
   await settle(window);
   assert.match(window.document.querySelector(".area-focus-summary").textContent, /Alpha/);
   assert.equal(window.document.querySelector("#work-search").value, "alpha");
-  assert.equal(window.document.querySelector('[data-person-value="mine"]').getAttribute("aria-checked"), "true");
   assert.equal(window.document.querySelector("#screen").scrollTop, 137, "worker Escape restores the Work scroll position");
 
   await openDocumentViaGoTo(window, alphaDocument.title);
@@ -201,7 +199,6 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
   assert.match(window.document.querySelector(".area-focus-summary").textContent, /Alpha/);
   assert.equal(window.document.querySelector("#work-search").value, "alpha");
   assert.equal(window.document.querySelector('[data-work-filter="inactive"]').getAttribute("aria-pressed"), "true");
-  assert.equal(window.document.querySelector('[data-person-value="mine"]').getAttribute("aria-checked"), "true");
 
   const returnedSearch = window.document.querySelector("#work-search");
   returnedSearch.value = "";
@@ -244,7 +241,6 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
   assert.ok(window.document.querySelector('[data-desk-area="otto/beta"]'), "stale Focus recovery restores complete Work");
 
   click(window, '[data-work-filter="active"]');
-  click(window, '[data-person-value="all"]');
   click(window, "[data-open-area-focus]");
   const awaySearch = window.document.querySelector("#area-focus-search");
   awaySearch.value = "otto/alpha";

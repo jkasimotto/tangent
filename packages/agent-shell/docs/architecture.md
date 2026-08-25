@@ -27,7 +27,6 @@ Dependencies: `@tangent/core` (arg parsing, help rendering), `@tangent/agent-run
 - `observation-cache.mjs`: coalesced session refresh and last-known-good fallback;
 - `bounded-work.mjs`: ordered concurrency bounds for pane and message fan-out;
 - `vault-repository.mjs`: safe atomic Markdown writes and exact-path provenance commits;
-- `human-assignees.mjs`: Area roster parsing, Goal assignee validation, stable person keys, and Markdown field updates;
 - record modules: the only readers and writers of pipelines, brains, inboxes, requests, continuations, armed prompts, and rebuild state.
 
 The browser entry `app/public/shell.js` composes feature ports. `shell-coordinator.js` owns cross-feature navigation. Views and controllers receive cohesive `shell`, `work`, `areas`, `programs`, `launch`, `documents`, and chrome records. A record groups one authority; it is not a generic service locator. Browser capabilities must not be attached to functions. Gateway admission limits duplicate and total controller work. Telemetry does not publish projection invalidations.
@@ -40,9 +39,7 @@ A brain normally mutates only its controlled Area tree. Julian can directly inst
 
 Uncovered work uses the stable durable-subject root. Descendant Areas and Goals appear as compact rows instead of peer cards.
 
-A separate Planned view keeps unstarted Goals available. The Work and selected-Area surfaces show assignee labels and filter with roster-scoped person keys.
-
-Human assignment does not change a Goal session, status, pipeline, or tmux binding. A reviewed Goal stays open until Julian accepts its Test request.
+A separate Planned view keeps unstarted Goals available. Work carries no human-assignee concept: a Goal names a result, and session ownership (`goal own`/`goal release`) names the agent working it. A reviewed Goal stays open until Julian accepts its Test request.
 
 The browser Programs projection also reads root-owned trigger state from `~/.tangent/agent-shell/triggers/state.json`. Trigger scheduling and launching remain in the root CLI so they work while this server is closed; the server delegates Check now and Acknowledge controls back to `tangent trigger` (ADR-0030).
 

@@ -108,7 +108,6 @@ test("returnPointFrom copies the identifying keys, the scroll, and the reader's 
     currentFile: "otto/tangent/goal-x.md",
     areaSelection: "otto/tangent",
     areaFocus: ["otto/tangent"],
-    personFilter: "mine",
     collapsedDeskSections: new Set(["otto/tangent/nested"]),
     describeDraft: { description: "not copied" },
     document: { file: "otto/tangent/design-x.md" },
@@ -120,7 +119,6 @@ test("returnPointFrom copies the identifying keys, the scroll, and the reader's 
   assert.equal(point.state.view, "document");
   assert.equal(point.state.areaSelection, "otto/tangent");
   assert.deepEqual(point.state.areaFocus, ["otto/tangent"]);
-  assert.equal(point.state.personFilter, "mine");
   assert.deepEqual([...point.state.collapsedDeskSections], ["otto/tangent/nested"]);
   reader.areaFocus.push("otto/other");
   reader.collapsedDeskSections.clear();

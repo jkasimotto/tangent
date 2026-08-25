@@ -7,11 +7,9 @@ export function createWorkMutationRoutes(operations) {
     ["POST /api/goals/accept", "accept"],
     ["POST /api/goals/new", "createSimple"],
     ["POST /api/goals/create", "create"],
-    ["POST /api/goals/assignees", "assignees"],
     ["POST /api/idea/new", "createIdea"],
     ["GET /api/ideas", "ideas"],
     ["POST /api/areas/status", "areaStatus"],
-    ["POST /api/areas/people", "areaPeople"],
     ["POST /api/goals/edit", "edit"],
     ["POST /api/goals/cleanup", "cleanup"],
   ]);

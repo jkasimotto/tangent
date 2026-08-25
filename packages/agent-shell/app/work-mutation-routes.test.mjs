@@ -34,3 +34,10 @@ test("work mutation routes dispatch POST bodies and GET filters", async () => {
   await routes.handle(request("GET"), ideas, new URL("http://shell/api/ideas?area=otto"));
   assert.equal(ideas.body.ideas[0].area, "otto");
 });
+
+test("the human assignee and Area roster routes are gone", async () => {
+  const routes = createWorkMutationRoutes({});
+  for (const path of ["/api/goals/assignees", "/api/areas/people"]) {
+    assert.equal(await routes.handle(request("POST", {}), response(), new URL(`http://shell${path}`)), false, `${path} is not routed`);
+  }
+});

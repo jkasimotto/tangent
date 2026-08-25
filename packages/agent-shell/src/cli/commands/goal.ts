@@ -12,7 +12,7 @@ export async function runGoalCli(argv = process.argv.slice(2)): Promise<void> {
   // "continue" is boolean so the reminder's printed command works verbatim:
   // `handover --continue "<facts>"` must keep the facts positional, never
   // swallow them as the flag's value (ADR-0028).
-  const args = parseArgs(argv, { repeatable: ["source", "assignee", "subgoal-title", "subgoal-done-when", "step", "launch", "path", "continue-from", "on"], boolean: ["continue"] });
+  const args = parseArgs(argv, { repeatable: ["source", "subgoal-title", "subgoal-done-when", "step", "launch", "path", "continue-from", "on"], boolean: ["continue"] });
   const subcommand = args._[0];
   if (!subcommand) return help();
   // "done" and "wont-do" handle --help themselves, to restate that status is written on
@@ -72,7 +72,6 @@ async function createCommand(args: Args): Promise<void> {
       doneWhen: subgoalDoneConditions[index]!.trim()
     })),
     sources: stringsArg(args.source).map((source) => source.trim()).filter(Boolean),
-    assignees: stringsArg(args.assignee).map((name) => name.trim()).filter(Boolean),
     ...(caller ? { caller } : {}),
     ...(own ? { own } : {})
   });

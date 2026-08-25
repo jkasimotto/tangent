@@ -553,7 +553,6 @@ test("the live shell restores context, defines work with an agent, and organizes
     title: "Share a scene safely",
     doneWhen: "A collaborator can join without losing scene edits.",
     state: "",
-    assignees: [],
   });
   assert.equal(posts.some((entry) => entry.path === "/api/goals/agent" && entry.body.file === goalFile), false);
   click(window, "#back-button");

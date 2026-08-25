@@ -4,33 +4,8 @@ import askCore from "./ask-core.js";
 import goToCore from "./go-to-core.js";
 import { activeBrainForArea } from "./brain-ownership.js";
 import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
-import { personMenu } from "./person-menu.js";
 import { isInAreaFocus, normalizeAreaFocus, reconcileAreaFocus, writeAreaFocus } from "./area-focus-core.js";
 import { readDismissedAskIds, writeDismissedAskIds } from "./ask-dismissal-core.js";
-
-/** Normalizes a roster label in the same way as the server projection. */
-export function normalizePersonLabel(value) {
-  return String(value ?? "").trim().replace(/\s+/g, " ").toLocaleLowerCase("en-US");
-}
-
-/** True when one Goal matches a human-responsibility filter. */
-export function goalMatchesPerson(goal, filter) {
-  if (filter === "all") return true;
-  if (filter === "mine") return goal.assignees?.some((name) => normalizePersonLabel(name) === "julian");
-  if (filter === "unassigned") return !goal.assignees?.length;
-  return goal.assigneeKeys?.includes(filter);
-}
-
-/** Keeps matching Goals and a nonmatching root only as ancestor context. */
-export function filterGoalTreesByPerson(trees, filter) {
-  if (filter === "all") return trees;
-  return trees.flatMap((tree) => {
-    const matches = tree.goals.filter((goal) => goalMatchesPerson(goal, filter));
-    if (!matches.length) return [];
-    const goals = tree.root && !matches.includes(tree.root) ? [tree.root, ...matches] : matches;
-    return [{ ...tree, goals, personGoals: matches }];
-  });
-}
 
 /** Creates the work desk from shell, launch, Area, and Program capabilities. */
 export function createWorkDeskView({ shell, launch, areaModel, programs, chrome }) {
@@ -114,22 +89,13 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   /** Applies the selected session-presence filter without splitting Goal trees. */
   function filteredGoalTrees(trees) {
     const readyForYou = new Set((state.brains ?? []).flatMap((brain) => (brain.forJulian ?? []).filter((row) => row.kind === "test").map((row) => row.file)));
-    const byPerson = filterGoalTreesByPerson(trees, state.personFilter);
-    /** Returns whether matching work, excluding ancestor-only context, is current. */
-    const isCurrent = (tree) => {
-      const goals = tree.personGoals ?? tree.goals;
-      return goals.some((goal) => {
-        if (sessionForGoal(goal) || goalNeedsYou(goal) || readyForYou.has(goal.file)) return true;
-        return Boolean(pipelineRecordForGoal(goal)?.steps?.some((step) => ["running", "stopped"].includes(step.status)));
-      });
-    };
-    return state.workFilter === "active" ? byPerson.filter(isCurrent)
-      : state.workFilter === "inactive" ? byPerson.filter((tree) => !isCurrent(tree)) : byPerson;
-  }
-
-  /** Human responsibility labels never replace the Goal's agent state. */
-  function assigneeLabel(goal) {
-    return goal.assignees?.length ? goal.assignees.join(" + ") : "Unassigned";
+    /** Returns whether any Goal in the tree is current. */
+    const isCurrent = (tree) => tree.goals.some((goal) => {
+      if (sessionForGoal(goal) || goalNeedsYou(goal) || readyForYou.has(goal.file)) return true;
+      return Boolean(pipelineRecordForGoal(goal)?.steps?.some((step) => ["running", "stopped"].includes(step.status)));
+    });
+    return state.workFilter === "active" ? trees.filter(isCurrent)
+      : state.workFilter === "inactive" ? trees.filter((tree) => !isCurrent(tree)) : trees;
   }
 
   /** Stores the expansion state of the Area tree. */
@@ -589,7 +555,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       <button class="work-card ${className} ${depth ? "nested" : ""}" style="--goal-depth: ${depth}" type="button" data-select-goal="${escapeHtml(goal.file)}">
         <span>
           ${grouped ? "" : `<span class="work-area">${escapeHtml(areaLabel(goal.area))}</span>`}
-          <span class="work-title">${escapeHtml(assigneeLabel(goal))} · ${escapeHtml(goal.title)}</span>
+          <span class="work-title">${escapeHtml(goal.title)}</span>
           <span class="work-goal">${escapeHtml(clip(goal.doneWhen, 180))}</span>
         </span>
         <span class="work-state">${escapeHtml(label || stateLabel(goal, session))}</span>
@@ -787,7 +753,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const inFocus = (path) => isInAreaFocus(path, roots);
     const trees = filteredGoalTrees(goalTrees().filter((tree) => goalTreeState(tree) !== "closed"))
       .filter((tree) => inFocus(tree.path));
-    const descriptions = (state.workFilter === "inactive" || state.personFilter !== "all" ? [] : describeWorkSessions())
+    const descriptions = (state.workFilter === "inactive" ? [] : describeWorkSessions())
       .filter((session) => inFocus(session.area));
     const core = areaMapCore;
     const areaList = (roots.length ? allAreas() : areas()).filter((area) => inFocus(area.path));
@@ -1406,7 +1372,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       <article class="desk-goal ${subgoal ? "subgoal" : "root-goal"} ${action.kind}${selected ? " selected" : ""}" data-goal-anchor="${escapeHtml(goal.file)}">
         ${selectable ? `<label class="desk-select" title="Select for one shared agent"><input type="checkbox" data-check-goal="${escapeHtml(goal.file)}" ${selected ? "checked" : ""} aria-label="Select ${escapeHtml(goal.title)} for one shared agent"></label>` : ""}
         <div class="desk-goal-main">
-          <div class="desk-goal-line1"><strong title="${escapeHtml(goal.title)}">${escapeHtml(goal.title)}</strong><small>${escapeHtml(assigneeLabel(goal))}</small></div>
+          <div class="desk-goal-line1"><strong title="${escapeHtml(goal.title)}">${escapeHtml(goal.title)}</strong></div>
           <div class="desk-goal-line2">
             <span class="desk-goal-status"><span class="desk-state ${action.kind}">${escapeHtml(action.state)}</span>${elapsed ? `<i aria-hidden="true">·</i>${elapsed}` : ""}</span>
             <span class="desk-goal-actions">
@@ -1572,34 +1538,18 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
   /** Renders the complete area-first work desk. */
   function renderWork() {
-    const people = new Map();
-    for (const area of areas()) for (const name of area.roster ?? []) {
-      const key = `${area.rosterArea}::${normalizePersonLabel(name)}`;
-      people.set(key, name);
-    }
-    const validPersonFilters = new Set(["all", "unassigned", ...people.keys()]);
-    if ([...people.values()].some((name) => normalizePersonLabel(name) === "julian")) validPersonFilters.add("mine");
-    if (!validPersonFilters.has(state.personFilter)) state.personFilter = "all";
     const query = state.query.trim();
     const records = filteredDeskAreas(query);
     const maxElapsedMs = 0;
-    const personLabel = state.personFilter === "mine" ? "Mine" : state.personFilter === "unassigned" ? "Unassigned" : people.get(state.personFilter);
     const roots = areaFocusRoots();
     const focusNames = areaFocusLabels(roots).join(" + ");
-    const emptyCopy = state.personFilter !== "all" && !query
-      ? `${roots.length ? `Area Focus (${escapeHtml(focusNames)}): ` : ""}No work is assigned to ${escapeHtml(personLabel ?? "All")}.`
-      : query
+    const emptyCopy = query
       ? `${roots.length ? `Area Focus (${escapeHtml(focusNames)}): ` : ""}No ${state.workFilter === "active" ? "current" : "planned"} work matches “${escapeHtml(query)}”.`
       : `${roots.length ? `Area Focus (${escapeHtml(focusNames)}): ` : ""}No ${state.workFilter === "active" ? "work is active" : "unstarted Goals"}.`;
     const content = `${!query && state.workFilter === "active" ? deskAttentionQueue() : ""}${records.length
       ? `<section class="area-desk-grid" aria-label="Work by Area">${records.map((record, position) => deskAreaPanel(record, position, maxElapsedMs)).join("")}</section>`
       : `<div class="empty-state">${emptyCopy}</div>`}`;
 
-    const labels = new Map();
-    for (const [, name] of people) labels.set(name, (labels.get(name) ?? 0) + 1);
-    const namedOptions = [...people].map(([key, name]) => [key, labels.get(name) > 1 ? `${name} — ${key.split("::")[0]}` : name]);
-    const personOptions = [["all", "All"], ...(namedOptions.some(([, label]) => label === "Julian" || label.startsWith("Julian — ")) ? [["mine", "Mine"]] : []), ...namedOptions.sort((left, right) => left[1].localeCompare(right[1])), ["unassigned", "Unassigned"]];
-    const selectedPerson = personOptions.some(([value]) => value === state.personFilter) ? state.personFilter : "all";
     return `
       <section class="work-page">
         ${roots.length ? areaFocusControl() : ""}
@@ -1615,7 +1565,6 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
           <div class="work-filter" role="group" aria-label="Choose current or planned work">
             ${[["active", "Current"], ["inactive", "Planned"]].map(([filter, label]) => `<button type="button" data-work-filter="${filter}" aria-pressed="${state.workFilter === filter}">${label}</button>`).join("")}
           </div>
-          ${personMenu({ id: "work-person-filter", options: personOptions, selected: selectedPerson, label: "Filter work by person" })}
         </div>
         ${content}
         ${launchPopover()}

@@ -555,7 +555,7 @@ function launchPopover() {
 function vaultRenderProjection() {
   if (!state.vault) return null;
   /** Selects the Goal fields that affect visible rendering. */
-  const goalFields = (goal) => [goal.file, goal.title, goal.status, goal.doneWhen, goal.mtime, goal.changedAt, goal.depth, goal.waitingOn, goal.assignees, goal.assigneeKeys, goal.storyText, goal.agents, goal.firstStartAt, goal.lastEndAt, (goal.documents ?? []).map((document) => [document.file, document.changedAt])];
+  const goalFields = (goal) => [goal.file, goal.title, goal.status, goal.doneWhen, goal.mtime, goal.changedAt, goal.depth, goal.waitingOn, goal.storyText, goal.agents, goal.firstStartAt, goal.lastEndAt, (goal.documents ?? []).map((document) => [document.file, document.changedAt])];
   return [
     (state.vault.map ?? []).map((group) => [group.path, (group.goals ?? []).map(goalFields)]),
     (state.vault.areas ?? []).map((area) => [area.path, area.status, area.children, area.purpose, area.body, (area.goals ?? []).map(goalFields), (area.documents ?? []).map((document) => [document.file, document.title, document.mtime, document.changedAt])]),
@@ -591,7 +591,7 @@ function renderKey() {
     state.areaSelection,
     state.goalSelection,
     [...state.expandedAreas].sort(),
-    [state.workFilter, state.personFilter, state.areaFocus, [...state.collapsedDeskSections].sort(), Boolean(state.areaFocusPicker)],
+    [state.workFilter, state.areaFocus, [...state.collapsedDeskSections].sort(), Boolean(state.areaFocusPicker)],
     // The card's durations count up, so a repaint is due once a minute even
     // when nothing else changed.
     Math.floor(Date.now() / 60_000),

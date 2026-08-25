@@ -58,29 +58,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (target.closest?.("[data-open-area-focus], [data-change-area-focus]")) return openAreaFocusPicker();
     if (target.closest?.("[data-cancel-area-focus]")) return cancelAreaFocusPicker();
     if (target.closest?.("[data-clear-area-focus]")) return clearAreaFocus();
-    for (const menu of document.querySelectorAll("[data-person-menu]")) {
-      if (menu.contains(target)) continue;
-      menu.querySelector("[data-person-menu-button]")?.setAttribute("aria-expanded", "false");
-      const popover = menu.querySelector("[role='menu']");
-      if (popover) popover.hidden = true;
-    }
-    const personButton = target.closest?.("[data-person-menu-button]");
-    if (personButton) {
-      const popover = personButton.parentElement.querySelector("[role='menu']");
-      const opening = popover.hidden;
-      popover.hidden = !opening;
-      personButton.setAttribute("aria-expanded", String(opening));
-      if (opening) popover.querySelector("[aria-checked='true']")?.focus();
-      return;
-    }
-    const personItem = target.closest?.("[data-person-value]");
-    if (personItem) {
-      const buttonId = personItem.closest("[data-person-menu]").querySelector("[data-person-menu-button]").id;
-      state.personFilter = personItem.dataset.personValue || "all";
-      localStorage.setItem("agent-shell.person-filter", state.personFilter);
-      paint(true);
-      return window.setTimeout(() => document.querySelector(`#${buttonId}`)?.focus(), 0);
-    }
     const areaBrain = target.closest("[data-open-area-brain]");
     if (areaBrain) return openOrStartBrain(areaBrain.dataset.openAreaBrain, areaBrain);
     if (target.closest("[data-rebuild-dismiss]")) {
@@ -263,7 +240,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       state.areaWorkQuery = "";
       state.areaWorkScope = "";
       state.areaWorkState = "all";
-      state.personFilter = "all";
       state.areaWorkLimits.set(state.areaSelection, { frontier: 12, successors: 12, boundaries: 12, successorDepth: 1 });
       return paint(true);
     }
@@ -669,19 +645,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       event.preventDefault();
       return submitCommentComposer();
     }
-    if (event.target.matches("[data-area-people-form]")) {
-      event.preventDefault();
-      const fields = new FormData(event.target);
-      const area = fields.get("area")?.toString() || "";
-      const people = fields.get("people")?.toString().split("\n").map((name) => name.trim()).filter(Boolean) || [];
-      try {
-        await post("/api/areas/people", { area, people });
-        await refresh();
-        paint(true);
-        showToast("The people roster is saved.");
-      } catch (error) { showToast(error.message); }
-      return;
-    }
     if (event.target.matches("[data-area-form]")) {
       event.preventDefault();
       const edit = state.areaEdit;
@@ -748,8 +711,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         return;
       }
       try {
-        const assignees = fields.getAll("assignee").map((name) => name.toString());
-        const created = await post("/api/goals/new", { area, title, doneWhen, state: startingPoint, assignees });
+        const created = await post("/api/goals/new", { area, title, doneWhen, state: startingPoint });
         localStorage.setItem("agent-shell.last-area", area);
         await refresh();
         selectGoal(created.file);
@@ -1034,29 +996,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (event.key === "Escape" && state.areaFocusPicker) {
       event.preventDefault();
       return cancelAreaFocusPicker();
-    }
-    const personMenu = event.target.closest?.("[data-person-menu]");
-    if (personMenu) {
-      const button = personMenu.querySelector("[data-person-menu-button]");
-      const popover = personMenu.querySelector("[role='menu']");
-      const items = [...popover.querySelectorAll("[role='menuitemradio']")];
-      const current = items.indexOf(event.target);
-      if (event.target === button && ["Enter", " ", "ArrowDown", "ArrowUp"].includes(event.key)) {
-        event.preventDefault();
-        popover.hidden = false;
-        button.setAttribute("aria-expanded", "true");
-        const row = event.key === "ArrowDown" ? items[0] : event.key === "ArrowUp" ? items.at(-1) : popover.querySelector("[aria-checked='true']");
-        row?.focus();
-        return;
-      }
-      if (!popover.hidden && current >= 0) {
-        if (event.key === "Tab") { popover.hidden = true; button.setAttribute("aria-expanded", "false"); return; }
-        if (event.key === "Escape") { event.preventDefault(); popover.hidden = true; button.setAttribute("aria-expanded", "false"); button.focus(); return; }
-        if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.target.click(); return; }
-        const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1
-          : event.key === "ArrowDown" ? (current + 1) % items.length : event.key === "ArrowUp" ? (current - 1 + items.length) % items.length : -1;
-        if (next >= 0) { event.preventDefault(); items[next].focus(); return; }
-      }
     }
     if (event.target.id === "area-search") {
       const rows = [...screen.querySelectorAll("[data-select-area]")];

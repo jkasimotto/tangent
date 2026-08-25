@@ -56,7 +56,6 @@ import { createGoalQueryRoutes } from "./goal-query-routes.mjs";
 import { changeGoalDependencies, dependencyPromptLines, dependencySlugs, projectGoalDependencies, writeDependencySlugs } from "./goal-dependencies.mjs";
 import { createLaunchRoutes } from "./launch-routes.mjs";
 import { createWorkMutationRoutes } from "./work-mutation-routes.mjs";
-import { assigneesFromFrontmatter, nearestRosterArea, peopleFromAreaNote, projectAssignees, validateAssignees, validatePeople, withAssigneesFrontmatter, withPeopleSection } from "./human-assignees.mjs";
 import { recordActionTelemetry } from "./action-telemetry.mjs";
 import { createMessageDelivery } from "./message-delivery.mjs";
 import { createRebuildOperations, readRebuildOperation, rebuildIsActive } from "./rebuild-operation.mjs";
@@ -500,18 +499,6 @@ async function areaNote(area) {
   }
 }
 
-/** Reads the nearest People roster that applies to one Area. */
-async function applicableRoster(area) {
-  const notes = new Map();
-  const parts = String(area).split("/").filter(Boolean);
-  for (let count = 1; count <= parts.length; count += 1) {
-    const candidate = parts.slice(0, count).join("/");
-    notes.set(candidate, await areaNote(candidate));
-  }
-  const rosterArea = nearestRosterArea(area, notes);
-  return rosterArea ? { area: rosterArea, people: peopleFromAreaNote(notes.get(rosterArea)) } : { area: null, people: [] };
-}
-
 /** Reads the Documents that belong directly to one Area. */
 async function readAreaDocuments(area) {
   const dir = path.join(TREES_ROOT, area);
@@ -634,7 +621,6 @@ async function readAreaGoals(area) {
     return [];
   }
   const goals = [];
-  const roster = await applicableRoster(area);
   for (const f of entries.filter((f) => /^(?:goal|outcome)-[a-z0-9-]+\.md$/.test(f))) {
     let text;
     try {
@@ -647,7 +633,6 @@ async function readAreaGoals(area) {
     const slug = f.replace(/^(?:goal|outcome)-/, "").slice(0, -".md".length);
     const mtime = await stat(path.join(TREES_ROOT, area, f)).then((s) => s.mtimeMs, () => 0);
     const status = fm.status || "open";
-    const assignees = validateAssignees(assigneesFromFrontmatter(fm.assignees), roster.people);
     goals.push({
       mtime,
       area,
@@ -661,8 +646,6 @@ async function readAreaGoals(area) {
       currentBrief: noteSection(text, "Current brief"),
       storyText: noteSection(text, "Story so far"),
       waitingOn: fm.waiting_on || null,
-      rosterArea: roster.area,
-      ...projectAssignees(assignees, roster.area ?? area),
       due: fm.due || null,
       session: fm.session || null,
       subgoals: subgoalsOrder(text),
@@ -823,7 +806,6 @@ async function buildVaultIndex() {
     };
     for (const s of [...roots, ...unlinked]) dive(s, 0);
     const fm = parseFrontmatter(note);
-    const roster = await applicableRoster(n.path);
     out.push({
       path: n.path,
       name: n.name,
@@ -833,9 +815,7 @@ async function buildVaultIndex() {
       type: fm.type || "",
       purpose: noteSection(note, "Purpose").split("\n")[0] ?? "",
       current: noteSection(note, "Current").split(/\n\s*\n/)[0]?.trim() ?? "",
-      rosterArea: roster.area,
-      roster: roster.people,
-      people: [fm.owners, fm.waiting_on, ...own.map((o) => o.waitingOn), ...own.flatMap((o) => o.assignees)].filter(Boolean).join(" "),
+      people: [fm.owners, fm.waiting_on, ...own.map((o) => o.waitingOn)].filter(Boolean).join(" "),
       body: note.slice(0, 4000).toLowerCase(),
       note: records.find((r) => r.kind === "note" && r.area === n.path),
       documents: documents.map((d) => ({ ...d, backlinks: backlinks.get(d.file) ?? [] })),
@@ -1041,7 +1021,7 @@ function replaceNoteSection(text, name, value) {
 }
 
 /** Applies the allowed direct-edit fields to one goal Markdown file. */
-async function editGoalFile(file, { status, session, title, doneWhen, state, understanding, currentBrief, story, wontDoReason, assignees }) {
+async function editGoalFile(file, { status, session, title, doneWhen, state, understanding, currentBrief, story, wontDoReason }) {
   const abs = path.join(TREES_ROOT, file);
   let text = await readFile(abs, "utf8");
   if (status !== undefined) {
@@ -1052,7 +1032,6 @@ async function editGoalFile(file, { status, session, title, doneWhen, state, und
     }
   }
   if (session !== undefined) text = withFrontmatterLine(text, "session", session);
-  if (assignees !== undefined) text = withAssigneesFrontmatter(text, assignees);
   if (doneWhen !== undefined) {
     const current = parseFrontmatter(text);
     const field = current.type === "outcome" && !current.done_when ? "outcome" : "done_when";
@@ -1092,7 +1071,7 @@ function allocateGoalSlug(area, title, taken) {
 }
 
 /** Renders a new goal with compact return context from its first save. */
-function renderNewGoal({ title, doneWhen, state, context, subgoals = [], sources = [], assignees = [] }) {
+function renderNewGoal({ title, doneWhen, state, context, subgoals = [], sources = [] }) {
   const result = oneLine(doneWhen);
   const subgoalsSection = subgoals.length
     ? `\n\n## Subgoals\n\n${subgoals.map((slug, index) => `${index + 1}. [[goal-${slug}]]`).join("\n")}`
@@ -1102,7 +1081,7 @@ function renderNewGoal({ title, doneWhen, state, context, subgoals = [], sources
     ? `\n\n## Sources\n\n${sources.map((source) => `- [[${source.file.replace(/\.md$/i, "")}|${oneLine(source.title).replace(/[|\]]/g, "")}]]`).join("\n")}`
     : "";
   return (
-    `---\ntype: goal\nstatus: open\ndone_when: ${result}\nassignees: [${assignees.join(", ")}]\nsession:\n---\n\n` +
+    `---\ntype: goal\nstatus: open\ndone_when: ${result}\nsession:\n---\n\n` +
     `# ${oneLine(title)}${contextParagraph}${subgoalsSection}${sourcesSection}\n\n` +
     `## State\n\n${String(state ?? "").trim() || "Not started."}\n\n` +
     `## Current brief\n\n` +
@@ -1239,9 +1218,6 @@ function goalSummary(goal) {
     title: goal.title,
     status: goal.status,
     doneWhen: goal.doneWhen,
-    assignees: goal.assignees,
-    assigneeKeys: goal.assigneeKeys,
-    rosterArea: goal.rosterArea,
     dependsOn: goal.dependsOn ?? [],
     requiredBy: goal.requiredBy ?? [],
     unresolvedDependencies: goal.unresolvedDependencies ?? [],
@@ -4601,10 +4577,7 @@ const workMutationRoutes = createWorkMutationRoutes({
     const doneWhen = String(body.doneWhen ?? "").trim();
     if (!await areaExists(area)) return { status: 404, error: `no area "${area}"` };
     if (!title || !doneWhen) return { status: 400, error: !title ? "a title is required" : "a Goal needs a done condition" };
-    let assignees;
-    try { assignees = validateAssignees(body.assignees, (await applicableRoster(area)).people); }
-    catch (error) { return { status: 400, error: error.message }; }
-    try { return { status: 200, value: { file: (await createGoalSet(area, { goal: { title, doneWhen, state: typeof body.state === "string" ? body.state : "", assignees } })).file } }; }
+    try { return { status: 200, value: { file: (await createGoalSet(area, { goal: { title, doneWhen, state: typeof body.state === "string" ? body.state : "" } })).file } }; }
     catch (error) { return serverError(error); }
   },
   /** Creates one Goal with optional Subgoals, sources, and ownership. */
@@ -4622,34 +4595,17 @@ const workMutationRoutes = createWorkMutationRoutes({
     if (subgoals.some((item) => !item.title || !item.doneWhen)) return { status: 400, error: "each Subgoal needs a name and a done condition" };
     const own = String(body.own ?? "").trim();
     if (caller && own && caller !== own) return { status: 409, error: `${caller} cannot create a Goal owned by live session ${own}` };
-    let assignees;
-    try { assignees = validateAssignees(body.assignees, (await applicableRoster(area)).people); }
-    catch (error) { return { status: 400, error: error.message }; }
     const sessions = own ? await listSessions() : [];
     if (own && !sessions.some((session) => session.name === own)) return { status: 404, error: `no tmux session "${own}"; run create --own inside the agent's session or pass --session` };
     try {
       const sources = await sourceDocuments(body.sources);
-      const created = await createGoalSet(area, { goal: { title: String(goal.title).trim(), doneWhen: String(goal.doneWhen).trim(), state: String(goal.state ?? "Not started.").trim(), assignees }, subgoals, description: String(body.description ?? "").trim(), sources: sources.map((source) => ({ file: source.file, title: source.title })) });
+      const created = await createGoalSet(area, { goal: { title: String(goal.title).trim(), doneWhen: String(goal.doneWhen).trim(), state: String(goal.state ?? "Not started.").trim() }, subgoals, description: String(body.description ?? "").trim(), sources: sources.map((source) => ({ file: source.file, title: source.title })) });
       if (own && created.file) {
         await writeGoalBinding(created.file, { status: "active", session: own });
         await vaultCommit([created.file], `update: ${area} goal owned by ${own}`, area, own);
         await adoptGoalSession(sessions, own, { area, file: created.file });
       }
       return { status: 200, value: { ...created, ...(own ? { session: own } : {}) } };
-    } catch (error) { return serverError(error); }
-  },
-  /** Replaces human responsibility labels without changing execution fields. */
-  async assignees(body) {
-    const file = String(body.file ?? "");
-    const goal = (await goalsByFile()).get(file);
-    if (!goal) return { status: 404, error: `no goal file ${file}` };
-    let assignees;
-    try { assignees = validateAssignees(body.assignees, (await applicableRoster(goal.area)).people); }
-    catch (error) { return { status: 400, error: error.message }; }
-    try {
-      await editGoalFile(file, { assignees });
-      await vaultCommit([file], `update: ${goal.area} goal ${goal.slug} assignees`, goal.area, null);
-      return { status: 200, value: { file, assignees } };
     } catch (error) { return serverError(error); }
   },
   /** Saves one idea on an Area. */
@@ -4677,28 +4633,6 @@ const workMutationRoutes = createWorkMutationRoutes({
     try { await stat(path.join(TREES_ROOT, area)); }
     catch { return { status: 404, error: `no Area ${area}` }; }
     return { status: 200, value: await setAreaStatus(area, status, body.session ? String(body.session) : null) };
-  },
-  /** Replaces one Area roster without orphaning assignments in its inherited scope. */
-  async areaPeople(body) {
-    const area = String(body.area ?? "");
-    if (!await areaExists(area)) return { status: 404, error: `no area "${area}"` };
-    let people;
-    try { people = validatePeople(body.people); }
-    catch (error) { return { status: 400, error: error.message }; }
-    try {
-      const allAreas = flattenAreaPaths(await readTree(TREES_ROOT));
-      const notes = new Map(await Promise.all(allAreas.map(async (one) => [one, await areaNote(one)])));
-      for (const one of allAreas.filter((candidate) => candidate === area || candidate.startsWith(`${area}/`))) {
-        const nearest = nearestRosterArea(one, notes);
-        if (nearest && nearest !== area && nearest.startsWith(`${area}/`)) continue;
-        for (const goal of await readAreaGoals(one)) validateAssignees(goal.assignees, people);
-      }
-      const file = areaNoteFile(area);
-      const text = await readFile(path.join(TREES_ROOT, file), "utf8").catch(() => emptyAreaNote(area));
-      await vaultRepository.writeMarkdown(file, withPeopleSection(text, people));
-      await vaultCommit([file], `update: ${area} people roster`, area, null);
-      return { status: 200, value: { area, rosterArea: area, people } };
-    } catch (error) { return { status: 409, error: error.message }; }
   },
   /** Applies validated direct edits and status changes to one Goal. */
   async edit(body) {

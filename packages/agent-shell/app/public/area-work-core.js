@@ -18,13 +18,6 @@ function readiness(goal, byFile) {
   if (unfinished.some((item) => item.status === "dropped")) return { kind: "broken", blockers: unfinished };
   return { kind: "blocked", blockers: unfinished.map((item) => byFile.get(item.file) ?? item) };
 }
-/** True when a Goal matches one normalized person filter. */
-function matchesPerson(goal, person) {
-  if (!person || person === "all") return true;
-  if (person === "mine") return (goal.assignees ?? []).some((name) => name.toLowerCase() === "julian");
-  if (person === "unassigned") return !(goal.assignees ?? []).length;
-  return (goal.assigneeKeys ?? []).includes(person);
-}
 /** Returns the files that participate in a dependency cycle. */
 function cycleFiles(goals) {
   const files = new Set(goals.map((goal) => goal.file));
@@ -59,9 +52,8 @@ function project({ scope, goals, areaPaths, filters = {}, limits = {} }) {
   for (const file of cycleFiles(goals)) facts.set(file, { kind: "error", blockers: ["dependency cycle"] });
   const query = String(filters.query ?? "").trim().toLowerCase();
   const targetScope = filters.scope || scope;
-  const reduced = (filters.person && filters.person !== "all") || (filters.state && filters.state !== "all") || query || targetScope !== scope;
+  const reduced = (filters.state && filters.state !== "all") || query || targetScope !== scope;
   const matches = stableGoals(open.filter((goal) => isInside(goal.area, targetScope))
-    .filter((goal) => matchesPerson(goal, filters.person))
     .filter((goal) => !filters.state || filters.state === "all" || facts.get(goal.file).kind === filters.state
       || (filters.state === "working" && goal.status === "active") || (filters.state === "waiting" && Boolean(goal.waitingOn)))
     .filter((goal) => !query || `${goal.title}\n${goal.doneWhen ?? ""}`.toLowerCase().includes(query)));
@@ -132,4 +124,4 @@ function project({ scope, goals, areaPaths, filters = {}, limits = {} }) {
     frontier, frontierHidden: allFrontier.length - frontier.length, successors, successorHidden: allSuccessors.length - successors.length,
     deeperSuccessors, successorDepth, boundaryEdges: visibleBoundaryEdges, boundaryHidden: boundaryEdges.length - visibleBoundaryEdges.length, emptyReason, reduced };
 }
-export default { PAGE_SIZE, cycleFiles, isInside, matchesPerson, project, readiness, stableGoals };
+export default { PAGE_SIZE, cycleFiles, isInside, project, readiness, stableGoals };

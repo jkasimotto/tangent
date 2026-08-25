@@ -3,8 +3,6 @@ import areaMapView from "./area-map.js";
 import areaWorkCore from "./area-work-core.js";
 import whatHappenedCore from "./what-happened-core.js";
 import { clip, escapeHtml } from "./text-format.js";
-import { filterGoalTreesByPerson, normalizePersonLabel } from "./work-desk-view.js";
-import { personMenu } from "./person-menu.js";
 
 /** Creates the Area directory from owned shell, Work, Document, and Program ports. */
 export function createAreaDirectoryView({ shell, documents, work, programs }) {
@@ -133,10 +131,9 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
 
   /** Renders one Area Goal with its current brief. */
   function areaGoalRow(goal) {
-    const people = goal.assignees?.length ? goal.assignees.join(" + ") : "Unassigned";
     return `
       <button type="button" data-select-goal="${escapeHtml(goal.file)}">
-        <span class="area-goal-main"><strong>${escapeHtml(people)} · ${escapeHtml(goal.title)}</strong><small>${escapeHtml(clip(goal.doneWhen, 150))}</small></span>
+        <span class="area-goal-main"><strong>${escapeHtml(goal.title)}</strong><small>${escapeHtml(clip(goal.doneWhen, 150))}</small></span>
         <span class="area-goal-brief"><em>Current brief</em><small>${escapeHtml(currentBriefFields(goal).wanted)}</small></span>
       </button>`;
   }
@@ -216,9 +213,6 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
     const problems = state.programs.errors.filter((item) => item.area === area.path);
     const done = area.status === "done";
     const current = clip(area.current ?? "", 240);
-    const rosterPeople = (area.roster ?? []).map((name) => [`${area.rosterArea}::${normalizePersonLabel(name)}`, name]);
-    const personOptions = [["all", "All"], ...(rosterPeople.some(([, name]) => normalizePersonLabel(name) === "julian") ? [["mine", "Mine"]] : []), ...rosterPeople, ["unassigned", "Unassigned"]];
-    const selectedPerson = personOptions.some(([value]) => value === state.personFilter) ? state.personFilter : "all";
     const documents = areaDocuments(area.path);
     const brain = brainForAreaCard(area.path);
     const brainClass = brainKind(brain);
@@ -237,12 +231,12 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
             ${brainAction}
           </div>
         </header>
-        ${state.areaHistory ? historySection(area, personOptions, selectedPerson) : workGraphSection(area, personOptions, selectedPerson)}
+        ${state.areaHistory ? historySection(area) : workGraphSection(area)}
         ${state.areaHistory ? "" : documentSection(area.path, documents)}
         <details class="area-more"><summary>More</summary>
           <details><summary>Relationship map</summary><div class="area-map-host" data-area-map="${escapeHtml(area.path)}"></div></details>
           <details><summary>Programs · ${programs.length}</summary><section class="area-content-section"><div class="memory-heading"><h3>Programs</h3><button class="quiet-button" type="button" data-new-program>New program</button></div>${programs.length ? `<div class="program-list">${programs.map(programRow).join("")}</div>` : `<p class="memory-empty">No Programs exist in this Area.</p>`}${problems.length ? `<div class="program-errors">${problems.map((item) => `<p>${escapeHtml(item.file)} — ${escapeHtml(item.error)}</p>`).join("")}</div>` : ""}</section></details>
-          <details><summary>Area settings</summary><form class="area-people-form" data-area-people-form><label><span>People <small>One name per line</small></span><textarea name="people" class="short-textarea">${escapeHtml((area.roster ?? []).join("\n"))}</textarea></label><input type="hidden" name="area" value="${escapeHtml(area.path)}"><button class="quiet-button" type="submit">Save people</button></form><div class="area-settings-actions"><button class="quiet-button" type="button" data-default-agents-area="${escapeHtml(area.path)}">Default agents</button><button class="quiet-button" type="button" data-new-area>Add nested Area</button>${area.path.split("/").length > 1 ? `<button class="quiet-button" type="button" data-rename-area>Rename or move</button>` : ""}${done ? `<button class="quiet-button" type="button" data-reopen-area="${escapeHtml(area.path)}">Reopen</button>` : `<button class="quiet-button" type="button" data-mark-area-done="${escapeHtml(area.path)}">Mark done</button>`}</div></details>
+          <details><summary>Area settings</summary><div class="area-settings-actions"><button class="quiet-button" type="button" data-default-agents-area="${escapeHtml(area.path)}">Default agents</button><button class="quiet-button" type="button" data-new-area>Add nested Area</button>${area.path.split("/").length > 1 ? `<button class="quiet-button" type="button" data-rename-area>Rename or move</button>` : ""}${done ? `<button class="quiet-button" type="button" data-reopen-area="${escapeHtml(area.path)}">Reopen</button>` : `<button class="quiet-button" type="button" data-mark-area-done="${escapeHtml(area.path)}">Mark done</button>`}</div></details>
         </details>
       </section>`;
   }
@@ -257,42 +251,38 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
   /** One Goal node in a dependency column. */
   function workGoalNode(item) {
     const goal = item.goal;
-    const people = goal.assignees?.length ? goal.assignees.join(" + ") : "Unassigned";
     const blockers = item.fact.blockers ?? [];
     const reason = item.fact.kind === "ready" ? `${goal.requiredBy?.length ?? 0} direct dependents`
       : item.fact.kind === "broken" ? "Broken plan · prerequisite won't do"
       : item.fact.kind === "error" ? `Unresolved dependency · ${blockers.join(", ")}`
       : `Needs ${blockers.map((blocker) => blocker.title ?? blocker.file).join(" + ")}`;
     const detail = item.kind === "context" ? `Needed by ${goal.neededBy}` : reason;
-    return `<button class="area-work-node ${escapeHtml(item.fact.kind)} ${item.kind === "context" ? "context" : ""}" type="button" data-select-goal="${escapeHtml(goal.file)}"><span>${escapeHtml(people)} · ${escapeHtml(goal.status === "active" ? "working" : item.fact.kind)}</span><strong>${escapeHtml(goal.title)}</strong><small>${escapeHtml(detail)}</small></button>`;
+    return `<button class="area-work-node ${escapeHtml(item.fact.kind)} ${item.kind === "context" ? "context" : ""}" type="button" data-select-goal="${escapeHtml(goal.file)}"><span>${escapeHtml(goal.status === "active" ? "working" : item.fact.kind)}</span><strong>${escapeHtml(goal.title)}</strong><small>${escapeHtml(detail)}</small></button>`;
   }
 
   /** The bounded ready-first graph for one Area subtree. */
-  function workGraphSection(area, personOptions, selectedPerson) {
+  function workGraphSection(area) {
     const scopes = [area.path, ...(area.children ?? [])];
     const selectedScope = scopes.includes(state.areaWorkScope) ? state.areaWorkScope : area.path;
     const limits = state.areaWorkLimits.get(area.path) ?? { frontier: 12, successors: 12, boundaries: 12, successorDepth: 1 };
     const graph = areaWorkCore.project({ scope: area.path, goals: projectedGoals(), areaPaths: areas().map((item) => item.path),
-      filters: { scope: selectedScope, person: selectedPerson, state: state.areaWorkState, query: state.areaWorkQuery }, limits });
+      filters: { scope: selectedScope, state: state.areaWorkState, query: state.areaWorkQuery }, limits });
     const frontier = graph.frontier.map((item) => item.kind === "portal"
       ? `<button class="area-work-portal" type="button" data-select-area="${escapeHtml(item.path)}"><span><strong>${escapeHtml(humanName(item.title))}</strong><small>Child Area · ${item.readyCount} ready · ${item.openCount} open · ${item.dependencyCount} boundary links</small></span>${item.preview ? `<em>${escapeHtml(item.preview.title)}</em>` : ""}<b>Enter →</b></button>`
       : workGoalNode(item)).join("");
     const successors = graph.successors.map(workGoalNode).join("");
     const boundaryEdges = graph.boundaryEdges.map((edge) => `<details class="area-work-boundary"><summary>${escapeHtml(humanName(edge.fromLane.split("/").pop()))} → ${escapeHtml(humanName(edge.toLane.split("/").pop()))}</summary><div><button type="button" data-select-goal="${escapeHtml(edge.from.file)}">${escapeHtml(edge.from.title)}</button><span aria-hidden="true">→</span><button type="button" data-select-goal="${escapeHtml(edge.to.file)}">${escapeHtml(edge.to.title)}</button></div></details>`).join("");
-    const selectedLabel = personOptions.find(([value]) => value === selectedPerson)?.[1] ?? "All";
-    const noMatches = selectedPerson !== "all" && graph.matchCount === 0;
     return `<section class="area-workspace-section area-work-graph" aria-labelledby="area-work-heading">
-      <div class="area-section-heading"><div><p class="kicker">Work</p><h3 id="area-work-heading" tabindex="-1">Ready leaves first</h3></div><div class="area-work-heading-tools">${personMenu({ id: "area-person-filter", options: personOptions, selected: selectedPerson, label: "Filter Area work by person" })}<span>${graph.readyCount} ready · ${graph.openCount} open</span></div></div>
+      <div class="area-section-heading"><div><p class="kicker">Work</p><h3 id="area-work-heading" tabindex="-1">Ready leaves first</h3></div><div class="area-work-heading-tools"><span>${graph.readyCount} ready · ${graph.openCount} open</span></div></div>
       <div class="area-work-tools"><select id="area-work-scope" aria-label="Work scope">${scopes.map((path) => `<option value="${escapeHtml(path)}" ${selectedScope === path ? "selected" : ""}>${escapeHtml(path === area.path ? "This Area and children" : humanName(path.split("/").pop()))}</option>`).join("")}</select><select id="area-work-state" aria-label="Work state"><option value="all">All states</option>${["ready", "working", "waiting", "blocked"].map((value) => `<option value="${value}" ${state.areaWorkState === value ? "selected" : ""}>${humanName(value)}</option>`).join("")}</select><input id="area-work-search" type="search" value="${escapeHtml(state.areaWorkQuery)}" placeholder="Find a Goal" aria-label="Find a Goal">${graph.reduced ? `<button class="area-filter-reset" type="button" data-area-work-reset>Reset</button>` : ""}</div>
       ${graph.emptyReason ? `<p class="area-work-reason" role="status">${escapeHtml(graph.emptyReason)}</p>` : ""}
-      ${noMatches ? `<p class="memory-empty" role="status">No work is assigned to ${escapeHtml(selectedLabel)}.</p>` : graph.openCount ? `<div class="area-work-columns"><section><header><span>${graph.reduced ? "Matches and context" : "Ready now"}</span><small>${graph.reduced ? `${graph.matchCount} matches` : `${graph.frontier.length} shown`}</small></header><div class="area-work-column">${frontier || `<p class="memory-empty">No Goals match these filters.</p>`}</div>${graph.frontierHidden ? `<button class="area-work-more" type="button" data-area-work-more="frontier">Show next 12 · ${graph.frontierHidden} hidden</button>` : ""}</section><span class="area-work-arrow" aria-hidden="true">→</span><section><header><span>Unlocked next</span><small>${graph.successors.length} shown · ${graph.successorDepth} ${graph.successorDepth === 1 ? "step" : "steps"}</small></header><div class="area-work-column">${successors || `<p class="memory-empty">No visible leaf unlocks another Goal.</p>`}</div>${graph.successorHidden ? `<button class="area-work-more" type="button" data-area-work-more="successors">Show next 12 · ${graph.successorHidden} hidden</button>` : ""}${graph.deeperSuccessors ? `<button class="area-work-more" type="button" data-area-work-deeper>Expand one step</button>` : ""}${graph.successorDepth > 1 ? `<button class="area-work-more" type="button" data-area-work-frontier>Back to frontier</button>` : ""}</section></div>${boundaryEdges ? `<section class="area-work-boundaries" aria-labelledby="area-work-boundaries-heading"><h4 id="area-work-boundaries-heading">Cross-Area dependencies</h4>${boundaryEdges}${graph.boundaryHidden ? `<button class="area-work-more" type="button" data-area-work-more="boundaries">Show next 12 · ${graph.boundaryHidden} hidden</button>` : ""}</section>` : ""}` : `<p class="memory-empty">No open Goals in this Area.</p>`}
+      ${graph.openCount ? `<div class="area-work-columns"><section><header><span>${graph.reduced ? "Matches and context" : "Ready now"}</span><small>${graph.reduced ? `${graph.matchCount} matches` : `${graph.frontier.length} shown`}</small></header><div class="area-work-column">${frontier || `<p class="memory-empty">No Goals match these filters.</p>`}</div>${graph.frontierHidden ? `<button class="area-work-more" type="button" data-area-work-more="frontier">Show next 12 · ${graph.frontierHidden} hidden</button>` : ""}</section><span class="area-work-arrow" aria-hidden="true">→</span><section><header><span>Unlocked next</span><small>${graph.successors.length} shown · ${graph.successorDepth} ${graph.successorDepth === 1 ? "step" : "steps"}</small></header><div class="area-work-column">${successors || `<p class="memory-empty">No visible leaf unlocks another Goal.</p>`}</div>${graph.successorHidden ? `<button class="area-work-more" type="button" data-area-work-more="successors">Show next 12 · ${graph.successorHidden} hidden</button>` : ""}${graph.deeperSuccessors ? `<button class="area-work-more" type="button" data-area-work-deeper>Expand one step</button>` : ""}${graph.successorDepth > 1 ? `<button class="area-work-more" type="button" data-area-work-frontier>Back to frontier</button>` : ""}</section></div>${boundaryEdges ? `<section class="area-work-boundaries" aria-labelledby="area-work-boundaries-heading"><h4 id="area-work-boundaries-heading">Cross-Area dependencies</h4>${boundaryEdges}${graph.boundaryHidden ? `<button class="area-work-more" type="button" data-area-work-more="boundaries">Show next 12 · ${graph.boundaryHidden} hidden</button>` : ""}</section>` : ""}` : `<p class="memory-empty">No open Goals in this Area.</p>`}
     </section>`;
   }
 
   /** The full chronological surface for finished work. */
-  function historySection(area, personOptions, selectedPerson) {
-    const closes = whatHappenedCore.areaCloses(state.vault?.closes ?? state.vault?.recentCloses ?? [], area.path, areaMapCore.isInside)
-      .filter((close) => selectedPerson === "all" || (() => { const goal = goalByFile(close.file); return goal && areaWorkCore.matchesPerson(goal, selectedPerson); })());
+  function historySection(area) {
+    const closes = whatHappenedCore.areaCloses(state.vault?.closes ?? state.vault?.recentCloses ?? [], area.path, areaMapCore.isInside);
     const groups = new Map();
     for (const close of closes) {
       const day = new Date(close.at).toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" });
@@ -300,9 +290,8 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
       groups.get(day).push(close);
     }
     const rows = [...groups].map(([day, items]) => `<section class="area-history-day"><h4>${escapeHtml(day)}</h4>${items.map((close) => { const goal = goalByFile(close.file); return `<button type="button" data-select-goal="${escapeHtml(close.file)}"><time>${escapeHtml(new Date(close.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}</time><span>${close.kind === "done" ? "✓ done" : "✕ won't do"}</span><strong>${escapeHtml(goal?.title ?? humanName(close.file.split("/").pop()))}</strong><small>${escapeHtml(whatHappenedCore.closerLabel(close.session))}</small></button>`; }).join("")}</section>`).join("");
-    const selectedLabel = personOptions.find(([value]) => value === selectedPerson)?.[1] ?? "All";
-    const empty = selectedPerson === "all" ? "No finished Goals exist in this Area." : `No work is assigned to ${selectedLabel}.`;
-    return `<section class="area-workspace-section area-history" aria-labelledby="area-history-heading"><div class="area-section-heading"><div><p class="kicker">History</p><h3 id="area-history-heading">Finished work</h3></div>${personMenu({ id: "area-person-filter", options: personOptions, selected: selectedPerson, label: "Filter finished work by person" })}<button class="quiet-button" type="button" data-close-area-history>Back to Work</button></div>${rows || `<p class="memory-empty">${escapeHtml(empty)}</p>`}</section>`;
+    const empty = "No finished Goals exist in this Area.";
+    return `<section class="area-workspace-section area-history" aria-labelledby="area-history-heading"><div class="area-section-heading"><div><p class="kicker">History</p><h3 id="area-history-heading">Finished work</h3></div><button class="quiet-button" type="button" data-close-area-history>Back to Work</button></div>${rows || `<p class="memory-empty">${escapeHtml(empty)}</p>`}</section>`;
   }
 
   /** Applies the Area's Document query, type, date, and order controls. */

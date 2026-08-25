@@ -54,12 +54,11 @@ test("tangent goal depend and undepend take repeatable prerequisites", () => {
   }
 });
 
-test("tangent goal create accepts repeatable human assignees without changing agent ownership", () => {
+test("tangent goal create has no human assignee option and keeps agent ownership", () => {
   const create = subcommand("create");
   assert.ok(create);
-  assert.ok(optionNames(create).includes("assignee"));
-  assert.match(create.options.find((entry) => entry.name === "assignee").description, /repeatable/);
-  assert.ok(optionNames(create).includes("own"), "agent ownership remains a separate option");
+  assert.equal(optionNames(create).includes("assignee"), false, "the human assignee concept is gone");
+  assert.ok(optionNames(create).includes("own"), "session ownership remains a separate option");
 });
 
 test("goal mutations accept an explicit caller outside tmux", async (context) => {

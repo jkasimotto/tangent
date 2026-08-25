@@ -17,7 +17,7 @@ test("a rebuild captures commits, rejects duplicates, and finishes on the new bo
     commits: [{ hash: "bbbb", shortHash: "bbb", subject: "Visible progress", author: "Julian" }],
   });
   const oldServer = createRebuildOperations({
-    file, root, log: path.join(root, "build.log"), bootId: "boot-1", revisions,
+    file, root, log: path.join(root, "build.log"), bootId: "boot-1", serverPid: 4321, revisions,
     /** Records the detached launch without starting a process. */
     launch: (value) => launches.push(value),
   });
@@ -27,6 +27,7 @@ test("a rebuild captures commits, rejects duplicates, and finishes on the new bo
   assert.equal(started.value.operation.phase, "building");
   assert.equal(started.value.operation.targetCommit, "bbbb");
   assert.equal(launches.length, 1);
+  assert.equal(launches[0].serverPid, 4321);
   assert.equal((await oldServer.start()).status, 409);
 
   await writeJsonObject(file, { ...started.value.operation, phase: "reconnecting", updatedAt: Date.now() });

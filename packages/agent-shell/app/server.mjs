@@ -85,9 +85,11 @@ if (process.env.AGENT_SHELL_INDEX_WORKER !== "1") startEventLoopWatchdog({
   timeoutMs: Number(process.env.TANGENT_CONTROLLER_WATCHDOG_TIMEOUT_MS ?? 15_000),
   heartbeatMs: 1_000,
 });
-// A fresh id per server process. The frontend compares it across polls to
-// notice that a rebuilt server is live and offer one explicit reload.
+// A fresh controller id. The gateway passes its separate process identity so
+// an explicit rebuild can replace the process that owns browser assets.
 const BOOT_ID = randomUUID();
+const RUNTIME_BOOT_ID = process.env.AGENT_SHELL_GATEWAY_BOOT || BOOT_ID;
+const RUNTIME_SERVER_PID = Number(process.env.AGENT_SHELL_GATEWAY_PID || process.pid);
 const ACTION_TELEMETRY_LOG = process.env.AGENT_SHELL_ACTION_LOG ?? path.join(os.homedir(), ".tangent", "agent-shell-actions.jsonl");
 const repoRoot = path.join(here, "..", "..", "..");
 const rebuildStateFile = process.env.AGENT_SHELL_REBUILD_STATE ?? path.join(os.homedir(), ".tangent", "agent-shell-rebuild.json");
@@ -99,7 +101,8 @@ const rebuildOperations = createRebuildOperations({
   file: rebuildStateFile,
   root: repoRoot,
   log: rebuildLog,
-  bootId: BOOT_ID,
+  bootId: RUNTIME_BOOT_ID,
+  serverPid: RUNTIME_SERVER_PID,
   /** Reads the commit range at the exact rebuild start boundary. */
   revisions: () => commitChanges.status(),
 });

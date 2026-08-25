@@ -57,7 +57,8 @@ async function rebuildCommand(args: Args): Promise<void> {
 async function bootId(server: URL): Promise<string> {
   try {
     const sessions = await vaultFetch(server, "/api/sessions");
-    return String(sessions.boot ?? "");
+    const runtime = sessions.runtime as { gateway?: { boot?: unknown } } | undefined;
+    return String(runtime?.gateway?.boot ?? sessions.boot ?? "");
   } catch {
     return "";
   }

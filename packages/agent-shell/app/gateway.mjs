@@ -73,6 +73,8 @@ function startController() {
       HOST: "127.0.0.1",
       PORT: "0",
       AGENT_SHELL_CONTROLLER: "1",
+      AGENT_SHELL_GATEWAY_BOOT: GATEWAY_BOOT_ID,
+      AGENT_SHELL_GATEWAY_PID: String(process.pid),
       AGENT_SHELL_NO_OPEN: "1",
     },
     stdio: ["ignore", "inherit", "inherit", "ipc"],

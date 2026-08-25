@@ -28,6 +28,33 @@
     return `${Math.floor(total / DAY)}d ${Math.floor((total % DAY) / HOUR)}h`;
   }
 
+  /**
+   * Step statuses that never change again. Mirrors FINAL_STATUSES in
+   * pipeline-record.mjs, which the browser cannot import.
+   */
+  const FINAL_STEP_STATUSES = new Set(["complete", "skipped", "ended"]);
+
+  /**
+   * The step a Goal card speaks for: the one the run is actually on. A pipeline
+   * leaves earlier attempts behind it, so a step a later step already moved
+   * past is history and must not speak for the card. Without this rule a
+   * stopped step 1 outranks a live step 2, so the card reads `Stopped 1/2` with
+   * no way into the working agent, and it keeps reading `Stopped 1/2` after
+   * step 2 completes and the run is over
+   * (goal-every-goal-card-on-work-has-a-way-to-open-its-ag).
+   * Order: the live running step, then the newest step that ran and has not
+   * finished, then the first step still to start. Null means the run is over
+   * and the card falls back to the plain Goal state.
+   */
+  function currentPipelineStep(steps = []) {
+    const live = steps.filter((step) => step.status === "running" && step.live);
+    if (live.length) return live[live.length - 1];
+    const touched = steps.filter((step) => step.status !== "pending");
+    const last = touched.length ? touched[touched.length - 1] : null;
+    if (last && !FINAL_STEP_STATUSES.has(last.status)) return last;
+    return steps.find((step) => step.status === "pending") ?? null;
+  }
+
   /** Milliseconds from an ISO time on a pipeline step, or 0 when it has none. */
   function stepTime(value) {
     const at = Date.parse(String(value ?? ""));
@@ -72,7 +99,8 @@
     if (stalled) return waitFrom(stalled.waitingSince, now, waitReason(stalled));
     const stepWaiting = steps.find((step) => step.status === "running" && step.live && (step.state === "waiting" || step.state === "shell") && !bound.has(step.session));
     if (stepWaiting) return waitFrom(stepWaiting.waitingSince, now, `Step ${stepWaiting.index}: ${waitReason(stepWaiting)}`);
-    const stepStopped = steps.find((step) => step.status === "stopped" || (step.status === "running" && !step.live));
+    const current = currentPipelineStep(steps);
+    const stepStopped = current && (current.status === "stopped" || (current.status === "running" && !current.live)) ? current : null;
     if (stepStopped) return waitFrom(stepTime(stepStopped.endedAt), now, `Step ${stepStopped.index} stopped`);
     const needsYou = handoffNeedsYou === null || handoffNeedsYou === undefined
       ? /\b(julian|you)\b/i.test(String(goal.waitingOn ?? ""))
@@ -195,4 +223,4 @@
     return Math.min(1, Math.max(0.05, Math.sqrt(elapsed / max)));
   }
 
-export default { durationLabel, goalCardFacts, factsSegments, factsBarShares, elapsedLengthShare, elapsedLabel };
+export default { durationLabel, currentPipelineStep, goalCardFacts, factsSegments, factsBarShares, elapsedLengthShare, elapsedLabel };

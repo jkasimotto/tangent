@@ -203,3 +203,48 @@ test("goalCardFacts: an idle pane from a finished step is no wait while a later 
   assert.equal(facts.waiting, null);
   assert.equal(line(facts), "2 agents · running 34m");
 });
+
+/** One step from a `status` or `status:live` word and its position. */
+function stepFrom(word, position) {
+  const [status, live] = word.split(":");
+  return { index: position + 1, status, live: live === "live", session: `s${position + 1}`, state: null, endedAt: null };
+}
+
+/** One pipeline's steps from a list of `status` or `status:live` words. */
+function stepsFrom(words) {
+  return words.map(stepFrom);
+}
+
+/** The index the picker chose, or null when the run is over. */
+function pick(words) {
+  return core.currentPipelineStep(stepsFrom(words))?.index ?? null;
+}
+
+test("currentPipelineStep: the live step wins, and a step the run moved past never speaks", () => {
+  assert.equal(pick(["stopped", "running:live"]), 2, "a live step 2 outranks a stopped step 1");
+  assert.equal(pick(["stopped", "complete"]), null, "the run finished past the stopped step, so no step is current");
+  assert.equal(pick(["stopped", "skipped"]), null);
+  assert.equal(pick(["ended", "ended"]), null, "an ended run offers no step");
+  assert.equal(pick(["complete", "complete"]), null);
+  assert.equal(pick(["stopped", "pending"]), 1, "nothing moved past step 1, so it is still the one to restart");
+  assert.equal(pick(["stopped", "stopped"]), 2, "the newest attempt is the one to restart");
+  assert.equal(pick(["complete", "stopped"]), 2);
+  assert.equal(pick(["complete", "pending"]), 2, "the next step to start");
+  assert.equal(pick(["stopped", "complete", "pending"]), 3);
+  assert.equal(pick(["pending", "pending"]), 1);
+  assert.equal(pick(["running:live", "pending"]), 1);
+  assert.equal(pick(["running", "pending"]), 1, "a running step whose session died is still the current step");
+  assert.equal(pick([]), null);
+});
+
+test("the facts line stops waiting on a step the run finished past", () => {
+  const goal = { status: "active", agents: [], firstStartAt: NOW - 3 * HOUR, lastEndAt: NOW - HOUR, waitingOn: "" };
+  const steps = stepsFrom(["stopped", "complete"]);
+  steps[0].endedAt = new Date(NOW - 2 * HOUR).toISOString();
+  const facts = core.goalCardFacts({ goal, sessions: [], pipeline: { steps }, now: NOW, handoffNeedsYou: false });
+  assert.equal(facts.waiting, null, "step 1 stopped, but step 2 finished the run: nothing waits");
+
+  steps[1].status = "pending";
+  const midRun = core.goalCardFacts({ goal, sessions: [], pipeline: { steps }, now: NOW, handoffNeedsYou: false });
+  assert.equal(midRun.waiting.title, "Step 1 stopped", "a stopped step nothing moved past still says why");
+});

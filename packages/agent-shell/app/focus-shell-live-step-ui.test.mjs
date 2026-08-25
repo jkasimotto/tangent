@@ -91,4 +91,16 @@ test("a Goal whose first step stopped still opens the step that runs", async () 
   assert.equal(row().querySelector(".work-step").textContent, "2/2", "the newest attempt is the one to restart");
   assert.equal(row().querySelector("[data-open-goal-run]"), null);
   assert.equal(row().querySelector("[data-pipeline-control='restart']").textContent, "Restart step 2");
+
+  // The run finishes past the step that died. The card must not fall back to
+  // reporting step 1's death: the pipeline is over, so the Goal reads as plain
+  // open work, with no Restart of a step the run already left behind.
+  pipeline.steps[1].status = "complete";
+  click(window, "#menu-refresh");
+  await settle(window);
+  await settle(window);
+  assert.equal(row().querySelector(".work-step"), null, "a finished run names no current step");
+  assert.notEqual(row().querySelector(".desk-state").textContent, "Stopped");
+  assert.equal(row().querySelector("[data-pipeline-control='restart']"), null, "no Restart for a step the run moved past");
+  assert.match(row().querySelector("[data-open-goal-run]").textContent, /Start agent/, "the Goal is plain open work again");
 });

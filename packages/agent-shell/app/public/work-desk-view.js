@@ -1279,20 +1279,11 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   }
 
   /**
-   * The step a Goal card speaks for: the one Julian can act on now. A pipeline
-   * leaves earlier attempts behind it, so a stopped step 1 must never outrank a
-   * live step 2, which is what left a Goal reading `Stopped 1/2` with no way
-   * into its working agent (goal-every-goal-card-on-work-has-a-way-to-open-its-ag).
-   * Order: the live running step, then the newest attempt that ran, then the
-   * first step still to start.
+   * The step a Goal card speaks for. One rule, shared with the facts line:
+   * goalCardCore.currentPipelineStep. Null means the run is over.
    */
   function currentPipelineStep(pipeline) {
-    const steps = pipeline?.steps ?? [];
-    const attempted = steps.filter((step) => ["running", "stopped"].includes(step.status));
-    return attempted.filter((step) => step.status === "running" && step.live).at(-1)
-      ?? attempted.at(-1)
-      ?? steps.find((step) => step.status === "pending")
-      ?? null;
+    return goalCardCore.currentPipelineStep(pipeline?.steps ?? []);
   }
 
   /** The small `Step N of M` line above the pill, and the step facts in its hover title. */

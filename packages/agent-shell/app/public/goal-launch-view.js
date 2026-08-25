@@ -210,6 +210,26 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     return selection.command ? { command: selection.command } : {};
   }
 
+  /**
+   * The launch fields for a start that did not go through the picker: Julian
+   * presses Start agent without opening it, so nothing is loaded and nothing
+   * would be sent. The server supplies no harness of its own, so the client
+   * fills the flag from the Area's declared default and names it back in the
+   * toast. Returns the request fields and the label that was started.
+   */
+  async function launchFieldsForArea(area) {
+    const chosen = launchRequestFields();
+    if (Object.keys(chosen).length) return { fields: chosen, label: launchSelection()?.label ?? "" };
+    const options = await api(`/api/launch/options?area=${encodeURIComponent(area)}`).catch(() => null);
+    const preset = options?.default && !options.default.error ? options.default : null;
+    if (!preset) return { fields: {}, label: "" };
+    const label = preset.label || preset.command || "";
+    if (preset.harness) {
+      return { fields: { choice: { harness: preset.harness, ...(preset.model ? { model: preset.model } : {}), ...(preset.effort ? { effort: preset.effort } : {}) } }, label };
+    }
+    return { fields: preset.command ? { command: preset.command } : {}, label };
+  }
+
   // ---- pipeline drafts ----
   // The popover holds one draft step per row. The active row's fields live in
   // state.launch (choice, command, instruction, continueFrom) so the picker
@@ -714,5 +734,5 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
 
   /** Renders the complete native agent terminal without a second chat. */
 
-  return { selectableAreas, preferredArea, areaOptions, renderCreate, renderDescribeCapture, describeSourcesBlock, launchOptionsFor, launchSelection, launchRequestFields, launchStepDraft, syncLaunchDraft, commitActiveStep, activateLaunchStep, loadLaunchStep, addLaunchStep, removeLaunchStep, launchStepLabel, launchStepRequest, launchIsPipeline, pipelineForGoal, pipelineRecordForGoal, launchDraftRows, launchStepList, launchPickerBlock, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, harnessSlug, saveHarnesses, renderHarnessEditor };
+  return { selectableAreas, preferredArea, areaOptions, renderCreate, renderDescribeCapture, describeSourcesBlock, launchOptionsFor, launchSelection, launchRequestFields, launchFieldsForArea, launchStepDraft, syncLaunchDraft, commitActiveStep, activateLaunchStep, loadLaunchStep, addLaunchStep, removeLaunchStep, launchStepLabel, launchStepRequest, launchIsPipeline, pipelineForGoal, pipelineRecordForGoal, launchDraftRows, launchStepList, launchPickerBlock, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, harnessSlug, saveHarnesses, renderHarnessEditor };
 }

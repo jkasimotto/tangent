@@ -446,7 +446,7 @@ const goalLaunchView = createGoalLaunchView({
 });
 const {
   selectableAreas, preferredArea, areaOptions, renderCreate, renderDescribeCapture, describeSourcesBlock,
-  launchOptionsFor, launchSelection, launchRequestFields, launchStepDraft, syncLaunchDraft, commitActiveStep,
+  launchOptionsFor, launchSelection, launchRequestFields, launchFieldsForArea, launchStepDraft, syncLaunchDraft, commitActiveStep,
   activateLaunchStep, loadLaunchStep, addLaunchStep, removeLaunchStep, launchStepLabel, launchStepRequest,
   launchIsPipeline, pipelineForGoal, pipelineRecordForGoal, launchDraftRows, launchStepList, launchPickerBlock,
   toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, harnessSlug, saveHarnesses, renderHarnessEditor,
@@ -497,7 +497,7 @@ const shellCoordinator = createShellCoordinator({
   areasFeature: { allAreas, areaParent, preferredArea, areas, revealArea, selectedArea },
   programs: { currentProgram, programById, programIsLive, programAreaDirectory },
   launch: {
-    launchOptionsFor, launchSelection, launchRequestFields, syncLaunchDraft, commitActiveStep, launchStepDraft,
+    launchOptionsFor, launchSelection, launchRequestFields, launchFieldsForArea, syncLaunchDraft, commitActiveStep, launchStepDraft,
     launchStepRequest, launchDraftRows, pipelineForGoal, pipelineRecordForGoal, syncDescribeDraft,
     DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
   },

@@ -47,6 +47,9 @@ test("checked Goals start one shared agent that owns them in checked order", asy
       });
     }
     if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
+    if (pathname === "/api/launch/options") {
+      return jsonResponse({ harnesses: [], default: { harness: "codex", model: "sol", effort: "low", label: "Codex · Sol · Low", command: "codex" } });
+    }
     return jsonResponse({
       areas: [
         { path: "otto", name: "otto", goals: [] },
@@ -86,6 +89,10 @@ test("checked Goals start one shared agent that owns them in checked order", asy
   assert.equal(start.body.file, second.file);
   assert.deepEqual(start.body.extraFiles, [first.file]);
   assert.equal(start.body.launch, true);
+  // Start agent never opens the picker, so the client fills the harness from
+  // the Area's declared default: the server supplies none and refuses a start
+  // that carries none.
+  assert.deepEqual(start.body.choice, { harness: "codex", model: "sol", effort: "low" });
 
   // The selection is spent: returning to the desk shows clean checkboxes.
   click(window, "#work-tab");

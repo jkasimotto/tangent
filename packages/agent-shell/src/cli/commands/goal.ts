@@ -334,10 +334,10 @@ Examples:
   tangent goal show connect-chosen-ramp-faces
   tangent goal own connect-chosen-ramp-faces render-cursor-presence
   tangent goal release connect-chosen-ramp-faces
-  tangent goal start connect-chosen-ramp-faces
+  tangent goal start connect-chosen-ramp-faces --launch codex/sol/low
   tangent goal start pipelines-demo --step "/design this" --launch claude/fable-5 --step "review the design and update it" --launch codex/sol/high --step "implement" --launch claude/opus-5
-  tangent goal start pipelines-demo --step "/design this" --step "implement the design" --continue-from - --continue-from 1
-  tangent goal start pipelines-demo --step "design the change" --path= --step "implement it in the plugin" --path ~/Projects/plugin
+  tangent goal start pipelines-demo --step "/design this" --launch claude/fable-5 --step "implement the design" --launch claude/opus-5 --continue-from - --continue-from 1
+  tangent goal start pipelines-demo --step "design the change" --launch claude/fable-5 --path= --step "implement it in the plugin" --launch claude/opus-5 --path ~/Projects/plugin
   tangent goal append pipelines-demo --step "prove the implementation" --launch codex/sol/high
   tangent goal handover "Design written: ~/.tangent/trees/otto/tangent/design-x.md. Unresolved: none."
 `);

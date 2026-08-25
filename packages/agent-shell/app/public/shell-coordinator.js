@@ -17,7 +17,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   const { allAreas, areaParent, preferredArea, areas, revealArea, selectedArea } = areasFeature;
   const { currentProgram, programById, programIsLive, programAreaDirectory } = programs;
   const {
-    launchOptionsFor, launchSelection, launchRequestFields, syncLaunchDraft, commitActiveStep, launchStepDraft,
+    launchOptionsFor, launchSelection, launchRequestFields, launchFieldsForArea, syncLaunchDraft, commitActiveStep, launchStepDraft,
     launchStepRequest, launchDraftRows, pipelineForGoal, pipelineRecordForGoal, syncDescribeDraft,
     DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
   } = launch;
@@ -581,14 +581,16 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     if (!primary) return;
     try {
       rememberGoal(primary);
-      await post("/api/goals/agent", { file: primary, launch: true, extraFiles, ...launchRequestFields() });
+      const start = await launchFieldsForArea(areaPath);
+      await post("/api/goals/agent", { file: primary, launch: true, extraFiles, ...start.fields });
       state.goalSelection = state.goalSelection.filter((file) => !files.includes(file));
       await refresh();
       state.agentReturnView = "work";
       state.view = "agent";
       state.renderedKey = "";
       paint(true);
-      showToast(files.length === 1 ? "The agent opened with this Goal." : `The agent opened with ${files.length} Goals.`);
+      const what = files.length === 1 ? "The agent opened with this Goal" : `The agent opened with ${files.length} Goals`;
+      showToast(start.label ? `${what} on ${start.label}.` : `${what}.`);
     } catch (error) {
       showToast(error.message);
     }
@@ -600,14 +602,15 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     if (!goal) return;
     const returnPoint = returnView === "work" && state.view === "work" ? captureReturnPoint() : null;
     try {
-      await post("/api/goals/agent", { file: goal.file, launch: true, ...launchRequestFields() });
+      const start = await launchFieldsForArea(goal.area);
+      await post("/api/goals/agent", { file: goal.file, launch: true, ...start.fields });
       await refresh();
       state.agentReturnView = returnView;
       state.agentReturn = returnPoint;
       state.view = "agent";
       state.renderedKey = "";
       paint(true);
-      showToast("The agent opened with this Goal and its linked Documents.");
+      showToast(`The agent opened with this Goal and its linked Documents${start.label ? ` on ${start.label}` : ""}.`);
     } catch (error) {
       showToast(error.message);
     }
@@ -623,7 +626,8 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     localStorage.setItem("agent-shell.last-area", goal.area);
     try {
       if (!sessionForGoal(goal)) {
-        await post("/api/goals/agent", { file: goal.file, document: state.document.file, launch: true });
+        const start = await launchFieldsForArea(goal.area);
+        await post("/api/goals/agent", { file: goal.file, document: state.document.file, launch: true, ...start.fields });
         await refresh();
       }
       if (!sessionForGoal(currentGoal())) throw new Error("The agent session did not open.");
@@ -645,16 +649,17 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     if (!goal || !session) return;
     try {
       const endpoint = session.phase === "collaborate" ? "/api/goals/agent" : "/api/goals/start";
+      const start = await launchFieldsForArea(goal.area);
       const body = session.phase === "collaborate"
-        ? { file: goal.file, launch: true, ...launchRequestFields() }
-        : { file: goal.file, approved: true, launch: true, ...launchRequestFields() };
+        ? { file: goal.file, launch: true, ...start.fields }
+        : { file: goal.file, approved: true, launch: true, ...start.fields };
       await post(endpoint, body);
       await refresh();
       state.agentReturnView = "work";
       state.view = session.phase === "collaborate" ? "agent" : "work";
       state.renderedKey = "";
       paint(true);
-      showToast("The agent started.");
+      showToast(start.label ? `The agent started on ${start.label}.` : "The agent started.");
     } catch (error) {
       showToast(error.message);
     }

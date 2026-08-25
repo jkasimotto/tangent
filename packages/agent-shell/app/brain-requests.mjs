@@ -137,13 +137,32 @@ export function answerBrainRequest(record, id, answer, note = "", now = new Date
   return request;
 }
 
-/** Builds the complete durable answer that the work owner receives next. */
-export function brainRequestAnswerNotice(request) {
+/**
+ * Clips Julian's own words and says where the rest is. A caller that clips the
+ * finished sentence instead would cut the subject off the end of it, and the
+ * brain would read an answer without knowing which Request it answers.
+ */
+function clipAnswerText(text, max) {
+  const value = String(text ?? "").replace(/\s+/g, " ").trim();
+  if (value.length <= max) return value;
+  const tail = " … (clipped; the Request on Julian's desk holds his full answer)";
+  return `${value.slice(0, Math.max(1, max - tail.length)).trimEnd()}${tail}`;
+}
+
+/**
+ * Builds the complete durable answer that the work owner receives next.
+ * `answerChars` clips Julian's pasted text, and only that: a generation's
+ * first message repeats every answer given while the last one read, and one
+ * pasted answer of 4,000 characters took a quarter of that whole message. The
+ * notice path passes nothing and keeps every word.
+ */
+export function brainRequestAnswerNotice(request, { answerChars = 0 } = {}) {
   if (!request?.response) throw new Error("request has no response");
+  const changes = answerChars ? clipAnswerText(request.response.text, answerChars) : request.response.text;
   const answer = request.response.answer === "approve"
     ? "approved"
     : request.response.answer === "changes"
-      ? `wants these changes: ${request.response.text}`
+      ? `wants these changes: ${changes}`
       : `selected "${request.response.answer}"`;
   return `Julian ${answer} for "${request.subject}".`;
 }

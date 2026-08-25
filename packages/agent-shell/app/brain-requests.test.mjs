@@ -95,6 +95,25 @@ test("all requests use approval or typed changes", async () => {
   assert.equal(brainRequestAnswerNotice(answered), 'Julian wants these changes: Labels overlap. for "Diagrams".');
 });
 
+test("a brain prompt clips a long answer and still names its Request", async () => {
+  const record = await readBrainRequests("/missing", "otto/tangent");
+  const request = createBrainRequest(record, { kind: "test", subject: "Diagrams", question: "Approve this result?", proposal: "Close the Goal as done.", detail: "Open one Document." });
+  // What Julian pastes when he answers "changes" with a whole review.
+  const pasted = `${"Every label overlaps its neighbour. ".repeat(120)}Fix the worst first.`;
+  const answered = answerBrainRequest(record, request.id, "changes", pasted);
+
+  const line = brainRequestAnswerNotice(answered, { answerChars: 240 });
+  assert.ok(line.length < 340, `one answered Request is one short line, not a quarter of the prompt: ${line.length} characters`);
+  assert.match(line, /^Julian wants these changes: Every label overlaps its neighbour\./);
+  assert.match(line, /clipped; the Request on Julian's desk holds his full answer/);
+  // The subject sits at the end of the sentence, so a caller that clipped the
+  // finished line would leave the brain an answer with no Request attached.
+  assert.match(line, /for "Diagrams"\.$/);
+
+  // The notice Julian's answer delivers to a live brain keeps every word.
+  assert.ok(brainRequestAnswerNotice(answered).includes(pasted), "the notice path is untouched");
+});
+
 test("a request cannot contain an agent report", async () => {
   const record = await readBrainRequests("/missing", "otto/tangent");
   assert.throws(() => createBrainRequest(record, {

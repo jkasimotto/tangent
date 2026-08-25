@@ -3208,6 +3208,15 @@ async function brainCommandContext(area) {
 }
 
 /**
+ * How much of Julian's own answer one prompt line carries. The answer tells
+ * the brain to act; it is not the work item. The subject and the verdict say
+ * what happened, and the Request on the desk holds every word. One pasted
+ * answer of about 4,000 characters was taking a quarter of a whole generation
+ * prompt, which is what this Goal set out to stop.
+ */
+const BRAIN_PROMPT_ANSWER_CHARS = 240;
+
+/**
  * The Request answers Julian gave while the generation this one replaces was
  * reading. The notice inbox is the fast path and reaches a live generation in
  * seconds; this section is the guaranteed one, because it is derived from the
@@ -3223,7 +3232,7 @@ async function answeredRequestLines(record) {
   return requests.requests
     .filter((request) => request.status === "answered" && request.response && String(request.answeredAt ?? "") >= previous.startedAt)
     .sort((left, right) => String(left.answeredAt).localeCompare(String(right.answeredAt)))
-    .map((request) => `- ${noticeMessage(brainRequestAnswerNotice(request))}${request.goal ? ` (Goal ${request.goal})` : ""}`);
+    .map((request) => `- ${noticeMessage(brainRequestAnswerNotice(request, { answerChars: BRAIN_PROMPT_ANSWER_CHARS }))}${request.goal ? ` (Goal ${request.goal})` : ""}`);
 }
 
 /**

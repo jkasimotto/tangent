@@ -49,8 +49,8 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
    * must not be a hidden feature, so the row carries it beside the state.
    */
   function programRowControl(program) {
-    if (program.type === "trigger") return program.available && !program.paused ? { action: "check", label: "Check now" } : null;
     if (programIsLive(program)) return { action: "stop", label: "Stop" };
+    if (program.type === "trigger") return program.available && !program.paused ? { action: "check", label: "Check now" } : null;
     if (!program.available) return null;
     return program.type === "process" ? { action: "start", label: "Start" } : { action: "run", label: "Run" };
   }
@@ -92,8 +92,9 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
       const attention = program.runtime?.lastOutcome?.status === "attention" && program.runtime.acknowledgedKey !== program.runtime.lastOutcome.key;
       actions = [
         retained ? `<button class="secondary-button" type="button" data-open-program-session>Open session</button>` : "",
-        !program.paused ? `<button class="primary-button" type="button" data-program-action="check">Check now</button>` : "",
+        !program.paused && !live ? `<button class="primary-button" type="button" data-program-action="check">Check now</button>` : "",
         attention ? `<button class="secondary-button" type="button" data-program-action="acknowledge">Acknowledge</button>` : "",
+        live ? `<button class="danger-button" type="button" data-program-action="stop">Stop…</button>` : "",
       ].join("");
     }
     return `
@@ -140,7 +141,7 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
   function renderProgramSession(program) {
     return `
       <section class="agent-page">
-        <div class="agent-toolbar"><div class="agent-context"><strong>${escapeHtml(program.label)}</strong><span>${escapeHtml(areaLabel(program.area))} · ${escapeHtml(programState(program))}</span></div><div class="agent-controls"><button class="quiet-button" type="button" data-back-program>Program details</button></div></div>
+        <div class="agent-toolbar"><div class="agent-context"><strong>${escapeHtml(program.label)}</strong><span>${escapeHtml(areaLabel(program.area))} · ${escapeHtml(programState(program))}</span></div><div class="agent-controls">${programIsLive(program) ? `<button class="danger-button" type="button" data-program-action="stop" data-program-id="${escapeHtml(program.id)}">Stop…</button>` : ""}<button class="quiet-button" type="button" data-back-program>Program details</button></div></div>
         <div class="terminal-wrap"><div class="terminal-host" data-session="${escapeHtml(program.sessionName)}"></div></div>
       </section>`;
   }

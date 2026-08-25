@@ -57,6 +57,7 @@ const tangentCommandSpec: CliCommandSpec = {
         { name: "list", description: "List Area triggers and their durable state", options: [{ name: "json", description: "Print machine-readable JSON" }] },
         { name: "check", description: "Check due triggers, or one named trigger", args: "[area:name|name]", options: [{ name: "force", description: "Check even when the interval is not due" }] },
         { name: "acknowledge", description: "Acknowledge the current attention condition", args: "<area:name|name>" },
+        { name: "stop", description: "End the live trigger agent; the trigger keeps its schedule", args: "<area:name|name>" },
         { name: "install", description: "Install the per-user macOS wake-up that checks due triggers every minute" }
       ]
     },

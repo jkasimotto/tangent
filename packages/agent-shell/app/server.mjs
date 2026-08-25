@@ -460,7 +460,7 @@ async function controlCommand(program, action) {
 
 /** Runs the built Tangent CLI against this server's vault. */
 async function runLocalTangent(args) {
-  const entry = path.resolve(here, "../../dist/cli/index.js");
+  const entry = path.resolve(here, "../../../dist/cli/index.js");
   if (!existsSync(entry)) throw new Error("Build Tangent before this action.");
   return execFileAsync(process.execPath, [entry, ...args], {
     env: { ...process.env, TANGENT_TREES_DIR: TREES_ROOT },
@@ -4373,7 +4373,8 @@ const programRoutes = createProgramRoutes({
     } else if (program.type === "trigger") {
       if (action === "check") await runLocalTangent(["trigger", "check", `${program.area}:${program.name}`, "--force"]);
       else if (action === "acknowledge") await runLocalTangent(["trigger", "acknowledge", `${program.area}:${program.name}`]);
-      else throw new Error("Choose Check now or Acknowledge.");
+      else if (action === "stop") await runLocalTangent(["trigger", "stop", `${program.area}:${program.name}`]);
+      else throw new Error("Choose Check now, Acknowledge, or Stop.");
     } else {
       throw new Error("Choose Start, Run, Stop, Restart, or Close.");
     }

@@ -196,6 +196,20 @@ export async function acknowledgeTrigger(statePath: string, definition: TriggerD
   return state;
 }
 
+/** Ends the live trigger agent and releases its session binding. The definition, its interval, and its recorded work key stay unchanged. */
+export async function stopTrigger(statePath: string, definition: TriggerDefinition, runner: TriggerRunner = defaultRunner): Promise<TriggerState> {
+  const session = triggerSessionName(definition);
+  try { await runner.run("tmux", ["kill-session", "-t", `=${session}`]); } catch { /* The session may already be gone. */ }
+  const state = await readState(statePath);
+  const id = triggerId(definition);
+  const record = state.triggers[id];
+  if (record?.sessionName) {
+    state.triggers[id] = { ...record, sessionName: undefined };
+    await writeState(statePath, state);
+  }
+  return state;
+}
+
 /** Runs the root trigger CLI. */
 export async function runTriggerCommand(argv: string[], runner: TriggerRunner = defaultRunner): Promise<void> {
   const args = parseArgs(argv);
@@ -215,19 +229,20 @@ export async function runTriggerCommand(argv: string[], runner: TriggerRunner = 
     await withSweepLock(paths.lock, async () => checkTriggers({ treesRoot: paths.trees, statePath: paths.state, name: args._[1], force: booleanArg(args.force), runner }));
     return;
   }
-  if (action === "acknowledge") {
+  if (action === "acknowledge" || action === "stop") {
     const name = args._[1];
-    if (!name) throw new Error("tangent trigger acknowledge requires <area:name> or a unique name");
+    if (!name) throw new Error(`tangent trigger ${action} requires <area:name> or a unique name`);
     const matches = (await discoverTriggers(paths.trees)).filter((item) => triggerId(item) === name || item.name === name);
     if (matches.length !== 1) throw new Error(matches.length ? `${name} matches more than one trigger; use area:name` : `no trigger matches ${name}`);
-    await acknowledgeTrigger(paths.state, matches[0]!);
+    if (action === "stop") await stopTrigger(paths.state, matches[0]!, runner);
+    else await acknowledgeTrigger(paths.state, matches[0]!);
     return;
   }
   if (action === "install") {
     console.log(await installTriggerLaunchAgent(os.homedir(), runner));
     return;
   }
-  throw new Error("usage: tangent trigger <list|check|acknowledge|install> [name] [--force] [--json]");
+  throw new Error("usage: tangent trigger <list|check|acknowledge|stop|install> [name] [--force] [--json]");
 }
 
 /** Installs one coarse per-user launchd wake-up; Tangent still owns due logic. */

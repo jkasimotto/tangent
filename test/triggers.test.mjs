@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -10,6 +10,8 @@ import {
   parseDuration,
   parseTriggerManifest,
   parseTriggerOutcome,
+  runTriggerCommand,
+  stopTrigger,
   triggerIsDue,
   triggerSessionName,
 } from "../dist/cli/triggers.js";
@@ -65,4 +67,49 @@ test("launch agent installation writes one coarse wake-up and reloads it", async
   assert.match(plist, /tangent trigger check/);
   assert.match(plist, /<integer>60<\/integer>/);
   assert.deepEqual(calls.map(([command, args]) => [command, args[0]]), [["launchctl", "bootout"], ["launchctl", "bootstrap"]]);
+});
+
+test("stopping a trigger kills its agent session and releases the binding", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "tangent-trigger-stop-"));
+  const statePath = path.join(home, "state.json");
+  const definition = { area: "neara/pgande", name: "rebase", every: "1d", everyMs: 86_400_000, probe: "./probe", instructions: "RUN.md", cwd: home, paused: false };
+  const session = triggerSessionName(definition);
+  await writeFile(statePath, JSON.stringify({ triggers: { "neara/pgande:rebase": { lastCheckedAt: "2026-08-25T07:14:24Z", handledKey: "2026-08-25", sessionName: session } } }));
+  const calls = [];
+  const runner = {
+    /** Records one fixture tmux call. */
+    async run(command, args) { calls.push([command, ...args]); return { stdout: "", stderr: "" }; }
+  };
+  const state = await stopTrigger(statePath, definition, runner);
+  assert.deepEqual(calls, [["tmux", "kill-session", "-t", `=${session}`]]);
+  assert.equal(state.triggers["neara/pgande:rebase"].sessionName, undefined);
+  assert.equal(state.triggers["neara/pgande:rebase"].handledKey, "2026-08-25");
+  assert.equal(JSON.parse(await readFile(statePath, "utf8")).triggers["neara/pgande:rebase"].handledKey, "2026-08-25");
+});
+
+test("stopping a trigger whose session is already gone still succeeds", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "tangent-trigger-stop-gone-"));
+  const statePath = path.join(home, "state.json");
+  const definition = { area: "otto/tangent", name: "poll", every: "1h", everyMs: 3_600_000, probe: "./probe", instructions: "RUN.md", cwd: home, paused: false };
+  const runner = {
+    /** Fails the way tmux fails for a missing session. */
+    async run() { throw new Error("can't find session"); }
+  };
+  const state = await stopTrigger(statePath, definition, runner);
+  assert.deepEqual(state, { triggers: {} });
+});
+
+test("the trigger CLI names a stop target it cannot resolve", async () => {
+  const home = await mkdtemp(path.join(os.tmpdir(), "tangent-trigger-cli-"));
+  const previous = { home: process.env.TANGENT_HOME, trees: process.env.TANGENT_TREES_DIR };
+  process.env.TANGENT_HOME = home;
+  process.env.TANGENT_TREES_DIR = path.join(home, "trees");
+  await mkdir(process.env.TANGENT_TREES_DIR, { recursive: true });
+  try {
+    await assert.rejects(runTriggerCommand(["stop", "missing"]), /no trigger matches missing/);
+    await assert.rejects(runTriggerCommand(["stop"]), /tangent trigger stop requires/);
+  } finally {
+    if (previous.home === undefined) delete process.env.TANGENT_HOME; else process.env.TANGENT_HOME = previous.home;
+    if (previous.trees === undefined) delete process.env.TANGENT_TREES_DIR; else process.env.TANGENT_TREES_DIR = previous.trees;
+  }
 });

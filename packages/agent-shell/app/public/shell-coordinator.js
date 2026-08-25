@@ -334,6 +334,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     if (["stop", "close"].includes(action) && state.view === "program-session") state.view = "program-detail";
     await refresh();
     paint(true);
+    if (action === "stop" && program.type === "trigger") return showToast("The agent stopped. The Trigger keeps its schedule.");
     const messages = { start: "The process started.", restart: "The process restarted.", stop: "The program stopped.", close: "The saved session was removed.", run: "The command started." };
     showToast(messages[action] || "The program changed.");
   }
@@ -346,17 +347,20 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
       performProgramAction(action, id).catch((error) => showToast(error.message));
       return;
     }
+    const trigger = program.type === "trigger";
     const descriptions = {
       run: `Run “${program.command}” in ${program.cwd}.`,
       restart: `Stop the current process, then run “${program.command}” again.`,
-      stop: "Stop the live program. A managed process keeps its session and scrollback.",
+      stop: trigger
+        ? "This ends the live agent. The Trigger keeps its schedule and checks again at its next interval."
+        : "Stop the live program. A managed process keeps its session and scrollback.",
       close: "Remove the retained tmux session and its scrollback. The program definition stays here.",
     };
     openModal({
-      kicker: program.type === "command" ? "Command" : "Managed process",
+      kicker: trigger ? "Trigger agent" : program.type === "command" ? "Command" : "Managed process",
       title: action === "run" ? `Run ${program.label}?` : action === "restart" ? `Restart ${program.label}?` : action === "close" ? "Remove the saved log?" : `Stop ${program.label}?`,
       copy: descriptions[action],
-      confirmLabel: action === "run" ? "Run now" : action === "restart" ? "Restart" : action === "close" ? "Remove log" : "Stop",
+      confirmLabel: action === "run" ? "Run now" : action === "restart" ? "Restart" : action === "close" ? "Remove log" : trigger ? "Stop agent" : "Stop",
       danger: ["stop", "close"].includes(action),
       /** Applies the confirmed Program action. */
       onConfirm: () => performProgramAction(action, id),

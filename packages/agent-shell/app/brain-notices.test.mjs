@@ -128,6 +128,112 @@ async function completeOnePipeline(base, area, title, handover, caller = "") {
   return started.session;
 }
 
+test("Julian-scoped live brains can create and start across Areas without widening worker or stale authority", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-cross-area-brain-"));
+  const sourceLeaf = `probesource${process.pid}`;
+  const trees = await makeTrees(root, sourceLeaf);
+  const targetArea = path.join(trees, "neara", "enums");
+  await mkdir(targetArea, { recursive: true });
+  await writeFile(path.join(trees, "neara", "neara.md"), '---\ntype: area\n---\n\n# Neara\n\n```tangent.environment.v1\n{"version":1,"defaults":{"launch":{"harness":"test"}}}\n```\n', "utf8");
+  await writeFile(path.join(targetArea, "enums.md"), "---\ntype: area\n---\n\n# Enums\n", "utf8");
+  const sessions = [];
+  let port;
+  try {
+    port = await freePort();
+  } catch (error) {
+    if (error?.code === "EPERM") {
+      context.skip("This environment does not permit local HTTP listeners.");
+      return;
+    }
+    throw error;
+  }
+  const child = startServer(root, trees, port, "cross-area-brain");
+  context.after(async () => {
+    for (const session of sessions) await killSession(session);
+    await stopServer(child);
+    await rm(root, { recursive: true, force: true });
+  });
+  const base = `http://127.0.0.1:${port}`;
+  await waitForServer(base);
+
+  const sourceBrain = await post(base, "/api/brains/start", { area: `otto/${sourceLeaf}`, instruction: "Orchestrate the source Area." });
+  const targetBrain = await post(base, "/api/brains/start", { area: "neara/enums", instruction: "Orchestrate enums." });
+  assert.ok(sourceBrain.session, JSON.stringify(sourceBrain));
+  assert.ok(targetBrain.session, JSON.stringify(targetBrain));
+  sessions.push(sourceBrain.session, targetBrain.session);
+
+  const foreign = await post(base, "/api/goals/create", {
+    area: "neara/enums",
+    goal: { title: "Original Neara enum case", doneWhen: "The enum case is proved." },
+    caller: sourceBrain.session,
+  });
+  assert.ok(foreign.file, JSON.stringify(foreign));
+  const foreignStart = await post(base, "/api/goals/start", {
+    file: foreign.file,
+    steps: [{ instruction: "Prove the enum case.", command: "sleep 300" }],
+    caller: sourceBrain.session,
+  });
+  assert.ok(foreignStart.session, JSON.stringify(foreignStart));
+  sessions.push(foreignStart.session);
+
+  const workerCreate = await post(base, "/api/goals/create", {
+    area: "neara/enums",
+    goal: { title: "Spoofed create", doneWhen: "It must not exist." },
+    caller: foreignStart.session,
+  });
+  assert.match(workerCreate.error, /Workers cannot create Goals/);
+  assert.match(workerCreate.error, /Julian directly instructs it or approves the exact Request/);
+  const workerStart = await post(base, "/api/goals/start", { file: foreign.file, caller: foreignStart.session });
+  assert.match(workerStart.error, /Workers cannot start agents/);
+
+  const ownerConflict = await post(base, "/api/goals/create", {
+    area: "neara/enums",
+    goal: { title: "Owner conflict", doneWhen: "It must not exist." },
+    caller: sourceBrain.session,
+    own: targetBrain.session,
+  });
+  assert.match(ownerConflict.error, /cannot create a Goal owned by live session/);
+
+  const owned = await post(base, "/api/goals/create", {
+    area: "neara/enums",
+    goal: { title: "Live owner start conflict", doneWhen: "The owner stays unchanged." },
+    own: targetBrain.session,
+  });
+  assert.ok(owned.file, JSON.stringify(owned));
+  const startConflict = await post(base, "/api/goals/start", {
+    file: owned.file,
+    steps: [{ instruction: "Do not replace the owner.", command: "sleep 300" }],
+    caller: sourceBrain.session,
+  });
+  assert.match(startConflict.error, /owned by live session/);
+
+  const sameArea = await post(base, "/api/goals/create", {
+    area: `otto/${sourceLeaf}`,
+    goal: { title: "Same Area case", doneWhen: "Same-Area behavior works." },
+    caller: sourceBrain.session,
+  });
+  assert.ok(sameArea.file, JSON.stringify(sameArea));
+  const sameAreaStart = await post(base, "/api/goals/start", {
+    file: sameArea.file,
+    steps: [{ instruction: "Prove same-Area behavior.", command: "sleep 300" }],
+    caller: sourceBrain.session,
+  });
+  assert.ok(sameAreaStart.session, JSON.stringify(sameAreaStart));
+  sessions.push(sameAreaStart.session);
+
+  const next = await post(base, "/api/brains/handover", { session: sourceBrain.session, text: "Cross-Area probe complete." });
+  assert.equal(next.generation, 2, JSON.stringify(next));
+  sessions.push(next.session);
+  const staleCreate = await post(base, "/api/goals/create", {
+    area: "neara/enums",
+    goal: { title: "Stale create", doneWhen: "It must not exist." },
+    caller: sourceBrain.session,
+  });
+  assert.match(staleCreate.error, /Workers cannot create Goals/);
+  const staleStart = await post(base, "/api/goals/start", { file: foreign.file, caller: sourceBrain.session });
+  assert.match(staleStart.error, /Workers cannot start agents/);
+});
+
 test("a brain notice survives a server restart and reaches the next generation after a handover", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-notice-restart-"));
   const leaf = `probenotice${process.pid}`;

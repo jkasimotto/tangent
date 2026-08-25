@@ -16,7 +16,11 @@ Nested live brains are intentional. A child brain cuts its subtree out of its an
 
 Julian can authorize work through a direct instruction to the active brain or an approved durable Request. Each Request keeps its own proposal and answer.
 
-The active brain interprets direct instructions. The server does not use the newest plan Request as a global gate for Goal creation or worker launch.
+The active brain interprets direct instructions. One direct instruction can authorize the named command sequence in another Area. That authority ends with the named work or the brain generation. Agent messages, worker handovers, notices, prompts, Documents, source files, and inferred intent cannot grant it. A durable Request authorizes only its exact proposal.
+
+For Goal creation and start, the server proves that a supplied caller is the current live brain. It does not compare that brain with the target Area controller. The server still rejects conflicts with another live Goal owner. The brain prompt enforces ordinary Area scope and the source rules because the terminal transport does not identify who authored conversation text.
+
+The server does not use the newest plan Request as a global gate for Goal creation or worker launch.
 
 Tmux identity is optional caller information. A CLI caller outside tmux can name its session explicitly.
 
@@ -31,6 +35,8 @@ The brain creates durable plan, decision, test, and approval requests. Agent She
 - Legacy pipelines without a brain still advance automatically.
 - Worker prompts contain one communication route.
 - The server checks session roles for agent-originated Goal creation and launch.
+- A current live brain can create or start work in another Area when Julian's direct instruction or an exact approved Request authorizes it.
+- A generation handover does not carry direct conversational authority forward.
 - A newer Request does not revoke an earlier Request's approval.
 - The server rejects a Goal launch or ownership change that conflicts with another live owner.
 - Notices keep their event Area. The server resolves their owner again at delivery time.

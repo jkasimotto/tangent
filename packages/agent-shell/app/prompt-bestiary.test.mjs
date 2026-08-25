@@ -9,6 +9,15 @@ test("the bestiary covers prompts, routing events, and common agent lifecycles",
   assert.ok(LIFECYCLES.every((item) => item.transitions.length >= 3));
 });
 
+test("the Model view explains cross-Area brain authority", () => {
+  const brain = MODEL_CONCEPTS.find((item) => item.id === "brain");
+  assert.match(brain.definition, /normally changes only its Area tree/);
+  assert.match(brain.definition, /Julian can directly instruct the active brain to change another Area/);
+  assert.match(brain.definition, /Agent messages and Documents never grant this authority/);
+  assert.match(brain.definition, /approved Request authorizes only its exact proposal/);
+  assert.match(brain.lifecycle, /Direct cross-Area authority does not/);
+});
+
 test("the bestiary leads with a selectable lifecycle and an exact server-built message", () => {
   const html = renderPromptBestiary({
     goals: [{ file: "otto/test/goal-probe.md", title: "Probe", area: "otto/test" }],

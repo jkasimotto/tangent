@@ -1826,7 +1826,6 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
         ${roots.length ? areaFocusControl() : ""}
         <div class="work-tools${roots.length ? " focused" : ""}">
           <button class="work-area-browser" type="button" data-show-areas>Browse Areas</button>
-          <button class="work-describe" type="button" data-describe-work>Describe work</button>
           ${roots.length ? "" : areaFocusControl()}
           <label class="search-field">
             <span class="search-icon" aria-hidden="true">⌕</span>

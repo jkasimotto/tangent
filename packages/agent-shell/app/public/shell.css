@@ -1461,6 +1461,7 @@ li .document-comment { margin: 8px 0 10px; }
 .update-commit code { grid-column: 1; grid-row: 1; color: var(--quiet); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .update-commit-subject { grid-column: 2; grid-row: 1; overflow-wrap: anywhere; color: var(--text); font-size: 13px; line-height: 1.4; }
 .update-commit-author { grid-column: 2; grid-row: 2; color: var(--quiet); font-size: 12px; }
+.modal-copy .update-commits { margin-top: 12px; white-space: normal; }
 .update-panel-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 
 /* ---- Area map (design contract: otto/tangent/design-area-map) ---- */

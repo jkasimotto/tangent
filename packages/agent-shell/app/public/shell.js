@@ -11,6 +11,7 @@ import { shellDom } from "./shell-dom.js";
 import { createRefreshCoordinator, readProjection, startRebuildRefresh, startRefreshLifecycle } from "./refresh-lifecycle.js";
 import { FENCE_OPEN, fenceCloser, frontmatterLineCount, markdownHeadingAnchor, markdownHeadings, markdownTableAlignments, markdownTableCells, visibleMarkdown } from "./markdown-structure.js";
 import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
+import { rebuildCommitRows } from "./rebuild-commit-list.js";
 import { buildGoToRows } from "./go-to-rows.js";
 import { currentBriefFields, storyEntries } from "./goal-narrative.js";
 import { createWhatHappenedView } from "./what-happened-view.js";
@@ -1179,15 +1180,6 @@ function updateStatusPill() {
   renderUpdatePanel(phase);
 }
 
-/**
- * One pending commit as its own row. The panel used to join every commit into
- * a single paragraph, which wrapped into an unreadable run of hashes, so the
- * hash, the subject, and the author each hold their own place in a grid row.
- */
-function updateCommitRow(commit) {
-  return `<li class="update-commit"><code>${escapeHtml(commit.shortHash || commit.hash || "")}</code><span class="update-commit-subject">${escapeHtml(commit.subject || "")}</span><span class="update-commit-author">${escapeHtml(commit.author || "")}</span></li>`;
-}
-
 /** Shows durable rebuild progress without blocking the current screen. */
 function renderUpdatePanel(phase = state.rebuild?.phase) {
   const panel = document.querySelector("#update-panel");
@@ -1216,7 +1208,7 @@ function renderUpdatePanel(phase = state.rebuild?.phase) {
   const commitList = panel.querySelector("#update-panel-commits");
   if (commitList) {
     const listed = phase === "ready" ? operation.commits ?? [] : [];
-    commitList.innerHTML = listed.map(updateCommitRow).join("");
+    commitList.innerHTML = rebuildCommitRows(listed);
     commitList.hidden = !listed.length;
   }
   panel.querySelector("#update-panel-actions").innerHTML = phase === "ready"

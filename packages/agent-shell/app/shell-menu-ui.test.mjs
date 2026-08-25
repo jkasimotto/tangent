@@ -100,6 +100,12 @@ test("the Shell menu owns recovery while offline refresh preserves the screen", 
   assert.equal(window.document.querySelector("#back-button").classList.contains("has-update"), true);
   click(window, "#back-button");
   click(window, "#menu-rebuild");
+  const modalRows = [...window.document.querySelectorAll("#modal-copy .update-commit")];
+  assert.equal(modalRows.length, 1, "the rebuild confirmation lists each commit as its own row");
+  assert.equal(modalRows[0].querySelector("code").textContent, "abc1234");
+  assert.equal(modalRows[0].querySelector(".update-commit-subject").textContent, "Improve reload");
+  assert.equal(modalRows[0].querySelector(".update-commit-author").textContent, "Julian");
+  assert.doesNotMatch(window.document.querySelector("#modal-copy").firstChild.textContent, /abc1234/, "the confirmation sentence never runs the commits together");
   click(window, "[data-modal-confirm]");
   await settle(window);
   assert.ok(posts.includes("/api/shell/rebuild"));

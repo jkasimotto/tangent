@@ -1,4 +1,5 @@
 import { clip, escapeHtml } from "./text-format.js";
+import { rebuildCommitRows } from "./rebuild-commit-list.js";
 import { rewriteAreaFocus, writeAreaFocus } from "./area-focus-core.js";
 
 /** Coordinates navigation between capability-owned browser features. */
@@ -176,13 +177,12 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     updateStatusPill();
   }
 
-  /** Human-readable commits included by the next rebuild. */
+  /** The sentence above the commit rows of the rebuild confirmation. */
   function rebuildCommitCopy() {
-    const commits = state.pendingCommits ?? [];
-    const list = commits.length
-      ? commits.map((commit) => `${commit.shortHash}  ${commit.subject} — ${commit.author}`).join("\n")
-      : "No new commits. This rebuild will rebuild the currently deployed commit.";
-    return `Agent sessions keep running in tmux. This page reloads automatically when the new server is up.\n\nCommits included:\n${list}`;
+    const lead = "Agent sessions keep running in tmux. This page reloads automatically when the new server is up.";
+    return state.pendingCommits?.length
+      ? `${lead}\n\nCommits included:`
+      : `${lead}\n\nNo new commits. This rebuild will rebuild the currently deployed commit.`;
   }
 
   /** Rebuilds from the permanent recovery action after explicit confirmation. */
@@ -193,6 +193,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
       kicker: "Agent Shell",
       title: "Rebuild and restart Agent Shell?",
       copy: rebuildCommitCopy(),
+      commits: state.pendingCommits ?? [],
       confirmLabel: state.pendingCommits?.length ? `Reload with ${state.pendingCommits.length} commit${state.pendingCommits.length === 1 ? "" : "s"}` : "Rebuild and restart",
       onConfirm: rebuildShell,
     });
@@ -666,11 +667,13 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   }
 
   /** Opens one confirmation modal with an explicit effect. */
-  function openModal({ kicker = "", title, copy, field = null, confirmLabel, danger = false, wide = false, onConfirm }) {
+  function openModal({ kicker = "", title, copy, commits = [], field = null, confirmLabel, danger = false, wide = false, onConfirm }) {
     modalLayer.querySelector(".modal")?.classList.toggle("request-surface", wide);
     modalKicker.textContent = kicker;
     modalTitle.textContent = title;
+    // Setting the text first drops any list a previous modal appended.
     modalCopy.textContent = copy;
+    if (commits.length) modalCopy.insertAdjacentHTML("beforeend", `<ul class="update-commits">${rebuildCommitRows(commits)}</ul>`);
     modalField.hidden = !field;
     modalField.innerHTML = field
       ? `<label><span>${escapeHtml(field.label)}</span><textarea data-modal-input required placeholder="${escapeHtml(field.placeholder)}"></textarea></label>`

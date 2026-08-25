@@ -1,3 +1,6 @@
+import os from "node:os";
+import path from "node:path";
+
 import { renderCommandHelp } from "@tangent/core";
 import { booleanArg, parseArgs, requiredString, stringArg, stringsArg, type Args } from "@tangent/core/cli";
 
@@ -9,7 +12,7 @@ export async function runGoalCli(argv = process.argv.slice(2)): Promise<void> {
   // "continue" is boolean so the reminder's printed command works verbatim:
   // `handover --continue "<facts>"` must keep the facts positional, never
   // swallow them as the flag's value (ADR-0028).
-  const args = parseArgs(argv, { repeatable: ["source", "assignee", "subgoal-title", "subgoal-done-when", "step", "launch", "continue-from", "on"], boolean: ["continue"] });
+  const args = parseArgs(argv, { repeatable: ["source", "assignee", "subgoal-title", "subgoal-done-when", "step", "launch", "path", "continue-from", "on"], boolean: ["continue"] });
   const subcommand = args._[0];
   if (!subcommand) return help();
   // "done" and "wont-do" handle --help themselves, to restate that status is written on
@@ -96,7 +99,7 @@ async function ownershipCommand(args: Args, verb: "own" | "release"): Promise<vo
 }
 
 /**
- * Handles `tangent goal start <slug> [--step <instruction> --launch <harness[/model[/effort]]> --continue-from <n|->]...`.
+ * Handles `tangent goal start <slug> [--step <instruction> --launch <harness[/model[/effort]]> --path <directory> --continue-from <n|->]...`.
  * Without --step it starts one agent on the Goal, the same as the desk's Start agent. With steps it
  * posts a pipeline to the same endpoint; the server records it and starts step 1.
  */
@@ -126,7 +129,7 @@ function printLaunchWarnings(result: { warnings?: unknown }): void {
 }
 
 /**
- * Handles `tangent goal append <slug> --step <instruction> [--launch ...] [--continue-from ...]...`.
+ * Handles `tangent goal append <slug> --step <instruction> [--launch ...] [--path ...] [--continue-from ...]...`.
  * Adds steps after the ones that already ran. The server says what happened: the steps wait
  * behind the running step, the finished last agent was asked to hand over again, or the first
  * new step started.
@@ -154,27 +157,47 @@ async function appendCommand(args: Args): Promise<void> {
 type PipelineStepInput = {
   instruction: string;
   launch?: { harness: string; model?: string; effort?: string };
+  path?: string;
   continueFrom: number | null;
 };
 
 /**
- * Pairs each --step with the --launch and --continue-from at the same position. When appending,
+ * Pairs each --step with the --launch, --path, and --continue-from at the same position. When appending,
  * a step may continue any step of the existing pipeline, so only the server (which knows the final
  * numbering) checks the upper bound.
  */
 function pipelineSteps(args: Args, { appending = false } = {}): PipelineStepInput[] {
   const instructions = stringsArg(args.step).map((step) => step.trim());
   const launches = stringsArg(args.launch);
+  const paths = stringsArg(args.path);
   const continues = stringsArg(args["continue-from"]);
   if (instructions.some((instruction) => !instruction)) throw new Error("Each --step needs an instruction.");
+  // Without a --step there is nothing for a directory to belong to, and a
+  // silently dropped --path would start the worker in the wrong repository.
+  if (!instructions.length && paths.length) throw new Error("--path belongs to a --step; add --step \"<instruction>\" or start the Goal without --path.");
   if (launches.length > instructions.length) throw new Error("More --launch values than --step values; each --launch pairs with the --step at the same position.");
+  if (paths.length > instructions.length) throw new Error("More --path values than --step values; each --path pairs with the --step at the same position.");
   if (continues.length > instructions.length) throw new Error("More --continue-from values than --step values; each pairs with the --step at the same position.");
   return instructions.map((instruction, index) => {
     const step: PipelineStepInput = { instruction, continueFrom: parseContinueFrom(continues[index], appending ? Number.POSITIVE_INFINITY : index + 1) };
     const launch = parseLaunch(launches[index]);
     if (launch) step.launch = launch;
+    const workingDirectory = parseStepPath(paths[index]);
+    if (workingDirectory) step.path = workingDirectory;
     return step;
   });
+}
+
+/**
+ * One step's working directory as an absolute path. `~` and a relative
+ * directory resolve against the shell that runs the command, because the
+ * Agent Shell server cannot see the caller's directory. Undefined, and the
+ * empty `--path=` that skips a position, both mean the Area repository.
+ */
+function parseStepPath(value: string | undefined): string | undefined {
+  const requested = value?.trim();
+  if (!requested) return undefined;
+  return path.resolve(requested.replace(/^~(?=\/|$)/, os.homedir()));
 }
 
 /** Parses `harness[/model[/effort]]` into a launch reference; undefined when no --launch was given for the position. */
@@ -300,6 +323,7 @@ Examples:
   tangent goal start connect-chosen-ramp-faces
   tangent goal start pipelines-demo --step "/design this" --launch claude/fable-5 --step "review the design and update it" --launch codex/sol/high --step "implement" --launch claude/opus-5
   tangent goal start pipelines-demo --step "/design this" --step "implement the design" --continue-from - --continue-from 1
+  tangent goal start pipelines-demo --step "design the change" --path= --step "implement it in the plugin" --path ~/Projects/plugin
   tangent goal append pipelines-demo --step "prove the implementation" --launch codex/sol/high
   tangent goal handover "Design written: ~/.tangent/trees/otto/tangent/design-x.md. Unresolved: none."
 `);

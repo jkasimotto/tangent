@@ -281,6 +281,7 @@ function normalizeStep(step, index) {
     launch,
     command: launch ? "" : step.command.trim(),
     label: "",
+    path: typeof step.path === "string" && step.path.trim() ? step.path.trim() : null,
     continueFrom: Number.isInteger(step.continueFrom) ? step.continueFrom : null,
     status: "pending",
     session: null,

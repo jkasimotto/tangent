@@ -136,7 +136,7 @@ test("newPipeline normalizes steps into the pending shape", () => {
     area: "otto/tangent",
     slug: "x",
     steps: [
-      { instruction: "  /design this Goal.  ", launch: { harness: " claude ", model: "fable-5" }, command: "ignored" },
+      { instruction: "  /design this Goal.  ", launch: { harness: " claude ", model: "fable-5" }, command: "ignored", path: "  /tmp/other-repo  " },
       { instruction: "Review.", command: "  codex --model sol ", continueFrom: 1 }
     ],
     now: "2026-08-15T10:00:00.000Z"
@@ -152,6 +152,7 @@ test("newPipeline normalizes steps into the pending shape", () => {
     launch: { harness: "claude", model: "fable-5", effort: null },
     command: "",
     label: "",
+    path: "/tmp/other-repo",
     continueFrom: null,
     status: "pending",
     session: null,
@@ -163,6 +164,7 @@ test("newPipeline normalizes steps into the pending shape", () => {
   assert.equal(record.steps[1].index, 2);
   assert.equal(record.steps[1].launch, null);
   assert.equal(record.steps[1].command, "codex --model sol");
+  assert.equal(record.steps[1].path, null);
   assert.equal(record.steps[1].continueFrom, 1);
 });
 

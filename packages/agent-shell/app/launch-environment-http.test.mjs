@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -57,14 +57,16 @@ test("launch options resolve the registry, and saving writes an Area default", a
   const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-launch-"));
   const trees = path.join(root, "trees");
   const workspace = path.join(root, "workspace");
+  const arbitraryDirectory = path.join(root, "arbitrary-worker-directory");
   const areaDirectory = path.join(trees, "otto", "test");
   await mkdir(areaDirectory, { recursive: true });
   await mkdir(workspace, { recursive: true });
+  await mkdir(arbitraryDirectory, { recursive: true });
   await writeFile(path.join(trees, "harnesses.md"), REGISTRY, "utf8");
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
   await writeFile(
     path.join(areaDirectory, "test.md"),
-    `---\ntype: area\n---\n\n# Test\n\n## Goals\n\n1. [[goal-prove-launch]]\n2. [[goal-default-pipeline]]\n\n## Development environment\n\n\`\`\`tangent.environment.v1\n{"defaults": {"launch": {"harness": "claude-otto", "model": "opus-4-6"}}}\n\`\`\`\n\n## Resources\n\n- Repository: ${workspace}\n`,
+    `---\ntype: area\n---\n\n# Test\n\n## Goals\n\n1. [[goal-prove-launch]]\n2. [[goal-default-pipeline]]\n3. [[goal-arbitrary-directory]]\n\n## Development environment\n\n\`\`\`tangent.environment.v1\n{"defaults": {"launch": {"harness": "claude-otto", "model": "opus-4-6"}}}\n\`\`\`\n\n## Resources\n\n- Repository: ${workspace}\n`,
     "utf8"
   );
   await writeFile(
@@ -75,6 +77,11 @@ test("launch options resolve the registry, and saving writes an Area default", a
   await writeFile(
     path.join(areaDirectory, "goal-default-pipeline.md"),
     "---\ntype: goal\nstatus: open\ndone_when: Default pipeline launches are stable\nsession:\n---\n\n# Default pipeline\n\n## State\n\nNot started.\n",
+    "utf8"
+  );
+  await writeFile(
+    path.join(areaDirectory, "goal-arbitrary-directory.md"),
+    "---\ntype: goal\nstatus: open\ndone_when: The worker uses its requested directory\nsession:\n---\n\n# Arbitrary directory\n\n## State\n\nNot started.\n",
     "utf8"
   );
 
@@ -167,14 +174,51 @@ test("launch options resolve the registry, and saving writes an Area default", a
   const pipelineStartBody = await pipelineStarted.json();
   openedSessions.push(pipelineStartBody.session);
   assert.deepEqual(pipelineStartBody.pipeline.steps[0].launch, { harness: "claude-otto", model: "opus-4-6", effort: null });
+  assert.equal(pipelineStartBody.pipeline.steps[0].path, null, "the record keeps an omitted path explicit");
+  const defaultPaneDirectory = await new Promise((resolve, reject) => {
+    execFile("tmux", ["display-message", "-p", "-t", `=${pipelineStartBody.session}:`, "#{pane_current_path}"], (error, stdout) => error ? reject(error) : resolve(stdout.trim()));
+  });
+  assert.equal(await realpath(defaultPaneDirectory), await realpath(workspace), "an omitted path still uses the Area repository");
+
+  const arbitraryStarted = await fetch(`${base}/api/goals/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file: "otto/test/goal-arbitrary-directory.md", steps: [{ instruction: "Work elsewhere", path: arbitraryDirectory }] }),
+  });
+  assert.equal(arbitraryStarted.status, 200);
+  const arbitraryBody = await arbitraryStarted.json();
+  openedSessions.push(arbitraryBody.session);
+  assert.equal(arbitraryBody.pipeline.steps[0].path, arbitraryDirectory, "the pipeline record keeps the step path");
+  const arbitraryPaneDirectory = await new Promise((resolve, reject) => {
+    execFile("tmux", ["display-message", "-p", "-t", `=${arbitraryBody.session}:`, "#{pane_current_path}"], (error, stdout) => error ? reject(error) : resolve(stdout.trim()));
+  });
+  assert.equal(await realpath(arbitraryPaneDirectory), await realpath(arbitraryDirectory), "the pane uses the exact step path");
   const appended = await fetch(`${base}/api/pipelines/append`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ goal: "otto/test/goal-default-pipeline.md", steps: [{ instruction: "Second step" }] }),
+    body: JSON.stringify({ goal: "otto/test/goal-default-pipeline.md", steps: [{ instruction: "Second step", path: arbitraryDirectory }] }),
   });
   assert.equal(appended.status, 200);
   const appendedBody = await appended.json();
   assert.deepEqual(appendedBody.pipeline.steps[1].launch, { harness: "claude-otto", model: "opus-4-6", effort: null });
+  assert.equal(appendedBody.pipeline.steps[1].path, arbitraryDirectory, "append records the new step path");
+
+  // A directory that does not resolve stops the append before anything is
+  // written, and names itself: the error contract of design-goal-launch-environments.
+  const missingDirectory = await fetch(`${base}/api/pipelines/append`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ goal: "otto/test/goal-default-pipeline.md", steps: [{ instruction: "Third step", path: path.join(root, "no-such-directory") }] }),
+  });
+  assert.equal(missingDirectory.status, 400);
+  assert.match((await missingDirectory.json()).error, /step 3: no directory /);
+  const relativeDirectory = await fetch(`${base}/api/pipelines/append`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ goal: "otto/test/goal-default-pipeline.md", steps: [{ instruction: "Third step", path: "relative/directory" }] }),
+  });
+  assert.equal(relativeDirectory.status, 400);
+  assert.match((await relativeDirectory.json()).error, /is not an absolute directory/);
 
   // Work and Brain persist independently. Follow Work is an explicit Brain
   // policy, while Use inherited removes only the selected local key.

@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { goalCommandSpec } from "../dist/cli/index.js";
@@ -8,12 +10,12 @@ const subcommand = (name) => goalCommandSpec.subcommands.find((entry) => entry.n
 /** Lists the option names one spec entry accepts. */
 const optionNames = (entry) => entry.options.map((option) => option.name);
 
-test("tangent goal start takes a slug and repeatable step, launch, and continue-from options", () => {
+test("tangent goal start takes a slug and repeatable step, launch, path, and continue-from options", () => {
   const start = subcommand("start");
   assert.ok(start, "goal spec has a start subcommand");
   assert.equal(start.args, "<slug>");
-  assert.deepEqual(optionNames(start), ["step", "launch", "continue-from", "session", "server", "json"]);
-  for (const name of ["step", "launch", "continue-from"]) {
+  assert.deepEqual(optionNames(start), ["step", "launch", "path", "continue-from", "session", "server", "json"]);
+  for (const name of ["step", "launch", "path", "continue-from"]) {
     const option = start.options.find((entry) => entry.name === name);
     assert.equal(option.takesValue, true, `${name} takes a value`);
     assert.match(option.description, /repeatable/i, `${name} is documented as repeatable`);
@@ -24,7 +26,7 @@ test("tangent goal append takes a slug and the same repeatable step options as s
   const append = subcommand("append");
   assert.ok(append, "goal spec has an append subcommand");
   assert.equal(append.args, "<slug>");
-  assert.deepEqual(optionNames(append), ["step", "launch", "continue-from", "server", "json"]);
+  assert.deepEqual(optionNames(append), ["step", "launch", "path", "continue-from", "server", "json"]);
   assert.match(append.description, /without restarting/);
 });
 
@@ -89,6 +91,60 @@ test("goal mutations accept an explicit caller outside tmux", async (context) =>
 
   assert.equal(requests.find((request) => request.path === "/api/goals/create").body.caller, "tangent-brain-test");
   assert.equal(requests.find((request) => request.path === "/api/goals/start").body.caller, "tangent-brain-test");
+});
+
+test("each --step carries its own working directory, and a step without one keeps the Area repository", async (context) => {
+  const { runGoalCli } = await import("../dist/cli/index.js");
+  const previousTmux = process.env.TMUX;
+  delete process.env.TMUX;
+  const requests = [];
+  const previousFetch = globalThis.fetch;
+  const previousLog = console.log;
+  console.log = () => {};
+  globalThis.fetch = async (input, init = {}) => {
+    const url = new URL(String(input));
+    requests.push({ path: url.pathname, body: init.body ? JSON.parse(String(init.body)) : null });
+    if (url.pathname === "/api/goals/show") return Response.json({ goal: { slug: "proof", file: "otto/test/goal-proof.md", area: "otto/test", status: "open" } });
+    if (url.pathname === "/api/goals/start") return Response.json({ session: "worker-proof" });
+    if (url.pathname === "/api/pipelines/append") return Response.json({ state: "queued", after: 1, added: [2] });
+    return Response.json({ error: `unexpected ${url.pathname}` }, { status: 404 });
+  };
+  context.after(() => {
+    globalThis.fetch = previousFetch;
+    console.log = previousLog;
+    if (previousTmux === undefined) delete process.env.TMUX;
+    else process.env.TMUX = previousTmux;
+  });
+
+  await runGoalCli(["start", "proof", "--step", "Design it.", "--path=", "--step", "Implement it in the plugin.", "--path", "/tmp/arbitrary-worker", "--session", "tangent-brain-test"]);
+  const steps = requests.find((request) => request.path === "/api/goals/start").body.steps;
+  assert.equal(steps[0].path, undefined, "an empty --path= keeps the Area repository for that step");
+  assert.equal(steps[1].path, "/tmp/arbitrary-worker", "the step at the same position takes the directory");
+
+  await runGoalCli(["start", "proof", "--step", "Work here.", "--path", "..", "--session", "tangent-brain-test"]);
+  const relative = requests.filter((request) => request.path === "/api/goals/start").at(-1).body.steps[0].path;
+  assert.equal(relative, path.resolve(".."), "a relative directory resolves against the calling shell");
+
+  await runGoalCli(["start", "proof", "--step", "Work at home.", "--path", "~", "--session", "tangent-brain-test"]);
+  const home = requests.filter((request) => request.path === "/api/goals/start").at(-1).body.steps[0].path;
+  assert.equal(home, os.homedir(), "a leading ~ expands before the server sees it");
+
+  await runGoalCli(["start", "proof", "--session", "tangent-brain-test"]);
+  const plain = requests.filter((request) => request.path === "/api/goals/start").at(-1).body;
+  assert.equal(plain.steps, undefined, "a Goal started without steps is unchanged");
+
+  await runGoalCli(["append", "proof", "--step", "Prove it.", "--path", "/tmp/arbitrary-worker"]);
+  assert.equal(requests.find((request) => request.path === "/api/pipelines/append").body.steps[0].path, "/tmp/arbitrary-worker");
+
+  await assert.rejects(
+    () => runGoalCli(["start", "proof", "--path", "/tmp/arbitrary-worker", "--session", "tangent-brain-test"]),
+    /--path belongs to a --step/,
+    "a directory without a step is refused instead of dropped"
+  );
+  await assert.rejects(
+    () => runGoalCli(["start", "proof", "--step", "One.", "--path", "/a", "--path", "/b", "--session", "tangent-brain-test"]),
+    /More --path values than --step values/
+  );
 });
 
 test("tangent brain has handover and status; tangent area gains create", async () => {

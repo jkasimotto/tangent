@@ -5,7 +5,7 @@ import http from "node:http";
 import os from "node:os";
 import { createHash, randomUUID } from "node:crypto";
 import { appendFile, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { execFile, fork, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import path from "node:path";
@@ -1972,8 +1972,10 @@ async function spawnDescribeWorkSession(area, description, sources, { session: r
  * @tangent_area + @tangent_goal, goal mechanically flipped to active.
  * Both the launch line and the opening prompt follow the type-but-never-submit
  * rule, so the harness, the model, and the words all stay the user's call.
+ * The path option gives the new pane one exact directory instead of the
+ * Area repository; a pipeline step passes its own.
  */
-async function spawnGoalSession(area, slug, { phase = "execute", approved = false, launch = false, document = "", command = "", label = "", extraSlugs = [], pipeline = null, continuation = null, onPrimed = null, trace = null } = {}) {
+async function spawnGoalSession(area, slug, { phase = "execute", approved = false, launch = false, document = "", command = "", label = "", path: workingDirectory = "", extraSlugs = [], pipeline = null, continuation = null, onPrimed = null, trace = null } = {}) {
   const areaGoals = await readAreaGoals(area);
   trace?.mark("spawn area goals ready", { goals: areaGoals.length });
   const o = areaGoals.find((t) => t.slug === slug);
@@ -2039,7 +2041,10 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
     }
     return { status: 200, session: existing, reattached: true, primed };
   }
-  const dir = (await areaDirectory(area)) ?? path.join(TREES_ROOT, area);
+  // The step's own directory wins when it named one; without it the Area
+  // repository stays the default, so nothing changes for the steps that
+  // omit it. resolveStepPaths already proved the directory exists.
+  const dir = workingDirectory || (await areaDirectory(area)) || path.join(TREES_ROOT, area);
   // No command: tmux runs the login shell, so aliases (claude-otto) resolve
   // and the session outlives whatever agent is started in it.
   await execFileAsync("tmux", ["new-session", "-d", "-s", phaseName, "-c", dir]);
@@ -2285,6 +2290,35 @@ async function materializeDefaultStepLaunches(area, steps) {
 }
 
 /**
+ * Resolves every step's working directory before anything is written. A step
+ * may name any directory on the machine, so a brain can put one worker in a
+ * plugin, a sibling repository, or a scratch tree while the rest of the
+ * pipeline stays in the Area repository. A step that names no directory is
+ * returned untouched and falls back to the Area repository in
+ * spawnGoalSession. The error contract of design-goal-launch-environments
+ * applies: a directory that does not resolve stops the launch, names itself,
+ * and leaves no record and no tmux session behind. firstIndex is the step
+ * number of the first entry, so appended steps name themselves correctly.
+ */
+function resolveStepPaths(steps, firstIndex = 1) {
+  if (!Array.isArray(steps)) return { steps };
+  const resolved = [];
+  for (const [position, step] of steps.entries()) {
+    const requested = typeof step?.path === "string" ? step.path.trim() : "";
+    if (!requested) {
+      resolved.push(step);
+      continue;
+    }
+    const dir = requested.replace(/^~(?=\/|$)/, os.homedir());
+    const index = firstIndex + position;
+    if (!path.isAbsolute(dir)) return { error: `step ${index}: path ${requested} is not an absolute directory` };
+    if (!existsSync(dir) || !statSync(dir).isDirectory()) return { error: `step ${index}: no directory ${dir}` };
+    resolved.push({ ...step, path: dir });
+  }
+  return { steps: resolved };
+}
+
+/**
  * The Area's resolved harness id in plain words: the registry harness id
  * when the default resolves through the registry, else the bare command
  * from the profile or legacy fallback (a single word, no arguments). Null
@@ -2355,6 +2389,7 @@ async function startPipelineStep(record, index, trace = null) {
       launch: true,
       command: step.command,
       label: step.label,
+      path: step.path,
       extraSlugs,
       pipeline: { record, index, sessionName },
       trace,
@@ -2383,6 +2418,9 @@ async function startPipeline(file, { steps, extraFiles = [] } = {}) {
   const materialized = await materializeDefaultStepLaunches(o.area, steps);
   if (materialized.error) return { status: 409, error: materialized.error };
   steps = materialized.steps;
+  const located = resolveStepPaths(steps);
+  if (located.error) return { status: 400, error: located.error };
+  steps = located.steps;
   const error = validateSteps(steps);
   if (error) return { status: 400, error };
   const sameArea = extraFiles.map(String).filter((extra) => byFile.get(extra)?.area === o.area);
@@ -2745,6 +2783,9 @@ async function appendPipelineSteps(goalFile, steps) {
   const materialized = await materializeDefaultStepLaunches(o.area, steps);
   if (materialized.error) return { status: 409, error: materialized.error };
   steps = materialized.steps;
+  const located = resolveStepPaths(steps, record.steps.length + 1);
+  if (located.error) return { status: 400, error: located.error };
+  steps = located.steps;
   const finished = pipelineFinished(record);
   const last = record.steps[record.steps.length - 1];
   let added;

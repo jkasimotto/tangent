@@ -38,8 +38,12 @@ export function createShellState(storage = globalThis.localStorage, href = globa
     pipelines: [], brains: [], brainDraft: null, agentSessionName: null,
     verdictLines: new Set(), dismissedAskIds: readDismissedAskIds(storage), goalSelection: [], goTo: null, launchTarget: "", launchAnchor: null, whatHappened: null,
     harnessDraft: null, harnessReturnView: "work", query: "", workFilter: storage.getItem("agent-shell.work-filter") === "inactive" ? "inactive" : "active", personFilter: storage.getItem("agent-shell.person-filter") || "all",
-    caffeinate: false, decisionReturnView: "agent", agentReturnView: "work", agentReturn: null, offline: false, rebuilding: false, rebuild: null,
-    updateAvailable: false, pendingCommits: [], deployedCommit: "", currentCommit: "", bootId: "", loading: true, error: "", renderedKey: "",
+    caffeinate: false, decisionReturnView: "agent", agentReturnView: "work", agentReturn: null, rebuilding: false, rebuild: null,
+    connection: {
+      phase: "online", gatewayBoot: "", controllerBoot: "", lastSuccessAt: 0, lastFailureAt: null,
+      retryAttempt: 0, nextRetryAt: null, eventStream: "unavailable", lastError: null,
+    },
+    updateAvailable: false, pendingCommits: [], deployedCommit: "", currentCommit: "", loading: true, error: "", renderedKey: "",
     promptInspector: { loading: false, title: "", text: "", error: "", file: "", area: "" },
     bestiarySelection: { mode: "model", concept: "area", lifecycle: "plan", transition: "work" },
   };

@@ -27,17 +27,35 @@ test("the Shell menu owns recovery while offline refresh preserves the screen", 
   window.setInterval = () => 0;
   let boot = "boot-1";
   let sourceChanged = false;
+  let backpressured = false;
+  let controllerDown = false;
+  let controllerBoot = "controller-1";
   const pendingCommits = [{ hash: "abc", shortHash: "abc1234", subject: "Improve reload", author: "Julian" }];
   let offline = false;
   const posts = [];
   window.fetch = async (url, options = {}) => {
     if (offline) throw new Error("connection refused");
     const pathname = new URL(url, window.location.href).pathname;
+    if (pathname === "/api/health") return jsonResponse({ ok: true, boot: "gateway-1", controller: { state: controllerDown ? "restarting" : "ready", boot: controllerBoot } });
+    if (backpressured && pathname.startsWith("/api/")) return {
+      ok: false,
+      status: 429,
+      headers: new Headers({ "retry-after": "1", "x-tangent-operation-id": "duplicate-1" }),
+      /** Returns the admission error. */
+      async json() { return { error: "duplicate read" }; },
+    };
+    if (controllerDown && pathname.startsWith("/api/")) return {
+      ok: false,
+      status: 503,
+      headers: new Headers({ "retry-after": "1", "x-tangent-operation-id": "controller-1" }),
+      /** Returns the controller error. */
+      async json() { return { error: "controller restarting" }; },
+    };
     if (options.method === "POST") {
       posts.push(pathname);
       return jsonResponse({ ok: true, operation: { id: "rebuild-1", phase: "building", commits: pendingCommits, log: "~/.tangent/agent-shell-rebuild.log" } });
     }
-    if (pathname === "/api/sessions") return jsonResponse({ boot, sourceChanged, deployedCommit: "5899d9c123456789", pendingCommits: sourceChanged ? pendingCommits : [], caffeinate: false, sessions: [] });
+    if (pathname === "/api/sessions") return jsonResponse({ boot, runtime: { gateway: { boot: "gateway-1", controller: { state: "ready", boot: controllerBoot } } }, sourceChanged, deployedCommit: "5899d9c123456789", pendingCommits: sourceChanged ? pendingCommits : [], caffeinate: false, sessions: [] });
     if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
     return jsonResponse({ areas: [], map: [], documents: [] });
   };
@@ -59,9 +77,21 @@ test("the Shell menu owns recovery while offline refresh preserves the screen", 
   offline = true;
   await window.refresh();
   assert.ok(window.document.querySelector(".work-page"));
-  assert.match(window.document.querySelector("#status-pill").textContent, /Server offline/);
+  assert.match(window.document.querySelector("#status-pill").textContent, /Connection lost/);
   offline = false;
   await window.refresh();
+  backpressured = true;
+  await window.refresh();
+  assert.equal(window.document.querySelector("#status-pill").hidden, true, "gateway backpressure keeps the current screen online");
+  backpressured = false;
+  await window.refresh();
+  controllerDown = true;
+  await window.refresh();
+  assert.match(window.document.querySelector("#status-pill").textContent, /Work data delayed/);
+  controllerDown = false;
+  controllerBoot = "controller-2";
+  await window.refresh();
+  assert.equal(window.document.querySelector("#status-pill").hidden, true, "a controller replacement recovers without an offline state");
   assert.equal(window.document.querySelector("#back-button").classList.contains("has-update"), true);
   click(window, "#back-button");
   click(window, "#menu-rebuild");

@@ -197,7 +197,9 @@ function proxyController(request, response, operationId) {
     return;
   }
   if (readPath && activeReadPaths.has(readPath)) {
+    console.error(`[gateway] duplicate read rejected operation=${operationId} path=${readPath} active=${activeControllerRequests} reads=${activeReadPaths.size}`);
     response.setHeader("retry-after", "1");
+    response.setHeader("x-tangent-operation-id", operationId);
     sendJson(response, 429, { error: "An identical Agent Shell read is already running; retry shortly.", operationId });
     return;
   }

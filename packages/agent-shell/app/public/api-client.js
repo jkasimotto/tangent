@@ -1,3 +1,21 @@
+/** One classified browser request error with the local operation evidence. */
+export class ApiError extends Error {
+  constructor(message, details = {}) {
+    super(message, details.cause ? { cause: details.cause } : undefined);
+    this.name = "ApiError";
+    Object.assign(this, details);
+  }
+}
+
+/** Converts one Retry-After header to a non-negative delay. */
+function retryAfterMs(value, now = Date.now()) {
+  if (!value) return 0;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1_000);
+  const at = Date.parse(value);
+  return Number.isFinite(at) ? Math.max(0, at - now) : 0;
+}
+
 /** Creates the browser's small JSON client around a fetch implementation. */
 export function createApiClient(fetchJson = globalThis.fetch.bind(globalThis), telemetry = null, deadlineMs = 20_000) {
   /** Calls one JSON endpoint and turns non-success replies into errors. */
@@ -20,15 +38,25 @@ export function createApiClient(fetchJson = globalThis.fetch.bind(globalThis), t
       response = await fetchJson(path, { ...options, signal: controller.signal });
     } catch (error) {
       telemetry?.apiFinished?.(method, path, startedAt, 0, false);
-      if (timedOut) throw new Error(`Agent Shell ${method} ${path} exceeded its ${deadlineMs}ms response deadline.`);
-      throw error;
+      if (timedOut) throw new ApiError(`Agent Shell ${method} ${path} exceeded its ${deadlineMs}ms response deadline.`, { kind: "timeout", status: 0, path, method, operationId: "", retryAfterMs: 0, cause: error });
+      const kind = callerSignal?.aborted ? "abort" : "transport";
+      throw new ApiError(error?.message ?? `Agent Shell ${method} ${path} could not connect.`, { kind, status: 0, path, method, operationId: "", retryAfterMs: 0, cause: error });
     } finally {
       globalThis.clearTimeout(timeout);
       callerSignal?.removeEventListener("abort", callerAborted);
     }
     telemetry?.apiFinished?.(method, path, startedAt, response.status, response.ok);
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || `Agent Shell returned ${response.status}.`);
+    if (!response.ok) {
+      throw new ApiError(data.error || `Agent Shell returned ${response.status}.`, {
+        kind: "http",
+        status: response.status,
+        path,
+        method,
+        operationId: response.headers?.get?.("x-tangent-operation-id") ?? data.operationId ?? "",
+        retryAfterMs: retryAfterMs(response.headers?.get?.("retry-after")),
+      });
+    }
     return data;
   }
 

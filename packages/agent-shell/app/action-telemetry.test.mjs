@@ -34,3 +34,31 @@ test("action telemetry appends JSONL and rejects empty actions", async () => {
   assert.equal(rows.length, 1);
   assert.equal(rows[0].action, "launch-start");
 });
+
+test("connection telemetry keeps bounded runtime evidence", () => {
+  const entry = normalizeActionTelemetry({
+    kind: "connection",
+    action: "online->transport-retrying",
+    trigger: "event",
+    retryAttempt: 2,
+    lastSuccessAgeMs: 1250.4,
+    gatewayBoot: "gateway-1",
+    controllerBoot: "controller-2",
+    operationId: "operation-3",
+    eventStream: "retrying",
+    prompt: "private words",
+  }, () => new Date("2026-08-25T00:00:00.000Z"));
+  assert.deepEqual(entry, {
+    schema: "agent-shell-action.v1",
+    at: "2026-08-25T00:00:00.000Z",
+    kind: "connection",
+    action: "online->transport-retrying",
+    trigger: "event",
+    retryAttempt: 2,
+    lastSuccessAgeMs: 1250,
+    gatewayBoot: "gateway-1",
+    controllerBoot: "controller-2",
+    operationId: "operation-3",
+    eventStream: "retrying",
+  });
+});

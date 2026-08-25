@@ -8,7 +8,7 @@ import areaMapView from "./area-map.js";
 import { createApiClient } from "./api-client.js";
 import { createShellState } from "./shell-state.js";
 import { shellDom } from "./shell-dom.js";
-import { startRebuildRefresh, startRefreshLifecycle } from "./refresh-lifecycle.js";
+import { createRefreshCoordinator, readProjection, startRebuildRefresh, startRefreshLifecycle } from "./refresh-lifecycle.js";
 import { FENCE_OPEN, fenceCloser, frontmatterLineCount, markdownHeadingAnchor, markdownHeadings, markdownTableAlignments, markdownTableCells, visibleMarkdown } from "./markdown-structure.js";
 import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
 import { buildGoToRows } from "./go-to-rows.js";
@@ -33,6 +33,7 @@ import { renderPromptBestiary } from "./prompt-bestiary.js";
 const actionTelemetry = createActionTelemetry();
 actionTelemetry.observe();
 const { api, post } = createApiClient(undefined, actionTelemetry);
+const { api: healthApi } = createApiClient(undefined, actionTelemetry, 3_000);
 const { requestedArea, requestedDocument, state } = createShellState();
 
 const {
@@ -976,10 +977,86 @@ function editingSurfaceOnScreen() {
   return Boolean(screen.querySelector("[data-create-form], [data-describe-work-form], [data-area-form], [data-program-form], [data-harness-form], [data-launch-popover], [data-comment-composer]"));
 }
 
-/** Refreshes the vault, program, and session projections from the server. */
-async function refresh({ initial = false } = {}) {
+/** Reports one connection transition with only local runtime identifiers. */
+function transitionConnection(phase, trigger, error = null) {
+  const previous = state.connection.phase;
+  const now = Date.now();
+  state.connection.phase = phase;
+  state.connection.lastFailureAt = phase === "online" ? null : now;
+  state.connection.lastError = error ? {
+    kind: error.kind || "unknown",
+    status: Number(error.status || 0),
+    path: error.path || "",
+    operationId: error.operationId || "",
+  } : null;
+  if (previous === phase) return;
+  actionTelemetry.record("connection", `${previous}->${phase}`, {
+    trigger,
+    retryAttempt: state.connection.retryAttempt,
+    lastSuccessAgeMs: state.connection.lastSuccessAt ? now - state.connection.lastSuccessAt : 0,
+    gatewayBoot: state.connection.gatewayBoot,
+    controllerBoot: state.connection.controllerBoot,
+    eventStream: state.connection.eventStream,
+    status: Number(error?.status || 0),
+    operationId: error?.operationId || "",
+  });
+}
+
+/** Tracks the stable gateway and replaceable controller as separate identities. */
+function noteRuntimeIdentity(gatewayBoot, controllerBoot) {
+  if (controllerBoot) state.connection.controllerBoot = controllerBoot;
+  if (!gatewayBoot) return;
+  if (!state.connection.gatewayBoot) {
+    state.connection.gatewayBoot = gatewayBoot;
+    return;
+  }
+  if (gatewayBoot === state.connection.gatewayBoot) return;
+  state.connection.gatewayBoot = gatewayBoot;
+  const reloadKey = "agent-shell.reloaded-gateway-boot";
+  if (sessionStorage.getItem(reloadKey) === gatewayBoot) return;
+  sessionStorage.setItem(reloadKey, gatewayBoot);
+  location.reload();
+}
+
+/** Records native event-stream recovery without declaring the gateway offline. */
+function noteEventStream(eventStream) {
+  if (state.connection.eventStream === eventStream) return;
+  state.connection.eventStream = eventStream;
+  actionTelemetry.record("connection", `event-stream:${eventStream}`, {
+    retryAttempt: state.connection.retryAttempt,
+    gatewayBoot: state.connection.gatewayBoot,
+    controllerBoot: state.connection.controllerBoot,
+    eventStream,
+  });
+}
+
+/** Returns the next bounded delay for projection recovery. */
+function recoveryDelay() {
+  const delays = [250, 500, 1_000, 2_000];
+  const attempt = state.connection.retryAttempt;
+  state.connection.retryAttempt += 1;
+  const delay = delays[Math.min(attempt, delays.length - 1)];
+  state.connection.nextRetryAt = Date.now() + delay;
+  return delay;
+}
+
+/** Uses gateway health to classify one material projection error. */
+async function diagnoseConnection(error, trigger) {
   try {
-    const [vault, sessionPayload, programs] = await Promise.all([api("/api/vault"), api("/api/sessions"), api("/api/programs")]);
+    const health = await healthApi("/api/health");
+    noteRuntimeIdentity(health.boot || "", health.controller?.boot || "");
+    transitionConnection("controller-recovering", trigger, error);
+  } catch {
+    transitionConnection("transport-retrying", trigger, error);
+  }
+  updateStatusPill();
+  return recoveryDelay();
+}
+
+/** Refreshes the vault, program, and session projections from the server. */
+async function performRefresh({ initial = false, trigger = initial ? "initial" : "direct" } = {}) {
+  try {
+    const [vault, sessionPayload, programs] = await readProjection(api);
     state.vault = vault;
     state.sessions = sessionPayload.sessions || [];
     state.pipelines = sessionPayload.pipelines || [];
@@ -999,11 +1076,15 @@ async function refresh({ initial = false } = {}) {
     state.updateAvailable = Boolean(sessionPayload.sourceChanged);
     state.rebuild = sessionPayload.rebuild || null;
     state.rebuilding = ["building", "restarting", "reconnecting"].includes(state.rebuild?.phase);
+    const gatewayRuntime = sessionPayload.runtime?.gateway;
+    noteRuntimeIdentity(gatewayRuntime?.boot || sessionPayload.boot || "", gatewayRuntime?.controller?.boot || sessionPayload.boot || "");
     reconcileCurrentAreaFocus();
     state.loading = false;
     state.error = "";
-    state.offline = false;
-    noteServerBoot(sessionPayload.boot || "");
+    state.connection.lastSuccessAt = Date.now();
+    state.connection.retryAttempt = 0;
+    state.connection.nextRetryAt = null;
+    transitionConnection("online", trigger);
     if (state.view === "program-session" && !currentProgram()?.session) {
       disposeTerminal();
       state.view = currentProgram() ? "program-detail" : "areas";
@@ -1022,43 +1103,41 @@ async function refresh({ initial = false } = {}) {
     updateStatusPill();
     if (state.goTo) renderGoToList();
     paint(initial);
+    return null;
   } catch (error) {
     state.loading = false;
-    // A poll that fails after the app has data means the server is away,
-    // usually because an agent is rebuilding it. Keep the screen exactly as
-    // it is and show one quiet pill; the next successful poll clears it.
+    if (error?.status === 429) {
+      if (!state.vault) {
+        state.error = error.message;
+        paint(true);
+      }
+      return { retryAfterMs: error.retryAfterMs || 250 };
+    }
     if (state.vault) {
-      state.offline = true;
-      updateStatusPill();
-      return;
+      return { retryAfterMs: await diagnoseConnection(error, trigger) };
     }
     state.error = error.message;
+    const retryAfterMs = await diagnoseConnection(error, trigger);
     paint(true);
+    return { retryAfterMs };
   }
 }
 
-/**
- * Tracks the server process identity across polls. Only pending commits own
- * the blue update dot; a process restart by itself is not a source change.
- */
-function noteServerBoot(boot) {
-  if (!boot) return;
-  if (!state.bootId) {
-    state.bootId = boot;
-    return;
-  }
-  if (boot === state.bootId) return;
-  location.reload();
-}
+const refreshCoordinator = createRefreshCoordinator(performRefresh);
+
+/** Requests one serialized projection refresh. */
+function refresh(options = {}) { return refreshCoordinator.request(options); }
 
 /** Keeps the quiet connection pill and the menu's update hint current. */
 function updateStatusPill() {
-  const phase = state.offline && state.rebuilding ? "reconnecting" : state.rebuild?.phase;
+  const phase = state.rebuild?.phase;
   const labels = { building: "Building Tangent…", restarting: "Restarting Tangent…", reconnecting: "Reconnecting to Tangent…" };
   const text = state.rebuilding
     ? labels[phase] || "Updating Tangent…"
-    : state.offline
-      ? "Server offline · reconnecting"
+    : state.connection.phase === "controller-recovering"
+      ? "Work data delayed · reconnecting"
+      : state.connection.phase === "transport-retrying"
+        ? "Connection lost · retrying"
       : "";
   statusPill.textContent = text;
   statusPill.hidden = !text;
@@ -1248,7 +1327,7 @@ void (async () => {
 })();
 // Mutations and reconciliation push invalidations. The slow timer is only a
 // recovery path for a suspended browser or a dropped event stream.
-startRefreshLifecycle(refresh);
+startRefreshLifecycle(refresh, globalThis, noteEventStream);
 startRebuildRefresh(() => state.rebuilding, refresh);
 
 // DOM-level exports keep tests on the module boundary instead of rebuilding

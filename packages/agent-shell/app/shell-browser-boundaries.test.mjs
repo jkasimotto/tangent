@@ -18,13 +18,14 @@ test("shell DOM lookup owns stable top-level element IDs", () => {
 });
 
 test("refresh lifecycle responds to pushes and cleans up both transports", () => {
-  let listener;
+  const listeners = {};
   let refreshes = 0;
   let closed = false;
   let cleared = null;
+  const streamStates = [];
   class EventSourceDouble {
     /** Records the event listener. */
-    addEventListener(_name, callback) { listener = callback; }
+    addEventListener(name, callback) { listeners[name] = callback; }
     /** Records stream closure. */
     close() { closed = true; }
   }
@@ -35,10 +36,13 @@ test("refresh lifecycle responds to pushes and cleans up both transports", () =>
     /** Records timer cleanup. */
     clearInterval(timer) { cleared = timer; },
   };
-  const lifecycle = startRefreshLifecycle(() => { refreshes += 1; }, environment);
-  listener();
+  const lifecycle = startRefreshLifecycle(() => { refreshes += 1; }, environment, (state) => streamStates.push(state));
+  listeners.open();
+  listeners.error();
+  listeners.changed();
   lifecycle.stop();
   assert.equal(refreshes, 1);
+  assert.deepEqual(streamStates, ["open", "retrying"]);
   assert.equal(closed, true);
   assert.equal(cleared, 7);
 });

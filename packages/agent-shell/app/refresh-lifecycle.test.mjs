@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { startRebuildRefresh } from "./public/refresh-lifecycle.js";
+import { createRefreshCoordinator, readProjection, startRebuildRefresh } from "./public/refresh-lifecycle.js";
 
 test("active rebuilds use a dedicated 750 ms refresh", () => {
   let callback;
@@ -21,4 +21,103 @@ test("active rebuilds use a dedicated 750 ms refresh", () => {
   callback();
   assert.equal(refreshes, 1);
   lifecycle.stop();
+});
+
+test("refresh coordinator serializes triggers and runs one trailing refresh", async () => {
+  let release;
+  let active = 0;
+  let maximum = 0;
+  let calls = 0;
+  const coordinator = createRefreshCoordinator(async () => {
+    calls += 1;
+    active += 1;
+    maximum = Math.max(maximum, active);
+    if (calls === 1) await new Promise((resolve) => { release = resolve; });
+    active -= 1;
+  });
+
+  const first = coordinator.request({ trigger: "event" });
+  await Promise.resolve();
+  const second = coordinator.request({ trigger: "timer" });
+  const third = coordinator.request({ trigger: "mutation" });
+  assert.equal(calls, 1);
+  release();
+  await Promise.all([first, second, third]);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(calls, 2);
+  assert.equal(maximum, 1);
+  coordinator.stop();
+});
+
+test("refresh coordinator owns one delayed retry", async () => {
+  const timers = [];
+  let calls = 0;
+  const environment = {
+    /** Captures one retry timer. */
+    setTimeout(callback, delay) { timers.push({ callback, delay }); return timers.length; },
+    /** Accepts retry timer cancellation. */
+    clearTimeout() {},
+  };
+  const coordinator = createRefreshCoordinator(async () => {
+    calls += 1;
+    return calls === 1 ? { retryAfterMs: 750 } : null;
+  }, environment);
+  await coordinator.request({ trigger: "event" });
+  assert.equal(timers.length, 1);
+  assert.equal(timers[0].delay, 750);
+  timers[0].callback();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(calls, 2);
+  coordinator.stop();
+});
+
+test("a pending trigger respects backpressure before its trailing refresh", async () => {
+  const timers = [];
+  let release;
+  let calls = 0;
+  const environment = {
+    /** Captures one backpressure timer. */
+    setTimeout(callback, delay) { timers.push({ callback, delay }); return timers.length; },
+    /** Accepts backpressure timer cancellation. */
+    clearTimeout() {},
+  };
+  const coordinator = createRefreshCoordinator(async () => {
+    calls += 1;
+    if (calls === 1) await new Promise((resolve) => { release = resolve; });
+    return calls === 1 ? { retryAfterMs: 1_000 } : null;
+  }, environment);
+  const first = coordinator.request({ trigger: "event" });
+  await Promise.resolve();
+  coordinator.request({ trigger: "timer" });
+  release();
+  await first;
+  await Promise.resolve();
+  assert.equal(calls, 1);
+  assert.equal(timers[0].delay, 1_000);
+  timers[0].callback();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(calls, 2);
+  coordinator.stop();
+});
+
+test("projection read waits for sibling requests after one endpoint rejects", async () => {
+  let releaseSessions;
+  let settled = false;
+  /** Returns one controlled projection endpoint result. */
+  const api = (path) => {
+    if (path === "/api/vault") return Promise.reject(Object.assign(new Error("duplicate"), { status: 429 }));
+    if (path === "/api/sessions") return new Promise((resolve) => { releaseSessions = () => resolve({ sessions: [] }); });
+    return Promise.resolve({ programs: [] });
+  };
+  const projection = readProjection(api).catch((error) => {
+    settled = true;
+    throw error;
+  });
+  await Promise.resolve();
+  assert.equal(settled, false);
+  releaseSessions();
+  await assert.rejects(projection, (error) => error.status === 429);
+  assert.equal(settled, true);
 });

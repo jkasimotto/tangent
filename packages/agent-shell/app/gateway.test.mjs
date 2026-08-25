@@ -108,7 +108,7 @@ test("gateway rejects duplicate reads while one controller request is active", a
     if (error?.code === "EPERM") return context.skip("local listeners are not permitted");
     throw error;
   }
-  await startGateway(context, port);
+  const gateway = await startGateway(context, port);
   const base = `http://127.0.0.1:${port}`;
   await waitForHealth(base, (health) => health.controller.state === "ready");
 
@@ -117,10 +117,12 @@ test("gateway rejects duplicate reads while one controller request is active", a
   const duplicate = await fetch(`${base}/api/slow`);
   assert.equal(duplicate.status, 429);
   assert.equal(duplicate.headers.get("retry-after"), "1");
+  assert.ok(duplicate.headers.get("x-tangent-operation-id"));
   assert.match((await duplicate.json()).error, /already running/);
   assert.equal((await first).status, 200);
   await waitForHealth(base, (health) => health.proxy.active === 0 && health.proxy.reads === 0);
   assert.equal((await fetch(`${base}/api/slow`)).status, 200, "admission is released after completion");
+  assert.match(gateway.errors.join(""), /duplicate read rejected .*path=\/api\/slow .*active=1 reads=1/);
 });
 
 test("gateway rejects controller work above its configured capacity", async (context) => {

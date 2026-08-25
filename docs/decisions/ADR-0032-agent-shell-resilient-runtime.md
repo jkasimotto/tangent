@@ -37,6 +37,9 @@ Agent Shell has two local processes with different failure domains.
   recovery it serves that response with explicit stale metadata. Mutations get
   a named 503 or a transport-uncertain CLI error; they never appear to have
   ended every session.
+- The browser serializes complete projection reads from all refresh sources.
+  It treats duplicate-read admission as backpressure, not server death, and
+  reloads assets only when the gateway boot changes.
 - The native launcher validates the gateway health identity, probes again
   before every launch, and uses exponential backoff. A competing public-port
   process cannot cause a child restart loop.

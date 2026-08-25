@@ -28,7 +28,7 @@ import { createObservationCache } from "./observation-cache.mjs";
 import { appendSteps, currentStep, endPipeline, goalBindingGoneFromSnapshot, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, readAllPipelines, readPipeline, reclaimLiveSteps, snapshotCanJudgeAbsence, stepGoneFromSnapshot, validateSteps, writePipeline } from "./pipeline-record.mjs";
 import { newContinuationRecord, readAllContinuations, readContinuation, writeContinuation } from "./continuation-record.mjs";
 import { contextReminderText, contextRepeatText, continuationSection, continuationSessionName, reminderDue } from "./context-handover.mjs";
-import { normalizeMessage } from "./agent-messages.mjs";
+import { noticeMessage, normalizeMessage } from "./agent-messages.mjs";
 import { beginGeneration, brainForArea, brainOwnsArea, brainRecordForArea, brainSessionName, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, reclaimStoppedBrain, recordHandover, validateInstruction, writeBrain } from "./brain-record.mjs";
 import { appendNotice, inboxesForBrain, markDelivered, mergeNotices, noticeBlock, noticeDigest, readAllInboxes, readInbox, writeInbox } from "./brain-inbox.mjs";
 import { forJulianSectionText, parseForJulian, removeForJulianLine, restoreForJulianLine, unparsedForJulianLines } from "./for-julian.mjs";
@@ -3029,14 +3029,15 @@ function releaseBrainNotices(notices) {
 
 /**
  * Tells the brain that covers an Area what happened, as a message from
- * `tangent`. The notice is persisted first, then queued when a brain session
- * is live; the queue delivers it into an idle composer and a working brain
+ * `tangent`. The text is clipped, never refused, so a long Request answer or
+ * handover cannot be dropped before it is written down. The notice is
+ * persisted first, then queued when a brain session is live; the queue delivers it into an idle composer and a working brain
  * reads it when it pauses. With no live brain the notice waits on disk for
  * the next generation. Returns true when a live brain was addressed.
  */
 async function notifyBrain(area, text) {
   try {
-    const message = normalizeMessage(text);
+    const message = noticeMessage(text);
     const records = await readAllBrains(BRAINS_ROOT);
     const owner = brainRecordForArea(records, area);
     if (!owner) return false;
@@ -3154,6 +3155,25 @@ async function brainCommandContext(area) {
   );
 }
 
+/**
+ * The Request answers Julian gave while the generation this one replaces was
+ * reading. The notice inbox is the fast path and reaches a live generation in
+ * seconds; this section is the guaranteed one, because it is derived from the
+ * durable Request record every time a generation starts. When the notice path
+ * fails, the very next generation still learns the answer. A repeated answer
+ * costs the brain one line; a missed one costs it the work.
+ */
+async function answeredRequestLines(record) {
+  const generations = record.generations ?? [];
+  const previous = generations[generations.length - 2];
+  if (!previous?.startedAt) return [];
+  const requests = await readBrainRequests(BRAINS_ROOT, record.area);
+  return requests.requests
+    .filter((request) => request.status === "answered" && request.response && String(request.answeredAt ?? "") >= previous.startedAt)
+    .sort((left, right) => String(left.answeredAt).localeCompare(String(right.answeredAt)))
+    .map((request) => `- ${noticeMessage(brainRequestAnswerNotice(request))}${request.goal ? ` (Goal ${request.goal})` : ""}`);
+}
+
 /** How many Area Documents the prompt names before it points at the folder. */
 const BRAIN_PROMPT_DOCUMENTS = 40;
 
@@ -3166,6 +3186,7 @@ async function brainPrompt(record) {
   const area = record.area;
   const generation = currentGeneration(record)?.generation ?? 1;
   const notices = currentGeneration(record)?.notices ?? [];
+  const answered = await answeredRequestLines(record);
   const notes = areaNoteFiles(area);
   const documents = (await readAreaDocuments(area)).filter((doc) => doc.file !== record.planFile);
   const planPath = path.join(TREES_ROOT, record.planFile);
@@ -3196,6 +3217,9 @@ async function brainPrompt(record) {
     (handover ? `## Handover from generation ${generation - 1}\n\n${handover}\n\n` : "") +
     (notices.length
       ? `## Notices you have not read\n\nTangent recorded these agent events while no generation of this brain was reading. Read them before you plan, and act on the ones that need it.\n\n${noticeBlock(notices)}\n\n`
+      : "") +
+    (answered.length
+      ? `## Requests Julian answered\n\nJulian answered these while the earlier generation was reading. Act on the ones the handover does not already cover.\n\n${answered.join("\n")}\n\n`
       : "") +
     `## Tangent commands\n\n${await brainCommandContext(area)}\n\n` +
     `## How to work\n\n` +

@@ -409,3 +409,68 @@ test("a sweep queues an unread notice for the live brain once, and never twice",
   assert.equal(await queuedForBrain(), 1, "a notice on its way is queued once");
   assert.equal(unreadNotices(await readInbox(brains, `otto/${leaf}`)).length, 1, "a queued notice the brain did not read stays unread");
 });
+
+test("an over-long Request answer still reaches the inbox and the next generation", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-notice-long-"));
+  const leaf = `probelong${process.pid}`;
+  const trees = await makeTrees(root, leaf);
+  const brains = path.join(root, "brains");
+  const sessions = [];
+  let port;
+  try {
+    port = await freePort();
+  } catch (error) {
+    if (error?.code === "EPERM") {
+      context.skip("This environment does not permit local HTTP listeners.");
+      return;
+    }
+    throw error;
+  }
+  const child = startServer(root, trees, port, "notice-long");
+  context.after(async () => {
+    for (const session of sessions) await killSession(session);
+    await stopServer(child);
+    await rm(root, { recursive: true, force: true });
+  });
+  const base = `http://127.0.0.1:${port}`;
+  await waitForServer(base);
+
+  const area = `otto/${leaf}`;
+  const brain = await post(base, "/api/brains/start", { area, instruction: "Get the probe Area done." });
+  sessions.push(brain.session);
+
+  const created = await post(base, "/api/brains/requests", {
+    session: brain.session,
+    kind: "decision",
+    subject: "Worker harness",
+    question: "Should the worker harness come from the Area?",
+    proposal: "Take the harness from the Area declaration.",
+    detail: "The fallback picks a harness nobody declared.",
+  });
+  assert.ok(created.request?.id, JSON.stringify(created));
+
+  // Julian pasted a whole brain prompt into the answer. This used to throw
+  // inside notifyBrain before anything was written down, so the answer never
+  // existed for any generation.
+  const note = `Its still so long ${"x".repeat(9000)}`;
+  const answered = await post(base, "/api/brains/requests/answer", { area, id: created.request.id, answer: "changes", note });
+  assert.equal(answered.request?.answer, "changes", JSON.stringify(answered));
+
+  const inbox = await waitFor("the answer notice on disk", async () => {
+    const record = await readInbox(brains, area);
+    return record.notices.length ? record : null;
+  });
+  const notice = inbox.notices[inbox.notices.length - 1];
+  assert.match(notice.text, /Julian wants these changes: Its still so long/);
+  assert.match(notice.text, /clipped from \d+ characters/);
+  assert.ok(notice.text.length <= 4000, `notice is ${notice.text.length} characters`);
+
+  // The next generation is told from the durable Request record, so the
+  // answer arrives even when the notice path drops it.
+  const next = await post(base, "/api/brains/handover", { session: brain.session, text: "Waiting on the harness answer." });
+  assert.equal(next.generation, 2, JSON.stringify(next));
+  sessions.push(next.session);
+  const show = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(next.session)}`).then((response) => response.json());
+  assert.match(show.prompt, /## Requests Julian answered/);
+  assert.match(show.prompt, /Julian wants these changes: Its still so long/);
+});

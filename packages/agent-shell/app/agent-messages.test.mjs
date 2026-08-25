@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { deliveryDecision, messageBanner, normalizeMessage } from "./agent-messages.mjs";
+import { deliveryDecision, messageBanner, noticeMessage, normalizeMessage } from "./agent-messages.mjs";
 
 test("the banner names the sender and its area", () => {
   assert.equal(
@@ -54,4 +54,17 @@ test("messages collapse whitespace and reject empties", () => {
   assert.equal(normalizeMessage("  two\n lines  "), "two lines");
   assert.throws(() => normalizeMessage("   "), /write the message/);
   assert.throws(() => normalizeMessage("x".repeat(4001)), /4000/);
+});
+
+test("a brain notice is clipped, never refused, however long its text is", () => {
+  // Julian answered a Request with 9341 characters pasted from a brain
+  // prompt. normalizeMessage threw, notifyBrain caught the throw, and the
+  // answer was never written to the inbox: no generation ever saw it.
+  const answer = `Julian wants these changes: ${"x".repeat(9000)}`;
+  const notice = noticeMessage(answer);
+  assert.ok(notice.length <= 4000, `clipped to ${notice.length} characters`);
+  assert.match(notice, /^Julian wants these changes: x+/);
+  assert.match(notice, /clipped from \d+ characters/);
+  assert.equal(noticeMessage("  two\n lines  "), "two lines");
+  assert.throws(() => noticeMessage("   "), /a notice needs text/);
 });

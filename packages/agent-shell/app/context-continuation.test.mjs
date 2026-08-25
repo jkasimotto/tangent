@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -83,9 +83,11 @@ test("worker context handover: the swap contract, its refusals, and the reminder
   const root = await mkdtemp(path.join(os.tmpdir(), "context-handover-"));
   const trees = path.join(root, "trees");
   const workspace = path.join(root, "workspace");
+  const stepDirectory = path.join(root, "step-directory");
   const areaDirectory = path.join(trees, "otto", "test");
   await mkdir(areaDirectory, { recursive: true });
   await mkdir(workspace, { recursive: true });
+  await mkdir(stepDirectory, { recursive: true });
   await writeFile(path.join(trees, "harnesses.md"), REGISTRY, "utf8");
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
   await writeFile(
@@ -155,7 +157,7 @@ test("worker context handover: the swap contract, its refusals, and the reminder
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       file: "otto/test/goal-pipeline-continue.md",
-      steps: [{ instruction: "Do the one step.", launch: { harness: "claude-otto" } }],
+      steps: [{ instruction: "Do the one step.", launch: { harness: "claude-otto" }, path: stepDirectory }],
     }),
   }).then((response) => response.json());
   const step1Session = started.session;
@@ -174,6 +176,10 @@ test("worker context handover: the swap contract, its refusals, and the reminder
   openedSessions.push(step1Continuation);
   assert.notEqual(step1Continuation, step1Session);
   assert.ok(await tmux(["has-session", "-t", `=${step1Continuation}`]).then(() => true).catch(() => false), "the fresh session exists");
+  // The fresh copy is the same step, so it opens in the step's own directory,
+  // never in the Area repository.
+  const continuationDirectory = await tmux(["display-message", "-p", "-t", `=${step1Continuation}:`, "#{pane_current_path}"]);
+  assert.equal(await realpath(continuationDirectory.trim()), await realpath(stepDirectory), "the continuation keeps the step's working directory");
 
   const record = await readPipeline(pipelinesRoot, "otto/test", "pipeline-continue");
   assert.equal(record.steps.length, 1, "the step count does not change");

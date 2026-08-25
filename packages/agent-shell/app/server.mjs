@@ -2575,7 +2575,10 @@ async function continueWorkerSession(sessionName, text) {
       messages.queue(sessionName, { from: "tangent", area: record.area, text: `Continuation recorded, but the fresh session could not start: the prompt never arrived. You still work this step.`, queuedAt: new Date().toISOString() });
     };
     const result = await spawnGoalSession(record.area, record.slug, {
-      phase: "execute", launch: true, command: step.command, label: step.label, extraSlugs,
+      // The fresh copy is the same step, so it keeps the step's own
+      // directory. Without it the replacement would open in the Area
+      // repository and quietly work the wrong tree.
+      phase: "execute", launch: true, command: step.command, label: step.label, path: step.path, extraSlugs,
       pipeline: { record, index: step.index, sessionName: next }, onPrimed,
     });
     if (result.status !== 200) {

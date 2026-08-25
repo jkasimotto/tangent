@@ -350,7 +350,7 @@ const terminalTransport = attachTerminalTransport(server, {
 });
 
 /** Stops only shell processes; durable tmux sessions remain untouched. */
-function shutdown(signal) {
+function shutdown(signal, exitCode = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.error(`[gateway] shutdown signal=${signal}`);
@@ -360,13 +360,14 @@ function shutdown(signal) {
   if (controller) controller.child.kill("SIGTERM");
   stateEvents.close();
   terminalTransport.close();
-  server.close(() => process.exit(0));
-  const force = setTimeout(() => process.exit(0), 2_000);
+  server.close(() => process.exit(exitCode));
+  const force = setTimeout(() => process.exit(exitCode), 2_000);
   force.unref();
 }
 
 process.once("SIGTERM", () => shutdown("SIGTERM"));
 process.once("SIGINT", () => shutdown("SIGINT"));
+process.once("SIGUSR2", () => shutdown("SIGUSR2", 75));
 
 server.on("error", async (error) => {
   console.error("[gateway] listener:", error?.code ?? error?.message ?? error);

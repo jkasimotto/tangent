@@ -41,8 +41,9 @@ Agent Shell has two local processes with different failure domains.
   It treats duplicate-read admission as backpressure, not server death, and
   reloads assets only when the gateway boot changes.
 - An explicit shell rebuild stops the gateway after a successful build.
-  Launchd starts a new gateway, and the new boot identity reloads browser
-  assets once. A controller recovery does not stop the gateway.
+  The gateway uses a named restart exit, so launchd starts a new gateway.
+  The new boot identity reloads browser assets once. A controller recovery
+  does not stop the gateway.
 - The native launcher validates the gateway health identity, probes again
   before every launch, and uses exponential backoff. A competing public-port
   process cannot cause a child restart loop.

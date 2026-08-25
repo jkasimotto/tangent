@@ -45,15 +45,18 @@ test("the package starts the single-owner gateway and keeps terminal transport o
 });
 
 test("an explicit rebuild replaces the asset-owning gateway", async () => {
-  const [gateway, controller, cli] = await Promise.all([
+  const [gateway, controller, worker, cli] = await Promise.all([
     readFile(path.join(here, "gateway.mjs"), "utf8"),
     readFile(path.join(here, "server.mjs"), "utf8"),
+    readFile(path.join(here, "rebuild-worker.mjs"), "utf8"),
     readFile(path.join(here, "..", "src", "cli", "commands", "shell.ts"), "utf8"),
   ]);
   assert.match(gateway, /AGENT_SHELL_GATEWAY_BOOT: GATEWAY_BOOT_ID/);
   assert.match(gateway, /AGENT_SHELL_GATEWAY_PID: String\(process\.pid\)/);
   assert.match(controller, /bootId: RUNTIME_BOOT_ID/);
   assert.match(controller, /serverPid: RUNTIME_SERVER_PID/);
+  assert.match(worker, /process\.kill\(Number\(serverPidText\), "SIGUSR2"\)/);
+  assert.match(gateway, /shutdown\("SIGUSR2", 75\)/);
   assert.match(cli, /runtime\?\.gateway\?\.boot \?\? sessions\.boot/);
 });
 

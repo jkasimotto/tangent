@@ -27,7 +27,7 @@ async function build() {
 try {
   await build();
   await phase("restarting", { buildFinishedAt: Date.now() });
-  process.kill(Number(serverPidText), "SIGTERM");
+  process.kill(Number(serverPidText), "SIGUSR2");
 } catch (error) {
   await phase("failed", { finishedAt: Date.now(), error: String(error?.message ?? error) }).catch(() => {});
   process.exitCode = 1;

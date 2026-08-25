@@ -512,8 +512,8 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 /* A caption keeps `display: table-caption`. Any other display value drops it
    out of the table box, and the browser then sizes it to one column. */
 .work-caption { padding: 0 4px 8px; color: #9fa7b0; font-size: 11px; font-weight: 760; letter-spacing: .1em; text-align: left; text-transform: uppercase; }
-.work-caption-count { margin-left: 12px; color: #646d78; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0; text-transform: none; }
-.work-keyboard-hint { float: right; color: #68717c; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em; text-transform: none; }
+.work-caption-count { margin-left: 12px; color: #7c8590; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0; text-transform: none; }
+.work-keyboard-hint { float: right; color: #7c8590; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em; text-transform: none; }
 .work-table thead th { box-sizing: border-box; height: 26px; padding: 0 10px; border-bottom: 1px solid #46505c; color: #8b949f; font-size: 10px; font-weight: 700; letter-spacing: .09em; text-align: left; text-transform: uppercase; }
 .work-col-select { width: 28px; }
 .work-head-select { padding-right: 0 !important; }
@@ -527,7 +527,7 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-group-head > * { vertical-align: middle; }
 .work-group-name button { padding: 0; border: 0; line-height: 1.1; background: transparent; color: #dfe3e8; cursor: pointer; font: inherit; font-size: 13px; font-weight: 720; letter-spacing: -.01em; }
 .work-group-name button:hover { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
-.work-group-count { margin-left: 10px; color: #646d78; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.work-group-count { margin-left: 10px; color: #7c8590; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .work-group-head .desk-state { margin-left: 12px; }
 .work-group-head .desk-selection-bar { display: inline-flex; margin-left: 14px; }
 .work-group-brain { float: right; padding: 0; border: 0; background: transparent; color: #9ebbe0; cursor: pointer; font-size: 11px; font-weight: 690; white-space: nowrap; }
@@ -558,15 +558,15 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-subgoal-toggle:hover { border-color: #68727e; color: #fff; }
 /* Provenance rides on the title line: the row keeps one line at wide width,
    and the title, not the path, is what an over-long cell truncates. */
-.work-row-path { flex: none; margin-left: 2px; color: #69737e; font-size: 10px; font-weight: 690; letter-spacing: .05em; text-transform: uppercase; }
+.work-row-path { flex: none; margin-left: 2px; color: #7c8590; font-size: 10px; font-weight: 690; letter-spacing: .05em; text-transform: uppercase; }
 .work-cell-facts { display: none; }
 .work-cell-state .desk-state { font-size: 11px; }
-.work-step { margin-left: 6px; color: #737d88; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 760; }
+.work-step { margin-left: 6px; color: #7c8590; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 760; }
 .work-readiness { display: block; color: #8b949f; font-size: 10px; font-weight: 690; letter-spacing: .03em; }
 .work-readiness.blocked, .work-readiness.broken, .work-readiness.error { color: #c9a55f; }
 .work-cell-time { white-space: nowrap; }
 .work-cell-time .desk-goal-bar { margin-left: 8px; vertical-align: middle; }
-.work-no-time { color: #4d555f; }
+.work-no-time { color: #7c8590; }
 .work-cell-action { text-align: right; }
 .work-cell-action .desk-action { white-space: nowrap; }
 .work-cell-action .desk-goal-actions { justify-content: flex-end; }

@@ -27,6 +27,7 @@ import { bindShellEvents } from "./shell-event-bindings.js";
 import { createTerminalController } from "./terminal-controller.js";
 import { createActionTelemetry } from "./action-telemetry.js";
 import { reconcileAreaFocus, writeAreaFocus } from "./area-focus-core.js";
+import { ASK_DISMISSALS_KEY, readDismissedAskIds } from "./ask-dismissal-core.js";
 import { renderPromptBestiary } from "./prompt-bestiary.js";
 
 const actionTelemetry = createActionTelemetry();
@@ -1226,6 +1227,14 @@ bindShellEvents({
     editComment, cancelCommentComposer, submitCommentComposer, removeComment, stepComment, saveVisibleIdea,
     notifyDocumentComments, refreshDocument, leaveReader, updateSelectionCommentButton, openReaderAgent,
   },
+});
+
+// localStorage is shared by Agent Shell tabs. Apply another tab's receipt
+// before the next server refresh so one dismissed event stays hidden everywhere.
+window.addEventListener("storage", (event) => {
+  if (event.key !== ASK_DISMISSALS_KEY) return;
+  state.dismissedAskIds = readDismissedAskIds(localStorage);
+  paint(true);
 });
 
 void (async () => {

@@ -31,7 +31,7 @@ const goal = {
 };
 
 /** Starts one shell around the stopped-pipeline screenshot case. */
-async function shellFixture({ storedDismissals = null } = {}) {
+async function shellFixture({ storedDismissals = null, request = null } = {}) {
   const html = await readFile(path.join(here, "public", "shell.html"), "utf8");
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
   const { window } = dom;
@@ -71,7 +71,13 @@ async function shellFixture({ storedDismissals = null } = {}) {
       posts.push({ path: pathname, body: JSON.parse(options.body || "{}") });
       return jsonResponse({ ok: true });
     }
-    if (pathname === "/api/sessions") return jsonResponse({ boot: "dismiss-boot", caffeinate: false, sessions: [], pipelines: [pipeline], brains: [] });
+    if (pathname === "/api/sessions") return jsonResponse({
+      boot: "dismiss-boot",
+      caffeinate: false,
+      sessions: [],
+      pipelines: [pipeline],
+      brains: request ? [{ area: goal.area, session: "tangent-brain-g1", generation: 1, live: true, requests: [request] }] : [],
+    });
     if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
     return jsonResponse(vault);
   };
@@ -123,4 +129,45 @@ test("a dismissal survives reload and a restarted attempt can ask again", async 
   await settle(reloaded.window);
   assert.equal(reloaded.window.forYouItems().length, 1, "a new stopped attempt has a new identity");
   assert.ok(reloaded.window.document.querySelector("[data-dismiss-ask]"));
+});
+
+test("a Request dismissal hides only that Request and does not answer it", async () => {
+  const request = {
+    id: "request-one",
+    kind: "decision",
+    subject: "Choose storage",
+    question: "Which storage must Tangent use?",
+    options: ["Local", "Server"],
+    status: "open",
+  };
+  const { window, posts } = await shellFixture({ request });
+  const requestDismiss = window.document.querySelector('[data-ask-id^="request:"] [data-dismiss-ask]');
+  assert.ok(requestDismiss);
+  requestDismiss.click();
+  assert.equal(window.document.querySelector('[data-ask-id^="request:"]'), null);
+  assert.equal(window.forYouItems().length, 1, "the stopped-step ask stays visible");
+  assert.deepEqual(posts, [], "dismissal does not answer or mutate the Request");
+});
+
+test("another tab's dismissal receipt updates this tab and preserves concurrent receipts", async () => {
+  const { window, posts } = await shellFixture();
+  const stoppedId = window.forYouItems()[0].id;
+  const otherId = "request:otto%2Ftangent:other";
+  window.localStorage.setItem(ASK_DISMISSALS_KEY, JSON.stringify({
+    schema: ASK_DISMISSALS_KEY,
+    ids: [stoppedId, otherId],
+  }));
+  window.dispatchEvent(new window.StorageEvent("storage", { key: ASK_DISMISSALS_KEY }));
+  assert.equal(window.forYouItems().length, 0, "the other tab's dismissal is applied immediately");
+
+  window.localStorage.setItem(ASK_DISMISSALS_KEY, JSON.stringify({ schema: ASK_DISMISSALS_KEY, ids: [otherId] }));
+  window.dispatchEvent(new window.StorageEvent("storage", { key: ASK_DISMISSALS_KEY }));
+  window.document.querySelector("[data-dismiss-ask]").click();
+  assert.deepEqual(JSON.parse(window.localStorage.getItem(ASK_DISMISSALS_KEY)).ids, [otherId, stoppedId].sort(), "a local dismissal merges the latest shared receipts");
+
+  const thirdId = "dialog:other-tab:3";
+  window.localStorage.setItem(ASK_DISMISSALS_KEY, JSON.stringify({ schema: ASK_DISMISSALS_KEY, ids: [otherId, stoppedId, thirdId] }));
+  click(window, "#toast .toast-action");
+  assert.deepEqual(JSON.parse(window.localStorage.getItem(ASK_DISMISSALS_KEY)).ids, [otherId, thirdId].sort(), "Undo removes only its receipt from the latest shared set");
+  assert.deepEqual(posts, []);
 });

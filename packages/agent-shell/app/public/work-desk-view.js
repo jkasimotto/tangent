@@ -6,7 +6,7 @@ import { activeBrainForArea } from "./brain-ownership.js";
 import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
 import { personMenu } from "./person-menu.js";
 import { isInAreaFocus, normalizeAreaFocus, reconcileAreaFocus, writeAreaFocus } from "./area-focus-core.js";
-import { writeDismissedAskIds } from "./ask-dismissal-core.js";
+import { readDismissedAskIds, writeDismissedAskIds } from "./ask-dismissal-core.js";
 
 /** Normalizes a roster label in the same way as the server projection. */
 export function normalizePersonLabel(value) {
@@ -1009,7 +1009,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   function dismissAsk(id) {
     const item = forYouItems().find((ask) => ask.id === id);
     if (!item) return;
-    const next = new Set(state.dismissedAskIds);
+    const next = readDismissedAskIds(localStorage);
     next.add(id);
     if (!writeDismissedAskIds(localStorage, next)) {
       showToast("The dismissal could not be saved.");
@@ -1019,7 +1019,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     paint(true);
     /** Restores only the dismissed attention event. */
     const undo = () => {
-      const restored = new Set(state.dismissedAskIds);
+      const restored = readDismissedAskIds(localStorage);
       restored.delete(id);
       if (!writeDismissedAskIds(localStorage, restored)) {
         showToast("Undo could not be saved.");

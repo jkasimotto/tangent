@@ -218,7 +218,11 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
    * toast. Returns the request fields and the label that was started.
    */
   async function launchFieldsForArea(area) {
-    const chosen = launchRequestFields();
+    // Only this Area's own worker picker may speak for this start. The picker
+    // state survives a close, so a choice made for another Area, or for the
+    // brain, would otherwise start this worker on a harness nobody named for it.
+    const owned = state.launch.area === area && (!state.launch.kind || state.launch.kind === "launch");
+    const chosen = owned ? launchRequestFields() : {};
     if (Object.keys(chosen).length) return { fields: chosen, label: launchSelection()?.label ?? "" };
     const options = await api(`/api/launch/options?area=${encodeURIComponent(area)}`).catch(() => null);
     const preset = options?.default && !options.default.error ? options.default : null;

@@ -1876,16 +1876,21 @@ async function sessionLaunch(session) {
 }
 
 /**
- * Primes a session sitting at its shell: the area's suggested launch command
+ * Primes a session sitting at its shell: the launch command the caller named,
  * typed but not submitted, and the goal prompt armed to follow whatever
  * harness the user starts. A pane that is already running something is left
  * alone — priming must never type over an agent mid-conversation.
  */
-async function primeGoalSession(session, area, phase = "execute", { launch = false, document = "", command = "", extraFiles = [], prompt = "", onTyped = null } = {}) {
+async function primeGoalSession(session, phase = "execute", { launch = false, document = "", command = "", extraFiles = [], prompt = "", onTyped = null } = {}) {
+  // The caller names the harness or nothing is typed. spawnGoalSession
+  // refuses a start with no command, and a pane that reached its shell
+  // between that check and this one must not get an Area default nobody
+  // asked for: not priming is visible, a wrong harness is not.
+  if (!command) return false;
   const { stdout } = await execFileAsync("tmux", ["display-message", "-p", "-t", "=" + session + ":", "#{pane_current_command}"]);
   if (!SHELL_CMDS.has(stdout.trim())) return false;
   await armSession(session, phase, launch, document, prompt, extraFiles, onTyped);
-  await typeInto(session, withDefaultModel(command || (await launchCatalog.commandForArea(area))), false);
+  await typeInto(session, withDefaultModel(command), false);
   if (launch) {
     await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "Enter"]);
     await sleep(250);
@@ -2019,7 +2024,7 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
       if (live.state === "working") return { status: 409, error: "the agent is still working; wait before you approve another assignment" };
       await typeInto(existing, await goalPrompt(area, o, ownExtras), true);
     } else {
-      primed = await primeGoalSession(existing, area, phase, { launch, document, command, extraFiles }).catch(() => false);
+      primed = await primeGoalSession(existing, phase, { launch, document, command, extraFiles }).catch(() => false);
     }
     const rebind = [o, ...ownExtras].filter((goal) => goal.status !== "active" || goal.session !== existing);
     if (rebind.length) {
@@ -2068,7 +2073,7 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
     // be wiped by the redraw.
     await sleep(700);
     try {
-      const primed = await primeGoalSession(phaseName, area, phase, { launch, document, command, extraFiles, prompt: stepPrompt, onTyped: onPrimed });
+      const primed = await primeGoalSession(phaseName, phase, { launch, document, command, extraFiles, prompt: stepPrompt, onTyped: onPrimed });
       if (!primed && onPrimed) onPrimed(false);
     } catch (err) {
       console.error("prime session:", err.message ?? err);

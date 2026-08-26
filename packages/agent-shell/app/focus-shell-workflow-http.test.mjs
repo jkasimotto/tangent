@@ -408,7 +408,8 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.deepEqual(options.harnesses[0].efforts, [{ id: "high", label: "High", args: "--effort high", command: "fake-agent --effort high" }]);
   assert.match(serverSource, /## Your step/);
   assert.match(serverSource, /## When you finish/);
-  assert.match(serverSource, /tangent goal handover/);
+  assert.match(serverSource, /tangent handover/);
+  assert.doesNotMatch(serverSource, /tangent goal handover/, "worker prompts use the one typed handover command");
   assert.match(serverSource, /design-<slug>\.md/);
   assert.match(serverSource, /rationaleDossierContract\(/);
   assert.match(serverSource, /name: "material Operation events"/, "material Operation delivery runs without a browser poll");
@@ -483,6 +484,21 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(snapshot.pipelines.length, 1);
   assert.equal(snapshot.pipelines[0].status, "running");
   assert.equal(snapshot.pipelines[0].steps[0].live, true);
+
+  const overlappingAdvance = await fetch(`${base}/api/pipelines/control`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      goal: pipelineGoal.file,
+      action: "advance",
+      step: 2,
+      caller: brainStart.session,
+      expectedRevision: startedPipeline.pipeline.revision,
+      idempotencyKey: "overlapping-advance",
+    }),
+  });
+  assert.equal(overlappingAdvance.status, 409, "one current assignment blocks a different pending assignment");
+  assert.match((await overlappingAdvance.json()).error, /assignment 1 is current/);
 
   const ownedElsewhere = await fetch(`${base}/api/goals/start`, {
     method: "POST",
@@ -766,6 +782,23 @@ test("the context-first shell is default and keeps the user's understanding with
   }).then((response) => response.json());
   assert.equal(correctedEventHandover.status, "reported", "the same worker can correct its untyped evidence");
   assert.equal(correctedEventHandover.pipeline.status, "complete");
+  const appendedReview = await fetch(`${base}/api/pipelines/append`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      goal: eventGoal.file,
+      caller: brainStart.session,
+      expectedRevision: correctedEventHandover.pipeline.revision,
+      idempotencyKey: "append-review-after-complete",
+      steps: [{ instruction: "Review the current Goal revision.", kind: "review", launch: { harness: "fake" } }],
+    }),
+  }).then((response) => response.json());
+  assert.equal(appendedReview.status, "queued", "a finished queue never starts an appended assignment itself");
+  assert.equal(appendedReview.pipeline.steps[0].status, "complete", "append does not revive the finished worker");
+  assert.equal(appendedReview.pipeline.steps[1].status, "pending");
+  assert.equal(appendedReview.pipeline.steps[1].kind, "review");
+  assert.equal(appendedReview.pipeline.steps[1].designatedReview, true);
+  assert.equal(appendedReview.pipeline.currentAssignmentId, null);
   // Handover from a session that is not a brain is refused; from the brain it
   // starts generation 2 on a new session and the record follows it.
   const notBrain = await fetch(`${base}/api/brains/handover`, {

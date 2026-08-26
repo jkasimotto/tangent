@@ -2399,6 +2399,10 @@ async function startPipelineStep(record, index, trace = null) {
   if (record.migrationProblem || record.status === "paused") return { status: 409, error: record.migrationProblem ?? "the Goal queue is paused" };
   const step = record.steps[index - 1];
   if (!step) return { status: 404, error: `no step ${index}` };
+  const current = record.steps.find((item) => ["running", "waiting"].includes(item.status));
+  if (current && current.id !== step.id) {
+    return { status: 409, error: `assignment ${current.index} is current; assignment ${index} cannot start` };
+  }
   if (step.status !== "pending") return { status: 409, error: `step ${index} is ${step.status}` };
   const resolved = await resolveStepLaunch(step);
   trace?.mark("step launch resolved");
@@ -2834,22 +2838,11 @@ async function controlPipelineUnlocked(goalFile, action, index, options = {}) {
   return { status: 400, error: `unknown action ${action}` };
 }
 
-/** The banner-less message that asks a finished step's agent to hand over again into appended steps. */
-function handoverAgainMessage(step, added) {
-  const first = added[0];
-  const list = added.length === 1
-    ? `step ${first.index} (${first.instruction})`
-    : `steps ${first.index} to ${added[added.length - 1].index}; step ${first.index} is: ${first.instruction}`;
-  return `Tangent: after you handed over, Julian added ${list} to this pipeline. Run \`tangent goal handover "<facts>"\` again from this session with your current facts (files with full paths, what is finished, what is unresolved, decisions Julian made) so the pipeline continues into step ${first.index}. Your earlier handover is kept; state only what changed since or what the next agent still needs.`;
-}
-
 /**
  * Appends steps to a Goal's pipeline without touching what already ran.
- * Mid-run, the new steps simply wait: the running step's handover flows into
- * them through nextPendingStep. On a finished pipeline the previously last
- * step is asked to hand over again when its session still runs an agent
- * (its status returns to running so the desk and the handover path treat it
- * as the current step); otherwise the first new step starts at once.
+ * New assignments always stay pending. The exact Area brain starts one after
+ * it reviews the updated queue, including when the earlier assignments had
+ * already finished.
  */
 async function appendPipelineSteps(goalFile, steps, options = {}) {
   return withGoalQueueMutation(goalFile, () => appendPipelineStepsUnlocked(goalFile, steps, options));
@@ -2874,7 +2867,6 @@ async function appendPipelineStepsUnlocked(goalFile, steps, options = {}) {
   const located = resolveStepPaths(steps, record.steps.length + 1);
   if (located.error) return { status: 400, error: located.error };
   steps = located.steps;
-  const finished = pipelineFinished(record);
   const last = record.steps[record.steps.length - 1];
   let added;
   try {
@@ -2887,23 +2879,8 @@ async function appendPipelineStepsUnlocked(goalFile, steps, options = {}) {
   const first = await resolveStepLaunch(added[0]);
   if (first.error) return { status: 409, error: `step ${added[0].index}: ${first.error}` };
   const warnings = await launchHarnessWarnings(record.area, added);
-  if (!finished) {
-    await writePipeline(PIPELINES_ROOT, record);
-    return { status: 200, state: "queued", after: currentStep(record)?.index ?? last.index, added: added.map((step) => step.index), pipeline: record, warnings };
-  }
-  const sessions = last.status === "complete" && last.session ? await listSessions() : [];
-  const live = sessions.find((session) => session.name === last.session && session.state !== "shell");
-  if (live) {
-    last.status = "running";
-    last.endedAt = null;
-    await writePipeline(PIPELINES_ROOT, record);
-    messages.queue(last.session, { from: "tangent", area: record.area, text: handoverAgainMessage(last, added), banner: false, queuedAt: new Date().toISOString() });
-    return { status: 200, state: "asked", after: last.index, session: last.session, added: added.map((step) => step.index), pipeline: record, warnings };
-  }
   await writePipeline(PIPELINES_ROOT, record);
-  const started = await startPipelineStep(record, added[0].index);
-  if (started.status !== 200) return started;
-  return { status: 200, state: "started", next: { index: added[0].index, session: started.session }, added: added.map((step) => step.index), pipeline: record, warnings };
+  return { status: 200, state: "queued", after: currentStep(record)?.index ?? last.index, added: added.map((step) => step.index), pipeline: record, warnings };
 }
 
 /** Edits one pending step; started steps are history. */

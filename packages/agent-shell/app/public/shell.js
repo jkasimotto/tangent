@@ -499,6 +499,7 @@ const documentReaderController = createDocumentReaderController({
 const {
   rememberDocumentPosition, restoreDocumentPosition, updateDocumentTrail, openDocument, navigateDocumentHistory,
   openDocumentPeek, retryDocumentPeek, navigateDocumentPeekHistory, closeDocumentPeek, promoteDocumentPeek, openPeekLink, openPeekHeading,
+  leaveQuickPath,
   openVaultLink, openDocumentHeading, bindDocumentReader, refreshDocument, commentComposerKey, readerBlockOf,
   readerSelection, updateSelectionCommentButton, hideSelectionCommentButton, readerSectionInView, documentTitleLine,
   openCommentComposer, setCommentScope, editComment, syncCommentDraft, cancelCommentComposer, noteInComposer,
@@ -1423,6 +1424,7 @@ bindShellEvents({
     editComment, cancelCommentComposer, submitCommentComposer, removeComment, stepComment, saveVisibleIdea,
     notifyDocumentComments, refreshDocument, leaveReader, updateSelectionCommentButton, openReaderAgent,
     closeDocumentPeek, promoteDocumentPeek, retryDocumentPeek, navigateDocumentPeekHistory, openPeekLink, openPeekHeading,
+    leaveQuickPath,
   },
 });
 

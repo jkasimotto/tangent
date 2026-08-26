@@ -335,3 +335,24 @@ test("Open full reader keeps the file and the reading position, and the layer is
   assert.equal(reader.scrollTop, 210, "the reading position came with it");
   assert.ok(window.document.querySelector("[data-comment-new]"), "the full reader owns the write controls");
 });
+
+test("the Area breadcrumb inside the quick layer opens that Area map and clears both layers", async () => {
+  const { window, work, design, terminals } = await bootShell();
+  await openSession(window, work.file);
+  const terminal = terminals.at(-1);
+  assert.ok(terminal, "the session layer mounted a terminal");
+
+  await peekDocumentViaGoTo(window, design.title);
+  const crumbs = [...window.document.querySelectorAll("#document-peek-layer .area-path [data-open-area]")];
+  assert.deepEqual(crumbs.map((button) => button.dataset.openArea), ["otto", "otto/tangent"], "the layer shows one route for each Area level");
+
+  crumbs.at(-1).dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+
+  // Section 5.3: an Area is explicit navigation, so it leaves the quick path
+  // and closes the session presentation below it.
+  assert.equal(window.document.querySelector("#document-peek-layer").hidden, true, "the quick layer closed");
+  assert.equal(window.document.querySelector("#session-layer").hidden, true, "the session presentation closed");
+  assert.equal(window.document.querySelector("#screen").hasAttribute("inert"), false, "the screen accepts input again");
+  assert.match(window.document.querySelector(".area-contents-heading").textContent, /tangent/i, "the selected Area map opened");
+});

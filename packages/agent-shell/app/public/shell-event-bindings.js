@@ -39,6 +39,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     editComment, cancelCommentComposer, submitCommentComposer, removeComment, stepComment, saveVisibleIdea,
     notifyDocumentComments, refreshDocument, leaveReader, updateSelectionCommentButton, openReaderAgent,
     closeDocumentPeek, promoteDocumentPeek, retryDocumentPeek, navigateDocumentPeekHistory, openPeekLink, openPeekHeading,
+    leaveQuickPath,
   } = documents;
   const awakeButton = document.querySelector("#awake-button");
 
@@ -143,6 +144,22 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   }
 
   /**
+   * Opens one Area map from a breadcrumb or an Area row. The quick Document
+   * layer and the reader share this one route, so an Area always lands on the
+   * same screen (design-quick-returnable-document-search 5.3).
+   */
+  function openAreaRoute(area) {
+    if (state.view === "document" && state.document?.file) state.mapSelectFile = state.document.file;
+    state.areaSelection = area;
+    state.areaHistory = false;
+    localStorage.setItem("agent-shell.last-area", state.areaSelection);
+    state.view = "areas";
+    state.whatHappened = null;
+    revealArea(state.areaSelection);
+    return paint(true);
+  }
+
+  /**
    * Routes one click inside the quick Document layer. It runs before every
    * screen rule, because the layer holds the same link and heading markup as
    * the reader below it (design-quick-returnable-document-search 5.3).
@@ -155,6 +172,12 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (target.closest?.("[data-retry-document-peek]")) return retryDocumentPeek();
     const history = target.closest?.("[data-document-peek-history]");
     if (history) return navigateDocumentPeekHistory(history.dataset.documentPeekHistory);
+    const openArea = target.closest?.("[data-open-area]");
+    if (openArea) {
+      const area = openArea.dataset.openArea;
+      leaveQuickPath();
+      return openAreaRoute(area);
+    }
     const vaultLink = target.closest?.("[data-open-vault-link]");
     if (vaultLink) return openPeekLink(vaultLink.dataset.openVaultLink);
     const heading = target.closest?.("[data-document-heading]");
@@ -331,16 +354,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       return paint(true);
     }
     const openArea = target.closest("[data-open-area]");
-    if (openArea) {
-      if (state.view === "document" && state.document?.file) state.mapSelectFile = state.document.file;
-      state.areaSelection = openArea.dataset.openArea;
-      state.areaHistory = false;
-      localStorage.setItem("agent-shell.last-area", state.areaSelection);
-      state.view = "areas";
-      state.whatHappened = null;
-      revealArea(state.areaSelection);
-      return paint(true);
-    }
+    if (openArea) return openAreaRoute(openArea.dataset.openArea);
     const openHistory = target.closest("[data-open-history]");
     if (openHistory) {
       state.areaSelection = openHistory.dataset.openHistory;

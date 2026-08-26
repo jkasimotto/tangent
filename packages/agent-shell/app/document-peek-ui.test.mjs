@@ -356,3 +356,57 @@ test("the Area breadcrumb inside the quick layer opens that Area map and clears 
   assert.equal(window.document.querySelector("#screen").hasAttribute("inert"), false, "the screen accepts input again");
   assert.match(window.document.querySelector(".area-contents-heading").textContent, /tangent/i, "the selected Area map opened");
 });
+
+test("Go to above a quick Document holds focus and assistive input on the finder alone", async () => {
+  const { window, work, design, terminals } = await bootShell();
+  await openSession(window, work.file);
+  const terminal = terminals.at(-1);
+  assert.ok(terminal, "the session layer mounted a terminal");
+
+  await peekDocumentViaGoTo(window, design.title);
+  const layer = window.document.querySelector("#document-peek-layer");
+  assert.equal(layer.hidden, false, "the quick Document is open");
+
+  // Section 5.1: the finder opens above the Document, so every surface below
+  // it, the Document included, is inert and out of the accessibility tree.
+  key(window, { key: "k", metaKey: true });
+  await settle(window);
+  const finder = window.document.querySelector("#go-to-layer");
+  assert.equal(finder.hidden, false, "the finder opened above the Document");
+  assert.equal(layer.hidden, false, "the Document stayed mounted below it");
+  assert.ok(layer.hasAttribute("inert"), "the quick Document is inert under the finder");
+  assert.ok(window.document.querySelector("#screen").hasAttribute("inert"), "the screen is inert");
+  assert.ok(window.document.querySelector("#session-layer").hasAttribute("inert"), "the session is inert");
+  assert.equal(finder.hasAttribute("inert"), false, "the finder itself takes input");
+  const exposedDialogs = [...window.document.querySelectorAll('[role="dialog"]')]
+    .filter((dialog) => !dialog.closest("[inert]") && !dialog.closest("[hidden]"));
+  assert.deepEqual(exposedDialogs.map((dialog) => dialog.className), ["go-to"], "only the finder is exposed as a dialog");
+
+  // Tab and Shift-Tab cannot leave the finder for the Document behind it.
+  const input = window.document.querySelector("#go-to-input");
+  input.focus();
+  const back = new window.KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true });
+  input.dispatchEvent(back);
+  assert.equal(back.defaultPrevented, true, "Shift-Tab on the first control was answered by the finder");
+  assert.ok(finder.contains(window.document.activeElement), "Shift-Tab stayed inside the finder");
+  const forward = new window.KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+  window.document.activeElement.dispatchEvent(forward);
+  assert.equal(forward.defaultPrevented, true, "Tab on the last control wrapped");
+  assert.equal(window.document.activeElement, input, "the wrap returned to the finder's own input");
+
+  // Closing the finder gives the Document back its input and its focus.
+  input.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  await settle(window);
+  assert.equal(finder.hidden, true, "the finder closed");
+  assert.equal(layer.hidden, false, "the Document is still the top layer");
+  assert.equal(layer.hasAttribute("inert"), false, "the Document takes input again");
+  assert.ok(layer.contains(window.document.activeElement), "focus returned into the Document");
+  assert.ok(window.document.querySelector("#screen").hasAttribute("inert"), "the screen stays inert below the Document");
+
+  // Escape then closes that Document, and the same session comes back.
+  key(window, { key: "Escape" });
+  await settle(window);
+  assert.equal(layer.hidden, true, "one Escape closed the Document");
+  assert.equal(window.document.querySelector("#session-layer").hidden, false, "the same session came back");
+  assert.equal(terminals.at(-1), terminal, "no terminal was replaced");
+});

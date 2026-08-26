@@ -513,7 +513,7 @@ const shellCoordinator = createShellCoordinator({
     screen, backButton, shellMenu, goToLayer, goToInput, goToList, modalLayer, modalKicker, modalTitle, modalCopy,
     modalField, modalActions, buildGoToRows, goToCore, rememberScreenScroll, restoreReturnPoint, captureReturnPoint,
     restoreReturnScroll, disposeTerminal, mountTerminal, updateStatusPill, openSessionLayer: forward(() => openSessionLayer),
-    closeSessionLayer: forward(() => closeSessionLayer),
+    closeSessionLayer: forward(() => closeSessionLayer), documentPeekLayer, syncLayerInertness,
   },
   work: {
     areaLabel, humanName, agentName, goalByFile, currentGoal, sessionForGoal, describeWorkSession,
@@ -887,6 +887,19 @@ function renderSessionLayer() {
 }
 
 /**
+ * Marks every layer below the top one inert, so only the visible dialog takes
+ * pointer, keyboard, and assistive input. The finder opens above the quick
+ * Document, so that Document is itself a lower layer while `Go to` is open
+ * (design-quick-returnable-document-search 5.1).
+ */
+function syncLayerInertness() {
+  const covered = Boolean(state.documentPeek) || Boolean(state.goTo);
+  screen.toggleAttribute("inert", covered);
+  sessionLayer.toggleAttribute("inert", covered);
+  documentPeekLayer.toggleAttribute("inert", Boolean(state.goTo));
+}
+
+/**
  * Draws the quick Document layer above the current screen and session. It
  * never touches `#screen`, and it makes the surfaces below it inert, so only
  * the top layer takes pointer and assistive input
@@ -896,8 +909,7 @@ function renderDocumentPeekLayer() {
   const peek = state.documentPeek;
   const open = Boolean(peek);
   documentPeekLayer.hidden = !open;
-  screen.toggleAttribute("inert", open);
-  sessionLayer.toggleAttribute("inert", open);
+  syncLayerInertness();
   if (!open) {
     documentPeekLayer.replaceChildren();
     return;

@@ -1164,26 +1164,38 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (event.target === event.currentTarget || event.target.closest?.("[data-close-session-layer]")) closeSessionLayer();
   });
 
+  /**
+   * Keeps Tab inside one open layer. The surfaces below a dialog are marked
+   * inert, but the trap must not depend on that: focus must never move behind
+   * the visible top layer (design-quick-returnable-document-search 5.1).
+   */
+  function trapTabInside(layer, stopSelector, isTop) {
+    layer.addEventListener("keydown", (event) => {
+      if (event.key !== "Tab" || !isTop()) return;
+      const stops = [...layer.querySelectorAll(stopSelector)];
+      if (!stops.length) return;
+      const first = stops[0];
+      const last = stops.at(-1);
+      const active = document.activeElement;
+      if (event.shiftKey && (active === first || !layer.contains(active))) {
+        event.preventDefault();
+        last.focus();
+        return;
+      }
+      if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    });
+  }
+
   // Tab stays inside the quick Document layer while it is the top surface.
-  // The screen and the session layer are marked inert, but the trap must not
-  // depend on that (design-quick-returnable-document-search 5.1).
-  documentPeekLayer.addEventListener("keydown", (event) => {
-    if (event.key !== "Tab" || !state.documentPeek) return;
-    const stops = [...documentPeekLayer.querySelectorAll('button:not([disabled]), a[href], [tabindex="-1"].document-peek-surface')];
-    if (!stops.length) return;
-    const first = stops[0];
-    const last = stops.at(-1);
-    const active = document.activeElement;
-    if (event.shiftKey && (active === first || !documentPeekLayer.contains(active))) {
-      event.preventDefault();
-      last.focus();
-      return;
-    }
-    if (!event.shiftKey && active === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  });
+  trapTabInside(documentPeekLayer, 'button:not([disabled]), a[href], [tabindex="-1"].document-peek-surface', () => Boolean(state.documentPeek) && !state.goTo);
+
+  // The finder is the top layer whenever it is open, including above a quick
+  // Document. Tab and Shift-Tab stay on its own controls, so no focus reaches
+  // the Document or the screen behind it.
+  trapTabInside(goToLayer, 'input, select, button:not([disabled]), [data-go-to-row][tabindex="0"]', () => Boolean(state.goTo));
 
   document.addEventListener("keydown", (event) => {
     // The layer order owns the key order. ⌘K opens the finder from any layer,

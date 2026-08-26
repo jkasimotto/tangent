@@ -9,6 +9,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     screen, backButton, shellMenu, goToLayer, goToInput, goToList, modalLayer, modalKicker, modalTitle, modalCopy,
     modalField, modalActions, buildGoToRows, goToCore, rememberScreenScroll, restoreReturnPoint, captureReturnPoint,
     restoreReturnScroll, disposeTerminal, mountTerminal, updateStatusPill, openSessionLayer, closeSessionLayer,
+    documentPeekLayer, syncLayerInertness,
   } = chrome;
   const {
     areaLabel, humanName, agentName, goalByFile, currentGoal, sessionForGoal, describeWorkSession,
@@ -70,19 +71,36 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     document.querySelector("#go-to-view").textContent = "Graph";
     document.querySelector("#go-to-view").setAttribute("aria-pressed", "false");
     goToLayer.hidden = false;
+    syncLayerInertness();
     renderGoToList();
     goToInput.focus();
   }
 
-  /** Closes the finder and gives the keyboard back to the screen underneath. */
+  /**
+   * The control that takes focus when the finder closes. Above a quick
+   * Document that control is always inside that Document: the surfaces below
+   * it stay inert, so the origin the finder captured there can no longer hold
+   * focus (design-quick-returnable-document-search 5.4).
+   */
+  function goToReturnTarget(origin) {
+    const usable = Boolean(origin) && origin !== document.body && origin.isConnected;
+    if (!state.documentPeek) return usable ? origin : null;
+    if (usable && documentPeekLayer.contains(origin)) return origin;
+    return documentPeekLayer.querySelector(".document-peek-surface");
+  }
+
+  /** Closes the finder and gives the keyboard back to the layer underneath. */
   function closeGoTo() {
     if (!state.goTo) return;
     const focus = state.goTo.returnFocus;
     state.goTo = null;
     goToLayer.hidden = true;
     goToList.innerHTML = "";
-    if (focus && focus !== document.body && focus.isConnected) {
-      try { focus.focus(); } catch {}
+    // The layer below is no longer inert before it is asked to take focus.
+    syncLayerInertness();
+    const target = goToReturnTarget(focus);
+    if (target) {
+      try { target.focus(); } catch {}
     }
   }
 

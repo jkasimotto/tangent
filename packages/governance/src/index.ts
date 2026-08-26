@@ -129,6 +129,34 @@ async function lintAgentShellWorkflowContracts(ctx: LintContext): Promise<Govern
     { pattern: /\b(?:newContinuationRecord|writeContinuation|soloExecution)\b/, message: "writes the retired solo execution controller." },
     { pattern: /row\.kind\s*===\s*["']test["'][\s\S]{0,500}cascadeGoalDone/, message: "restores legacy Markdown Test closure." },
   ];
+  // The calm-Work contract is a removal, so it needs a lint of its own: the
+  // surfaces below are what the design took off Work, and each one grew back
+  // easily because its builder still exists for the two-release audit window.
+  const workTargets = [
+    "packages/agent-shell/app/public/work-desk-view.js",
+    "packages/agent-shell/app/public/shell.js",
+    "packages/agent-shell/app/public/shell-event-bindings.js",
+  ];
+  const workRules = [
+    { pattern: /attention-queue|>For you</, message: "restores the For you attention strip on Work." },
+    { pattern: /setAppBadge|clearAppBadge|data-enable-dock-badge/, message: "restores the agent-count Dock badge." },
+    { pattern: /askFrom(?:StoppedStep|DialogSession|WaitingOn)/, message: "restores an ask inferred from machine state." },
+    { pattern: /from "\.\/ask-core\.js"/, message: "re-imports the retired For-you ask builder." },
+  ];
+  for (const rel of workTargets) {
+    const file = path.join(ctx.root, rel);
+    if (!await pathExists(file)) continue;
+    const text = await readFile(file, "utf8");
+    for (const rule of workRules) {
+      if (!rule.pattern.test(text)) continue;
+      findings.push({
+        rule: "agent-shell/calm-work-contract",
+        severity: "error",
+        message: `${rel} ${rule.message}`,
+        fix: ["Keep Questions with their Area brain: a quiet count on the Area header and the deliberate review behind r."],
+      });
+    }
+  }
   for (const rel of targets) {
     const file = path.join(ctx.root, rel);
     if (!await pathExists(file)) continue;

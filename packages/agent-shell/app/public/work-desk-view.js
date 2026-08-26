@@ -1,11 +1,9 @@
 import areaMapCore from "./area-map-core.js";
 import goalCardCore from "./goal-card-core.js";
 import areaWorkCore from "./area-work-core.js";
-import askCore from "./ask-core.js";
 import goToCore from "./go-to-core.js";
 import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
 import { isInAreaFocus, normalizeAreaFocus, reconcileAreaFocus, writeAreaFocus } from "./area-focus-core.js";
-import { readDismissedAskIds, writeDismissedAskIds } from "./ask-dismissal-core.js";
 
 /** Creates the work desk from shell, launch, Area, and Program capabilities. */
 export function createWorkDeskView({ shell, launch, areaModel, programs, chrome }) {
@@ -707,14 +705,63 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     });
   }
 
+  /**
+   * The open Questions of one Area and its child Areas. Only a brain writing
+   * an explicit Request makes one. A waiting worker, a stopped step, and a
+   * finished Goal make none: Tangent does not infer an ask from machine state.
+   */
+  function areaQuestions(path) {
+    return (state.brains ?? [])
+      .filter((brain) => brain.area === path || brain.area.startsWith(`${path}/`))
+      .flatMap((brain) => (brain.requests ?? []).filter((request) => request.status === "open").map((request) => ({ area: brain.area, brain, request })));
+  }
+
+  /**
+   * The blockers of one Area, owner first. The design orders them by who can
+   * move them: Julian's own Questions, then a dependency or an outside party,
+   * then the brain's own recovery. A folded Area shows the first one, which is
+   * the next fact that can change what Julian does.
+   */
+  function areaBlockers(path, trees, facts) {
+    const goals = trees.flatMap((tree) => tree.goals).filter((goal) => !["done", "dropped", "deferred"].includes(goal.status));
+    const questions = areaQuestions(path).map((item) => ({ owner: "You", cause: item.request.question || item.request.subject, rank: 0 }));
+    const dependencies = goals
+      .map((goal) => ({ goal, fact: facts.get(goal.file) }))
+      .filter((item) => ["blocked", "broken", "error"].includes(item.fact?.kind))
+      .map((item) => ({ owner: "Dependency", cause: `${item.goal.title}: ${readinessLabel(item.fact).toLowerCase()}`, rank: 1 }));
+    const brain = brainForAreaCard(path);
+    const recovery = brain?.health?.status === "failed" || brain?.health?.status === "recovering"
+      ? [{ owner: `${humanName(path.split("/").pop())} brain`, cause: brain.health.problem || "recovering", rank: 2 }]
+      : [];
+    return [...questions, ...dependencies, ...recovery].sort((left, right) => left.rank - right.rank);
+  }
+
+  /**
+   * The one summary line of an Area group: how much work is open, how much is
+   * moving, what is blocked, and how many Questions its brains asked. It counts
+   * work and explicit asks. It never counts agents, waits, or handovers, which
+   * are the brain's business and turn agent volume into a demand on Julian.
+   */
+  function deskAreaSummary(path, trees, descriptions, facts) {
+    const goals = trees.flatMap((tree) => tree.goals).filter((goal) => !["done", "dropped", "deferred"].includes(goal.status));
+    const sessions = [...goals.map(sessionForGoal).filter(Boolean), ...descriptions];
+    const moving = sessions.filter((session) => session.state === "working").length;
+    const blockers = areaBlockers(path, trees, facts);
+    const questions = areaQuestions(path).length;
+    const parts = [`${goals.length} open`];
+    if (moving) parts.push(`${moving} moving`);
+    if (blockers.length) parts.push(`${blockers.length} ${blockers.length === 1 ? "blocker" : "blockers"}`);
+    if (questions) parts.push(`${questions} ${questions === 1 ? "question" : "questions"}`);
+    return { text: parts.join(" · "), questions, blockers, moving };
+  }
+
   /** Returns one compact, explicit state for an Area on the Work desk. */
   function deskAreaState(path, trees, descriptions) {
     const goals = trees.flatMap((tree) => tree.goals).filter((goal) => !["done", "dropped", "deferred"].includes(goal.status));
     const sessions = [...goals.map(sessionForGoal).filter(Boolean), ...descriptions];
-    // One list, one number: the Area pill counts the same asks the card shows.
-    const waiting = forYouItems().filter((ask) => ask.area === path || ask.area.startsWith(`${path}/`)).length;
+    const waiting = areaQuestions(path).length;
     const working = sessions.filter((session) => session.state === "working").length;
-    if (waiting) return { kind: "waiting", label: `${waiting} ${waiting === 1 ? "item needs" : "items need"} you` };
+    if (waiting) return { kind: "waiting", label: `${waiting} ${waiting === 1 ? "question" : "questions"}` };
     if (working) return { kind: "working", label: `${working} working` };
     // A live brain outranks the Goal count. A brain that waits while its
     // agents work says nothing new, so ranks 1 and 2 stay in front; a brain
@@ -827,178 +874,6 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     return !sessionForGoal(goal);
   }
 
-  /**
-   * What Tangent itself may ask for an Area with no brain of its own: a
-   * pipeline step that stopped, a session sitting at a dialog, and a handover
-   * that names Julian. Brains are the primary path, so this stays the minimal
-   * fallback and grows nothing (design-the-for-you-row-shows-only-direct-asks,
-   * Julian's answer 3). Idle, waiting, draft, and shell sessions reach no
-   * builder at all, so machine state on its own can never make a row.
-   * Describe-work sessions ask even under a brain: they answer to Julian.
-   */
-  function fallbackAsks() {
-    const ask = askCore;
-    const goalAsks = allGoals().flatMap((goal) => {
-      if (["done", "dropped", "deferred"].includes(goal.status)) return [];
-      if (coveredByBrainRecord(goal.area)) return [];
-      const pipeline = pipelineForGoal(goal);
-      const step = pipeline ? currentPipelineStep(pipeline) : null;
-      const stoppedStep = step && (step.status === "stopped" || (step.status === "running" && !step.live)) ? step : null;
-      if (stoppedStep) return [ask.askFromStoppedStep(goal, stoppedStep)];
-      const session = sessionForGoal(goal);
-      if (session) {
-        const action = { kind: "open-run", label: `Open ${agentName(session)}`, arg: { file: goal.file } };
-        return [ask.askFromDialogSession(goal, session, { action })];
-      }
-      return [ask.askFromWaitingOn(goal, { finished: goalWorkFinished(goal) })];
-    });
-    const definitionAsks = describeWorkSessions().map((session) => ask.askFromDialogSession(
-      null,
-      session,
-      { action: { kind: "select-definition", label: "Open", arg: { session: session.name } } }
-    ));
-    return [...goalAsks, ...definitionAsks]
-      .filter(Boolean)
-      .filter((item) => !state.dismissedAskIds.has(item.id))
-      .sort((left, right) => left.area.localeCompare(right.area) || left.subject.localeCompare(right.subject));
-  }
-
-  let dockBadgeCount = null;
-
-  /** Keeps the installed Safari web app's Dock badge equal to the For you count. */
-  async function syncDockBadge() {
-    const count = forYouItems().length;
-    if (count === dockBadgeCount) return;
-    const nativeBridge = window.__agentShellNativeDockBadge === true;
-    if (!nativeBridge && (typeof Notification === "undefined" || Notification.permission !== "granted")) return;
-    try {
-      if (count > 0) {
-        if (typeof navigator.setAppBadge !== "function") return;
-        await navigator.setAppBadge(count);
-      } else if (typeof navigator.clearAppBadge === "function") {
-        await navigator.clearAppBadge();
-      } else if (typeof navigator.setAppBadge === "function") {
-        await navigator.setAppBadge(0);
-      } else {
-        return;
-      }
-      dockBadgeCount = count;
-    } catch {
-      // Badge support and permission are browser-owned; retry on the next refresh.
-    }
-  }
-
-  /** Requests the notification permission WebKit requires before it displays app-icon badges. */
-  async function enableDockBadge() {
-    if (window.__agentShellNativeDockBadge === true) {
-      dockBadgeCount = null;
-      await syncDockBadge();
-      return;
-    }
-    if (typeof Notification === "undefined" || typeof Notification.requestPermission !== "function") {
-      return showToast("This browser cannot enable Dock badges for Agent Shell.");
-    }
-    const permission = Notification.permission === "granted" ? "granted" : await Notification.requestPermission();
-    if (permission !== "granted") {
-      return showToast("Allow Agent Shell notifications in System Settings to show its Dock badge.");
-    }
-    dockBadgeCount = null;
-    await syncDockBadge();
-    paint(true);
-    showToast("The Dock badge now follows For you. No notification banners are sent.");
-  }
-
-  /**
-   * The brain-written asks, grouped by Area in brain record order. One group:
-   * { area, brain, stopped, asks }. Requests belong to the logical exact-Area
-   * brain. Deactivation ends its authority immediately; its durable record
-   * remains available for a later Resume from the Area card.
-   */
-  function askGroups() {
-    const ask = askCore;
-    return (state.brains ?? [])
-      .map((brain) => {
-        const requests = (brain.requests ?? []).map((request) => ask.askFromRequest(brain, request));
-        const asks = requests.filter(Boolean).filter((item) => !state.dismissedAskIds.has(item.id));
-        return { area: brain.area, brain, stopped: !brain.live, asks };
-      })
-      .filter((group) => group.asks.length);
-  }
-
-  /** Every ask Tangent shows Julian: what the brains wrote, then the fallback. One list, one number. */
-  function forYouItems() {
-    return [...askGroups().flatMap((group) => group.asks), ...fallbackAsks()];
-  }
-
-  /**
-   * The brain-written For-you rows that belong on one Area's own panel: its
-   * own brain's asks, and any brain's asks in a sub-Area. Empty when the Area
-   * has no brain of its own, so a plain Area panel stays as it is today
-   * (design-what-needs-julian-under-brains, goal-decisions-show-on-the-area-
-   * view-not-just-a-count).
-   */
-  function areaForYouGroups(areaPath) {
-    if (!coveredByBrainRecord(areaPath)) return [];
-    const core = areaMapCore;
-    return askGroups().filter((group) => core.isInside(group.area, areaPath));
-  }
-
-  /** The verbs that open something; the first one a row carries is its main button. */
-  const ASK_PRIMARY_ACTIONS = ["open-request", "open-document", "open-brain", "open-run", "reveal-goal", "select-definition", "answer"];
-
-  /** Carries one action's verb and its argument to the click delegation. */
-  function askActionAttributes(ask, action) {
-    const arg = action.arg ?? {};
-    if (action.kind === "open-request") return `data-open-request-area="${escapeHtml(arg.area ?? ask.area)}" data-open-request-id="${escapeHtml(arg.id ?? "")}"`;
-    if (action.kind === "open-document") return `data-open-document="${escapeHtml(arg.file ?? "")}"`;
-    if (action.kind === "open-brain") return `data-open-brain="${escapeHtml(arg.session ?? "")}"`;
-    if (action.kind === "open-run") return `data-open-goal-run="${escapeHtml(arg.file ?? "")}"`;
-    if (action.kind === "reveal-goal") return `data-reveal-goal="${escapeHtml(arg.file ?? "")}"`;
-    if (action.kind === "select-definition") return `data-select-work-definition="${escapeHtml(arg.session ?? "")}"`;
-    if (action.kind === "answer" || action.kind === "reply") {
-      return `data-reply-area="${escapeHtml(arg.area ?? ask.area)}" data-reply-session="${escapeHtml(arg.session ?? "")}" data-reply-subject="${escapeHtml(arg.subject ?? ask.subject)}"`;
-    }
-    if (action.kind === "request-answer") return `data-verdict-area="${escapeHtml(arg.area ?? ask.area)}" data-verdict-line="request:${escapeHtml(arg.id ?? "")}" data-verdict="${escapeHtml(arg.answer ?? "")}" data-effect-revision="${escapeHtml(arg.effectRevision ?? "")}"`;
-    return `data-verdict-area="${escapeHtml(arg.area ?? ask.area)}" data-verdict-line="${escapeHtml(arg.line ?? "")}" data-verdict="${escapeHtml(action.kind)}"`;
-  }
-
-  /** Hides one exact attention event and offers a local Undo. */
-  async function dismissAsk(id) {
-    const item = forYouItems().find((ask) => ask.id === id);
-    if (!item) return;
-    if (item.source.startsWith("request:")) {
-      const action = item.actions.find((candidate) => candidate.kind === "open-request");
-      try {
-        await post("/api/brains/requests/dismiss", { area: item.area, id: action?.arg?.id ?? "" });
-        showToast("Dismissed. The brain was told.");
-        await refresh();
-      } catch (error) {
-        showToast(error.message);
-      }
-      return;
-    }
-    const next = readDismissedAskIds(localStorage);
-    next.add(id);
-    if (!writeDismissedAskIds(localStorage, next)) {
-      showToast("The dismissal could not be saved.");
-      return;
-    }
-    state.dismissedAskIds = next;
-    paint(true);
-    /** Restores only the dismissed attention event. */
-    const undo = () => {
-      const restored = readDismissedAskIds(localStorage);
-      restored.delete(id);
-      if (!writeDismissedAskIds(localStorage, restored)) {
-        showToast("Undo could not be saved.");
-        return;
-      }
-      state.dismissedAskIds = restored;
-      paint(true);
-    };
-    showToast("Dismissed from For you.", { label: "Undo", run: undo });
-  }
-
   /** Opens the complete Request away from its compact index row. */
   function openRequest(area, id) {
     const request = (state.brains ?? []).find((brain) => brain.area === area)?.requests?.find((item) => item.id === id);
@@ -1007,7 +882,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const effectState = operation?.status === "failed" ? `Effect problem\n${operation.problem}`
       : operation?.status && operation.status !== "idle" ? `Effect state\n${operation.status}` : "";
     const anchor = request.conversationAnchor
-      ? `Native conversation\n${request.conversationAnchor.session} · generation ${request.conversationAnchor.generation}`
+      ? `Native conversation\n${areaLabel(area)} brain`
       : `Native conversation\n${area} brain`;
     const context = request.precedingContext ? `Preceding context\n${request.precedingContext}` : "";
     const effectRevision = request.effectRevision ? `Exact effect revision\n${request.effectRevision}` : "";
@@ -1068,6 +943,45 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     });
   }
 
+  /**
+   * The contextual commands of the row Julian is on, as one list he can read.
+   * Every entry is a key path he already has, so the palette teaches the keys
+   * instead of becoming a second way to do the same thing.
+   */
+  function openWorkCommands(area) {
+    const commands = [
+      { value: "brain", label: `b · Open the ${area ? areaLabel(area) : "Area"} brain` },
+      { value: "questions", label: "r · Review the open questions" },
+      { value: "capture", label: "n · Capture a Journal note" },
+      { value: "fold", label: "z · Fold or expand this Area" },
+      { value: "focus", label: "f · Change Area Focus" },
+      { value: "complete", label: "x · Complete the selected Goal" },
+    ];
+    /** Runs the chosen command against the Area the cursor is on. */
+    const runCommand = async () => {
+      const choice = document.querySelector("[data-modal-select]")?.value || "";
+      if (choice === "brain") return openOrStartBrain(area);
+      if (choice === "questions") return openQuestionsReview(area);
+      if (choice === "capture") return openAreaCapture(area);
+      if (choice === "fold") return toggleWorkArea(area);
+      if (choice === "focus") return openAreaFocusPicker();
+      if (choice === "complete") {
+        const goal = currentGoal();
+        if (!goal) throw new Error("Choose a Goal row first.");
+        return showToast("Press x on the Goal row to complete it.");
+      }
+      return undefined;
+    };
+    openModal({
+      kicker: "Commands",
+      title: area ? areaLabel(area) : "Work",
+      copy: "Every command here has a key. The key works without this list.",
+      field: { kind: "select", label: "Command", options: commands },
+      confirmLabel: "Run",
+      onConfirm: runCommand,
+    });
+  }
+
   /** Opens one journal-first note composer for the selected Work Area. */
   function openAreaCapture(area) {
     if (!area) return showToast("Choose an Area row first.");
@@ -1083,90 +997,6 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   }
 
   /** The fallback asks grouped by Area, so every row says which Area it is from. */
-  function fallbackAskGroups(asks) {
-    const byArea = new Map();
-    for (const ask of asks) byArea.set(ask.area, [...(byArea.get(ask.area) ?? []), ask]);
-    return [...byArea].map(([area, items]) => ({ area, asks: items }));
-  }
-
-  /** The word for what one direct ask is: its kind, not its machine source. */
-  function askKindLabel(ask) {
-    const source = String(ask.source ?? "");
-    if (source.startsWith("request:")) {
-      const kind = source.slice("request:".length);
-      return kind === "decision" ? "Decide" : kind === "test" ? "Test" : kind === "approval" ? "Approve" : "Plan";
-    }
-    if (source === "plan") return "Plan";
-    if (source === "brain-dialog") return "Brain";
-    if (source === "stopped-step") return "Stopped";
-    if (source === "dialog") return "Dialog";
-    return "Result";
-  }
-
-  /**
-   * One direct ask as a table row: Area and kind as facts, the question as the
-   * row header (it is the only part Julian must read), and the answer verbs in
-   * the Action cell. The first opening verb stays the row's main button, as it
-   * was on the card (design-the-for-you-row-shows-only-direct-asks). The
-   * question cell also holds one narrow-width copy of the Area and kind,
-   * because their own cells hide below 640 px; CSS shows exactly one copy at
-   * each width, so nothing is read twice.
-   */
-  function askTableRow(ask) {
-    const primary = ask.actions.find((action) => ASK_PRIMARY_ACTIONS.includes(action.kind));
-    const rest = ask.actions.filter((action) => action !== primary);
-    const context = ask.context ? `<small class="ask-context">${escapeHtml(ask.context)}</small>` : "";
-    const proposal = ask.proposal ? `<small class="ask-proposal"><b>Proposed:</b> ${escapeHtml(ask.proposal)}</small>` : "";
-    const question = primary
-      ? `<button class="ask-question" type="button" ${askActionAttributes(ask, primary)} title="${escapeHtml(primary.label)}">${escapeHtml(ask.question)}</button>`
-      : `<span class="ask-question">${escapeHtml(ask.question)}</span>`;
-    const answers = rest.map((action) => `<button class="ask-answer${action.kind === "reply" ? " ask-reply" : ""}" type="button" ${askActionAttributes(ask, action)}>${escapeHtml(action.label)}</button>`).join("");
-    const dismissLabel = `Dismiss ${ask.subject}: ${ask.question} from For you`;
-    return `<tr class="ask-row" data-ask-id="${escapeHtml(ask.id)}">
-      <td class="ask-cell-area">${escapeHtml(areaLabel(ask.area))}</td>
-      <td class="ask-cell-kind">${escapeHtml(askKindLabel(ask))}</td>
-      <th class="ask-cell-question" scope="row"><small class="ask-cell-facts">${escapeHtml(`${areaLabel(ask.area)} \u00b7 ${askKindLabel(ask)}`)}</small><span class="ask-subject">${escapeHtml(ask.subject)}</span>${question}${context}${proposal}</th>
-      <td class="ask-cell-action"><span class="ask-actions${rest.length > 2 ? " choices" : ""}">${answers}<button class="ask-dismiss" type="button" data-dismiss-ask="${escapeHtml(ask.id)}" aria-label="${escapeHtml(dismissLabel)}" title="Dismiss from For you"><span aria-hidden="true">×</span></button></span></td>
-    </tr>`;
-  }
-
-  /**
-   * The For you table: what the brains asked, then what Tangent itself asks for
-   * the Areas with no brain. Every row is a direct ask, and the number in the
-   * header is the length of that one list. Rows of one Area share a row group,
-   * so a single Area never earns a repeated heading
-   * (design-redesign-work-as-a-compact-table Decision 2).
-   */
-  function deskAttentionQueue() {
-    const roots = areaFocusRoots();
-    const completeGroups = askGroups();
-    const completeFallback = fallbackAsks();
-    const total = completeGroups.reduce((count, group) => count + group.asks.length, 0) + completeFallback.length;
-    if (!total && !roots.length) return "";
-    const groups = roots.length
-      ? completeGroups.map((group) => ({ ...group, asks: group.asks.filter((ask) => isInAreaFocus(ask.area, roots)) })).filter((group) => group.asks.length)
-      : completeGroups;
-    const fallback = roots.length ? completeFallback.filter((ask) => isInAreaFocus(ask.area, roots)) : completeFallback;
-    const shown = groups.reduce((count, group) => count + group.asks.length, 0) + fallback.length;
-    const enableBadge = typeof navigator.setAppBadge === "function"
-      && window.__agentShellNativeDockBadge !== true
-      && typeof Notification !== "undefined"
-      && Notification.permission !== "granted";
-    const bodies = [
-      ...groups.map((group) => `<tbody class="ask-group${group.stopped ? " stopped" : ""}" data-ask-area="${escapeHtml(group.area)}">${group.asks.map(askTableRow).join("")}</tbody>`),
-      ...fallbackAskGroups(fallback).map((group) => `<tbody class="ask-group fallback" data-ask-area="${escapeHtml(group.area)}">${group.asks.map(askTableRow).join("")}</tbody>`),
-    ].join("");
-    const scopeCopy = roots.length
-      ? `<p class="attention-focus-count">${shown} shown in Focus · ${total - shown} outside Focus</p>`
-      : "";
-    const empty = roots.length && !shown ? `<p class="attention-focus-empty">No direct asks in Focus.</p>` : "";
-    return `
-      <section class="attention-queue" aria-labelledby="attention-heading">
-        <header><p class="kicker">Attention</p><h2 id="attention-heading">For you</h2>${enableBadge ? `<button class="attention-badge-button" type="button" data-enable-dock-badge>Show in Dock</button>` : ""}<span>${roots.length ? `${total} total` : total}</span></header>
-        ${scopeCopy}${empty}
-        ${bodies ? `<table class="ask-table"><caption class="visually-hidden">Direct questions for you</caption><colgroup><col class="ask-col-area"><col class="ask-col-kind"><col class="ask-col-question"><col class="ask-col-action"></colgroup><thead><tr><th scope="col" class="ask-head-area">Area</th><th scope="col" class="ask-head-kind">Kind</th><th scope="col" class="ask-head-question">Question</th><th scope="col" class="ask-head-action">Action</th></tr></thead>${bodies}</table>` : ""}
-      </section>`;
-  }
 
   /**
    * Drops from `state.verdictLines` every line the server no longer lists, once
@@ -1621,12 +1451,16 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * route for every row below it. The Action column never repeats that route
    * (design-redesign-work-as-a-compact-table Decision 4).
    */
-  function workGroupHeaderRow(record) {
+  function workGroupHeaderRow(record, facts = new Map()) {
     const { area, trees, descriptions, sections } = record;
     const allTrees = [...trees, ...sections.flatMap((section) => section.trees)];
     const allDescriptions = [...descriptions, ...sections.flatMap((section) => section.descriptions)];
+    const summary = deskAreaSummary(area.path, allTrees, allDescriptions, facts);
+    // The pill keeps saying what the Area is doing, so a live brain with no
+    // agent under it still states itself (design-active-brains-show-on-work-
+    // even-with-no-agents). Only its "waiting" case changed source: it counts
+    // the Questions brains asked, never an inferred ask.
     const status = deskAreaState(area.path, allTrees, allDescriptions);
-    const count = allTrees.reduce((total, tree) => total + tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status)).length, 0);
     const brain = brainForAreaCard(area.path);
     const label = brain?.live ? "Open brain" : brain ? "Resume brain" : "Start brain";
     // A live brain opens its own session; only a missing or stopped one goes
@@ -1636,13 +1470,14 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       : `data-open-area-brain="${escapeHtml(area.path)}"`;
     const name = humanName(area.name);
     const cursor = `area:${area.path}`;
-    const roots = areaFocusRoots();
-    const folded = roots.length > 0 && area.path !== roots[0] && !state.expandedAreas.has(area.path);
+    const folded = areaIsFoldedOnWork(area.path);
     return `<tr class="work-group-row${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${escapeHtml(area.path)}">
       <th class="work-group-head" colspan="${WORK_COLUMNS.length}" scope="rowgroup" id="${workGroupId(area.path)}">
         <span class="work-group-name"><button type="button" data-work-cursor-control data-focus-key="area:${escapeHtml(area.path)}" data-open-area="${escapeHtml(area.path)}" title="Open the ${escapeHtml(name)} Area map">${escapeHtml(name)}</button><button type="button" data-fold-work-area="${escapeHtml(area.path)}" aria-expanded="${!folded}" title="${folded ? "Expand" : "Fold"} ${escapeHtml(name)}">${folded ? "+" : "−"}</button></span>
-        <span class="work-group-count">${count} ${count === 1 ? "Goal" : "Goals"}</span>
-        <span class="desk-state ${status.kind}">${escapeHtml(status.label)}</span>
+        <span class="work-group-count">${escapeHtml(summary.text)}</span>
+        ${summary.questions
+          ? `<button class="desk-state ${status.kind}" type="button" data-review-questions="${escapeHtml(area.path)}" title="Review the open questions">${escapeHtml(status.label)}</button>`
+          : `<span class="desk-state ${status.kind}">${escapeHtml(status.label)}</span>`}
         ${deskSelectionBar(area.path, allTrees)}
         <button class="work-group-brain" type="button" ${route} data-focus-key="brain:${escapeHtml(area.path)}" aria-label="${escapeHtml(label)} for ${escapeHtml(areaLabel(area.path))}"><span class="work-group-brain-long">${escapeHtml(label)}</span><span class="work-group-brain-short">Brain</span></button>
       </th>
@@ -1792,21 +1627,57 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const empty = record.focusRoot && !record.focusHasWork
       ? `<tr class="work-empty-row"><td class="area-focus-empty" colspan="${WORK_COLUMNS.length}">No ${state.workFilter === "active" ? "current" : "planned"} work matches in this Focus.</td></tr>`
       : "";
-    const roots = areaFocusRoots();
-    const folded = roots.length > 0 && area.path !== roots[0] && !state.expandedAreas.has(area.path);
-    const blocked = parts.flatMap((part) => part.trees.flatMap((tree) => tree.goals)).map((goal) => ({ goal, fact: facts.get(goal.file) })).find((item) => ["blocked", "broken", "error"].includes(item.fact?.kind));
-    const preview = folded && blocked ? `<tr class="work-blocker-preview"><td colspan="${WORK_COLUMNS.length}">Dependency · ${escapeHtml(blocked.goal.title)}</td></tr>` : "";
+    const folded = areaIsFoldedOnWork(area.path);
+    // A folded Area keeps the one fact that can change what Julian does next:
+    // its highest blocker, and who owns it. Julian's own Questions come first,
+    // then a dependency, then the brain's own recovery.
+    const blockers = areaBlockers(area.path, [...parts.flatMap((part) => part.trees)], facts);
+    const top = blockers[0];
+    const more = blockers.length > 1 ? `<span class="work-blocker-more">+${blockers.length - 1} more</span>` : "";
+    const preview = folded && top
+      ? `<tr class="work-blocker-preview"><td colspan="${WORK_COLUMNS.length}"><b>${escapeHtml(top.owner)}</b> · ${escapeHtml(clip(top.cause, 90))}${more}</td></tr>`
+      : "";
     return `<tbody class="work-group${folded ? " folded" : ""}" data-work-group="${escapeHtml(area.path)}" data-desk-area="${escapeHtml(area.path)}" aria-labelledby="${workGroupId(area.path)}">
-      ${workGroupHeaderRow(record)}${folded ? preview : `${body}${empty}`}
+      ${workGroupHeaderRow(record, facts)}${folded ? preview : `${body}${empty}`}
     </tbody>`;
+  }
+
+  /**
+   * Whether one Area group is folded on Work.
+   *
+   * The primary focused Area opens expanded and every other Area folds, which
+   * is what makes Focus an attention control rather than a filter. Folding no
+   * longer needs a Focus to exist: without one the Areas Julian expanded stay
+   * open and the rest stay quiet, so `z` works on the plain desk too.
+   */
+  function areaIsFoldedOnWork(path) {
+    const roots = areaFocusRoots();
+    if (roots.length) return path !== roots[0] && !state.expandedAreas.has(path);
+    return state.foldedWorkAreas.has(path);
   }
 
   /** Folds or expands one Area without changing Area Focus. */
   function toggleWorkArea(area) {
-    if (state.expandedAreas.has(area)) state.expandedAreas.delete(area);
-    else state.expandedAreas.add(area);
-    saveExpandedAreas();
+    if (!area) return;
+    if (areaFocusRoots().length) {
+      if (state.expandedAreas.has(area)) state.expandedAreas.delete(area);
+      else state.expandedAreas.add(area);
+      saveExpandedAreas();
+    } else {
+      if (state.foldedWorkAreas.has(area)) state.foldedWorkAreas.delete(area);
+      else state.foldedWorkAreas.add(area);
+      saveFoldedWorkAreas();
+    }
     paint(true);
+  }
+
+  /** Keeps the folded Areas across reloads, the same way the expanded ones persist. */
+  function saveFoldedWorkAreas() {
+    try {
+      localStorage.setItem("agent-shell.folded-work-areas", JSON.stringify([...state.foldedWorkAreas]));
+    } catch {
+      showToast("The folded Areas could not be saved.");
+    }
   }
 
   /** One Goal tree as adjacent rows: the parent, then its open Subgoals. */
@@ -1909,7 +1780,6 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
     return `
       <section class="work-page">
-        ${deskAttentionQueue()}
         ${roots.length ? areaFocusControl() : ""}
         <div class="work-tools${roots.length ? " focused" : ""}">
           <button class="work-area-browser" type="button" data-show-areas>Browse Areas</button>
@@ -1930,5 +1800,5 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     `;
   }
 
-  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, fallbackAsks, forgetVerdictLines, openRequest, openQuestionsReview, openAreaCapture, sendVerdict, replyAboutRow, dismissAsk, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups, goalGroupRoot, toggleSubgoals, toggleWorkArea, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, renderWork };
+  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, forgetVerdictLines, openRequest, openQuestionsReview, openAreaCapture, openWorkCommands, sendVerdict, replyAboutRow, areaQuestions, areaBlockers, goalGroupRoot, toggleSubgoals, toggleWorkArea, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, renderWork };
 }

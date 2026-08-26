@@ -15,7 +15,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain, brainForAreaCard,
     openBrainSession, openOrStartBrain, toggleBrainPopover, saveDescribeDraft, saveDescribeSession, describeWorkSession,
     openDescribeSession, addDescribeSource, switchDescribeToManualCreate, selectionForArea, startSelectedGoals,
-    openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, enableDockBadge, openRequest, openQuestionsReview, openAreaCapture, sendVerdict, dismissAsk,
+    openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, openRequest, openQuestionsReview, openAreaCapture, openWorkCommands, sendVerdict,
     replyAboutRow, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery,
     applyAreaFocus, clearAreaFocus, renderWork, describeLaunchArea, describeWorkSessions,
     goalGroupRoot, toggleSubgoals, toggleWorkArea,
@@ -188,11 +188,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       return paint(true);
     }
     if (target === awakeButton || target.closest("#awake-button")) return toggleAwake();
-    if (target.closest("[data-enable-dock-badge]")) return enableDockBadge();
-    const dismissAskButton = target.closest("[data-dismiss-ask]");
-    if (dismissAskButton) {
+    const reviewQuestions = target.closest("[data-review-questions]");
+    if (reviewQuestions) {
       event.stopPropagation();
-      return dismissAsk(dismissAskButton.dataset.dismissAsk);
+      return openQuestionsReview(reviewQuestions.dataset.reviewQuestions);
     }
     const goalPrompt = target.closest("[data-load-goal-prompt]");
     if (goalPrompt) return loadGoalPrompt(document.querySelector("[data-prompt-goal]")?.value ?? "", goalPrompt.dataset.loadGoalPrompt);
@@ -1199,9 +1198,18 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         return goal ? confirmComplete(goal.file) : showToast("Choose a Goal row first.");
       }
       if (event.key === "/") { event.preventDefault(); return document.querySelector("#work-search")?.focus(); }
+      if (event.key === ":") { event.preventDefault(); return openWorkCommands(current?.dataset.workArea ?? ""); }
       if (event.key === "?") {
         event.preventDefault();
-        return openModal({ kicker: "Work keys", title: "Move around Work", copy: "j/k rows · gg/G first/last · b brain · / filter · ⌘J session", confirmLabel: "Close", onConfirm: closeKeySheet });
+        // Every key path the design names, in the order Julian uses them.
+        const copy = [
+          "j / k · move · gg / G first, last",
+          "b · open the Area brain (a message starts an inactive one)",
+          "⌘J · enter the live session · z · fold the Area",
+          "f · Area Focus · r · review questions · n · capture a note",
+          "x · complete the Goal · : · commands · / · filter",
+        ].join("\n");
+        return openModal({ kicker: "Work keys", title: "Move around Work", copy, confirmLabel: "Close", onConfirm: closeKeySheet });
       }
     }
     if (moveBetweenWorkRows(event)) return;

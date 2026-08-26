@@ -27,6 +27,7 @@ export function createShellState(storage = globalThis.localStorage, href = globa
     describeReturn: null, describeDraft: storedDescribeDraft?.session ? null : storedDescribeDraft, describeSessionName: savedDescribeSession,
     areaSelection: requestedArea || storage.getItem("agent-shell.last-area") || "", createArea: "", createReturnView: "work",
     expandedAreas: new Set(storedJson("agent-shell.expanded-areas") || []),
+    foldedWorkAreas: new Set(storedJson("agent-shell.folded-work-areas") || []),
     collapsedDeskSections: new Set(storedJson("agent-shell.collapsed-desk-sections") || []),
     collapsedGoalTrees: new Set(storedJson("agent-shell.collapsed-goal-trees") || []),
     areaFocus: storedAreaFocus.areas, areaFocusPicker: null, areaFocusStorageError: storedAreaFocus.error,

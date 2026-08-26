@@ -22,7 +22,7 @@ function brain(area, name) {
   };
 }
 
-test("Area Focus stages selection, scopes Work and asks, preserves return context, and recovers after deletion", async () => {
+test("Area Focus stages selection, scopes Work and questions, preserves return context, and recovers after deletion", async () => {
   const html = await readFile(path.join(here, "public", "shell.html"), "utf8");
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
   const { window } = dom;
@@ -99,7 +99,10 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
   await settle(window);
   assert.ok(window.document.querySelector('[data-desk-area="otto/alpha"]'));
   assert.ok(window.document.querySelector('[data-desk-area="otto/beta"]'));
-  assert.ok(window.document.querySelector(".attention-queue"), "Work includes the actionable Questions queue");
+  // Questions stay with their Area brain: a quiet count on the Area header,
+  // never an attention strip above the work.
+  assert.equal(window.document.querySelector(".attention-queue"), null, "Work carries no attention strip");
+  assert.ok(window.document.querySelector("[data-review-questions]"), "an Area whose brain asked shows its question count");
 
   click(window, "[data-open-area-focus]");
   await settle(window);
@@ -153,7 +156,11 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
 
   assert.equal(window.document.querySelector('[data-desk-area="otto/beta"]'), null);
   assert.match(window.document.querySelector(".area-focus-summary").textContent, /Focus:\s*Alpha/);
-  assert.equal(window.document.querySelectorAll(".attention-queue [data-ask-id]").length, 1, "Area Focus keeps only Alpha's Question visible");
+  assert.deepEqual(
+    [...window.document.querySelectorAll("[data-review-questions]")].map((button) => button.dataset.reviewQuestions),
+    ["otto/alpha"],
+    "Area Focus keeps only Alpha's question count visible",
+  );
   assert.equal(window.document.querySelector("#work-tab").textContent, "Work");
   assert.deepEqual(JSON.parse(window.localStorage.getItem("agent-shell.area-focus.v1")), {
     schema: "agent-shell.area-focus.v1", areas: ["otto/alpha"],

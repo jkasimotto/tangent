@@ -67,18 +67,26 @@ test("every status carries a word, and every icon-only control carries a name", 
   assert.equal(document.querySelectorAll(".work-table th:empty").length, 0, "no header cell is empty");
 });
 
-test("Questions have a selectable review outside the Goal table", async () => {
+test("Work carries no attention queue and infers no ask", async () => {
   const { document } = await bootWorkTable(withDirectAsks(workTableFixture()));
-  const questions = document.querySelector("table.ask-table");
-  assert.ok(questions, "Questions have their own selectable review");
-  assert.equal(questions.closest(".work-table"), null, "Questions remain outside the Goal table");
-  assert.equal(document.querySelectorAll(".work-table tr.ask-row").length, 0, "Questions do not become Goal rows");
-  assert.equal(document.querySelectorAll(".work-table .ask-row").length, 0, "no question repeats inside the work table");
-  // A Test question and its Ready-for-validation Goal can both exist; only the
-  // Test row answers it.
+  // The For you strip and its Dock badge are gone. A brain's Question is a
+  // quiet count on its Area header, and nothing else on Work asks anything.
+  assert.equal(document.querySelector("table.ask-table"), null, "no attention queue survives on Work");
+  assert.equal(document.querySelector(".attention-queue"), null, "no attention section survives on Work");
+  assert.equal(document.querySelector("[data-enable-dock-badge]"), null, "no Dock badge control survives");
+  assert.equal(document.querySelectorAll(".ask-row").length, 0, "no ask row exists anywhere on Work");
+  assert.equal(document.querySelector("[data-dismiss-ask]"), null, "nothing on Work needs dismissing");
+
+  // A finished Goal is a state, not a question: it makes no row that asks.
   const online = document.querySelector("tr[data-goal-anchor$='goal-stays-online.md']");
   assert.match(online.querySelector(".desk-state").textContent, /^Ready for validation$/);
   assert.equal(online.querySelector("[data-verdict], [data-verdict-line]"), null, "the Goal row carries no verdict");
+
+  // The one count Work shows comes from an explicit brain Request, and it
+  // opens the deliberate review rather than answering in place.
+  const counts = [...document.querySelectorAll("[data-review-questions]")];
+  assert.ok(counts.length, "an Area whose brain asked shows a quiet question count");
+  assert.match(counts[0].textContent, /^\d+ questions?$/);
 });
 
 test("a filter keeps focus in its input and says how many Goals are left", async () => {
@@ -432,12 +440,13 @@ test("a stopped brain earns no group, and Planned work shows no brain-only group
     "Planned work is about unstarted Goals, so a live brain does not force a group there");
 });
 
-test("working agents and items for Julian still outrank the brain word", async () => {
+test("working agents and open Questions still outrank the brain word", async () => {
   const { document } = await bootWorkTable(withDirectAsks(withBrainOnlyArea(workTableFixture())));
   assert.match(groupHeader(document, "otto/standards").querySelector(".desk-state").textContent, /^2 working$/,
     "an Area whose agents work reports the agents, not its brain");
-  assert.match(groupHeader(document, "otto/tangent").querySelector(".desk-state").textContent, /items need you$/,
-    "an Area with direct asks still reports them first");
+  const asked = groupHeader(document, "otto/tangent").querySelector(".desk-state");
+  assert.match(asked.textContent, /^\d+ questions?$/, "an Area whose brain asked reports the Questions first");
+  assert.equal(asked.dataset.reviewQuestions, "otto/tangent", "the count opens the deliberate review");
 });
 
 test("an Area Focus that excludes the brain's Area hides its group", async () => {
@@ -454,8 +463,8 @@ test("an Area whose Goals are all unstarted still shows its live brain on Curren
   assert.equal(group.querySelectorAll("tr.work-row").length, 0, "an unstarted Goal stays off the Current table");
   const header = groupHeader(document, "otto/quiet");
   assert.match(header.querySelector(".desk-state").textContent, /^Brain working$/);
-  assert.match(header.querySelector(".work-group-count").textContent, /^0 Goals$/,
-    "the count follows the filtered rows, as it does for every group");
+  assert.match(header.querySelector(".work-group-count").textContent, /^0 open$/,
+    "the summary follows the filtered rows, as it does for every group");
 
   const stopped = await bootWorkTable(withBrainOnlyArea(workTableFixture(), { planned: true, live: false }));
   assert.equal(stopped.document.querySelector("tbody.work-group[data-work-group='otto/quiet']"), null,

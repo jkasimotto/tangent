@@ -2,7 +2,6 @@ import documentComments from "./document-comments.js";
 import codeHighlight from "./code-highlight.js";
 import areaMapCore from "./area-map-core.js";
 import goalCardCore from "./goal-card-core.js";
-import askCore from "./ask-core.js";
 import goToCore from "./go-to-core.js";
 import areaMapView from "./area-map.js";
 import { createApiClient } from "./api-client.js";
@@ -408,7 +407,7 @@ const {
   brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain,
   humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel,
   goalNeedsYou, goalWorkFinished, workCard, goalTreeCard,
-  fallbackAsks, forgetVerdictLines, openRequest, openQuestionsReview, openAreaCapture, sendVerdict, replyAboutRow, dismissAsk, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups,
+  forgetVerdictLines, openRequest, openQuestionsReview, openAreaCapture, openWorkCommands, sendVerdict, replyAboutRow, areaQuestions, areaBlockers,
   goalGroupRoot, toggleSubgoals, toggleWorkArea,
   openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, renderWork,
 } = workDeskView;
@@ -807,7 +806,7 @@ function renderScreen() {
   else if (state.view === "create") screen.innerHTML = renderCreate();
   else if (state.view === "describe") screen.innerHTML = renderDescribeCapture();
   else if (state.view === "areas") screen.innerHTML = renderAreas() + launchPopover();
-  else if (state.view === "prompts") screen.innerHTML = renderPromptBestiary({ goals: allGoals(), brains: state.brains, sessions: state.sessions, pipelines: state.pipelines, programs: state.programs.operations, asks: forYouItems(), inspector: state.promptInspector, selection: state.bestiarySelection });
+  else if (state.view === "prompts") screen.innerHTML = renderPromptBestiary({ goals: allGoals(), brains: state.brains, sessions: state.sessions, pipelines: state.pipelines, programs: state.programs.operations, asks: areaQuestions("").map((item) => ({ area: item.area, subject: item.request.subject, question: item.request.question })), inspector: state.promptInspector, selection: state.bestiarySelection });
   else if (state.view === "area-edit") screen.innerHTML = renderAreaEditor();
   else if (state.view === "program-detail") screen.innerHTML = renderProgramDetail(currentProgram());
   else if (state.view === "program-create") screen.innerHTML = renderProgramCreate();
@@ -1158,7 +1157,6 @@ async function performRefresh({ initial = false, trigger = initial ? "initial" :
       if (!areas().some((area) => area.path === state.areaSelection)) state.areaSelection = preferredArea();
       revealArea(state.areaSelection);
     }
-    void syncDockBadge();
     updateStatusPill();
     if (state.goTo) renderGoToList();
     paint(initial);
@@ -1350,8 +1348,8 @@ bindShellEvents({
     selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain, brainForAreaCard,
     openBrainSession, openOrStartBrain, toggleBrainPopover, saveDescribeDraft, saveDescribeSession, describeWorkSession,
     openDescribeSession, addDescribeSource, switchDescribeToManualCreate, selectionForArea, startSelectedGoals,
-    openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, enableDockBadge, openRequest, openQuestionsReview, openAreaCapture, sendVerdict,
-    replyAboutRow, dismissAsk, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery,
+    openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, openRequest, openQuestionsReview, openAreaCapture, openWorkCommands, sendVerdict,
+    replyAboutRow, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery,
     applyAreaFocus, clearAreaFocus, renderWork, describeLaunchArea, describeWorkSessions,
     goalGroupRoot, toggleSubgoals, toggleWorkArea,
   },
@@ -1400,4 +1398,4 @@ startRebuildRefresh(() => state.rebuilding, refresh);
 
 // DOM-level exports keep tests on the module boundary instead of rebuilding
 // the old order-dependent browser globals.
-export { areaMapView, enableDockBadge, fallbackAsks, forYouItems, markdownHeadings, markdownToHtml, refresh };
+export { areaMapView, areaQuestions, markdownHeadings, markdownToHtml, refresh };

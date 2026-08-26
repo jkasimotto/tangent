@@ -273,52 +273,32 @@ test("the live shell restores context, defines work with an agent, and organizes
 
   assert.ok(window.document.querySelector(".work-page"), "the desk shows the Work page");
   assert.equal(window.document.querySelectorAll(".work-table tbody").length, 2);
-  assert.ok(window.document.querySelector(".attention-queue"), "Work includes actionable Questions");
-  const questions = window.document.querySelector(".attention-queue").textContent;
-  assert.ok(questions.includes("Do you want to rewrite the vision section?"), "a session stopped at a dialog asks the dialog's own question");
-  assert.ok(
-    !window.forYouItems().some((ask) => ask.subject === "Already complete"),
-    "a done Goal never rows, however its handover reads"
-  );
-  assert.deepEqual(dockBadges, []);
-  await window.enableDockBadge();
-  await settle(window);
-  assert.deepEqual(dockBadges, [2], "the Dock badge follows the For you count");
+  // The For you strip, the Dock badge, and every inferred ask are gone.
+  // A Question is a quiet count on its Area header, and nothing else on Work
+  // turns machine state into a demand.
+  assert.equal(window.document.querySelector(".attention-queue"), null, "Work carries no attention strip");
+  assert.equal(window.document.querySelector(".ask-table"), null, "no ask table survives");
+  assert.equal(window.document.querySelector("[data-enable-dock-badge]"), null, "no Dock badge control survives");
+  assert.equal(window.enableDockBadge, undefined, "the Dock badge is not reachable at all");
+  assert.deepEqual(dockBadges, [], "nothing sets a Dock badge any more");
+  assert.doesNotMatch(window.document.querySelector("#screen").textContent, /Do you want to rewrite the vision section\?/,
+    "a session sitting at a dialog is machine state, not a question for Julian");
 
-  // An idle session asks nothing at all: machine state on its own can never
-  // make a row, with or without a brain.
-  tangentSessionState = "working";
-  await window.refresh();
-  await settle(window);
-  assert.equal(window.forYouItems().length, 1, "a working session is not an ask");
-  assert.ok(!window.forYouItems().some((ask) => ask.source === "dialog"), "and no dialog row is left behind");
-  tangentSessionState = "waiting";
-  await window.refresh();
-  await settle(window);
-
-  // A brain on the Live Edit Area takes over as Julian's touchpoint: its Goal
-  // drops out of the fallback, because the brain raises what that Area needs.
-  assert.ok(window.fallbackAsks().some((ask) => ask.area === liveEditGoal.area), "before the brain, the Live Edit handover still needs Julian");
+  // A brain's own Request still reaches Julian: the count opens the review,
+  // and the review opens the Request itself.
   liveEditBrainStarted = true;
   await window.refresh();
   await settle(window);
-  assert.ok(!window.fallbackAsks().some((ask) => ask.area === liveEditGoal.area), "an Area with a brain never feeds the fallback");
+  const questionCount = window.document.querySelector(`[data-review-questions="${liveEditGoal.area}"]`);
+  assert.ok(questionCount, "the Area whose brain asked shows its question count");
+  assert.match(questionCount.textContent, /^1 question$/);
 
-  // Under the brain, its own rows lead the card, and the count is one number:
-  // the brain's asks plus the fallback asks of the Areas without a brain.
-  const group = window.document.querySelector(".ask-table .ask-group:not(.fallback)");
-  assert.ok(group, "the brain's Area gets its own row group");
-  assert.doesNotMatch(group.textContent, /Reply to brain/, "the group has no second answer lane");
-  const rows = [...group.querySelectorAll(".ask-row")];
-  assert.equal(rows.length, 1, "only the durable Request appears");
-  assert.equal(rows[0].querySelector(".ask-question").textContent, "Approve the proposed audit scope?");
-  const requestButtons = [...rows[0].querySelectorAll("button")].map((button) => button.textContent.trim()).filter(Boolean);
-  assert.ok(requestButtons.includes("Reply"));
-  assert.ok(!requestButtons.includes("Approve") && !requestButtons.includes("I want these changes"));
-  assert.ok(rows[0].querySelector("[data-open-request-id]"), "Open enters the full Request surface");
-  assert.doesNotMatch(rows[0].textContent, /opened Request surface/, "the compact row does not contain full detail");
-
-  click(window, "[data-open-request-id]");
+  click(window, `[data-review-questions="${liveEditGoal.area}"]`);
+  await settle(window);
+  assert.match(window.document.querySelector("[data-modal-select]").textContent, /Approve the proposed audit scope\?/,
+    "the review lists the Question the brain wrote");
+  click(window, "[data-modal-confirm]");
+  await settle(window);
   const changesInput = window.document.querySelector("[data-modal-input]");
   changesInput.value = "Use one copy-paste command.";
   assert.match(window.document.querySelector("[data-modal-confirm]").textContent, /Apply response.*⌘↵/, "the send action shows its shortcut");
@@ -326,47 +306,10 @@ test("the live shell restores context, defines work with an agent, and organizes
   await settle(window);
   assert.deepEqual(posts.at(-1), { path: "/api/brains/requests/answer", body: { area: liveEditGoal.area, id: "request-1", answer: "reply", note: "Use one copy-paste command." } });
 
-  assert.equal(window.forYouItems().length, 2, "the durable Request plus the one fallback ask left");
-  assert.equal(window.document.querySelector(".attention-queue > header > span").textContent, "2", "the card's number is that one list");
   const brainGoalCard = window.document.querySelector(`[data-goal-anchor="${liveEditGoal.file}"]`);
   assert.ok(brainGoalCard, "the brain's Area still shows its Goal");
   assert.equal(brainGoalCard.classList.contains("waiting"), false, "a brain-run Goal keeps no amber");
   assert.match(brainGoalCard.className, /\bready\b/, "with no agent on it, the Goal is simply ready");
-
-  // The same rows, with the same actions, sit right on the Area's own panel:
-  // Julian decides there without the desk-wide card
-  // (goal-decisions-show-on-the-area-view-not-just-a-count).
-  const areaGroup = window.document.querySelector(`.work-table tbody[data-work-group="${liveEditGoal.area}"]`);
-  assert.ok(areaGroup, "the Live Edit Area has its own row group");
-  const askTable = window.document.querySelector(".ask-table");
-  assert.equal(window.document.querySelectorAll(".work-table .ask-row").length, 0, "no question repeats inside the work table");
-  assert.ok(askTable.compareDocumentPosition(window.document.querySelector(".work-table")) & window.Node.DOCUMENT_POSITION_FOLLOWING,
-    "the one question table sits above the work table");
-  assert.equal(window.document.querySelectorAll(`.ask-table .ask-row[data-ask-id^="request:"]`).length, 1, "the durable Request rows once");
-
-  // With an agent on it, the pane is static because the brain has not read it
-  // yet: the row states the fact and keeps the amber that means "you" off.
-  const beforeAgent = reviewAgentStarted;
-  reviewAgentStarted = true;
-  await window.refresh();
-  await settle(window);
-  const runningGoalCard = window.document.querySelector(`[data-goal-anchor="${liveEditGoal.file}"]`);
-  assert.ok(runningGoalCard.classList.contains("fact"), "under a brain it is a fact, not a call on Julian");
-  assert.equal(runningGoalCard.classList.contains("waiting"), false, "and it keeps no amber");
-  assert.match(runningGoalCard.querySelector(".desk-state.fact").textContent, /Waiting/, "the state word stays");
-  reviewAgentStarted = beforeAgent;
-  await window.refresh();
-  await settle(window);
-  assert.equal(dockBadges.at(-1), 2, "the Dock badge counts the Request too");
-
-  // Stopping a brain removes its asks. Resume remains on the Area card; a dead
-  // brain cannot keep asking Julian for an answer.
-  brainLive = false;
-  await window.refresh();
-  await settle(window);
-  const stoppedGroup = window.document.querySelector(".ask-table .ask-group.stopped");
-  assert.ok(stoppedGroup, "a durable Request remains visible while its brain is stopped");
-  brainLive = true;
 
   liveEditBrainStarted = false;
   await window.refresh();
@@ -376,12 +319,6 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.equal(tangentBrainAction.querySelector(".work-group-brain-long").textContent, "Start brain", "a group header can start its exact Area brain");
   assert.equal(tangentBrainAction.getAttribute("aria-label"), "Start brain for Otto / Tangent");
 
-  window.__agentShellNativeDockBadge = true;
-  notificationPermission = "denied";
-  dockBadges.length = 0;
-  await window.enableDockBadge();
-  await settle(window);
-  assert.deepEqual(dockBadges, [2]);
   assert.match(window.document.querySelectorAll(".work-table tbody")[1].textContent, /Tangent/);
   assert.equal(window.document.querySelector(".area-desk-section.documents"), null, "the Documents section left the work tab");
   assert.equal(window.document.querySelectorAll(".desk-goal.subgoal").length, 1);
@@ -664,7 +601,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   for (const session of describeSessions) session.state = "working";
   await window.refresh();
   await settle(window);
-  assert.equal(dockBadgeClears, 1);
+  assert.equal(dockBadgeClears, 0, "no Dock badge is set, so none is ever cleared");
 
   dom.window.close();
 });

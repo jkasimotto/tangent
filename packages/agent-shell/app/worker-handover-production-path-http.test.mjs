@@ -75,7 +75,7 @@ function workerNotices(inbox) {
 }
 
 /** Polls one durable condition that a background reconcile pass completes. */
-async function waitFor(what, check, attempts = 80) {
+async function waitFor(what, check, attempts = 320) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const value = await check();
     if (value) return value;

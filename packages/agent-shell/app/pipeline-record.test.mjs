@@ -170,7 +170,8 @@ test("newPipeline normalizes steps into the pending shape", () => {
     handover: null,
     handoverSource: null,
     attempts: [],
-    reports: []
+    reports: [],
+    handoverReceipts: []
   });
   assert.equal(record.steps[1].index, 2);
   assert.equal(record.steps[1].launch, null);

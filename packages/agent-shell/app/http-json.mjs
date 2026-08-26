@@ -13,7 +13,7 @@ export class HttpError extends Error {
  * root can judge a finished request (who called it, what it named) without
  * every route handler passing the body back out.
  */
-export async function readJson(request, { maxBytes = 2 * 1024 * 1024 } = {}) {
+export async function readJson(request, { maxBytes = 2 * 1024 * 1024, rejectMalformed = false, malformedMessage = "request body must be one complete JSON object" } = {}) {
   const chunks = [];
   let bytes = 0;
   for await (const chunk of request) {
@@ -24,11 +24,19 @@ export async function readJson(request, { maxBytes = 2 * 1024 * 1024 } = {}) {
     }
     chunks.push(chunk);
   }
-  if (!chunks.length) return remember(request, {});
+  if (!chunks.length) {
+    if (rejectMalformed) throw new HttpError(400, malformedMessage);
+    return remember(request, {});
+  }
   try {
     const value = JSON.parse(Buffer.concat(chunks.map((chunk) => Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))).toString("utf8"));
-    return remember(request, value && typeof value === "object" && !Array.isArray(value) ? value : {});
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      if (rejectMalformed) throw new HttpError(400, malformedMessage);
+      return remember(request, {});
+    }
+    return remember(request, value);
   } catch {
+    if (rejectMalformed) throw new HttpError(400, malformedMessage);
     return remember(request, {});
   }
 }

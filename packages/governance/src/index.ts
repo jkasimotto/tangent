@@ -176,6 +176,52 @@ async function lintAgentShellWorkflowContracts(ctx: LintContext): Promise<Govern
       });
     }
   }
+  const workerHandoverContracts = [
+    {
+      file: "packages/agent-shell/src/cli/commands/goal.ts",
+      applies: "/api/goals/handover",
+      required: ["parseWorkerReportOption(args)"],
+    },
+    {
+      file: "packages/agent-shell/src/cli/commands/handover.ts",
+      applies: "/api/goals/handover",
+      required: ["parseWorkerReportOption(args)"],
+    },
+    {
+      file: "packages/agent-shell/app/pipeline-routes.mjs",
+      applies: "POST /api/goals/handover",
+      required: ["rejectMalformed: true", 'Object.hasOwn(body, "report")', "receipt: result.receipt"],
+    },
+    {
+      file: "packages/agent-shell/app/pipeline-record.mjs",
+      applies: "normalizeStoredAssignment",
+      required: ["handoverReceipts"],
+    },
+    {
+      file: "packages/agent-shell/app/server.mjs",
+      applies: "handoverPipelineStep",
+      required: ["appendWorkerHandoverReceipt", "settleWorkerHandoverNotice", "pendingWorkerHandoverReceipts"],
+    },
+  ];
+  for (const contract of workerHandoverContracts) {
+    const file = path.join(ctx.root, contract.file);
+    if (!await pathExists(file)) continue;
+    const text = await readFile(file, "utf8");
+    if (!text.includes(contract.applies)) continue;
+    const missing = contract.required.filter((marker) => !text.includes(marker));
+    if (!missing.length) continue;
+    findings.push({
+      rule: "agent-shell/worker-handover-contract",
+      severity: "error",
+      file: contract.file,
+      message: `loses required worker handover markers: ${missing.join(", ")}.`,
+      fix: [
+        "Use the shared strict worker report parser in both CLI commands.",
+        "Reject damaged report bodies before queue mutation.",
+        "Store a pending exact-Area notice receipt with every accepted worker handover.",
+      ],
+    });
+  }
   return findings;
 }
 

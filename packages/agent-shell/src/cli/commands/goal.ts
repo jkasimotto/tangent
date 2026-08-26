@@ -7,6 +7,7 @@ import { booleanArg, parseArgs, requiredString, stringArg, stringsArg, type Args
 
 import { currentTmuxSession, goalQueueRevision, listGoalScope, postJson, requireArea, requireGoal, resolveServerUrl } from "../client.js";
 import { goalCommandSpec } from "../spec.js";
+import { parseWorkerReportOption, workerHandoverResultLine } from "../worker-report.js";
 
 /** Dispatches `tangent goal` subcommands. */
 export async function runGoalCli(argv = process.argv.slice(2)): Promise<void> {
@@ -271,21 +272,10 @@ async function handoverCommand(args: Args): Promise<void> {
   if (!text) throw new Error("tangent goal handover needs the facts as text.");
   if (booleanArg(args.continue)) throw new Error("--continue is retired. Submit a typed context-risk report; the exact Area brain starts any fresh attempt.");
   const body: Record<string, unknown> = { session, text };
-  const reportText = stringArg(args.report)?.trim();
-  if (reportText) {
-    try {
-      const report = JSON.parse(reportText);
-      if (!report || typeof report !== "object" || Array.isArray(report)) throw new Error();
-      body.report = report;
-    } catch {
-      throw new Error("--report must be one JSON object.");
-    }
-  }
+  const report = parseWorkerReportOption(args);
+  if (report) body.report = report;
   const result = await postJson(server, "/api/goals/handover", body);
-  const next = result.next as { index?: number; session?: string } | null | undefined;
-  if (result.status === "reported") console.log("handed over to the brain; the brain chooses what happens next");
-  else if (result.status === "started" && next) console.log(`handed over; next: step ${next.index} (${next.session})`);
-  else console.log("pipeline complete");
+  console.log(workerHandoverResultLine(result));
 }
 
 /** The session that owns the action: --session, or the tmux session this command runs in. */

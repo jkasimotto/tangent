@@ -13,7 +13,7 @@ The root `tangent` command loads this package only when one of these nouns is us
 
 Every command except `vault commit` and `study` is a thin HTTP client to the Agent Shell gateway. The default URL is `http://127.0.0.1:4321`. `--server` or `TANGENT_SHELL_URL` can select another loopback URL.
 
-Requests have a response deadline and an operation ID. A failed mutation response warns that the operation can already be durable. Callers must inspect current state before retrying.
+Requests have a response deadline and an operation ID. A failed mutation response warns that the operation can already be durable. A worker handover transport failure tells the caller to retry the same command. The server deduplicates that retry and repairs a missing brain notice.
 
 `tangent vault commit` writes the vault history directly. `tangent study` starts one local interactive agent directly. No other package command writes vault files or starts a process itself.
 
@@ -49,13 +49,15 @@ Every active Goal execution uses one `area-goal-queue.v2` record under `~/.tange
 - `tangent goal start <slug> --step <instruction> [--kind <implementation|review>] [--launch ...] [--path ...] ...` declares ordered assignments.
 - `tangent goal append <slug> --step <instruction> [--kind <implementation|review>] ...` adds pending assignments without rewriting history. The type defaults to `implementation`. A designated review requires `--kind review`; instruction text never infers the type.
 - `tangent brain advance <goal> <step>` starts one pending assignment after the exact-Area brain reviews the current queue.
-- `tangent handover <facts...> --report '<json>'` submits evidence and one tagged worker report.
+- `tangent handover <facts...> --report '<json>'` and `tangent goal handover <facts...> --report '<json>'` submit through the same route.
 
 A Julian start without a caller queues normal work for the exact brain. An exact-Area brain caller can start the declared assignment. A guarded `--recovery` start records `julian-emergency` in the same queue. It requires a pending assignment, no current attempt, and exhausted brain recovery.
 
-Worker report types are `implementation-result`, `review-result`, `question-needed`, `context-risk`, and `failed`. The server validates the report against the assignment kind and queue revision. A worker report never starts another assignment.
+Worker report types are `implementation-result`, `review-result`, `question-needed`, `context-risk`, and `failed`. The server validates the report against the assignment kind and queue revision. A worker report never starts another assignment. Missing, malformed, truncated, shell-quoted, and non-object reports fail before queue mutation. A rejected typed report also records no queue result or notice.
 
-Only a designated `review-result` can close routine work. Closure requires the `review-pass` policy, the current Goal revision, passed criteria, and evidence references. Free text never closes a Goal.
+An accepted handover adds one `worker-handover-receipt.v1` record to the assignment. It links the worker session, Goal, assignment, report type, queue revisions, queue result, exact destination Area, and inbox notice. The server writes the queue and pending receipt first. It then writes one notice with a stable source ID. If notice storage fails, the command fails and tells the worker to retry unchanged. Reconcile and the retry repair the same notice. A response is successful only after the receipt holds the notice ID.
+
+Only a designated `review-result` can close routine work. Closure requires the `review-pass` policy, the current Goal revision, passed criteria, and evidence references. Free text becomes `untyped-evidence`. It reaches the exact brain, but the assignment stays `waiting`. Free text never closes or advances a Goal.
 
 Compatibility readers normalize `agent-pipeline.v1` and solo records. New mutations write only `area-goal-queue.v2`.
 
@@ -97,7 +99,7 @@ Routine healthy polling, starts, stops, and repeated success stay quiet. Event i
 ## Main HTTP shapes
 
 - `POST /api/goals/start`: `{ file, steps?, caller?, recovery?, extraFiles? }`.
-- `POST /api/goals/handover`: `{ session, text, report, idempotencyKey? }`.
+- `POST /api/goals/handover`: `{ session, text, report?, idempotencyKey? }`. A successful response includes the queue `pipeline` and its worker handover `receipt`.
 - `POST /api/pipelines/control`: `{ goal, action, step, caller, expectedRevision, idempotencyKey }`.
 - `POST /api/pipelines/append`: `{ goal, steps, caller, expectedRevision, idempotencyKey }`.
 - `POST /api/pipelines/edit`: `{ goal, step, caller, expectedRevision, idempotencyKey, ...patch }`.

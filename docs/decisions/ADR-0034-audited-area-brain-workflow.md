@@ -23,9 +23,17 @@ Normal worker starts use the exact Area brain and queue. A recovery-only direct 
 Workers submit tagged reports to the queue controller. Only a designated review assignment can submit a `review-result` report.
 A brain appends that assignment with `--kind review`. The queue defaults to `implementation`, and instruction text never changes the explicit type.
 
+`tangent handover` and `tangent goal handover` use one report parser and one server route. The route rejects damaged report input before it mutates the queue.
+
+Each accepted worker submission adds a receipt to its exact Goal assignment. The receipt stores the queue result and the exact Area inbox notice identity.
+
+The receipt is a durable outbox until it holds a notice ID. Retry and reconcile use one stable source ID, so they repair the notice without adding a second notice.
+
 A routine Goal closes after a `passed` review with complete criteria. The report revision must equal the current Goal revision.
 
 Free text never closes a Goal. A Goal that needs human judgment uses a revision-bound Question effect.
+
+Free text is durable `untyped-evidence`. It produces a brain notice, but its assignment stays waiting until the queue accepts a typed report.
 
 Every Question accepts a durable reply. A Question can also offer one allowlisted, revision-bound effect with a preview.
 
@@ -60,6 +68,8 @@ ADR-0033 remains the product direction. This ADR defines its exact authority, cl
 ## Consequences
 
 The server validates exact Area and revision fields before every workflow mutation. It records durable intent before retryable side effects.
+
+A worker sees success only after the queue receipt links to its inbox notice. A notice-write failure tells the worker to retry the same handover.
 
 One release can read old execution and response shapes. New mutations write only the audited records.
 

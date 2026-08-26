@@ -4,12 +4,12 @@ Purpose: the CLI surface of the Agent Shell, under the root `tangent` command:
 
 - Vault CLI: `tangent area`, `tangent goal`, `tangent idea`, `tangent document`, `tangent vault commit`.
 - Agent messaging CLI: `tangent agent list`, `tangent agent send`.
-- Worker CLI: `tangent handover` reports facts to the controlling brain. `tangent area recent` queries subtree milestones. `tangent area audit` exports legacy records.
+- Worker CLI: `tangent handover` and `tangent goal handover` report facts through the same exact-Area route. `tangent area recent` queries subtree milestones. `tangent area audit` exports legacy records.
 - Brain CLI: `tangent brain request` creates durable user requests, and `tangent brain advance` starts the next approved assignment.
 - Brain and server CLI: `tangent brain handover|status` shows lifecycle, health, checkpoint, and Questions. `tangent shell rebuild` rebuilds and restarts the server.
 - Study partner CLI: `tangent study` (spawns an interactive `claude-otto` session carrying the partner contract) and `tangent study contract` (prints that contract).
 
-The Agent Shell gateway in `packages/agent-shell/app/gateway.mjs` owns port 4321 and durable terminal transport. It supervises the controller in `server.mjs`. The controller owns logical Area brains, Goal queues, Questions, Operation events, and session projection. See ADR-0032 and ADR-0034.
+The Agent Shell gateway in `packages/agent-shell/app/gateway.mjs` owns port 4321 and durable terminal transport. It supervises the controller in `server.mjs`. The controller owns logical Area brains, Goal queues, worker handover notice receipts, Questions, Operation events, and session projection. See ADR-0032 and ADR-0034.
 
 Agent Shell centers each Area on one logical brain with an active or inactive lifecycle. Exact Area identity controls mutations. The Area Journal saves unstructured text before brain delivery.
 

@@ -6,4 +6,4 @@ Public import paths:
 
 Agents must import through these public exports, not package src internals.
 
-The `agents` and `docs` groups also enforce the ADR-0034 Area-brain workflow vocabulary in Agent Shell production surfaces.
+The `agents` and `docs` groups also enforce the ADR-0034 Area-brain workflow vocabulary in Agent Shell production surfaces. They require both worker handover commands to keep strict report parsing and durable exact-Area notice receipts.

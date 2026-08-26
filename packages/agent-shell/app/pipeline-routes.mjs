@@ -19,7 +19,10 @@ export function createPipelineRoutes(operations) {
 
   /** Stores one worker report. The queue controller chooses the next attempt. */
   async function handover(request, response) {
-    const body = await readJson(request);
+    const body = await readJson(request, {
+      rejectMalformed: true,
+      malformedMessage: "The handover body is malformed or truncated JSON. Retry the same command unchanged. Nothing was submitted.",
+    });
     if (body["continue"] === true) {
       sendJson(response, 400, { error: "Workers cannot replace themselves. Submit a typed context-risk report for the Area brain." });
       return;
@@ -27,9 +30,14 @@ export function createPipelineRoutes(operations) {
     let text;
     try { text = operations.normalizeMessage(body.text); }
     catch (error) { sendJson(response, 400, { error: String(error.message ?? error) }); return; }
-    const result = await operations.handoverStep(String(body.session ?? ""), text, body.report && typeof body.report === "object" ? body.report : null, String(body.idempotencyKey ?? ""));
+    const hasReport = Object.hasOwn(body, "report");
+    if (hasReport && (!body.report || typeof body.report !== "object" || Array.isArray(body.report))) {
+      sendJson(response, 400, { error: "The report was rejected because it is not one JSON object. Correct --report and retry the same handover. Nothing was submitted." });
+      return;
+    }
+    const result = await operations.handoverStep(String(body.session ?? ""), text, hasReport ? body.report : null, String(body.idempotencyKey ?? ""));
     const value = result.status !== 200 ? { error: result.error }
-      : { status: result.state, next: result.next, pipeline: result.pipeline };
+      : { status: result.state, next: result.next, pipeline: result.pipeline, receipt: result.receipt ?? null };
     sendJson(response, result.status, value);
   }
 

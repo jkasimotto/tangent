@@ -12,3 +12,12 @@ test("JSON reader accepts bounded objects and keeps malformed compatibility", as
   assert.deepEqual(await readJson(Readable.from(['{"value":1}'])), { value: 1 });
   assert.deepEqual(await readJson(Readable.from(["not json"])), {});
 });
+
+test("JSON reader can reject malformed or non-object bodies for strict mutations", async () => {
+  for (const body of ["", '{"value":', "[]", "null"]) {
+    await assert.rejects(
+      readJson(Readable.from(body ? [body] : []), { rejectMalformed: true, malformedMessage: "retry the complete JSON body" }),
+      (error) => error instanceof HttpError && error.status === 400 && /retry the complete JSON body/.test(error.message)
+    );
+  }
+});

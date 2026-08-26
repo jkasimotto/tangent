@@ -79,6 +79,7 @@ Search owns structural indexing and search over TypeScript and Dart source: a SQ
 Each Area brain has one logical identity.
 Its lifecycle is active or inactive. Process attempts and recovery are diagnostic health.
 The server owns its activation envelope, bounded prompt, subtree milestones, Journal, Requests, exact-Area Goal queue, and Operation event outbox.
+Each accepted worker handover adds a receipt to that Goal queue before it writes one exact-Area inbox notice. A pending receipt is a durable notice outbox, and a stable source ID makes retry and recovery idempotent.
 Mutation authority is exact by Area. Parent brains can read descendant summaries and route information, but cannot mutate child work.
 Journal capture writes before delivery.
 Exact Request effects use hashed revisions and an allowlist.

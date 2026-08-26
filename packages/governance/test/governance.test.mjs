@@ -98,6 +98,23 @@ test("agent lint rejects retired solo execution writers", async () => {
   }
 });
 
+test("agent lint requires the durable worker handover markers", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
+  try {
+    await writeMinimalRootAgentDocs(root);
+    const app = path.join(root, "packages", "agent-shell", "app");
+    await mkdir(app, { recursive: true });
+    await writeFile(path.join(app, "pipeline-routes.mjs"), 'routes.set("POST /api/goals/handover", body.report);\n', "utf8");
+    const result = await lintGovernance({ root, groups: ["docs"] });
+    const finding = result.findings.find((candidate) => candidate.rule === "agent-shell/worker-handover-contract");
+    assert.ok(finding);
+    assert.equal(finding.file, "packages/agent-shell/app/pipeline-routes.mjs");
+    assert.match(finding.message, /rejectMalformed.*Object\.hasOwn.*receipt/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("dependency lint flags disallowed vertical package dependencies", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
   try {

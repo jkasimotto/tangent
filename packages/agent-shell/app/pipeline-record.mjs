@@ -9,6 +9,7 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { readJsonObject, walkJsonFiles, writeJsonObject } from "./json-store.mjs";
 import { GOAL_QUEUE_SCHEMA, submitWorkerReport } from "./area-brain-domain.mjs";
+import { normalizeWorkerHandoverReceipts } from "./worker-handover-receipt.mjs";
 
 export const PIPELINE_SCHEMA = GOAL_QUEUE_SCHEMA;
 const LEGACY_PIPELINE_SCHEMA = "agent-pipeline.v1";
@@ -413,6 +414,7 @@ function normalizeStep(step, index) {
     handoverSource: null,
     attempts: [],
     reports: [],
+    handoverReceipts: [],
   };
 }
 
@@ -426,5 +428,6 @@ function normalizeStoredAssignment(step, index) {
     designatedReview: step.designatedReview === true || step.kind === "review",
     attempts: Array.isArray(step.attempts) ? step.attempts : [],
     reports: Array.isArray(step.reports) ? step.reports : [],
+    handoverReceipts: normalizeWorkerHandoverReceipts(step.handoverReceipts),
   };
 }

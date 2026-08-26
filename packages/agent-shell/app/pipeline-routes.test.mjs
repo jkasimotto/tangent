@@ -39,3 +39,19 @@ test("pipeline routes reject worker replacement and accept typed queue reports",
   assert.match(continued.body.error, /typed context-risk/);
   assert.equal(advanced.body.status, "advanced");
 });
+
+test("pipeline routes reject a report value that is not an object", async () => {
+  let called = false;
+  const routes = createPipelineRoutes({
+    normalizeMessage: String,
+    /** Must stay unreachable for every rejected report value. */
+    async handoverStep() { called = true; return { status: 200, state: "reported", pipeline: {} }; },
+  });
+  for (const report of ['{"type":"implementation-result"}', [], true, null]) {
+    const output = response();
+    await routes.handle(request("POST", { session: "worker", text: "facts", report }), output, new URL("http://shell/api/goals/handover"));
+    assert.equal(output.status, 400);
+    assert.match(output.body.error, /Correct --report.*Nothing was submitted/);
+  }
+  assert.equal(called, false, "a malformed report never reaches the queue controller");
+});

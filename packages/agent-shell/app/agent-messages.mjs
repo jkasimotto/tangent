@@ -7,10 +7,21 @@
 // - The provenance banner is stamped by the server, never written by the
 //   sender, so a receiving agent can always tell agent words from Julian's
 //   words. Authority phrases ("on Julian's word") stay unforgeable.
-// - Delivery happens only into a positively identified empty composer
-//   (stateDetail "idle"). Anything else queues or refuses: a dialog would
-//   treat typed text as an answer, a draft would be corrupted, and a shell
-//   would execute the text as a command.
+// - Delivery happens only into a positively identified empty composer.
+//   Anything else queues or refuses: a dialog would treat typed text as an
+//   answer, a draft would be corrupted, and a shell would execute the text as
+//   a command.
+//
+// An empty composer is not the same as an idle agent. A waiting agent shows
+// one (stateDetail "idle"); a WORKING agent also has one whenever it is not
+// being typed into (`composer` "idle", from classifyWorkingComposer). Waiting
+// for the idle state alone made a busy Area brain unreachable: a worker's
+// typed report was written to the inbox, queued, and then held in memory
+// until the brain's turn ended, so the assignment queue that report unblocks
+// stood still for as long as the brain kept working (Goal
+// probe-brain-worker-handover-message-2026-08-26). Claude Code and codex both
+// take typed text while they work and read it at their next turn boundary, so
+// a working agent with an empty composer is delivered to now.
 
 /** The provenance header typed before the message body. */
 export function messageBanner(from, area, text) {
@@ -21,9 +32,14 @@ export function messageBanner(from, area, text) {
 /**
  * Decides what to do with one message given the target session's live facts,
  * or null when the session does not exist. Returns one of:
- *   { action: "deliver" }
+ *   { action: "deliver", composer: "idle" | "working" }
  *   { action: "queue", reason }
  *   { action: "refuse", error }
+ *
+ * `composer` says which empty composer was found: "idle" is an agent waiting
+ * for input, "working" is an agent mid-turn whose composer holds nothing. The
+ * caller needs the difference, because a working harness is already up and
+ * must not be waited on for a quiet screen before the text is typed.
  */
 export function deliveryDecision(target) {
   if (!target) return { action: "refuse", error: "no such session; run \"tangent agent list\" to see live agents" };
@@ -33,9 +49,12 @@ export function deliveryDecision(target) {
   if (target.state === "shell") {
     return { action: "refuse", error: `${target.name} has no agent running; typed text would execute in its shell` };
   }
-  if (target.state === "waiting" && target.stateDetail === "idle") return { action: "deliver" };
+  if (target.state === "waiting" && target.stateDetail === "idle") return { action: "deliver", composer: "idle" };
+  if (target.state === "working" && target.composer === "idle") return { action: "deliver", composer: "working" };
   const reason = target.state === "working"
-    ? `${target.name} is working`
+    ? target.composer === "draft"
+      ? `${target.name} is working and its composer holds unsent text`
+      : `${target.name} is working and shows no empty composer`
     : target.stateDetail === "decision"
       ? `${target.name} waits on a decision dialog`
       : target.stateDetail === "draft"

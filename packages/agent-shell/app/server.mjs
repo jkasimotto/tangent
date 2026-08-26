@@ -23,6 +23,7 @@ import areaMapCore from "./public/area-map-core.js";
 import whatHappenedCore from "./public/what-happened-core.js";
 import { createVaultGitReader, fileTimes } from "./area-map.mjs";
 import { createPaneObserver } from "./pane-observer.mjs";
+import { classifyWorkingComposer } from "./pane-state.mjs";
 import { mapWithConcurrency } from "./bounded-work.mjs";
 import { createObservationCache } from "./observation-cache.mjs";
 import { appendSteps, currentStep, endPipeline, goalBindingGoneFromSnapshot, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, queueNormalizationChanged, readAllPipelines, readPipeline, reclaimLiveSteps, recordTypedReport, snapshotCanJudgeAbsence, stepGoneFromSnapshot, validateSteps, writePipeline } from "./pipeline-record.mjs";
@@ -34,7 +35,7 @@ import { createBrainPacing } from "./brain-pacing.mjs";
 import { appendNotice, inboxesForBrain, markDelivered, mergeNotices, noticeBlock, noticeDigest, readAllInboxes, readInbox, writeInbox } from "./brain-inbox.mjs";
 import { forJulianSectionText, parseForJulian, removeForJulianLine, restoreForJulianLine, unparsedForJulianLines } from "./for-julian.mjs";
 import { createCommitChangeMonitor } from "./commit-change-monitor.mjs";
-import { promptArrived, splitPrompt, squash, typeChunks } from "./prompt-delivery.mjs";
+import { promptArrived, readyForText, splitPrompt, squash, typeChunks } from "./prompt-delivery.mjs";
 import { clearArmedPrompt, readAllArmedPrompts, writeArmedPrompt } from "./armed-prompts.mjs";
 import { createRuntimeScheduler } from "./runtime-scheduler.mjs";
 import { attachTerminalTransport } from "./terminal-transport.mjs";
@@ -1687,6 +1688,37 @@ async function waitForHarnessReady(session) {
 }
 
 /**
+ * The composer state of a live pane, read fresh: "idle", "draft", or null.
+ * The observer's reading can be up to one sample old, which is long enough
+ * for Julian to have started typing, so the working path asks again at the
+ * moment it is about to type.
+ */
+async function paneComposerNow(session) {
+  try {
+    const [{ stdout: text }, { stdout: at }] = await Promise.all([
+      execFileAsync("tmux", ["capture-pane", "-p", "-t", "=" + session + ":"]),
+      execFileAsync("tmux", ["display-message", "-p", "-t", "=" + session + ":", "#{cursor_x} #{cursor_y}"]),
+    ]);
+    const [cursorX, cursorY] = at.trim().split(/\s+/).map(Number);
+    return classifyWorkingComposer({ text, cursorX: Number.isFinite(cursorX) ? cursorX : 0, cursorY: Number.isFinite(cursorY) ? cursorY : 0 });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True when a pane can take typed text now. A booting harness is waited for;
+ * one already running an agent must not be a bare shell and must still show
+ * the empty composer the delivery decision found. The second check is what
+ * makes mid-turn delivery safe: the decision read a sample, and text typed
+ * since then would otherwise be typed over.
+ */
+async function paneReadyForText(session, settle) {
+  if (settle) return waitForHarnessReady(session);
+  return readyForText({ command: await paneCommand(session), composer: await paneComposerNow(session), shellCommands: SHELL_CMDS });
+}
+
+/**
  * Types a Goal's opening prompt into the harness the user just started,
  * once that harness is up, and checks that it arrived whole.
  *
@@ -1703,8 +1735,14 @@ async function waitForHarnessReady(session) {
  * Returns true when the whole prompt showed in the pane, false when the
  * session was gone, sat at a shell, or never took the whole prompt. A brain
  * notice counts as read only on true.
+ *
+ * `settle` false skips the boot wait. The wait watches for a quiet screen,
+ * which a working agent never shows, so waiting on one costs the full
+ * READY_MAX_MS per attempt and delays exactly the message that must be
+ * prompt: a worker's report to a busy Area brain. A working harness is
+ * already up; the only thing left to prove is that its pane is not a shell.
  */
-async function typePromptWhenReady(session, prompt, submit = false, label = "agent prompt") {
+async function typePromptWhenReady(session, prompt, submit = false, label = "agent prompt", { settle = true } = {}) {
   const startedAt = Date.now();
   /** Records delivery latency without the session name or prompt content. */
   const measured = (ok) => {
@@ -1714,7 +1752,7 @@ async function typePromptWhenReady(session, prompt, submit = false, label = "age
   try {
     const { probe, rest } = splitPrompt(prompt);
     for (let attempt = 1; attempt <= TYPE_ATTEMPTS; attempt++) {
-      if (!(await waitForHarnessReady(session))) return measured(false);
+      if (!(await paneReadyForText(session, settle))) return measured(false);
       await typeInto(session, probe, false);
       await sleep(ECHO_MS);
       if ((await paneText(session)).includes(squash(probe))) {
@@ -1855,7 +1893,7 @@ const messages = createMessageDelivery({
   file: MESSAGE_LOG,
   sessions: listSessions,
   /** Delivers a complete message through the prompt transport. */
-  deliverText: (target, text, label) => typePromptWhenReady(target, text, true, label),
+  deliverText: (target, text, label, options) => typePromptWhenReady(target, text, true, label, options),
   notices: { delivered: markBrainNoticesDelivered, released: releaseBrainNotices },
   /** The scheduler is constructed below; delivery begins only after this callback runs. */
   wake: () => runtimeScheduler.wake(),
@@ -3138,9 +3176,11 @@ function releaseBrainNotices(notices) {
  * Tells the exact Area brain what happened, as a message from
  * `tangent`. The text is clipped, never refused, so a long Request answer or
  * handover cannot be dropped before it is written down. The notice is
- * persisted first, then queued when a brain session is live; the queue delivers it into an idle composer and a working brain
- * reads it when it pauses. With no live brain the notice waits on disk for
- * the next generation. Returns true when a live brain was addressed.
+ * persisted first, then queued when a brain session is live. The queue
+ * delivers it into any empty composer, including that of a brain still in a
+ * long turn, which reads it at its next turn boundary. With no live brain the
+ * notice waits on disk for the next generation. Returns true when a live
+ * brain was addressed.
  */
 async function notifyBrain(area, text, { idempotencyKey = null } = {}) {
   try {

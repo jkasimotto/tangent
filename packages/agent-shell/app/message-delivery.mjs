@@ -18,11 +18,16 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
     }
   }
 
-  /** Delivers one queued entry and settles any durable brain notices. */
-  async function deliver(target, entry) {
+  /**
+   * Delivers one queued entry and settles any durable brain notices.
+   * `composer` is the decision's finding: into a working agent's empty
+   * composer the transport must type at once, because a repainting screen
+   * never goes quiet and the harness needs no boot wait.
+   */
+  async function deliver(target, entry, composer = "idle") {
     const body = typeof entry.render === "function" ? entry.render() ?? entry.text : entry.text;
     const text = entry.banner === false ? body : messageBanner(entry.from, entry.area, body);
-    const arrived = await deliverText(target, text, entry.banner === false ? "pipeline step" : "agent message");
+    const arrived = await deliverText(target, text, entry.banner === false ? "pipeline step" : "agent message", { settle: composer !== "working" });
     await log({ event: arrived ? "delivered" : "not delivered", to: target, from: entry.from, area: entry.area, text: body, banner: entry.banner !== false, queuedAt: entry.queuedAt });
     if (!entry.notices?.length) return arrived;
     if (arrived) await notices.delivered(entry.notices, target, entry.generation ?? null);
@@ -53,7 +58,7 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
     if (decision.action === "deliver" && !ticking && queuedCount(target.name) === 0 && !deliveringTargets.has(target.name) && activeDeliveries < concurrency) {
       deliveringTargets.add(target.name);
       activeDeliveries += 1;
-      void deliver(target.name, entry)
+      void deliver(target.name, entry, decision.composer)
         .catch((error) => report("agent message:", error?.message ?? error))
         .finally(() => {
           activeDeliveries -= 1;
@@ -90,13 +95,14 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
           }
           return;
         }
-        if (deliveryDecision(live).action !== "deliver") return;
+        const decision = deliveryDecision(live);
+        if (decision.action !== "deliver") return;
         const entry = pending.shift();
         if (!pending.length) queues.delete(target);
         deliveringTargets.add(target);
         activeDeliveries += 1;
         try {
-          await deliver(target, entry);
+          await deliver(target, entry, decision.composer);
         } finally {
           activeDeliveries -= 1;
           deliveringTargets.delete(target);

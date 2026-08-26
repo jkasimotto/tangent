@@ -14,13 +14,35 @@ test("the banner names the sender and its area", () => {
 test("delivery happens only into an empty composer", () => {
   assert.deepEqual(
     deliveryDecision({ name: "a", kind: "goal", state: "waiting", stateDetail: "idle" }),
-    { action: "deliver" }
+    { action: "deliver", composer: "idle" }
   );
 });
 
-test("a working target queues", () => {
+test("a working target with no observed composer queues", () => {
   const decision = deliveryDecision({ name: "a", kind: "goal", state: "working", stateDetail: null });
   assert.equal(decision.action, "queue");
+});
+
+test("a working brain with an empty composer is delivered to mid-turn", () => {
+  // The blocked case: a worker's typed report reached a brain that had been
+  // working for the whole pipeline, so its composer never went idle.
+  assert.deepEqual(
+    deliveryDecision({ name: "tangent-brain-g313", kind: "brain", state: "working", stateDetail: null, composer: "idle" }),
+    { action: "deliver", composer: "working" }
+  );
+});
+
+test("a working target composing text queues rather than corrupting it", () => {
+  const decision = deliveryDecision({ name: "a", kind: "goal", state: "working", stateDetail: null, composer: "draft" });
+  assert.equal(decision.action, "queue");
+  assert.match(decision.reason, /unsent text/);
+});
+
+test("an idle composer still reports which composer took the message", () => {
+  assert.deepEqual(
+    deliveryDecision({ name: "a", kind: "goal", state: "waiting", stateDetail: "idle" }),
+    { action: "deliver", composer: "idle" }
+  );
 });
 
 test("a decision dialog queues rather than answers itself", () => {

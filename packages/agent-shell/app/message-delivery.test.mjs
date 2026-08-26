@@ -159,3 +159,68 @@ test("an arriving dispatch cannot overbook slots held by a queue tick", async ()
   assert.equal(peak, 8);
   assert.equal(delivery.totalQueued(), 1);
 });
+
+test("a worker report reaches a brain that never stops working, in order", async () => {
+  // The production block: tangent-brain-g313 held one queued notice until its
+  // composer ended, so the assignment queue it controls could not advance.
+  const root = await mkdtemp(path.join(os.tmpdir(), "tangent-message-working-brain-"));
+  const file = path.join(root, "messages.jsonl");
+  const brain = { name: "tangent-brain-g313", kind: "brain", state: "working", stateDetail: null, composer: "idle" };
+  const delivered = [];
+  const read = [];
+  const delivery = createMessageDelivery({
+    file,
+    /** Returns the working brain as the only live session. */
+    sessions: async () => [brain],
+    /** Records what the transport was asked to type and how. */
+    deliverText: async (target, text, label, options) => { delivered.push({ target, text, label, options }); return true; },
+    notices: {
+      /** Records which durable notices the brain read. */
+      delivered: async (notices) => { read.push(...notices); },
+      /** Fails the test if a delivered notice is released instead. */
+      released: (notices) => { throw new Error(`released ${JSON.stringify(notices)}`); },
+    },
+    /** Accepts fixture polling wake-up. */
+    wake() {},
+  });
+  const report = { from: "tangent", area: null, text: "Goal g: assignment 1 submitted implementation-result.", queuedAt: "then", notices: [{ area: "otto/tangent", id: "n1" }] };
+  const ready = { from: "tangent", area: null, text: "Goal g: assignment 2 is ready and waits for your command.", queuedAt: "then", notices: [{ area: "otto/tangent", id: "n2" }] };
+  assert.equal(delivery.queue(brain.name, report), 1);
+  assert.equal(delivery.queue(brain.name, ready), 2);
+  await delivery.tick();
+  await delivery.tick();
+  assert.equal(delivery.queuedCount(brain.name), 0, "nothing waits for the brain's turn to end");
+  assert.deepEqual(delivered.map((call) => call.text.includes("assignment 1")), [true, false]);
+  assert.deepEqual(delivered.map((call) => call.options), [{ settle: false }, { settle: false }], "a working harness is typed into at once");
+  assert.deepEqual(read, [...report.notices, ...ready.notices]);
+});
+
+test("a brain composing text keeps its queued report until the text is gone", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "tangent-message-brain-draft-"));
+  const brain = { name: "tangent-brain-g313", kind: "brain", state: "working", stateDetail: null, composer: "draft" };
+  const delivered = [];
+  const delivery = createMessageDelivery({
+    file: path.join(root, "messages.jsonl"),
+    /** Returns the mutable brain fixture. */
+    sessions: async () => [brain],
+    /** Records fixture text delivery. */
+    deliverText: async (...args) => { delivered.push(args); return true; },
+    notices: {
+      /** Accepts fixture notice delivery. */
+      delivered: async () => {},
+      /** Fails the test if a still-queued notice is released. */
+      released: () => { throw new Error("released a queued notice"); },
+    },
+    /** Accepts fixture polling wake-up. */
+    wake() {},
+  });
+  const entry = { from: "tangent", area: null, text: "Goal g: assignment 1 submitted implementation-result.", queuedAt: "then", notices: [{ area: "otto/tangent", id: "n1" }] };
+  assert.equal((await delivery.dispatch(brain, entry)).state, "queued");
+  await delivery.tick();
+  assert.equal(delivered.length, 0, "unsent text in the composer is never typed over");
+  assert.equal(delivery.queuedCount(brain.name), 1);
+  brain.composer = "idle";
+  await delivery.tick();
+  assert.equal(delivered.length, 1);
+  assert.equal(delivery.queuedCount(brain.name), 0);
+});

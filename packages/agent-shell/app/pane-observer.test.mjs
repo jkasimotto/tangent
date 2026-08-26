@@ -55,3 +55,31 @@ test("pane observer bounds capture fan-out for a large session snapshot", async 
   assert.equal((await observer.enrich(sessions)).length, 200);
   assert.equal(peak, 8);
 });
+
+test("pane observer reports the composer of a brain that keeps working", async () => {
+  // Without this the message queue cannot tell a busy brain with an empty
+  // composer from one whose composer holds Julian's half-typed words.
+  let at = 1_000;
+  let frame = 0;
+  let cursorX = 2;
+  const observer = createPaneObserver({
+    /** Repaints a claude working screen with a composer at row 1. */
+    runTmux: async (args) => args[0] === "capture-pane"
+      ? { stdout: `✳ Simmering… (esc to interrupt · ${(frame += 1)}s)\n❯ \n` }
+      : { stdout: `${cursorX} 1` },
+    shellCommands: new Set(["zsh"]),
+    minSampleMs: 10,
+    waitStableMs: 0,
+    /** Returns the mutable fixture clock. */
+    now: () => at,
+  });
+  const brain = { name: "tangent-brain-g313", command: "claude", kind: "brain" };
+  const working = (await observer.enrich([brain]))[0];
+  assert.equal(working.state, "working");
+  assert.equal(working.composer, "idle");
+  at += 20;
+  cursorX = 24;
+  const composing = (await observer.enrich([brain]))[0];
+  assert.equal(composing.state, "working");
+  assert.equal(composing.composer, "draft");
+});

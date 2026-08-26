@@ -67,3 +67,23 @@ function pastedAfterProbe(pane, probe) {
     from = at + 1;
   }
 }
+
+/**
+ * Whether a live pane may be typed into right now, for the path that does not
+ * wait for a harness to boot (a target already mid-turn).
+ *
+ * The server asks this again immediately before it types, with a pane command
+ * and composer read fresh from tmux. The delivery decision that chose this
+ * target read an observer sample that can be a second or more old, which is
+ * long enough for Julian to have started typing. The settling path has its own
+ * proof that nobody typed, because it waits for a screen that stops changing;
+ * this path has none, so it asks for the composer directly.
+ *
+ * True only for a pane running an agent whose composer is empty. A bare shell
+ * would execute the text as a command, a "draft" composer holds words that
+ * would be typed over, and null means no composer this shell recognizes.
+ */
+export function readyForText({ command, composer, shellCommands }) {
+  if (!command || shellCommands.has(command)) return false;
+  return composer === "idle";
+}

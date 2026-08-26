@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { classifyStaticPane, hasRunningBackgroundShell, parseContextFill, stabilizeStaticPane, staticSinceOf } from "./pane-state.mjs";
+import { classifyStaticPane, classifyWorkingComposer, hasRunningBackgroundShell, parseContextFill, stabilizeStaticPane, staticSinceOf } from "./pane-state.mjs";
 
 const fixturesDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "panes");
 
@@ -145,4 +145,32 @@ test("parseContextFill returns null for codex, which prints no fill", () => {
 test("parseContextFill returns null for an inverted or missing reading", () => {
   assert.equal(parseContextFill("[Opus 5] ░░ 8% (1200k/1000k)"), null);
   assert.equal(parseContextFill("no status line here"), null);
+});
+
+test("a working claude pane still reports its empty composer", () => {
+  const { text, cursorY } = fixture("claude-working.txt", /^❯(\s|$)/);
+  assert.ok(cursorY >= 0, "the working fixture keeps a composer prompt line");
+  assert.equal(classifyStaticPane({ text, cursorX: 2, cursorY }).kind, "working", "the busy marker still wins the state");
+  assert.equal(classifyWorkingComposer({ text, cursorX: 2, cursorY }), "idle");
+});
+
+test("a working pane whose composer holds text is a draft, never typed into", () => {
+  const { text, cursorY } = fixture("claude-working.txt", /^❯(\s|$)/);
+  assert.equal(classifyWorkingComposer({ text, cursorX: 24, cursorY }), "draft");
+});
+
+test("a working codex pane reads its placeholder composer as empty", () => {
+  const { text, lines, cursorY } = fixture("codex-idle.txt", /^›(\s|$)/);
+  const working = `${text}\n· esc to interrupt\n`;
+  assert.ok(lines[cursorY].length > 2, "the composer line holds gray placeholder text");
+  assert.equal(classifyWorkingComposer({ text: working, cursorX: 2, cursorY }), "idle");
+});
+
+test("a working pane showing a dialog has no composer to type into", () => {
+  const { text } = fixture("claude-dialog.txt");
+  assert.equal(classifyWorkingComposer({ text, cursorX: 2, cursorY: 0 }), null);
+});
+
+test("a working pane with no recognized composer reports none", () => {
+  assert.equal(classifyWorkingComposer({ text: "building…\nno composer here", cursorX: 0, cursorY: 1 }), null);
 });

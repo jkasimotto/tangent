@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { PROBE_CHARS, TYPE_CHUNK_CHARS, promptArrived, splitPrompt, typeChunks } from "./prompt-delivery.mjs";
+import { PROBE_CHARS, TYPE_CHUNK_CHARS, promptArrived, readyForText, splitPrompt, typeChunks } from "./prompt-delivery.mjs";
 
 const PROMPT =
   "# Work with Julian\n\nThis session covers the complete Goal and all linked Documents.\n\n" +
@@ -70,4 +70,19 @@ test("a marker that does not follow this attempt's probe is not proof", () => {
 test("a partially taken prompt is not delivered", () => {
   assert.equal(promptArrived(claudePane("# Work with JulianThis session covers the complete Goal and"), PROMPT), false);
   assert.equal(promptArrived(claudePane(""), PROMPT), false);
+});
+
+test("a mid-turn pane is typed into only while its composer is still empty", () => {
+  // Read fresh at the moment of typing: the delivery decision's sample can be
+  // older than the moment Julian started typing.
+  const shellCommands = new Set(["zsh", "bash"]);
+  assert.equal(readyForText({ command: "claude", composer: "idle", shellCommands }), true);
+  assert.equal(readyForText({ command: "claude", composer: "draft", shellCommands }), false, "words already in the composer are never typed over");
+  assert.equal(readyForText({ command: "claude", composer: null, shellCommands }), false, "an unrecognized composer is never typed into");
+});
+
+test("a mid-turn pane sitting at a shell is never typed into", () => {
+  const shellCommands = new Set(["zsh", "bash"]);
+  assert.equal(readyForText({ command: "zsh", composer: "idle", shellCommands }), false);
+  assert.equal(readyForText({ command: "", composer: "idle", shellCommands }), false, "a gone session takes nothing");
 });

@@ -39,7 +39,7 @@ A supplied brain caller must be the current live brain for the exact target Area
 - `tangent agent list` reads live agent sessions and queued message counts.
 - `tangent agent send <name> <text...>` sends through the server queue.
 
-The server stamps the sender and delivers only into an empty composer. Otherwise, the message stays queued.
+The server stamps the sender and delivers only into an empty composer. An agent that is still working has one whenever nobody is typing into it, so a message reaches a busy agent and it reads the message at its next turn boundary. Otherwise, the message stays queued.
 
 ## Goal queue
 

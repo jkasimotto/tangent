@@ -135,22 +135,61 @@ export function classifyStaticPane({ text, cursorX = 0, cursorY = 0 }) {
       if (pattern.test(String(text))) return { kind: "working" };
     }
   }
-  for (const signature of Object.values(PANE_SIGNATURES)) {
-    for (const pattern of signature.dialog) {
-      const line = lines.find((candidate) => pattern.test(candidate));
-      if (line !== undefined) return { kind: "decision", question: dialogQuestion(lines) };
-    }
-  }
+  if (hasDialog(lines)) return { kind: "decision", question: dialogQuestion(lines) };
   // After the dialog sweep, so a pane that asks a question while a shell of
   // its own runs still reads as an ask, not as work.
   if (hasRunningBackgroundShell(text)) return { kind: "working" };
+  return composerKind(lines, cursorX, cursorY) ?? { kind: "waiting" };
+}
+
+/**
+ * The composer state of a pane that is still WORKING, for the one question
+ * the message queue asks about a busy agent: may text be typed into it now?
+ *
+ * A brain in a long turn never reaches an idle composer, so a worker's report
+ * notice used to wait in the server's memory queue until the turn ended, and
+ * the queue it unblocks stood still (probe-brain-worker-handover-message,
+ * 2026-08-26). Claude Code and codex both accept typed text while they work
+ * and read it at their next turn boundary, so the wait was never needed; what
+ * is needed is proof that nothing is being composed.
+ *
+ * Returns "idle" (a recognized composer prompt with the cursor at its home
+ * column), "draft" (the cursor has moved past the home column, so text is
+ * being composed), or null when the pane shows a dialog or no composer this
+ * module recognizes. Only "idle" is safe to type into; null and "draft" mean
+ * queue, exactly as before.
+ *
+ * The cursor, not the composer text, decides. Codex paints gray placeholder
+ * text after its prompt, and placeholder text never moves the cursor.
+ */
+export function classifyWorkingComposer({ text, cursorX = 0, cursorY = 0 }) {
+  const lines = String(text ?? "").split("\n");
+  if (hasDialog(lines)) return null;
+  return composerKind(lines, cursorX, cursorY)?.kind ?? null;
+}
+
+/** True when any harness's dialog signature is on screen. */
+function hasDialog(lines) {
+  for (const signature of Object.values(PANE_SIGNATURES)) {
+    for (const pattern of signature.dialog) {
+      if (lines.some((candidate) => pattern.test(candidate))) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The composer classification of the cursor's own line, or null when the
+ * cursor does not sit on a composer prompt this module recognizes.
+ */
+function composerKind(lines, cursorX, cursorY) {
   const cursorLine = lines[cursorY] ?? "";
   for (const signature of Object.values(PANE_SIGNATURES)) {
     const { prompt, homeColumn } = signature.composer;
     if (!prompt.test(cursorLine)) continue;
     return cursorX <= homeColumn ? { kind: "idle" } : { kind: "draft" };
   }
-  return { kind: "waiting" };
+  return null;
 }
 
 /**

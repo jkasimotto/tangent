@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { mapWithConcurrency } from "./bounded-work.mjs";
-import { classifyStaticPane, parseContextFill, stabilizeStaticPane, staticSinceOf } from "./pane-state.mjs";
+import { classifyStaticPane, classifyWorkingComposer, parseContextFill, stabilizeStaticPane, staticSinceOf } from "./pane-state.mjs";
 
 /** Owns passive tmux pane samples and their derived agent state. */
 export function createPaneObserver({ runTmux, shellCommands, minSampleMs = 1200, waitStableMs = 8_000, concurrency = 8, now = Date.now }) {
@@ -33,18 +33,21 @@ export function createPaneObserver({ runTmux, shellCommands, minSampleMs = 1200,
     }
     if (previous && at - previous.at < minSampleMs) {
       const waitingSince = previous.state === "waiting" || previous.state === "shell" ? previous.staticSince ?? null : null;
-      return { state: previous.state, detail: previous.detail ?? null, question: previous.question ?? "", idleSince: previous.idleSince ?? null, waitingSince, context: previous.context ?? null };
+      return { state: previous.state, detail: previous.detail ?? null, question: previous.question ?? "", idleSince: previous.idleSince ?? null, waitingSince, context: previous.context ?? null, composer: previous.composer ?? null };
     }
     const { stdout: text } = await runTmux(["capture-pane", "-p", "-t", `=${name}:`]);
     const nextHash = createHash("sha1").update(text).digest("hex");
     const context = parseContextFill(text);
+    let cursorAt = null;
+    /** Reads this pane's cursor at most once per sample. */
+    const cursorOnce = async () => (cursorAt ??= await cursor(name));
     let state = !previous || previous.state === "shell" || nextHash !== previous.hash ? "working" : "waiting";
     let detail = null;
     let question = "";
     let quietSince = null;
     if (state === "waiting") {
       const stable = stabilizeStaticPane({
-        classification: classifyStaticPane({ text, ...(await cursor(name)) }),
+        classification: classifyStaticPane({ text, ...(await cursorOnce()) }),
         quietSince: previous?.hash === nextHash ? previous?.quietSince : null,
         now: at,
         thresholdMs: waitStableMs,
@@ -56,10 +59,14 @@ export function createPaneObserver({ runTmux, shellCommands, minSampleMs = 1200,
         question = stable.classification.question ?? "";
       }
     }
+    // A repainting pane still has a composer, and the message queue needs to
+    // know whether it is empty: an agent that works for an hour would
+    // otherwise never be told anything (agent-messages.mjs, deliveryDecision).
+    const composer = state === "working" ? classifyWorkingComposer({ text, ...(await cursorOnce()) }) : detail;
     const idleSince = state === "waiting" && (detail === "idle" || detail === null) ? (previous?.idleSince ?? at) : null;
     const staticSince = staticSinceOf({ previous, hash: nextHash, now: at });
-    samples.set(name, { hash: nextHash, at, state, detail, question, idleSince, quietSince, staticSince, context });
-    return { state, detail, question, idleSince, waitingSince: state === "waiting" ? staticSince : null, context };
+    samples.set(name, { hash: nextHash, at, state, detail, question, idleSince, quietSince, staticSince, context, composer });
+    return { state, detail, question, idleSince, waitingSince: state === "waiting" ? staticSince : null, context, composer };
   }
 
   /** Adds observed state to sessions and forgets panes that no longer exist. */
@@ -67,13 +74,13 @@ export function createPaneObserver({ runTmux, shellCommands, minSampleMs = 1200,
     const at = now();
     const enriched = await mapWithConcurrency(sessions, concurrency, async (session) => {
       if (["process", "service", "command"].includes(session.kind)) {
-        return { ...session, state: shellCommands.has(session.command) ? "stopped" : "service", stateDetail: null, stateQuestion: "", context: null };
+        return { ...session, state: shellCommands.has(session.command) ? "stopped" : "service", stateDetail: null, stateQuestion: "", context: null, composer: null };
       }
       try {
         const observed = await classify(session.name, session.command, at);
-        return { ...session, state: observed.state, stateDetail: observed.detail, stateQuestion: observed.question, idleSince: observed.idleSince ?? null, waitingSince: observed.waitingSince ?? null, context: observed.context ?? null };
+        return { ...session, state: observed.state, stateDetail: observed.detail, stateQuestion: observed.question, idleSince: observed.idleSince ?? null, waitingSince: observed.waitingSince ?? null, context: observed.context ?? null, composer: observed.composer ?? null };
       } catch {
-        return { ...session, state: null, stateDetail: null, stateQuestion: "", context: null };
+        return { ...session, state: null, stateDetail: null, stateQuestion: "", context: null, composer: null };
       }
     });
     const live = new Set(sessions.map((session) => session.name));

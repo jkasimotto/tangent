@@ -1695,9 +1695,9 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       return `
         <div class="desk-program ${programIsLive(program) ? "live" : ""}">
           <button type="button" data-select-program="${escapeHtml(program.id)}">
-            <span aria-hidden="true">${program.type === "process" ? "SERVER" : program.type === "command" ? "COMMAND" : "TRIGGER"}</span>
+            <span aria-hidden="true">${escapeHtml(String(program.mode ?? "on-demand").toUpperCase())}</span>
             <strong>${escapeHtml(program.label)}</strong>
-            <em>${escapeHtml(programState(program))}</em>
+            <em>${escapeHtml(program.problem ? clip(program.problem, 80) : programState(program))}</em>
           </button>
           ${programRowControls(program).map((control) => `<button class="desk-icon-action" type="button" data-program-action="${control.action}" data-program-id="${escapeHtml(program.id)}" aria-label="${escapeHtml(control.label)} ${escapeHtml(program.label)}">${escapeHtml(control.label)}</button>`).join("")}
         </div>`;
@@ -1707,7 +1707,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   /** Renders Programs once under the Area that owns them. */
   function deskProgramSection(area, programs, { root = false } = {}) {
     if (!programs?.length) return "";
-    const title = root ? "Programs" : `${humanName(area.name)} · Programs`;
+    const title = root ? "Operation problems" : `${humanName(area.name)} · Operation problems`;
     return `<section class="area-desk-section programs" data-program-area="${escapeHtml(area.path)}">
       <div class="area-desk-section-heading"><h3>${escapeHtml(title)}</h3><span>${programs.length}</span></div>
       ${deskProgramShelf(programs)}
@@ -1715,14 +1715,19 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   }
 
   /**
-   * The Programs of every Area on the screen, in one shelf under the table.
-   * A Program is not work: it never earns a Goal row, and it keeps the plain
-   * operational controls it had on the Area panel.
+   * The Operations of every Area on the screen that have a problem.
+   *
+   * A healthy Operation adds nothing to Work: a running service and a
+   * scheduled command that succeeded are facts the Area page holds. Only a
+   * problem can change what Julian does, so only a problem earns space here
+   * and the whole shelf disappears when every Operation is quiet.
    */
   function workProgramSections(records) {
+    /** Keeps only the Operations whose state is a problem. */
+    const problems = (programs) => (programs ?? []).filter((program) => program.state === "problem" || program.problem);
     const sections = records.flatMap((record) => [
-      deskProgramSection(record.area, record.programs, { root: true }),
-      ...record.sections.map((section) => deskProgramSection(section.area, section.programs)),
+      deskProgramSection(record.area, problems(record.programs), { root: true }),
+      ...record.sections.map((section) => deskProgramSection(section.area, problems(section.programs))),
     ]).filter(Boolean).join("");
     if (!sections) return "";
     return `<div class="work-programs">${sections}</div>`;

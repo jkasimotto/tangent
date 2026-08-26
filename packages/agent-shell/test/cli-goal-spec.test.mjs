@@ -145,11 +145,13 @@ test("each --step carries its own working directory, and a step without one keep
   await runGoalCli(["append", "proof", "--step", "Prove it.", "--path", "/tmp/arbitrary-worker"]);
   assert.equal(requests.find((request) => request.path === "/api/pipelines/append").body.steps[0].path, "/tmp/arbitrary-worker");
 
-  await assert.rejects(
-    () => runGoalCli(["start", "proof", "--session", "tangent-brain-test"]),
-    /needs --launch/,
-    "a Goal started with no harness named is refused, never given one"
-  );
+  // An omitted --launch is not a client-side error any more: it reaches the
+  // server, which lends the calling brain's own harness or refuses loudly.
+  // The client still names no harness of its own.
+  await runGoalCli(["start", "proof", "--session", "tangent-brain-test"]);
+  const unnamed = requests.filter((request) => request.path === "/api/goals/start").at(-1).body;
+  assert.equal(Object.hasOwn(unnamed, "choice"), false, "the client sends no harness it was not given");
+  assert.equal(unnamed.caller, "tangent-brain-test", "the server needs the caller to know whose harness applies");
   await assert.rejects(
     () => runGoalCli(["start", "proof", "--launch", "codex", "--launch", "pi-code", "--session", "tangent-brain-test"]),
     /exactly one --launch/,

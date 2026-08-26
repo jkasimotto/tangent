@@ -2511,16 +2511,79 @@ async function areaHarnessId(area) {
 }
 
 /**
- * One warning per step whose explicit --launch harness differs from the
- * Area's inherited default. Warns, never blocks: the step's own choice is
- * still honored.
+ * The launch identity the calling brain itself runs on, or null when that
+ * brain was started from an edited command and so has no harness id. This is
+ * the one authority for a worker that names no harness of its own: a brain
+ * launched as claude-otto dispatches claude-otto workers, whatever the Area
+ * declares for hand-started work.
  */
-async function launchHarnessWarnings(area, steps) {
-  const areaHarness = await areaHarnessId(area);
-  if (!areaHarness) return [];
-  return steps
-    .filter((step) => step.launch?.harness && step.launch.harness !== areaHarness)
-    .map((step) => `step ${step.index}: --launch ${step.launch.harness}${step.launch.model ? `/${step.launch.model}` : ""} differs from ${area}'s default harness ${areaHarness}.`);
+function brainWorkerLaunch(brain) {
+  const launch = brain?.launch;
+  if (!launch?.harness) return null;
+  return { harness: String(launch.harness), model: launch.model ?? null, effort: launch.effort ?? null };
+}
+
+/**
+ * Turns the requested assignments into launched ones: every assignment that
+ * names no harness takes the calling brain's own launch, and every
+ * assignment is then resolved to its exact command. Nothing is written
+ * before this returns, so a refusal or an unresolvable id leaves no record
+ * and no session behind.
+ *
+ * The loud refusal stays for a caller that is not the exact live brain, and
+ * for a brain that has no harness id of its own. Tangent still supplies no
+ * harness from a profile or from a recorded command.
+ */
+async function materializeStepLaunches(area, steps, { firstIndex = 1, brain = null } = {}) {
+  const fallback = brainWorkerLaunch(brain);
+  const requested = Array.isArray(steps) ? steps : [];
+  /** True when the caller already named this assignment's harness or command. */
+  const named = (step) => Boolean(step?.launch) || Boolean(String(step?.command ?? "").trim());
+  const filled = requested.map((step) => named(step) || !fallback
+    ? step
+    : { ...step, launch: { ...fallback }, launchSource: "brain-default" });
+  const missing = await missingStepLaunches(area, filled, firstIndex);
+  if (missing) return { status: 400, error: missing };
+  const rows = [];
+  for (const [position, step] of filled.entries()) {
+    const index = firstIndex + position;
+    const resolved = await resolveStepLaunch({ ...step, index });
+    if (resolved.error) return { status: 409, error: `step ${index}: ${resolved.error}` };
+    rows.push({
+      index,
+      launch: step.launch ? launchRef(step.launch) : null,
+      source: step.launchSource === "brain-default" ? "brain-default" : "explicit",
+      label: resolved.label,
+      command: resolved.command,
+    });
+  }
+  // The default a mismatch is measured against is the one that would have
+  // been applied, never a second reading of the Area note.
+  const defaultHarness = fallback?.harness ?? await areaHarnessId(area);
+  const warnings = rows
+    .filter((row) => row.source === "explicit" && row.launch && defaultHarness && row.launch.split("/")[0] !== defaultHarness)
+    .map((row) => `step ${row.index}: --launch ${row.launch} differs from the default harness ${defaultHarness}.`);
+  return { steps: filled, rows, warnings, defaultHarness };
+}
+
+/**
+ * Writes what one assignment is about to run into the queue record and tells
+ * every open shell, before any session is created or primed. The entry keeps
+ * the facts it was written with, so a later reader can prove the harness was
+ * settled while the assignment still had no session.
+ */
+async function discloseAssignmentLaunch(record, step) {
+  step.launchDisclosure = {
+    launch: launchRef(step.launch) || null,
+    source: step.launchSource ?? "explicit",
+    label: step.label,
+    command: step.command,
+    assignmentStatus: step.status,
+    session: step.session,
+    disclosedAt: new Date().toISOString(),
+  };
+  await writePipeline(PIPELINES_ROOT, record);
+  stateEvents.changed("assignment launch disclosed");
 }
 
 /**
@@ -2554,6 +2617,8 @@ async function startPipelineStep(record, index, trace = null) {
   const liveNames = new Set(sessions.map((item) => item.name));
   const extraSlugs = (record.extraFiles ?? []).map((extra) => byFile.get(extra)).filter((extra) => extra && extra.area === o.area).map((extra) => extra.slug);
   const source = step.continueFrom ? record.steps[step.continueFrom - 1] : null;
+  await discloseAssignmentLaunch(record, step);
+  trace?.mark("step launch disclosed", { launch: step.launchDisclosure.launch });
   if (source?.session && liveNames.has(source.session)) {
     const goals = await readAreaGoals(record.area);
     const extras = extraSlugs.map((extraSlug) => goals.find((goal) => goal.slug === extraSlug)).filter(Boolean);
@@ -2604,7 +2669,7 @@ async function startPipelineStep(record, index, trace = null) {
 }
 
 /** Creates the record for one Goal and starts its first step. */
-async function startPipeline(file, { steps, extraFiles = [], start = true, attemptKind = "managed" } = {}) {
+async function startPipeline(file, { steps, extraFiles = [], start = true, attemptKind = "managed", brain = null } = {}) {
   const byFile = await goalsByFile();
   const o = byFile.get(file);
   if (!o) return { status: 404, error: `no goal file ${file}` };
@@ -2615,9 +2680,11 @@ async function startPipeline(file, { steps, extraFiles = [], start = true, attem
   if (o.session && sessions.some((item) => item.name === o.session)) {
     return { status: 409, error: `goal is owned by live session ${o.session}` };
   }
-  const missing = await missingStepLaunches(o.area, steps);
-  if (missing) return { status: 400, error: missing };
-  const located = resolveStepPaths(steps);
+  // Fill and resolve every assignment before anything is written: a bad
+  // launch names itself and leaves no record and no session behind.
+  const materialized = await materializeStepLaunches(o.area, steps, { brain });
+  if (materialized.error) return { status: materialized.status, error: materialized.error };
+  const located = resolveStepPaths(materialized.steps);
   if (located.error) return { status: 400, error: located.error };
   steps = located.steps;
   const error = validateSteps(steps);
@@ -2625,16 +2692,12 @@ async function startPipeline(file, { steps, extraFiles = [], start = true, attem
   const sameArea = extraFiles.map(String).filter((extra) => byFile.get(extra)?.area === o.area);
   const record = newPipeline({ goal: o.file, goalRevision: await goalContentRevision(o.file), area: o.area, slug: o.slug, extraFiles: sameArea, steps });
   record.steps[0].nextAttemptKind = attemptKind;
-  // Resolve step 1 before anything is written: a bad launch names itself
-  // and leaves no record and no session behind.
-  const first = await resolveStepLaunch(record.steps[0]);
-  if (first.error) return { status: 409, error: `step 1: ${first.error}` };
-  const warnings = await launchHarnessWarnings(o.area, record.steps);
+  const { warnings, rows: launches } = materialized;
   await writePipeline(PIPELINES_ROOT, record);
-  if (!start) return { status: 200, state: "queued", session: null, pipeline: record, warnings };
+  if (!start) return { status: 200, state: "queued", session: null, pipeline: record, warnings, launches };
   const started = await startPipelineStep(record, 1);
   if (started.status !== 200) return started;
-  return { ...started, warnings };
+  return { ...started, warnings, launches };
 }
 
 /**
@@ -2985,18 +3048,22 @@ async function appendPipelineStepsUnlocked(goalFile, steps, options = {}) {
   const byFile = await goalsByFile();
   const o = byFile.get(goalFile);
   if (!o) return { status: 404, error: `no goal file ${goalFile}` };
+  let caller = null;
   if (options.caller) {
     const authority = await exactBrainCaller(options.caller, o.area);
     if (authority.error) return { status: 403, error: authority.error };
+    caller = authority.brain;
   }
   if (["done", "dropped"].includes(o.status)) return { status: 409, error: `goal is ${o.status}` };
   const record = await readPipeline(PIPELINES_ROOT, o.area, o.slug);
   if (!record) return { status: 404, error: "no pipeline on this goal" };
   const guarded = queueMutationGuard(record, options);
   if (guarded) return guarded;
-  const missing = await missingStepLaunches(o.area, steps, record.steps.length + 1);
-  if (missing) return { status: 400, error: missing };
-  const located = resolveStepPaths(steps, record.steps.length + 1);
+  // Fill and resolve every new assignment before anything is written: a bad
+  // launch names itself and leaves the record as it was.
+  const materialized = await materializeStepLaunches(o.area, steps, { firstIndex: record.steps.length + 1, brain: caller });
+  if (materialized.error) return { status: materialized.status, error: materialized.error };
+  const located = resolveStepPaths(materialized.steps, record.steps.length + 1);
   if (located.error) return { status: 400, error: located.error };
   steps = located.steps;
   const last = record.steps[record.steps.length - 1];
@@ -3006,13 +3073,9 @@ async function appendPipelineStepsUnlocked(goalFile, steps, options = {}) {
   } catch (error) {
     return { status: 400, error: error.message };
   }
-  // Resolve the first new step before anything is written: a bad launch
-  // names itself and leaves the record as it was.
-  const first = await resolveStepLaunch(added[0]);
-  if (first.error) return { status: 409, error: `step ${added[0].index}: ${first.error}` };
-  const warnings = await launchHarnessWarnings(record.area, added);
+  const { warnings, rows: launches } = materialized;
   await writePipeline(PIPELINES_ROOT, record);
-  return { status: 200, state: "queued", after: currentStep(record)?.index ?? last.index, added: added.map((step) => step.index), pipeline: record, warnings };
+  return { status: 200, state: "queued", after: currentStep(record)?.index ?? last.index, added: added.map((step) => step.index), pipeline: record, warnings, launches };
 }
 
 /** Edits one pending step; started steps are history. */
@@ -5090,9 +5153,13 @@ const launchRoutes = createLaunchRoutes({
       const goal = (await goalsByFile()).get(file);
       if (!goal) return { status: 404, error: `no goal file ${file}` };
       const caller = String(body.caller ?? "").trim();
+      // The brain proved here is the worker-launch authority further down:
+      // it is passed into startPipeline instead of being read again.
+      let callingBrain = null;
       if (caller) {
         const authority = await exactBrainCaller(caller, goal.area);
         if (authority.error) return { status: 403, error: authority.error };
+        callingBrain = authority.brain;
       }
       if (body.recovery === true) {
         if (caller) return { status: 403, error: "Only Julian can use guarded Goal recovery." };
@@ -5115,14 +5182,15 @@ const launchRoutes = createLaunchRoutes({
         const queued = await startPipeline(file, { steps, start: false, extraFiles: Array.isArray(body.extraFiles) ? body.extraFiles.map(String) : [] });
         if (queued.status !== 200) return { status: queued.status, error: queued.error };
         await notifyBrain(goal.area, `Goal ${goal.slug}: Julian queued ${steps.length} assignment${steps.length === 1 ? "" : "s"}. Review the queue and start its first assignment.`);
-        return { status: 202, value: { status: "queued", session: null, pipeline: queued.pipeline, warnings: queued.warnings ?? [] } };
+        return { status: 202, value: { status: "queued", session: null, pipeline: queued.pipeline, warnings: queued.warnings ?? [], launches: queued.launches ?? [] } };
       }
       const result = await startPipeline(file, {
         steps,
         attemptKind: "managed",
+        brain: callingBrain,
         extraFiles: Array.isArray(body.extraFiles) ? body.extraFiles.map(String) : [],
       });
-      return { status: result.status, ...(result.status === 200 ? { value: { session: result.session, pipeline: result.pipeline, warnings: result.warnings ?? [], recovery: false } } : { error: result.error }) };
+      return { status: result.status, ...(result.status === 200 ? { value: { session: result.session, pipeline: result.pipeline, warnings: result.warnings ?? [], launches: result.launches ?? [], recovery: false } } : { error: result.error }) };
     } catch (error) { return { status: 500, error: String(error.stderr ?? error.message ?? error) }; }
   },
 });

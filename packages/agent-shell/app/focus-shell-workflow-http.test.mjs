@@ -510,11 +510,14 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(startedPipeline.pipeline.steps[0].command, "fake-agent --model one --effort high");
   assert.equal(startedPipeline.pipeline.steps[0].label, "Fake · One · High");
   assert.ok(existsSync(path.join(root, "pipelines", "otto", "test", "pipeline-demo.json")));
-  // otto/test declares the harness `other`; steps 1 and 2 named a different
-  // one, so the server warns without blocking either.
-  assert.equal(startedPipeline.warnings.length, 2);
-  assert.match(startedPipeline.warnings[0], /step 1: --launch fake\/one differs from otto\/test's default harness other\./);
-  assert.match(startedPipeline.warnings[1], /step 2: --launch fake\/one differs from otto\/test's default harness other\./);
+  // The worker default is the calling brain's own harness, and this brain
+  // runs `fake`. Steps 1 and 2 named the same harness, so nothing warns.
+  assert.equal(startedPipeline.warnings.length, 0, JSON.stringify(startedPipeline.warnings));
+  assert.deepEqual(startedPipeline.launches.map((row) => [row.index, row.launch, row.source]), [
+    [1, "fake/one/high", "explicit"],
+    [2, "fake/one", "explicit"],
+    [3, null, "explicit"],
+  ], "the start response says what each assignment runs and where its harness came from");
   let goalText = await readFile(path.join(trees, pipelineGoal.file), "utf8");
   assert.match(goalText, /^status: active$/m);
   assert.match(goalText, /^session: test-pipeline-demo$/m);

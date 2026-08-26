@@ -160,6 +160,7 @@ test("newPipeline normalizes steps into the pending shape", () => {
     launch: { harness: "claude", model: "fable-5", effort: null },
     command: "",
     label: "",
+    launchSource: "explicit",
     path: "/tmp/other-repo",
     continueFrom: null,
     status: "pending",
@@ -176,6 +177,21 @@ test("newPipeline normalizes steps into the pending shape", () => {
   assert.equal(record.steps[1].command, "codex --model sol");
   assert.equal(record.steps[1].path, null);
   assert.equal(record.steps[1].continueFrom, 1);
+  assert.equal(record.steps[1].launchSource, "explicit");
+});
+
+test("newPipeline keeps the harness a brain lent to an assignment", () => {
+  const record = newPipeline({
+    goal: "otto/tangent/goal-x.md",
+    area: "otto/tangent",
+    slug: "x",
+    steps: [
+      { instruction: "Do the work.", launch: { harness: "claude-otto", model: "fable-5" }, launchSource: "brain-default" },
+      { instruction: "Review it.", launch: { harness: "claude", model: "opus-5" }, launchSource: "made up" }
+    ]
+  });
+  assert.equal(record.steps[0].launchSource, "brain-default", "an applied default is recorded, never inferred later");
+  assert.equal(record.steps[1].launchSource, "explicit", "an unknown source falls back to the caller's own choice");
 });
 
 test("newPipeline throws the validation message", () => {

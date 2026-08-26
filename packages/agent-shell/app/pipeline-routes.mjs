@@ -55,7 +55,7 @@ export function createPipelineRoutes(operations) {
       idempotencyKey: String(body.idempotencyKey ?? ""),
     });
     sendJson(response, result.status, result.status === 200
-      ? { status: result.state, after: result.after ?? null, next: result.next ?? null, session: result.session ?? null, added: result.added, pipeline: result.pipeline, warnings: result.warnings ?? [] }
+      ? { status: result.state, after: result.after ?? null, next: result.next ?? null, session: result.session ?? null, added: result.added, pipeline: result.pipeline, warnings: result.warnings ?? [], launches: result.launches ?? [] }
       : { error: result.error });
   }
 

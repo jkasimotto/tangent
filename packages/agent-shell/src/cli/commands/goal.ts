@@ -110,15 +110,17 @@ async function startCommand(args: Args): Promise<void> {
   const caller = stringArg(args.session) || (await currentTmuxSession());
   const recovery = booleanArg(args.recovery);
   const steps = pipelineSteps(args);
+  const solo = steps.length ? undefined : soloLaunch(args);
   const result = recovery
     ? await postJson(server, "/api/goals/start", { file: goal.file, recovery: true, ...(caller ? { caller } : {}) })
     : steps.length
     ? await postJson(server, "/api/goals/start", { file: goal.file, steps, recovery, ...(caller ? { caller } : {}) })
-    : await postJson(server, "/api/goals/start", { file: goal.file, approved: true, launch: true, choice: soloLaunch(args), recovery, ...(caller ? { caller } : {}) });
+    : await postJson(server, "/api/goals/start", { file: goal.file, approved: true, launch: true, ...(solo ? { choice: solo } : {}), recovery, ...(caller ? { caller } : {}) });
   if (booleanArg(args.json)) {
     console.log(JSON.stringify(result, null, 2));
     return;
   }
+  printLaunches(result);
   printLaunchWarnings(result);
   const session = result.session ? String(result.session) : "(no session)";
   if (result.status === "queued") console.log(`queued ${slug} for its exact Area brain`);
@@ -127,18 +129,30 @@ async function startCommand(args: Args): Promise<void> {
 }
 
 /**
- * The one --launch of a start with no --step. It is required: Tangent supplies
- * no harness of its own, so a worker that nobody named a harness for never starts.
+ * The one --launch of a start with no --step, or undefined when the caller
+ * named none. An omitted launch reaches the server, which lends the calling
+ * brain's own harness or refuses. The client never picks a harness itself.
  */
-function soloLaunch(args: Args): { harness: string; model?: string; effort?: string } {
+function soloLaunch(args: Args): { harness: string; model?: string; effort?: string } | undefined {
   const launches = stringsArg(args.launch);
   if (launches.length > 1) throw new Error("Starting a Goal without --step takes exactly one --launch.");
-  const launch = parseLaunch(launches[0]);
-  if (!launch) throw new Error("tangent goal start needs --launch <harness[/model[/effort]]>; Tangent never picks a harness for you. Run `tangent harness list --area <area>` for the valid ids.");
-  return launch;
+  return parseLaunch(launches[0]);
 }
 
-/** Prints one line per step whose --launch harness differs from the Area's default; the server computes them. */
+/**
+ * Prints the harness each assignment will run, before the line that says one
+ * started. The server materializes these rows and discloses the same choice
+ * in the queue record before it creates any session.
+ */
+function printLaunches(result: { launches?: unknown }): void {
+  const launches = Array.isArray(result.launches) ? (result.launches as { index?: number; launch?: string; source?: string; command?: string }[]) : [];
+  for (const row of launches) {
+    const source = row.source === "brain-default" ? " (your brain's harness)" : "";
+    console.log(`launch: step ${row.index} runs ${row.launch ?? row.command ?? "(edited command)"}${source}`);
+  }
+}
+
+/** Prints one line per step whose --launch harness differs from the applied default; the server computes them. */
 function printLaunchWarnings(result: { warnings?: unknown }): void {
   const warnings = Array.isArray(result.warnings) ? (result.warnings as string[]) : [];
   for (const warning of warnings) console.error(`warning: ${warning}`);
@@ -163,6 +177,7 @@ async function appendCommand(args: Args): Promise<void> {
     console.log(JSON.stringify(result, null, 2));
     return;
   }
+  printLaunches(result);
   printLaunchWarnings(result);
   const added = Array.isArray(result.added) ? (result.added as number[]) : [];
   const which = added.length > 1 ? `steps ${added[0]} to ${added[added.length - 1]}` : `step ${added[0] ?? "?"}`;
@@ -357,9 +372,9 @@ Examples:
   tangent goal own connect-chosen-ramp-faces render-cursor-presence
   tangent goal release connect-chosen-ramp-faces
   tangent goal start connect-chosen-ramp-faces --launch codex/sol/low
-  tangent goal start pipelines-demo --step "/design this" --launch claude/fable-5 --step "review the design and update it" --launch codex/sol/high --step "implement" --launch claude/opus-5
-  tangent goal start pipelines-demo --step "/design this" --launch claude/fable-5 --step "implement the design" --launch claude/opus-5 --continue-from - --continue-from 1
-  tangent goal start pipelines-demo --step "design the change" --launch claude/fable-5 --path= --step "implement it in the plugin" --launch claude/opus-5 --path ~/Projects/plugin
+  tangent goal start pipelines-demo --step "/design this" --launch claude-otto/fable-5 --step "review the design and update it" --launch codex/sol/high --step "implement" --launch claude-otto/opus-5
+  tangent goal start pipelines-demo --step "/design this" --launch claude-otto/fable-5 --step "implement the design" --launch claude-otto/opus-5 --continue-from - --continue-from 1
+  tangent goal start pipelines-demo --step "design the change" --launch claude-otto/fable-5 --path= --step "implement it in the plugin" --launch claude-otto/opus-5 --path ~/Projects/plugin
   tangent goal append pipelines-demo --step "prove the implementation" --launch codex/sol/high
   tangent goal handover "Design written: ~/.tangent/trees/otto/tangent/design-x.md. Unresolved: none."
 `);

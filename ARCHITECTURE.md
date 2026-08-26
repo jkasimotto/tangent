@@ -85,8 +85,9 @@ Exact Request effects use hashed revisions and an allowlist.
 A designated typed final review can close routine Goals at the current Goal revision.
 Material Operation Problems, resolutions, and declared results persist before brain delivery.
 Detached audit exports preserve old generation and pipeline records.
+A worker assignment that names no harness takes the calling brain's own launch, and the server discloses that choice in the queue record before it creates the session; a caller that is not the exact live brain is still refused.
 The old Program API is available only with `TANGENT_LEGACY_PROGRAM_API=1`.
-See ADR-0033 and ADR-0034.
+See ADR-0033, ADR-0034, and ADR-0035.
 
 The package is lazily loaded from `@tangent/agent-shell/cli` as the root `tangent area`, `tangent brain`, `tangent goal`, `tangent idea`, and `tangent vault` commands (ADR-0020). `area`/`goal`/`idea` are thin HTTP clients to the stable Agent Shell gateway on port 4321; the gateway proxies them to the controller in `packages/agent-shell/app/server.mjs`, the vault's single writer. `vault commit` is the one exception: it commits directly to `~/.tangent/trees` with `@tangent/repo`'s `git()`, producing the same `<verb>: <area> <summary>` message and `Tangent-Area`/`Tangent-Tmux` trailers as the controller's own `vaultCommit()`.
 

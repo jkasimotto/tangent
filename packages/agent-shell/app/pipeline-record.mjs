@@ -397,6 +397,10 @@ function normalizeStep(step, index) {
     launch,
     command: launch ? "" : step.command.trim(),
     label: "",
+    // Where the harness came from. The server fills this in when the calling
+    // brain lent the assignment its own launch; it is never inferred later
+    // from a record that may have changed since.
+    launchSource: step.launchSource === "brain-default" ? "brain-default" : "explicit",
     path: typeof step.path === "string" && step.path.trim() ? step.path.trim() : null,
     continueFrom: Number.isInteger(step.continueFrom) ? step.continueFrom : null,
     kind: step.kind === "review" ? "review" : "implementation",

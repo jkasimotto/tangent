@@ -32,7 +32,7 @@ export function createShellState(storage = globalThis.localStorage, href = globa
     areaFocus: storedAreaFocus.areas, areaFocusPicker: null, areaFocusStorageError: storedAreaFocus.error,
     mapStates: new Map(), mapSelectFile: "", showDoneAreas: storage.getItem("agent-shell.show-done-areas") === "1", areaEdit: null,
     areaQuery: "", areaDocumentQuery: "", areaDocumentPeriod: "any", areaDocumentOrder: "newest", areaDocumentOnly: "", areaDocumentExcluded: new Set(),
-    areaWorkQuery: "", areaWorkScope: "", areaWorkState: "all", areaWorkLimits: new Map(), areaHistory: false,
+    areaWorkQuery: "", areaWorkScope: "", areaWorkState: "all", areaWorkLimits: new Map(), areaHistory: false, areaJournal: null,
     programId: "", programDraft: { type: "process", area: "", name: "", command: "", cwd: "" },
     launch: { area: "", kind: "", options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", continueFrom: null, steps: [], active: 0, record: null },
     defaultAgents: { area: "", editing: "", mode: "" },

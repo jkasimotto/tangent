@@ -329,6 +329,48 @@ test("the context-first shell is default and keeps the user's understanding with
   const allGoals = await fetch(`${base}/api/goals`).then((response) => response.json());
   assert.ok(allGoals.goals.some((goal) => goal.slug === "prove-it" && goal.area === "otto/test"));
 
+  // An exact-Area listing names what its child Areas hold, so a brain that
+  // finds nothing here learns where to look instead of searching elsewhere.
+  await fetch(`${base}/api/areas/new`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ parent: "otto/test", name: "nested" }),
+  });
+  await writeFile(path.join(trees, "otto", "test", "nested", "goal-nested-work.md"), "---\ntype: goal\nstatus: open\ndone_when: The nested work is done.\n---\n\n# Nested work\n");
+  const exactScope = await fetch(`${base}/api/goals?area=otto%2Ftest`).then((response) => response.json());
+  assert.equal(exactScope.scope, "exact");
+  assert.ok(exactScope.childAreas >= 1, "the exact listing counts the child Areas that exist");
+  assert.equal(exactScope.descendantGoals, 1);
+  assert.equal(exactScope.subtreeCommand, "tangent goal list otto/test --subtree");
+  assert.ok(!exactScope.goals.some((goal) => goal.slug === "nested-work"), "the exact scope stays exact");
+  const subtreeScope = await fetch(`${base}/api/goals?area=otto%2Ftest&subtree=1`).then((response) => response.json());
+  assert.equal(subtreeScope.scope, "subtree");
+  assert.ok(subtreeScope.goals.some((goal) => goal.slug === "nested-work"), "the subtree scope reaches child Areas");
+  assert.equal(subtreeScope.subtreeCommand, undefined, "a subtree listing does not point at itself");
+
+  // Journal capture saves the exact words, then the read route returns them.
+  const captured = await fetch(`${base}/api/areas/journal`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ area: "otto/test", text: "Neil owns the loading work until Friday.", idempotencyKey: "journal-http-1", source: "Agent Shell" }),
+  }).then((response) => response.json());
+  assert.equal(captured.duplicate, false);
+  const journalRead = await fetch(`${base}/api/areas/journal?area=otto%2Ftest`).then((response) => response.json());
+  assert.equal(journalRead.files.length, 1);
+  assert.match(journalRead.files[0].text, /Neil owns the loading work until Friday\./);
+  assert.match(journalRead.files[0].text, /<!-- tangent-journal:journal-http-1 -->/);
+  // The same key never writes the note twice.
+  await fetch(`${base}/api/areas/journal`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ area: "otto/test", text: "Neil owns the loading work until Friday.", idempotencyKey: "journal-http-1", source: "Agent Shell" }),
+  });
+  const journalAgain = await fetch(`${base}/api/areas/journal?area=otto%2Ftest`).then((response) => response.json());
+  assert.equal(journalAgain.files[0].text.match(/Neil owns the loading work until Friday\./g).length, 1);
+  // The capture is a material milestone, clipped to its stored limit.
+  const recent = await fetch(`${base}/api/areas/milestones?area=otto%2Ftest`).then((response) => response.json());
+  assert.ok(recent.milestones.some((item) => item.kind === "journal" && /Neil owns the loading work/.test(item.summary)));
+
   const goalShow = await fetch(`${base}/api/goals/show?slug=prove-it`).then((response) => response.json());
   assert.equal(goalShow.goal.title, "Prove it");
   assert.equal(goalShow.goal.file, "otto/test/goal-prove-it.md");

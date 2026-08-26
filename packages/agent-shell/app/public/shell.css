@@ -1520,6 +1520,9 @@ li .document-comment { margin: 8px 0 10px; }
 .area-history-day h4 { margin: 0 0 8px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
 .area-history-day button { width: 100%; display: grid; grid-template-columns: 82px 88px minmax(0, 1fr) auto; gap: 12px; padding: 10px 8px; text-align: left; border: 0; border-top: 1px solid var(--line); background: transparent; color: var(--text); }
 .area-history-day small, .area-history-day time { color: var(--muted); }
+.area-journal-entry { padding: 10px 8px; border-top: 1px solid var(--line); }
+.area-journal-entry header { display: flex; gap: 12px; align-items: baseline; }
+.area-journal-entry p { margin: 6px 0 0; white-space: pre-wrap; }
 @media (max-width: 900px) { .area-work-tools { grid-template-columns: 1fr 1fr; } .area-work-columns { grid-template-columns: 1fr; gap: 12px; } .area-work-arrow { display: none; } }
 .areas-page:has(.area-map-screen) { width: min(1680px, calc(100% - 72px)); }
 .area-layout:has(.area-map-screen) { grid-template-columns: minmax(220px, 260px) minmax(720px, 1fr); gap: 32px; }

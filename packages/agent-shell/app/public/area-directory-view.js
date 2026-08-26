@@ -232,7 +232,7 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
           </div>
         </header>
         <section class="area-workspace-section area-journal-composer" aria-labelledby="area-journal-heading">
-          <div class="area-section-heading"><div><p class="kicker">Journal</p><h3 id="area-journal-heading">Capture for ${escapeHtml(humanName(area.name))} brain</h3></div></div>
+          <div class="area-section-heading"><div><p class="kicker">Journal</p><h3 id="area-journal-heading">Capture for ${escapeHtml(humanName(area.name))} brain</h3></div><button class="quiet-button" type="button" data-open-history="${escapeHtml(area.path)}">Read the Journal and finished work</button></div>
           <form data-area-journal-form data-command-enter-submit><label><span>To: ${escapeHtml(area.path)} brain</span><textarea name="text" rows="3" placeholder="Write or dictate an exact note." required></textarea></label><button class="primary-button" type="submit">Save and send <kbd>⌘↵</kbd></button></form>
           <p class="form-note">Tangent saves the exact text before it wakes the brain.</p>
         </section>
@@ -285,6 +285,54 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
     </section>`;
   }
 
+  /**
+   * Loads one Area's Journal files once per Area, on the way into History.
+   * The Journal is written on capture and never read anywhere else, so
+   * without this the exact words Julian saved were unreachable in the shell.
+   */
+  async function loadAreaJournal(path) {
+    if (!path || state.areaJournal?.area === path) return;
+    state.areaJournal = { area: path, loading: true, entries: [], error: "" };
+    try {
+      const result = await api(`/api/areas/journal?area=${encodeURIComponent(path)}`);
+      state.areaJournal = { area: path, loading: false, entries: journalEntries(result.files ?? []), error: "" };
+    } catch (error) {
+      state.areaJournal = { area: path, loading: false, entries: [], error: error.message };
+    }
+    paint(true);
+  }
+
+  /**
+   * Splits the stored Journal files into dated entries, newest first. One
+   * entry is a `<!-- tangent-journal:ID -->` marker, an ISO heading, a source
+   * line, and the exact words. Archives read the same way as the active file.
+   */
+  function journalEntries(files) {
+    const entries = [];
+    for (const file of files) {
+      const parts = String(file.text ?? "").split(/<!-- tangent-journal:([^>]+) -->/).slice(1);
+      for (let index = 0; index + 1 < parts.length; index += 2) {
+        const body = parts[index + 1];
+        const at = /^\s*##\s*(\S+)/.exec(body)?.[1] ?? "";
+        const source = /^Source:\s*(.+?)\.?$/m.exec(body)?.[1] ?? "capture";
+        const text = body.replace(/^\s*##\s*\S+\s*/, "").replace(/^Source:.*$/m, "").trim();
+        entries.push({ id: parts[index], at, source, text, file: file.file });
+      }
+    }
+    return entries.sort((left, right) => String(right.at).localeCompare(String(left.at)));
+  }
+
+  /** One Area's saved thoughts, in date order, beside its finished work. */
+  function journalHistoryBlock() {
+    const journal = state.areaJournal;
+    if (journal?.loading) return `<section class="area-history-day"><h4>Journal</h4><p class="memory-empty">Reading the Journal…</p></section>`;
+    if (journal?.error) return `<section class="area-history-day"><h4>Journal</h4><p class="memory-empty">The Journal could not be read: ${escapeHtml(journal.error)}</p></section>`;
+    const entries = journal?.entries ?? [];
+    if (!entries.length) return `<section class="area-history-day"><h4>Journal</h4><p class="memory-empty">No Journal entry exists in this Area.</p></section>`;
+    const rows = entries.map((entry) => `<article class="area-journal-entry"><header><time>${escapeHtml(entry.at)}</time><small>${escapeHtml(entry.source)}</small></header><p>${escapeHtml(entry.text)}</p></article>`).join("");
+    return `<section class="area-history-day area-journal-history"><h4>Journal · ${entries.length}</h4>${rows}</section>`;
+  }
+
   /** The full chronological surface for finished work. */
   function historySection(area) {
     const closes = whatHappenedCore.areaCloses(state.vault?.closes ?? state.vault?.recentCloses ?? [], area.path, areaMapCore.isInside);
@@ -296,7 +344,7 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
     }
     const rows = [...groups].map(([day, items]) => `<section class="area-history-day"><h4>${escapeHtml(day)}</h4>${items.map((close) => { const goal = goalByFile(close.file); return `<button type="button" data-select-goal="${escapeHtml(close.file)}"><time>${escapeHtml(new Date(close.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}</time><span>${close.kind === "done" ? "✓ done" : "✕ won't do"}</span><strong>${escapeHtml(goal?.title ?? humanName(close.file.split("/").pop()))}</strong><small>${escapeHtml(whatHappenedCore.closerLabel(close.session))}</small></button>`; }).join("")}</section>`).join("");
     const empty = "No finished Goals exist in this Area.";
-    return `<section class="area-workspace-section area-history" aria-labelledby="area-history-heading"><div class="area-section-heading"><div><p class="kicker">History</p><h3 id="area-history-heading">Finished work</h3></div><button class="quiet-button" type="button" data-close-area-history>Back to Work</button></div>${rows || `<p class="memory-empty">${escapeHtml(empty)}</p>`}</section>`;
+    return `<section class="area-workspace-section area-history" aria-labelledby="area-history-heading"><div class="area-section-heading"><div><p class="kicker">History</p><h3 id="area-history-heading">Finished work and Journal</h3></div><button class="quiet-button" type="button" data-close-area-history>Back to Work</button></div>${rows || `<p class="memory-empty">${escapeHtml(empty)}</p>`}${journalHistoryBlock()}</section>`;
   }
 
   /** Applies the Area's Document query, type, date, and order controls. */
@@ -374,5 +422,5 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
 
   /** Returns one program by its stable UI identity. */
 
-  return { areas, allAreas, areaIsFolded, setAreaStatus, selectedArea, areaParent, areaTreeRows, areaProgramMark, areaGoalRow, goalAttention, orderedGoalTrees, loadMapState, mountAreaMap, areaContents, renderAreas, areaParentOptions, renderAreaEditor };
+  return { areas, allAreas, areaIsFolded, setAreaStatus, selectedArea, areaParent, areaTreeRows, areaProgramMark, areaGoalRow, goalAttention, orderedGoalTrees, loadMapState, loadAreaJournal, mountAreaMap, areaContents, renderAreas, areaParentOptions, renderAreaEditor };
 }

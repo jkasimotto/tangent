@@ -22,7 +22,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   } = work;
   const {
     showAreasAt, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelCreate, cancelDescribe, areaIsFolded,
-    saveExpandedAreas, revealArea, setAreaStatus, preferredArea, areaLabel,
+    saveExpandedAreas, revealArea, setAreaStatus, preferredArea, areaLabel, loadAreaJournal,
   } = areas;
   const {
     showProgramCreate, selectProgram, openProgramSession, controlProgram, performProgramAction, currentProgram,
@@ -325,6 +325,9 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       state.view = "areas";
       state.whatHappened = null;
       revealArea(state.areaSelection);
+      // History shows the Journal beside the finished Goals, so read it on
+      // the way in. The paint below does not wait for it.
+      loadAreaJournal(state.areaSelection);
       return paint(true);
     }
     if (target.closest("[data-close-area-history]")) { state.areaHistory = false; return paint(true); }
@@ -757,6 +760,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       if (!text) return;
       try {
         await post("/api/areas/journal", { area: state.areaSelection, text, idempotencyKey: crypto.randomUUID(), source: "Agent Shell" });
+        state.areaJournal = null;
         form.reset();
         showToast("Saved to the Journal and sent to the Area brain.");
         await refresh();

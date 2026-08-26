@@ -5,111 +5,114 @@ Public import paths:
 - `@tangent/agent-shell`
 - `@tangent/agent-shell/cli`
 
-Both export the same surface: `runAreaCli`, `runBrainCli`, `runGoalCli`, `runIdeaCli`, `runDocumentCli`, `runAgentCli`, `runShellCli`, `runStudyCli`, `runVaultCli`, and their help specs `areaCommandSpec`, `brainCommandSpec`, `goalCommandSpec`, `ideaCommandSpec`, `documentCommandSpec`, `agentCommandSpec`, `shellCommandSpec`, `studyCommandSpec`, `vaultCommandSpec`, plus `STUDY_CONTRACT` and `STUDY_CONTRACT_VERSION` (the partner's system prompt and its version). The root `tangent` CLI lazily loads `@tangent/agent-shell/cli` for the `area`, `brain`, `goal`, `idea`, `document`, `agent`, `shell`, `study`, and `vault` nouns, the same way `usage`/`eval`/`rollup`/`search` are loaded. Nothing else is exported; the Reviewed build engine was removed in ADR-0023.
+Both paths export the CLI runners and help specifications for `area`, `brain`, `goal`, `idea`, `document`, `agent`, `shell`, `study`, and `vault`. They also export the study contract. Agent Shell does not export its private server modules.
 
-The root package, not this package's import surface, owns `tangent trigger list|check|acknowledge|stop|install`. Agent Shell reads its durable state for Programs and delegates manual controls to that CLI (ADR-0030). `stop` ends the live trigger agent and clears its session binding; the trigger keeps its interval and its recorded work key. Pause and Resume are not delegated: the paused flag lives in the Area programs manifest, which this server owns, so `setTriggerPaused` in `app/programs.mjs` writes it directly.
+The root `tangent` command loads this package only when one of these nouns is used. The root package owns `tangent process` and `tangent trigger`.
 
-## Vault CLI
+## Command boundary
 
-- `tangent area list|show <area>`: lists or shows one Area's Purpose/Resources, own Goals, and ideas.
-- `tangent area create <parent> <name>`: creates a nested Area with its note through the desk's `POST /api/areas/new`, committed with provenance. For a durable subject only; a result is a Goal.
-- `tangent goal create --area <area> --title <t> --done-when <c> [--description <d>] [--source <file>]... [--subgoal-title <t> --subgoal-done-when <c>]... [--own] [--session <name>]`: creates a Goal, optionally with Subgoals. `--session` supplies optional caller information and supplies the owner with `--own`. Tmux discovery remains a convenience. A supplied caller must be the current live brain, but it need not control the target Area. The brain may cross Areas only for Julian's direct instruction or an exact approved Request. Live-owner conflicts still fail.
-- `tangent goal list [<area>]`, `tangent goal show <slug>`: list or show Goals.
-- `tangent goal depend <slug> --on <prerequisite>...`, `tangent goal undepend <slug> --on <prerequisite>...`: add or remove idempotent prerequisite links. The server rejects missing, ambiguous, self, and cyclic dependencies. Dependencies are advisory and do not block or reorder Goal operations.
-- `tangent goal own <slug...>`, `tangent goal release <slug...>` `[--session <name>]`: take or hand back ownership. Ownership is the Goal's existing `session:` binding (status flips to `active`/`open` with it), so the desk display and the dead-session reconcile pass need no extra machinery. Owning never steals from another live session; the server refuses and names the owner. The session defaults to the tmux session the command runs in.
-- `tangent goal done <slug>`, `tangent goal wont-do <slug> --reason <text>`: flip a Goal's status. Run only on the user's explicit word; idempotent when already in the target status.
-- `tangent idea add <area> <text...>`, `tangent idea list [<area>]`: capture and list Area ideas.
-- `tangent document comments <file>`, `tangent document resolve <file> "<first words>" -m "<what changed>"`: list Julian's comments (CriticMarkup `{>>Julian: ...<<}` inside the Markdown) in one vault Document, and remove exactly one in its own `resolve:` commit. Resolve is the only agent path that removes a comment (design contract: otto/tangent/design-comment-on-documents).
-- `tangent vault commit <paths...> -m "<verb>: <area> <summary>" [--area <path>]`: the one command in this surface that talks to git directly instead of the server. Verb is one of `add`, `note`, `update`, `remove`. Commits exactly the given vault-relative paths (pathspec, never staged) with `Tangent-Area`/`Tangent-Tmux` trailers, mirroring the server's own `vaultCommit()`.
+Every command except `vault commit` and `study` is a thin HTTP client to the Agent Shell gateway. The default URL is `http://127.0.0.1:4321`. `--server` or `TANGENT_SHELL_URL` can select another loopback URL.
 
-## Agent messaging CLI
+Requests have a response deadline and an operation ID. A failed mutation response warns that the operation can already be durable. Callers must inspect current state before retrying.
 
-- `tangent agent list`: lists live agent sessions with their refined states (`working`, `needs decision`, `idle`, `draft`, `shell`) and queued message counts.
-- `tangent agent send <name> <text...> [--from <session>]`: sends a message to another agent through the server's queue. The server stamps the sender banner and delivers only into an empty composer; otherwise the message queues. `--from` defaults to the tmux session the command runs in.
+`tangent vault commit` writes the vault history directly. `tangent study` starts one local interactive agent directly. No other package command writes vault files or starts a process itself.
 
-## Pipeline CLI
+## Vault and Area commands
 
-A pipeline is a list of steps on one Goal. The server owns it (one record per Goal under `~/.tangent/agent-shell/pipelines/<area>/<slug>.json`, schema `agent-pipeline.v1`) and runs each step as an ordinary tmux Goal session. This package only posts to the endpoints below.
+- `tangent area list|show <area>` reads Areas.
+- `tangent area create <parent> <name>` creates one nested Area.
+- `tangent area recent <area>` reads subtree milestones.
+- `tangent area audit <area>` writes one detached compatibility audit.
+- `tangent goal create --area <area> --title <text> --done-when <text> ...` creates one Goal and optional Subgoals.
+- `tangent goal list [<area>]` and `tangent goal show <slug>` read Goals.
+- `tangent goal depend|undepend` edits advisory prerequisite links.
+- `tangent goal own|release` changes the Goal session binding without stealing a live owner.
+- `tangent goal done|wont-do` changes Goal state only on Julian's explicit instruction.
+- `tangent idea add|list` writes or reads Area ideas.
+- `tangent document comments|resolve` reads or resolves Julian's inline Document comments.
+- `tangent vault commit <paths...> -m "<verb>: <area> <summary>"` commits only the named vault paths with provenance trailers.
 
-- `tangent goal start <slug> --launch <harness[/model[/effort]]> [--session <name>] [--server] [--json]`: starts one agent on the Goal, the same as the desk's Start agent. The single `--launch` is required and names that agent's harness; Tangent supplies none and refuses a start without one. `--session` supplies optional caller information outside tmux. A supplied caller must be the current live brain. Julian can authorize that brain to start named work in another Area; a different live Goal owner still blocks the start.
-- `tangent goal start <slug> --step <instruction> [--launch <harness[/model[/effort]]>] [--path <directory>] [--continue-from <n|->] ... [--session <name>] [--server] [--json]`: starts a pipeline. `--step`, `--launch`, `--path`, and `--continue-from` are repeatable and pair by position. Every step names its own `--launch`; a start whose steps do not is refused before anything is written, and the error names each missing step and the Area's declared default. `--path` gives one step any working directory on the machine; the CLI expands `~` and resolves a relative directory against the caller's shell, so the server always receives an absolute one. A step without `--path`, or with an empty `--path=` that skips a position, uses the Area repository, unchanged. `--continue-from <n>` continues step n's live session. `-` means a fresh session. The command posts the steps and optional caller to `POST /api/goals/start`.
-- `tangent goal append <slug> --step <instruction> [--launch <harness[/model[/effort]]>] [--path <directory>] [--continue-from <n|->] ... [--server] [--json]`: adds steps to the end of the Goal's pipeline, mid-run or finished, without restarting or losing what already ran. Same pairing rules as `start`; `--continue-from` may name any earlier step of the whole pipeline (the server checks the bound). Posts `POST /api/pipelines/append { goal, steps }` and prints what happened: the steps wait behind the running step, the finished last agent was asked to hand over again, or the first new step started.
-- `tangent goal handover <facts...> [--session <name>] [--server]`: run by a step agent when its step is finished. Facts only: paths, what changed, what is unresolved, decisions Julian made. Posts `POST /api/goals/handover { session, text }`; the session defaults to the tmux session the command runs in. Prints `handed over; next: step N (<session>)` or `pipeline complete`. A session that is not a running pipeline step gets the server's 404 error text.
-- `tangent handover <facts...> [--session <name>] [--server]`: the worker's one managed-work operation. It reports facts to the controlling brain. A brain-controlled pipeline does not advance. Legacy continuation commands remain during migration.
-- `tangent brain request --kind <plan|decision|test|approval> ...`: creates a durable request for Julian. Each answer applies to that Request's proposal. Direct instructions in the active brain conversation also authorize work.
-- `tangent brain advance <goal> <step>`: starts one pending approved assignment after the brain reads the prior handover.
+A supplied brain caller must be the current live brain for the exact target Area. Parent, child, sibling, worker, and stale sessions cannot mutate the target Area.
 
-## Brain CLI
+## Agent messages
 
-An Area brain is one long-lived orchestrating agent per exact Area (ADR-0024; design contract `otto/tangent/impl-area-brain`). The server owns its record, session, event messages, and self-handover. The record uses `~/.tangent/agent-shell/brains/<area>/brain.json` and schema `area-brain.v1`. Work uses the nearest live brain: the exact Area first, then its ancestors. A live child brain owns its subtree until it stops. Julian can open, resume, or start an exact sub-Area brain from its Work header. This package only posts to the endpoints below.
+- `tangent agent list` reads live agent sessions and queued message counts.
+- `tangent agent send <name> <text...>` sends through the server queue.
 
-- `tangent brain handover <facts...> [--session <name>] [--server]`: run by the brain when its context fills. Posts `POST /api/brains/handover { session, text }`; the server records the facts on the current generation, starts the next generation on a new session with the same instruction, the plan path, and these facts, then ends the calling session. Prints the new generation and session. A session that is not a running brain gets the server's 404 error text.
-- `tangent brain status [<area>] [--session <name>] [--server] [--json]`: shows one brain (status, generation, session, plan file, instruction, latest handover) by Area, or by the tmux session the command runs in, then `Tangent shows N items for Julian`, one numbered line per row (each marked when Tangent hides it), and every section line that became no row. `GET /api/brains/show?area=|session=`.
+The server stamps the sender and delivers only into an empty composer. Otherwise, the message stays queued.
 
-## What waits on Julian
+## Goal queue
 
-Under a brain, durable Request records are conversational messages. A reply can contain text. An action authorizes one hashed effect revision:
+Every active Goal execution uses one `area-goal-queue.v2` record under `~/.tangent/agent-shell/pipelines/<area>/<slug>.json`. One assignment and many assignments use the same controller. A worker session is one attempt inside an assignment.
 
-- `- Decide [[<document>]]: <the question, ending with ?> Unblocks: <what the answer unblocks>.`
-- `- Decide: <one question that fits no Document, ending with ?>`
-- `- Test [[<goal-slug>]]: <where to go, what to press, what he sees>.`
+- `tangent goal start <slug> --launch <harness[/model[/effort]]>` declares one implementation assignment.
+- `tangent goal start <slug> --step <instruction> [--kind <implementation|review>] [--launch ...] [--path ...] ...` declares ordered assignments.
+- `tangent goal append <slug> --step <instruction> ...` adds pending assignments without rewriting history.
+- `tangent brain advance <goal> <step>` starts one pending assignment after the exact-Area brain reviews the current queue.
+- `tangent handover <facts...> --report '<json>'` submits evidence and one tagged worker report.
 
-A Decide ask must end with a question mark or the line does not parse. Tangent puts the fixed question `Accept it?` under every Test row. A Test stays visible while its reviewed Goal is `open` or `done`. Accept marks an open Goal done and removes the Test. Reject removes the Test and keeps the Goal open. `Decision`, `Try it`, and `Brain` still parse as aliases of Decide (with a target), Test, and Decide (without one). Every line of the section that becomes no row is reported by `unparsedForJulianLines`, printed by `tangent brain status`, and sent to the brain once per plan change.
+A Julian start without a caller queues normal work for the exact brain. An exact-Area brain caller can start the declared assignment. A guarded `--recovery` start records `julian-emergency` in the same queue. It requires a pending assignment, no current attempt, and exhausted brain recovery.
 
-- `tangent shell rebuild [--server <url>] [--timeout <seconds>]`: prints the commits between the running server's deployed revision and repository `HEAD`, posts `POST /api/shell/rebuild`, then polls `GET /api/sessions` every 500 ms until `boot` changes. The rebuild has one durable operation record at `~/.tangent/agent-shell-rebuild.json`. The record captures the target commit and reports `building`, `restarting`, `reconnecting`, `succeeded`, or `failed`. A build error leaves the current server running. Default timeout 240 s; the failure names the rebuild log. The brain runs it before it writes a Test line. Uncommitted filesystem edits do not advertise an update.
+Worker report types are `implementation-result`, `review-result`, `question-needed`, `context-risk`, and `failed`. The server validates the report against the assignment kind and queue revision. A worker report never starts another assignment.
 
-## Study CLI
+Only a designated `review-result` can close routine work. Closure requires the `review-pass` policy, the current Goal revision, passed criteria, and evidence references. Free text never closes a Goal.
 
-`tangent study` starts the study partner: an interactive agent session beside nvim that explores real code with Julian and gets him to change it (design contract: otto/tangent/design-code-first-study-partner). No repo argument; scoping happens in the opening conversation.
+Compatibility readers normalize `agent-pipeline.v1` and solo records. New mutations write only `area-goal-queue.v2`.
 
-- `tangent study`: spawns `claude --verbose --dangerously-skip-permissions --append-system-prompt <STUDY_CONTRACT>` with `CLAUDE_CONFIG_DIR` set to `~/.claude-otto`, `stdio: "inherit"`. The session owns the terminal until it exits.
-- `tangent study contract`: prints `STUDY_CONTRACT` to stdout and exits; no session is spawned.
+## Area brain
 
-## Server contract
+One logical brain belongs to one exact Area. Its record is `~/.tangent/agent-shell/brains/<area>/brain.json` with schema `area-brain.v2`.
 
-Every command but `vault commit` and `study` is a thin HTTP client to the running Agent Shell gateway (default `http://127.0.0.1:4321`, overridable via `--server` or `TANGENT_SHELL_URL`, loopback-only). `vault commit` writes the vault's git history directly; `study` spawns a local interactive session directly. `--json` prints machine-readable output on read commands. Requests have a 20-second default response deadline and carry an operation ID. Gateway-unreachable errors name the fix ("Agent Shell is not running..."). A mutation that loses its response says that it may have committed and tells the caller to inspect state before retrying. Unknown Area/Goal errors suggest the nearest existing path or slug. Non-2xx responses surface the controller's own `error` text.
+The product lifecycle is `active` or `inactive`. Process, waiting, attempt, and recovery values are health or diagnostic detail.
 
-Public endpoints enter through `packages/agent-shell/app/gateway.mjs` and are handled by the controller routes composed in `server.mjs`:
+- `tangent brain handover <facts...>` stores the facts as the current checkpoint before replacement starts.
+- `tangent brain status [<area>]` shows lifecycle, health, founding instruction, checkpoint, open Question count, and current session.
+- `tangent brain request ...` creates one durable Question.
 
-- Read: `GET /api/tree`, `GET /api/areas/show?area=<path>`, `GET /api/goals[?area=<path>]`, `GET /api/goals/show?slug=<slug>`, `GET /api/ideas[?area=<path>]`, `GET /api/document/comments?file=<path>`, `GET /api/sessions`. The sessions snapshot includes `deployedCommit`, `currentCommit`, `pendingCommits`, and the last `rebuild` operation. The blue update indicator appears only when the pending commit list is non-empty.
-- Area Journal: `GET /api/areas/journal?area=<path>` returns archived and active files. `POST /api/areas/journal` accepts `{ area, text, idempotencyKey, source? }`. The server commits exact text before brain notification.
-- `POST /api/shell/rebuild` starts one rebuild and returns its operation. A concurrent request returns 409.
-- Vault mutations: `POST /api/goals/create` accepts optional `caller` information and the separate `own: <session>` value.
-- Other mutations include `POST /api/goals/depend`, `POST /api/goals/undepend`, `POST /api/idea/new`, `POST /api/goals/own`, `POST /api/goals/release`, and `POST /api/agents/send`.
+Every attempt receives the immutable founding instruction. A replacement also receives the latest checkpoint. Structural prompt context has an 8,000-character limit. The checkpoint has a 6,000-character limit with explicit omission data.
 
-The vault projection carries no human-assignee fields. A Goal file written before the removal can still hold an `assignees:` frontmatter line; the server ignores it and preserves it on edit.
-- `POST /api/goals/start`: `{ file, approved, launch, caller?, extraFiles? }` starts one agent. `{ file, steps, caller?, extraFiles? }` starts a pipeline. The server copies the current Work default into each step that has no launch. Thus, later Area edits do not change pending steps. A supplied caller must be a current live brain; it does not have to control the target Area. The brain prompt limits cross-Area use to Julian's direct instruction or an exact approved Request. The server does not require a plan Request. Errors include an unknown Goal, an invalid caller, and ownership by another live session.
-- `POST /api/goals/handover`: `{ session, text }`. Marks the running step whose session matches as `complete` with `handover: text`, `handoverSource: "agent"`, then starts the next pending step. A step that already holds a handover (it was asked to hand over again after an append) keeps it and gains the new text below a blank line. Responds `{ status: "started", next: { index, session } }` or `{ status: "complete", next: null }`. 404 when the session is not a running step; 400 when the text is empty.
-- `POST /api/pipelines/append`: `{ goal, steps: [{ instruction, launch?, command?, path?, continueFrom }] }`. A step's `path` must be an absolute existing directory; the server proves every step's directory before it writes the record or starts tmux, so a bad one answers 400 (`step N: no directory <dir>` or `step N: path <dir> is not an absolute directory`) and leaves nothing behind. The server appends pending steps after the existing steps. It copies the current Work default into each appended step that has no launch. Existing steps do not change. The response is `{ status, after, next, session, added: [indices], pipeline }`. `status` is `"queued"`, `"asked"`, or `"started"`. Errors include an unknown Goal, no pipeline, a closed Goal, an invalid step, or an unresolved launch.
+Area memory includes exact `Purpose`, `Current`, and `Knowledge`. It includes smaller ancestor `Purpose` and `Knowledge` sections. Selected Documents come only from current source instructions, open Goal relationships, and open Request relationships. Completed Goals and their Documents remain excluded.
 
-Endpoints the desk uses on the same records (not called by this package, listed so the record's lifecycle is in one place):
+## Questions
 
-- `POST /api/pipelines/control`: `{ goal, action: "restart" | "skip" | "send", step }`. `restart` re-runs a stopped step in a new session (`...--s<N>-r<k>`); `skip` marks a step `skipped` with a skip handover and starts the next; `send` completes an idle step with the pane's last agent message as its handover and starts the next. Other combinations respond 409.
-- `POST /api/pipelines/edit`: `{ goal, step, instruction?, choice?, command?, continueFrom? }` patches a `pending` step; 409 on any other status.
-- `GET /api/sessions` gains `pipelines`: every record with its derived `status` (`running`, `paused`, `stopped`, `complete`), each step marked `live: boolean`, and the running step carrying the session's `state` and `stateDetail`.
+Every Question accepts a free-text reply in the native exact-Area brain conversation. A Question can also contain one effect from the server allowlist.
 
-Pipeline record shape (`agent-pipeline.v1`): `{ schema, goal, area, slug, createdAt, updatedAt, extraFiles, steps: [{ index, instruction, launch | null, command, label, path, continueFrom, status: "pending" | "running" | "complete" | "stopped" | "skipped", session, startedAt, endedAt, handover, handoverSource: "agent" | "skip" | "last-message" | null, continuations?, contextReminders? }] }`. `path` is the step's own working directory, or `null` for the Area repository. It is part of the record, so a restarted step and a `--continue` replacement session both open where the step was told to. A step that continues an earlier live session (`continueFrom`) inherits that session's directory and ignores its own `path`, the same way it ignores its own launch. Step sessions carry the tmux options `@tangent_pipeline` (the Goal file) and `@tangent_step` (the index).
+The initial effects are `goal-done` and `route-journal`. Each effect has a hashed revision and a durable operation record. The server writes operation intent before execution. Success closes the Question. Failure records the problem and leaves the Question actionable for retry.
 
-Worker context continuation (ADR-0028; design contract `otto/tangent/design-worker-context-handover`): every worker session's fill is read from its own harness status bar, no extra tmux call. `GET /api/sessions` gains `contextHandoverTokens` (the constant, default 300000) at the top level, and each session and each pipeline step gains `context: { usedTokens, windowTokens } | null`. At the threshold, Tangent queues one reminder into the worker's own composer naming the exact `tangent goal handover --continue` command; a stronger repeat follows a tenth past it. Each level fires at most once per session. A step's `continuations` is `[{ session, next, facts, at, fill, failed? }]`, appended by every `--continue` swap; `contextReminders` is `{ [sessionName]: { firstAt, repeatAt } }`. A solo Goal session keeps the same two fields in its own small record, `goal-continuation.v1`, one file per Goal under `~/.tangent/agent-shell/continuations/<area>/<slug>.json` (`TANGENT_CONTINUATIONS_ROOT` to override the root).
+Legacy Decide and Test plan lines remain readable during migration. They do not define closure for new Goal queues.
 
-Brain endpoints:
+## Operations
 
-The generated prompt uses the logical Area brain as its author. It has an 8,000-character hard limit and structural source references.
-Runtime generation fields remain in compatibility responses and diagnostics during migration.
+Programs project to canonical `operations` and `problems` fields. Compatibility aliases remain for one release.
 
-- `POST /api/brains/start`: `{ area, instruction, choice?, command?, resume? }`. Starts the Area's brain. An explicit run choice wins. Otherwise, the nearest Brain declaration wins. The value `"work"` uses the target Area's declared Work launch. Without a Brain declaration, the server uses the declared Work launch. The server returns 409 if neither declaration exists. It does not use the Work profile fallback. A live brain reattaches. A resume keeps the launch in the brain record. A start-over operation resolves the current default. The response is `{ session, generation, brain }`.
-- `POST /api/brains/handover`: `{ session, text }` as above. Responds `{ status: "started", session, generation, previous }`.
-- `GET /api/brains/show?area=<path>` or `?session=<name>`: `{ brain }` with `live`, `state`, `stateDetail`, `stateQuestion`, `latestHandover`, `forJulian`, `forJulianUnparsed`; 404 when none.
-- `GET /api/sessions` gains `brains`: every record with `live`, `state`, `stateDetail`, `stateQuestion`, `idleSince`, `latestHandover`, and `forJulian`. Brain sessions carry `kind: "brain"`, `brain` (the Area), and `generation`.
-- `GET /api/launch/options?area=<path>&kind=all` returns the catalog, both effective defaults, and both local declarations. Work and Brain inherit independently. The nearest declaration of the same kind wins.
-- `POST /api/launch/default` accepts `{ area, kind, mode, launch? }`. `kind` is `"work"` or `"brain"`. `mode: "launch"` stores validated catalog identifiers. `mode: "inherit"` removes the selected local key. `mode: "work"` is valid only for Brain. It stores the explicit `"work"` policy. The Area settings view exposes this editor. It does not start an agent.
-- `forJulian` is the parsed `## For Julian` section, resolved against the vault index: `[{ kind: "decide" | "test", target, text, unblocks, line, index, file, title, commentCount, missing, goalStatus }]`. `target` is null for a Decide that names no Document. `line` is the exact plan line and the key a verdict press sends back.
-- `forJulianUnparsed` (on `GET /api/brains/show` only) is every line of the section that became no row, as written.
-- `POST /api/brains/verdict`: `{ area, line, verdict: "accept" | "reject" }`. Removes the line, commits the plan, and tells the brain `Julian accepted <target>` or `Julian rejected <target>`. Responds `{ ok: true, line, removedText, index, target, verdict }`; 400 on an unknown verdict or a targetless Decide, 404 when no brain covers the Area or the plan has no such line. A bare Reject means the brain parks the subject and does not raise it again.
-- `POST /api/brains/verdict/undo`: `{ area, line, index }`. Puts the line back at that position, commits, and tells the brain `Julian withdrew his verdict on <target>; the line is back`. Responds `{ ok: true }`.
-- A save through `POST /api/document` that adds or changes a comment in a Document a brain lists on a Decide row sends that brain one notice through the brain inbox. A removal sends nothing.
-- `POST /api/kill/<name>` also ends the brain whose current session that is (`brainEnded: true`).
+Each exact Area can have an `operation-event-ledger.v1`. The server records these material edges:
 
-Brain record shape (`area-brain.v1`): `{ schema, area, instruction, launch | null, command, label, planFile, status: "running" | "stopped" | "ended", generation, session, createdAt, updatedAt, forJulianNoticeHash?, generations: [{ generation, session, startedAt, endedAt, handover, remindedAt }] }`.
+- a new Problem;
+- a changed Problem;
+- a Problem resolution;
+- a successful result from a Program with `report: true`.
 
-See ADR-0020 for why the vault CLI lives here, ADR-0023 for pipelines, ADR-0024 for the Area brain, ADR-0025 for what waits on Julian under one, and ADR-0028 for worker context continuation.
+Routine healthy polling, starts, stops, and repeated success stay quiet. Event identity includes the Operation, kind, condition, and revision. The event persists before exact-Area inbox delivery.
+
+## Main HTTP shapes
+
+- `POST /api/goals/start`: `{ file, steps?, caller?, recovery?, extraFiles? }`.
+- `POST /api/goals/handover`: `{ session, text, report, idempotencyKey? }`.
+- `POST /api/pipelines/control`: `{ goal, action, step, caller, expectedRevision, idempotencyKey }`.
+- `POST /api/pipelines/append`: `{ goal, steps, caller, expectedRevision, idempotencyKey }`.
+- `POST /api/pipelines/edit`: `{ goal, step, caller, expectedRevision, idempotencyKey, ...patch }`.
+- `POST /api/brains/start`: `{ area, instruction, choice?, command?, resume? }`.
+- `POST /api/brains/handover`: `{ session, text }`.
+- `POST /api/brains/requests/answer`: `{ area, id, answer, note?, effectRevision? }`.
+- `GET /api/brains/show?area=<path>|session=<name>` reads one enriched brain.
+- `GET /api/sessions` reads the complete Work projection.
+
+Mutation routes validate exact Area authority, current revisions, and idempotency where the record supports retries. Read APIs can carry compatibility aliases. Mutation APIs do not have two meanings.
+
+## Shell and study
+
+- `tangent shell rebuild` starts a durable build and waits for the gateway boot ID to change. A failed build leaves the current server running.
+- `tangent study` starts the study partner with the published study contract.
+- `tangent study contract` prints that contract.
+
+See ADR-0020 for the CLI package boundary, ADR-0032 for the gateway, and ADR-0034 for the current Area-brain workflow.

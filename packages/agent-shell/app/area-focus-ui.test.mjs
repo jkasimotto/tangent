@@ -155,6 +155,20 @@ test("Area Focus stages selection, scopes Work and questions, preserves return c
   submit(window, "[data-area-focus-form]");
 
   assert.equal(window.document.querySelector('[data-desk-area="otto/beta"]'), null);
+  // Focus orders attention; it removes nothing. Beta leaves the focused panels
+  // and arrives in the one folded Other Areas group, so Julian can see that
+  // work exists outside his Focus without clearing it.
+  const others = window.document.querySelector('[data-work-group="__other-areas"]');
+  assert.ok(others, "Areas outside Focus fold into one group instead of disappearing");
+  assert.ok(others.classList.contains("folded"), "the group opens folded");
+  assert.match(others.textContent, /Other Areas/);
+  assert.match(others.textContent, /1 open/, "the folded header stays truthful about what it holds");
+  assert.equal(others.querySelector(`[data-open-goal-run="${beta.file}"]`), null, "a folded group draws no rows");
+  assert.equal(others.querySelector("[data-open-area-brain]"), null, "the group spans many Areas, so it offers no brain");
+  click(window, '[data-fold-work-area="__other-areas"]');
+  const expanded = window.document.querySelector('[data-work-group="__other-areas"]');
+  assert.ok(expanded.querySelector(`[data-open-goal-run="${beta.file}"]`), "expanding the group reveals the work outside Focus");
+  click(window, '[data-fold-work-area="__other-areas"]');
   assert.match(window.document.querySelector(".area-focus-summary").textContent, /Focus:\s*Alpha/);
   assert.deepEqual(
     [...window.document.querySelectorAll("[data-review-questions]")].map((button) => button.dataset.reviewQuestions),

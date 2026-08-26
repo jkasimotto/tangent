@@ -11,7 +11,7 @@ import { goalCommandSpec } from "../spec.js";
 /** Dispatches `tangent goal` subcommands. */
 export async function runGoalCli(argv = process.argv.slice(2)): Promise<void> {
   // Boolean flags never consume the token after them.
-  const args = parseArgs(argv, { repeatable: ["source", "subgoal-title", "subgoal-done-when", "step", "launch", "path", "continue-from", "kind", "on"], boolean: ["continue", "own"] });
+  const args = parseArgs(argv, { repeatable: ["source", "subgoal-title", "subgoal-done-when", "step", "launch", "path", "continue-from", "kind", "on", "status"], boolean: ["continue", "own"] });
   const subcommand = args._[0];
   if (!subcommand) return help();
   // "done" and "wont-do" handle --help themselves, to restate that status is written on
@@ -300,13 +300,17 @@ async function listCommand(args: Args): Promise<void> {
   const server = resolveServerUrl(stringArg(args.server));
   const areaArg = stringArg(args._[1]);
   const area = areaArg ? await requireArea(server, areaArg) : undefined;
-  const scope = await listGoalScope(server, area, booleanArg(args.subtree));
+  const scope = await listGoalScope(server, area, booleanArg(args.subtree), {
+    status: stringsArg(args.status),
+    changedSince: stringArg(args["changed-since"]) ?? "",
+    query: stringArg(args.query) ?? "",
+  });
   const goals = scope.goals;
   if (booleanArg(args.json)) {
     console.log(JSON.stringify(scope, null, 2));
     return;
   }
-  if (!goals.length) console.log("No Goals.");
+  if (!goals.length) console.log(scope.filters && (scope.filters.status.length || scope.filters.changedSince || scope.filters.query) ? "No Goals match these filters." : "No Goals.");
   for (const goal of goals) console.log(`${goal.slug}  [${goal.status}]  ${goal.area}  ${goal.title}`);
   // The scent that the Portland brain did not have: an exact Area that looks
   // empty still says how much work its child Areas hold, and the command

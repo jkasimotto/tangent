@@ -64,7 +64,9 @@ async function waitFor(what, check, attempts = 300) {
 /** The stop notices ("stopped (its session ended without a handover)") in one Area inbox. */
 async function stopNotices(brains, area) {
   const inbox = await readInbox(brains, area);
-  return inbox.notices.filter((notice) => notice.text.includes("stopped (its session ended without a handover)"));
+  // c537c7b reworded this notice; the filter follows the words the server
+  // writes today, which name the queue actions the brain has.
+  return inbox.notices.filter((notice) => notice.text.includes("stopped without a handover"));
 }
 
 test("an empty tmux world never stops a running step, flips its Goal, or clears armed prompts", async (context) => {

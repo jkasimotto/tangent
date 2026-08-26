@@ -21,10 +21,10 @@ Requests have a response deadline and an operation ID. A failed mutation respons
 
 - `tangent area list|show <area>` reads Areas.
 - `tangent area create <parent> <name>` creates one nested Area.
-- `tangent area recent <area>` reads subtree milestones.
+- `tangent area recent <area>` reads subtree milestones. `--since` takes a window (`30d`, `12h`, `2w`, `90m`) or an ISO time, and `--query` keeps the milestones whose summary or reference holds any of its words.
 - `tangent area audit <area>` writes one detached compatibility audit.
 - `tangent goal create --area <area> --title <text> --done-when <text> ...` creates one Goal and optional Subgoals.
-- `tangent goal list [<area>]` and `tangent goal show <slug>` read Goals.
+- `tangent goal list [<area>]` and `tangent goal show <slug>` read Goals. The listing takes `--subtree`, a repeatable `--status`, `--changed-since` with the same window or date, and `--query`. The subtree scent counts what the same filters find in the child Areas and prints the command that reads them.
 - `tangent goal depend|undepend` edits advisory prerequisite links.
 - `tangent goal own|release` changes the Goal session binding without stealing a live owner.
 - `tangent goal done|wont-do` changes Goal state only on Julian's explicit instruction.
@@ -69,7 +69,7 @@ The product lifecycle is `active` or `inactive`. Process, waiting, attempt, and 
 - `tangent brain status [<area>]` shows lifecycle, health, founding instruction, checkpoint, open Question count, and current session.
 - `tangent brain request ...` creates one durable Question.
 
-Every attempt receives the immutable founding instruction. A replacement also receives the latest checkpoint. Structural prompt context has an 8,000-character limit. The checkpoint has a 6,000-character limit with explicit omission data.
+Every attempt receives the immutable founding instruction. A replacement also receives the latest checkpoint. One 8,000-character budget covers the whole generated prompt: structural context, checkpoint, and provenance. Only the founding instruction sits outside it. The checkpoint takes what the structural sections left, with explicit omission data when it is clipped.
 
 Area memory includes exact `Purpose`, `Current`, and `Knowledge`. It includes smaller ancestor `Purpose` and `Knowledge` sections. Selected Documents come only from current source instructions, open Goal relationships, and open Request relationships. Completed Goals and their Documents remain excluded.
 

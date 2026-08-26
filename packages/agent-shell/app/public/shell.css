@@ -546,6 +546,9 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-group-head > * { vertical-align: middle; }
 .work-group-name button { padding: 0; border: 0; line-height: 1.1; background: transparent; color: #dfe3e8; cursor: pointer; font: inherit; font-size: 13px; font-weight: 720; letter-spacing: -.01em; }
 .work-group-name button:hover { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
+/* The one group of Areas outside Area Focus: present, quiet, never a link. */
+.work-group-name .work-group-other { color: #9aa3ad; font-size: 13px; font-weight: 720; letter-spacing: -.01em; }
+.work-group.other-areas .work-group-head { opacity: .82; }
 .work-group-count { margin-left: 10px; color: #7c8590; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .work-group-head .desk-state { margin-left: 12px; }
 .work-group-head .desk-selection-bar { display: inline-flex; margin-left: 14px; }

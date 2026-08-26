@@ -40,11 +40,15 @@ The vault owns Area knowledge. The bound product repository owns code-agent rule
 It does not ask an agent to select inherited facts. It does not copy complete repository instructions into every prompt.
 
 Journal intake commits exact text before brain delivery. One active Journal rolls over at 256 KB.
-Generated brain prompts have an 8,000-character structural limit. The founding instruction and current wake input stay outside that budget. The current checkpoint has a 6,000-character limit. Each omitted collection or clipped section reports its source and count.
+One 8,000-character budget covers every character Agent Shell generates for a brain prompt. Only Julian's own founding instruction sits outside it. The checkpoint is generated text, so it sits inside and takes the room the structural sections left, down to a floor that keeps a replacement attempt oriented. Structural sections that cannot fit fail the brain start instead of starting a brain with no prompt. Each omitted collection or clipped section reports its source and count.
 
 A brain mutates only its exact Area. A parent can read descendant milestones and route referenced text, but it cannot mutate child work. An approved Request authorizes only its hashed effect revision. Agent messages, handovers, notices, prompts, Documents, and inferred intent do not expand scope. Server mutation routes verify the current exact-Area brain attempt.
 
 Uncovered work uses the stable durable-subject root. Descendant Areas and Goals appear as compact rows instead of peer cards.
+
+Area Focus orders attention; it removes nothing. Work renders the primary focused Area expanded, the other focused Areas folded, and one folded `Other Areas` group that holds every Area outside the Focus.
+
+A brain that is not live never wakes without Julian's words. The Work key opens the message box, and the send action starts a new brain from that message or wakes an inactive one with it. The message reaches the woken attempt as an unread notice. Only automatic recovery resumes with no message.
 
 A separate Planned view keeps unstarted Goals available. Work carries no human-assignee concept. A planned review closes routine work when the done condition holds.
 One `area-goal-queue.v2` record controls both one-assignment and multi-assignment work. Workers submit tagged reports. Only a designated typed review can close routine work, and only when its Goal revision and evidence match the current record. A done condition that needs Julian, a physical test, or an external authority uses a revision-bound Request effect.

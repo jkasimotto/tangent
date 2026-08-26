@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import zlib from "node:zlib";
+import { queryTerms, recencyBound } from "./goal-query-filters.mjs";
 import { promisify } from "node:util";
 
 export const BRAIN_PROMPT_LIMIT = 8_000;
@@ -430,13 +431,26 @@ export async function appendMilestone({ root, area, kind, summary, ref = null, i
   return { ...item, duplicate: false };
 }
 
-/** Queries material milestones for an Area subtree in newest-first order. */
-export async function querySubtreeMilestones({ root, area, areas, since = "", limit = 12 }) {
+/**
+ * Queries material milestones for an Area subtree in newest-first order.
+ *
+ * `since` reads a relative window (`30d`, `12h`) as well as an absolute time,
+ * and `query` keeps the milestones whose summary or reference holds any of its
+ * words. Those two are what let a brain ask "what happened about 24x lately"
+ * in one command instead of reading the whole index.
+ */
+export async function querySubtreeMilestones({ root, area, areas, since = "", query = "", limit = 12, now = Date.now() }) {
   const prefix = `${cleanArea(area)}/`;
   const scope = areas.filter((item) => item === cleanArea(area) || item.startsWith(prefix));
   const records = await Promise.all(scope.map((item) => readMilestones(root, item)));
+  const bound = recencyBound(since, now);
+  const after = bound === null ? "" : new Date(bound).toISOString();
+  const terms = queryTerms(query);
+  /** True when one milestone's summary or reference holds any query word. */
+  const matches = (item) => !terms.length
+    || terms.some((term) => `${item.summary ?? ""} ${item.ref ?? ""} ${item.kind ?? ""}`.toLowerCase().includes(term));
   const all = records.flatMap((record) => record.items)
-    .filter((item) => !since || item.createdAt > since)
+    .filter((item) => (!after || item.createdAt > after) && matches(item))
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   const count = Math.max(1, Math.min(100, Number(limit) || 12));
   return { area: cleanArea(area), subtree: true, milestones: all.slice(0, count), omitted: Math.max(0, all.length - count) };

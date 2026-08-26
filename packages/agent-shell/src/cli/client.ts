@@ -146,9 +146,17 @@ export async function listGoals(server: URL, area?: string, subtree = false): Pr
   return (await listGoalScope(server, area, subtree)).goals;
 }
 
+/** The status, recency, and free-text filters of one Goal listing. */
+export interface GoalListFilters {
+  status?: string[];
+  changedSince?: string;
+  query?: string;
+}
+
 /** What one Goal listing found, and what its subtree holds beyond the exact Area. */
 export interface GoalScope {
   goals: GoalSummary[];
+  filters?: { status: string[]; changedSince: string; query: string };
   childAreas?: number;
   descendantGoals?: number;
   subtreeCommand?: string;
@@ -159,10 +167,13 @@ export interface GoalScope {
  * reports how much work sits in child Areas, so a caller that finds nothing
  * learns where to look next instead of searching unrelated systems.
  */
-export async function listGoalScope(server: URL, area?: string, subtree = false): Promise<GoalScope> {
+export async function listGoalScope(server: URL, area?: string, subtree = false, filters: GoalListFilters = {}): Promise<GoalScope> {
   const params = new URLSearchParams();
   if (area) params.set("area", area);
   if (subtree) params.set("subtree", "1");
+  for (const status of filters.status ?? []) params.append("status", status);
+  if (filters.changedSince) params.set("changed-since", filters.changedSince);
+  if (filters.query) params.set("query", filters.query);
   const query = params.toString() ? `?${params.toString()}` : "";
   const body = await vaultFetch(server, `/api/goals${query}`);
   return { ...body, goals: body.goals as GoalSummary[] };

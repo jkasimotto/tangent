@@ -36,7 +36,7 @@ export const areaCommandSpec: CliCommandSpec = {
   subcommands: [
     { name: "list", description: "List every Area path in the vault", options: [serverOption, jsonOption] },
     { name: "show", description: "Show one Area's purpose, Goals, and ideas", args: "<area>", options: [serverOption, jsonOption] },
-    { name: "recent", description: "Show material milestones for one Area and its child Areas", args: "<area>", options: [{ name: "since", takesValue: true, description: "Only milestones after this ISO time" }, { name: "limit", takesValue: true, description: "Maximum rows (default 12)" }, serverOption, jsonOption] },
+    { name: "recent", description: "Show material milestones for one Area and its child Areas", args: "<area>", options: [{ name: "since", takesValue: true, description: "Only milestones inside a window (30d, 12h, 2w, 90m) or after an ISO time" }, { name: "query", takesValue: true, description: "Only milestones whose summary or reference holds any of these words" }, { name: "limit", takesValue: true, description: "Maximum rows (default 12)" }, serverOption, jsonOption] },
     { name: "audit", description: "Export detached legacy Area-brain records for explicit audit", args: "<area>", options: [serverOption, jsonOption] },
     {
       name: "create",
@@ -151,7 +151,19 @@ export const goalCommandSpec: CliCommandSpec = {
         jsonOption
       ]
     },
-    { name: "list", description: "List Goals, optionally scoped to one Area; --subtree includes its child Areas", args: "[area]", options: [{ name: "subtree", description: "Include Goals in child Areas" }, serverOption, jsonOption] },
+    {
+      name: "list",
+      description: "List Goals, optionally scoped to one Area; --subtree includes its child Areas",
+      args: "[area]",
+      options: [
+        { name: "subtree", description: "Include Goals in child Areas" },
+        { name: "status", takesValue: true, description: "Keep only this status; repeatable" },
+        { name: "changed-since", takesValue: true, description: "Keep only Goals changed inside a window (30d, 12h, 2w, 90m) or since a date" },
+        { name: "query", takesValue: true, description: "Keep Goals whose slug, title, done condition, or Area holds any of these words" },
+        serverOption,
+        jsonOption
+      ]
+    },
     { name: "show", description: "Show one Goal's status, done condition, and state", args: "<slug>", options: [serverOption, jsonOption] },
     {
       name: "depend",

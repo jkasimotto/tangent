@@ -130,8 +130,21 @@ test("recent context is durable, idempotent, and scoped to the Area subtree", as
   await appendMilestone({ root, area: "otto/portland/rules", kind: "goal-done", summary: "Rule 250 passed.", idempotencyKey: "two", now: "2026-08-25T02:00:00.000Z" });
   await appendMilestone({ root, area: "otto/other", kind: "journal", summary: "Noise.", idempotencyKey: "three", now: "2026-08-25T03:00:00.000Z" });
   await appendMilestone({ root, area: "otto/portland", kind: "journal", summary: "Duplicate.", idempotencyKey: "one" });
-  const result = await querySubtreeMilestones({ root, area: "otto/portland", areas: ["otto/portland", "otto/portland/rules", "otto/other"] });
+  const areas = ["otto/portland", "otto/portland/rules", "otto/other"];
+  const result = await querySubtreeMilestones({ root, area: "otto/portland", areas });
   assert.deepEqual(result.milestones.map((item) => item.summary), ["Rule 250 passed.", "Neil owns Friday."]);
+
+  // The recent-work question is "what happened about 250 lately", so the
+  // query takes a window and free text as well as an absolute time.
+  const now = Date.parse("2026-08-25T04:00:00.000Z");
+  const recent = await querySubtreeMilestones({ root, area: "otto/portland", areas, since: "3h", now });
+  assert.deepEqual(recent.milestones.map((item) => item.summary), ["Rule 250 passed."]);
+  const absolute = await querySubtreeMilestones({ root, area: "otto/portland", areas, since: "2026-08-25T01:30:00.000Z" });
+  assert.deepEqual(absolute.milestones.map((item) => item.summary), ["Rule 250 passed."]);
+  const matched = await querySubtreeMilestones({ root, area: "otto/portland", areas, query: "250 friday" });
+  assert.deepEqual(matched.milestones.map((item) => item.summary), ["Rule 250 passed.", "Neil owns Friday."]);
+  const narrow = await querySubtreeMilestones({ root, area: "otto/portland", areas, query: "250" });
+  assert.deepEqual(narrow.milestones.map((item) => item.summary), ["Rule 250 passed."]);
 });
 
 test("one queue starts one assignment once", () => {

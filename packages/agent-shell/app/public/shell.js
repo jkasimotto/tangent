@@ -756,7 +756,7 @@ function updateLiveHeader() {
     const session = describeWorkSession();
     if (!session) return;
     barContext.textContent = session.kind === "brain"
-      ? `${areaLabel(session.area)} · Brain · generation ${session.generation ?? "?"} · ${describeWorkStateLabel(session)}`
+      ? `${areaLabel(session.area)} · Brain · ${describeWorkStateLabel(session)}`
       : `${areaLabel(session.area)} · Defining work · ${describeWorkStateLabel(session)}`;
     findButton.hidden = true;
     updateLiveProgramCount();

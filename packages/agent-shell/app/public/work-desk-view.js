@@ -331,8 +331,8 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const title = !brain
       ? "Start a brain for this Area"
       : brain.live
-        ? `Open the brain (generation ${brain.generation}, ${brainStateLabel(brain).toLowerCase()})`
-        : `${brainStateLabel(brain)} after generation ${brain.generation}: resume or start over`;
+        ? `Open the brain (${brainStateLabel(brain).toLowerCase()})`
+        : `${brainStateLabel(brain)}: send it a message to resume, or start over`;
     return `<button class="area-brain ${kind}${open ? " open" : ""}" type="button" data-launch-for="${BRAIN_LAUNCH_TARGET}" data-brain-area="${escapeHtml(areaPath)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}" aria-expanded="${open}"><span aria-hidden="true">🧠</span></button>`;
   }
 
@@ -344,19 +344,35 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     openSessionLayer(session, "brain", captureReturnPoint());
   }
 
-  /** Opens the Area brain, or starts the missing session before opening it. */
+  /**
+   * Opens the Area brain, or opens the box that starts one.
+   *
+   * A brain that is not live never wakes from this route on its own. Tangent
+   * used to send a canned instruction here, so `b` on a quiet Area started a
+   * brain that nobody had asked anything. Now the same key opens the message
+   * box, and the brain wakes with Julian's own words in the send action that
+   * writes them (design-record-tangent-around-the-area-brain, "A message to an
+   * inactive brain activates it in the same explicit send action").
+   */
   async function openOrStartBrain(area, trigger = null) {
     const existing = brainForAreaCard(area);
     const live = brainSessions().find((session) => session.area === area || session.name === existing?.session);
     if (live) return openBrainSession(live.name);
+    // A brain the record still calls live lost its process, not its orders.
+    // Reattaching it is runtime recovery, not a cold wake, so it needs no new
+    // message. Everything else waits for Julian's words.
+    if (existing?.live) return resumeLiveBrain(area, trigger);
+    return openBrainComposer(area, trigger);
+  }
+
+  /** Reattaches a brain whose record is live while its session list is stale. */
+  async function resumeLiveBrain(area, trigger = null) {
     if (openingBrains.has(area)) return;
     openingBrains.add(area);
     if (trigger) trigger.disabled = true;
-    showToast(existing ? "Resuming brain…" : "Starting brain…");
+    showToast("Resuming brain…");
     try {
-      const result = await post("/api/brains/start", existing
-        ? { area, resume: true }
-        : { area, instruction: "Work with Julian to understand, plan, and dispatch new work for this Area." });
+      const result = await post("/api/brains/start", { area, resume: true });
       state.sessions = [...state.sessions.filter((session) => session.name !== result.session), { name: result.session, area, kind: "brain", state: "shell" }];
       if (result.brain) state.brains = [...(state.brains ?? []).filter((brain) => brain.area !== area), { ...result.brain, live: true }];
       openBrainSession(result.session);
@@ -368,6 +384,24 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       openingBrains.delete(area);
       if (trigger?.isConnected) trigger.disabled = false;
     }
+    return undefined;
+  }
+
+  /** Opens the brain message box for one Area, anchored to whatever asked for it. */
+  function openBrainComposer(area, trigger = null) {
+    if (!area) return showToast("Choose an Area row first.");
+    const anchor = trigger?.isConnected
+      ? trigger
+      : document.querySelector(`[data-open-area-brain="${cssAttribute(area)}"], [data-brain-area="${cssAttribute(area)}"]`);
+    if (!anchor) return showToast("Open this Area's brain from its row.");
+    seedBrainDraft(area, anchor);
+    window.setTimeout(() => document.querySelector("#brain-instruction")?.focus(), 0);
+    return undefined;
+  }
+
+  /** Escapes one Area path for a CSS attribute selector. */
+  function cssAttribute(value) {
+    return String(value ?? "").replace(/["\\]/g, "\\$&");
   }
 
   /** Opens or closes the brain popover for one Area card; a live brain opens its terminal instead. */
@@ -380,6 +414,12 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       state.launchAnchor = null;
       return paint(true);
     }
+    return seedBrainDraft(area, button);
+  }
+
+  /** Opens an empty brain message box for one Area, anchored under one element. */
+  function seedBrainDraft(area, anchor) {
+    const brain = brainForAreaCard(area);
     state.launchTarget = BRAIN_LAUNCH_TARGET;
     launchOptionsFor(area);
     state.launch.record = null;
@@ -392,31 +432,38 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     // A prior brain retains its runtime. A new brain is seeded asynchronously
     // from the nearest explicit Area brain default (then the server fallback).
     state.launch.choice = brain?.launch ?? null;
-    // Start over begins a new brain, so the box starts empty. Prefilling it
-    // with the inactive brain's instruction let an instruction Julian typed for
-    // an earlier brain become the new one's, and its first generation then read
-    // an old order as today's. Resume never reads this box.
+    // The box always starts empty. Prefilling it with the inactive brain's
+    // instruction let an instruction Julian typed for an earlier brain become
+    // the new one's, and the next attempt then read an old order as today's.
     state.brainDraft = { area, instruction: "" };
-    const rect = button.getBoundingClientRect();
+    const rect = anchor.getBoundingClientRect();
     state.launchAnchor = { top: Math.round(rect.bottom + 8), right: Math.round(rect.right) };
     state.launch.open = false;
     return paint(true);
   }
 
-  /** Starts, resumes, or starts over the brain of the popover's Area. */
+  /**
+   * Starts, resumes, or starts over the brain of the message box's Area.
+   *
+   * Both routes need Julian's words. A new brain needs its founding
+   * instruction; an inactive brain wakes only for a message, and that message
+   * travels with the resume so the woken brain reads why it is awake.
+   */
   async function startBrain({ resume = false } = {}) {
     syncLaunchDraft();
     const area = state.brainDraft?.area;
     const instruction = (state.brainDraft?.instruction ?? "").trim();
     if (!area) return;
-    if (!resume && !instruction) return showToast("Tell the brain what this Area should get done.");
+    if (!instruction) return showToast(resume ? "Write the message that wakes this brain." : "Tell the brain what this Area should get done.");
     try {
       const result = await post("/api/brains/start", { area, instruction, ...(resume ? {} : launchRequestFields()), resume });
+      // The resume message is the wake reason. The server records it as an
+      // unread notice, so the woken attempt reads it in its first message.
       state.launchTarget = "";
       state.launchAnchor = null;
       state.brainDraft = null;
       await refresh();
-      showToast(result.reattached ? "The brain already runs." : resume ? `Brain resumed (generation ${result.generation}).` : "Brain started.");
+      showToast(result.reattached ? "The brain already runs." : resume ? "Brain resumed." : "Brain started.");
       openBrainSession(result.session);
     } catch (error) {
       showToast(error.message);
@@ -687,10 +734,11 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   }
 
   /** Filters the existing work desk without changing its information hierarchy. */
-  function filteredDeskAreas(query) {
+  function filteredDeskAreas(query, records = null) {
     const terms = searchTerms(query);
-    if (!terms.length) return deskAreas();
-    return deskAreas().filter((record) => {
+    const all = records ?? deskAreas();
+    if (!terms.length) return all;
+    return all.filter((record) => {
       const parts = [record, ...record.sections];
       const searchText = parts.flatMap((part) => [
         part.area?.path,
@@ -808,16 +856,18 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * must not go quiet on a subject that has notes but no open Goal yet.
    * Panels keep hierarchy order. Runtime activity never moves a subject.
    */
-  function deskAreas() {
+  function deskAreas(scope = null) {
     const roots = areaFocusRoots();
     /** True when one projected record stays inside the applied scope. */
-    const inFocus = (path) => isInAreaFocus(path, roots);
+    const inFocus = scope ?? ((path) => isInAreaFocus(path, roots));
     const trees = filteredGoalTrees(goalTrees().filter((tree) => goalTreeState(tree) !== "closed"))
       .filter((tree) => inFocus(tree.path));
     const descriptions = (state.workFilter === "inactive" ? [] : describeWorkSessions())
       .filter((session) => inFocus(session.area));
     const core = areaMapCore;
     const areaList = (roots.length ? allAreas() : areas()).filter((area) => inFocus(area.path));
+    /** The focus roots this pass renders as roots; a scoped pass has none. */
+    const panelRoots = scope ? [] : roots;
     const byPath = new Map(areaList.map((area) => [area.path, area]));
     /** One Area's own open Goal trees and definition sessions, not its descendants'. */
     const workOf = (path) => ({
@@ -829,13 +879,13 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     for (const area of areaList) {
       const { trees: areaTrees, descriptions: areaDescriptions, programs: areaPrograms } = workOf(area.path);
       const openGoalCount = areaTrees.reduce((count, tree) => count + tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status)).length, 0);
-      openCounts.set(area.path, Math.max(openGoalCount, areaDescriptions.length ? 1 : 0, roots.length ? areaPrograms.length : 0));
+      openCounts.set(area.path, Math.max(openGoalCount, areaDescriptions.length ? 1 : 0, panelRoots.length ? areaPrograms.length : 0));
     }
     const liveBrainAreas = (state.brains ?? [])
       .filter((brain) => brain.status === "active" && brain.live)
       .map((brain) => brain.area)
       .filter(inFocus);
-    const panelDefs = core.deskPanels(openCounts, roots.length ? [...roots, ...liveBrainAreas] : liveBrainAreas);
+    const panelDefs = core.deskPanels(openCounts, panelRoots.length ? [...panelRoots, ...liveBrainAreas] : liveBrainAreas);
     const covered = new Set(panelDefs.flatMap((panel) => [panel.path, ...panel.sections]));
     const panels = panelDefs.map((panel) => {
       const area = byPath.get(panel.path);
@@ -845,7 +895,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
         .filter((section) => section.area);
       const programs = own.programs;
       const brain = (state.brains ?? []).find((item) => item.area === panel.path && item.status === "active" && item.live) ?? null;
-      const focusRoot = roots.includes(panel.path);
+      const focusRoot = panelRoots.includes(panel.path);
       const focusHasWork = !focusRoot || trees.some((tree) => core.isInside(tree.path, panel.path))
         || descriptions.some((session) => core.isInside(session.area, panel.path))
         || liveBrainAreas.some((path) => core.isInside(path, panel.path))
@@ -861,6 +911,24 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       }
     }
     return core.orderPanels(panels, panelActivity).map((record, index) => ({ ...record, index }));
+  }
+
+  /**
+   * The Areas outside Area Focus, as panels for the one folded `Other Areas`
+   * group.
+   *
+   * Focus orders attention; it does not delete a subject. Work used to drop
+   * every nonfocused Area, so Julian's own Focus made the rest of his work
+   * invisible and he had to clear the Focus to check whether anything moved.
+   * The accepted order is the primary focused Area expanded, the other
+   * focused Areas folded, and one folded `Other Areas` group after them
+   * (design-record-tangent-around-the-area-brain, "Area Focus controls
+   * importance").
+   */
+  function otherDeskAreas() {
+    const roots = areaFocusRoots();
+    if (!roots.length) return [];
+    return deskAreas((path) => !isInAreaFocus(path, roots));
   }
 
   /**
@@ -950,7 +1018,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    */
   function openWorkCommands(area) {
     const commands = [
-      { value: "brain", label: `b · Open the ${area ? areaLabel(area) : "Area"} brain` },
+      { value: "brain", label: `b · Open the ${area ? areaLabel(area) : "Area"} brain, or write the message that starts it` },
       { value: "questions", label: "r · Review the open questions" },
       { value: "capture", label: "n · Capture a Journal note" },
       { value: "fold", label: "z · Fold or expand this Area" },
@@ -1746,13 +1814,58 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     paint(true);
   }
 
+  // The fold key of the one group that holds every Area outside Area Focus.
+  // No Area path can collide with it: a path has no leading underscores.
+  const OTHER_AREAS_KEY = "__other-areas";
+
+  /**
+   * The one folded `Other Areas` group: every Area outside Area Focus, as one
+   * row group after the focused ones.
+   *
+   * Folded it states its own totals, so Julian can see that work exists
+   * outside his Focus without leaving it. Expanded it lists those Goals with
+   * their Area beside them. It has no brain button: the group is a view over
+   * many Areas, and a brain belongs to exactly one.
+   */
+  function otherAreasGroupBody(records, facts, maxElapsedMs) {
+    if (!records.length) return "";
+    const parts = records.flatMap((record) => [
+      { area: record.area, trees: record.trees, descriptions: record.descriptions },
+      ...record.sections,
+    ]);
+    const allTrees = parts.flatMap((part) => part.trees);
+    const allDescriptions = parts.flatMap((part) => part.descriptions);
+    const goals = allTrees.flatMap((tree) => tree.goals).filter((goal) => !["done", "dropped", "deferred"].includes(goal.status));
+    const moving = [...goals.map(sessionForGoal).filter(Boolean), ...allDescriptions].filter((session) => session.state === "working").length;
+    const areaCount = new Set(parts.map((part) => part.area.path)).size;
+    const summary = [`${areaCount} ${areaCount === 1 ? "Area" : "Areas"}`, `${goals.length} open`, ...(moving ? [`${moving} moving`] : [])].join(" · ");
+    const folded = areaIsFoldedOnWork(OTHER_AREAS_KEY);
+    const labels = new Map(parts.map((part) => [part.area.path, areaLabel(part.area.path)]));
+    const body = folded ? "" : parts.flatMap((part) => [
+      ...part.descriptions.map((session) => workDefinitionRow(session)),
+      ...orderedGoalTrees(part.trees).map((tree) => workTreeRows(tree, OTHER_AREAS_KEY, labels, facts, maxElapsedMs)),
+    ]).join("");
+    const cursor = `area:${OTHER_AREAS_KEY}`;
+    return `<tbody class="work-group other-areas${folded ? " folded" : ""}" data-work-group="${OTHER_AREAS_KEY}" aria-labelledby="${workGroupId(OTHER_AREAS_KEY)}">
+      <tr class="work-group-row${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${OTHER_AREAS_KEY}">
+        <th class="work-group-head" colspan="${WORK_COLUMNS.length}" scope="rowgroup" id="${workGroupId(OTHER_AREAS_KEY)}">
+          <span class="work-group-name"><span class="work-group-other">Other Areas</span><button type="button" data-fold-work-area="${OTHER_AREAS_KEY}" aria-expanded="${!folded}" title="${folded ? "Expand" : "Fold"} the Areas outside Focus">${folded ? "+" : "−"}</button></span>
+          <span class="work-group-count">${escapeHtml(summary)}</span>
+          <span class="desk-state quiet">Outside Focus</span>
+        </th>
+      </tr>${body}
+    </tbody>`;
+  }
+
   /** The complete work table: one caption, one header, one row group per Area. */
-  function workTable(records, maxElapsedMs) {
+  function workTable(records, maxElapsedMs, others = []) {
     const facts = readinessFacts();
     // An Area with no row of its own does not earn a header. A chosen Focus
     // root is the one exception: it says that the Focus is what emptied it.
     const shown = records.filter(workGroupHasRows);
-    const bodies = shown.map((record) => workGroupBody(record, facts, maxElapsedMs)).join("");
+    const outside = others.filter(workGroupHasRows);
+    const bodies = shown.map((record) => workGroupBody(record, facts, maxElapsedMs)).join("")
+      + otherAreasGroupBody(outside, facts, maxElapsedMs);
     const rowCount = shown.reduce((count, record) => count + [record, ...record.sections]
       .reduce((inner, part) => inner + part.trees.reduce((goals, tree) => goals + tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status)).length, 0), 0), 0);
     const word = state.workFilter === "inactive" ? "Planned work" : "Current work";
@@ -1771,16 +1884,19 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   function renderWork() {
     const query = state.query.trim();
     const records = filteredDeskAreas(query);
+    // Focus orders the desk; it never removes a subject. Everything outside it
+    // stays reachable in one folded group after the focused Areas.
+    const others = filteredDeskAreas(query, otherDeskAreas());
     // Every bar on this paint is scaled to the longest-elapsed Goal it draws
     // (deskGoalBar, design-compact-work-desk Decision 2).
-    const maxElapsedMs = deskMaxElapsedMs(records, Date.now());
+    const maxElapsedMs = deskMaxElapsedMs([...records, ...others], Date.now());
     const roots = areaFocusRoots();
     const focusNames = areaFocusLabels(roots).join(" + ");
     const emptyCopy = query
       ? `${roots.length ? `Area Focus (${escapeHtml(focusNames)}): ` : ""}No ${state.workFilter === "active" ? "current" : "planned"} work matches “${escapeHtml(query)}”.`
       : `${roots.length ? `Area Focus (${escapeHtml(focusNames)}): ` : ""}No ${state.workFilter === "active" ? "work is active" : "unstarted Goals"}.`;
-    const content = `${records.length
-      ? workTable(records, maxElapsedMs)
+    const content = `${records.length || others.length
+      ? workTable(records, maxElapsedMs, others)
       : `<div class="empty-state">${emptyCopy}</div>`}`;
 
     return `
@@ -1805,5 +1921,5 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     `;
   }
 
-  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, forgetVerdictLines, openRequest, openQuestionsReview, openAreaCapture, openWorkCommands, sendVerdict, replyAboutRow, areaQuestions, areaBlockers, goalGroupRoot, toggleSubgoals, toggleWorkArea, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, renderWork };
+  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, forgetVerdictLines, openRequest, openQuestionsReview, openAreaCapture, openWorkCommands, sendVerdict, replyAboutRow, areaQuestions, areaBlockers, goalGroupRoot, toggleSubgoals, toggleWorkArea, otherDeskAreas, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, renderWork };
 }

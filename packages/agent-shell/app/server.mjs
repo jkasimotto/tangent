@@ -56,6 +56,7 @@ import { createShellControlRoutes } from "./shell-control-routes.mjs";
 import { createShellStateRoutes } from "./shell-state-routes.mjs";
 import { createVoiceRoutes } from "./voice-routes.mjs";
 import { createGoalQueryRoutes } from "./goal-query-routes.mjs";
+import { filterGoalSummaries, goalQueryFilters, hasGoalQueryFilters } from "./goal-query-filters.mjs";
 import { changeGoalDependencies, dependencySlugs, projectGoalDependencies, writeDependencySlugs } from "./goal-dependencies.mjs";
 import { createLaunchRoutes } from "./launch-routes.mjs";
 import { createWorkMutationRoutes } from "./work-mutation-routes.mjs";
@@ -1251,7 +1252,19 @@ function goalSummary(goal) {
     dependsOn: goal.dependsOn ?? [],
     requiredBy: goal.requiredBy ?? [],
     unresolvedDependencies: goal.unresolvedDependencies ?? [],
+    // When the Goal file last changed. A recency filter has nothing to read
+    // without it, and the listing is the one place a brain asks what moved.
+    changedAt: goal.changedAt ?? goal.mtime ?? 0,
   };
+}
+
+/** The filter flags of one listing, so a printed follow-up command keeps them. */
+function goalFilterFlags(filters) {
+  return [
+    ...filters.status.map((one) => ` --status ${one}`),
+    filters.changedSince ? ` --changed-since ${filters.changedSince}` : "",
+    filters.query ? ` --query ${JSON.stringify(filters.query)}` : "",
+  ].join("");
 }
 
 /** Saves a natural work description as an idea without creating goals. */
@@ -3705,6 +3718,11 @@ async function startBrainUnlocked(area, { instruction = "", choice = null, comma
   if (resume) {
     if (!existing) return { status: 404, error: "no brain to resume on this Area" };
     if (!automaticRecovery) existing.recovery = { attempts: 0, exhausted: false, lastAttemptAt: null };
+    // An inactive brain wakes for Julian's message, not for the act of
+    // resuming. The message becomes an unread notice before the session
+    // exists, so the woken attempt reads it in its first message and knows
+    // why it is awake. Automatic recovery carries no message and stays silent.
+    if (instruction.trim()) await recordBrainNotice(area, `Julian woke this brain: ${instruction.trim()}`);
     if (choice || command) {
       const launch = await launchCatalog.requested({ choice, command });
       if (launch.error) return { status: 409, error: launch.error };
@@ -4967,27 +4985,43 @@ const goalQueryRoutes = createGoalQueryRoutes({
    * asked one Area for recent work used to read an empty list and then search
    * unrelated repositories, because nothing told it that child Areas existed.
    */
-  async list(area, { subtree = false } = {}) {
+  async list(area, { subtree = false, ...requested } = {}) {
     const allAreas = flattenAreaPaths(await readTree(TREES_ROOT));
     if (area && !allAreas.includes(area)) return { status: 404, error: `no area "${area}"` };
+    const filters = goalQueryFilters(requested);
     const allGoals = [];
     for (const one of allAreas) allGoals.push(...await readAreaGoals(one));
     projectGoalDependencies(allGoals);
-    if (!area) return { status: 200, value: { goals: allGoals.map(goalSummary) } };
+    /** Applies the caller's filters to one page of summaries. */
+    const narrow = (goals) => filterGoalSummaries(goals, filters);
     const prefix = `${area}/`;
     /** True when one Goal belongs to the requested Area scope. */
     const inScope = (goal) => goal.area === area || (subtree && goal.area.startsWith(prefix));
-    const children = allAreas.filter((one) => one.startsWith(prefix));
-    const descendants = allGoals.filter((goal) => goal.area.startsWith(prefix));
+    const children = area ? allAreas.filter((one) => one.startsWith(prefix)) : [];
+    const descendants = area ? allGoals.filter((goal) => goal.area.startsWith(prefix)) : [];
+    let goals;
+    let matchedDescendants;
+    // An unreadable recency window is the caller's mistake. Answering it with
+    // an empty list would report the opposite of what the caller asked.
+    try {
+      goals = narrow((area ? allGoals.filter(inScope) : allGoals).map(goalSummary));
+      matchedDescendants = narrow(descendants.map(goalSummary));
+    } catch (error) {
+      return { status: 400, error: String(error.message ?? error) };
+    }
+    if (!area) return { status: 200, value: { goals, ...(hasGoalQueryFilters(filters) ? { filters } : {}) } };
     return {
       status: 200,
       value: {
-        goals: allGoals.filter(inScope).map(goalSummary),
+        goals,
         scope: subtree ? "subtree" : "exact",
         childAreas: children.length,
-        descendantGoals: descendants.length,
-        ...(!subtree && descendants.length
-          ? { subtreeCommand: `tangent goal list ${area} --subtree` }
+        // The subtree scent counts what the same filters would find there, so
+        // a filtered listing never sends a brain after work it excluded.
+        descendantGoals: matchedDescendants.length,
+        ...(hasGoalQueryFilters(filters) ? { filters } : {}),
+        ...(!subtree && matchedDescendants.length
+          ? { subtreeCommand: `tangent goal list ${area} --subtree${goalFilterFlags(filters)}` }
           : {}),
       },
     };

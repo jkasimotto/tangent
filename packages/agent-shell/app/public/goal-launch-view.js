@@ -425,13 +425,13 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     const stepCount = describing || braining || settings ? 1 : commitActiveStep().length;
     const drafts = record ? launchDraftRows().length : 0;
     const startLabel = braining
-      ? (brainResumes ? "Resume brain" : "Start brain")
+      ? (brainResumes ? "Send and wake brain" : "Start brain")
       : record
       ? (state.launch.active < record.steps.length ? `Save step ${state.launch.active + 1}` : drafts > 1 ? `Add ${drafts} steps` : `Add step ${record.steps.length + 1}`)
       : stepCount > 1 ? `Start ${stepCount} steps` : `Start ${selection ? (selection.label || "agent") : "agent"}`;
     const brainZone = braining ? `
-        <label class="brain-instruction"><span>What should this Area get done?</span><textarea id="brain-instruction" rows="5" placeholder="The instruction the brain plans and dispatches from. It splits the work into Goals, starts agents in dependency order, reviews what comes back, and asks you only for real decisions.">${escapeHtml(state.brainDraft?.instruction ?? "")}</textarea></label>
-        ${brainResumes ? `<p class="form-note">A brain ran here before (generation ${brain.generation}, ${escapeHtml(brainStateLabel(brain).toLowerCase())}). Resume continues from its plan and handover. Start over begins a new brain from the instruction above.</p>` : ""}` : "";
+        <label class="brain-instruction"><span>${brainResumes ? "What should this brain do next?" : "What should this Area get done?"}</span><textarea id="brain-instruction" rows="5" placeholder="${brainResumes ? "The message that wakes this brain. It keeps its founding instruction and its plan, and reads this as the reason it is awake." : "The instruction the brain plans and dispatches from. It splits the work into Goals, starts agents in dependency order, reviews what comes back, and asks you only for real decisions."}">${escapeHtml(state.brainDraft?.instruction ?? "")}</textarea></label>
+        ${brainResumes ? `<p class="form-note">A brain ran here before (${escapeHtml(brainStateLabel(brain).toLowerCase())}). Your message wakes it and keeps its founding instruction. Start over begins a new brain from the message above.</p>` : ""}` : "";
     const stepZone = describing || braining || settings ? "" : `
         <label class="launch-instruction"><span>Step ${state.launch.active + 1} does</span><textarea id="launch-instruction" rows="2" placeholder="${stepCount > 1 || record ? "What this agent does" : "What this agent does (optional for one step)"}">${escapeHtml(state.launch.instruction ?? "")}</textarea></label>
         ${state.launch.active > 0 ? `<label class="launch-continue"><span>Session</span><select data-launch-continue><option value="">Fresh session</option>${Array.from({ length: state.launch.active }, (_, k) => `<option value="${k + 1}"${state.launch.continueFrom === k + 1 ? " selected" : ""}>Continue step ${k + 1}</option>`).join("")}</select></label>` : ""}`;

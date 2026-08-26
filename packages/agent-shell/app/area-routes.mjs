@@ -44,6 +44,7 @@ export function createAreaRoutes(operations) {
   async function milestones(_request, response, url) {
     const result = await operations.milestones(url.searchParams.get("area") ?? "", {
       since: url.searchParams.get("since") ?? "",
+      query: url.searchParams.get("query") ?? "",
       limit: url.searchParams.get("limit") ?? "12",
     });
     sendJson(response, result ? 200 : 404, result ?? { error: "Area not found." });

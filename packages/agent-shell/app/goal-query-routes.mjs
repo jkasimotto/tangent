@@ -20,9 +20,18 @@ export function createGoalQueryRoutes(operations) {
     return true;
   }
 
-  /** Lists Goals, optionally limited to one Area or to its subtree. */
+  /**
+   * Lists Goals, optionally limited to one Area or to its subtree, and
+   * narrowed by status, recency, and free text. The three filters are what
+   * turns the listing into the brain's recent-work query.
+   */
   async function list(_request, response, url) {
-    sendResult(response, await operations.list(url.searchParams.get("area"), { subtree: url.searchParams.get("subtree") === "1" }));
+    sendResult(response, await operations.list(url.searchParams.get("area"), {
+      subtree: url.searchParams.get("subtree") === "1",
+      status: url.searchParams.getAll("status"),
+      changedSince: url.searchParams.get("changed-since") ?? "",
+      query: url.searchParams.get("query") ?? "",
+    }));
   }
 
   /** Finds one Goal by slug. */

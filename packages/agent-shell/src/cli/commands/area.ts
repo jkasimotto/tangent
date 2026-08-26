@@ -35,11 +35,12 @@ async function recentCommand(args: Args): Promise<void> {
   const area = await requireArea(server, requiredString(args._[1], "tangent area recent requires <area>."));
   const query = new URLSearchParams({ area, limit: stringArg(args.limit) || "12" });
   if (stringArg(args.since)) query.set("since", stringArg(args.since) || "");
+  if (stringArg(args.query)) query.set("query", stringArg(args.query) || "");
   const result = await vaultFetch(server, `/api/areas/milestones?${query}`);
   if (booleanArg(args.json)) return void console.log(JSON.stringify(result, null, 2));
-  if (!result.milestones.length) console.log(`No material milestones in ${area} or its child Areas.`);
+  if (!result.milestones.length) console.log(`No material milestones in ${area} or its child Areas${stringArg(args.query) || stringArg(args.since) ? " match these filters" : ""}.`);
   for (const item of result.milestones) console.log(`${item.createdAt}  ${item.area}  ${item.kind}  ${item.summary}`);
-  if (result.omitted) console.log(`${result.omitted} more. Increase --limit or use --since.`);
+  if (result.omitted) console.log(`${result.omitted} more. Increase --limit, or narrow with --since and --query.`);
 }
 
 /** Handles `tangent area list`. */

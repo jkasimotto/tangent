@@ -38,8 +38,8 @@ tmux display-message -p -t '=SESSION:' '#{session_id} #{@tangent_agent_shell_ins
 The second value must equal the server's `instanceId`. A missing value means
 that the process is legacy.
 
-Do not add the option to an existing process. That action would invent
-ownership evidence after creation.
+Do not add the option manually. An explicit brain resume can claim one legacy
+brain when its durable record matches its live brain tags.
 
 ## Inspect stale recovery evidence
 
@@ -64,13 +64,16 @@ the Area, instance identity, status, and error.
 ## Handle legacy processes
 
 A process without the live ownership key is a pre-change process. Agent Shell
-keeps it alive and refuses attachment, cleanup, reconciliation, or recovery.
+keeps it alive and refuses cleanup, reconciliation, or automatic recovery.
+
+An explicit resume can claim the exact legacy brain from its durable record.
+The session, Area, generation, and live brain tags must match.
 
 Let the process finish when possible. If removal is necessary, inspect it and
 stop it manually outside Agent Shell. Then relaunch work through Agent Shell.
 
-Agent Shell does not provide an adopt command. A new launch creates both live
-and durable ownership evidence.
+Agent Shell does not provide a general adopt command. A new launch creates
+both live and durable ownership evidence.
 
 ## Verify the boundary
 

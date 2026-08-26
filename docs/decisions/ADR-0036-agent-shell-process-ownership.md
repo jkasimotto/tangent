@@ -40,8 +40,10 @@ Each Agent Shell has one stable runtime identity.
   Internal snapshots retain foreign names for collision and absence checks.
 - Reconciliation treats a foreign live process as present but never mutates it.
   Missing-process recovery needs a current-instance record or sidecar.
-- A markerless process is legacy. Agent Shell does not attach to it, adopt it,
-  stop it, or use its absence as recovery evidence.
+- A markerless process is legacy. Agent Shell does not stop it or use its
+  absence as recovery evidence. One compatibility exception exists for an
+  explicit brain resume. The session, Area, generation, and live brain tags
+  must match the durable brain record before the current instance claims it.
 - Rebuild and shutdown stop gateway or controller processes only. They do not
   stop tmux sessions.
 
@@ -55,7 +57,8 @@ two controllers on one private socket and exercise every termination path.
   identity.
 - Changing the identity creates a new ownership domain. Old sessions remain
   safe and appear foreign.
-- Legacy sessions remain alive until they finish or an operator removes them.
-  Relaunching work through Agent Shell creates the required marker.
+- Arbitrary legacy sessions remain alive until they finish or an operator
+  removes them. Explicit resume can claim an exact legacy brain. Relaunching
+  other work through Agent Shell creates the required marker.
 - Runtime diagnosis needs the health identity, live tmux option, durable
   sidecar, and workflow record. The operations guide gives the commands.

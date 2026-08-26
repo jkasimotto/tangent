@@ -88,9 +88,9 @@ Material Operation Problems, resolutions, and declared results persist before br
 Detached audit exports preserve old generation and pipeline records.
 A worker assignment that names no harness takes the calling brain's own launch, and the server discloses that choice in the queue record before it creates the session; a caller that is not the exact live brain is still refused.
 The old Program API is available only with `TANGENT_LEGACY_PROGRAM_API=1`.
-Each Agent Shell runtime has one stable instance identity. Every tmux worker and brain carries that identity in `@tangent_agent_shell_instance`.
+Each Agent Shell runtime has one stable instance identity. Every new tmux worker and brain carries that identity in `@tangent_agent_shell_instance`. Explicit resume can claim an exact pre-marker brain when its durable record matches all live brain tags.
 Only the session ownership capability can terminate tmux sessions, and it verifies the immutable tmux session ID before termination.
-Foreign and markerless legacy sessions remain alive. Reconciliation uses durable owner sidecars only for the current instance.
+Foreign and arbitrary markerless sessions remain alive. Reconciliation uses durable owner sidecars only for the current instance.
 See ADR-0033, ADR-0034, ADR-0035, and ADR-0036.
 
 The package is lazily loaded from `@tangent/agent-shell/cli` as the root `tangent area`, `tangent brain`, `tangent goal`, `tangent idea`, and `tangent vault` commands (ADR-0020). `area`/`goal`/`idea` are thin HTTP clients to the stable Agent Shell gateway on port 4321; the gateway proxies them to the controller in `packages/agent-shell/app/server.mjs`, the vault's single writer. `vault commit` is the one exception: it commits directly to `~/.tangent/trees` with `@tangent/repo`'s `git()`, producing the same `<verb>: <area> <summary>` message and `Tangent-Area`/`Tangent-Tmux` trailers as the controller's own `vaultCommit()`.

@@ -65,6 +65,44 @@ export function createSessionOwnership({ instanceId, root, runTmux, now = () => 
     return (await readSessionOwner(root, session))?.instanceId === instanceId;
   }
 
+  /** Claims one exact pre-marker brain after its durable and live identities match. */
+  async function claimLegacyBrain({ session, area, generation }) {
+    const inspected = await inspect(session);
+    if (inspected.state !== "live") return inspected;
+    if (inspected.instanceId) {
+      return inspected.instanceId === instanceId
+        ? { state: "owned", instanceId, target: inspected.target }
+        : { state: "foreign", instanceId: inspected.instanceId, target: inspected.target };
+    }
+    try {
+      const result = await runTmux([
+        "display-message", "-p", "-t", inspected.target,
+        `#{@tangent_kind}\t#{@tangent_brain}\t#{@tangent_generation}`,
+      ]);
+      const [kind = "", liveArea = "", liveGeneration = ""] = String(result.stdout ?? "").trimEnd().split("\t");
+      if (kind !== "brain" || liveArea !== area || liveGeneration !== String(generation)) {
+        return { state: "mismatch", instanceId: null, target: inspected.target, kind, area: liveArea, generation: liveGeneration };
+      }
+      await runTmux(["set-option", "-o", "-t", inspected.target, SESSION_OWNER_OPTION, instanceId]);
+    } catch (error) {
+      const after = await inspect(session);
+      if (after.state === "live" && after.instanceId) {
+        return after.instanceId === instanceId
+          ? { state: "owned", instanceId, target: after.target }
+          : { state: "foreign", instanceId: after.instanceId, target: after.target };
+      }
+      return { state: "error", instanceId: null, error };
+    }
+    const after = await inspect(session);
+    if (after.state !== "live" || after.instanceId !== instanceId) {
+      if (after.state === "live" && after.instanceId) return { state: "foreign", instanceId: after.instanceId, target: after.target };
+      return { state: "error", instanceId: after.instanceId ?? null, error: new Error(`tmux did not retain ownership for ${session}`) };
+    }
+    const record = { schema: SESSION_OWNER_SCHEMA, session, instanceId, claimedAt: now() };
+    await writeJsonObject(sessionOwnerPath(root, session), record);
+    return { state: "claimed", instanceId, target: after.target };
+  }
+
   /** Terminates one live session only after its tmux marker proves ownership. */
   async function terminate(session) {
     const inspected = await inspect(session);
@@ -79,5 +117,5 @@ export function createSessionOwnership({ instanceId, root, runTmux, now = () => 
     }
   }
 
-  return { instanceId, claim, inspect, ownsRecorded, terminate };
+  return { instanceId, claim, claimLegacyBrain, inspect, ownsRecorded, terminate };
 }

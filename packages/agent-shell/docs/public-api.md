@@ -36,7 +36,7 @@ A supplied brain caller must be the current live brain for the exact target Area
 
 Each server response comes from one Agent Shell instance identity. `GET /api/health` returns `instanceId`. `GET /api/sessions` returns only sessions owned by that instance.
 
-The live tmux ownership key is `@tangent_agent_shell_instance`. A foreign or markerless legacy session cannot be attached, stopped, reconciled, or adopted.
+The live tmux ownership key is `@tangent_agent_shell_instance`. A foreign session cannot be attached, stopped, reconciled, or adopted. A markerless legacy session has the same rule, except an explicit brain resume can claim the exact session whose durable record matches its live brain tags.
 
 ## Agent messages
 

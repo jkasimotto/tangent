@@ -17,6 +17,7 @@ test("session termination requires the live tmux owner and records stale ownersh
   const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-session-owner-"));
   context.after(() => rm(root, { recursive: true, force: true }));
   const live = new Map();
+  const tags = new Map();
   const calls = [];
   /** Implements the tmux commands used by the ownership capability. */
   const runTmux = async (args) => {
@@ -24,7 +25,8 @@ test("session termination requires the live tmux owner and records stale ownersh
     const session = String(args[args.indexOf("-t") + 1]).replace(/^[$=]/, "").replace(/:$/, "");
     if (args[0] === "set-option") {
       if (!live.has(session)) throw new Error(`can't find session: ${session}`);
-      live.set(session, args[4]);
+      if (args.includes("-o") && live.get(session)) throw new Error("already set");
+      live.set(session, args.at(-1));
       return { stdout: "" };
     }
     if (args[0] === "has-session") {
@@ -33,6 +35,10 @@ test("session termination requires the live tmux owner and records stale ownersh
     }
     if (args[0] === "display-message") {
       if (!live.has(session)) throw new Error(`can't find session: ${session}`);
+      if (String(args.at(-1)).includes("@tangent_kind")) {
+        const value = tags.get(session) ?? {};
+        return { stdout: `${value.kind ?? ""}\t${value.area ?? ""}\t${value.generation ?? ""}\n` };
+      }
       return { stdout: `$${session}\t${live.get(session) ?? ""}\n` };
     }
     if (args[0] === "kill-session") {
@@ -59,5 +65,22 @@ test("session termination requires the live tmux owner and records stale ownersh
   live.set("legacy", null);
   assert.deepEqual(await one.terminate("legacy"), { state: "legacy", instanceId: null });
   assert.equal(live.has("legacy"), true);
+
+  tags.set("legacy", { kind: "brain", area: "otto/tangent", generation: "12" });
+  assert.deepEqual(
+    await one.claimLegacyBrain({ session: "legacy", area: "otto/other", generation: 12 }),
+    { state: "mismatch", instanceId: null, target: "$legacy", kind: "brain", area: "otto/tangent", generation: "12" },
+  );
+  assert.equal(live.get("legacy"), null, "mismatched legacy evidence stays unowned");
+  assert.deepEqual(
+    await one.claimLegacyBrain({ session: "legacy", area: "otto/tangent", generation: 12 }),
+    { state: "claimed", instanceId: "shell-one", target: "$legacy" },
+  );
+  assert.equal(live.get("legacy"), "shell-one");
+  assert.equal((await readSessionOwner(root, "legacy")).instanceId, "shell-one");
+  assert.deepEqual(
+    await two.claimLegacyBrain({ session: "legacy", area: "otto/tangent", generation: 12 }),
+    { state: "foreign", instanceId: "shell-one", target: "$legacy" },
+  );
   assert.ok(calls.some((args) => args.includes(SESSION_OWNER_OPTION)), "the tmux option is the live ownership key");
 });

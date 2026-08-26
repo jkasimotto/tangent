@@ -17,7 +17,7 @@ Dependencies: `@tangent/core` (arg parsing, help rendering), `@tangent/agent-run
 
 Gateway and controller share one stable Agent Shell instance identity. The gateway passes this identity to each replacement controller and verifies the ready message.
 
-`app/session-ownership.mjs` owns tmux process authority. It sets `@tangent_agent_shell_instance` and stores a durable owner sidecar for each created session. It claims and terminates the immutable tmux session ID. Foreign and markerless legacy sessions are never attached, terminated, or recovered (ADR-0036).
+`app/session-ownership.mjs` owns tmux process authority. It sets `@tangent_agent_shell_instance` and stores a durable owner sidecar for each created session. It claims and terminates the immutable tmux session ID. Foreign sessions are never attached, terminated, or recovered. Markerless legacy sessions stay isolated, except an explicit resume can claim the exact brain whose durable identity matches its live brain tags (ADR-0036).
 
 `app/public/refresh-lifecycle.js` serializes all complete browser projection reads. It keeps one trailing refresh when triggers overlap and owns projection retry timing. The browser probes gateway health only after a material projection error. Gateway and controller boot identities remain separate, so only a gateway replacement reloads browser assets.
 

@@ -4034,8 +4034,22 @@ async function startBrainUnlocked(area, { instruction = "", choice = null, comma
   if (!area || !existsSync(path.join(TREES_ROOT, area))) return { status: 404, error: `no Area ${area || "(none)"}` };
   const existing = await readBrain(BRAINS_ROOT, area);
   if (existing?.session) {
-    const live = await sessionOwnership.inspect(existing.session);
+    let live = await sessionOwnership.inspect(existing.session);
     if (live.state === "error") return { status: 503, error: terminationError(existing.session, live) };
+    if (live.state === "live" && !live.instanceId && resume && !automaticRecovery) {
+      const claimed = await sessionOwnership.claimLegacyBrain({
+        session: existing.session,
+        area: existing.area,
+        generation: existing.generation,
+      });
+      if (claimed.state === "claimed" || claimed.state === "owned") {
+        console.error(`[runtime] ${JSON.stringify({ operation: "claim-legacy-brain", session: existing.session, area: existing.area, generation: existing.generation, instanceId: INSTANCE_ID })}`);
+        live = await sessionOwnership.inspect(existing.session);
+        sessionObservation.invalidate();
+      } else if (claimed.state === "foreign") {
+        live = { state: "live", instanceId: claimed.instanceId, target: claimed.target };
+      }
+    }
     if (live.state === "live" && live.instanceId !== INSTANCE_ID) {
       const ownership = live.instanceId ? { state: "foreign", instanceId: live.instanceId } : { state: "legacy" };
       return { status: 409, error: terminationError(existing.session, ownership) };

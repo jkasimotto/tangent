@@ -1,4 +1,4 @@
-import { journalCaptureToast } from "./journal-capture-core.js";
+import { journalCaptureNeedsRetry, journalCaptureToast } from "./journal-capture-core.js";
 
 /** Binds browser events through capability-owned feature ports. */
 export function bindShellEvents({ shell, chrome, prompts, work, areas, programs, launch, documents }) {
@@ -798,10 +798,14 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       const text = new FormData(form).get("text")?.toString().trim() || "";
       if (!text) return;
       try {
-        const saved = await post("/api/areas/journal", { area: state.areaSelection, text, idempotencyKey: crypto.randomUUID(), source: "Agent Shell" });
+        const idempotencyKey = form.dataset.journalIdempotencyKey || crypto.randomUUID();
+        form.dataset.journalIdempotencyKey = idempotencyKey;
+        const saved = await post("/api/areas/journal", { area: state.areaSelection, text, idempotencyKey, source: "Agent Shell" });
+        showToast(journalCaptureToast(saved));
+        if (journalCaptureNeedsRetry(saved)) return;
+        delete form.dataset.journalIdempotencyKey;
         state.areaJournal = null;
         form.reset();
-        showToast(journalCaptureToast(saved));
         await refresh();
       } catch (error) { showToast(error.message); }
       return;

@@ -223,14 +223,14 @@ export const goalCommandSpec: CliCommandSpec = {
     },
     {
       name: "append",
-      description: "Add steps to the end of a Goal's pipeline, mid-run or finished, without restarting what already ran. Same --step, --launch, --path, and --continue-from pairing as start.",
+      description: "Add steps to the end of a Goal's pipeline, mid-run or finished, without restarting what already ran. Use --kind review for a designated review. Instruction text never sets the type.",
       args: "<slug>",
       options: [
         { name: "step", takesValue: true, description: "One new step's instruction, in your words; repeatable, steps run in order after the existing ones" },
         { name: "launch", takesValue: true, description: "Required harness for the step at the same position as <harness[/model[/effort]]>; repeatable, one per --step" },
         { name: "path", takesValue: true, description: "Any working directory for the step at the same position; repeatable; missing, or an empty --path=, means the Area repository" },
         { name: "continue-from", takesValue: true, description: "Step number whose session the step at the same position continues, or - for a fresh session; repeatable" },
-        { name: "kind", takesValue: true, description: "implementation or review; repeatable, one per step" },
+        { name: "kind", takesValue: true, description: "implementation or review; repeatable, one per step. Defaults to implementation. A designated review requires --kind review" },
         serverOption,
         jsonOption
       ]

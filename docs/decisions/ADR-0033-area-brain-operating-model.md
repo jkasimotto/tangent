@@ -46,4 +46,4 @@ Work carries no attention strip, no Dock badge, and no inferred ask. A Question 
 
 Only an Operation with a problem reaches Work. Healthy Operations stay on the Area page.
 
-The Journal commit is a precondition, not an ordering. A capture the vault refuses records no milestone and wakes no brain; it reports `not-committed` and the words stay in the working tree. Exactly-once covers the whole Journal: an idempotency key stays used after a rollover moves its entry into an archive.
+The Journal commit is a precondition, not an ordering. A capture the vault refuses records no milestone and wakes no brain. It reports `not-committed`, and the surface keeps the text and idempotency key. After Git recovers, the same request commits the existing Journal files before one milestone and one brain delivery. Exactly-once covers the whole Journal: an idempotency key stays used after a rollover moves its entry into an archive.

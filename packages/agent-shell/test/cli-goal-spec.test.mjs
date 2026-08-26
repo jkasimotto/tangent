@@ -30,6 +30,8 @@ test("tangent goal append takes a slug and the same repeatable step options as s
   assert.equal(append.args, "<slug>");
   assert.deepEqual(optionNames(append), ["step", "launch", "path", "continue-from", "kind", "server", "json"]);
   assert.match(append.description, /without restarting/);
+  assert.match(append.description, /--kind review/, "append help names the required review type");
+  assert.match(append.options.find((entry) => entry.name === "kind").description, /defaults to implementation/i, "kind help names the safe default");
 });
 
 test("tangent goal handover takes facts, session identity, and a typed report", () => {
@@ -143,7 +145,13 @@ test("each --step carries its own working directory, and a step without one keep
   assert.deepEqual(plain.choice, { harness: "codex", model: "sol", effort: "low" }, "the solo form carries its own harness");
 
   await runGoalCli(["append", "proof", "--step", "Prove it.", "--path", "/tmp/arbitrary-worker"]);
-  assert.equal(requests.find((request) => request.path === "/api/pipelines/append").body.steps[0].path, "/tmp/arbitrary-worker");
+  const defaultAppend = requests.filter((request) => request.path === "/api/pipelines/append").at(-1).body.steps[0];
+  assert.equal(defaultAppend.path, "/tmp/arbitrary-worker");
+  assert.equal(defaultAppend.kind, "implementation", "review words do not infer a review assignment");
+
+  await runGoalCli(["append", "proof", "--step", "Review the current Goal revision.", "--kind", "review"]);
+  const reviewAppend = requests.filter((request) => request.path === "/api/pipelines/append").at(-1).body.steps[0];
+  assert.equal(reviewAppend.kind, "review", "--kind review preserves the designated review type");
 
   // An omitted --launch is not a client-side error any more: it reaches the
   // server, which lends the calling brain's own harness or refuses loudly.

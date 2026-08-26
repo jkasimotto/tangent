@@ -11,8 +11,13 @@ export function journalCaptureToast(result) {
   if (route === "brain-resumed" || route === "brain-started") return "Saved to the Journal and woke the Area brain.";
   if (route === "not-started") return `Saved to the Journal. The Area brain did not start: ${result?.brainError ?? "unknown reason"}.`;
   if (route === "no-brain") return "Saved to the Journal. It waits for this Area's first brain.";
-  if (route === "not-committed") return `Written to the Journal file, but the vault did not save it, so the Area brain was not told: ${result?.commitError ?? "unknown reason"}.`;
+  if (route === "not-committed") return `Written to the Journal file, but the vault did not save it, so the Area brain was not told: ${result?.commitError ?? "unknown reason"}. Retry keeps the same Journal entry.`;
   return "Saved to the Journal.";
 }
 
-export default { journalCaptureToast };
+/** Keeps the capture composer and its idempotency key after a refused commit. */
+export function journalCaptureNeedsRetry(result) {
+  return result?.route === "not-committed";
+}
+
+export default { journalCaptureNeedsRetry, journalCaptureToast };

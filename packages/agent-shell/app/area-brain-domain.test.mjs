@@ -139,6 +139,9 @@ test("Journal intake stays exactly once after a rollover archives the entry", as
 
   const retry = await appendJournalEntry({ treesRoot: root, area: "otto/test", text: "Exact words.", idempotencyKey: "capture-1", now: "2026-03-02T00:00:00.000Z" });
   assert.equal(retry.duplicate, true, "the archived key is still used");
+  assert.equal(retry.existingFile, rolled.archive, "the retry names the archive that holds the original entry");
+  assert.equal(retry.createdAt, "2026-01-01T00:00:00.000Z", "the retry keeps the original entry time");
+  assert.match(retry.text, /^Exact words\./, "the retry returns the original entry body");
   const everywhere = [await readFile(first.file, "utf8"), await readFile(rolled.archive, "utf8")].join("");
   assert.equal(everywhere.match(/Exact words\./g).length, 1);
 });

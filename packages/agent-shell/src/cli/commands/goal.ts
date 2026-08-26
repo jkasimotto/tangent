@@ -379,7 +379,7 @@ Examples:
   tangent goal start pipelines-demo --step "/design this" --launch claude-otto/fable-5 --step "review the design and update it" --launch codex/sol/high --step "implement" --launch claude-otto/opus-5
   tangent goal start pipelines-demo --step "/design this" --launch claude-otto/fable-5 --step "implement the design" --launch claude-otto/opus-5 --continue-from - --continue-from 1
   tangent goal start pipelines-demo --step "design the change" --launch claude-otto/fable-5 --path= --step "implement it in the plugin" --launch claude-otto/opus-5 --path ~/Projects/plugin
-  tangent goal append pipelines-demo --step "prove the implementation" --launch codex/sol/high
+  tangent goal append pipelines-demo --step "review the implementation" --kind review --launch codex/sol/high
   tangent goal handover "Design written: ~/.tangent/trees/otto/tangent/design-x.md. Unresolved: none."
 `);
 }

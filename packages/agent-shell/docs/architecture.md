@@ -41,7 +41,7 @@ The browser has one Area-based Work destination. Each exact Area has one logical
 The vault owns Area knowledge. The bound product repository owns code-agent rules. Agent Shell derives both instruction stacks by path.
 It does not ask an agent to select inherited facts. It does not copy complete repository instructions into every prompt.
 
-Journal intake commits exact text before brain delivery. A refused commit records no milestone and wakes no brain. One active Journal rolls over at 256 KB, and an idempotency key stays used after its entry moves to an archive.
+Journal intake commits exact text before brain delivery. A refused commit records no milestone and wakes no brain. The capture surface keeps the text and idempotency key. A retry commits the existing Journal files before one milestone and one brain delivery. One active Journal rolls over at 256 KB, and an idempotency key stays used after its entry moves to an archive.
 One 8,000-character budget covers every character Agent Shell generates for a brain prompt. Only Julian's own founding instruction sits outside it. The checkpoint is generated text, so it sits inside and takes the room the structural sections left, down to a floor that keeps a replacement attempt oriented. Structural sections that cannot fit fail the brain start instead of starting a brain with no prompt. Each omitted collection or clipped section reports its source and count.
 
 A brain mutates only its exact Area. A parent can read descendant milestones and route referenced text, but it cannot mutate child work. An approved Request authorizes only its hashed effect revision. Agent messages, handovers, notices, prompts, Documents, and inferred intent do not expand scope. Server mutation routes verify the current exact-Area brain attempt.
@@ -53,7 +53,7 @@ Area Focus orders attention; it removes nothing. Work renders the primary focuse
 A brain that is not live never wakes without Julian's words. The Work key opens the message box, and the send action starts a new brain from that message or wakes an inactive one with it. The message reaches the woken attempt as an unread notice. Only automatic recovery resumes with no message.
 
 A separate Planned view keeps unstarted Goals available. Work carries no human-assignee concept. A planned review closes routine work when the done condition holds.
-One `area-goal-queue.v2` record controls both one-assignment and multi-assignment work. Workers submit tagged reports. Only a designated typed review can close routine work, and only when its Goal revision and evidence match the current record. A done condition that needs Julian, a physical test, or an external authority uses a revision-bound Request effect.
+One `area-goal-queue.v2` record controls both one-assignment and multi-assignment work. Workers submit tagged reports. A brain appends a designated review with `--kind review`. Without that flag, the queue stores an implementation assignment even when its instruction says review. Only a designated typed review can close routine work, and only when its Goal revision and evidence match the current record. A done condition that needs Julian, a physical test, or an external authority uses a revision-bound Request effect.
 
 Questions remain part of the native Area brain conversation. Every Question accepts free text. An optional allowlisted effect records durable intent before execution, runs once per revision, and stays actionable after failure.
 

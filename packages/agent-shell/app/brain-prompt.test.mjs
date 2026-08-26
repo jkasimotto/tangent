@@ -178,6 +178,8 @@ test("bounded brain prompt delegates routine review closure", async (context) =>
 
   assert.match(show.prompt, /Delegate sustained investigation, design, implementation, test campaigns, reviews/);
   assert.match(show.prompt, /You can read files, search history, inspect status, reason, explain/);
+  assert.match(show.prompt, /append.*--kind review/s, "the brain receives the explicit designated-review append contract");
+  assert.match(show.prompt, /Without --kind review.*implementation/s, "the brain knows that review words do not infer the assignment type");
   assert.doesNotMatch(show.prompt, /Keep the Goal open until Julian approves/);
 });
 

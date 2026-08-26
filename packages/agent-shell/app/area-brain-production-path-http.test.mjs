@@ -8,7 +8,7 @@
 // are what prove the work happened.
 
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -411,6 +411,9 @@ test("a Journal capture the vault refuses to commit wakes no brain", async (cont
   await git("init", "-q");
   await git("config", "user.email", "test@tangent.local");
   await git("config", "user.name", "Tangent Test");
+  const journal = path.join(trees, "otto", "test", "journal.md");
+  const earlierWords = "The archived words stay exactly once.";
+  await writeFile(journal, `# Journal\n\n## 2026-01-01T00:00:00.000Z\n\nSource: capture.\n\n${earlierWords}\n\n## 2026-02-01T00:00:00.000Z\n\n${"The filler line.\n".repeat(20_000)}\n`, "utf8");
   await git("add", "-A");
   await git("commit", "-qm", "seed");
 
@@ -428,21 +431,53 @@ test("a Journal capture the vault refuses to commit wakes no brain", async (cont
   const killed = await fetch(`${base}/api/kill/${encodeURIComponent(started.body.session)}`, { method: "POST" }).then((response) => response.json());
   assert.equal(killed.brainEnded, true, "the destination brain is inactive before the capture");
 
-  const captured = await post(base, "/api/areas/journal", { area: "otto/test", text: "The words the vault refused.", idempotencyKey: "guard-1", source: "Agent Shell" });
+  const body = { area: "otto/test", text: "The words the vault refused.", idempotencyKey: "guard-1", source: "Agent Shell" };
+  const captured = await post(base, "/api/areas/journal", body);
   assert.equal(captured.status, 200, JSON.stringify(captured.body));
   assert.equal(captured.body.route, "not-committed", "the capture reports that the vault did not save it");
   assert.ok(captured.body.commitError, "the capture carries why the commit failed");
   assert.ok(!captured.body.session, "no brain was woken");
 
   // The words are never lost, they are only uncommitted.
-  assert.match(await readFile(path.join(trees, "otto", "test", "journal.md"), "utf8"), /The words the vault refused\./);
+  assert.match(await readFile(journal, "utf8"), /The words the vault refused\./);
   assert.equal((await git("log", "--format=%s")).trim(), "seed", "the vault history gained nothing");
 
   // Nothing downstream of the commit ran: no milestone, and the brain is
   // still inactive with no notice telling it to read the entry.
   const milestones = await fetch(`${base}/api/areas/milestones?area=${encodeURIComponent("otto/test")}`).then((response) => response.json());
-  assert.equal((milestones.items ?? []).filter((item) => item.kind === "journal").length, 0, "an uncommitted capture records no milestone");
+  assert.equal((milestones.milestones ?? []).filter((item) => item.kind === "journal").length, 0, "an uncommitted capture records no milestone");
   const record = await fetch(`${base}/api/brains/show?area=${encodeURIComponent("otto/test")}`).then((response) => response.json());
   assert.notEqual(record.brain.status, "active", "the brain stayed inactive");
   assert.doesNotMatch(JSON.stringify(record.brain), /guard-1/, "no notice about the uncommitted entry reached the brain");
+
+  // Git can recover after the request returns. The same idempotency key must
+  // then commit the existing active file and rollover archive, without adding
+  // either entry again, before it records one milestone and wakes the brain.
+  await rm(hook);
+  const retried = await post(base, "/api/areas/journal", body);
+  assert.equal(retried.status, 200, JSON.stringify(retried.body));
+  assert.equal(retried.body.duplicate, true, "the retry reuses the existing Journal entry");
+  assert.equal(retried.body.route, "brain-resumed", "the recovered commit lets delivery continue");
+  openedSessions.push(retried.body.session);
+
+  const history = await fetch(`${base}/api/areas/journal?area=${encodeURIComponent("otto/test")}`).then((response) => response.json());
+  const allText = history.files.map((file) => file.text).join("\n");
+  assert.equal(allText.split(earlierWords).length - 1, 1, "the rollover archive is not duplicated");
+  assert.equal(allText.split(body.text).length - 1, 1, "the refused entry is not duplicated");
+  const committed = (await git("show", "--name-only", "--pretty=format:", "HEAD")).split("\n").filter(Boolean);
+  assert.deepEqual(committed.sort(), history.files.map((file) => file.file).sort(), "the recovered commit carries the active Journal and archive");
+  const recoveredMilestones = await fetch(`${base}/api/areas/milestones?area=${encodeURIComponent("otto/test")}`).then((response) => response.json());
+  assert.equal((recoveredMilestones.milestones ?? []).filter((item) => item.kind === "journal").length, 1, "the retry records one Journal milestone");
+  const recoveredRecord = await fetch(`${base}/api/brains/show?area=${encodeURIComponent("otto/test")}`).then((response) => response.json());
+  assert.equal(recoveredRecord.brain.status, "active", "the retry wakes the destination brain");
+  assert.match(JSON.stringify(recoveredRecord.brain), /guard-1/, "the retry delivers one notice for the existing entry");
+
+  // A later duplicate is complete because this key is already in Git. An
+  // unrelated dirty Journal edit must not turn it into another recovery.
+  const recoveredHead = (await git("rev-parse", "HEAD")).trim();
+  await writeFile(journal, `${await readFile(journal, "utf8")}An unrelated draft.\n`, "utf8");
+  const completeDuplicate = await post(base, "/api/areas/journal", body);
+  assert.equal(completeDuplicate.body.route, "duplicate", "a committed key stays a normal duplicate");
+  assert.equal((await git("rev-parse", "HEAD")).trim(), recoveredHead, "the duplicate does not commit an unrelated Journal edit");
+  assert.match(await git("status", "--porcelain", "--", "otto/test/journal.md"), /^ M /, "the unrelated edit stays uncommitted");
 });

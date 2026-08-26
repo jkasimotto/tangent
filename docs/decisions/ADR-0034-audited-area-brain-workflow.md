@@ -21,6 +21,7 @@ One `area-goal-queue.v2` record controls each Goal execution. Pipeline and solo 
 Normal worker starts use the exact Area brain and queue. A recovery-only direct start creates a marked `julian-emergency` attempt in that queue.
 
 Workers submit tagged reports to the queue controller. Only a designated review assignment can submit a `review-result` report.
+A brain appends that assignment with `--kind review`. The queue defaults to `implementation`, and instruction text never changes the explicit type.
 
 A routine Goal closes after a `passed` review with complete criteria. The report revision must equal the current Goal revision.
 

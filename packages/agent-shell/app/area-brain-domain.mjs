@@ -235,9 +235,11 @@ export function journalPath(treesRoot, area) {
 /**
  * Saves exact capture text once, then returns its stable entry. Once spans the
  * whole Journal, archives included, so a retry after a rollover is still the
- * same entry. A Journal that reached its size limit rolls over first, and the
- * entry then also names the archive it created, because one capture must
- * commit both files together.
+ * same entry. A duplicate returns the original body, time, and containing
+ * file so a refused Git commit can resume without appending the words again.
+ * A Journal that reached its size limit rolls over first, and the entry then
+ * also names the archive it created, because one capture must commit both
+ * files together.
  */
 export async function appendJournalEntry({ treesRoot, area, text, idempotencyKey, source = "capture", now = new Date().toISOString() }) {
   const clean = cleanArea(area);
@@ -249,7 +251,8 @@ export async function appendJournalEntry({ treesRoot, area, text, idempotencyKey
   let current = "";
   try { current = await readFile(file, "utf8"); } catch {}
   const marker = `<!-- tangent-journal:${key} -->`;
-  if (current.includes(marker) || await archiveHoldsMarker(file, marker)) return { area: clean, file, archive: null, id: key, duplicate: true };
+  const existing = journalEntryAtMarker(file, current, marker) ?? await archivedJournalEntry(file, marker);
+  if (existing) return { area: clean, file, archive: null, id: key, duplicate: true, ...existing };
   const archive = Buffer.byteLength(current) >= JOURNAL_LIMIT_BYTES ? await archiveJournal(file, current, now) : null;
   const heading = current && !archive ? "" : journalHeading(archive);
   const entry = `${heading}${marker}\n## ${now}\n\nSource: ${source}.\n\n${value}\n\n`;
@@ -269,21 +272,34 @@ function journalHeading(archive) {
 }
 
 /**
- * Reports whether a rolled-over archive already holds one entry marker. The
+ * Returns the original envelope whose marker is in a rolled-over archive. The
  * active Journal loses every earlier marker when it rolls over, so a retry of
- * a capture whose original moved to an archive must still count as the same
- * entry. Without this the rollover turns an exactly-once capture into two.
+ * a capture whose original moved to an archive must still use that entry.
  */
-async function archiveHoldsMarker(file, marker) {
+async function archivedJournalEntry(file, marker) {
   const directory = path.dirname(file);
   let names = [];
-  try { names = await readdir(directory); } catch { return false; }
+  try { names = await readdir(directory); } catch { return null; }
   for (const name of names.filter((item) => /^journal-.*\.md$/.test(item))) {
     let text = "";
     try { text = await readFile(path.join(directory, name), "utf8"); } catch { continue; }
-    if (text.includes(marker)) return true;
+    const entry = journalEntryAtMarker(path.join(directory, name), text, marker);
+    if (entry) return entry;
   }
-  return false;
+  return null;
+}
+
+/** Reads one stable Journal envelope without changing its exact body. */
+function journalEntryAtMarker(file, journal, marker) {
+  const markerAt = journal.indexOf(marker);
+  if (markerAt < 0) return null;
+  const afterMarker = journal.slice(markerAt + marker.length);
+  const envelope = afterMarker.match(/^\n## ([^\n]+)\n\nSource: [^\n]+\.\n\n/);
+  if (!envelope) return { existingFile: file, text: "", createdAt: "" };
+  const bodyAt = markerAt + marker.length + envelope[0].length;
+  const nextEntry = journal.indexOf("\n<!-- tangent-journal:", bodyAt);
+  const bodyEnd = nextEntry < 0 ? journal.length : nextEntry;
+  return { existingFile: file, text: journal.slice(bodyAt, bodyEnd).trimEnd(), createdAt: envelope[1] };
 }
 
 /** Moves a full active Journal to a dated archive and returns that archive path. */

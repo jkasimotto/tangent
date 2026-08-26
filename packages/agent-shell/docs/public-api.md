@@ -47,7 +47,7 @@ Every active Goal execution uses one `area-goal-queue.v2` record under `~/.tange
 
 - `tangent goal start <slug> --launch <harness[/model[/effort]]>` declares one implementation assignment.
 - `tangent goal start <slug> --step <instruction> [--kind <implementation|review>] [--launch ...] [--path ...] ...` declares ordered assignments.
-- `tangent goal append <slug> --step <instruction> ...` adds pending assignments without rewriting history.
+- `tangent goal append <slug> --step <instruction> [--kind <implementation|review>] ...` adds pending assignments without rewriting history. The type defaults to `implementation`. A designated review requires `--kind review`; instruction text never infers the type.
 - `tangent brain advance <goal> <step>` starts one pending assignment after the exact-Area brain reviews the current queue.
 - `tangent handover <facts...> --report '<json>'` submits evidence and one tagged worker report.
 
@@ -107,7 +107,7 @@ Routine healthy polling, starts, stops, and repeated success stay quiet. Event i
 - `GET /api/brains/show?area=<path>|session=<name>` reads one enriched brain.
 - `GET /api/sessions` reads the complete Work projection.
 - `GET /api/goals?area=<path>[&subtree=1]` lists Goals. An exact-Area result also carries `scope`, `childAreas`, `descendantGoals`, and the `subtreeCommand` that reads the rest.
-- `POST /api/areas/journal`: `{ area, text, idempotencyKey, source? }` saves the exact words, commits them with any rollover archive as `files`, and then wakes the exact Area brain. The result `route` says what happened to that brain: `brain-opened`, `brain-resumed`, `brain-started`, `no-brain`, `not-started`, `duplicate`, or `not-committed`. A `not-committed` capture carries `commitError`, records no milestone and wakes no brain, because the words must reach the vault history first. An idempotency key stays used after a rollover moves its entry to an archive, so a retry never saves the same words twice.
+- `POST /api/areas/journal`: `{ area, text, idempotencyKey, source? }` saves the exact words, commits them with any rollover archive as `files`, and then wakes the exact Area brain. The result `route` says what happened to that brain: `brain-opened`, `brain-resumed`, `brain-started`, `no-brain`, `not-started`, `duplicate`, or `not-committed`. A `not-committed` capture carries `commitError`, records no milestone, and wakes no brain. The surface keeps its text and idempotency key. After Git recovers, the same request commits the existing Journal files before one milestone and one brain delivery. An idempotency key stays used after a rollover moves its entry to an archive, so a retry never saves the same words twice.
 - `GET /api/areas/journal?area=<path>` reads the active Journal and its archives in order.
 - `GET /api/areas/milestones?area=<path>[&since&limit]` reads material milestones across the Area subtree.
 - `GET /api/operations` lists Area Operations with one `mode`, one `state`, and any `problem`.

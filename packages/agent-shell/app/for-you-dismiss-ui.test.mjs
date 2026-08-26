@@ -93,7 +93,7 @@ test("a stopped pipeline ask has a quiet accessible dismissal with Undo and no w
   const dismiss = window.document.querySelector("[data-dismiss-ask]");
   assert.ok(dismiss, "the stopped row has a dismissal");
   assert.equal(dismiss.textContent.trim(), "×");
-  assert.match(dismiss.getAttribute("aria-label"), /^Dismiss Stopped without brain: Step 1 stopped\. Restart or skip it\? from For you$/);
+  assert.match(dismiss.getAttribute("aria-label"), /^Dismiss Stopped without brain: Step 1 stopped\. Review its queue recovery\? from For you$/);
   dismiss.focus();
   assert.equal(window.document.activeElement, dismiss, "the native button receives keyboard focus");
 
@@ -102,7 +102,7 @@ test("a stopped pipeline ask has a quiet accessible dismissal with Undo and no w
   assert.equal(window.document.querySelector("[data-dismiss-ask]"), null);
   assert.equal(window.document.activeElement.closest?.("[data-ask-id]") ?? null, null, "dismissal does not select another ask");
   assert.ok(window.document.querySelector(`[data-goal-anchor='${goal.file}']`), "the Goal stays on Work");
-  assert.ok(window.document.querySelector("[data-pipeline-control='restart']"), "the stopped pipeline stays actionable outside For you");
+  assert.ok(window.document.querySelector("[data-pipeline-control='end']"), "the stopped pipeline stays actionable outside For you");
   assert.deepEqual(posts, [], "dismissal sends no Goal, pipeline, brain, Request, or worker command");
   const stored = JSON.parse(window.localStorage.getItem(ASK_DISMISSALS_KEY));
   assert.equal(stored.ids.length, 1);

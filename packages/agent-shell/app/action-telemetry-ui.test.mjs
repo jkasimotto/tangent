@@ -20,6 +20,7 @@ function control(attributes = {}, tagName = "BUTTON") {
 test("browser action names use stable data attributes, not visible labels", () => {
   assert.equal(actionName(control({ "data-pipeline-control": "skip" })), "pipeline-control:skip");
   assert.equal(actionName(control({ "data-launch-for": "private/goal.md" })), "launch-for");
+  assert.equal(actionName(control({ "data-goal-recovery": "private/goal.md" })), "goal-recovery");
   assert.equal(actionName(control({ "data-notify-document-comments": "" })), "notify-document-comments");
   assert.equal(actionName(control({ "data-complete-goal": "private/goal.md" })), "complete-goal");
   assert.equal(actionName(control({ "data-wont-do-goal": "private/goal.md" })), "wont-do-goal");

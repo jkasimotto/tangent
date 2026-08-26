@@ -88,6 +88,7 @@ function startServer(root, trees, port, label) {
       AGENT_SHELL_NO_OPEN: "1",
       AGENT_SHELL_TEST_NO_LAUNCH: "1",
       TANGENT_PIPELINES_ROOT: path.join(root, "pipelines"),
+      TANGENT_CONTINUATIONS_ROOT: path.join(root, "continuations"),
       TANGENT_BRAINS_ROOT: path.join(root, "brains"),
       AGENT_MESSAGE_LOG: path.join(root, "messages.jsonl"),
       GROQ_API_KEY: "",
@@ -96,6 +97,60 @@ function startServer(root, trees, port, label) {
     stdio: ["ignore", "pipe", "pipe"],
   });
 }
+
+test("startup converts one live solo worker into the authoritative queue without a legacy write", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-solo-migration-"));
+  const leaf = `probesolomigration${process.pid}`;
+  const area = `otto/${leaf}`;
+  const trees = await makeTrees(root, leaf);
+  const goal = `${area}/goal-legacy-solo.md`;
+  const session = `legacy-solo-${process.pid}`;
+  await writeFile(path.join(trees, goal), `---\ntype: goal\nstatus: active\ndone_when: The legacy worker reports through the queue.\nsession: ${session}\n---\n\n# Legacy solo\n`, "utf8");
+  execFileSync("tmux", ["new-session", "-d", "-s", session, "sleep", "300"]);
+  execFileSync("tmux", ["set-option", "-t", session, "@tangent_kind", "goal"]);
+  execFileSync("tmux", ["set-option", "-t", session, "@tangent_phase", "execute"]);
+  execFileSync("tmux", ["set-option", "-t", session, "@tangent_area", area]);
+  execFileSync("tmux", ["set-option", "-t", session, "@tangent_goal", goal]);
+  execFileSync("tmux", ["set-option", "-t", session, "@tangent_launch_command", "sleep 300"]);
+  let port;
+  try {
+    port = await freePort();
+  } catch (error) {
+    await killSession(session);
+    if (error?.code === "EPERM") {
+      context.skip("This environment does not permit local HTTP listeners.");
+      return;
+    }
+    throw error;
+  }
+  const child = startServer(root, trees, port, "solo-migration");
+  context.after(async () => {
+    await killSession(session);
+    await stopServer(child);
+    await rm(root, { recursive: true, force: true });
+  });
+  const base = `http://127.0.0.1:${port}`;
+  await waitForServer(base);
+  const queueFile = path.join(root, "pipelines", area, "legacy-solo.json");
+  const queue = await waitFor("the migrated solo queue", async () => {
+    try { return JSON.parse(await readFile(queueFile, "utf8")); } catch { return null; }
+  });
+  assert.equal(queue.schema, "area-goal-queue.v2");
+  assert.equal(queue.status, "open");
+  assert.ok(queue.goalRevision);
+  assert.equal(queue.steps[0].session, session);
+  assert.equal(queue.steps[0].attempts[0].kind, "legacy-solo");
+  assert.equal(queue.steps[0].command, "sleep 300");
+  assert.equal(await readFile(path.join(root, "continuations", area, "legacy-solo.json"), "utf8").then(() => true, () => false), false, "migration never writes the legacy controller");
+
+  const report = await post(base, "/api/goals/handover", {
+    session,
+    text: "The legacy worker completed through the migrated queue.",
+    report: { type: "implementation-result", status: "complete", summary: "Migration complete.", evidenceRefs: ["queue"] },
+  });
+  assert.equal(report.status, "reported", JSON.stringify(report));
+  assert.equal(report.pipeline.status, "complete");
+});
 
 /** Stops one child server and waits for it to exit. */
 async function stopServer(child) {

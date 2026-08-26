@@ -4,7 +4,7 @@ const ACTION_ATTRIBUTES = [
   "data-program-action", "data-area-action", "data-modal-confirm", "data-modal-cancel",
   "data-toggle-awake", "data-stop-agent", "data-finish-run", "data-mark-complete",
   "data-mark-wont-do", "data-reopen-goal", "data-action",
-  "data-stop-goal", "data-complete-goal", "data-wont-do-goal",
+  "data-stop-goal", "data-goal-recovery", "data-complete-goal", "data-wont-do-goal",
   "data-notify-document-comments",
 ];
 

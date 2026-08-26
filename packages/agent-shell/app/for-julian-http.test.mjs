@@ -209,7 +209,7 @@ async function startProbe(context, label) {
   // Every file is tracked, so the vault's own commits (a verdict, a comment
   // save) land in its history the way they do in the real vault.
   await initGit(trees);
-  return { root, trees, area, leaf, base, brains: path.join(root, "brains"), brain: brain.body, planFile, lines, slug };
+  return { root, trees, area, leaf, base, brains: path.join(root, "brains"), brain: brain.body, goalFile: path.join(trees, goal.body.file), planFile, lines, slug };
 }
 
 test("a brain carries the rows its plan wrote for Julian", async (context) => {
@@ -280,6 +280,7 @@ test("Accept and Reject answer a row, and the brain hears the verdict", async (c
   assert.equal(accepted.body.target, probe.slug);
   assert.equal(accepted.body.verdict, "accept");
   assert.equal((await readFile(probe.planFile, "utf8")).includes(probe.lines.test), false);
+  assert.equal((await readFile(probe.goalFile, "utf8")).includes("status: done"), false, "a legacy Markdown Test verdict is not a Goal closure policy");
   assert.equal((await gitSubjects(probe.trees))[0], `update: ${probe.area} plan ${probe.slug} accepted`);
   const verdictNotice = await waitFor("the verdict on disk", async () => {
     const inbox = await readInbox(probe.brains, probe.area);
@@ -290,6 +291,7 @@ test("Accept and Reject answer a row, and the brain hears the verdict", async (c
   const undo = await post(probe.base, "/api/brains/verdict/undo", { area: probe.area, line: accepted.body.removedText ?? probe.lines.test, index: accepted.body.index });
   assert.equal(undo.status, 200, JSON.stringify(undo.body));
   assert.equal((await readFile(probe.planFile, "utf8")).includes(probe.lines.test), true, "the line is back");
+  assert.equal((await readFile(probe.goalFile, "utf8")).includes("status: done"), false, "undo does not mutate Goal lifecycle either");
   assert.equal((await gitSubjects(probe.trees))[0], `update: ${probe.area} plan restore ${probe.slug}`);
   const withdrawal = await waitFor("the withdrawal on disk", async () => {
     const inbox = await readInbox(probe.brains, probe.area);

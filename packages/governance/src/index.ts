@@ -126,6 +126,8 @@ async function lintAgentShellWorkflowContracts(ctx: LintContext): Promise<Govern
     { pattern: /does not have to control the target Area|Work uses the nearest live brain|You own .* descendants/, message: "restores ancestor or cross-Area mutation authority." },
     { pattern: /accepts its Test.*close|Test approval.*close/i, message: "restores Test approval as the routine closure policy." },
     { pattern: /operations\.continueWorker|body\.continue\s*=|name:\s*["']continue["']\s*,\s*description:/, message: "restores worker-owned continuation." },
+    { pattern: /\b(?:newContinuationRecord|writeContinuation|soloExecution)\b/, message: "writes the retired solo execution controller." },
+    { pattern: /row\.kind\s*===\s*["']test["'][\s\S]{0,500}cascadeGoalDone/, message: "restores legacy Markdown Test closure." },
   ];
   for (const rel of targets) {
     const file = path.join(ctx.root, rel);

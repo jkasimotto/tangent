@@ -184,7 +184,7 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   const grownRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
   assert.equal(grownRow.querySelector("[data-open-goal-run]").textContent, "codex/sol/high");
 
-  // The step session dies: the row offers Restart and Skip; Skip advances the line
+  // The step session dies: normal restart stays with the brain; Julian can Skip or end.
   // and the latest handover shows under the chips.
   sessions = [];
   pipeline.steps[0].live = false;
@@ -195,7 +195,8 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   assert.match(stoppedRow.querySelector(".desk-state").textContent, /^Stopped$/);
   assert.equal(stoppedRow.querySelector("[data-open-goal-run]"), null, "a dead session is not offered as Open");
   assert.equal(stoppedRow.querySelector("[data-stop-goal]"), null);
-  assert.ok(stoppedRow.querySelector("[data-pipeline-control='restart']"));
+  assert.equal(stoppedRow.querySelector("[data-pipeline-control='restart']"), null);
+  assert.ok(stoppedRow.querySelector("[data-pipeline-control='skip']"));
   click(window, `[data-goal-anchor='${goal.file}'] [data-pipeline-control='skip']`);
   await settle(window);
   await settle(window);

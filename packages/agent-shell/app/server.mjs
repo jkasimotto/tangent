@@ -26,7 +26,7 @@ import { createPaneObserver } from "./pane-observer.mjs";
 import { mapWithConcurrency } from "./bounded-work.mjs";
 import { createObservationCache } from "./observation-cache.mjs";
 import { appendSteps, currentStep, endPipeline, goalBindingGoneFromSnapshot, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, readAllPipelines, readPipeline, reclaimLiveSteps, recordTypedReport, snapshotCanJudgeAbsence, stepGoneFromSnapshot, validateSteps, writePipeline } from "./pipeline-record.mjs";
-import { newContinuationRecord, readAllContinuations, readContinuation, writeContinuation } from "./continuation-record.mjs";
+import { readAllContinuations, readContinuation } from "./continuation-record.mjs";
 import { contextReminderText, contextRepeatText, continuationSection, reminderDue } from "./context-handover.mjs";
 import { noticeMessage, normalizeMessage } from "./agent-messages.mjs";
 import { beginGeneration, brainForArea, brainOwnsArea, brainRecordForArea, brainSessionName, countWaitingHandover, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, recordHandover, validateInstruction, writeBrain } from "./brain-record.mjs";
@@ -45,7 +45,7 @@ import { answerBrainRequest, beginRequestEffect, brainRequestAnswerNotice, close
 import { createPipelineRoutes } from "./pipeline-routes.mjs";
 import { createAgentRoutes } from "./agent-routes.mjs";
 import { createVaultRepository } from "./vault-repository.mjs";
-import { pipelineExecution, soloExecution } from "./execution-record.mjs";
+import { pipelineExecution } from "./execution-record.mjs";
 import { createAreaRoutes } from "./area-routes.mjs";
 import { createProgramRoutes } from "./program-routes.mjs";
 import { createDocumentRoutes } from "./document-routes.mjs";
@@ -1887,6 +1887,16 @@ const runtimeScheduler = createRuntimeScheduler([
     active: messages.active,
     run: messages.tick,
   },
+  {
+    name: "material Operation events", intervalMs: 10_000,
+    /** Operation results must reach the brain even when no browser polls the shelf. */
+    active: () => true,
+    /** Projects root-owned Operation state into durable exact-Area outboxes. */
+    async run() {
+      const snapshot = await programsSnapshot({ treesRoot: TREES_ROOT, sessions: await listProgramSessions() });
+      await projectMaterialOperationEvents(snapshot);
+    },
+  },
 ]);
 
 /**
@@ -2386,6 +2396,7 @@ async function launchHarnessWarnings(area, steps) {
  * The Goal binds to whichever session now works it.
  */
 async function startPipelineStep(record, index, trace = null) {
+  if (record.migrationProblem || record.status === "paused") return { status: 409, error: record.migrationProblem ?? "the Goal queue is paused" };
   const step = record.steps[index - 1];
   if (!step) return { status: 404, error: `no step ${index}` };
   if (step.status !== "pending") return { status: 409, error: `step ${index} is ${step.status}` };
@@ -2398,6 +2409,9 @@ async function startPipelineStep(record, index, trace = null) {
   trace?.mark("step area goals ready", { goals: byFile.size });
   const o = byFile.get(record.goal);
   if (!o) return { status: 404, error: `no goal file ${record.goal}` };
+  if (!record.goalRevision) record.goalRevision = await goalContentRevision(record.goal);
+  record.controllerArea = record.area;
+  if (record.status !== "open") record.status = "open";
   const sessions = await listSessions();
   trace?.mark("step sessions ready", { sessions: sessions.length });
   const liveNames = new Set(sessions.map((item) => item.name));
@@ -2486,6 +2500,52 @@ async function startPipeline(file, { steps, extraFiles = [], start = true, attem
   return { ...started, warnings };
 }
 
+/**
+ * Converts one live pre-queue Goal session into the authoritative queue.
+ * The old continuation file stays untouched as detached compatibility evidence.
+ */
+async function migrateLiveSoloExecution(goal, sessions) {
+  const existing = await readPipeline(PIPELINES_ROOT, goal.area, goal.slug);
+  if (existing) return existing;
+  const candidates = sessions.filter((session) => session.kind === "goal" && (!session.phase || session.phase === "execute") && session.goal === goal.file);
+  if (!candidates.length) return null;
+  const legacy = await readContinuation(CONTINUATIONS_ROOT, goal.area, goal.slug);
+  const record = newPipeline({
+    goal: goal.file,
+    goalRevision: await goalContentRevision(goal.file),
+    area: goal.area,
+    slug: goal.slug,
+    steps: [{ instruction: "Complete this migrated solo Goal execution and submit a typed implementation result.", command: "true" }],
+  });
+  const step = record.steps[0];
+  const launch = candidates.length === 1 ? await sessionLaunch(candidates[0].name) : null;
+  step.command = String(legacy?.command || launch?.command || "true");
+  step.label = String(legacy?.label ?? "Migrated solo execution");
+  step.continuations = Array.isArray(legacy?.continuations) ? structuredClone(legacy.continuations) : [];
+  step.contextReminders = legacy?.contextReminders && typeof legacy.contextReminders === "object" ? structuredClone(legacy.contextReminders) : {};
+  step.attempts = candidates.map((session) => ({
+    id: randomUUID(),
+    kind: "legacy-solo",
+    session: session.name,
+    startedAt: Number.isFinite(session.created) ? new Date(session.created).toISOString() : legacy?.createdAt ?? record.createdAt,
+    endedAt: null,
+    report: null,
+  }));
+  if (candidates.length === 1) {
+    step.status = "running";
+    step.session = candidates[0].name;
+    step.startedAt = step.attempts[0].startedAt;
+    record.currentAssignmentId = step.id;
+  } else {
+    step.status = "stopped";
+    record.status = "paused";
+    record.migrationProblem = `Ambiguous legacy solo execution: ${candidates.map((session) => session.name).join(", ")}`;
+  }
+  record.migration = { source: legacy?.schema ?? "goal-session-binding", migratedAt: new Date().toISOString() };
+  await writePipeline(PIPELINES_ROOT, record);
+  return record;
+}
+
 /** Starts one pending assignment only after the exact brain exhausted automatic recovery. */
 async function recoverQueuedGoal(goal) {
   const record = await readPipeline(PIPELINES_ROOT, goal.area, goal.slug);
@@ -2500,7 +2560,7 @@ async function recoverQueuedGoal(goal) {
 /** Finds the record and step a live session works, or null. */
 async function pipelineStepForSession(sessionName) {
   for (const record of await readAllPipelines(PIPELINES_ROOT)) {
-    const step = record.steps.find((item) => item.session === sessionName && item.status === "running");
+    const step = record.steps.find((item) => item.session === sessionName && ["running", "waiting"].includes(item.status));
     if (step) return { record, step };
   }
   return null;
@@ -2525,7 +2585,14 @@ async function endPipelineForSession(sessionName) {
 
 /** Records one step's handover and starts the next pending step. */
 async function handoverPipelineStep(sessionName, text, report = null, idempotencyKey = "") {
-  const found = await pipelineStepForSession(sessionName);
+  const operationId = idempotencyKey || `report:${sessionName}:${createHash("sha256").update(JSON.stringify(report ?? { text })).digest("hex")}`;
+  const records = await readAllPipelines(PIPELINES_ROOT);
+  for (const record of records) {
+    const repeated = record.steps.find((step) => (step.session === sessionName || step.attempts?.some((attempt) => attempt.session === sessionName))
+      && step.reports?.some((item) => item.idempotencyKey === operationId));
+    if (repeated) return { status: 200, state: "repeated", next: null, pipeline: record, repeated: true };
+  }
+  let found = await pipelineStepForSession(sessionName);
   if (!found) {
     // A plain handover from a session whose step already swapped to a fresh
     // one (attack 3, design-worker-context-handover) must not complete the
@@ -2538,10 +2605,12 @@ async function handoverPipelineStep(sessionName, text, report = null, idempotenc
     if (!goal) return { status: 404, error: "this worker has no Goal" };
     const controller = await exactLiveBrainForArea(goal.area);
     if (!controller) return { status: 409, error: "a solo legacy Goal has no brain; use its existing session controls" };
-    await notifyBrain(goal.area, `Goal ${goal.slug}: worker reported and waits for your command. Handover: ${brainMessageExcerpt(text)}`);
-    return { status: 200, state: "reported", next: null, pipeline: null };
+    const migrated = await migrateLiveSoloExecution(goal, await listSessions());
+    const step = migrated?.steps.find((item) => item.status === "running" && item.session === sessionName);
+    if (!step) return { status: 409, error: migrated?.migrationProblem ?? "the legacy solo execution could not become an authoritative queue" };
+    found = { record: migrated, step };
   }
-  return completePipelineStep(found.record, found.step, text, "agent", report, idempotencyKey || `report:${sessionName}:${createHash("sha256").update(JSON.stringify(report ?? { text })).digest("hex")}`);
+  return completePipelineStep(found.record, found.step, text, "agent", report, operationId);
 }
 
 /**
@@ -2580,10 +2649,13 @@ async function completePipelineStep(record, step, text, source, report = null, i
       return { status: 409, error: String(error.message ?? error) };
     }
   } else if (source === "agent" && record.schema === "area-goal-queue.v2") {
-    step.reports = [...(step.reports ?? []), { type: "untyped-evidence", text, idempotencyKey, reportedAt: endedAt }];
+    const untyped = { type: "untyped-evidence", text, idempotencyKey, reportedAt: endedAt };
+    step.reports = [...(step.reports ?? []), untyped];
+    const attempt = step.attempts?.at(-1);
+    if (attempt) attempt.report = untyped;
     step.status = "waiting";
     step.endedAt = endedAt;
-    record.currentAssignmentId = null;
+    record.currentAssignmentId = step.id;
     record.revision = Math.max(1, Number(record.revision) || 1) + 1;
     record.assignments = record.steps;
     await writePipeline(PIPELINES_ROOT, record);
@@ -2592,6 +2664,11 @@ async function completePipelineStep(record, step, text, source, report = null, i
   } else {
     step.status = source === "skip" ? "skipped" : "complete";
     step.endedAt = endedAt;
+    const attempt = step.attempts?.at(-1);
+    if (attempt && !attempt.endedAt) {
+      attempt.endedAt = endedAt;
+      attempt.result = source === "skip" ? { type: "skipped", summary: `Step ${step.index} was skipped.` } : attempt.result;
+    }
     record.currentAssignmentId = null;
     record.revision = Math.max(1, Number(record.revision) || 1) + 1;
   }
@@ -2611,9 +2688,13 @@ async function completePipelineStep(record, step, text, source, report = null, i
         const goal = byFile.get(record.goal);
         const currentRevision = await goalContentRevision(goal.file);
         if (currentRevision !== report.goalRevision || currentRevision !== record.goalRevision) {
+          record.status = "complete";
+          await writePipeline(PIPELINES_ROOT, record);
           await notifyBrain(record.area, `Goal ${record.slug}: a typed review passed an old Goal revision. Start a current review assignment.`);
           return { status: 200, state: "reported", next: null, pipeline: record };
         }
+        record.status = "complete";
+        await writePipeline(PIPELINES_ROOT, record);
         const changed = await cascadeGoalDone(record.goal, byFile);
         await vaultCommit(changed, `update: ${goal.area} goal ${goal.slug} done after planned review`, goal.area, null);
         await appendMilestone({ root: BRAINS_ROOT, area: goal.area, kind: "goal-done", summary: `${goal.title} passed its planned review and closed.`, ref: goal.file, idempotencyKey: `goal-done:${goal.file}:${step.endedAt}`, now: step.endedAt });
@@ -2628,7 +2709,7 @@ async function completePipelineStep(record, step, text, source, report = null, i
     await notifyBrain(record.area, `Goal ${record.slug}: pipeline complete (${record.steps.length} steps; step ${step.index} ${stepWord}, ${step.label || "agent"}). Last handover: ${brainMessageExcerpt(step.handover)}`);
     return { status: 200, state: "complete", next: null, pipeline: record };
   }
-  if (record.schema === "area-goal-queue.v2" && source === "agent") {
+  if (record.schema === "area-goal-queue.v2" && ["agent", "skip"].includes(source)) {
     await notifyBrain(record.area, `Goal ${record.slug}: step ${step.index} of ${record.steps.length} ${stepWord} (${step.label || "agent"}). Step ${next.index} is ready and waits for your command. Handover: ${brainMessageExcerpt(step.handover)}`);
     return { status: 200, state: "reported", next: { index: next.index, session: null }, pipeline: record };
   }
@@ -2666,17 +2747,18 @@ function withGoalQueueMutation(goalFile, mutation) {
 }
 
 /** Rejects stale queue mutations and makes exact retries harmless. */
-function queueMutationGuard(record, options = {}) {
+function queueMutationGuard(record, options = {}, { allowPaused = false } = {}) {
+  if (!allowPaused && (record.migrationProblem || record.status === "paused")) return { status: 409, error: record.migrationProblem ?? "the Goal queue is paused" };
+  const key = String(options.idempotencyKey ?? "").trim();
+  if (key && record.idempotencyKeys?.includes(key)) return { status: 200, state: "repeated", pipeline: record, repeated: true };
   if (options.expectedRevision !== undefined && Number(options.expectedRevision) !== record.revision) {
     return { status: 409, error: `stale-revision:${record.revision}` };
   }
-  const key = String(options.idempotencyKey ?? "").trim();
-  if (key && record.idempotencyKeys?.includes(key)) return { status: 200, state: "repeated", pipeline: record, repeated: true };
   if (key) record.idempotencyKeys = [...(record.idempotencyKeys ?? []), key];
   return null;
 }
 
-/** Restart, skip, end, or send-on one step at Julian's explicit action. */
+/** Applies one explicit queue control command. */
 async function controlPipeline(goalFile, action, index, options = {}) {
   return withGoalQueueMutation(goalFile, () => controlPipelineUnlocked(goalFile, action, index, options));
 }
@@ -2687,6 +2769,13 @@ async function controlPipelineUnlocked(goalFile, action, index, options = {}) {
   const o = await goalByFile(goalFile);
   trace?.mark("goal resolved");
   if (!o) return { status: 404, error: `no goal file ${goalFile}` };
+  if (["advance", "restart", "send"].includes(action) && !options.caller) {
+    return { status: 403, error: action === "advance"
+      ? "Only the exact Area brain can start a normal assignment."
+      : action === "restart"
+        ? "Use the guarded Goal recovery action after exact-brain recovery is exhausted."
+        : "The retired send-on action cannot advance an authoritative Goal queue." };
+  }
   if (options.caller) {
     const authority = await exactBrainCaller(options.caller, o.area);
     if (authority.error) return { status: 403, error: authority.error };
@@ -2694,7 +2783,7 @@ async function controlPipelineUnlocked(goalFile, action, index, options = {}) {
   const record = await readPipeline(PIPELINES_ROOT, o.area, o.slug);
   trace?.mark("pipeline read");
   if (!record) return { status: 404, error: "no pipeline on this goal" };
-  const guarded = queueMutationGuard(record, options);
+  const guarded = queueMutationGuard(record, options, { allowPaused: action === "end" });
   if (guarded) return guarded;
   const step = record.steps[Number(index) - 1];
   if (!step) return { status: 404, error: `no step ${index}` };
@@ -2708,36 +2797,39 @@ async function controlPipelineUnlocked(goalFile, action, index, options = {}) {
       trace?.mark("advance already committed", { session: step.session });
       return { status: 200, session: step.session, index: step.index, pipeline: record, repeated: true };
     }
-    if (step.status !== "pending") return { status: 409, error: `step ${step.index} is ${step.status}; advance needs a pending step` };
+    if (step.status === "stopped" || (step.status === "running" && !live)) {
+      step.status = "pending";
+      step.session = null;
+      record.currentAssignmentId = null;
+    }
+    if (step.status !== "pending") return { status: 409, error: `step ${step.index} is ${step.status}; advance needs a pending or stopped step` };
     const controller = await exactLiveBrainForArea(record.area);
     trace?.mark("advance controller resolved", { controller: controller?.session ?? null });
     if (!controller) return { status: 409, error: `no live brain controls ${record.area}` };
     return startPipelineStep(record, step.index, trace);
   }
   if (action === "restart") {
-    if (!(step.status === "stopped" || (step.status === "running" && !live))) return { status: 409, error: `step ${step.index} is ${step.status}; restart needs a stopped step` };
-    step.status = "pending";
-    step.session = null;
-    await writePipeline(PIPELINES_ROOT, record);
-    return startPipelineStep(record, step.index);
+    return { status: 410, error: "Restart was replaced by exact-brain advance and guarded Julian recovery." };
   }
   if (action === "skip") {
     if (!["stopped", "running", "pending"].includes(step.status)) return { status: 409, error: `step ${step.index} is ${step.status}` };
+    if (live) await execFileAsync("tmux", ["kill-session", "-t", "=" + step.session]).catch(() => {});
     return completePipelineStep(record, step, `Step ${step.index} was skipped by Julian.`, "skip");
   }
   if (action === "end") {
     // Stop work on the whole run: kill the live step, if any, and end every
     // step that has not run. The Goal stays open with its handovers.
-    if (live) await execFileAsync("tmux", ["kill-session", "-t", "=" + step.session]).catch(() => {});
+    const attemptSessions = new Set([step.session, ...(step.attempts ?? []).map((attempt) => attempt.session)].filter(Boolean));
+    for (const name of attemptSessions) {
+      if (sessions.some((session) => session.name === name)) await execFileAsync("tmux", ["kill-session", "-t", "=" + name]).catch(() => {});
+    }
     const ended = endPipeline(record);
     await writePipeline(PIPELINES_ROOT, record);
     await notifyBrain(record.area, `Goal ${record.slug}: pipeline ended by Julian at step ${step.index}.`);
     return { status: 200, state: "ended", ended, pipeline: record };
   }
   if (action === "send") {
-    if (step.status !== "running" || !live) return { status: 409, error: `step ${step.index} is not running` };
-    if (!(live.state === "waiting" && ["idle", null, undefined].includes(live.stateDetail))) return { status: 409, error: `step ${step.index} is ${live.state}; send needs an idle agent` };
-    return completePipelineStep(record, step, await paneLastMessage(step.session), "last-message");
+    return { status: 410, error: "Send-on was replaced by a typed worker report to the queue controller." };
   }
   return { status: 400, error: `unknown action ${action}` };
 }
@@ -2872,12 +2964,21 @@ async function pipelinesView(sessions) {
 async function reconcilePipelines(sessions, snapshotAt = Date.now()) {
   const byName = new Map(sessions.map((item) => [item.name, item]));
   const now = Date.now();
+  let goalIndex = null;
   for (const record of await readAllPipelines(PIPELINES_ROOT)) {
     let changed = reclaimLiveSteps(record, byName);
+    if (!record.goalRevision) {
+      goalIndex ??= await goalsByFile();
+      const goal = goalIndex.get(record.goal);
+      if (goal) {
+        record.goalRevision = await goalContentRevision(goal.file);
+        changed = true;
+      }
+    }
     const stopped = [];
     for (const step of record.steps) {
       const key = `${record.goal}#${step.index}#${step.session}`;
-      if (step.status !== "running" || !step.session) {
+      if (!["running", "waiting"].includes(step.status) || !step.session) {
         idleNoticed.delete(key);
         waitNoticed.delete(key);
         continue;
@@ -2891,6 +2992,11 @@ async function reconcilePipelines(sessions, snapshotAt = Date.now()) {
         if (!stepGoneFromSnapshot(step, byName, snapshotAt)) continue;
         step.status = "stopped";
         step.endedAt = new Date().toISOString();
+        const attempt = step.attempts?.findLast?.((item) => item.session === step.session);
+        if (attempt && !attempt.endedAt) {
+          attempt.endedAt = step.endedAt;
+          attempt.result = { type: "runtime-stopped", summary: "The worker session ended without a handover." };
+        }
         changed = true;
         idleNoticed.delete(key);
         waitNoticed.delete(key);
@@ -2926,7 +3032,7 @@ async function reconcilePipelines(sessions, snapshotAt = Date.now()) {
     if (!fresh || fresh.updatedAt !== record.updatedAt) continue;
     await writePipeline(PIPELINES_ROOT, record);
     for (const index of stopped) {
-      await notifyBrain(record.area, `Goal ${record.slug}: step ${index} of ${record.steps.length} stopped (its session ended without a handover). Restart, skip, or end it on the desk, or start it again with tangent goal start.`);
+      await notifyBrain(record.area, `Goal ${record.slug}: step ${index} of ${record.steps.length} stopped without a handover. Retry or skip it through the exact queue, or end the work. Julian's recovery start is available only after your recovery is exhausted.`);
     }
   }
 }
@@ -3709,13 +3815,14 @@ async function reconcileContextHandovers(sessions) {
       const byFile = await goalsByFile();
       const o = byFile.get(session.goal);
       if (!o) continue;
-      const existing = await readContinuation(CONTINUATIONS_ROOT, o.area, o.slug);
-      const record = existing ?? newContinuationRecord({ goal: o.file, area: o.area, slug: o.slug, session: session.name });
-      execution = soloExecution({
+      const record = await migrateLiveSoloExecution(o, sessions);
+      const step = record?.steps.find((item) => item.status === "running" && item.session === session.name);
+      if (!record || !step) continue;
+      execution = pipelineExecution({
         record,
-        area: o.area,
-        /** Persists the solo execution record. */
-        save: (next) => writeContinuation(CONTINUATIONS_ROOT, next),
+        step,
+        /** Persists the migrated authoritative queue. */
+        save: (next) => writePipeline(PIPELINES_ROOT, next),
       });
     } else {
       continue;
@@ -3812,13 +3919,6 @@ async function clearRowWithVerdict(area, line, verdict) {
   const { text, removed, index, removedText } = removeForJulianLine(current.text, line);
   if (!removed) return { status: 404, error: "the plan has no such line" };
   const past = verdict === "accept" ? "accepted" : "rejected";
-  if (row.kind === "test" && verdict === "accept") {
-    const byFile = await goalsByFile();
-    const goal = [...byFile.values()].find((item) => item.slug === row.target);
-    if (!goal) return { status: 404, error: `no goal ${row.target}` };
-    const changed = await cascadeGoalDone(goal.file, byFile);
-    if (changed.length) await vaultCommit(changed, `update: ${goal.area} goal ${goal.slug} accepted`, goal.area, null);
-  }
   await writeVaultDocument(current, text, `update: ${area} plan ${row.target} ${past}`);
   await notifyBrain(area, `Julian ${past} ${row.target}`);
   return { status: 200, line: row.line, removedText, index, target: row.target, verdict };
@@ -3838,14 +3938,6 @@ async function restoreVerdictLine(area, line, index) {
   const text = restoreForJulianLine(current.text, line, index);
   const row = parseForJulian(text).find((item) => item.line.trimEnd() === String(line).trimEnd());
   const target = row?.target ?? "row";
-  if (row?.kind === "test") {
-    const byFile = await goalsByFile();
-    const goal = [...byFile.values()].find((item) => item.slug === row.target);
-    if (goal?.status === "done") {
-      await editGoalFile(goal.file, { status: "open" });
-      await vaultCommit([goal.file], `update: ${goal.area} goal ${goal.slug} acceptance withdrawn`, goal.area, null);
-    }
-  }
   await writeVaultDocument(current, text, `update: ${area} plan restore ${target}`);
   await notifyBrain(area, `Julian withdrew his verdict on ${target}; the line is back`);
   return { status: 200 };

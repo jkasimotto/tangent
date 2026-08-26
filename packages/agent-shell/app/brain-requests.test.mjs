@@ -99,7 +99,8 @@ test("legacy requests use approval or typed changes", async () => {
 
 test("an exact effect accepts free text and rejects a stale revision", async () => {
   const record = await readBrainRequests("/missing", "otto/tangent");
-  const effect = createBrainRequest(record, { kind: "approval", subject: "Deploy", question: "Deploy this commit?", proposal: "Deploy commit abc.", effect: { type: "deploy", commit: "abc" } });
+  assert.throws(() => createBrainRequest(record, { kind: "approval", subject: "Deploy", question: "Deploy this commit?", proposal: "Deploy commit abc.", effect: { type: "deploy", commit: "abc" } }), /unsupported Request effect/);
+  const effect = createBrainRequest(record, { kind: "approval", subject: "Route note", question: "Route this exact note?", proposal: "Add the note to the exact Area Journal.", effect: { type: "route-journal", area: "otto/tangent", text: "Use the exact Area." } });
   assert.throws(() => answerBrainRequest(record, effect.id, "authorize", "", undefined, "old"), /stale/);
   const reply = createBrainRequest(record, { kind: "decision", subject: "Scope", question: "Which scope?", proposal: "Use the Area." });
   answerBrainRequest(record, reply.id, "reply", "Use the child Area.");
@@ -108,7 +109,7 @@ test("an exact effect accepts free text and rejects a stale revision", async () 
 
 test("an exact effect records intent, survives a problem, and retries", async () => {
   const record = await readBrainRequests("/missing", "otto/tangent");
-  const request = createBrainRequest(record, { kind: "approval", subject: "Deploy", question: "Deploy this commit?", proposal: "Deploy commit abc.", effect: { type: "deploy", commit: "abc" } });
+  const request = createBrainRequest(record, { kind: "approval", subject: "Route note", question: "Route this exact note?", proposal: "Add the note to the exact Area Journal.", effect: { type: "route-journal", area: "otto/tangent", text: "Use the exact Area." } });
   beginRequestEffect(record, request.id, request.effectRevision, "effect-1", "2026-08-26T01:00:00.000Z");
   finishRequestEffect(record, request.id, { problem: "offline", now: "2026-08-26T01:01:00.000Z" });
   assert.equal(request.status, "open");

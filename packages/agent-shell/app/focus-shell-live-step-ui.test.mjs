@@ -44,10 +44,11 @@ test("a Goal whose first step stopped still opens the step that runs", async () 
   };
   const pipeline = pipelineWithStoppedFirstStep(goal);
   let sessions = [{ name: "viz-branch-graphics-s2", goal: goal.file, area: goal.area, kind: "goal", state: "working", command: "pi-code", pipeline: goal.file, step: 2 }];
+  let brains = [];
 
   window.fetch = async (url) => {
     const pathname = new URL(url, window.location.href).pathname;
-    if (pathname === "/api/sessions") return jsonResponse({ boot: "boot-1", caffeinate: false, sessions, pipelines: [pipeline], brains: [] });
+    if (pathname === "/api/sessions") return jsonResponse({ boot: "boot-1", caffeinate: false, sessions, pipelines: [pipeline], brains });
     if (pathname === "/api/operations") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
     return jsonResponse({
       areas: [{ path: "neara", name: "neara", goals: [] }, { path: "neara/viz-input", name: "viz-input", goals: [goal], documents: [] }],
@@ -84,13 +85,15 @@ test("a Goal whose first step stopped still opens the step that runs", async () 
 
   // No session at all: the card says why, and its menu still holds the exits.
   sessions = [];
+  brains = [{ area: goal.area, status: "active", live: false, health: { status: "failed" }, recovery: { exhausted: true } }];
   click(window, "#menu-refresh");
   await settle(window);
   await settle(window);
   assert.equal(row().querySelector(".desk-state").textContent, "Stopped");
   assert.equal(row().querySelector(".work-step").textContent, "2/2", "the newest attempt is the one to restart");
   assert.equal(row().querySelector("[data-open-goal-run]"), null);
-  assert.equal(row().querySelector("[data-pipeline-control='restart']").textContent, "Restart step 2");
+  assert.equal(row().querySelector("[data-pipeline-control='restart']"), null);
+  assert.equal(row().querySelector("[data-goal-recovery]"), null, "guarded recovery does not reinterpret a stopped assignment as pending");
 
   // The run finishes past the step that died. The card must not fall back to
   // reporting step 1's death: the pipeline is over, so the Goal reads as plain
@@ -101,6 +104,16 @@ test("a Goal whose first step stopped still opens the step that runs", async () 
   await settle(window);
   assert.equal(row().querySelector(".work-step"), null, "a finished run names no current step");
   assert.notEqual(row().querySelector(".desk-state").textContent, "Stopped");
-  assert.equal(row().querySelector("[data-pipeline-control='restart']"), null, "no Restart for a step the run moved past");
+  assert.equal(row().querySelector("[data-goal-recovery]"), null, "no recovery start for a step the run moved past");
   assert.match(row().querySelector("[data-open-goal-run]").textContent, /Start agent/, "the Goal is plain open work again");
+
+  // Guarded recovery appears only for an existing pending assignment with no current attempt.
+  pipeline.steps[0].status = "complete";
+  pipeline.steps[1].status = "pending";
+  pipeline.currentAssignmentId = null;
+  click(window, "#menu-refresh");
+  await settle(window);
+  await settle(window);
+  click(window, "[data-work-filter='inactive']");
+  assert.equal(row().querySelector("[data-goal-recovery]").textContent, "Recovery start step 2");
 });

@@ -144,6 +144,7 @@ test("newPipeline normalizes steps into the pending shape", () => {
   assert.equal(record.schema, PIPELINE_SCHEMA);
   assert.equal(record.controllerArea, "otto/tangent");
   assert.equal(record.revision, 1);
+  assert.equal(record.status, "open");
   assert.equal(record.completionPolicy, "review-pass");
   assert.equal(record.goal, "otto/tangent/goal-x.md");
   assert.equal(record.createdAt, "2026-08-15T10:00:00.000Z");
@@ -180,11 +181,27 @@ test("newPipeline throws the validation message", () => {
   assert.throws(() => newPipeline({ goal: "g", area: "a", slug: "s", steps: [{ instruction: "" , launch: claude }] }), /step 1: instruction is empty/);
 });
 
+test("legacy queues gain open status and invalid authority pauses", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "pipelines-"));
+  const legacy = newPipeline({ goal: "otto/tangent/goal-x.md", area: "otto/tangent", slug: "x", steps: sampleSteps() });
+  delete legacy.status;
+  await mkdir(path.dirname(pipelinePath(root, "otto/tangent", "x")), { recursive: true });
+  await writeFile(pipelinePath(root, "otto/tangent", "x"), `${JSON.stringify(legacy)}\n`);
+  assert.equal((await readPipeline(root, "otto/tangent", "x")).status, "open");
+
+  legacy.controllerArea = "otto";
+  await writeFile(pipelinePath(root, "otto/tangent", "x"), `${JSON.stringify(legacy)}\n`);
+  const invalid = await readPipeline(root, "otto/tangent", "x");
+  assert.equal(invalid.status, "paused");
+  assert.match(invalid.migrationProblem, /does not match exact Area/);
+});
+
 test("currentStep prefers running or stopped, then the first pending", () => {
   assert.equal(currentStep(recordWith(["complete", "running", "pending"])).index, 2);
   assert.equal(currentStep(recordWith(["complete", "stopped", "pending"])).index, 2);
   assert.equal(currentStep(recordWith(["complete", "skipped", "pending", "pending"])).index, 3);
   assert.equal(currentStep(recordWith(["complete", "skipped"])), null);
+  assert.equal(currentStep(recordWith(["complete", "waiting", "pending"])).index, 2);
   assert.equal(currentStep({ steps: [] }), null);
 });
 
@@ -204,6 +221,7 @@ test("pipelineStatus derives from step statuses and session liveness", () => {
   assert.equal(pipelineStatus(recordWith(["complete", "complete"]), live), "complete");
   assert.equal(pipelineStatus(recordWith(["complete", "skipped"]), live), "complete");
   assert.equal(pipelineStatus(recordWith(["complete", "running", "pending"], [null, "s2"]), live), "running");
+  assert.equal(pipelineStatus(recordWith(["complete", "waiting", "pending"], [null, "s2"]), live), "running");
   assert.equal(pipelineStatus(recordWith(["complete", "running", "pending"], [null, "s2"]), dead), "stopped");
   assert.equal(pipelineStatus(recordWith(["complete", "stopped", "pending"]), live), "stopped");
   assert.equal(pipelineStatus(recordWith(["pending", "pending"]), live), "pending");
@@ -367,12 +385,14 @@ test("stepStartedWithinGrace also covers the newest continuation's at time", () 
 
 test("endPipeline ends what has not run and leaves history alone", () => {
   const record = recordWith(["complete", "stopped", "pending", "skipped", "running"]);
+  record.steps[4].attempts = [{ id: "attempt-5", session: "worker-5", endedAt: null, result: null }];
   record.steps[0].handover = "Design written.";
   record.steps[1].handover = "Half a review.";
   assert.deepEqual(endPipeline(record, "2026-08-17T10:00:00.000Z"), [2, 3, 5]);
   assert.deepEqual(record.steps.map((step) => step.status), ["complete", "ended", "ended", "skipped", "ended"]);
   assert.equal(record.steps[1].handover, "Half a review.", "an ended step keeps its handover");
   assert.equal(record.steps[1].endedAt, "2026-08-17T10:00:00.000Z");
+  assert.deepEqual(record.steps[4].attempts[0].result, { type: "canceled", summary: "The Goal queue was ended." });
   assert.equal(record.updatedAt, "2026-08-17T10:00:00.000Z");
   assert.equal(pipelineFinished(record), true);
   assert.equal(currentStep(record), null, "nothing is current after the run ends");

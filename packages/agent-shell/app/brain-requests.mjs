@@ -5,6 +5,19 @@ import { readJsonObject, writeJsonObject } from "./json-store.mjs";
 
 export const BRAIN_REQUESTS_SCHEMA = "area-brain-requests.v1";
 export const REQUEST_KINDS = new Set(["plan", "decision", "test", "approval"]);
+export const REQUEST_EFFECT_KINDS = new Set(["goal-done", "route-journal"]);
+
+/** Rejects an effect that cannot be previewed and executed by the closed server allowlist. */
+export function validateRequestEffect(effect) {
+  if (!effect || typeof effect !== "object" || Array.isArray(effect)) return "effect must be one object";
+  const type = String(effect.type ?? "").trim();
+  if (!REQUEST_EFFECT_KINDS.has(type)) return `unsupported Request effect type: ${type || "missing"}`;
+  if (type === "goal-done" && !String(effect.goal ?? "").trim()) return "goal-done needs a Goal file";
+  if (type === "route-journal" && (!String(effect.area ?? "").trim() || !String(effect.text ?? "").trim())) {
+    return "route-journal needs an Area and exact text";
+  }
+  return null;
+}
 
 /** Returns the durable request-record path for one Area brain. */
 export function brainRequestsPath(root, area) {
@@ -63,6 +76,8 @@ export function createBrainRequest(record, input, now = new Date().toISOString()
   if (detail.length > 300) throw new Error("detail must be 300 characters or fewer; put full evidence in the plan");
   if (!proposal) throw new Error("proposal is required");
   if (proposal.length > 200) throw new Error("proposal must be 200 characters or fewer");
+  const effectError = effect ? validateRequestEffect(effect) : null;
+  if (effectError) throw new Error(effectError);
   const brainGeneration = Number.isInteger(input.brainGeneration) ? input.brainGeneration : null;
   const subjectRef = goal
     ? { type: "goal", goal }

@@ -221,7 +221,7 @@ export function startNextAssignment(queue, operationId, now = new Date().toISOSt
   if (queue.status !== "open") throw new Error("The Goal queue is not open.");
   if (!String(operationId ?? "").trim()) throw new Error("An idempotency key is required.");
   const repeated = queue.idempotencyKeys?.includes(operationId);
-  const running = queue.assignments.find((item) => item.status === "running");
+  const running = queue.assignments.find((item) => ["running", "waiting"].includes(item.status));
   if (repeated) return { assignment: running ?? null, duplicate: true };
   if (running) return { assignment: running, duplicate: true };
   const next = queue.assignments.find((item) => item.status === "pending");
@@ -238,7 +238,7 @@ export function startNextAssignment(queue, operationId, now = new Date().toISOSt
 /** Returns why Julian's emergency start is unavailable, or null when it is safe. */
 export function emergencyStartProblem(queue, brain) {
   if (!queue || queue.status !== "open") return "recovery needs an existing open authoritative queue";
-  if (queue.currentAssignmentId || queue.assignments?.some((assignment) => assignment.status === "running")) return "recovery needs a queue with no current attempt";
+  if (queue.currentAssignmentId || queue.assignments?.some((assignment) => ["running", "waiting"].includes(assignment.status))) return "recovery needs a queue with no current attempt";
   if (!queue.assignments?.some((assignment) => assignment.status === "pending")) return "recovery needs an existing pending assignment";
   if (!brain || brain.status !== "active" || brain.health?.status !== "failed" || brain.recovery?.exhausted !== true) return "recovery is available only after the exact Area brain exhausts automatic recovery";
   return null;
@@ -246,12 +246,12 @@ export function emergencyStartProblem(queue, brain) {
 
 /** Validates and stores one typed worker report without advancing the queue. */
 export function submitWorkerReport(queue, assignmentId, report, { expectedRevision, idempotencyKey, now = new Date().toISOString() } = {}) {
-  if (queue.revision !== expectedRevision) throw new Error(`stale-revision:${queue.revision}`);
   if (!idempotencyKey) throw new Error("An idempotency key is required.");
   const assignment = queue.assignments.find((item) => item.id === assignmentId);
   if (!assignment) throw new Error("assignment-not-found");
   const duplicate = assignment.reports?.find((item) => item.idempotencyKey === idempotencyKey);
   if (duplicate) return { report: duplicate, duplicate: true, closeGoal: false };
+  if (queue.revision !== expectedRevision) throw new Error(`stale-revision:${queue.revision}`);
   const type = String(report?.type ?? "");
   const allowed = assignment.designatedReview ? new Set(["review-result", "question-needed", "context-risk", "failed"]) : new Set(["implementation-result", "question-needed", "context-risk", "failed"]);
   if (!allowed.has(type)) throw new Error("report-type-not-allowed");
@@ -259,11 +259,23 @@ export function submitWorkerReport(queue, assignmentId, report, { expectedRevisi
   if (!String(report?.summary ?? "").trim()) throw new Error("report-summary-required");
   if (type === "implementation-result" && !["complete", "blocked", "failed"].includes(report.status)) throw new Error("invalid-implementation-status");
   if (type === "question-needed" && !String(report.question ?? "").trim()) throw new Error("report-question-required");
+  const criteria = Array.isArray(report.criteria) ? report.criteria : [];
+  if (type === "review-result") {
+    if (!String(report.goalRevision ?? "").trim()) throw new Error("review-goal-revision-required");
+    if (!criteria.length) throw new Error("review-criteria-required");
+    if (criteria.some((criterion) => !String(criterion?.id ?? "").trim()
+      || typeof criterion.passed !== "boolean"
+      || !Array.isArray(criterion.evidenceRefs)
+      || criterion.evidenceRefs.length === 0)) {
+      throw new Error("invalid-review-criterion");
+    }
+  }
   const stored = { ...structuredClone(report), idempotencyKey, reportedAt: now };
   assignment.reports = [...(assignment.reports ?? []), stored];
   const attempt = assignment.attempts.at(-1);
   if (attempt) {
     attempt.result = stored;
+    attempt.report = stored;
     attempt.endedAt = now;
   }
   assignment.status = ["question-needed", "context-risk", "failed"].includes(type) || report.status === "blocked" || report.status === "failed" || report.verdict === "blocked" ? "waiting" : "complete";
@@ -271,7 +283,7 @@ export function submitWorkerReport(queue, assignmentId, report, { expectedRevisi
   queue.idempotencyKeys = [...(queue.idempotencyKeys ?? []), idempotencyKey];
   queue.revision += 1;
   queue.updatedAt = now;
-  const criteria = Array.isArray(report.criteria) ? report.criteria : [];
+  if (assignment.status === "complete" && !queue.assignments.some((item) => ["pending", "running"].includes(item.status))) queue.status = "complete";
   const closeGoal = type === "review-result"
     && assignment.designatedReview
     && queue.completionPolicy === "review-pass"
@@ -279,7 +291,6 @@ export function submitWorkerReport(queue, assignmentId, report, { expectedRevisi
     && report.goalRevision === queue.goalRevision
     && criteria.length > 0
     && criteria.every((criterion) => criterion?.id && criterion.passed === true && Array.isArray(criterion.evidenceRefs) && criterion.evidenceRefs.length > 0);
-  if (closeGoal) queue.status = "complete";
   return { report: stored, duplicate: false, closeGoal };
 }
 

@@ -82,6 +82,22 @@ test("agent lint rejects retired Area brain authority contracts", async () => {
   }
 });
 
+test("agent lint rejects retired solo execution writers", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
+  try {
+    await writeMinimalRootAgentDocs(root);
+    const app = path.join(root, "packages", "agent-shell", "app");
+    await mkdir(app, { recursive: true });
+    await writeFile(path.join(app, "server.mjs"), "await writeContinuation(root, newContinuationRecord(input));\n", "utf8");
+    const result = await lintGovernance({ root, groups: ["docs"] });
+    const finding = result.findings.find((candidate) => candidate.rule === "agent-shell/area-brain-contract");
+    assert.ok(finding);
+    assert.match(finding.message, /retired solo execution controller/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("dependency lint flags disallowed vertical package dependencies", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
   try {

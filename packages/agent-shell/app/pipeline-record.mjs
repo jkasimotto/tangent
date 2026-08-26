@@ -55,14 +55,23 @@ export function normalizeQueueRecord(value) {
   const source = Array.isArray(value.assignments) ? value.assignments : Array.isArray(value.steps) ? value.steps : [];
   const assignments = source.map((step, position) => normalizeStoredAssignment(step, position + 1));
   const revision = Math.max(1, Number(value.revision) || 1);
+  const controllerArea = value.controllerArea ?? value.area;
+  const running = assignments.filter((assignment) => ["running", "waiting"].includes(assignment.status));
+  const migrationProblem = controllerArea !== value.area
+    ? `Queue controller ${controllerArea} does not match exact Area ${value.area}.`
+    : running.length > 1
+      ? `Queue has ${running.length} current attempts.`
+      : value.migrationProblem ?? null;
   return {
     ...value,
     schema: PIPELINE_SCHEMA,
-    controllerArea: value.controllerArea ?? value.area,
+    controllerArea,
     goalRevision: String(value.goalRevision ?? ""),
     revision,
+    status: migrationProblem ? "paused" : ["open", "complete", "paused", "canceled"].includes(value.status) ? value.status : "open",
+    migrationProblem,
     completionPolicy: value.completionPolicy ?? "review-pass",
-    currentAssignmentId: value.currentAssignmentId ?? assignments.find((item) => item.status === "running")?.id ?? null,
+    currentAssignmentId: value.currentAssignmentId ?? assignments.find((item) => ["running", "waiting"].includes(item.status))?.id ?? null,
     idempotencyKeys: Array.isArray(value.idempotencyKeys) ? value.idempotencyKeys : [],
     assignments,
     steps: assignments,
@@ -90,6 +99,8 @@ export function newPipeline({ goal, goalRevision = "", area, slug, extraFiles = 
     controllerArea: area,
     slug,
     revision: 1,
+    status: "open",
+    migrationProblem: null,
     completionPolicy,
     currentAssignmentId: null,
     idempotencyKeys: [],
@@ -117,6 +128,7 @@ export function appendSteps(record, steps) {
   const added = steps.map((step, position) => normalizeStep(step, existing.length + position + 1));
   record.steps = [...existing, ...added];
   record.assignments = record.steps;
+  if (record.status !== "paused") record.status = "open";
   record.revision = Math.max(1, Number(record.revision) || 1) + 1;
   return added;
 }
@@ -158,9 +170,15 @@ export function endPipeline(record, now = new Date().toISOString()) {
     if (FINAL_STATUSES.has(step.status)) continue;
     step.status = "ended";
     step.endedAt = now;
+    const attempt = step.attempts?.at(-1);
+    if (attempt && !attempt.endedAt) {
+      attempt.endedAt = now;
+      attempt.result = attempt.result ?? { type: "canceled", summary: "The Goal queue was ended." };
+    }
     changed.push(step.index);
   }
   if (changed.length) {
+    record.status = "canceled";
     record.revision = Math.max(1, Number(record.revision) || 1) + 1;
     record.updatedAt = now;
   }
@@ -194,7 +212,7 @@ export function validateSteps(steps) {
 /** The step the pipeline is on: first running or stopped, else first pending, else null. */
 export function currentStep(record) {
   const steps = record?.steps ?? [];
-  return steps.find((step) => step.status === "running" || step.status === "stopped")
+  return steps.find((step) => ["running", "waiting", "stopped"].includes(step.status))
     ?? steps.find((step) => step.status === "pending")
     ?? null;
 }
@@ -206,6 +224,11 @@ export function reclaimLiveSteps(record, liveSessions) {
     if (step.status !== "stopped" || !step.session || !liveSessions.has(step.session)) continue;
     step.status = "running";
     step.endedAt = null;
+    const attempt = step.attempts?.findLast?.((item) => item.session === step.session);
+    if (attempt?.result?.type === "runtime-stopped") {
+      attempt.endedAt = null;
+      attempt.result = null;
+    }
     changed = true;
   }
   return changed;
@@ -298,7 +321,7 @@ export function pipelineStatus(record, isLive) {
   const steps = record?.steps ?? [];
   if (pipelineFinished(record)) return "complete";
   if (steps.some((step) => step.status === "stopped")) return "stopped";
-  const running = steps.filter((step) => step.status === "running");
+  const running = steps.filter((step) => ["running", "waiting"].includes(step.status));
   if (running.some((step) => !isLive(step.session))) return "stopped";
   if (running.length > 0) return "running";
   return "pending";

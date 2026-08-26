@@ -132,10 +132,10 @@ test("a brain that is not at a dialog, or is not live, asks nothing", () => {
   assert.equal(core.askFromBrainDialog(brain({ live: false, stateDetail: "decision", stateQuestion: "Which?" })), null);
 });
 
-test("a stopped step asks whether to restart or skip it", () => {
+test("a stopped step routes Julian to the authoritative queue", () => {
   const goal = { area: "otto/tangent", file: "otto/tangent/goal-x.md", title: "Find a document" };
   const ask = core.askFromStoppedStep(goal, { index: 2, status: "stopped", session: "find-document-s2", startedAt: "2026-08-25T01:00:00Z" });
-  assert.equal(ask.question, "Step 2 stopped. Restart or skip it?");
+  assert.equal(ask.question, "Step 2 stopped. Review its queue recovery?");
   assert.equal(ask.subject, "Find a document");
   assert.deepEqual(kinds(ask), ["reveal-goal"]);
   assert.equal(ask.id, core.askFromStoppedStep(goal, { index: 2, status: "running", live: false, session: "find-document-s2", startedAt: "2026-08-25T01:00:00Z" }).id, "reconciliation keeps the attempt identity");

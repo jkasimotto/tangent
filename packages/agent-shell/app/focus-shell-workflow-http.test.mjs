@@ -411,6 +411,8 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.match(serverSource, /tangent goal handover/);
   assert.match(serverSource, /design-<slug>\.md/);
   assert.match(serverSource, /rationaleDossierContract\(/);
+  assert.match(serverSource, /name: "material Operation events"/, "material Operation delivery runs without a browser poll");
+  assert.doesNotMatch(serverSource, /\b(?:newContinuationRecord|writeContinuation|soloExecution)\b/, "production has no retired solo writer");
 
   const emptyBrain = await fetch(`${base}/api/brains/start`, {
     method: "POST",
@@ -524,6 +526,13 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(handoverOne.pipeline.steps[0].status, "complete");
   assert.deepEqual(handoverOne.next, { index: 2, session: null }, "a worker report identifies but never starts its successor");
 
+  const directAdvance = await fetch(`${base}/api/pipelines/control`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ goal: pipelineGoal.file, action: "advance", step: 2, expectedRevision: handoverOne.pipeline.revision, idempotencyKey: "direct-advance" }),
+  });
+  assert.equal(directAdvance.status, 403, "Julian cannot bypass the guarded recovery path for a normal start");
+
   const advanceTwo = await fetch(`${base}/api/pipelines/control`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -539,6 +548,19 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(advanceTwo.status, "started");
   assert.equal(advanceTwo.next.index, 2);
   assert.equal(advanceTwo.next.session, "test-pipeline-demo");
+  const repeatedAdvance = await fetch(`${base}/api/pipelines/control`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      goal: pipelineGoal.file,
+      action: "advance",
+      step: 2,
+      caller: brainStart.session,
+      expectedRevision: handoverOne.pipeline.revision,
+      idempotencyKey: "workflow-advance-2",
+    }),
+  }).then((response) => response.json());
+  assert.equal(repeatedAdvance.status, "repeated", "an exact retry wins over its stale queue revision");
 
   const handoverTwo = await fetch(`${base}/api/goals/handover`, {
     method: "POST",
@@ -607,6 +629,24 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(advanceFour.status, "started");
   openedSessions.push(advanceFour.next.session);
 
+  const evidenceFreeReview = await fetch(`${base}/api/goals/handover`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      session: advanceFour.next.session,
+      text: "Review claimed a pass without proof.",
+      idempotencyKey: "review-without-proof",
+      report: {
+        type: "review-result",
+        verdict: "passed",
+        goalRevision: advanceFour.pipeline.goalRevision,
+        summary: "Claimed pass.",
+        criteria: [{ id: "done-condition", passed: true, evidenceRefs: [] }],
+      },
+    }),
+  });
+  assert.equal(evidenceFreeReview.status, 409, "complete review criteria require evidence");
+
   const handoverFour = await fetch(`${base}/api/goals/handover`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -623,6 +663,22 @@ test("the context-first shell is default and keeps the user's understanding with
     }),
   }).then((response) => response.json());
   assert.equal(handoverFour.status, "goal-done");
+  const repeatedReview = await fetch(`${base}/api/goals/handover`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      session: advanceFour.next.session,
+      text: "Review passed.",
+      report: {
+        type: "review-result",
+        verdict: "passed",
+        goalRevision: advanceFour.pipeline.goalRevision,
+        summary: "The current Goal revision satisfies its done condition.",
+        criteria: [{ id: "done-condition", passed: true, evidenceRefs: ["test:workflow"] }],
+      },
+    }),
+  }).then((response) => response.json());
+  assert.equal(repeatedReview.status, "repeated", "a lost closure response cannot close the Goal twice");
   goalText = await readFile(path.join(trees, pipelineGoal.file), "utf8");
   assert.match(goalText, /^status: done$/m);
   // ---- Area brain ----
@@ -696,9 +752,20 @@ test("the context-first shell is default and keeps the user's understanding with
   }).then((response) => response.json());
   assert.equal(eventHandover.status, "reported");
   const messageLog = (await readFile(path.join(root, "messages.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line));
-  const brainEvent = messageLog.find((entry) => entry.to === "test-brain" && entry.from === "tangent" && /untyped evidence/.test(entry.text));
+  const brainEvent = messageLog.find((entry) => entry.to === "test-brain" && entry.from === "tangent" && /untyped evidence/.test(entry.text) && /One more done\./.test(entry.text));
   assert.ok(brainEvent, "the brain hears that the worker submitted untyped evidence");
   assert.match(brainEvent.text, /One more done\./);
+  const correctedEventHandover = await fetch(`${base}/api/goals/handover`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      session: eventPipeline.session,
+      text: "One more done with a typed result.",
+      report: { type: "implementation-result", status: "complete", summary: "One more done.", evidenceRefs: ["event"] },
+    }),
+  }).then((response) => response.json());
+  assert.equal(correctedEventHandover.status, "reported", "the same worker can correct its untyped evidence");
+  assert.equal(correctedEventHandover.pipeline.status, "complete");
   // Handover from a session that is not a brain is refused; from the brain it
   // starts generation 2 on a new session and the record follows it.
   const notBrain = await fetch(`${base}/api/brains/handover`, {

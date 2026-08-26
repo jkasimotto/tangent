@@ -491,6 +491,18 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       }
       return;
     }
+    const goalRecovery = target.closest("[data-goal-recovery]");
+    if (goalRecovery) {
+      try {
+        const result = await post("/api/goals/start", { file: goalRecovery.dataset.goalRecovery, recovery: true });
+        await refresh();
+        paint(true);
+        showToast(result.session ? "Recovery worker started." : "Recovery start recorded.");
+      } catch (error) {
+        showToast(error.message);
+      }
+      return;
+    }
     const whatHappenedFor = target.closest("[data-what-happened-for]");
     if (whatHappenedFor) {
       const area = whatHappenedFor.dataset.whatHappenedFor;

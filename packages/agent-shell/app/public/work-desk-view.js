@@ -1338,7 +1338,6 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   }
 
   /** The idle time (ms) after which an idle step is offered "Send to next". */
-  const PIPELINE_SEND_AFTER_MS = 60_000;
 
   /**
    * The pipeline row's state pill, primary action, and the small `Step N of M`
@@ -1404,19 +1403,19 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   /** Rare pipeline actions shown inside the Goal action menu, only when valid. */
   function deskPipelineControls(goal, pipeline) {
     const step = currentPipelineStep(pipeline);
-    if (!step || step.status === "pending") return "";
+    if (!step) return "";
+    const brain = brainForAreaCard(goal.area);
+    const recoveryAvailable = brain?.status === "active" && brain.health?.status === "failed" && brain.recovery?.exhausted === true;
+    if (step.status === "pending") {
+      return !pipeline.currentAssignmentId && recoveryAvailable
+        ? `<button type="button" data-goal-recovery="${escapeHtml(goal.file)}">Recovery start step ${step.index}</button>`
+        : "";
+    }
     const last = step.index >= pipeline.steps.length;
     const stopped = step.status === "stopped" || (step.status === "running" && !step.live);
     if (stopped) {
-      // A step whose session died on its own. Julian's own Stop agent already
-      // ends the run, so Stop work here is the same exit for a crashed step.
-      return `<button type="button" data-pipeline-control="restart" data-pipeline-goal="${escapeHtml(goal.file)}" data-pipeline-step="${step.index}">Restart step ${step.index}</button>`
-        + (last ? "" : `<button type="button" data-pipeline-control="skip" data-pipeline-goal="${escapeHtml(goal.file)}" data-pipeline-step="${step.index}">Skip to step ${step.index + 1}</button>`)
-        + `<button type="button" data-pipeline-control="end" data-pipeline-goal="${escapeHtml(goal.file)}" data-pipeline-step="${step.index}" title="End the run; the Goal stays open with its handovers">End work</button>`;
-    }
-    const idleLong = step.state === "waiting" && (step.stateDetail === "idle" || step.stateDetail === null) && step.idleSince && Date.now() - step.idleSince >= PIPELINE_SEND_AFTER_MS;
-    if (idleLong && !last) {
-      return `<button type="button" data-pipeline-control="send" data-pipeline-goal="${escapeHtml(goal.file)}" data-pipeline-step="${step.index}" title="Use the agent's last message as its handover">Send to step ${step.index + 1}</button>`;
+      return (last ? "" : `<button type="button" data-pipeline-control="skip" data-pipeline-goal="${escapeHtml(goal.file)}" data-pipeline-step="${step.index}">Skip to step ${step.index + 1}</button>`)
+        + `<button type="button" data-pipeline-control="end" data-pipeline-goal="${escapeHtml(goal.file)}" data-pipeline-step="${step.index}" title="${escapeHtml(pipeline.migrationProblem ? `${pipeline.migrationProblem} End every live attempt and keep its audit history.` : "End the run; the Goal stays open with its handovers")}">End work</button>`;
     }
     return "";
   }

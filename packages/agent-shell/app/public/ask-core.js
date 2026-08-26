@@ -200,14 +200,14 @@
     });
   }
 
-  /** A pipeline step that stopped: it runs again or it is skipped, and only Julian says which. */
+  /** A pipeline step that stopped: the exact queue controller decides its next transition. */
   function askFromStoppedStep(goal, step) {
     if (!goal || !step) return null;
     return makeAsk({
       id: askIdentity("stopped-step", goal.file, step.index, step.startedAt || step.session || step.endedAt || "attempt"),
       area: goal.area,
       subject: goal.title,
-      question: `Step ${step.index} stopped. Restart or skip it?`,
+      question: `Step ${step.index} stopped. Review its queue recovery?`,
       actions: [{ kind: "reveal-goal", label: "See steps", arg: { file: goal.file } }],
       source: "step",
     });

@@ -106,13 +106,15 @@ test("only a designated passing review at the Goal revision can close", () => {
 
   const validQueue = newGoalQueue({ file: "goal-probe.md", revision: "rev-1", area: "otto/test" }, [{ kind: "review", instruction: "Review." }]);
   const validReview = startNextAssignment(validQueue, "start-valid").assignment;
-  const noEvidence = submitWorkerReport(validQueue, validReview.id, { type: "review-result", verdict: "passed", goalRevision: "rev-1", summary: "Claimed pass without evidence.", criteria: [{ id: "done", passed: true, evidenceRefs: [] }] }, { expectedRevision: validQueue.revision, idempotencyKey: "report-empty" });
-  assert.equal(noEvidence.closeGoal, false);
+  assert.throws(() => submitWorkerReport(validQueue, validReview.id, { type: "review-result", verdict: "passed", goalRevision: "rev-1", summary: "Claimed pass without evidence.", criteria: [{ id: "done", passed: true, evidenceRefs: [] }] }, { expectedRevision: validQueue.revision, idempotencyKey: "report-empty" }), /invalid-review-criterion/);
 
   const provedQueue = newGoalQueue({ file: "goal-probe.md", revision: "rev-1", area: "otto/test" }, [{ kind: "review", instruction: "Review." }]);
   const provedReview = startNextAssignment(provedQueue, "start-proved").assignment;
   const proved = submitWorkerReport(provedQueue, provedReview.id, { type: "review-result", verdict: "passed", goalRevision: "rev-1", summary: "Proved current behavior.", criteria: [{ id: "done", passed: true, evidenceRefs: ["test:focused"] }] }, { expectedRevision: provedQueue.revision, idempotencyKey: "report-proved" });
   assert.equal(proved.closeGoal, true);
+  assert.equal(provedQueue.status, "complete");
+  const repeated = submitWorkerReport(provedQueue, provedReview.id, { type: "review-result", verdict: "passed", goalRevision: "rev-1", summary: "Proved current behavior.", criteria: [{ id: "done", passed: true, evidenceRefs: ["test:focused"] }] }, { expectedRevision: 1, idempotencyKey: "report-proved" });
+  assert.equal(repeated.duplicate, true, "an exact retry wins over a now-stale expected revision");
 });
 
 test("Programs become quiet Operations and failures become problems", () => {

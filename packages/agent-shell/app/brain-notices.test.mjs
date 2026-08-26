@@ -6,7 +6,7 @@
 
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -168,6 +168,9 @@ test("Julian-scoped live brains can create and start across Areas without wideni
     caller: sourceBrain.session,
   });
   assert.ok(foreign.file, JSON.stringify(foreign));
+  const unownedGoal = await readFile(path.join(trees, foreign.file), "utf8");
+  assert.match(unownedGoal, /^status: open$/m, "a brain-created Goal starts open");
+  assert.match(unownedGoal, /^session:\s*$/m, "caller authority does not bind the brain as owner");
   const foreignStart = await post(base, "/api/goals/start", {
     file: foreign.file,
     steps: [{ instruction: "Prove the enum case.", command: "sleep 300" }],
@@ -200,6 +203,9 @@ test("Julian-scoped live brains can create and start across Areas without wideni
     own: targetBrain.session,
   });
   assert.ok(owned.file, JSON.stringify(owned));
+  const ownedGoal = await readFile(path.join(trees, owned.file), "utf8");
+  assert.match(ownedGoal, /^status: active$/m, "explicit ownership activates the Goal");
+  assert.match(ownedGoal, new RegExp(`^session: ${targetBrain.session}$`, "m"), "explicit ownership binds the named session");
   const startConflict = await post(base, "/api/goals/start", {
     file: owned.file,
     steps: [{ instruction: "Do not replace the owner.", command: "sleep 300" }],

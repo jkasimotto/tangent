@@ -61,7 +61,7 @@ test("tangent goal create has no human assignee option and keeps agent ownership
   assert.ok(optionNames(create).includes("own"), "session ownership remains a separate option");
 });
 
-test("goal mutations accept an explicit caller outside tmux", async (context) => {
+test("brain Goal creation stays unowned unless --own is explicit", async (context) => {
   const { runGoalCli } = await import("../dist/cli/index.js");
   const previousTmux = process.env.TMUX;
   delete process.env.TMUX;
@@ -86,9 +86,14 @@ test("goal mutations accept an explicit caller outside tmux", async (context) =>
   });
 
   await runGoalCli(["create", "--area", "otto/test", "--title", "Proof", "--done-when", "The proof passes.", "--session", "tangent-brain-test"]);
+  await runGoalCli(["create", "--area", "otto/test", "--title", "Owned proof", "--done-when", "The owned proof passes.", "--own", "--session", "tangent-brain-test"]);
   await runGoalCli(["start", "proof", "--launch", "codex/sol/low", "--session", "tangent-brain-test"]);
 
-  assert.equal(requests.find((request) => request.path === "/api/goals/create").body.caller, "tangent-brain-test");
+  const creates = requests.filter((request) => request.path === "/api/goals/create");
+  assert.equal(creates[0].body.caller, "tangent-brain-test");
+  assert.equal(Object.hasOwn(creates[0].body, "own"), false, "caller authority does not imply ownership");
+  assert.equal(creates[1].body.caller, "tangent-brain-test");
+  assert.equal(creates[1].body.own, "tangent-brain-test", "--own keeps explicit ownership");
   assert.equal(requests.find((request) => request.path === "/api/goals/start").body.caller, "tangent-brain-test");
 });
 

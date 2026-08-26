@@ -243,3 +243,37 @@ test("an inactive brain wakes with Julian's message, and the woken attempt reads
   const before = JSON.stringify(prompt.brain).match(/Julian woke this brain/g)?.length ?? 0;
   assert.equal(before, 1, "one wake, one notice");
 });
+
+test("an ended brain does not wake without a message, and a live record still reattaches", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-silent-wake-"));
+  const { trees, workspace } = await buildVault(root);
+  const openedSessions = [];
+  const base = await startShellServer(context, { here, root, trees, workspace, openedSessions });
+  if (!base) return;
+
+  const first = await post(base, "/api/brains/start", { area: "otto/test", instruction: "Own this Area." });
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  openedSessions.push(first.body.session);
+
+  // Stop agent ends the logical brain, so the record becomes inactive.
+  const killed = await fetch(`${base}/api/kill/${encodeURIComponent(first.body.session)}`, { method: "POST" }).then((response) => response.json());
+  assert.equal(killed.brainEnded, true);
+
+  const silent = await post(base, "/api/brains/start", { area: "otto/test", resume: true });
+  assert.equal(silent.status, 400, JSON.stringify(silent.body));
+  assert.match(silent.body.error, /message/i, "the server says what the wake needs");
+  const stillEnded = await fetch(`${base}/api/brains/show?area=${encodeURIComponent("otto/test")}`).then((response) => response.json());
+  assert.equal(stillEnded.brain.status, "inactive", "the refused wake starts nothing");
+  assert.doesNotMatch(JSON.stringify(stillEnded.brain), /Julian woke this brain/, "the refused wake records no notice");
+
+  const woken = await post(base, "/api/brains/start", { area: "otto/test", resume: true, instruction: "Take this Area back up." });
+  assert.equal(woken.status, 200, JSON.stringify(woken.body));
+  openedSessions.push(woken.body.session);
+
+  // A record that is still active lost its process, not its orders. That
+  // reattachment stays open with no message.
+  await new Promise((resolve) => execFile("tmux", ["kill-session", "-t", `=${woken.body.session}`], () => resolve()));
+  const reattached = await post(base, "/api/brains/start", { area: "otto/test", resume: true });
+  assert.equal(reattached.status, 200, JSON.stringify(reattached.body));
+  openedSessions.push(reattached.body.session);
+});

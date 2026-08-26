@@ -886,10 +886,16 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.deepEqual([durableRequests[0].status, durableRequests[0].closedReason], ["closed", "brain-ended"], "explicit brain end closes its open Requests");
   const briefWithoutBrain = await fetch(`${base}/api/goals/brief?file=${encodeURIComponent(pipelineGoal.file)}`).then((response) => response.json());
   assert.doesNotMatch(briefWithoutBrain.markdown, /## Brain/);
-  const brainResume = await fetch(`${base}/api/brains/start`, {
+  const silentResume = await fetch(`${base}/api/brains/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ area: "otto/test", resume: true }),
+  });
+  assert.equal(silentResume.status, 400, "an ended brain does not wake without a message");
+  const brainResume = await fetch(`${base}/api/brains/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ area: "otto/test", resume: true, instruction: "Take the test Area back up." }),
   }).then((response) => response.json());
   assert.equal(brainResume.session, "test-brain-g3");
   assert.equal(brainResume.generation, 3);

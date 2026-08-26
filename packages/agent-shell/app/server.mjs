@@ -3422,7 +3422,9 @@ async function describeWorkToBrain(owner, area, description, sources, launchOver
   const message = describedWorkNotice(area, description, sources);
   await recordBrainNotice(area, message);
   const route = owner.status === "active" ? "brain-started" : "brain-resumed";
-  const started = await startBrain(owner.area, { resume: true, ...(launchOverride ?? {}) });
+  // The description is already an unread notice, so this wake carries
+  // Julian's words even though the start call has no instruction text.
+  const started = await startBrain(owner.area, { resume: true, messageRecorded: true, ...(launchOverride ?? {}) });
   if (started.status !== 200) {
     return { status: started.status, error: `Your description was saved for the ${owner.area} brain, but the brain did not start: ${started.error}` };
   }
@@ -3691,7 +3693,7 @@ async function startBrain(area, options = {}) {
   const run = earlier
     ? earlier.then(
       (result) => result.status === 200
-        ? startBrainUnlocked(area, options.automaticRecovery ? { resume: true, automaticRecovery: true } : { resume: Boolean(options.resume) })
+        ? startBrainUnlocked(area, options.automaticRecovery ? { resume: true, automaticRecovery: true } : { resume: Boolean(options.resume), messageRecorded: Boolean(options.messageRecorded) })
         : startBrainUnlocked(area, options),
       () => startBrainUnlocked(area, options),
     )
@@ -3705,7 +3707,7 @@ async function startBrain(area, options = {}) {
 }
 
 /** Performs one exact-Area start, resume, or reattachment. */
-async function startBrainUnlocked(area, { instruction = "", choice = null, command = "", resume = false, automaticRecovery = false } = {}) {
+async function startBrainUnlocked(area, { instruction = "", choice = null, command = "", resume = false, automaticRecovery = false, messageRecorded = false } = {}) {
   if (!area || !existsSync(path.join(TREES_ROOT, area))) return { status: 404, error: `no Area ${area || "(none)"}` };
   const existing = await readBrain(BRAINS_ROOT, area);
   if (existing?.session) {
@@ -3717,11 +3719,18 @@ async function startBrainUnlocked(area, { instruction = "", choice = null, comma
   }
   if (resume) {
     if (!existing) return { status: 404, error: "no brain to resume on this Area" };
-    if (!automaticRecovery) existing.recovery = { attempts: 0, exhausted: false, lastAttemptAt: null };
     // An inactive brain wakes for Julian's message, not for the act of
-    // resuming. The message becomes an unread notice before the session
-    // exists, so the woken attempt reads it in its first message and knows
-    // why it is awake. Automatic recovery carries no message and stays silent.
+    // resuming. The server holds that rule too, because the message box is
+    // only the browser's half of it. Two resumes carry no message and stay
+    // allowed: automatic recovery, and the reattachment of a brain whose
+    // record is still active but whose process died.
+    if (!automaticRecovery && !messageRecorded && existing.status !== "active" && !instruction.trim()) {
+      return { status: 400, error: `the ${existing.area} brain is not live; send it a message to wake it` };
+    }
+    if (!automaticRecovery) existing.recovery = { attempts: 0, exhausted: false, lastAttemptAt: null };
+    // The wake message becomes an unread notice before the session exists, so
+    // the woken attempt reads it in its first message and knows why it is
+    // awake. Automatic recovery carries no message and stays silent.
     if (instruction.trim()) await recordBrainNotice(area, `Julian woke this brain: ${instruction.trim()}`);
     if (choice || command) {
       const launch = await launchCatalog.requested({ choice, command });

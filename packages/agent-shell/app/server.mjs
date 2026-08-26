@@ -69,7 +69,7 @@ import { startEventLoopWatchdog } from "./event-loop-watchdog.mjs";
 import { uniqueSessionName } from "./session-names.mjs";
 import { withDefaultModel } from "./agent-command.mjs";
 import { clearGoalCleanup, readAllGoalCleanups, readGoalCleanup, writeGoalCleanup } from "./goal-cleanup-record.mjs";
-import { appendJournalEntry, appendMilestone, boundedBrainPrompt, BRAIN_STRUCTURAL_LIMIT, clipSummary, composeBrainPrompt, emergencyStartProblem, exportLegacyAudit, inheritedInstructionFiles, journalFiles, projectAreaMemory, querySubtreeMilestones, selectCurrentDocuments } from "./area-brain-domain.mjs";
+import { appendJournalEntry, appendMilestone, boundedBrainPrompt, BRAIN_STRUCTURAL_LIMIT, clipSummary, composeBrainPrompt, emergencyStartProblem, exportLegacyAudit, inheritedInstructionFiles, journalFiles, projectAreaMemory, querySubtreeMilestones, readMilestones, selectCurrentDocuments } from "./area-brain-domain.mjs";
 import { materialOperationEvents, markOperationEventDelivered, readOperationEvents, writeOperationEvents } from "./operation-events.mjs";
 
 const rawExecFileAsync = promisify(execFile);
@@ -3445,17 +3445,55 @@ async function commitJournalCapture(changed, message, area, session) {
   return outcome;
 }
 
-/** Returns every Journal path when this entry still waits for a Git commit. */
+/** True when both durable downstream records exist for one Journal entry. */
+async function journalProcessingComplete(area, entry) {
+  const sourceId = `journal:${entry.id}`;
+  const [milestones, inbox] = await Promise.all([
+    readMilestones(BRAINS_ROOT, area),
+    readInbox(BRAINS_ROOT, area),
+  ]);
+  return milestones.items.some((item) => item.id === sourceId)
+    && inbox.notices.some((notice) => notice.sourceId === sourceId);
+}
+
+/**
+ * Finds only the Journal paths that still belong to this capture's refused
+ * commit. A marker in HEAD proves that the entry is durable. It does not
+ * prove that the entry gained its milestone and brain notice. In that case,
+ * a rollover archive linked by the entry's Journal can still be pending, but
+ * an unrelated active-Journal edit must stay out of the recovery commit.
+ */
 async function pendingJournalChangedPaths(area, entry) {
-  const changed = (await journalFiles(TREES_ROOT, area)).map((file) => path.relative(TREES_ROOT, file));
-  if (!changed.length || !existsSync(path.join(TREES_ROOT, ".git"))) return [];
+  const files = await journalFiles(TREES_ROOT, area);
+  const changed = files.map((file) => path.relative(TREES_ROOT, file));
+  if (!changed.length || !existsSync(path.join(TREES_ROOT, ".git"))) return { paths: [], persisted: true };
   const marker = `<!-- tangent-journal:${entry.id} -->`;
+  let persisted = false;
   for (const relative of changed) {
     const committed = await captureVaultGit(["show", `HEAD:${relative}`]).catch(() => "");
-    if (committed.includes(marker)) return [];
+    if (committed.includes(marker)) {
+      persisted = true;
+      break;
+    }
   }
-  const status = await captureVaultGit(["status", "--porcelain", "--", ...changed]);
-  return status.trim() ? changed : [];
+  if (!persisted) {
+    const status = await captureVaultGit(["status", "--porcelain", "--", ...changed]);
+    return { paths: status.trim() ? changed : [], persisted: false };
+  }
+
+  const containingFile = entry.existingFile || entry.file;
+  const current = await readFile(containingFile, "utf8").catch(() => "");
+  const linkedArchives = [...current.matchAll(/\((journal-[^)\/]+\.md)\)/g)].map((match) => match[1]);
+  const available = new Map(files.map((file) => [path.basename(file), file]));
+  const pending = [];
+  for (const name of new Set(linkedArchives)) {
+    const file = available.get(name);
+    if (!file) continue;
+    const relative = path.relative(TREES_ROOT, file);
+    const committed = await captureVaultGit(["show", `HEAD:${relative}`]).then(() => true).catch(() => false);
+    if (!committed) pending.push(relative);
+  }
+  return { paths: pending, persisted: true };
 }
 
 /** The vault paths one saved Journal entry changed, its active file first. */
@@ -4862,12 +4900,18 @@ const areaRoutesOperations = {
     const area = String(body.area ?? "");
     if (!flattenAreaPaths(await readTree(TREES_ROOT)).includes(area)) throw new Error("The destination Area does not exist.");
     const entry = await appendJournalEntry({ treesRoot: TREES_ROOT, area, text: body.text, idempotencyKey: body.idempotencyKey || body.id, source: body.source || "capture" });
-    const changed = entry.duplicate ? await pendingJournalChangedPaths(area, entry) : journalChangedPaths(entry);
-    if (entry.duplicate && !changed.length) return { ...entry, route: "duplicate", files: [] };
+    if (entry.duplicate && await journalProcessingComplete(area, entry)) return { ...entry, route: "duplicate", files: [] };
+    const pending = entry.duplicate ? await pendingJournalChangedPaths(area, entry) : { paths: journalChangedPaths(entry), persisted: false };
+    const changed = pending.paths;
+    if (entry.duplicate && !pending.persisted && !changed.length) {
+      return { ...entry, route: "not-committed", commitError: "The Journal entry is not in Git, and no pending Journal file can be committed.", files: [] };
+    }
     const relative = entry.existingFile ? path.relative(TREES_ROOT, entry.existingFile) : changed[0];
-    await runVaultGit(["add", "--", ...changed]);
-    const saved = await commitJournalCapture(changed, `note: ${area} Journal capture`, area, null);
-    if (!saved.committed) return { ...entry, route: "not-committed", commitError: saved.error, files: changed };
+    if (changed.length) {
+      await runVaultGit(["add", "--", ...changed]);
+      const saved = await commitJournalCapture(changed, `note: ${area} Journal capture`, area, null);
+      if (!saved.committed) return { ...entry, route: "not-committed", commitError: saved.error, files: changed };
+    }
     await appendMilestone({ root: BRAINS_ROOT, area, kind: "journal", summary: entry.text || String(body.text ?? "").trim(), ref: relative, idempotencyKey: `journal:${entry.id}`, now: entry.createdAt || new Date().toISOString() });
     const delivery = await deliverJournalToBrain(area, `Journal entry ${entry.id} was saved. Read ${relative} and respond in this Area conversation.`, `journal:${entry.id}`);
     return { ...entry, ...delivery, files: changed };

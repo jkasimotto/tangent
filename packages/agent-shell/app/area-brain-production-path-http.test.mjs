@@ -8,7 +8,7 @@
 // are what prove the work happened.
 
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -480,4 +480,78 @@ test("a Journal capture the vault refuses to commit wakes no brain", async (cont
   assert.equal(completeDuplicate.body.route, "duplicate", "a committed key stays a normal duplicate");
   assert.equal((await git("rev-parse", "HEAD")).trim(), recoveredHead, "the duplicate does not commit an unrelated Journal edit");
   assert.match(await git("status", "--porcelain", "--", "otto/test/journal.md"), /^ M /, "the unrelated edit stays uncommitted");
+});
+
+test("a refused Journal capture finishes after a later capture commits its entry", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-journal-interleaved-retry-"));
+  const { trees, workspace } = await buildVault(root);
+  /** Runs one Git command inside the isolated vault. */
+  const git = (...args) => new Promise((resolve, reject) => {
+    execFile("git", ["-C", trees, ...args], (error, stdout) => error ? reject(error) : resolve(stdout));
+  });
+  await git("init", "-q");
+  await git("config", "user.email", "test@tangent.local");
+  await git("config", "user.name", "Tangent Test");
+  const journal = path.join(trees, "otto", "test", "journal.md");
+  const earlierWords = "The earlier archive sentinel.";
+  await writeFile(journal, `# Journal\n\n## 2026-01-01T00:00:00.000Z\n\nSource: capture.\n\n${earlierWords}\n\n${"The filler line.\n".repeat(20_000)}`, "utf8");
+  await git("add", "-A");
+  await git("commit", "-qm", "seed");
+
+  const hook = path.join(trees, ".git", "hooks", "pre-commit");
+  await writeFile(hook, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+  const openedSessions = [];
+  const base = await startShellServer(context, { here, root, trees, workspace, openedSessions });
+  if (!base) return;
+
+  const started = await post(base, "/api/brains/start", { area: "otto/test", instruction: "Own this Area." });
+  assert.equal(started.status, 200, JSON.stringify(started.body));
+  openedSessions.push(started.body.session);
+  await fetch(`${base}/api/kill/${encodeURIComponent(started.body.session)}`, { method: "POST" });
+
+  const firstBody = { area: "otto/test", text: "The first capture must finish later.", idempotencyKey: "interleaved-first", source: "Agent Shell" };
+  const refused = await post(base, "/api/areas/journal", firstBody);
+  assert.equal(refused.body.route, "not-committed", "Git refuses the first capture after its rollover");
+  await rm(hook);
+
+  const secondBody = { area: "otto/test", text: "The later capture commits first.", idempotencyKey: "interleaved-second", source: "Agent Shell" };
+  const later = await post(base, "/api/areas/journal", secondBody);
+  assert.equal(later.status, 200, JSON.stringify(later.body));
+  assert.notEqual(later.body.route, "not-committed", "Git recovers for the later capture");
+  if (later.body.session) openedSessions.push(later.body.session);
+
+  // The later pathspec commit carries the active file and both entries. It
+  // does not carry the rollover archive. An unrelated draft then proves that
+  // the first retry commits only its own remaining archive.
+  await writeFile(journal, `${await readFile(journal, "utf8")}An unrelated Journal draft.\n`, "utf8");
+  const retry = await post(base, "/api/areas/journal", firstBody);
+  assert.equal(retry.status, 200, JSON.stringify(retry.body));
+  assert.equal(retry.body.duplicate, true, "the retry reuses the first entry");
+  assert.notEqual(retry.body.route, "duplicate", "the retry still finishes its missing downstream work");
+
+  const files = await readdir(path.dirname(journal));
+  const archives = files.filter((file) => /^journal-.*\.md$/.test(file));
+  assert.equal(archives.length, 1, "the rollover archive exists once");
+  const history = await fetch(`${base}/api/areas/journal?area=${encodeURIComponent("otto/test")}`).then((response) => response.json());
+  const allText = history.files.map((file) => file.text).join("\n");
+  assert.equal(allText.split(firstBody.text).length - 1, 1, "the first entry exists once");
+  assert.equal(allText.split(secondBody.text).length - 1, 1, "the later entry exists once");
+  assert.equal(allText.split(earlierWords).length - 1, 1, "the archived entry exists once");
+
+  const latestCommit = (await git("show", "--name-only", "--pretty=format:", "HEAD")).split("\n").filter(Boolean);
+  assert.deepEqual(latestCommit, [`otto/test/${archives[0]}`], "the retry commits only its pending rollover archive");
+  assert.match(await git("status", "--porcelain", "--", "otto/test/journal.md"), /^ M /, "the unrelated Journal draft stays uncommitted");
+
+  const milestones = await fetch(`${base}/api/areas/milestones?area=${encodeURIComponent("otto/test")}`).then((response) => response.json());
+  const journalMilestones = (milestones.milestones ?? []).filter((item) => item.kind === "journal");
+  assert.equal(journalMilestones.filter((item) => item.id === "journal:interleaved-first").length, 1, "the first capture gains one milestone");
+  assert.equal(journalMilestones.filter((item) => item.id === "journal:interleaved-second").length, 1, "the later capture keeps one milestone");
+  const inbox = JSON.parse(await readFile(path.join(root, "brains", "otto", "test", "inbox.json"), "utf8"));
+  assert.equal(inbox.notices.filter((notice) => notice.sourceId === "journal:interleaved-first").length, 1, "the first capture gains one brain notice");
+  assert.equal(inbox.notices.filter((notice) => notice.sourceId === "journal:interleaved-second").length, 1, "the later capture keeps one brain notice");
+
+  const recoveredHead = (await git("rev-parse", "HEAD")).trim();
+  const completeDuplicate = await post(base, "/api/areas/journal", firstBody);
+  assert.equal(completeDuplicate.body.route, "duplicate", "the completed retry becomes a normal duplicate");
+  assert.equal((await git("rev-parse", "HEAD")).trim(), recoveredHead, "the completed duplicate creates no commit");
 });

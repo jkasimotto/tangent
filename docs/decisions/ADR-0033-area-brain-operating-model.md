@@ -31,3 +31,17 @@ Prompt limits fail visibly and report omitted collections.
 
 The browser and new clients use `/api/operations`. The old Program API requires `TANGENT_LEGACY_PROGRAM_API=1` during the two-release window.
 The `tangent area audit` command is the only path to detached legacy records.
+
+## 2026-08-27 implementation notes
+
+One budget covers every generated character of a brain prompt. The checkpoint is generated text and sits inside it; only Julian's founding instruction sits outside. A prompt that cannot be built fails the brain start instead of starting a brain with no prompt.
+
+Every stored line that reaches a bounded prompt is clipped where it is written. A Journal note, a Goal title, and a Question subject carry no length of their own.
+
+Every Goal closure funnels through one milestone record, dropped Goals included. A one-time backfill dates existing closures by their Goal file.
+
+`tangent goal list` stays exact by default and reports what its child Areas hold, with the command that reads them.
+
+Work carries no attention strip, no Dock badge, and no inferred ask. A Question is a quiet count on its Area header and a deliberate review behind it. `ask-core.js` and `ask-dismissal-core.js` stay unreferenced for the two-release audit window; a governance lint refuses their return along with the strip, the badge, and the inferred-ask builders.
+
+Only an Operation with a problem reaches Work. Healthy Operations stay on the Area page.

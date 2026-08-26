@@ -59,6 +59,9 @@ Raw, debug, and CI commands remain callable but hidden from default help.
 
 Agent Shell centers each Area on one logical brain. The vault owns Area knowledge, and each bound repository owns code-agent instructions.
 Agent Shell derives inherited sources by path. It owns bounded runtime projections, Journal delivery, Requests, Goal queues, and Operation health.
+One budget covers every character Agent Shell generates for a brain prompt; only Julian's own founding instruction sits outside it.
+Work infers no ask. A Question exists only when a brain writes a Request, and it stays with that brain: a quiet count on the Area header, and a deliberate review behind it.
+Every Goal closure and every dropped Goal records one material milestone, so a brain's recent-work view matches what happened.
 
 Standalone package CLIs use collision-resistant binary names: `tangent-usage`, `tangent-search`, `tangent-rollup`, and `tangent-eval`. The root `tangent` CLI keeps the short subcommands, but product code is imported only when that command is selected and the package is installed.
 

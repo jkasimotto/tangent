@@ -106,6 +106,11 @@ Routine healthy polling, starts, stops, and repeated success stay quiet. Event i
 - `POST /api/brains/requests/answer`: `{ area, id, answer, note?, effectRevision? }`.
 - `GET /api/brains/show?area=<path>|session=<name>` reads one enriched brain.
 - `GET /api/sessions` reads the complete Work projection.
+- `GET /api/goals?area=<path>[&subtree=1]` lists Goals. An exact-Area result also carries `scope`, `childAreas`, `descendantGoals`, and the `subtreeCommand` that reads the rest.
+- `POST /api/areas/journal`: `{ area, text, idempotencyKey, source? }` saves the exact words, commits them, and then wakes the brain.
+- `GET /api/areas/journal?area=<path>` reads the active Journal and its archives in order.
+- `GET /api/areas/milestones?area=<path>[&since&limit]` reads material milestones across the Area subtree.
+- `GET /api/operations` lists Area Operations with one `mode`, one `state`, and any `problem`.
 
 Mutation routes validate exact Area authority, current revisions, and idempotency where the record supports retries. Read APIs can carry compatibility aliases. Mutation APIs do not have two meanings.
 

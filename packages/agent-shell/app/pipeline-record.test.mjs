@@ -196,6 +196,40 @@ test("legacy queues gain open status and invalid authority pauses", async () => 
   assert.match(invalid.migrationProblem, /does not match exact Area/);
 });
 
+test("a later started assignment supersedes a historical legacy wait", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "pipelines-"));
+  const legacy = newPipeline({ goal: "otto/tangent/goal-x.md", area: "otto/tangent", slug: "x", steps: [
+    { instruction: "Implement.", launch: claude },
+    { instruction: "Correct the implementation.", launch: claude },
+    { instruction: "Review.", launch: claude, kind: "review" },
+  ] });
+  legacy.steps[0].status = "waiting";
+  legacy.steps[0].session = "worker-1";
+  legacy.steps[0].reports = [{ type: "implementation-result", status: "blocked", reportedAt: "2026-08-26T01:00:00.000Z" }];
+  legacy.steps[1].status = "complete";
+  legacy.steps[1].session = "worker-2";
+  legacy.steps[1].startedAt = "2026-08-26T02:00:00.000Z";
+  legacy.steps[2].status = "running";
+  legacy.steps[2].session = "worker-3";
+  legacy.steps[2].startedAt = "2026-08-26T03:00:00.000Z";
+  legacy.currentAssignmentId = legacy.steps[0].id;
+  legacy.status = "paused";
+  legacy.migrationProblem = "Queue has 2 current attempts.";
+  await mkdir(path.dirname(pipelinePath(root, "otto/tangent", "x")), { recursive: true });
+  await writeFile(pipelinePath(root, "otto/tangent", "x"), `${JSON.stringify(legacy)}\n`);
+
+  const migrated = await readPipeline(root, "otto/tangent", "x");
+  assert.equal(migrated.steps[0].status, "ended");
+  assert.deepEqual(migrated.steps[0].migrationResolution, {
+    kind: "superseded-by-later-assignment",
+    successorAssignmentId: migrated.steps[1].id,
+  });
+  assert.equal(migrated.steps[0].reports[0].status, "blocked", "typed audit evidence stays attached");
+  assert.equal(migrated.currentAssignmentId, migrated.steps[2].id);
+  assert.equal(migrated.status, "open");
+  assert.equal(migrated.migrationProblem, null);
+});
+
 test("currentStep prefers running or stopped, then the first pending", () => {
   assert.equal(currentStep(recordWith(["complete", "running", "pending"])).index, 2);
   assert.equal(currentStep(recordWith(["complete", "stopped", "pending"])).index, 2);

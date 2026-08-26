@@ -56,22 +56,45 @@ export function normalizeQueueRecord(value) {
   const assignments = source.map((step, position) => normalizeStoredAssignment(step, position + 1));
   const revision = Math.max(1, Number(value.revision) || 1);
   const controllerArea = value.controllerArea ?? value.area;
+  let supersededLegacyWait = false;
+  for (let position = 0; position < assignments.length; position += 1) {
+    const assignment = assignments[position];
+    if (assignment.status !== "waiting") continue;
+    const successor = assignments.slice(position + 1).find((item) => item.status !== "pending"
+      || item.session
+      || item.startedAt
+      || item.attempts.length > 0
+      || item.reports.length > 0);
+    if (!successor) continue;
+    assignment.status = "ended";
+    assignment.endedAt ??= assignment.reports.at(-1)?.reportedAt ?? successor.startedAt ?? value.updatedAt ?? null;
+    assignment.migrationResolution ??= {
+      kind: "superseded-by-later-assignment",
+      successorAssignmentId: successor.id,
+    };
+    supersededLegacyWait = true;
+  }
   const running = assignments.filter((assignment) => ["running", "waiting"].includes(assignment.status));
+  const generatedMultipleAttemptProblem = /^Queue has \d+ current attempts\.$/.test(String(value.migrationProblem ?? ""));
+  const inheritedMigrationProblem = generatedMultipleAttemptProblem ? null : value.migrationProblem ?? null;
   const migrationProblem = controllerArea !== value.area
     ? `Queue controller ${controllerArea} does not match exact Area ${value.area}.`
     : running.length > 1
       ? `Queue has ${running.length} current attempts.`
-      : value.migrationProblem ?? null;
+      : inheritedMigrationProblem;
+  const activeAssignment = assignments.find((item) => ["running", "waiting"].includes(item.status));
+  const storedCurrent = assignments.find((item) => item.id === value.currentAssignmentId && ["running", "waiting"].includes(item.status));
+  const reopenSupersededPause = supersededLegacyWait && generatedMultipleAttemptProblem && value.status === "paused";
   return {
     ...value,
     schema: PIPELINE_SCHEMA,
     controllerArea,
     goalRevision: String(value.goalRevision ?? ""),
     revision,
-    status: migrationProblem ? "paused" : ["open", "complete", "paused", "canceled"].includes(value.status) ? value.status : "open",
+    status: migrationProblem ? "paused" : reopenSupersededPause ? "open" : ["open", "complete", "paused", "canceled"].includes(value.status) ? value.status : "open",
     migrationProblem,
     completionPolicy: value.completionPolicy ?? "review-pass",
-    currentAssignmentId: value.currentAssignmentId ?? assignments.find((item) => ["running", "waiting"].includes(item.status))?.id ?? null,
+    currentAssignmentId: storedCurrent?.id ?? activeAssignment?.id ?? null,
     idempotencyKeys: Array.isArray(value.idempotencyKeys) ? value.idempotencyKeys : [],
     assignments,
     steps: assignments,

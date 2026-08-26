@@ -41,18 +41,29 @@ export function submit(window, selector) {
 }
 
 /**
- * Opens a Document by title through Go to (⌘K): the work desk no longer
- * opens a Document from a Goal card or a Documents section
- * (design-compact-work-desk), so tests that only need a Document open reach
- * it through the finder, one of the routes that stayed.
+ * Opens a Document by title through Go to (⌘K) in the quick Document layer:
+ * the work desk no longer opens a Document from a Goal card or a Documents
+ * section (design-compact-work-desk), so tests that only need a Document open
+ * reach it through the finder, one of the routes that stayed.
  */
-export async function openDocumentViaGoTo(window, title) {
+export async function peekDocumentViaGoTo(window, title) {
   click(window, "#go-to-button");
   const input = window.document.querySelector("#go-to-input");
   input.value = title;
   input.dispatchEvent(new window.Event("input", { bubbles: true }));
   await settle(window);
   click(window, "[data-go-to-row='0']");
+  await settle(window);
+}
+
+/**
+ * Opens a Document in the full reader through Go to. The finder's own
+ * destination is the quick layer, so the reader needs the one control that
+ * leaves the quick path (design-quick-returnable-document-search D1).
+ */
+export async function openDocumentViaGoTo(window, title) {
+  await peekDocumentViaGoTo(window, title);
+  click(window, "[data-promote-document-peek]");
   await settle(window);
 }
 

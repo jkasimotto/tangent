@@ -2,12 +2,12 @@ import { markdownHeadingAnchor } from "./markdown-structure.js";
 
 /** Creates the Document controller from shell, rendering, Work, and navigation ports. */
 export function createDocumentReaderController({ shell, rendering, work, navigation }) {
-  const { state, api, post, paint, showToast, screen } = shell;
+  const { state, api, post, paint, showToast, screen, paintPeek, documentPeekLayer } = shell;
   const { documentComments, markdownHeadings, documentOutlineItems, documentGoal, renderDocumentArticle } = rendering;
   const { goalByFile, currentGoal, sessionsForGoal, humanName, areaLabel, agentReference } = work;
   const {
     decodeLink, vaultLinkRecord, revealArea, captureReturnPoint, restoreReturnPoint, selectGoal, showWorkAt,
-    openGoalAgent,
+    openGoalAgent, closeSessionLayer,
   } = navigation;
   /** Stores the current reader position for later navigation. */
   function rememberDocumentPosition() {
@@ -68,6 +68,222 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
       if (enteringReader) restoreReturnPoint(state.documentReturn);
     }
   }
+
+  // ---- The quick Document layer (design-quick-returnable-document-search) ----
+  // Go to opens a Document above the screen or the session Julian is on, so
+  // nothing below it repaints, unmounts, or loses its selection. The layer is
+  // read-only: comments, agent actions, and writing need the full reader, and
+  // `Open full reader` is the one control that leaves the quick path.
+
+  // The request owner stays outside serializable state. Only the newest serial
+  // may change the layer, so an out-of-order or late reply does nothing.
+  let peekRequest = null;
+  let peekSerial = 0;
+
+  /** True while this read still owns the open layer and its file. */
+  function peekOwnsResult(serial, file) {
+    return Boolean(state.documentPeek) && state.documentPeek.requestSerial === serial && state.documentPeek.file === file;
+  }
+
+  /** The indexed title and Area for one vault file, for the layer's loading header. */
+  function indexedDocument(file) {
+    return (state.vault?.documents ?? []).find((record) => record.file === file) ?? null;
+  }
+
+  /** The scrolling reading column inside the quick layer. */
+  function peekScroll() {
+    return documentPeekLayer?.querySelector(".document-peek-scroll") ?? null;
+  }
+
+  /** Stores the quick layer's reading position for its private trail. */
+  function rememberPeekPosition() {
+    const scroll = peekScroll();
+    if (state.documentPeek && scroll) state.documentPeek.positions.set(state.documentPeek.file, scroll.scrollTop);
+  }
+
+  /**
+   * Restores a heading target or the saved position inside the quick layer.
+   * Heading ids are looked up inside the layer: the reader below it can hold
+   * the same ids, and it comes first in document order.
+   */
+  function restorePeekPosition(heading = "") {
+    window.setTimeout(() => {
+      const peek = state.documentPeek;
+      const scroll = peekScroll();
+      if (!scroll || !peek?.document) return;
+      if (heading) return openPeekHeading(markdownHeadingAnchor(decodeLink(heading.split("#").at(-1)), new Map()));
+      scroll.scrollTop = peek.positions.get(peek.file) || 0;
+    }, 0);
+  }
+
+  /** Moves the quick layer to one of its own headings. */
+  function openPeekHeading(id) {
+    const selector = String(id).replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+    documentPeekLayer?.querySelector(`[id="${selector}"]`)?.scrollIntoView?.({ block: "start" });
+  }
+
+  /** Records one Document change in the quick layer's private trail. */
+  function updatePeekTrail(file, mode, index) {
+    const peek = state.documentPeek;
+    if (mode === "jump") {
+      peek.trailIndex = index;
+      return;
+    }
+    if (peek.trail[peek.trailIndex] === file) return;
+    peek.trail = peek.trail.slice(0, peek.trailIndex + 1);
+    peek.trail.push(file);
+    peek.trailIndex = peek.trail.length - 1;
+  }
+
+  /**
+   * Opens one Document above the current surface. It never changes
+   * `state.view`, never touches the terminal, and never stores a screen return
+   * point, because everything below it stays mounted.
+   */
+  async function openDocumentPeek(file, { heading = "", trail = "push", trailIndex = -1, origin = null } = {}) {
+    if (!file) return;
+    const opening = !state.documentPeek;
+    if (!opening) rememberPeekPosition();
+    const record = indexedDocument(file);
+    peekSerial += 1;
+    const serial = peekSerial;
+    peekRequest?.abort();
+    const request = new AbortController();
+    peekRequest = request;
+    if (opening) {
+      const focus = origin ?? (document.activeElement === document.body ? null : document.activeElement);
+      state.documentPeek = {
+        file, document: null, trail: [], trailIndex: -1, positions: new Map(),
+        returnFocus: focus, returnFocusKey: focus?.dataset?.focusKey ?? "",
+        requestSerial: serial, error: "", title: record?.title ?? "", area: record?.area ?? "",
+      };
+    } else {
+      Object.assign(state.documentPeek, {
+        file, document: null, requestSerial: serial, error: "",
+        title: record?.title ?? "", area: record?.area ?? "",
+      });
+    }
+    updatePeekTrail(file, trail, trailIndex);
+    paintPeek();
+    try {
+      const loaded = await api(`/api/document?file=${encodeURIComponent(file)}`, { signal: request.signal });
+      if (!peekOwnsResult(serial, file)) return;
+      state.documentPeek.document = loaded;
+      state.documentPeek.error = "";
+      paintPeek();
+      restorePeekPosition(heading);
+    } catch (error) {
+      // Cancellation is silent, and so is a late reply for a read the layer no
+      // longer owns. Neither may replace what Julian is looking at.
+      if (error?.kind === "abort") return;
+      if (!peekOwnsResult(serial, file)) return;
+      state.documentPeek.error = error.message;
+      paintPeek();
+    } finally {
+      if (peekRequest === request) peekRequest = null;
+    }
+  }
+
+  /** Reads the open Document again after a failed read. */
+  function retryDocumentPeek() {
+    const peek = state.documentPeek;
+    if (!peek) return;
+    return openDocumentPeek(peek.file, { trail: "jump", trailIndex: peek.trailIndex });
+  }
+
+  /** Moves backward or forward through the quick layer's private trail. */
+  function navigateDocumentPeekHistory(direction) {
+    const peek = state.documentPeek;
+    if (!peek) return;
+    const nextIndex = peek.trailIndex + (direction === "back" ? -1 : 1);
+    const file = peek.trail[nextIndex];
+    if (!file) return;
+    return openDocumentPeek(file, { trail: "jump", trailIndex: nextIndex });
+  }
+
+  /**
+   * Closes the quick layer and gives the keyboard back to the surface below.
+   * The screen and the session layer were never changed, so there is nothing
+   * to rebuild: focus is the only thing to put back.
+   */
+  function closeDocumentPeek() {
+    const peek = state.documentPeek;
+    if (!peek) return;
+    peekRequest?.abort();
+    peekRequest = null;
+    peekSerial += 1;
+    state.documentPeek = null;
+    paintPeek();
+    restorePeekFocus(peek);
+  }
+
+  /** Focuses the element the layer opened from, or the surface that replaced it. */
+  function restorePeekFocus(peek) {
+    const origin = peek.returnFocus;
+    if (origin && origin !== document.body && origin.isConnected) {
+      try { origin.focus({ preventScroll: true }); return; } catch {}
+    }
+    if (peek.returnFocusKey) {
+      const selector = String(peek.returnFocusKey).replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+      const target = screen.querySelector(`[data-focus-key="${selector}"]`);
+      if (target) {
+        target.focus({ preventScroll: true });
+        return;
+      }
+    }
+    const terminal = state.sessionPeek ? document.querySelector("#session-layer-terminal .xterm-helper-textarea, #session-layer-terminal textarea") : null;
+    try { (terminal ?? screen).focus({ preventScroll: true }); } catch {}
+  }
+
+  /**
+   * Leaves the quick path for the full reader, with the same file and reading
+   * position. Promotion means Julian chose Document work, so it also closes a
+   * session presentation below: the reader is a screen, not a layer.
+   */
+  function promoteDocumentPeek() {
+    const peek = state.documentPeek;
+    if (!peek) return;
+    rememberPeekPosition();
+    const file = peek.file;
+    const top = peek.positions.get(file) ?? 0;
+    closeDocumentPeek();
+    if (state.sessionPeek) closeSessionLayer();
+    state.documentPositions.set(file, top);
+    return openDocument(file);
+  }
+
+  /** Leaves the quick path for one explicit Goal or Area route. */
+  function leaveQuickPath() {
+    closeDocumentPeek();
+    if (state.sessionPeek) closeSessionLayer();
+  }
+
+  /**
+   * Opens one link from inside the quick layer. Documents, Area notes, and
+   * headings stay in the layer; a Goal or an Area is explicit navigation and
+   * leaves it.
+   */
+  function openPeekLink(target) {
+    const peek = state.documentPeek;
+    if (!peek) return;
+    const parts = String(target ?? "").split("#");
+    const path = parts.shift() || "";
+    const heading = parts.at(-1) || "";
+    if (!path && heading) return openPeekHeading(markdownHeadingAnchor(decodeLink(heading), new Map()));
+    const record = vaultLinkRecord(target, peek.file);
+    if (!record) return showToast(`Agent Shell cannot find “${target}”.`);
+    if (record.kind === "goal") {
+      leaveQuickPath();
+      return selectGoal(record.file);
+    }
+    if (record.kind === "note") {
+      // An Area note is a vault file like any other Document, so it stays in
+      // the quick layer instead of switching Julian to the Areas screen.
+      return openDocumentPeek(record.file, { heading });
+    }
+    return openDocumentPeek(record.file, { heading });
+  }
+
 
   /** Moves backward or forward through Documents opened in this reader. */
   function navigateDocumentHistory(direction) {
@@ -443,5 +659,5 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
 
   /** Opens the explicit next-step decision page. */
 
-  return { rememberDocumentPosition, restoreDocumentPosition, updateDocumentTrail, openDocument, navigateDocumentHistory, openVaultLink, openDocumentHeading, bindDocumentReader, refreshDocument, commentComposerKey, readerBlockOf, readerSelection, updateSelectionCommentButton, hideSelectionCommentButton, readerSectionInView, documentTitleLine, openCommentComposer, setCommentScope, editComment, syncCommentDraft, cancelCommentComposer, noteInComposer, composerResult, saveDocumentText, adoptSavedDocument, restoreDocumentText, submitCommentComposer, removeComment, stepComment, saveVisibleIdea, notifyDocumentComments };
+  return { rememberDocumentPosition, restoreDocumentPosition, updateDocumentTrail, openDocument, openDocumentPeek, retryDocumentPeek, navigateDocumentPeekHistory, closeDocumentPeek, promoteDocumentPeek, openPeekLink, openPeekHeading, navigateDocumentHistory, openVaultLink, openDocumentHeading, bindDocumentReader, refreshDocument, commentComposerKey, readerBlockOf, readerSelection, updateSelectionCommentButton, hideSelectionCommentButton, readerSectionInView, documentTitleLine, openCommentComposer, setCommentScope, editComment, syncCommentDraft, cancelCommentComposer, noteInComposer, composerResult, saveDocumentText, adoptSavedDocument, restoreDocumentText, submitCommentComposer, removeComment, stepComment, saveVisibleIdea, notifyDocumentComments };
 }

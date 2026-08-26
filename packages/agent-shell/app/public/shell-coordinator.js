@@ -8,13 +8,13 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   const {
     screen, backButton, shellMenu, goToLayer, goToInput, goToList, modalLayer, modalKicker, modalTitle, modalCopy,
     modalField, modalActions, buildGoToRows, goToCore, rememberScreenScroll, restoreReturnPoint, captureReturnPoint,
-    restoreReturnScroll, disposeTerminal, mountTerminal, updateStatusPill, openSessionLayer,
+    restoreReturnScroll, disposeTerminal, mountTerminal, updateStatusPill, openSessionLayer, closeSessionLayer,
   } = chrome;
   const {
     areaLabel, humanName, agentName, goalByFile, currentGoal, sessionForGoal, describeWorkSession,
     goalTrees, filteredGoalTrees,
     describeWorkSessions, stopSession, brainForAreaCard, brainStateLabel, agentReference, saveDescribeDraft,
-    saveDescribeSession, describeLaunchArea,
+    saveDescribeSession, describeLaunchArea, openBrainSession,
   } = work;
   const { allAreas, areaParent, preferredArea, areas, revealArea, selectedArea } = areasFeature;
   const { currentProgram, programById, programIsLive, programAreaDirectory } = programs;
@@ -23,7 +23,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     launchStepRequest, launchDraftRows, pipelineForGoal, pipelineRecordForGoal, syncDescribeDraft,
     DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
   } = launch;
-  const { openDocument, refreshDocument, rememberDocumentPosition, documentGoal } = documents;
+  const { openDocument, refreshDocument, rememberDocumentPosition, documentGoal, openDocumentPeek, closeDocumentPeek } = documents;
   let modalConfirm = null;
 
   /** Opens, closes, or toggles the shell menu. */
@@ -124,15 +124,25 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     goToList.children[state.goTo.selected]?.scrollIntoView?.({ block: "nearest" });
   }
 
-  /** Goes to one chosen row. Enter never starts an agent. */
+  /**
+   * Goes to one chosen row. Enter never starts an agent. A Document opens in
+   * the quick layer above the current surface, so the screen or session below
+   * it is never replaced (design-quick-returnable-document-search D1). A brain
+   * is a session, not a Document, so it leaves the quick path.
+   */
   function chooseGoToRow(row) {
     if (!row) return;
+    // The finder's own input is never the return target: the layer inherits
+    // the focus origin the finder captured when it opened.
+    const origin = state.goTo?.returnFocus ?? null;
     closeGoTo();
     if (row.kind === "brain") {
+      if (state.documentPeek) closeDocumentPeek();
       if (row.live) return openBrainSession(row.session);
+      if (state.sessionPeek) closeSessionLayer();
       return showWorkAt(row.area);
     }
-    return openDocument(row.file);
+    return openDocumentPeek(row.file, { origin });
   }
 
   /**

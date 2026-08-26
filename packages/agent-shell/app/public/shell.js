@@ -44,6 +44,7 @@ const {
   "shell-menu": shellMenu, "go-to-button": goToButton, "go-to-layer": goToLayer,
   "go-to-input": goToInput, "go-to-list": goToList,
   "session-layer": sessionLayer, "session-layer-title": sessionLayerTitle, "session-layer-terminal": sessionLayerTerminal,
+  "document-peek-layer": documentPeekLayer,
 } = shellDom();
 
 /**
@@ -79,12 +80,17 @@ function decodeLink(value) {
   }
 }
 
-/** Resolves one local link path against the selected Document. */
-function vaultLinkPath(target) {
+/**
+ * Resolves one local link path against the Document that is on screen. The
+ * quick Document layer shows a different file than the full reader, so the
+ * source file is a parameter, not `state.document`
+ * (design-quick-returnable-document-search 5.3).
+ */
+function vaultLinkPath(target, baseFile = state.document?.file ?? "") {
   const raw = decodeLink(String(target ?? "").split("#")[0].split("?")[0]).replaceAll("\\", "/");
   if (!raw || /^[a-z][a-z0-9+.-]*:/i.test(raw)) return raw;
   const parts = raw.startsWith("./") || raw.startsWith("../")
-    ? [...String(state.document?.file ?? "").split("/").slice(0, -1), ...raw.split("/")]
+    ? [...String(baseFile ?? "").split("/").slice(0, -1), ...raw.split("/")]
     : raw.replace(/^\//, "").split("/");
   const resolved = [];
   for (const part of parts) {
@@ -96,11 +102,11 @@ function vaultLinkPath(target) {
 }
 
 /** Finds one vault record from a full, short, or relative link target. */
-function vaultLinkRecord(target) {
-  const value = vaultLinkPath(target).replace(/\.md$/i, "");
+function vaultLinkRecord(target, baseFile = state.document?.file ?? "") {
+  const value = vaultLinkPath(target, baseFile).replace(/\.md$/i, "");
   const records = state.vault?.documents ?? [];
   if (value.includes("/")) return records.find((record) => record.file.replace(/\.md$/i, "") === value) ?? null;
-  const currentDirectory = String(state.document?.file ?? "").split("/").slice(0, -1).join("/");
+  const currentDirectory = String(baseFile ?? "").split("/").slice(0, -1).join("/");
   const nearby = currentDirectory ? `${currentDirectory}/${value}` : "";
   if (nearby) {
     const record = records.find((item) => item.file.replace(/\.md$/i, "") === nearby);
@@ -114,7 +120,7 @@ function vaultLinkRecord(target) {
  * in document-comments.js mirrors these rules to map a selection back to the
  * source; change both together.
  */
-function inlineMarkdown(value) {
+function inlineMarkdown(value, baseFile = state.document?.file ?? "") {
   const links = [];
   const source = String(value ?? "")
     .replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_match, target, alias) => {
@@ -144,7 +150,7 @@ function inlineMarkdown(value) {
       );
       continue;
     }
-    const record = vaultLinkRecord(link.target);
+    const record = vaultLinkRecord(link.target, baseFile);
     const fallback = humanName(link.target.split("#")[0].split("/").at(-1)?.replace(/\.md$/i, "") || link.target);
     const label = link.label || record?.title || fallback;
     html = html.replace(
@@ -174,11 +180,15 @@ function markdownToHtml(text, options = {}) {
   const headingIds = new Map();
   const comments = options.comments ?? [];
   const composer = options.composer ?? null;
+  // The quick Document layer reads a file the screen is not showing, and it
+  // owns no write controls (design-quick-returnable-document-search D5).
+  const baseFile = options.baseFile ?? state.document?.file ?? "";
+  const readOnly = Boolean(options.readOnly);
   const lineOffset = frontmatterLineCount(text);
   /** Comment blocks (and the composer) that belong under one file line. */
   const tailFor = (fileLine) => {
     const parts = comments.filter((comment) => comment.line === fileLine)
-      .map((comment) => composer?.editing?.index === comment.index ? commentComposerHtml(composer) : commentAsideHtml(comment));
+      .map((comment) => composer?.editing?.index === comment.index ? commentComposerHtml(composer) : commentAsideHtml(comment, readOnly));
     if (composer && !composer.editing && composer.placeLine === fileLine) parts.push(commentComposerHtml(composer));
     return parts.join("");
   };
@@ -255,14 +265,14 @@ function markdownToHtml(text, options = {}) {
       /** Returns the alignment class for one table column. */
       const cellClass = (column) => ` class="align-${alignments[column]}"`;
       html.push(
-        `<div class="markdown-table-wrap" data-line="${tableLine}"><table><thead><tr>${headers.map((cell, column) => `<th${cellClass(column)}>${inlineMarkdown(cell)}</th>`).join("")}</tr></thead>` +
-        `<tbody>${rows.map((row) => `<tr>${row.map((cell, column) => `<td${cellClass(column)}>${inlineMarkdown(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>${tableTail}`
+        `<div class="markdown-table-wrap" data-line="${tableLine}"><table><thead><tr>${headers.map((cell, column) => `<th${cellClass(column)}>${inlineMarkdown(cell, baseFile)}</th>`).join("")}</tr></thead>` +
+        `<tbody>${rows.map((row) => `<tr>${row.map((cell, column) => `<td${cellClass(column)}>${inlineMarkdown(cell, baseFile)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>${tableTail}`
       );
     } else if (heading) {
       closeList();
       const level = Math.min(4, heading[1].length);
       const id = markdownHeadingAnchor(heading[2], headingIds);
-      html.push(`<h${level} id="${escapeHtml(id)}" data-line="${fileLine}">${inlineMarkdown(heading[2])}</h${level}>${tail}`);
+      html.push(`<h${level} id="${escapeHtml(id)}" data-line="${fileLine}">${inlineMarkdown(heading[2], baseFile)}</h${level}>${tail}`);
     } else if (bullet || ordered) {
       const nextList = ordered ? "ol" : "ul";
       if (list !== nextList) {
@@ -270,13 +280,13 @@ function markdownToHtml(text, options = {}) {
         list = nextList;
         html.push(`<${list}>`);
       }
-      html.push(`<li data-line="${fileLine}">${inlineMarkdown((bullet || ordered)[1])}${tail}</li>`);
+      html.push(`<li data-line="${fileLine}">${inlineMarkdown((bullet || ordered)[1], baseFile)}${tail}</li>`);
     } else if (!line.trim()) {
       closeList();
       if (tail) html.push(tail);
     } else {
       closeList();
-      html.push(`<p data-line="${fileLine}">${inlineMarkdown(line)}</p>${tail}`);
+      html.push(`<p data-line="${fileLine}">${inlineMarkdown(line, baseFile)}</p>${tail}`);
     }
   }
   closeList();
@@ -286,11 +296,22 @@ function markdownToHtml(text, options = {}) {
     .replace(/\u0005\u0006/g, "</mark>");
 }
 
-/** One comment as a red-ruled block: author, words, and an always-visible remove control. */
-function commentAsideHtml(comment) {
+/**
+ * One comment as a red-ruled block: author, words, and an always-visible
+ * remove control. Read-only mode shows the same words without the edit and
+ * remove controls, because the quick Document layer never writes a file.
+ */
+function commentAsideHtml(comment, readOnly = false) {
   const author = comment.author || "Comment";
+  const body = `<span class="document-comment-author">${escapeHtml(author)}</span><span class="document-comment-text">${escapeHtml(comment.text)}</span>`;
+  if (readOnly) {
+    // No id: the full reader below the quick layer already owns these ids.
+    return `<aside class="document-comment read-only" role="note" aria-label="Comment from ${escapeHtml(author)}" data-comment-index="${comment.index}">
+    <span class="document-comment-body">${body}</span>
+  </aside>`;
+  }
   return `<aside class="document-comment" id="document-comment-${comment.index}" role="note" aria-label="Comment from ${escapeHtml(author)}" data-comment-index="${comment.index}" tabindex="-1">
-    <button class="document-comment-body" type="button" data-edit-comment="${comment.index}" title="Edit comment"><span class="document-comment-author">${escapeHtml(author)}</span><span class="document-comment-text">${escapeHtml(comment.text)}</span></button>
+    <button class="document-comment-body" type="button" data-edit-comment="${comment.index}" title="Edit comment">${body}</button>
     <button class="document-comment-remove" type="button" data-remove-comment="${comment.index}" aria-label="Remove comment" title="Remove comment">×</button>
   </aside>`;
 }
@@ -462,21 +483,22 @@ const documentReaderView = createDocumentReaderView({
 });
 const {
   documentGoal, readerDocuments, documentOutlineItems, documentOutlineLinks, documentCommentControls,
-  documentOutline, documentOutlineMenu, documentPicker, documentToolbar, renderDocumentArticle, renderDocument,
+  documentOutline, documentOutlineMenu, documentPicker, documentToolbar, renderDocumentArticle, renderDocumentPeek, renderDocument,
 } = documentReaderView;
 
 const documentReaderController = createDocumentReaderController({
-  shell: { state, api, post, paint, showToast, screen },
+  shell: { state, api, post, paint, showToast, screen, paintPeek: forward(() => renderDocumentPeekLayer), documentPeekLayer },
   rendering: { documentComments, markdownHeadings, documentOutlineItems, documentGoal, renderDocumentArticle },
   work: { goalByFile, currentGoal, sessionsForGoal, humanName, areaLabel, agentReference },
   navigation: {
     decodeLink, vaultLinkRecord, revealArea, captureReturnPoint, restoreReturnPoint,
     selectGoal: forward(() => selectGoal), showWorkAt: forward(() => showWorkAt),
-    openGoalAgent: forward(() => openGoalAgent),
+    openGoalAgent: forward(() => openGoalAgent), closeSessionLayer: forward(() => closeSessionLayer),
   },
 });
 const {
   rememberDocumentPosition, restoreDocumentPosition, updateDocumentTrail, openDocument, navigateDocumentHistory,
+  openDocumentPeek, retryDocumentPeek, navigateDocumentPeekHistory, closeDocumentPeek, promoteDocumentPeek, openPeekLink, openPeekHeading,
   openVaultLink, openDocumentHeading, bindDocumentReader, refreshDocument, commentComposerKey, readerBlockOf,
   readerSelection, updateSelectionCommentButton, hideSelectionCommentButton, readerSectionInView, documentTitleLine,
   openCommentComposer, setCommentScope, editComment, syncCommentDraft, cancelCommentComposer, noteInComposer,
@@ -490,12 +512,13 @@ const shellCoordinator = createShellCoordinator({
     screen, backButton, shellMenu, goToLayer, goToInput, goToList, modalLayer, modalKicker, modalTitle, modalCopy,
     modalField, modalActions, buildGoToRows, goToCore, rememberScreenScroll, restoreReturnPoint, captureReturnPoint,
     restoreReturnScroll, disposeTerminal, mountTerminal, updateStatusPill, openSessionLayer: forward(() => openSessionLayer),
+    closeSessionLayer: forward(() => closeSessionLayer),
   },
   work: {
     areaLabel, humanName, agentName, goalByFile, currentGoal, sessionForGoal, describeWorkSession,
     goalTrees, filteredGoalTrees,
     describeWorkSessions, stopSession, brainForAreaCard, brainStateLabel, agentReference, saveDescribeDraft,
-    saveDescribeSession, describeLaunchArea,
+    saveDescribeSession, describeLaunchArea, openBrainSession,
   },
   areasFeature: { allAreas, areaParent, preferredArea, areas, revealArea, selectedArea },
   programs: { currentProgram, programById, programIsLive, programAreaDirectory },
@@ -504,7 +527,7 @@ const shellCoordinator = createShellCoordinator({
     launchStepRequest, launchDraftRows, pipelineForGoal, pipelineRecordForGoal, syncDescribeDraft,
     DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
   },
-  documents: { openDocument, refreshDocument, rememberDocumentPosition, documentGoal },
+  documents: { openDocument, refreshDocument, rememberDocumentPosition, documentGoal, openDocumentPeek, closeDocumentPeek },
 });
 const {
   toggleShellMenu, goToRows, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWorkAt, confirmRebuild, reloadChanges,
@@ -863,6 +886,29 @@ function renderSessionLayer() {
 }
 
 /**
+ * Draws the quick Document layer above the current screen and session. It
+ * never touches `#screen`, and it makes the surfaces below it inert, so only
+ * the top layer takes pointer and assistive input
+ * (design-quick-returnable-document-search 5.1).
+ */
+function renderDocumentPeekLayer() {
+  const peek = state.documentPeek;
+  const open = Boolean(peek);
+  documentPeekLayer.hidden = !open;
+  screen.toggleAttribute("inert", open);
+  sessionLayer.toggleAttribute("inert", open);
+  if (!open) {
+    documentPeekLayer.replaceChildren();
+    return;
+  }
+  const focusKey = documentPeekLayer.contains(document.activeElement) ? document.activeElement?.dataset?.peekKey ?? "" : "";
+  documentPeekLayer.innerHTML = renderDocumentPeek(peek);
+  const restored = focusKey ? documentPeekLayer.querySelector(`[data-peek-key="${focusKey}"]`) : null;
+  (restored ?? documentPeekLayer.querySelector(".document-peek-surface"))?.focus?.({ preventScroll: true });
+  mountMermaidDiagrams(documentPeekLayer.querySelector(".document-content"));
+}
+
+/**
  * The stable identity of the focused control, if it carries one. A poll that
  * changes any visible fact rebuilds the screen from strings, which would drop
  * focus mid-scan; `data-focus-key` names the control across that rebuild
@@ -998,6 +1044,11 @@ function returnsToBrain() {
 
 /** Renders changed state while preserving active form inputs. */
 function paint(force = false) {
+  // The screen under the quick Document layer must not rebuild while that
+  // layer is open: a rebuild would discard the exact surface Escape reveals.
+  // Closing and promoting the layer are the only paths that repaint it
+  // (design-quick-returnable-document-search D8).
+  if (state.documentPeek) return updateHeader();
   // Goal selection is a work-view gesture: leaving the desk clears it.
   if (state.view !== "work" && state.goalSelection.length) state.goalSelection = [];
   if (state.loading) {
@@ -1336,7 +1387,7 @@ bindShellEvents({
   shell: { state, post, paint, refresh, showToast },
   chrome: {
     screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction, shellMenu, goToButton, goToLayer,
-    goToInput, modalLayer, terminalFit: terminalController.fit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu,
+    goToInput, modalLayer, documentPeekLayer, terminalFit: terminalController.fit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu,
     confirmRebuild, reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, restoreReturnPoint,
     showDecision, showCreate, showDescribe, toggleAwake, openModal, closeModal, modalConfirm: getModalConfirm, openSessionLayer, closeSessionLayer,
   },
@@ -1371,6 +1422,7 @@ bindShellEvents({
     openDocument, navigateDocumentHistory, openVaultLink, openDocumentHeading, openCommentComposer, setCommentScope,
     editComment, cancelCommentComposer, submitCommentComposer, removeComment, stepComment, saveVisibleIdea,
     notifyDocumentComments, refreshDocument, leaveReader, updateSelectionCommentButton, openReaderAgent,
+    closeDocumentPeek, promoteDocumentPeek, retryDocumentPeek, navigateDocumentPeekHistory, openPeekLink, openPeekHeading,
   },
 });
 

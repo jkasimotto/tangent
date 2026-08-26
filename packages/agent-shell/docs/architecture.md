@@ -34,6 +34,8 @@ The browser entry `app/public/shell.js` composes feature ports. `shell-coordinat
 
 Private module and controller-loopback contracts can change with all in-repository callers. The public loopback URL, Vault Markdown, Git provenance, tmux bindings, and persisted workflow schemas remain compatible. See ADR-0031 and ADR-0032.
 
+The browser stacks its surfaces in one fixed order: `#screen`, the session layer, the quick Document layer, the modal layer, and the `Go to` finder. The key order matches that visual order, so a command for a lower layer never reaches past a visible destination. `Go to` opens a Document in the read-only quick layer above the current screen or session, which is not repainted or unmounted while the layer is open; `Open full reader` is the one control that leaves the quick path (design record: design-quick-returnable-document-search).
+
 The browser has one Area-based Work destination. Each exact Area has one logical brain identity. Its product lifecycle is active or inactive. Runtime attempts, health, waiting, and recovery do not change its visible author.
 
 The vault owns Area knowledge. The bound product repository owns code-agent rules. Agent Shell derives both instruction stacks by path.

@@ -1337,6 +1337,26 @@ details.more-work .area-work-list { margin-top: 18px; }
 
 /* Modal and toast */
 
+/* The quick Document layer: Go to reads a Document above the screen or the
+   session Julian is on, and Escape reveals that exact surface again
+   (design-quick-returnable-document-search). It sits above the session layer
+   and below the modal layer, so the visual order matches the key order. */
+.document-peek-layer { position: fixed; inset: 0; z-index: 90; display: grid; padding: 34px; background: rgba(3, 5, 8, .66); backdrop-filter: blur(3px); place-items: stretch; }
+.document-peek-layer[hidden] { display: none; }
+.document-peek-surface { display: grid; min-width: 0; min-height: 0; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 16px; background: var(--bg); box-shadow: 0 28px 80px rgba(0, 0, 0, .6); grid-template-rows: 52px minmax(0, 1fr); }
+.document-peek-surface:focus { outline: none; }
+.document-peek-header { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 24px; padding: 0 18px; border-bottom: 1px solid var(--line); background: rgba(13, 15, 18, .9); }
+.document-peek-route { display: flex; min-width: 0; align-items: center; gap: 12px; }
+.document-peek-route .area-path { flex: none; margin: 0; font-size: 12px; white-space: nowrap; }
+.document-peek-title { overflow: hidden; color: var(--text); font-size: 13px; font-weight: 640; text-overflow: ellipsis; white-space: nowrap; }
+.document-peek-actions { display: flex; flex: none; align-items: center; gap: 8px; }
+.document-peek-scroll { min-width: 0; min-height: 0; overflow-y: auto; }
+.document-peek-scroll .document-page { max-width: 820px; margin: 0 auto; padding: 34px 30px 90px; grid-column: auto; }
+.document-peek-error { display: grid; align-content: center; justify-items: center; gap: 16px; padding: 40px; text-align: center; }
+.document-peek-error p { margin: 0; max-width: 560px; color: var(--muted); font-size: 15px; line-height: 1.6; }
+.document-peek-error-actions { display: flex; gap: 10px; }
+.document-comment.read-only .document-comment-body { display: grid; gap: 4px; text-align: left; }
+
 .modal-layer { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px; background: rgba(2, 4, 6, .76); backdrop-filter: blur(8px); }
 .modal-layer[hidden] { display: none; }
 .modal { width: min(500px, 100%); padding: 30px; border: 1px solid var(--line-strong); border-radius: 18px; background: var(--surface-raised); box-shadow: 0 28px 80px rgba(0, 0, 0, .48); }

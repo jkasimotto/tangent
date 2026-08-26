@@ -3,7 +3,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   const { state, post, paint, refresh, showToast } = shell;
   const {
     screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction, shellMenu, goToButton, goToLayer,
-    goToInput, modalLayer, terminalFit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu, confirmRebuild,
+    goToInput, modalLayer, documentPeekLayer, terminalFit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu, confirmRebuild,
     reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, showDecision,
     showCreate, showDescribe, toggleAwake, openModal, closeModal, modalConfirm, restoreReturnPoint, openSessionLayer, closeSessionLayer,
   } = chrome;
@@ -38,6 +38,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     openDocument, navigateDocumentHistory, openVaultLink, openDocumentHeading, openCommentComposer, setCommentScope,
     editComment, cancelCommentComposer, submitCommentComposer, removeComment, stepComment, saveVisibleIdea,
     notifyDocumentComments, refreshDocument, leaveReader, updateSelectionCommentButton, openReaderAgent,
+    closeDocumentPeek, promoteDocumentPeek, retryDocumentPeek, navigateDocumentPeekHistory, openPeekLink, openPeekHeading,
   } = documents;
   const awakeButton = document.querySelector("#awake-button");
 
@@ -141,8 +142,31 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     return true;
   }
 
+  /**
+   * Routes one click inside the quick Document layer. It runs before every
+   * screen rule, because the layer holds the same link and heading markup as
+   * the reader below it (design-quick-returnable-document-search 5.3).
+   */
+  function handleDocumentPeekClick(event) {
+    const target = event.target;
+    if (target === documentPeekLayer) return closeDocumentPeek();
+    if (target.closest?.("[data-close-document-peek]")) return closeDocumentPeek();
+    if (target.closest?.("[data-promote-document-peek]")) return promoteDocumentPeek();
+    if (target.closest?.("[data-retry-document-peek]")) return retryDocumentPeek();
+    const history = target.closest?.("[data-document-peek-history]");
+    if (history) return navigateDocumentPeekHistory(history.dataset.documentPeekHistory);
+    const vaultLink = target.closest?.("[data-open-vault-link]");
+    if (vaultLink) return openPeekLink(vaultLink.dataset.openVaultLink);
+    const heading = target.closest?.("[data-document-heading]");
+    if (heading) {
+      event.preventDefault();
+      return openPeekHeading(heading.dataset.documentHeading);
+    }
+  }
+
   document.addEventListener("click", async (event) => {
     const target = event.target;
+    if (state.documentPeek && documentPeekLayer.contains(target)) return handleDocumentPeekClick(event);
     const cursor = target.closest?.("[data-work-cursor]");
     if (cursor && state.view === "work") setWorkCursor(cursor, false);
     if (target.closest?.("[data-open-area-focus], [data-change-area-focus]")) return openAreaFocusPicker();
@@ -1126,7 +1150,47 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (event.target === event.currentTarget || event.target.closest?.("[data-close-session-layer]")) closeSessionLayer();
   });
 
+  // Tab stays inside the quick Document layer while it is the top surface.
+  // The screen and the session layer are marked inert, but the trap must not
+  // depend on that (design-quick-returnable-document-search 5.1).
+  documentPeekLayer.addEventListener("keydown", (event) => {
+    if (event.key !== "Tab" || !state.documentPeek) return;
+    const stops = [...documentPeekLayer.querySelectorAll('button:not([disabled]), a[href], [tabindex="-1"].document-peek-surface')];
+    if (!stops.length) return;
+    const first = stops[0];
+    const last = stops.at(-1);
+    const active = document.activeElement;
+    if (event.shiftKey && (active === first || !documentPeekLayer.contains(active))) {
+      event.preventDefault();
+      last.focus();
+      return;
+    }
+    if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  });
+
   document.addEventListener("keydown", (event) => {
+    // The layer order owns the key order. ⌘K opens the finder from any layer,
+    // and while the finder is open only its own keys run: a command for a
+    // lower layer must never reach past a visible destination
+    // (design-quick-returnable-document-search D7).
+    if (shortcutMatches(event, KEYMAP.goTo)) {
+      event.preventDefault();
+      return openGoTo();
+    }
+    if (state.goTo) return;
+    // The quick Document layer is the top destination below a modal. It owns
+    // Escape and blocks ⌘J, ⌘/, and every screen key below it.
+    if (state.documentPeek && modalLayer.hidden) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        return closeDocumentPeek();
+      }
+      if (shortcutMatches(event, KEYMAP.session) || shortcutMatches(event, KEYMAP.findWork)) event.preventDefault();
+      return;
+    }
     if (shortcutMatches(event, KEYMAP.session)) {
       event.preventDefault();
       return state.sessionPeek ? closeSessionLayer() : state.view === "work" ? enterCursorSession() : showToast("Return to Work to choose a session.");
@@ -1156,12 +1220,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         return;
       }
     }
-    if (shortcutMatches(event, KEYMAP.goTo)) {
-      event.preventDefault();
-      return openGoTo();
-    }
-    // No other global shortcut fires while the finder holds the keyboard.
-    if (state.goTo) return;
     const textEntry = event.target.closest?.("input, textarea, select, [contenteditable='true'], .terminal-host");
     if (state.view === "work" && !textEntry && !event.metaKey && !event.ctrlKey && !event.altKey) {
       const rows = visibleCursorRows();

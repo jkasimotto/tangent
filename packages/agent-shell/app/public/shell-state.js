@@ -23,6 +23,7 @@ export function createShellState(storage = globalThis.localStorage, href = globa
     sessions: [], contextHandoverTokens: 0,
     currentFile: storage.getItem("agent-shell.current-goal") || "", view: initialView,
     document: null, documentReturn: null, documentTrail: [], documentTrailIndex: -1, documentPositions: new Map(),
+    documentPeek: null,
     commentComposer: null, commentCursor: -1,
     describeReturn: null, describeDraft: storedDescribeDraft?.session ? null : storedDescribeDraft, describeSessionName: savedDescribeSession,
     areaSelection: requestedArea || storage.getItem("agent-shell.last-area") || "", createArea: "", createReturnView: "work",

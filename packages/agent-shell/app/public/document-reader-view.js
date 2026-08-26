@@ -134,18 +134,67 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
       </header>`;
   }
 
-  /** Renders one linked Markdown Document in the reading column. */
-  function renderDocumentArticle() {
-    if (!state.document) return `<div class="loading">Opening the Document…</div>`;
+  /**
+   * Renders one linked Markdown Document in the reading column. The Document
+   * and its source file are arguments, because the quick Document layer shows
+   * a file the screen is not showing
+   * (design-quick-returnable-document-search 6.3).
+   */
+  function renderDocumentArticle(source = state.document, { readOnly = false } = {}) {
+    if (!source) return `<div class="loading">Opening the Document…</div>`;
     return `
       <article class="document-page">
         <header class="document-heading">
-          <h1>${escapeHtml(state.document.title)}</h1>
+          <h1>${escapeHtml(source.title)}</h1>
         </header>
-        <div class="document-content">${markdownToHtml(state.document.text, { comments: state.document.comments ?? [], composer: state.commentComposer })}</div>
-        <p class="document-source">Source: ${escapeHtml(state.document.file)}</p>
+        <div class="document-content">${markdownToHtml(source.text, { comments: source.comments ?? [], composer: readOnly ? null : state.commentComposer, readOnly, baseFile: source.file })}</div>
+        <p class="document-source">Source: ${escapeHtml(source.file)}</p>
       </article>
-      <button class="selection-comment-button" type="button" data-comment-new hidden>Comment <kbd>⌘⌥M</kbd></button>`;
+      ${readOnly ? "" : `<button class="selection-comment-button" type="button" data-comment-new hidden>Comment <kbd>⌘⌥M</kbd></button>`}`;
+  }
+
+  /**
+   * Renders the quick Document layer: a read-only reading column above the
+   * screen or the session Julian was on. Escape closes it, and only
+   * `Open full reader` leaves the quick path
+   * (design-quick-returnable-document-search 5.2).
+   */
+  function renderDocumentPeek(peek) {
+    const loaded = peek.document;
+    const title = loaded?.title || peek.title || "Document";
+    const area = loaded?.area ?? peek.area ?? "";
+    const canGoBack = peek.trailIndex > 0;
+    const canGoForward = peek.trailIndex >= 0 && peek.trailIndex < peek.trail.length - 1;
+    const body = peek.error
+      ? `<div class="document-peek-error" role="alert">
+          <p>${escapeHtml(peek.error)}</p>
+          <div class="document-peek-error-actions">
+            <button class="primary-button" type="button" data-retry-document-peek data-peek-key="retry">Retry</button>
+            <button class="quiet-button" type="button" data-close-document-peek data-peek-key="close-error">Close <kbd>esc</kbd></button>
+          </div>
+        </div>`
+      : loaded
+        ? `<div class="document-peek-scroll">${renderDocumentArticle(loaded, { readOnly: true })}</div>`
+        : `<div class="loading" role="status">Opening ${escapeHtml(title)}…</div>`;
+    return `
+      <section class="document-peek-surface" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}" tabindex="-1">
+        <header class="document-peek-header">
+          <div class="document-peek-route">
+            <div class="document-history-controls" aria-label="Reading history">
+              <button type="button" data-document-peek-history="back" data-peek-key="back" aria-label="Previous Document" title="Previous Document" ${canGoBack ? "" : "disabled"}>←</button>
+              <button type="button" data-document-peek-history="forward" data-peek-key="forward" aria-label="Next Document" title="Next Document" ${canGoForward ? "" : "disabled"}>→</button>
+            </div>
+            ${areaPath(area)}
+            <span class="document-route-separator" aria-hidden="true">/</span>
+            <strong class="document-peek-title">${escapeHtml(title)}</strong>
+          </div>
+          <div class="document-peek-actions">
+            <button class="quiet-button" type="button" data-promote-document-peek data-peek-key="promote">Open full reader</button>
+            <button class="quiet-button" type="button" data-close-document-peek data-peek-key="close">Close <kbd>esc</kbd></button>
+          </div>
+        </header>
+        ${body}
+      </section>`;
   }
 
   /** Renders one calm Document reader with optional navigation at the edge. */
@@ -166,5 +215,5 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
 
   /** Releases the terminal, socket, and resize observer. */
 
-  return { documentGoal, readerDocuments, documentOutlineItems, documentOutlineLinks, documentCommentControls, documentOutline, documentOutlineMenu, documentPicker, documentToolbar, renderDocumentArticle, renderDocument };
+  return { documentGoal, readerDocuments, documentOutlineItems, documentOutlineLinks, documentCommentControls, documentOutline, documentOutlineMenu, documentPicker, documentToolbar, renderDocumentArticle, renderDocumentPeek, renderDocument };
 }

@@ -327,7 +327,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   async function performProgramAction(action, id) {
     const program = programById(id);
     if (!program) return;
-    await post("/api/programs/control", { id: program.id, action });
+    await post("/api/operations/control", { id: program.id, action });
     if (["stop", "close"].includes(action) && state.view === "program-session") state.view = "program-detail";
     await refresh();
     // The refresh above joins a reading that started before this write, and it

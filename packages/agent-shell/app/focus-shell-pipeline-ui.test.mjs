@@ -75,7 +75,7 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
       return jsonResponse({ ok: true, session: "dnd-ship-the-map" });
     }
     if (pathname === "/api/sessions") return jsonResponse({ boot: "boot-1", caffeinate: false, sessions, pipelines: pipeline ? [pipeline] : [] });
-    if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
+    if (pathname === "/api/operations") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
     if (pathname === "/api/launch/options") {
       return jsonResponse({
         harnesses: [

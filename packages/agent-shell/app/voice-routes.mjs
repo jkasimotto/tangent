@@ -1,6 +1,7 @@
 import { readJson, sendJson } from "./http-json.mjs";
+import { randomUUID } from "node:crypto";
 
-/** Creates the HTTP routes for spoken and typed command routing. */
+/** Creates spoken and typed Journal capture routes. */
 export function createVoiceRoutes(operations) {
   const unavailable = { error: "no Groq key: set GROQ_API_KEY or keep one in otto-launcher/.env" };
 
@@ -18,10 +19,10 @@ export function createVoiceRoutes(operations) {
     try {
       const audio = await readBinary(request);
       if (audio.length < 200) { sendJson(response, 400, { error: "no audio" }); return; }
-      const visible = String(request.headers["x-visible-areas"] ?? "").split(",").filter(Boolean);
-      const context = await operations.context(focused, visible);
-      const transcript = await operations.transcribe(audio, request.headers["content-type"], operations.nameHints(context));
-      sendJson(response, 200, { transcript, ...await operations.route(transcript, focused, context) });
+      const area = url.searchParams.get("area") || String(request.headers["x-capture-area"] ?? "");
+      if (!area) { sendJson(response, 400, { error: "capture Area required" }); return; }
+      const transcript = await operations.transcribe(audio, request.headers["content-type"], [area.split("/").at(-1)]);
+      sendJson(response, 200, { transcript, entry: await operations.capture({ area, text: transcript, idempotencyKey: request.headers["x-idempotency-key"] || randomUUID(), source: "voice" }) });
     } catch (error) {
       sendJson(response, 500, { error: String(error.message ?? error) });
     }
@@ -29,14 +30,12 @@ export function createVoiceRoutes(operations) {
 
   /** Routes one typed command through the same action grammar. */
   async function command(request, response) {
-    if (!operations.available()) { sendJson(response, 503, unavailable); return; }
     const body = await readJson(request);
     const text = String(body.text ?? "").trim();
     if (!text) { sendJson(response, 400, { error: "text required" }); return; }
     try {
-      const focused = body.focused || operations.chatSession;
-      const context = await operations.context(focused, Array.isArray(body.visibleAreas) ? body.visibleAreas : []);
-      sendJson(response, 200, { transcript: text, ...await operations.route(text, focused, context) });
+      if (!body.area) { sendJson(response, 400, { error: "capture Area required" }); return; }
+      sendJson(response, 200, { transcript: text, entry: await operations.capture({ area: body.area, text, idempotencyKey: body.idempotencyKey || randomUUID(), source: "typed capture" }) });
     } catch (error) {
       sendJson(response, 500, { error: String(error.message ?? error) });
     }

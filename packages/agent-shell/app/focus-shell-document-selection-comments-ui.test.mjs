@@ -47,7 +47,7 @@ test("a second comment lands on the words Julian selected, and the reader holds 
     }
     if (options.method === "POST") return jsonResponse({ ok: true });
     if (pathname === "/api/sessions") return jsonResponse({ boot: "boot-1", caffeinate: false, sessions: [], pipelines: [] });
-    if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
+    if (pathname === "/api/operations") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
     if (pathname === "/api/document") return jsonResponse(served());
     return jsonResponse({
       areas: [{ path: "otto", name: "otto", goals: [] }, { path: "otto/dnd", name: "dnd", goals: [], documents: [doc] }],

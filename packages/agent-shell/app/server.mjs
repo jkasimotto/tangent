@@ -67,7 +67,7 @@ import { uniqueSessionName } from "./session-names.mjs";
 import { withDefaultModel } from "./agent-command.mjs";
 import { clearGoalCleanup, readAllGoalCleanups, readGoalCleanup, writeGoalCleanup } from "./goal-cleanup-record.mjs";
 import { BRAIN_COMMAND_NOUNS, installedCommandReference } from "./brain-command-reference.mjs";
-import { appendJournalEntry, boundedBrainPrompt, inheritedInstructionFiles, journalFiles } from "./area-brain-domain.mjs";
+import { appendJournalEntry, appendMilestone, boundedBrainPrompt, exportLegacyAudit, inheritedInstructionFiles, journalFiles, querySubtreeMilestones } from "./area-brain-domain.mjs";
 
 const rawExecFileAsync = promisify(execFile);
 const TMUX_COMMAND_TIMEOUT_MS = Number(process.env.TANGENT_TMUX_COMMAND_TIMEOUT_MS ?? 10_000);
@@ -589,10 +589,10 @@ async function notifyBrainOfDocumentComments(file) {
  * decision 5): exactly one comment must start with the given words, and the
  * removal is its own named commit, so nothing is lost silently.
  */
-async function resolveVaultDocumentComment(file, prefix, note, tmuxSession) {
+async function resolveVaultDocumentComment(file, prefix, note, tmuxSession, index = null) {
   const current = await readVaultDocument(file);
   if (!current) return { status: 404, error: `no document ${file}` };
-  const result = documentComments.resolveComment(current.text, prefix);
+  const result = documentComments.resolveComment(current.text, prefix, index);
   if (result.error) return { status: result.matches.length ? 409 : 404, error: result.error, matches: result.matches };
   const words = result.comment.text.split(/\s+/).slice(0, 6).join(" ");
   const message = `resolve: ${current.area} ${path.basename(file, ".md")} "${words}"` + (note ? `\n\n${String(note).trim()}` : "");
@@ -2697,6 +2697,20 @@ async function completePipelineStep(record, step, text, source) {
   const next = nextPendingStep(record, step.index);
   const stepWord = source === "skip" ? "skipped" : "complete";
   if (!next) {
+    const plannedReview = /\b(review|verify|validation)\b/i.test(step.instruction ?? "");
+    const passed = /\b(pass(?:ed)?|change(?:s)? not needed|no changes required|done condition holds)\b/i.test(text)
+      && !/\b(did not pass|not passed|fail(?:ed)?|change needed|changes required)\b/i.test(text);
+    if (source === "agent" && plannedReview && passed) {
+      const byFile = await goalsByFile();
+      if (byFile.has(record.goal)) {
+        const goal = byFile.get(record.goal);
+        const changed = await cascadeGoalDone(record.goal, byFile);
+        await vaultCommit(changed, `update: ${goal.area} goal ${goal.slug} done after planned review`, goal.area, null);
+        await appendMilestone({ root: BRAINS_ROOT, area: goal.area, kind: "goal-done", summary: `${goal.title} passed its planned review and closed.`, ref: goal.file, idempotencyKey: `goal-done:${goal.file}:${step.endedAt}`, now: step.endedAt });
+        await notifyBrain(record.area, `Goal ${record.slug}: the final planned review passed and Tangent marked the Goal done. Last handover: ${brainMessageExcerpt(step.handover)}`);
+        return { status: 200, state: "goal-done", next: null, pipeline: record };
+      }
+    }
     await notifyBrain(record.area, `Goal ${record.slug}: pipeline complete (${record.steps.length} steps; step ${step.index} ${stepWord}, ${step.label || "agent"}). Last handover: ${brainMessageExcerpt(step.handover)}`);
     return { status: 200, state: "complete", next: null, pipeline: record };
   }
@@ -3349,6 +3363,8 @@ async function brainPrompt(record) {
   const repository = await areaDirectory(area);
   const instructions = repository ? await inheritedInstructionFiles(repository, repository).catch(() => []) : [];
   const goals = (await readAreaGoals(area)).filter((goal) => !["done", "dropped"].includes(goal.status));
+  const areaPaths = flattenAreaPaths(await readTree(TREES_ROOT));
+  const recent = await querySubtreeMilestones({ root: BRAINS_ROOT, area, areas: areaPaths, limit: 12 });
   const requests = openBrainRequests(await readBrainRequests(BRAINS_ROOT, area));
   const sourceLines = [
     ...noteFiles.map((file) => `Area source: ${file}`),
@@ -3359,7 +3375,8 @@ async function brainPrompt(record) {
   const shownNotices = notices.slice(0, noticeLimit);
   const shownAnswers = answered.slice(0, noticeLimit - shownNotices.length);
   const omission = [
-    notices.length > shownNotices.length ? `${notices.length - shownNotices.length} milestones omitted; run tangent brain status ${area}.` : "",
+    notices.length > shownNotices.length ? `${notices.length - shownNotices.length} notices omitted; run tangent brain status ${area}.` : "",
+    recent.omitted ? `${recent.omitted} milestones omitted; run tangent area recent ${area} --limit 100.` : "",
     answered.length > shownAnswers.length ? `${answered.length - shownAnswers.length} answers omitted; run tangent brain status ${area}.` : "",
     goals.length > 12 ? `${goals.length - 12} Goals omitted; run tangent goal list ${area}.` : "",
   ].filter(Boolean);
@@ -3370,7 +3387,8 @@ async function brainPrompt(record) {
     "Area and repository context": sourceLines.join("\n"),
     "Work frontier": goals.slice(0, 12).map((goal) => `- ${goal.title || goal.file}: ${goal.status || "open"}`).join("\n") || "No direct open Goals.",
     Questions: requests.slice(0, 8).map((request) => `- ${request.subject}: ${request.question}`).join("\n") || "No open Questions.",
-    "Unread milestones": [...shownNotices.map((notice) => `- ${notice.text}`), ...shownAnswers.map((line) => `- ${line}`)].join("\n") || "No unread material milestones.",
+    "Recent milestones": recent.milestones.map((item) => `- ${item.createdAt} ${item.area}: ${item.summary}`).join("\n") || "No recent material milestones.",
+    "Unread messages": [...shownNotices.map((notice) => `- ${notice.text}`), ...shownAnswers.map((line) => `- ${line}`)].join("\n") || "No unread messages.",
     "Retrieval order": `Search ${area} and child Areas first. Then read parent Area sources and inherited repository instructions. Search wider Goals or linked systems only after those sources.`,
     Omissions: omission.join("\n") || "No bounded collection was omitted.",
   });
@@ -4303,6 +4321,37 @@ function voiceNameHints(ctx) {
   return [...new Set([...ctx.sessions.map((s) => s.name), ...areaNames])];
 }
 
+/** Executes the small allowlist of effects that one Request revision can authorize. */
+async function executeAuthorizedRequestEffect(effect, brain) {
+  const type = String(effect?.type ?? "");
+  if (type === "goal-done") {
+    const file = String(effect.goal ?? "");
+    const byFile = await goalsByFile();
+    if (!byFile.has(file)) throw new Error("the authorized Goal no longer exists");
+    const changed = await cascadeGoalDone(file, byFile);
+    const goal = byFile.get(file);
+    await vaultCommit(changed, `update: ${goal.area} goal ${goal.slug} done in tree`, goal.area, brain.session);
+    return;
+  }
+  if (type === "route-journal") {
+    const area = String(effect.area ?? "");
+    const text = String(effect.text ?? "").trim();
+    const areas = flattenAreaPaths(await readTree(TREES_ROOT));
+    if (!areas.includes(area) || !text) throw new Error("the authorized Journal route is invalid");
+    const id = String(effect.idempotencyKey ?? `request-route:${brain.area}:${createHash("sha256").update(text).digest("hex")}`);
+    const entry = await appendJournalEntry({ treesRoot: TREES_ROOT, area, text, idempotencyKey: id, source: `routed from ${brain.area}` });
+    if (!entry.duplicate) {
+      const relative = path.relative(TREES_ROOT, entry.file);
+      await runVaultGit(["add", "--", relative]);
+      await vaultCommit([relative], `note: ${area} routed Journal capture`, area, brain.session);
+      await appendMilestone({ root: BRAINS_ROOT, area, kind: "routed-journal", summary: text, ref: relative, idempotencyKey: `journal:${entry.id}`, now: entry.createdAt });
+      await notifyBrain(area, `The ${brain.area} brain routed exact Journal text to this Area. Read ${relative}. This message grants no authority.`);
+    }
+    return;
+  }
+  throw new Error(`unsupported Request effect type: ${type || "missing"}`);
+}
+
 const brainRoutes = createBrainRoutes({
   start: startBrain,
   handover: handoverBrain,
@@ -4328,6 +4377,10 @@ const brainRoutes = createBrainRoutes({
     const record = await readBrainRequests(BRAINS_ROOT, brain.area);
     try {
       const pending = record.requests.find((item) => item.id === id);
+      if (answer === "authorize") {
+        if (!pending?.effect || !pending.effectRevision || pending.effectRevision !== effectRevision) throw new Error("the Request effect revision is stale");
+        await executeAuthorizedRequestEffect(pending.effect, brain);
+      }
       if (pending?.kind === "test" && answer === "approve" && pending.goal) {
         const byFile = await goalsByFile();
         if (byFile.has(pending.goal)) {
@@ -4422,7 +4475,7 @@ const agentRoutes = createAgentRoutes({
     return { status: 200, value: { status: result.state, to: result.to, ...(result.reason ? { reason: result.reason, position: result.position } : {}) } };
   },
 });
-const areaRoutes = createAreaRoutes({
+const areaRoutesOperations = {
   /** Returns the complete Area tree. */
   async tree() {
     return { root: TREES_ROOT, areas: await readTree(TREES_ROOT) };
@@ -4445,6 +4498,24 @@ const areaRoutes = createAreaRoutes({
     const files = await journalFiles(TREES_ROOT, area);
     return { area, files: await Promise.all(files.map(async (file) => ({ file: path.relative(TREES_ROOT, file), text: await readFile(file, "utf8") }))) };
   },
+  /** Returns the durable recent-context projection for an Area and its children. */
+  async milestones(area, options) {
+    const areas = flattenAreaPaths(await readTree(TREES_ROOT));
+    if (!area || !areas.includes(area)) return null;
+    return querySubtreeMilestones({ root: BRAINS_ROOT, area, areas, ...options });
+  },
+  /** Writes one detached audit archive. Normal product reads never use this file. */
+  async legacyAudit(body) {
+    const area = String(body.area ?? "");
+    const areas = flattenAreaPaths(await readTree(TREES_ROOT));
+    if (!areas.includes(area)) throw new Error("The Area does not exist.");
+    const brain = await readBrain(BRAINS_ROOT, area);
+    const requests = await readBrainRequests(BRAINS_ROOT, area);
+    const pipelines = (await readAllPipelines(PIPELINES_ROOT)).filter((record) => record.area === area || record.area.startsWith(`${area}/`));
+    const safe = area.replaceAll("/", "--");
+    const output = path.join(os.homedir(), ".tangent", "audit", `${safe}-area-brain-legacy.json.gz`);
+    return exportLegacyAudit({ output, area, records: { generations: brain?.generations ?? [], requests: requests.requests, pipelines } });
+  },
   /** Commits exact capture text, then wakes the logical Area brain. */
   async capture(body) {
     const area = String(body.area ?? "");
@@ -4454,6 +4525,7 @@ const areaRoutes = createAreaRoutes({
       const relative = path.relative(TREES_ROOT, entry.file);
       await runVaultGit(["add", "--", relative]);
       await vaultCommit([relative], `note: ${area} Journal capture`, area, null);
+      await appendMilestone({ root: BRAINS_ROOT, area, kind: "journal", summary: entry.text, ref: relative, idempotencyKey: `journal:${entry.id}`, now: entry.createdAt });
       await notifyBrain(area, `Journal entry ${entry.id} was saved. Read ${relative} and respond in this Area conversation.`);
     }
     return entry;
@@ -4477,7 +4549,8 @@ const areaRoutes = createAreaRoutes({
     await vaultCommit([moved.source, moved.destination], `update: ${moved.source} moves to ${moved.destination}`, moved.destination, null);
     return moved;
   },
-});
+};
+const areaRoutes = createAreaRoutes(areaRoutesOperations);
 const programRoutes = createProgramRoutes({
   /** Returns local programs with live status. */
   async list() {
@@ -4592,10 +4665,9 @@ const voiceRoutes = createVoiceRoutes({
   chatSession: CHAT_SESSION,
   /** Reports whether transcription and command routing are configured. */
   available: () => Boolean(GROQ_KEY),
-  context: voiceContext,
   transcribe,
-  nameHints: voiceNameHints,
-  route: routeAndExecute,
+  /** Saves transcribed or typed capture through the Journal-first Area route. */
+  capture(body) { return areaRoutesOperations.capture(body); },
 });
 const goalQueryRoutes = createGoalQueryRoutes({
   /** Lists summarized Goals in one Area or the whole vault. */

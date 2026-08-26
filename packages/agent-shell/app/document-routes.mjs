@@ -78,7 +78,7 @@ export function createDocumentRoutes(operations) {
   /** Resolves one uniquely matched Document comment. */
   async function resolve(request, response) {
     const body = await readJson(request);
-    const result = await operations.resolve(String(body.file ?? ""), String(body.prefix ?? ""), String(body.note ?? ""), String(body.session ?? ""));
+    const result = await operations.resolve(String(body.file ?? ""), String(body.prefix ?? ""), String(body.note ?? ""), String(body.session ?? ""), Number.isInteger(body.index) ? body.index : null);
     sendJson(response, result.status, result.status === 200
       ? { file: result.document.file, comment: result.comment, remaining: result.document.comments.length }
       : { error: result.error, matches: result.matches ?? [] });

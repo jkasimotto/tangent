@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createShellCoordinator } from "./public/shell-coordinator.js";
 
-globalThis.window = globalThis.window || { /** Runs no deferred focus in a test. */ setTimeout: () => 0 };
+/** Runs no deferred focus in a test. */
+const ignoreTimeout = () => 0;
+/** Finds nothing inside a stub node. */
+const findNothing = () => null;
+/** Appends nothing to a stub node. */
+const insertNothing = () => {};
+globalThis.window = globalThis.window || { setTimeout: ignoreTimeout };
 
 /** Builds one trigger program record the coordinator can act on. */
 function trigger(paused = false) {
@@ -11,7 +17,7 @@ function trigger(paused = false) {
 
 /** Stands in for one text node of the confirmation modal. */
 function textNode() {
-  return { textContent: "", innerHTML: "", hidden: true, /** Finds nothing inside a stub node. */ querySelector: () => null, /** Appends nothing to a stub node. */ insertAdjacentHTML: () => {} };
+  return { textContent: "", innerHTML: "", hidden: true, querySelector: findNothing, insertAdjacentHTML: insertNothing };
 }
 
 /**
@@ -23,7 +29,7 @@ function textNode() {
 function coordinator({ programs = [trigger()], refreshWith = null } = {}) {
   const posted = [];
   const toasts = [];
-  const modal = { kicker: textNode(), title: textNode(), copy: textNode(), field: textNode(), actions: textNode(), layer: { hidden: true, /** Finds no modal frame in a stub layer. */ querySelector: () => null } };
+  const modal = { kicker: textNode(), title: textNode(), copy: textNode(), field: textNode(), actions: textNode(), layer: { hidden: true, querySelector: findNothing } };
   const state = { programs: { programs }, programId: programs[0]?.id ?? "", view: "program-detail" };
   /** Finds one program in the list the screen reads right now. */
   const programById = (id) => state.programs.programs.find((item) => item.id === id) ?? null;
@@ -57,7 +63,7 @@ test("Pause keeps its new flag when the refresh it waits for started before the 
     refreshWith: () => [trigger(false)],
   });
   await shellCoordinator.performProgramAction("pause", "trigger:neara/pgande:rebase");
-  assert.deepEqual(posted, [{ url: "/api/programs/control", body: { id: "trigger:neara/pgande:rebase", action: "pause" } }]);
+  assert.deepEqual(posted, [{ url: "/api/operations/control", body: { id: "trigger:neara/pgande:rebase", action: "pause" } }]);
   assert.equal(programById("trigger:neara/pgande:rebase").paused, true);
   assert.deepEqual(toasts, ["The Trigger is paused. It checks again only after you resume it."]);
 });

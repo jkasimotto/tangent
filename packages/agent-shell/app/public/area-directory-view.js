@@ -207,7 +207,7 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
     });
   }
 
-  /** Renders the Area map screen: header, the map host, and the Area's Programs. */
+  /** Renders the Area screen with Now, Journal capture, History, and Operations. */
   function areaContents(area) {
     const programs = state.programs.programs.filter((program) => program.area === area.path);
     const problems = state.programs.errors.filter((item) => item.area === area.path);
@@ -231,11 +231,16 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
             ${brainAction}
           </div>
         </header>
+        <section class="area-workspace-section area-journal-composer" aria-labelledby="area-journal-heading">
+          <div class="area-section-heading"><div><p class="kicker">Journal</p><h3 id="area-journal-heading">Capture for ${escapeHtml(humanName(area.name))} brain</h3></div></div>
+          <form data-area-journal-form data-command-enter-submit><label><span>To: ${escapeHtml(area.path)} brain</span><textarea name="text" rows="3" placeholder="Write or dictate an exact note." required></textarea></label><button class="primary-button" type="submit">Save and send <kbd>⌘↵</kbd></button></form>
+          <p class="form-note">Tangent saves the exact text before it wakes the brain.</p>
+        </section>
         ${state.areaHistory ? historySection(area) : workGraphSection(area)}
         ${state.areaHistory ? "" : documentSection(area.path, documents)}
         <details class="area-more"><summary>More</summary>
           <details><summary>Relationship map</summary><div class="area-map-host" data-area-map="${escapeHtml(area.path)}"></div></details>
-          <details><summary>Programs · ${programs.length}</summary><section class="area-content-section"><div class="memory-heading"><h3>Programs</h3><button class="quiet-button" type="button" data-new-program>New program</button></div>${programs.length ? `<div class="program-list">${programs.map(programRow).join("")}</div>` : `<p class="memory-empty">No Programs exist in this Area.</p>`}${problems.length ? `<div class="program-errors">${problems.map((item) => `<p>${escapeHtml(item.file)} — ${escapeHtml(item.error)}</p>`).join("")}</div>` : ""}</section></details>
+          <details><summary>Operations · ${programs.length}</summary><section class="area-content-section"><div class="memory-heading"><h3>Operations</h3><button class="quiet-button" type="button" data-new-program>New Operation</button></div>${programs.length ? `<div class="program-list">${programs.map(programRow).join("")}</div>` : `<p class="memory-empty">No Operations exist in this Area.</p>`}${problems.length ? `<div class="program-errors">${problems.map((item) => `<p>${escapeHtml(item.file)} — ${escapeHtml(item.error)}</p>`).join("")}</div>` : ""}</section></details>
           <details><summary>Area settings</summary><div class="area-settings-actions"><button class="quiet-button" type="button" data-default-agents-area="${escapeHtml(area.path)}">Default agents</button><button class="quiet-button" type="button" data-new-area>Add nested Area</button>${area.path.split("/").length > 1 ? `<button class="quiet-button" type="button" data-rename-area>Rename or move</button>` : ""}${done ? `<button class="quiet-button" type="button" data-reopen-area="${escapeHtml(area.path)}">Reopen</button>` : `<button class="quiet-button" type="button" data-mark-area-done="${escapeHtml(area.path)}">Mark done</button>`}</div></details>
         </details>
       </section>`;

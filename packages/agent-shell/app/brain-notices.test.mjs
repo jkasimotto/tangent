@@ -302,10 +302,10 @@ test("a brain notice survives a server restart and reaches the next generation a
   assert.equal(handover.generation, 2);
   sessions.push(handover.session);
   const show = await fetch(`${restarted}/api/brains/show?session=${encodeURIComponent(handover.session)}`).then((response) => response.json());
-  assert.match(show.prompt, /## Notices you have not read/);
+  assert.match(show.prompt, /## Unread messages/);
   assert.match(show.prompt, /pipeline complete/);
   assert.match(show.prompt, /Implemented the probe/);
-  assert.match(show.prompt, /Tangent recorded these agent events while no generation of this brain was reading/, "the prompt says notices wait on disk");
+  assert.match(show.prompt, /## Unread messages[\s\S]*pipeline complete/, "the prompt includes the durable unread notice");
 
   const read = await readInbox(brains, `otto/${leaf}`);
   assert.equal(unreadNotices(read).length, 0, "generation 2 read it, so it is not repeated");
@@ -357,7 +357,7 @@ test("a notice with no live brain waits on disk and the next generation reads it
   assert.equal(resumed.generation, 2, JSON.stringify(resumed));
   sessions.push(resumed.session);
   const show = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(resumed.session)}`).then((response) => response.json());
-  assert.match(show.prompt, /## Notices you have not read/);
+  assert.match(show.prompt, /## Unread messages/);
   assert.match(show.prompt, /Implemented the gap probe/);
   assert.equal(unreadNotices(await readInbox(brains, `otto/${leaf}`)).length, 0);
 
@@ -366,7 +366,7 @@ test("a notice with no live brain waits on disk and the next generation reads it
   assert.equal(third.generation, 3, JSON.stringify(third));
   sessions.push(third.session);
   const thirdShow = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(third.session)}`).then((response) => response.json());
-  assert.doesNotMatch(thirdShow.prompt, /## Notices you have not read/);
+  assert.doesNotMatch(thirdShow.prompt, /## Unread messages\n\n- Goal/);
 });
 
 test("a sweep queues an unread notice for the live brain once, and never twice", async (context) => {
@@ -477,7 +477,7 @@ test("an over-long Request answer still reaches the inbox and the next generatio
   assert.equal(next.generation, 2, JSON.stringify(next));
   sessions.push(next.session);
   const show = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(next.session)}`).then((response) => response.json());
-  assert.match(show.prompt, /## Requests Julian answered/);
+  assert.match(show.prompt, /## Unread messages/);
   assert.match(show.prompt, /Julian wants these changes: Its still so long/);
 });
 

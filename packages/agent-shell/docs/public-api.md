@@ -48,7 +48,7 @@ An Area brain is one long-lived orchestrating agent per exact Area (ADR-0024; de
 
 ## What waits on Julian
 
-Under a brain, durable request records are the source of new plan, decision, test, and approval asks (ADR-0029). Existing `## For Julian` plan rows remain readable for active legacy runs during migration:
+Under a brain, durable Request records are conversational messages. A reply can contain text. An action authorizes one hashed effect revision:
 
 - `- Decide [[<document>]]: <the question, ending with ?> Unblocks: <what the answer unblocks>.`
 - `- Decide: <one question that fits no Document, ending with ?>`

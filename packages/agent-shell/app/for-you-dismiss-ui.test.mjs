@@ -80,7 +80,7 @@ async function shellFixture({ storedDismissals = null, request = null } = {}) {
       pipelines: [pipeline],
       brains: request ? [{ area: goal.area, session: "tangent-brain-g1", generation: 1, live: true, requests: [request] }] : [],
     });
-    if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
+    if (pathname === "/api/operations") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
     return jsonResponse(vault);
   };
   window.eval(shellBundle);

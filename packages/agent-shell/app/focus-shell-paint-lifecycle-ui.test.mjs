@@ -33,7 +33,7 @@ test("background polls never rebuild the screen under an editing surface or a re
     const pathname = new URL(url, window.location.href).pathname;
     if (options.method === "POST") return jsonResponse({ ok: true });
     if (pathname === "/api/sessions") return jsonResponse({ boot: "boot-1", caffeinate: false, sessions: [], pipelines: [] });
-    if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
+    if (pathname === "/api/operations") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
     if (pathname === "/api/document") return jsonResponse({ ...doc, text: "# Map design\n\nA long design.\n\n## Part two\n\nMore.", hash: "map-1" });
     if (pathname === "/api/launch/options") {
       return jsonResponse({
@@ -82,20 +82,6 @@ test("background polls never rebuild the screen under an editing surface or a re
   const deskBefore = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
   await vaultChangesAndPolls();
   assert.equal(window.document.querySelector(`[data-goal-anchor='${goal.file}']`), deskBefore, "hidden prose does not rebuild an unchanged compact row");
-
-  // Describing work: the form survives a poll while Julian reads elsewhere on the page.
-  click(window, "[data-describe-work]");
-  const form = window.document.querySelector("[data-describe-work-form]");
-  assert.ok(form);
-  const description = window.document.querySelector("#describe-work");
-  description.value = "The scroll must never jump.";
-  description.dispatchEvent(new window.Event("input", { bubbles: true }));
-  description.blur();
-  await vaultChangesAndPolls();
-  assert.equal(window.document.querySelector("[data-describe-work-form]"), form, "the poll did not rebuild the describe form");
-  assert.equal(window.document.querySelector("#describe-work").value, "The scroll must never jump.");
-  click(window, "[data-cancel-describe]");
-  await settle(window);
 
   // Reading a Document: the reader survives a poll and a forced repaint keeps the reading position.
   await openDocumentViaGoTo(window, doc.title);

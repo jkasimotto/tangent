@@ -3,9 +3,14 @@ import { readJson, sendJson } from "./http-json.mjs";
 /** Creates the HTTP route table for local processes and commands. */
 export function createProgramRoutes(operations) {
   const routes = new Map([
-    ["GET /api/programs", list],
-    ["POST /api/programs/new", create],
-    ["POST /api/programs/control", control],
+    ["GET /api/operations", list],
+    ["POST /api/operations/new", create],
+    ["POST /api/operations/control", control],
+    ...(process.env.TANGENT_LEGACY_PROGRAM_API === "1" ? [
+      ["GET /api/programs", list],
+      ["POST /api/programs/new", create],
+      ["POST /api/programs/control", control],
+    ] : []),
   ]);
 
   /** Handles one matching request and reports whether this router owned it. */

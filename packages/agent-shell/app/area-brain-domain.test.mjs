@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
 import { promisify } from "node:util";
-import { appendJournalEntry, areaLineage, boundedBrainPrompt, exportLegacyAudit, inheritedInstructionFiles, JOURNAL_LIMIT_BYTES, newGoalQueue, operationFromProgram, startNextAssignment } from "./area-brain-domain.mjs";
+import { appendJournalEntry, appendMilestone, areaLineage, boundedBrainPrompt, exportLegacyAudit, inheritedInstructionFiles, JOURNAL_LIMIT_BYTES, newGoalQueue, operationFromProgram, querySubtreeMilestones, startNextAssignment } from "./area-brain-domain.mjs";
 
 test("Area and repository knowledge inherit by path", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "area-brain-context-"));
@@ -29,6 +29,16 @@ test("Journal intake saves exact text once before delivery", async () => {
   assert.equal(first.duplicate, false);
   assert.equal(again.duplicate, true);
   assert.equal((await readFile(first.file, "utf8")).match(/Exact words\./g).length, 1);
+});
+
+test("recent context is durable, idempotent, and scoped to the Area subtree", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "area-brain-milestones-"));
+  await appendMilestone({ root, area: "otto/portland", kind: "journal", summary: "Neil owns Friday.", idempotencyKey: "one", now: "2026-08-25T01:00:00.000Z" });
+  await appendMilestone({ root, area: "otto/portland/rules", kind: "goal-done", summary: "Rule 250 passed.", idempotencyKey: "two", now: "2026-08-25T02:00:00.000Z" });
+  await appendMilestone({ root, area: "otto/other", kind: "journal", summary: "Noise.", idempotencyKey: "three", now: "2026-08-25T03:00:00.000Z" });
+  await appendMilestone({ root, area: "otto/portland", kind: "journal", summary: "Duplicate.", idempotencyKey: "one" });
+  const result = await querySubtreeMilestones({ root, area: "otto/portland", areas: ["otto/portland", "otto/portland/rules", "otto/other"] });
+  assert.deepEqual(result.milestones.map((item) => item.summary), ["Rule 250 passed.", "Neil owns Friday."]);
 });
 
 test("one queue starts one assignment once", () => {

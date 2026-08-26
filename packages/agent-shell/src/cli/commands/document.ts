@@ -49,10 +49,11 @@ async function resolveCommand(args: Args, note: string): Promise<void> {
   const server = resolveServerUrl(stringArg(args.server));
   const file = requiredString(args._[1], "tangent document resolve requires <vault-relative file> \"<first words of the comment>\".");
   const prefix = args._.slice(2).join(" ").trim();
-  if (!prefix) throw new Error("tangent document resolve requires the first words of the comment after the file.");
+  const index = stringArg(args.index) ? Number(stringArg(args.index)) : null;
+  if (!prefix && !Number.isInteger(index)) throw new Error("tangent document resolve requires first words or --index <number>.");
   if (!note.trim()) throw new Error("tangent document resolve requires -m \"<what changed>\" so the resolution is recorded.");
   const session = stringArg(args.session) ?? (await currentTmuxSession());
-  const result = await postJson(server, "/api/document/resolve", { file, prefix, note, session });
+  const result = await postJson(server, "/api/document/resolve", { file, prefix, index, note, session });
   const comment = result.comment as DocumentComment;
   console.log(`resolved: ${comment.text}`);
   console.log(`${result.remaining} open comment${result.remaining === 1 ? "" : "s"} left in ${file}.`);

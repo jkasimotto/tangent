@@ -35,6 +35,8 @@ export const areaCommandSpec: CliCommandSpec = {
   subcommands: [
     { name: "list", description: "List every Area path in the vault", options: [serverOption, jsonOption] },
     { name: "show", description: "Show one Area's purpose, Goals, and ideas", args: "<area>", options: [serverOption, jsonOption] },
+    { name: "recent", description: "Show material milestones for one Area and its child Areas", args: "<area>", options: [{ name: "since", takesValue: true, description: "Only milestones after this ISO time" }, { name: "limit", takesValue: true, description: "Maximum rows (default 12)" }, serverOption, jsonOption] },
+    { name: "audit", description: "Export detached legacy Area-brain records for explicit audit", args: "<area>", options: [serverOption, jsonOption] },
     {
       name: "create",
       description: "Create a nested Area under a parent, with its note, committed with provenance. Only for a durable subject; a result is a Goal.",
@@ -67,6 +69,7 @@ export const brainCommandSpec: CliCommandSpec = {
         { name: "detail", takesValue: true, description: "At most two short sentences that Julian needs to answer" },
         { name: "option", takesValue: true, description: "Decision choice; repeat for each choice" },
         { name: "goal", takesValue: true, description: "Goal slug this request is about; approval of a test request closes this Goal" },
+        { name: "effect", takesValue: true, description: "Exact authorized effect as one JSON object" },
         { name: "session", takesValue: true, description: "Brain session; defaults to the current tmux session" },
         serverOption
       ]
@@ -258,6 +261,7 @@ export const documentCommandSpec: CliCommandSpec = {
       description: "Remove exactly one comment, matched by its first words, in its own named commit. Use it only after the work is done or Julian said to close it. Requires -m \"<what changed>\".",
       args: "<file> <first words...>",
       options: [
+        { name: "index", takesValue: true, description: "Exact 1-based index from document comments" },
         { name: "session", takesValue: true, description: "Session for the commit trailer; defaults to the tmux session this command runs in" },
         serverOption
       ]

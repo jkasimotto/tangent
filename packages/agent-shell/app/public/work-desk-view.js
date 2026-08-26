@@ -864,7 +864,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
   /** Keeps the installed Safari web app's Dock badge equal to the For you count. */
   async function syncDockBadge() {
-    const count = forYouItems().length;
+    const count = 0;
     if (count === dockBadgeCount) return;
     const nativeBridge = window.__agentShellNativeDockBadge === true;
     if (!nativeBridge && (typeof Notification === "undefined" || Notification.permission !== "granted")) return;
@@ -955,7 +955,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     if (action.kind === "answer" || action.kind === "reply") {
       return `data-reply-area="${escapeHtml(arg.area ?? ask.area)}" data-reply-session="${escapeHtml(arg.session ?? "")}" data-reply-subject="${escapeHtml(arg.subject ?? ask.subject)}"`;
     }
-    if (action.kind === "request-answer") return `data-verdict-area="${escapeHtml(arg.area ?? ask.area)}" data-verdict-line="request:${escapeHtml(arg.id ?? "")}" data-verdict="${escapeHtml(arg.answer ?? "")}"`;
+    if (action.kind === "request-answer") return `data-verdict-area="${escapeHtml(arg.area ?? ask.area)}" data-verdict-line="request:${escapeHtml(arg.id ?? "")}" data-verdict="${escapeHtml(arg.answer ?? "")}" data-effect-revision="${escapeHtml(arg.effectRevision ?? "")}"`;
     return `data-verdict-area="${escapeHtml(arg.area ?? ask.area)}" data-verdict-line="${escapeHtml(arg.line ?? "")}" data-verdict="${escapeHtml(action.kind)}"`;
   }
 
@@ -1004,6 +1004,29 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     /** Closes the read-only Request detail. */
     const closeRequest = async () => {};
     openModal({ kicker: "Request", title: request.subject, copy, wide: true, confirmLabel: "Close", onConfirm: closeRequest });
+  }
+
+  /** Opens the explicit Questions review without changing the Work cursor. */
+  function openQuestionsReview(area = "") {
+    const questions = (state.brains ?? []).filter((brain) => !area || brain.area === area || brain.area.startsWith(`${area}/`))
+      .flatMap((brain) => (brain.requests ?? []).filter((request) => request.status === "open").map((request) => `${brain.area} brain — ${request.question}`));
+    /** Closes Questions review and returns to the preserved Work position. */
+    const closeQuestions = async () => {};
+    openModal({ kicker: "Questions", title: questions.length ? `${questions.length} from Area brains` : "No open questions", copy: questions.join("\n\n") || "No Area brain needs a reply.", confirmLabel: "Return to Work", onConfirm: closeQuestions });
+  }
+
+  /** Opens one journal-first note composer for the selected Work Area. */
+  function openAreaCapture(area) {
+    if (!area) return showToast("Choose an Area row first.");
+    /** Saves the exact modal text before delivery to the Area brain. */
+    const saveCapture = async () => {
+      const text = document.querySelector("[data-modal-input]")?.value.trim() || "";
+      if (!text) throw new Error("Write a Journal note.");
+      await post("/api/areas/journal", { area, text, idempotencyKey: crypto.randomUUID(), source: "Agent Shell" });
+      showToast("Saved to the Journal and sent to the Area brain.");
+      await refresh();
+    };
+    openModal({ kicker: "Capture", title: `To: ${area} brain`, copy: "Tangent saves the exact text before it wakes the brain.", field: { label: "Journal note", placeholder: "Write or dictate a note." }, confirmLabel: "Save and send", onConfirm: saveCapture });
   }
 
   /** The fallback asks grouped by Area, so every row says which Area it is from. */
@@ -1109,8 +1132,8 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * line back and withdraws the verdict, so a mis-press costs one click and
    * never leaves the brain acting on an answer Julian took back.
    */
-  async function sendVerdict(area, line, verdict, note = "") {
-    if (line.startsWith("request:") && verdict === "changes" && !note) {
+  async function sendVerdict(area, line, verdict, note = "", effectRevision = "") {
+    if (line.startsWith("request:") && ["changes", "reply"].includes(verdict) && !note) {
       openModal({
         kicker: "Changes",
         title: "What must change?",
@@ -1121,7 +1144,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
         onConfirm: async () => {
           const text = document.querySelector("[data-modal-input]")?.value.trim() || "";
           if (!text) throw new Error("State the change that you want.");
-          return sendVerdict(area, line, verdict, text);
+          return sendVerdict(area, line, verdict, text, effectRevision);
         },
       });
       return;
@@ -1130,7 +1153,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     paint(true);
     try {
       if (line.startsWith("request:")) {
-        await post("/api/brains/requests/answer", { area, id: line.slice("request:".length), answer: verdict, note });
+        await post("/api/brains/requests/answer", { area, id: line.slice("request:".length), answer: verdict, note, ...(effectRevision ? { effectRevision } : {}) });
         showToast("Answer sent to the brain.");
         await refresh();
         return;
@@ -1561,9 +1584,11 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       : `data-open-area-brain="${escapeHtml(area.path)}"`;
     const name = humanName(area.name);
     const cursor = `area:${area.path}`;
+    const roots = areaFocusRoots();
+    const folded = roots.length > 0 && area.path !== roots[0] && !state.expandedAreas.has(area.path);
     return `<tr class="work-group-row${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${escapeHtml(area.path)}">
       <th class="work-group-head" colspan="${WORK_COLUMNS.length}" scope="rowgroup" id="${workGroupId(area.path)}">
-        <span class="work-group-name"><button type="button" data-work-cursor-control data-focus-key="area:${escapeHtml(area.path)}" data-open-area="${escapeHtml(area.path)}" title="Open the ${escapeHtml(name)} Area map">${escapeHtml(name)}</button></span>
+        <span class="work-group-name"><button type="button" data-work-cursor-control data-focus-key="area:${escapeHtml(area.path)}" data-open-area="${escapeHtml(area.path)}" title="Open the ${escapeHtml(name)} Area map">${escapeHtml(name)}</button><button type="button" data-fold-work-area="${escapeHtml(area.path)}" aria-expanded="${!folded}" title="${folded ? "Expand" : "Fold"} ${escapeHtml(name)}">${folded ? "+" : "−"}</button></span>
         <span class="work-group-count">${count} ${count === 1 ? "Goal" : "Goals"}</span>
         <span class="desk-state ${status.kind}">${escapeHtml(status.label)}</span>
         ${deskSelectionBar(area.path, allTrees)}
@@ -1715,9 +1740,21 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const empty = record.focusRoot && !record.focusHasWork
       ? `<tr class="work-empty-row"><td class="area-focus-empty" colspan="${WORK_COLUMNS.length}">No ${state.workFilter === "active" ? "current" : "planned"} work matches in this Focus.</td></tr>`
       : "";
-    return `<tbody class="work-group" data-work-group="${escapeHtml(area.path)}" data-desk-area="${escapeHtml(area.path)}" aria-labelledby="${workGroupId(area.path)}">
-      ${workGroupHeaderRow(record)}${body}${empty}
+    const roots = areaFocusRoots();
+    const folded = roots.length > 0 && area.path !== roots[0] && !state.expandedAreas.has(area.path);
+    const blocked = parts.flatMap((part) => part.trees.flatMap((tree) => tree.goals)).map((goal) => ({ goal, fact: facts.get(goal.file) })).find((item) => ["blocked", "broken", "error"].includes(item.fact?.kind));
+    const preview = folded && blocked ? `<tr class="work-blocker-preview"><td colspan="${WORK_COLUMNS.length}">Dependency · ${escapeHtml(blocked.goal.title)}</td></tr>` : "";
+    return `<tbody class="work-group${folded ? " folded" : ""}" data-work-group="${escapeHtml(area.path)}" data-desk-area="${escapeHtml(area.path)}" aria-labelledby="${workGroupId(area.path)}">
+      ${workGroupHeaderRow(record)}${folded ? preview : `${body}${empty}`}
     </tbody>`;
+  }
+
+  /** Folds or expands one Area without changing Area Focus. */
+  function toggleWorkArea(area) {
+    if (state.expandedAreas.has(area)) state.expandedAreas.delete(area);
+    else state.expandedAreas.add(area);
+    saveExpandedAreas();
+    paint(true);
   }
 
   /** One Goal tree as adjacent rows: the parent, then its open Subgoals. */
@@ -1839,5 +1876,5 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     `;
   }
 
-  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, fallbackAsks, forgetVerdictLines, openRequest, sendVerdict, replyAboutRow, dismissAsk, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups, goalGroupRoot, toggleSubgoals, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, renderWork };
+  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, fallbackAsks, forgetVerdictLines, openRequest, openQuestionsReview, openAreaCapture, sendVerdict, replyAboutRow, dismissAsk, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups, goalGroupRoot, toggleSubgoals, toggleWorkArea, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, renderWork };
 }

@@ -56,7 +56,7 @@ test("the Shell menu owns recovery while offline refresh preserves the screen", 
       return jsonResponse({ ok: true, operation: { id: "rebuild-1", phase: "building", commits: pendingCommits, log: "~/.tangent/agent-shell-rebuild.log" } });
     }
     if (pathname === "/api/sessions") return jsonResponse({ boot, runtime: { gateway: { boot: "gateway-1", controller: { state: "ready", boot: controllerBoot } } }, sourceChanged, deployedCommit: "5899d9c123456789", pendingCommits: sourceChanged ? pendingCommits : [], caffeinate: false, sessions: [] });
-    if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
+    if (pathname === "/api/operations") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
     return jsonResponse({ areas: [], map: [], documents: [] });
   };
   window.eval(shellBundle);

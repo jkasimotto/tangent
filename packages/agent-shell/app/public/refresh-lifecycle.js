@@ -3,7 +3,7 @@ export async function readProjection(api) {
   const results = await Promise.allSettled([
     api("/api/vault"),
     api("/api/sessions"),
-    api("/api/programs"),
+    api("/api/operations"),
   ]);
   const failure = results.find((result) => result.status === "rejected");
   if (failure) throw failure.reason;

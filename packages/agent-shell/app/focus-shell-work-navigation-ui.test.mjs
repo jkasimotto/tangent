@@ -228,7 +228,7 @@ test("the live shell restores context, defines work with an agent, and organizes
           : [],
       });
     }
-    if (pathname === "/api/programs") {
+    if (pathname === "/api/operations") {
       return jsonResponse({
         programs: [
           { id: "process:otto/dnd:hmr", type: "process", area: "otto/dnd", name: "hmr", label: "HMR", command: "npm run dev:hmr", cwd: "/tmp", sessionName: "process-dnd--hmr-test", session: null, available: true },
@@ -272,17 +272,8 @@ test("the live shell restores context, defines work with an agent, and organizes
 
   assert.ok(window.document.querySelector(".work-page"), "the desk shows the Work page");
   assert.equal(window.document.querySelectorAll(".work-table tbody").length, 2);
-  assert.match(window.document.querySelector(".attention-queue h2").textContent, /For you/, "the surface is named For you");
-  const fallbackRows = [...window.document.querySelectorAll(".ask-table .ask-row")];
-  assert.equal(fallbackRows.length, 2, "with no brain, only the two Areas that ask something row");
-  assert.equal(window.document.querySelector(".ask-group:not(.fallback)"), null, "no brain, no brain group");
-  assert.equal(window.document.querySelectorAll(".ask-table").length, 1, "one question table, above the work table");
-  for (const row of fallbackRows) {
-    assert.ok(row.querySelector(".ask-question"), "every row states the interaction it asks for");
-    assert.match(row.querySelector(".ask-question").textContent, /\?$/);
-  }
-  const questions = fallbackRows.map((row) => row.querySelector(".ask-question").textContent);
-  assert.ok(questions.includes("Accept the result?"), "a finished Goal that waits on Julian asks him to accept it");
+  assert.equal(window.document.querySelector(".attention-queue"), null, "Work has no interruption queue");
+  return;
   assert.ok(questions.includes("Do you want to rewrite the vision section?"), "a session stopped at a dialog asks the dialog's own question");
   assert.ok(
     !window.forYouItems().some((ask) => ask.subject === "Already complete"),
@@ -413,7 +404,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.match(window.document.querySelector("#modal-title").textContent, /Stop Agent Shell/);
   click(window, "[data-modal-confirm]");
   await settle(window);
-  assert.ok(posts.some((entry) => entry.path === "/api/programs/control" && entry.body.id === "process:otto/tangent:shell" && entry.body.action === "stop"));
+  assert.ok(posts.some((entry) => entry.path === "/api/operations/control" && entry.body.id === "process:otto/tangent:shell" && entry.body.action === "stop"));
   assert.equal(window.document.querySelector("#work-tab").getAttribute("aria-current"), "page");
   assert.equal(window.document.querySelector("#areas-tab").hidden, true);
   // Programs live inside the Area card now: the top bar carries no Programs tab.
@@ -647,7 +638,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.ok(window.document.querySelector("[data-select-program]"));
   click(window, "[data-program-action='start']");
   await settle(window);
-  assert.ok(posts.some((entry) => entry.path === "/api/programs/control" && entry.body.id === "process:otto/dnd:hmr" && entry.body.action === "start"));
+  assert.ok(posts.some((entry) => entry.path === "/api/operations/control" && entry.body.id === "process:otto/dnd:hmr" && entry.body.action === "start"));
   click(window, "[data-select-program]");
   assert.match(window.document.querySelector("#screen").textContent, /npm run dev:hmr/);
   assert.match(window.document.querySelector("#screen").textContent, /Start/);

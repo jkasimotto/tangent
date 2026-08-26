@@ -6,6 +6,8 @@ export function createAreaRoutes(operations) {
     ["GET /api/tree", tree],
     ["GET /api/areas/show", show],
     ["GET /api/areas/journal", journal],
+    ["GET /api/areas/milestones", milestones],
+    ["POST /api/areas/legacy-audit", legacyAudit],
     ["POST /api/areas/journal", capture],
     ["POST /api/areas/new", create],
     ["POST /api/areas/preview-move", previewMove],
@@ -36,6 +38,20 @@ export function createAreaRoutes(operations) {
   async function journal(_request, response, url) {
     const result = await operations.journal(url.searchParams.get("area") ?? "");
     sendJson(response, result ? 200 : 404, result ?? { error: "Area not found." });
+  }
+
+  /** Returns recent material changes from one Area subtree. */
+  async function milestones(_request, response, url) {
+    const result = await operations.milestones(url.searchParams.get("area") ?? "", {
+      since: url.searchParams.get("since") ?? "",
+      limit: url.searchParams.get("limit") ?? "12",
+    });
+    sendJson(response, result ? 200 : 404, result ?? { error: "Area not found." });
+  }
+
+  /** Exports detached legacy coordination records for explicit audit use. */
+  async function legacyAudit(request, response) {
+    await mutate(request, response, operations.legacyAudit);
   }
 
   /** Saves exact text before any brain delivery. */

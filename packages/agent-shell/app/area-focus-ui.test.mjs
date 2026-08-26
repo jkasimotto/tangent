@@ -90,7 +90,7 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
   window.fetch = async (url) => {
     const pathname = new URL(url, window.location.href).pathname;
     if (pathname === "/api/sessions") return jsonResponse({ boot: "focus-boot", sessions, pipelines: [], brains });
-    if (pathname === "/api/programs") return jsonResponse({ programs: [childProgram, programOnly], errors: [], areas: [], liveCount: 0 });
+    if (pathname === "/api/operations") return jsonResponse({ programs: [childProgram, programOnly], errors: [], areas: [], liveCount: 0 });
     if (pathname === "/api/document") return jsonResponse({ ...alphaDocument, text: "# Alpha focus notes\n\nFocused context stays exact.", hash: "alpha-focus" });
     return jsonResponse(vault);
   };
@@ -99,7 +99,7 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
   await settle(window);
   assert.ok(window.document.querySelector('[data-desk-area="otto/alpha"]'));
   assert.ok(window.document.querySelector('[data-desk-area="otto/beta"]'));
-  assert.equal(window.document.querySelector(".attention-queue > header > span").textContent, "2");
+  assert.equal(window.document.querySelector(".attention-queue"), null, "Work has no interruption queue");
 
   click(window, "[data-open-area-focus]");
   await settle(window);
@@ -127,8 +127,7 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
   assert.ok(window.document.querySelector('[data-desk-area="otto/beta"]'), "independent selected roots remain visible together");
   const panelPaths = [...window.document.querySelectorAll("[data-desk-area]")].map((panel) => panel.dataset.deskArea);
   assert.equal(new Set(panelPaths).size, panelPaths.length, "multiple roots do not duplicate Area panels");
-  assert.equal(window.document.querySelectorAll('[data-program-area="otto/alpha/child"] .desk-program').length, 1, "a selected parent includes its descendant Program once");
-  assert.equal(window.document.querySelector(".attention-focus-count").textContent, "2 shown in Focus · 0 outside Focus");
+  assert.equal(window.document.querySelectorAll(".desk-program").length, 0, "Operations stay off the Work table");
   assert.deepEqual(JSON.parse(window.localStorage.getItem("agent-shell.area-focus.v1")), {
     schema: "agent-shell.area-focus.v1", areas: ["otto/alpha", "otto/beta"],
   });
@@ -154,11 +153,8 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
 
   assert.equal(window.document.querySelector('[data-desk-area="otto/beta"]'), null);
   assert.match(window.document.querySelector(".area-focus-summary").textContent, /Focus:\s*Alpha/);
-  assert.equal(window.document.querySelector(".attention-queue > header > span").textContent, "2 total");
-  assert.equal(window.document.querySelector(".attention-focus-count").textContent, "1 shown in Focus · 1 outside Focus");
-  assert.equal(window.document.querySelector("#work-tab").textContent, "Work · 2");
-  assert.equal(dockBadges.at(-1), 2, "the Dock badge keeps the complete For you total");
-  assert.equal(window.document.querySelectorAll(".ask-row").length >= 1, true);
+  assert.equal(window.document.querySelector(".attention-queue"), null);
+  assert.equal(window.document.querySelector("#work-tab").textContent, "Work");
   assert.deepEqual(JSON.parse(window.localStorage.getItem("agent-shell.area-focus.v1")), {
     schema: "agent-shell.area-focus.v1", areas: ["otto/alpha"],
   });
@@ -219,8 +215,8 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
   deltaChoice.checked = true;
   deltaChoice.dispatchEvent(new window.Event("change", { bubbles: true }));
   submit(window, "[data-area-focus-form]");
-  assert.equal(window.document.querySelectorAll('[data-program-area="otto/delta"] .desk-program').length, 1, "a Program-only Focus renders its relevant work");
-  assert.equal(window.document.querySelector('[data-desk-area="otto/delta"] .area-focus-empty'), null, "a visible Program is not an empty Focus");
+  assert.equal(window.document.querySelectorAll('[data-program-area="otto/delta"] .desk-program').length, 0, "an Operation does not enter Work");
+  assert.ok(window.document.querySelector('[data-desk-area="otto/delta"]'), "the selected Area keeps its calm header");
   click(window, "[data-clear-area-focus]");
 
   click(window, "[data-open-area-focus]");

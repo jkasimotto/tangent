@@ -9,6 +9,7 @@ export const BRAIN_PROMPT_LIMIT = 8_000;
 export const JOURNAL_LIMIT_BYTES = 256 * 1024;
 export const GOAL_QUEUE_SCHEMA = "area-goal-queue.v2";
 export const LEGACY_AUDIT_SCHEMA = "area-brain-legacy-audit.v1";
+export const AREA_MILESTONES_SCHEMA = "area-milestones.v1";
 const gzip = promisify(zlib.gzip);
 
 /** Returns the stable content hash used in source and export manifests. */
@@ -132,4 +133,47 @@ export async function journalFiles(treesRoot, area) {
   let names = [];
   try { names = await readdir(directory); } catch { return []; }
   return names.filter((name) => /^journal(?:-.*)?\.md$/.test(name)).sort((left, right) => left === "journal.md" ? 1 : right === "journal.md" ? -1 : left.localeCompare(right)).map((name) => path.join(directory, name));
+}
+
+/** Returns the durable milestone index path for one Area. */
+export function milestonePath(root, area) {
+  return path.join(root, cleanArea(area), "milestones.json");
+}
+
+/** Reads one Area milestone index and tolerates an index that does not exist. */
+export async function readMilestones(root, area) {
+  try {
+    const record = JSON.parse(await readFile(milestonePath(root, area), "utf8"));
+    if (record?.schema === AREA_MILESTONES_SCHEMA && Array.isArray(record.items)) return record;
+  } catch {}
+  return { schema: AREA_MILESTONES_SCHEMA, area: cleanArea(area), items: [] };
+}
+
+/** Adds one material milestone once and writes the index atomically. */
+export async function appendMilestone({ root, area, kind, summary, ref = null, idempotencyKey, now = new Date().toISOString() }) {
+  const record = await readMilestones(root, area);
+  const key = String(idempotencyKey ?? "").trim();
+  if (!record.area || !key || !String(summary ?? "").trim()) throw new Error("Area, summary, and idempotency key are required.");
+  const duplicate = record.items.find((item) => item.id === key);
+  if (duplicate) return { ...duplicate, duplicate: true };
+  const item = { id: key, area: record.area, kind: String(kind || "note"), summary: String(summary).trim(), ref, createdAt: now };
+  record.items.push(item);
+  record.items = record.items.slice(-2_000);
+  const file = milestonePath(root, area);
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(`${file}.tmp`, `${JSON.stringify(record, null, 2)}\n`);
+  await rename(`${file}.tmp`, file);
+  return { ...item, duplicate: false };
+}
+
+/** Queries material milestones for an Area subtree in newest-first order. */
+export async function querySubtreeMilestones({ root, area, areas, since = "", limit = 12 }) {
+  const prefix = `${cleanArea(area)}/`;
+  const scope = areas.filter((item) => item === cleanArea(area) || item.startsWith(prefix));
+  const records = await Promise.all(scope.map((item) => readMilestones(root, item)));
+  const all = records.flatMap((record) => record.items)
+    .filter((item) => !since || item.createdAt > since)
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  const count = Math.max(1, Math.min(100, Number(limit) || 12));
+  return { area: cleanArea(area), subtree: true, milestones: all.slice(0, count), omitted: Math.max(0, all.length - count) };
 }

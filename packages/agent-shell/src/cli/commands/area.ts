@@ -11,10 +11,35 @@ export async function runAreaCli(argv = process.argv.slice(2)): Promise<void> {
   if (!subcommand || args.help) return help();
   if (subcommand === "list") return listCommand(args);
   if (subcommand === "show") return showCommand(args);
+  if (subcommand === "recent") return recentCommand(args);
+  if (subcommand === "audit") return auditCommand(args);
   if (subcommand === "create") return createCommand(args);
   if (subcommand === "done") return statusCommand(args, "done");
   if (subcommand === "reopen") return statusCommand(args, "active");
   throw new Error(`Unknown area command: ${subcommand}. Try "tangent area list", "tangent area show <area>", "tangent area create <parent> <name>", "tangent area done <area>", or "tangent area reopen <area>".`);
+}
+
+/** Exports legacy coordination records to a detached compressed audit file. */
+async function auditCommand(args: Args): Promise<void> {
+  const server = resolveServerUrl(stringArg(args.server));
+  const area = await requireArea(server, requiredString(args._[1], "tangent area audit requires <area>."));
+  const result = await postJson(server, "/api/areas/legacy-audit", { area });
+  if (booleanArg(args.json)) return void console.log(JSON.stringify(result, null, 2));
+  console.log(`legacy audit: ${result.output}`);
+  for (const source of result.manifest) console.log(`  ${source.name}: ${source.records} records  sha256:${source.hash}`);
+}
+
+/** Handles `tangent area recent <area>` with subtree context by default. */
+async function recentCommand(args: Args): Promise<void> {
+  const server = resolveServerUrl(stringArg(args.server));
+  const area = await requireArea(server, requiredString(args._[1], "tangent area recent requires <area>."));
+  const query = new URLSearchParams({ area, limit: stringArg(args.limit) || "12" });
+  if (stringArg(args.since)) query.set("since", stringArg(args.since) || "");
+  const result = await vaultFetch(server, `/api/areas/milestones?${query}`);
+  if (booleanArg(args.json)) return void console.log(JSON.stringify(result, null, 2));
+  if (!result.milestones.length) console.log(`No material milestones in ${area} or its child Areas.`);
+  for (const item of result.milestones) console.log(`${item.createdAt}  ${item.area}  ${item.kind}  ${item.summary}`);
+  if (result.omitted) console.log(`${result.omitted} more. Increase --limit or use --since.`);
 }
 
 /** Handles `tangent area list`. */

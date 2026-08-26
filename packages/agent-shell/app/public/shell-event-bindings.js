@@ -15,10 +15,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain, brainForAreaCard,
     openBrainSession, openOrStartBrain, toggleBrainPopover, saveDescribeDraft, saveDescribeSession, describeWorkSession,
     openDescribeSession, addDescribeSource, switchDescribeToManualCreate, selectionForArea, startSelectedGoals,
-    openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, enableDockBadge, openRequest, sendVerdict, dismissAsk,
+    openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, enableDockBadge, openRequest, openQuestionsReview, openAreaCapture, sendVerdict, dismissAsk,
     replyAboutRow, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery,
     applyAreaFocus, clearAreaFocus, renderWork, describeLaunchArea, describeWorkSessions,
-    goalGroupRoot, toggleSubgoals,
+    goalGroupRoot, toggleSubgoals, toggleWorkArea,
   } = work;
   const {
     showAreasAt, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelCreate, cancelDescribe, areaIsFolded,
@@ -456,8 +456,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const verdictRow = target.closest("[data-verdict-line]");
     if (verdictRow) {
       event.stopPropagation();
-      return sendVerdict(verdictRow.dataset.verdictArea, verdictRow.dataset.verdictLine, verdictRow.dataset.verdict);
+      return sendVerdict(verdictRow.dataset.verdictArea, verdictRow.dataset.verdictLine, verdictRow.dataset.verdict, "", verdictRow.dataset.effectRevision);
     }
+    const foldArea = target.closest("[data-fold-work-area]");
+    if (foldArea) return toggleWorkArea(foldArea.dataset.foldWorkArea);
     const requestRow = target.closest("[data-open-request-id]");
     if (requestRow) return openRequest(requestRow.dataset.openRequestArea, requestRow.dataset.openRequestId);
     const replyRow = target.closest("[data-reply-subject]");
@@ -735,6 +737,19 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   });
 
   document.addEventListener("submit", async (event) => {
+    if (event.target.matches("[data-area-journal-form]")) {
+      event.preventDefault();
+      const form = event.target;
+      const text = new FormData(form).get("text")?.toString().trim() || "";
+      if (!text) return;
+      try {
+        await post("/api/areas/journal", { area: state.areaSelection, text, idempotencyKey: crypto.randomUUID(), source: "Agent Shell" });
+        form.reset();
+        showToast("Saved to the Journal and sent to the Area brain.");
+        await refresh();
+      } catch (error) { showToast(error.message); }
+      return;
+    }
     if (event.target.matches("[data-area-focus-form]")) {
       event.preventDefault();
       return applyAreaFocus();
@@ -785,7 +800,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         prompt: fields.get("prompt")?.toString().trim() || "",
       };
       try {
-        const created = await post("/api/programs/new", body);
+        const created = await post("/api/operations/new", body);
         localStorage.setItem("agent-shell.last-area", body.area);
         await refresh();
         state.programId = created.id;
@@ -1150,7 +1165,19 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         const area = current?.dataset.workArea ?? "";
         const brain = (state.brains ?? []).filter((item) => item.live && (area === item.area || area.startsWith(`${item.area}/`))).sort((a, b) => b.area.length - a.area.length)[0];
         const session = state.sessions.find((item) => item.name === brain?.session);
-        return session ? openSessionLayer(session, "brain") : showToast("This Area has no live brain to enter.");
+        return session ? openSessionLayer(session, "brain") : openOrStartBrain(area);
+      }
+      if (event.key === "z") {
+        event.preventDefault();
+        return toggleWorkArea(current?.dataset.workArea ?? "");
+      }
+      if (event.key === "r") { event.preventDefault(); return openQuestionsReview(current?.dataset.workArea ?? ""); }
+      if (event.key === "n") { event.preventDefault(); return openAreaCapture(current?.dataset.workArea ?? ""); }
+      if (event.key === "f") { event.preventDefault(); return openAreaFocusPicker(); }
+      if (event.key === "x") {
+        event.preventDefault();
+        const goal = goalByFile(current?.dataset.goalAnchor ?? current?.closest?.("[data-goal-anchor]")?.dataset.goalAnchor);
+        return goal ? confirmComplete(goal.file) : showToast("Choose a Goal row first.");
       }
       if (event.key === "/") { event.preventDefault(); return document.querySelector("#work-search")?.focus(); }
       if (event.key === "?") {

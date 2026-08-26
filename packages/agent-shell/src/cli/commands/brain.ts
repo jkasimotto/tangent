@@ -38,7 +38,13 @@ async function requestCommand(args: Args): Promise<void> {
   const proposal = stringArg(args.proposal)?.trim() || "";
   const goalSlug = stringArg(args.goal)?.trim() || "";
   const goal = goalSlug ? (await requireGoal(server, goalSlug)).file : "";
-  const result = await postJson(server, "/api/brains/requests", { session, kind, subject, question, proposal, detail, options: stringsArg(args.option), goal });
+  let effect: object | undefined;
+  const effectText = stringArg(args.effect)?.trim();
+  if (effectText) {
+    try { effect = JSON.parse(effectText); }
+    catch { throw new Error("--effect must be one JSON object."); }
+  }
+  const result = await postJson(server, "/api/brains/requests", { session, kind, subject, question, proposal, detail, options: stringsArg(args.option), goal, ...(effect ? { effect } : {}) });
   console.log(`asked Julian: ${String(result.request?.id ?? "request recorded")}`);
 }
 

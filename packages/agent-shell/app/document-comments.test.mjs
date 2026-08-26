@@ -51,6 +51,14 @@ test("removing every comment restores the original text, and resolve matches exa
   assert.equal(stripped, DOCUMENT);
 });
 
+test("resolve can select comments whose text differs only by case", () => {
+  const text = "{>>Julian: Sounds good.<<}\n{>>Julian: SOunds good.<<}";
+  assert.match(comments.resolveComment(text, "sounds good").error, /2 comments/);
+  const second = comments.resolveComment(text, "", 2);
+  assert.equal(second.comment.text, "SOunds good.");
+  assert.equal(comments.parseComments(second.text)[0].text, "Sounds good.");
+});
+
 test("editing keeps the place and the quoted words", () => {
   const text = comments.insertComment(DOCUMENT, { kind: "selection", quote: "some words" }, "Old").text;
   const [comment] = comments.parseComments(text);

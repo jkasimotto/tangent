@@ -1,7 +1,7 @@
 // Opening and saving a Document stays under a second
 // (goal-opening-and-saving-a-document-takes-under-a-seco).
 //
-// The shell polls /api/vault, /api/sessions, and /api/programs every 2.5
+// The shell polls /api/vault, /api/sessions, and /api/operations every 2.5
 // seconds from every open tab, and each of those requests used to build the
 // vault index from every Markdown file in the vault. The builds cost more than
 // the poll interval gave them, so requests piled up and one Document read took

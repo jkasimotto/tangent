@@ -93,17 +93,17 @@ test("the context-first shell is default and keeps the user's understanding with
   const sessionPayload = await fetch(`${base}/api/sessions`).then((response) => response.json());
   assert.equal(sessionPayload.caffeinate, false);
 
-  const programs = await fetch(`${base}/api/programs`).then((response) => response.json());
+  const programs = await fetch(`${base}/api/operations`).then((response) => response.json());
   assert.equal(programs.programs.find((program) => program.name === "dev").type, "process");
 
-  const command = await fetch(`${base}/api/programs/new`, {
+  const command = await fetch(`${base}/api/operations/new`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ type: "command", area: "otto/test", name: "Release", command: "npm run release", cwd: workspace }),
   }).then((response) => response.json());
   assert.equal(command.id, "command:otto/test:release");
 
-  const routine = await fetch(`${base}/api/programs/new`, {
+  const routine = await fetch(`${base}/api/operations/new`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ type: "routine", area: "otto/test", name: "Daily check", time: "07:30", cwd: workspace, model: "sonnet", prompt: "Check the area and leave proof." }),
@@ -741,8 +741,8 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(brainShow.brain.area, "otto/test");
   // A brain gets both declared defaults in plain words, and the rule that
   // every worker start names its own harness.
-  assert.match(brainShow.prompt, /Area `otto\/test` declares the work harness `other` and the brain harness `fake\/one\/high`\./);
-  assert.match(brainShow.prompt, /need an explicit `--launch`/);
+  assert.match(brainShow.prompt, /Repository:/);
+  assert.doesNotMatch(brainShow.prompt, /declares the work harness/, "the bounded prompt omits launch catalog narration");
   assert.doesNotMatch(brainShow.prompt, /Every --launch in this Area is/);
   assert.equal((await fetch(`${base}/api/brains/show?area=otto%2Fnowhere`)).status, 404);
   const brainRequest = await fetch(`${base}/api/brains/requests`, {
@@ -750,7 +750,7 @@ test("the context-first shell is default and keeps the user's understanding with
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ session: "test-brain", kind: "decision", subject: "Live choice", question: "Approve this choice?", proposal: "Use the live choice." }),
   }).then((response) => response.json());
-  assert.equal(brainRequest.request.ownerRef.generation, 1);
+  assert.equal(brainRequest.request.ownerRef.generation, null, "the Request belongs to the logical Area brain");
   const briefUnderBrain = await fetch(`${base}/api/goals/brief?file=${encodeURIComponent(pipelineGoal.file)}`).then((response) => response.json());
   assert.match(briefUnderBrain.markdown, /## Brain\n\nThe brain for Area otto\/test controls this work/);
   // A pipeline event on the Area is queued to the brain as a message from tangent.
@@ -800,8 +800,8 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(snapshot.brains[0].latestHandover, "Wave 1 dispatched: pipeline-demo runs step 9. Next: wait for it.");
   assert.equal(snapshot.brains[0].generations[0].handover, "Wave 1 dispatched: pipeline-demo runs step 9. Next: wait for it.");
   let durableRequests = JSON.parse(await readFile(path.join(root, "brains", "otto", "test", "requests.json"), "utf8")).requests;
-  assert.deepEqual(durableRequests[0].ownerRef, { type: "brain", area: "otto/test", generation: 2 }, "handover transfers the open Request to the replacement generation");
-  assert.deepEqual(durableRequests[0].subjectRef, { type: "brain", area: "otto/test", generation: 2 });
+  assert.deepEqual(durableRequests[0].ownerRef, { type: "brain", area: "otto/test", generation: null }, "handover keeps the Request with the logical Area brain");
+  assert.deepEqual(durableRequests[0].subjectRef, { type: "brain", area: "otto/test", generation: null });
   // Stop agent on the brain ends it; Resume starts generation 3 from the record.
   const brainKilled = await fetch(`${base}/api/kill/${encodeURIComponent("test-brain-g2")}`, { method: "POST" }).then((response) => response.json());
   assert.equal(brainKilled.brainEnded, true);
@@ -829,10 +829,10 @@ test("the context-first shell is default and keeps the user's understanding with
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ session: "test-brain-g3", kind: "approval", subject: "Resumed choice", question: "Approve resumed choice?", proposal: "Use the resumed choice." }),
   }).then((response) => response.json());
-  assert.equal(resumedRequest.request.ownerRef.generation, 3, "resume creates Requests under the surviving subject generation");
+  assert.equal(resumedRequest.request.ownerRef.generation, null, "resume creates Requests under the logical Area brain");
 
   await new Promise((resolve, reject) => execFile("tmux", ["kill-session", "-t", "=test-brain-g3"], (error, stdout, stderr) => (error ? reject(new Error(stderr || error.message)) : resolve())));
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
     snapshot = await fetch(`${base}/api/sessions`).then((response) => response.json());
     if (snapshot.brains[0].status === "stopped") break;
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -846,7 +846,7 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(brainReplacement.session, "test-brain");
   openedSessions.push(brainReplacement.session);
   durableRequests = JSON.parse(await readFile(path.join(root, "brains", "otto", "test", "requests.json"), "utf8")).requests;
-  assert.deepEqual([durableRequests[1].status, durableRequests[1].closedReason], ["closed", "brain-replaced"], "a new brain closes Requests owned by the replaced generation");
+  assert.equal(durableRequests[1].status, "open", "a runtime replacement keeps the logical Area brain's Request open");
 
   const replacementRequest = await fetch(`${base}/api/brains/requests`, {
     method: "POST",

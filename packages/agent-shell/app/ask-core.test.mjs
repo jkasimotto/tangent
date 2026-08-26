@@ -39,12 +39,12 @@ test("the exports are the identity, constructor, builders, and fixed questions",
   ]);
 });
 
-test("new Requests share two answers and stored choices keep their answers", () => {
+test("new Requests accept conversation replies and stored choices keep their answers", () => {
   const owner = brain();
   const plan = core.askFromRequest(owner, { id: "p1", kind: "plan", subject: "Work plan", proposal: "Start two Goals.", detail: "2 Goals", question: "Approve this plan?", status: "open" });
-  assert.deepEqual(plan.actions.slice(1).map((action) => [action.label, action.arg.answer]), [["Approve", "approve"], ["I want these changes", "changes"]]);
+  assert.deepEqual(plan.actions.slice(1).map((action) => [action.label, action.arg.answer]), [["Reply", "reply"]]);
   const testAsk = core.askFromRequest(owner, { id: "t1", kind: "test", subject: "Reload", proposal: "Close the Goal.", detail: "Press it", question: "Approve this result?", status: "open" });
-  assert.deepEqual(testAsk.actions.slice(1).map((action) => action.label), ["Approve", "I want these changes"]);
+  assert.deepEqual(testAsk.actions.slice(1).map((action) => action.label), ["Reply"]);
   const decision = core.askFromRequest(owner, { id: "d1", kind: "decision", subject: "Behavior", detail: "One-way door", question: "Which behavior?", options: ["Keep", "Change"], status: "open" });
   assert.deepEqual(decision.actions.slice(1).map((action) => action.arg.answer), ["Keep", "Change"]);
   assert.equal(plan.proposal, "Start two Goals.");

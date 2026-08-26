@@ -163,8 +163,8 @@
     const answers = legacyChoices.length
       ? legacyChoices.map((answer) => ({ kind: "request-answer", label: answer, arg: { area: brain.area, id: request.id, answer } }))
       : [
-          { kind: "request-answer", label: "Approve", arg: { area: brain.area, id: request.id, answer: "approve" } },
-          { kind: "request-answer", label: "I want these changes", arg: { area: brain.area, id: request.id, answer: "changes" } },
+          ...(request.effect ? [{ kind: "request-answer", label: request.proposal, arg: { area: brain.area, id: request.id, answer: "authorize", effectRevision: request.effectRevision } }] : []),
+          { kind: "request-answer", label: "Reply", arg: { area: brain.area, id: request.id, answer: "reply" } },
         ];
     return makeAsk({
       id: askIdentity("request", brain.area, request.id),

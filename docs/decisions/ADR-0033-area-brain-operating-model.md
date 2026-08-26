@@ -29,5 +29,5 @@ Legacy generations, Requests, inbox events, and pipeline records move to detache
 Agent Shell gains one clear authority for each mutable fact. Capture survives a brain error because the Journal commit occurs first.
 Prompt limits fail visibly and report omitted collections.
 
-Compatibility readers remain during migration. New writers must not add new legacy product state.
-The explicit audit reader is the only path to detached legacy records.
+The browser and new clients use `/api/operations`. The old Program API requires `TANGENT_LEGACY_PROGRAM_API=1` during the two-release window.
+The `tangent area audit` command is the only path to detached legacy records.

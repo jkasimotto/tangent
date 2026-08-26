@@ -46,7 +46,7 @@ test("checked Goals start one shared agent that owns them in checked order", asy
         sessions: started ? [{ name: "dnd--name-the-panes", goal: second.file, state: "waiting", phase: "collaborate", command: "codex" }] : [],
       });
     }
-    if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
+    if (pathname === "/api/operations") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
     if (pathname === "/api/launch/options") {
       return jsonResponse({ harnesses: [], default: { harness: "codex", model: "sol", effort: "low", label: "Codex · Sol · Low", command: "codex" } });
     }

@@ -541,7 +541,12 @@
    * `{ text, comment }` or `{ error, matches }` when zero or several match, so a
    * caller can never remove the wrong comment.
    */
-  function resolveComment(text, prefix) {
+  function resolveComment(text, prefix, index = null) {
+    if (Number.isInteger(index)) {
+      const comment = parseComments(text)[index - 1];
+      if (!comment) return { error: `No open comment has index ${index}.`, matches: [] };
+      return { text: removeComment(text, comment), comment };
+    }
     const wanted = textKey(prefix);
     if (!wanted) return { error: "Give the first words of the comment.", matches: [] };
     const matches = parseComments(text).filter((comment) => textKey(comment.text).startsWith(wanted));

@@ -28,9 +28,9 @@ test("program routes dispatch lists and mutations", async () => {
     async create(body) { return { id: body.name }; },
   });
   const listed = response();
-  await routes.handle(request("GET"), listed, new URL("http://shell/api/programs"));
+  await routes.handle(request("GET"), listed, new URL("http://shell/api/operations"));
   assert.deepEqual(listed.body, { programs: [] });
   const created = response();
-  await routes.handle(request("POST", { name: "watch" }), created, new URL("http://shell/api/programs/new"));
+  await routes.handle(request("POST", { name: "watch" }), created, new URL("http://shell/api/operations/new"));
   assert.equal(created.body.id, "watch");
 });

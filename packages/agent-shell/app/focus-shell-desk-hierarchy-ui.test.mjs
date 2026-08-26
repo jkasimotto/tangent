@@ -52,7 +52,7 @@ test("a parent Area owns descendant current work without a separate sub-Area sec
         ],
       });
     }
-    if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
+    if (pathname === "/api/operations") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
     return jsonResponse({
       areas: [
         { path: "neara", name: "neara", goals: [] },

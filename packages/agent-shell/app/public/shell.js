@@ -408,8 +408,8 @@ const {
   brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain,
   humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel,
   goalNeedsYou, goalWorkFinished, workCard, goalTreeCard,
-  fallbackAsks, forgetVerdictLines, openRequest, sendVerdict, replyAboutRow, dismissAsk, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups,
-  goalGroupRoot, toggleSubgoals,
+  fallbackAsks, forgetVerdictLines, openRequest, openQuestionsReview, openAreaCapture, sendVerdict, replyAboutRow, dismissAsk, syncDockBadge, enableDockBadge, forYouItems, areaForYouGroups,
+  goalGroupRoot, toggleSubgoals, toggleWorkArea,
   openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, renderWork,
 } = workDeskView;
 
@@ -712,10 +712,9 @@ function updateHeader() {
     : isPrompts
       ? "prompts"
       : "";
-  const attentionCount = forYouItems().length;
-  workTab.textContent = attentionCount ? `Work · ${attentionCount}` : "Work";
+  workTab.textContent = "Work";
   workTab.classList.toggle("active", topLevel === "work");
-  workTab.classList.toggle("has-attention", attentionCount > 0);
+  workTab.classList.remove("has-attention");
   areasTab.classList.toggle("active", false);
   promptsTab.classList.toggle("active", topLevel === "prompts");
   for (const [button, active] of [[workTab, topLevel === "work"], [areasTab, false], [promptsTab, topLevel === "prompts"]]) {
@@ -1351,10 +1350,10 @@ bindShellEvents({
     selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain, brainForAreaCard,
     openBrainSession, openOrStartBrain, toggleBrainPopover, saveDescribeDraft, saveDescribeSession, describeWorkSession,
     openDescribeSession, addDescribeSource, switchDescribeToManualCreate, selectionForArea, startSelectedGoals,
-    openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, enableDockBadge, openRequest, sendVerdict,
+    openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, enableDockBadge, openRequest, openQuestionsReview, openAreaCapture, sendVerdict,
     replyAboutRow, dismissAsk, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery,
     applyAreaFocus, clearAreaFocus, renderWork, describeLaunchArea, describeWorkSessions,
-    goalGroupRoot, toggleSubgoals,
+    goalGroupRoot, toggleSubgoals, toggleWorkArea,
   },
   areas: {
     showAreasAt, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelCreate, cancelDescribe, areaIsFolded,

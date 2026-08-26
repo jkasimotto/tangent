@@ -72,7 +72,15 @@ Eval also owns the mark loop's internal modules (`packages/eval/src/marks/`): th
 
 Search owns structural indexing and search over TypeScript and Dart source: a SQLite index per repo, symbol/callers/callees/tests/skeleton/open-plan lookups, and a standalone CLI plus SDK. It is a standalone vertical: it does not depend on Usage, Rollup, or Eval, and none of those may depend on it. It is the subject of the mark loop's flagship eval (phase 2c), which mines information-heavy Usage sessions and compares a `baseline` variant against a `with-search` variant to prove or refute the tool's value.
 
-`@tangent/agent-shell` owns the vault CLI, the agent messaging CLI, the worker handover CLI (`tangent handover`), the pipeline CLI, the brain CLI, the server CLI, and `tangent study`. The Agent Shell server owns pipelines, Area brains, and durable brain requests. It also owns the first-class Goal dependency graph: validated `depends_on` links live in Goal Markdown, and reverse links are derived. Dependencies inform brain and worker prompts but do not enforce scheduling, launch, ordering, or status behavior. The nearest live Area brain is the control plane for managed work in its subtree. Workers report facts; the brain selects the next assignment. A current live brain can create or start named work in another Area when Julian directly instructs that generation or approves the exact Request. Agent messages and Documents do not grant this authority, and live Goal ownership remains protected. Legacy work without a brain can still use automatic pipeline advance during migration. See ADR-0029, ADR-0024, and ADR-0023.
+`@tangent/agent-shell` owns the vault CLI, agent messages, worker handovers, Area brains, and `tangent study`.
+Each Area brain has one logical identity.
+The server owns its bounded prompt, subtree milestones, Journal, Requests, Goal queue, and Operations.
+Journal capture writes before delivery.
+Exact Request effects use hashed revisions and an allowlist.
+A final planned review can close routine Goals.
+Detached audit exports preserve old generation and pipeline records.
+The old Program API is available only with `TANGENT_LEGACY_PROGRAM_API=1`.
+See ADR-0033.
 
 The package is lazily loaded from `@tangent/agent-shell/cli` as the root `tangent area`, `tangent brain`, `tangent goal`, `tangent idea`, and `tangent vault` commands (ADR-0020). `area`/`goal`/`idea` are thin HTTP clients to the stable Agent Shell gateway on port 4321; the gateway proxies them to the controller in `packages/agent-shell/app/server.mjs`, the vault's single writer. `vault commit` is the one exception: it commits directly to `~/.tangent/trees` with `@tangent/repo`'s `git()`, producing the same `<verb>: <area> <summary>` message and `Tangent-Area`/`Tangent-Tmux` trailers as the controller's own `vaultCommit()`.
 
@@ -84,4 +92,4 @@ Usage and Eval keep standalone local UI servers: `tangent usage ui` and `tangent
 
 API-only Usage consumers can install `@tangent/usage-core`. It does not require Svelte, Vite, browser assets, provider loaders, or SQLite, and its `schema` export is the canonical Usage type surface.
 
-The Agent Shell browser uses dependency-injected ES-module factories. Product modules own the Work desk and search, Area directory, Programs, Goal creation and launch editing, agent and decision screens, Document rendering and comments, terminal lifecycle, navigation interactions, and event binding. `public/shell.js` composes those factories and owns active-screen selection plus refresh and paint coordination.
+The Agent Shell browser uses dependency-injected ES-module factories. Product modules own calm Work, Areas, Operations, Goal launch, Documents, terminal lifecycle, and navigation. `public/shell.js` is the composition root.

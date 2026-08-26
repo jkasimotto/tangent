@@ -28,7 +28,7 @@ async function shell(url, goals, sessions = []) {
   window.fetch = async (address) => {
     const pathname = new URL(address, window.location.href).pathname;
     if (pathname === "/api/sessions") return jsonResponse({ sessions, pipelines: [], brains: [] });
-    if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
+    if (pathname === "/api/operations") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
     if (pathname === "/api/map-state") return jsonResponse({ state: {} });
     return jsonResponse(vaultResponse(goals));
   };

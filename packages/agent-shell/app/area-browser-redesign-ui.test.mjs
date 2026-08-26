@@ -46,7 +46,7 @@ test("the Area browser focuses search and leads with ready work and filterable D
       if (holdSessionRefresh) await new Promise((resolve) => { releaseSessionRefresh = resolve; });
       return jsonResponse({ boot: "boot-1", caffeinate: false, sessions, pipelines: [], brains: [brain] });
     }
-    if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
+    if (pathname === "/api/operations") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
     if (pathname === "/api/map-state") return jsonResponse({ state: {} });
     return jsonResponse({
       areas: [{ path: "otto", name: "otto", goals: [] }, { path: "otto/dnd", name: "dnd", goals: [] }, { path: "otto/tangent", name: "tangent", goals: [goal], documents }],

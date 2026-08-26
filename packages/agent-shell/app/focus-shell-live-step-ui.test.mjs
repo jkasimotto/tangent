@@ -48,7 +48,7 @@ test("a Goal whose first step stopped still opens the step that runs", async () 
   window.fetch = async (url) => {
     const pathname = new URL(url, window.location.href).pathname;
     if (pathname === "/api/sessions") return jsonResponse({ boot: "boot-1", caffeinate: false, sessions, pipelines: [pipeline], brains: [] });
-    if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
+    if (pathname === "/api/operations") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
     return jsonResponse({
       areas: [{ path: "neara", name: "neara", goals: [] }, { path: "neara/viz-input", name: "viz-input", goals: [goal], documents: [] }],
       map: [{ path: "neara/viz-input", name: "viz-input", goals: [goal] }],

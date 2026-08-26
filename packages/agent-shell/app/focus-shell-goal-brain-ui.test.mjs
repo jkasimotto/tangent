@@ -70,7 +70,7 @@ test("Goal cards open their nearest live brain and preserve Work context", async
       ];
       return jsonResponse({ boot: "boot-1", caffeinate: false, pipelines: [], sessions: sessionProjection, brains });
     }
-    if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
+    if (pathname === "/api/operations") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
     return jsonResponse({
       areas: [
         { path: "otto", name: "otto", goals: [] },

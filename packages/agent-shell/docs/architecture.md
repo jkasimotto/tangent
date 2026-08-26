@@ -41,7 +41,7 @@ The browser has one Area-based Work destination. Each exact Area has one logical
 The vault owns Area knowledge. The bound product repository owns code-agent rules. Agent Shell derives both instruction stacks by path.
 It does not ask an agent to select inherited facts. It does not copy complete repository instructions into every prompt.
 
-Journal intake commits exact text before brain delivery. One active Journal rolls over at 256 KB.
+Journal intake commits exact text before brain delivery. A refused commit records no milestone and wakes no brain. One active Journal rolls over at 256 KB, and an idempotency key stays used after its entry moves to an archive.
 One 8,000-character budget covers every character Agent Shell generates for a brain prompt. Only Julian's own founding instruction sits outside it. The checkpoint is generated text, so it sits inside and takes the room the structural sections left, down to a floor that keeps a replacement attempt oriented. Structural sections that cannot fit fail the brain start instead of starting a brain with no prompt. Each omitted collection or clipped section reports its source and count.
 
 A brain mutates only its exact Area. A parent can read descendant milestones and route referenced text, but it cannot mutate child work. An approved Request authorizes only its hashed effect revision. Agent messages, handovers, notices, prompts, Documents, and inferred intent do not expand scope. Server mutation routes verify the current exact-Area brain attempt.

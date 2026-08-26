@@ -363,3 +363,86 @@ test("a full Journal rolls over into an archive the same commit carries", async 
   const history = await fetch(`${base}/api/areas/journal?area=${encodeURIComponent("otto/test")}`).then((response) => response.json());
   assert.deepEqual(history.files.map((file) => file.file), [archive, active]);
 });
+
+test("a retry of an entry the rollover archived is still the same entry", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-journal-across-rollover-"));
+  const { trees, workspace } = await buildVault(root);
+  const base = await startShellServer(context, { here, root, trees, workspace });
+  if (!base) return;
+
+  const journal = path.join(trees, "otto", "test", "journal.md");
+  const words = "The pole spacing survived the retry.";
+  const first = await post(base, "/api/areas/journal", { area: "otto/test", text: words, idempotencyKey: "across-1", source: "Agent Shell" });
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  assert.equal(first.body.duplicate ?? false, false);
+
+  // Fill the active Journal past its limit without disturbing the first
+  // entry, so the next capture rolls it into an archive.
+  const padding = `## 2026-02-01T00:00:00.000Z\n\nSource: capture.\n\n${"The filler line.\n".repeat(20_000)}\n`;
+  await writeFile(journal, `${await readFile(journal, "utf8")}${padding}`, "utf8");
+  assert.ok(Buffer.byteLength(await readFile(journal, "utf8")) >= 256 * 1024, "the Journal is over the rollover limit");
+
+  const rolled = await post(base, "/api/areas/journal", { area: "otto/test", text: "The entry that rolls it over.", idempotencyKey: "across-2", source: "Agent Shell" });
+  assert.equal(rolled.status, 200, JSON.stringify(rolled.body));
+  const [, archive] = rolled.body.files ?? [];
+  assert.ok(archive, "the rollover produced an archive");
+  assert.match(await readFile(path.join(trees, archive), "utf8"), /The pole spacing survived the retry\./, "the first entry moved into the archive");
+
+  // The same idempotency key must still name the same entry after its words
+  // left the active file, or one capture becomes two.
+  const retry = await post(base, "/api/areas/journal", { area: "otto/test", text: words, idempotencyKey: "across-1", source: "Agent Shell" });
+  assert.equal(retry.status, 200, JSON.stringify(retry.body));
+  assert.equal(retry.body.route, "duplicate", "the archived entry is recognised as already saved");
+  assert.deepEqual(retry.body.files, [], "a duplicate changes no file");
+
+  const history = await fetch(`${base}/api/areas/journal?area=${encodeURIComponent("otto/test")}`).then((response) => response.json());
+  const copies = history.files.map((file) => file.text.split(words).length - 1).reduce((total, count) => total + count, 0);
+  assert.equal(copies, 1, "the words are in the Journal exactly once");
+});
+
+test("a Journal capture the vault refuses to commit wakes no brain", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-journal-commit-guard-"));
+  const { trees, workspace } = await buildVault(root);
+
+  /** Runs one git command inside the test vault. */
+  const git = (...args) => new Promise((resolve, reject) => {
+    execFile("git", ["-C", trees, ...args], (error, stdout) => error ? reject(error) : resolve(stdout));
+  });
+  await git("init", "-q");
+  await git("config", "user.email", "test@tangent.local");
+  await git("config", "user.name", "Tangent Test");
+  await git("add", "-A");
+  await git("commit", "-qm", "seed");
+
+  // A hook that refuses every commit is how a real vault rejects one.
+  const hook = path.join(trees, ".git", "hooks", "pre-commit");
+  await writeFile(hook, "#!/bin/sh\necho 'the vault refused this commit' >&2\nexit 1\n", { mode: 0o755 });
+
+  const openedSessions = [];
+  const base = await startShellServer(context, { here, root, trees, workspace, openedSessions });
+  if (!base) return;
+
+  const started = await post(base, "/api/brains/start", { area: "otto/test", instruction: "Own this Area." });
+  assert.equal(started.status, 200, JSON.stringify(started.body));
+  openedSessions.push(started.body.session);
+  const killed = await fetch(`${base}/api/kill/${encodeURIComponent(started.body.session)}`, { method: "POST" }).then((response) => response.json());
+  assert.equal(killed.brainEnded, true, "the destination brain is inactive before the capture");
+
+  const captured = await post(base, "/api/areas/journal", { area: "otto/test", text: "The words the vault refused.", idempotencyKey: "guard-1", source: "Agent Shell" });
+  assert.equal(captured.status, 200, JSON.stringify(captured.body));
+  assert.equal(captured.body.route, "not-committed", "the capture reports that the vault did not save it");
+  assert.ok(captured.body.commitError, "the capture carries why the commit failed");
+  assert.ok(!captured.body.session, "no brain was woken");
+
+  // The words are never lost, they are only uncommitted.
+  assert.match(await readFile(path.join(trees, "otto", "test", "journal.md"), "utf8"), /The words the vault refused\./);
+  assert.equal((await git("log", "--format=%s")).trim(), "seed", "the vault history gained nothing");
+
+  // Nothing downstream of the commit ran: no milestone, and the brain is
+  // still inactive with no notice telling it to read the entry.
+  const milestones = await fetch(`${base}/api/areas/milestones?area=${encodeURIComponent("otto/test")}`).then((response) => response.json());
+  assert.equal((milestones.items ?? []).filter((item) => item.kind === "journal").length, 0, "an uncommitted capture records no milestone");
+  const record = await fetch(`${base}/api/brains/show?area=${encodeURIComponent("otto/test")}`).then((response) => response.json());
+  assert.notEqual(record.brain.status, "active", "the brain stayed inactive");
+  assert.doesNotMatch(JSON.stringify(record.brain), /guard-1/, "no notice about the uncommitted entry reached the brain");
+});

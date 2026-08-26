@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
@@ -122,6 +122,25 @@ test("Journal intake saves exact text once before delivery", async () => {
   assert.equal(first.duplicate, false);
   assert.equal(again.duplicate, true);
   assert.equal((await readFile(first.file, "utf8")).match(/Exact words\./g).length, 1);
+});
+
+test("Journal intake stays exactly once after a rollover archives the entry", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "area-brain-journal-rollover-"));
+  const first = await appendJournalEntry({ treesRoot: root, area: "otto/test", text: "Exact words.", idempotencyKey: "capture-1", now: "2026-01-01T00:00:00.000Z" });
+  await appendFile(first.file, `## 2026-02-01T00:00:00.000Z\n\n${"Filler line.\n".repeat(25_000)}\n`, "utf8");
+  assert.ok(Buffer.byteLength(await readFile(first.file, "utf8")) >= JOURNAL_LIMIT_BYTES, "the fixture Journal is over the rollover limit");
+
+  // A later entry rolls the first one into an archive, so the active Journal
+  // no longer carries its marker.
+  const rolled = await appendJournalEntry({ treesRoot: root, area: "otto/test", text: "Later words.", idempotencyKey: "capture-2", now: "2026-03-01T00:00:00.000Z" });
+  assert.ok(rolled.archive, "the second entry rolled the Journal over");
+  assert.match(await readFile(rolled.archive, "utf8"), /Exact words\./);
+  assert.doesNotMatch(await readFile(first.file, "utf8"), /Exact words\./);
+
+  const retry = await appendJournalEntry({ treesRoot: root, area: "otto/test", text: "Exact words.", idempotencyKey: "capture-1", now: "2026-03-02T00:00:00.000Z" });
+  assert.equal(retry.duplicate, true, "the archived key is still used");
+  const everywhere = [await readFile(first.file, "utf8"), await readFile(rolled.archive, "utf8")].join("");
+  assert.equal(everywhere.match(/Exact words\./g).length, 1);
 });
 
 test("recent context is durable, idempotent, and scoped to the Area subtree", async () => {

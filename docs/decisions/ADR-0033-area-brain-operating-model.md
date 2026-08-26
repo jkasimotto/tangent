@@ -45,3 +45,5 @@ Every Goal closure funnels through one milestone record, dropped Goals included.
 Work carries no attention strip, no Dock badge, and no inferred ask. A Question is a quiet count on its Area header and a deliberate review behind it. `ask-core.js` and `ask-dismissal-core.js` stay unreferenced for the two-release audit window; a governance lint refuses their return along with the strip, the badge, and the inferred-ask builders.
 
 Only an Operation with a problem reaches Work. Healthy Operations stay on the Area page.
+
+The Journal commit is a precondition, not an ordering. A capture the vault refuses records no milestone and wakes no brain; it reports `not-committed` and the words stay in the working tree. Exactly-once covers the whole Journal: an idempotency key stays used after a rollover moves its entry into an archive.

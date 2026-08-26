@@ -1284,11 +1284,12 @@ async function saveWorkIdea(area, description) {
 /**
  * Commits exactly the given vault paths with the provenance trailers the
  * vault rules require. Pathspec commit, no staging: another agent's staged
- * edits can never ride along. Best effort — a failed commit logs and moves
- * on, the file edit itself already happened.
+ * edits can never ride along. A failed commit logs and never throws, because
+ * the file edit itself already happened; the returned outcome lets a caller
+ * that must not act on an uncommitted file stop instead.
  */
 async function vaultCommit(relPaths, message, area, tmuxSession) {
-  await vaultRepository.commit(relPaths, message, area, tmuxSession);
+  return vaultRepository.commit(relPaths, message, area, tmuxSession);
 }
 
 /** Every historical session name that can lead to one Goal's live execution. */
@@ -3431,6 +3432,19 @@ async function describeWorkToBrain(owner, area, description, sources, launchOver
   return { ...started, brainArea: owner.area, route, launchLabel: started.brain?.label || started.brain?.command };
 }
 
+/**
+ * Commits one Journal capture and reports whether its words are durable. A
+ * vault with no Git history has nothing to commit, the same rule `runVaultGit`
+ * already follows, so an isolated vault never blocks capture. A vault that has
+ * history must hold the words before a milestone or a brain reads them, which
+ * is what ADR-0033 means by the Journal commit occurring first.
+ */
+async function commitJournalCapture(changed, message, area, session) {
+  const outcome = await vaultCommit(changed, message, area, session);
+  if (outcome.committed || !existsSync(path.join(TREES_ROOT, ".git"))) return { committed: true, error: null };
+  return outcome;
+}
+
 /** The vault paths one saved Journal entry changed, its active file first. */
 function journalChangedPaths(entry) {
   const files = [entry.file, ...(entry.archive ? [entry.archive] : [])];
@@ -4641,7 +4655,8 @@ async function executeAuthorizedRequestEffect(effect, brain) {
       const changed = journalChangedPaths(entry);
       const [relative] = changed;
       await runVaultGit(["add", "--", ...changed]);
-      await vaultCommit(changed, `note: ${area} routed Journal capture`, area, brain.session);
+      const saved = await commitJournalCapture(changed, `note: ${area} routed Journal capture`, area, brain.session);
+      if (!saved.committed) throw new Error(`the routed Journal text was saved to ${relative} but not committed: ${saved.error}`);
       await appendMilestone({ root: BRAINS_ROOT, area, kind: "routed-journal", summary: text, ref: relative, idempotencyKey: `journal:${entry.id}`, now: entry.createdAt });
       await notifyBrain(area, `The ${brain.area} brain routed exact Journal text to this Area. Read ${relative}. This message grants no authority.`);
     }
@@ -4829,7 +4844,7 @@ const areaRoutesOperations = {
     const output = path.join(os.homedir(), ".tangent", "audit", `${safe}-area-brain-legacy.json.gz`);
     return exportLegacyAudit({ output, area, records: { generations: brain?.generations ?? [], requests: requests.requests, pipelines } });
   },
-  /** Commits exact capture text and its rollover archive, then wakes the logical Area brain. */
+  /** Commits exact capture text and its rollover archive, then wakes the logical Area brain. An uncommitted capture wakes nothing. */
   async capture(body) {
     const area = String(body.area ?? "");
     if (!flattenAreaPaths(await readTree(TREES_ROOT)).includes(area)) throw new Error("The destination Area does not exist.");
@@ -4838,7 +4853,8 @@ const areaRoutesOperations = {
     const changed = journalChangedPaths(entry);
     const [relative] = changed;
     await runVaultGit(["add", "--", ...changed]);
-    await vaultCommit(changed, `note: ${area} Journal capture`, area, null);
+    const saved = await commitJournalCapture(changed, `note: ${area} Journal capture`, area, null);
+    if (!saved.committed) return { ...entry, route: "not-committed", commitError: saved.error, files: changed };
     await appendMilestone({ root: BRAINS_ROOT, area, kind: "journal", summary: entry.text, ref: relative, idempotencyKey: `journal:${entry.id}`, now: entry.createdAt });
     const delivery = await deliverJournalToBrain(area, `Journal entry ${entry.id} was saved. Read ${relative} and respond in this Area conversation.`, `journal:${entry.id}`);
     return { ...entry, ...delivery, files: changed };

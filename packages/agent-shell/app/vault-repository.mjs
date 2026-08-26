@@ -15,13 +15,21 @@ export function createVaultRepository({ root, runGit, reportError = console.erro
     return safe.relative;
   }
 
-  /** Commits exactly the supplied paths with Tangent provenance trailers. */
+  /**
+   * Commits exactly the supplied paths with Tangent provenance trailers, and
+   * reports the outcome. A failed commit still logs and never throws, because
+   * the file edit already happened; the result lets a caller that must not act
+   * on an uncommitted file, such as Journal capture, stop instead.
+   */
   async function commit(paths, message, area, session = null) {
     const trailers = [`Tangent-Area: ${area}`, session ? `Tangent-Tmux: ${session}` : null].filter(Boolean);
     try {
       await runGit(["-C", root, "commit", "-m", message, "-m", trailers.join("\n"), "--", ...paths]);
+      return { committed: true, error: null };
     } catch (error) {
-      reportError(`vault commit failed: ${paths.join(", ")}: ${String(error.stderr ?? error.message ?? error).slice(0, 200)}`);
+      const reason = String(error.stderr ?? error.message ?? error).slice(0, 200);
+      reportError(`vault commit failed: ${paths.join(", ")}: ${reason}`);
+      return { committed: false, error: reason };
     }
   }
 

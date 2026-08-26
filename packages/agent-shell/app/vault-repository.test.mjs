@@ -31,3 +31,31 @@ test("vault repository rejects traversal before writing", async () => {
   });
   await assert.rejects(repository.writeMarkdown("../outside.md", "bad"), /unsafe vault path/);
 });
+
+test("vault repository reports a refused commit instead of hiding it", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "tangent-vault-repository-"));
+  const reported = [];
+  const repository = createVaultRepository({
+    root,
+    /** Refuses every commit the way a rejected vault commit does. */
+    async runGit() { const error = new Error("commit rejected"); error.stderr = "the vault refused this commit"; throw error; },
+    /** Collects the reported failure instead of printing it. */
+    reportError: (message) => reported.push(message),
+  });
+
+  const refused = await repository.commit(["otto/note.md"], "note: otto", "otto", null);
+
+  assert.equal(refused.committed, false, "a caller can see that the commit failed");
+  assert.match(refused.error, /the vault refused this commit/);
+  assert.equal(reported.length, 1, "the failure is still logged");
+});
+
+test("vault repository reports a successful commit", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "tangent-vault-repository-"));
+  const repository = createVaultRepository({
+    root,
+    /** Accepts the commit without invoking Git. */
+    async runGit() {},
+  });
+  assert.deepEqual(await repository.commit(["otto/note.md"], "note: otto", "otto", null), { committed: true, error: null });
+});

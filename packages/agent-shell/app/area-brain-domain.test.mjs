@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
 import { promisify } from "node:util";
-import { appendJournalEntry, appendMilestone, areaLineage, boundedBrainPrompt, brainActivationEnvelope, BRAIN_CHECKPOINT_LIMIT, BRAIN_PROMPT_LIMIT, composeBrainPrompt, emergencyStartProblem, exportLegacyAudit, inheritedInstructionFiles, JOURNAL_LIMIT_BYTES, MILESTONE_SUMMARY_LIMIT, newGoalQueue, operationFromProgram, projectAreaMemory, querySubtreeMilestones, selectCurrentDocuments, startNextAssignment, submitWorkerReport } from "./area-brain-domain.mjs";
+import { appendJournalEntry, appendMilestone, areaLineage, boundedBrainPrompt, brainActivationEnvelope, BRAIN_CHECKPOINT_LIMIT, BRAIN_PROMPT_LIMIT, BRAIN_STRUCTURAL_LIMIT, composeBrainPrompt, emergencyStartProblem, exportLegacyAudit, inheritedInstructionFiles, JOURNAL_LIMIT_BYTES, MILESTONE_SUMMARY_LIMIT, newGoalQueue, operationFromProgram, projectAreaMemory, querySubtreeMilestones, selectCurrentDocuments, startNextAssignment, submitWorkerReport } from "./area-brain-domain.mjs";
 
 test("Area and repository knowledge inherit by path", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "area-brain-context-"));
@@ -20,6 +20,27 @@ test("Area and repository knowledge inherit by path", async () => {
 test("the prompt limit fails visibly instead of clipping", () => {
   assert.equal(boundedBrainPrompt({ Identity: "Portland brain", Work: "One Goal" }).includes("Portland brain"), true);
   assert.throws(() => boundedBrainPrompt({ Identity: "x".repeat(8_001) }), /limit is 8000/);
+});
+
+test("the reported 7648-character structure keeps controls and marks omitted records", () => {
+  const reported = boundedBrainPrompt({ Reported: "x".repeat(7_635) });
+  assert.equal(reported.length, 7_648, "the fixture pins the reported structural size");
+  const structural = boundedBrainPrompt({
+    Identity: "Exact Area identity.",
+    Boundary: "Exact authority boundary.",
+    "Execution contract": "Exact execution contract.",
+    Wake: "Julian's current message stays exact.",
+    "Work frontier": "Current Goal.",
+    Questions: "Current question.",
+    "Area memory": reported,
+  }, BRAIN_STRUCTURAL_LIMIT, { required: ["Identity", "Boundary", "Execution contract", "Wake", "Work frontier", "Questions"] });
+  assert.match(structural, /## Identity\n\nExact Area identity\./);
+  assert.match(structural, /## Wake\n\nJulian's current message stays exact\./);
+  assert.match(structural, /## Work frontier\n\nCurrent Goal\./);
+  assert.match(structural, /## Questions\n\nCurrent question\./);
+  assert.match(structural, /Structural sections omitted to fit the 6900-character budget: Area memory\./);
+  const composed = composeBrainPrompt({ record: {}, generation: 1, structural });
+  assert.ok(composed.generatedCharacters <= BRAIN_PROMPT_LIMIT);
 });
 
 test("activation keeps founding instruction and current checkpoint separate", () => {
@@ -45,7 +66,7 @@ test("one budget covers the checkpoint and leaves only Julian's own message outs
   assert.ok(roomy.activation.checkpoint.characters > composed.activation.checkpoint.characters, "a fuller frontier takes room from the checkpoint");
 });
 
-test("structural sections that cannot fit refuse to build a prompt", () => {
+test("unbounded structural sections that cannot fit refuse to build a prompt", () => {
   assert.throws(
     () => composeBrainPrompt({ record: {}, generation: 1, structural: "x".repeat(7_900) }),
     /leave no room inside the 8000-character budget/,

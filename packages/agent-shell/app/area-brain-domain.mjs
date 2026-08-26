@@ -6,6 +6,7 @@ import zlib from "node:zlib";
 import { promisify } from "node:util";
 
 export const BRAIN_PROMPT_LIMIT = 8_000;
+export const BRAIN_STRUCTURAL_LIMIT = 6_900;
 export const BRAIN_CHECKPOINT_LIMIT = 6_000;
 export const BRAIN_CHECKPOINT_FLOOR = 400;
 export const MILESTONE_SUMMARY_LIMIT = 240;
@@ -68,11 +69,28 @@ export async function inheritedInstructionFiles(repository, workingDirectory = r
   return files;
 }
 
-/** Builds a truthful prompt and rejects any section that exceeds the hard limit. */
-export function boundedBrainPrompt(sections, limit = BRAIN_PROMPT_LIMIT) {
+/** Builds structural sections in priority order and keeps required sections exact. */
+export function boundedBrainPrompt(sections, limit = BRAIN_PROMPT_LIMIT, { required = [], omissionName = "Omissions" } = {}) {
   const entries = Object.entries(sections).filter(([, value]) => String(value ?? "").trim());
-  const text = entries.map(([name, value]) => `## ${name}\n\n${String(value).trim()}`).join("\n\n");
-  if (text.length > limit) throw new Error(`The generated brain prompt is ${text.length} characters; the limit is ${limit}.`);
+  /** Renders the selected sections with their stable Markdown envelope. */
+  const render = (items) => items.map(([name, value]) => `## ${name}\n\n${String(value).trim()}`).join("\n\n");
+  const full = render(entries);
+  if (full.length <= limit) return full;
+  if (!required.length) throw new Error(`The generated brain prompt is ${full.length} characters; the limit is ${limit}.`);
+
+  const requiredNames = new Set(required);
+  const kept = entries.filter(([name]) => requiredNames.has(name));
+  const optional = entries.filter(([name]) => !requiredNames.has(name) && name !== omissionName);
+  const omitted = [];
+  for (const [index, entry] of optional.entries()) {
+    const markerNames = [...omitted, ...optional.slice(index + 1).map(([name]) => name)];
+    const marker = [omissionName, `Structural sections omitted to fit the ${limit}-character budget: ${markerNames.join(", ")}.`];
+    if (render([...kept, entry, marker]).length <= limit) kept.push(entry);
+    else omitted.push(entry[0]);
+  }
+  const marker = [omissionName, `Structural sections omitted to fit the ${limit}-character budget: ${omitted.join(", ")}.`];
+  const text = render([...kept, marker]);
+  if (text.length > limit) throw new Error(`The required brain prompt sections are ${text.length} characters; the limit is ${limit}.`);
   return text;
 }
 

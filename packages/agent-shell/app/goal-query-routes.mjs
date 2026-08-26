@@ -20,9 +20,9 @@ export function createGoalQueryRoutes(operations) {
     return true;
   }
 
-  /** Lists Goals, optionally limited to one Area. */
+  /** Lists Goals, optionally limited to one Area or to its subtree. */
   async function list(_request, response, url) {
-    sendResult(response, await operations.list(url.searchParams.get("area")));
+    sendResult(response, await operations.list(url.searchParams.get("area"), { subtree: url.searchParams.get("subtree") === "1" }));
   }
 
   /** Finds one Goal by slug. */

@@ -68,7 +68,7 @@ import { uniqueSessionName } from "./session-names.mjs";
 import { withDefaultModel } from "./agent-command.mjs";
 import { clearGoalCleanup, readAllGoalCleanups, readGoalCleanup, writeGoalCleanup } from "./goal-cleanup-record.mjs";
 import { BRAIN_COMMAND_NOUNS, installedCommandReference } from "./brain-command-reference.mjs";
-import { appendJournalEntry, appendMilestone, boundedBrainPrompt, brainActivationEnvelope, emergencyStartProblem, exportLegacyAudit, inheritedInstructionFiles, journalFiles, projectAreaMemory, querySubtreeMilestones, selectCurrentDocuments } from "./area-brain-domain.mjs";
+import { appendJournalEntry, appendMilestone, boundedBrainPrompt, clipSummary, composeBrainPrompt, emergencyStartProblem, exportLegacyAudit, inheritedInstructionFiles, journalFiles, projectAreaMemory, querySubtreeMilestones, selectCurrentDocuments } from "./area-brain-domain.mjs";
 import { materialOperationEvents, markOperationEventDelivered, readOperationEvents, writeOperationEvents } from "./operation-events.mjs";
 
 const rawExecFileAsync = promisify(execFile);
@@ -1370,7 +1370,7 @@ async function finishGoalExecutions({ goalFiles, reason, sessions = null }) {
 }
 
 /** Marks one Goal and every Subgoal done after their worker cleanup succeeds. */
-async function cascadeGoalDone(rootFile, byFile) {
+async function cascadeGoalDone(rootFile, byFile, { note = "" } = {}) {
   const changed = [];
   const endedGoals = [];
   const cascade = doneCascade(rootFile, byFile);
@@ -1392,7 +1392,35 @@ async function cascadeGoalDone(rootFile, byFile) {
     goal.waitingOn = null;
   }
   await closeRequestsForGoals(endedGoals, "goal-done");
+  for (const goal of cascade) await recordGoalClosure(goal, "done", note);
   return changed;
+}
+
+/**
+ * Writes one material milestone for a Goal that ended. Every closure path
+ * funnels through here: a passing designated review, `tangent goal done`, an
+ * authorized Request effect, and Julian's own completion control. Recording it
+ * at each call site missed three of the four, so a brain's recent-work view
+ * stayed empty while Goals closed all around it.
+ */
+async function recordGoalClosure(goal, outcome, reason = "") {
+  if (!goal?.area || !goal.file) return;
+  const title = goal.title || goal.slug || goal.file;
+  const summary = outcome === "done"
+    ? `${title} closed.${reason ? ` ${reason}` : ""}`
+    : `${title} was dropped.${reason ? ` Reason: ${reason}` : ""}`;
+  try {
+    await appendMilestone({
+      root: BRAINS_ROOT,
+      area: goal.area,
+      kind: `goal-${outcome}`,
+      summary,
+      ref: goal.file,
+      idempotencyKey: `goal-${outcome}:${goal.file}`,
+    });
+  } catch (error) {
+    console.error("milestone:", error.message ?? error);
+  }
 }
 
 /** Closes open Requests in every brain store when their Goal subject ends. */
@@ -2288,6 +2316,32 @@ async function goalsByFile() {
   return map;
 }
 
+/**
+ * Fills each Area's milestone index from the Goals that already closed, once.
+ * Without this the recent-work view starts empty on every Area that finished
+ * work before the index existed, which is every Area but one. `appendMilestone`
+ * is keyed by Goal file, so a repeated boot adds nothing and costs one read.
+ * The Goal file's own modified time dates the milestone, so the order matches
+ * the work rather than the boot.
+ */
+async function backfillClosureMilestones() {
+  for (const goal of (await goalsByFile()).values()) {
+    if (!["done", "dropped"].includes(goal.status)) continue;
+    const outcome = goal.status === "done" ? "done" : "dropped";
+    const at = Number.isFinite(goal.mtime) ? new Date(goal.mtime).toISOString() : undefined;
+    const title = goal.title || goal.slug || goal.file;
+    await appendMilestone({
+      root: BRAINS_ROOT,
+      area: goal.area,
+      kind: `goal-${outcome}`,
+      summary: outcome === "done" ? `${title} closed.` : `${title} was dropped.`,
+      ref: goal.file,
+      idempotencyKey: `goal-${outcome}:${goal.file}`,
+      ...(at ? { now: at } : {}),
+    }).catch((error) => console.error("milestone backfill:", error.message ?? error));
+  }
+}
+
 /** Reads one Goal from its own Area without walking the complete vault. */
 async function goalByFile(file) {
   const relative = String(file ?? "").replaceAll("\\", "/");
@@ -2737,9 +2791,8 @@ async function completePipelineStep(record, step, text, source, report = null, i
         }
         record.status = "complete";
         await writePipeline(PIPELINES_ROOT, record);
-        const changed = await cascadeGoalDone(record.goal, byFile);
+        const changed = await cascadeGoalDone(record.goal, byFile, { note: "It passed its planned review." });
         await vaultCommit(changed, `update: ${goal.area} goal ${goal.slug} done after planned review`, goal.area, null);
-        await appendMilestone({ root: BRAINS_ROOT, area: goal.area, kind: "goal-done", summary: `${goal.title} passed its planned review and closed.`, ref: goal.file, idempotencyKey: `goal-done:${goal.file}:${step.endedAt}`, now: step.endedAt });
         await notifyBrain(record.area, `Goal ${record.slug}: its designated typed review passed the current revision and Tangent marked the Goal done.`);
         return { status: 200, state: "goal-done", next: null, pipeline: record };
       }
@@ -3416,16 +3469,22 @@ async function brainPrompt(record) {
     Wake: `Wake reason: ${shownNotices.length || shownAnswers.length ? "material Area event" : "activation or context rotation"}. Julian's current message, when present, is delivered separately and stays exact.`,
     "Area and repository context": sourceLines.join("\n"),
     "Area memory": memory.text || "The approved Area sections are empty.",
-    "Work frontier": goals.slice(0, 12).map((goal) => `- ${goal.title || goal.file}: ${goal.status || "open"}`).join("\n") || "No direct open Goals.",
-    Questions: requests.slice(0, 8).map((request) => `- ${request.subject}: ${request.question}`).join("\n") || "No open Questions.",
-    "Selected Documents": selectedDocuments.map((document) => `- ${document.title}: ${path.join(TREES_ROOT, document.file)} sha256:${document.hash}. Reason: ${document.reasons.join("; ")}.`).join("\n") || "No current relationship selects a Document.",
-    "Recent milestones": recent.milestones.map((item) => `- ${item.createdAt} ${item.area}: ${item.summary}`).join("\n") || "No recent material milestones.",
-    "Unread messages": [...shownNotices.map((notice) => `- ${notice.text}`), ...shownAnswers.map((line) => `- ${line}`)].join("\n") || "No unread messages.",
+    // Every line below carries text a human or a model wrote. Each one is
+    // clipped, so no single long title, question, or note can spend the
+    // whole prompt budget and fail the build for everything else.
+    "Work frontier": goals.slice(0, 12).map((goal) => `- ${clipSummary(goal.title || goal.file)}: ${goal.status || "open"}`).join("\n") || "No direct open Goals.",
+    Questions: requests.slice(0, 8).map((request) => `- ${clipSummary(request.subject)}: ${clipSummary(request.question)}`).join("\n") || "No open Questions.",
+    "Selected Documents": selectedDocuments.map((document) => `- ${clipSummary(document.title, 120)}: ${path.join(TREES_ROOT, document.file)} sha256:${document.hash}. Reason: ${clipSummary(document.reasons.join("; "), 160)}.`).join("\n") || "No current relationship selects a Document.",
+    "Recent milestones": recent.milestones.map((item) => `- ${item.createdAt} ${item.area}: ${clipSummary(item.summary)}`).join("\n") || "No recent material milestones.",
+    "Unread messages": [...shownNotices.map((notice) => `- ${clipSummary(notice.text, 400)}`), ...shownAnswers.map((line) => `- ${clipSummary(line, 400)}`)].join("\n") || "No unread messages.",
     "Retrieval order": `Search ${area} and child Areas first. Then read parent Area sources and inherited repository instructions. Search wider Goals or linked systems only after those sources.`,
     Omissions: omission.join("\n") || "No bounded collection was omitted.",
   });
-  const activation = brainActivationEnvelope(record, entry?.generation ?? record.generation ?? 1);
-  return `${activation.text}\n\n${structural}\n\n## Activation provenance\n\nInstruction: ${activation.instruction.source} sha256:${activation.instruction.hash}, ${activation.instruction.characters} characters.\nCheckpoint: ${activation.checkpoint.source} sha256:${activation.checkpoint.hash}, ${activation.checkpoint.characters} characters.${activation.omissions.length ? `\n${activation.omissions.join("\n")}` : ""}`;
+  return composeBrainPrompt({
+    record,
+    generation: entry?.generation ?? record.generation ?? 1,
+    structural,
+  }).text;
 }
 
 /** Creates and primes the next generation's session for one brain record. */
@@ -3435,6 +3494,18 @@ async function spawnBrainSession(record) {
   const generation = (record.generations?.length ?? 0) + 1;
   const name = uniqueSessionName(brainSessionName(record.area, generation), "", names, 60);
   const directory = (await areaDirectory(record.area)) ?? path.join(TREES_ROOT, record.area);
+  // Build the prompt before anything is created. A brain that starts with no
+  // prompt looks live on Work and knows nothing, which is the worst of the
+  // two failures; the error names itself here and leaves no session behind.
+  let prompt = "";
+  try {
+    prompt = await brainPrompt(record);
+  } catch (error) {
+    const problem = `The brain prompt could not be built: ${error.message ?? error}`;
+    record.health = { status: "failed", problem, updatedAt: new Date().toISOString() };
+    await writeBrain(BRAINS_ROOT, record);
+    return { status: 500, error: problem };
+  }
   try {
     await execFileAsync("tmux", ["new-session", "-d", "-s", name, "-c", directory]);
   } catch (error) {
@@ -3482,7 +3553,7 @@ async function spawnBrainSession(record) {
   await sleep(700);
   let primed = false;
   try {
-    primed = await primeDescribeWorkSession(name, record.area, await brainPrompt(record), { launch: true, command: record.command, onTyped: firstMessageTyped });
+    primed = await primeDescribeWorkSession(name, record.area, prompt, { launch: true, command: record.command, onTyped: firstMessageTyped });
   } catch (error) {
     console.error("brain session:", error.message ?? error);
   }
@@ -4805,14 +4876,37 @@ const voiceRoutes = createVoiceRoutes({
   capture(body) { return areaRoutesOperations.capture(body); },
 });
 const goalQueryRoutes = createGoalQueryRoutes({
-  /** Lists summarized Goals in one Area or the whole vault. */
-  async list(area) {
+  /**
+   * Lists summarized Goals in one Area, its subtree, or the whole vault.
+   *
+   * The exact-Area result also reports what the subtree holds. A brain that
+   * asked one Area for recent work used to read an empty list and then search
+   * unrelated repositories, because nothing told it that child Areas existed.
+   */
+  async list(area, { subtree = false } = {}) {
     const allAreas = flattenAreaPaths(await readTree(TREES_ROOT));
     if (area && !allAreas.includes(area)) return { status: 404, error: `no area "${area}"` };
     const allGoals = [];
     for (const one of allAreas) allGoals.push(...await readAreaGoals(one));
     projectGoalDependencies(allGoals);
-    return { status: 200, value: { goals: allGoals.filter((goal) => !area || goal.area === area).map(goalSummary) } };
+    if (!area) return { status: 200, value: { goals: allGoals.map(goalSummary) } };
+    const prefix = `${area}/`;
+    /** True when one Goal belongs to the requested Area scope. */
+    const inScope = (goal) => goal.area === area || (subtree && goal.area.startsWith(prefix));
+    const children = allAreas.filter((one) => one.startsWith(prefix));
+    const descendants = allGoals.filter((goal) => goal.area.startsWith(prefix));
+    return {
+      status: 200,
+      value: {
+        goals: allGoals.filter(inScope).map(goalSummary),
+        scope: subtree ? "subtree" : "exact",
+        childAreas: children.length,
+        descendantGoals: descendants.length,
+        ...(!subtree && descendants.length
+          ? { subtreeCommand: `tangent goal list ${area} --subtree` }
+          : {}),
+      },
+    };
   },
   /** Finds one complete Goal by slug. */
   async show(slug) {
@@ -5134,6 +5228,7 @@ const workMutationRoutes = createWorkMutationRoutes({
         await editGoalFile(file, fields);
         changed = [file, ...cleanup.releasedGoals];
         await closeRequestsForGoals([file], "goal-dropped");
+        await recordGoalClosure(goal, "dropped", fields.wontDoReason);
       } else {
         await editGoalFile(file, fields);
         changed = [file];
@@ -5271,6 +5366,7 @@ server.listen(PORT, HOST, () => {
   // A prompt armed by the last process is still waiting on disk if its
   // harness had not left the shell yet.
   rearmPersistedPrompts().catch((err) => console.error("armed prompts:", err.message ?? err));
+  backfillClosureMilestones().catch((err) => console.error("milestone backfill:", err.message ?? err));
 });
 
 if (IS_CONTROLLER) process.once("disconnect", () => process.exit(0));

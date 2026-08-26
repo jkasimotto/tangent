@@ -5,7 +5,7 @@ import path from "node:path";
 import { renderCommandHelp } from "@tangent/core";
 import { booleanArg, parseArgs, requiredString, stringArg, stringsArg, type Args } from "@tangent/core/cli";
 
-import { currentTmuxSession, goalQueueRevision, listGoals, postJson, requireArea, requireGoal, resolveServerUrl } from "../client.js";
+import { currentTmuxSession, goalQueueRevision, listGoalScope, postJson, requireArea, requireGoal, resolveServerUrl } from "../client.js";
 import { goalCommandSpec } from "../spec.js";
 
 /** Dispatches `tangent goal` subcommands. */
@@ -285,16 +285,20 @@ async function listCommand(args: Args): Promise<void> {
   const server = resolveServerUrl(stringArg(args.server));
   const areaArg = stringArg(args._[1]);
   const area = areaArg ? await requireArea(server, areaArg) : undefined;
-  const goals = await listGoals(server, area);
+  const scope = await listGoalScope(server, area, booleanArg(args.subtree));
+  const goals = scope.goals;
   if (booleanArg(args.json)) {
-    console.log(JSON.stringify(goals, null, 2));
+    console.log(JSON.stringify(scope, null, 2));
     return;
   }
-  if (!goals.length) {
-    console.log("No Goals.");
-    return;
-  }
+  if (!goals.length) console.log("No Goals.");
   for (const goal of goals) console.log(`${goal.slug}  [${goal.status}]  ${goal.area}  ${goal.title}`);
+  // The scent that the Portland brain did not have: an exact Area that looks
+  // empty still says how much work its child Areas hold, and the command
+  // that reads it.
+  if (scope.subtreeCommand) {
+    console.log(`\n${scope.descendantGoals} more in ${scope.childAreas} child ${scope.childAreas === 1 ? "Area" : "Areas"}. Run: ${scope.subtreeCommand}`);
+  }
 }
 
 /** Handles `tangent goal show <slug>`. */

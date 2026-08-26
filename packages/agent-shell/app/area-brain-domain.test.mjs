@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
 import { promisify } from "node:util";
-import { appendJournalEntry, appendMilestone, areaLineage, boundedBrainPrompt, brainActivationEnvelope, emergencyStartProblem, exportLegacyAudit, inheritedInstructionFiles, JOURNAL_LIMIT_BYTES, newGoalQueue, operationFromProgram, projectAreaMemory, querySubtreeMilestones, selectCurrentDocuments, startNextAssignment, submitWorkerReport } from "./area-brain-domain.mjs";
+import { appendJournalEntry, appendMilestone, areaLineage, boundedBrainPrompt, brainActivationEnvelope, BRAIN_CHECKPOINT_LIMIT, BRAIN_PROMPT_LIMIT, composeBrainPrompt, emergencyStartProblem, exportLegacyAudit, inheritedInstructionFiles, JOURNAL_LIMIT_BYTES, MILESTONE_SUMMARY_LIMIT, newGoalQueue, operationFromProgram, projectAreaMemory, querySubtreeMilestones, selectCurrentDocuments, startNextAssignment, submitWorkerReport } from "./area-brain-domain.mjs";
 
 test("Area and repository knowledge inherit by path", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "area-brain-context-"));
@@ -27,6 +27,45 @@ test("activation keeps founding instruction and current checkpoint separate", ()
   assert.match(envelope.text, /Standing authority\n\nRun the Area\./);
   assert.match(envelope.text, /Current checkpoint\n\nReview Goal B\./);
   assert.notEqual(envelope.instruction.hash, envelope.checkpoint.hash);
+});
+
+test("one budget covers the checkpoint and leaves only Julian's own message outside", () => {
+  const record = {
+    foundingInstruction: { text: "J".repeat(3_000) },
+    checkpoint: { text: "C".repeat(20_000) },
+  };
+  const structural = boundedBrainPrompt({ Identity: "Portland brain", Work: "x".repeat(5_000) });
+  const composed = composeBrainPrompt({ record, generation: 2, structural });
+  assert.ok(composed.generatedCharacters <= BRAIN_PROMPT_LIMIT, `generated part is ${composed.generatedCharacters}`);
+  assert.ok(composed.text.includes("J".repeat(3_000)), "Julian's founding instruction stays exact and outside the budget");
+  assert.match(composed.text, /Checkpoint clipped by \d+ characters; run tangent brain status/);
+  // A short structural part leaves the checkpoint its full allowance.
+  const roomy = composeBrainPrompt({ record, generation: 2, structural: boundedBrainPrompt({ Identity: "Portland brain" }) });
+  assert.equal(roomy.activation.checkpoint.characters, BRAIN_CHECKPOINT_LIMIT);
+  assert.ok(roomy.activation.checkpoint.characters > composed.activation.checkpoint.characters, "a fuller frontier takes room from the checkpoint");
+});
+
+test("structural sections that cannot fit refuse to build a prompt", () => {
+  assert.throws(
+    () => composeBrainPrompt({ record: {}, generation: 1, structural: "x".repeat(7_900) }),
+    /leave no room inside the 8000-character budget/,
+  );
+});
+
+test("a stored milestone summary is clipped where it is written", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-milestone-clip-"));
+  const stored = await appendMilestone({
+    root,
+    area: "otto/tangent",
+    kind: "journal",
+    summary: `${"n".repeat(4_000)}`,
+    idempotencyKey: "journal:long",
+  });
+  assert.equal(stored.summary.length, MILESTONE_SUMMARY_LIMIT);
+  assert.match(stored.summary, /…$/);
+  // Twelve of these used to exceed the whole prompt budget on their own.
+  const query = await querySubtreeMilestones({ root, area: "otto/tangent", areas: ["otto/tangent"], limit: 12 });
+  assert.ok(query.milestones[0].summary.length <= MILESTONE_SUMMARY_LIMIT);
 });
 
 test("Area memory includes exact Purpose Current Knowledge and no ancestor Current", () => {

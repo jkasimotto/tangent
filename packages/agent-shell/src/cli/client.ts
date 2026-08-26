@@ -142,10 +142,30 @@ export async function requireArea(server: URL, area: string): Promise<string> {
 }
 
 /** Lists Goals across the vault, or one Area's own Goals when given. */
-export async function listGoals(server: URL, area?: string): Promise<GoalSummary[]> {
-  const query = area ? `?area=${encodeURIComponent(area)}` : "";
-  const { goals } = await vaultFetch(server, `/api/goals${query}`);
-  return goals as GoalSummary[];
+export async function listGoals(server: URL, area?: string, subtree = false): Promise<GoalSummary[]> {
+  return (await listGoalScope(server, area, subtree)).goals;
+}
+
+/** What one Goal listing found, and what its subtree holds beyond the exact Area. */
+export interface GoalScope {
+  goals: GoalSummary[];
+  childAreas?: number;
+  descendantGoals?: number;
+  subtreeCommand?: string;
+}
+
+/**
+ * Lists Goals and keeps the scope facts beside them. An exact-Area listing
+ * reports how much work sits in child Areas, so a caller that finds nothing
+ * learns where to look next instead of searching unrelated systems.
+ */
+export async function listGoalScope(server: URL, area?: string, subtree = false): Promise<GoalScope> {
+  const params = new URLSearchParams();
+  if (area) params.set("area", area);
+  if (subtree) params.set("subtree", "1");
+  const query = params.toString() ? `?${params.toString()}` : "";
+  const body = await vaultFetch(server, `/api/goals${query}`);
+  return { ...body, goals: body.goals as GoalSummary[] };
 }
 
 /** Resolves a Goal slug to its full summary, naming the fix (the nearest slug, with its Area) when it is unknown. */

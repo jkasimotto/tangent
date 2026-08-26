@@ -151,7 +151,7 @@ export const goalCommandSpec: CliCommandSpec = {
         jsonOption
       ]
     },
-    { name: "list", description: "List Goals, optionally scoped to one Area", args: "[area]", options: [serverOption, jsonOption] },
+    { name: "list", description: "List Goals, optionally scoped to one Area; --subtree includes its child Areas", args: "[area]", options: [{ name: "subtree", description: "Include Goals in child Areas" }, serverOption, jsonOption] },
     { name: "show", description: "Show one Goal's status, done condition, and state", args: "<slug>", options: [serverOption, jsonOption] },
     {
       name: "depend",

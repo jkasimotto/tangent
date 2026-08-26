@@ -7,6 +7,8 @@ import { promisify } from "node:util";
 
 export const BRAIN_PROMPT_LIMIT = 8_000;
 export const BRAIN_CHECKPOINT_LIMIT = 6_000;
+export const BRAIN_CHECKPOINT_FLOOR = 400;
+export const MILESTONE_SUMMARY_LIMIT = 240;
 export const JOURNAL_LIMIT_BYTES = 256 * 1024;
 export const GOAL_QUEUE_SCHEMA = "area-goal-queue.v2";
 export const LEGACY_AUDIT_SCHEMA = "area-brain-legacy-audit.v1";
@@ -17,6 +19,19 @@ const gzip = promisify(zlib.gzip);
 const digest = (text) => createHash("sha256").update(text).digest("hex");
 /** Normalizes an Area path without accepting empty path segments. */
 const cleanArea = (area) => String(area ?? "").split("/").filter(Boolean).join("/");
+
+/**
+ * Clips one stored line to a hard length and says where the rest is. Every
+ * value that reaches a bounded prompt as one list item passes through here:
+ * a Journal note, a Goal title, and a Question subject are all written by a
+ * human or a model and carry no length of their own. Without this clip one
+ * long note fills the whole prompt budget and the prompt build fails.
+ */
+export function clipSummary(text, limit = MILESTONE_SUMMARY_LIMIT) {
+  const value = String(text ?? "").replace(/\s+/g, " ").trim();
+  if (value.length <= limit) return value;
+  return `${value.slice(0, Math.max(1, limit - 1)).trimEnd()}…`;
+}
 const DEFAULT_MEMORY_BUDGETS = Object.freeze({
   exact: Object.freeze({ Purpose: 1_000, Current: 1_000, Knowledge: 1_600 }),
   ancestor: Object.freeze({ Purpose: 400, Knowledge: 600 }),
@@ -61,14 +76,19 @@ export function boundedBrainPrompt(sections, limit = BRAIN_PROMPT_LIMIT) {
   return text;
 }
 
-/** Builds the separately bounded instruction and checkpoint activation part. */
-export function brainActivationEnvelope(record, generation = Number(record?.generation) || 1) {
+/**
+ * Builds the activation part: Julian's founding instruction and the
+ * checkpoint that the last attempt wrote. `checkpointLimit` is what the
+ * structural sections left of the one prompt budget, because the checkpoint
+ * is text Tangent generated and the budget covers all of it.
+ */
+export function brainActivationEnvelope(record, generation = Number(record?.generation) || 1, checkpointLimit = BRAIN_CHECKPOINT_LIMIT) {
   const instruction = String(record?.foundingInstruction?.text ?? record?.instruction ?? "").trim();
   const checkpoint = String(record?.checkpoint?.text ?? "").trim();
-  const boundedCheckpoint = checkpoint.slice(0, BRAIN_CHECKPOINT_LIMIT);
+  const boundedCheckpoint = checkpoint.slice(0, Math.max(0, checkpointLimit));
   const role = generation <= 1 ? "Current assignment" : "Standing authority";
   const omissions = checkpoint.length > boundedCheckpoint.length
-    ? [`Checkpoint clipped by ${checkpoint.length - boundedCheckpoint.length} characters.`]
+    ? [`Checkpoint clipped by ${checkpoint.length - boundedCheckpoint.length} characters; run tangent brain status to read the whole checkpoint.`]
     : [];
   return {
     text: `# Activation material\n\n## ${role}\n\n${instruction}\n\n## Current checkpoint\n\n${boundedCheckpoint || "No checkpoint exists."}`,
@@ -84,6 +104,41 @@ export function brainActivationEnvelope(record, generation = Number(record?.gene
       omittedCharacters: checkpoint.length - boundedCheckpoint.length,
     },
     omissions,
+  };
+}
+
+/**
+ * Joins the activation part, the structural sections, and the provenance into
+ * one prompt under one budget.
+ *
+ * The budget covers every character that Tangent generated. Julian's founding
+ * instruction is his own current message and stays outside it, which is the
+ * only exemption the design gives. The checkpoint is text a previous attempt
+ * wrote, so it is inside: it takes the space the structural sections left,
+ * down to a floor that keeps a replacement attempt oriented.
+ *
+ * Returns the prompt and the measured budget so a caller can record what it
+ * sent. Throws when the structural sections alone cannot fit, because a brain
+ * that starts without its identity, authority, and frontier is worse than a
+ * brain that does not start.
+ */
+export function composeBrainPrompt({ record, generation, structural, limit = BRAIN_PROMPT_LIMIT }) {
+  const provenanceOverhead = 400;
+  const envelopeOverhead = 120;
+  const structuralLength = String(structural ?? "").length;
+  const spare = limit - structuralLength - provenanceOverhead - envelopeOverhead;
+  if (spare < 0) {
+    throw new Error(`The structural brain sections are ${structuralLength} characters and leave no room inside the ${limit}-character budget.`);
+  }
+  const checkpointLimit = Math.min(BRAIN_CHECKPOINT_LIMIT, Math.max(BRAIN_CHECKPOINT_FLOOR, spare));
+  const activation = brainActivationEnvelope(record, generation, checkpointLimit);
+  const provenance = `## Activation provenance\n\nInstruction: ${activation.instruction.source} sha256:${activation.instruction.hash}, ${activation.instruction.characters} characters.\nCheckpoint: ${activation.checkpoint.source} sha256:${activation.checkpoint.hash}, ${activation.checkpoint.characters} characters.${activation.omissions.length ? `\n${activation.omissions.join("\n")}` : ""}`;
+  const text = `${activation.text}\n\n${structural}\n\n${provenance}`;
+  return {
+    text,
+    activation,
+    generatedCharacters: text.length - activation.instruction.characters,
+    limit,
   };
 }
 
@@ -347,7 +402,7 @@ export async function appendMilestone({ root, area, kind, summary, ref = null, i
   if (!record.area || !key || !String(summary ?? "").trim()) throw new Error("Area, summary, and idempotency key are required.");
   const duplicate = record.items.find((item) => item.id === key);
   if (duplicate) return { ...duplicate, duplicate: true };
-  const item = { id: key, area: record.area, kind: String(kind || "note"), summary: String(summary).trim(), ref, createdAt: now };
+  const item = { id: key, area: record.area, kind: String(kind || "note"), summary: clipSummary(summary), ref, createdAt: now };
   record.items.push(item);
   record.items = record.items.slice(-2_000);
   const file = milestonePath(root, area);

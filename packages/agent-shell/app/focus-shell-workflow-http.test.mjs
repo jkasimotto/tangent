@@ -701,7 +701,8 @@ test("the context-first shell is default and keeps the user's understanding with
   // Julian starts one brain on the Area; it is a session of kind brain with a
   // record under the brains root, and every Goal prompt on the Area names it.
   assert.match(serverSource, /async function brainPrompt\(record\)/);
-  assert.match(serverSource, /brainActivationEnvelope\(record/);
+  // One budget covers the activation part and the structural sections.
+  assert.match(serverSource, /composeBrainPrompt\(\{/);
   assert.match(serverSource, /One Goal queue controls every assignment/);
   assert.match(serverSource, /A designated review closes routine work only at the current Goal revision/);
   assert.match(serverSource, /Free text never closes a Goal/);

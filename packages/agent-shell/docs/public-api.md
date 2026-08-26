@@ -107,7 +107,7 @@ Routine healthy polling, starts, stops, and repeated success stay quiet. Event i
 - `GET /api/brains/show?area=<path>|session=<name>` reads one enriched brain.
 - `GET /api/sessions` reads the complete Work projection.
 - `GET /api/goals?area=<path>[&subtree=1]` lists Goals. An exact-Area result also carries `scope`, `childAreas`, `descendantGoals`, and the `subtreeCommand` that reads the rest.
-- `POST /api/areas/journal`: `{ area, text, idempotencyKey, source? }` saves the exact words, commits them, and then wakes the brain.
+- `POST /api/areas/journal`: `{ area, text, idempotencyKey, source? }` saves the exact words, commits them with any rollover archive as `files`, and then wakes the exact Area brain. The result `route` says what happened to that brain: `brain-opened`, `brain-resumed`, `brain-started`, `no-brain`, `not-started`, or `duplicate`.
 - `GET /api/areas/journal?area=<path>` reads the active Journal and its archives in order.
 - `GET /api/areas/milestones?area=<path>[&since&limit]` reads material milestones across the Area subtree.
 - `GET /api/operations` lists Area Operations with one `mode`, one `state`, and any `problem`.

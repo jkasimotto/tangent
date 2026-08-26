@@ -277,3 +277,89 @@ test("an ended brain does not wake without a message, and a live record still re
   assert.equal(reattached.status, 200, JSON.stringify(reattached.body));
   openedSessions.push(reattached.body.session);
 });
+
+test("a capture wakes the inactive destination brain and never loses the words", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-capture-wake-"));
+  const { trees, workspace } = await buildVault(root);
+  const openedSessions = [];
+  const base = await startShellServer(context, { here, root, trees, workspace, openedSessions });
+  if (!base) return;
+
+  const first = await post(base, "/api/brains/start", { area: "otto/test", instruction: "Own this Area." });
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  openedSessions.push(first.body.session);
+
+  // Stop agent ends the logical brain, so the destination record is inactive.
+  const killed = await fetch(`${base}/api/kill/${encodeURIComponent(first.body.session)}`, { method: "POST" }).then((response) => response.json());
+  assert.equal(killed.brainEnded, true);
+
+  // Capture promises that the words reach the brain, so an inactive
+  // destination is woken rather than left with a notice nobody reads.
+  const captured = await post(base, "/api/areas/journal", { area: "otto/test", text: "The ramp faces meet at the dragged width.", idempotencyKey: "capture-wake-1", source: "Agent Shell" });
+  assert.equal(captured.status, 200, JSON.stringify(captured.body));
+  assert.equal(captured.body.route, "brain-resumed", "the inactive destination brain was activated");
+  assert.ok(captured.body.session, "the woken brain reports its session");
+  openedSessions.push(captured.body.session);
+
+  // The words are on disk before any wake, and the woken brain is told to read them.
+  assert.match(await readFile(path.join(trees, "otto", "test", "journal.md"), "utf8"), /The ramp faces meet at the dragged width\./);
+  const record = await fetch(`${base}/api/brains/show?area=${encodeURIComponent("otto/test")}`).then((response) => response.json());
+  assert.equal(record.brain.status, "active", "the destination brain is live again");
+  assert.match(JSON.stringify(record.brain), /Journal entry capture-wake-1 was saved/, "the wake carries the saved entry");
+
+  // An Area with no brain keeps its words and says so, instead of failing.
+  const orphan = await post(base, "/api/areas/journal", { area: "otto/other", text: "Nobody owns this yet.", idempotencyKey: "capture-wake-2", source: "Agent Shell" });
+  assert.equal(orphan.status, 200, JSON.stringify(orphan.body));
+  assert.equal(orphan.body.route, "no-brain");
+  assert.match(await readFile(path.join(trees, "otto", "other", "journal.md"), "utf8"), /Nobody owns this yet\./);
+});
+
+test("a full Journal rolls over into an archive the same commit carries", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-journal-rollover-"));
+  const { trees, workspace } = await buildVault(root);
+
+  /** Runs one git command inside the test vault. */
+  const git = (...args) => new Promise((resolve, reject) => {
+    execFile("git", ["-C", trees, ...args], (error, stdout) => error ? reject(error) : resolve(stdout));
+  });
+  await git("init", "-q");
+  await git("config", "user.email", "test@tangent.local");
+  await git("config", "user.name", "Tangent Test");
+
+  // A Journal at its size limit, with dated entries an archive name can use.
+  const older = `# Journal\n\n## 2026-01-01T00:00:00.000Z\n\nSource: capture.\n\n${"The earlier entry line.\n".repeat(12_000)}\n## 2026-02-01T00:00:00.000Z\n\nSource: capture.\n\nThe last earlier entry.\n\n`;
+  const journal = path.join(trees, "otto", "test", "journal.md");
+  await writeFile(journal, older, "utf8");
+  assert.ok(Buffer.byteLength(older) >= 256 * 1024, "the fixture Journal is over the rollover limit");
+  await git("add", "-A");
+  await git("commit", "-qm", "seed");
+
+  const openedSessions = [];
+  const base = await startShellServer(context, { here, root, trees, workspace, openedSessions });
+  if (!base) return;
+
+  const captured = await post(base, "/api/areas/journal", { area: "otto/test", text: "The first entry after the rollover.", idempotencyKey: "rollover-1", source: "Agent Shell" });
+  assert.equal(captured.status, 200, JSON.stringify(captured.body));
+  const [active, archive] = captured.body.files ?? [];
+  assert.equal(active, "otto/test/journal.md");
+  assert.match(archive ?? "", /^otto\/test\/journal-2026-01-01-2026-02-01\.md$/, "the archive is named by its date range");
+
+  // The rolled-over history survives, and the new active file opens with a
+  // heading and a link back to it, so a reader who opens journal.md alone
+  // still reaches the earlier entries.
+  assert.match(await readFile(path.join(trees, archive), "utf8"), /The last earlier entry\./);
+  const current = await readFile(journal, "utf8");
+  assert.match(current, /^# Journal\n/);
+  assert.match(current, /Earlier entries: \[journal-2026-01-01-2026-02-01\.md\]\(journal-2026-01-01-2026-02-01\.md\)\./);
+  assert.match(current, /The first entry after the rollover\./);
+  assert.doesNotMatch(current, /The last earlier entry\./, "the active file holds only what came after the rollover");
+
+  // One capture is one provenance commit, and the archive belongs to it.
+  const committed = (await git("show", "--name-only", "--pretty=format:", "HEAD")).split("\n").filter(Boolean);
+  assert.deepEqual(committed.sort(), [active, archive].sort(), "the commit carries the archive and the active Journal");
+  assert.match(await git("log", "-1", "--format=%B", "HEAD"), /Tangent-Area: otto\/test/);
+
+  // Area History stays continuous across both files, archive first.
+  const history = await fetch(`${base}/api/areas/journal?area=${encodeURIComponent("otto/test")}`).then((response) => response.json());
+  assert.deepEqual(history.files.map((file) => file.file), [archive, active]);
+});

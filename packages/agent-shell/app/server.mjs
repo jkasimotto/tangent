@@ -3431,6 +3431,32 @@ async function describeWorkToBrain(owner, area, description, sources, launchOver
   return { ...started, brainArea: owner.area, route, launchLabel: started.brain?.label || started.brain?.command };
 }
 
+/** The vault paths one saved Journal entry changed, its active file first. */
+function journalChangedPaths(entry) {
+  const files = [entry.file, ...(entry.archive ? [entry.archive] : [])];
+  return files.map((file) => path.relative(TREES_ROOT, file));
+}
+
+/**
+ * Delivers one saved Journal notice to the exact Area brain, and wakes that
+ * brain when its record exists but nothing is live. Capture promises Julian
+ * that his words reach the brain, not only the file, so an inactive
+ * destination is activated instead of left with an unread notice. The notice
+ * is written down before the wake, so a start error costs the delivery and
+ * never the words. An Area with no brain record keeps the notice for the
+ * brain it gets later. Returns what happened, so the surface can say it.
+ */
+async function deliverJournalToBrain(area, message, idempotencyKey) {
+  if (await notifyBrain(area, message, { idempotencyKey })) return { route: "brain-opened" };
+  const record = brainRecordForArea(await readAllBrains(BRAINS_ROOT), area);
+  if (!record) return { route: "no-brain" };
+  // The notice already carries Julian's words, so this wake is a message wake
+  // even though the start call has no instruction text of its own.
+  const started = await startBrain(area, { resume: true, messageRecorded: true });
+  if (started.status !== 200) return { route: "not-started", brainError: started.error };
+  return { route: record.status === "active" ? "brain-started" : "brain-resumed", session: started.session };
+}
+
 /**
  * Queues every unread notice that is not already on its way, for the brains
  * that run right now. The server calls this when it starts (the memory queue
@@ -4612,9 +4638,10 @@ async function executeAuthorizedRequestEffect(effect, brain) {
     const id = String(effect.idempotencyKey ?? `request-route:${brain.area}:${createHash("sha256").update(text).digest("hex")}`);
     const entry = await appendJournalEntry({ treesRoot: TREES_ROOT, area, text, idempotencyKey: id, source: `routed from ${brain.area}` });
     if (!entry.duplicate) {
-      const relative = path.relative(TREES_ROOT, entry.file);
-      await runVaultGit(["add", "--", relative]);
-      await vaultCommit([relative], `note: ${area} routed Journal capture`, area, brain.session);
+      const changed = journalChangedPaths(entry);
+      const [relative] = changed;
+      await runVaultGit(["add", "--", ...changed]);
+      await vaultCommit(changed, `note: ${area} routed Journal capture`, area, brain.session);
       await appendMilestone({ root: BRAINS_ROOT, area, kind: "routed-journal", summary: text, ref: relative, idempotencyKey: `journal:${entry.id}`, now: entry.createdAt });
       await notifyBrain(area, `The ${brain.area} brain routed exact Journal text to this Area. Read ${relative}. This message grants no authority.`);
     }
@@ -4802,19 +4829,19 @@ const areaRoutesOperations = {
     const output = path.join(os.homedir(), ".tangent", "audit", `${safe}-area-brain-legacy.json.gz`);
     return exportLegacyAudit({ output, area, records: { generations: brain?.generations ?? [], requests: requests.requests, pipelines } });
   },
-  /** Commits exact capture text, then wakes the logical Area brain. */
+  /** Commits exact capture text and its rollover archive, then wakes the logical Area brain. */
   async capture(body) {
     const area = String(body.area ?? "");
     if (!flattenAreaPaths(await readTree(TREES_ROOT)).includes(area)) throw new Error("The destination Area does not exist.");
     const entry = await appendJournalEntry({ treesRoot: TREES_ROOT, area, text: body.text, idempotencyKey: body.idempotencyKey || body.id, source: body.source || "capture" });
-    if (!entry.duplicate) {
-      const relative = path.relative(TREES_ROOT, entry.file);
-      await runVaultGit(["add", "--", relative]);
-      await vaultCommit([relative], `note: ${area} Journal capture`, area, null);
-      await appendMilestone({ root: BRAINS_ROOT, area, kind: "journal", summary: entry.text, ref: relative, idempotencyKey: `journal:${entry.id}`, now: entry.createdAt });
-      await notifyBrain(area, `Journal entry ${entry.id} was saved. Read ${relative} and respond in this Area conversation.`);
-    }
-    return entry;
+    if (entry.duplicate) return { ...entry, route: "duplicate", files: [] };
+    const changed = journalChangedPaths(entry);
+    const [relative] = changed;
+    await runVaultGit(["add", "--", ...changed]);
+    await vaultCommit(changed, `note: ${area} Journal capture`, area, null);
+    await appendMilestone({ root: BRAINS_ROOT, area, kind: "journal", summary: entry.text, ref: relative, idempotencyKey: `journal:${entry.id}`, now: entry.createdAt });
+    const delivery = await deliverJournalToBrain(area, `Journal entry ${entry.id} was saved. Read ${relative} and respond in this Area conversation.`, `journal:${entry.id}`);
+    return { ...entry, ...delivery, files: changed };
   },
   /** Creates and commits one Area. */
   async create(body) {

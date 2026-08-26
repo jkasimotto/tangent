@@ -232,7 +232,11 @@ export function journalPath(treesRoot, area) {
   return path.join(treesRoot, cleanArea(area), "journal.md");
 }
 
-/** Saves exact capture text once, then returns its stable entry. */
+/**
+ * Saves exact capture text once, then returns its stable entry. A Journal that
+ * reached its size limit rolls over first, and the entry then also names the
+ * archive it created, because one capture must commit both files together.
+ */
 export async function appendJournalEntry({ treesRoot, area, text, idempotencyKey, source = "capture", now = new Date().toISOString() }) {
   const clean = cleanArea(area);
   const value = String(text ?? "").trim();
@@ -243,15 +247,26 @@ export async function appendJournalEntry({ treesRoot, area, text, idempotencyKey
   let current = "";
   try { current = await readFile(file, "utf8"); } catch {}
   const marker = `<!-- tangent-journal:${key} -->`;
-  if (current.includes(marker)) return { area: clean, file, id: key, duplicate: true };
-  if (Buffer.byteLength(current) >= JOURNAL_LIMIT_BYTES) await archiveJournal(file, current, now);
-  const heading = current ? "" : "# Journal\n\n";
+  if (current.includes(marker)) return { area: clean, file, archive: null, id: key, duplicate: true };
+  const archive = Buffer.byteLength(current) >= JOURNAL_LIMIT_BYTES ? await archiveJournal(file, current, now) : null;
+  const heading = current && !archive ? "" : journalHeading(archive);
   const entry = `${heading}${marker}\n## ${now}\n\nSource: ${source}.\n\n${value}\n\n`;
   await appendFile(file, entry, "utf8");
-  return { area: clean, file, id: key, duplicate: false, text: value, createdAt: now };
+  return { area: clean, file, archive, id: key, duplicate: false, text: value, createdAt: now };
 }
 
-/** Moves a full active Journal to a dated archive. */
+/**
+ * Opens an active Journal. After a rollover the heading also names the archive
+ * that holds the earlier entries, so a reader who opens `journal.md` alone
+ * still finds the history the Area History view stitches together.
+ */
+function journalHeading(archive) {
+  if (!archive) return "# Journal\n\n";
+  const name = path.basename(archive);
+  return `# Journal\n\nEarlier entries: [${name}](${name}).\n\n`;
+}
+
+/** Moves a full active Journal to a dated archive and returns that archive path. */
 async function archiveJournal(file, text, now) {
   const headings = [...text.matchAll(/^## (\d{4}-\d{2}-\d{2})/gm)].map((match) => match[1]);
   const from = headings[0] ?? "unknown";
@@ -259,6 +274,7 @@ async function archiveJournal(file, text, now) {
   let archive = path.join(path.dirname(file), `journal-${from}-${to}.md`);
   for (let index = 2; existsSync(archive); index += 1) archive = path.join(path.dirname(file), `journal-${from}-${to}-${index}.md`);
   await rename(file, archive);
+  return archive;
 }
 
 /** Creates an ordered queue with immutable assignment identities. */

@@ -1,3 +1,5 @@
+import { journalCaptureToast } from "./journal-capture-core.js";
+
 /** Binds browser events through capability-owned feature ports. */
 export function bindShellEvents({ shell, chrome, prompts, work, areas, programs, launch, documents }) {
   const { state, post, paint, refresh, showToast } = shell;
@@ -796,10 +798,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       const text = new FormData(form).get("text")?.toString().trim() || "";
       if (!text) return;
       try {
-        await post("/api/areas/journal", { area: state.areaSelection, text, idempotencyKey: crypto.randomUUID(), source: "Agent Shell" });
+        const saved = await post("/api/areas/journal", { area: state.areaSelection, text, idempotencyKey: crypto.randomUUID(), source: "Agent Shell" });
         state.areaJournal = null;
         form.reset();
-        showToast("Saved to the Journal and sent to the Area brain.");
+        showToast(journalCaptureToast(saved));
         await refresh();
       } catch (error) { showToast(error.message); }
       return;

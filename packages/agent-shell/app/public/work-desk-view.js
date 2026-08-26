@@ -4,6 +4,7 @@ import areaWorkCore from "./area-work-core.js";
 import goToCore from "./go-to-core.js";
 import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
 import { isInAreaFocus, normalizeAreaFocus, reconcileAreaFocus, writeAreaFocus } from "./area-focus-core.js";
+import { journalCaptureToast } from "./journal-capture-core.js";
 
 /** Creates the work desk from shell, launch, Area, and Program capabilities. */
 export function createWorkDeskView({ shell, launch, areaModel, programs, chrome }) {
@@ -1057,8 +1058,8 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const saveCapture = async () => {
       const text = document.querySelector("[data-modal-input]")?.value.trim() || "";
       if (!text) throw new Error("Write a Journal note.");
-      await post("/api/areas/journal", { area, text, idempotencyKey: crypto.randomUUID(), source: "Agent Shell" });
-      showToast("Saved to the Journal and sent to the Area brain.");
+      const saved = await post("/api/areas/journal", { area, text, idempotencyKey: crypto.randomUUID(), source: "Agent Shell" });
+      showToast(journalCaptureToast(saved));
       await refresh();
     };
     openModal({ kicker: "Capture", title: `To: ${area} brain`, copy: "Tangent saves the exact text before it wakes the brain.", field: { label: "Journal note", placeholder: "Write or dictate a note." }, confirmLabel: "Save and send", onConfirm: saveCapture });

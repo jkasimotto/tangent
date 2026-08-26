@@ -592,7 +592,7 @@ function renderKey() {
     state.areaEdit,
     state.programId,
     state.programDraft,
-    state.programs.programs.map((item) => [item.id, item.paused, item.lastRunAt, item.nextRunAt, item.session?.state]),
+    state.programs.operations.map((item) => [item.id, item.paused, item.lastRunAt, item.nextRunAt, item.session?.state]),
     vaultRenderProjection(),
     goal ? [goal.file, goal.status, goal.mtime, goal.stateText, goal.currentBrief, goal.storyText, goal.why, goal.subgoalItems, goal.documents] : null,
     [state.launch.area, state.launch.kind, state.launch.open, state.launch.editing, state.launch.command, state.launch.choice, state.launch.loading, state.launch.options, state.launch.instruction, state.launch.continueFrom, state.launch.active, state.launch.steps, state.launch.record?.updatedAt ?? null],
@@ -807,7 +807,7 @@ function renderScreen() {
   else if (state.view === "create") screen.innerHTML = renderCreate();
   else if (state.view === "describe") screen.innerHTML = renderDescribeCapture();
   else if (state.view === "areas") screen.innerHTML = renderAreas() + launchPopover();
-  else if (state.view === "prompts") screen.innerHTML = renderPromptBestiary({ goals: allGoals(), brains: state.brains, sessions: state.sessions, pipelines: state.pipelines, programs: state.programs.programs, asks: forYouItems(), inspector: state.promptInspector, selection: state.bestiarySelection });
+  else if (state.view === "prompts") screen.innerHTML = renderPromptBestiary({ goals: allGoals(), brains: state.brains, sessions: state.sessions, pipelines: state.pipelines, programs: state.programs.operations, asks: forYouItems(), inspector: state.promptInspector, selection: state.bestiarySelection });
   else if (state.view === "area-edit") screen.innerHTML = renderAreaEditor();
   else if (state.view === "program-detail") screen.innerHTML = renderProgramDetail(currentProgram());
   else if (state.view === "program-create") screen.innerHTML = renderProgramCreate();
@@ -1122,8 +1122,8 @@ async function performRefresh({ initial = false, trigger = initial ? "initial" :
     state.contextHandoverTokens = Number(sessionPayload.contextHandoverTokens || 0);
     forgetVerdictLines();
     state.programs = {
-      programs: programs.programs || [],
-      errors: programs.errors || [],
+      operations: programs.operations || [],
+      problems: programs.problems || [],
       areas: programs.areas || [],
       liveCount: Number(programs.liveCount || 0),
     };

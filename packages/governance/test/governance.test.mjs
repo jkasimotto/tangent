@@ -65,6 +65,23 @@ test("agent lint does not require AGENTS.md in ordinary implementation directori
   }
 });
 
+test("agent lint rejects retired Area brain authority contracts", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
+  try {
+    await writeMinimalRootAgentDocs(root);
+    const docs = path.join(root, "packages", "agent-shell", "docs");
+    await mkdir(docs, { recursive: true });
+    await writeFile(path.join(docs, "public-api.md"), "Work uses the nearest live brain.\n", "utf8");
+
+    const result = await lintGovernance({ root, groups: ["docs"] });
+    const finding = result.findings.find((candidate) => candidate.rule === "agent-shell/area-brain-contract");
+    assert.ok(finding);
+    assert.equal(finding.file, "packages/agent-shell/docs/public-api.md");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("dependency lint flags disallowed vertical package dependencies", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
   try {

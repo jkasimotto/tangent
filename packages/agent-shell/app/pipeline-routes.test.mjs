@@ -20,13 +20,11 @@ function response() {
   };
 }
 
-test("pipeline routes keep continuation and step handover on one contract", async () => {
+test("pipeline routes reject worker replacement and accept typed queue reports", async () => {
   const calls = [];
   const routes = createPipelineRoutes({
     /** Normalizes handover facts. */
     normalizeMessage: String,
-    /** Records a continuation. */
-    async continueWorker(session, text) { calls.push(["continue", session, text]); return { status: 200, session: "fresh" }; },
     /** Records a step advance. */
     async handoverStep(session, text) { calls.push(["advance", session, text]); return { status: 200, state: "advanced", next: 2, pipeline: {} }; },
   });
@@ -36,7 +34,8 @@ test("pipeline routes keep continuation and step handover on one contract", asyn
   const advanced = response();
   await routes.handle(request("POST", { session: "step-1", text: "more" }), advanced, new URL("http://shell/api/goals/handover"));
 
-  assert.deepEqual(calls, [["continue", "old", "facts"], ["advance", "step-1", "more"]]);
-  assert.deepEqual(continued.body, { status: "continued", session: "fresh" });
+  assert.deepEqual(calls, [["advance", "step-1", "more"]]);
+  assert.equal(continued.status, 400);
+  assert.match(continued.body.error, /typed context-risk/);
   assert.equal(advanced.body.status, "advanced");
 });

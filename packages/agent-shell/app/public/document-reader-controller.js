@@ -429,7 +429,7 @@ export function createDocumentReaderController({ shell, rendering, work, navigat
     }
   }
 
-  /** Tells the nearest live Area brain that Julian finished commenting. */
+  /** Tells the exact live Area brain that Julian finished commenting. */
   async function notifyDocumentComments() {
     if (!state.document?.file) return;
     try {

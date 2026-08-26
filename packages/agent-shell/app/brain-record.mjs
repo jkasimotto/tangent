@@ -19,7 +19,8 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { readJsonObject, walkJsonFiles, writeJsonObject } from "./json-store.mjs";
 
-export const BRAIN_SCHEMA = "area-brain.v1";
+export const BRAIN_SCHEMA = "area-brain.v2";
+const LEGACY_BRAIN_SCHEMA = "area-brain.v1";
 
 const MAX_INSTRUCTION_CHARS = 4000;
 const SESSION_NAME_MAX = 60;
@@ -31,7 +32,7 @@ export function brainPath(root, area) {
 
 /** Reads one brain record, or null when the file is missing or unparsable. */
 export async function readBrain(root, area) {
-  return readJsonObject(brainPath(root, area));
+  return normalizeBrainRecord(await readJsonObject(brainPath(root, area)), area);
 }
 
 /** Reads every brain record under the root; empty when the root is missing. */
@@ -39,8 +40,8 @@ export async function readAllBrains(root) {
   const files = await walkJsonFiles(root);
   const records = [];
   for (const file of files) {
-    const record = await readJsonObject(file);
-    if (record && record.schema === BRAIN_SCHEMA) records.push(record);
+    const record = normalizeBrainRecord(await readJsonObject(file));
+    if (record) records.push(record);
   }
   return records;
 }
@@ -48,8 +49,40 @@ export async function readAllBrains(root) {
 /** Writes a record with mkdir -p and an atomic tmp + rename; stamps updatedAt. */
 export async function writeBrain(root, record) {
   const target = brainPath(root, record.area);
+  record.schema = BRAIN_SCHEMA;
   record.updatedAt = new Date().toISOString();
   return writeJsonObject(target, record);
+}
+
+/** Converts the v1 runtime lifecycle into the v2 logical lifecycle. */
+export function normalizeBrainRecord(value, area = "") {
+  if (!value || typeof value !== "object" || ![BRAIN_SCHEMA, LEGACY_BRAIN_SCHEMA].includes(value.schema)) return null;
+  const createdAt = value.createdAt ?? value.updatedAt ?? new Date(0).toISOString();
+  const generations = Array.isArray(value.generations) ? value.generations : [];
+  const latest = [...generations].reverse().find((entry) => entry?.handover);
+  const legacyActive = value.status === "running";
+  const status = value.schema === BRAIN_SCHEMA && ["active", "inactive"].includes(value.status)
+    ? value.status
+    : legacyActive ? "active" : "inactive";
+  const foundingText = String(value.foundingInstruction?.text ?? value.instruction ?? "").trim();
+  const checkpointText = String(value.checkpoint?.text ?? latest?.handover ?? "").trim();
+  return {
+    ...value,
+    schema: BRAIN_SCHEMA,
+    area: String(value.area ?? area),
+    status,
+    foundingInstruction: {
+      text: foundingText,
+      createdAt: value.foundingInstruction?.createdAt ?? createdAt,
+    },
+    checkpoint: checkpointText ? {
+      text: checkpointText,
+      createdAt: value.checkpoint?.createdAt ?? latest?.endedAt ?? value.updatedAt ?? createdAt,
+      sourceAttemptId: value.checkpoint?.sourceAttemptId ?? latest?.session ?? null,
+    } : null,
+    currentAttemptId: value.currentAttemptId ?? value.session ?? null,
+    generations,
+  };
 }
 
 /** Deletes one brain record; a missing file is not an error. */
@@ -77,14 +110,16 @@ export function newBrain({ area, instruction, launch = null, command, label = ""
   return {
     schema: BRAIN_SCHEMA,
     area,
-    instruction: String(instruction).trim(),
+    foundingInstruction: { text: String(instruction).trim(), createdAt: now },
+    checkpoint: null,
     launch: launch && typeof launch === "object" && launch.harness
       ? { harness: String(launch.harness), model: launch.model ?? null, effort: launch.effort ?? null }
       : null,
     command,
     label: label || (launch ? "" : "Edited command"),
     planFile,
-    status: "running",
+    status: "active",
+    currentAttemptId: null,
     generation: 0,
     session: null,
     createdAt: now,
@@ -101,7 +136,7 @@ export function currentGeneration(record) {
 
 /**
  * Starts generation N+1 on the given session: appends the entry, points the
- * record at it, and sets status running. Returns the new entry.
+ * record at it, and keeps the logical brain active. Returns the new entry.
  */
 export function beginGeneration(record, session, now = new Date().toISOString()) {
   const generation = (record.generations?.length ?? 0) + 1;
@@ -109,7 +144,8 @@ export function beginGeneration(record, session, now = new Date().toISOString())
   record.generations = [...(record.generations ?? []), entry];
   record.generation = generation;
   record.session = session;
-  record.status = "running";
+  record.currentAttemptId = session;
+  record.status = "active";
   return entry;
 }
 
@@ -125,25 +161,17 @@ export function recordHandover(record, text, now = new Date().toISOString()) {
   if (!entry) throw new Error("no generation to hand over from");
   entry.handover = entry.handover ? `${entry.handover}\n\n${text}` : String(text);
   entry.endedAt = now;
+  record.checkpoint = { text: entry.handover, createdAt: now, sourceAttemptId: entry.session };
   return entry;
 }
 
-/** Ends the brain: "ended" on Julian's stop, "stopped" when its session died. */
-export function endBrain(record, status, now = new Date().toISOString()) {
-  if (!["ended", "stopped"].includes(status)) throw new Error(`unknown brain end status "${status}"`);
-  record.status = status;
+/** Makes the logical brain inactive after an explicit stop. */
+export function endBrain(record, status = "inactive", now = new Date().toISOString()) {
+  if (!["inactive", "ended", "stopped"].includes(status)) throw new Error(`unknown brain end status "${status}"`);
+  record.status = "inactive";
   const entry = currentGeneration(record);
   if (entry && !entry.endedAt) entry.endedAt = now;
   return record;
-}
-
-/** Restores a stopped record when its exact generation session is still live. */
-export function reclaimStoppedBrain(record) {
-  if (record?.status !== "stopped" || !record.session) return false;
-  record.status = "running";
-  const entry = currentGeneration(record);
-  if (entry?.session === record.session) entry.endedAt = null;
-  return true;
 }
 
 /** The tmux session name for one generation of an Area's brain. */
@@ -154,37 +182,22 @@ export function brainSessionName(area, generation) {
 }
 
 /**
- * The running brain that covers an Area: the record on the Area itself or
- * on its nearest ancestor. Ended and stopped brains do not cover anything.
+ * The active brain for one exact Area. Ancestors never gain mutation rights.
  */
 export function brainForArea(records, area) {
-  const parts = String(area ?? "").split("/").filter(Boolean);
-  for (let i = parts.length; i >= 1; i--) {
-    const candidate = parts.slice(0, i).join("/");
-    const record = records.find((item) => item.area === candidate && item.status === "running");
-    if (record) return record;
-  }
-  return null;
+  return records.find((item) => item.area === String(area ?? "") && item.status === "active") ?? null;
 }
 
-/** True when this brain is the nearest running owner of an Area. */
+/** True when this brain owns the exact Area. */
 export function brainOwnsArea(records, brainArea, area) {
-  return brainForArea(records, area)?.area === brainArea;
+  return brainArea === area && brainForArea(records, area)?.area === brainArea;
 }
 
 /**
- * The nearest brain record for an Area, whatever its status: the record on
- * the Area itself or on its closest ancestor. A stopped or ended brain still
- * owns its Area, so notices for it are kept until a generation reads them.
+ * The brain record for one exact Area, whatever its status.
  */
 export function brainRecordForArea(records, area) {
-  const parts = String(area ?? "").split("/").filter(Boolean);
-  for (let i = parts.length; i >= 1; i--) {
-    const candidate = parts.slice(0, i).join("/");
-    const record = records.find((item) => item.area === candidate);
-    if (record) return record;
-  }
-  return null;
+  return records.find((item) => item.area === String(area ?? "")) ?? null;
 }
 
 /** The text of the latest non-null handover, or null. */

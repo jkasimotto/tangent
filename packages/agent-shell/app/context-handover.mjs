@@ -46,19 +46,19 @@ export function reminderDue({ fill, thresholdTokens, reminders }) {
   return null;
 }
 
-/** The first-level reminder, printing the exact command so the agent never composes it from memory. */
+/** The first-level reminder sends context risk to the authoritative controller. */
 export function contextReminderText({ usedTokens, windowTokens, subject }) {
   const used = Math.round(usedTokens / 1000);
   const window = Math.round(windowTokens / 1000);
   const pct = Math.round((usedTokens / windowTokens) * 100);
-  return `Your context is at ${used}k of ${window}k (${pct}%). At the next natural pause, hand this ${subject} to a fresh copy of yourself: tangent goal handover --continue "<facts>". State files changed with full paths, commits made, commands and tests that ran with their outcomes, messages you received mid-${subject}, questions to the brain still unanswered, what is unresolved, decisions taken, and what to do first. If the ${subject} is nearly done, finish it and run the plain handover instead.`;
+  return `Your context is at ${used}k of ${window}k (${pct}%). At the next natural pause, submit a typed context-risk report with the durable facts. The exact Area brain chooses and starts any fresh attempt; do not replace yourself. If the ${subject} is nearly done, finish it and submit the normal typed result.`;
 }
 
 /** The second, stronger reminder once carried context is a tenth past the threshold. */
 export function contextRepeatText({ usedTokens, thresholdTokens, subject }) {
   const used = Math.round(usedTokens / 1000);
   const threshold = Math.round(thresholdTokens / 1000);
-  return `Your context is well past ${threshold}k tokens (${used}k). Hand this ${subject} to a fresh copy of yourself now, before you continue anything else: tangent goal handover --continue "<facts>".`;
+  return `Your context is well past ${threshold}k tokens (${used}k). Submit a typed context-risk report now. The exact Area brain chooses and starts any fresh attempt; do not replace yourself.`;
 }
 
 /**

@@ -20,7 +20,7 @@ function noAreaPath() { return ""; }
 /** Renders the toolbar for a live brain and the supplied comments. */
 function toolbar(comments) {
   const state = {
-    brains: [{ area: "otto/tangent", status: "running", live: true, session: "tangent-brain" }],
+    brains: [{ area: "otto/tangent", status: "active", live: true, session: "tangent-brain" }],
     document: { area: "otto/tangent", title: "Plan", file: "otto/tangent/plan.md", text: "", comments },
     documentTrail: [], documentTrailIndex: -1, vault: { documents: [] },
   };

@@ -18,7 +18,7 @@ function goal(area, slug, title, extra = {}) {
 
 /** Builds one live Area brain with no open requests. */
 function brain(area, generation, state) {
-  return { area, status: "running", live: true, session: `${area.replaceAll("/", "-")}--brain`, generation, state, forJulian: [], requests: [] };
+  return { area, status: "active", live: true, session: `${area.replaceAll("/", "-")}--brain`, generation, state, forJulian: [], requests: [] };
 }
 
 /**
@@ -120,7 +120,7 @@ export function withBrainOnlyArea(fixture, { state = "working", live = true, pla
   const map = own.length ? [...fixture.vault.map, { path: "otto/quiet", name: "quiet", goals: own }] : fixture.vault.map;
   const record = live
     ? brain("otto/quiet", 4, state)
-    : { ...brain("otto/quiet", 4, state), status: "stopped", live: false };
+    : { ...brain("otto/quiet", 4, state), status: "inactive", live: false };
   const sessions = live
     ? [...fixture.sessions, { name: "otto-quiet--brain", area: "otto/quiet", kind: "brain", state, command: "claude" }]
     : fixture.sessions;

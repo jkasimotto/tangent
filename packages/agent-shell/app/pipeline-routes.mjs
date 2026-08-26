@@ -17,25 +17,30 @@ export function createPipelineRoutes(operations) {
     return true;
   }
 
-  /** Advances a step or moves its work into a fresh session. */
+  /** Stores one worker report. The queue controller chooses the next attempt. */
   async function handover(request, response) {
     const body = await readJson(request);
+    if (body["continue"] === true) {
+      sendJson(response, 400, { error: "Workers cannot replace themselves. Submit a typed context-risk report for the Area brain." });
+      return;
+    }
     let text;
     try { text = operations.normalizeMessage(body.text); }
     catch (error) { sendJson(response, 400, { error: String(error.message ?? error) }); return; }
-    const result = body.continue === true
-      ? await operations.continueWorker(String(body.session ?? ""), text)
-      : await operations.handoverStep(String(body.session ?? ""), text);
+    const result = await operations.handoverStep(String(body.session ?? ""), text, body.report && typeof body.report === "object" ? body.report : null, String(body.idempotencyKey ?? ""));
     const value = result.status !== 200 ? { error: result.error }
-      : body.continue === true ? { status: "continued", session: result.session }
-        : { status: result.state, next: result.next, pipeline: result.pipeline };
+      : { status: result.state, next: result.next, pipeline: result.pipeline };
     sendJson(response, result.status, value);
   }
 
   /** Advances, restarts, skips, sends, or ends a pipeline step. */
   async function control(request, response) {
     const body = await readJson(request);
-    const result = await operations.control(String(body.goal ?? ""), String(body.action ?? ""), body.step);
+    const result = await operations.control(String(body.goal ?? ""), String(body.action ?? ""), body.step, {
+      caller: String(body.caller ?? ""),
+      expectedRevision: body.expectedRevision,
+      idempotencyKey: String(body.idempotencyKey ?? ""),
+    });
     sendJson(response, result.status, result.status === 200
       ? { status: result.state ?? "started", next: result.next ?? (result.index ? { index: result.index, session: result.session } : null), pipeline: result.pipeline, ...(result.ended ? { ended: result.ended } : {}) }
       : { error: result.error });
@@ -44,7 +49,11 @@ export function createPipelineRoutes(operations) {
   /** Appends new pending steps without rewriting pipeline history. */
   async function append(request, response) {
     const body = await readJson(request);
-    const result = await operations.append(String(body.goal ?? ""), Array.isArray(body.steps) ? body.steps : []);
+    const result = await operations.append(String(body.goal ?? ""), Array.isArray(body.steps) ? body.steps : [], {
+      caller: String(body.caller ?? ""),
+      expectedRevision: body.expectedRevision,
+      idempotencyKey: String(body.idempotencyKey ?? ""),
+    });
     sendJson(response, result.status, result.status === 200
       ? { status: result.state, after: result.after ?? null, next: result.next ?? null, session: result.session ?? null, added: result.added, pipeline: result.pipeline, warnings: result.warnings ?? [] }
       : { error: result.error });
@@ -53,7 +62,11 @@ export function createPipelineRoutes(operations) {
   /** Edits one step that has not started. */
   async function edit(request, response) {
     const body = await readJson(request);
-    const result = await operations.edit(String(body.goal ?? ""), body.step, body);
+    const result = await operations.edit(String(body.goal ?? ""), body.step, body, {
+      caller: String(body.caller ?? ""),
+      expectedRevision: body.expectedRevision,
+      idempotencyKey: String(body.idempotencyKey ?? ""),
+    });
     sendJson(response, result.status, result.status === 200 ? { pipeline: result.pipeline } : { error: result.error });
   }
 

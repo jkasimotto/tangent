@@ -19,7 +19,7 @@ export function createShellState(storage = globalThis.localStorage, href = globa
   const storedAreaFocus = readAreaFocus(storage);
   const state = {
     vault: null,
-    programs: { programs: [], errors: [], areas: [], liveCount: 0 },
+    programs: { operations: [], problems: [], areas: [], liveCount: 0 },
     sessions: [], contextHandoverTokens: 0,
     currentFile: storage.getItem("agent-shell.current-goal") || "", view: initialView,
     document: null, documentReturn: null, documentTrail: [], documentTrailIndex: -1, documentPositions: new Map(),

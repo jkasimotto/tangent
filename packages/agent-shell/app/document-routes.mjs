@@ -61,7 +61,7 @@ export function createDocumentRoutes(operations) {
     sendJson(response, result.status, result.status === 200 ? result.document : { error: result.error, current: result.current });
   }
 
-  /** Explicitly notifies the nearest active brain about saved comments. */
+  /** Explicitly notifies the exact active Area brain about saved comments. */
   async function notifyComments(request, response) {
     const result = await operations.notifyComments(String((await readJson(request)).file ?? ""));
     sendJson(response, result.status, result.status === 200 ? result.value : { error: result.error });

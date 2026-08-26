@@ -1,7 +1,8 @@
+import { randomUUID } from "node:crypto";
 import { renderCommandHelp } from "@tangent/core";
 import { booleanArg, parseArgs, stringArg, stringsArg, type Args } from "@tangent/core/cli";
 
-import { currentTmuxSession, postJson, postJsonResult, requireGoal, resolveServerUrl, vaultFetch } from "../client.js";
+import { currentTmuxSession, goalQueueRevision, postJson, postJsonResult, requireGoal, resolveServerUrl, vaultFetch } from "../client.js";
 import { brainCommandSpec } from "../spec.js";
 
 /** Dispatches `tangent brain` subcommands. */
@@ -57,7 +58,8 @@ async function advanceCommand(args: Args): Promise<void> {
   if (!Number.isInteger(step) || step < 1) throw new Error("tangent brain advance needs a positive step number.");
   const goal = await requireGoal(server, slug);
   const caller = await currentTmuxSession();
-  const result = await postJson(server, "/api/pipelines/control", { goal: goal.file, action: "advance", step, ...(caller ? { caller } : {}) });
+  const expectedRevision = await goalQueueRevision(server, goal.file);
+  const result = await postJson(server, "/api/pipelines/control", { goal: goal.file, action: "advance", step, expectedRevision, idempotencyKey: randomUUID(), ...(caller ? { caller } : {}) });
   console.log(`started ${slug} step ${step} in ${String(result.next?.session ?? "(no session)")}`);
 }
 
@@ -93,53 +95,12 @@ async function statusCommand(args: Args): Promise<void> {
     return;
   }
   console.log(`${brain.area}  [${brain.status}${brain.live ? ", live" : ""}]  generation ${brain.generation}  ${brain.session ?? "(no session)"}`);
+  console.log(`health: ${brain.health?.status ?? (brain.live ? "healthy" : "unknown")}${brain.health?.problem ? ` · ${brain.health.problem}` : ""}`);
   console.log(`plan: ${brain.planFile}`);
-  console.log(`instruction: ${firstLine(brain.instruction)}`);
-  if (brain.latestHandover) console.log(`latest handover: ${firstLine(brain.latestHandover)}`);
-  printForJulian(brain.forJulian ?? [], brain.forJulianUnparsed ?? []);
+  console.log(`founding instruction: ${firstLine(brain.foundingInstruction?.text ?? "")}`);
+  if (brain.checkpoint?.text) console.log(`current checkpoint: ${firstLine(brain.checkpoint.text)}`);
+  console.log(`questions: ${(brain.requests ?? []).length} open`);
 }
-
-/**
- * Prints what Tangent shows Julian for this brain, and what it does not: the
- * rows it parsed from the plan's `## For Julian` section, each marked when
- * Tangent hides it, then every line the section holds that became no row.
- * The brain reads this to see its own misses; hiding a line is never silent.
- */
-function printForJulian(rows: ForJulianRow[], unparsed: string[]): void {
-  console.log(`Tangent shows ${rows.length} ${rows.length === 1 ? "item" : "items"} for Julian`);
-  rows.forEach((row, at) => {
-    const number = `  ${at + 1}.`;
-    if (row.kind === "test") {
-      const stale = row.goalStatus !== "done" ? ` · goal is ${row.goalStatus ?? "unknown"} (not shown)` : "";
-      const missing = row.missing ? " · TARGET MISSING (not shown)" : "";
-      console.log(`${number} Test ${row.title}: ${row.text} · Accept it?${stale}${missing}`);
-      return;
-    }
-    if (!row.target) {
-      console.log(`${number} Decide: ${row.text}`);
-      return;
-    }
-    const unblocks = row.unblocks ? ` · unblocks ${row.unblocks}` : "";
-    const missing = row.missing ? " · TARGET MISSING (not shown)" : "";
-    console.log(`${number} Decide ${row.file ?? row.title}: ${row.text}${unblocks} · ${row.commentCount} open comments${missing}`);
-  });
-  if (!unparsed.length) return;
-  console.log("Not shown, in other shapes:");
-  for (const line of unparsed) console.log(`  ${line.trim()}`);
-}
-
-type ForJulianRow = {
-  kind: "decide" | "test";
-  target: string | null;
-  text: string;
-  unblocks: string | null;
-  file: string | null;
-  title: string | null;
-  commentCount: number;
-  missing: boolean;
-  goalStatus: string | null;
-  line: string;
-};
 
 type BrainSummary = {
   area: string;
@@ -148,10 +109,11 @@ type BrainSummary = {
   generation: number;
   session: string | null;
   planFile: string;
-  instruction: string;
+  foundingInstruction: { text: string; createdAt: string };
+  checkpoint: { text: string; createdAt: string; sourceAttemptId: string | null } | null;
+  health?: { status: string; problem?: string | null };
   latestHandover: string | null;
-  forJulian: ForJulianRow[];
-  forJulianUnparsed: string[];
+  requests?: unknown[];
 };
 
 /** The first line of a text, trimmed. */

@@ -6,7 +6,7 @@ Purpose: the CLI surface of the Agent Shell, under the root `tangent` command:
 - Agent messaging CLI: `tangent agent list`, `tangent agent send`.
 - Worker CLI: `tangent handover` reports facts to the controlling brain. `tangent area recent` queries subtree milestones. `tangent area audit` exports legacy records.
 - Brain CLI: `tangent brain request` creates durable user requests, and `tangent brain advance` starts the next approved assignment.
-- Brain and server CLI: `tangent brain handover|status` (the Area brain's own lane; `status` ends with what Tangent shows Julian) and `tangent shell rebuild` (rebuild and restart the server, and wait for the new boot).
+- Brain and server CLI: `tangent brain handover|status` shows lifecycle, health, checkpoint, and Questions. `tangent shell rebuild` rebuilds and restarts the server.
 - Study partner CLI: `tangent study` (spawns an interactive `claude-otto` session carrying the partner contract) and `tangent study contract` (prints that contract).
 
 The Agent Shell gateway in `packages/agent-shell/app/gateway.mjs` owns port 4321 and durable terminal transport. It supervises the controller in `server.mjs`. The controller owns logical Area brains, Goal queues, Questions, Operation events, and session projection. See ADR-0032 and ADR-0034.

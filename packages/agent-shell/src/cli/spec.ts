@@ -9,6 +9,7 @@ export const handoverCommandSpec: CliCommandSpec = {
   args: "<facts...>",
   options: [
     { name: "session", takesValue: true, description: "Worker session name; defaults to the tmux session this command runs in" },
+    { name: "report", takesValue: true, description: "Tagged worker report as one JSON object" },
     serverOption
   ]
 };
@@ -158,6 +159,7 @@ export const goalCommandSpec: CliCommandSpec = {
       args: "<slug>",
       options: [
         { name: "on", takesValue: true, description: "Prerequisite Goal slug; repeatable" },
+        { name: "session", takesValue: true, description: "Caller session; defaults to the current tmux session" },
         serverOption,
         jsonOption
       ]
@@ -168,6 +170,7 @@ export const goalCommandSpec: CliCommandSpec = {
       args: "<slug>",
       options: [
         { name: "on", takesValue: true, description: "Prerequisite Goal slug; repeatable" },
+        { name: "session", takesValue: true, description: "Caller session; defaults to the current tmux session" },
         serverOption,
         jsonOption
       ]
@@ -199,6 +202,8 @@ export const goalCommandSpec: CliCommandSpec = {
         { name: "launch", takesValue: true, description: "Required harness as <harness[/model[/effort]]>; repeatable, one per --step at the same position, or exactly one for a Goal started without --step" },
         { name: "path", takesValue: true, description: "Any working directory for the step at the same position; repeatable; missing, or an empty --path=, means the Area repository" },
         { name: "continue-from", takesValue: true, description: "Step number whose session the step at the same position continues, or - for a fresh session; repeatable" },
+        { name: "kind", takesValue: true, description: "implementation or review; repeatable, one per step" },
+        { name: "recovery", description: "Emergency start through the Goal queue when the exact Area brain is impaired" },
         { name: "session", takesValue: true, description: "Caller session; defaults to the current tmux session when available" },
         serverOption,
         jsonOption
@@ -213,17 +218,18 @@ export const goalCommandSpec: CliCommandSpec = {
         { name: "launch", takesValue: true, description: "Required harness for the step at the same position as <harness[/model[/effort]]>; repeatable, one per --step" },
         { name: "path", takesValue: true, description: "Any working directory for the step at the same position; repeatable; missing, or an empty --path=, means the Area repository" },
         { name: "continue-from", takesValue: true, description: "Step number whose session the step at the same position continues, or - for a fresh session; repeatable" },
+        { name: "kind", takesValue: true, description: "implementation or review; repeatable, one per step" },
         serverOption,
         jsonOption
       ]
     },
     {
       name: "handover",
-      description: "Hand this step's facts to the next agent in the pipeline, or, with --continue, to a fresh copy of yourself on the same step. State facts only: paths, what changed, what is unresolved.",
+      description: "Submit this assignment's facts or tagged result to its authoritative queue. The exact Area brain controls later attempts.",
       args: "<facts...>",
       options: [
         { name: "session", takesValue: true, description: "The step's session name; defaults to the tmux session this command runs in" },
-        { name: "continue", description: "Hand this step to a fresh copy of yourself; the step continues, the pipeline does not advance" },
+        { name: "report", takesValue: true, description: "Tagged worker report as one JSON object" },
         serverOption
       ]
     },

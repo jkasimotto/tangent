@@ -100,7 +100,7 @@ test("a stopped pipeline ask has a quiet accessible dismissal with Undo and no w
   dismiss.click();
   assert.equal(window.forYouItems().length, 0, "only the exact ask leaves the projection");
   assert.equal(window.document.querySelector("[data-dismiss-ask]"), null);
-  assert.equal(window.document.activeElement, window.document.body, "dismissal does not select another ask");
+  assert.equal(window.document.activeElement.closest?.("[data-ask-id]") ?? null, null, "dismissal does not select another ask");
   assert.ok(window.document.querySelector(`[data-goal-anchor='${goal.file}']`), "the Goal stays on Work");
   assert.ok(window.document.querySelector("[data-pipeline-control='restart']"), "the stopped pipeline stays actionable outside For you");
   assert.deepEqual(posts, [], "dismissal sends no Goal, pipeline, brain, Request, or worker command");

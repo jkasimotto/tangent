@@ -47,7 +47,7 @@ function renderDescribe(brain = null, command = "") {
   const currentGoal = () => null;
   /** Returns no Goal session in this focused fixture. */
   const sessionForGoal = () => null;
-  /** Finds an exact Area brain so the view must perform ancestor lookup. */
+  /** Finds only the exact Area brain. */
   const brainForAreaCard = (area) => state.brains.find((item) => item.area === area) ?? null;
   /** Returns no brain state text in this focused fixture. */
   const brainStateLabel = () => "";
@@ -76,12 +76,12 @@ function renderDescribe(brain = null, command = "") {
 }
 
 test("Describe work shows the truthful chooser and recipient for every brain state", () => {
-  const live = renderDescribe({ area: "otto/tangent", live: true, label: "Claude Otto · Fable 5", command: "claude-otto --model fable" });
+  const live = renderDescribe({ area: "otto/tangent/child", live: true, label: "Claude Otto · Fable 5", command: "claude-otto --model fable" });
   assert.equal(live.document.querySelector(`[data-launch-for="${DESCRIBE}"]`), null);
   assert.match(live.document.querySelector("button[type=submit]").textContent, /Send to Claude Otto · Fable 5 brain/);
   assert.deepEqual(live.view.launchRequestFields(true), {});
 
-  const stopped = renderDescribe({ area: "otto/tangent", live: false, label: "Claude Otto · Fable 5", command: "claude-otto --model fable" });
+  const stopped = renderDescribe({ area: "otto/tangent/child", live: false, label: "Claude Otto · Fable 5", command: "claude-otto --model fable" });
   assert.ok(stopped.document.querySelector(`[data-launch-for="${DESCRIBE}"]`));
   assert.match(stopped.document.querySelector("button[type=submit]").textContent, /Resume Codex · Sol brain/);
   assert.deepEqual(stopped.view.launchRequestFields(true), { choice: { harness: "codex", model: "sol" } });

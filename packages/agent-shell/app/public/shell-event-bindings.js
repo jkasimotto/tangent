@@ -481,7 +481,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (pipelineControl) {
       const { pipelineControl: action, pipelineGoal: goalFile, pipelineStep: step } = pipelineControl.dataset;
       try {
-        const result = await post("/api/pipelines/control", { goal: goalFile, action, step: Number(step) });
+        const record = (state.pipelines ?? []).find((item) => item.goal === goalFile);
+        const result = await post("/api/pipelines/control", { goal: goalFile, action, step: Number(step), expectedRevision: record?.revision, idempotencyKey: crypto.randomUUID() });
         await refresh();
         paint(true);
         showToast(result.next ? `Step ${result.next.index} started.` : action === "skip" ? `Step ${step} skipped; the pipeline is complete.` : action === "end" ? "Work stopped. The Goal stays open." : `Step ${step} ${action}ed.`);
@@ -861,8 +862,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         saveDescribeSession();
         saveDescribeDraft();
         await refresh();
-        if (!describeWorkSession()) throw new Error("The agent session did not open.");
-        openSessionLayer(describeWorkSession(), opened.route?.startsWith("brain-") ? "brain" : "definition");
+        const session = describeWorkSession();
+        if (!session) throw new Error("The agent session did not open.");
+        showWork();
+        openSessionLayer(session, opened.route?.startsWith("brain-") ? "brain" : "definition");
         const messages = {
           "brain-opened": "Your description reached the Area brain.",
           "brain-resumed": "Your description reached the resumed Area brain.",
@@ -1163,7 +1166,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       if (event.key === "b") {
         event.preventDefault();
         const area = current?.dataset.workArea ?? "";
-        const brain = (state.brains ?? []).filter((item) => item.live && (area === item.area || area.startsWith(`${item.area}/`))).sort((a, b) => b.area.length - a.area.length)[0];
+        const brain = (state.brains ?? []).find((item) => item.live && item.status === "active" && item.area === area);
         const session = state.sessions.find((item) => item.name === brain?.session);
         return session ? openSessionLayer(session, "brain") : openOrStartBrain(area);
       }

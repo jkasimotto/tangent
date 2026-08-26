@@ -16,9 +16,9 @@ import {
   endBrain,
   latestHandover,
   newBrain,
+  normalizeBrainRecord,
   readAllBrains,
   readBrain,
-  reclaimStoppedBrain,
   recordHandover,
   validateInstruction,
   writeBrain
@@ -39,10 +39,12 @@ function sampleBrain(overrides = {}) {
   });
 }
 
-test("newBrain builds a running record with no generation", () => {
+test("newBrain builds an active logical record with founding instruction", () => {
   const record = sampleBrain();
   assert.equal(record.schema, BRAIN_SCHEMA);
-  assert.equal(record.status, "running");
+  assert.equal(record.status, "active");
+  assert.equal(record.foundingInstruction.text, "Ship the Area map.");
+  assert.equal(record.checkpoint, null);
   assert.equal(record.generation, 0);
   assert.equal(record.session, null);
   assert.deepEqual(record.generations, []);
@@ -57,6 +59,14 @@ test("validateInstruction rejects empty and overlong text", () => {
   assert.throws(() => sampleBrain({ instruction: "" }), /instruction is empty/);
 });
 
+test("legacy records normalize into active or inactive logical lifecycle", () => {
+  const legacy = normalizeBrainRecord({ schema: "area-brain.v1", area: "otto/tangent", instruction: "Found it.", status: "running", session: "brain", generations: [] });
+  assert.equal(legacy.schema, BRAIN_SCHEMA);
+  assert.equal(legacy.status, "active");
+  assert.equal(legacy.foundingInstruction.text, "Found it.");
+  assert.equal(normalizeBrainRecord({ ...legacy, schema: "area-brain.v1", status: "stopped" }).status, "inactive");
+});
+
 test("write and read round trip; readAllBrains walks the root", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "brains-"));
   const record = sampleBrain();
@@ -64,7 +74,7 @@ test("write and read round trip; readAllBrains walks the root", async () => {
   const text = await readFile(brainPath(root, "otto/tangent"), "utf8");
   assert.equal(JSON.parse(text).area, "otto/tangent");
   const back = await readBrain(root, "otto/tangent");
-  assert.equal(back.instruction, "Ship the Area map.");
+  assert.equal(back.foundingInstruction.text, "Ship the Area map.");
   assert.ok(back.updatedAt);
   await writeBrain(root, sampleBrain({ area: "otto/dnd" }));
   const all = await readAllBrains(root);
@@ -85,7 +95,7 @@ test("beginGeneration numbers generations and points the record at the session",
   assert.equal(second.generation, 2);
   assert.equal(record.session, "tangent--brain--g2");
   assert.equal(record.generations.length, 2);
-  assert.equal(record.status, "running");
+  assert.equal(record.status, "active");
 });
 
 test("recordHandover keeps earlier text and stamps endedAt", () => {
@@ -98,6 +108,7 @@ test("recordHandover keeps earlier text and stamps endedAt", () => {
   assert.equal(entry.handover, "Wave 1 started.\n\nWave 1 done.");
   assert.ok(entry.endedAt);
   assert.equal(latestHandover(record), "Wave 1 started.\n\nWave 1 done.");
+  assert.equal(record.checkpoint.text, "Wave 1 started.\n\nWave 1 done.");
 });
 
 test("latestHandover skips generations without a handover", () => {
@@ -109,30 +120,15 @@ test("latestHandover skips generations without a handover", () => {
   assert.equal(latestHandover(sampleBrain()), null);
 });
 
-test("endBrain sets ended or stopped and closes the generation", () => {
+test("endBrain makes the logical brain inactive and closes the attempt", () => {
   const record = sampleBrain();
   beginGeneration(record, "a");
   endBrain(record, "stopped");
-  assert.equal(record.status, "stopped");
+  assert.equal(record.status, "inactive");
   assert.ok(currentGeneration(record).endedAt);
   endBrain(record, "ended");
-  assert.equal(record.status, "ended");
+  assert.equal(record.status, "inactive");
   assert.throws(() => endBrain(record, "paused"), /unknown brain end status/);
-});
-
-test("only a stopped brain can reclaim its exact live generation", () => {
-  const stopped = sampleBrain();
-  beginGeneration(stopped, "tangent-brain-g32");
-  endBrain(stopped, "stopped");
-  assert.equal(reclaimStoppedBrain(stopped), true);
-  assert.equal(stopped.status, "running");
-  assert.equal(currentGeneration(stopped).endedAt, null);
-
-  const ended = sampleBrain();
-  beginGeneration(ended, "tangent-brain-g33");
-  endBrain(ended, "ended");
-  assert.equal(reclaimStoppedBrain(ended), false);
-  assert.equal(ended.status, "ended");
 });
 
 test("brainSessionName follows the leaf and generation rule", () => {
@@ -141,19 +137,19 @@ test("brainSessionName follows the leaf and generation rule", () => {
   assert.equal(brainSessionName("neara/Hackathon Storm", 2), "hackathon-storm-brain-g2");
 });
 
-test("brainForArea finds the nearest running ancestor and ignores ended brains", () => {
+test("brainForArea grants authority only to the exact active brain", () => {
   const parent = sampleBrain({ area: "otto" });
   const child = sampleBrain({ area: "otto/tangent" });
   const ended = endBrain(sampleBrain({ area: "otto/dnd" }), "ended");
   const records = [parent, child, ended];
-  assert.equal(brainForArea(records, "otto/tangent/sub"), child);
+  assert.equal(brainForArea(records, "otto/tangent/sub"), null);
   assert.equal(brainForArea(records, "otto/tangent"), child);
-  assert.equal(brainForArea(records, "otto/other"), parent);
-  assert.equal(brainForArea(records, "otto/dnd"), parent);
+  assert.equal(brainForArea(records, "otto/other"), null);
+  assert.equal(brainForArea(records, "otto/dnd"), null);
   assert.equal(brainForArea([ended], "otto/dnd"), null);
   assert.equal(brainForArea(records, "neara"), null);
-  assert.equal(brainOwnsArea(records, "otto/tangent", "otto/tangent/sub"), true);
-  assert.equal(brainOwnsArea(records, "otto", "otto/tangent/sub"), false, "the child cuts its territory out of the parent");
+  assert.equal(brainOwnsArea(records, "otto/tangent", "otto/tangent/sub"), false);
+  assert.equal(brainOwnsArea(records, "otto/tangent", "otto/tangent"), true);
   endBrain(child, "stopped");
-  assert.equal(brainOwnsArea(records, "otto", "otto/tangent/sub"), true, "ownership returns to the nearest running ancestor");
+  assert.equal(brainOwnsArea(records, "otto/tangent", "otto/tangent"), false);
 });

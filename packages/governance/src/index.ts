@@ -80,7 +80,7 @@ export async function lintGovernance(options: GovernanceLintOptions = {}): Promi
   const findings: GovernanceFinding[] = [];
   const ctx = { root, packages: await packageInfos(root) };
 
-  if (hasGroup(groups, "agents") || hasGroup(groups, "docs")) findings.push(...await lintAgentDocs(ctx));
+  if (hasGroup(groups, "agents") || hasGroup(groups, "docs")) findings.push(...await lintAgentDocs(ctx), ...await lintAgentShellWorkflowContracts(ctx));
   if (hasGroup(groups, "deps")) findings.push(...await lintPackageDeps(ctx), ...await lintPackageInstallability(ctx), ...await lintImports(ctx), ...await lintUsageDependencyLightEntrypoints(ctx), ...await lintUiPackageBoundaries(ctx));
   if (hasGroup(groups, "shared")) findings.push(...await lintSharedHelpers(ctx));
   if (hasGroup(groups, "hooks")) findings.push(...await lintHookBoundaries(ctx));
@@ -105,6 +105,49 @@ type LintContext = {
   root: string;
   packages: PackageInfo[];
 };
+
+/** Prevents the retired Area-brain authority and writer contracts from returning. */
+async function lintAgentShellWorkflowContracts(ctx: LintContext): Promise<GovernanceFinding[]> {
+  const findings: GovernanceFinding[] = [];
+  const targets = [
+    "packages/agent-shell/app/server.mjs",
+    "packages/agent-shell/app/brain-record.mjs",
+    "packages/agent-shell/app/pipeline-record.mjs",
+    "packages/agent-shell/app/pipeline-routes.mjs",
+    "packages/agent-shell/app/public/brain-ownership.js",
+    "packages/agent-shell/src/cli/commands/goal.ts",
+    "packages/agent-shell/src/cli/spec.ts",
+    "packages/agent-shell/docs/public-api.md",
+  ];
+  const rules = [
+    { pattern: /schema\s*:\s*["']agent-pipeline\.v1["']/, message: "writes the retired agent-pipeline.v1 schema." },
+    { pattern: /schema\s*:\s*["']area-brain\.v1["']/, message: "writes the retired area-brain.v1 schema." },
+    { pattern: /\b(?:record|brain)\.instruction\b/, message: "reads the retired combined brain instruction field." },
+    { pattern: /does not have to control the target Area|Work uses the nearest live brain|You own .* descendants/, message: "restores ancestor or cross-Area mutation authority." },
+    { pattern: /accepts its Test.*close|Test approval.*close/i, message: "restores Test approval as the routine closure policy." },
+    { pattern: /operations\.continueWorker|body\.continue\s*=|name:\s*["']continue["']\s*,\s*description:/, message: "restores worker-owned continuation." },
+  ];
+  for (const rel of targets) {
+    const file = path.join(ctx.root, rel);
+    if (!await pathExists(file)) continue;
+    const text = await readFile(file, "utf8");
+    for (const rule of rules) {
+      if (!rule.pattern.test(text)) continue;
+      findings.push({
+        rule: "agent-shell/area-brain-contract",
+        severity: "error",
+        file: rel,
+        message: rule.message,
+        fix: [
+          "Use exact-Area authority from ADR-0034.",
+          "Write area-brain.v2 and area-goal-queue.v2 records.",
+          "Use a designated typed review for routine Goal closure."
+        ]
+      });
+    }
+  }
+  return findings;
+}
 
 /** Supports the lint agent docs helper. */
 async function lintAgentDocs(ctx: LintContext): Promise<GovernanceFinding[]> {

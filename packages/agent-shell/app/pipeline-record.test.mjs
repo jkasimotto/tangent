@@ -141,13 +141,19 @@ test("newPipeline normalizes steps into the pending shape", () => {
     ],
     now: "2026-08-15T10:00:00.000Z"
   });
-  assert.equal(record.schema, "agent-pipeline.v1");
+  assert.equal(record.schema, PIPELINE_SCHEMA);
+  assert.equal(record.controllerArea, "otto/tangent");
+  assert.equal(record.revision, 1);
+  assert.equal(record.completionPolicy, "review-pass");
   assert.equal(record.goal, "otto/tangent/goal-x.md");
   assert.equal(record.createdAt, "2026-08-15T10:00:00.000Z");
   assert.equal(record.updatedAt, "2026-08-15T10:00:00.000Z");
   assert.deepEqual(record.extraFiles, []);
   assert.deepEqual(record.steps[0], {
+    id: record.steps[0].id,
     index: 1,
+    kind: "implementation",
+    designatedReview: false,
     instruction: "/design this Goal.",
     launch: { harness: "claude", model: "fable-5", effort: null },
     command: "",
@@ -159,7 +165,9 @@ test("newPipeline normalizes steps into the pending shape", () => {
     startedAt: null,
     endedAt: null,
     handover: null,
-    handoverSource: null
+    handoverSource: null,
+    attempts: [],
+    reports: []
   });
   assert.equal(record.steps[1].index, 2);
   assert.equal(record.steps[1].launch, null);

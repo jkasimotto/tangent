@@ -95,6 +95,14 @@ export function postJson(server: URL, path: string, payload: unknown): Promise<R
   });
 }
 
+/** Reads the authoritative queue revision for one Goal from the shell snapshot. */
+export async function goalQueueRevision(server: URL, goalFile: string): Promise<number> {
+  const snapshot = await vaultFetch(server, "/api/sessions");
+  const queue = Array.isArray(snapshot.pipelines) ? snapshot.pipelines.find((item: any) => item?.goal === goalFile) : null;
+  if (!queue || !Number.isInteger(queue.revision)) throw new Error("This Goal has no authoritative queue revision.");
+  return queue.revision;
+}
+
 /**
  * POSTs a JSON payload and returns the status with the body. For the caller
  * that treats one refusal as an answer rather than a failure: `tangent brain

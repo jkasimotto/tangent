@@ -122,8 +122,8 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
   function areaProgramMark(path, expanded) {
     /** True while one Program or problem belongs to the counted scope. */
     const inScope = (value) => value === path || (!expanded && value.startsWith(`${path}/`));
-    const live = state.programs.programs.filter((program) => inScope(program.area) && programIsLive(program)).length;
-    const broken = state.programs.errors.some((item) => inScope(item.area));
+    const live = state.programs.operations.filter((program) => inScope(program.area) && programIsLive(program)).length;
+    const broken = state.programs.problems.some((item) => inScope(item.area));
     if (live) return `<span class="area-row-mark live">${live} running</span>`;
     if (broken) return `<span class="area-row-mark warn">Program problem</span>`;
     return "";
@@ -209,8 +209,8 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
 
   /** Renders the Area screen with Now, Journal capture, History, and Operations. */
   function areaContents(area) {
-    const programs = state.programs.programs.filter((program) => program.area === area.path);
-    const problems = state.programs.errors.filter((item) => item.area === area.path);
+    const programs = state.programs.operations.filter((program) => program.area === area.path);
+    const problems = state.programs.problems.filter((item) => item.area === area.path);
     const done = area.status === "done";
     const current = clip(area.current ?? "", 240);
     const documents = areaDocuments(area.path);

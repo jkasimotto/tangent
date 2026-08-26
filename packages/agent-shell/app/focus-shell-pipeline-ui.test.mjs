@@ -37,7 +37,7 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
       posts.push({ path: pathname, body });
       if (pathname === "/api/goals/start" && body.steps) {
         pipeline = {
-          goal: goal.file, area: goal.area, slug: goal.slug, status: "running", updatedAt: "t1", extraFiles: [],
+          goal: goal.file, area: goal.area, slug: goal.slug, revision: 1, status: "running", updatedAt: "t1", extraFiles: [],
           steps: body.steps.map((step, index) => ({
             index: index + 1, instruction: step.instruction, launch: step.launch ?? null, command: step.command ?? "",
             label: index === 0 ? "Codex · Sol · High" : "Claude · Fable 5", continueFrom: step.continueFrom ?? null,
@@ -175,7 +175,10 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   await settle(window);
   await settle(window);
   const append = posts.find((entry) => entry.path === "/api/pipelines/append");
-  assert.deepEqual(append.body, { goal: goal.file, steps: [{ instruction: "Prove it", continueFrom: null, launch: { harness: "codex", model: "sol", effort: null } }] });
+  assert.equal(append.body.goal, goal.file);
+  assert.deepEqual(append.body.steps, [{ instruction: "Prove it", continueFrom: null, launch: { harness: "codex", model: "sol", effort: null } }]);
+  assert.equal(append.body.expectedRevision, 1);
+  assert.match(append.body.idempotencyKey, /^[0-9a-f-]{36}$/);
   assert.equal(popover(), null, "the popover closed after the append");
   assert.equal(posts.filter((entry) => entry.path === "/api/goals/start").length, 1, "an append never restarts the pipeline");
   const grownRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
@@ -197,7 +200,8 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   await settle(window);
   await settle(window);
   const control = posts.find((entry) => entry.path === "/api/pipelines/control");
-  assert.deepEqual(control.body, { goal: goal.file, action: "skip", step: 1 });
+  assert.deepEqual({ goal: control.body.goal, action: control.body.action, step: control.body.step, expectedRevision: control.body.expectedRevision }, { goal: goal.file, action: "skip", step: 1, expectedRevision: 1 });
+  assert.match(control.body.idempotencyKey, /^[0-9a-f-]{36}$/);
   const afterRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
   assert.equal(afterRow.querySelector(".desk-handover"), null, "the handover line left the card");
 
@@ -212,7 +216,8 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   await settle(window);
   await settle(window);
   const endPost = posts.filter((entry) => entry.path === "/api/pipelines/control").at(-1);
-  assert.deepEqual(endPost.body, { goal: goal.file, action: "end", step: 2 });
+  assert.deepEqual({ goal: endPost.body.goal, action: endPost.body.action, step: endPost.body.step }, { goal: goal.file, action: "end", step: 2 });
+  assert.match(endPost.body.idempotencyKey, /^[0-9a-f-]{36}$/);
   click(window, "[data-work-filter='inactive']");
   const endedRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
   // End work removes the run record, so Tangent knows of no agent that ran:

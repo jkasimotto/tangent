@@ -13,7 +13,7 @@ function goal(area, slug, title, { depth = 0, parent = null } = {}) {
   };
 }
 
-test("Goal cards open their nearest live brain and preserve Work context", async () => {
+test("Goal cards open only their exact Area brain and preserve Work context", async () => {
   const html = await readFile(path.join(here, "public", "shell.html"), "utf8");
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
   const { window } = dom;
@@ -65,8 +65,8 @@ test("Goal cards open their nearest live brain and preserve Work context", async
     const pathname = new URL(url, window.location.href).pathname;
     if (pathname === "/api/sessions") {
       const brains = [
-        { area: "otto/tangent", status: "running", live: parentLive, session: "tangent-brain", generation: 1 },
-        { area: "otto/tangent/nested", status: "running", live: childLive, session: "nested-brain", generation: 1 },
+        { area: "otto/tangent", status: "active", live: parentLive, session: "tangent-brain", generation: 1 },
+        { area: "otto/tangent/nested", status: "active", live: childLive, session: "nested-brain", generation: 1 },
       ];
       return jsonResponse({ boot: "boot-1", caffeinate: false, pipelines: [], sessions: sessionProjection, brains });
     }

@@ -163,12 +163,20 @@ test("launch options resolve the registry, and saving writes an Area default", a
     brain: { mode: "inherit" },
   });
 
+  const brain = await fetch(`${base}/api/brains/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ area: "otto/test", instruction: "Control launch tests.", command: "sleep 300" }),
+  }).then((response) => response.json());
+  assert.ok(brain.session, JSON.stringify(brain));
+  openedSessions.push(brain.session);
+
   // A step that names no harness is refused before anything is written, and
   // the error carries what the caller was missing.
   const noLaunch = await fetch(`${base}/api/goals/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ file: "otto/test/goal-default-pipeline.md", steps: [{ instruction: "First step" }, { instruction: "Second step", launch: { harness: "pi-code" } }, { instruction: "Third step" }] }),
+    body: JSON.stringify({ file: "otto/test/goal-default-pipeline.md", caller: brain.session, steps: [{ instruction: "First step" }, { instruction: "Second step", launch: { harness: "pi-code" } }, { instruction: "Third step" }] }),
   });
   assert.equal(noLaunch.status, 400);
   const noLaunchError = (await noLaunch.json()).error;
@@ -181,7 +189,7 @@ test("launch options resolve the registry, and saving writes an Area default", a
   const pipelineStarted = await fetch(`${base}/api/goals/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ file: "otto/test/goal-default-pipeline.md", steps: [{ instruction: "First step", launch: { harness: "claude-otto", model: "opus-4-6" } }] }),
+    body: JSON.stringify({ file: "otto/test/goal-default-pipeline.md", caller: brain.session, steps: [{ instruction: "First step", launch: { harness: "claude-otto", model: "opus-4-6" } }] }),
   });
   assert.equal(pipelineStarted.status, 200);
   const pipelineStartBody = await pipelineStarted.json();
@@ -196,7 +204,7 @@ test("launch options resolve the registry, and saving writes an Area default", a
   const arbitraryStarted = await fetch(`${base}/api/goals/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ file: "otto/test/goal-arbitrary-directory.md", steps: [{ instruction: "Work elsewhere", path: arbitraryDirectory, launch: { harness: "claude-otto", model: "opus-4-6" } }] }),
+    body: JSON.stringify({ file: "otto/test/goal-arbitrary-directory.md", caller: brain.session, steps: [{ instruction: "Work elsewhere", path: arbitraryDirectory, launch: { harness: "claude-otto", model: "opus-4-6" } }] }),
   });
   assert.equal(arbitraryStarted.status, 200);
   const arbitraryBody = await arbitraryStarted.json();
@@ -272,7 +280,7 @@ test("launch options resolve the registry, and saving writes an Area default", a
   const bad = await fetch(`${base}/api/goals/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ file: "otto/test/goal-none.md", choice: { harness: "gemini" } }),
+    body: JSON.stringify({ file: "otto/test/goal-prove-launch.md", caller: brain.session, choice: { harness: "gemini" } }),
   });
   assert.equal(bad.status, 400);
   assert.match((await bad.json()).error, /unknown harness "gemini"/);
@@ -325,7 +333,7 @@ test("launch options resolve the registry, and saving writes an Area default", a
   const started = await fetch(`${base}/api/goals/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ file: "otto/test/goal-prove-launch.md", choice: { harness: "claude-otto", model: "opus-4-6" } }),
+    body: JSON.stringify({ file: "otto/test/goal-prove-launch.md", caller: brain.session, choice: { harness: "claude-otto", model: "opus-4-6" } }),
   });
   assert.equal(started.status, 200);
   const session = (await started.json()).session;
@@ -357,31 +365,14 @@ test("launch options resolve the registry, and saving writes an Area default", a
   const listed = await fetch(`${base}/api/sessions`).then((response) => response.json());
   assert.equal(listed.sessions.find((item) => item.name === session).launchRef, "claude-otto/opus-4-6");
 
-  // Reopening the Goal resumes the same session instead of rebuilding one.
+  // A second start cannot replace the Goal's authoritative queue.
   const reopened = await fetch(`${base}/api/goals/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ file: "otto/test/goal-prove-launch.md", choice: { harness: "claude-otto", model: "opus-4-6" } }),
-  }).then((response) => response.json());
-  assert.equal(reopened.session, session);
-  assert.equal(reopened.reattached, true);
-
-  // A Goal pane at its shell is a fresh start. It uses the harness the
-  // request names, not the command recorded when the pane opened.
-  const restartedAtShell = await fetch(`${base}/api/goals/start`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ file: "otto/test/goal-prove-launch.md", choice: { harness: "pi-code" } }),
+    body: JSON.stringify({ file: "otto/test/goal-prove-launch.md", caller: brain.session, choice: { harness: "claude-otto", model: "opus-4-6" } }),
   });
-  assert.equal(restartedAtShell.status, 200);
-  const currentCommand = await new Promise((resolve) => {
-    execFile("tmux", ["show-options", "-t", session, "-v", "@tangent_launch_command"], (_error, stdout) => resolve((stdout ?? "").trim()));
-  });
-  assert.equal(currentCommand, "pi-code");
-  const restartedRef = await new Promise((resolve) => {
-    execFile("tmux", ["show-options", "-t", session, "-v", "@tangent_launch_ref"], (_error, stdout) => resolve((stdout ?? "").trim()));
-  });
-  assert.equal(restartedRef, "pi-code", "a restart at the shell records the harness it actually started");
+  assert.equal(reopened.status, 409);
+  assert.match((await reopened.json()).error, /already has an authoritative queue/);
 
   // A start that names no harness is refused. Tangent uses neither the Area
   // default nor the recorded command as a silent substitute.
@@ -397,12 +388,12 @@ test("launch options resolve the registry, and saving writes an Area default", a
   const reattachedAfterRemoval = await fetch(`${base}/api/goals/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ file: "otto/test/goal-prove-launch.md" }),
+    body: JSON.stringify({ file: "otto/test/goal-prove-launch.md", caller: brain.session }),
   });
   assert.equal(reattachedAfterRemoval.status, 409);
-  assert.match((await reattachedAfterRemoval.json()).error, /this start named no harness/);
+  assert.match((await reattachedAfterRemoval.json()).error, /already has an authoritative queue/);
   const recordedCommand = await new Promise((resolve) => {
     execFile("tmux", ["show-options", "-t", session, "-v", "@tangent_launch_command"], (_error, stdout) => resolve((stdout ?? "").trim()));
   });
-  assert.equal(recordedCommand, "pi-code");
+  assert.match(recordedCommand, /claude-otto claude --model claude-opus-4-6/, "the recorded assignment launch stays immutable");
 });

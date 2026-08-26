@@ -8,8 +8,10 @@
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { readJsonObject, walkJsonFiles, writeJsonObject } from "./json-store.mjs";
+import { GOAL_QUEUE_SCHEMA, submitWorkerReport } from "./area-brain-domain.mjs";
 
-export const PIPELINE_SCHEMA = "agent-pipeline.v1";
+export const PIPELINE_SCHEMA = GOAL_QUEUE_SCHEMA;
+const LEGACY_PIPELINE_SCHEMA = "agent-pipeline.v1";
 
 const MAX_STEPS = 20;
 const MAX_INSTRUCTION_CHARS = 2000;
@@ -21,7 +23,7 @@ export function pipelinePath(root, area, slug) {
 
 /** Reads one pipeline record, or null when the file is missing or unparsable. */
 export async function readPipeline(root, area, slug) {
-  return readJsonObject(pipelinePath(root, area, slug));
+  return normalizeQueueRecord(await readJsonObject(pipelinePath(root, area, slug)));
 }
 
 /** Reads every pipeline record under the root; empty when the root is missing. */
@@ -29,8 +31,8 @@ export async function readAllPipelines(root) {
   const files = await walkJsonFiles(root);
   const records = [];
   for (const file of files) {
-    const record = await readJsonObject(file);
-    if (record?.schema === PIPELINE_SCHEMA) records.push(record);
+    const record = normalizeQueueRecord(await readJsonObject(file));
+    if (record) records.push(record);
   }
   return records;
 }
@@ -41,8 +43,30 @@ export async function readAllPipelines(root) {
  */
 export async function writePipeline(root, record) {
   const target = pipelinePath(root, record.area, record.slug);
+  record.schema = PIPELINE_SCHEMA;
+  record.assignments = record.steps;
   record.updatedAt = new Date().toISOString();
   return writeJsonObject(target, record);
+}
+
+/** Normalizes the legacy pipeline into the one production Goal queue shape. */
+export function normalizeQueueRecord(value) {
+  if (!value || typeof value !== "object" || ![PIPELINE_SCHEMA, LEGACY_PIPELINE_SCHEMA].includes(value.schema)) return null;
+  const source = Array.isArray(value.assignments) ? value.assignments : Array.isArray(value.steps) ? value.steps : [];
+  const assignments = source.map((step, position) => normalizeStoredAssignment(step, position + 1));
+  const revision = Math.max(1, Number(value.revision) || 1);
+  return {
+    ...value,
+    schema: PIPELINE_SCHEMA,
+    controllerArea: value.controllerArea ?? value.area,
+    goalRevision: String(value.goalRevision ?? ""),
+    revision,
+    completionPolicy: value.completionPolicy ?? "review-pass",
+    currentAssignmentId: value.currentAssignmentId ?? assignments.find((item) => item.status === "running")?.id ?? null,
+    idempotencyKeys: Array.isArray(value.idempotencyKeys) ? value.idempotencyKeys : [],
+    assignments,
+    steps: assignments,
+  };
 }
 
 /** Deletes one pipeline record; a missing file is not an error. */
@@ -54,18 +78,26 @@ export async function deletePipeline(root, area, slug) {
  * Builds a fresh record with every step pending. Throws with the
  * validateSteps message when the steps are invalid.
  */
-export function newPipeline({ goal, area, slug, extraFiles = [], steps, now = new Date().toISOString() }) {
+export function newPipeline({ goal, goalRevision = "", area, slug, extraFiles = [], steps, completionPolicy = "review-pass", now = new Date().toISOString() }) {
   const error = validateSteps(steps);
   if (error) throw new Error(error);
+  const assignments = steps.map((step, position) => normalizeStep(step, position + 1));
   return {
     schema: PIPELINE_SCHEMA,
     goal,
+    goalRevision,
     area,
+    controllerArea: area,
     slug,
+    revision: 1,
+    completionPolicy,
+    currentAssignmentId: null,
+    idempotencyKeys: [],
     createdAt: now,
     updatedAt: now,
     extraFiles: [...extraFiles],
-    steps: steps.map((step, position) => normalizeStep(step, position + 1))
+    assignments,
+    steps: assignments,
   };
 }
 
@@ -84,7 +116,20 @@ export function appendSteps(record, steps) {
   if (error) throw new Error(error);
   const added = steps.map((step, position) => normalizeStep(step, existing.length + position + 1));
   record.steps = [...existing, ...added];
+  record.assignments = record.steps;
+  record.revision = Math.max(1, Number(record.revision) || 1) + 1;
   return added;
+}
+
+/** Stores one typed report against the current queue revision. */
+export function recordTypedReport(record, step, report, idempotencyKey, now = new Date().toISOString()) {
+  const result = submitWorkerReport(record, step.id, report, {
+    expectedRevision: record.revision,
+    idempotencyKey,
+    now,
+  });
+  record.assignments = record.steps;
+  return result;
 }
 
 /** Step statuses that never change again: the step ran, was skipped, or Julian ended the run. */
@@ -115,7 +160,10 @@ export function endPipeline(record, now = new Date().toISOString()) {
     step.endedAt = now;
     changed.push(step.index);
   }
-  if (changed.length) record.updatedAt = now;
+  if (changed.length) {
+    record.revision = Math.max(1, Number(record.revision) || 1) + 1;
+    record.updatedAt = now;
+  }
   return changed;
 }
 
@@ -276,6 +324,7 @@ function normalizeStep(step, index) {
     }
     : null;
   return {
+    id: step.id || `assignment-${index}`,
     index,
     instruction: step.instruction.trim(),
     launch,
@@ -283,11 +332,28 @@ function normalizeStep(step, index) {
     label: "",
     path: typeof step.path === "string" && step.path.trim() ? step.path.trim() : null,
     continueFrom: Number.isInteger(step.continueFrom) ? step.continueFrom : null,
+    kind: step.kind === "review" ? "review" : "implementation",
+    designatedReview: step.kind === "review" || step.designatedReview === true,
     status: "pending",
     session: null,
     startedAt: null,
     endedAt: null,
     handover: null,
-    handoverSource: null
+    handoverSource: null,
+    attempts: [],
+    reports: [],
+  };
+}
+
+/** Adds queue fields to one stored assignment without changing its history. */
+function normalizeStoredAssignment(step, index) {
+  return {
+    ...step,
+    id: step.id || `assignment-${index}`,
+    index,
+    kind: step.kind === "review" ? "review" : "implementation",
+    designatedReview: step.designatedReview === true || step.kind === "review",
+    attempts: Array.isArray(step.attempts) ? step.attempts : [],
+    reports: Array.isArray(step.reports) ? step.reports : [],
   };
 }

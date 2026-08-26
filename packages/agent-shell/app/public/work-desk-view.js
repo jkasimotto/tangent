@@ -303,23 +303,26 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     return (state.brains ?? []).find((brain) => brain.area === areaPath) ?? null;
   }
 
-  /** The desk word for a brain's state: live pane state, else its record status. */
+  /** The desk word for a brain's logical lifecycle and separate runtime health. */
   function brainStateLabel(brain) {
     if (!brain) return "No brain";
+    if (brain.status === "inactive") return "Brain inactive";
     if (brain.live) {
       if (brain.state === "working") return "Brain working";
       if (brain.state === "waiting") return brain.stateDetail === "decision" ? "Brain needs a decision" : "Brain waiting for you";
       if (brain.state === "shell") return "Brain did not start";
       return "Brain session open";
     }
-    return brain.status === "ended" ? "Brain ended" : "Brain stopped";
+    if (brain.health?.status === "recovering") return "Brain recovering";
+    if (brain.health?.status === "failed") return "Brain has a problem";
+    return "Brain active";
   }
 
-  /** The class that colours the brain icon: none, working, waiting, live, stopped, ended. */
+  /** The class that colours the brain icon without inventing lifecycle states. */
   function brainKind(brain) {
     if (!brain) return "none";
     if (brain.live) return brain.state === "waiting" ? "waiting" : brain.state === "working" ? "working" : "live";
-    return brain.status === "ended" ? "ended" : "stopped";
+    return brain.status === "inactive" ? "ended" : "stopped";
   }
 
   /** The brain icon in the Area card header: dim without a brain, stateful with one. */
@@ -392,7 +395,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     // from the nearest explicit Area brain default (then the server fallback).
     state.launch.choice = brain?.launch ?? null;
     // Start over begins a new brain, so the box starts empty. Prefilling it
-    // with the stopped brain's instruction let an instruction Julian typed for
+    // with the inactive brain's instruction let an instruction Julian typed for
     // an earlier brain become the new one's, and its first generation then read
     // an old order as today's. Resume never reads this box.
     state.brainDraft = { area, instruction: "" };
@@ -493,7 +496,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    */
   function coveredByBrainRecord(areaPath) {
     const brain = brainForAreaCard(areaPath ?? "");
-    return Boolean(brain && (brain.status === "running" || brain.status === "stopped"));
+    return Boolean(brain && brain.status === "active");
   }
 
   /** True when a brain owns this Goal's Area: it is the brain's to raise, not a desk item for Julian. */
@@ -773,7 +776,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const workOf = (path) => ({
       trees: trees.filter((tree) => tree.path === path),
       descriptions: descriptions.filter((session) => session.area === path),
-      programs: state.programs.programs.filter((program) => program.area === path),
+      programs: state.programs.operations.filter((program) => program.area === path),
     });
     const openCounts = new Map();
     for (const area of areaList) {
@@ -782,7 +785,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       openCounts.set(area.path, Math.max(openGoalCount, areaDescriptions.length ? 1 : 0, roots.length ? areaPrograms.length : 0));
     }
     const liveBrainAreas = (state.brains ?? [])
-      .filter((brain) => brain.status === "running" && brain.live)
+      .filter((brain) => brain.status === "active" && brain.live)
       .map((brain) => brain.area)
       .filter(inFocus);
     const panelDefs = core.deskPanels(openCounts, roots.length ? [...roots, ...liveBrainAreas] : liveBrainAreas);
@@ -794,12 +797,12 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
         .map((path) => ({ area: byPath.get(path), ...workOf(path) }))
         .filter((section) => section.area);
       const programs = own.programs;
-      const brain = (state.brains ?? []).find((item) => item.area === panel.path && item.status === "running" && item.live) ?? null;
+      const brain = (state.brains ?? []).find((item) => item.area === panel.path && item.status === "active" && item.live) ?? null;
       const focusRoot = roots.includes(panel.path);
       const focusHasWork = !focusRoot || trees.some((tree) => core.isInside(tree.path, panel.path))
         || descriptions.some((session) => core.isInside(session.area, panel.path))
         || liveBrainAreas.some((path) => core.isInside(path, panel.path))
-        || state.programs.programs.some((program) => core.isInside(program.area, panel.path));
+        || state.programs.operations.some((program) => core.isInside(program.area, panel.path));
       return { area, trees: own.trees, descriptions: own.descriptions, sections, programs, brain, focusRoot, focusHasWork };
     }).filter((record) => record.area);
     if (state.workFilter === "all") {
@@ -807,7 +810,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
         if (covered.has(area.path)) continue;
         if (!(area.documents ?? []).length) continue;
         if (panels.some((panel) => core.isInside(area.path, panel.area.path))) continue;
-        panels.push({ area, trees: [], descriptions: [], sections: [], programs: state.programs.programs.filter((program) => program.area === area.path) });
+        panels.push({ area, trees: [], descriptions: [], sections: [], programs: state.programs.operations.filter((program) => program.area === area.path) });
       }
     }
     return core.orderPanels(panels, panelActivity).map((record, index) => ({ ...record, index }));
@@ -864,7 +867,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
   /** Keeps the installed Safari web app's Dock badge equal to the For you count. */
   async function syncDockBadge() {
-    const count = 0;
+    const count = forYouItems().length;
     if (count === dockBadgeCount) return;
     const nativeBridge = window.__agentShellNativeDockBadge === true;
     if (!nativeBridge && (typeof Notification === "undefined" || Notification.permission !== "granted")) return;
@@ -907,8 +910,8 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
   /**
    * The brain-written asks, grouped by Area in brain record order. One group:
-   * { area, brain, stopped, asks }. Only a running brain can ask Julian for
-   * anything. Stopping it ends that authority immediately; its durable record
+   * { area, brain, stopped, asks }. Requests belong to the logical exact-Area
+   * brain. Deactivation ends its authority immediately; its durable record
    * remains available for a later Resume from the Area card.
    */
   function askGroups() {
@@ -1000,19 +1003,69 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   function openRequest(area, id) {
     const request = (state.brains ?? []).find((brain) => brain.area === area)?.requests?.find((item) => item.id === id);
     if (!request) return showToast("This Request is no longer open.");
-    const copy = [request.proposal ? `Proposed transition\n${request.proposal}` : "", request.question, request.detail].filter(Boolean).join("\n\n");
-    /** Closes the read-only Request detail. */
-    const closeRequest = async () => {};
-    openModal({ kicker: "Request", title: request.subject, copy, wide: true, confirmLabel: "Close", onConfirm: closeRequest });
+    const operation = request.effectOperation;
+    const effectState = operation?.status === "failed" ? `Effect problem\n${operation.problem}`
+      : operation?.status && operation.status !== "idle" ? `Effect state\n${operation.status}` : "";
+    const anchor = request.conversationAnchor
+      ? `Native conversation\n${request.conversationAnchor.session} · generation ${request.conversationAnchor.generation}`
+      : `Native conversation\n${area} brain`;
+    const context = request.precedingContext ? `Preceding context\n${request.precedingContext}` : "";
+    const effectRevision = request.effectRevision ? `Exact effect revision\n${request.effectRevision}` : "";
+    const copy = [anchor, context, request.proposal ? `Proposed transition\n${request.proposal}` : "", request.question, request.detail, effectRevision, effectState].filter(Boolean).join("\n\n");
+    const options = [
+      { value: "reply", label: "Reply to the brain" },
+      ...(request.effect ? [{ value: "authorize", label: operation?.status === "failed" ? `Retry exact effect: ${request.proposal}` : `Authorize exact effect: ${request.proposal}` }] : []),
+      { value: "dismiss", label: "Dismiss this Question" },
+    ];
+    /** Stores a reply or starts the selected exact effect. */
+    const answerRequest = async () => {
+      const answer = document.querySelector("[data-modal-select]")?.value || "reply";
+      const note = document.querySelector("[data-modal-input]")?.value.trim() || "";
+      if (answer === "dismiss") {
+        await post("/api/brains/requests/dismiss", { area, id });
+        await refresh();
+        return;
+      }
+      if (answer === "reply" && !note) throw new Error("Write the reply that the brain must receive.");
+      await sendVerdict(area, `request:${id}`, answer, note, request.effectRevision || "");
+    };
+    openModal({
+      kicker: "Request",
+      title: request.subject,
+      copy,
+      wide: true,
+      field: { kind: "request", actionLabel: "Effect", options, label: "Reply", placeholder: "Write the exact reply for the Area brain." },
+      confirmLabel: "Apply response",
+      onConfirm: answerRequest,
+    });
   }
 
   /** Opens the explicit Questions review without changing the Work cursor. */
   function openQuestionsReview(area = "") {
     const questions = (state.brains ?? []).filter((brain) => !area || brain.area === area || brain.area.startsWith(`${area}/`))
-      .flatMap((brain) => (brain.requests ?? []).filter((request) => request.status === "open").map((request) => `${brain.area} brain — ${request.question}`));
-    /** Closes Questions review and returns to the preserved Work position. */
-    const closeQuestions = async () => {};
-    openModal({ kicker: "Questions", title: questions.length ? `${questions.length} from Area brains` : "No open questions", copy: questions.join("\n\n") || "No Area brain needs a reply.", confirmLabel: "Return to Work", onConfirm: closeQuestions });
+      .flatMap((brain) => (brain.requests ?? []).filter((request) => request.status === "open").map((request) => ({ area: brain.area, request })));
+    if (!questions.length) {
+      /** Closes the empty Questions review. */
+      const closeQuestions = async () => {};
+      openModal({ kicker: "Questions", title: "No open questions", copy: "No Area brain needs a reply.", confirmLabel: "Return to Work", onConfirm: closeQuestions });
+      return;
+    }
+    /** Opens the selected Question without changing the Work cursor. */
+    const selectQuestion = async () => {
+      const index = Number(document.querySelector("[data-modal-select]")?.value || 0);
+      const selected = questions[index];
+      if (!selected) throw new Error("Choose a current Question.");
+      openRequest(selected.area, selected.request.id);
+      return false;
+    };
+    openModal({
+      kicker: "Questions",
+      title: `${questions.length} from Area brains`,
+      copy: "Choose a Question. Then reply or authorize its exact effect.",
+      field: { kind: "select", label: "Question", options: questions.map((item, index) => ({ value: String(index), label: `${item.area} — ${item.request.subject}: ${item.request.question}` })) },
+      confirmLabel: "Open question",
+      onConfirm: selectQuestion,
+    });
   }
 
   /** Opens one journal-first note composer for the selected Work Area. */
@@ -1857,9 +1910,11 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
 
     return `
       <section class="work-page">
+        ${deskAttentionQueue()}
         ${roots.length ? areaFocusControl() : ""}
         <div class="work-tools${roots.length ? " focused" : ""}">
           <button class="work-area-browser" type="button" data-show-areas>Browse Areas</button>
+          <button class="work-area-browser" type="button" data-describe-work>Describe work</button>
           ${roots.length ? "" : areaFocusControl()}
           <label class="search-field">
             <span class="search-icon" aria-hidden="true">⌕</span>

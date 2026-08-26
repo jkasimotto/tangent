@@ -17,7 +17,7 @@ test("the Area browser focuses search and leads with ready work and filterable D
   let sessions = [];
   let holdSessionRefresh = false;
   let releaseSessionRefresh;
-  let brain = { area: "otto/tangent", instruction: "Run this Area.", status: "running", generation: 1, session: "missing-brain", live: true, state: "working" };
+  let brain = { area: "otto/tangent", foundingInstruction: { text: "Run this Area." }, status: "active", generation: 1, session: "missing-brain", live: true, state: "working" };
   window.fetch = async (url, options = {}) => {
     const pathname = new URL(url, window.location.href).pathname;
     if (pathname === "/api/launch/options") return jsonResponse({

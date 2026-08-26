@@ -119,14 +119,9 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     `;
   }
 
-  /** The nearest brain record that controls an Area, whatever its state. */
+  /** The brain record for this exact Area, whatever its state. */
   function controllingBrainForArea(area) {
-    const parts = String(area ?? "").split("/").filter(Boolean);
-    for (let count = parts.length; count > 0; count -= 1) {
-      const brain = brainForAreaCard(parts.slice(0, count).join("/"));
-      if (brain) return brain;
-    }
-    return null;
+    return brainForAreaCard(String(area ?? ""));
   }
 
   /** Shows the Documents that will inform and remain linked to new work. */

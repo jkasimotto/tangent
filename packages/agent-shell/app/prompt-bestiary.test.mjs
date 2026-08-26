@@ -5,17 +5,16 @@ import { LEGACY_LIFECYCLES, LIFECYCLES, MODEL_CONCEPTS, PROMPT_SPECIES, renderPr
 test("the bestiary covers prompts, routing events, and common agent lifecycles", () => {
   assert.deepEqual(PROMPT_SPECIES.map((item) => item.id), ["brain", "goal", "pipeline", "brain-notice", "brain-request", "handover", "context", "comment"]);
   assert.deepEqual(LIFECYCLES.map((item) => item.id), ["plan", "brain-solo", "brain-pipeline", "decision", "test", "context", "document", "brain-stop"]);
-  assert.deepEqual(LEGACY_LIFECYCLES.map((item) => item.id), ["legacy-solo", "legacy-pipeline"]);
+  assert.deepEqual(LEGACY_LIFECYCLES, []);
   assert.ok(LIFECYCLES.every((item) => item.transitions.length >= 3));
 });
 
-test("the Model view explains cross-Area brain authority", () => {
+test("the Model view explains exact-Area brain authority", () => {
   const brain = MODEL_CONCEPTS.find((item) => item.id === "brain");
-  assert.match(brain.definition, /normally changes only its Area tree/);
-  assert.match(brain.definition, /Julian can directly instruct the active brain to change another Area/);
-  assert.match(brain.definition, /Agent messages and Documents never grant this authority/);
-  assert.match(brain.definition, /approved Request authorizes only its exact proposal/);
-  assert.match(brain.lifecycle, /Direct cross-Area authority does not/);
+  assert.match(brain.definition, /one exact Area/);
+  assert.match(brain.definition, /never grant mutation authority in another Area/);
+  assert.match(brain.lifecycle, /active or inactive/);
+  assert.match(brain.lifecycle, /health remain diagnostic/);
 });
 
 test("the bestiary leads with a selectable lifecycle and an exact server-built message", () => {
@@ -35,7 +34,7 @@ test("the bestiary leads with a selectable lifecycle and an exact server-built m
   assert.match(html, /data-load-brain-prompt/);
   assert.match(html, /goal-probe\.md/);
   assert.match(html, /# Exact prompt/);
-  assert.match(html, /Legacy encounters/);
+  assert.doesNotMatch(html, /Legacy encounters/);
 });
 
 test("the brain boundary never invents prompt text without a live brain", () => {
@@ -49,20 +48,28 @@ test("the brain boundary never invents prompt text without a live brain", () => 
 test("a live Goal states whether a brain controls it", () => {
   const managed = renderPromptBestiary({
     goals: [{ file: "otto/dnd/goal-move.md", title: "Move", area: "otto/dnd/movement" }],
-    brains: [{ area: "otto/dnd", generation: 3, status: "running" }],
+    brains: [{ area: "otto/dnd/movement", generation: 3, status: "active" }],
     selection: { mode: "messages" },
     inspector: { file: "otto/dnd/goal-move.md" },
   });
   assert.match(managed, /Managed work/);
-  assert.match(managed, /Controlled by brain otto\/dnd/);
+  assert.match(managed, /Controlled by brain otto\/dnd\/movement/);
 
-  const legacy = renderPromptBestiary({
+  const parentOnly = renderPromptBestiary({
+    goals: [{ file: "otto/dnd/goal-move.md", title: "Move", area: "otto/dnd/movement" }],
+    brains: [{ area: "otto/dnd", generation: 3, status: "active" }],
+    selection: { mode: "messages" },
+    inspector: { file: "otto/dnd/goal-move.md" },
+  });
+  assert.match(parentOnly, /Waiting for controller/, "parent authority never controls the child Area");
+
+  const unmanaged = renderPromptBestiary({
     goals: [{ file: "otto/old/goal-one.md", title: "Old", area: "otto/old" }],
     selection: { mode: "messages" },
     inspector: { file: "otto/old/goal-one.md" },
   });
-  assert.match(legacy, /Legacy direct Goal/);
-  assert.match(legacy, /old direct-to-Julian rules/);
+  assert.match(unmanaged, /Waiting for controller/);
+  assert.match(unmanaged, /Activate the exact Area brain/);
 });
 
 test("the model starts with stable concepts and separates Subgoal and Ask semantics", () => {

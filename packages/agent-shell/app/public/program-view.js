@@ -4,7 +4,7 @@ import { escapeHtml } from "./text-format.js";
 export function createProgramView({ state, areaLabel, areaPath, humanName, agentName, areaOptions }) {
   /** Finds a Program by its stable identifier. */
   function programById(id) {
-    return state.programs.programs.find((program) => program.id === id) ?? null;
+    return state.programs.operations.find((program) => program.id === id) ?? null;
   }
 
   /** Returns the program the shell has open. */

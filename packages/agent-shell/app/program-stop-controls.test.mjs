@@ -5,7 +5,7 @@ import { createProgramView } from "./public/program-view.js";
 /** Builds the program view with the stubs its row and detail helpers need. */
 function view(programs) {
   return createProgramView({
-    state: { programs: { programs, areas: [] }, programId: programs[0]?.id ?? "" },
+    state: { programs: { operations: programs, areas: [] }, programId: programs[0]?.id ?? "" },
     /** Names one area for a heading. */
     areaLabel: (area) => area,
     /** Renders one area breadcrumb. */

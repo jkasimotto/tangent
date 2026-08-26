@@ -44,16 +44,16 @@ test("reminderDue: a compaction dip below the threshold never re-arms a level th
   assert.equal(reminderDue({ fill: { usedTokens: 50_000, windowTokens: 1_000_000 }, thresholdTokens: THRESHOLD, reminders: alreadyFired }), null);
 });
 
-test("contextReminderText and contextRepeatText both print the exact flagged command", () => {
+test("contextReminderText and contextRepeatText route context risk to the exact controller", () => {
   const reminder = contextReminderText({ usedTokens: 310_000, windowTokens: 1_000_000, subject: "step" });
-  assert.match(reminder, /tangent goal handover --continue "<facts>"/);
   assert.match(reminder, /Your context is at 310k of 1000k \(31%\)/);
-  assert.match(reminder, /hand this step to a fresh copy of yourself/);
+  assert.match(reminder, /submit a typed context-risk report/);
+  assert.match(reminder, /exact Area brain chooses and starts any fresh attempt/);
 
   const repeat = contextRepeatText({ usedTokens: 331_000, thresholdTokens: THRESHOLD, subject: "Goal" });
-  assert.match(repeat, /tangent goal handover --continue "<facts>"/);
   assert.match(repeat, /well past 300k tokens \(331k\)/);
-  assert.match(repeat, /Hand this Goal to a fresh copy of yourself now/);
+  assert.match(repeat, /Submit a typed context-risk report now/);
+  assert.match(repeat, /do not replace yourself/);
 });
 
 test("continuationSessionName: fresh, second, and collision cases", () => {

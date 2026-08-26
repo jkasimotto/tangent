@@ -64,9 +64,12 @@ export async function writeInbox(root, record) {
  * Appends one notice and returns it. Ids count up inside the inbox, so they
  * stay stable across restarts and never repeat.
  */
-export function appendNotice(record, text, now = new Date().toISOString()) {
+export function appendNotice(record, text, now = new Date().toISOString(), sourceId = null) {
   const body = String(text ?? "").trim();
   if (!body) throw new Error("a notice needs text");
+  const stableSourceId = String(sourceId ?? "").trim() || null;
+  const existing = stableSourceId ? record.notices?.find((notice) => notice.sourceId === stableSourceId) : null;
+  if (existing) return { ...existing, duplicate: true };
   record.seq = Number(record.seq ?? 0) + 1;
   const notice = {
     id: `n${record.seq}`,
@@ -75,9 +78,10 @@ export function appendNotice(record, text, now = new Date().toISOString()) {
     deliveredAt: null,
     deliveredTo: null,
     deliveredGeneration: null,
+    ...(stableSourceId ? { sourceId: stableSourceId } : {}),
   };
   record.notices = [...(record.notices ?? []), notice];
-  return notice;
+  return { ...notice, duplicate: false };
 }
 
 /** Every notice no brain generation has read yet, oldest first. */
@@ -115,12 +119,10 @@ export function pruneDelivered(record, keep = KEPT_DELIVERED) {
 }
 
 /**
- * The inboxes one brain reads: its own Area and every Area under it. A brain
- * on a parent Area covers its children, so their notices are its notices.
+ * The inbox one brain reads. Parent and child Areas never share delivery.
  */
 export function inboxesForBrain(records, area, ownsArea = null) {
-  const prefix = `${area}/`;
-  return records.filter((record) => (record.area === area || record.area.startsWith(prefix)) && (!ownsArea || ownsArea(record.area)));
+  return records.filter((record) => record.area === area && (!ownsArea || ownsArea(record.area)));
 }
 
 /** Notices from several inboxes as one list, oldest first, each with its Area. */

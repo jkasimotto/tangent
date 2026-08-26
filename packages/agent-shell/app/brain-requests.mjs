@@ -15,23 +15,29 @@ export function brainRequestsPath(root, area) {
 export async function readBrainRequests(root, area) {
   const value = await readJsonObject(brainRequestsPath(root, area));
   return value?.schema === BRAIN_REQUESTS_SCHEMA
-    ? { ...value, area, requests: Array.isArray(value.requests) ? value.requests.map((request) => normalizeRequestSubject(request, area)) : [] }
+    ? { ...value, area, requests: Array.isArray(value.requests) ? value.requests.map((request) => normalizeRequest(request, area)) : [] }
     : { schema: BRAIN_REQUESTS_SCHEMA, area, requests: [] };
 }
 
 /** Adds lifecycle identity to a stored pre-lifecycle Request without changing its answer contract. */
-function normalizeRequestSubject(request, area) {
+function normalizeRequest(request, area) {
   const generation = Number.isInteger(request?.brainGeneration) ? request.brainGeneration : null;
   const ownerRef = request?.ownerRef?.area ? request.ownerRef : { type: "brain", area, generation };
-  if (request?.subjectRef?.type === "goal" && request.subjectRef.goal) return { ...request, ownerRef };
-  if (request?.subjectRef?.type === "brain" && request.subjectRef.area) return { ...request, ownerRef };
-  return {
+  const normalized = request?.subjectRef?.type === "goal" && request.subjectRef.goal
+    ? { ...request, ownerRef }
+    : request?.subjectRef?.type === "brain" && request.subjectRef.area
+      ? { ...request, ownerRef }
+      : {
     ...request,
     ownerRef,
     subjectRef: request?.goal
       ? { type: "goal", goal: request.goal }
       : { type: "brain", area, generation },
   };
+  if (normalized.effect && !normalized.effectOperation) {
+    normalized.effectOperation = { status: "idle", idempotencyKey: null, startedAt: null, finishedAt: null, result: null, problem: null, attempts: 0 };
+  }
+  return normalized;
 }
 
 /** Writes one Area's request record atomically. */
@@ -63,7 +69,16 @@ export function createBrainRequest(record, input, now = new Date().toISOString()
     : { type: "brain", area: record.area, generation: null };
   const ownerRef = { type: "brain", area: record.area, generation: brainGeneration };
   const effectRevision = effect ? createHash("sha256").update(JSON.stringify(effect)).digest("hex") : null;
-  const request = { id: randomUUID(), kind, subject, question, proposal, detail, options, goal, effect, effectRevision, brainGeneration, ownerRef: { ...ownerRef, generation: null }, subjectRef, status: "open", createdAt: now, answeredAt: null, answer: null, note: null, response: null };
+  const documents = Array.isArray(input.documents) ? input.documents.map(String).map((item) => item.trim()).filter(Boolean) : [];
+  const conversationAnchor = input.conversationAnchor && typeof input.conversationAnchor === "object" ? structuredClone(input.conversationAnchor) : null;
+  const precedingContext = String(input.precedingContext ?? "").trim().slice(-800);
+  const request = {
+    id: randomUUID(), kind, subject, question, proposal, detail, options, goal, effect, effectRevision, documents,
+    effectOperation: effect ? { status: "idle", idempotencyKey: null, startedAt: null, finishedAt: null, result: null, problem: null, attempts: 0 } : null,
+    brainGeneration, ownerRef: { ...ownerRef, generation: null }, subjectRef, conversationAnchor, precedingContext, status: "open", createdAt: now,
+    closurePolicy: kind === "test" ? "observation-only" : null,
+    answeredAt: null, answer: null, note: null, response: null,
+  };
   record.requests.push(request);
   return request;
 }
@@ -137,6 +152,41 @@ export function answerBrainRequest(record, id, answer, note = "", now = new Date
   request.answeredAt = now;
   request.response = { answer: value, text: responseNote || null, answeredAt: now };
   return request;
+}
+
+/** Records durable intent before an exact Request effect starts. */
+export function beginRequestEffect(record, id, effectRevision, idempotencyKey, now = new Date().toISOString()) {
+  const request = record.requests.find((item) => item.id === id);
+  if (!request) throw new Error("request not found");
+  if (request.status !== "open") throw new Error("request is already answered");
+  if (!request.effect || !request.effectRevision || request.effectRevision !== effectRevision) throw new Error("the Request effect revision is stale");
+  const key = String(idempotencyKey ?? "").trim();
+  if (!key) throw new Error("the Request effect needs an idempotency key");
+  const operation = request.effectOperation ?? { status: "idle", attempts: 0 };
+  if (operation.status === "succeeded" && operation.idempotencyKey === key) return { request, operation, duplicate: true };
+  if (operation.status === "running") throw new Error("the Request effect is already running");
+  request.effectOperation = {
+    ...operation,
+    status: "running",
+    idempotencyKey: key,
+    startedAt: now,
+    finishedAt: null,
+    result: null,
+    problem: null,
+    attempts: Number(operation.attempts ?? 0) + 1,
+  };
+  return { request, operation: request.effectOperation, duplicate: false };
+}
+
+/** Stores the result of one exact Request effect. A problem keeps it open. */
+export function finishRequestEffect(record, id, { result = null, problem = null, now = new Date().toISOString() } = {}) {
+  const request = record.requests.find((item) => item.id === id);
+  if (!request?.effectOperation || request.effectOperation.status !== "running") throw new Error("the Request effect is not running");
+  request.effectOperation.status = problem ? "failed" : "succeeded";
+  request.effectOperation.finishedAt = now;
+  request.effectOperation.result = problem ? null : result;
+  request.effectOperation.problem = problem ? String(problem) : null;
+  return request.effectOperation;
 }
 
 /**

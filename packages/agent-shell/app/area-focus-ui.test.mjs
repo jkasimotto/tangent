@@ -14,7 +14,7 @@ function goal(area, slug, title) {
 /** Builds one live brain with one durable direct ask. */
 function brain(area, name) {
   return {
-    area, session: `${name}-brain`, status: "running", live: true, state: "working", generation: 1,
+    area, session: `${name}-brain`, status: "active", live: true, state: "working", generation: 1,
     requests: [{
       id: `${name}-request`, kind: "decision", subject: `${name} decision`,
       question: `Approve ${name}?`, proposal: `Use ${name}.`, detail: `${name} needs a direct answer.`, status: "open",
@@ -90,7 +90,7 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
   window.fetch = async (url) => {
     const pathname = new URL(url, window.location.href).pathname;
     if (pathname === "/api/sessions") return jsonResponse({ boot: "focus-boot", sessions, pipelines: [], brains });
-    if (pathname === "/api/operations") return jsonResponse({ programs: [childProgram, programOnly], errors: [], areas: [], liveCount: 0 });
+    if (pathname === "/api/operations") return jsonResponse({ operations: [childProgram, programOnly], problems: [], areas: [], liveCount: 0 });
     if (pathname === "/api/document") return jsonResponse({ ...alphaDocument, text: "# Alpha focus notes\n\nFocused context stays exact.", hash: "alpha-focus" });
     return jsonResponse(vault);
   };
@@ -99,7 +99,7 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
   await settle(window);
   assert.ok(window.document.querySelector('[data-desk-area="otto/alpha"]'));
   assert.ok(window.document.querySelector('[data-desk-area="otto/beta"]'));
-  assert.equal(window.document.querySelector(".attention-queue"), null, "Work has no interruption queue");
+  assert.ok(window.document.querySelector(".attention-queue"), "Work includes the actionable Questions queue");
 
   click(window, "[data-open-area-focus]");
   await settle(window);
@@ -153,7 +153,7 @@ test("Area Focus stages selection, scopes Work and asks, preserves return contex
 
   assert.equal(window.document.querySelector('[data-desk-area="otto/beta"]'), null);
   assert.match(window.document.querySelector(".area-focus-summary").textContent, /Focus:\s*Alpha/);
-  assert.equal(window.document.querySelector(".attention-queue"), null);
+  assert.equal(window.document.querySelectorAll(".attention-queue [data-ask-id]").length, 1, "Area Focus keeps only Alpha's Question visible");
   assert.equal(window.document.querySelector("#work-tab").textContent, "Work");
   assert.deepEqual(JSON.parse(window.localStorage.getItem("agent-shell.area-focus.v1")), {
     schema: "agent-shell.area-focus.v1", areas: ["otto/alpha"],

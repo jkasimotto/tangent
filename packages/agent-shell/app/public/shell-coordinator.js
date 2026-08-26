@@ -137,7 +137,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
 
   /**
    * Opens the Work desk at one Area card, where the control that resumes a
-   * stopped brain lives. Without a card for that Area the Areas screen is the
+   * inactive brain lives. Without a card for that Area the Areas screen is the
    * next nearest place. Neither starts anything.
    */
   function showWorkAt(area) {
@@ -525,8 +525,11 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
       state.goalSelection = [];
       await refresh();
       rememberGoal(targetFile);
-      openSessionLayer(sessionForGoal(currentGoal()), "agent", captureReturnPoint());
-      showToast(steps.length > 1 ? `Started ${steps.length} steps; step 1 is ${result.pipeline?.steps?.[0]?.label || "running"}.` : "The agent started.");
+      const opened = sessionForGoal(currentGoal());
+      if (opened) openSessionLayer(opened, "agent", captureReturnPoint());
+      else paint(true);
+      if (result.status === "queued") showToast(`Queued ${steps.length} assignment${steps.length === 1 ? "" : "s"} for the exact Area brain.`);
+      else showToast(steps.length > 1 ? `Started ${steps.length} steps; step 1 is ${result.pipeline?.steps?.[0]?.label || "running"}.` : "The agent started.");
     } catch (error) {
       showToast(error.message);
     }
@@ -541,7 +544,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     if (!step || step.status !== "pending") return showToast("Only pending steps change.");
     const request = launchStepRequest(row);
     try {
-      await post("/api/pipelines/edit", { goal: targetFile, step: step.index, instruction: request.instruction, ...(request.command ? { command: request.command } : request.launch ? { choice: request.launch } : {}), continueFrom: request.continueFrom });
+      await post("/api/pipelines/edit", { goal: targetFile, step: step.index, expectedRevision: record.revision, idempotencyKey: crypto.randomUUID(), instruction: request.instruction, ...(request.command ? { command: request.command } : request.launch ? { choice: request.launch } : {}), continueFrom: request.continueFrom });
       await refresh();
       state.launch.record = pipelineForGoal(goalByFile(targetFile));
       paint(true);
@@ -563,7 +566,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     if (!drafts.length) return showToast("Add a step first.");
     const steps = drafts.map(launchStepRequest);
     try {
-      const result = await post("/api/pipelines/append", { goal: targetFile, steps });
+      const result = await post("/api/pipelines/append", { goal: targetFile, steps, expectedRevision: record.revision, idempotencyKey: crypto.randomUUID() });
       state.launch.open = false;
       state.launchTarget = "";
       state.launchAnchor = null;
@@ -678,16 +681,20 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     modalCopy.textContent = copy;
     if (commits.length) modalCopy.insertAdjacentHTML("beforeend", `<ul class="update-commits">${rebuildCommitRows(commits)}</ul>`);
     modalField.hidden = !field;
-    modalField.innerHTML = field
-      ? `<label><span>${escapeHtml(field.label)}</span><textarea data-modal-input required placeholder="${escapeHtml(field.placeholder)}"></textarea></label>`
-      : "";
+    modalField.innerHTML = field?.kind === "select"
+      ? `<label><span>${escapeHtml(field.label)}</span><select data-modal-select>${field.options.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("")}</select></label>`
+      : field?.kind === "request"
+        ? `<label><span>${escapeHtml(field.actionLabel)}</span><select data-modal-select>${field.options.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("")}</select></label><label><span>${escapeHtml(field.label)}</span><textarea data-modal-input placeholder="${escapeHtml(field.placeholder)}"></textarea></label>`
+        : field
+          ? `<label><span>${escapeHtml(field.label)}</span><textarea data-modal-input required placeholder="${escapeHtml(field.placeholder)}"></textarea></label>`
+          : "";
     modalActions.innerHTML = `
       <button class="quiet-button" type="button" data-modal-cancel>Cancel</button>
       <button class="${danger ? "danger-button" : "primary-button"}" type="button" data-modal-confirm>${escapeHtml(confirmLabel)}${field ? " <kbd>⌘↵</kbd>" : ""}</button>
     `;
     modalConfirm = onConfirm;
     modalLayer.hidden = false;
-    window.setTimeout(() => (modalField.querySelector("[data-modal-input]") || modalActions.querySelector("[data-modal-confirm]"))?.focus(), 0);
+    window.setTimeout(() => (modalField.querySelector("[data-modal-select]") || modalField.querySelector("[data-modal-input]") || modalActions.querySelector("[data-modal-confirm]"))?.focus(), 0);
   }
 
   /** Closes the confirmation modal without acting. */

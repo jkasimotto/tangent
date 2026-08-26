@@ -21,7 +21,7 @@ function describe(base, body) {
   }).then(async (response) => ({ status: response.status, body: await response.json() }));
 }
 
-test("Describe work reaches stopped, live, or stale Area brains and never opens a work-definition session", async (context) => {
+test("Describe work reaches inactive, live, or recovering exact-Area brains", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "describe-work-brain-"));
   const trees = path.join(root, "trees");
   const brains = path.join(root, "brains");
@@ -82,7 +82,7 @@ save();
   if (!base) return;
 
   const resumed = await describe(base, {
-    area: "otto/tangent/child",
+    area: "otto/tangent",
     description: "Route this exact description to the controlling brain.",
     sources: ["otto/tangent/design-context.md"],
     choice: { harness: "codex", model: "sol" },
@@ -98,9 +98,16 @@ save();
   assert.deepEqual(resumedRecord.launch, { harness: "codex", model: "sol" });
   assert.equal(resumedRecord.command, "codex --model sol");
   assert.equal(Object.values(tmuxAfterResume.sessions).some((session) => session.options["@tangent_kind"] === "work-definition"), false);
-  const inbox = JSON.parse(await readFile(path.join(brains, "otto", "tangent", "child", "inbox.json"), "utf8"));
+  const inbox = JSON.parse(await readFile(path.join(brains, "otto", "tangent", "inbox.json"), "utf8"));
   assert.match(inbox.notices[0].text, /Route this exact description to the controlling brain\./);
   assert.match(inbox.notices[0].text, /otto\/tangent\/design-context\.md/);
+
+  const child = await describe(base, {
+    area: "otto/tangent/child",
+    description: "Define child work without borrowing parent authority.",
+  });
+  assert.equal(child.status, 200);
+  assert.equal(child.body.route, "work-definition-opened", "a parent brain never controls a child Area");
 
   const live = await describe(base, { area: "otto/tangent", description: "Deliver this while the brain is live." });
   assert.equal(live.status, 200);
@@ -122,7 +129,7 @@ save();
   delete staleTmux.sessions[live.body.session];
   await writeFile(fakeTmuxState, JSON.stringify(staleTmux), "utf8");
   const started = await describe(base, {
-    area: "otto/tangent/child",
+    area: "otto/tangent",
     description: "Restart the stale recorded brain.",
     choice: { harness: "claude", model: "fable" },
   });
@@ -133,7 +140,6 @@ save();
   assert.equal(tmuxAfterStart.sessions[started.body.session].options["@tangent_kind"], "brain");
   assert.equal(tmuxAfterStart.sessions[started.body.session].options["@tangent_launch"], "Claude · Fable");
   assert.equal((await readBrain(brains, "otto/tangent")).command, "claude --model fable");
-  assert.equal(Object.values(tmuxAfterStart.sessions).some((session) => session.options["@tangent_kind"] === "work-definition"), false);
 
   /** Starts the exact child brain through the public lifecycle route. */
   const startChild = () => fetch(`${base}/api/brains/start`, {
@@ -149,10 +155,12 @@ save();
   const childOwned = await describe(base, { area: "otto/tangent/child", description: "The nearest child brain owns this." });
   assert.equal(childOwned.status, 200);
   assert.equal(childOwned.body.brainArea, "otto/tangent/child");
-  await fetch(`${base}/api/kill/${encodeURIComponent("child-brain")}`, { method: "POST" });
-  const parentOwnedAgain = await describe(base, { area: "otto/tangent/child", description: "Ownership returns after the child stops." });
-  assert.equal(parentOwnedAgain.status, 200);
-  assert.equal(parentOwnedAgain.body.brainArea, "otto/tangent");
+  const staleChildTmux = JSON.parse(await readFile(fakeTmuxState, "utf8"));
+  delete staleChildTmux.sessions["child-brain"];
+  await writeFile(fakeTmuxState, JSON.stringify(staleChildTmux), "utf8");
+  const childRecovered = await describe(base, { area: "otto/tangent/child", description: "The child brain recovers after process loss." });
+  assert.equal(childRecovered.status, 200, JSON.stringify(childRecovered.body));
+  assert.equal(childRecovered.body.brainArea, "otto/tangent/child", "parent authority never replaces exact child authority");
 
   const plain = await describe(base, {
     area: "otto/plain",

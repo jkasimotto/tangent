@@ -54,6 +54,16 @@ test("an empty notice is refused", () => {
   assert.throws(() => appendNotice(inbox, "   "), /a notice needs text/);
 });
 
+test("a stable source identity appends one notice", () => {
+  const inbox = newInbox("otto/tangent");
+  const first = appendNotice(inbox, "Material result.", "2026-08-26T01:00:00.000Z", "operation:event-1");
+  const duplicate = appendNotice(inbox, "Material result.", "2026-08-26T02:00:00.000Z", "operation:event-1");
+  assert.equal(first.duplicate, false);
+  assert.equal(duplicate.duplicate, true);
+  assert.equal(inbox.notices.length, 1);
+  assert.equal(inbox.notices[0].sourceId, "operation:event-1");
+});
+
 test("notices survive a restart: they read back unread from disk", async (context) => {
   const root = await tempRoot(context);
   const inbox = await readInbox(root, "otto/tangent");
@@ -94,7 +104,7 @@ test("a missing or damaged inbox reads as an empty one", async (context) => {
   assert.deepEqual((await readInbox(root, "otto/broken")).notices, []);
 });
 
-test("a brain reads its own Area and every Area under it, oldest notice first", async (context) => {
+test("a brain reads only its exact Area inbox", async (context) => {
   const root = await tempRoot(context);
   const parent = newInbox("otto/tangent");
   appendNotice(parent, "Goal alpha: pipeline complete.", "2026-08-19T10:00:00.000Z");
@@ -108,14 +118,14 @@ test("a brain reads its own Area and every Area under it, oldest notice first", 
   assert.deepEqual(all.map((record) => record.area).sort(), ["otto/dnd", "otto/tangent", "otto/tangent/search"]);
 
   const mine = inboxesForBrain(all, "otto/tangent");
-  assert.deepEqual(mine.map((record) => record.area).sort(), ["otto/tangent", "otto/tangent/search"]);
+  assert.deepEqual(mine.map((record) => record.area), ["otto/tangent"]);
 
   const merged = mergeNotices(mine);
-  assert.deepEqual(merged.map((notice) => notice.area), ["otto/tangent/search", "otto/tangent"]);
-  assert.equal(merged[0].text, "Goal beta: step 1 stopped.");
+  assert.deepEqual(merged.map((notice) => notice.area), ["otto/tangent"]);
+  assert.equal(merged[0].text, "Goal alpha: pipeline complete.");
 
   const withoutChildTerritory = inboxesForBrain(all, "otto/tangent", (area) => area !== "otto/tangent/search");
-  assert.deepEqual(withoutChildTerritory.map((record) => record.area), ["otto/tangent"], "a live child cuts its inbox territory out of the parent");
+  assert.deepEqual(withoutChildTerritory.map((record) => record.area), ["otto/tangent"]);
 });
 
 test("many notices become one flat line and one numbered block, both cut when long", () => {

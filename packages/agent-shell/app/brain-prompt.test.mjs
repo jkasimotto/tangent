@@ -179,7 +179,7 @@ test("a pipeline step under a brain has one handover route and never chooses the
   const serverSource = await readFile(path.join(here, "server.mjs"), "utf8");
   assert.match(
     serverSource,
-    /Run .*tangent handover.*This operation reports to the brain; it does not choose the next agent\./,
+    /Finish with .*tangent handover --report.*This operation reports to the brain; it does not choose the next agent\./s,
     "under a brain, a worker reports through one route and does not schedule work"
   );
   assert.match(
@@ -334,7 +334,7 @@ test("bounded brain prompt selects structural sources instead of recent Document
   assert.match(first, /Area source:/);
   assert.doesNotMatch(first, /design-probe-\d+\.md/, "modified Documents do not enter by recency");
 
-  assert.doesNotMatch(first, /## Julian's instruction/, "the standing instruction does not replay as a new task");
+  assert.match(first, /## Current assignment\n\nPropose the document structure first\./, "generation 1 receives its founding instruction as the current assignment");
 
   // Tangent paces a handover from a generation that took no action, so this
   // generation files one Request before it hands over.
@@ -367,8 +367,8 @@ test("bounded brain prompt selects structural sources instead of recent Document
   openedSessions.push(next.session);
   const second = await promptFor(next.session);
 
-  assert.doesNotMatch(second, /## Julian's instruction/);
-  assert.doesNotMatch(second, /Propose the document structure first/, "a runtime replacement does not replay the old order");
+  assert.match(second, /## Standing authority\n\nPropose the document structure first\./, "a runtime replacement keeps founding authority separate from current state");
+  assert.match(second, /## Current checkpoint\n\nStructure proposed and approved\./);
 
   // The date is the one Julian saw when he typed the instruction. This
   // timestamp is 6am on the 20th where the server runs and still the 19th in

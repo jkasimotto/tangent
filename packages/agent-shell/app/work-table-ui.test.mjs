@@ -67,9 +67,11 @@ test("every status carries a word, and every icon-only control carries a name", 
   assert.equal(document.querySelectorAll(".work-table th:empty").length, 0, "no header cell is empty");
 });
 
-test("Questions stay out of the work table", async () => {
+test("Questions have a selectable review outside the Goal table", async () => {
   const { document } = await bootWorkTable(withDirectAsks(workTableFixture()));
-  assert.equal(document.querySelector("table.ask-table"), null, "Work has no interruption table");
+  const questions = document.querySelector("table.ask-table");
+  assert.ok(questions, "Questions have their own selectable review");
+  assert.equal(questions.closest(".work-table"), null, "Questions remain outside the Goal table");
   assert.equal(document.querySelectorAll(".work-table tr.ask-row").length, 0, "Questions do not become Goal rows");
   assert.equal(document.querySelectorAll(".work-table .ask-row").length, 0, "no question repeats inside the work table");
   // A Test question and its Ready-for-validation Goal can both exist; only the
@@ -309,7 +311,7 @@ test("one agent per group: checking across groups moves the selection and says s
   const other = { ...fixture.goals[0], area: "otto/standards", slug: "standards-startable", file: "otto/standards/goal-standards-startable.md", title: "Write the standards index", dependsOn: [] };
   fixture.vault.areas.push({ path: "otto/standards", name: "standards", goals: [other], documents: [] });
   fixture.vault.map.push({ path: "otto/standards", name: "standards", goals: [other] });
-  fixture.brains.push({ area: "otto/standards", status: "running", live: true, session: "otto-standards--brain", generation: 1, state: "working", forJulian: [], requests: [] });
+  fixture.brains.push({ area: "otto/standards", status: "active", live: true, session: "otto-standards--brain", generation: 1, state: "working", forJulian: [], requests: [] });
   fixture.sessions.push({ name: "otto-standards--brain", area: "otto/standards", kind: "brain", state: "working", command: "claude" });
 
   const { window, document } = await bootWorkTable(fixture, { workFilter: "inactive" });

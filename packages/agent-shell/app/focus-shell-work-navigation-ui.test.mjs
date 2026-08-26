@@ -224,18 +224,19 @@ test("the live shell restores context, defines work with an agent, and organizes
           ...(liveEditBrainStarted ? [{ name: "live-edit-brain", area: liveEditGoal.area, kind: "brain", state: "waiting", command: "claude" }] : []),
         ],
         brains: liveEditBrainStarted
-          ? [{ area: liveEditGoal.area, session: "live-edit-brain", status: brainLive ? "running" : "stopped", live: brainLive, generation: 1, state: brainLive ? "waiting" : null, stateDetail: brainLive ? "decision" : null, stateQuestion: "Do you want the audit to start now?", forJulian: brainRowsForJulian, requests: brainRequests }]
+          ? [{ area: liveEditGoal.area, session: brainLive ? "live-edit-brain" : null, status: brainLive ? "active" : "inactive", health: { status: brainLive ? "healthy" : "inactive" }, live: brainLive, generation: 1, state: brainLive ? "waiting" : null, stateDetail: brainLive ? "decision" : null, stateQuestion: "Do you want the audit to start now?", forJulian: brainRowsForJulian, requests: brainRequests }]
           : [],
       });
     }
     if (pathname === "/api/operations") {
+      const operations = [
+        { id: "process:otto/dnd:hmr", type: "process", mode: "service", state: "quiet", area: "otto/dnd", name: "hmr", label: "HMR", command: "npm run dev:hmr", cwd: "/tmp", sessionName: "process-dnd--hmr-test", session: null, available: true },
+        { id: "process:otto/tangent:shell", type: "process", mode: "service", state: "running", area: "otto/tangent", name: "shell", label: "Agent Shell", command: "npm start", cwd: "/tmp", sessionName: "process-tangent--shell-test", session: { name: "process-tangent--shell-test", state: "running" }, available: true },
+      ];
       return jsonResponse({
-        programs: [
-          { id: "process:otto/dnd:hmr", type: "process", area: "otto/dnd", name: "hmr", label: "HMR", command: "npm run dev:hmr", cwd: "/tmp", sessionName: "process-dnd--hmr-test", session: null, available: true },
-          { id: "process:otto/tangent:shell", type: "process", area: "otto/tangent", name: "shell", label: "Agent Shell", command: "npm start", cwd: "/tmp", sessionName: "process-tangent--shell-test", session: { name: "process-tangent--shell-test", state: "running" }, available: true },
-        ],
-        errors: [],
-        areas: [{ path: "otto/dnd", cwd: "/tmp" }],
+        operations,
+        problems: [],
+        areas: [{ path: "otto/dnd", cwd: "/tmp" }, { path: "otto/tangent", cwd: "/tmp" }],
         liveCount: 1,
       });
     }
@@ -272,8 +273,8 @@ test("the live shell restores context, defines work with an agent, and organizes
 
   assert.ok(window.document.querySelector(".work-page"), "the desk shows the Work page");
   assert.equal(window.document.querySelectorAll(".work-table tbody").length, 2);
-  assert.equal(window.document.querySelector(".attention-queue"), null, "Work has no interruption queue");
-  return;
+  assert.ok(window.document.querySelector(".attention-queue"), "Work includes actionable Questions");
+  const questions = window.document.querySelector(".attention-queue").textContent;
   assert.ok(questions.includes("Do you want to rewrite the vision section?"), "a session stopped at a dialog asks the dialog's own question");
   assert.ok(
     !window.forYouItems().some((ask) => ask.subject === "Already complete"),
@@ -311,17 +312,19 @@ test("the live shell restores context, defines work with an agent, and organizes
   const rows = [...group.querySelectorAll(".ask-row")];
   assert.equal(rows.length, 1, "only the durable Request appears");
   assert.equal(rows[0].querySelector(".ask-question").textContent, "Approve the proposed audit scope?");
-  assert.deepEqual([...rows[0].querySelectorAll("[data-verdict]")].map((button) => button.textContent), ["Approve", "I want these changes"]);
+  const requestButtons = [...rows[0].querySelectorAll("button")].map((button) => button.textContent.trim()).filter(Boolean);
+  assert.ok(requestButtons.includes("Reply"));
+  assert.ok(!requestButtons.includes("Approve") && !requestButtons.includes("I want these changes"));
   assert.ok(rows[0].querySelector("[data-open-request-id]"), "Open enters the full Request surface");
   assert.doesNotMatch(rows[0].textContent, /opened Request surface/, "the compact row does not contain full detail");
 
-  click(window, "[data-verdict='changes']");
+  click(window, "[data-open-request-id]");
   const changesInput = window.document.querySelector("[data-modal-input]");
   changesInput.value = "Use one copy-paste command.";
-  assert.match(window.document.querySelector("[data-modal-confirm]").textContent, /Send changes.*⌘↵/, "the send action shows its shortcut");
+  assert.match(window.document.querySelector("[data-modal-confirm]").textContent, /Apply response.*⌘↵/, "the send action shows its shortcut");
   changesInput.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true }));
   await settle(window);
-  assert.deepEqual(posts.at(-1), { path: "/api/brains/requests/answer", body: { area: liveEditGoal.area, id: "request-1", answer: "changes", note: "Use one copy-paste command." } });
+  assert.deepEqual(posts.at(-1), { path: "/api/brains/requests/answer", body: { area: liveEditGoal.area, id: "request-1", answer: "reply", note: "Use one copy-paste command." } });
 
   assert.equal(window.forYouItems().length, 2, "the durable Request plus the one fallback ask left");
   assert.equal(window.document.querySelector(".attention-queue > header > span").textContent, "2", "the card's number is that one list");
@@ -393,27 +396,18 @@ test("the live shell restores context, defines work with an agent, and organizes
   click(window, "[data-work-filter='inactive']");
   assert.equal(window.document.querySelectorAll(".work-table tbody").length, 0);
   assert.match(window.document.querySelector("#screen").textContent, /No unstarted Goals/);
-  assert.doesNotMatch(window.document.querySelector("#screen").textContent, /UX Product Vision/);
+  assert.doesNotMatch(window.document.querySelector(".work-table")?.textContent ?? "", /UX Product Vision/, "the planned Goal leaves the Goal table while its open Question remains actionable above it");
   click(window, "[data-work-filter='active']");
-  // The Area square on the desk carries the Area's Programs beside its Goals and Documents.
-  const deskProgram = window.document.querySelector('.work-programs [data-program-area="otto/tangent"] .desk-program');
-  assert.match(deskProgram.textContent, /Agent Shell/);
-  assert.match(deskProgram.textContent, /Running/);
-  assert.ok(deskProgram.classList.contains("live"));
-  click(window, "[data-program-action='stop'][data-program-id='process:otto/tangent:shell']");
-  assert.match(window.document.querySelector("#modal-title").textContent, /Stop Agent Shell/);
-  click(window, "[data-modal-confirm]");
-  await settle(window);
-  assert.ok(posts.some((entry) => entry.path === "/api/operations/control" && entry.body.id === "process:otto/tangent:shell" && entry.body.action === "stop"));
+  assert.equal(window.document.querySelector(".desk-program"), null, "Operations stay on Area surfaces, not the Goal table");
   assert.equal(window.document.querySelector("#work-tab").getAttribute("aria-current"), "page");
   assert.equal(window.document.querySelector("#areas-tab").hidden, true);
-  // Programs live inside the Area card now: the top bar carries no Programs tab.
+  // Operations live inside the Area card now: the top bar carries no Programs tab.
   assert.equal(window.document.querySelector("#programs-button"), null);
 
   click(window, `[data-open-goal-run='${goalFile}']`);
-  assert.ok(window.document.querySelector(".agent-page"));
-  assert.equal(window.document.querySelector("#back-button").textContent, "Work");
-  click(window, "#back-button");
+  assert.equal(window.document.querySelector("#session-layer").hidden, false);
+  assert.equal(window.document.querySelector("#session-layer-terminal").dataset.session, "tangent-vision");
+  click(window, "[data-close-session-layer]");
   assert.ok(window.document.querySelector(".work-page"), "the desk shows the Work page");
 
   // The Goal row carries only decision-relevant facts and one action menu.
@@ -489,12 +483,12 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.equal(described.body.description, description.value);
   assert.equal(described.body.launch, true);
   assert.equal(described.body.session, undefined);
-  assert.ok(window.document.querySelector(".agent-page"));
-  assert.match(window.document.querySelector("#bar-context").textContent, /D&D · Defining work · Waiting for you/);
+  assert.equal(window.document.querySelector("#session-layer").hidden, false);
+  assert.equal(window.document.querySelector("#session-layer-terminal").dataset.session, "dnd--describe-scene-flow");
   assert.equal(window.localStorage.getItem("agent-shell.describe-draft"), null);
   assert.equal(window.localStorage.getItem("agent-shell.describe-session"), "dnd--describe-scene-flow");
 
-  click(window, "#back-button");
+  click(window, "[data-close-session-layer]");
   assert.equal(window.document.querySelector("[data-describe-work]").textContent.trim(), "Describe work");
   const workDefinition = window.document.querySelector(".desk-definition");
   assert.ok(workDefinition, window.document.querySelector("#screen").textContent);
@@ -503,8 +497,8 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.match(workDefinition.textContent, /Make the scene flow reliable/);
   assert.match(workDefinition.textContent, /Waiting for you/);
   click(window, "[data-select-work-definition='dnd--describe-scene-flow']");
-  assert.ok(window.document.querySelector(".agent-page"));
-  click(window, "#back-button");
+  assert.equal(window.document.querySelector("#session-layer-terminal").dataset.session, "dnd--describe-scene-flow");
+  click(window, "[data-close-session-layer]");
   click(window, "[data-describe-work]");
   assert.ok(window.document.querySelector("[data-describe-work-form]"));
   assert.equal(window.document.querySelector("#describe-work").value, "");
@@ -513,8 +507,8 @@ test("the live shell restores context, defines work with an agent, and organizes
   secondDescription.dispatchEvent(new window.Event("input", { bubbles: true }));
   submit(window, "[data-describe-work-form]");
   await settle(window);
-  assert.ok(window.document.querySelector(".agent-page"));
-  click(window, "#back-button");
+  assert.equal(window.document.querySelector("#session-layer-terminal").dataset.session, "dnd--describe-ladder-authoring");
+  click(window, "[data-close-session-layer]");
   assert.equal(window.document.querySelectorAll(".desk-definition").length, 2);
   assert.match(window.document.querySelector("#screen").textContent, /Make the scene flow reliable/);
   assert.match(window.document.querySelector("#screen").textContent, /Define ladder authoring/);
@@ -612,10 +606,10 @@ test("the live shell restores context, defines work with an agent, and organizes
   const collaboration = posts.find((entry) => entry.path === "/api/goals/agent");
   assert.equal(collaboration.body.file, liveEditGoal.file);
   assert.equal(collaboration.body.document, liveEditDocument.file);
-  assert.ok(window.document.querySelector(".agent-page"));
-  assert.equal(window.document.querySelector(".document-reader"), null);
-  assert.equal(window.document.querySelector("#back-button").textContent, "Document");
-  click(window, "#back-button");
+  assert.equal(window.document.querySelector("#session-layer").hidden, false);
+  assert.equal(window.document.querySelector("#session-layer-terminal").dataset.session, "live-edit-collaboration");
+  assert.ok(window.document.querySelector(".document-reader"), "the reader stays below the session layer");
+  click(window, "[data-close-session-layer]");
   await settle(window);
   assert.ok(window.document.querySelector(".document-reader"));
   assert.match(window.document.querySelector(".document-content").textContent, /Cursor/);
@@ -626,10 +620,10 @@ test("the live shell restores context, defines work with an agent, and organizes
   click(window, "[data-toggle-area='neara']");
   assert.ok(window.document.querySelector("[data-select-area='neara/hackathon']"));
   click(window, "#back-button");
-  // The Area card carries the Programs of the selected Area.
+  // The Area card carries the Operations of the selected Area.
   click(window, "[data-select-area='otto/dnd']");
   const programSection = [...window.document.querySelectorAll(".area-content-section")].at(-1);
-  assert.match(programSection.textContent, /Programs/);
+  assert.match(programSection.textContent, /Operations/);
   assert.match(programSection.textContent, /npm run dev:hmr/);
   assert.match(programSection.querySelector(".program-state").textContent, /Not running/);
   click(window, "[data-new-program]");

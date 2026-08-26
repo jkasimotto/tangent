@@ -4,14 +4,16 @@ import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { answerBrainRequest, brainRequestAnswerNotice, closeBrainRequests, closeGoalRequests, createBrainRequest, dismissBrainRequest, handoverBrainRequests, openBrainRequests, readBrainRequests, requestIsApproved, withdrawBrainRequest, writeBrainRequests } from "./brain-requests.mjs";
+import { answerBrainRequest, beginRequestEffect, brainRequestAnswerNotice, closeBrainRequests, closeGoalRequests, createBrainRequest, dismissBrainRequest, finishRequestEffect, handoverBrainRequests, openBrainRequests, readBrainRequests, requestIsApproved, withdrawBrainRequest, writeBrainRequests } from "./brain-requests.mjs";
 
 test("each durable approval stays attached to its own proposal", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "brain-requests-"));
   const record = await readBrainRequests(root, "otto/tangent");
-  const request = createBrainRequest(record, { kind: "plan", subject: "Work plan", question: "Approve this plan?", proposal: "Start the two planned Goals.", detail: "Two Goals" });
+  const request = createBrainRequest(record, { kind: "plan", subject: "Work plan", question: "Approve this plan?", proposal: "Start the two planned Goals.", detail: "Two Goals", conversationAnchor: { area: "otto/tangent", session: "tangent-brain", generation: 2 }, precedingContext: "The brain described the staged plan." });
   assert.equal(openBrainRequests(record).length, 1);
   assert.equal(requestIsApproved(record, request.id), false);
+  assert.equal(request.conversationAnchor.session, "tangent-brain");
+  assert.equal(request.precedingContext, "The brain described the staged plan.");
   answerBrainRequest(record, request.id, "approve");
   assert.equal(requestIsApproved(record, request.id), true);
   const newer = createBrainRequest(record, { kind: "plan", subject: "Unrelated plan", question: "Approve this plan?", proposal: "Start an unrelated Goal.", detail: "One Goal" });
@@ -102,6 +104,19 @@ test("an exact effect accepts free text and rejects a stale revision", async () 
   const reply = createBrainRequest(record, { kind: "decision", subject: "Scope", question: "Which scope?", proposal: "Use the Area." });
   answerBrainRequest(record, reply.id, "reply", "Use the child Area.");
   assert.equal(reply.response.text, "Use the child Area.");
+});
+
+test("an exact effect records intent, survives a problem, and retries", async () => {
+  const record = await readBrainRequests("/missing", "otto/tangent");
+  const request = createBrainRequest(record, { kind: "approval", subject: "Deploy", question: "Deploy this commit?", proposal: "Deploy commit abc.", effect: { type: "deploy", commit: "abc" } });
+  beginRequestEffect(record, request.id, request.effectRevision, "effect-1", "2026-08-26T01:00:00.000Z");
+  finishRequestEffect(record, request.id, { problem: "offline", now: "2026-08-26T01:01:00.000Z" });
+  assert.equal(request.status, "open");
+  assert.equal(request.effectOperation.status, "failed");
+  beginRequestEffect(record, request.id, request.effectRevision, "effect-2", "2026-08-26T01:02:00.000Z");
+  finishRequestEffect(record, request.id, { result: { deployed: "abc" }, now: "2026-08-26T01:03:00.000Z" });
+  assert.equal(request.effectOperation.status, "succeeded");
+  assert.equal(request.effectOperation.attempts, 2);
 });
 
 test("a brain prompt clips a long answer and still names its Request", async () => {

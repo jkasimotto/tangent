@@ -38,7 +38,7 @@ test("a parent Area owns descendant current work without a separate sub-Area sec
       if (pathname === "/api/brains/start") {
         const body = JSON.parse(options.body);
         brainStarts.push(body);
-        return jsonResponse({ session: "embedded-js-brain", generation: 1, brain: { area: body.area, status: "running" } });
+        return jsonResponse({ session: "embedded-js-brain", generation: 1, brain: { area: body.area, status: "active" } });
       }
       return jsonResponse({ ok: true });
     }
@@ -47,8 +47,8 @@ test("a parent Area owns descendant current work without a separate sub-Area sec
         boot: "boot-1", caffeinate: false, pipelines: [],
         sessions: [{ name: "neara--brain", area: "neara", kind: "brain", state: "working", command: "codex" }, { name: "embedded--working", goal: embeddedGoal.file, state: "working", command: "codex" }, { name: "storm--working", goal: workingGoal.file, state: "working", command: "codex" }],
         brains: [
-          { area: "neara", status: "running", live: true, session: "neara--brain", generation: 2, state: "working" },
-          { area: "neara/hackathon/embedded-js/storm-response", status: "running", live: false, session: "storm-response-brain", generation: 1 },
+          { area: "neara", status: "active", live: true, session: "neara--brain", generation: 2, state: "working" },
+          { area: "neara/hackathon/embedded-js/storm-response", status: "active", live: false, session: "storm-response-brain", generation: 1 },
         ],
       });
     }

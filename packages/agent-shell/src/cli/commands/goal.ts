@@ -1,18 +1,17 @@
+import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 
 import { renderCommandHelp } from "@tangent/core";
 import { booleanArg, parseArgs, requiredString, stringArg, stringsArg, type Args } from "@tangent/core/cli";
 
-import { currentTmuxSession, listGoals, postJson, requireArea, requireGoal, resolveServerUrl } from "../client.js";
+import { currentTmuxSession, goalQueueRevision, listGoals, postJson, requireArea, requireGoal, resolveServerUrl } from "../client.js";
 import { goalCommandSpec } from "../spec.js";
 
 /** Dispatches `tangent goal` subcommands. */
 export async function runGoalCli(argv = process.argv.slice(2)): Promise<void> {
-  // Boolean flags never consume the token after them. This keeps the reminder's printed command verbatim:
-  // `handover --continue "<facts>"` must keep the facts positional, never
-  // swallow them as the flag's value (ADR-0028).
-  const args = parseArgs(argv, { repeatable: ["source", "subgoal-title", "subgoal-done-when", "step", "launch", "path", "continue-from", "on"], boolean: ["continue", "own"] });
+  // Boolean flags never consume the token after them.
+  const args = parseArgs(argv, { repeatable: ["source", "subgoal-title", "subgoal-done-when", "step", "launch", "path", "continue-from", "kind", "on"], boolean: ["continue", "own"] });
   const subcommand = args._[0];
   if (!subcommand) return help();
   // "done" and "wont-do" handle --help themselves, to restate that status is written on
@@ -40,7 +39,8 @@ async function dependencyCommand(args: Args, removing: boolean): Promise<void> {
   const on = stringsArg(args.on).map((item) => item.trim()).filter(Boolean);
   if (!on.length) throw new Error(`tangent goal ${removing ? "undepend" : "depend"} requires --on <prerequisite>.`);
   for (const prerequisite of on) await requireGoal(server, prerequisite);
-  const result = await postJson(server, `/api/goals/${removing ? "undepend" : "depend"}`, { slug, on });
+  const caller = stringArg(args.session) || (await currentTmuxSession());
+  const result = await postJson(server, `/api/goals/${removing ? "undepend" : "depend"}`, { slug, on, ...(caller ? { caller } : {}) });
   if (booleanArg(args.json)) {
     console.log(JSON.stringify(result, null, 2));
     return;
@@ -108,18 +108,22 @@ async function startCommand(args: Args): Promise<void> {
   const slug = requiredString(args._[1], "tangent goal start requires <slug>.");
   const goal = await requireGoal(server, slug);
   const caller = stringArg(args.session) || (await currentTmuxSession());
+  const recovery = booleanArg(args.recovery);
   const steps = pipelineSteps(args);
-  const result = steps.length
-    ? await postJson(server, "/api/goals/start", { file: goal.file, steps, ...(caller ? { caller } : {}) })
-    : await postJson(server, "/api/goals/start", { file: goal.file, approved: true, launch: true, choice: soloLaunch(args), ...(caller ? { caller } : {}) });
+  const result = recovery
+    ? await postJson(server, "/api/goals/start", { file: goal.file, recovery: true, ...(caller ? { caller } : {}) })
+    : steps.length
+    ? await postJson(server, "/api/goals/start", { file: goal.file, steps, recovery, ...(caller ? { caller } : {}) })
+    : await postJson(server, "/api/goals/start", { file: goal.file, approved: true, launch: true, choice: soloLaunch(args), recovery, ...(caller ? { caller } : {}) });
   if (booleanArg(args.json)) {
     console.log(JSON.stringify(result, null, 2));
     return;
   }
   printLaunchWarnings(result);
   const session = result.session ? String(result.session) : "(no session)";
-  if (steps.length) console.log(`started ${slug}: ${steps.length} step${steps.length === 1 ? "" : "s"}, step 1 in ${session}`);
-  else console.log(`started ${slug} in ${session}`);
+  if (result.status === "queued") console.log(`queued ${slug} for its exact Area brain`);
+  else if (steps.length) console.log(`started ${slug}: ${steps.length} step${steps.length === 1 ? "" : "s"}, step 1 in ${session}${recovery ? " (recovery)" : ""}`);
+  else console.log(`started ${slug} in ${session}${recovery ? " (recovery)" : ""}`);
 }
 
 /**
@@ -153,7 +157,8 @@ async function appendCommand(args: Args): Promise<void> {
   const steps = pipelineSteps(args, { appending: true });
   if (!steps.length) throw new Error("tangent goal append needs at least one --step.");
   const caller = stringArg(args.session) || (await currentTmuxSession());
-  const result = await postJson(server, "/api/pipelines/append", { goal: goal.file, steps, ...(caller ? { caller } : {}) });
+  const expectedRevision = await goalQueueRevision(server, goal.file);
+  const result = await postJson(server, "/api/pipelines/append", { goal: goal.file, steps, expectedRevision, idempotencyKey: randomUUID(), ...(caller ? { caller } : {}) });
   if (booleanArg(args.json)) {
     console.log(JSON.stringify(result, null, 2));
     return;
@@ -171,6 +176,7 @@ type PipelineStepInput = {
   instruction: string;
   launch?: { harness: string; model?: string; effort?: string };
   path?: string;
+  kind?: "implementation" | "review";
   continueFrom: number | null;
 };
 
@@ -184,6 +190,7 @@ function pipelineSteps(args: Args, { appending = false } = {}): PipelineStepInpu
   const launches = stringsArg(args.launch);
   const paths = stringsArg(args.path);
   const continues = stringsArg(args["continue-from"]);
+  const kinds = stringsArg(args.kind);
   if (instructions.some((instruction) => !instruction)) throw new Error("Each --step needs an instruction.");
   // Without a --step there is nothing for a directory to belong to, and a
   // silently dropped --path would start the worker in the wrong repository.
@@ -193,12 +200,16 @@ function pipelineSteps(args: Args, { appending = false } = {}): PipelineStepInpu
   if (launches.length > instructions.length) throw new Error("More --launch values than --step values; each --launch pairs with the --step at the same position.");
   if (paths.length > instructions.length) throw new Error("More --path values than --step values; each --path pairs with the --step at the same position.");
   if (continues.length > instructions.length) throw new Error("More --continue-from values than --step values; each pairs with the --step at the same position.");
+  if (kinds.length > instructions.length) throw new Error("More --kind values than --step values; each pairs with the --step at the same position.");
   return instructions.map((instruction, index) => {
     const step: PipelineStepInput = { instruction, continueFrom: parseContinueFrom(continues[index], appending ? Number.POSITIVE_INFINITY : index + 1) };
     const launch = parseLaunch(launches[index]);
     if (launch) step.launch = launch;
     const workingDirectory = parseStepPath(paths[index]);
     if (workingDirectory) step.path = workingDirectory;
+    const kind = kinds[index]?.trim() || "implementation";
+    if (!(["implementation", "review"] as string[]).includes(kind)) throw new Error(`--kind for step ${index + 1} must be implementation or review.`);
+    step.kind = kind as PipelineStepInput["kind"];
     return step;
   });
 }
@@ -235,21 +246,27 @@ function parseContinueFrom(value: string | undefined, stepIndex: number): number
 }
 
 /**
- * Handles `tangent goal handover [--continue] <facts...>`. Run by a worker at the end of its step or Goal.
- * Plain: the server records the facts. A controlling brain chooses the next
- * transition; legacy work without a brain still advances automatically.
- * `--continue`: this step or Goal is not done; the server hands it to a fresh copy of the same session
- * instead of advancing (design-worker-context-handover D4).
+ * Handles `tangent goal handover <facts...>`. A worker submits evidence or a
+ * typed report; the exact Area brain controls every later attempt.
  */
 async function handoverCommand(args: Args): Promise<void> {
   const server = resolveServerUrl(stringArg(args.server));
   const session = await requireSession(args, "tangent goal handover");
   const text = args._.slice(1).map(String).join(" ").trim();
   if (!text) throw new Error("tangent goal handover needs the facts as text.");
+  if (booleanArg(args.continue)) throw new Error("--continue is retired. Submit a typed context-risk report; the exact Area brain starts any fresh attempt.");
   const body: Record<string, unknown> = { session, text };
-  if (booleanArg(args.continue)) body.continue = true;
+  const reportText = stringArg(args.report)?.trim();
+  if (reportText) {
+    try {
+      const report = JSON.parse(reportText);
+      if (!report || typeof report !== "object" || Array.isArray(report)) throw new Error();
+      body.report = report;
+    } catch {
+      throw new Error("--report must be one JSON object.");
+    }
+  }
   const result = await postJson(server, "/api/goals/handover", body);
-  if (result.status === "continued") { console.log(`handed over; a fresh copy continues this step: ${result.session}`); return; }
   const next = result.next as { index?: number; session?: string } | null | undefined;
   if (result.status === "reported") console.log("handed over to the brain; the brain chooses what happens next");
   else if (result.status === "started" && next) console.log(`handed over; next: step ${next.index} (${next.session})`);

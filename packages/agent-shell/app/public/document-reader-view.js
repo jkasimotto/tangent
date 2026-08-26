@@ -4,7 +4,7 @@ import { activeBrainForArea } from "./brain-ownership.js";
 
 /** Creates the document reader view product boundary. */
 export function createDocumentReaderView({ state, markdownToHtml, currentGoal, goalByFile, sessionsForGoal, areaLabel, areaPath, humanName }) {
-  /** The closest ancestor brain with a currently live session. */
+  /** The exact Document Area brain with a currently live session. */
   function activeDocumentBrain() {
     return activeBrainForArea(state.brains, state.document?.area);
   }

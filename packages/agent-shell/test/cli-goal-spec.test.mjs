@@ -10,31 +10,34 @@ const subcommand = (name) => goalCommandSpec.subcommands.find((entry) => entry.n
 /** Lists the option names one spec entry accepts. */
 const optionNames = (entry) => entry.options.map((option) => option.name);
 
-test("tangent goal start takes a slug and repeatable step, launch, path, and continue-from options", () => {
+test("tangent goal start takes a slug, typed assignments, and an explicit recovery option", () => {
   const start = subcommand("start");
   assert.ok(start, "goal spec has a start subcommand");
   assert.equal(start.args, "<slug>");
-  assert.deepEqual(optionNames(start), ["step", "launch", "path", "continue-from", "session", "server", "json"]);
+  assert.deepEqual(optionNames(start), ["step", "launch", "path", "continue-from", "kind", "recovery", "session", "server", "json"]);
   for (const name of ["step", "launch", "path", "continue-from"]) {
     const option = start.options.find((entry) => entry.name === name);
     assert.equal(option.takesValue, true, `${name} takes a value`);
     assert.match(option.description, /repeatable/i, `${name} is documented as repeatable`);
   }
+  assert.equal(start.options.find((entry) => entry.name === "kind").takesValue, true, "assignment kind takes a value");
+  assert.notEqual(start.options.find((entry) => entry.name === "recovery").takesValue, true, "recovery is an explicit switch");
 });
 
 test("tangent goal append takes a slug and the same repeatable step options as start", () => {
   const append = subcommand("append");
   assert.ok(append, "goal spec has an append subcommand");
   assert.equal(append.args, "<slug>");
-  assert.deepEqual(optionNames(append), ["step", "launch", "path", "continue-from", "server", "json"]);
+  assert.deepEqual(optionNames(append), ["step", "launch", "path", "continue-from", "kind", "server", "json"]);
   assert.match(append.description, /without restarting/);
 });
 
-test("tangent goal handover takes the facts and an optional session", () => {
+test("tangent goal handover takes facts, session identity, and a typed report", () => {
   const handover = subcommand("handover");
   assert.ok(handover, "goal spec has a handover subcommand");
   assert.equal(handover.args, "<facts...>");
-  assert.deepEqual(optionNames(handover), ["session", "continue", "server"]);
+  assert.deepEqual(optionNames(handover), ["session", "report", "server"]);
+  assert.equal(handover.options.find((entry) => entry.name === "report").takesValue, true);
   assert.match(handover.description, /facts/);
 });
 
@@ -49,7 +52,7 @@ test("tangent goal depend and undepend take repeatable prerequisites", () => {
   for (const name of ["depend", "undepend"]) {
     const command = subcommand(name);
     assert.equal(command.args, "<slug>");
-    assert.deepEqual(optionNames(command), ["on", "server", "json"]);
+    assert.deepEqual(optionNames(command), ["on", "session", "server", "json"]);
     assert.match(command.options[0].description, /repeatable/);
   }
 });
@@ -109,6 +112,7 @@ test("each --step carries its own working directory, and a step without one keep
     const url = new URL(String(input));
     requests.push({ path: url.pathname, body: init.body ? JSON.parse(String(init.body)) : null });
     if (url.pathname === "/api/goals/show") return Response.json({ goal: { slug: "proof", file: "otto/test/goal-proof.md", area: "otto/test", status: "open" } });
+    if (url.pathname === "/api/sessions") return Response.json({ pipelines: [{ goal: "otto/test/goal-proof.md", revision: 4 }] });
     if (url.pathname === "/api/goals/start") return Response.json({ session: "worker-proof" });
     if (url.pathname === "/api/pipelines/append") return Response.json({ state: "queued", after: 1, added: [2] });
     return Response.json({ error: `unexpected ${url.pathname}` }, { status: 404 });

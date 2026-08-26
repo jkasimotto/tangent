@@ -30,11 +30,9 @@ test("the pane observer owns context parsing and session enrichment", async () =
   assert.match(source, /context: null/);
 });
 
-test("a context-handover swap kills the old session directly, never through endPipelineForSession", async () => {
+test("workers have no self-replacement implementation", async () => {
   const source = await readFile(path.join(here, "server.mjs"), "utf8");
-  const swap = source.match(/async function continueWorkerSession\([\s\S]*?\n\}\n\n(?=(?:\/\*\*[\s\S]*?\*\/\n)?async function completePipelineStep)/)?.[0] ?? "";
-  assert.match(swap, /"kill-session"/);
-  assert.doesNotMatch(swap, /endPipelineForSession/);
+  assert.doesNotMatch(source, /continueWorkerSession|continueWorker:/);
 });
 
 test("the package starts the single-owner gateway and keeps terminal transport out of the controller", async () => {

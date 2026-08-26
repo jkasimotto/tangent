@@ -30,9 +30,9 @@ function coordinator({ programs = [trigger()], refreshWith = null } = {}) {
   const posted = [];
   const toasts = [];
   const modal = { kicker: textNode(), title: textNode(), copy: textNode(), field: textNode(), actions: textNode(), layer: { hidden: true, querySelector: findNothing } };
-  const state = { programs: { programs }, programId: programs[0]?.id ?? "", view: "program-detail" };
+  const state = { programs: { operations: programs }, programId: programs[0]?.id ?? "", view: "program-detail" };
   /** Finds one program in the list the screen reads right now. */
-  const programById = (id) => state.programs.programs.find((item) => item.id === id) ?? null;
+  const programById = (id) => state.programs.operations.find((item) => item.id === id) ?? null;
   const shellCoordinator = createShellCoordinator({
     shell: {
       state,
@@ -43,7 +43,7 @@ function coordinator({ programs = [trigger()], refreshWith = null } = {}) {
       /** Repaints nothing in a test. */
       paint: () => {},
       /** Replaces the program list the way a completed refresh does. */
-      refresh: async () => { if (refreshWith) state.programs = { programs: refreshWith() }; },
+      refresh: async () => { if (refreshWith) state.programs = { operations: refreshWith() }; },
       /** Records one toast. */
       showToast: (message) => toasts.push(message),
     },

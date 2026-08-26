@@ -93,9 +93,10 @@ export function parseProgramManifest(text, file = PROCESS_FILE) {
       if (!PROGRAM_NAME.test(name)) throw new Error(`${file}: invalid program name ${name}`);
       const command = typeof raw === "string" ? raw : raw && typeof raw === "object" && !Array.isArray(raw) ? raw.command : "";
       const cwd = raw && typeof raw === "object" && !Array.isArray(raw) ? raw.cwd : undefined;
+      const report = raw && typeof raw === "object" && !Array.isArray(raw) ? raw.report === true : false;
       if (typeof command !== "string" || !command.trim()) throw new Error(`${file}: ${name} needs a command`);
       if (cwd !== undefined && (typeof cwd !== "string" || !cwd.trim())) throw new Error(`${file}: ${name} needs a valid working folder`);
-      output[name] = { command: command.trim(), ...(typeof cwd === "string" ? { cwd: cwd.trim().replace(/^~(?=\/|$)/, os.homedir()) } : {}) };
+      output[name] = { command: command.trim(), report, ...(typeof cwd === "string" ? { cwd: cwd.trim().replace(/^~(?=\/|$)/, os.homedir()) } : {}) };
     }
     return output;
   };
@@ -112,7 +113,7 @@ export function parseProgramManifest(text, file = PROCESS_FILE) {
       if (!DURATION.test(every)) throw new Error(`${file}: trigger ${name} needs an interval such as 15m`);
       if (!probe) throw new Error(`${file}: trigger ${name} needs a probe`);
       if (!instructions) throw new Error(`${file}: trigger ${name} needs instructions`);
-      triggers[name] = { every, probe, instructions, paused: raw.paused === true, ...(cwd ? { cwd } : {}) };
+      triggers[name] = { every, probe, instructions, paused: raw.paused === true, report: raw.report === true, ...(cwd ? { cwd } : {}) };
     }
   }
   return { scripts: readMap("scripts"), commands: readMap("commands"), triggers };
@@ -136,13 +137,13 @@ export async function programsSnapshot({ treesRoot, sessions = [] }) {
           const programCwd = entry.cwd || cwd;
           const sessionName = managedProcessSession(area, name);
           const session = sessions.find((item) => item.name === sessionName || (item.kind === "process" && item.area === area && item.process === name));
-          programs.push({ id: `process:${area}:${name}`, type: "process", area, name, label: programLabel(name), command: entry.command, cwd: programCwd, sessionName, session: session ?? null, available: Boolean(programCwd && existsSync(programCwd)) });
+          programs.push({ id: `process:${area}:${name}`, type: "process", area, name, label: programLabel(name), command: entry.command, report: entry.report, cwd: programCwd, sessionName, session: session ?? null, available: Boolean(programCwd && existsSync(programCwd)) });
         }
         for (const [name, entry] of Object.entries(parsed.commands)) {
           const programCwd = entry.cwd || cwd;
           const sessionName = commandSession(area, name);
           const session = sessions.find((item) => item.name === sessionName);
-          programs.push({ id: `command:${area}:${name}`, type: "command", area, name, label: programLabel(name), command: entry.command, cwd: programCwd, sessionName, session: session ?? null, available: Boolean(programCwd && existsSync(programCwd)) });
+          programs.push({ id: `command:${area}:${name}`, type: "command", area, name, label: programLabel(name), command: entry.command, report: entry.report, cwd: programCwd, sessionName, session: session ?? null, available: Boolean(programCwd && existsSync(programCwd)) });
         }
         for (const [name, entry] of Object.entries(parsed.triggers)) {
           const programCwd = entry.cwd || cwd;
@@ -151,7 +152,7 @@ export async function programsSnapshot({ treesRoot, sessions = [] }) {
           const runtime = triggerState.triggers?.[`${area}:${name}`] ?? {};
           programs.push({
             id: `trigger:${area}:${name}`, type: "trigger", area, name, label: programLabel(name), command: entry.probe,
-            probe: entry.probe, instructions: entry.instructions, every: entry.every, paused: entry.paused, runtime,
+            probe: entry.probe, instructions: entry.instructions, every: entry.every, paused: entry.paused, report: entry.report, runtime,
             cwd: programCwd, sessionName, session: session ?? null, available: Boolean(programCwd && existsSync(programCwd))
           });
         }

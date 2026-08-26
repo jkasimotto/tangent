@@ -191,8 +191,17 @@ test("an armed step prompt survives a server restart", async (context) => {
   });
   assert.ok(goal.file, `goal was created: ${JSON.stringify(goal)}`);
 
+  const brain = await post(base, "/api/brains/start", {
+    area: `otto/${leaf}`,
+    instruction: "Control the restart probe.",
+    command: HARNESS_CMD,
+  });
+  assert.ok(brain.session, `brain started: ${JSON.stringify(brain)}`);
+  sessions.push(brain.session);
+
   const started = await post(base, "/api/goals/start", {
     file: goal.file,
+    caller: brain.session,
     steps: [{ instruction: "Prove the arm-restart probe delivers.", command: HARNESS_CMD }],
   });
   assert.ok(started.session, `pipeline started: ${JSON.stringify(started)}`);

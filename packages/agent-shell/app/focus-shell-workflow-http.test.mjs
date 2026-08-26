@@ -412,6 +412,20 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.match(serverSource, /design-<slug>\.md/);
   assert.match(serverSource, /rationaleDossierContract\(/);
 
+  const emptyBrain = await fetch(`${base}/api/brains/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ area: "otto/test", instruction: "   " }),
+  });
+  assert.equal(emptyBrain.status, 400);
+  const brainStart = await fetch(`${base}/api/brains/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ area: "otto/test", instruction: "Get the test Area done.", choice: { harness: "fake", model: "one" } }),
+  }).then((response) => response.json());
+  assert.equal(brainStart.session, "test-brain");
+  openedSessions.push("test-brain");
+
   const pipelineGoal = await fetch(`${base}/api/goals/create`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -420,7 +434,7 @@ test("the context-first shell is default and keeps the user's understanding with
   const badEffort = await fetch(`${base}/api/goals/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ file: pipelineGoal.file, steps: [{ instruction: "design", launch: { harness: "fake", model: "one", effort: "ultra" } }] }),
+    body: JSON.stringify({ file: pipelineGoal.file, caller: brainStart.session, steps: [{ instruction: "design", launch: { harness: "fake", model: "one", effort: "ultra" } }] }),
   });
   assert.equal(badEffort.status, 409);
   assert.match((await badEffort.json()).error, /unknown effort "ultra"/);
@@ -428,7 +442,7 @@ test("the context-first shell is default and keeps the user's understanding with
   const badSteps = await fetch(`${base}/api/goals/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ file: pipelineGoal.file, steps: [{ instruction: "  ", launch: { harness: "fake" } }] }),
+    body: JSON.stringify({ file: pipelineGoal.file, caller: brainStart.session, steps: [{ instruction: "  ", launch: { harness: "fake" } }] }),
   });
   assert.equal(badSteps.status, 400);
 
@@ -437,6 +451,7 @@ test("the context-first shell is default and keeps the user's understanding with
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       file: pipelineGoal.file,
+      caller: brainStart.session,
       steps: [
         { instruction: "/design this Goal.", launch: { harness: "fake", model: "one", effort: "high" } },
         { instruction: "Review the design from step 1 and update it.", launch: { harness: "fake", model: "one" }, continueFrom: 1 },
@@ -470,17 +485,17 @@ test("the context-first shell is default and keeps the user's understanding with
   const ownedElsewhere = await fetch(`${base}/api/goals/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ file: pipelineGoal.file, steps: [{ instruction: "again", launch: { harness: "fake" } }] }),
+    body: JSON.stringify({ file: pipelineGoal.file, caller: brainStart.session, steps: [{ instruction: "again", launch: { harness: "fake" } }] }),
   });
   assert.equal(ownedElsewhere.status, 409);
-  assert.match((await ownedElsewhere.json()).error, /owned by live session test-pipeline-demo/);
+  assert.match((await ownedElsewhere.json()).error, /already has an authoritative queue/);
 
   const strayHandover = await fetch(`${base}/api/goals/handover`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ session: described.session, text: "nothing" }),
   });
-  assert.equal(strayHandover.status, 409);
+  assert.equal(strayHandover.status, 200, "a work-definition session can still hand over its durable discovery facts");
   const editRunning = await fetch(`${base}/api/pipelines/edit`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -494,210 +509,130 @@ test("the context-first shell is default and keeps the user's understanding with
   }).then((response) => response.json());
   assert.equal(editPending.pipeline.steps[2].instruction, "Implement the design and prove it.");
 
-  // Step 1 hands over: step 2 continues step 1's session (same tmux session,
-  // step option advanced), the Goal stays bound to it.
+  // A typed worker report completes only its assignment. The exact Area brain
+  // starts each later assignment through the authoritative queue.
   const handoverOne = await fetch(`${base}/api/goals/handover`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session: "test-pipeline-demo", text: "Design written: design-pipeline-demo.md. Unresolved: none." }),
+    body: JSON.stringify({
+      session: "test-pipeline-demo",
+      text: "Design written: design-pipeline-demo.md. Unresolved: none.",
+      report: { type: "implementation-result", status: "complete", summary: "The design is ready.", evidenceRefs: ["design-pipeline-demo.md"] },
+    }),
   }).then((response) => response.json());
-  assert.equal(handoverOne.status, "started");
-  assert.deepEqual(handoverOne.next, { index: 2, session: "test-pipeline-demo" });
+  assert.equal(handoverOne.status, "reported");
   assert.equal(handoverOne.pipeline.steps[0].status, "complete");
-  assert.equal(handoverOne.pipeline.steps[0].handoverSource, "agent");
-  snapshot = await fetch(`${base}/api/sessions`).then((response) => response.json());
-  assert.equal(snapshot.sessions.find((session) => session.name === "test-pipeline-demo").step, 2);
+  assert.deepEqual(handoverOne.next, { index: 2, session: null }, "a worker report identifies but never starts its successor");
 
-  // Step 2 hands over: step 3 is a fresh session named for its step and the
-  // Goal follows it.
+  const advanceTwo = await fetch(`${base}/api/pipelines/control`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      goal: pipelineGoal.file,
+      action: "advance",
+      step: 2,
+      caller: brainStart.session,
+      expectedRevision: handoverOne.pipeline.revision,
+      idempotencyKey: "workflow-advance-2",
+    }),
+  }).then((response) => response.json());
+  assert.equal(advanceTwo.status, "started");
+  assert.equal(advanceTwo.next.index, 2);
+  assert.equal(advanceTwo.next.session, "test-pipeline-demo");
+
   const handoverTwo = await fetch(`${base}/api/goals/handover`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session: "test-pipeline-demo", text: "Design reviewed and updated in place." }),
+    body: JSON.stringify({
+      session: advanceTwo.next.session,
+      text: "Design reviewed and updated in place.",
+      report: { type: "implementation-result", status: "complete", summary: "The reviewed design is ready.", evidenceRefs: ["design-pipeline-demo.md"] },
+    }),
   }).then((response) => response.json());
-  assert.deepEqual(handoverTwo.next, { index: 3, session: "test-pipeline-demo-s3" });
-  openedSessions.push("test-pipeline-demo-s3");
-  goalText = await readFile(path.join(trees, pipelineGoal.file), "utf8");
-  assert.match(goalText, /^session: test-pipeline-demo-s3$/m);
-  snapshot = await fetch(`${base}/api/sessions`).then((response) => response.json());
-  const stepThree = snapshot.sessions.find((session) => session.name === "test-pipeline-demo-s3");
-  assert.equal(stepThree.step, 3);
-  assert.equal(stepThree.launchLabel, "Edited command");
-  const sendShell = await fetch(`${base}/api/pipelines/control`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ goal: pipelineGoal.file, action: "send", step: 3 }),
-  });
-  assert.equal(sendShell.status, 409);
+  assert.equal(handoverTwo.status, "reported");
+  assert.deepEqual(handoverTwo.next, { index: 3, session: null });
 
-  // The step 3 session dies: restart creates a new session for the same step.
-  await new Promise((resolve, reject) => execFile("tmux", ["kill-session", "-t", "=test-pipeline-demo-s3"], (error, stdout, stderr) => (error ? reject(new Error(stderr || error.message)) : resolve())));
-  await new Promise((resolve) => execFile("tmux", ["has-session", "-t", "=test-pipeline-demo-s3"], (error) => resolve(assert.ok(error, "step 3 session should be gone"))));
-  const restarted = await fetch(`${base}/api/pipelines/control`, {
+  const advanceThree = await fetch(`${base}/api/pipelines/control`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ goal: pipelineGoal.file, action: "restart", step: 3 }),
+    body: JSON.stringify({
+      goal: pipelineGoal.file,
+      action: "advance",
+      step: 3,
+      caller: brainStart.session,
+      expectedRevision: handoverTwo.pipeline.revision,
+      idempotencyKey: "workflow-advance-3",
+    }),
   }).then((response) => response.json());
-  assert.equal(restarted.next.index, 3);
-  assert.equal(restarted.next.session, "test-pipeline-demo-s3");
-  openedSessions.push(restarted.next.session);
-  goalText = await readFile(path.join(trees, pipelineGoal.file), "utf8");
-  assert.match(goalText, /^session: test-pipeline-demo-s3$/m);
+  assert.equal(advanceThree.status, "started");
+  assert.equal(advanceThree.next.index, 3);
+  openedSessions.push(advanceThree.next.session);
 
-  // Appending mid-run: step 4 waits behind the running step 3 and nothing
-  // that already ran changes.
-  const appendMidRun = await fetch(`${base}/api/pipelines/append`, {
+  const appended = await fetch(`${base}/api/pipelines/append`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ goal: pipelineGoal.file, steps: [{ instruction: "Prove the implementation.", launch: { harness: "fake", model: "one" } }] }),
+    body: JSON.stringify({
+      goal: pipelineGoal.file,
+      caller: brainStart.session,
+      steps: [{ instruction: "Review the implementation against the done condition.", kind: "review", launch: { harness: "fake", model: "one" } }],
+    }),
   }).then((response) => response.json());
-  assert.equal(appendMidRun.status, "queued");
-  assert.equal(appendMidRun.after, 3);
-  assert.deepEqual(appendMidRun.added, [4]);
-  assert.equal(appendMidRun.pipeline.steps[3].status, "pending");
-  assert.equal(appendMidRun.pipeline.steps[0].handover, "Design written: design-pipeline-demo.md. Unresolved: none.");
-  assert.equal(appendMidRun.pipeline.steps[2].status, "running");
-  const appendEmpty = await fetch(`${base}/api/pipelines/append`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ goal: pipelineGoal.file, steps: [] }),
-  });
-  assert.equal(appendEmpty.status, 400);
-  const appendNoPipeline = await fetch(`${base}/api/pipelines/append`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ goal: hierarchy.file, steps: [{ instruction: "x", launch: { harness: "fake" } }] }),
-  });
-  assert.equal(appendNoPipeline.status, 404);
+  assert.equal(appended.status, "queued");
+  assert.deepEqual(appended.added, [4]);
+  assert.equal(appended.pipeline.steps[3].designatedReview, true);
 
-  // Skipping step 3 flows into the appended step 4 without any restart.
-  const skipped = await fetch(`${base}/api/pipelines/control`, {
+  const handoverThree = await fetch(`${base}/api/goals/handover`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ goal: pipelineGoal.file, action: "skip", step: 3 }),
+    body: JSON.stringify({
+      session: advanceThree.next.session,
+      text: "Implementation complete.",
+      report: { type: "implementation-result", status: "complete", summary: "The implementation is complete.", evidenceRefs: ["commit:workflow"] },
+    }),
   }).then((response) => response.json());
-  assert.equal(skipped.status, "started");
-  assert.deepEqual(skipped.next, { index: 4, session: "test-pipeline-demo-s4" });
-  openedSessions.push("test-pipeline-demo-s4");
-  assert.equal(skipped.pipeline.steps[2].status, "skipped");
+  assert.equal(handoverThree.status, "reported");
+
+  const advanceFour = await fetch(`${base}/api/pipelines/control`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      goal: pipelineGoal.file,
+      action: "advance",
+      step: 4,
+      caller: brainStart.session,
+      expectedRevision: handoverThree.pipeline.revision,
+      idempotencyKey: "workflow-advance-4",
+    }),
+  }).then((response) => response.json());
+  assert.equal(advanceFour.status, "started");
+  openedSessions.push(advanceFour.next.session);
+
   const handoverFour = await fetch(`${base}/api/goals/handover`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session: "test-pipeline-demo-s4", text: "Proof written." }),
+    body: JSON.stringify({
+      session: advanceFour.next.session,
+      text: "Review passed.",
+      report: {
+        type: "review-result",
+        verdict: "passed",
+        goalRevision: advanceFour.pipeline.goalRevision,
+        summary: "The current Goal revision satisfies its done condition.",
+        criteria: [{ id: "done-condition", passed: true, evidenceRefs: ["test:workflow"] }],
+      },
+    }),
   }).then((response) => response.json());
-  assert.equal(handoverFour.status, "complete");
-  snapshot = await fetch(`${base}/api/sessions`).then((response) => response.json());
-  assert.equal(snapshot.pipelines[0].status, "complete");
-
-  // Appending to a finished pipeline whose last agent is gone (its pane sits
-  // at a shell): the new step starts at once.
-  const appendAfterDead = await fetch(`${base}/api/pipelines/append`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ goal: pipelineGoal.file, steps: [{ instruction: "Write the release note.", launch: { harness: "fake", model: "one" } }] }),
-  }).then((response) => response.json());
-  assert.equal(appendAfterDead.status, "started");
-  assert.deepEqual(appendAfterDead.next, { index: 5, session: "test-pipeline-demo-s5" });
-  openedSessions.push("test-pipeline-demo-s5");
-  assert.equal(appendAfterDead.pipeline.steps[3].status, "complete", "the finished step stays finished");
-  const handoverFive = await fetch(`${base}/api/goals/handover`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session: "test-pipeline-demo-s5", text: "Release note written." }),
-  }).then((response) => response.json());
-  assert.equal(handoverFive.status, "complete");
-
-  // Appending to a finished pipeline whose last agent still runs: that step
-  // is asked to hand over again; its second handover is kept beside the first
-  // and flows into the new step.
-  await new Promise((resolve, reject) => execFile("tmux", ["send-keys", "-t", "=test-pipeline-demo-s5:", "sleep 300", "Enter"], (error, stdout, stderr) => (error ? reject(new Error(stderr || error.message)) : resolve())));
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    const command = await new Promise((resolve) => execFile("tmux", ["display-message", "-p", "-t", "=test-pipeline-demo-s5:", "#{pane_current_command}"], (error, stdout) => resolve(error ? "" : stdout.trim())));
-    if (command === "sleep") break;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  // Wait until the server's cached session sample sees the process. The tmux
-  // command can change before the API sample refreshes under full-suite load.
-  let sampledLive = false;
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const current = await fetch(`${base}/api/sessions`).then((response) => response.json());
-    const session = current.sessions.find((item) => item.name === "test-pipeline-demo-s5");
-    if (session && session.state !== "shell") { sampledLive = true; break; }
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  assert.equal(sampledLive, true, "the server sees the live final step before append");
-  const appendAfterLive = await fetch(`${base}/api/pipelines/append`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ goal: pipelineGoal.file, steps: [{ instruction: "Announce it.", launch: { harness: "fake" } }, { instruction: "Archive it.", command: "fake-agent --archive", continueFrom: 6 }] }),
-  }).then((response) => response.json());
-  assert.equal(appendAfterLive.status, "asked");
-  assert.equal(appendAfterLive.after, 5);
-  assert.equal(appendAfterLive.session, "test-pipeline-demo-s5");
-  assert.deepEqual(appendAfterLive.added, [6, 7]);
-  assert.equal(appendAfterLive.pipeline.steps[4].status, "running");
-  assert.equal(appendAfterLive.pipeline.steps[4].handover, "Release note written.");
-  assert.equal(appendAfterLive.pipeline.steps[5].status, "pending");
-  snapshot = await fetch(`${base}/api/sessions`).then((response) => response.json());
-  assert.equal(snapshot.pipelines[0].status, "running");
-  const handoverAgain = await fetch(`${base}/api/goals/handover`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session: "test-pipeline-demo-s5", text: "Nothing changed since; the note is final." }),
-  }).then((response) => response.json());
-  assert.equal(handoverAgain.next.index, 6);
-  assert.match(handoverAgain.next.session, /^test-pipeline-demo-s6(?:-r\d+)?$/);
-  openedSessions.push(handoverAgain.next.session);
-  assert.equal(handoverAgain.pipeline.steps[4].status, "complete");
-  assert.equal(handoverAgain.pipeline.steps[4].handover, "Release note written.\n\nNothing changed since; the note is final.");
-  assert.equal(handoverAgain.pipeline.steps[5].status, "running");
-
-  // Julian stops the agent on step 6 (the same kill as Stop agent, ⌘D, or ✕):
-  // the run ends. Step 6 and the pending step 7 are ended, not left
-  // "stopped", so the desk offers no Restart and the Goal settles back to
-  // plain open work.
-  const killed = await fetch(`${base}/api/kill/${encodeURIComponent(handoverAgain.next.session)}`, { method: "POST" }).then((response) => response.json());
-  assert.equal(killed.pipelineEnded, true);
-  snapshot = await fetch(`${base}/api/sessions`).then((response) => response.json());
-  assert.deepEqual(snapshot.pipelines[0].steps.slice(4).map((step) => step.status), ["complete", "ended", "ended"]);
-  assert.equal(snapshot.pipelines[0].status, "complete");
-  const killedPlain = await fetch(`${base}/api/kill/${encodeURIComponent("test-pipeline-demo-s5")}`, { method: "POST" }).then((response) => response.json());
-  assert.equal(killedPlain.pipelineEnded, false, "killing a session that is no running step ends nothing");
-  // Ending a run twice is harmless, and a later append starts fresh after the ended steps.
-  const endAgain = await fetch(`${base}/api/pipelines/control`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ goal: pipelineGoal.file, action: "end", step: 6 }),
-  }).then((response) => response.json());
-  assert.equal(endAgain.status, "ended");
-  assert.deepEqual(endAgain.ended, []);
-  const appendAfterEnd = await fetch(`${base}/api/pipelines/append`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ goal: pipelineGoal.file, steps: [{ instruction: "Pick it up again.", launch: { harness: "fake" } }] }),
-  }).then((response) => response.json());
-  assert.equal(appendAfterEnd.status, "started");
-  assert.deepEqual(appendAfterEnd.next, { index: 8, session: "test-pipeline-demo-s8" });
-  openedSessions.push("test-pipeline-demo-s8");
-  assert.equal(appendAfterEnd.pipeline.steps[6].status, "ended", "the ended step stays ended");
-  // A step whose session died on its own can be ended from the desk too.
-  await new Promise((resolve, reject) => execFile("tmux", ["kill-session", "-t", "=test-pipeline-demo-s8"], (error, stdout, stderr) => (error ? reject(new Error(stderr || error.message)) : resolve())));
-  const endDead = await fetch(`${base}/api/pipelines/control`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ goal: pipelineGoal.file, action: "end", step: 8 }),
-  }).then((response) => response.json());
-  assert.deepEqual(endDead.ended, [8]);
-  assert.equal(endDead.pipeline.steps[7].status, "ended");
-
+  assert.equal(handoverFour.status, "goal-done");
+  goalText = await readFile(path.join(trees, pipelineGoal.file), "utf8");
+  assert.match(goalText, /^status: done$/m);
   // ---- Area brain ----
   // Julian starts one brain on the Area; it is a session of kind brain with a
   // record under the brains root, and every Goal prompt on the Area names it.
-  assert.match(serverSource, /# Brain for \$\{area\}/);
-  assert.match(serverSource, /tangent brain handover/);
-  assert.match(serverSource, /declares the work harness/);
-  assert.match(serverSource, /Every worker start names its own harness/);
-  assert.match(serverSource, /Choose its steps and launch ids from the approved plan/);
+  assert.match(serverSource, /async function brainPrompt\(record\)/);
+  assert.match(serverSource, /brainActivationEnvelope\(record/);
+  assert.match(serverSource, /One Goal queue controls every assignment/);
+  assert.match(serverSource, /A designated review closes routine work only at the current Goal revision/);
+  assert.match(serverSource, /Free text never closes a Goal/);
   assert.doesNotMatch(serverSource, /Sonnet is the workhorse/);
   const brainDefault = await fetch(`${base}/api/launch/default`, {
     method: "POST",
@@ -705,19 +640,7 @@ test("the context-first shell is default and keeps the user's understanding with
     body: JSON.stringify({ area: "otto/test", kind: "brain", mode: "launch", launch: { harness: "fake", model: "one", effort: "high" } }),
   });
   assert.equal(brainDefault.status, 200);
-  const emptyBrain = await fetch(`${base}/api/brains/start`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ area: "otto/test", instruction: "   " }),
-  });
-  assert.equal(emptyBrain.status, 400);
-  const brainStart = await fetch(`${base}/api/brains/start`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ area: "otto/test", instruction: "Get the test Area done.", choice: { harness: "fake", model: "one" } }),
-  }).then((response) => response.json());
   assert.equal(brainStart.session, "test-brain");
-  openedSessions.push("test-brain");
   assert.equal(brainStart.generation, 1);
   assert.equal(brainStart.brain.command, "fake-agent --model one");
   assert.equal(brainStart.brain.planFile, "otto/test/plan-test.md");
@@ -729,7 +652,7 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(brainSession.generation, 1);
   assert.equal(snapshot.brains.length, 1);
   assert.equal(snapshot.brains[0].live, true);
-  assert.equal(snapshot.brains[0].status, "running");
+  assert.equal(snapshot.brains[0].status, "active");
   const brainAgain = await fetch(`${base}/api/brains/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -753,24 +676,29 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(brainRequest.request.ownerRef.generation, null, "the Request belongs to the logical Area brain");
   const briefUnderBrain = await fetch(`${base}/api/goals/brief?file=${encodeURIComponent(pipelineGoal.file)}`).then((response) => response.json());
   assert.match(briefUnderBrain.markdown, /## Brain\n\nThe brain for Area otto\/test controls this work/);
-  // A pipeline event on the Area is queued to the brain as a message from tangent.
-  const eventPipeline = await fetch(`${base}/api/pipelines/append`, {
+  // A queue event on the Area is queued to the brain as a message from tangent.
+  const eventGoal = await fetch(`${base}/api/goals/create`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ goal: pipelineGoal.file, steps: [{ instruction: "One more.", launch: { harness: "fake" } }] }),
+    body: JSON.stringify({ area: "otto/test", goal: { title: "Event demo", doneWhen: "The event reaches the brain." } }),
   }).then((response) => response.json());
-  assert.equal(eventPipeline.status, "started");
-  openedSessions.push(eventPipeline.next.session);
+  const eventPipeline = await fetch(`${base}/api/goals/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file: eventGoal.file, caller: brainStart.session, steps: [{ instruction: "One more.", launch: { harness: "fake" } }] }),
+  }).then((response) => response.json());
+  assert.ok(eventPipeline.session);
+  openedSessions.push(eventPipeline.session);
   const eventHandover = await fetch(`${base}/api/goals/handover`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session: eventPipeline.next.session, text: "One more done." }),
+    body: JSON.stringify({ session: eventPipeline.session, text: "One more done." }),
   }).then((response) => response.json());
-  assert.equal(eventHandover.status, "complete");
+  assert.equal(eventHandover.status, "reported");
   const messageLog = (await readFile(path.join(root, "messages.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line));
-  const brainEvent = messageLog.find((entry) => entry.to === "test-brain" && entry.from === "tangent" && /pipeline complete/.test(entry.text));
-  assert.ok(brainEvent, "the brain hears that the pipeline completed");
-  assert.match(brainEvent.text, /Last handover: One more done\./);
+  const brainEvent = messageLog.find((entry) => entry.to === "test-brain" && entry.from === "tangent" && /untyped evidence/.test(entry.text));
+  assert.ok(brainEvent, "the brain hears that the worker submitted untyped evidence");
+  assert.match(brainEvent.text, /One more done\./);
   // Handover from a session that is not a brain is refused; from the brain it
   // starts generation 2 on a new session and the record follows it.
   const notBrain = await fetch(`${base}/api/brains/handover`, {
@@ -788,15 +716,15 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(brainHandover.session, "test-brain-g2");
   assert.equal(brainHandover.generation, 2);
   const handedOverBrain = await fetch(`${base}/api/brains/show?session=test-brain-g2`).then((response) => response.json());
-  assert.deepEqual(handedOverBrain.brain.launch, { harness: "fake", model: "one", effort: "high" });
-  assert.equal(handedOverBrain.brain.command, "fake-agent --model one --effort high", "handover refreshes the complete current Brain launch instead of keeping generation 1's explicit choice");
+  assert.deepEqual(handedOverBrain.brain.launch, { harness: "fake", model: "one", effort: null });
+  assert.equal(handedOverBrain.brain.command, "fake-agent --model one", "handover preserves the durable Brain launch instead of taking a later Area default");
   openedSessions.push("test-brain-g2");
   await new Promise((resolve) => setTimeout(resolve, 1800));
   snapshot = await fetch(`${base}/api/sessions`).then((response) => response.json());
   assert.equal(snapshot.sessions.some((session) => session.name === "test-brain"), false, "the old generation ends after the new one starts");
   assert.equal(snapshot.brains[0].session, "test-brain-g2");
   assert.equal(snapshot.brains[0].generation, 2);
-  assert.equal(snapshot.brains[0].status, "running");
+  assert.equal(snapshot.brains[0].status, "active");
   assert.equal(snapshot.brains[0].latestHandover, "Wave 1 dispatched: pipeline-demo runs step 9. Next: wait for it.");
   assert.equal(snapshot.brains[0].generations[0].handover, "Wave 1 dispatched: pipeline-demo runs step 9. Next: wait for it.");
   let durableRequests = JSON.parse(await readFile(path.join(root, "brains", "otto", "test", "requests.json"), "utf8")).requests;
@@ -806,7 +734,7 @@ test("the context-first shell is default and keeps the user's understanding with
   const brainKilled = await fetch(`${base}/api/kill/${encodeURIComponent("test-brain-g2")}`, { method: "POST" }).then((response) => response.json());
   assert.equal(brainKilled.brainEnded, true);
   snapshot = await fetch(`${base}/api/sessions`).then((response) => response.json());
-  assert.equal(snapshot.brains[0].status, "ended");
+  assert.equal(snapshot.brains[0].status, "inactive");
   assert.equal(snapshot.brains[0].live, false);
   durableRequests = JSON.parse(await readFile(path.join(root, "brains", "otto", "test", "requests.json"), "utf8")).requests;
   assert.deepEqual([durableRequests[0].status, durableRequests[0].closedReason], ["closed", "brain-ended"], "explicit brain end closes its open Requests");
@@ -820,9 +748,9 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(brainResume.session, "test-brain-g3");
   assert.equal(brainResume.generation, 3);
   openedSessions.push("test-brain-g3");
-  assert.equal(brainResume.brain.instruction, "Get the test Area done.");
-  assert.deepEqual(brainResume.brain.launch, { harness: "fake", model: "one", effort: "high" });
-  assert.equal(brainResume.brain.command, "fake-agent --model one --effort high");
+  assert.equal(brainResume.brain.foundingInstruction.text, "Get the test Area done.");
+  assert.deepEqual(brainResume.brain.launch, { harness: "fake", model: "one", effort: null });
+  assert.equal(brainResume.brain.command, "fake-agent --model one");
 
   const resumedRequest = await fetch(`${base}/api/brains/requests`, {
     method: "POST",
@@ -834,16 +762,17 @@ test("the context-first shell is default and keeps the user's understanding with
   await new Promise((resolve, reject) => execFile("tmux", ["kill-session", "-t", "=test-brain-g3"], (error, stdout, stderr) => (error ? reject(new Error(stderr || error.message)) : resolve())));
   for (let attempt = 0; attempt < 50; attempt += 1) {
     snapshot = await fetch(`${base}/api/sessions`).then((response) => response.json());
-    if (snapshot.brains[0].status === "stopped") break;
+    if (snapshot.brains[0].health?.status === "recovering") break;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  assert.equal(snapshot.brains[0].status, "stopped");
+  assert.equal(snapshot.brains[0].status, "active");
+  assert.ok(["recovering", "healthy"].includes(snapshot.brains[0].health.status), "automatic recovery can finish before this poll observes it");
   const brainReplacement = await fetch(`${base}/api/brains/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ area: "otto/test", instruction: "Replace the stopped brain." }),
+    body: JSON.stringify({ area: "otto/test", resume: true }),
   }).then((response) => response.json());
-  assert.equal(brainReplacement.session, "test-brain");
+  assert.equal(brainReplacement.session, "test-brain-g4");
   openedSessions.push(brainReplacement.session);
   durableRequests = JSON.parse(await readFile(path.join(root, "brains", "otto", "test", "requests.json"), "utf8")).requests;
   assert.equal(durableRequests[1].status, "open", "a runtime replacement keeps the logical Area brain's Request open");

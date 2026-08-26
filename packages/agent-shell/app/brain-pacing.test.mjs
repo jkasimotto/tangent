@@ -199,7 +199,7 @@ test("a brain that did nothing waits out its backoff before it may hand over", a
   const held = await readBrain(brains, area);
   assert.equal(held.generation, 1, "the refused handover started no new generation");
   assert.equal(held.session, brain.body.session, "the old generation is still the brain");
-  assert.equal(held.status, "running", "the refused handover leaves the record alone");
+  assert.equal(held.status, "active", "the refused handover leaves the logical brain active");
   assert.equal(held.generations.at(-1).handover, null, "the refused facts were not recorded");
 
   // The reconcile sweep wakes the paced generation once the pause is over.

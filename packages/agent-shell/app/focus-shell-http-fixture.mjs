@@ -48,6 +48,7 @@ export async function startShellServer(context, { here, root, trees, workspace, 
     }
     throw error;
   }
+  const instanceId = env.TANGENT_SHELL_INSTANCE_ID ?? `focus-shell-${process.pid}-${port}`;
   const child = spawn(nodeExecutable(), ["server.mjs"], {
     cwd: here,
     env: {
@@ -56,6 +57,7 @@ export async function startShellServer(context, { here, root, trees, workspace, 
       AGENT_SHELL_TEST_NO_LAUNCH: "1", TANGENT_PIPELINES_ROOT: path.join(root, "pipelines"),
       TANGENT_BRAINS_ROOT: path.join(root, "brains"), AGENT_MESSAGE_LOG: path.join(root, "messages.jsonl"),
       GROQ_API_KEY: "", CHAT_SESSION: `focus-shell-test-${process.pid}`,
+      TANGENT_SHELL_INSTANCE_ID: instanceId,
       // These tests hand a brain over to prove the swap, not the pacing of an
       // idle brain; brain-pacing.test.mjs owns the ladder.
       TANGENT_BRAIN_WAITING_BACKOFF_MS: "0",
@@ -63,13 +65,20 @@ export async function startShellServer(context, { here, root, trees, workspace, 
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  const base = `http://127.0.0.1:${port}`;
   context.after(async () => {
-    await Promise.all(openedSessions.map((session) => new Promise((resolve) => execFile("tmux", ["kill-session", "-t", `=${session}`], () => resolve()))));
+    await Promise.all(openedSessions.map(async (session) => {
+      try {
+        await fetch(`${base}/api/kill/${encodeURIComponent(session)}`, { method: "POST" });
+        return;
+      } catch {}
+      const owner = await new Promise((resolve) => execFile("tmux", ["display-message", "-p", "-t", `=${session}:`, "#{@tangent_agent_shell_instance}"], (error, stdout) => resolve(error ? "" : stdout.trim())));
+      if (owner === instanceId) await new Promise((resolve) => execFile("tmux", ["kill-session", "-t", `=${session}`], () => resolve()));
+    }));
     child.kill("SIGTERM");
     await Promise.race([once(child, "exit"), new Promise((resolve) => setTimeout(resolve, 1000))]);
     await rm(root, { recursive: true, force: true });
   });
-  const base = `http://127.0.0.1:${port}`;
   await waitForServer(base);
   return base;
 }

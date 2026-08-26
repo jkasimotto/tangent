@@ -15,6 +15,7 @@ isolateTmuxTests();
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);
+const INSTANCE_ID = `goal-close-http-${process.pid}`;
 
 /** Runs tmux on this test file's private socket. */
 function tmux(args) {
@@ -24,6 +25,7 @@ function tmux(args) {
 /** Creates one tagged tmux fixture. */
 async function taggedSession(name, kind, goal = "") {
   await tmux(["new-session", "-d", "-s", name]);
+  await tmux(["set-option", "-t", name, "@tangent_agent_shell_instance", INSTANCE_ID]);
   await tmux(["set-option", "-t", name, "@tangent_kind", kind]);
   if (goal) await tmux(["set-option", "-t", name, "@tangent_goal", goal]);
 }
@@ -81,7 +83,7 @@ test("a close commit records its session and appears in recent closes", async (c
     if (error?.code === "EPERM") return context.skip("This environment does not permit local HTTP listeners.");
     throw error;
   }
-  const child = spawn(nodeExecutable(), ["server.mjs"], { cwd: here, env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", TREES_ROOT: trees, TANGENT_LOOPS_ROOT: path.join(root, "loops"), WORKSPACE: workspace, AGENT_SHELL_NO_OPEN: "1", AGENT_SHELL_TEST_NO_LAUNCH: "1", TANGENT_PIPELINES_ROOT: path.join(root, "pipelines"), TANGENT_CONTINUATIONS_ROOT: path.join(root, "continuations"), TANGENT_GOAL_CLEANUPS_ROOT: path.join(root, "goal-cleanups"), TANGENT_BRAINS_ROOT: path.join(root, "brains"), TANGENT_ARMED_ROOT: path.join(root, "armed"), AGENT_MESSAGE_LOG: path.join(root, "messages.jsonl"), GROQ_API_KEY: "", CHAT_SESSION: `what-happened-http-test-${process.pid}` }, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(nodeExecutable(), ["server.mjs"], { cwd: here, env: { ...process.env, PORT: String(port), HOST: "127.0.0.1", TREES_ROOT: trees, TANGENT_LOOPS_ROOT: path.join(root, "loops"), WORKSPACE: workspace, AGENT_SHELL_NO_OPEN: "1", AGENT_SHELL_TEST_NO_LAUNCH: "1", TANGENT_PIPELINES_ROOT: path.join(root, "pipelines"), TANGENT_CONTINUATIONS_ROOT: path.join(root, "continuations"), TANGENT_GOAL_CLEANUPS_ROOT: path.join(root, "goal-cleanups"), TANGENT_BRAINS_ROOT: path.join(root, "brains"), TANGENT_ARMED_ROOT: path.join(root, "armed"), AGENT_MESSAGE_LOG: path.join(root, "messages.jsonl"), GROQ_API_KEY: "", CHAT_SESSION: `what-happened-http-test-${process.pid}`, TANGENT_SHELL_INSTANCE_ID: INSTANCE_ID }, stdio: ["ignore", "pipe", "pipe"] });
   context.after(async () => { child.kill("SIGTERM"); await Promise.race([once(child, "exit"), new Promise((resolve) => setTimeout(resolve, 1000))]); await rm(root, { recursive: true, force: true }); });
   const base = `http://127.0.0.1:${port}`;
   await waitForServer(base);

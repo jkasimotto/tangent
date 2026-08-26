@@ -13,7 +13,11 @@ Dependencies: `@tangent/core` (arg parsing, help rendering), `@tangent/agent-run
 
 ## Application boundaries
 
-`app/gateway.mjs` is the stable public process edge. It alone owns port 4321, `/api/health`, static assets, SSE, and terminal WebSockets. It supervises `app/server.mjs` over IPC and an ephemeral loopback port. A controller heartbeat failure restarts only that controller; the gateway retains terminals and the last valid session snapshot (ADR-0032).
+`app/gateway.mjs` is the stable public process edge. It alone owns port 4321, `/api/health`, static assets, SSE, and terminal WebSockets. It supervises `app/server.mjs` over IPC and an ephemeral loopback port. A controller heartbeat failure restarts only that controller. The gateway retains terminals and the last valid session snapshot (ADR-0032).
+
+Gateway and controller share one stable Agent Shell instance identity. The gateway passes this identity to each replacement controller and verifies the ready message.
+
+`app/session-ownership.mjs` owns tmux process authority. It sets `@tangent_agent_shell_instance` and stores a durable owner sidecar for each created session. It claims and terminates the immutable tmux session ID. Foreign and markerless legacy sessions are never attached, terminated, or recovered (ADR-0036).
 
 `app/public/refresh-lifecycle.js` serializes all complete browser projection reads. It keeps one trailing refresh when triggers overlap and owns projection retry timing. The browser probes gateway health only after a material projection error. Gateway and controller boot identities remain separate, so only a gateway replacement reloads browser assets.
 
@@ -25,6 +29,7 @@ Dependencies: `@tangent/core` (arg parsing, help rendering), `@tangent/agent-run
 - `message-delivery.mjs`: cross-agent queue order, delivery, audit, retargeting, and brain-notice settlement;
 - `pane-observer.mjs`: tmux pane samples and derived agent state;
 - `observation-cache.mjs`: coalesced session refresh and last-known-good fallback;
+- `session-ownership.mjs`: runtime identity, live tmux ownership, stale ownership evidence, and guarded termination;
 - `bounded-work.mjs`: ordered concurrency bounds for pane and message fan-out;
 - `vault-repository.mjs`: safe atomic Markdown writes and exact-path provenance commits;
 - record modules: the only readers and writers of Goal queues, worker handover receipts, brains, inboxes, requests, Operation events, armed prompts, and rebuild state. Compatibility readers normalize old pipeline and continuation records without writing those schemas.
@@ -32,7 +37,7 @@ Dependencies: `@tangent/core` (arg parsing, help rendering), `@tangent/agent-run
 
 The browser entry `app/public/shell.js` composes feature ports. `shell-coordinator.js` owns cross-feature navigation. Views and controllers receive cohesive `shell`, `work`, `areas`, `programs`, `launch`, `documents`, and chrome records. A record groups one authority; it is not a generic service locator. Browser capabilities must not be attached to functions. Gateway admission limits duplicate and total controller work. Telemetry does not publish projection invalidations.
 
-Private module and controller-loopback contracts can change with all in-repository callers. The public loopback URL, Vault Markdown, Git provenance, tmux bindings, and persisted workflow schemas remain compatible. See ADR-0031 and ADR-0032.
+Private module and controller-loopback contracts can change with all in-repository callers. The public loopback URL, Vault Markdown, Git provenance, tmux bindings, and persisted workflow schemas remain compatible. The runtime ownership key remains `@tangent_agent_shell_instance`. See ADR-0031, ADR-0032, and ADR-0036.
 
 The browser stacks its surfaces in one fixed order: `#screen`, the session layer, the quick Document layer, the modal layer, and the `Go to` finder. The key order matches that visual order, so a command for a lower layer never reaches past a visible destination. `Go to` opens a Document in the read-only quick layer above the current screen or session, which is not repainted or unmounted while the layer is open; `Open full reader` is the one control that leaves the quick path (design record: design-quick-returnable-document-search).
 

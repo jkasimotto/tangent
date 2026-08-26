@@ -115,6 +115,27 @@ test("agent lint requires the durable worker handover markers", async () => {
   }
 });
 
+test("agent lint rejects tmux termination outside the Agent Shell ownership capability", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
+  try {
+    await writeMinimalRootAgentDocs(root);
+    const app = path.join(root, "packages", "agent-shell", "app");
+    await mkdir(app, { recursive: true });
+    await writeFile(
+      path.join(app, "server.mjs"),
+      'createSessionOwnership(); createOwnedTmuxSession(); terminateOwnedSession(); tmux("kill-session");\n',
+      "utf8",
+    );
+    const result = await lintGovernance({ root, groups: ["docs"] });
+    const finding = result.findings.find((candidate) => candidate.rule === "agent-shell/session-ownership-contract");
+    assert.ok(finding);
+    assert.equal(finding.file, "packages/agent-shell/app/server.mjs");
+    assert.match(finding.message, /outside the session ownership capability/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("dependency lint flags disallowed vertical package dependencies", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "tangent-governance-"));
   try {

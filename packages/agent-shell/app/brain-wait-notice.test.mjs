@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 
 import { readInbox, unreadNotices } from "./brain-inbox.mjs";
 import { newPipeline, writePipeline } from "./pipeline-record.mjs";
+import { SESSION_OWNER_OPTION } from "./session-ownership.mjs";
 import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
 
 isolateTmuxTests();
@@ -69,8 +70,20 @@ function pollSessions(base) {
   return fetch(`${base}/api/sessions`).catch(() => {});
 }
 
-/** Kills one tmux session; a session that is already gone is not an error. */
-async function killSession(name) {
+/** Returns the stable Agent Shell identity used for one test root. */
+function instanceIdFor(root) {
+  return `brain-wait-${path.basename(root)}`;
+}
+
+/** Kills one tmux session only when this test server owns it. */
+async function killSession(name, root) {
+  let owner = "";
+  try {
+    owner = execFileSync("tmux", ["display-message", "-p", "-t", `=${name}:`, `#{${SESSION_OWNER_OPTION}}`], { encoding: "utf8" }).trim();
+  } catch {
+    return;
+  }
+  if (owner !== instanceIdFor(root)) return;
   await new Promise((resolve) => execFile("tmux", ["kill-session", "-t", `=${name}`], () => resolve()));
 }
 
@@ -102,6 +115,7 @@ function startServer(root, trees, port, label, waitMinutes) {
       TANGENT_BRAINS_ROOT: path.join(root, "brains"),
       TANGENT_BRAIN_WAIT_MINUTES: String(waitMinutes),
       AGENT_MESSAGE_LOG: path.join(root, "messages.jsonl"),
+      TANGENT_SHELL_INSTANCE_ID: instanceIdFor(root),
       GROQ_API_KEY: "",
       CHAT_SESSION: `${label}-${process.pid}`,
     },
@@ -136,6 +150,7 @@ async function post(base, route, body) {
  */
 function makePane(name, dir, script) {
   execFileSync("tmux", ["new-session", "-d", "-s", name, "-c", dir, "bash", "-lc", script]);
+  execFileSync("tmux", ["set-option", "-t", name, SESSION_OWNER_OPTION, instanceIdFor(dir)]);
 }
 
 /** Hand-builds a one-step running pipeline record and writes it. */
@@ -176,7 +191,7 @@ test("a step stuck at a decision menu past the threshold notifies the brain once
   // "working", can never itself qualify.
   const child = startServer(root, trees, port, "wait-decision", 0.05);
   context.after(async () => {
-    for (const session of sessions) await killSession(session);
+    for (const session of sessions) await killSession(session, root);
     await stopServer(child);
     await rm(root, { recursive: true, force: true });
   });
@@ -233,7 +248,7 @@ test("a step stuck at an unsent draft past the threshold notifies the brain once
   }
   const child = startServer(root, trees, port, "wait-draft", 0.05);
   context.after(async () => {
-    for (const session of sessions) await killSession(session);
+    for (const session of sessions) await killSession(session, root);
     await stopServer(child);
     await rm(root, { recursive: true, force: true });
   });
@@ -281,7 +296,7 @@ test("a decision pane that resolves before the threshold notifies the brain abou
   }
   const child = startServer(root, trees, port, "wait-resolves", 0.05);
   context.after(async () => {
-    for (const session of sessions) await killSession(session);
+    for (const session of sessions) await killSession(session, root);
     await stopServer(child);
     await rm(root, { recursive: true, force: true });
   });

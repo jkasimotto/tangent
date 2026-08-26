@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
 import { readInbox } from "./brain-inbox.mjs";
 import { armedPromptPath } from "./armed-prompts.mjs";
 import { PIPELINE_SCHEMA, readPipeline } from "./pipeline-record.mjs";
+import { SESSION_OWNER_SCHEMA, sessionOwnerPath } from "./session-ownership.mjs";
 import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
 
 isolateTmuxTests();
@@ -75,6 +76,7 @@ test("an empty tmux world never stops a running step, flips its Goal, or clears 
   const area = `otto/${leaf}`;
   const ghost = `ghost-worker-${process.pid}`;
   const unrelated = `unrelated-${process.pid}`;
+  const instanceId = `empty-world-${process.pid}`;
 
   const trees = path.join(root, "trees");
   const areaDirectory = path.join(trees, "otto", leaf);
@@ -92,16 +94,19 @@ test("an empty tmux world never stops a running step, flips its Goal, or clears 
   const pipelines = path.join(root, "pipelines");
   const brains = path.join(root, "brains");
   const armed = path.join(root, "armed");
+  const sessionOwners = path.join(root, "session-owners");
+  const startedAt = new Date(Date.now() - 10 * 60_000).toISOString();
   await mkdir(path.join(pipelines, "otto", leaf), { recursive: true });
   await mkdir(path.join(brains, "otto", leaf), { recursive: true });
   await mkdir(armed, { recursive: true });
+  await mkdir(sessionOwners, { recursive: true });
+  await writeFile(sessionOwnerPath(sessionOwners, ghost), JSON.stringify({ schema: SESSION_OWNER_SCHEMA, session: ghost, instanceId, claimedAt: startedAt }), "utf8");
   // notifyBrain persists a notice only for an Area some brain record owns.
   await writeFile(
     path.join(brains, "otto", leaf, "brain.json"),
     JSON.stringify({ schema: "area-brain.v1", area, instruction: "Probe.", launch: null, command: "true", label: "", planFile: `${area}/plan-probe.md`, status: "ended", session: null, generations: [] }),
     "utf8"
   );
-  const startedAt = new Date(Date.now() - 10 * 60_000).toISOString();
   await writeFile(
     path.join(pipelines, "otto", leaf, "probe-empty.json"),
     JSON.stringify({
@@ -149,6 +154,8 @@ test("an empty tmux world never stops a running step, flips its Goal, or clears 
       TANGENT_PIPELINES_ROOT: pipelines,
       TANGENT_BRAINS_ROOT: brains,
       TANGENT_ARMED_ROOT: armed,
+      TANGENT_SESSION_OWNERS_ROOT: sessionOwners,
+      TANGENT_SHELL_INSTANCE_ID: instanceId,
       AGENT_MESSAGE_LOG: path.join(root, "messages.jsonl"),
       GROQ_API_KEY: "",
       CHAT_SESSION: `empty-world-${process.pid}`,

@@ -10,7 +10,7 @@ function dimension(value, fallback, minimum, maximum) {
 }
 
 /** Attaches the durable tmux terminal transport to an HTTP server. */
-export function attachTerminalTransport(server, { port, workspace, chatSession, chatCommand, maxConnections = 128 }) {
+export function attachTerminalTransport(server, { port, workspace, chatSession, chatCommand, maxConnections = 128, prepareSession = null }) {
   const wss = new WebSocketServer({ server, path: "/term", maxPayload: 64 * 1024, perMessageDeflate: false });
   wss.on("connection", (socket, request) => {
     if (wss.clients.size > maxConnections) {
@@ -31,51 +31,64 @@ export function attachTerminalTransport(server, { port, workspace, chatSession, 
     }
     const cols = dimension(url.searchParams.get("cols"), 120, 20, 500);
     const rows = dimension(url.searchParams.get("rows"), 32, 5, 200);
-    const args = session === chatSession
-      ? ["new-session", "-A", "-s", session, "-c", workspace]
-      : ["attach-session", "-t", `=${session}`];
-    if (session === chatSession) {
-      const shell = process.env.SHELL ?? "/bin/zsh";
-      args.push(`exec ${shell} -ic '${chatCommand.replace(/'/g, "'\\''")}'`);
-    }
-    let terminal;
-    try {
-      terminal = pty.spawn("tmux", args, {
-        name: "xterm-256color", cols, rows, cwd: workspace,
-        env: { ...process.env, TERM: "xterm-256color" },
-      });
-    } catch (error) {
-      console.error("terminal spawn:", error?.message ?? error);
-      socket.close(1011, "terminal could not start");
-      return;
-    }
-    let clientClosed = false;
-    socket.isAlive = true;
-    socket.on("pong", () => { socket.isAlive = true; });
-    terminal.onData((data) => {
-      if (socket.readyState !== WebSocket.OPEN) return;
-      if (socket.bufferedAmount > MAX_TERMINAL_BUFFER_BYTES) {
-        socket.close(1013, "terminal client is too slow");
+    /** Starts the PTY only after the Agent Shell instance authorizes the target. */
+    const start = () => {
+      if (socket.readyState >= WebSocket.CLOSING) return;
+      const prepared = Boolean(prepareSession);
+      const args = session === chatSession && !prepared
+        ? ["new-session", "-A", "-s", session, "-c", workspace]
+        : ["attach-session", "-t", `=${session}`];
+      if (session === chatSession && !prepared) {
+        const shell = process.env.SHELL ?? "/bin/zsh";
+        args.push(`exec ${shell} -ic '${chatCommand.replace(/'/g, "'\\''")}'`);
+      }
+      let terminal;
+      try {
+        terminal = pty.spawn("tmux", args, {
+          name: "xterm-256color", cols, rows, cwd: workspace,
+          env: { ...process.env, TERM: "xterm-256color" },
+        });
+      } catch (error) {
+        console.error("terminal spawn:", error?.message ?? error);
+        socket.close(1011, "terminal could not start");
         return;
       }
-      try { socket.send(data); } catch {}
-    });
-    terminal.onExit(() => {
-      if (!clientClosed && socket.readyState < WebSocket.CLOSING) socket.close(4404, "tmux session ended");
-    });
-    socket.on("message", (raw) => {
-      const text = raw.toString();
-      if (text.startsWith("\x00resize:")) {
-        const [nextCols, nextRows] = text.slice(8).split("x").map(Number);
-        terminal.resize(dimension(nextCols, cols, 20, 500), dimension(nextRows, rows, 5, 200));
-      } else {
-        terminal.write(text);
-      }
-    });
-    socket.on("error", (error) => console.error("terminal socket:", error?.message ?? error));
-    socket.on("close", () => {
-      clientClosed = true;
-      try { terminal.kill(); } catch {}
+      let clientClosed = false;
+      socket.isAlive = true;
+      socket.on("pong", () => { socket.isAlive = true; });
+      terminal.onData((data) => {
+        if (socket.readyState !== WebSocket.OPEN) return;
+        if (socket.bufferedAmount > MAX_TERMINAL_BUFFER_BYTES) {
+          socket.close(1013, "terminal client is too slow");
+          return;
+        }
+        try { socket.send(data); } catch {}
+      });
+      terminal.onExit(() => {
+        if (!clientClosed && socket.readyState < WebSocket.CLOSING) socket.close(4404, "tmux session ended");
+      });
+      socket.on("message", (raw) => {
+        const text = raw.toString();
+        if (text.startsWith("\x00resize:")) {
+          const [nextCols, nextRows] = text.slice(8).split("x").map(Number);
+          terminal.resize(dimension(nextCols, cols, 20, 500), dimension(nextRows, rows, 5, 200));
+        } else {
+          terminal.write(text);
+        }
+      });
+      socket.on("error", (error) => console.error("terminal socket:", error?.message ?? error));
+      socket.on("close", () => {
+        clientClosed = true;
+        try { terminal.kill(); } catch {}
+      });
+    };
+    if (!prepareSession) {
+      start();
+      return;
+    }
+    Promise.resolve(prepareSession({ session, chat: session === chatSession, workspace, chatCommand })).then(start, (error) => {
+      console.error("terminal ownership:", error?.message ?? error);
+      socket.close(4403, "tmux session belongs to another Agent Shell instance");
     });
   });
   wss.on("error", (error) => console.error("terminal transport:", error?.message ?? error));

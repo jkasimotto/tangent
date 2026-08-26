@@ -2,7 +2,7 @@
 
 Start here when changing architecture, package boundaries, or agent workflow.
 
-Agent Shell is the daily product for work with coding agents. Its current local implementation lives in `packages/agent-shell/app/`. A stable gateway owns the UI and terminal edge while a supervised controller owns workflows (ADR-0032). Each exact Area has one logical brain, and that brain controls the managed work of its own Area only. A brain never inherits an ancestor's Area and never owns a child Area, so a parent and a child brain route information to each other but cannot create, start, advance, or close each other's work. Julian's direct word and an approved Request authorize work inside that same exact Area; an approved Request authorizes only its exact proposal. Agent messages and Documents do not expand authority. `tangent handover` and `tangent goal handover` use one worker route. An accepted handover writes the Goal queue and its exact-Area notice receipt before it reports success. The brain owns later transitions and requests. See ADR-0033 and ADR-0034.
+Agent Shell is the daily product for work with coding agents. Its current local implementation lives in `packages/agent-shell/app/`. A stable gateway owns the UI and terminal edge while a supervised controller owns workflows (ADR-0032). Gateway and controller share one runtime identity. They can attach to or stop only tmux sessions with that identity (ADR-0036). Each exact Area has one logical brain, and that brain controls the managed work of its own Area only. A brain never inherits an ancestor's Area and never owns a child Area, so a parent and a child brain route information to each other but cannot create, start, advance, or close each other's work. Julian's direct word and an approved Request authorize work inside that same exact Area; an approved Request authorizes only its exact proposal. Agent messages and Documents do not expand authority. `tangent handover` and `tangent goal handover` use one worker route. An accepted handover writes the Goal queue and its exact-Area notice receipt before it reports success. The brain owns later transitions and requests. See ADR-0033, ADR-0034, and ADR-0036.
 
 Human CLI defaults are `setup`, `status`, `process`, `trigger`, `usage`, `rollup`, `search`, `eval`, `mark`, `doctor`, and `completion`.
 `tangent process` runs configured processes from inherited, ignored `.processes.json` files in Tangent Areas. Managed processes use Area-bound tmux sessions so they remain visible and inspectable in the hierarchy.
@@ -33,6 +33,7 @@ Decisions:
 - decisions/ADR-0025-brain-writes-what-needs-julian.md
 - decisions/ADR-0031-agent-shell-capability-ownership.md
 - decisions/ADR-0032-agent-shell-resilient-runtime.md
+- decisions/ADR-0036-agent-shell-process-ownership.md
 - decisions/ADR-0030-area-triggers.md
 - ui/adr/0001-ui-package-split.md
 - ui/adr/0002-react-vite-ui-stack.md

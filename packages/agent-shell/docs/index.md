@@ -9,7 +9,7 @@ Purpose: the CLI surface of the Agent Shell, under the root `tangent` command:
 - Brain and server CLI: `tangent brain handover|status` shows lifecycle, health, checkpoint, and Questions. `tangent shell rebuild` rebuilds and restarts the server.
 - Study partner CLI: `tangent study` (spawns an interactive `claude-otto` session carrying the partner contract) and `tangent study contract` (prints that contract).
 
-The Agent Shell gateway in `packages/agent-shell/app/gateway.mjs` owns port 4321 and durable terminal transport. It supervises the controller in `server.mjs`. The controller owns logical Area brains, Goal queues, worker handover notice receipts, Questions, Operation events, and session projection. See ADR-0032 and ADR-0034.
+The Agent Shell gateway in `packages/agent-shell/app/gateway.mjs` owns port 4321 and durable terminal transport. It supervises the controller in `server.mjs`. Both processes share one runtime identity. They can use only tmux sessions marked with that identity. The controller owns logical Area brains, Goal queues, worker handover notice receipts, Questions, Operation events, and session projection. See ADR-0032, ADR-0034, and ADR-0036.
 
 Agent Shell centers each Area on one logical brain with an active or inactive lifecycle. Exact Area identity controls mutations. The Area Journal saves unstructured text before brain delivery.
 
@@ -20,3 +20,4 @@ This package never runs an agent itself except through `tangent study`. That com
 Read next:
 - architecture.md
 - public-api.md
+- runtime-operations.md

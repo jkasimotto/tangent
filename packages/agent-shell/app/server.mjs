@@ -71,6 +71,7 @@ import { withDefaultModel } from "./agent-command.mjs";
 import { clearGoalCleanup, readAllGoalCleanups, readGoalCleanup, writeGoalCleanup } from "./goal-cleanup-record.mjs";
 import { appendJournalEntry, appendMilestone, boundedBrainPrompt, BRAIN_STRUCTURAL_LIMIT, clipSummary, composeBrainPrompt, emergencyStartProblem, exportLegacyAudit, inheritedInstructionFiles, journalFiles, projectAreaMemory, querySubtreeMilestones, readMilestones, selectCurrentDocuments } from "./area-brain-domain.mjs";
 import { materialOperationEvents, markOperationEventDelivered, readOperationEvents, writeOperationEvents } from "./operation-events.mjs";
+import { agentShellInstanceId, createSessionOwnership, SESSION_OWNER_OPTION } from "./session-ownership.mjs";
 import { appendWorkerHandoverReceipt, pendingWorkerHandoverReceipts, recordWorkerHandoverNotice, workerHandoverReceipt } from "./worker-handover-receipt.mjs";
 
 const rawExecFileAsync = promisify(execFile);
@@ -134,6 +135,23 @@ function traceOperation(name, fields = {}) {
 const CHAT_SESSION = process.env.CHAT_SESSION ?? "orchestrator";
 const WORKSPACE = process.env.WORKSPACE ?? path.join(here, "workspace");
 const TREES_ROOT = process.env.TREES_ROOT ?? path.join(os.homedir(), ".tangent", "trees");
+const INSTANCE_ID = agentShellInstanceId({
+  explicit: process.env.TANGENT_SHELL_INSTANCE_ID,
+  host: HOST,
+  port: PORT,
+  treesRoot: TREES_ROOT,
+  chatSession: CHAT_SESSION,
+});
+const SESSION_OWNERS_ROOT = process.env.TANGENT_SESSION_OWNERS_ROOT
+  ?? (process.env.TANGENT_BRAINS_ROOT
+    ? path.join(path.dirname(process.env.TANGENT_BRAINS_ROOT), "session-owners")
+    : path.join(os.homedir(), ".tangent", "agent-shell", "session-owners"));
+const sessionOwnership = createSessionOwnership({
+  instanceId: INSTANCE_ID,
+  root: SESSION_OWNERS_ROOT,
+  /** Runs one ownership command through the bounded tmux executor. */
+  runTmux: (args) => execFileAsync("tmux", args),
+});
 /** Runs one Git command for the vault repository boundary. */
 const runRepositoryGit = (args) => execFileAsync("git", args);
 const vaultRepository = createVaultRepository({ root: TREES_ROOT, runGit: runRepositoryGit });
@@ -195,6 +213,7 @@ const BRAIN_IDLE_NOTICE_MS = Number(process.env.TANGENT_BRAIN_IDLE_MINUTES ?? 10
 // has false positives, so a step that answers itself within the threshold
 // must never notify.
 const BRAIN_WAIT_NOTICE_MS = Number(process.env.TANGENT_BRAIN_WAIT_MINUTES ?? 5) * 60_000;
+const RECONCILE_INTERVAL_MS = Math.max(10, Number(process.env.TANGENT_RECONCILE_INTERVAL_MS ?? 10_000));
 // The carried-context threshold at which a worker must report context risk
 // to its queue controller. One
 // absolute token count, never a percentage: a model whose window is at or
@@ -225,14 +244,14 @@ async function loadSessions() {
     const { stdout } = await runTmuxObservation([
       "list-sessions",
       "-F",
-      "#{session_name}\t#{session_path}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{@tangent_area}\t#{@tangent_kind}\t#{@tangent_goal}\t#{@tangent_process}\t#{pane_current_command}\t#{@tangent_phase}\t#{@tangent_work_title}\t#{@tangent_launch}\t#{@tangent_launch_ref}\t#{@tangent_pipeline}\t#{@tangent_step}\t#{@tangent_brain}\t#{@tangent_generation}",
+      `#{session_name}\t#{session_path}\t#{session_windows}\t#{session_attached}\t#{session_created}\t#{@tangent_area}\t#{@tangent_kind}\t#{@tangent_goal}\t#{@tangent_process}\t#{pane_current_command}\t#{@tangent_phase}\t#{@tangent_work_title}\t#{@tangent_launch}\t#{@tangent_launch_ref}\t#{@tangent_pipeline}\t#{@tangent_step}\t#{@tangent_brain}\t#{@tangent_generation}\t#{${SESSION_OWNER_OPTION}}`,
     ]);
     const sessions = stdout
       .trim()
       .split("\n")
       .filter(Boolean)
       .map((line) => {
-        const [name, cwd, windows, attached, created, area, kind, goal, processName, command, phase, workTitle, launchLabel, launchIds, pipeline, step, brain, generation] = line.split("\t");
+        const [name, cwd, windows, attached, created, area, kind, goal, processName, command, phase, workTitle, launchLabel, launchIds, pipeline, step, brain, generation, instanceId] = line.split("\t");
         return {
           name,
           cwd,
@@ -255,19 +274,28 @@ async function loadSessions() {
           step: step ? Number(step) : null,
           brain: brain || null,
           generation: generation ? Number(generation) : null,
+          instanceId: instanceId || null,
+          owned: instanceId === INSTANCE_ID,
           isChat: name === CHAT_SESSION,
         };
       });
-    return await paneObserver.enrich(await withGoalInfo(sessions));
+    const owned = sessions.filter((session) => session.owned);
+    const enriched = new Map((await paneObserver.enrich(await withGoalInfo(owned))).map((session) => [session.name, session]));
+    return sessions.map((session) => enriched.get(session.name) ?? session);
   } catch (error) {
     if (isNoTmuxServer(error)) return [];
     throw error;
   }
 }
 
-/** Reads one coalesced session observation, preserving its last valid value. */
-async function listSessions(options) {
+/** Reads every tmux session so foreign names remain visible to collision and reconcile guards. */
+async function listAllSessions(options) {
   return sessionObservation.get(options);
+}
+
+/** Reads only sessions whose live tmux marker belongs to this Agent Shell. */
+async function listSessions(options) {
+  return (await listAllSessions(options)).filter((session) => session.owned);
 }
 
 /**
@@ -319,6 +347,50 @@ const sessionObservation = createObservationCache({
   load: loadSessions,
   ttlMs: Number(process.env.TANGENT_SESSION_OBSERVATION_TTL_MS ?? 500),
 });
+
+/** Creates one tmux session and records this instance before any caller can use it. */
+async function createOwnedTmuxSession(name, args) {
+  const created = await execFileAsync("tmux", ["new-session", "-P", "-F", "#{session_id}", ...args]);
+  const target = String(created.stdout ?? "").trim();
+  if (!target) throw new Error(`tmux returned no immutable session ID for ${name}`);
+  try {
+    await sessionOwnership.claim(name, target);
+  } catch (error) {
+    await sessionOwnership.terminate(name).catch(() => {});
+    throw new Error(`Agent Shell could not record ownership for ${name}: ${error.message ?? error}`);
+  }
+  sessionObservation.invalidate();
+}
+
+/** Terminates one session only when its live marker belongs to this instance. */
+async function terminateOwnedSession(name) {
+  const result = await sessionOwnership.terminate(name);
+  if (result.state === "terminated") sessionObservation.invalidate();
+  return result;
+}
+
+/** Gives one stable refusal for a foreign, legacy, or unreadable session. */
+function terminationError(name, result) {
+  if (result.state === "foreign") return `session ${name} belongs to Agent Shell instance ${result.instanceId}`;
+  if (result.state === "legacy") return `session ${name} has no ${SESSION_OWNER_OPTION} ownership marker`;
+  if (result.state === "absent") return `no live session ${name}`;
+  return `could not inspect or terminate session ${name}: ${result.error?.stderr ?? result.error?.message ?? result.error ?? result.state}`;
+}
+
+/** Authorizes a terminal attachment and creates this instance's chat session when absent. */
+async function prepareTerminalSession({ session, chat, workspace, chatCommand }) {
+  const inspected = await sessionOwnership.inspect(session);
+  if (inspected.state === "live") {
+    if (inspected.instanceId === INSTANCE_ID) return;
+    const ownership = inspected.instanceId ? { state: "foreign", instanceId: inspected.instanceId } : { state: "legacy" };
+    throw new Error(terminationError(session, ownership));
+  }
+  if (inspected.state === "error") throw new Error(terminationError(session, inspected));
+  if (!chat) throw new Error(`no live session ${session}`);
+  const shell = process.env.SHELL ?? "/bin/zsh";
+  const command = `exec ${shell} -ic '${chatCommand.replace(/'/g, "'\\''")}'`;
+  await createOwnedTmuxSession(session, ["-d", "-s", session, "-c", workspace, command]);
+}
 
 /**
  * Reads one labelled line from an Area note's `## Resources` section, the
@@ -389,14 +461,10 @@ async function spawnSession(area, name) {
   if (!/^[a-z0-9-]+$/.test(name ?? "")) return { status: 400, error: "name must be lowercase letters, digits, hyphens" };
   const dir = await areaDirectory(area);
   if (!dir) return { status: 409, error: "no repo recorded, ask chat" };
-  // Exact-name existence check via list-sessions: has-session prefix-matches,
-  // and set-option rejects the "=" exact-match prefix on this tmux, so "="
-  // targets are unusable here.
-  try {
-    const { stdout } = await execFileAsync("tmux", ["list-sessions", "-F", "#{session_name}"]);
-    if (stdout.split("\n").includes(name)) return { status: 409, error: `session "${name}" already exists` };
-  } catch {} // no tmux server yet: nothing exists
-  await execFileAsync("tmux", ["new-session", "-d", "-s", name, "-c", dir]);
+  if ((await listAllSessions({ fresh: true })).some((session) => session.name === name)) {
+    return { status: 409, error: `session "${name}" already exists` };
+  }
+  await createOwnedTmuxSession(name, ["-d", "-s", name, "-c", dir]);
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_area", area]);
   return { status: 200 };
 }
@@ -468,7 +536,8 @@ async function controlCommand(program, action) {
   const sessions = await listProgramSessions();
   const current = sessions.find((item) => item.name === session);
   if (action === "close") {
-    if (current) await execFileAsync("tmux", ["kill-session", "-t", `=${session}`]);
+    const result = await terminateOwnedSession(session);
+    if (!["terminated", "absent"].includes(result.state)) throw new Error(terminationError(session, result));
     return;
   }
   if (action === "stop") {
@@ -479,7 +548,10 @@ async function controlCommand(program, action) {
   if (!program.cwd) throw new Error("This area needs a Repository or Worktree resource first.");
   if (current && current.state !== "stopped") throw new Error("This command is already running.");
   if (!current) {
-    await execFileAsync("tmux", ["new-session", "-d", "-s", session, "-c", program.cwd]);
+    const occupied = await sessionOwnership.inspect(session);
+    if (occupied.state === "live") throw new Error(terminationError(session, occupied.instanceId ? { state: "foreign", instanceId: occupied.instanceId } : { state: "legacy" }));
+    if (occupied.state === "error") throw new Error(terminationError(session, occupied));
+    await createOwnedTmuxSession(session, ["-d", "-s", session, "-c", program.cwd]);
     await execFileAsync("tmux", ["set-option", "-t", session, "@tangent_kind", "command"]);
     await execFileAsync("tmux", ["set-option", "-t", session, "@tangent_area", program.area]);
     await execFileAsync("tmux", ["set-option", "-t", session, "@tangent_process", program.name]);
@@ -1331,7 +1403,7 @@ async function finishGoalExecutions({ goalFiles, reason, sessions = null }) {
   for (const session of sessions ?? []) if (targets.has(session.goal)) candidates.add(session.name);
   let observed;
   try {
-    observed = await listSessions({ fresh: true });
+    observed = await listAllSessions({ fresh: true });
     if (sessionObservation.status().error) throw new Error(`tmux observation failed: ${sessionObservation.status().error}`);
   } catch (error) {
     failures.push({ goal: null, session: null, operation: "observe", error: String(error.message ?? error) });
@@ -1341,28 +1413,32 @@ async function finishGoalExecutions({ goalFiles, reason, sessions = null }) {
   const liveByName = new Map(observed.map((session) => [session.name, session]));
   for (const name of candidates) {
     const live = liveByName.get(name);
-    if (!live) { alreadyAbsent.push(name); continue; }
-    if (live.kind !== "goal" || !targets.has(live.goal)) {
-      preserved.push({ session: name, kind: live.kind, goal: live.goal, created: live.created });
+    if (!live) {
+      if (await sessionOwnership.ownsRecorded(name)) alreadyAbsent.push(name);
+      else preserved.push({ session: name, kind: null, goal: null, created: null, instanceId: null, legacy: true });
       continue;
     }
-    try {
-      await execFileAsync("tmux", ["kill-session", "-t", `=${name}`]);
+    if (!live.owned || live.kind !== "goal" || !targets.has(live.goal)) {
+      preserved.push({ session: name, kind: live.kind, goal: live.goal, created: live.created, instanceId: live.instanceId });
+      continue;
+    }
+    const stopped = await terminateOwnedSession(name);
+    if (stopped.state === "terminated") {
       removed.push(name);
       armedSessions.delete(name);
       await clearArmedPrompt(ARMED_ROOT, name);
-    } catch (error) {
-      failures.push({ goal: live.goal, session: name, operation: "kill", error: String(error.stderr ?? error.message ?? error) });
+    } else {
+      failures.push({ goal: live.goal, session: name, operation: "kill", error: terminationError(name, stopped) });
     }
   }
   sessionObservation.invalidate();
   let after = [];
   if (!failures.length) {
     try {
-      after = await listSessions({ fresh: true });
+      after = await listAllSessions({ fresh: true });
       if (sessionObservation.status().error) throw new Error(`tmux observation failed: ${sessionObservation.status().error}`);
       for (const session of after) {
-        if (session.kind === "goal" && targets.has(session.goal)) failures.push({ goal: session.goal, session: session.name, operation: "verify", error: "worker session remains live" });
+        if (session.owned && session.kind === "goal" && targets.has(session.goal)) failures.push({ goal: session.goal, session: session.name, operation: "verify", error: "worker session remains live" });
       }
     } catch (error) {
       failures.push({ goal: null, session: null, operation: "verify", error: String(error.message ?? error) });
@@ -1874,7 +1950,7 @@ async function tickArmedSessions() {
     ({ stdout } = await execFileAsync("tmux", [
       "list-sessions",
       "-F",
-      "#{session_name}\t#{@tangent_area}\t#{@tangent_goal}\t#{pane_current_command}",
+      `#{session_name}\t#{@tangent_area}\t#{@tangent_goal}\t#{pane_current_command}\t#{${SESSION_OWNER_OPTION}}`,
     ]));
   } catch {
     armedSessions.clear(); // no tmux server: nothing to watch
@@ -1882,7 +1958,8 @@ async function tickArmedSessions() {
   }
   const live = new Set();
   for (const line of stdout.trim().split("\n").filter(Boolean)) {
-    const [name, area, file, command] = line.split("\t");
+    const [name, area, file, command, instanceId] = line.split("\t");
+    if (instanceId !== INSTANCE_ID) continue;
     live.add(name);
     if (!armedSessions.has(name) || SHELL_CMDS.has(command)) continue;
     const armed = armedSessions.get(name);
@@ -1951,13 +2028,16 @@ async function armSession(name, phase = "execute", submit = false, document = ""
 async function rearmPersistedPrompts() {
   const records = await readAllArmedPrompts(ARMED_ROOT);
   if (!records.length) return;
-  const sessions = await listSessions();
+  const sessions = await listAllSessions();
   // An empty snapshot cannot say these sessions died (snapshotCanJudgeAbsence):
   // keep every record; the next boot that sees a real world sweeps them.
   if (!snapshotCanJudgeAbsence(sessions)) return;
-  const live = new Set(sessions.map((session) => session.name));
+  const live = new Map(sessions.map((session) => [session.name, session]));
   for (const record of records) {
-    if (!live.has(record.session)) {
+    const observed = live.get(record.session);
+    if (observed && !observed.owned) continue;
+    if (!observed) {
+      if (!(await sessionOwnership.ownsRecorded(record.session))) continue;
       await clearArmedPrompt(ARMED_ROOT, record.session).catch(() => {});
       continue;
     }
@@ -1985,12 +2065,12 @@ const messages = createMessageDelivery({
 
 const runtimeScheduler = createRuntimeScheduler([
   {
-    name: "goal reconciliation", intervalMs: 10_000,
+    name: "goal reconciliation", intervalMs: RECONCILE_INTERVAL_MS,
     /** Keeps durable repair live inside the replaceable controller. */
     active: () => true,
     /** Reads one current session snapshot and repairs stale work bindings. */
     async run() {
-      const sessions = await listSessions();
+      const sessions = await listAllSessions();
       // The snapshot's own capture time bounds what it can testify about: a
       // step or binding created after the capture is invisible to it, so
       // absence is judged against loadedAt, never against the clock now.
@@ -2093,7 +2173,7 @@ async function spawnDescribeWorkSession(area, description, sources, { session: r
   let name = base;
   for (let index = 2; names.has(name); index += 1) name = `${base.slice(0, 55 - String(index).length)}-${index}`;
   const directory = (await areaDirectory(area)) ?? path.join(TREES_ROOT, area);
-  await execFileAsync("tmux", ["new-session", "-d", "-s", name, "-c", directory]);
+  await createOwnedTmuxSession(name, ["-d", "-s", name, "-c", directory]);
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_area", area]);
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_kind", "work-definition"]);
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_phase", "define"]);
@@ -2197,7 +2277,7 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
   const dir = workingDirectory || (await areaDirectory(area)) || path.join(TREES_ROOT, area);
   // No command: tmux runs the login shell, so aliases (claude-otto) resolve
   // and the session outlives whatever agent is started in it.
-  await execFileAsync("tmux", ["new-session", "-d", "-s", phaseName, "-c", dir]);
+  await createOwnedTmuxSession(phaseName, ["-d", "-s", phaseName, "-c", dir]);
   trace?.mark("tmux session created", { session: phaseName });
   await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_area", area]);
   await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_goal", o.file]);
@@ -2271,7 +2351,7 @@ let reconciling = false;
  * works, so only an explicit user action has authority to end a Run.
  */
 async function reconcileGoals(sessions, snapshotAt = Date.now()) {
-  if (reconciling || Date.now() - lastReconcile < 10_000) return;
+  if (reconciling || Date.now() - lastReconcile < RECONCILE_INTERVAL_MS) return;
   // An empty snapshot is a wrong-world signal, never proof that a session
   // ended (snapshotCanJudgeAbsence): judging against one marked live workers
   // stopped when a test-spawned server reconciled the real records.
@@ -2293,6 +2373,7 @@ async function reconcileGoals(sessions, snapshotAt = Date.now()) {
     if (closedCleanup?.releasedGoals.length) await vaultCommit(closedCleanup.releasedGoals, "update: release Goals from finished worker", closed[0].area, null);
     for (const t of byFile.values()) {
       if (["done", "dropped"].includes(t.status)) continue;
+      if (t.session && !live.has(t.session) && !(await sessionOwnership.ownsRecorded(t.session))) continue;
       // The Goal file's own mtime is when its binding was last written: a
       // binding fresher than the sessions snapshot above is not stopped.
       if (!goalBindingGoneFromSnapshot(t, live, snapshotAt)) continue;
@@ -2304,7 +2385,7 @@ async function reconcileGoals(sessions, snapshotAt = Date.now()) {
     }
     await reconcilePipelines(sessions, snapshotAt);
     await reconcileBrains(sessions);
-    await reconcileContextHandovers(sessions);
+    await reconcileContextHandovers(sessions.filter((session) => session.owned));
     const missingFinishedGoals = new Set();
     for (const s of sessions) {
       if (!s.goal) continue;
@@ -2666,10 +2747,12 @@ async function startPipelineStep(record, index, trace = null) {
   step.status = "running";
   step.startedAt = new Date().toISOString();
   step.endedAt = null;
+  record.instanceId = INSTANCE_ID;
   step.attempts = [...(step.attempts ?? []), {
     id: randomUUID(),
     kind: step.nextAttemptKind ?? "managed",
     session: step.session,
+    instanceId: INSTANCE_ID,
     startedAt: step.startedAt,
     endedAt: null,
     report: null,
@@ -2706,6 +2789,7 @@ async function startPipeline(file, { steps, extraFiles = [], start = true, attem
   if (error) return { status: 400, error };
   const sameArea = extraFiles.map(String).filter((extra) => byFile.get(extra)?.area === o.area);
   const record = newPipeline({ goal: o.file, goalRevision: await goalContentRevision(o.file), area: o.area, slug: o.slug, extraFiles: sameArea, steps });
+  record.instanceId = INSTANCE_ID;
   record.steps[0].nextAttemptKind = attemptKind;
   const { warnings, rows: launches } = materialized;
   await writePipeline(PIPELINES_ROOT, record);
@@ -3105,9 +3189,15 @@ async function controlPipelineUnlocked(goalFile, action, index, options = {}) {
   if (guarded) return guarded;
   const step = record.steps[Number(index) - 1];
   if (!step) return { status: 404, error: `no step ${index}` };
-  const sessions = await listSessions({ fresh: true });
+  const allSessions = await listAllSessions({ fresh: true });
+  const sessions = allSessions.filter((session) => session.owned);
   trace?.mark("control sessions ready", { sessions: sessions.length });
-  const live = step.session ? sessions.find((item) => item.name === step.session) : null;
+  const observed = step.session ? allSessions.find((item) => item.name === step.session) : null;
+  if (observed && !observed.owned) {
+    const ownership = observed.instanceId ? { state: "foreign", instanceId: observed.instanceId } : { state: "legacy" };
+    return { status: 409, error: terminationError(step.session, ownership) };
+  }
+  const live = observed?.owned ? observed : null;
   if (action === "advance") {
     // A caller can lose the HTTP response after the durable transition. The
     // exact retry is an idempotent status read, not a second agent launch.
@@ -3131,15 +3221,25 @@ async function controlPipelineUnlocked(goalFile, action, index, options = {}) {
   }
   if (action === "skip") {
     if (!["stopped", "running", "pending"].includes(step.status)) return { status: 409, error: `step ${step.index} is ${step.status}` };
-    if (live) await execFileAsync("tmux", ["kill-session", "-t", "=" + step.session]).catch(() => {});
+    if (live) {
+      const stopped = await terminateOwnedSession(step.session);
+      if (stopped.state !== "terminated") return { status: 409, error: terminationError(step.session, stopped) };
+    }
     return completePipelineStep(record, step, `Step ${step.index} was skipped by Julian.`, "skip");
   }
   if (action === "end") {
     // Stop work on the whole run: kill the live step, if any, and end every
     // step that has not run. The Goal stays open with its handovers.
     const attemptSessions = new Set([step.session, ...(step.attempts ?? []).map((attempt) => attempt.session)].filter(Boolean));
+    const foreign = [...attemptSessions].map((name) => allSessions.find((session) => session.name === name)).find((session) => session && !session.owned);
+    if (foreign) {
+      const ownership = foreign.instanceId ? { state: "foreign", instanceId: foreign.instanceId } : { state: "legacy" };
+      return { status: 409, error: terminationError(foreign.name, ownership) };
+    }
     for (const name of attemptSessions) {
-      if (sessions.some((session) => session.name === name)) await execFileAsync("tmux", ["kill-session", "-t", "=" + name]).catch(() => {});
+      if (!sessions.some((session) => session.name === name)) continue;
+      const stopped = await terminateOwnedSession(name);
+      if (stopped.state !== "terminated") return { status: 409, error: terminationError(name, stopped) };
     }
     const ended = endPipeline(record);
     await writePipeline(PIPELINES_ROOT, record);
@@ -3253,7 +3353,8 @@ async function pipelinesView(sessions) {
 
 /** Marks running steps whose session is gone as stopped. */
 async function reconcilePipelines(sessions, snapshotAt = Date.now()) {
-  const byName = new Map(sessions.map((item) => [item.name, item]));
+  const allByName = new Map(sessions.map((item) => [item.name, item]));
+  const byName = new Map(sessions.filter((item) => item.owned).map((item) => [item.name, item]));
   const now = Date.now();
   let goalIndex = null;
   for (const record of await readAllPipelines(PIPELINES_ROOT)) {
@@ -3287,8 +3388,13 @@ async function reconcilePipelines(sessions, snapshotAt = Date.now()) {
         waitNoticed.delete(key);
         continue;
       }
+      const observed = allByName.get(step.session);
+      if (observed && !observed.owned) continue;
       const live = byName.get(step.session);
       if (!live) {
+        const attempt = step.attempts?.findLast?.((item) => item.session === step.session);
+        const ownedAttempt = attempt?.instanceId === INSTANCE_ID || await sessionOwnership.ownsRecorded(step.session);
+        if (!ownedAttempt) continue;
         // The step may have started after this sessions snapshot was taken:
         // its tmux session exists but this list predates it. Absence is
         // judged against the snapshot's capture time, so a stale list can
@@ -3296,7 +3402,6 @@ async function reconcilePipelines(sessions, snapshotAt = Date.now()) {
         if (!stepGoneFromSnapshot(step, byName, snapshotAt)) continue;
         step.status = "stopped";
         step.endedAt = new Date().toISOString();
-        const attempt = step.attempts?.findLast?.((item) => item.session === step.session);
         if (attempt && !attempt.endedAt) {
           attempt.endedAt = step.endedAt;
           attempt.result = { type: "runtime-stopped", summary: "The worker session ended without a handover." };
@@ -3365,8 +3470,8 @@ async function exactLiveBrainForArea(area) {
   const records = await readAllBrains(BRAINS_ROOT);
   const record = records.find((item) => item.area === String(area ?? "") && item.status === "active" && item.session);
   if (!record) return null;
-  const live = await execFileAsync("tmux", ["has-session", "-t", "=" + record.session]).then(() => true, () => false);
-  return live ? record : null;
+  const live = await sessionOwnership.inspect(record.session);
+  return live.state === "live" && live.instanceId === INSTANCE_ID ? record : null;
 }
 
 /** Running brain records whose current sessions exist in this snapshot. */
@@ -3528,7 +3633,7 @@ function describedWorkNotice(area, description, sources) {
 async function describeWorkToBrain(owner, area, description, sources, launchOverride = null) {
   owner = await exactLiveBrainForArea(area) ?? brainRecordForArea(await readAllBrains(BRAINS_ROOT), area) ?? owner;
   const live = owner.status === "active" && owner.session
-    ? await execFileAsync("tmux", ["has-session", "-t", "=" + owner.session]).then(() => true, () => false)
+    ? await sessionOwnership.inspect(owner.session).then((session) => session.state === "live" && session.instanceId === INSTANCE_ID)
     : false;
   if (live) {
     if (launchOverride) {
@@ -3804,7 +3909,7 @@ async function brainPrompt(record) {
 
 /** Creates and primes the next generation's session for one brain record. */
 async function spawnBrainSession(record) {
-  const sessions = await listSessions();
+  const sessions = await listAllSessions();
   const names = new Set(sessions.map((item) => item.name));
   const generation = (record.generations?.length ?? 0) + 1;
   const name = uniqueSessionName(brainSessionName(record.area, generation), "", names, 60);
@@ -3822,7 +3927,7 @@ async function spawnBrainSession(record) {
     return { status: 500, error: problem };
   }
   try {
-    await execFileAsync("tmux", ["new-session", "-d", "-s", name, "-c", directory]);
+    await createOwnedTmuxSession(name, ["-d", "-s", name, "-c", directory]);
   } catch (error) {
     return { status: 500, error: `could not create the brain session: ${error.stderr ?? error.message ?? error}` };
   }
@@ -3833,7 +3938,9 @@ async function spawnBrainSession(record) {
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_generation", String(generation)]);
   if (record.label) await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_launch", record.label]);
   if (launchRef(record.launch)) await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_launch_ref", launchRef(record.launch)]);
+  record.instanceId = INSTANCE_ID;
   const entry = beginGeneration(record, name);
+  entry.instanceId = INSTANCE_ID;
   entry.deliveryStatus = "pending";
   record.health = { status: "starting", problem: null, updatedAt: new Date().toISOString() };
   // The notices no generation read belong in this generation's first
@@ -3927,11 +4034,16 @@ async function startBrainUnlocked(area, { instruction = "", choice = null, comma
   if (!area || !existsSync(path.join(TREES_ROOT, area))) return { status: 404, error: `no Area ${area || "(none)"}` };
   const existing = await readBrain(BRAINS_ROOT, area);
   if (existing?.session) {
-    const live = await execFileAsync("tmux", ["has-session", "-t", "=" + existing.session]).then(() => true, () => false);
-    if (live && (choice || command)) {
+    const live = await sessionOwnership.inspect(existing.session);
+    if (live.state === "error") return { status: 503, error: terminationError(existing.session, live) };
+    if (live.state === "live" && live.instanceId !== INSTANCE_ID) {
+      const ownership = live.instanceId ? { state: "foreign", instanceId: live.instanceId } : { state: "legacy" };
+      return { status: 409, error: terminationError(existing.session, ownership) };
+    }
+    if (live.state === "live" && (choice || command)) {
       return { status: 409, error: `the ${existing.area} brain is already live on ${existing.label || existing.command}; refresh to send this draft to that brain` };
     }
-    if (live) return { status: 200, session: existing.session, generation: existing.generation, brain: existing, reattached: true };
+    if (live.state === "live") return { status: 200, session: existing.session, generation: existing.generation, brain: existing, reattached: true };
   }
   if (resume) {
     if (!existing) return { status: 404, error: "no brain to resume on this Area" };
@@ -3999,8 +4111,8 @@ async function startBrainUnlocked(area, { instruction = "", choice = null, comma
 async function liveBrainForSession(sessionName) {
   const record = (await readAllBrains(BRAINS_ROOT)).find((item) => item.session === sessionName);
   if (!record || record.status !== "active") return null;
-  const live = await execFileAsync("tmux", ["has-session", "-t", "=" + sessionName]).then(() => true, () => false);
-  if (!live) return null;
+  const live = await sessionOwnership.inspect(sessionName);
+  if (live.state !== "live" || live.instanceId !== INSTANCE_ID) return null;
   return record;
 }
 
@@ -4073,7 +4185,8 @@ async function handoverBrain(sessionName, text) {
   // mutation response so a caller can never observe a successful handover
   // while the old generation is still live. Expire any observation that may
   // have been populated while the replacement was starting.
-  await execFileAsync("tmux", ["kill-session", "-t", "=" + previous]);
+  const retired = await terminateOwnedSession(previous);
+  if (retired.state !== "terminated") throw new Error(terminationError(previous, retired));
   brainPacing.forget(previous);
   sessionObservation.invalidate();
   return { status: 200, state: "started", session: started.session, generation: started.generation, previous, brain: record };
@@ -4143,18 +4256,31 @@ async function reportUnshownForJulian(record, index) {
  * long-running attempt to hand over.
  */
 async function reconcileBrains(sessions) {
-  const live = new Set(sessions.map((item) => item.name));
+  const allByName = new Map(sessions.map((item) => [item.name, item]));
+  const ownedSessions = sessions.filter((item) => item.owned);
+  const live = new Set(ownedSessions.map((item) => item.name));
   const now = Date.now();
-  await flushBrainNotices(sessions, "unread notices found by a sweep").catch(reportNoticeSweepFailure);
+  await flushBrainNotices(ownedSessions, "unread notices found by a sweep").catch(reportNoticeSweepFailure);
   const index = await vaultIndex();
   for (const record of await readAllBrains(BRAINS_ROOT)) {
+    const entry = currentGeneration(record);
+    const observed = record.session ? allByName.get(record.session) : null;
+    if (observed && !observed.owned) continue;
+    const durableOwner = record.instanceId === INSTANCE_ID
+      || entry?.instanceId === INSTANCE_ID
+      || Boolean(record.session && await sessionOwnership.ownsRecorded(record.session));
+    if (!observed && !durableOwner) continue;
     if (record.status === "active") {
       await reportUnshownForJulian(record, index).catch(reportUnshownFailure);
     }
     if (record.status !== "active") continue;
-    const deliveryFailed = currentGeneration(record)?.deliveryStatus === "failed";
+    const deliveryFailed = entry?.deliveryStatus === "failed";
     if (record.session && live.has(record.session) && deliveryFailed) {
-      await execFileAsync("tmux", ["kill-session", "-t", "=" + record.session]).catch(() => {});
+      const stopped = await terminateOwnedSession(record.session);
+      if (stopped.state !== "terminated") {
+        console.error("brain recovery ownership:", terminationError(record.session, stopped));
+        continue;
+      }
       live.delete(record.session);
     }
     if (!record.session || !live.has(record.session)) {
@@ -4175,6 +4301,7 @@ async function reconcileBrains(sessions) {
       await writeBrain(BRAINS_ROOT, record);
       const recovered = await startBrain(record.area, { resume: true, automaticRecovery: true });
       if (recovered.status !== 200) {
+        console.error("brain recovery start:", JSON.stringify({ area: record.area, instanceId: INSTANCE_ID, status: recovered.status, error: recovered.error }));
         const current = await readBrain(BRAINS_ROOT, record.area);
         if (current) {
           current.recovery = { attempts: nextAttempts, exhausted: nextAttempts >= BRAIN_RECOVERY_LIMIT, lastAttemptAt: record.recovery.lastAttemptAt };
@@ -4196,7 +4323,6 @@ async function reconcileBrains(sessions) {
       messages.queue(record.session, { from: "tangent", area: record.area, text: wakeFromPaceText(record), queuedAt: new Date().toISOString() });
       continue;
     }
-    const entry = currentGeneration(record);
     if (!entry || entry.remindedAt || now - Date.parse(entry.startedAt) < BRAIN_REFRESH_MS) continue;
     entry.remindedAt = new Date().toISOString();
     await writeBrain(BRAINS_ROOT, record);
@@ -4398,7 +4524,10 @@ async function brainsView(sessions, { includeForJulian = true } = {}) {
 async function acceptGoalAssignment(file) {
   const o = (await goalsByFile()).get(file);
   if (!o) return { status: 404, error: `no goal file ${file}` };
-  if (o.session) await execFileAsync("tmux", ["kill-session", "-t", "=" + o.session]).catch(() => {});
+  if (o.session) {
+    const stopped = await terminateOwnedSession(o.session);
+    if (!["terminated", "absent"].includes(stopped.state)) return { status: 409, error: terminationError(o.session, stopped) };
+  }
   await writeGoalBinding(o.file, { status: "open", session: null });
   await vaultCommit([o.file], `update: ${o.area} goal ${o.slug} assignment accepted`, o.area, null);
   return { status: 200 };
@@ -4723,7 +4852,11 @@ async function executeVoiceActions(actions, ctx, focused, utterance) {
             summary.push("refusing to kill that");
             break;
           }
-          await execFileAsync("tmux", ["kill-session", "-t", "=" + target]);
+          const stopped = await terminateOwnedSession(target);
+          if (stopped.state !== "terminated") {
+            summary.push(`refusing to kill ${target}: ${terminationError(target, stopped)}`);
+            break;
+          }
           summary.push(`killed ${target}`);
           break;
         }
@@ -4735,9 +4868,8 @@ async function executeVoiceActions(actions, ctx, focused, utterance) {
           const cmd = String(a.cmd ?? "").trim();
           if (!cmd) break;
           agentCmd = cmd;
-          try {
-            await execFileAsync("tmux", ["kill-session", "-t", "=" + CHAT_SESSION]);
-          } catch {} // no chat session running: reconnect spawns it fresh
+          const stopped = await terminateOwnedSession(CHAT_SESSION);
+          if (!["terminated", "absent"].includes(stopped.state)) throw new Error(terminationError(CHAT_SESSION, stopped));
           summary.push(`chat agent → ${cmd}`);
           break;
         }
@@ -5154,14 +5286,19 @@ const shellControlRoutes = createShellControlRoutes({
   /** Changes the orchestrator command and stops its old session. */
   async agent(command) {
     agentCmd = command;
-    await execFileAsync("tmux", ["kill-session", "-t", "=" + CHAT_SESSION]).catch(() => {});
+    const stopped = await terminateOwnedSession(CHAT_SESSION);
+    if (!["terminated", "absent"].includes(stopped.state)) throw new Error(terminationError(CHAT_SESSION, stopped));
     return agentCmd;
   },
   /** Kills one exact non-orchestrator session and closes its execution records. */
   async kill(name) {
     if (!name || name === CHAT_SESSION) return { status: 400, error: "refusing to kill this session" };
     try {
-      await execFileAsync("tmux", ["kill-session", "-t", "=" + name]);
+      const stopped = await terminateOwnedSession(name);
+      if (stopped.state !== "terminated") {
+        const status = stopped.state === "absent" ? 404 : stopped.state === "error" ? 503 : 409;
+        return { status, error: terminationError(name, stopped) };
+      }
       const ended = await endPipelineForSession(name).catch((error) => { console.error("end pipeline on kill:", error.message ?? error); return null; });
       const brainEnded = await endBrainForSession(name).catch((error) => { console.error("end brain on kill:", error.message ?? error); return null; });
       return { status: 200, value: { ok: true, pipelineEnded: Boolean(ended), brainEnded: Boolean(brainEnded) } };
@@ -5196,7 +5333,7 @@ const shellStateRoutes = createShellStateRoutes({
       caffeinate: caffeinateProc !== null,
       voice: Boolean(GROQ_KEY),
       sessions,
-      runtime: { sessions: sessionObservation.status() },
+      runtime: { instanceId: INSTANCE_ID, ownershipKey: SESSION_OWNER_OPTION, sessions: sessionObservation.status() },
       pipelines,
       brains,
       contextHandoverTokens: CONTEXT_HANDOVER_TOKENS,
@@ -5627,7 +5764,7 @@ const server = http.createServer(async (req, res) => {
   res.setHeader("x-tangent-operation-id", operationId);
   try {
     if (url.pathname === "/api/health" && req.method === "GET") {
-      sendJson(res, 200, { ok: true, service: "tangent-agent-shell-controller", role: IS_CONTROLLER ? "controller" : "standalone", boot: BOOT_ID, pid: process.pid });
+      sendJson(res, 200, { ok: true, service: "tangent-agent-shell-controller", role: IS_CONTROLLER ? "controller" : "standalone", boot: BOOT_ID, instanceId: INSTANCE_ID, pid: process.pid });
       return;
     }
     if (url.pathname === "/api/events" && req.method === "GET") {
@@ -5700,17 +5837,18 @@ if (!IS_CONTROLLER) {
     workspace: WORKSPACE,
     chatSession: CHAT_SESSION,
     chatCommand: withDefaultModel(agentCmd),
+    prepareSession: prepareTerminalSession,
   });
 }
 
 server.listen(PORT, HOST, () => {
   const address = server.address();
   const listeningPort = typeof address === "object" && address ? address.port : PORT;
-  console.log(`agent-shell controller: http://${HOST}:${listeningPort}`);
+  console.log(`agent-shell controller: http://${HOST}:${listeningPort} instance=${INSTANCE_ID}`);
   console.log(`  orchestrator session "${CHAT_SESSION}" runs: ${agentCmd}`);
   console.log(`  workspace: ${WORKSPACE}`);
   if (IS_CONTROLLER && process.send) {
-    process.send({ type: "agent-shell-ready", port: listeningPort, boot: BOOT_ID, pid: process.pid });
+    process.send({ type: "agent-shell-ready", port: listeningPort, boot: BOOT_ID, instanceId: INSTANCE_ID, pid: process.pid });
     const heartbeat = setInterval(() => process.send?.({ type: "agent-shell-heartbeat", boot: BOOT_ID, at: Date.now() }), 1_000);
     heartbeat.unref();
   }

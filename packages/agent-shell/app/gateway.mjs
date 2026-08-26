@@ -7,19 +7,40 @@ import path from "node:path";
 import { execFile, fork } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { attachTerminalTransport } from "./terminal-transport.mjs";
 import { withDefaultModel } from "./agent-command.mjs";
 import { sendJson } from "./http-json.mjs";
 import { serveStaticAsset } from "./static-assets.mjs";
 import { createStateEvents } from "./state-events.mjs";
 import { startEventLoopWatchdog } from "./event-loop-watchdog.mjs";
+import { agentShellInstanceId, createSessionOwnership, SESSION_OWNER_OPTION } from "./session-ownership.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const HOST = process.env.HOST ?? "127.0.0.1";
 const PORT = Number(process.env.PORT ?? 4321);
 const CHAT_SESSION = process.env.CHAT_SESSION ?? "orchestrator";
 const WORKSPACE = process.env.WORKSPACE ?? path.join(here, "workspace");
+const TREES_ROOT = process.env.TREES_ROOT ?? path.join(os.homedir(), ".tangent", "trees");
 const AGENT_CMD = process.env.AGENT_CMD ?? "claude";
+const INSTANCE_ID = agentShellInstanceId({
+  explicit: process.env.TANGENT_SHELL_INSTANCE_ID,
+  host: HOST,
+  port: PORT,
+  treesRoot: TREES_ROOT,
+  chatSession: CHAT_SESSION,
+});
+const SESSION_OWNERS_ROOT = process.env.TANGENT_SESSION_OWNERS_ROOT
+  ?? (process.env.TANGENT_BRAINS_ROOT
+    ? path.join(path.dirname(process.env.TANGENT_BRAINS_ROOT), "session-owners")
+    : path.join(os.homedir(), ".tangent", "agent-shell", "session-owners"));
+const execFileAsync = promisify(execFile);
+const sessionOwnership = createSessionOwnership({
+  instanceId: INSTANCE_ID,
+  root: SESSION_OWNERS_ROOT,
+  /** Runs one gateway-owned tmux command. */
+  runTmux: (args) => execFileAsync("tmux", args, { timeout: 10_000, maxBuffer: 8 * 1024 * 1024 }),
+});
 const GATEWAY_BOOT_ID = randomUUID();
 const CONTROLLER_ENTRY = process.env.AGENT_SHELL_CONTROLLER_ENTRY ?? path.join(here, "server.mjs");
 const CONTROLLER_HEARTBEAT_TIMEOUT_MS = Number(process.env.TANGENT_CONTROLLER_HEARTBEAT_TIMEOUT_MS ?? 7_500);
@@ -52,12 +73,13 @@ export function controllerRestartDelay(attempt, baseMs = RESTART_BASE_MS, maxMs 
 
 /** Reports the currently supervised generation without exposing its child. */
 function controllerStatus() {
-  if (!controller) return { state: restartTimer ? "restarting" : "starting", pid: null, boot: null };
+  if (!controller) return { state: restartTimer ? "restarting" : "starting", pid: null, boot: null, instanceId: INSTANCE_ID };
   const heartbeatAgeMs = Date.now() - controller.lastHeartbeatAt;
   return {
     state: controller.port ? (heartbeatAgeMs > CONTROLLER_HEARTBEAT_TIMEOUT_MS ? "unresponsive" : "ready") : "starting",
     pid: controller.child.pid ?? null,
     boot: controller.boot ?? null,
+    instanceId: controller.instanceId ?? INSTANCE_ID,
     heartbeatAgeMs,
     restartAttempt,
   };
@@ -76,6 +98,7 @@ function startController() {
       AGENT_SHELL_GATEWAY_BOOT: GATEWAY_BOOT_ID,
       AGENT_SHELL_GATEWAY_PID: String(process.pid),
       AGENT_SHELL_NO_OPEN: "1",
+      TANGENT_SHELL_INSTANCE_ID: INSTANCE_ID,
     },
     stdio: ["ignore", "inherit", "inherit", "ipc"],
   });
@@ -83,6 +106,7 @@ function startController() {
     child,
     port: null,
     boot: null,
+    instanceId: null,
     startedAt: Date.now(),
     readyAt: null,
     lastHeartbeatAt: Date.now(),
@@ -92,8 +116,14 @@ function startController() {
   child.on("message", (message) => {
     if (controller !== generation || !message || typeof message !== "object") return;
     if (message.type === "agent-shell-ready") {
+      const childInstanceId = String(message.instanceId ?? "");
+      if (childInstanceId !== INSTANCE_ID) {
+        terminateController(`instance mismatch ${childInstanceId || "missing"}`);
+        return;
+      }
       generation.port = Number(message.port);
       generation.boot = String(message.boot ?? "");
+      generation.instanceId = childInstanceId;
       generation.readyAt = Date.now();
       generation.lastHeartbeatAt = Date.now();
       console.error(`[gateway] controller ready pid=${child.pid} port=${generation.port} boot=${generation.boot}`);
@@ -166,7 +196,7 @@ function sendSessionSnapshot(response, value, { stale, operationId }) {
     ...value,
     runtime: {
       ...(value?.runtime ?? {}),
-      gateway: { boot: GATEWAY_BOOT_ID, stale, controller: status, capturedAt: sessionSnapshot?.capturedAt ?? null },
+      gateway: { boot: GATEWAY_BOOT_ID, instanceId: INSTANCE_ID, stale, controller: status, capturedAt: sessionSnapshot?.capturedAt ?? null },
     },
   };
   response.setHeader("x-tangent-stale", stale ? "1" : "0");
@@ -304,6 +334,7 @@ const server = http.createServer(async (request, response) => {
         service: "tangent-agent-shell-gateway",
         role: "gateway",
         boot: GATEWAY_BOOT_ID,
+        instanceId: INSTANCE_ID,
         pid: process.pid,
         controller: controllerStatus(),
         sessions: { cached: Boolean(sessionSnapshot), capturedAt: sessionSnapshot?.capturedAt ?? null },
@@ -347,6 +378,28 @@ const terminalTransport = attachTerminalTransport(server, {
   chatSession: CHAT_SESSION,
   chatCommand: withDefaultModel(AGENT_CMD),
   maxConnections: Number(process.env.TANGENT_TERMINAL_MAX_CONNECTIONS ?? 128),
+  /** Creates or authorizes only this gateway's tmux sessions. */
+  async prepareSession({ session, chat, workspace, chatCommand }) {
+    const inspected = await sessionOwnership.inspect(session);
+    if (inspected.state === "live") {
+      if (inspected.instanceId === INSTANCE_ID) return;
+      const owner = inspected.instanceId || `legacy session without ${SESSION_OWNER_OPTION}`;
+      throw new Error(`session ${session} belongs to ${owner}`);
+    }
+    if (inspected.state === "error") throw inspected.error;
+    if (!chat) throw new Error(`no live session ${session}`);
+    const shell = process.env.SHELL ?? "/bin/zsh";
+    const command = `exec ${shell} -ic '${chatCommand.replace(/'/g, "'\\''")}'`;
+    const created = await execFileAsync("tmux", ["new-session", "-P", "-F", "#{session_id}", "-d", "-s", session, "-c", workspace, command]);
+    const target = String(created.stdout ?? "").trim();
+    if (!target) throw new Error(`tmux returned no immutable session ID for ${session}`);
+    try {
+      await sessionOwnership.claim(session, target);
+    } catch (error) {
+      await sessionOwnership.terminate(session).catch(() => {});
+      throw error;
+    }
+  },
 });
 
 /** Stops only shell processes; durable tmux sessions remain untouched. */
@@ -387,7 +440,7 @@ server.on("error", async (error) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`agent-shell gateway: http://${HOST}:${PORT}`);
+  console.log(`agent-shell gateway: http://${HOST}:${PORT} instance=${INSTANCE_ID}`);
   startController();
   if (!process.env.AGENT_SHELL_NO_OPEN) {
     execFile("open", ["-a", "Agent Shell"], (error) => {

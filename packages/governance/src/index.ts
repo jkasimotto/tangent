@@ -222,6 +222,43 @@ async function lintAgentShellWorkflowContracts(ctx: LintContext): Promise<Govern
       ],
     });
   }
+  const sessionOwnershipContracts = [
+    {
+      file: "packages/agent-shell/app/server.mjs",
+      required: ["createSessionOwnership", "createOwnedTmuxSession", "terminateOwnedSession"],
+      forbidden: /["']kill-session["']/,
+    },
+    {
+      file: "packages/agent-shell/app/gateway.mjs",
+      required: ["TANGENT_SHELL_INSTANCE_ID", "sessionOwnership.claim", "prepareSession"],
+      forbidden: /["']kill-session["']/,
+    },
+    {
+      file: "packages/agent-shell/app/session-ownership.mjs",
+      required: ["SESSION_OWNER_OPTION", "#{session_id}", "inspected.target"],
+      forbidden: null,
+    },
+  ];
+  for (const contract of sessionOwnershipContracts) {
+    const file = path.join(ctx.root, contract.file);
+    if (!await pathExists(file)) continue;
+    const text = await readFile(file, "utf8");
+    const missing = contract.required.filter((marker) => !text.includes(marker));
+    const rawTermination = Boolean(contract.forbidden?.test(text));
+    if (!missing.length && !rawTermination) continue;
+    findings.push({
+      rule: "agent-shell/session-ownership-contract",
+      severity: "error",
+      file: contract.file,
+      message: rawTermination
+        ? "terminates tmux outside the session ownership capability."
+        : `loses required session ownership markers: ${missing.join(", ")}.`,
+      fix: [
+        "Create and terminate Agent Shell sessions through session-ownership.mjs.",
+        "Keep the explicit instance ID, live tmux owner option, and immutable tmux session target.",
+      ],
+    });
+  }
   return findings;
 }
 

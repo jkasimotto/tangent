@@ -34,6 +34,10 @@ Requests have a response deadline and an operation ID. A failed mutation respons
 
 A supplied brain caller must be the current live brain for the exact target Area. Parent, child, sibling, worker, and stale sessions cannot mutate the target Area.
 
+Each server response comes from one Agent Shell instance identity. `GET /api/health` returns `instanceId`. `GET /api/sessions` returns only sessions owned by that instance.
+
+The live tmux ownership key is `@tangent_agent_shell_instance`. A foreign or markerless legacy session cannot be attached, stopped, reconciled, or adopted.
+
 ## Agent messages
 
 - `tangent agent list` reads live agent sessions and queued message counts.
@@ -108,6 +112,7 @@ Routine healthy polling, starts, stops, and repeated success stay quiet. Event i
 - `POST /api/brains/requests/answer`: `{ area, id, answer, note?, effectRevision? }`.
 - `GET /api/brains/show?area=<path>|session=<name>` reads one enriched brain.
 - `GET /api/sessions` reads the complete Work projection.
+- `POST /api/kill/<session>` stops only a session owned by the responding Agent Shell instance. It returns 409 for foreign or legacy sessions.
 - `GET /api/goals?area=<path>[&subtree=1]` lists Goals. An exact-Area result also carries `scope`, `childAreas`, `descendantGoals`, and the `subtreeCommand` that reads the rest.
 - `POST /api/areas/journal`: `{ area, text, idempotencyKey, source? }` saves the exact words, commits them with any rollover archive as `files`, and then wakes the exact Area brain. The result `route` says what happened to that brain: `brain-opened`, `brain-resumed`, `brain-started`, `no-brain`, `not-started`, `duplicate`, or `not-committed`. A `not-committed` capture carries `commitError`, records no milestone, and wakes no brain. The surface keeps its text and idempotency key. After Git recovers, the same request commits the existing Journal files before one milestone and one brain delivery. An idempotency key stays used after a rollover moves its entry to an archive, so a retry never saves the same words twice.
 - `GET /api/areas/journal?area=<path>` reads the active Journal and its archives in order.
@@ -119,7 +124,8 @@ Mutation routes validate exact Area authority, current revisions, and idempotenc
 ## Shell and study
 
 - `tangent shell rebuild` starts a durable build and waits for the gateway boot ID to change. A failed build leaves the current server running.
+- Rebuild and shutdown keep all tmux sessions alive. A replacement with the same instance identity can recover its own sessions.
 - `tangent study` starts the study partner with the published study contract.
 - `tangent study contract` prints that contract.
 
-See ADR-0020 for the CLI package boundary, ADR-0032 for the gateway, and ADR-0034 for the current Area-brain workflow.
+See ADR-0020 for the CLI boundary, ADR-0032 for the gateway, ADR-0034 for Area brains, and ADR-0036 for process ownership.

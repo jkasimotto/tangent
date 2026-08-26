@@ -33,24 +33,36 @@ test("Describe work reaches inactive, live, or recovering exact-Area brains", as
 const fs = require("node:fs");
 const file = process.env.FAKE_TMUX_STATE;
 const args = process.argv.slice(2);
-const state = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : { sessions: {}, commands: [] };
+const state = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : { sessions: {}, commands: [], nextId: 1 };
+state.nextId ??= Object.keys(state.sessions).length + 1;
 state.commands.push(args);
 const value = (flag) => args[args.indexOf(flag) + 1];
 const save = () => fs.writeFileSync(file, JSON.stringify(state));
-if (args[0] === "new-session") state.sessions[value("-s")] = { name: value("-s"), cwd: value("-c"), options: {} };
+const cleanTarget = (target) => String(target ?? "").replace(/^=/, "").replace(/:$/, "");
+const sessionFor = (target) => Object.values(state.sessions).find((session) => session.name === cleanTarget(target) || session.id === cleanTarget(target));
+const formatSession = (session, format) => format.replace(/#\{([^}]+)\}/g, (_, key) => key.startsWith("@") ? (session.options[key] ?? "") : ({ session_id: session.id, session_name: session.name, session_path: session.cwd, session_windows: "1", session_attached: "0", session_created: "1", pane_current_command: "zsh" }[key] ?? ""));
+if (args[0] === "new-session") {
+  const name = value("-s");
+  const session = { id: "$" + state.nextId++, name, cwd: value("-c"), options: {} };
+  state.sessions[name] = session;
+  if (args.includes("-P")) process.stdout.write(formatSession(session, value("-F") ?? "#{session_id}") + "\\n");
+}
 else if (args[0] === "set-option") {
-  const session = state.sessions[String(value("-t")).replace(/^=/, "")];
+  const session = sessionFor(value("-t"));
   if (session) session.options[args[args.indexOf("-t") + 2]] = args[args.indexOf("-t") + 3] ?? "";
 } else if (args[0] === "has-session") {
-  if (!state.sessions[String(value("-t")).replace(/^=/, "")]) process.exitCode = 1;
-} else if (args[0] === "kill-session") delete state.sessions[String(value("-t")).replace(/^=/, "")];
+  if (!sessionFor(value("-t"))) { process.stderr.write("can't find session\\n"); process.exitCode = 1; }
+} else if (args[0] === "display-message") {
+  const session = sessionFor(value("-t"));
+  if (!session) { process.stderr.write("can't find session\\n"); process.exitCode = 1; }
+  else process.stdout.write(formatSession(session, args.at(-1)) + "\\n");
+} else if (args[0] === "kill-session") {
+  const session = sessionFor(value("-t"));
+  if (session) delete state.sessions[session.name];
+}
 else if (args[0] === "list-sessions") {
   const format = value("-F") ?? "#{session_name}";
-  for (const session of Object.values(state.sessions)) {
-    const fields = { session_name: session.name, session_path: session.cwd, session_windows: "1", session_attached: "0", session_created: "1", pane_current_command: "zsh" };
-    const line = format.replace(/#\{([^}]+)\}/g, (_, key) => key.startsWith("@") ? (session.options[key] ?? "") : (fields[key] ?? ""));
-    process.stdout.write(line + "\\n");
-  }
+  for (const session of Object.values(state.sessions)) process.stdout.write(formatSession(session, format) + "\\n");
 }
 save();
 `, "utf8");

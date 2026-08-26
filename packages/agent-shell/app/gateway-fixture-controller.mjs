@@ -26,7 +26,7 @@ const server = http.createServer((request, response) => {
 
 server.listen(0, "127.0.0.1", () => {
   const address = server.address();
-  process.send?.({ type: "agent-shell-ready", port: address.port, boot, pid: process.pid });
+  process.send?.({ type: "agent-shell-ready", port: address.port, boot, instanceId: process.env.TANGENT_SHELL_INSTANCE_ID, pid: process.pid });
 });
 
 setInterval(() => process.send?.({ type: "agent-shell-heartbeat", boot, at: Date.now() }), 25);

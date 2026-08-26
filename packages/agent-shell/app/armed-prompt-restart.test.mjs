@@ -20,12 +20,14 @@ import { fileURLToPath } from "node:url";
 
 import { readAllArmedPrompts } from "./armed-prompts.mjs";
 import { PROBE_CHARS, promptArrived, squash } from "./prompt-delivery.mjs";
+import { SESSION_OWNER_OPTION } from "./session-ownership.mjs";
 import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
 
 isolateTmuxTests();
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);
+const INSTANCE_ID = `arm-restart-${process.pid}`;
 
 // Stands in for a real harness TUI: raw mode (no canonical line-buffer limit,
 // which drops the tail of a multi-KB prompt fed straight to a plain `cat`)
@@ -66,8 +68,14 @@ async function waitFor(what, check, attempts = 200) {
   throw new Error(`timed out waiting for ${what}`);
 }
 
-/** Kills one tmux session; a session that is already gone is not an error. */
+/** Kills one tmux session only when this test server owns it. */
 async function killSession(name) {
+  const owner = await new Promise((resolve) => execFile(
+    "tmux",
+    ["display-message", "-p", "-t", `=${name}:`, `#{${SESSION_OWNER_OPTION}}`],
+    (error, stdout) => resolve(error ? "" : stdout.trim()),
+  ));
+  if (owner !== INSTANCE_ID) return;
   await new Promise((resolve) => execFile("tmux", ["kill-session", "-t", `=${name}`], () => resolve()));
 }
 
@@ -98,6 +106,7 @@ function startServer(root, trees, port, label) {
       TANGENT_BRAINS_ROOT: path.join(root, "brains"),
       TANGENT_ARMED_ROOT: path.join(root, "armed"),
       AGENT_MESSAGE_LOG: path.join(root, "messages.jsonl"),
+      TANGENT_SHELL_INSTANCE_ID: INSTANCE_ID,
       GROQ_API_KEY: "",
       CHAT_SESSION: `${label}-${process.pid}`,
     },

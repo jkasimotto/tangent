@@ -15,12 +15,12 @@ test("background Goal reconciliation stops only exact closed-Goal workers", asyn
   const cleanup = source.match(/async function finishGoalExecutions\([^\n]*\) \{[\s\S]*?\n\}\n\n\/\*\* Marks one Goal/)?.[0] ?? "";
   assert.match(reconcile, /finishGoalExecutions/);
   assert.doesNotMatch(reconcile, /kill-session|cascadeGoalDone/);
-  assert.match(cleanup, /observed = await listSessions\(\{ fresh: true \}\)/);
+  assert.match(cleanup, /observed = await listAllSessions\(\{ fresh: true \}\)/);
   assert.doesNotMatch(cleanup, /observed = sessions \?\?/);
   assert.match(cleanup, /live\.kind !== "goal" \|\| !targets\.has\(live\.goal\)/);
-  assert.match(cleanup, /"kill-session", "-t", `=\$\{name\}`/);
+  assert.match(cleanup, /terminateOwnedSession\(name\)/);
   assert.match(controls, /url\.pathname\.startsWith\("\/api\/kill\/"\)/);
-  assert.match(source, /"kill-session", "-t", "=" \+ name/);
+  assert.doesNotMatch(source, /"kill-session"/);
 });
 
 test("the pane observer owns context parsing and session enrichment", async () => {

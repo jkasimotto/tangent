@@ -15,6 +15,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { appendNotice, readInbox, unreadNotices, writeInbox } from "./brain-inbox.mjs";
+import { SESSION_OWNER_OPTION } from "./session-ownership.mjs";
 import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
 
 isolateTmuxTests();
@@ -54,9 +55,22 @@ async function waitFor(what, check, attempts = 80) {
   throw new Error(`timed out waiting for ${what}`);
 }
 
-/** Kills one tmux session; a session that is already gone is not an error. */
-async function killSession(name) {
+/** Returns the stable Agent Shell identity used for one test root. */
+function instanceIdFor(root) {
+  return `brain-notices-${path.basename(root)}`;
+}
+
+/** Kills one tmux session only when this test server owns it. */
+async function killSession(name, root) {
+  let owner = "";
+  try {
+    owner = execFileSync("tmux", ["display-message", "-p", "-t", `=${name}:`, `#{${SESSION_OWNER_OPTION}}`], { encoding: "utf8" }).trim();
+  } catch {
+    return false;
+  }
+  if (owner !== instanceIdFor(root)) return owner || "legacy";
   await new Promise((resolve) => execFile("tmux", ["kill-session", "-t", `=${name}`], () => resolve()));
+  return true;
 }
 
 /**
@@ -91,6 +105,7 @@ function startServer(root, trees, port, label) {
       TANGENT_CONTINUATIONS_ROOT: path.join(root, "continuations"),
       TANGENT_BRAINS_ROOT: path.join(root, "brains"),
       AGENT_MESSAGE_LOG: path.join(root, "messages.jsonl"),
+      TANGENT_SHELL_INSTANCE_ID: instanceIdFor(root),
       GROQ_API_KEY: "",
       CHAT_SESSION: `${label}-${process.pid}`,
     },
@@ -112,11 +127,12 @@ test("startup converts one live solo worker into the authoritative queue without
   execFileSync("tmux", ["set-option", "-t", session, "@tangent_area", area]);
   execFileSync("tmux", ["set-option", "-t", session, "@tangent_goal", goal]);
   execFileSync("tmux", ["set-option", "-t", session, "@tangent_launch_command", "sleep 300"]);
+  execFileSync("tmux", ["set-option", "-t", session, SESSION_OWNER_OPTION, instanceIdFor(root)]);
   let port;
   try {
     port = await freePort();
   } catch (error) {
-    await killSession(session);
+    await killSession(session, root);
     if (error?.code === "EPERM") {
       context.skip("This environment does not permit local HTTP listeners.");
       return;
@@ -125,7 +141,7 @@ test("startup converts one live solo worker into the authoritative queue without
   }
   const child = startServer(root, trees, port, "solo-migration");
   context.after(async () => {
-    await killSession(session);
+    await killSession(session, root);
     await stopServer(child);
     await rm(root, { recursive: true, force: true });
   });
@@ -204,7 +220,7 @@ test("live brains can create and start only in their exact Area", async (context
   }
   const child = startServer(root, trees, port, "cross-area-brain");
   context.after(async () => {
-    for (const session of sessions) await killSession(session);
+    for (const session of sessions) await killSession(session, root);
     await stopServer(child);
     await rm(root, { recursive: true, force: true });
   });
@@ -326,7 +342,7 @@ test("a brain notice survives a server restart and reaches the next generation a
   }
   let child = startServer(root, trees, port, "notice-restart");
   context.after(async () => {
-    for (const session of sessions) await killSession(session);
+    for (const session of sessions) await killSession(session, root);
     await stopServer(child);
     await rm(root, { recursive: true, force: true });
   });
@@ -399,7 +415,7 @@ test("a notice with no live brain waits on disk and the next generation reads it
   }
   const child = startServer(root, trees, port, "notice-gap");
   context.after(async () => {
-    for (const session of sessions) await killSession(session);
+    for (const session of sessions) await killSession(session, root);
     await stopServer(child);
     await rm(root, { recursive: true, force: true });
   });
@@ -418,7 +434,12 @@ test("a notice with no live brain waits on disk and the next generation reads it
     steps: [{ instruction: "Implement the Goal.", command: "sleep 300" }],
   });
   assert.ok(started.session, JSON.stringify(started));
-  await killSession(brain.session);
+  assert.equal(await killSession(brain.session, root), true, "the fixture stops only its owned brain");
+  await waitFor("the stopped brain to leave the live-session view", async () => {
+    const body = await fetch(`${base}/api/sessions`).then((response) => response.json());
+    const live = body.sessions ?? body;
+    return Array.isArray(live) && !live.some((session) => session.name === brain.session);
+  });
   const handed = await post(base, "/api/goals/handover", {
     session: started.session,
     text: "Implemented the gap probe. Unresolved: none.",
@@ -468,7 +489,7 @@ test("a sweep queues an unread notice for the live brain once, and never twice",
   }
   const child = startServer(root, trees, port, "notice-sweep");
   context.after(async () => {
-    for (const session of sessions) await killSession(session);
+    for (const session of sessions) await killSession(session, root);
     await stopServer(child);
     await rm(root, { recursive: true, force: true });
   });
@@ -515,7 +536,7 @@ test("an over-long Request answer still reaches the inbox and the next generatio
   }
   const child = startServer(root, trees, port, "notice-long");
   context.after(async () => {
-    for (const session of sessions) await killSession(session);
+    for (const session of sessions) await killSession(session, root);
     await stopServer(child);
     await rm(root, { recursive: true, force: true });
   });
@@ -569,14 +590,31 @@ test("an over-long Request answer still reaches the inbox and the next generatio
  * once, so the name is taken and released in a race; the loop keeps trying
  * until it owns the name.
  */
-function makeIdleComposerPane(name, dir) {
+async function makeIdleComposerPane(name, dir, instanceId) {
   const script = "clear; printf '\\342\\235\\257 '; exec sleep 600";
   for (let attempt = 0; attempt < 40; attempt += 1) {
-    try { execFileSync("tmux", ["kill-session", "-t", `=${name}`], { stdio: "ignore" }); } catch {}
+    let nameAvailable = false;
+    try {
+      const owner = execFileSync("tmux", ["display-message", "-p", "-t", `=${name}:`, `#{${SESSION_OWNER_OPTION}}`], { encoding: "utf8" }).trim();
+      if (!owner) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        continue;
+      }
+      if (owner !== instanceId) throw new Error(`refused to replace ${name}; owner is ${owner}`);
+      execFileSync("tmux", ["kill-session", "-t", `=${name}`], { stdio: "ignore" });
+      nameAvailable = true;
+    } catch (error) {
+      if (!String(error?.message ?? "").includes("can't find session")) throw error;
+      nameAvailable = true;
+    }
+    if (!nameAvailable) continue;
     try {
       execFileSync("tmux", ["new-session", "-d", "-s", name, "-c", dir, "bash", "-lc", script], { stdio: "ignore" });
+      execFileSync("tmux", ["set-option", "-t", name, SESSION_OWNER_OPTION, instanceId], { stdio: "ignore" });
       return;
-    } catch {}
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
   }
   throw new Error(`could not take the pane name ${name}`);
 }
@@ -607,7 +645,7 @@ test("an over-long Request answer is typed into the live brain pane, not dropped
   }
   const child = startServer(root, trees, port, "notice-live");
   context.after(async () => {
-    for (const session of sessions) await killSession(session);
+    for (const session of sessions) await killSession(session, root);
     await stopServer(child);
     await rm(root, { recursive: true, force: true });
   });
@@ -619,7 +657,7 @@ test("an over-long Request answer is typed into the live brain pane, not dropped
   sessions.push(brain.session);
   // Let the server finish its own launch attempt before taking the pane name.
   await new Promise((resolve) => setTimeout(resolve, 4000));
-  makeIdleComposerPane(brain.session, root);
+  await makeIdleComposerPane(brain.session, root, instanceIdFor(root));
 
   const live = await waitFor("the brain pane to read as an idle composer", async () => {
     const body = await fetch(`${base}/api/sessions`).then((response) => response.json()).catch(() => null);

@@ -1,0 +1,88 @@
+# Agent Shell runtime ownership operations
+
+This guide diagnoses process ownership for Agent Shell. See ADR-0036 for the
+decision.
+
+## Identify an instance
+
+`TANGENT_SHELL_INSTANCE_ID` sets one explicit identity. Independent Agent Shell
+instances must use different values.
+
+Without that variable, Agent Shell derives a stable identity from these values:
+
+- public host and port;
+- `TREES_ROOT`;
+- `CHAT_SESSION`.
+
+The gateway passes the same identity to each replacement controller. A rebuild
+or controller restart must not change it.
+
+Inspect the public identity:
+
+```bash
+curl -s http://127.0.0.1:4321/api/health
+```
+
+The response includes `instanceId`. The session projection includes
+`runtime.instanceId` and `runtime.ownershipKey`.
+
+## Inspect a live session
+
+The live ownership key is `@tangent_agent_shell_instance`. Inspect one exact
+session with its immutable tmux ID:
+
+```bash
+tmux display-message -p -t '=SESSION:' '#{session_id} #{@tangent_agent_shell_instance}'
+```
+
+The second value must equal the server's `instanceId`. A missing value means
+that the process is legacy.
+
+Do not add the option to an existing process. That action would invent
+ownership evidence after creation.
+
+## Inspect stale recovery evidence
+
+Agent Shell stores owner sidecars here:
+
+```text
+~/.tangent/agent-shell/session-owners/
+```
+
+Each JSON record contains `session`, `instanceId`, and `claimedAt`. The file
+name is a hash of the session name.
+
+Goal queues and brain records also store `instanceId`. Compare all records with
+the public health identity before you diagnose recovery.
+
+Controller startup logs include `instance=<id>`. Gateway health names its
+identity and the controller identity.
+
+Failed brain recovery logs use `brain recovery start`. The JSON evidence names
+the Area, instance identity, status, and error.
+
+## Handle legacy processes
+
+A process without the live ownership key is a pre-change process. Agent Shell
+keeps it alive and refuses attachment, cleanup, reconciliation, or recovery.
+
+Let the process finish when possible. If removal is necessary, inspect it and
+stop it manually outside Agent Shell. Then relaunch work through Agent Shell.
+
+Agent Shell does not provide an adopt command. A new launch creates both live
+and durable ownership evidence.
+
+## Verify the boundary
+
+Run the focused production-path proof:
+
+```bash
+node --test packages/agent-shell/app/agent-shell-instance-ownership-http.test.mjs
+```
+
+The test starts two controllers on one private tmux socket. It checks explicit
+kill, reconciliation, cleanup, brain replacement, stale recovery, rebuild,
+shutdown, and legacy refusal.
+
+The governance rule `agent-shell/session-ownership-contract` rejects raw tmux
+termination outside `session-ownership.mjs`.

@@ -267,7 +267,7 @@ async function handoverWhenAllowed(base, session, text, limitMs = 30_000) {
 }
 
 test("work drops a lineage that has climbed the ladder back to the first rung", async (context) => {
-  const world = await boot(context, "brainreset", "1000,1000,60000");
+  const world = await boot(context, "brainreset", "1000,1000,600000");
   if (!world) {
     context.skip("This environment does not permit local HTTP listeners.");
     return;
@@ -284,7 +284,7 @@ test("work drops a lineage that has climbed the ladder back to the first rung", 
   sessions.push(second.body.session);
   assert.equal((await readBrain(brains, area)).waitingStreak, 2);
 
-  // The third rung is a minute, so this generation is firmly asleep.
+  // The third rung is ten minutes, so suite load cannot finish the wait.
   const refused = await post(base, "/api/brains/handover", { session: second.body.session, text: "Nothing again." });
   assert.equal(refused.status, 429, JSON.stringify(refused.body));
   assert.match(refused.body.error, /waiting handover number 3 in a row/);

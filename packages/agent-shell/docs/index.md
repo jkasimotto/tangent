@@ -11,6 +11,9 @@ Purpose: the CLI surface of the Agent Shell, under the root `tangent` command:
 
 The Agent Shell gateway in `packages/agent-shell/app/gateway.mjs` owns port 4321 and durable terminal transport. It supervises the controller in `server.mjs`, which owns Goals, pipelines, and session projection. See ADR-0032.
 
+Agent Shell centers each Area on one logical brain. The Area Journal saves unstructured text before brain delivery.
+Structural Area and repository paths define inherited context.
+
 This package never runs an agent itself except through `tangent study`. That command starts a local interactive session directly (ADR-0026). All other operations use the server.
 
 Read next:

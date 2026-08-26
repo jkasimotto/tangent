@@ -1814,8 +1814,8 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const emptyCopy = query
       ? `${roots.length ? `Area Focus (${escapeHtml(focusNames)}): ` : ""}No ${state.workFilter === "active" ? "current" : "planned"} work matches “${escapeHtml(query)}”.`
       : `${roots.length ? `Area Focus (${escapeHtml(focusNames)}): ` : ""}No ${state.workFilter === "active" ? "work is active" : "unstarted Goals"}.`;
-    const content = `${!query && state.workFilter === "active" ? deskAttentionQueue() : ""}${records.length
-      ? `${workTable(records, maxElapsedMs)}${workProgramSections(records)}`
+    const content = `${records.length
+      ? workTable(records, maxElapsedMs)
       : `<div class="empty-state">${emptyCopy}</div>`}`;
 
     return `

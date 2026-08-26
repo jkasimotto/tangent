@@ -72,6 +72,7 @@ Every command but `vault commit` and `study` is a thin HTTP client to the runnin
 Public endpoints enter through `packages/agent-shell/app/gateway.mjs` and are handled by the controller routes composed in `server.mjs`:
 
 - Read: `GET /api/tree`, `GET /api/areas/show?area=<path>`, `GET /api/goals[?area=<path>]`, `GET /api/goals/show?slug=<slug>`, `GET /api/ideas[?area=<path>]`, `GET /api/document/comments?file=<path>`, `GET /api/sessions`. The sessions snapshot includes `deployedCommit`, `currentCommit`, `pendingCommits`, and the last `rebuild` operation. The blue update indicator appears only when the pending commit list is non-empty.
+- Area Journal: `GET /api/areas/journal?area=<path>` returns archived and active files. `POST /api/areas/journal` accepts `{ area, text, idempotencyKey, source? }`. The server commits exact text before brain notification.
 - `POST /api/shell/rebuild` starts one rebuild and returns its operation. A concurrent request returns 409.
 - Vault mutations: `POST /api/goals/create` accepts optional `caller` information and the separate `own: <session>` value.
 - Other mutations include `POST /api/goals/depend`, `POST /api/goals/undepend`, `POST /api/idea/new`, `POST /api/goals/own`, `POST /api/goals/release`, and `POST /api/agents/send`.
@@ -92,6 +93,9 @@ Pipeline record shape (`agent-pipeline.v1`): `{ schema, goal, area, slug, create
 Worker context continuation (ADR-0028; design contract `otto/tangent/design-worker-context-handover`): every worker session's fill is read from its own harness status bar, no extra tmux call. `GET /api/sessions` gains `contextHandoverTokens` (the constant, default 300000) at the top level, and each session and each pipeline step gains `context: { usedTokens, windowTokens } | null`. At the threshold, Tangent queues one reminder into the worker's own composer naming the exact `tangent goal handover --continue` command; a stronger repeat follows a tenth past it. Each level fires at most once per session. A step's `continuations` is `[{ session, next, facts, at, fill, failed? }]`, appended by every `--continue` swap; `contextReminders` is `{ [sessionName]: { firstAt, repeatAt } }`. A solo Goal session keeps the same two fields in its own small record, `goal-continuation.v1`, one file per Goal under `~/.tangent/agent-shell/continuations/<area>/<slug>.json` (`TANGENT_CONTINUATIONS_ROOT` to override the root).
 
 Brain endpoints:
+
+The generated prompt uses the logical Area brain as its author. It has an 8,000-character hard limit and structural source references.
+Runtime generation fields remain in compatibility responses and diagnostics during migration.
 
 - `POST /api/brains/start`: `{ area, instruction, choice?, command?, resume? }`. Starts the Area's brain. An explicit run choice wins. Otherwise, the nearest Brain declaration wins. The value `"work"` uses the target Area's declared Work launch. Without a Brain declaration, the server uses the declared Work launch. The server returns 409 if neither declaration exists. It does not use the Work profile fallback. A live brain reattaches. A resume keeps the launch in the brain record. A start-over operation resolves the current default. The response is `{ session, generation, brain }`.
 - `POST /api/brains/handover`: `{ session, text }` as above. Responds `{ status: "started", session, generation, previous }`.

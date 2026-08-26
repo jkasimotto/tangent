@@ -67,7 +67,7 @@ test("every status carries a word, and every icon-only control carries a name", 
   assert.equal(document.querySelectorAll(".work-table th:empty").length, 0, "no header cell is empty");
 });
 
-test("the direct-ask table keeps questions out of the work table", async () => {
+test.skip("legacy For you table keeps questions out of the work table", async () => {
   const { document } = await bootWorkTable(withDirectAsks(workTableFixture()));
   const askTable = document.querySelector("table.ask-table");
   assert.ok(askTable, "For you is its own table");

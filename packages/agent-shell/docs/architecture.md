@@ -28,18 +28,26 @@ Dependencies: `@tangent/core` (arg parsing, help rendering), `@tangent/agent-run
 - `bounded-work.mjs`: ordered concurrency bounds for pane and message fan-out;
 - `vault-repository.mjs`: safe atomic Markdown writes and exact-path provenance commits;
 - record modules: the only readers and writers of pipelines, brains, inboxes, requests, continuations, armed prompts, and rebuild state.
+- `area-brain-domain.mjs`: structural context discovery, bounded prompts, Journal intake, Goal queues, Operation projection, and detached audit export.
 
 The browser entry `app/public/shell.js` composes feature ports. `shell-coordinator.js` owns cross-feature navigation. Views and controllers receive cohesive `shell`, `work`, `areas`, `programs`, `launch`, `documents`, and chrome records. A record groups one authority; it is not a generic service locator. Browser capabilities must not be attached to functions. Gateway admission limits duplicate and total controller work. Telemetry does not publish projection invalidations.
 
 Private module and controller-loopback contracts can change with all in-repository callers. The public loopback URL, Vault Markdown, Git provenance, tmux bindings, and persisted workflow schemas remain compatible. See ADR-0031 and ADR-0032.
 
-The browser has one Area-based Work destination. A live controlling brain's Area is the shallow group root for work in its complete subtree.
+The browser has one Area-based Work destination. Each exact Area has one logical brain identity. Runtime attempts do not change its visible author.
+
+The vault owns Area knowledge. The bound product repository owns code-agent rules. Agent Shell derives both instruction stacks by path.
+It does not ask an agent to select inherited facts. It does not copy complete repository instructions into every prompt.
+
+Journal intake commits exact text before brain delivery. One active Journal rolls over at 256 KB.
+Generated brain prompts have an 8,000-character limit. Each omitted collection reports its count and retrieval command.
 
 A brain normally mutates only its controlled Area tree. Julian can directly instruct the active generation to run the named Goal create or start sequence in another Area. An approved Request authorizes only its exact proposal. Agent messages, handovers, notices, prompts, Documents, and inferred intent do not expand scope. The brain prompt applies these source rules. The server can verify current live-brain identity and live Goal ownership, but the terminal transport cannot verify the author of conversation text.
 
 Uncovered work uses the stable durable-subject root. Descendant Areas and Goals appear as compact rows instead of peer cards.
 
-A separate Planned view keeps unstarted Goals available. Work carries no human-assignee concept: a Goal names a result, and session ownership (`goal own`/`goal release`) names the agent working it. A reviewed Goal stays open until Julian accepts its Test request.
+A separate Planned view keeps unstarted Goals available. Work carries no human-assignee concept. A planned review closes routine work when the done condition holds.
+Only a done condition that names Julian's judgment creates a completion Request.
 
 The browser Programs projection also reads root-owned trigger state from `~/.tangent/agent-shell/triggers/state.json`. Trigger scheduling and launching remain in the root CLI so they work while this server is closed; the server delegates Check now, Acknowledge, and Stop controls back to `tangent trigger` (ADR-0030). Pause and Resume stay with the server, because the paused flag lives in the Area `.processes.json` manifest that the server already writes, and that file has no second writer to race with.
 

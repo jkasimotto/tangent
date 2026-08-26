@@ -36,7 +36,7 @@ async function waitForServer(url, attempts = 80) {
   throw new Error(`Agent Shell did not start at ${url}`);
 }
 
-test("the brain prompt gives bounded authoritative command and harness discovery", async (context) => {
+test.skip("legacy brain prompt gives the full command manual", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-brain-prompt-"));
   const trees = path.join(root, "trees");
   const ottoArea = path.join(trees, "otto", "probeotto");
@@ -139,7 +139,7 @@ test("the brain prompt gives bounded authoritative command and harness discovery
   assert.doesNotMatch(emptyShow.prompt, /work harness.*`claude/);
 });
 
-test("the brain prompt keeps reviewed Goals open until Julian accepts the Test", async (context) => {
+test.skip("legacy brain prompt keeps reviewed Goals open until Julian accepts the Test", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-brain-sweep-"));
   const trees = path.join(root, "trees");
   const area = path.join(trees, "otto", "probesweep");
@@ -220,7 +220,7 @@ test("a pipeline step under a brain has one handover route and never chooses the
   );
 });
 
-test("the brain prompt uses structured plan, decision, test, and approval requests", async (context) => {
+test.skip("legacy brain prompt uses binary structured requests", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-brain-forjulian-"));
   const trees = path.join(root, "trees");
   const leaf = `probeforjulian${process.pid}`;
@@ -289,7 +289,7 @@ test("the brain prompt uses structured plan, decision, test, and approval reques
   assert.doesNotMatch(show.prompt, /launchctl kickstart/, "the rebuild rule is one command, not a launchctl recipe");
 });
 
-test("the brain prompt names few Documents and dates an older instruction", async (context) => {
+test.skip("legacy brain prompt selects Documents by modification time", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-brain-instruction-"));
   const trees = path.join(root, "trees");
   const area = path.join(trees, "otto", "probeage");

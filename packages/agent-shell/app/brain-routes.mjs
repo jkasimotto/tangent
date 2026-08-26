@@ -96,7 +96,7 @@ export function createBrainRoutes(operations) {
   /** Records Julian's answer and notifies the controlling brain. */
   async function answerRequest(request, response) {
     const body = await readJson(request);
-    const result = await operations.answerRequest(String(body.area ?? ""), String(body.id ?? ""), String(body.answer ?? ""), String(body.note ?? ""));
+    const result = await operations.answerRequest(String(body.area ?? ""), String(body.id ?? ""), String(body.answer ?? ""), String(body.note ?? ""), body.effectRevision ?? null);
     sendJson(response, result.status, result.status === 200 ? { request: result.request } : { error: result.error });
   }
 

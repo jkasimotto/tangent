@@ -4,6 +4,7 @@ import { readFile, readdir, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { absoluteAreaPath, cleanAreaPath, areaSlug } from "./area-operations.mjs";
+import { operationFromProgram } from "./area-brain-domain.mjs";
 
 const PROCESS_FILE = ".processes.json";
 const TREE_SKIP = new Set([".git", ".obsidian", "shared", "node_modules"]);
@@ -165,7 +166,8 @@ export async function programsSnapshot({ treesRoot, sessions = [] }) {
     return rightLive - leftLive || left.area.localeCompare(right.area) || left.label.localeCompare(right.label);
   });
   const liveCount = programs.filter((program) => program.session && !["shell", "stopped"].includes(program.session.state)).length;
-  return { programs, errors, areas, liveCount };
+  const operations = programs.map(operationFromProgram);
+  return { programs, operations, problems: operations.filter((operation) => operation.state === "problem"), errors, areas, liveCount };
 }
 
 /** Reads the durable trigger projection; an absent or malformed file degrades to no state. */

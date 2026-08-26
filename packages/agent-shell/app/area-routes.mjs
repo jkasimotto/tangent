@@ -5,6 +5,8 @@ export function createAreaRoutes(operations) {
   const routes = new Map([
     ["GET /api/tree", tree],
     ["GET /api/areas/show", show],
+    ["GET /api/areas/journal", journal],
+    ["POST /api/areas/journal", capture],
     ["POST /api/areas/new", create],
     ["POST /api/areas/preview-move", previewMove],
     ["POST /api/areas/move", move],
@@ -28,6 +30,17 @@ export function createAreaRoutes(operations) {
     const area = url.searchParams.get("area") ?? "";
     const result = await operations.show(area);
     sendJson(response, result ? 200 : 404, result ?? { error: `no area "${area}"` });
+  }
+
+  /** Returns one Area's continuous Journal. */
+  async function journal(_request, response, url) {
+    const result = await operations.journal(url.searchParams.get("area") ?? "");
+    sendJson(response, result ? 200 : 404, result ?? { error: "Area not found." });
+  }
+
+  /** Saves exact text before any brain delivery. */
+  async function capture(request, response) {
+    await mutate(request, response, operations.capture);
   }
 
   /** Creates one nested Area. */

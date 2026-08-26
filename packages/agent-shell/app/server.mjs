@@ -37,6 +37,7 @@ import { forJulianSectionText, parseForJulian, removeForJulianLine, restoreForJu
 import { createCommitChangeMonitor } from "./commit-change-monitor.mjs";
 import { promptArrived, readyForText, splitPrompt, squash, typeChunks } from "./prompt-delivery.mjs";
 import { clearArmedPrompt, readAllArmedPrompts, writeArmedPrompt } from "./armed-prompts.mjs";
+import { createPaneWriteQueue } from "./pane-writes.mjs";
 import { createRuntimeScheduler } from "./runtime-scheduler.mjs";
 import { attachTerminalTransport } from "./terminal-transport.mjs";
 import { serveStaticAsset } from "./static-assets.mjs";
@@ -266,6 +267,14 @@ async function loadSessions() {
 /** Reads one coalesced session observation, preserving its last valid value. */
 async function listSessions(options) {
   return sessionObservation.get(options);
+}
+
+/**
+ * Live sessions with the one fact the delivery decision cannot observe: a
+ * prompt this server already has on its way into the pane.
+ */
+async function listDeliverySessions() {
+  return (await listSessions()).map((session) => ({ ...session, promptPending: promptPending(session.name) }));
 }
 
 /** Reuses the shared observation for the subset of facts Programs needs. */
@@ -1669,6 +1678,20 @@ const ECHO_MS = 1200; // time for a TUI to draw what was typed into it
 const RETRY_MS = 2500; // extra boot time before typing the prompt again
 const TYPE_ATTEMPTS = 3;
 const armedSessions = new Map(); // session -> { phase, submit, document, prompt }
+// Every prompt this server types goes through one queue per pane, so the
+// arming poll and the message queue cannot type into the same brain at the
+// same moment (pane-writes.mjs).
+const paneWrites = createPaneWriteQueue();
+
+/**
+ * True while Tangent has a prompt on its way into this pane: armed and
+ * waiting for the harness, or being typed right now. The delivery decision
+ * holds notices back on this, because a booting generation shows a working
+ * pane with an empty composer for the whole time.
+ */
+function promptPending(session) {
+  return armedSessions.has(session) || paneWrites.busy(session);
+}
 
 /** The pane's foreground command, "" when the session is gone. */
 async function paneCommand(session) {
@@ -1771,6 +1794,14 @@ async function paneReadyForText(session, settle) {
  * already up; the only thing left to prove is that its pane is not a shell.
  */
 async function typePromptWhenReady(session, prompt, submit = false, label = "agent prompt", { settle = true } = {}) {
+  return paneWrites.run(session, () => typePromptNow(session, prompt, submit, label, settle));
+}
+
+/**
+ * Types one prompt into a pane that is this writer's alone. Called only from
+ * typePromptWhenReady, inside that pane's write queue.
+ */
+async function typePromptNow(session, prompt, submit, label, settle) {
   const startedAt = Date.now();
   /** Records delivery latency without the session name or prompt content. */
   const measured = (ok) => {
@@ -1841,15 +1872,26 @@ async function tickArmedSessions() {
     live.add(name);
     if (!armedSessions.has(name) || SHELL_CMDS.has(command)) continue;
     const armed = armedSessions.get(name);
-    armedSessions.delete(name);
-    /** Clears the persisted record and runs the caller's callback, once delivery settles. */
+    if (armed.firing) continue;
+    // The arm stays in the map until its prompt has settled, not until it is
+    // picked up. Building a goal prompt reads the vault first, and promptPending
+    // has to stay true across that read, or a notice can win the pane in the
+    // gap and be typed into the activation prompt.
+    armed.firing = true;
+    /** Forgets the arm and its record, then runs the caller's callback, once delivery settles. */
     const settle = (arrived) => {
+      if (armedSessions.get(name) === armed) armedSessions.delete(name); // never drop a newer arm
       clearArmedPrompt(ARMED_ROOT, name).catch(() => {});
       (armed.onTyped ?? noop)(arrived);
     };
     if (armed.prompt) typePromptWhenReady(name, armed.prompt, armed.submit, "armed prompt").then(settle).catch(reportArmedPromptFailure);
     else if (area && file) typeGoalPromptWhenReady(name, area, file, armed.phase, armed.submit, armed.document, armed.extraFiles).then(settle).catch(reportArmedPromptFailure);
-    else clearArmedPrompt(ARMED_ROOT, name).catch(() => {}); // no goal bound yet: nothing left to type
+    else {
+      // No goal bound yet: nothing left to type, and nobody was promised a
+      // callback for a prompt that never existed.
+      if (armedSessions.get(name) === armed) armedSessions.delete(name);
+      clearArmedPrompt(ARMED_ROOT, name).catch(() => {});
+    }
   }
   for (const [name, armed] of [...armedSessions.entries()]) {
     if (live.has(name)) continue;
@@ -1919,7 +1961,7 @@ const MESSAGE_POLL_MS = 2000;
 const MESSAGE_LOG = process.env.AGENT_MESSAGE_LOG ?? path.join(os.homedir(), ".tangent", "agent-shell-messages.jsonl");
 const messages = createMessageDelivery({
   file: MESSAGE_LOG,
-  sessions: listSessions,
+  sessions: listDeliverySessions,
   /** Delivers a complete message through the prompt transport. */
   deliverText: (target, text, label, options) => typePromptWhenReady(target, text, true, label, options),
   notices: { delivered: markBrainNoticesDelivered, released: releaseBrainNotices },
@@ -4640,7 +4682,7 @@ const agentRoutes = createAgentRoutes({
   /** Delivers or queues one normalized cross-agent message. */
   async send(body) {
     const text = normalizeMessage(body.text);
-    const sessions = await listSessions();
+    const sessions = await listDeliverySessions();
     const target = resolveSession(String(body.to ?? ""), sessions);
     const live = sessions.find((session) => session.name === target);
     const sender = sessions.find((session) => session.name === String(body.from ?? ""));

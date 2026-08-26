@@ -34,6 +34,18 @@ Two guards keep this safe. The boot wait is skipped for a working target, becaus
 
 The rule stays about the pane, not the role. A brain-only carve-out would be more code covering less, and every other message that waits on a busy agent waits for the same wrong reason. Launch is untouched: a freshly started harness is still typed into only after it settles.
 
+## Amendment, 2026-08-27: Tangent's own prompt writer comes first
+
+The amendment above left the server with two writers into one pane and nothing between them. A brain generation is armed with its activation prompt while its pane still sits at the shell, and the arming poll types that prompt as soon as the harness comes up. A booting harness repaints, so it reads as `working` with an empty composer for exactly as long as its prompt takes to arrive: a queued notice was delivered into the middle of the activation prompt and both texts reached the brain as one line. Before the amendment the boot wait had hidden this by accident, because it waited for a screen that a booting harness never shows.
+
+Two rules replace that accident.
+
+`promptPending` is a fact on the session the delivery decision reads: Tangent has a prompt armed for this pane, or is typing one into it right now. It queues whatever the composer shows, so a notice always arrives behind the activation prompt and never beside it. The arm is now held until its prompt settles rather than until it is picked up, because building a Goal prompt reads the vault first and the fact has to stay true across that read.
+
+`pane-writes.mjs` puts every prompt this server types behind the last one for the same pane. `promptPending` reads a snapshot that can be a second old, so the order it gives is the right order but not a guarantee; the write queue is the guarantee. Two writers can queue, but they cannot type at once.
+
+Delivery to a busy brain is unchanged: the pane the notice waits for is the pane Tangent is writing to, and it waits for seconds, not for the brain's turn.
+
 ## Consequences
 
 - Attention surfaces can rank `decision` above `idle`; the sidebar labels already distinguish them.

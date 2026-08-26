@@ -22,6 +22,13 @@
 // probe-brain-worker-handover-message-2026-08-26). Claude Code and codex both
 // take typed text while they work and read it at their next turn boundary, so
 // a working agent with an empty composer is delivered to now.
+//
+// The server's own prompt writer is the exception. A brain generation that is
+// still booting shows a working pane with an empty composer for as long as
+// its activation prompt takes to arrive, so `promptPending` holds a notice
+// back until that prompt is in. Overlapping writes are also serialized per
+// pane (pane-writes.mjs); this rule keeps the notice behind the prompt
+// instead of merely beside it.
 
 /** The provenance header typed before the message body. */
 export function messageBanner(from, area, text) {
@@ -40,6 +47,11 @@ export function messageBanner(from, area, text) {
  * for input, "working" is an agent mid-turn whose composer holds nothing. The
  * caller needs the difference, because a working harness is already up and
  * must not be waited on for a quiet screen before the text is typed.
+ *
+ * `promptPending` is the server's own writer: a prompt armed for this pane or
+ * being typed into it right now. It queues whatever the composer shows,
+ * because a booting generation reads as working with an empty composer for
+ * the whole time its activation prompt is on its way.
  */
 export function deliveryDecision(target) {
   if (!target) return { action: "refuse", error: "no such session; run \"tangent agent list\" to see live agents" };
@@ -48,6 +60,9 @@ export function deliveryDecision(target) {
   }
   if (target.state === "shell") {
     return { action: "refuse", error: `${target.name} has no agent running; typed text would execute in its shell` };
+  }
+  if (target.promptPending) {
+    return { action: "queue", reason: `${target.name} is still taking a prompt Tangent sent it` };
   }
   if (target.state === "waiting" && target.stateDetail === "idle") return { action: "deliver", composer: "idle" };
   if (target.state === "working" && target.composer === "idle") return { action: "deliver", composer: "working" };

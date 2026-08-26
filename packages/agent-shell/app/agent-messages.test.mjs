@@ -90,3 +90,16 @@ test("a brain notice is clipped, never refused, however long its text is", () =>
   assert.equal(noticeMessage("  two\n lines  "), "two lines");
   assert.throws(() => noticeMessage("   "), /a notice needs text/);
 });
+
+test("a pane with a prompt already on its way holds every message back", () => {
+  // A brain generation that is booting shows a working pane with an empty
+  // composer for the whole time its activation prompt takes to arrive, so the
+  // composer alone would have said "deliver" and the two texts would have
+  // been typed into the pane together.
+  const booting = { name: "tangent-brain-g314", kind: "brain", state: "working", composer: "idle", promptPending: true };
+  const decision = deliveryDecision(booting);
+  assert.equal(decision.action, "queue");
+  assert.match(decision.reason, /still taking a prompt/);
+  assert.equal(deliveryDecision({ ...booting, state: "waiting", stateDetail: "idle" }).action, "queue");
+  assert.deepEqual(deliveryDecision({ ...booting, promptPending: false }), { action: "deliver", composer: "working" });
+});

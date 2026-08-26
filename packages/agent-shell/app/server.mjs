@@ -25,7 +25,7 @@ import { createVaultGitReader, fileTimes } from "./area-map.mjs";
 import { createPaneObserver } from "./pane-observer.mjs";
 import { mapWithConcurrency } from "./bounded-work.mjs";
 import { createObservationCache } from "./observation-cache.mjs";
-import { appendSteps, currentStep, endPipeline, goalBindingGoneFromSnapshot, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, readAllPipelines, readPipeline, reclaimLiveSteps, recordTypedReport, snapshotCanJudgeAbsence, stepGoneFromSnapshot, validateSteps, writePipeline } from "./pipeline-record.mjs";
+import { appendSteps, currentStep, endPipeline, goalBindingGoneFromSnapshot, newPipeline, nextPendingStep, pipelineFinished, pipelineStatus, queueNormalizationChanged, readAllPipelines, readPipeline, reclaimLiveSteps, recordTypedReport, snapshotCanJudgeAbsence, stepGoneFromSnapshot, validateSteps, writePipeline } from "./pipeline-record.mjs";
 import { readAllContinuations, readContinuation } from "./continuation-record.mjs";
 import { contextReminderText, contextRepeatText, continuationSection, reminderDue } from "./context-handover.mjs";
 import { noticeMessage, normalizeMessage } from "./agent-messages.mjs";
@@ -2966,7 +2966,7 @@ async function reconcilePipelines(sessions, snapshotAt = Date.now()) {
   const now = Date.now();
   let goalIndex = null;
   for (const record of await readAllPipelines(PIPELINES_ROOT)) {
-    let changed = reclaimLiveSteps(record, byName);
+    let changed = queueNormalizationChanged(record) || reclaimLiveSteps(record, byName);
     if (!record.goalRevision) {
       goalIndex ??= await goalsByFile();
       const goal = goalIndex.get(record.goal);

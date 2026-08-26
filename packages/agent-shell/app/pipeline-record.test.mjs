@@ -19,6 +19,7 @@ import {
   pipelineFinished,
   pipelinePath,
   pipelineStatus,
+  queueNormalizationChanged,
   readAllPipelines,
   readPipeline,
   stepGoneFromSnapshot,
@@ -228,6 +229,12 @@ test("a later started assignment supersedes a historical legacy wait", async () 
   assert.equal(migrated.currentAssignmentId, migrated.steps[2].id);
   assert.equal(migrated.status, "open");
   assert.equal(migrated.migrationProblem, null);
+  assert.equal(queueNormalizationChanged(migrated), true);
+
+  await writePipeline(root, migrated);
+  const persisted = await readPipeline(root, "otto/tangent", "x");
+  assert.equal(queueNormalizationChanged(persisted), false, "the canonical migration is a single write");
+  assert.equal(persisted.steps[0].status, "ended");
 });
 
 test("currentStep prefers running or stopped, then the first pending", () => {

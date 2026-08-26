@@ -15,6 +15,12 @@ const LEGACY_PIPELINE_SCHEMA = "agent-pipeline.v1";
 
 const MAX_STEPS = 20;
 const MAX_INSTRUCTION_CHARS = 2000;
+const QUEUE_NORMALIZATION_CHANGED = Symbol("queueNormalizationChanged");
+
+/** True when a read repaired a legacy record and the scheduler must persist it once. */
+export function queueNormalizationChanged(record) {
+  return record?.[QUEUE_NORMALIZATION_CHANGED] === true;
+}
 
 /** File path of one pipeline record. */
 export function pipelinePath(root, area, slug) {
@@ -85,7 +91,7 @@ export function normalizeQueueRecord(value) {
   const activeAssignment = assignments.find((item) => ["running", "waiting"].includes(item.status));
   const storedCurrent = assignments.find((item) => item.id === value.currentAssignmentId && ["running", "waiting"].includes(item.status));
   const reopenSupersededPause = supersededLegacyWait && generatedMultipleAttemptProblem && value.status === "paused";
-  return {
+  const normalized = {
     ...value,
     schema: PIPELINE_SCHEMA,
     controllerArea,
@@ -99,6 +105,21 @@ export function normalizeQueueRecord(value) {
     assignments,
     steps: assignments,
   };
+  const storedAssignments = Array.isArray(value.assignments) ? value.assignments : Array.isArray(value.steps) ? value.steps : [];
+  const normalizationChanged = value.schema !== normalized.schema
+    || value.controllerArea !== normalized.controllerArea
+    || String(value.goalRevision ?? "") !== normalized.goalRevision
+    || Math.max(1, Number(value.revision) || 1) !== normalized.revision
+    || value.status !== normalized.status
+    || (value.migrationProblem ?? null) !== normalized.migrationProblem
+    || (value.currentAssignmentId ?? null) !== normalized.currentAssignmentId
+    || (value.completionPolicy ?? null) !== normalized.completionPolicy
+    || !Array.isArray(value.idempotencyKeys)
+    || !Array.isArray(value.assignments)
+    || !Array.isArray(value.steps)
+    || JSON.stringify(storedAssignments) !== JSON.stringify(assignments);
+  Object.defineProperty(normalized, QUEUE_NORMALIZATION_CHANGED, { value: normalizationChanged });
+  return normalized;
 }
 
 /** Deletes one pipeline record; a missing file is not an error. */

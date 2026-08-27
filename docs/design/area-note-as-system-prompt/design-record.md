@@ -1,6 +1,6 @@
 # The Area note as system prompt: design record
 
-Date: 2026-08-27, revised the same evening after Julian's answers (section 1). Status: agreed in framing. One decision waits for Julian (section 9, D6).
+Date: 2026-08-27, revised twice the same evening after Julian's answers (section 1). Status: agreed. One open point on the environment block (section 11).
 
 This record follows `../agent-shell-operating-vision/design-record.md` (D1, D4, D11, D16, D20) and its `evidence/area-skills.md`. It does not repeat them.
 
@@ -17,6 +17,10 @@ First framing:
 His answers to the first draft of this record:
 
 > resources (links branches repos commands etc) go in knowledge. We basically treat each area note as an AGENTS.md in fact maybe we just do that. That so simple. We have one AGENTS.md and one CLAUDE.md symlinked to that per area. Then brains that get launched dont need a message sent they have the system prompt from that. and the root .tangent one tells how to be a good brain. its not one repo per area. thats why its just freeform text for the brain to read.
+
+On the Goal list in the note:
+
+> It better not be in the AGENTS.md one. There's no need for it there. Goals should just be goal-slug files in the area repo.
 
 The operating philosophy: "Everything is basically md and agents and a few helpers from tangent cli. The model is less strict and more here are notes we pass around to agents."
 
@@ -36,7 +40,7 @@ A brain opens in its Area folder in the vault (D4). Its standing context is the 
 ### Constraints
 
 - Keep the section names that exist. No new terms.
-- The machine-read lines keep their shape: the `tangent.environment.v1` block, the `Goals` links, the `Idea:` lines, skill frontmatter.
+- Tangent never writes into an Area note. The one open point is the `tangent.environment.v1` block the UI writes today (section 11).
 - Rules an agent obeys when it edits come before machinery. Two small mechanical pieces are allowed: a symlink sweep and a template write.
 - Do not write code in this design. Do not edit vault files.
 
@@ -88,7 +92,7 @@ Observed. The note grew from 39 lines on 2026-08-09 to 263 on 2026-08-27. The RE
 
 - **Purpose.** One line or empty. `neara/neara.md` uses it as a child index.
 - **Current.** Text in 9 of 29 notes. `live-edit.md` lines 12 to 16 hold three paragraphs of dated progress, last changed 2026-08-16.
-- **Goals.** Written by the server at `server.mjs:1312` when a Goal is created. Read at `server.mjs:735-747` for order. Nothing removes a link when the Goal is done.
+- **Goals.** Written by the server at `server.mjs:1312` when a Goal is created. Read at `server.mjs:735-747` for order. Nothing removes a link when the Goal is done. The Goal files themselves are listed by `readAreaGoals`, which reads the folder, not the note.
 - **Knowledge.** Three kinds mixed. Path facts (`standards.md`). How-to procedures (`neara.md` lines 15 to 28, `pgande.md` lines 24 to 26). Decision lists (`tangent.md` lines 36 to 59).
 - **Ideas and open questions.** Appended by `saveWorkIdea` at `server.mjs:1382-1393`. Nothing removes a line. `otto/dnd/dnd.md` uses the section well: eight deferred decisions, each with the reason.
 - **Resources.** Machine lines in 8 notes. Document links in two. Two lines that do not parse in `pgande.md`: `- Repository \`$POLEZ\` — dart`. `pgande.md` names two repositories, polez and delivery, and the parser reads one.
@@ -170,10 +174,9 @@ Ownership per section:
 | Knowledge | Julian, brain, workers through the brain | Standing | None. The Resources parser is optional. |
 | Development environment | The UI only | Standing | Environment parser |
 | Current | Brain | Weekly | Area map first paragraph |
-| Goals | The server | Per Goal | Order reader |
-| Ideas and open questions | `tangent idea add`, Julian, brain | Until triaged | `ideasFromNote` |
+| Ideas and open questions | Julian, brain | Until triaged | None |
 
-Invariant: `<area>/AGENTS.md` is a relative symlink to `<dirname>.md`, and `<area>/CLAUDE.md` is a relative symlink to `AGENTS.md`. The vault root has a real `AGENTS.md` and `CLAUDE.md -> AGENTS.md`. A real file at either name is never overwritten. Wikilinks and the Document index keep pointing at `<dirname>.md`. Tangent's walkers skip nothing new: the two names are files, not folders.
+Invariant: Tangent reads Area notes and never writes them. The server's two writers today, `server.mjs:1312` (Goal links) and `server.mjs:1382-1393` (ideas), go. Second invariant: `<area>/AGENTS.md` is a relative symlink to `<dirname>.md`, and `<area>/CLAUDE.md` is a relative symlink to `AGENTS.md`. The vault root has a real `AGENTS.md` and `CLAUDE.md -> AGENTS.md`. A real file at either name is never overwritten. Wikilinks and the Document index keep pointing at `<dirname>.md`. Tangent's walkers skip nothing new: the two names are files, not folders.
 
 Trade-off, stated plainly. With Resources folded into Knowledge, nothing machine-checks the folder before a worker starts. The brain reads the path from Knowledge and passes `--path`. A wrong path fails at the worker start, not before. The `- Repository:` parser stays as an optional shortcut for an Area that wants inherited defaults.
 
@@ -222,29 +225,30 @@ Decision: C2, with the hygiene rules of section 9. C1 is what Julian moved away 
 
 **D2. No `## Resources` section (Julian).** Repositories, worktrees, branches, links, commands, environments, and conventions are free-form bullets under `## Knowledge`. One fact per line, with what it is for. The brain takes the folder from Knowledge and passes `--path` on `tangent goal create`. The `- Repository:` parser in `area-resources.mjs` stays as an optional shortcut and reads the line wherever it sits. An Area with two repositories lists both. The trade-off: nothing checks the folder before the start.
 
-**D3. The sections and their rules.** Order: Purpose, Knowledge, Current, Goals, Ideas and open questions, Development environment. Standing sections first so a reader stops early.
+**D3. The sections and their rules.** Order: Purpose, Knowledge, Current, Ideas and open questions, Development environment. Standing sections first so a reader stops early.
 
 | Section | The rule |
 |---|---|
 | Purpose | One to three lines. What this Area is and what done looks like. |
 | Knowledge | What an agent needs every time it works here. Repositories, branches, commands, URLs, conventions, gotchas, decisions with their reason. One line each. A procedure is a `skill-<slug>.md`. A large topic is a Document with a link here. |
 | Current | What is in motion now, in present tense, at most five lines, no dates. Rewrite, never append. Name Goals with links. Empty is fine. |
-| Goals | Machine-written links to open Goals, in order. Reorder by hand, nothing else. |
-| Ideas and open questions | Thoughts and questions that are not yet a Goal, one line each, at most ten. A bug is a Goal, not an idea. |
+| Ideas and open questions | Thoughts and questions that are not yet a Goal, one line each, at most ten. Hand-written. `tangent idea add` goes to `ideas.md` instead. A bug is a Goal, not an idea. |
 | Development environment | The UI writes this block. Leave it. |
 
-**D4. Standing, current, and history live in three places.** Standing, read every turn: Purpose, Knowledge, Development environment, and the `skill-` and `process-` files beside the note. Current, changes weekly: Current, Goals, Ideas. History, never in the note: dated progress, what a worker did, how a bug was fixed. The commit message and the Goal file's State hold these. A worker's result goes in the Goal file, and at most one line reaches Knowledge.
+**D4. Standing, current, and history live in three places.** Standing, read every turn: Purpose, Knowledge, Development environment, and the `skill-` and `process-` files beside the note. Current, changes weekly: Current, Ideas, and `ideas.md`. History, never in the note: dated progress, what a worker did, how a bug was fixed. The commit message and the Goal file's State hold these. A worker's result goes in the Goal file, and at most one line reaches Knowledge.
 
-**D5. A fact lives at the highest Area where it is true for every Area under it, and no higher.** A child never repeats an ancestor's line. The harness concatenates the chain. A repeated line costs context twice. What a root note carries: the shared repository, the branch convention, the commands every child uses, and the list of children with one phrase each. What it must not carry: any Goal, any Current, any fact true for one child only. The release-check command is true for all of Neara, so it lives in `neara.md` as a skill.
+**D5. A fact lives at the highest Area where it is true for every Area under it.** Never higher. A child never repeats an ancestor's line. The harness concatenates the chain. A repeated line costs context twice. What a root note carries: the shared repository, the branch convention, the commands every child uses, and the list of children with one phrase each. What it must not carry: any Goal, any Current, any fact true for one child only. The release-check command is true for all of Neara, so it lives in `neara.md` as a skill.
 
-**D6. Done Goal links leave `## Goals` (Julian decides, recommended yes).** The server removes a Goal's link in the same write that sets `done` or `dropped`. Open Goals keep their order. Reason: the list is the largest thing in every note, and the harness now reads it on every turn. `tangent goal list` and git keep the done ones. Not yet answered by Julian.
+**D6. Tangent never writes into an Area note (Julian).** The `## Goals` section goes entirely. A Goal is its `goal-<slug>.md` file in the Area folder and nothing else. No link list, no ordering from the note. Work and `tangent goal list` order Goals by status, then by creation time. `areaGoalOrder` (`server.mjs:735-747`) and the append at `server.mjs:1312` go. The `- Idea:` append (`server.mjs:1382-1393`) goes too. `tangent idea add` writes one line into `<area>/ideas.md`, a plain Document beside the note, and creates it when absent. The brain reads `ideas.md`, turns a line into a Goal or a Knowledge line, and deletes it. The note's own `Ideas and open questions` stays hand-written.
 
 **D7. Hygiene is four edit rules and one signal.** In the README and, in one sentence each, in the root `AGENTS.md`:
 
 1. Rewrite, do not append. Every edit to Current, Knowledge, or Ideas replaces text.
-2. Harvest, then delete. When a Goal finishes, write at most one Knowledge line, then let its link go.
+2. Harvest, then delete. When a Goal finishes, write at most one Knowledge line. When an `ideas.md` line becomes a Goal or a fact, delete the line.
 3. Size guide: Purpose 3 lines, Knowledge 40, Current 5, Ideas 10. The whole note under 100 lines. When a section passes its guide, move something out before adding.
 4. No dates, no conversation ids, no bug reports in the note. A date belongs in git. A bug is a Goal.
+
+README changes: line 17 lists the sections as Purpose, Knowledge, Current, Ideas and open questions. Line 18 (Resources) goes. Line 21 (Road to done as the ordering source) becomes: Work orders Goals by status, then creation time. Line 23 (checkboxes under Road to done) goes. The Outcomes bullet on ordering ("Ordering has one home per outcome") loses the node-note half. A new line: `tangent idea add` writes to `<area>/ideas.md`. A new line: `AGENTS.md` and `CLAUDE.md` in an Area folder are symlinks to the main note, written by Tangent, never edited.
 
 Signal: beside the note name in Work and on the Area page, one dim line: `<n> lines · Current <d> days old`. Warning color past 100 lines or past 14 days. `tangent area check` (C4) is not built. Revisit if three notes pass 100 lines a month after the rules land.
 
@@ -274,12 +278,10 @@ status: active
 
 ## Current
 
-## Goals
-
 ## Ideas and open questions
 ```
 
-Twenty-one lines. The environment block arrives when Julian sets a default in the UI. Skills are files beside the note, not lines in it. The harness reads this note as a system prompt on every turn, so every line costs context each turn.
+Nineteen lines. The environment block arrives when Julian sets a default in the UI. Skills are files beside the note, not lines in it. The harness reads this note as a system prompt on every turn, so every line costs context each turn.
 
 ## 10. Rejected alternatives
 
@@ -287,6 +289,8 @@ Twenty-one lines. The environment block arrives when Julian sets a default in th
 - **A generated brain prompt** (C1). Rejected on Julian's word. The harness lane already exists and was verified in all three harnesses.
 - **Rename the note to `AGENTS.md`** (C3). Rejected: wikilinks and the Document index key on the file name.
 - **Keep `## Resources` as a machine section.** Rejected on Julian's word. The parser survives as a shortcut only.
+- **Done Goal links leave `## Goals`, open ones stay.** The first revision recommended this. Julian went further: no Goal list in the note at all.
+- **Ideas appended to the note by command.** Rejected with D6. The note is hand-written. The command gets its own file.
 - **Clipping sections in the brain prompt.** Gone with the prompt.
 - **Automatic pruning of Ideas or Knowledge by age.** Rejected: nothing auto-edits prose in this vault.
 - **`tangent area check`** (C4). Deferred, not rejected. The strongest alternative. It loses because it is machinery before the rule has had one month.
@@ -299,7 +303,9 @@ Twenty-one lines. The environment block arrives when Julian sets a default in th
 - Assumption: brains obey a size guide when the root `AGENTS.md` names it. The UI signal is the reminder.
 - Risk: with no folder check, a brain starts a worker in a wrong or missing path. The start fails with the harness's own error. `unboundAreaMessage` no longer applies.
 - Risk: Codex's 32 KiB cap on the chain. A root note plus three route notes plus the root `AGENTS.md` fit under it only if each stays near the 100-line guide.
-- Risk: Julian reads `## Goals` as a progress record. The done rows still show in Work and in `tangent goal list`.
+- Open point for Julian: the UI writes the `tangent.environment.v1` block into the note on his click (`launch-environment.mjs:183-201`). D6 says Tangent never writes a note. Two ways out: keep the block as the one exception, since his click is his own word, or move it to `<area>/environment.md`. Recommended: keep the exception. He named the default harness as the one exception earlier tonight.
+- Risk: two places for ideas, `ideas.md` (the command's inbox) and the note section (curated by hand). The README's one-home rule holds if the brain empties `ideas.md` on each pass.
+- Assumption: no reader depends on `areaGoalOrder`. The Area map and Work read it for order today (`server.mjs:970-975`). Both change to status then creation time.
 - Unknown: whether the Area map's use of `Current` needs a fallback when Current is empty. Today 20 notes have an empty Current and the map works.
 - Condition for reconsideration: if three notes pass 100 lines a month after the rules land, build C4.
 

@@ -24,7 +24,6 @@ status: active
 - Repository: `~/Projects/<name>`, branch `<name>`. Workers start here.
 - `<command>`: <what it does and when to run it>.
 ## Current
-## Goals
 ## Ideas and open questions
 ```
 
@@ -35,8 +34,7 @@ status: active
 | Purpose | What this Area is and what done looks like. One to three lines. |
 | Knowledge | What an agent needs every time. Repos, branches, commands, links, conventions. One line each. A procedure is a `skill-<slug>.md`. A big topic is a Document. |
 | Current | What is in motion now. Five lines, present tense, no dates. Rewrite, never append. Name Goals with links. |
-| Goals | Machine-written links to open Goals. Reorder by hand, nothing else. |
-| Ideas and open questions | Thoughts not yet a Goal. Ten lines at most. A bug is a Goal, not an idea. |
+| Ideas and open questions | Thoughts not yet a Goal, by hand. Ten lines at most. A bug is a Goal, not an idea. |
 | Development environment | The UI writes it. Leave it. |
 
 No `Resources` section. The brain reads the folder from Knowledge and passes `--path`. Nothing checks the folder before a start. An Area with two repositories lists both. A fact lives at the highest Area where it is true for every Area under it. A child never repeats a parent line.
@@ -49,10 +47,12 @@ No `Resources` section. The brain reads the folder from Knowledge and passes `--
 4. README gets the table above and four edit rules. Rewrite, do not append. Harvest, then delete. Keep the note under 100 lines. No dates, no bug reports.
 5. Work shows one dim line per Area: `<n> lines · Current <d> days old`. Warning color past 100 lines or 14 days.
 6. A brain or Goal start on an Area with no note writes the template first.
+7. Tangent never writes into a note. `## Goals` goes: a Goal is its `goal-<slug>.md` file, and Work orders by status then creation time. `tangent idea add` writes to `<area>/ideas.md`. The brain empties it into Goals or Knowledge.
+8. README: sections are Purpose, Knowledge, Current, Ideas and open questions. Road to done and its ordering rule go.
 
 ## Your word is still needed on
 
-1. Done Goal links leave the note when a Goal is done or dropped. `tangent goal list` and git keep them. Recommended yes.
+1. The UI writes the `tangent.environment.v1` block into the note on your click. Keep that one exception, or move it to `environment.md`? Recommended: keep it.
 
 ## Not verified
 

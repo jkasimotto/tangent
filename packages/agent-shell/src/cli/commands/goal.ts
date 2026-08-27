@@ -203,7 +203,7 @@ type QueueAssignmentView = {
   id?: string;
   status?: string;
   session?: string | null;
-  attempts?: Array<{ id?: string; session?: string }>;
+  attempts?: Array<{ id?: string; session?: string; endedAt?: string | null }>;
 };
 
 /** Reads the canonical or compatibility assignment array from one Goal detail queue. */
@@ -337,16 +337,19 @@ async function showCommand(args: Args): Promise<void> {
     console.log(JSON.stringify(detail, null, 2));
     return;
   }
-  console.log(`${goal.title}  [${goal.status}]`);
-  console.log(`area: ${goal.area}`);
-  console.log(`file: ${goal.file}`);
-  if (goal.doneWhen) console.log(`done when: ${goal.doneWhen}`);
+  const projectedGoal = detail.goal ?? goal;
+  console.log(`${projectedGoal.title ?? goal.title}  [${projectedGoal.status ?? goal.status}]`);
+  console.log(`area: ${projectedGoal.area ?? goal.area}`);
+  console.log(`file: ${projectedGoal.file ?? goal.file}`);
+  if (projectedGoal.doneWhen ?? goal.doneWhen) console.log(`done when: ${projectedGoal.doneWhen ?? goal.doneWhen}`);
   const state = String(detail.goal?.stateText ?? detail.goal?.state ?? "").trim();
   if (state) console.log(`state: ${state}`);
   const notes = String(detail.goal?.storyText ?? detail.goal?.currentBrief ?? "").trim();
   if (notes) console.log(`notes: ${notes}`);
-  const dependencies = (Array.isArray(detail.dependencies) ? detail.dependencies : []) as Array<{ title?: string; slug?: string; file?: string }>;
+  const dependencies = (Array.isArray(detail.dependencies?.prerequisites) ? detail.dependencies.prerequisites : []) as Array<{ title?: string; slug?: string; file?: string }>;
   if (dependencies.length) console.log(`depends on: ${dependencies.map((item) => item.title ?? item.slug ?? item.file).join(", ")}`);
+  const unresolved = Array.isArray(detail.dependencies?.unresolvedReferences) ? detail.dependencies.unresolvedReferences : [];
+  if (unresolved.length) console.log(`missing dependencies: ${unresolved.join(", ")}`);
   const queue = detail.queue;
   if (queue) {
     const assignments = queueAssignments(queue);
@@ -423,11 +426,12 @@ async function replaceAgentCommand(args: Args): Promise<void> {
   const queue = detail.queue;
   if (!queue || !Number.isInteger(queue.revision)) throw new Error("This Goal has no authoritative queue to replace.");
   const assignments = queueAssignments(queue);
-  const assignment = assignments.find((item) => item.id === queue.currentAssignmentId)
+  const assignmentId = detail.current?.assignmentId ?? queue.currentAssignmentId;
+  const assignment = assignments.find((item) => item.id === assignmentId)
     ?? assignments.find((item) => ["running", "waiting", "stopped"].includes(String(item.status ?? "")));
   if (!assignment) throw new Error("This Goal has no current assignment to replace.");
-  const attempt = Array.isArray(assignment.attempts) ? assignment.attempts.at(-1) : null;
-  const expectedAttemptId = assignment.session ?? attempt?.id ?? attempt?.session;
+  const attempt = Array.isArray(assignment.attempts) ? assignment.attempts.slice().reverse().find((item) => !item.endedAt) ?? assignment.attempts.at(-1) : null;
+  const expectedAttemptId = detail.current?.attemptId ?? attempt?.id;
   if (!expectedAttemptId) throw new Error("This Goal has no current attempt identity to replace safely.");
   const result = await postJson(server, "/api/goals/attempts/replace", {
     goal: goal.file,

@@ -76,7 +76,8 @@ test("park, reopen, and replace-agent send exact Goal mutations", async (context
     }
     if (url.pathname === "/api/goals/detail") return Response.json({
       goal: { slug: "proof", file: "otto/test/goal-proof.md", area: "otto/test", status: "open" },
-      queue: { revision: 8, currentAssignmentId: "assignment-2", assignments: [{ id: "assignment-2", status: "running", session: "proof-worker", attempts: [{ id: "proof-worker", session: "proof-worker" }] }] },
+      current: { assignmentId: "assignment-2", attemptId: "attempt-proof", session: "proof-worker" },
+      queue: { revision: 8, currentAssignmentId: "assignment-2", assignments: [{ id: "assignment-2", status: "running", session: "proof-worker", attempts: [{ id: "attempt-proof", session: "proof-worker" }] }] },
     });
     if (url.pathname === "/api/goals/edit" || url.pathname === "/api/goals/attempts/replace") return Response.json({ status: "complete", session: "proof-worker-2" });
     return Response.json({ error: `unexpected ${url.pathname}` }, { status: 404 });
@@ -99,7 +100,7 @@ test("park, reopen, and replace-agent send exact Goal mutations", async (context
   assert.equal(replacement.goal, "otto/test/goal-proof.md");
   assert.equal(replacement.assignmentId, "assignment-2");
   assert.equal(replacement.expectedRevision, 8);
-  assert.equal(replacement.expectedAttemptId, "proof-worker");
+  assert.equal(replacement.expectedAttemptId, "attempt-proof");
   assert.deepEqual(replacement.launch, { harness: "codex", model: "sol", effort: "high" });
   assert.equal(replacement.caller, "parent-brain");
   assert.match(replacement.operationId, /^[0-9a-f-]{36}$/);

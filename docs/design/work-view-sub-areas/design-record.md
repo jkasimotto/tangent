@@ -2,7 +2,7 @@
 
 Date: 2026-08-28
 
-Status: proposed. No code changes accompany this record.
+Status: implemented on 2026-08-28 (commits 50080a1 and 3f49a81). Two deviations from the text below, both accepted at review: a live brain at depth 3 or deeper is now work inside its top-level group, not a peer panel (deskPanels changed). A sub-header counts only its own brain's questions. The top-level header keeps the roll-up.
 
 Lenses applied: UI/UX. The change touches one interactive workflow (Work) and one stored browser preference (fold state). No package, API, migration, or operations contract changes.
 

@@ -3004,6 +3004,15 @@ function workerHandoverNotice(record, step, workerSession, report, text) {
 
 /** Makes the receipt's exact-Area notice durable before a worker sees success. */
 async function settleWorkerHandoverNotice(record, receipt) {
+  // writePipeline canonicalizes the queue in place. That keeps each assignment
+  // object stable, but replaces its normalized receipt array, so a receipt held
+  // across the queue-acceptance write can be detached from `record`. Always
+  // mutate the receipt currently owned by the authoritative queue.
+  /** Finds the canonical copy after any queue write. */
+  const storedReceipt = () => record.steps
+    .find((step) => step.id === receipt.assignmentId)
+    ?.handoverReceipts?.find((candidate) => candidate.id === receipt.id) ?? receipt;
+  receipt = storedReceipt();
   if (receipt.destinationArea !== record.area || record.controllerArea !== record.area) {
     return {
       status: 503,
@@ -3015,6 +3024,7 @@ async function settleWorkerHandoverNotice(record, receipt) {
       const routed = await routeBrainNotice(receipt.destinationArea, receipt.notice.text, { idempotencyKey: receipt.notice.sourceId });
       recordWorkerHandoverNotice(receipt, routed.notice);
       await writePipeline(PIPELINES_ROOT, record);
+      receipt = storedReceipt();
     } catch (error) {
       console.error("worker handover notice:", error?.message ?? error);
       return {
@@ -3065,7 +3075,7 @@ async function handoverPipelineStepUnlocked(sessionName, text, report = null, id
     }
     const settled = await settleWorkerHandoverNotice(record, receipt);
     return settled.status === 200
-      ? { status: 200, state: "repeated", next: null, pipeline: record, receipt, repeated: true }
+      ? { status: 200, state: "repeated", next: null, pipeline: record, receipt: settled.receipt, repeated: true }
       : settled;
   }
 
@@ -3199,7 +3209,7 @@ async function completePipelineStep(record, step, text, source, report = null, i
   const workerResponse = async (state, next = null) => {
     const settled = await settleWorkerHandoverNotice(record, receipt);
     return settled.status === 200
-      ? { status: 200, state, next, pipeline: record, receipt }
+      ? { status: 200, state, next, pipeline: record, receipt: settled.receipt }
       : settled;
   };
 

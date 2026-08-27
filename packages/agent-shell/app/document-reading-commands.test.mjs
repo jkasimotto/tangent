@@ -58,6 +58,13 @@ test("Escape is staged and read-only readers keep navigation without comment cre
   assert.equal(matchDocumentReadingCommand(key("KeyX"), { activeComment: true, commentLifecycle: false }), null);
 });
 
+test("r resumes the Goal attempt only while no comment is active and a Resume verb is shown", () => {
+  assert.equal(matchDocumentReadingCommand(key("KeyR"), { resumableAttempt: true }), command.resumeAttempt);
+  assert.equal(matchDocumentReadingCommand(key("KeyR"), { resumableAttempt: true, activeComment: true }), command.replyComment, "an active comment keeps r for its reply");
+  assert.equal(matchDocumentReadingCommand(key("KeyR")), null, "no Resume verb, no command");
+  assert.equal(matchDocumentReadingCommand(key("KeyR", { shiftKey: true }), { resumableAttempt: true }), null);
+});
+
 test("wrong modifiers, IME input, and an earlier owner never reach reading mode", () => {
   assert.equal(matchDocumentReadingCommand(key("KeyJ", { shiftKey: true })), null);
   assert.equal(matchDocumentReadingCommand(key("KeyJ", { ctrlKey: true })), null);

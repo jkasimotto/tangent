@@ -17,6 +17,7 @@ export const documentReadingCommands = Object.freeze({
   editComment: "edit-comment",
   replyComment: "reply-comment",
   resolveComment: "resolve-comment",
+  resumeAttempt: "resume-attempt",
   help: "help",
   clearSelection: "clear-selection",
   clearComment: "clear-comment",
@@ -46,6 +47,8 @@ function exactModifiers(event, { shift = false, ctrl = false } = {}) {
  * Matches one key in normal Document reading mode. The caller owns the short
  * `g` timeout and passes `pendingG` back for the second key. Text entry, IME,
  * and already-owned events return null without changing that caller state.
+ * `resumableAttempt` gives `r` to the Goal reader's Resume verb (ADR-0042)
+ * while no comment is active, so the printed key on that button works.
  */
 export function matchDocumentReadingCommand(event, {
   pendingG = false,
@@ -54,6 +57,7 @@ export function matchDocumentReadingCommand(event, {
   commentLifecycle = true,
   hasSelection = false,
   activeComment = false,
+  resumableAttempt = false,
 } = {}) {
   const imeKey = ["Dead", "Process", "Unidentified"].includes(String(event?.key ?? ""));
   if (!event || event.defaultPrevented || event.isComposing || event.keyCode === 229 || imeKey || isDocumentTextEntry(event.target)) return null;
@@ -77,6 +81,7 @@ export function matchDocumentReadingCommand(event, {
   if (commentCreation && code === "KeyC") return documentReadingCommands.createComment;
   if (commentLifecycle && activeComment && code === "KeyE") return documentReadingCommands.editComment;
   if (commentLifecycle && activeComment && code === "KeyR") return documentReadingCommands.replyComment;
+  if (resumableAttempt && !activeComment && code === "KeyR") return documentReadingCommands.resumeAttempt;
   if (commentLifecycle && activeComment && code === "KeyX") return documentReadingCommands.resolveComment;
   if (code === "Escape") {
     if (hasSelection) return documentReadingCommands.clearSelection;

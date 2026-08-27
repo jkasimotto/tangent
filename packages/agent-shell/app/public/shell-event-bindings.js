@@ -926,7 +926,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       { key: "c", label: "Write a comment", help: quick ? "Open the full reader to write a comment." : "Write a comment at the current text or Document." },
       ...(!quick ? [
         { key: "e", label: "Edit active comment", help: "Edit the active Julian comment." },
-        { key: "r", label: "Reply to active comment", help: "Add a Julian note at the same anchor." },
+        { key: "r", label: "Reply to active comment", help: "Add a Julian note at the same anchor. With no active comment, r resumes the Goal's current attempt." },
         { key: "x", label: "Resolve active comment", help: "Resolve it with a required short change note." },
       ] : []),
       { key: "Esc", label: "Step back", help: "Clear selected text, clear the active comment, then close the reader." },
@@ -1138,6 +1138,19 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     });
   }
 
+  /**
+   * The Resume button `r` presses in the full Goal reader (ADR-0042): the
+   * current attempt's button when one exists, else the first one listed.
+   * The quick peek has no attempt history, so it never resumes.
+   */
+  function readerResumeAttemptButton(quick) {
+    if (quick) return null;
+    const reader = screen.querySelector(".document-reader");
+    if (!reader) return null;
+    const buttons = [...reader.querySelectorAll("[data-resume-attempt]")];
+    return buttons.find((button) => button.parentElement?.querySelector(":scope > em")) ?? buttons[0] ?? null;
+  }
+
   /** Dispatches one pure reading command for the exact visible Document surface. */
   function handleDocumentReadingKey(event, { quick = false } = {}) {
     const surface = documentReadingSurface(quick);
@@ -1156,6 +1169,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       commentLifecycle: !quick,
       hasSelection: readingSurfaceHasSelection(surface),
       activeComment,
+      resumableAttempt: Boolean(readerResumeAttemptButton(quick)),
     });
     if (!command) {
       if (state.documentPendingG === surfaceKey && event.code !== "KeyG") clearDocumentPendingG(surfaceKey);
@@ -1207,6 +1221,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
     if (command === documentReadingCommands.resolveComment) {
       openResolveActiveComment();
+      return true;
+    }
+    if (command === documentReadingCommands.resumeAttempt) {
+      readerResumeAttemptButton(quick)?.click();
       return true;
     }
     if (command === documentReadingCommands.help) {

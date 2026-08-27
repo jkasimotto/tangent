@@ -120,4 +120,7 @@ test("the Goal reader lists a Resume button per attempt that prints r and posts 
   const calls = posts.filter((entry) => entry.path === "/api/goals/attempts/resume");
   assert.deepEqual(calls.map((entry) => entry.body), [{ goal: readerFile, attemptId: "attempt-dead", conversationId: "conv-dead" }]);
   assert.match(document.querySelector("#toast").textContent, /Resume command typed in tangent-worker-resume/);
+  press(window, "r", { code: "KeyR" });
+  await settle(window, 5);
+  assert.equal(posts.filter((entry) => entry.path === "/api/goals/attempts/resume").length, 2, "the printed r key presses the same Resume button inside the reader");
 });

@@ -115,8 +115,8 @@ function help(): void {
 A process is a note: <area>/process-<slug>.md with type: process and either
 schedule: (calendar words such as "daily 09:00", "weekdays 08:30 UTC") or
 when: (a shell probe; exit 0 means due) with every: (30m, 2h). Optional
-launch:, path:, verify:. The body is the instruction the brain gives the
-worker. When it is due, the server writes one note to the Area brain.
+launch: (harness[/model[/effort]], such as claude/opus-5), path:, verify:.
+The body is the instruction the brain gives the worker. When it is due, the server writes one note to the Area brain.
 
 Servers and watchers are "tangent service".
 

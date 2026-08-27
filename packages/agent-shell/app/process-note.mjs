@@ -162,6 +162,7 @@ export function parseProcessNote(text, { file, area }) {
     if (fields.schedule && fields.when) throw new Error("use schedule: or when:, not both");
     if (!fields.schedule && !fields.when) throw new Error("the frontmatter needs schedule: <calendar words> or when: <shell probe> with every: <duration>");
     if (fields.schedule) note.schedule = parseSchedule(fields.schedule);
+    if (note.launch && /\s/.test(note.launch)) throw new Error("launch must be harness[/model[/effort]], such as launch: claude/opus-5, not a command line");
     if (fields.when) {
       if (!fields.every) throw new Error("when: needs every: <duration>, such as every: 30m");
       note.everyMs = parseEvery(fields.every);

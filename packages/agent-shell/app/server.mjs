@@ -4314,7 +4314,7 @@ const WORKER_REFUSED_ROUTES = new Set([
   "/api/pipelines/append", "/api/pipelines/control", "/api/pipelines/edit", "/api/pipelines/mutate", "/api/goals/attempts/replace", "/api/goals/attempts/resume",
   "/api/areas/new", "/api/areas/status", "/api/areas/move", "/api/idea/new", "/api/document/resolve", "/api/document",
   "/api/brains/start", "/api/brains/stop", "/api/brains/handover", "/api/brains/requests", "/api/brains/requests/withdraw",
-  "/api/operations/new", "/api/operations/control", "/api/programs/new", "/api/programs/control",
+  "/api/operations/new", "/api/operations/control", "/api/programs/new", "/api/programs/control", "/api/processes/control",
 ]);
 
 const WORKER_MUTATION_REFUSAL = 'workers only send. Use: tangent send brain "<note>"';

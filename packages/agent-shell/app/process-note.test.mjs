@@ -32,6 +32,7 @@ test("a broken note keeps its slug and says what is wrong", () => {
   assert.match(parseProcessNote("---\ntype: process\n---\nBody.\n", { file: "a/process-x.md", area: "a" }).error, /schedule: .* or when:/);
   assert.match(parseProcessNote("---\ntype: process\nschedule: daily 09:00\nwhen: true\nevery: 1h\n---\nBody.\n", { file: "a/process-x.md", area: "a" }).error, /not both/);
   assert.match(parseProcessNote("---\ntype: process\nschedule: daily 09:00\nstatus: off\n---\nBody.\n", { file: "a/process-x.md", area: "a" }).error, /active or paused/);
+  assert.match(parseProcessNote("---\ntype: process\nschedule: daily 09:00\nlaunch: claude --model opus\n---\nBody.\n", { file: "a/process-x.md", area: "a" }).error, /launch must be harness\[\/model\[\/effort\]\]/);
   assert.match(parseProcessNote("---\ntype: process\nschedule: daily 09:00\n---\n", { file: "a/process-x.md", area: "a" }).error, /body is empty/);
   assert.equal(processSlugFromFile("a/goal-x.md"), null);
 });

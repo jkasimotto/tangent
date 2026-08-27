@@ -45,9 +45,14 @@ test("a Goal whose first step stopped still opens the step that runs", async () 
   const pipeline = pipelineWithStoppedFirstStep(goal);
   let sessions = [{ name: "viz-branch-graphics-s2", goal: goal.file, area: goal.area, kind: "goal", state: "working", command: "pi-code", pipeline: goal.file, step: 2 }];
   let brains = [];
+  const posts = [];
 
-  window.fetch = async (url) => {
+  window.fetch = async (url, options = {}) => {
     const pathname = new URL(url, window.location.href).pathname;
+    if (options.method === "POST") {
+      posts.push({ pathname, body: JSON.parse(options.body) });
+      return jsonResponse({ ok: true });
+    }
     if (pathname === "/api/sessions") return jsonResponse({ boot: "boot-1", caffeinate: false, sessions, pipelines: [pipeline], brains });
     if (pathname === "/api/operations") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
     return jsonResponse({
@@ -114,5 +119,13 @@ test("a Goal whose first step stopped still opens the step that runs", async () 
   click(window, "#menu-refresh");
   await settle(window);
   await settle(window);
-  assert.equal(row().querySelector("[data-goal-recovery]").textContent, "Recovery start step 2");
+  assert.equal(row().querySelector("[data-goal-recovery]"), null, "recovery is a state-owned action, not an inline row control");
+  click(window, `[data-goal-anchor='${goal.file}'] [data-work-object-actions]`);
+  await settle(window);
+  const recovery = window.document.querySelector("[data-modal-action='recoveryStart']");
+  assert.equal(recovery.querySelector("strong").textContent, "Recovery start assignment 2");
+  assert.match(recovery.querySelector("small").textContent, /brain exhausted its recovery attempts/);
+  click(window, "[data-modal-action='recoveryStart']");
+  await settle(window);
+  assert.deepEqual(posts.at(-1), { pathname: "/api/goals/start", body: { file: goal.file, recovery: true } });
 });

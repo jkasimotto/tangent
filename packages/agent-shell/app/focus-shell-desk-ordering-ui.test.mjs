@@ -14,7 +14,7 @@ test("one Work projection keeps a stable Area order", async () => {
   window.HTMLCanvasElement.prototype.getContext = () => null;
   const DAY = 86_400_000;
   const now = Date.now();
-  // Moving work leads, then the remaining Areas keep stable path order.
+  // Runtime activity must not move a subject out of stable path order.
   const megabranchGoal = {
     mtime: 1, area: "otto/megabranch", slug: "old-goal", file: "otto/megabranch/goal-old.md",
     title: "Old megabranch goal", status: "open", doneWhen: "Done.", changedAt: now - 60 * DAY, waitingOn: "", depth: 0,
@@ -58,7 +58,7 @@ test("one Work projection keeps a stable Area order", async () => {
   window.eval(shellBundle);
   await settle(window);
 
-  const headers = [...window.document.querySelectorAll(".work-table .work-group-name [data-open-area]")].map((node) => node.textContent);
-  assert.deepEqual(headers, ["D&D", "Megabranch", "Standards", "Tangent"], "moving work leads and unstarted work remains visible in stable path order");
+  const headers = [...window.document.querySelectorAll(".work-table .work-group-name [data-work-cursor-control]")].map((node) => node.textContent);
+  assert.deepEqual(headers, ["D&D", "Megabranch", "Standards", "Tangent"], "activity leaves every Area visible in stable path order");
   assert.equal(window.document.querySelector("[data-work-filter]"), null);
 });

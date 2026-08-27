@@ -755,6 +755,14 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
   }
 
+  /** Starts the one server-guarded pending assignment after brain recovery failed. */
+  async function recoverGoalAssignment(goalFile) {
+    const result = await post("/api/goals/start", { file: goalFile, recovery: true });
+    await refresh();
+    paint(true);
+    showToast(result.session ? "Recovery worker started." : "Recovery start recorded.");
+  }
+
   /** Opens one state-owned action surface for the current Work object. */
   function openObjectActions(row = cursorRow()) {
     if (!row) return showToast("There is no Work object to act on.");
@@ -777,8 +785,14 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const record = goal ? pipelineRecordForGoal(goal) : null;
     const currentAssignment = record?.steps?.find((step) => !["complete", "skipped", "ended", "replaced"].includes(step.status));
     const stoppedAssignment = currentAssignment && (currentAssignment.status === "stopped" || (currentAssignment.status === "running" && !currentAssignment.live));
+    const recoveryAvailable = currentAssignment?.status === "pending"
+      && !record?.currentAssignmentId
+      && brain?.status === "active"
+      && brain.health?.status === "failed"
+      && brain.recovery?.exhausted === true;
     if (record) options.splice(2, 0, { value: "editAssignments", key: "e", label: "Edit pending assignments", help: "Review history and atomically edit the pending queue.", enabled: true });
     if (goal && sessionForGoal(goal)) options.splice(2, 0, { value: "stopWork", key: "", label: "End current agent", help: "Stop this exact agent while keeping the Goal and its notes.", enabled: true });
+    if (goal && recoveryAvailable) options.splice(2, 0, { value: "recoveryStart", key: "", label: `Recovery start assignment ${currentAssignment.index}`, help: "Start the pending assignment after this Area brain exhausted its recovery attempts.", enabled: true });
     if (goal && stoppedAssignment) {
       if (currentAssignment.index < (record.steps?.length ?? 0)) options.splice(2, 0, { value: "skipAssignment", key: "", label: `Skip to assignment ${currentAssignment.index + 1}`, help: "End this stopped assignment and advance to the next one.", enabled: true });
       options.splice(2, 0, { value: "endPipeline", key: "", label: "End work", help: "End the run while keeping the Goal open and preserving its history.", enabled: true });
@@ -800,6 +814,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         controlGoalPipeline(goal.file, "end", currentAssignment.index);
         return true;
       }
+      if (id === "recoveryStart" && goal && recoveryAvailable) return recoverGoalAssignment(goal.file);
       return executeWorkCommand(id, currentRow);
     };
     return openModal({
@@ -1577,10 +1592,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const goalRecovery = target.closest("[data-goal-recovery]");
     if (goalRecovery) {
       try {
-        const result = await post("/api/goals/start", { file: goalRecovery.dataset.goalRecovery, recovery: true });
-        await refresh();
-        paint(true);
-        showToast(result.session ? "Recovery worker started." : "Recovery start recorded.");
+        await recoverGoalAssignment(goalRecovery.dataset.goalRecovery);
       } catch (error) {
         showToast(error.message);
       }

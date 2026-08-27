@@ -19,6 +19,15 @@ test("command provenance records identity without granting by Area", () => {
   assert.deepEqual(commandActor("", { sessions, brains }), { session: null, area: null, role: "local-shell" });
 });
 
+test("a live session identity wins when it reuses a historical brain name", () => {
+  const sessions = [{ name: "autodesign-brain-g2", area: "otto/tangent", kind: "goal" }];
+  assert.deepEqual(commandActor("autodesign-brain-g2", { sessions, brains }), {
+    session: "autodesign-brain-g2",
+    area: "otto/tangent",
+    role: "worker",
+  });
+});
+
 test("Area messages accept exact paths and known stale brain sessions only", () => {
   const areas = ["neara/essential", "neara/essential/autodesign"];
   assert.deepEqual(areaInboxTarget("neara/essential/autodesign", { areas, brains }), { area: "neara/essential/autodesign", via: "area" });

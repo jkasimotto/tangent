@@ -11,7 +11,9 @@ export function commandActor(session, { sessions = [], brains = [] } = {}) {
   return {
     session: name,
     area: live?.area ?? brain?.area ?? null,
-    role: brain ? "brain" : live?.kind === "goal" ? "worker" : live?.kind ?? "local-session",
+    role: live
+      ? live.kind === "goal" ? "worker" : live.kind ?? "local-session"
+      : brain ? "brain" : "local-session",
   };
 }
 

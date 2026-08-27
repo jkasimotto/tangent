@@ -395,13 +395,26 @@ test("a brain notice survives a server restart and reaches the next attempt afte
   child = startServer(root, trees, nextPort, "notice-restart-2");
   const restarted = `http://127.0.0.1:${nextPort}`;
   await waitForServer(restarted);
-  await waitFor("the notice queued again after the restart", async () => {
+  /** The brain's queue length as the restarted desk sees it; the poll also runs a reconcile pass. */
+  const queuedAfterRestart = async () => {
+    await fetch(`${restarted}/api/sessions`);
     const { agents } = await fetch(`${restarted}/api/agents`).then((response) => response.json());
-    const live = agents.find((agent) => agent.name === brain.session);
-    return live && live.queued > 0;
-  });
-  const unreadAfterRestart = unreadNotices(await readInbox(brains, `otto/${leaf}`)).map((notice) => notice.id);
-  for (const notice of unreadBeforeRestart) assert.ok(unreadAfterRestart.includes(notice.id), "notices the brain never read stay unread");
+    return agents.find((agent) => agent.name === brain.session)?.queued ?? 0;
+  };
+  await waitFor("the notice queued again after the restart", async () => (await queuedAfterRestart()) > 0);
+  // The persisted queue entries and the startup sweep must not both queue
+  // the same notice: more reconcile passes leave one entry per unread notice.
+  for (let pass = 0; pass < 3; pass += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await queuedAfterRestart();
+  }
+  const unreadAfterRestart = unreadNotices(await readInbox(brains, `otto/${leaf}`));
+  const unreadIdsAfterRestart = unreadAfterRestart.map((notice) => notice.id);
+  for (const notice of unreadBeforeRestart) assert.ok(unreadIdsAfterRestart.includes(notice.id), "notices the brain never read stay unread");
+  assert.equal(await queuedAfterRestart(), unreadAfterRestart.length, "after a restart each unread notice is queued once, never twice");
+  const queueFile = JSON.parse(await readFile(path.join(root, "agent-shell", "message-queue.json"), "utf8"));
+  const queuedNoticeIds = queueFile.entries.flatMap((entry) => (entry.notices ?? []).map((notice) => notice.id));
+  assert.deepEqual([...queuedNoticeIds].sort(), [...unreadIdsAfterRestart].sort(), "the durable queue holds each unread notice exactly once");
 
   // Julian restarts the brain: generation 1 never read the notice, so
   // generation 2's first message carries it below his words.

@@ -1768,9 +1768,13 @@ async function pipelineStepPrompt(area, o, record, index, extras = [], sessionNa
   );
 }
 
-/** The contract for one native-agent collaboration around a complete Goal. */
-async function collaborationPrompt(area, o, documentFile = "", extras = []) {
-  const assignment = await goalPrompt(area, o, extras, [], null, null, { closing: false });
+/**
+ * The contract for one native-agent collaboration around a complete Goal.
+ * `folder` is the resolved working directory so the collaborate prompt names
+ * it like every other prompt path (D3).
+ */
+async function collaborationPrompt(area, o, documentFile = "", extras = [], folder = null) {
+  const assignment = await goalPrompt(area, o, extras, [], null, folder, { closing: false });
   const focus = documentFile ? await readVaultDocument(documentFile) : null;
   const documentFocus = focus
     ? `## Current reading location\n\nJulian is reading ${focus.file}. Use this location to interpret references such as “this section.” It does not limit the feedback to one Document.\n\n`
@@ -1968,9 +1972,10 @@ async function typeGoalPromptWhenReady(session, area, file, phase = "execute", s
   const o = goals.find((t) => t.file === file);
   if (!o) return false;
   const extras = (extraFiles ?? []).map((extra) => goals.find((t) => t.file === extra)).filter(Boolean);
+  const folder = await promptWorkFolder(area);
   const prompt = phase === "collaborate"
-    ? await collaborationPrompt(area, o, documentFile, extras)
-    : await goalPrompt(area, o, extras, [], null, await promptWorkFolder(area));
+    ? await collaborationPrompt(area, o, documentFile, extras, folder)
+    : await goalPrompt(area, o, extras, [], null, folder);
   return typePromptWhenReady(session, prompt, submit, "goal prompt");
 }
 
@@ -2251,7 +2256,9 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
     ? await pipelineStepPrompt(area, o, pipeline.record, pipeline.index, ownExtras, pipeline.sessionName, trace, folder)
     : continuation
       ? await goalPrompt(area, o, ownExtras, continuation.entries, null, folder)
-      : "";
+      : phase === "collaborate"
+        ? await collaborationPrompt(area, o, document, ownExtras, folder)
+        : "";
   trace?.mark("step prompt ready", { characters: stepPrompt.length });
   if ((pipeline || continuation) && process.env.AGENT_SHELL_TEST_NO_LAUNCH === "1") launch = false;
   // A new launch, including one in an existing shell pane, resolves after the
@@ -6410,7 +6417,7 @@ const goalQueryRoutes = createGoalQueryRoutes({
     const goal = (await goalsByFile()).get(file);
     if (!goal) return { status: 404, error: `no goal file ${file}` };
     let markdown;
-    if (mode === "collaborate") markdown = await collaborationPrompt(goal.area, goal);
+    if (mode === "collaborate") markdown = await collaborationPrompt(goal.area, goal, "", [], await promptWorkFolder(goal.area));
     else if (mode === "pipeline") {
       const record = await readPipeline(PIPELINES_ROOT, goal.area, goal.slug);
       if (!record) return { status: 404, error: "this Goal has no pipeline" };

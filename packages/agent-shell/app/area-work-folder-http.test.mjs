@@ -71,6 +71,7 @@ test("a worker starts in the Area's bound folder or is refused before any record
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
   await writeAreaWithGoal(trees, "otto/bound", [`- Repository: ${workspace}`, "- Branch: main"], "bound-work");
   await writeAreaWithGoal(trees, "otto/bound/child", [], "child-work");
+  await writeAreaWithGoal(trees, "otto/bound/talk", [], "talk-work");
   await writeFile(path.join(trees, "otto", "skill-review.md"), "---\nname: review\ndescription: Review a change.\n---\n\nSteps.\n", "utf8");
   await writeFile(path.join(trees, "otto", "bound", "child", "skill-release.md"), "# Ship a release\n\nSteps.\n", "utf8");
   await mkdir(path.join(workspace, ".claude", "skills", "deploy"), { recursive: true });
@@ -114,6 +115,19 @@ test("a worker starts in the Area's bound folder or is refused before any record
     assert.equal(await tmuxOption(started.body.session, "@tangent_cwd"), workspace);
     const prompt = await armedPrompt(armed, started.body.session);
     assert.match(prompt, new RegExp(`## Working directory\\n\\n${workspace.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(from area:otto/bound\\)\\nBranch: main`));
+  });
+
+  await context.test("the collaborate preview and its typed prompt name the same folder", async () => {
+    const folderLine = new RegExp(`## Working directory\\n\\n${workspace.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(from area:otto/bound\\)\\nBranch: main`);
+    const brief = await fetch(`${base}/api/goals/brief?file=${encodeURIComponent("otto/bound/talk/goal-talk-work.md")}&mode=collaborate`).then((response) => response.json());
+    assert.match(brief.markdown, /^# Work with Julian/);
+    assert.match(brief.markdown, folderLine, "the collaborate preview prints the working directory");
+    const started = await post(base, "/api/goals/agent", { file: "otto/bound/talk/goal-talk-work.md", choice: { harness: "test-shell" } });
+    assert.equal(started.status, 200, JSON.stringify(started.body));
+    openedSessions.push(started.body.session);
+    const prompt = await armedPrompt(armed, started.body.session);
+    assert.match(prompt, /^# Work with Julian/);
+    assert.match(prompt, folderLine, "the typed collaborate prompt prints the working directory");
   });
 
   await context.test("a step's own path wins and is recorded as the source", async () => {

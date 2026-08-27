@@ -107,10 +107,13 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   /** Draws the finder's list. It never touches #screen. */
   function renderGoToList() {
     if (!state.goTo) return;
+    goToInput.removeAttribute("aria-activedescendant");
     const rows = goToRows();
     if (rows === null) {
       state.goTo.rows = [];
-      goToList.innerHTML = `<li class="go-to-empty">Loading the vault…</li>`;
+      goToList.innerHTML = state.error
+        ? `<li class="go-to-empty go-to-error" role="alert"><span>${escapeHtml(state.error)}</span><button type="button" data-close-go-to>Close</button></li>`
+        : `<li class="go-to-empty" role="status">Loading the vault…</li>`;
       return;
     }
     state.goTo.rows = rows;
@@ -118,7 +121,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
       const documents = rows.filter((row) => row.kind !== "brain");
       state.goTo.rows = documents;
       if (!documents.length) {
-        goToList.innerHTML = `<li class="go-to-empty">No Documents match these filters.</li>`;
+        goToList.innerHTML = `<li class="go-to-empty" role="status">No Documents match these filters.</li>`;
         return;
       }
       const byStem = new Map(documents.map((row, index) => [String(row.file).split("/").pop().replace(/\.md$/i, ""), { row, index }]));
@@ -130,7 +133,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     }
     state.goTo.selected = rows.length ? Math.min(Math.max(state.goTo.selected, 0), rows.length - 1) : 0;
     if (!rows.length) {
-      goToList.innerHTML = `<li class="go-to-empty">Nothing is named “${escapeHtml(state.goTo.query)}”.</li>`;
+      goToList.innerHTML = `<li class="go-to-empty" role="status">Nothing is named “${escapeHtml(state.goTo.query)}”.</li>`;
       return;
     }
     goToList.innerHTML = rows.map((row, index) => `

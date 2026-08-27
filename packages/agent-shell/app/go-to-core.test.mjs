@@ -155,3 +155,24 @@ test("the finder filters Documents by an Area subtree and kind", () => {
   });
   assert.deepEqual(rows.map((item) => item.name), ["Map"]);
 });
+
+test("visible rows with the same kind, title, and Area show their file names", () => {
+  const vault = { documents: [
+    { file: "otto/tangent/design-search-a.md", kind: "document", docKind: "design", title: "Search", area: "otto/tangent", changedAt: 2 },
+    { file: "otto/tangent/design-search-b.md", kind: "document", docKind: "design", title: "Search", area: "otto/tangent", changedAt: 1 },
+    { file: "otto/other/design-search.md", kind: "document", docKind: "design", title: "Search", area: "otto/other", changedAt: 3 },
+  ] };
+  const rows = buildGoToRows({
+    vault,
+    query: "search",
+    /** Returns the fixture Area label. */
+    areaLabel: (value) => value,
+    /** Returns an empty fixture brain label. */
+    brainStateLabel: () => "",
+  });
+  assert.deepEqual(rows.map((item) => item.detail), [
+    "",
+    "otto/tangent · design-search-a.md",
+    "otto/tangent · design-search-b.md",
+  ]);
+});

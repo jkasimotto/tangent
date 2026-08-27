@@ -1061,7 +1061,7 @@ function paint(force = false) {
   // layer is open: a rebuild would discard the exact surface Escape reveals.
   // Closing and promoting the layer are the only paths that repaint it
   // (design-quick-returnable-document-search D8).
-  if (state.documentPeek) return updateHeader();
+  if (state.documentPeek || state.goTo) return updateHeader();
   // Goal selection is a work-view gesture: leaving the desk clears it.
   if (state.view !== "work" && state.goalSelection.length) state.goalSelection = [];
   if (state.loading) {

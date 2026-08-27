@@ -1392,6 +1392,23 @@ details.more-work .area-work-list { margin-top: 18px; }
 #go-to-list li strong { display: block; font-size: 15px; }
 #go-to-list li small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
 #go-to-list .go-to-empty { display: block; color: var(--muted); padding: 9px 10px; cursor: default; }
+#go-to-list .go-to-error button { min-height: 44px; margin-top: 12px; }
+
+@media (max-width: 480px) {
+  .document-peek-layer { padding: 0; }
+  .document-peek-surface { border-width: 0; border-radius: 0; grid-template-rows: auto minmax(0, 1fr); }
+  .document-peek-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; min-height: 0; padding: 8px; }
+  .document-peek-route .area-path { display: none; }
+  .document-peek-actions { gap: 4px; }
+  .document-peek-actions button { min-height: 44px; }
+  .document-peek-scroll .document-page { padding: 24px 16px 72px; }
+  .go-to-layer { padding: 0; }
+  .go-to { width: 100%; min-height: 100%; padding: 12px; border-width: 0; border-radius: 0; overflow-x: hidden; }
+  .go-to-filters { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .go-to-filters button { grid-column: 1 / -1; }
+  .go-to-filters select, .go-to-filters button, #go-to-list li { min-height: 44px; }
+  #go-to-list li { grid-template-columns: 70px minmax(0, 1fr); column-gap: 8px; }
+}
 
 /* Document comments: red-ruled blocks under their block, marks on quoted words, one inline composer. */
 .document-comment { position: relative; display: flex; align-items: flex-start; gap: 8px; margin: 10px 0 18px; padding: 8px 6px 8px 14px; border-left: 3px solid var(--red); border-radius: 0 6px 6px 0; background: rgba(240, 154, 154, .05); }

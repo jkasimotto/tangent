@@ -1086,22 +1086,23 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   goToLayer.addEventListener("keydown", (event) => {
     if (!state.goTo) return;
     const rows = state.goTo.rows;
+    const resultsOwnKeys = event.target === goToInput || Boolean(event.target.closest?.("[data-go-to-row]"));
     /** Keeps the finder's keys inside the layer, away from the global handler. */
     const own = () => {
       event.preventDefault();
       event.stopPropagation();
     };
-    if (event.key === "ArrowDown") {
+    if (resultsOwnKeys && event.key === "ArrowDown") {
       state.goTo.selected = Math.min(state.goTo.selected + 1, Math.max(rows.length - 1, 0));
       renderGoToList();
       return own();
     }
-    if (event.key === "ArrowUp") {
+    if (resultsOwnKeys && event.key === "ArrowUp") {
       state.goTo.selected = Math.max(state.goTo.selected - 1, 0);
       renderGoToList();
       return own();
     }
-    if (event.key === "Enter") {
+    if (resultsOwnKeys && event.key === "Enter") {
       own();
       return chooseGoToRow(rows[state.goTo.selected]);
     }
@@ -1114,6 +1115,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   goToLayer.addEventListener("click", (event) => {
     event.stopPropagation();
     if (event.target === goToLayer) return closeGoTo();
+    if (event.target.closest?.("[data-close-go-to]")) return closeGoTo();
     const row = event.target.closest?.("[data-go-to-row]");
     if (row) return chooseGoToRow(state.goTo?.rows[Number(row.dataset.goToRow)]);
   });

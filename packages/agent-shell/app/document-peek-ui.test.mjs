@@ -20,7 +20,7 @@ function record(file, area, title) {
  * controllable Document read. Every quick-layer case in
  * design-quick-returnable-document-search section 11 needs this same world.
  */
-async function bootShell() {
+async function bootShell({ projectionFailure = "" } = {}) {
   const html = await readFile(path.join(here, "public", "shell.html"), "utf8");
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
   const { window } = dom;
@@ -69,7 +69,7 @@ async function bootShell() {
     [notes.file]: "# Search notes\n\nNothing here yet.",
   };
   const pending = [];
-  const control = { mode: "immediate", failure: "" };
+  const control = { mode: "immediate", failure: "", projectionFailure };
   window.fetch = async (url, options = {}) => {
     const address = new URL(url, window.location.href);
     const pathname = address.pathname;
@@ -102,6 +102,7 @@ async function bootShell() {
         });
       });
     }
+    if (control.projectionFailure) throw new Error(control.projectionFailure);
     return jsonResponse({
       areas: [
         { path: "otto", name: "otto", goals: [] },
@@ -115,6 +116,70 @@ async function bootShell() {
   await settle(window);
   return { window, work, design, notes, pending, control, deadlines, terminals };
 }
+
+test("the finder freezes the screen and keeps native filter keys", async () => {
+  const { window } = await bootShell();
+  click(window, "#go-to-button");
+  const screenPage = window.document.querySelector("#screen").firstElementChild;
+  const input = window.document.querySelector("#go-to-input");
+  const area = window.document.querySelector("#go-to-area");
+  const kind = window.document.querySelector("#go-to-kind");
+  const view = window.document.querySelector("#go-to-view");
+
+  for (const control of [input, area, kind, view]) {
+    control.focus();
+    click(window, "#menu-refresh");
+    await settle(window);
+    assert.equal(window.document.querySelector("#screen").firstElementChild, screenPage, `${control.id} focus kept the same screen node`);
+  }
+
+  for (const control of [area, kind]) {
+    for (const keyName of ["ArrowDown", "ArrowUp", "Enter"]) {
+      const event = new window.KeyboardEvent("keydown", { key: keyName, bubbles: true, cancelable: true });
+      control.dispatchEvent(event);
+      assert.equal(event.defaultPrevented, false, `${control.id} kept native ${keyName}`);
+      assert.equal(window.document.querySelector("#go-to-layer").hidden, false, `${keyName} did not open a result`);
+    }
+  }
+
+  click(window, "#go-to-view");
+  const graphRow = window.document.querySelector("[data-go-to-row]");
+  graphRow.focus();
+  click(window, "#menu-refresh");
+  await settle(window);
+  assert.equal(window.document.querySelector("#screen").firstElementChild, screenPage, "graph focus kept the same screen node");
+});
+
+test("finder loading, error, and empty states expose complete accessible state", async () => {
+  const failed = await bootShell({ projectionFailure: "Vault connection failed" });
+  click(failed.window, "#go-to-button");
+  const failedFinder = failed.window.document.querySelector("#go-to-layer");
+  assert.match(failedFinder.querySelector('[role="alert"]').textContent, /Vault connection failed/);
+  assert.ok(failedFinder.querySelector("[data-close-go-to]"), "the failed finder has a Close action");
+  click(failed.window, "[data-close-go-to]");
+  assert.equal(failedFinder.hidden, true);
+  failed.window.close();
+
+  const { window } = await bootShell();
+  click(window, "#go-to-button");
+  const input = window.document.querySelector("#go-to-input");
+  assert.equal(input.getAttribute("aria-labelledby"), "go-to-title");
+  input.value = "no result has this title";
+  input.dispatchEvent(new window.Event("input", { bubbles: true }));
+  await settle(window);
+  assert.equal(input.hasAttribute("aria-activedescendant"), false);
+  assert.match(window.document.querySelector('#go-to-list [role="status"]').textContent, /Nothing is named/);
+});
+
+test("the quick surfaces define the 320 px touch layout contract", async () => {
+  const css = await readFile(path.join(here, "public", "shell.css"), "utf8");
+  const narrow = css.slice(css.indexOf("@media (max-width: 480px)"));
+  assert.match(narrow, /\.document-peek-layer\s*\{\s*padding:\s*0/);
+  assert.match(narrow, /\.document-peek-route \.area-path\s*\{\s*display:\s*none/);
+  assert.match(narrow, /\.document-peek-actions button\s*\{\s*min-height:\s*44px/);
+  assert.match(narrow, /\.go-to-layer\s*\{\s*padding:\s*0/);
+  assert.match(narrow, /#go-to-list li\s*\{\s*min-height:\s*44px/);
+});
 
 /** Sends one keystroke to the page. */
 function key(window, init) {

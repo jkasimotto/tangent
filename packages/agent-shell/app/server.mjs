@@ -2409,7 +2409,6 @@ async function adoptGoalSession(sessions, sessionName, goal) {
   await set("@tangent_phase", "execute");
 }
 
-let lastReconcile = 0;
 let reconciling = false;
 /**
  * Repairs Goal bindings after a session ends. This background pass never
@@ -2417,7 +2416,13 @@ let reconciling = false;
  * works, so only an explicit user action has authority to end a Run.
  */
 async function reconcileGoals(sessions, snapshotAt = Date.now()) {
-  if (reconciling || Date.now() - lastReconcile < RECONCILE_INTERVAL_MS) return;
+  // runtimeScheduler owns the reconciliation cadence and already keeps this
+  // lane serial. Keep the local guard for defensive re-entry, but do not
+  // throttle a due scheduler pass a second time: the scheduler records its
+  // timestamp before collecting the session snapshot, so a duplicate elapsed
+  // time check here can reject the boundary pass and delay durable repairs by
+  // another full interval.
+  if (reconciling) return;
   // An empty snapshot is a wrong-world signal, never proof that a session
   // ended (snapshotCanJudgeAbsence): judging against one marked live workers
   // stopped when a test-spawned server reconciled the real records.
@@ -2426,14 +2431,12 @@ async function reconcileGoals(sessions, snapshotAt = Date.now()) {
     // does not rely on a world snapshot. Let that state machine settle even
     // when an empty tmux list is not trustworthy for Goal recovery.
     reconciling = true;
-    lastReconcile = Date.now();
     try { await reconcileBrains(sessions); }
     catch (error) { console.error("brain reconcile:", error.message ?? error); }
     finally { reconciling = false; }
     return;
   }
   reconciling = true;
-  lastReconcile = Date.now();
   try {
     const live = new Set(sessions.map((s) => s.name));
     const byFile = new Map();

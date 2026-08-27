@@ -94,7 +94,9 @@ test("neara/portland worker handovers survive delay, rollover, restart, and exac
     trees,
     workspace,
     openedSessions,
-    env: { TANGENT_RECONCILE_INTERVAL_MS: "10000" },
+    // Exercise the production scheduler without tying correctness to which
+    // side of its ten-second wall-clock boundary a loaded test process lands.
+    env: { TANGENT_RECONCILE_INTERVAL_MS: "100" },
   });
   if (!base) return;
 

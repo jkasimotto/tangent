@@ -6181,7 +6181,16 @@ const brainRoutes = createBrainRoutes({
   },
   /** Finds one enriched brain record by Area or session. */
   async show(area, session) {
-    const brains = await brainsView(await listSessions()).catch(() => []);
+    // The durable brain is still readable when passive tmux observation is
+    // temporarily unhealthy. In particular, do not let the inner await
+    // reject before the old `brainsView(...).catch(...)` could run: opening a
+    // brain would then return 500 even though its record and prompt were
+    // intact. Live state is optional enrichment on this read path.
+    const sessions = await listSessions().catch((error) => {
+      console.error("brain show observation:", error.message ?? error);
+      return [];
+    });
+    const brains = await brainsView(sessions);
     return brains.find((item) => (area && item.area === area) || (session && item.session === session)) ?? null;
   },
   /** Returns the plan lines that the parser could not classify. */

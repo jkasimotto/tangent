@@ -7,6 +7,7 @@ import path from "node:path";
 import { execFile, spawn } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { newBrain, writeBrain } from "./brain-record.mjs";
 import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
 
 isolateTmuxTests();
@@ -183,6 +184,71 @@ test("bounded brain prompt delegates routine review closure", async (context) =>
   assert.match(show.prompt, /append.*--kind review/s, "the brain receives the explicit designated-review append contract");
   assert.match(show.prompt, /Without --kind review.*implementation/s, "the brain knows that review words do not infer the assignment type");
   assert.doesNotMatch(show.prompt, /Keep the Goal open until Julian approves/);
+});
+
+test("brain show keeps durable prompt access when live tmux observation fails", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-brain-show-degraded-"));
+  const trees = path.join(root, "trees");
+  const brains = path.join(root, "brains");
+  const areaName = "otto/probedegraded";
+  const area = path.join(trees, ...areaName.split("/"));
+  const bin = path.join(root, "bin");
+  await mkdir(area, { recursive: true });
+  await mkdir(bin, { recursive: true });
+  await writeFile(path.join(trees, "harnesses.md"), "```tangent.harnesses.v1\n{\"version\":1,\"harnesses\":[{\"id\":\"brain\",\"command\":\"brain-agent\"}]}\n```\n", "utf8");
+  await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
+  await writeFile(path.join(area, "probedegraded.md"), "---\ntype: area\n---\n\n# Probe degraded\n", "utf8");
+  await writeFile(path.join(bin, "tmux"), "#!/bin/sh\necho 'synthetic tmux observation failure' >&2\nexit 70\n", { mode: 0o755 });
+  await writeBrain(brains, newBrain({
+    area: areaName,
+    instruction: "Keep organizing this Area.",
+    planFile: `${areaName}/plan-probedegraded.md`,
+  }));
+
+  let port;
+  try {
+    port = await freePort();
+  } catch (error) {
+    if (error?.code === "EPERM") {
+      context.skip("This environment does not permit local HTTP listeners.");
+      return;
+    }
+    throw error;
+  }
+  const child = spawn(process.execPath, ["server.mjs"], {
+    cwd: here,
+    env: {
+      ...process.env,
+      PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+      PORT: String(port),
+      HOST: "127.0.0.1",
+      TREES_ROOT: trees,
+      TANGENT_LOOPS_ROOT: path.join(root, "loops"),
+      WORKSPACE: path.join(root, "workspace"),
+      AGENT_SHELL_NO_OPEN: "1",
+      AGENT_SHELL_TEST_NO_LAUNCH: "1",
+      TANGENT_PIPELINES_ROOT: path.join(root, "pipelines"),
+      TANGENT_BRAINS_ROOT: brains,
+      AGENT_MESSAGE_LOG: path.join(root, "messages.jsonl"),
+      GROQ_API_KEY: "",
+      CHAT_SESSION: `brain-degraded-test-${process.pid}`,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  context.after(async () => {
+    child.kill("SIGTERM");
+    await Promise.race([once(child, "exit"), new Promise((resolve) => setTimeout(resolve, 1000))]);
+    await rm(root, { recursive: true, force: true });
+  });
+  const base = `http://127.0.0.1:${port}`;
+  await waitForServer(base);
+
+  const response = await fetch(`${base}/api/brains/show?area=${encodeURIComponent(areaName)}`);
+  const show = await response.json();
+  assert.equal(response.status, 200, show.error);
+  assert.equal(show.brain.area, areaName);
+  assert.equal(show.brain.live, false, "failed observation degrades only the ephemeral live state");
+  assert.match(show.prompt, /Delegate sustained investigation, design, implementation, test campaigns, reviews/);
 });
 
 test("a pipeline step under a brain has one handover route and never chooses the next agent", async () => {

@@ -65,8 +65,8 @@ export function createSessionOwnership({ instanceId, root, runTmux, now = () => 
     return (await readSessionOwner(root, session))?.instanceId === instanceId;
   }
 
-  /** Claims one exact pre-marker brain after its durable and live identities match. */
-  async function claimLegacyBrain({ session, area, generation }) {
+  /** Claims one exact pre-marker session after all expected live tags match. */
+  async function claimLegacySession({ session, expected }) {
     const inspected = await inspect(session);
     if (inspected.state !== "live") return inspected;
     if (inspected.instanceId) {
@@ -77,11 +77,12 @@ export function createSessionOwnership({ instanceId, root, runTmux, now = () => 
     try {
       const result = await runTmux([
         "display-message", "-p", "-t", inspected.target,
-        `#{@tangent_kind}\t#{@tangent_brain}\t#{@tangent_generation}`,
+        Object.keys(expected).map((key) => `#{@tangent_${key}}`).join("\t"),
       ]);
-      const [kind = "", liveArea = "", liveGeneration = ""] = String(result.stdout ?? "").trimEnd().split("\t");
-      if (kind !== "brain" || liveArea !== area || liveGeneration !== String(generation)) {
-        return { state: "mismatch", instanceId: null, target: inspected.target, kind, area: liveArea, generation: liveGeneration };
+      const values = String(result.stdout ?? "").trimEnd().split("\t");
+      const observed = Object.fromEntries(Object.keys(expected).map((key, index) => [key, values[index] ?? ""]));
+      if (Object.entries(expected).some(([key, value]) => observed[key] !== String(value))) {
+        return { state: "mismatch", instanceId: null, target: inspected.target, observed };
       }
       await runTmux(["set-option", "-o", "-t", inspected.target, SESSION_OWNER_OPTION, instanceId]);
     } catch (error) {
@@ -103,6 +104,11 @@ export function createSessionOwnership({ instanceId, root, runTmux, now = () => 
     return { state: "claimed", instanceId, target: after.target };
   }
 
+  /** Claims one exact pre-marker brain after its durable and live identities match. */
+  function claimLegacyBrain({ session, area, generation }) {
+    return claimLegacySession({ session, expected: { kind: "brain", brain: area, generation } });
+  }
+
   /** Terminates one live session only after its tmux marker proves ownership. */
   async function terminate(session) {
     const inspected = await inspect(session);
@@ -117,5 +123,5 @@ export function createSessionOwnership({ instanceId, root, runTmux, now = () => 
     }
   }
 
-  return { instanceId, claim, claimLegacyBrain, inspect, ownsRecorded, terminate };
+  return { instanceId, claim, claimLegacyBrain, claimLegacySession, inspect, ownsRecorded, terminate };
 }

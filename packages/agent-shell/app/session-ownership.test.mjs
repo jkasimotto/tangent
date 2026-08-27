@@ -37,7 +37,7 @@ test("session termination requires the live tmux owner and records stale ownersh
       if (!live.has(session)) throw new Error(`can't find session: ${session}`);
       if (String(args.at(-1)).includes("@tangent_kind")) {
         const value = tags.get(session) ?? {};
-        return { stdout: `${value.kind ?? ""}\t${value.area ?? ""}\t${value.generation ?? ""}\n` };
+        return { stdout: `${value.kind ?? ""}\t${value.brain ?? ""}\t${value.generation ?? ""}\n` };
       }
       return { stdout: `$${session}\t${live.get(session) ?? ""}\n` };
     }
@@ -66,10 +66,10 @@ test("session termination requires the live tmux owner and records stale ownersh
   assert.deepEqual(await one.terminate("legacy"), { state: "legacy", instanceId: null });
   assert.equal(live.has("legacy"), true);
 
-  tags.set("legacy", { kind: "brain", area: "otto/tangent", generation: "12" });
+  tags.set("legacy", { kind: "brain", brain: "otto/tangent", generation: "12" });
   assert.deepEqual(
     await one.claimLegacyBrain({ session: "legacy", area: "otto/other", generation: 12 }),
-    { state: "mismatch", instanceId: null, target: "$legacy", kind: "brain", area: "otto/tangent", generation: "12" },
+    { state: "mismatch", instanceId: null, target: "$legacy", observed: { kind: "brain", brain: "otto/tangent", generation: "12" } },
   );
   assert.equal(live.get("legacy"), null, "mismatched legacy evidence stays unowned");
   assert.deepEqual(
@@ -81,6 +81,12 @@ test("session termination requires the live tmux owner and records stale ownersh
   assert.deepEqual(
     await two.claimLegacyBrain({ session: "legacy", area: "otto/tangent", generation: 12 }),
     { state: "foreign", instanceId: "shell-one", target: "$legacy" },
+  );
+  live.set("legacy-worker", null);
+  tags.set("legacy-worker", { kind: "goal", brain: "otto/tangent/goal-one.md", generation: "2" });
+  assert.deepEqual(
+    await one.claimLegacySession({ session: "legacy-worker", expected: { kind: "goal", brain: "otto/tangent/goal-one.md", generation: 2 } }),
+    { state: "claimed", instanceId: "shell-one", target: "$legacy-worker" },
   );
   assert.ok(calls.some((args) => args.includes(SESSION_OWNER_OPTION)), "the tmux option is the live ownership key");
 });

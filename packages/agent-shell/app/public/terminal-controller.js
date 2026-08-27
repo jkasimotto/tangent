@@ -11,6 +11,7 @@ export function createTerminalController({ state, showToast }) {
   let terminalSelection = null;
   let terminalReconnectTimer = null;
   let terminalGeneration = 0;
+  let fitTerminal = null;
 
   /** Disposes the mounted terminal and its transport. */
   function disposeTerminal() {
@@ -29,6 +30,7 @@ export function createTerminalController({ state, showToast }) {
     terminal?.dispose();
     terminal = null;
     terminalFit = null;
+    fitTerminal = null;
     terminalSession = "";
   }
 
@@ -89,7 +91,7 @@ export function createTerminalController({ state, showToast }) {
         if (terminalSocket?.readyState === WebSocket.OPEN) terminalSocket.send(`\x00resize:${terminal.cols}x${terminal.rows}`);
       } catch {}
     };
-    window.setTimeout(fit, 0);
+    fitTerminal = fit;
     terminalResizeObserver = new ResizeObserver(fit);
     terminalResizeObserver.observe(host);
     let reconnectAttempt = 0;
@@ -123,7 +125,14 @@ export function createTerminalController({ state, showToast }) {
         terminalReconnectTimer = window.setTimeout(connect, delay);
       };
     };
-    connect();
+    // The overlay becomes visible in the same paint that mounts xterm. Wait
+    // for layout before the first connection, so tmux never receives xterm's
+    // 80x24 construction default as the browser client size.
+    window.setTimeout(() => {
+      if (generation !== terminalGeneration || terminalSession !== sessionName) return;
+      fit();
+      connect();
+    }, 0);
     terminal.onData((data) => {
       terminalSelection?.noteInput();
       if (terminalSocket?.readyState === WebSocket.OPEN) terminalSocket.send(data);
@@ -145,6 +154,6 @@ export function createTerminalController({ state, showToast }) {
     disposeTerminal,
     mountTerminal,
     /** Fits the terminal to its host. */
-    fit: () => terminalFit?.fit(),
+    fit: () => fitTerminal?.(),
   };
 }

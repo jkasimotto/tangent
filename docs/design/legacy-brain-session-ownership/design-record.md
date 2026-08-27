@@ -1,5 +1,15 @@
 # Legacy brain session ownership
 
+## Revision after rollout evidence
+
+The explicit-brain-only decision below was too narrow. The ownership rollout also hid pre-marker workers from discovery and message delivery.
+
+**Observed:** active durable pipeline steps still named matching live tmux sessions. Ownership filtering removed those sessions before reconciliation and delivery.
+
+**Revised decision:** the first observation can claim active brains and running workers after all durable and live tags match.
+
+**Revised decision:** the compatibility sweep never claims completed attempts, arbitrary terminals, triggers, or mismatched sessions.
+
 ## Problem contract
 
 ADR-0036 added an Agent Shell instance marker to each new tmux session. A live brain from an older controller has no marker.

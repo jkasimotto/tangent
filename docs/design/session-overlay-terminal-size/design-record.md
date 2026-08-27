@@ -1,5 +1,15 @@
 # Session overlay terminal size
 
+## Revision after live verification
+
+The CSS decision below was insufficient. The stretched host did not change the attached tmux client from 80 by 24 cells.
+
+**Observed:** the browser client stayed at exactly 80 by 24 after the CSS fix. This proved that the transport connected before its first fit.
+
+**Revised decision:** fit xterm after browser layout and before WebSocket creation. The first tmux attachment now starts with fitted dimensions.
+
+**Revised decision:** the public fit operation also uses the resize-reporting function. Later browser resizes update both xterm and the PTY.
+
 ## Problem contract
 
 The Work overlay fills the viewport, but its terminal can remain at the xterm default size of 80 by 24 cells.
@@ -55,6 +65,8 @@ This option loses because xterm already owns those measurements.
 This option sets the host width and height to 100 percent. Padding replaces the current margins inside the same track.
 
 This option wins because layout owns geometry and `FitAddon` keeps ownership of terminal cells.
+
+Live verification later showed that this option was necessary but not sufficient. The first transport connection still used xterm defaults.
 
 ## Decisions
 

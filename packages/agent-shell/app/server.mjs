@@ -233,6 +233,37 @@ const ARMED_ROOT = process.env.TANGENT_ARMED_ROOT ?? path.join(os.homedir(), ".t
 
 if (!existsSync(WORKSPACE)) mkdirSync(WORKSPACE, { recursive: true });
 
+const legacyWorkflowClaims = new Set();
+
+/** Claims pre-marker live work only when its durable record and tmux tags agree. */
+async function claimLegacyWorkflowSessions(sessions) {
+  const candidates = sessions.filter((session) => !session.instanceId && ["brain", "goal"].includes(session.kind) && !legacyWorkflowClaims.has(session.name));
+  if (!candidates.length) return;
+  const expectedBySession = new Map();
+  for (const brain of await readAllBrains(BRAINS_ROOT)) {
+    if (brain.status !== "active" || !brain.session) continue;
+    expectedBySession.set(brain.session, { kind: "brain", area: brain.area, brain: brain.area, generation: brain.generation });
+  }
+  for (const pipeline of await readAllPipelines(PIPELINES_ROOT)) {
+    for (const step of pipeline.steps ?? []) {
+      if (!["running", "waiting"].includes(step.status) || !step.session) continue;
+      expectedBySession.set(step.session, {
+        kind: "goal", area: pipeline.area, goal: pipeline.goal, pipeline: pipeline.goal, step: step.index,
+      });
+    }
+  }
+  for (const session of candidates) {
+    legacyWorkflowClaims.add(session.name);
+    const expected = expectedBySession.get(session.name);
+    if (!expected) continue;
+    const claimed = await sessionOwnership.claimLegacySession({ session: session.name, expected });
+    if (!["claimed", "owned"].includes(claimed.state)) continue;
+    session.instanceId = INSTANCE_ID;
+    session.owned = true;
+    console.error(`[runtime] ${JSON.stringify({ operation: "claim-legacy-workflow", session: session.name, kind: session.kind, instanceId: INSTANCE_ID })}`);
+  }
+}
+
 /**
  * Lists live tmux sessions for the sidebar in the frontend, which polls
  * /api/sessions to discover sessions the chat agent created. The `area`
@@ -279,6 +310,7 @@ async function loadSessions() {
           isChat: name === CHAT_SESSION,
         };
       });
+    await claimLegacyWorkflowSessions(sessions);
     const owned = sessions.filter((session) => session.owned);
     const enriched = new Map((await paneObserver.enrich(await withGoalInfo(owned))).map((session) => [session.name, session]));
     return sessions.map((session) => enriched.get(session.name) ?? session);

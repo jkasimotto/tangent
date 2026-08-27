@@ -35,7 +35,8 @@ test("message delivery owns ordering, retargeting, and dead-target drops", async
   assert.equal(delivery.queuedCount("worker-2"), 1);
   live = [];
   await delivery.tick();
-  assert.deepEqual(released, entry.notices);
+  assert.deepEqual(released, [], "a dropped notice is not released; it stays unread in its inbox for the sweep");
+  assert.equal(delivery.queuedCount("worker-2"), 0);
   assert.match(await readFile(file, "utf8"), /"event":"dropped"/);
 });
 
@@ -470,4 +471,43 @@ test("a durable retarget restarts on the exact replacement session", async () =>
   });
   assert.equal(restarted.queuedCount("worker-old"), 0);
   assert.equal(restarted.queuedCount("worker-new"), 1);
+});
+
+test("a brain notice is queued durably, survives a restart, and is read only when shown", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "tangent-message-notice-durable-"));
+  const queueFile = path.join(root, "state", "message-queue.json");
+  const logFile = path.join(root, "messages.jsonl");
+  const brain = { name: "tangent-brain-g1", kind: "brain", state: "working", stateDetail: null, composer: "draft" };
+  const read = [];
+  /** Builds one delivery over the same store file, as a restarted server does. */
+  const open = async (store) => createMessageDelivery({
+    file: logFile,
+    store,
+    /** Returns the brain fixture. */
+    sessions: async () => [brain],
+    /** Accepts fixture text delivery. */
+    deliverText: async () => true,
+    notices: {
+      /** Records which durable notices the brain read. */
+      delivered: async (notices, target, generation) => { read.push({ notices, target, generation }); },
+    },
+    /** Accepts fixture polling wake-up. */
+    wake() {},
+  });
+  const first = await open(await openMessageQueueStore({ file: queueFile }));
+  const entry = { from: "tangent", area: null, text: "Goal g: assignment 1 done.", notices: [{ area: "otto/tangent", id: "n1" }], generation: 1 };
+  assert.equal(await first.queueDurable(brain.name, entry), 1);
+  assert.deepEqual([...first.pendingNotices()], ["otto/tangent n1"], "a queued notice is on its way");
+  await first.tick();
+  assert.equal(read.length, 0, "a drafting brain is not typed over, and the notice stays queued");
+
+  // A restart reloads the entry, with its notices, from the queue file.
+  const second = await open(await openMessageQueueStore({ file: queueFile }));
+  assert.deepEqual([...second.pendingNotices()], ["otto/tangent n1"]);
+  brain.composer = "idle";
+  await second.tick();
+  assert.deepEqual(read, [{ notices: [{ area: "otto/tangent", id: "n1" }], target: brain.name, generation: 1 }]);
+  assert.equal(second.queuedCount(brain.name), 0);
+  assert.deepEqual([...second.pendingNotices()], [], "a shown notice leaves the queue");
+  assert.deepEqual((await openMessageQueueStore({ file: queueFile })).entries(), [], "and the file");
 });

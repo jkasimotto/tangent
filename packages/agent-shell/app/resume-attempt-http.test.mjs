@@ -4,14 +4,14 @@
 // owned session of kind `resume` in the attempt's folder with the command
 // typed and never submitted, and that session never binds to the Goal.
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { startShellServer } from "./focus-shell-http-fixture.mjs";
+import { startBrainCaller, startShellServer } from "./focus-shell-http-fixture.mjs";
 import { readPipeline } from "./pipeline-record.mjs";
 import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
 
@@ -19,7 +19,8 @@ isolateTmuxTests();
 
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
-const harnessRegistry = `# Harnesses
+/** The registry: one harness records its id at launch, one is found by lookup in `transcripts` (codex), one has no resume. */
+const harnessRegistry = (transcripts) => `# Harnesses
 
 \`\`\`tangent.harnesses.v2
 {
@@ -28,6 +29,7 @@ const harnessRegistry = `# Harnesses
   "harnesses": [
     { "id": "test-shell", "label": "Test shell", "command": "sleep 300", "resume": "{command} --resume {id}", "sessionIdArg": "--session-id {id}" },
     { "id": "test-noid", "label": "No id", "command": "sleep 300", "resume": "sleep resume {id}" },
+    { "id": "test-codex", "label": "Codex-like", "command": "sleep 300", "resume": "{command} resume {id}", "transcripts": ${JSON.stringify(transcripts)} },
     { "id": "test-plain", "label": "Plain", "command": "sleep 300" }
   ]
 }
@@ -70,19 +72,21 @@ test("an attempt records its conversation at launch and resumes into a session t
   const area = path.join(trees, "otto", "resume");
   await mkdir(workspace, { recursive: true });
   await mkdir(area, { recursive: true });
-  await writeFile(path.join(trees, "harnesses.md"), harnessRegistry, "utf8");
+  const transcripts = path.join(root, "codex-sessions");
+  await writeFile(path.join(trees, "harnesses.md"), harnessRegistry(transcripts), "utf8");
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
   await writeFile(path.join(area, "resume.md"), `---\ntype: area\n---\n\n# Resume\n\n## Resources\n\n- Repository: ${workspace}\n`, "utf8");
-  for (const slug of ["with-id", "no-id", "plain"]) await writeGoal(area, slug);
+  for (const slug of ["with-id", "no-id", "codex-like", "plain"]) await writeGoal(area, slug);
   await execFileAsync("git", ["-C", trees, "init", "-q"]);
   await execFileAsync("git", ["-C", trees, "-c", "user.name=Test", "-c", "user.email=test@tangent", "add", "-A"]);
   await execFileAsync("git", ["-C", trees, "-c", "user.name=Test", "-c", "user.email=test@tangent", "commit", "-q", "-m", "add: resume fixture"]);
   const openedSessions = [];
   const base = await startShellServer(context, { here, root, trees, workspace, openedSessions, env: { TANGENT_RECONCILE_INTERVAL_MS: "600000" } });
   if (!base) return;
+  const brain = await startBrainCaller(base, { area: "otto/resume", choice: { harness: "test-shell" }, openedSessions });
 
   const goalFile = "otto/resume/goal-with-id.md";
-  const started = await post(base, "/api/goals/start", { file: goalFile, steps: [{ instruction: "Prove resume.", launch: { harness: "test-shell" } }] });
+  const started = await post(base, "/api/goals/start", { caller: brain, file: goalFile, steps: [{ instruction: "Prove resume.", launch: { harness: "test-shell" } }] });
   assert.equal(started.status, 200, JSON.stringify(started.body));
   const workerSession = started.body.session;
   openedSessions.push(workerSession);
@@ -97,12 +101,40 @@ test("an attempt records its conversation at launch and resumes into a session t
   });
 
   await context.test("a harness without a session id flag gets no id", async () => {
-    const noId = await post(base, "/api/goals/start", { file: "otto/resume/goal-no-id.md", steps: [{ instruction: "No id.", launch: { harness: "test-noid" } }] });
+    const noId = await post(base, "/api/goals/start", { caller: brain, file: "otto/resume/goal-no-id.md", steps: [{ instruction: "No id.", launch: { harness: "test-noid" } }] });
     assert.equal(noId.status, 200, JSON.stringify(noId.body));
     openedSessions.push(noId.body.session);
     const record = await readPipeline(pipelines, "otto/resume", "no-id");
     assert.equal(record.steps[0].attempts.at(-1).providerSession, null);
     assert.equal(await tmuxOption(noId.body.session, "@tangent_launch_command"), "sleep 300");
+  });
+
+  await context.test("a conversation found by lookup is written back to the attempt, so the next show needs no lookup", async () => {
+    const codexGoal = "otto/resume/goal-codex-like.md";
+    const started = await post(base, "/api/goals/start", { caller: brain, file: codexGoal, steps: [{ instruction: "Codex-like.", launch: { harness: "test-codex" } }] });
+    assert.equal(started.status, 200, JSON.stringify(started.body));
+    openedSessions.push(started.body.session);
+    let record = await readPipeline(pipelines, "otto/resume", "codex-like");
+    const codexAttempt = record.steps[0].attempts.at(-1);
+    assert.equal(codexAttempt.providerSession, null, "a harness without a session id flag records nothing at launch");
+    // One rollout in the attempt's folder, one second after the attempt started.
+    const day = new Date(codexAttempt.startedAt);
+    /** Two-digit month or day. */
+    const pad = (n) => String(n).padStart(2, "0");
+    const folder = path.join(transcripts, String(day.getFullYear()), pad(day.getMonth() + 1), pad(day.getDate()));
+    await mkdir(folder, { recursive: true });
+    const rolloutFile = path.join(folder, "rollout-found.jsonl");
+    const timestamp = new Date(day.getTime() + 1000).toISOString();
+    await writeFile(rolloutFile, JSON.stringify({ timestamp, type: "session_meta", payload: { id: "found-id", session_id: "found-id", cwd: codexAttempt.cwd, timestamp, thread_source: "user" } }) + "\n", "utf8");
+    const detail = await (await fetch(`${base}/api/goals/detail?goal=${encodeURIComponent(codexGoal)}&conversations=1`)).json();
+    assert.equal(detail.attempts.at(-1).resume.conversationId, "found-id");
+    assert.equal(detail.attempts.at(-1).resume.command, "sleep 300 resume found-id");
+    record = await readPipeline(pipelines, "otto/resume", "codex-like");
+    assert.deepEqual(record.steps[0].attempts.at(-1).providerSession, { provider: "test-codex", id: "found-id" }, "the found conversation is on the attempt");
+    // The rollout is gone: the next show and Resume read the attempt, not the transcripts.
+    await rm(rolloutFile);
+    const again = await (await fetch(`${base}/api/goals/detail?goal=${encodeURIComponent(codexGoal)}&conversations=1`)).json();
+    assert.equal(again.attempts.at(-1).resume.command, "sleep 300 resume found-id");
   });
 
   await context.test("goal detail carries the resume command per attempt", async () => {
@@ -145,7 +177,7 @@ test("an attempt records its conversation at launch and resumes into a session t
   });
 
   await context.test("a harness without resume has no Resume verb", async () => {
-    const plain = await post(base, "/api/goals/start", { file: "otto/resume/goal-plain.md", steps: [{ instruction: "Plain.", launch: { harness: "test-plain" } }] });
+    const plain = await post(base, "/api/goals/start", { caller: brain, file: "otto/resume/goal-plain.md", steps: [{ instruction: "Plain.", launch: { harness: "test-plain" } }] });
     assert.equal(plain.status, 200, JSON.stringify(plain.body));
     openedSessions.push(plain.body.session);
     await fetch(`${base}/api/kill/${encodeURIComponent(plain.body.session)}`, { method: "POST" });

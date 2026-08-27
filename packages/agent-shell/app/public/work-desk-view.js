@@ -1331,13 +1331,8 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   function deskPipelineControls(goal, pipeline) {
     const step = currentPipelineStep(pipeline);
     if (!step) return "";
-    const brain = brainForAreaCard(goal.area);
-    const recoveryAvailable = brain?.status === "active" && brain.health?.status === "failed" && brain.recovery?.exhausted === true;
-    if (step.status === "pending") {
-      return !pipeline.currentAssignmentId && recoveryAvailable
-        ? `<button type="button" data-goal-recovery="${escapeHtml(goal.file)}">Recovery start step ${step.index}</button>`
-        : "";
-    }
+    // A pending step waits for the brain: only the brain starts workers (D8).
+    if (step.status === "pending") return "";
     const last = step.index >= pipeline.steps.length;
     const stopped = step.status === "stopped" || (step.status === "running" && !step.live);
     if (stopped) {

@@ -8,6 +8,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { startBrainCaller } from "./focus-shell-http-fixture.mjs";
 import { attemptReplacementPath, readAttemptReplacement } from "./goal-attempt-replacement.mjs";
 import { readPipeline } from "./pipeline-record.mjs";
 import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
@@ -168,9 +169,10 @@ async function createVault(trees, workspace) {
 }
 
 /** Starts one stable-ID assignment and returns its authoritative queue. */
-async function startGoal(base, slug) {
+async function startGoal(base, slug, caller) {
   const result = await jsonRequest(base, "/api/goals/start", {
     file: `${areaName}/goal-${slug}.md`,
+    caller,
     steps: [{ id: "work", instruction: `Exercise ${slug}.`, launch }],
   });
   assert.equal(result.response.status, 200, JSON.stringify(result.body));
@@ -218,13 +220,14 @@ test("exact-attempt replacement survives controller restarts without losing eith
 
   await createVault(trees, workspace);
   controller = await startController({ root, trees, workspace, instanceId, controllers });
+  const brain = await startBrainCaller(controller.base, { area: areaName, choice: launch });
 
-  const unrelatedQueue = await startGoal(controller.base, "unrelated");
+  const unrelatedQueue = await startGoal(controller.base, "unrelated", brain);
   const unrelatedSession = unrelatedQueue.steps[0].session;
 
   await context.test("restart never guesses readiness for replacement-starting", async () => {
     const goal = `${areaName}/goal-starting.md`;
-    const queue = await startGoal(controller.base, "starting");
+    const queue = await startGoal(controller.base, "starting", brain);
     const sourceSession = queue.steps[0].session;
     const request = replacementRequest(goal, queue, "restart-while-starting");
     const requested = await jsonRequest(controller.base, "/api/goals/attempts/replace", request);
@@ -265,7 +268,7 @@ test("exact-attempt replacement survives controller restarts without losing eith
 
   await context.test("a dead replacement target can never retire the current source", async () => {
     const goal = `${areaName}/goal-dead-target.md`;
-    const queue = await startGoal(controller.base, "dead-target");
+    const queue = await startGoal(controller.base, "dead-target", brain);
     const sourceSession = queue.steps[0].session;
     const request = replacementRequest(goal, queue, "replacement-target-died");
     const requested = await jsonRequest(controller.base, "/api/goals/attempts/replace", request);
@@ -293,7 +296,7 @@ test("exact-attempt replacement survives controller restarts without losing eith
 
   await context.test("retirement-incomplete resumes behind both immutable target fences", async () => {
     const goal = `${areaName}/goal-retirement-retry.md`;
-    const queue = await startGoal(controller.base, "retirement-retry");
+    const queue = await startGoal(controller.base, "retirement-retry", brain);
     const sourceSession = queue.steps[0].session;
     const request = replacementRequest(goal, queue, "resume-retirement");
     const requested = await jsonRequest(controller.base, "/api/goals/attempts/replace", request);

@@ -44,8 +44,7 @@ test("a brain creates and starts a Goal in one call; Julian's flag turns the bra
   // Only a brain starts a worker from create; nothing is written first.
   const refused = await post(base, "/api/goals/create", { area: "otto/check", goal: { title: "Not from a brain" }, start: true, caller: "julian-shell" });
   assert.equal(refused.status, 403, JSON.stringify(refused.body));
-  assert.match(refused.body.error, /Only an Area brain starts a worker/);
-  assert.equal(refused.body.error.includes("The Goal was not created"), true);
+  assert.equal(refused.body.error, 'only the brain starts workers. Message it in Work (a on the Area) or run: tangent send otto/check "<what you want>"');
 
   const brain = await post(base, "/api/brains/start", { area: "otto/check", instruction: "Fix the flicker. I check that one myself." });
   assert.equal(brain.status, 200, JSON.stringify(brain.body));

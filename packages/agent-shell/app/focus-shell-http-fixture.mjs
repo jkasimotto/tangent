@@ -82,3 +82,20 @@ export async function startShellServer(context, { here, root, trees, workspace, 
   await waitForServer(base);
   return base;
 }
+
+/**
+ * Starts one Area brain through the public route and returns its session
+ * name. Only the brain starts workers (D8), so a test that starts a worker
+ * passes this name as `caller`.
+ */
+export async function startBrainCaller(base, { area, choice = null, instruction = `Control ${area}.`, openedSessions = [] }) {
+  const response = await fetch(`${base}/api/brains/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ area, instruction, ...(choice ? { choice } : {}) }),
+  });
+  const body = await response.json();
+  if (!response.ok || !body.session) throw new Error(`the ${area} brain did not start: ${JSON.stringify(body)}`);
+  openedSessions.push(body.session);
+  return body.session;
+}

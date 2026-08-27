@@ -477,8 +477,8 @@ const goalLaunchView = createGoalLaunchView({
 const {
   selectableAreas, preferredArea, areaOptions, renderDescribeCapture, describeSourcesBlock,
   launchOptionsFor, launchSelection, launchRequestFields, launchFieldsForArea, launchStepDraft, syncLaunchDraft, commitActiveStep,
-  blankLaunchStep, launchStepsForRecord, launchStepIsMutable, activateLaunchStep, loadLaunchStep, addLaunchStep, removeLaunchStep, moveLaunchStep, launchStepLabel, launchStepRequest,
-  launchIsPipeline, pipelineForGoal, pipelineRecordForGoal, launchDraftRows, pipelineMutationOperations, rebasePipelineDraft, launchStepList, launchPickerBlock,
+  blankLaunchStep, launchStepsForRecord, launchStepIsMutable, activateLaunchStep, loadLaunchStep, launchStepLabel,
+  pipelineForGoal, pipelineRecordForGoal, launchStepList, launchPickerBlock,
   toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, harnessSlug, saveHarnesses, renderHarnessEditor,
 } = goalLaunchView;
 
@@ -532,8 +532,8 @@ const shellCoordinator = createShellCoordinator({
   areasFeature: { allAreas, areaParent, preferredArea, areas, revealArea, selectedArea },
   programs: { currentProgram, programById, programIsLive, programAreaDirectory },
   launch: {
-    launchOptionsFor, launchSelection, launchRequestFields, launchFieldsForArea, syncLaunchDraft, commitActiveStep, launchStepDraft,
-    launchStepRequest, pipelineMutationOperations, pipelineForGoal, pipelineRecordForGoal, syncDescribeDraft,
+    launchOptionsFor, launchSelection, launchRequestFields, launchFieldsForArea, syncLaunchDraft, launchStepDraft,
+    pipelineForGoal, pipelineRecordForGoal, syncDescribeDraft,
     DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
   },
   documents: { openDocument, refreshDocument, rememberDocumentPosition, documentGoal, openDocumentPeek, closeDocumentPeek },
@@ -644,7 +644,7 @@ function renderKey() {
     state.programs.operations.map((item) => [item.id, item.paused, item.lastRunAt, item.nextRunAt, item.session?.state]),
     vaultRenderProjection(),
     goal ? [goal.file, goal.status, goal.mtime, goal.stateText, goal.currentBrief, goal.storyText, goal.why, goal.subgoalItems, goal.documents] : null,
-    [state.launch.area, state.launch.kind, state.launch.open, state.launch.editing, state.launch.command, state.launch.choice, state.launch.loading, state.launch.options, state.launch.instruction, state.launch.assignmentKind, state.launch.assignmentPath, state.launch.continueFrom, state.launch.active, state.launch.steps, state.launch.record?.updatedAt ?? null, state.launch.stale],
+    [state.launch.area, state.launch.kind, state.launch.open, state.launch.editing, state.launch.command, state.launch.choice, state.launch.loading, state.launch.options, state.launch.instruction, state.launch.assignmentKind, state.launch.assignmentPath, state.launch.continueFrom, state.launch.active, state.launch.steps, state.launch.record?.updatedAt ?? null],
     (state.pipelines ?? []).map((item) => [item.goal, item.status, item.updatedAt, item.steps.map((step) => [step.status, step.session, step.startedAt, step.endedAt, step.live, step.state, step.idleSince, step.waitingSince])]),
     (state.brains ?? []).map((item) => [item.area, item.status, item.generation, item.session, item.live, item.state, item.stateDetail, item.stateQuestion, item.waitingSince, item.updatedAt, (item.forJulian ?? []).map((row) => [row.line, row.commentCount, row.missing, row.goalStatus]), (item.requests ?? []).map((request) => [request.id, request.status, request.subject, request.question, request.proposal, request.detail])]),
     (state.goalCleanups ?? []).map((item) => [item.goal, item.lastAttemptAt, item.retryCount, item.failures]),
@@ -1494,9 +1494,9 @@ bindShellEvents({
     programAreaDirectory,
   },
   launch: {
-    syncDescribeDraft, launchSelection, launchRequestFields, syncLaunchDraft, activateLaunchStep, removeLaunchStep, moveLaunchStep,
-    addLaunchStep, launchStepIsMutable, launchStepsForRecord, blankLaunchStep, launchIsPipeline, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, saveHarnesses, startPipeline,
-    savePipelineChanges, replaceGoalAttempt, launchOptionsFor, pipelineRecordForGoal, rebasePipelineDraft, loadLaunchStep,
+    syncDescribeDraft, launchSelection, launchRequestFields, syncLaunchDraft,
+    launchStepsForRecord, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, saveHarnesses,
+    replaceGoalAttempt, launchOptionsFor, pipelineRecordForGoal, loadLaunchStep,
     DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET, DEFAULT_AGENTS_TARGET,
   },
   documents: {

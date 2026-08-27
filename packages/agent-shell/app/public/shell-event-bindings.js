@@ -34,9 +34,9 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     programAreaDirectory,
   } = programs;
   const {
-    syncDescribeDraft, launchSelection, launchRequestFields, syncLaunchDraft, activateLaunchStep, removeLaunchStep, moveLaunchStep,
-    addLaunchStep, launchStepIsMutable, launchStepsForRecord, blankLaunchStep, launchIsPipeline, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, saveHarnesses, startPipeline,
-    savePipelineChanges, replaceGoalAttempt, launchOptionsFor, pipelineRecordForGoal, rebasePipelineDraft, loadLaunchStep,
+    syncDescribeDraft, launchSelection, launchRequestFields, syncLaunchDraft,
+    launchStepsForRecord, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, saveHarnesses,
+    replaceGoalAttempt, launchOptionsFor, pipelineRecordForGoal, loadLaunchStep,
     DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET, DEFAULT_AGENTS_TARGET,
   } = launch;
   const {
@@ -277,7 +277,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       else if (state.launchTarget === BRAIN_LAUNCH_TARGET) candidate = popover.querySelector("#brain-instruction");
       else if (preference === "choices") candidate = choice;
       else if (state.launchTarget === DEFAULT_AGENTS_TARGET && !state.defaultAgents.editing) candidate = summary;
-      else candidate = popover.querySelector("[data-launch-assignment-region] [data-launch-step-select]") ?? choice ?? popover.querySelector("textarea, input, select, button:not([disabled])");
+      else candidate = choice ?? popover.querySelector("textarea, input, select, button:not([disabled])");
       (candidate ?? popover).focus?.({ preventScroll: true });
       return Boolean(candidate);
     };
@@ -290,7 +290,11 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     window.setTimeout(stopLaunchFocusRequest, 2500);
   }
 
-  /** Opens one Goal Launch Editor from any semantic pointer or keyboard action. */
+  /**
+   * Opens the agent chooser for a Goal Julian works on himself (Start agent,
+   * the collaborate route). It composes no assignments: only the brain
+   * starts workers (D8).
+   */
   function openGoalLaunchEditor(file, opener) {
     const goal = goalByFile(file) ?? (state.goalDetail?.goal?.file === file ? state.goalDetail.goal : null);
     if (!goal) return showToast("The Goal file was removed from the vault.");
@@ -302,21 +306,9 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     state.launchTarget = file;
     state.launchAnchor = { top: Math.round(rect.bottom + 8), above: Math.round(rect.top - 8), right: Math.round(rect.right) };
     launchOptionsFor(goal.area);
-    const record = pipelineRecordForGoal(goal);
-    if (record) {
-      state.launch.record = record;
-      const steps = launchStepsForRecord(record);
-      const firstPending = steps.findIndex(launchStepIsMutable);
-      state.launch.steps = steps;
-      loadLaunchStep(steps, firstPending >= 0 ? firstPending : Math.max(0, steps.length - 1));
-    } else {
-      state.launch.record = null;
-      const steps = [blankLaunchStep()];
-      state.launch.steps = steps;
-      loadLaunchStep(steps, 0);
-    }
-    state.launch.stale = null;
-    state.launch.queueMutation = null;
+    state.launch.record = null;
+    state.launch.steps = [];
+    loadLaunchStep(state.launch.steps, 0);
     state.launch.replacement = null;
     state.launch.open = false;
     paint(true);
@@ -385,7 +377,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const active = Math.max(0, steps.findIndex((row) => row.id === target.assignmentId));
     state.launch.steps = steps;
     loadLaunchStep(steps, active);
-    state.launch.queueMutation = null;
     if (canResume) {
       state.launch.replacement = existing;
       state.launch.choice = existing.launch ? { ...existing.launch } : replacementLaunchChoice(target.assignment, target.attempt);
@@ -453,27 +444,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         const delta = ["j", "ArrowDown"].includes(event.key) ? 1 : -1;
         const next = current < 0 ? (delta > 0 ? 0 : rows.length - 1) : Math.max(0, Math.min(rows.length - 1, current + delta));
         rows[next]?.querySelector("[data-launch-step-select]")?.focus({ preventScroll: true });
-        return true;
-      }
-      const index = Number(assignment?.querySelector("[data-launch-step-select]")?.dataset.launchStepSelect ?? state.launch.active);
-      if (event.key === "a") {
-        event.preventDefault(); event.stopPropagation();
-        addLaunchStep(index); paint(true); requestLaunchFocus(`key:launch:assignment:${state.launch.steps[state.launch.active]?.id}`);
-        return true;
-      }
-      if (event.key === "e") {
-        event.preventDefault(); event.stopPropagation();
-        activateLaunchStep(index); paint(true); window.setTimeout(() => document.querySelector("#launch-instruction")?.focus(), 0);
-        return true;
-      }
-      if (event.key === "d") {
-        event.preventDefault(); event.stopPropagation();
-        removeLaunchStep(index); paint(true); requestLaunchFocus(`key:launch:assignment:${state.launch.steps[state.launch.active]?.id}`);
-        return true;
-      }
-      if (event.key === "J" || event.key === "K") {
-        event.preventDefault(); event.stopPropagation();
-        moveLaunchStep(index, event.key === "J" ? 1 : -1); paint(true); requestLaunchFocus(`key:launch:assignment:${state.launch.steps[state.launch.active]?.id}`);
         return true;
       }
     }
@@ -560,16 +530,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       return true;
     }
     return false;
-  }
-
-  /** Discards the active assignment fields and restores its exact list row. */
-  function cancelAssignmentEdit() {
-    const row = state.launch.steps[state.launch.active];
-    if (!row || !screen.querySelector("[data-launch-assignment-editor]")) return false;
-    loadLaunchStep(state.launch.steps, state.launch.active);
-    paint(true);
-    requestLaunchFocus(`key:launch:assignment:${row.id}`);
-    return true;
   }
 
   /** Opens the live session owned by the cursor row without starting work. */
@@ -753,7 +713,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       const resumable = resumeAvailabilityForGoal(goal);
       return resumable.enabled ? resumeGoalAttempt(goal.file) : showToast(resumable.reason);
     }
-    if (id === "editAssignments") return goal ? openGoalLaunchEditor(goal.file, row.querySelector("[data-work-object-actions], [data-work-row-title]")) : showToast("Choose a Goal row first.");
     if (id === "filter") return document.querySelector("#work-search")?.focus();
     if (id === "keys") return openWorkKeySheet();
     return undefined;
@@ -805,14 +764,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
   }
 
-  /** Starts the one server-guarded pending assignment after brain recovery failed. */
-  async function recoverGoalAssignment(goalFile) {
-    const result = await post("/api/goals/start", { file: goalFile, recovery: true });
-    await refresh();
-    paint(true);
-    showToast(result.session ? "Recovery worker started." : "Recovery start recorded.");
-  }
-
   /** Opens one state-owned action surface for the current Work object. */
   function openObjectActions(row = cursorRow()) {
     if (!row) return showToast("There is no Work object to act on.");
@@ -837,14 +788,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const record = goal ? pipelineRecordForGoal(goal) : null;
     const currentAssignment = record?.steps?.find((step) => !["complete", "skipped", "ended", "replaced"].includes(step.status));
     const stoppedAssignment = currentAssignment && (currentAssignment.status === "stopped" || (currentAssignment.status === "running" && !currentAssignment.live));
-    const recoveryAvailable = currentAssignment?.status === "pending"
-      && !record?.currentAssignmentId
-      && brain?.status === "active"
-      && brain.health?.status === "failed"
-      && brain.recovery?.exhausted === true;
-    if (record) options.splice(2, 0, { value: "editAssignments", key: "e", label: "Edit pending assignments", help: "Review history and atomically edit the pending queue.", enabled: true });
     if (goal && sessionForGoal(goal)) options.splice(2, 0, { value: "stopWork", key: "", label: "End current agent", help: "Stop this exact agent while keeping the Goal and its notes.", enabled: true });
-    if (goal && recoveryAvailable) options.splice(2, 0, { value: "recoveryStart", key: "", label: `Recovery start assignment ${currentAssignment.index}`, help: "Start the pending assignment after this Area brain exhausted its recovery attempts.", enabled: true });
     if (goal && stoppedAssignment) {
       if (currentAssignment.index < (record.steps?.length ?? 0)) options.splice(2, 0, { value: "skipAssignment", key: "", label: `Skip to assignment ${currentAssignment.index + 1}`, help: "End this stopped assignment and advance to the next one.", enabled: true });
       options.splice(2, 0, { value: "endPipeline", key: "", label: "End work", help: "End the run while keeping the Goal open and preserving its history.", enabled: true });
@@ -866,7 +810,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         controlGoalPipeline(goal.file, "end", currentAssignment.index);
         return true;
       }
-      if (id === "recoveryStart" && goal && recoveryAvailable) return recoverGoalAssignment(goal.file);
       return executeWorkCommand(id, currentRow);
     };
     return openModal({
@@ -1657,15 +1600,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       const { pipelineControl: action, pipelineGoal: goalFile, pipelineStep: step } = pipelineControl.dataset;
       return controlGoalPipeline(goalFile, action, step);
     }
-    const goalRecovery = target.closest("[data-goal-recovery]");
-    if (goalRecovery) {
-      try {
-        await recoverGoalAssignment(goalRecovery.dataset.goalRecovery);
-      } catch (error) {
-        showToast(error.message);
-      }
-      return;
-    }
     const whatHappenedFor = target.closest("[data-what-happened-for]");
     if (whatHappenedFor) {
       const area = whatHappenedFor.dataset.whatHappenedFor;
@@ -1709,7 +1643,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       state.launchTarget = file;
       state.launchAnchor = { top: Math.round(rect.bottom + 8), above: Math.round(rect.top - 8), right: Math.round(rect.right) };
       launchOptionsFor(describeLaunchArea());
-      state.launch.stale = null;
       state.launch.open = false;
       paint(true);
       requestLaunchFocus();
@@ -1777,39 +1710,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       state.launch.editing = false;
       return paint(true);
     }
-    const launchStepSelect = target.closest("[data-launch-step-select]");
-    if (launchStepSelect) {
-      activateLaunchStep(Number(launchStepSelect.dataset.launchStepSelect));
-      return paint(true);
-    }
-    if (target.closest("[data-launch-assignment-cancel]")) return cancelAssignmentEdit();
-    const launchStepEdit = target.closest("[data-launch-step-edit]");
-    if (launchStepEdit) {
-      activateLaunchStep(Number(launchStepEdit.dataset.launchStepEdit));
-      paint(true);
-      return window.setTimeout(() => document.querySelector("#launch-instruction")?.focus(), 0);
-    }
-    const launchStepRemove = target.closest("[data-launch-step-remove]");
-    if (launchStepRemove) {
-      removeLaunchStep(Number(launchStepRemove.dataset.launchStepRemove));
-      return paint(true);
-    }
-    const launchStepMove = target.closest("[data-launch-step-move]");
-    if (launchStepMove) {
-      moveLaunchStep(Number(launchStepMove.dataset.launchStepIndex), Number(launchStepMove.dataset.launchStepMove));
-      return paint(true);
-    }
-    const launchStepAddAfter = target.closest("[data-launch-step-add-after]");
-    if (launchStepAddAfter) {
-      addLaunchStep(Number(launchStepAddAfter.dataset.launchStepAddAfter));
-      paint(true);
-      return window.setTimeout(() => document.querySelector("#launch-instruction")?.focus(), 0);
-    }
-    if (target.closest("[data-launch-step-add]")) {
-      addLaunchStep();
-      paint(true);
-      return window.setTimeout(() => document.querySelector("#launch-instruction")?.focus(), 0);
-    }
     if (target.closest("[data-launch-edit]")) {
       const selection = launchSelection();
       state.launch.editing = true;
@@ -1822,22 +1722,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       state.launch.editing = false;
       return paint(true);
     }
-    if (target.closest("[data-launch-rebase]")) {
-      const latest = state.launch.stale?.pipeline;
-      if (!latest) return showToast("The current queue is not available yet.");
-      syncLaunchDraft();
-      const activeId = state.launch.steps[state.launch.active]?.id;
-      const rows = rebasePipelineDraft(latest, state.launch.record);
-      state.launch.record = latest;
-      state.launch.steps = rows;
-      const active = Math.max(0, rows.findIndex((row) => row.id === activeId));
-      loadLaunchStep(rows, active);
-      state.launch.stale = null;
-      state.launch.queueMutation = null;
-      paint(true);
-      requestLaunchFocus(`key:launch:assignment:${rows[active]?.id}`);
-      return showToast("The current queue is loaded and your local draft was reapplied.");
-    }
     if (target.closest("[data-brain-start-over]")) return startBrain({ resume: false });
     if (target.closest("[data-launch-start]")) {
       syncLaunchDraft();
@@ -1847,10 +1731,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         const brain = brainForAreaCard(state.brainDraft?.area);
         return startBrain({ resume: Boolean(brain && !brain.live) });
       }
-      if (targetFile !== DESCRIBE_LAUNCH_TARGET && state.launch.record) {
-        return savePipelineChanges(targetFile);
-      }
-      if (targetFile !== DESCRIBE_LAUNCH_TARGET && launchIsPipeline()) return startPipeline(targetFile);
       state.launch.open = false;
       state.launchTarget = "";
       state.launchAnchor = null;
@@ -2669,12 +2549,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       }
       if (handleLaunchPopoverKey(event)) return;
       if (handleCommandEnter(event)) return;
-      if (event.key === "Escape" && event.target.closest?.("[data-launch-assignment-editor]")) {
-        event.preventDefault();
-        event.stopPropagation();
-        cancelAssignmentEdit();
-        return;
-      }
       if (event.key === "Escape") {
         event.preventDefault();
         closeTransientSurface();

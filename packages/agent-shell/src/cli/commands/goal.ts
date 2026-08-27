@@ -138,9 +138,9 @@ async function ownershipCommand(args: Args, verb: "own" | "release"): Promise<vo
 
 /**
  * Handles `tangent goal start <slug> [--step <instruction> --launch <harness[/model[/effort]]> --path <directory> --continue-from <n|->]...`.
- * Without --step it starts one agent on the Goal, the same as the desk's Start agent, and its one
- * --launch names that agent's harness. With steps it posts a pipeline to the same endpoint; the
- * server records it and starts step 1.
+ * Brains only: the server refuses every other caller (D8). Without --step it starts one worker on
+ * the Goal, and its one --launch names that worker's harness. With steps it posts a pipeline to the
+ * same endpoint; the server records it and starts step 1.
  */
 async function startCommand(args: Args): Promise<void> {
   const server = resolveServerUrl(stringArg(args.server));
@@ -201,7 +201,7 @@ function printLaunchWarnings(result: { warnings?: unknown }): void {
 
 /**
  * Handles `tangent goal append <slug> --step <instruction> [--launch ...] [--path ...] [--continue-from ...]...`.
- * Adds steps after the ones that already ran. The server says what happened: the steps wait
+ * Brains only (D8). Adds steps after the ones that already ran. The server says what happened: the steps wait
  * behind the running step, the finished last agent was asked to hand over again, or the first
  * new step started.
  */

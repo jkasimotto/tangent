@@ -160,7 +160,7 @@ export function beginGeneration(record, session, resolvedLaunch, now = new Date(
   const generation = (record.generations?.length ?? 0) + 1;
   if (!resolvedLaunch?.ref?.harness || !resolvedLaunch.command) throw new Error("resolved brain launch is required");
   const launchSnapshot = { ...resolvedLaunch, ref: { ...resolvedLaunch.ref } };
-  const entry = { generation, session, resolvedLaunch: launchSnapshot, startedAt: now, endedAt: null, handover: null, remindedAt: null };
+  const entry = { generation, session, resolvedLaunch: launchSnapshot, startedAt: now, endedAt: null, handover: null };
   record.generations = [...(record.generations ?? []), entry];
   record.generation = generation;
   record.session = session;

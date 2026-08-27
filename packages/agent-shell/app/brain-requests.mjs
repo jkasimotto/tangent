@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { readJsonObject, writeJsonObject } from "./json-store.mjs";
 
 export const BRAIN_REQUESTS_SCHEMA = "area-brain-requests.v1";
-export const REQUEST_KINDS = new Set(["plan", "decision", "test", "approval"]);
+export const REQUEST_KINDS = new Set(["plan", "decision", "approval"]);
 export const REQUEST_EFFECT_KINDS = new Set(["goal-done", "route-journal"]);
 
 /** Rejects an effect that cannot be previewed and executed by the closed server allowlist. */
@@ -68,7 +68,7 @@ export function createBrainRequest(record, input, now = new Date().toISOString()
   const options = Array.isArray(input.options) ? input.options.map(String).map((item) => item.trim()).filter(Boolean) : [];
   const goal = String(input.goal ?? "").trim() || null;
   const effect = input.effect && typeof input.effect === "object" ? structuredClone(input.effect) : null;
-  if (!REQUEST_KINDS.has(kind)) throw new Error("kind must be plan, decision, test, or approval");
+  if (!REQUEST_KINDS.has(kind)) throw new Error("kind must be plan, decision, or approval");
   if (!subject) throw new Error("subject is required");
   if (subject.length > 80) throw new Error("subject must be 80 characters or fewer");
   if (!question.endsWith("?")) throw new Error("question must end with ?");
@@ -91,7 +91,6 @@ export function createBrainRequest(record, input, now = new Date().toISOString()
     id: randomUUID(), kind, subject, question, proposal, detail, options, goal, effect, effectRevision, documents,
     effectOperation: effect ? { status: "idle", idempotencyKey: null, startedAt: null, finishedAt: null, result: null, problem: null, attempts: 0 } : null,
     brainGeneration, ownerRef: { ...ownerRef, generation: null }, subjectRef, conversationAnchor, precedingContext, status: "open", createdAt: now,
-    closurePolicy: kind === "test" ? "observation-only" : null,
     answeredAt: null, answer: null, note: null, response: null,
   };
   record.requests.push(request);

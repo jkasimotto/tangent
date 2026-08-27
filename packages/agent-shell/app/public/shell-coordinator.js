@@ -20,8 +20,8 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   const { allAreas, areaParent, preferredArea, areas, revealArea, selectedArea } = areasFeature;
   const { currentProgram, programById, programIsLive, programAreaDirectory } = programs;
   const {
-    launchOptionsFor, launchSelection, launchRequestFields, launchFieldsForArea, syncLaunchDraft, commitActiveStep, launchStepDraft,
-    launchStepRequest, pipelineMutationOperations, pipelineForGoal, pipelineRecordForGoal, syncDescribeDraft,
+    launchOptionsFor, launchSelection, launchRequestFields, launchFieldsForArea, syncLaunchDraft, launchStepDraft,
+    pipelineForGoal, pipelineRecordForGoal, syncDescribeDraft,
     DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
   } = launch;
   const { openDocument, refreshDocument, rememberDocumentPosition, documentGoal, openDocumentPeek, closeDocumentPeek } = documents;
@@ -478,80 +478,6 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     paint(true);
   }
 
-  /**
-   * Starts the Launch Editor's assignment list as one pipeline on the target
-   * Goal. Co-assigned Goal data remains a server capability; Work no longer
-   * builds it from transient browser checkboxes.
-   */
-  async function startPipeline(targetFile) {
-    const goal = goalByFile(targetFile);
-    if (!goal) return;
-    const steps = commitActiveStep().map(launchStepRequest);
-    try {
-      const result = await post("/api/goals/start", { file: targetFile, steps });
-      state.launch.open = false;
-      state.launchTarget = "";
-      state.launchAnchor = null;
-      state.launch.steps = [];
-      state.launch.active = 0;
-      state.launch.instruction = "";
-      state.launch.assignmentKind = "implementation";
-      state.launch.assignmentPath = "";
-      state.launch.continueFrom = null;
-      state.launch.queueMutation = null;
-      await refresh();
-      rememberGoal(targetFile);
-      const opened = sessionForGoal(currentGoal());
-      if (opened) openSessionLayer(opened, "agent", captureReturnPoint());
-      else paint(true);
-      if (result.status === "queued") showToast(`Queued ${steps.length} assignment${steps.length === 1 ? "" : "s"} for the exact Area brain.`);
-      else showToast(steps.length > 1 ? `Started ${steps.length} steps; step 1 is ${result.pipeline?.steps?.[0]?.label || "running"}.` : "The agent started.");
-    } catch (error) {
-      showToast(error.message);
-    }
-  }
-
-  /** Saves every local pending-assignment change as one revision-guarded batch. */
-  async function savePipelineChanges(targetFile) {
-    const record = state.launch.record;
-    if (!record) return;
-    syncLaunchDraft();
-    const operations = pipelineMutationOperations(record);
-    if (!operations.length) return showToast("The pending assignments have no changes.");
-    const batch = { goal: targetFile, expectedRevision: record.revision, operations };
-    const fingerprint = JSON.stringify(batch);
-    if (state.launch.queueMutation?.fingerprint !== fingerprint) {
-      state.launch.queueMutation = { fingerprint, operationId: crypto.randomUUID() };
-    }
-    const operationId = state.launch.queueMutation.operationId;
-    try {
-      const result = await post("/api/pipelines/mutate", { ...batch, operationId });
-      state.launch.open = false;
-      state.launchTarget = "";
-      state.launchAnchor = null;
-      state.launch.record = null;
-      state.launch.steps = [];
-      state.launch.active = 0;
-      state.launch.instruction = "";
-      state.launch.assignmentKind = "implementation";
-      state.launch.assignmentPath = "";
-      state.launch.continueFrom = null;
-      state.launch.stale = null;
-      state.launch.queueMutation = null;
-      await refresh();
-      paint(true);
-      showToast(result.state === "repeated" ? "The assignment changes were already saved." : "The pending assignments were saved together.");
-    } catch (error) {
-      if (error.code === "stale-revision") {
-        state.launch.stale = { currentRevision: error.currentRevision, pipeline: error.pipeline, operationId };
-        paint(true);
-        showToast("The queue changed. Your local assignment draft is still open.");
-        return;
-      }
-      showToast(error.message);
-    }
-  }
-
   /** Starts or confirms one persisted exact-attempt replacement operation. */
   async function replaceGoalAttempt({ confirmed = false } = {}) {
     const replacement = state.launch.replacement;
@@ -930,5 +856,5 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
 
   /** Toggles the server-owned macOS sleep assertion. */
 
-  return { toggleShellMenu, goToRows, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWorkAt, confirmRebuild, reloadChanges, selectGoal, rememberGoal, openGoalRun, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt, selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath, confirmAreaMove, addDescribeSource, showDescribe, openDescribeSession, cancelDescribe, showDecision, startPipeline, savePipelineChanges, replaceGoalAttempt, openGoalAgent, openReaderAgent, launchOpenSession, openModal, closeModal, getModalConfirm, confirmStop, confirmComplete, confirmWontDo };
+  return { toggleShellMenu, goToRows, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWorkAt, confirmRebuild, reloadChanges, selectGoal, rememberGoal, openGoalRun, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt, selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath, confirmAreaMove, addDescribeSource, showDescribe, openDescribeSession, cancelDescribe, showDecision, replaceGoalAttempt, openGoalAgent, openReaderAgent, launchOpenSession, openModal, closeModal, getModalConfirm, confirmStop, confirmComplete, confirmWontDo };
 }

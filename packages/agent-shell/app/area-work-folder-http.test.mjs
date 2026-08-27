@@ -13,7 +13,7 @@ import { promisify } from "node:util";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { readAllArmedPrompts } from "./armed-prompts.mjs";
-import { startShellServer } from "./focus-shell-http-fixture.mjs";
+import { startBrainCaller, startShellServer } from "./focus-shell-http-fixture.mjs";
 import { pipelinePath, readPipeline } from "./pipeline-record.mjs";
 import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
 
@@ -88,9 +88,10 @@ test("a worker starts in the Area's bound folder or is refused before any record
     env: { TANGENT_ARMED_ROOT: armed, TANGENT_RECONCILE_INTERVAL_MS: "600000" },
   });
   if (!base) return;
+  const brain = await startBrainCaller(base, { area: "otto", choice: launch, openedSessions });
 
   await context.test("an Area that binds nothing is refused with the line to add and writes no record", async () => {
-    const refused = await post(base, "/api/goals/start", { file: "otto/unbound/goal-unbound-work.md", steps: [{ instruction: "Do it.", launch }] });
+    const refused = await post(base, "/api/goals/start", { caller: brain, file: "otto/unbound/goal-unbound-work.md", steps: [{ instruction: "Do it.", launch }] });
     assert.equal(refused.status, 409);
     assert.equal(
       refused.body.error,
@@ -102,7 +103,7 @@ test("a worker starts in the Area's bound folder or is refused before any record
   });
 
   await context.test("a child inherits its parent's folder and the attempt, session, and prompt record it", async () => {
-    const started = await post(base, "/api/goals/start", { file: "otto/bound/child/goal-child-work.md", steps: [{ instruction: "Prove the folder.", launch }] });
+    const started = await post(base, "/api/goals/start", { caller: brain, file: "otto/bound/child/goal-child-work.md", steps: [{ instruction: "Prove the folder.", launch }] });
     assert.equal(started.status, 200, JSON.stringify(started.body));
     openedSessions.push(started.body.session);
     assert.equal(started.body.launches[0].cwd, workspace);
@@ -131,7 +132,7 @@ test("a worker starts in the Area's bound folder or is refused before any record
   });
 
   await context.test("a step's own path wins and is recorded as the source", async () => {
-    const started = await post(base, "/api/goals/start", { file: "otto/bound/goal-bound-work.md", steps: [{ instruction: "Use my folder.", launch, path: stepFolder }] });
+    const started = await post(base, "/api/goals/start", { caller: brain, file: "otto/bound/goal-bound-work.md", steps: [{ instruction: "Use my folder.", launch, path: stepFolder }] });
     assert.equal(started.status, 200, JSON.stringify(started.body));
     openedSessions.push(started.body.session);
     const queue = await readPipeline(pipelines, "otto/bound", "bound-work");
@@ -141,11 +142,11 @@ test("a worker starts in the Area's bound folder or is refused before any record
   });
 
   await context.test("a vault folder binds the Area that declares it and does not inherit", async () => {
-    const own = await post(base, "/api/goals/start", { file: "otto/docs/goal-docs-work.md", steps: [{ instruction: "Write docs.", launch }] });
+    const own = await post(base, "/api/goals/start", { caller: brain, file: "otto/docs/goal-docs-work.md", steps: [{ instruction: "Write docs.", launch }] });
     assert.equal(own.status, 200, JSON.stringify(own.body));
     openedSessions.push(own.body.session);
     assert.equal(own.body.launches[0].cwd, path.join(trees, "otto", "docs"));
-    const kid = await post(base, "/api/goals/start", { file: "otto/docs/kid/goal-kid-work.md", steps: [{ instruction: "Inherit nothing.", launch }] });
+    const kid = await post(base, "/api/goals/start", { caller: brain, file: "otto/docs/kid/goal-kid-work.md", steps: [{ instruction: "Inherit nothing.", launch }] });
     assert.equal(kid.status, 409);
     assert.match(kid.body.error, /^goal kid-work: otto\/docs\/kid and its parent Areas bind no repository\./);
   });

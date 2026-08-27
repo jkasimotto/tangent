@@ -255,13 +255,21 @@ test("local callers mutate work across Areas while ownership and queue fences re
     caller: targetStart.session,
   });
   assert.ok(workerCreate.file, JSON.stringify(workerCreate));
+  // Only the brain starts workers (D8): a worker that names itself as the
+  // caller is refused, and the brain starts the Goal it created.
   const workerStart = await post(base, "/api/goals/start", {
     file: workerCreate.file,
     steps: [{ instruction: "Run the worker-created case.", command: "sleep 300" }],
     caller: targetStart.session,
   });
-  assert.ok(workerStart.session, JSON.stringify(workerStart));
-  sessions.push(workerStart.session);
+  assert.equal(workerStart.error, `only the brain starts workers. Message it in Work (a on the Area) or run: tangent send neara/enums "<what you want>"`);
+  const brainStartsIt = await post(base, "/api/goals/start", {
+    file: workerCreate.file,
+    steps: [{ instruction: "Run the worker-created case.", command: "sleep 300" }],
+    caller: sourceBrain.session,
+  });
+  assert.ok(brainStartsIt.session, JSON.stringify(brainStartsIt));
+  sessions.push(brainStartsIt.session);
 
   const owned = await post(base, "/api/goals/create", {
     area: "neara/enums",
@@ -330,8 +338,12 @@ test("local callers mutate work across Areas while ownership and queue fences re
   const targetShow = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(targetBrain.session)}`).then((response) => response.json());
   assert.match(targetShow.prompt, /^Orchestrate enums\./, "Julian's founding message comes first");
   assert.match(targetShow.prompt, /Review the cross-Area work that already started/, "the later brain reads its logical Area inbox below it");
-  const readInboxAfterStart = JSON.parse(await readFile(inboxFile, "utf8"));
-  assert.ok(readInboxAfterStart.notices.every((notice) => notice.deliveredTo === targetBrain.session), "the founding message marked every waiting notice read");
+  // The founding message marked the waiting notices read; a notice written
+  // during the start reaches the live brain through the queue a moment later.
+  await waitFor("every notice read by the new brain", async () => {
+    const readInboxAfterStart = JSON.parse(await readFile(inboxFile, "utf8"));
+    return readInboxAfterStart.notices.every((notice) => notice.deliveredTo === targetBrain.session) ? readInboxAfterStart : null;
+  });
 });
 
 test("a brain notice survives a server restart and reaches the next attempt after a restart", async (context) => {

@@ -58,22 +58,15 @@ test("background polls never rebuild the screen under an editing surface or a re
   await settle(window);
   assert.ok(poll, "the shell polls the server");
 
-  // Defining a pipeline: the typed instruction and the popover survive a poll, focused or not.
+  // Choosing an agent: the open popover survives a poll, focused or not.
   click(window, `[data-launch-for='${goal.file}']`);
   await settle(window);
   await settle(window);
   const popover = window.document.querySelector("[data-launch-popover]");
   assert.ok(popover, "the popover opened");
-  const instruction = window.document.querySelector("#launch-instruction");
-  instruction.value = "/design the map";
-  instruction.dispatchEvent(new window.Event("input", { bubbles: true }));
-  instruction.blur();
+  assert.equal(window.document.querySelector("#launch-instruction"), null, "the chooser composes no assignments: only the brain starts workers (D8)");
   await vaultChangesAndPolls();
   assert.equal(window.document.querySelector("[data-launch-popover]"), popover, "the poll did not rebuild the popover");
-  assert.equal(window.document.querySelector("#launch-instruction").value, "/design the map");
-  // Julian's own action may repaint, and the typed instruction is still there.
-  click(window, "[data-launch-step-add]");
-  assert.match(window.document.querySelector("[data-launch-step-select='0']").textContent, /design the map/);
   click(window, "[data-launch-close]");
   await settle(window);
   assert.equal(window.document.querySelector("[data-launch-popover]"), null);

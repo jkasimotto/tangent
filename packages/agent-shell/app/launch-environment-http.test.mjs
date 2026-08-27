@@ -172,20 +172,15 @@ test("launch options resolve the registry, and saving writes an Area default", a
   assert.ok(brain.session, JSON.stringify(brain));
   openedSessions.push(brain.session);
 
-  // A user-started step that names no harness is refused before anything is
-  // written, and the error carries what the caller was missing. An exact live
-  // Brain caller would instead lend its registered launch to these steps.
-  const noLaunch = await fetch(`${base}/api/goals/start`, {
+  // A start that names no brain caller is refused before anything is written
+  // (D8): only the brain starts workers.
+  const noBrain = await fetch(`${base}/api/goals/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ file: "otto/test/goal-default-pipeline.md", steps: [{ instruction: "First step" }, { instruction: "Second step", launch: { harness: "pi-code" } }, { instruction: "Third step" }] }),
+    body: JSON.stringify({ file: "otto/test/goal-default-pipeline.md", steps: [{ instruction: "First step", launch: { harness: "pi-code" } }] }),
   });
-  assert.equal(noLaunch.status, 400);
-  const noLaunchError = (await noLaunch.json()).error;
-  assert.match(noLaunchError, /step 1 has no --launch, and step 3 has no --launch/);
-  assert.match(noLaunchError, /Pass --launch <harness\[\/model\[\/effort\]\]> for each step/);
-  assert.match(noLaunchError, /otto\/test declares the work default claude-otto\/opus-4-6/);
-  assert.match(noLaunchError, /tangent harness list --area otto\/test/);
+  assert.equal(noBrain.status, 403);
+  assert.match((await noBrain.json()).error, /^only the brain starts workers\. Message it in Work \(a on the Area\) or run: tangent send otto\/test "<what you want>"$/);
   assert.equal((await fetch(`${base}/api/sessions`).then((response) => response.json())).pipelines.some((item) => item.goal === "otto/test/goal-default-pipeline.md"), false, "a refused start leaves no record");
 
   const pipelineStarted = await fetch(`${base}/api/goals/start`, {
@@ -219,7 +214,7 @@ test("launch options resolve the registry, and saving writes an Area default", a
   const appended = await fetch(`${base}/api/pipelines/append`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ goal: "otto/test/goal-default-pipeline.md", steps: [{ instruction: "Second step", path: arbitraryDirectory, launch: { harness: "claude-otto", model: "opus-4-6" } }] }),
+    body: JSON.stringify({ goal: "otto/test/goal-default-pipeline.md", caller: brain.session, steps: [{ instruction: "Second step", path: arbitraryDirectory, launch: { harness: "claude-otto", model: "opus-4-6" } }] }),
   });
   assert.equal(appended.status, 200);
   const appendedBody = await appended.json();
@@ -231,14 +226,14 @@ test("launch options resolve the registry, and saving writes an Area default", a
   const missingDirectory = await fetch(`${base}/api/pipelines/append`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ goal: "otto/test/goal-default-pipeline.md", steps: [{ instruction: "Third step", path: path.join(root, "no-such-directory"), launch: { harness: "pi-code" } }] }),
+    body: JSON.stringify({ goal: "otto/test/goal-default-pipeline.md", caller: brain.session, steps: [{ instruction: "Third step", path: path.join(root, "no-such-directory"), launch: { harness: "pi-code" } }] }),
   });
   assert.equal(missingDirectory.status, 400);
   assert.match((await missingDirectory.json()).error, /step 3: no directory /);
   const relativeDirectory = await fetch(`${base}/api/pipelines/append`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ goal: "otto/test/goal-default-pipeline.md", steps: [{ instruction: "Third step", path: "relative/directory", launch: { harness: "pi-code" } }] }),
+    body: JSON.stringify({ goal: "otto/test/goal-default-pipeline.md", caller: brain.session, steps: [{ instruction: "Third step", path: "relative/directory", launch: { harness: "pi-code" } }] }),
   });
   assert.equal(relativeDirectory.status, 400);
   assert.match((await relativeDirectory.json()).error, /is not an absolute directory/);
@@ -371,7 +366,7 @@ test("launch options resolve the registry, and saving writes an Area default", a
   const reopened = await fetch(`${base}/api/goals/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ file: "otto/test/goal-prove-launch.md", choice: { harness: "claude-otto", model: "opus-4-6" } }),
+    body: JSON.stringify({ file: "otto/test/goal-prove-launch.md", caller: brain.session, choice: { harness: "claude-otto", model: "opus-4-6" } }),
   });
   assert.equal(reopened.status, 409);
   assert.match((await reopened.json()).error, /already has an authoritative queue/);

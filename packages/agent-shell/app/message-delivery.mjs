@@ -10,9 +10,9 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
   let ticking = null;
   let durableMutations = Promise.resolve();
 
-  // Only generic `tangent send` entries opt into this store. Brain
-  // notices already have their own durable outbox, and context reminders can
-  // carry a live render function that must not be guessed back from JSON.
+  // Generic `tangent send` entries and brain notices live in this store
+  // until they were shown (D24). Context reminders carry a live render
+  // function that must not be guessed back from JSON, so they stay in memory.
   for (const stored of store?.entries?.() ?? []) {
     const pending = queues.get(stored.target) ?? [];
     pending.push({
@@ -23,6 +23,7 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
       text: stored.text,
       banner: stored.banner,
       queuedAt: stored.queuedAt,
+      ...(stored.notices?.length ? { notices: stored.notices, generation: stored.generation ?? null } : {}),
     });
     queues.set(stored.target, pending);
   }
@@ -47,9 +48,9 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
     const text = entry.banner === false ? body : messageBanner(entry.from, entry.area, body);
     const arrived = await deliverText(target, text, entry.banner === false ? "pipeline step" : "agent message", { settle: composer !== "working" });
     await log({ event: arrived ? "delivered" : "not delivered", to: target, from: entry.from, area: entry.area, text: body, banner: entry.banner !== false, queuedAt: entry.queuedAt });
-    if (!entry.notices?.length) return arrived;
-    if (arrived) await notices.delivered(entry.notices, target, entry.generation ?? null);
-    else notices.released(entry.notices);
+    // A notice that did not arrive stays queued and unread; the inbox marks
+    // it read only after it was shown.
+    if (arrived && entry.notices?.length) await notices.delivered(entry.notices, target, entry.generation ?? null);
     return arrived;
   }
 
@@ -59,7 +60,6 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
     if (pending.length >= maxPerTarget || totalQueued() >= maxTotal) {
       const reason = pending.length >= maxPerTarget ? `target queue limit ${maxPerTarget}` : `message queue limit ${maxTotal}`;
       void log({ event: "rejected", to: target, from: entry.from, text: entry.text, reason });
-      if (entry.notices?.length) notices.released(entry.notices);
       report("agent message queue:", `${target}: ${reason}`);
       return 0;
     }
@@ -94,6 +94,26 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
     });
     durableMutations = operation.catch(() => {});
     return operation;
+  }
+
+  /**
+   * Queues one brain notice durably behind existing work for a target, then
+   * wakes delivery. Returns the queue position, 0 when the queue refused it;
+   * a refused notice stays unread in its inbox for the next sweep.
+   */
+  async function queueDurable(target, entry) {
+    const queued = await queueDurably(target, { ...entry, durable: true });
+    wake();
+    return queued.position;
+  }
+
+  /** The inbox notices every queued entry still carries, as `area id` keys. */
+  function pendingNotices() {
+    const keys = new Set();
+    for (const pending of queues.values()) {
+      for (const entry of pending) for (const notice of entry.notices ?? []) keys.add(`${notice.area} ${notice.id}`);
+    }
+    return keys;
   }
 
   /** Removes one settled head from disk first, then from the live queue. */
@@ -170,10 +190,9 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
         if (deliveringTargets.has(target)) return;
         const live = liveByName.get(target);
         if (!live) {
-          for (const entry of pending) {
-            await log({ event: "dropped", to: target, from: entry.from, text: entry.text, reason: "session ended" });
-            if (entry.notices?.length) notices.released(entry.notices);
-          }
+          // A dropped brain notice is still unread in its inbox; the sweep
+          // queues it again for the next live generation.
+          for (const entry of pending) await log({ event: "dropped", to: target, from: entry.from, text: entry.text, reason: "session ended" });
           const durableIds = pending.filter((entry) => entry.durable).map((entry) => entry.deliveryId);
           if (durableIds.length) await store.remove(durableIds);
           queues.delete(target);
@@ -186,9 +205,8 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
         activeDeliveries += 1;
         try {
           const arrived = await deliver(target, entry, decision.composer);
-          // Generic messages keep their durable head until the prompt
-          // transport proves the whole presentation arrived. Transient brain
-          // notices retain their established release-and-sweep retry path.
+          // A durable entry keeps its head until the prompt transport proves
+          // the whole presentation arrived; a memory entry is tried once.
           if (arrived || !entry.durable) await settle(target, pending, entry);
         } finally {
           activeDeliveries -= 1;
@@ -212,7 +230,6 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
       if (accepted.length) queues.set(newName, accepted);
       for (const entry of rejected) {
         void log({ event: "rejected", to: newName, from: entry.from, text: entry.text, reason: `target queue limit ${maxPerTarget} after retarget` });
-        if (entry.notices?.length) notices.released(entry.notices);
       }
       const orderedIds = accepted.filter((entry) => entry.durable).map((entry) => entry.deliveryId);
       const rejectedIds = rejected.filter((entry) => entry.durable).map((entry) => entry.deliveryId);
@@ -244,5 +261,5 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
     return queues.size > 0;
   }
 
-  return { active, deliver, dispatch, log, queue, queuedCount, retarget, tick, totalQueued };
+  return { active, deliver, dispatch, log, pendingNotices, queue, queueDurable, queuedCount, retarget, tick, totalQueued };
 }

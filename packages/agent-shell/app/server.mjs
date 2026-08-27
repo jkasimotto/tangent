@@ -16,7 +16,7 @@ import { launchRef, resolveLaunch } from "./launch-environment.mjs";
 import { createLaunchCatalog } from "./launch-catalog.mjs";
 import { cleanAreaPath, createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
 import { commandSession, programsSnapshot, saveLocalProgram } from "./programs.mjs";
-import { discoverProcesses, evaluateProcess, processFileExists, processView, readAreaProcesses, readProcessState, sweepProcesses, withProcessStatus } from "./process-scheduler.mjs";
+import { discoverProcesses, evaluateProcess, goalNamesProcess, processFileExists, processView, readAreaProcesses, readProcessState, sweepProcesses, withProcessStatus } from "./process-scheduler.mjs";
 import { documentHash, markdownTitle, safeMarkdownPath, wikiLinks } from "./vault-documents.mjs";
 import documentComments from "./public/document-comments.js";
 import areaMapCore from "./public/area-map-core.js";
@@ -2118,7 +2118,7 @@ const messages = createMessageDelivery({
   sessions: listDeliverySessions,
   /** Delivers a complete message through the prompt transport. */
   deliverText: (target, text, label, options) => typePromptWhenReady(target, text, true, label, options),
-  notices: { delivered: markBrainNoticesDelivered, released: releaseBrainNotices },
+  notices: { delivered: markBrainNoticesDelivered },
   /** The scheduler is constructed below; delivery begins only after this callback runs. */
   wake: () => runtimeScheduler.wake(),
 });
@@ -3425,7 +3425,8 @@ async function controlPipelineUnlocked(goalFile, action, index, options = {}) {
 
 /**
  * Appends steps to a Goal's pipeline without touching what already ran.
- * New assignments always stay pending. Any caller can add them. Queue
+ * New assignments always stay pending. Only the brain adds them, because an
+ * appended step starts a worker when the queue reaches it (D8). Queue
  * revision and idempotency guards still serialize concurrent edits.
  */
 async function appendPipelineSteps(goalFile, steps, options = {}) {
@@ -3437,10 +3438,8 @@ async function appendPipelineStepsUnlocked(goalFile, steps, options = {}) {
   const byFile = await goalsByFile();
   const o = byFile.get(goalFile);
   if (!o) return { status: 404, error: `no goal file ${goalFile}` };
-  let caller = null;
-  if (options.caller) {
-    caller = await liveBrainForSession(options.caller);
-  }
+  const caller = await liveCallingBrain(options.caller);
+  if (!caller) return { status: 403, error: brainOnlyStartRefusal(o.area) };
   if (["done", "dropped", "parked"].includes(o.status)) return { status: 409, error: `goal is ${o.status}` };
   const record = await readPipeline(PIPELINES_ROOT, o.area, o.slug);
   if (!record) return { status: 404, error: "no pipeline on this goal" };
@@ -4216,12 +4215,8 @@ async function unreadBrainNotices(area, records = null) {
   return mergeNotices(inboxesForBrain(await readAllInboxes(BRAINS_ROOT), area, (eventArea) => brainOwnsArea(owners, area, eventArea)));
 }
 
-/**
- * Marks notices read by one brain session and generation, and lets go of
- * them: they are no longer on their way anywhere.
- */
+/** Marks notices read by one brain session and generation. */
 async function markBrainNoticesDelivered(notices, session, generation) {
-  releaseBrainNotices(notices);
   const byArea = new Map();
   for (const notice of notices) {
     const ids = byArea.get(notice.area) ?? [];
@@ -4233,26 +4228,43 @@ async function markBrainNoticesDelivered(notices, session, generation) {
   }
 }
 
-// A notice is "on its way" from the moment it is queued or put into a new
-// generation's first message until it is marked read or that way failed. The
-// sweep in flushBrainNotices queues only notices that are not on their way,
-// so a retry never doubles a delivery that is still in progress, and a
-// failed delivery is tried again at the next sweep.
-const noticesOnTheirWay = new Set(); // "area\u0000id"
-
-/** The key of one notice in the on-their-way set. */
+/** The key of one notice in the in-flight set: the same shape `pendingNotices` uses. */
 function noticeKey(notice) {
-  return `${notice.area}\u0000${notice.id}`;
+  return `${notice.area} ${notice.id}`;
 }
 
-/** Remembers that these notices are on their way to a brain. */
-function holdBrainNotices(notices) {
-  for (const notice of notices) noticesOnTheirWay.add(noticeKey(notice));
+/**
+ * Every unread notice that is on its way to a brain right now (D24): queued
+ * durably in message-queue.json for a live session, or typed inside the
+ * first message of a generation whose prompt is still armed. The sweep
+ * queues only notices outside this set, so a retry never doubles a delivery
+ * in progress. Nothing here lives in memory alone: a queue entry survives a
+ * restart, and an armed first message is re-armed from disk or forgotten
+ * with its dead session, so a notice can never be stuck as in flight.
+ */
+function noticesInFlight(records) {
+  const keys = new Set(messages.pendingNotices());
+  for (const record of records) {
+    for (const entry of record.generations ?? []) {
+      if (entry.deliveryStatus !== "pending" || !promptPending(entry.session)) continue;
+      for (const notice of entry.notices ?? []) keys.add(noticeKey(notice));
+    }
+  }
+  return keys;
 }
 
-/** Forgets that these notices are on their way; they may be queued again. */
-function releaseBrainNotices(notices) {
-  for (const notice of notices) noticesOnTheirWay.delete(noticeKey(notice));
+/**
+ * Queues one brain notice text for a live brain session, durable until it
+ * was shown. The inbox holds the words and marks them read on arrival.
+ */
+async function queueBrainNotice(session, { from = "tangent", area = null, text, notices, generation = null }) {
+  return messages.queueDurable(session, { from, area, text: clipQueuedNotice(text), notices, generation, queuedAt: new Date().toISOString() });
+}
+
+/** The queue store keeps one message under 4000 characters; a longer notice is cut, the inbox keeps every word. */
+function clipQueuedNotice(text) {
+  const body = String(text ?? "");
+  return body.length > 3900 ? `${body.slice(0, 3880)} [clipped; the inbox holds the full text]` : body;
 }
 
 /**
@@ -4273,7 +4285,7 @@ async function routeBrainNotice(area, text, { idempotencyKey = null, sender = nu
   const records = await readAllBrains(BRAINS_ROOT);
   const owner = brainRecordForArea(records, area);
   const notice = await recordBrainNotice(area, message, idempotencyKey);
-  if (notice.duplicate && (notice.deliveredAt || noticesOnTheirWay.has(noticeKey({ area, id: notice.id })))) {
+  if (notice.duplicate && (notice.deliveredAt || noticesInFlight(records).has(noticeKey({ area, id: notice.id })))) {
     return { addressed: Boolean(owner), notice, session: notice.deliveredTo ?? owner?.session ?? null, generation: notice.deliveredGeneration ?? owner?.generation ?? null };
   }
   if (!owner) {
@@ -4286,14 +4298,12 @@ async function routeBrainNotice(area, text, { idempotencyKey = null, sender = nu
     return { addressed: false, notice, session: null, generation: null };
   }
   const notices = [{ area, id: notice.id }];
-  holdBrainNotices(notices);
-  messages.queue(record.session, {
+  await queueBrainNotice(record.session, {
     from: senderName || "tangent",
     area: senderName ? senderArea : null,
     text: senderName ? body : message,
     notices,
     generation: record.generation ?? null,
-    queuedAt: new Date().toISOString(),
   });
   await messages.log({ event: "sent", to: record.session, from: senderName || "tangent", area: senderArea, text: body, disposition: "queued", reason: "brain event" });
   return { addressed: true, notice, session: record.session, generation: record.generation ?? null };
@@ -4397,11 +4407,7 @@ async function describeWorkToBrain(owner, area, description, sources, launchOver
     const message = describedWorkNotice(area, description, sources);
     const notice = await recordBrainNotice(area, message);
     const notices = [{ area, id: notice.id }];
-    holdBrainNotices(notices);
-    messages.queue(owner.session, {
-      from: "tangent", area: null, text: message, notices,
-      generation: owner.generation ?? null, queuedAt: new Date().toISOString(),
-    });
+    await queueBrainNotice(owner.session, { text: message, notices, generation: owner.generation ?? null });
     await messages.log({ event: "sent", to: owner.session, from: "tangent", text: message, disposition: "queued", reason: "described work" });
     return { status: 200, session: owner.session, generation: owner.generation, brainArea: owner.area, route: "brain-opened", launchLabel: currentGeneration(owner)?.resolvedLaunch?.label || "" };
   }
@@ -4510,27 +4516,20 @@ async function deliverJournalToBrain(area, message, idempotencyKey) {
 
 /**
  * Queues every unread notice that is not already on its way, for the brains
- * that run right now. The server calls this when it starts (the memory queue
- * is gone after a restart, the notices are not) and on every reconcile pass,
- * so a notice whose delivery failed or whose queue entry died with an old
- * generation's session still reaches the live generation.
+ * that run right now. The server calls this when it starts and on every
+ * reconcile pass, so a notice whose queue entry was dropped with an old
+ * generation's session still reaches the live generation. The durable queue
+ * and the inbox say what is on its way; nothing is kept in memory alone.
  */
 async function flushBrainNotices(sessions = null, reason = "unread notices after a server start") {
   const records = await liveBrainRecords(sessions);
+  const inFlight = noticesInFlight(records);
   for (const record of records) {
-    const unread = (await unreadBrainNotices(record.area, records)).filter((notice) => !noticesOnTheirWay.has(noticeKey(notice)));
+    const unread = (await unreadBrainNotices(record.area, records)).filter((notice) => !inFlight.has(noticeKey(notice)));
     if (!unread.length) continue;
     const text = unread.length === 1 ? unread[0].text : noticeDigest(unread);
     const notices = unread.map((notice) => ({ area: notice.area, id: notice.id }));
-    holdBrainNotices(notices);
-    messages.queue(record.session, {
-      from: "tangent",
-      area: null,
-      text,
-      notices,
-      generation: record.generation ?? null,
-      queuedAt: new Date().toISOString(),
-    });
+    await queueBrainNotice(record.session, { text, notices, generation: record.generation ?? null });
     await messages.log({ event: "sent", to: record.session, from: "tangent", text, disposition: "queued", reason });
   }
 }
@@ -4551,10 +4550,7 @@ function isCurrentBrainGeneration(record, session, generation) {
  */
 async function settleBrainActivation(record, session, generation, arrived, notices = []) {
   const entry = (record.generations ?? []).find((item) => item.session === session && item.generation === generation);
-  if (!entry) {
-    releaseBrainNotices(notices);
-    return;
-  }
+  if (!entry) return;
   entry.deliveryStatus = arrived ? "ready" : "failed";
   if (isCurrentBrainGeneration(record, session, generation)) {
     record.health = arrived
@@ -4562,9 +4558,9 @@ async function settleBrainActivation(record, session, generation, arrived, notic
       : { status: "recovering", problem: "The first message did not arrive.", updatedAt: new Date().toISOString() };
   }
   await writeBrain(BRAINS_ROOT, record);
-  // The notices typed inside the first message are read once it arrived.
+  // The notices typed inside the first message are read once it arrived. A
+  // failed first message leaves them unread, so the sweep queues them again.
   if (arrived && notices.length) await markBrainNoticesDelivered(notices, session, generation);
-  else releaseBrainNotices(notices);
 }
 
 /**
@@ -4609,7 +4605,6 @@ async function spawnBrainSession(record, resolvedLaunch, { firstMessage = "", no
   const directory = path.join(TREES_ROOT, record.area);
   const message = brainFirstMessage(firstMessage);
   const held = notices.map((notice) => ({ area: notice.area, id: notice.id }));
-  holdBrainNotices(held);
   let target = "";
   let armed = false;
   try {
@@ -4634,10 +4629,7 @@ async function spawnBrainSession(record, resolvedLaunch, { firstMessage = "", no
     /** Settles an asynchronous arm callback under the same Area lifecycle lock. */
     const firstMessageTyped = (arrived) => withBrainMutation(record.area, async () => {
       const current = await readBrain(BRAINS_ROOT, record.area);
-      if (!current) {
-        releaseBrainNotices(held);
-        return;
-      }
+      if (!current) return;
       await settleBrainActivation(current, name, generation, arrived, held);
     });
     if (process.env.AGENT_SHELL_TEST_NO_LAUNCH === "1") {
@@ -4660,7 +4652,6 @@ async function spawnBrainSession(record, resolvedLaunch, { firstMessage = "", no
     return { status: 200, session: name, generation, brain: { ...record, resolvedLaunch }, firstMessage: message, cwd: directory };
   } catch (error) {
     const problem = `could not activate the brain session: ${error.stderr ?? error.message ?? error}`;
-    releaseBrainNotices(held);
     if (armed) {
       armedSessions.delete(name);
       await clearArmedPrompt(ARMED_ROOT, name).catch(() => {});
@@ -4814,6 +4805,14 @@ function actingSession(body) {
 async function liveCallingBrain(session) {
   const name = String(session ?? "").trim();
   return name ? liveBrainForSession(name) : null;
+}
+
+/**
+ * The 403 text when anyone but the Area brain tries to start a worker (D8).
+ * Julian and other sessions ask the brain; the brain runs the start.
+ */
+function brainOnlyStartRefusal(area) {
+  return `only the brain starts workers. Message it in Work (a on the Area) or run: tangent send ${area} "<what you want>"`;
 }
 
 /** True while a logical stop still needs to settle its exact tmux attempt. */
@@ -5770,20 +5769,6 @@ const brainRoutes = createBrainRoutes({
       }
       const request = answerBrainRequest(record, id, answer, note, undefined, effectRevision);
       await writeBrainRequests(BRAINS_ROOT, record);
-      // Stored Test Requests predate typed queue closure. Keep them actionable
-      // during migration. New Test Questions are observation-only.
-      if (request.kind === "test" && request.closurePolicy !== "observation-only" && request.answer === "approve" && request.goal) {
-        const byFile = await goalsByFile();
-        if (byFile.has(request.goal)) {
-          const cascade = doneCascade(request.goal, byFile);
-          const cleanup = await finishGoalExecutions({ goalFiles: cascade.map((goal) => goal.file), reason: "goal-done" });
-          if (!cleanup.ok) return { status: 503, value: { error: "Worker cleanup failed. Retry the legacy approval.", cleanup } };
-          const changed = await cascadeGoalDone(request.goal, byFile);
-          if (!changed.includes(request.goal)) changed.unshift(request.goal);
-          const goal = byFile.get(request.goal);
-          await vaultCommit(changed, `update: ${goal.area} goal ${goal.slug} done by legacy Test Request`, goal.area, brain.session);
-        }
-      }
       await notifyBrain(brain.area, brainRequestAnswerNotice(request));
       return { status: 200, request };
     } catch (error) { return { status: 400, error: String(error.message ?? error) }; }
@@ -6104,7 +6089,7 @@ function processFileOf(instructionFile) {
 
 /** The open Goal a process note started, or null. Done, dropped, and parked Goals do not count. */
 async function openGoalForProcess(note) {
-  const goals = (await readAreaGoals(note.area)).filter((goal) => goal.process === note.file);
+  const goals = (await readAreaGoals(note.area)).filter((goal) => goalNamesProcess(goal, note));
   return goals.find((goal) => ["open", "active", "verify"].includes(goal.status)) ?? null;
 }
 
@@ -6508,9 +6493,10 @@ const launchRoutes = createLaunchRoutes({
       const goal = (await goalsByFile()).get(file);
       if (!goal) return { status: 404, error: `no goal file ${file}` };
       const caller = String(body.caller ?? "").trim();
-      // A current brain may lend its own launch across Area boundaries. Every
-      // other caller names an explicit launch and keeps the same command rights.
+      // Only the brain starts workers (D8). It may lend its own launch across
+      // Area boundaries; a step that names a launch keeps it.
       const callingBrain = await liveCallingBrain(caller);
+      if (!callingBrain) return { status: 403, error: brainOnlyStartRefusal(goal.area) };
       if (body.recovery === true) {
         const recovered = await recoverQueuedGoal(goal);
         if (recovered.status === 200) {
@@ -6574,16 +6560,17 @@ async function readGoalDetail(file, { conversations = false } = {}) {
     relatedDocuments: goal.documents ?? [],
     registry: validRegistry,
   });
-  if (conversations) await attachFoundConversations(detail, validRegistry);
+  if (conversations) await attachFoundConversations(goal, detail, validRegistry);
   return { status: 200, value: detail };
 }
 
 /**
  * Finds the conversation of every attempt that got no id at launch (codex)
  * by its folder and start time, on request only (D22). Every match is
- * listed; one match also fills the resume command.
+ * listed; one match also fills the resume command and is written back to
+ * the attempt, so the next `goal show` and Resume need no lookup.
  */
-async function attachFoundConversations(detail, registry) {
+async function attachFoundConversations(goal, detail, registry) {
   for (const attempt of detail.attempts) {
     if (attempt.providerSession?.id) continue;
     const harness = (registry?.harnesses ?? []).find((entry) => entry.id === attempt.resolvedLaunch?.ref?.harness);
@@ -6593,8 +6580,26 @@ async function attachFoundConversations(detail, registry) {
     if (found.length === 1) {
       attempt.resume.conversationId = found[0].id;
       attempt.resume.command = resumeCommand(harness, { command: attempt.resolvedLaunch?.command ?? "", id: found[0].id });
+      attempt.providerSession = await rememberFoundConversation(goal, attempt.id, { provider: harness.id, id: found[0].id });
     }
   }
+}
+
+/**
+ * Writes a conversation found by lookup onto its attempt in the queue record
+ * (D22), under the Goal queue lock. Returns the stored conversation. A later
+ * lookup for the same attempt is then never needed.
+ */
+async function rememberFoundConversation(goal, attemptId, conversation) {
+  return withGoalQueueMutation(goal.file, async () => {
+    const record = await readPipeline(PIPELINES_ROOT, goal.area, goal.slug);
+    const attempt = (record?.steps ?? []).flatMap((step) => step.attempts ?? []).find((item) => item.id === attemptId);
+    if (!attempt) return conversation;
+    if (attempt.providerSession?.id) return attempt.providerSession;
+    attempt.providerSession = { provider: conversation.provider, id: conversation.id };
+    await writePipeline(PIPELINES_ROOT, record);
+    return attempt.providerSession;
+  });
 }
 
 /**
@@ -6612,7 +6617,9 @@ async function resumeGoalAttempt(goalFile, { attemptId = "", conversationId = ""
   const attempt = attemptId ? attempts.find((item) => item.id === attemptId) : attempts.at(-1);
   if (!attempt) return { status: 404, error: attemptId ? `no attempt ${attemptId} on ${goal.slug}` : `${goal.slug} has no attempts` };
   const sessions = await listSessions();
-  if (attempt.session && sessions.some((session) => session.name === attempt.session)) {
+  // A dead attempt whose tmux name was reused must never attach to the
+  // stranger that holds the name now.
+  if (attempt.session && !attempt.endedAt && sessions.some((session) => session.name === attempt.session)) {
     return { status: 200, state: "live", session: attempt.session, command: null };
   }
   const harness = await registryHarness(attempt.resolvedLaunch?.ref?.harness);
@@ -6620,7 +6627,10 @@ async function resumeGoalAttempt(goalFile, { attemptId = "", conversationId = ""
   let id = String(conversationId || attempt.providerSession?.id || "");
   if (!id && harness.transcripts && attempt.cwd && attempt.startedAt) {
     const found = await findCodexRollouts({ transcripts: harness.transcripts, cwd: attempt.cwd, startedAt: attempt.startedAt });
-    if (found.length === 1) id = found[0].id;
+    if (found.length === 1) {
+      id = found[0].id;
+      await rememberFoundConversation(goal, attempt.id, { provider: harness.id, id });
+    }
     else if (found.length > 1) return { status: 409, error: `${found.length} conversations match this attempt: ${found.map((item) => item.id).join(", ")}. Pass conversationId.`, found };
   }
   if (!id) return { status: 409, error: `attempt ${attempt.id} has no conversation id to resume` };
@@ -6800,7 +6810,7 @@ const workMutationRoutes = createWorkMutationRoutes({
     // worker from create. Nothing is written before this refusal.
     const start = body.start === true;
     const callingBrain = start ? await liveCallingBrain(caller) : null;
-    if (start && !callingBrain) return { status: 403, error: "Only an Area brain starts a worker. Send the brain a message instead (a on the Area in Work). The Goal was not created." };
+    if (start && !callingBrain) return { status: 403, error: brainOnlyStartRefusal(area) };
     const subgoals = (Array.isArray(body.subgoals) ? body.subgoals.slice(0, 8) : []).map((item) => ({ title: String(item?.title ?? "").trim(), doneWhen: String(item?.doneWhen ?? "").trim(), state: "Not started." })).filter((item) => item.title || item.doneWhen);
     if (subgoals.some((item) => !item.title || !item.doneWhen)) return { status: 400, error: "each Subgoal needs a name and a done condition" };
     const own = String(body.own ?? "").trim();

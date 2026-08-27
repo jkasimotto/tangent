@@ -6,7 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { startShellServer } from "./focus-shell-http-fixture.mjs";
+import { startBrainCaller, startShellServer } from "./focus-shell-http-fixture.mjs";
 import { pipelinePath, readPipeline, writePipeline } from "./pipeline-record.mjs";
 import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
 
@@ -84,9 +84,10 @@ async function createVault(trees, workspace) {
 }
 
 /** Starts one three-assignment queue through the public server route. */
-async function startContractGoal(base) {
+async function startContractGoal(base, caller) {
   return jsonRequest(base, "/api/goals/start", {
     file: goalFile,
+    caller,
     steps: [
       { id: "implementation", instruction: "Implement the contract.", kind: "implementation", launch },
       { id: "draft-review", instruction: "Review the contract.", kind: "review", launch, continueFromAssignmentId: "implementation" },
@@ -123,16 +124,18 @@ test("approved Agent Shell work contracts cross the real HTTP route boundary", a
     },
   });
   if (!base) return;
+  const brain = await startBrainCaller(base, { area: "otto/test", choice: launch, openedSessions });
 
   const unrelated = await jsonRequest(base, "/api/goals/start", {
     file: unrelatedGoalFile,
+    caller: brain,
     steps: [{ id: "unrelated", instruction: "Keep unrelated work alive.", launch }],
   });
   assert.equal(unrelated.response.status, 200, JSON.stringify(unrelated.body));
   const unrelatedSession = unrelated.body.session;
   openedSessions.push(unrelatedSession);
 
-  const started = await startContractGoal(base);
+  const started = await startContractGoal(base, brain);
   assert.equal(started.response.status, 200, JSON.stringify(started.body));
   const sourceSession = started.body.session;
   openedSessions.push(sourceSession);

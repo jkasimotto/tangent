@@ -112,6 +112,19 @@ export function probeCheckDue(note, state, now) {
     : { check: false, reason: `next check ${new Date(last.getTime() + note.everyMs).toISOString()}` };
 }
 
+/**
+ * True when a Goal is the one a process note started: its `process:`
+ * frontmatter names the note file or slug, or its title is the process
+ * title. The title match covers a brain that started the process without
+ * `--instruction-file`, so a `when:` note is not left waiting forever.
+ */
+export function goalNamesProcess(goal, note) {
+  const named = String(goal?.process ?? "").trim();
+  if (named && [note.file, note.slug, `process-${note.slug}`, `process-${note.slug}.md`].includes(named)) return true;
+  if (named && named.endsWith(`/process-${note.slug}.md`)) return true;
+  return String(goal?.title ?? "").trim().toLowerCase() === String(note.title ?? "").trim().toLowerCase();
+}
+
 /** True when a Goal record is still open in any of its working statuses. */
 function goalIsOpen(goal) {
   return OPEN_STATUSES.has(String(goal?.status ?? "open"));

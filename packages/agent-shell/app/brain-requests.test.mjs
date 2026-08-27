@@ -26,21 +26,21 @@ test("each durable approval stays attached to its own proposal", async () => {
   assert.equal((await readBrainRequests(root, "otto/tangent")).requests[0].answer, "approve");
 });
 
-test("a test request records the Goal file it is about", async () => {
+test("an approval request records the Goal file it is about", async () => {
   const record = await readBrainRequests("/missing", "otto/tangent");
-  const withGoal = createBrainRequest(record, { kind: "test", subject: "Ramp faces", question: "Approve this result?", proposal: "Close the Goal as done.", detail: "Drag the pole.", goal: "otto/dnd/goal-x.md" });
+  const withGoal = createBrainRequest(record, { kind: "approval", subject: "Ramp faces", question: "Approve this result?", proposal: "Close the Goal as done.", detail: "Drag the pole.", goal: "otto/dnd/goal-x.md" });
   assert.equal(withGoal.goal, "otto/dnd/goal-x.md");
   assert.deepEqual(withGoal.subjectRef, { type: "goal", goal: "otto/dnd/goal-x.md" });
   assert.deepEqual(withGoal.ownerRef, { type: "brain", area: "otto/tangent", generation: null });
-  const withoutGoal = createBrainRequest(record, { kind: "test", subject: "Ramp faces", question: "Approve this result?", proposal: "Accept the result.", detail: "Drag the pole." });
+  const withoutGoal = createBrainRequest(record, { kind: "approval", subject: "Ramp faces", question: "Approve this result?", proposal: "Accept the result.", detail: "Drag the pole." });
   assert.equal(withoutGoal.goal, null);
   assert.deepEqual(withoutGoal.subjectRef, { type: "brain", area: "otto/tangent", generation: null });
 });
 
 test("Goal closure closes only open Requests about that Goal", async () => {
   const record = await readBrainRequests("/missing", "otto/tangent");
-  const closed = createBrainRequest(record, { kind: "test", subject: "A", question: "Accept A?", proposal: "Close A.", goal: "otto/a/goal-a.md" });
-  const other = createBrainRequest(record, { kind: "test", subject: "B", question: "Accept B?", proposal: "Close B.", goal: "otto/a/goal-b.md" });
+  const closed = createBrainRequest(record, { kind: "approval", subject: "A", question: "Accept A?", proposal: "Close A.", goal: "otto/a/goal-a.md" });
+  const other = createBrainRequest(record, { kind: "approval", subject: "B", question: "Accept B?", proposal: "Close B.", goal: "otto/a/goal-b.md" });
   assert.deepEqual(closeGoalRequests(record, "otto/a/goal-a.md", "goal-dropped", "2026-08-25T00:00:00.000Z"), [closed]);
   assert.equal(closed.status, "closed");
   assert.equal(closed.closedReason, "goal-dropped");
@@ -88,7 +88,7 @@ test("new requests need a concrete proposal", async () => {
 
 test("legacy requests use approval or typed changes", async () => {
   const record = await readBrainRequests("/missing", "otto/tangent");
-  const request = createBrainRequest(record, { kind: "test", subject: "Diagrams", question: "Approve this result?", proposal: "Close the Goal as done.", detail: "Open one Document." });
+  const request = createBrainRequest(record, { kind: "approval", subject: "Diagrams", question: "Approve this result?", proposal: "Close the Goal as done.", detail: "Open one Document." });
   assert.throws(() => answerBrainRequest(record, request.id, "changes"), /need text/);
   const answered = answerBrainRequest(record, request.id, "changes", "Labels overlap.");
   assert.equal(answered.answer, "changes");
@@ -121,7 +121,7 @@ test("an exact effect records intent, survives a problem, and retries", async ()
 
 test("a brain prompt clips a long answer and still names its Request", async () => {
   const record = await readBrainRequests("/missing", "otto/tangent");
-  const request = createBrainRequest(record, { kind: "test", subject: "Diagrams", question: "Approve this result?", proposal: "Close the Goal as done.", detail: "Open one Document." });
+  const request = createBrainRequest(record, { kind: "approval", subject: "Diagrams", question: "Approve this result?", proposal: "Close the Goal as done.", detail: "Open one Document." });
   // What Julian pastes when he answers "changes" with a whole review.
   const pasted = `${"Every label overlaps its neighbour. ".repeat(120)}Fix the worst first.`;
   const answered = answerBrainRequest(record, request.id, "changes", pasted);
@@ -141,7 +141,7 @@ test("a brain prompt clips a long answer and still names its Request", async () 
 test("a request cannot contain an agent report", async () => {
   const record = await readBrainRequests("/missing", "otto/tangent");
   assert.throws(() => createBrainRequest(record, {
-    kind: "test",
+    kind: "approval",
     subject: "Diagrams",
     question: "Do diagrams render?",
     proposal: "Close the Goal as done.",

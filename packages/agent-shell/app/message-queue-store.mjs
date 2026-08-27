@@ -16,11 +16,25 @@ function normalizeEntry(value) {
     from: String(value.from ?? "unknown sender").replace(/\s+/g, " ").trim() || "unknown sender",
     area: typeof value.area === "string" && value.area.trim() ? value.area.replace(/\s+/g, " ").trim() : null,
     text,
-    // This store is only for generic cross-agent messages. Their provenance
-    // banner is mandatory and cannot be disabled by a stale or edited file.
+    // Generic cross-agent messages and brain notices both carry a provenance
+    // banner. It cannot be disabled by a stale or edited file.
     banner: true,
     queuedAt: String(value.queuedAt ?? "").trim() || null,
+    ...noticeFields(value),
   };
+}
+
+/**
+ * The inbox notices one entry carries, with the brain generation it was
+ * queued for. A brain notice stays in this queue until it was shown, and the
+ * inbox marks it read only then (D24).
+ */
+function noticeFields(value) {
+  const notices = (Array.isArray(value.notices) ? value.notices : [])
+    .map((notice) => ({ area: String(notice?.area ?? "").trim(), id: String(notice?.id ?? "").trim() }))
+    .filter((notice) => notice.area && notice.id);
+  if (!notices.length) return {};
+  return { notices, generation: Number.isInteger(value.generation) ? value.generation : null };
 }
 
 /** Normalizes a missing, malformed, or partially old queue without guessing recipients. */
@@ -74,6 +88,8 @@ export async function openMessageQueueStore({ file, now = () => new Date().toISO
       text: entry.text,
       banner: entry.banner,
       queuedAt: entry.queuedAt || now(),
+      notices: entry.notices,
+      generation: entry.generation,
     });
     if (!stored) throw new Error("a durable agent message needs an exact target and normalized text");
     await mutate((current) => ({ ...current, entries: [...current.entries, stored] }));

@@ -112,20 +112,17 @@ test("a Goal whose first step stopped still opens the step that runs", async () 
   assert.equal(row().querySelector("[data-goal-recovery]"), null, "no recovery start for a step the run moved past");
   assert.match(row().querySelector(".work-cell-action [data-launch-for]").textContent, /Start agent/, "the Goal is plain open work again");
 
-  // Guarded recovery appears only for an existing pending assignment with no current attempt.
+  // A pending assignment with no current attempt waits for the brain: only
+  // the brain starts workers (D8), so Work offers no recovery start.
   pipeline.steps[0].status = "complete";
   pipeline.steps[1].status = "pending";
   pipeline.currentAssignmentId = null;
   click(window, "#menu-refresh");
   await settle(window);
   await settle(window);
-  assert.equal(row().querySelector("[data-goal-recovery]"), null, "recovery is a state-owned action, not an inline row control");
+  assert.equal(row().querySelector("[data-goal-recovery]"), null, "no recovery start: the brain starts the pending assignment");
   click(window, `[data-goal-anchor='${goal.file}'] [data-work-object-actions]`);
   await settle(window);
-  const recovery = window.document.querySelector("[data-modal-action='recoveryStart']");
-  assert.equal(recovery.querySelector("strong").textContent, "Recovery start assignment 2");
-  assert.match(recovery.querySelector("small").textContent, /brain exhausted its recovery attempts/);
-  click(window, "[data-modal-action='recoveryStart']");
-  await settle(window);
-  assert.deepEqual(posts.at(-1), { pathname: "/api/goals/start", body: { file: goal.file, recovery: true } });
+  assert.equal(window.document.querySelector("[data-modal-action='recoveryStart']"), null, "the action menu offers no recovery start");
+  assert.equal(posts.filter((entry) => entry.pathname === "/api/goals/start").length, 0, "the browser never starts a worker");
 });

@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { discoverProcesses, dueNotice, evaluateProcess, processView, readProcessState, sweepProcesses, withProcessStatus } from "./process-scheduler.mjs";
+import { discoverProcesses, dueNotice, evaluateProcess, goalNamesProcess, processView, readProcessState, sweepProcesses, withProcessStatus } from "./process-scheduler.mjs";
 import { parseProcessNote } from "./process-note.mjs";
 
 /** A parsed scheduled process for one Area. */
@@ -122,4 +122,15 @@ test("pause and resume rewrite only the status line", () => {
   assert.equal(paused, "---\ntype: process\nschedule: daily 09:00\nstatus: paused\n---\nBody.\n");
   assert.equal(withProcessStatus(paused, "active"), "---\ntype: process\nschedule: daily 09:00\nstatus: active\n---\nBody.\n");
   assert.throws(() => withProcessStatus(text, "off"), /active or paused/);
+});
+
+test("a Goal names its process by frontmatter file, by slug, or by title", () => {
+  const note = scheduled();
+  assert.equal(goalNamesProcess({ process: "neara/pgande/process-rebase.md", title: "Anything" }, note), true, "the note file");
+  assert.equal(goalNamesProcess({ process: "rebase", title: "Anything" }, note), true, "the slug");
+  assert.equal(goalNamesProcess({ process: "process-rebase", title: "Anything" }, note), true, "the file stem");
+  assert.equal(goalNamesProcess({ process: null, title: "Rebase staging" }, note), true, "the title, when the brain started it without --instruction-file");
+  assert.equal(goalNamesProcess({ process: null, title: "rebase STAGING " }, note), true, "the title, whatever its case");
+  assert.equal(goalNamesProcess({ process: "neara/pgande/process-other.md", title: "Other work" }, note), false);
+  assert.equal(goalNamesProcess({ process: null, title: "Rebase" }, note), false, "a shorter title is another Goal");
 });

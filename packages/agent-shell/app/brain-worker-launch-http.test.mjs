@@ -290,13 +290,13 @@ test("a brain lends its own harness to every worker it starts", async (context) 
     "attempt choices do not mutate the Area Brain default",
   );
 
-  // A caller who is not the exact live brain still names its own harness.
+  // A caller who is not the exact live brain cannot start a worker (D8).
   const julian = await post("/api/goals/start", {
     file: "otto/proof/goal-julian-start.md",
-    steps: [{ instruction: "Start this by hand." }],
+    steps: [{ instruction: "Start this by hand.", launch: { harness: "claude" } }],
   });
-  assert.equal(julian.status, 400);
-  assert.match(julian.body.error, /step 1 has no --launch/);
+  assert.equal(julian.status, 403);
+  assert.equal(julian.body.error, 'only the brain starts workers. Message it in Work (a on the Area) or run: tangent send otto/proof "<what you want>"');
 
   // An edited command cannot become a second Brain launch authority.
   const commandBrain = await post("/api/brains/start", {

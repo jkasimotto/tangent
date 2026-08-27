@@ -31,45 +31,6 @@ const harnessRegistry = {
   effortSets: { efforts: [{ id: "low", label: "Low", args: "--effort low" }] },
 };
 
-/** One revisioned queue whose pending row can be edited without a live tmux session. */
-function queueWorkFixture() {
-  const fixture = plannedWorkFixture();
-  const file = "otto/tangent/goal-startable.md";
-  const pipeline = {
-    goal: file, area: "otto/tangent", revision: 7, status: "running", currentAssignmentId: "assignment-running",
-    steps: [
-      { id: "assignment-running", index: 1, status: "running", instruction: "Implement it.", kind: "implementation", path: null, continueFromAssignmentId: null, launch: { harness: "codex", model: "sol", effort: "low" } },
-      { id: "assignment-review", index: 2, status: "pending", instruction: "Review it.", kind: "review", path: null, continueFromAssignmentId: "assignment-running", launch: { harness: "codex", model: "sol", effort: "high" } },
-    ],
-  };
-  fixture.pipelines = [pipeline];
-  return { fixture, file, pipeline };
-}
-
-/** Creates the stale-revision response shape consumed by the browser API client. */
-function staleResponse(pipeline) {
-  return {
-    ok: false,
-    status: 409,
-    headers: {
-      /** The fixture has no retry or operation response headers. */
-      get() { return null; },
-    },
-    /** Returns the configured stale queue projection. */
-    async json() {
-      return { code: "stale-revision", error: "The queue changed.", currentRevision: pipeline.revision, pipeline };
-    },
-  };
-}
-
-/** Opens the shared assignment editor through the Goal's pointer action. */
-async function openQueueEditor(window, document, file) {
-  document.querySelector(`[data-goal-anchor='${file}'] [data-work-object-actions]`).click();
-  await settle(window);
-  document.querySelector("[data-modal-action='editAssignments']").click();
-  await settle(window, 5);
-}
-
 test("defaults are a complete keyboard chooser with staged Escape and exact return focus", async () => {
   const { window, document } = await bootWorkTable(workTableFixture(), { launchOptions });
   const origin = document.activeElement.closest("[data-work-cursor]")?.dataset.workCursor;
@@ -122,9 +83,7 @@ test("Goal and brain spawning share the Harness, Model, Effort keyboard surface"
   const goal = document.querySelector("[data-goal-anchor='otto/onboarding/goal-walkthrough.md'] [data-work-row-title]");
   goal.click();
   await settle(window, 5);
-  assert.equal(document.activeElement.dataset.launchStepSelect, "0", "Goal launch starts in the assignment-list region");
-  for (let index = 0; index < 20 && !document.activeElement.dataset.launchHarness; index += 1) press(window, "Tab");
-  assert.equal(document.activeElement.dataset.launchHarness, "codex", "Tab reaches the selected Harness without a pointer");
+  assert.equal(document.activeElement.dataset.launchHarness, "codex", "Goal launch starts at the selected Harness: it composes no assignments (D8)");
   document.querySelector("[data-launch-edit]").click();
   await settle(window);
   assert.equal(document.activeElement.id, "launch-command-input");
@@ -203,7 +162,7 @@ test("switching from defaults to a Goal loads the Goal catalog and returns to th
   goal.click();
   await settle(window, 5);
 
-  assert.equal(document.activeElement.dataset.launchStepSelect, "0", "the Goal starts at its assignment list");
+  assert.equal(document.activeElement.dataset.launchHarness, "codex", "the Goal starts at its selected Harness");
   assert.equal(document.querySelector("[data-launch-harness='codex']").getAttribute("aria-checked"), "true", "the Goal receives its launch default, not the settings catalog");
   const launchRequests = gets.filter((url) => new URL(url).pathname === "/api/launch/options");
   assert.equal(new URL(launchRequests.at(-1)).searchParams.has("kind"), false, "the replacement chooser requests Goal launch options");
@@ -302,185 +261,5 @@ test("a chooser near the viewport bottom flips above its trigger", async () => {
   assert.equal(popover.style.top, "", "a flipped chooser no longer uses the unusable below-trigger top");
   assert.equal(popover.style.bottom, "68px", "the chooser bottom sits eight pixels above the trigger");
   assert.ok(Number.parseFloat(popover.style.maxHeight) > 600, "the full space above the trigger remains scrollable");
-  window.close();
-});
-
-test("assignment CRUD and reorder own a, e, d, J, and K without changing stable continuations", async () => {
-  const { window, document } = await bootWorkTable(plannedWorkFixture(), { launchOptions });
-  document.querySelector("[data-goal-anchor='otto/tangent/goal-startable.md'] [data-work-row-title]").click();
-  await settle(window, 5);
-
-  /** Returns the stable assignment identities in current display order. */
-  const assignmentIds = () => [...document.querySelectorAll("[data-launch-assignment]")].map((row) => row.dataset.launchAssignment);
-  const firstId = assignmentIds()[0];
-  press(window, "a");
-  await settle(window);
-  press(window, "a");
-  await settle(window);
-  const [sameFirstId, secondId, thirdId] = assignmentIds();
-  assert.equal(sameFirstId, firstId);
-  assert.equal(new Set([firstId, secondId, thirdId]).size, 3, "every draft keeps a stable identity");
-  for (const key of ["a", "e", "d", "J", "K"]) assert.ok(document.querySelector(`[title*="(${key})"]`), `${key} also has a pointer action`);
-
-  const continuation = document.querySelector("[data-launch-continue]");
-  continuation.value = firstId;
-  continuation.dispatchEvent(new window.Event("change", { bubbles: true }));
-  document.querySelector(`[data-launch-assignment='${thirdId}'] [data-launch-step-select]`).focus();
-  press(window, "K");
-  await settle(window);
-  assert.deepEqual(assignmentIds(), [firstId, thirdId, secondId], "K reorders by identity");
-  assert.equal(document.querySelector("[data-launch-continue]").value, firstId, "a valid continuation survives reorder");
-  press(window, "J");
-  await settle(window);
-  assert.deepEqual(assignmentIds(), [firstId, secondId, thirdId], "J moves the same assignment back down");
-
-  press(window, "e");
-  await settle(window);
-  assert.equal(document.activeElement.id, "launch-instruction");
-  document.activeElement.value = "Discard this inner edit";
-  document.activeElement.dispatchEvent(new window.Event("input", { bubbles: true }));
-  press(window, "Escape");
-  await settle(window);
-  assert.equal(document.activeElement.closest("[data-launch-assignment]")?.dataset.launchAssignment, thirdId, "Escape leaves the inner edit first");
-  assert.equal(document.querySelector("#launch-instruction").value, "", "the cancelled inner edit restores the assignment draft");
-
-  const escapeFocusKey = document.activeElement.dataset.focusKey;
-  press(window, "e");
-  await settle(window);
-  document.activeElement.value = "Discard this pointer edit too";
-  document.activeElement.dispatchEvent(new window.Event("input", { bubbles: true }));
-  const pointerCancel = document.querySelector("[data-launch-assignment-cancel]");
-  assert.match(pointerCancel.textContent, /Cancel assignment edit\s*Esc/, "the visible pointer action teaches its keyboard equivalent");
-  pointerCancel.click();
-  await settle(window);
-  assert.equal(document.activeElement.dataset.focusKey, escapeFocusKey, "pointer Cancel restores the exact row that Escape restores");
-  assert.equal(document.querySelector("#launch-instruction").value, "", "pointer Cancel discards the same assignment fields as Escape");
-
-  document.querySelector(`[data-launch-assignment='${firstId}'] [data-launch-step-select]`).focus();
-  press(window, "d");
-  await settle(window);
-  assert.deepEqual(assignmentIds(), [secondId, thirdId]);
-  document.querySelector(`[data-launch-assignment='${thirdId}'] [data-launch-step-select]`).click();
-  assert.equal(document.querySelector("[data-launch-continue]").value, "", "removing a continuation source clears only that reference");
-  window.close();
-});
-
-test("a successful queue mutation with a lost response retries the exact body and operation ID", async () => {
-  const { fixture, file, pipeline } = queueWorkFixture();
-  let serverPipeline = structuredClone(pipeline);
-  const applied = new Set();
-  let mutationCalls = 0;
-  const { window, document, posts } = await bootWorkTable(fixture, {
-    launchOptions,
-    /** Applies the first request, loses its response, then serves the idempotent replay. */
-    postHandler: ({ path, body }) => {
-      if (path !== "/api/pipelines/mutate") return { ok: true };
-      mutationCalls += 1;
-      if (!applied.has(body.operationId)) {
-        const addition = body.operations.find((operation) => operation.type === "add");
-        serverPipeline = {
-          ...serverPipeline,
-          revision: serverPipeline.revision + 1,
-          steps: [...serverPipeline.steps, { ...addition.assignment, index: serverPipeline.steps.length + 1, status: "pending" }],
-        };
-        applied.add(body.operationId);
-        fixture.pipelines = [serverPipeline];
-      }
-      if (mutationCalls === 1) throw new TypeError("The response was lost after commit.");
-      return { state: "repeated", pipeline: serverPipeline };
-    },
-  });
-
-  await openQueueEditor(window, document, file);
-  document.querySelector("[data-launch-step-add]").click();
-  document.querySelector("#launch-instruction").value = "Prove the retry contract.";
-  document.querySelector("[data-launch-start]").click();
-  await settle(window, 5);
-  assert.ok(document.querySelector("[data-launch-popover]"), "a lost response keeps the local queue editor open");
-
-  document.querySelector("[data-launch-start]").click();
-  await settle(window, 6);
-  const calls = posts.filter((entry) => entry.path === "/api/pipelines/mutate");
-  assert.equal(calls.length, 2);
-  assert.deepEqual(calls[1].body, calls[0].body, "retry reuses the exact fenced batch, including its stable draft assignment");
-  assert.match(calls[0].body.operationId, /^[0-9a-f-]{36}$/i);
-  const addedId = calls[0].body.operations.find((operation) => operation.type === "add").assignment.id;
-  assert.equal(serverPipeline.steps.filter((assignment) => assignment.id === addedId).length, 1, "the repeated operation cannot add the draft twice");
-  assert.equal(document.querySelector("[data-launch-popover]"), null, "the idempotent replay completes the save");
-  window.close();
-});
-
-test("queue mutation identity changes only with a changed batch or an explicit rebase", async () => {
-  const { fixture, file, pipeline } = queueWorkFixture();
-  const latest = { ...structuredClone(pipeline), revision: pipeline.revision + 1 };
-  let mutationCalls = 0;
-  const { window, document, posts } = await bootWorkTable(fixture, {
-    launchOptions,
-    /** Loses one response, then forces the changed draft through a rebase. */
-    postHandler: ({ path }) => {
-      if (path !== "/api/pipelines/mutate") return { ok: true };
-      mutationCalls += 1;
-      if (mutationCalls === 1) throw new TypeError("The first response was lost.");
-      if (mutationCalls === 2) return staleResponse(latest);
-      fixture.pipelines = [latest];
-      return { state: "updated", pipeline: latest };
-    },
-  });
-
-  await openQueueEditor(window, document, file);
-  document.querySelector("[data-launch-step-add]").click();
-  document.querySelector("#launch-instruction").value = "First operation batch.";
-  document.querySelector("[data-launch-start]").click();
-  await settle(window, 5);
-
-  document.querySelector("#launch-instruction").value = "Changed operation batch.";
-  document.querySelector("[data-launch-start]").click();
-  await settle(window, 5);
-  /** Returns every queue mutation sent during this editor lifetime. */
-  const calls = () => posts.filter((entry) => entry.path === "/api/pipelines/mutate");
-  assert.notEqual(calls()[1].body.operationId, calls()[0].body.operationId, "editing the operation batch creates a new identity");
-  assert.equal(calls()[1].body.operations.find((operation) => operation.type === "add").assignment.instruction, "Changed operation batch.");
-
-  document.querySelector("[data-launch-rebase]").click();
-  await settle(window, 5);
-  document.querySelector("[data-launch-start]").click();
-  await settle(window, 6);
-  assert.notEqual(calls()[2].body.operationId, calls()[1].body.operationId, "explicit rebase creates a new mutation identity against the newer revision");
-  assert.equal(calls()[2].body.expectedRevision, latest.revision);
-  window.close();
-});
-
-test("rebasing a queue that already contains the stable draft ID does not duplicate the add", async () => {
-  const { fixture, file, pipeline } = queueWorkFixture();
-  let latest = null;
-  const { window, document, posts } = await bootWorkTable(fixture, {
-    launchOptions,
-    /** Reports a newer projection that already contains the locally stable add. */
-    postHandler: ({ path, body }) => {
-      if (path !== "/api/pipelines/mutate") return { ok: true };
-      const addition = body.operations.find((operation) => operation.type === "add");
-      latest = {
-        ...structuredClone(pipeline),
-        revision: pipeline.revision + 1,
-        steps: [...structuredClone(pipeline.steps), { ...addition.assignment, index: pipeline.steps.length + 1, status: "pending" }],
-      };
-      return staleResponse(latest);
-    },
-  });
-
-  await openQueueEditor(window, document, file);
-  document.querySelector("[data-launch-step-add]").click();
-  document.querySelector("#launch-instruction").value = "Keep one stable draft row.";
-  document.querySelector("[data-launch-start]").click();
-  await settle(window, 5);
-  const addedId = posts[0].body.operations.find((operation) => operation.type === "add").assignment.id;
-  document.querySelector("[data-launch-rebase]").click();
-  await settle(window, 5);
-
-  assert.equal([...document.querySelectorAll("[data-launch-assignment]")].filter((row) => row.dataset.launchAssignment === addedId).length, 1);
-  document.querySelector("[data-launch-start]").click();
-  await settle(window);
-  assert.equal(posts.filter((entry) => entry.path === "/api/pipelines/mutate").length, 1, "the rebased committed add leaves no duplicate operation to save");
-  assert.equal(latest.steps.filter((assignment) => assignment.id === addedId).length, 1);
   window.close();
 });

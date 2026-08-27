@@ -5,7 +5,8 @@
 // parsed Decide and Test rows with their titles and comment counts, the lines
 // Tangent shows nothing for travel with the record, Accept and Reject remove a
 // row and reach the brain with an undo that withdraws them, and a saved
-// comment on a listed Document wakes the brain.
+// comment on a listed Document wakes the brain only after Julian explicitly
+// asks Tangent to send the comment notice.
 
 import assert from "node:assert/strict";
 import { once } from "node:events";
@@ -389,6 +390,11 @@ test("saving comments is silent until Julian explicitly notifies the nearest liv
   if (!probe) return;
 
   await waitFor("the rows in the payload", async () => (await brainOf(probe.base))?.forJulian?.length === 3);
+  // Fixture setup creates a Goal, which intentionally leaves its own durable
+  // command-audit notice. This test owns only notices appended after this
+  // point; save must not append one and Notify brain must append exactly one.
+  const beforeComment = await readInbox(probe.brains, probe.area);
+  const priorNoticeIds = new Set(beforeComment.notices.map((notice) => notice.id));
 
   /** Saves one Document with the text a fresh read gives, plus the added line. */
   const comment = async (file, added) => {
@@ -402,7 +408,9 @@ test("saving comments is silent until Julian explicitly notifies the nearest liv
   const listed = `${probe.area}/design-probe.md`;
   await comment(listed, "\nAnother point. {>>Julian: do the second one<<}\n");
   await new Promise((resolve) => setTimeout(resolve, 200));
-  assert.equal((await readInbox(probe.brains, probe.area)).notices.length, 0, "saving a comment sends nothing");
+  const afterSave = await readInbox(probe.brains, probe.area);
+  assert.equal(afterSave.seq, beforeComment.seq, "saving a comment appends no brain notice");
+  assert.deepEqual(afterSave.notices.map((notice) => notice.id), beforeComment.notices.map((notice) => notice.id));
 
   const sent = await post(probe.base, "/api/document/notify-comments", { file: listed });
   assert.equal(sent.status, 200, JSON.stringify(sent.body));
@@ -410,7 +418,8 @@ test("saving comments is silent until Julian explicitly notifies the nearest liv
   assert.equal(sent.body.comments, 2);
   const notices = await waitFor("the notice on disk", async () => {
     const inbox = await readInbox(probe.brains, probe.area);
-    return inbox.notices.length ? inbox.notices : null;
+    const added = inbox.notices.filter((notice) => !priorNoticeIds.has(notice.id));
+    return added.length ? added : null;
   });
   assert.equal(notices.length, 1);
   assert.equal(
@@ -431,5 +440,7 @@ test("saving comments is silent until Julian explicitly notifies the nearest liv
   // Saving another Document remains silent too.
   await comment(`${probe.area}/design-quiet.md`, "\nA thought. {>>Julian: and this?<<}\n");
   await new Promise((resolve) => setTimeout(resolve, 300));
-  assert.equal((await readInbox(probe.brains, probe.area)).notices.length, 1);
+  const afterQuietSave = await readInbox(probe.brains, probe.area);
+  assert.equal(afterQuietSave.seq, beforeComment.seq + 1, "a second save appends no brain notice either");
+  assert.equal(afterQuietSave.notices.filter((notice) => !priorNoticeIds.has(notice.id)).length, 1);
 });

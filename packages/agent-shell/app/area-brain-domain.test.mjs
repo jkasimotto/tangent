@@ -120,7 +120,7 @@ test("no worker report closes a Goal; a passing review only completes the queue"
 test("Programs become quiet Operations and failures become problems", () => {
   assert.equal(operationFromProgram({ type: "process" }).mode, "service");
   assert.equal(operationFromProgram({ type: "command" }).state, "quiet");
-  assert.equal(operationFromProgram({ type: "trigger", runtime: { error: "probe failed" } }).state, "problem");
+  assert.equal(operationFromProgram({ type: "command", error: "manifest broken" }).state, "problem");
 });
 
 test("legacy data remains recoverable from a detached compressed export", async () => {

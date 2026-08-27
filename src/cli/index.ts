@@ -2,8 +2,7 @@
 import { completeCommand, completionScript, renderCommandHelp, type CliCommandSpec, type CliCompletionShell } from "@tangent/core";
 import { dataCommandSpec, devCommandSpec, doctorCommandSpec, openCommandSpec, runOpenCommand, runProductStatusCommand, runSetupCommand, setupCommandSpec, statusCommandSpec } from "./product.js";
 import { requiredProductModule } from "./module-loader.js";
-import { runProcessCommand } from "./processes.js";
-import { runTriggerCommand } from "./triggers.js";
+import { runServiceCommand } from "./services.js";
 
 type ProductRunner = (argv: string[]) => Promise<void>;
 
@@ -27,6 +26,7 @@ const productCommands: Record<string, ProductCommand> = {
   handover: { module: "@tangent/agent-shell/cli", exportName: "runHandoverCli", installHint: "handover" },
   send: { module: "@tangent/agent-shell/cli", exportName: "runSendCli", installHint: "send" },
   idea: { module: "@tangent/agent-shell/cli", exportName: "runIdeaCli", installHint: "idea" },
+  process: { module: "@tangent/agent-shell/cli", exportName: "runProcessCli", installHint: "process" },
   document: { module: "@tangent/agent-shell/cli", exportName: "runDocumentCli", installHint: "document" },
   study: { module: "@tangent/agent-shell/cli", exportName: "runStudyCli", installHint: "study" },
   vault: { module: "@tangent/agent-shell/cli", exportName: "runVaultCli", installHint: "vault" },
@@ -41,27 +41,18 @@ const tangentCommandSpec: CliCommandSpec = {
     statusCommandSpec,
     openCommandSpec,
     {
-      name: "process",
-      description: "Run named local processes visibly in the Tangent tree",
+      name: "service",
+      description: "Run named servers and watchers visibly in the Tangent tree",
+      args: "<list|start|stop|restart|close>",
       subcommands: [
-        { name: "list", description: "List inherited process definitions", options: [{ name: "area", takesValue: true, description: "Tangent Area path" }] },
-        { name: "start", description: "Start or reopen a named process", args: "<name>", options: [{ name: "area", takesValue: true, description: "Tangent Area path" }] },
-        { name: "stop", description: "Stop a process but keep its visible session", args: "<name>", options: [{ name: "area", takesValue: true, description: "Tangent Area path" }] },
-        { name: "restart", description: "Restart a named process", args: "<name>", options: [{ name: "area", takesValue: true, description: "Tangent Area path" }] },
-        { name: "close", description: "Close a process session and remove its row", args: "<name>", options: [{ name: "area", takesValue: true, description: "Tangent Area path" }] }
+        { name: "list", description: "List inherited service definitions", options: [{ name: "area", takesValue: true, description: "Tangent Area path" }] },
+        { name: "start", description: "Start or reopen a named service", args: "<name>", options: [{ name: "area", takesValue: true, description: "Tangent Area path" }] },
+        { name: "stop", description: "Stop a service but keep its visible session", args: "<name>", options: [{ name: "area", takesValue: true, description: "Tangent Area path" }] },
+        { name: "restart", description: "Restart a named service", args: "<name>", options: [{ name: "area", takesValue: true, description: "Tangent Area path" }] },
+        { name: "close", description: "Close a service session and remove its row", args: "<name>", options: [{ name: "area", takesValue: true, description: "Tangent Area path" }] }
       ]
     },
-    {
-      name: "trigger",
-      description: "Check Area conditions and launch visible agents when work appears",
-      subcommands: [
-        { name: "list", description: "List Area triggers and their durable state", options: [{ name: "json", description: "Print machine-readable JSON" }] },
-        { name: "check", description: "Check due triggers, or one named trigger", args: "[area:name|name]", options: [{ name: "force", description: "Check even when the interval is not due" }] },
-        { name: "acknowledge", description: "Acknowledge the current attention condition", args: "<area:name|name>" },
-        { name: "stop", description: "End the live trigger agent; the trigger keeps its schedule", args: "<area:name|name>" },
-        { name: "install", description: "Install the per-user macOS wake-up that checks due triggers every minute" }
-      ]
-    },
+    { name: "process", description: "Read, pause, resume, and check repeatable work (process-<slug>.md notes)", args: "<list|show|pause|resume|check>" },
     productCommandSpec("usage", "Inspect coding-agent activity"),
     productCommandSpec("rollup", "Generate private rollup notes"),
     productCommandSpec("search", "Index and search repository structure"),
@@ -120,13 +111,17 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
     return;
   }
 
-  if (app === "process") {
-    await runProcessCommand(rest);
+  if (app === "service") {
+    await runServiceCommand(rest);
     return;
   }
 
-  if (app === "trigger") {
-    await runTriggerCommand(rest);
+  // `tangent process start|stop|restart|close` meant servers and watchers
+  // until 2026-08-27 (D19). The old spelling works for one release and says
+  // where it moved; `tangent process list` lists processes and adds the hint.
+  if (app === "process" && SERVICE_VERBS.has(rest[0] ?? "")) {
+    console.error(SERVICE_HINT);
+    await runServiceCommand(rest);
     return;
   }
 
@@ -183,6 +178,10 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
   throw new Error(`Unknown command: ${app}`);
 }
 
+/** The old `tangent process` verbs that belong to `tangent service` now. */
+const SERVICE_VERBS = new Set(["start", "stop", "restart", "close"]);
+const SERVICE_HINT = "hint: servers and watchers are `tangent service` now; `tangent process` is repeatable work (process-<slug>.md notes).";
+
 /** Creates a root-owned command stub for an optional product package. */
 function productCommandSpec(name: string, description: string): CliCommandSpec {
   return {
@@ -196,9 +195,9 @@ function productCommandSpec(name: string, description: string): CliCommandSpec {
  * commands; a worker has one; the rest are Julian's own tools.
  */
 const HELP_GROUPS: Array<{ title: string; commands: string[] }> = [
-  { title: "Brains", commands: ["goal", "area", "send", "agent", "idea", "document", "vault", "brain", "harness", "process"] },
+  { title: "Brains", commands: ["goal", "area", "send", "agent", "idea", "document", "vault", "brain", "harness", "process", "service"] },
   { title: "Workers", commands: ["send"] },
-  { title: "Julian", commands: ["setup", "status", "open", "shell", "study", "usage", "rollup", "search", "eval", "trigger", "doctor", "dev", "data", "completion"] },
+  { title: "Julian", commands: ["setup", "status", "open", "shell", "study", "usage", "rollup", "search", "eval", "doctor", "dev", "data", "completion"] },
 ];
 
 /** One `  name args  description` row per command, padded to the group's width. */
@@ -228,6 +227,7 @@ Examples:
   tangent idea add otto/dnd Maybe add a calmer return screen later.
   tangent vault commit otto/dnd/dnd.md -m "update: otto/dnd rewrite Current"
   tangent process list
+  tangent service list
   tangent usage today
   tangent search "horizontal tension"
   tangent completion zsh

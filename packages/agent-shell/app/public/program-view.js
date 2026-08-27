@@ -19,13 +19,6 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
 
   /** Describes one program's current state in plain language. */
   function programState(program) {
-    if (program.type === "trigger") {
-      if (program.session && !["stopped", "shell"].includes(program.session.state)) return program.paused ? "Agent running · Paused" : "Agent running";
-      if (program.paused) return "Paused";
-      if (program.runtime?.error) return "Check failed";
-      if (program.runtime?.lastOutcome?.status === "attention" && program.runtime.acknowledgedKey !== program.runtime.lastOutcome.key) return "Needs attention";
-      return program.runtime?.lastCheckedAt ? "Waiting" : "Not checked";
-    }
     if (!program.session) return "Not running";
     if (["stopped", "shell"].includes(program.session.state)) return "Stopped · log kept";
     return "Running";
@@ -39,28 +32,18 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
     return date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
   }
 
-  /** Names the kind of one program for a reader. */
+  /** Names the kind of one program for a reader: the stored kind `process` is a Service (D19). */
   function programKind(program) {
-    return program.type === "process" ? "Server or watcher" : program.type === "trigger" ? "Trigger" : "Command";
+    return program.type === "process" ? "Service" : "Command";
   }
 
   /**
-   * The runtime controls a program row offers. Stopping a runaway program and
-   * pausing a Trigger that keeps coming back must not be hidden features, so
-   * the row carries them beside the state. Stop ends the current run; Pause
-   * keeps the Trigger from firing again, so a Trigger offers both.
+   * The runtime controls a program row offers. Stopping a runaway program
+   * must not be a hidden feature, so the row carries it beside the state.
    */
   function programRowControls(program) {
     const live = programIsLive(program);
     const controls = live ? [{ action: "stop", label: "Stop" }] : [];
-    if (program.type === "trigger") {
-      if (program.paused) controls.push({ action: "resume", label: "Resume" });
-      else {
-        if (!live && program.available) controls.push({ action: "check", label: "Check now" });
-        controls.push({ action: "pause", label: "Pause" });
-      }
-      return controls;
-    }
     if (live || !program.available) return controls;
     controls.push(program.type === "process" ? { action: "start", label: "Start" } : { action: "run", label: "Run" });
     return controls;
@@ -103,15 +86,6 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
         live ? `<button class="danger-button" type="button" data-program-action="stop">Stop…</button>` : `<button class="primary-button" type="button" data-program-action="run">Run…</button>`,
         retained && !live ? `<button class="quiet-button" type="button" data-program-action="close">Remove saved log…</button>` : "",
       ].join("");
-    } else if (program.type === "trigger") {
-      const attention = program.runtime?.lastOutcome?.status === "attention" && program.runtime.acknowledgedKey !== program.runtime.lastOutcome.key;
-      actions = [
-        retained ? `<button class="secondary-button" type="button" data-open-program-session>Open session</button>` : "",
-        !program.paused && !live ? `<button class="primary-button" type="button" data-program-action="check">Check now</button>` : "",
-        attention ? `<button class="secondary-button" type="button" data-program-action="acknowledge">Acknowledge</button>` : "",
-        live ? `<button class="danger-button" type="button" data-program-action="stop">Stop…</button>` : "",
-        program.paused ? `<button class="primary-button" type="button" data-program-action="resume">Resume</button>` : `<button class="secondary-button" type="button" data-program-action="pause">Pause</button>`,
-      ].join("");
     }
     return `
       <article class="program-detail">
@@ -122,7 +96,6 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
         <dl class="program-facts">
           <div><dt>Command</dt><dd><code>${escapeHtml(program.command)}</code></dd></div>
           <div><dt>Folder</dt><dd><code>${escapeHtml(program.cwd || "No area folder is recorded")}</code></dd></div>
-          ${program.type === "trigger" ? `<div><dt>Cadence</dt><dd>${escapeHtml(program.every)}</dd></div><div><dt>Instructions</dt><dd><code>${escapeHtml(program.instructions)}</code></dd></div><div><dt>Last check</dt><dd>${escapeHtml(localMoment(program.runtime?.lastCheckedAt))}</dd></div>${program.runtime?.lastOutcome?.status === "attention" ? `<div><dt>Attention</dt><dd>${escapeHtml(program.runtime.lastOutcome.message)}</dd></div>` : ""}${program.runtime?.error ? `<div><dt>Error</dt><dd>${escapeHtml(program.runtime.error)}</dd></div>` : ""}` : ""}
           ${program.session ? `<div><dt>Session</dt><dd><code>${escapeHtml(program.sessionName)}</code></dd></div>` : ""}
         </dl>
         <div class="program-actions">${actions}</div>
@@ -142,13 +115,13 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
         <p class="kicker">New program</p><h1>What should run?</h1>
         <p class="create-lede">Keep the setup with its area. Nothing runs until you use a clear action.</p>
         <form class="create-form" data-program-form data-command-enter-submit>
-          <label><span>Kind</span><select name="type" data-program-draft="type"><option value="process" ${draft.type === "process" ? "selected" : ""}>Server or watcher</option><option value="command" ${draft.type === "command" ? "selected" : ""}>One-off command</option></select></label>
+          <label><span>Kind</span><select name="type" data-program-draft="type"><option value="process" ${draft.type === "process" ? "selected" : ""}>Service (server or watcher)</option><option value="command" ${draft.type === "command" ? "selected" : ""}>One-off command</option></select></label>
           <label><span>Area</span><select name="area" data-program-draft="area" required>${areaOptions(draft.area)}</select></label>
           <label><span>Name</span><input name="name" data-program-draft="name" value="${escapeHtml(draft.name)}" required placeholder="Development server" /></label>
           <label><span>Working folder</span><input name="cwd" data-program-draft="cwd" value="${escapeHtml(draft.cwd)}" required placeholder="/path/to/repository" /></label>
           <label><span>Command</span><input name="command" data-program-draft="command" value="${escapeHtml(draft.command)}" required placeholder="npm run dev" /></label>
           <div class="create-actions"><button class="primary-button" type="submit">Save program <kbd>⌘↵</kbd></button><button class="quiet-button" type="button" data-cancel-program-create>Cancel</button></div>
-          <p class="form-note">Commands always ask before they run. Process sessions keep their scrollback after Stop.</p>
+          <p class="form-note">Commands always ask before they run. Service sessions keep their scrollback after Stop.</p>
         </form>
       </article>`;
   }
@@ -157,7 +130,7 @@ export function createProgramView({ state, areaLabel, areaPath, humanName, agent
   function renderProgramSession(program) {
     return `
       <section class="agent-page">
-        <div class="agent-toolbar"><div class="agent-context"><strong>${escapeHtml(program.label)}</strong><span>${escapeHtml(areaLabel(program.area))} · ${escapeHtml(programState(program))}</span></div><div class="agent-controls">${programIsLive(program) ? `<button class="danger-button" type="button" data-program-action="stop" data-program-id="${escapeHtml(program.id)}">Stop…</button>` : ""}${program.type === "trigger" ? `<button class="secondary-button" type="button" data-program-action="${program.paused ? "resume" : "pause"}" data-program-id="${escapeHtml(program.id)}">${program.paused ? "Resume" : "Pause"}</button>` : ""}<button class="quiet-button" type="button" data-back-program>Program details</button></div></div>
+        <div class="agent-toolbar"><div class="agent-context"><strong>${escapeHtml(program.label)}</strong><span>${escapeHtml(areaLabel(program.area))} · ${escapeHtml(programState(program))}</span></div><div class="agent-controls">${programIsLive(program) ? `<button class="danger-button" type="button" data-program-action="stop" data-program-id="${escapeHtml(program.id)}">Stop…</button>` : ""}<button class="quiet-button" type="button" data-back-program>Program details</button></div></div>
       </section>`;
   }
 

@@ -367,22 +367,10 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     await post("/api/operations/control", { id: program.id, action });
     if (["stop", "close"].includes(action) && state.view === "program-session") state.view = "program-detail";
     await refresh();
-    // The refresh above joins a reading that started before this write, and it
-    // installs a fresh list that still carries the old flag. So Pause and
-    // Resume write what they just made true onto the program the screen reads,
-    // after that list is in place. The next refresh brings the server's truth.
-    if (["pause", "resume"].includes(action)) {
-      const current = programById(program.id);
-      if (current) current.paused = action === "pause";
-    }
     paint(true);
-    if (action === "stop" && program.type === "trigger") return showToast("The agent stopped. The Trigger keeps its schedule.");
     const messages = {
-      start: "The process started.", restart: "The process restarted.", stop: "The program stopped.",
+      start: "The service started.", restart: "The service restarted.", stop: "The program stopped.",
       close: "The saved session was removed.", run: "The command started.",
-      check: "The Trigger ran its check.", acknowledge: "The attention message is cleared.",
-      pause: "The Trigger is paused. It checks again only after you resume it.",
-      resume: "The Trigger is back on its schedule.",
     };
     showToast(messages[action] || "The program changed.");
   }
@@ -391,27 +379,23 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   function controlProgram(action, id = state.programId) {
     const program = programById(id);
     if (!program) return;
-    if (["start", "pause", "resume", "acknowledge"].includes(action)) {
+    if (action === "start") {
       performProgramAction(action, id).catch((error) => showToast(error.message));
       return;
     }
-    const trigger = program.type === "trigger";
     const descriptions = {
       run: `Run “${program.command}” in ${program.cwd}.`,
-      restart: `Stop the current process, then run “${program.command}” again.`,
-      check: "This runs the probe now. If the probe finds new work, the Trigger starts its agent.",
-      stop: trigger
-        ? "This ends the live agent. The Trigger keeps its schedule and checks again at its next interval."
-        : "Stop the live program. A managed process keeps its session and scrollback.",
+      restart: `Stop the current service, then run “${program.command}” again.`,
+      stop: "Stop the live program. A service keeps its session and scrollback.",
       close: "Remove the retained tmux session and its scrollback. The program definition stays here.",
     };
-    const titles = { run: `Run ${program.label}?`, restart: `Restart ${program.label}?`, check: `Check ${program.label} now?`, close: "Remove the saved log?" };
-    const confirmLabels = { run: "Run now", restart: "Restart", check: "Check now", close: "Remove log" };
+    const titles = { run: `Run ${program.label}?`, restart: `Restart ${program.label}?`, close: "Remove the saved log?" };
+    const confirmLabels = { run: "Run now", restart: "Restart", close: "Remove log" };
     openModal({
-      kicker: trigger ? "Trigger agent" : program.type === "command" ? "Command" : "Managed process",
+      kicker: program.type === "command" ? "Command" : "Service",
       title: titles[action] || `Stop ${program.label}?`,
       copy: descriptions[action],
-      confirmLabel: confirmLabels[action] || (trigger ? "Stop agent" : "Stop"),
+      confirmLabel: confirmLabels[action] || "Stop",
       danger: ["stop", "close"].includes(action),
       /** Applies the confirmed Program action. */
       onConfirm: () => performProgramAction(action, id),

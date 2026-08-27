@@ -49,11 +49,11 @@ product-ui -> product-ui-data, ui-* packages
 product-server -> product-core/API routes, product-ui assets, ui-server
 ```
 
-Human-facing root commands include `setup`, `status`, `process`, `trigger`, `usage`, `rollup`, `search`, `eval`, `mark`, `doctor`, and `completion`.
+Human-facing root commands include `setup`, `status`, `service`, `usage`, `rollup`, `search`, `eval`, `doctor`, and `completion`.
 
-The root-owned `process` command resolves inherited `.processes.json` definitions. It manages Area-bound tmux sessions and composes the personal tree. It is not reusable.
+The root-owned `service` command resolves inherited `.processes.json` definitions for servers and watchers. It manages Area-bound tmux sessions (kind `process`) and composes the personal tree. It is not reusable. `tangent process start|stop|restart|close` still reach it for one release with a hint.
 
-The root-owned `trigger` command discovers Area-local trigger definitions in the same manifests. A fast probe reports `idle`, `work`, or `attention`; durable machine-local state coalesces intervals, prevents overlapping agents, and deduplicates conditions. One optional per-user LaunchAgent wakes the CLI while Agent Shell is closed. Agent Shell only projects and controls this state. See ADR-0030.
+`tangent process` is repeatable work. A process is a `<area>/process-<slug>.md` note. The Agent Shell server is its scheduler: when a process is due, the server writes one note to the Area brain, which starts the work as a Goal. The root `trigger` command and its LaunchAgent are retired. See ADR-0043.
 
 Raw, debug, and CI commands remain callable but hidden from default help.
 

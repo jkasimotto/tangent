@@ -6,9 +6,9 @@ Public import paths:
 - `@tangent/agent-shell/cli`
 - `@tangent/agent-shell/area-resources`
 
-The first two paths export the CLI runners and help specifications for `send`, `area`, `brain`, `goal`, `idea`, `document`, `agent`, `handover`, `shell`, `study`, and `vault`. They also export the study contract. The third path exports the one parser for an Area note's `## Resources` section (`parseAreaResources`, `resolveWorkFolder`, `describeAreaResources`, `unboundAreaMessage`). The root `tangent trigger` runtime reads Area folders through it. Agent Shell exports no other server module.
+The first two paths export the CLI runners and help specifications for `send`, `area`, `brain`, `goal`, `idea`, `document`, `agent`, `handover`, `process`, `shell`, `study`, and `vault`. They also export the study contract. The third path exports the one parser for an Area note's `## Resources` section (`parseAreaResources`, `resolveWorkFolder`, `describeAreaResources`, `unboundAreaMessage`). The root `tangent service` command reads Area folders through it. Agent Shell exports no other server module.
 
-The root `tangent` command loads this package only when one of these nouns is used. The root package owns `tangent process` and `tangent trigger`.
+The root `tangent` command loads this package only when one of these nouns is used. The root package owns `tangent service` (servers and watchers). `tangent process start|stop|restart|close` still reach it for one release with a hint (ADR-0043).
 
 ## Command boundary
 

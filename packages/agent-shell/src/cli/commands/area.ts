@@ -74,6 +74,7 @@ async function showCommand(args: Args): Promise<void> {
     console.log(detail.purpose);
   }
   printResources(detail);
+  printProcesses(detail);
   console.log("");
   console.log(`Goals (${detail.goals.length}):`);
   if (!detail.goals.length) console.log("  none");
@@ -104,6 +105,25 @@ function printResources(detail: AreaShowDetail): void {
   if (detail.workFolder) console.log(`  Workers start in ${detail.workFolder.cwd} (from ${detail.workFolder.source})`);
 }
 
+/**
+ * Prints the Area's processes with their next run, so a brain reading
+ * `tangent area show` knows what repeatable work exists and when it is due
+ * (D16). Nothing prints when the Area has none.
+ */
+function printProcesses(detail: AreaShowDetail): void {
+  const processes = detail.processes ?? [];
+  if (!processes.length) return;
+  console.log("");
+  console.log("Processes:");
+  for (const item of processes) {
+    const next = item.status === "paused" ? "paused" : item.nextRunAt ? `next ${item.nextRunAt}` : "no next run";
+    console.log(`  ${item.slug}: ${item.when}; ${next}; ${item.error ? `broken note: ${item.error}` : item.state} (${item.file})`);
+  }
+}
+
+/** One process row of `/api/areas/show`. */
+type AreaShowProcess = { slug: string; file: string; when: string; status: string; nextRunAt: string | null; state: string; error: string | null };
+
 /** One resource value with the Area whose note declares it. */
 type ResolvedResource = { value: string; area: string };
 
@@ -111,6 +131,7 @@ type ResolvedResource = { value: string; area: string };
 type AreaShowDetail = {
   resolved?: { repository?: ResolvedResource | null; worktree?: ResolvedResource | null; branch?: ResolvedResource | null };
   workFolder?: { cwd: string; source: string } | null;
+  processes?: AreaShowProcess[];
 };
 
 /**

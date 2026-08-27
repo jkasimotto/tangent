@@ -100,6 +100,10 @@ async function createCommand(args: Args): Promise<void> {
     ...(verify ? { verify: true } : {}),
     ...(start ? { start: true } : {}),
     ...(start && instruction ? { instruction } : {}),
+    // A process note as the instruction file links the Goal to its process
+    // (`process:` in the Goal frontmatter), so the scheduler skips the
+    // process while this Goal is open (ADR-0043).
+    ...(start && instructionFile ? { instructionFile: parseStepPath(instructionFile) } : {}),
     ...(start && workerPath ? { path: workerPath } : {}),
     ...(start && launch ? { launch } : {}),
   });

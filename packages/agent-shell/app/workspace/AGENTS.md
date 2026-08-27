@@ -8,12 +8,12 @@ Agent Shell uses tmux for native agent sessions. Do not detach or kill the orche
 - A Goal records something the user wants to make true.
 - A Subgoal is another Goal linked by “To do that.”
 - A Document stores reusable knowledge linked to relevant Goals.
-- A Program is a repeatable operation attached to an Area.
+- A Program is a service (server or watcher) or command attached to an Area. A process is repeatable work: a `process-<slug>.md` note.
 - A Run is one agent session working on one Goal.
 
 ## Start a Run
 
-If the user names an Area, read its canonical note first. Use the repository or worktree in `## Resources`. Before you start a server or watcher, run `tangent process list`. Start a matching Program with `tangent process start <name>`.
+If the user names an Area, read its canonical note first. Use the repository or worktree in `## Resources`. Before you start a server or watcher, run `tangent service list`. Start a matching Program with `tangent service start <name>`.
 Otherwise, create a tmux session in the selected directory. Confirm that its name is not in use. Always quote directory paths.
 
 Bind each Goal Run with these tmux options:

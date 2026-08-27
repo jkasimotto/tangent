@@ -32,7 +32,7 @@ async function rebuildCommand(args: Args): Promise<void> {
   const server = resolveServerUrl(stringArg(args.server));
   const seconds = numberArg(args.timeout) ?? DEFAULT_TIMEOUT_SECONDS;
   const old = await bootId(server);
-  if (!old) throw new Error(`Agent Shell does not answer at ${server.origin}; start it first (tangent process list).`);
+  if (!old) throw new Error(`Agent Shell does not answer at ${server.origin}; start it first (tangent service list).`);
   const snapshot = await vaultFetch(server, "/api/sessions");
   const commits = Array.isArray(snapshot.pendingCommits) ? snapshot.pendingCommits as Array<{ shortHash?: string; subject?: string; author?: string }> : [];
   console.log(commits.length ? "commits included:" : "commits included: none (rebuilding the deployed commit)");
@@ -73,7 +73,7 @@ function sleep(ms: number): Promise<void> {
 function help(): void {
   console.log(renderCommandHelp(shellCommandSpec));
   console.log(`
-Agent Shell is the server on port 4321. Start and stop it with tangent process;
+Agent Shell is the server on port 4321. Start and stop it with tangent service;
 this command is the one that puts new code in front of Julian: it rebuilds the
 packages, restarts the server, and returns when the new boot answers.
 

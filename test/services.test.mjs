@@ -5,34 +5,34 @@ import path from "node:path";
 import test from "node:test";
 
 import {
-  controlProcess,
-  parseProcessManifest,
-  processSessionName,
-  resolveProcessDefinitions,
-  resolveProcessArea,
-  runProcessCommand
-} from "../dist/cli/processes.js";
+  controlService,
+  parseServiceManifest,
+  serviceSessionName,
+  resolveServiceDefinitions,
+  resolveServiceArea,
+  runServiceCommand
+} from "../dist/cli/services.js";
 
 test("process manifests validate their deliberately small schema", () => {
-  assert.deepEqual(parseProcessManifest('{"scripts":{"dev":"npm run dev"}}', "/area/.processes.json"), {
+  assert.deepEqual(parseServiceManifest('{"scripts":{"dev":"npm run dev"}}', "/area/.processes.json"), {
     scripts: { dev: { command: "npm run dev" } },
     commands: {}
   });
-  assert.throws(() => parseProcessManifest("{", "/bad"), /invalid JSON/);
-  assert.throws(() => parseProcessManifest('{"scripts":{"Bad name":"x"}}', "/bad"), /invalid program name/);
-  assert.throws(() => parseProcessManifest('{"scripts":{"dev":""}}', "/bad"), /non-empty string/);
-  assert.throws(() => parseProcessManifest('{"scripts":{},"cwd":"x"}', "/bad"), /only "scripts", "commands", and "triggers"/);
+  assert.throws(() => parseServiceManifest("{", "/bad"), /invalid JSON/);
+  assert.throws(() => parseServiceManifest('{"scripts":{"Bad name":"x"}}', "/bad"), /invalid program name/);
+  assert.throws(() => parseServiceManifest('{"scripts":{"dev":""}}', "/bad"), /non-empty string/);
+  assert.throws(() => parseServiceManifest('{"scripts":{},"cwd":"x"}', "/bad"), /only "scripts" and "commands"/);
 });
 
 test("process manifests can hold on-demand commands beside managed processes", () => {
-  assert.deepEqual(parseProcessManifest('{"commands":{"release":"npm run release"}}', "/area/.processes.json"), {
+  assert.deepEqual(parseServiceManifest('{"commands":{"release":"npm run release"}}', "/area/.processes.json"), {
     scripts: {},
     commands: { release: { command: "npm run release" } }
   });
 });
 
 test("a managed process may record its own working directory", () => {
-  assert.deepEqual(parseProcessManifest('{"scripts":{"dev":{"command":"npm run dev","cwd":"/tmp"}}}', "/area/.processes.json"), {
+  assert.deepEqual(parseServiceManifest('{"scripts":{"dev":{"command":"npm run dev","cwd":"/tmp"}}}', "/area/.processes.json"), {
     scripts: { dev: { command: "npm run dev", cwd: "/tmp" } },
     commands: {}
   });
@@ -49,7 +49,7 @@ test("descendants inherit definitions and the nearest Area wins", async () => {
     await writeArea(root, "otto", repoA, { dev: "root-dev", shared: "root-shared" });
     await writeArea(root, "otto/tangent", repoB, { dev: "tangent-dev" });
 
-    const definitions = await resolveProcessDefinitions("otto/tangent/shell", root);
+    const definitions = await resolveServiceDefinitions("otto/tangent/shell", root);
     assert.deepEqual([...definitions.keys()], ["dev", "shared"]);
     assert.deepEqual(definitions.get("dev"), {
       name: "dev",
@@ -66,17 +66,17 @@ test("descendants inherit definitions and the nearest Area wins", async () => {
 });
 
 test("process sessions are stable and namespaced by defining area", () => {
-  const a = processSessionName({ area: "otto/tangent", name: "dev" });
-  assert.equal(a, processSessionName({ area: "otto/tangent", name: "dev" }));
-  assert.notEqual(a, processSessionName({ area: "neara/tangent", name: "dev" }));
+  const a = serviceSessionName({ area: "otto/tangent", name: "dev" });
+  assert.equal(a, serviceSessionName({ area: "otto/tangent", name: "dev" }));
+  assert.notEqual(a, serviceSessionName({ area: "neara/tangent", name: "dev" }));
   assert.match(a, /^process-tangent--dev-[a-f0-9]{8}$/);
 });
 
 test("start creates a metadata-bound tmux shell and submits the literal command", async () => {
   const runner = recordingRunner([""]);
   const definition = def();
-  const message = await controlProcess("start", definition, runner);
-  const session = processSessionName(definition);
+  const message = await controlService("start", definition, runner);
+  const session = serviceSessionName(definition);
   assert.match(message, /started dev on otto\/tangent/);
   assert.deepEqual(runner.calls, [
     ["tmux", ["list-sessions", "-F", "#{session_name}\t#{pane_current_command}"]],
@@ -91,13 +91,13 @@ test("start creates a metadata-bound tmux shell and submits the literal command"
 
 test("start reuses running sessions and reruns stopped sessions", async () => {
   const definition = def();
-  const session = processSessionName(definition);
+  const session = serviceSessionName(definition);
   const live = recordingRunner([`${session}\tnode\n`]);
-  assert.match(await controlProcess("start", definition, live), /already running/);
+  assert.match(await controlService("start", definition, live), /already running/);
   assert.equal(live.calls.length, 1);
 
   const stopped = recordingRunner([`${session}\tzsh\n`]);
-  assert.match(await controlProcess("start", definition, stopped), /started dev/);
+  assert.match(await controlService("start", definition, stopped), /started dev/);
   assert.deepEqual(stopped.calls.slice(1), [
     ["tmux", ["send-keys", "-t", `=${session}:`, "-l", "--", definition.command]],
     ["tmux", ["send-keys", "-t", `=${session}:`, "Enter"]]
@@ -106,13 +106,13 @@ test("start reuses running sessions and reruns stopped sessions", async () => {
 
 test("stop and close target only the exact managed session", async () => {
   const definition = def();
-  const session = processSessionName(definition);
+  const session = serviceSessionName(definition);
   const stop = recordingRunner([`${session}\tnode\n`]);
-  await controlProcess("stop", definition, stop);
+  await controlService("stop", definition, stop);
   assert.deepEqual(stop.calls.at(-1), ["tmux", ["send-keys", "-t", `=${session}:`, "C-c"]]);
 
   const close = recordingRunner([`${session}\tzsh\n`]);
-  await controlProcess("close", definition, close);
+  await controlService("close", definition, close);
   assert.deepEqual(close.calls.at(-1), ["tmux", ["kill-session", "-t", `=${session}`]]);
 });
 
@@ -121,8 +121,8 @@ test("the bound tmux area is authoritative unless --area is explicit", async () 
   const previous = process.env.TMUX;
   process.env.TMUX = "/tmp/tmux";
   try {
-    assert.equal(await resolveProcessArea(undefined, runner), "otto/tangent");
-    assert.equal(await resolveProcessArea("neara/pgande", runner), "neara/pgande");
+    assert.equal(await resolveServiceArea(undefined, runner), "otto/tangent");
+    assert.equal(await resolveServiceArea("neara/pgande", runner), "neara/pgande");
     assert.equal(runner.calls.length, 1);
   } finally {
     if (previous === undefined) delete process.env.TMUX;
@@ -136,7 +136,7 @@ test("a worker session cannot start, stop, restart, or close processes", async (
   try {
     for (const action of ["start", "stop", "restart", "close"]) {
       const runner = recordingRunner(["goal\n"]);
-      await assert.rejects(runProcessCommand([action, "dev", "--area", "otto/tangent"], runner, "/nowhere"), /workers only send\. Use: tangent send brain/);
+      await assert.rejects(runServiceCommand([action, "dev", "--area", "otto/tangent"], runner, "/nowhere"), /workers only send\. Use: tangent send brain/);
       assert.deepEqual(runner.calls, [["tmux", ["show-option", "-qv", "@tangent_kind"]]]);
     }
   } finally {

@@ -207,7 +207,38 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
     });
   }
 
-  /** Renders the Area screen with Now, Journal capture, History, and Operations. */
+  /** Formats one stored instant for the local reader, or a dash. */
+  function processMoment(value) {
+    if (!value) return "–";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+  }
+
+  /**
+   * The Area's processes, read-only, at the top of the page (D19): name,
+   * schedule or probe, next run, last run, and state. A due process whose
+   * note waits for a brain that is not running stands out.
+   */
+  function processSection(area) {
+    const processes = (state.programs.processes ?? []).filter((item) => item.area === area.path);
+    if (!processes.length) return "";
+    const rows = processes.map((item) => `
+      <tr class="process-row ${item.due ? "due" : ""} ${item.status === "paused" ? "paused" : ""}">
+        <td><button class="process-open" type="button" data-open-document="${escapeHtml(item.file)}"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.slug)}</small></button></td>
+        <td>${escapeHtml(item.when)}</td>
+        <td>${escapeHtml(item.status === "paused" ? "–" : processMoment(item.nextRunAt))}</td>
+        <td>${escapeHtml(processMoment(item.lastRunAt))}</td>
+        <td><span class="process-state ${escapeHtml(item.due ? "due" : item.status)}">${escapeHtml(item.error ? `Broken note: ${item.error}` : item.state)}</span></td>
+      </tr>`).join("");
+    return `
+      <section class="area-workspace-section area-processes" aria-labelledby="area-processes-heading">
+        <div class="area-section-heading"><div><p class="kicker">Processes</p><h3 id="area-processes-heading">${processes.length === 1 ? "One process" : `${processes.length} processes`}</h3></div><small>Pause or resume with <code>tangent process pause|resume &lt;slug&gt;</code></small></div>
+        <div class="table-scroll"><table class="process-table"><thead><tr><th>Process</th><th>When</th><th>Next run</th><th>Last run</th><th>State</th></tr></thead><tbody>${rows}</tbody></table></div>
+      </section>`;
+  }
+
+  /** Renders the Area screen with Processes, Journal capture, History, and Operations. */
   function areaContents(area) {
     const programs = state.programs.operations.filter((program) => program.area === area.path);
     const problems = state.programs.problems.filter((item) => item.area === area.path);
@@ -232,6 +263,7 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
             ${brainAction}
           </div>
         </header>
+        ${processSection(area)}
         <section class="area-workspace-section area-journal-composer" aria-labelledby="area-journal-heading">
           <div class="area-section-heading"><div><p class="kicker">Journal</p><h3 id="area-journal-heading">Capture for ${escapeHtml(humanName(area.name))} brain</h3></div><button class="quiet-button" type="button" data-open-history="${escapeHtml(area.path)}">Read the Journal and finished work</button></div>
           <form data-area-journal-form data-command-enter-submit><label><span>To: ${escapeHtml(area.path)} brain</span><textarea name="text" rows="3" placeholder="Write or dictate an exact note." required></textarea></label><button class="primary-button" type="submit">Save and send <kbd>⌘↵</kbd></button></form>

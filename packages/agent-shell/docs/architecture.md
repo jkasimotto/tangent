@@ -79,6 +79,6 @@ Questions remain part of the native Area brain conversation. Every Question acce
 
 Material Operation events use a durable exact-Area outbox. New or changed Problems, resolutions, and declared `report: true` results reach the brain. Routine healthy polling stays quiet.
 
-The browser Programs projection also reads root-owned trigger state from `~/.tangent/agent-shell/triggers/state.json`. Trigger scheduling and launching remain in the root CLI so they work while this server is closed; the server delegates Check now, Acknowledge, and Stop controls back to `tangent trigger` (ADR-0030). Pause and Resume stay with the server, because the paused flag lives in the Area `.processes.json` manifest that the server already writes, and that file has no second writer to race with.
+Processes are notes (ADR-0043). `app/process-note.mjs` parses `<area>/process-<slug>.md` and computes schedule slots. `app/process-scheduler.mjs` runs as a 10 s lane of the runtime scheduler: it reads every process note, keeps run state in `~/.tangent/agent-shell/processes/<area>/<slug>.json`, and writes one note to the exact-Area brain inbox when a process is due. It starts no worker. `GET /api/processes`, `POST /api/processes/control` (pause, resume: the server rewrites `status:` and commits the note), and `POST /api/processes/check` serve `tangent process` and the Area page. The root `tangent trigger` runtime and its LaunchAgent are retired.
 
 The Reviewed build engine that used to live here was deleted in ADR-0023; pipelines replaced it.

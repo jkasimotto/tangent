@@ -41,3 +41,13 @@ test("tangent brain --help and tangent goal --help match the commands that exist
   const alias = await tangent("handover", "--help");
   assert.match(alias, /Replaced by tangent send brain/);
 });
+
+test("tangent process start|stop|restart|close still reach tangent service, with a hint", async () => {
+  const out = await tangent("help");
+  assert.match(out, /^  service <list\|start\|stop\|restart\|close>/m, "help lists tangent service");
+  assert.match(out, /^  process <list\|show\|pause\|resume\|check>/m, "help lists tangent process as repeatable work");
+  assert.doesNotMatch(out, /trigger/, "help names no trigger command");
+  const stderr = await execFileAsync(process.execPath, [cli, "process", "stop", "nothing", "--area", "otto/nowhere"], { env: { ...process.env, TANGENT_TREES_DIR: "/nonexistent" } })
+    .then(() => "", (error) => String(error.stderr));
+  assert.match(stderr, /hint: servers and watchers are `tangent service` now/);
+});

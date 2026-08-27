@@ -25,3 +25,7 @@ A single optional per-user LaunchAgent invokes the due sweep every minute. Agent
 - Probe stdout becomes a small compatibility contract.
 - The first version supports fixed intervals only. Calendar schedules, native notifications, and event queues require later evidence.
 - ADR-0029 still removes Threads and routines; this ADR introduces a narrower Programs lifecycle rather than restoring either product.
+
+## Amendment 2026-08-27
+
+ADR-0043 retires this runtime. The `tangent trigger` command, its `triggers` map in `.processes.json`, its state file, and its LaunchAgent are gone. A process is now a note, `<area>/process-<slug>.md`, with `schedule:` or `when:` plus `every:`. The Agent Shell server is the scheduler. When a process is due, it writes one note to the Area brain and starts no worker. The two triggers that existed were rewritten by hand as process notes in their Areas.

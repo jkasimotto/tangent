@@ -1811,6 +1811,29 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   }
 
   /**
+   * The processes on the screen whose due note waits for a brain that is
+   * not running (D17). A waiting or running process is a fact the Area page
+   * holds; only this state asks Julian to start the brain.
+   */
+  function workProcessSections(records) {
+    const areas = records.flatMap((record) => [record.area.path, ...record.sections.map((section) => section.area.path)]);
+    const due = (state.programs.processes ?? []).filter((item) => item.due && !item.brainLive && areas.includes(item.area));
+    if (!due.length) return "";
+    return `<div class="work-processes"><section class="area-desk-section processes">
+      <div class="area-desk-section-heading"><h3>Processes due</h3><span>${due.length}</span></div>
+      <div class="desk-programs">${due.map((item) => `
+        <div class="desk-program">
+          <button type="button" data-open-document="${escapeHtml(item.file)}">
+            <span aria-hidden="true">${escapeHtml(item.area)}</span>
+            <strong>${escapeHtml(item.title)}</strong>
+            <em>${escapeHtml(item.state)}</em>
+          </button>
+          <button class="desk-icon-action" type="button" data-open-area-brain="${escapeHtml(item.area)}" data-brain-area="${escapeHtml(item.area)}" aria-label="Start the ${escapeHtml(item.area)} brain">Start brain</button>
+        </div>`).join("")}</div>
+    </section></div>`;
+  }
+
+  /**
    * The Operations of every Area on the screen that have a problem.
    *
    * A healthy Operation adds nothing to Work: a running service and a
@@ -1929,7 +1952,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       : `${roots.length ? `Area Focus (${escapeHtml(focusNames)}): ` : ""}No open work.`;
     const content = `${records.length || others.length
       ? workTable(records, maxElapsedMs, others)
-      : `<div class="empty-state">${emptyCopy}</div>`}`;
+      : `<div class="empty-state">${emptyCopy}</div>`}${workProcessSections(records)}`;
 
     return `
       <section class="work-page">

@@ -1253,6 +1253,7 @@ async function performRefresh({ initial = false, trigger = initial ? "initial" :
     forgetVerdictLines();
     state.programs = {
       operations: programs.operations || [],
+      processes: programs.processes || [],
       problems: programs.problems || [],
       areas: programs.areas || [],
       liveCount: Number(programs.liveCount || 0),

@@ -48,7 +48,7 @@ export const areaCommandSpec: CliCommandSpec = {
   description: "List, inspect, and create Tangent tree Areas",
   subcommands: [
     { name: "list", description: "List every Area path in the vault", options: [serverOption, jsonOption] },
-    { name: "show", description: "Show one Area's purpose, Goals, and ideas", args: "<area>", options: [serverOption, jsonOption] },
+    { name: "show", description: "Show one Area's purpose, resources, processes, Goals, and ideas", args: "<area>", options: [serverOption, jsonOption] },
     { name: "recent", description: "Show material milestones for one Area and its child Areas", args: "<area>", options: [{ name: "since", takesValue: true, description: "Only milestones inside a window (30d, 12h, 2w, 90m) or after an ISO time" }, { name: "query", takesValue: true, description: "Only milestones whose summary or reference holds any of these words" }, { name: "limit", takesValue: true, description: "Maximum rows (default 12)" }, serverOption, jsonOption] },
     { name: "audit", description: "Export detached legacy Area-brain records for explicit audit", args: "<area>", options: [serverOption, jsonOption] },
     {
@@ -59,6 +59,20 @@ export const areaCommandSpec: CliCommandSpec = {
     },
     { name: "done", description: "Mark an Area done on Julian's word: it folds away from the desk and the tree; its Goals are not changed", args: "<area>", options: [serverOption] },
     { name: "reopen", description: "Reopen a done Area", args: "<area>", options: [serverOption] }
+  ]
+};
+
+const areaOption = { name: "area", takesValue: true, description: "Only this Area and the Areas inside it" };
+
+export const processCommandSpec: CliCommandSpec = {
+  name: "process",
+  description: "Read, pause, resume, and check repeatable work: <area>/process-<slug>.md notes",
+  subcommands: [
+    { name: "list", description: "List every process with its schedule, next run, and state", args: "[area]", options: [areaOption, serverOption, jsonOption] },
+    { name: "show", description: "Show one process: schedule or probe, next run, last run, last Goal", args: "<slug|area/slug>", options: [areaOption, serverOption, jsonOption] },
+    { name: "pause", description: "Set status: paused in the note and commit it", args: "<slug|area/slug>", options: [areaOption, serverOption, jsonOption] },
+    { name: "resume", description: "Set status: active in the note and commit it", args: "<slug|area/slug>", options: [areaOption, serverOption, jsonOption] },
+    { name: "check", description: "Evaluate due-ness now and print why", args: "<slug|area/slug>", options: [areaOption, serverOption, jsonOption] }
   ]
 };
 

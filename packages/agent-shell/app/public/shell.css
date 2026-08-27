@@ -609,6 +609,19 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-row.fact .desk-action { border-color: #3c434c; color: #cbd1d7; }
 .work-row.definition .work-row-title { color: #e2d7bd; }
 .work-programs { margin-top: 26px; display: grid; }
+.work-processes { margin-top: 26px; display: grid; }
+.table-scroll { overflow-x: auto; }
+.work-processes .desk-program em { color: var(--amber); }
+.area-processes .area-section-heading small { color: var(--quiet); font-size: 12px; }
+.process-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.process-table th { padding: 4px 10px 6px 0; color: var(--quiet); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .06em; text-align: left; text-transform: uppercase; }
+.process-table td { padding: 8px 10px 8px 0; border-top: 1px dotted #3e454e; vertical-align: top; }
+.process-open { display: grid; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; text-align: left; }
+.process-open strong { font-weight: 620; }
+.process-open small { color: var(--quiet); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.process-state.due { color: var(--amber); font-weight: 620; }
+.process-state.paused { color: var(--quiet); }
+.process-row.paused td { color: var(--quiet); }
 
 .work-table :focus-visible, .ask-table :focus-visible { outline: 2px solid #8fc4ff; outline-offset: 1px; }
 

@@ -216,9 +216,9 @@ export function submitWorkerReport(queue, assignmentId, report, { expectedRevisi
   return { report: stored, duplicate: false };
 }
 
-/** Projects legacy Program kinds into one Operation mode. */
+/** Projects Program kinds into one Operation mode: a stored kind `process` is a service. */
 export function operationFromProgram(program) {
-  const mode = program.type === "process" ? "service" : program.type === "trigger" ? "scheduled" : "on-demand";
+  const mode = program.type === "process" ? "service" : "on-demand";
   const attention = program.runtime?.lastOutcome?.status === "attention" && program.runtime?.acknowledgedKey !== program.runtime.lastOutcome.key
     ? program.runtime.lastOutcome.message
     : null;

@@ -15,7 +15,8 @@ import { describeAreaResources, resolveWorkFolder, unboundAreaMessage } from "./
 import { launchRef, resolveLaunch } from "./launch-environment.mjs";
 import { createLaunchCatalog } from "./launch-catalog.mjs";
 import { cleanAreaPath, createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
-import { commandSession, programsSnapshot, saveLocalProgram, setTriggerPaused } from "./programs.mjs";
+import { commandSession, programsSnapshot, saveLocalProgram } from "./programs.mjs";
+import { discoverProcesses, evaluateProcess, processFileExists, processView, readAreaProcesses, readProcessState, sweepProcesses, withProcessStatus } from "./process-scheduler.mjs";
 import { documentHash, markdownTitle, safeMarkdownPath, wikiLinks } from "./vault-documents.mjs";
 import documentComments from "./public/document-comments.js";
 import areaMapCore from "./public/area-map-core.js";
@@ -52,6 +53,7 @@ import { createVaultRepository } from "./vault-repository.mjs";
 import { pipelineExecution } from "./execution-record.mjs";
 import { createAreaRoutes } from "./area-routes.mjs";
 import { createProgramRoutes } from "./program-routes.mjs";
+import { createProcessRoutes } from "./process-routes.mjs";
 import { createDocumentRoutes } from "./document-routes.mjs";
 import { projectDesk } from "./desk-projection.mjs";
 import { createShellControlRoutes } from "./shell-control-routes.mjs";
@@ -199,6 +201,9 @@ const ATTEMPT_REPLACEMENTS_ROOT = process.env.TANGENT_ATTEMPT_REPLACEMENTS_ROOT 
 // One JSON record per exact Area brain: logical lifecycle, founding
 // instruction, checkpoint, launch, and runtime attempt diagnostics.
 const BRAINS_ROOT = process.env.TANGENT_BRAINS_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "brains");
+// One JSON record per process note (`<area>/process-<slug>.md`): when it was
+// last due, when the brain was told, and the Goal it created (ADR-0043).
+const PROCESSES_ROOT = process.env.TANGENT_PROCESSES_ROOT ?? path.join(os.homedir(), ".tangent", "agent-shell", "processes");
 
 // Persist the additive subject identity for pre-lifecycle Request records.
 // The v1 envelope stays readable, and no request status or answer changes.
@@ -841,6 +846,9 @@ async function readAreaGoals(area) {
       waitingOn: fm.waiting_on || null,
       due: fm.due || null,
       session: fm.session || null,
+      // The process note this Goal was started from, so a due process is
+      // skipped while its last Goal is open (ADR-0043).
+      process: fm.process || null,
       subgoals: subgoalsOrder(text),
       dependencySlugs: dependencySlugs(text),
     });
@@ -1268,7 +1276,7 @@ function allocateGoalSlug(area, title, taken) {
 }
 
 /** Renders a new goal with compact return context from its first save. */
-function renderNewGoal({ title, doneWhen, state, context, subgoals = [], sources = [], verify = false }) {
+function renderNewGoal({ title, doneWhen, state, context, subgoals = [], sources = [], verify = false, process = "" }) {
   const result = oneLine(doneWhen);
   const subgoalsSection = subgoals.length
     ? `\n\n## Subgoals\n\n${subgoals.map((slug, index) => `${index + 1}. [[goal-${slug}]]`).join("\n")}`
@@ -1278,7 +1286,7 @@ function renderNewGoal({ title, doneWhen, state, context, subgoals = [], sources
     ? `\n\n## Sources\n\n${sources.map((source) => `- [[${source.file.replace(/\.md$/i, "")}|${oneLine(source.title).replace(/[|\]]/g, "")}]]`).join("\n")}`
     : "";
   return (
-    `---\ntype: goal\nstatus: open\ndone_when: ${result}\n${verify ? "verify: yes\n" : ""}session:\n---\n\n` +
+    `---\ntype: goal\nstatus: open\ndone_when: ${result}\n${verify ? "verify: yes\n" : ""}${process ? `process: ${process}\n` : ""}session:\n---\n\n` +
     `# ${oneLine(title)}${contextParagraph}${subgoalsSection}${sourcesSection}\n\n` +
     `## State\n\n${String(state ?? "").trim() || "Not started."}\n\n` +
     `## Current brief\n\n` +
@@ -1353,7 +1361,7 @@ async function readAreaGoalsDeep(area) {
 /**
  * Creates one Goal and its optional Subgoals in one confirmed save.
  */
-async function createGoalSet(area, { goal, subgoals = [], description = "", sources = [], verify = false }) {
+async function createGoalSet(area, { goal, subgoals = [], description = "", sources = [], verify = false, process = "" }) {
   const taken = new Set([...(await goalsByFile()).values()].map((item) => item.slug));
   const goalSlug = allocateGoalSlug(area, goal.title, taken);
   const subgoalRecords = subgoals.map((subgoal) => ({
@@ -1361,7 +1369,7 @@ async function createGoalSet(area, { goal, subgoals = [], description = "", sour
     slug: allocateGoalSlug(area, subgoal.title, taken),
   }));
   const records = [
-    { ...goal, slug: goalSlug, subgoals: subgoalRecords.map((subgoal) => subgoal.slug), context: description, sources, verify },
+    { ...goal, slug: goalSlug, subgoals: subgoalRecords.map((subgoal) => subgoal.slug), context: description, sources, verify, process },
     ...subgoalRecords.map((subgoal) => ({ ...subgoal, subgoals: [], context: `This Goal supports [[goal-${goalSlug}]].` })),
   ].map((record) => ({ ...record, file: `${area}/goal-${record.slug}.md` }));
 
@@ -2147,6 +2155,15 @@ const runtimeScheduler = createRuntimeScheduler([
     /** Runs only while at least one target has queued messages. */
     active: messages.active,
     run: messages.tick,
+  },
+  {
+    name: "processes", intervalMs: 10_000,
+    /** A due process must reach the brain inbox whether or not a browser is open. */
+    active: () => true,
+    /** Tells the Area brain about each due process note (ADR-0043). */
+    async run() {
+      await sweepProcesses({ treesRoot: TREES_ROOT, stateRoot: PROCESSES_ROOT, runProbe: runProcessProbe, openGoalFor: openGoalForProcess, notify: notifyBrain });
+    },
   },
   {
     name: "material Operation events", intervalMs: 10_000,
@@ -5977,6 +5994,7 @@ const areaRoutesOperations = {
       workFolder,
       goals: (await readAreaGoals(area)).map(goalSummary),
       ideas: await areaIdeas(area),
+      processes: await processViews({ area, exact: true }),
     };
   },
   /** Returns archived and active Journal text in chronological file order. */
@@ -6073,11 +6091,90 @@ async function projectMaterialOperationEvents(snapshot) {
   return snapshot;
 }
 
+// ---- processes: repeatable work as notes (ADR-0043) ----
+
+/** The vault-relative process note an instruction file names, or "" when it is not one. */
+function processFileOf(instructionFile) {
+  const absolute = String(instructionFile ?? "").trim();
+  if (!absolute) return "";
+  const relative = path.relative(TREES_ROOT, path.resolve(absolute));
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return "";
+  return /^process-[a-z0-9][a-z0-9-]*\.md$/.test(path.basename(relative)) ? relative.split(path.sep).join("/") : "";
+}
+
+/** The open Goal a process note started, or null. Done, dropped, and parked Goals do not count. */
+async function openGoalForProcess(note) {
+  const goals = (await readAreaGoals(note.area)).filter((goal) => goal.process === note.file);
+  return goals.find((goal) => ["open", "active", "verify"].includes(goal.status)) ?? null;
+}
+
+/** Runs a `when:` probe in the process's folder and resolves its exit code. */
+async function runProcessProbe(note) {
+  const folder = note.path?.replace(/^~(?=\/|$)/, os.homedir()) || (await areaWorkFolder(note.area))?.cwd || path.join(TREES_ROOT, note.area);
+  return new Promise((resolve) => {
+    execFile("zsh", ["-c", note.when], { cwd: existsSync(folder) ? folder : TREES_ROOT, timeout: 60_000 }, (error) => {
+      resolve(error ? (typeof error.code === "number" ? error.code : 1) : 0);
+    });
+  });
+}
+
+/** Every process note as the Area page, Work, and the CLI show it, with its brain and Goal state. */
+async function processViews({ area = "", exact = false } = {}) {
+  const notes = exact ? await readAreaProcesses(TREES_ROOT, area) : await discoverProcesses(TREES_ROOT, { area });
+  const views = [];
+  const liveByArea = new Map();
+  for (const note of notes) {
+    if (!liveByArea.has(note.area)) liveByArea.set(note.area, Boolean(await liveBrainForArea(note.area).catch(() => null)));
+    const state = await readProcessState(PROCESSES_ROOT, note.area, note.slug);
+    views.push(processView(note, state, new Date(), { brainLive: liveByArea.get(note.area), openGoal: await openGoalForProcess(note) }));
+  }
+  return views;
+}
+
+/** Resolves one process by `<area>/<slug>`, `<slug>` with an Area, or a slug that is unique in the vault. */
+async function resolveProcessNote(slug, area = "") {
+  const notes = await discoverProcesses(TREES_ROOT, { area });
+  const matches = notes.filter((note) => note.slug === slug || `${note.area}/${note.slug}` === slug || note.file === slug);
+  if (matches.length === 1) return matches[0];
+  if (!matches.length) throw new Error(`no process named ${JSON.stringify(slug)}${area ? ` in ${area}` : ""}`);
+  throw new Error(`${slug} names ${matches.length} processes; use <area>/<slug>: ${matches.map((note) => `${note.area}/${note.slug}`).join(", ")}`);
+}
+
+const processRoutes = createProcessRoutes({
+  /** Lists processes, in one Area and below it when asked. */
+  async list(area) {
+    return { processes: await processViews({ area }) };
+  },
+  /** Pauses or resumes one process by rewriting its status line and committing through the vault. */
+  async control(body) {
+    const action = String(body.action ?? "");
+    if (!["pause", "resume"].includes(action)) throw new Error("Choose pause or resume.");
+    const note = await resolveProcessNote(String(body.slug ?? "").trim(), String(body.area ?? "").trim());
+    if (!processFileExists(TREES_ROOT, note.file)) throw new Error(`${note.file} no longer exists.`);
+    const status = action === "pause" ? "paused" : "active";
+    const text = await readFile(path.join(TREES_ROOT, note.file), "utf8");
+    await vaultRepository.writeMarkdown(note.file, withProcessStatus(text, status));
+    await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", note.file]).catch(() => {});
+    await vaultCommit([note.file], `update: ${note.area} process ${note.slug} ${status}`, note.area, String(body.caller ?? "").trim() || null);
+    const view = (await processViews({ area: note.area, exact: true })).find((item) => item.slug === note.slug);
+    return { ok: true, file: note.file, status, process: view };
+  },
+  /** Evaluates one process now and says why it is or is not due. Writes nothing. */
+  async check(body) {
+    const note = await resolveProcessNote(String(body.slug ?? "").trim(), String(body.area ?? "").trim());
+    const state = await readProcessState(PROCESSES_ROOT, note.area, note.slug);
+    const openGoal = await openGoalForProcess(note);
+    const outcome = await evaluateProcess({ note, state, runProbe: runProcessProbe, openGoal });
+    const view = processView(note, state, new Date(), { brainLive: Boolean(await liveBrainForArea(note.area).catch(() => null)), openGoal });
+    return { due: outcome.due, reason: outcome.reason, process: view };
+  },
+});
+
 const programRoutes = createProgramRoutes({
-  /** Returns local programs with live status. */
+  /** Returns local programs with live status, and every process note with its run state. */
   async list() {
     const snapshot = await programsSnapshot({ treesRoot: TREES_ROOT, sessions: await listProgramSessions() });
-    return projectMaterialOperationEvents(snapshot);
+    return { ...await projectMaterialOperationEvents(snapshot), processes: await processViews() };
   },
   /** Creates one local process or command. */
   async create(body) {
@@ -6091,15 +6188,9 @@ const programRoutes = createProgramRoutes({
     const action = String(body.action ?? "");
     if (program.type === "process") {
       if (!["start", "stop", "restart", "close"].includes(action)) throw new Error("Choose Start, Stop, Restart, or Close.");
-      await runLocalTangent(["process", action, program.name, "--area", program.area]);
+      await runLocalTangent(["service", action, program.name, "--area", program.area]);
     } else if (program.type === "command") {
       await controlCommand(program, action);
-    } else if (program.type === "trigger") {
-      if (action === "check") await runLocalTangent(["trigger", "check", `${program.area}:${program.name}`, "--force"]);
-      else if (action === "acknowledge") await runLocalTangent(["trigger", "acknowledge", `${program.area}:${program.name}`]);
-      else if (action === "stop") await runLocalTangent(["trigger", "stop", `${program.area}:${program.name}`]);
-      else if (action === "pause" || action === "resume") await setTriggerPaused({ treesRoot: TREES_ROOT, area: program.area, name: program.name, paused: action === "pause" });
-      else throw new Error("Choose Check now, Acknowledge, Stop, Pause, or Resume.");
     } else {
       throw new Error("Choose Start, Run, Stop, Restart, or Close.");
     }
@@ -6717,7 +6808,7 @@ const workMutationRoutes = createWorkMutationRoutes({
     if (own && !sessions.some((session) => session.name === own)) return { status: 404, error: `no tmux session "${own}"; run create --own inside the agent's session or pass --session` };
     try {
       const sources = await sourceDocuments(body.sources);
-      const created = await createGoalSet(area, { goal: { title: String(goal.title).trim(), doneWhen: String(goal.doneWhen).trim(), state: String(goal.state ?? "Not started.").trim() }, subgoals, description: String(body.description ?? "").trim(), sources: sources.map((source) => ({ file: source.file, title: source.title })), verify: body.verify === true });
+      const created = await createGoalSet(area, { goal: { title: String(goal.title).trim(), doneWhen: String(goal.doneWhen).trim(), state: String(goal.state ?? "Not started.").trim() }, subgoals, description: String(body.description ?? "").trim(), sources: sources.map((source) => ({ file: source.file, title: source.title })), verify: body.verify === true, process: processFileOf(body.instructionFile) });
       if (start && created.file) {
         await recordCommittedCommand({ operation: "goal-create", actorSession: caller, targetArea: area, goal: path.basename(created.file, ".md").replace(/^goal-/, "") });
         const instruction = String(body.instruction ?? "").trim() || `${String(goal.title).trim()}. Done when: ${goal.doneWhen}`;
@@ -6959,6 +7050,7 @@ const server = http.createServer(async (req, res) => {
     if (await agentRoutes.handle(req, res, url)) return;
     if (await areaRoutes.handle(req, res, url)) return;
     if (await programRoutes.handle(req, res, url)) return;
+    if (await processRoutes.handle(req, res, url)) return;
     if (await documentRoutes.handle(req, res, url)) return;
     if (await shellControlRoutes.handle(req, res, url)) return;
     if (await voiceRoutes.handle(req, res, url)) return;

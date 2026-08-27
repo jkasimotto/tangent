@@ -365,6 +365,16 @@ test("the row and group heights meet the measured density targets", async () => 
   assert.ok(Math.floor((714 - group) / row) >= 18, "18 Goal rows fit in one group in the 714 px work region");
 });
 
+test("the session overlay gives xterm definite full-track dimensions", async () => {
+  const css = await readFile(path.join(here, "public", "shell.css"), "utf8");
+  const rule = css.split("\n").find((line) => line.trimStart().startsWith(".session-layer-terminal {") && line.includes("box-sizing"));
+  assert.ok(rule, "the session terminal has an overlay-specific rule");
+  assert.match(rule, /box-sizing:\s*border-box/, "padding stays inside the grid track");
+  assert.match(rule, /width:\s*100%/, "the xterm host has a definite width");
+  assert.match(rule, /height:\s*100%/, "the xterm host has a definite height");
+  assert.doesNotMatch(rule, /width:\s*auto|height:\s*auto/, "the xterm host does not depend on intrinsic size");
+});
+
 // Julian's word 2026-08-26: every row's TIME bar must start at the same x. The
 // bar can only do that if the label before it sits in a box of its own width
 // instead of sharing the cell's flow, so this test pins the three numbers that

@@ -613,6 +613,7 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .table-scroll { overflow-x: auto; }
 .work-processes .desk-program em { color: var(--amber); }
 .area-processes .area-section-heading small { color: var(--quiet); font-size: 12px; }
+.area-skills .area-section-heading small { color: var(--quiet); font-size: 12px; }
 .process-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .process-table th { padding: 4px 10px 6px 0; color: var(--quiet); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .06em; text-align: left; text-transform: uppercase; }
 .process-table td { padding: 8px 10px 8px 0; border-top: 1px dotted #3e454e; vertical-align: top; }

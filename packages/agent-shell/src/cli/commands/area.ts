@@ -74,6 +74,7 @@ async function showCommand(args: Args): Promise<void> {
     console.log(detail.purpose);
   }
   printResources(detail);
+  printSkills(detail);
   printProcesses(detail);
   console.log("");
   console.log(`Goals (${detail.goals.length}):`);
@@ -121,6 +122,23 @@ function printProcesses(detail: AreaShowDetail): void {
   }
 }
 
+/**
+ * Prints the skills a brain can hand to a worker (D20): every `skill-*.md`
+ * on the route from the vault root to this Area, root first, then the
+ * bound repository's own project skills. Names and descriptions only, the
+ * way a harness lists skills. Nothing prints when there are none.
+ */
+function printSkills(detail: AreaShowDetail): void {
+  const skills = [...(detail.skills ?? []), ...(detail.projectSkills ?? [])];
+  if (!skills.length) return;
+  console.log("");
+  console.log("Skills:");
+  for (const skill of skills) console.log(`  - ${skill.name}: ${skill.description} (${skill.path})`);
+}
+
+/** One skill row of `/api/areas/show`. */
+type AreaShowSkill = { name: string; description: string; path: string };
+
 /** One process row of `/api/areas/show`. */
 type AreaShowProcess = { slug: string; file: string; when: string; status: string; nextRunAt: string | null; state: string; error: string | null };
 
@@ -132,6 +150,8 @@ type AreaShowDetail = {
   resolved?: { repository?: ResolvedResource | null; worktree?: ResolvedResource | null; branch?: ResolvedResource | null };
   workFolder?: { cwd: string; source: string } | null;
   processes?: AreaShowProcess[];
+  skills?: AreaShowSkill[];
+  projectSkills?: AreaShowSkill[];
 };
 
 /**

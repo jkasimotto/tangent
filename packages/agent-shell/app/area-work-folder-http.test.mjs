@@ -71,6 +71,10 @@ test("a worker starts in the Area's bound folder or is refused before any record
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
   await writeAreaWithGoal(trees, "otto/bound", [`- Repository: ${workspace}`, "- Branch: main"], "bound-work");
   await writeAreaWithGoal(trees, "otto/bound/child", [], "child-work");
+  await writeFile(path.join(trees, "otto", "skill-review.md"), "---\nname: review\ndescription: Review a change.\n---\n\nSteps.\n", "utf8");
+  await writeFile(path.join(trees, "otto", "bound", "child", "skill-release.md"), "# Ship a release\n\nSteps.\n", "utf8");
+  await mkdir(path.join(workspace, ".claude", "skills", "deploy"), { recursive: true });
+  await writeFile(path.join(workspace, ".claude", "skills", "deploy", "SKILL.md"), "---\nname: deploy\ndescription: Deploy the app.\n---\nSteps.\n", "utf8");
   await writeAreaWithGoal(trees, "otto/unbound", [], "unbound-work");
   await writeAreaWithGoal(trees, "otto/docs", [`- Repository: ${path.join(trees, "otto", "docs")}`], "docs-work");
   await writeAreaWithGoal(trees, "otto/docs/kid", [], "kid-work");
@@ -137,6 +141,16 @@ test("a worker starts in the Area's bound folder or is refused before any record
     assert.deepEqual(shown.resolved.repository, { value: workspace, area: "otto/bound" });
     assert.deepEqual(shown.resolved.branch, { value: "main", area: "otto/bound" });
     assert.equal(shown.workFolder.cwd, workspace);
+    assert.deepEqual(shown.skills.map((skill) => [skill.name, skill.description, skill.path]), [
+      ["review", "Review a change.", path.join(trees, "otto", "skill-review.md")],
+      ["release", "Ship a release", path.join(trees, "otto", "bound", "child", "skill-release.md")],
+    ], "route skills list root first with frontmatter defaults");
+    assert.deepEqual(shown.projectSkills.map((skill) => [skill.name, skill.description, skill.path]), [["deploy", "Deploy the app.", path.join(workspace, ".claude", "skills", "deploy", "SKILL.md")]]);
+    const unboundShown = await fetch(`${base}/api/areas/show?area=${encodeURIComponent("otto/unbound")}`).then((response) => response.json());
+    assert.deepEqual(unboundShown.projectSkills, [], "no bound repository lists no project skills");
+    const vault = await fetch(`${base}/api/vault`).then((response) => response.json());
+    const skillDocument = vault.documents.find((item) => item.file === "otto/bound/child/skill-release.md");
+    assert.deepEqual(skillDocument?.skill, { name: "release", description: "Ship a release" }, "the vault index carries the skill's name and description for the Area page");
     const brain = await post(base, "/api/brains/start", { area: "otto/bound/child", instruction: "Organize the child." });
     assert.equal(brain.status, 200, JSON.stringify(brain.body));
     openedSessions.push(brain.body.session);

@@ -48,7 +48,7 @@ export const areaCommandSpec: CliCommandSpec = {
   description: "List, inspect, and create Tangent tree Areas",
   subcommands: [
     { name: "list", description: "List every Area path in the vault", options: [serverOption, jsonOption] },
-    { name: "show", description: "Show one Area's purpose, resources, processes, Goals, and ideas", args: "<area>", options: [serverOption, jsonOption] },
+    { name: "show", description: "Show one Area's purpose, resources, skills, processes, Goals, and ideas", args: "<area>", options: [serverOption, jsonOption] },
     { name: "recent", description: "Show material milestones for one Area and its child Areas", args: "<area>", options: [{ name: "since", takesValue: true, description: "Only milestones inside a window (30d, 12h, 2w, 90m) or after an ISO time" }, { name: "query", takesValue: true, description: "Only milestones whose summary or reference holds any of these words" }, { name: "limit", takesValue: true, description: "Maximum rows (default 12)" }, serverOption, jsonOption] },
     { name: "audit", description: "Export detached legacy Area-brain records for explicit audit", args: "<area>", options: [serverOption, jsonOption] },
     {

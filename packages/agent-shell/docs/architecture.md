@@ -51,6 +51,8 @@ The browser has one Area-based Work destination. Each exact Area has one logical
 
 The vault owns Area knowledge. The bound product repository owns code-agent rules. Agent Shell derives both instruction stacks by path.
 An Area binds its repository with `- Repository:`, `- Worktree:`, and `- Branch:` lines under `## Resources` in its note. `area-resources.mjs` is the one parser. Workers, programs, `tangent area show`, the brain prompt, and the root trigger runtime read Area folders through it. A worker starts in the nearest bound folder or is refused. A brain always starts in its Area folder inside the vault and reads the bound repository from its prompt.
+
+A skill is `<area>/skill-<slug>.md`, a Document whose frontmatter has `name:` and `description:` (D20). `area-skills.mjs` parses it, lists every skill on the route from the vault root to an Area, and reads the bound repository's project skills from `.claude/skills` and `.agents/skills`. `tangent area show` prints them as `- <name>: <description> (<path>)`, and the Area page lists them under the Documents.
 It does not ask an agent to select inherited facts. It does not copy complete repository instructions into every prompt.
 
 Journal intake commits exact text before brain delivery. A refused commit records no milestone and wakes no brain. The capture surface keeps the text and idempotency key. A retry commits the existing Journal files before one milestone and one brain delivery. One active Journal rolls over at 256 KB, and an idempotency key stays used after its entry moves to an archive.

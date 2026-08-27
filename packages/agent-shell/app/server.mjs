@@ -54,6 +54,7 @@ import { pipelineExecution } from "./execution-record.mjs";
 import { createAreaRoutes } from "./area-routes.mjs";
 import { createProgramRoutes } from "./program-routes.mjs";
 import { createProcessRoutes } from "./process-routes.mjs";
+import { parseSkillNote, projectSkills, routeSkills, skillSlugFromFile } from "./area-skills.mjs";
 import { createDocumentRoutes } from "./document-routes.mjs";
 import { projectDesk } from "./desk-projection.mjs";
 import { createShellControlRoutes } from "./shell-control-routes.mjs";
@@ -713,10 +714,14 @@ async function readAreaDocuments(area) {
     const absolute = path.join(dir, name);
     try {
       const [text, info] = await Promise.all([readFile(absolute, "utf8"), stat(absolute)]);
+      const skill = skillSlugFromFile(name) ? parseSkillNote(text, { file, area, path: absolute }) : null;
       documents.push({
         file, area, kind: "document", title: markdownTitle(text, name.slice(0, -3)),
         mtime: info.mtimeMs, hash: documentHash(text), links: wikiLinks(text),
         commentCount: documentComments.parseComments(text).length,
+        // A skill Document carries its name and description so the Area
+        // page lists it the way `tangent area show` does (D20).
+        ...(skill ? { skill: { name: skill.name, description: skill.description } } : {}),
       });
     } catch {}
   }
@@ -5984,14 +5989,19 @@ const areaRoutesOperations = {
     if (!area || !flattenAreaPaths(await readTree(TREES_ROOT)).includes(area)) return null;
     const text = await areaNote(area);
     const workFolder = await areaWorkFolder(area);
+    const resolved = await describeAreaResources(TREES_ROOT, area);
     return {
       area,
       purpose: noteSection(text, "Purpose"),
       resources: noteSection(text, "Resources"),
       // The three resource lines as the Area sees them, each with the Area
       // that declared it, and the folder a worker would actually start in.
-      resolved: await describeAreaResources(TREES_ROOT, area),
+      resolved,
       workFolder,
+      // Every skill on the route from the vault root to this Area, root
+      // first, and the bound repository's own project skills (D20).
+      skills: await routeSkills(TREES_ROOT, area),
+      projectSkills: await projectSkills(resolved.repository?.value ?? null),
       goals: (await readAreaGoals(area)).map(goalSummary),
       ideas: await areaIdeas(area),
       processes: await processViews({ area, exact: true }),

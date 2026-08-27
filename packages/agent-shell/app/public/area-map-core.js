@@ -12,11 +12,11 @@
    * when at least two files in the vault share it (a convention needs
    * repetition); a one-off slug such as `world-viewer-...` is a `page`.
    */
-  const KNOWN_KINDS = ["design", "impl", "plan", "reference", "status", "use-case", "goal", "outcome", "note", "page"];
+  const KNOWN_KINDS = ["design", "impl", "plan", "reference", "status", "use-case", "skill", "goal", "outcome", "note", "page"];
   /** Multi-word prefixes that stay whole instead of splitting at the first dash. */
   const MULTIWORD_PREFIXES = ["use-case"];
   /** Chip order on the map: the known kinds first, then any other kind by name. */
-  const KIND_ORDER = ["design", "impl", "plan", "reference", "status", "use-case", "goal", "note", "page"];
+  const KIND_ORDER = ["design", "impl", "plan", "reference", "status", "use-case", "skill", "goal", "note", "page"];
   const KIND_LABELS = { "use-case": "use case", impl: "impl", note: "note", page: "page" };
   const CLOSED_GOAL_STATUS = new Set(["done", "dropped", "parked", "deferred"]);
   const DAY = 86_400_000;

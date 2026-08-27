@@ -12,6 +12,8 @@ test("the Area browser focuses search and leads with ready work and filterable D
   const documents = [
     { file: "otto/tangent/design-browser.md", area: "otto/tangent", kind: "document", docKind: "design", title: "Browser design", changedAt: now },
     { file: "otto/tangent/note-browser.md", area: "otto/tangent", kind: "document", docKind: "note", title: "Browser notes", changedAt: now - 10 * 86_400_000 },
+    { file: "otto/skill-review.md", area: "otto", kind: "document", docKind: "skill", title: "Review", changedAt: now, skill: { name: "review", description: "Review a change." } },
+    { file: "otto/tangent/skill-release.md", area: "otto/tangent", kind: "document", docKind: "skill", title: "Release", changedAt: now, skill: { name: "release", description: "Ship a release." } },
   ];
   const posts = [];
   let sessions = [];
@@ -63,7 +65,11 @@ test("the Area browser focuses search and leads with ready work and filterable D
   assert.doesNotMatch(window.document.querySelector("#area-work-heading").closest(".area-workspace-section").textContent, /Not started/);
   assert.ok(window.document.querySelector("[data-brain-area='otto/tangent']"));
   assert.equal(window.document.querySelector("[data-default-agents-area='otto/tangent']").textContent.trim(), "Default agents");
-  assert.equal(window.document.querySelectorAll(".area-documents .document-row").length, 2);
+  assert.equal(window.document.querySelectorAll(".area-documents .document-row").length, 3);
+  const skillRows = [...window.document.querySelectorAll(".area-skills .skill-row")];
+  assert.deepEqual(skillRows.map((row) => row.dataset.openDocument), ["otto/skill-review.md", "otto/tangent/skill-release.md"], "skills list root first under the Documents");
+  assert.match(skillRows[0].textContent, /review.*Review a change\..*otto/s);
+  assert.match(skillRows[1].textContent, /release.*Ship a release\./s);
 
   click(window, "[data-default-agents-area='otto/tangent']");
   await settle(window);
@@ -128,8 +134,8 @@ test("the Area browser focuses search and leads with ready work and filterable D
   assert.match(window.document.querySelector(".area-documents .document-row").textContent, /Browser design/);
   click(window, "[data-area-kind-reset]");
   click(window, "[data-area-kind-toggle='design']");
-  assert.equal(window.document.querySelectorAll(".area-documents .document-row").length, 1);
-  assert.match(window.document.querySelector(".area-documents .document-row").textContent, /Browser notes/);
+  assert.equal(window.document.querySelectorAll(".area-documents .document-row").length, 2);
+  assert.match(window.document.querySelector(".area-documents .document-row").textContent, /Browser notes|Release/);
 
   const search = window.document.querySelector("#area-search");
   search.value = "";

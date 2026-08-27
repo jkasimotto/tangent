@@ -271,6 +271,7 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
         </section>
         ${state.areaHistory ? historySection(area) : workGraphSection(area)}
         ${state.areaHistory ? "" : documentSection(area.path, documents)}
+        ${state.areaHistory ? "" : skillSection(area.path)}
         <details class="area-more"><summary>More</summary>
           <details><summary>Relationship map</summary><div class="area-map-host" data-area-map="${escapeHtml(area.path)}"></div></details>
           <details><summary>Operations · ${programs.length}</summary><section class="area-content-section"><div class="memory-heading"><h3>Operations</h3><button class="quiet-button" type="button" data-new-program>New Operation</button></div>${programs.length ? `<div class="program-list">${programs.map(programRow).join("")}</div>` : `<p class="memory-empty">No Operations exist in this Area.</p>`}${problems.length ? `<div class="program-errors">${problems.map((item) => `<p>${escapeHtml(item.file)} — ${escapeHtml(item.error)}</p>`).join("")}</div>` : ""}</section></details>
@@ -378,6 +379,21 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
     const rows = [...groups].map(([day, items]) => `<section class="area-history-day"><h4>${escapeHtml(day)}</h4>${items.map((close) => { const goal = goalByFile(close.file); return `<button type="button" data-select-goal="${escapeHtml(close.file)}"><time>${escapeHtml(new Date(close.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}</time><span>${close.kind === "done" ? "✓ done" : "✕ won't do"}</span><strong>${escapeHtml(goal?.title ?? humanName(close.file.split("/").pop()))}</strong><small>${escapeHtml(whatHappenedCore.closerLabel(close.session))}</small></button>`; }).join("")}</section>`).join("");
     const empty = "No finished Goals exist in this Area.";
     return `<section class="area-workspace-section area-history" aria-labelledby="area-history-heading"><div class="area-section-heading"><div><p class="kicker">History</p><h3 id="area-history-heading">Finished work and Journal</h3></div><button class="quiet-button" type="button" data-close-area-history>Back to Work</button></div>${rows || `<p class="memory-empty">${escapeHtml(empty)}</p>`}${journalHistoryBlock()}</section>`;
+  }
+
+  /**
+   * The skills a brain can hand to a worker (D20): every skill Document on
+   * the route from the vault root to this Area, root first, by name and
+   * description. Each opens the reader. Nothing renders when there are none.
+   */
+  function skillSection(path) {
+    const route = path.split("/").map((_, index, parts) => parts.slice(0, index + 1).join("/"));
+    const skills = route.flatMap((areaPath) => (state.vault?.documents ?? [])
+      .filter((item) => item.kind === "document" && item.skill && item.area === areaPath)
+      .sort((left, right) => left.file.localeCompare(right.file)));
+    if (!skills.length) return "";
+    const rows = skills.map((item) => `<button class="document-row skill-row" type="button" data-open-document="${escapeHtml(item.file)}"><span><strong>${escapeHtml(item.skill.name)}</strong><small>${escapeHtml(item.skill.description)}</small></span><span>${item.area === path ? "" : escapeHtml(item.area)}</span></button>`).join("");
+    return `<section class="area-workspace-section area-skills" aria-labelledby="area-skills-heading"><div class="area-section-heading"><div><p class="kicker">Skills</p><h3 id="area-skills-heading">${skills.length === 1 ? "One skill" : `${skills.length} skills`}</h3></div><small>The brain hands a skill to a worker with <code>--source &lt;file&gt;</code></small></div><div class="document-list">${rows}</div></section>`;
   }
 
   /** Applies the Area's Document query, type, date, and order controls. */

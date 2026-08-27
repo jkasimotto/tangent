@@ -33,6 +33,36 @@ test("brain routes dispatch by method and path", async () => {
   assert.equal(await routes.handle(request("GET"), response(), new URL("http://shell/api/unknown")), false);
 });
 
+test("brain start rejects retired overrides and carries the displayed launch token", async () => {
+  let received;
+  const routes = createBrainRoutes({
+    /** Records one start request and returns a stale-launch response. */
+    async start(area, options) { received = { area, options }; return { status: 409, code: "launch-changed", error: "changed", launch: { label: "Codex" } }; },
+  });
+  const retired = response();
+  await routes.handle(request("POST", { area: "otto/tangent", command: "codex custom" }), retired, new URL("http://shell/api/brains/start"));
+  assert.equal(retired.status, 400);
+  assert.equal(retired.body.code, "override-retired");
+  const stale = response();
+  await routes.handle(request("POST", { area: "otto/tangent", instruction: "Work.", expectedLaunch: "codex/luna/low" }), stale, new URL("http://shell/api/brains/start"));
+  assert.equal(stale.status, 409);
+  assert.equal(stale.body.code, "launch-changed");
+  assert.deepEqual(received.options, { instruction: "Work.", expectedLaunch: "codex/luna/low", resume: false });
+});
+
+test("brain stop carries the Area, attempt, and idempotency key", async () => {
+  let received;
+  const routes = createBrainRoutes({
+    /** Records one Area-scoped stop request. */
+    async stop(area, options) { received = { area, options }; return { status: 200, state: "stopped", brain: { area } }; },
+  });
+  const output = response();
+  await routes.handle(request("POST", { area: "otto/tangent", expectedAttemptId: "tangent-brain-g3", operationId: "stop-1" }), output, new URL("http://shell/api/brains/stop"));
+  assert.equal(output.status, 200);
+  assert.equal(output.body.state, "stopped");
+  assert.deepEqual(received, { area: "otto/tangent", options: { expectedAttemptId: "tangent-brain-g3", operationId: "stop-1" } });
+});
+
 test("the answer route sends typed changes to the brain operation", async () => {
   let received;
   const routes = createBrainRoutes({

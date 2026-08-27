@@ -15,7 +15,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   } = prompts;
   const {
     selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain, brainForAreaCard,
-    openBrainSession, openOrStartBrain, toggleBrainPopover, saveDescribeDraft, saveDescribeSession, describeWorkSession,
+    openBrainSession, openOrStartBrain, toggleBrainPopover, confirmStopBrain, saveDescribeDraft, saveDescribeSession, describeWorkSession,
     openDescribeSession, addDescribeSource, switchDescribeToManualCreate, selectionForArea, startSelectedGoals,
     openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, openRequest, openQuestionsReview, openAreaCapture, openWorkCommands, sendVerdict,
     replyAboutRow, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery,
@@ -197,6 +197,8 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (target.closest?.("[data-open-area-focus], [data-change-area-focus]")) return openAreaFocusPicker();
     if (target.closest?.("[data-cancel-area-focus]")) return cancelAreaFocusPicker();
     if (target.closest?.("[data-clear-area-focus]")) return clearAreaFocus();
+    const stopBrain = target.closest("[data-stop-brain-area]");
+    if (stopBrain) return confirmStopBrain(stopBrain.dataset.stopBrainArea, stopBrain.dataset.stopBrainAttempt);
     const areaBrain = target.closest("[data-open-area-brain]");
     if (areaBrain) return openOrStartBrain(areaBrain.dataset.openAreaBrain, areaBrain);
     if (target.closest("[data-rebuild-dismiss]")) {

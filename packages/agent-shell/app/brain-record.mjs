@@ -19,8 +19,8 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { readJsonObject, walkJsonFiles, writeJsonObject } from "./json-store.mjs";
 
-export const BRAIN_SCHEMA = "area-brain.v2";
-const LEGACY_BRAIN_SCHEMA = "area-brain.v1";
+export const BRAIN_SCHEMA = "area-brain.v3";
+const LEGACY_BRAIN_SCHEMAS = new Set(["area-brain.v1", "area-brain.v2"]);
 
 const MAX_INSTRUCTION_CHARS = 4000;
 const SESSION_NAME_MAX = 60;
@@ -56,18 +56,34 @@ export async function writeBrain(root, record) {
 
 /** Converts the v1 runtime lifecycle into the v2 logical lifecycle. */
 export function normalizeBrainRecord(value, area = "") {
-  if (!value || typeof value !== "object" || ![BRAIN_SCHEMA, LEGACY_BRAIN_SCHEMA].includes(value.schema)) return null;
+  if (!value || typeof value !== "object" || (value.schema !== BRAIN_SCHEMA && !LEGACY_BRAIN_SCHEMAS.has(value.schema))) return null;
   const createdAt = value.createdAt ?? value.updatedAt ?? new Date(0).toISOString();
-  const generations = Array.isArray(value.generations) ? value.generations : [];
+  const legacyResolvedLaunch = value.launch?.harness || value.command ? {
+    ref: value.launch?.harness ? {
+      harness: String(value.launch.harness), model: value.launch.model ?? null, effort: value.launch.effort ?? null,
+    } : null,
+    label: String(value.label ?? value.command ?? ""),
+    command: String(value.command ?? ""),
+    sourceArea: null,
+    mode: "legacy",
+  } : null;
+  const currentAttemptId = value.currentAttemptId ?? value.session ?? null;
+  const currentResolvedLaunch = value.resolvedLaunch ?? legacyResolvedLaunch;
+  const generations = (Array.isArray(value.generations) ? value.generations : []).map((entry) => (
+    !entry?.resolvedLaunch && currentResolvedLaunch && entry?.session === currentAttemptId
+      ? { ...entry, resolvedLaunch: currentResolvedLaunch }
+      : entry
+  ));
   const latest = [...generations].reverse().find((entry) => entry?.handover);
   const legacyActive = value.status === "running";
-  const status = value.schema === BRAIN_SCHEMA && ["active", "inactive"].includes(value.status)
+  const status = ["active", "inactive"].includes(value.status)
     ? value.status
     : legacyActive ? "active" : "inactive";
   const foundingText = String(value.foundingInstruction?.text ?? value.instruction ?? "").trim();
   const checkpointText = String(value.checkpoint?.text ?? latest?.handover ?? "").trim();
+  const { launch: _launch, command: _command, label: _label, resolvedLaunch: _resolvedLaunch, ...rest } = value;
   return {
-    ...value,
+    ...rest,
     schema: BRAIN_SCHEMA,
     area: String(value.area ?? area),
     status,
@@ -80,7 +96,7 @@ export function normalizeBrainRecord(value, area = "") {
       createdAt: value.checkpoint?.createdAt ?? latest?.endedAt ?? value.updatedAt ?? createdAt,
       sourceAttemptId: value.checkpoint?.sourceAttemptId ?? latest?.session ?? null,
     } : null,
-    currentAttemptId: value.currentAttemptId ?? value.session ?? null,
+    currentAttemptId,
     generations,
   };
 }
@@ -103,20 +119,14 @@ export function validateInstruction(text) {
  * beginGeneration when it spawns the first session. Throws on an invalid
  * instruction.
  */
-export function newBrain({ area, instruction, launch = null, command, label = "", planFile, now = new Date().toISOString() }) {
+export function newBrain({ area, instruction, planFile, now = new Date().toISOString() }) {
   const error = validateInstruction(instruction);
   if (error) throw new Error(error);
-  if (!command || typeof command !== "string") throw new Error("command is required");
   return {
     schema: BRAIN_SCHEMA,
     area,
     foundingInstruction: { text: String(instruction).trim(), createdAt: now },
     checkpoint: null,
-    launch: launch && typeof launch === "object" && launch.harness
-      ? { harness: String(launch.harness), model: launch.model ?? null, effort: launch.effort ?? null }
-      : null,
-    command,
-    label: label || (launch ? "" : "Edited command"),
     planFile,
     status: "active",
     currentAttemptId: null,
@@ -138,9 +148,10 @@ export function currentGeneration(record) {
  * Starts generation N+1 on the given session: appends the entry, points the
  * record at it, and keeps the logical brain active. Returns the new entry.
  */
-export function beginGeneration(record, session, now = new Date().toISOString()) {
+export function beginGeneration(record, session, resolvedLaunch, now = new Date().toISOString()) {
   const generation = (record.generations?.length ?? 0) + 1;
-  const entry = { generation, session, startedAt: now, endedAt: null, handover: null, remindedAt: null };
+  if (!resolvedLaunch?.ref?.harness || !resolvedLaunch.command) throw new Error("resolved brain launch is required");
+  const entry = { generation, session, resolvedLaunch, startedAt: now, endedAt: null, handover: null, remindedAt: null };
   record.generations = [...(record.generations ?? []), entry];
   record.generation = generation;
   record.session = session;

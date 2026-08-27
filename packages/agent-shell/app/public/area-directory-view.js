@@ -216,7 +216,7 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
     const documents = areaDocuments(area.path);
     const brain = brainForAreaCard(area.path);
     const brainClass = brainKind(brain);
-    const brainAction = `<button class="primary-button area-brain ${escapeHtml(brainClass)}" type="button" data-open-area-brain="${escapeHtml(area.path)}" data-brain-area="${escapeHtml(area.path)}">${brain?.live ? "Open brain" : brain ? "Resume brain" : "Start brain"}</button>`;
+    const brainAction = `<span class="area-brain-controls"><button class="primary-button area-brain ${escapeHtml(brainClass)}" type="button" data-open-area-brain="${escapeHtml(area.path)}" data-brain-area="${escapeHtml(area.path)}">${brain?.live ? "Open brain" : brain ? "Resume brain" : "Start brain"}</button>${brain?.live ? `<button class="danger-button" type="button" data-stop-brain-area="${escapeHtml(area.path)}" data-stop-brain-attempt="${escapeHtml(brain.currentAttemptId ?? brain.session ?? "")}">Stop brain</button>` : ""}</span>`;
     return `
       <section class="area-contents area-map-screen ${done ? "area-done" : ""}">
         <header class="area-contents-heading">

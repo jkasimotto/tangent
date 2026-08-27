@@ -110,11 +110,14 @@ export function createSessionOwnership({ instanceId, root, runTmux, now = () => 
   }
 
   /** Terminates one live session only after its tmux marker proves ownership. */
-  async function terminate(session) {
+  async function terminate(session, expectedTarget = "") {
     const inspected = await inspect(session);
     if (inspected.state !== "live") return inspected;
     if (!inspected.instanceId) return { state: "legacy", instanceId: null };
     if (inspected.instanceId !== instanceId) return { state: "foreign", instanceId: inspected.instanceId };
+    if (expectedTarget && inspected.target !== expectedTarget) {
+      return { state: "replaced", instanceId, target: inspected.target, expectedTarget };
+    }
     try {
       await runTmux(["kill-session", "-t", inspected.target]);
       return { state: "terminated", instanceId };

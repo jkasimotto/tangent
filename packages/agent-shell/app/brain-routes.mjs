@@ -4,6 +4,7 @@ import { readJson, sendJson } from "./http-json.mjs";
 export function createBrainRoutes(operations) {
   const routes = new Map([
     ["POST /api/brains/start", start],
+    ["POST /api/brains/stop", stop],
     ["POST /api/brains/handover", handover],
     ["GET /api/brains/show", show],
     ["POST /api/brains/verdict", verdict],
@@ -26,19 +27,34 @@ export function createBrainRoutes(operations) {
   /** Starts, resumes, or reattaches an Area brain. */
   async function start(request, response) {
     const body = await readJson(request);
+    if (body.choice || String(body.command ?? "").trim()) {
+      sendJson(response, 400, { code: "override-retired", error: "Brain launch overrides are retired. Change the Area Brain configuration, then refresh." });
+      return;
+    }
     const area = String(body.area ?? "");
     const resume = Boolean(body.resume);
     console.info(`[brain start] requested area=${JSON.stringify(area)} mode=${resume ? "resume" : "start"}`);
     const result = await operations.start(String(body.area ?? ""), {
       instruction: String(body.instruction ?? ""),
-      choice: body.choice && typeof body.choice === "object" ? body.choice : null,
-      command: typeof body.command === "string" ? body.command : "",
+      expectedLaunch: String(body.expectedLaunch ?? ""),
       resume,
     });
     console.info(`[brain start] result area=${JSON.stringify(area)} status=${result.status} session=${JSON.stringify(result.session ?? "")} error=${JSON.stringify(result.error ?? "")}`);
     sendJson(response, result.status, result.status === 200
       ? { session: result.session, generation: result.generation, reattached: Boolean(result.reattached), brain: result.brain }
-      : { error: result.error });
+      : { error: result.error, ...(result.code ? { code: result.code } : {}), ...(result.launch ? { launch: result.launch } : {}) });
+  }
+
+  /** Stops one logical Area brain without trusting a stale session name. */
+  async function stop(request, response) {
+    const body = await readJson(request);
+    const result = await operations.stop(String(body.area ?? ""), {
+      expectedAttemptId: String(body.expectedAttemptId ?? ""),
+      operationId: String(body.operationId ?? ""),
+    });
+    sendJson(response, result.status, result.status === 200
+      ? { state: result.state, brain: result.brain }
+      : { error: result.error, ...(result.code ? { code: result.code } : {}) });
   }
 
   /** Hands a brain generation's facts to its replacement. */

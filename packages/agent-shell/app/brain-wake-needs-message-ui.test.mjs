@@ -31,6 +31,7 @@ async function bootShell(brainRecord) {
     if (pathname === "/api/launch/options") return jsonResponse({
       area: "otto/tangent",
       harnesses: [{ id: "codex", label: "Codex", command: "codex", models: [{ id: "sol", label: "Sol", args: "--model sol", efforts: [] }] }],
+      default: { harness: "codex", model: "sol", command: "codex --model sol", label: "Codex · Sol", source: "otto" },
       workDefault: { harness: "codex", model: "sol", command: "codex --model sol", label: "Codex · Sol", source: "otto" },
       brainDefault: { harness: "codex", model: "sol", command: "codex --model sol", label: "Codex · Sol", source: "otto" },
       declarations: { work: { mode: "inherit" }, brain: { mode: "work" } },
@@ -63,6 +64,12 @@ test("the Work brain key opens the message box instead of starting a brain", asy
   const box = window.document.querySelector("#brain-instruction");
   assert.ok(box, "the key opens the message box");
   assert.equal(box.value, "", "the box starts empty, so no old order becomes today's");
+  const launch = window.document.querySelector(".brain-launch-summary");
+  assert.match(launch.textContent, /codex\/sol/);
+  assert.match(launch.textContent, /Codex · Sol/);
+  assert.match(launch.textContent, /codex --model sol/);
+  assert.match(launch.textContent, /Inherited from Otto/);
+  assert.ok(launch.querySelector("[data-default-agents-area='otto/tangent']"), "the disclosed launch links to the Area default editor");
 
   // An empty send is refused. Nothing reaches the server.
   click(window, "[data-launch-start]");
@@ -76,6 +83,25 @@ test("the Work brain key opens the message box instead of starting a brain", asy
   assert.equal(started.length, 1);
   assert.equal(started[0].body.instruction, "Plan the migration.", "the brain starts from Julian's own words");
   assert.equal(started[0].body.resume, false);
+  assert.equal(started[0].body.expectedLaunch, "codex/sol", "the request carries the launch that the control disclosed");
+  dom.window.close();
+});
+
+test("a live brain has a direct Area stop control", async () => {
+  const live = {
+    area: "otto/tangent", session: "tangent-brain-g7", currentAttemptId: "tangent-brain-g7", status: "active", live: true,
+    state: "working", generation: 7, foundingInstruction: { text: "Run this Area." }, requests: [],
+  };
+  const { dom, window, posts } = await bootShell(live);
+  click(window, "[data-stop-brain-area='otto/tangent']");
+  assert.match(window.document.querySelector("#modal-title").textContent, /Stop the Tangent brain/);
+  assert.match(window.document.querySelector("#modal-copy").textContent, /Goals, queues, and worker agents continue/);
+  click(window, "[data-modal-confirm]");
+  await settle(window);
+  const stopped = posts.find((item) => item.path === "/api/brains/stop");
+  assert.equal(stopped.body.area, "otto/tangent");
+  assert.equal(stopped.body.expectedAttemptId, "tangent-brain-g7");
+  assert.ok(stopped.body.operationId);
   dom.window.close();
 });
 

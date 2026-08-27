@@ -82,7 +82,7 @@ test("a brain lends its own harness to every worker it starts", async (context) 
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
   await writeFile(
     path.join(proof, "proof.md"),
-    `---\ntype: area\n---\n\n# Proof\n\n## Development environment\n\n\`\`\`tangent.environment.v1\n{"defaults": {"launch": {"harness": "claude", "model": "opus-5"}}}\n\`\`\`\n\n## Resources\n\n- Repository: ${workspace}\n`,
+    `---\ntype: area\n---\n\n# Proof\n\n## Development environment\n\n\`\`\`tangent.environment.v1\n{"defaults": {"launch": {"harness": "claude", "model": "opus-5"}, "brain": {"harness": "claude-otto", "model": "fable-5"}}}\n\`\`\`\n\n## Resources\n\n- Repository: ${workspace}\n`,
     "utf8"
   );
   await writeFile(
@@ -151,11 +151,10 @@ test("a brain lends its own harness to every worker it starts", async (context) 
   const brain = await post("/api/brains/start", {
     area: "otto/proof",
     instruction: "Control the worker launch proof.",
-    choice: { harness: "claude-otto", model: "fable-5" },
   });
   assert.equal(brain.status, 200, JSON.stringify(brain.body));
   openedSessions.push(brain.body.session);
-  assert.deepEqual(brain.body.brain.launch, { harness: "claude-otto", model: "fable-5", effort: null });
+  assert.deepEqual(brain.body.brain.resolvedLaunch.ref, { harness: "claude-otto", model: "fable-5", effort: null });
 
   // Two assignments, neither naming a harness. Both take the brain's.
   const started = await post("/api/goals/start", {
@@ -235,23 +234,14 @@ test("a brain lends its own harness to every worker it starts", async (context) 
   assert.equal(julian.status, 400);
   assert.match(julian.body.error, /step 1 has no --launch/);
 
-  // A brain started from an edited command has no harness id to lend, so the
-  // refusal stays loud instead of guessing one.
+  // An edited command cannot become a second Brain launch authority.
   const commandBrain = await post("/api/brains/start", {
     area: "otto/plainbrain",
     instruction: "Control the no-identity proof.",
     command: "sleep 300",
   });
-  assert.equal(commandBrain.status, 200, JSON.stringify(commandBrain.body));
-  openedSessions.push(commandBrain.body.session);
-  assert.equal(commandBrain.body.brain.launch, null);
-  const refused = await post("/api/goals/start", {
-    file: "otto/plainbrain/goal-no-identity.md",
-    caller: commandBrain.body.session,
-    steps: [{ instruction: "Work without a harness." }],
-  });
-  assert.equal(refused.status, 400);
-  assert.match(refused.body.error, /step 1 has no --launch/);
+  assert.equal(commandBrain.status, 400);
+  assert.equal(commandBrain.body.code, "override-retired");
   assert.equal(
     (await fetch(`${base}/api/sessions`).then((response) => response.json())).pipelines.some((item) => item.goal === "otto/plainbrain/goal-no-identity.md"),
     false,

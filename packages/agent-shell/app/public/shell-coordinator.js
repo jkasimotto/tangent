@@ -758,7 +758,8 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
       showToast("Stop agent failed before it found the session. The failure was logged.");
       return;
     }
-    if (!session || (!describing && !goal)) {
+    const brain = session?.kind === "brain";
+    if (!session || (!describing && !brain && !goal)) {
       actionTelemetry.record("stop", `guard-rejected:${describing ? "describe" : "goal"}`);
       showToast("Stop agent could not find the displayed session. The failure was logged.");
       return;
@@ -771,7 +772,15 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     const stopSelectedSession = async () => {
       actionTelemetry.record("stop", `confirm:${session.name}`);
       try {
-        await post(`/api/kill/${encodeURIComponent(session.name)}`, {});
+        if (brain) {
+          await post("/api/brains/stop", {
+            area: session.brain || session.area,
+            expectedAttemptId: session.name,
+            operationId: crypto.randomUUID(),
+          });
+        } else {
+          await post(`/api/kill/${encodeURIComponent(session.name)}`, {});
+        }
         actionTelemetry.record("stop", `kill-succeeded:${session.name}`);
       } catch (error) {
         actionTelemetry.record("stop", `kill-failed:${session.name}:${error?.name ?? "Error"}`);
@@ -790,26 +799,28 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
       await refresh();
       paint(true);
       if (returnToDocument) await refreshDocument();
-      showToast(shell ? "The session closed." : "The agent stopped. The work stays open.");
+      showToast(shell ? "The session closed." : brain ? "The brain stopped. Its work continues." : "The agent stopped. The work stays open.");
       return true;
     };
-    if (immediate) {
+    if (immediate && !brain) {
       actionTelemetry.record("stop", `immediate:${session.name}`);
       void stopSelectedSession();
       return;
     }
     actionTelemetry.record("stop", `modal-open:${session.name}`);
     openModal({
-      kicker: shell ? "Open session" : "Live agent",
-      title: shell ? "Close this session?" : `Stop ${agentName(session)}?`,
-      copy: describing
+      kicker: shell ? "Open session" : brain ? "Area brain" : "Live agent",
+      title: shell ? "Close this session?" : brain ? `Stop the ${humanName((session.brain || session.area || "Area").split("/").pop())} brain?` : `Stop ${agentName(session)}?`,
+      copy: brain
+        ? "This makes the brain inactive. Its Goals, queues, and worker agents continue. A later message can wake it."
+        : describing
         ? session.kind === "brain"
           ? "This ends the brain. Goals and pipelines it started keep running. Resume it later from the brain icon on the Area card."
           : "This ends the conversation about new work. Any Goals or Documents already created stay in Tangent."
         : pipeline
           ? `This ends the run${stepsLeft ? ` and its ${stepsLeft} remaining step${stepsLeft === 1 ? "" : "s"}` : ""}. The Goal, its notes, and its handovers stay here.`
           : "This ends the live session. The work and its notes stay here.",
-      confirmLabel: shell ? "Close session" : "Stop agent",
+      confirmLabel: shell ? "Close session" : brain ? "Stop brain" : "Stop agent",
       danger: true,
       /** Stops only the live run and preserves the goal. */
       onConfirm: stopSelectedSession,

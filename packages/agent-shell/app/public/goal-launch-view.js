@@ -79,7 +79,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     const brain = controllingBrainForArea(area);
     launchOptionsFor(area);
     const selection = launchSelection();
-    const recipient = brain?.label && brain.label !== "Edited command" ? brain.label : brain?.command || "brain";
+    const recipient = brain?.resolvedLaunch?.label || "brain";
     const startLabel = brain?.live
       ? `Send to ${recipient} brain`
       : selection?.label
@@ -189,7 +189,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     if (!selection) return {};
     if (describing) {
       const brain = controllingBrainForArea(describeLaunchArea());
-      if (brain?.live) return {};
+      if (brain) return {};
       if (selection.edited) return { command: selection.command };
       return selection.harness
         ? { choice: { harness: selection.harness.id, ...(selection.model ? { model: selection.model.id } : {}), ...(selection.effort ? { effort: selection.effort.id } : {}) } }
@@ -392,6 +392,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     const presetCandidate = settings
       ? state.defaultAgents.editing === "brain" ? options.brainDefault : options.workDefault
       : options.default;
+    const presetError = presetCandidate?.error ?? "";
     const preset = presetCandidate && !presetCandidate.error ? presetCandidate : {};
     const currentHarness = selection?.harness ?? null;
     const harnessButtons = (options.harnesses ?? []).map((harness) => `
@@ -411,14 +412,18 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
           <span>${escapeHtml(effort.label)}</span>${preset.harness === currentHarness?.id && preset.effort === effort.id ? `<span class="launch-default-tag">default</span>` : ""}
         </button>`).join("");
     const command = selection?.command ?? "";
-    const commandZone = settings
+    const describing = state.launchTarget === DESCRIBE_LAUNCH_TARGET;
+    const braining = state.launchTarget === BRAIN_LAUNCH_TARGET;
+    const brainRef = braining ? [preset.harness, preset.model, preset.effort].filter(Boolean).join("/") : "";
+    const brainSource = braining && preset.source ? (preset.source === state.brainDraft?.area ? "Set on this Area" : `Inherited from ${areaLabel(preset.source)}`) : "";
+    const commandZone = braining
+      ? `<section class="brain-launch-summary" aria-label="Resolved brain launch"><p class="kicker">Brain launch</p><strong>${escapeHtml(brainRef || "Not configured")}</strong><span>${escapeHtml(preset.label || presetError)}</span><code>${escapeHtml(preset.command || "")}</code>${brainSource ? `<small>${escapeHtml(brainSource)}</small>` : ""}<button class="quiet-button" type="button" data-default-agents-area="${escapeHtml(state.brainDraft?.area ?? "")}">Change default</button></section>`
+      : settings
       ? `<div class="launch-command"><code>${escapeHtml(command)}</code></div>`
       : state.launch.editing
       ? `<div class="launch-command"><input id="launch-command-input" type="text" spellcheck="false" value="${escapeHtml(state.launch.command || command)}"><button class="quiet-button" type="button" data-launch-reset>Reset</button></div>
          <p class="form-note">The edited command applies to this run only.</p>`
       : `<div class="launch-command"><code>${escapeHtml(command)}</code>${selection?.edited ? `<span class="launch-default-tag">edited</span>` : ""}<button class="quiet-button" type="button" data-launch-edit>Edit command</button></div>`;
-    const describing = state.launchTarget === DESCRIBE_LAUNCH_TARGET;
-    const braining = state.launchTarget === BRAIN_LAUNCH_TARGET;
     const brain = braining ? brainForAreaCard(state.brainDraft?.area) : null;
     const brainResumes = Boolean(brain && !brain.live);
     const record = state.launch.record;
@@ -437,7 +442,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
         ${state.launch.active > 0 ? `<label class="launch-continue"><span>Session</span><select data-launch-continue><option value="">Fresh session</option>${Array.from({ length: state.launch.active }, (_, k) => `<option value="${k + 1}"${state.launch.continueFrom === k + 1 ? " selected" : ""}>Continue step ${k + 1}</option>`).join("")}</select></label>` : ""}`;
     const settingsRows = settings ? defaultAgentRows(options) : "";
     const settingsMode = state.defaultAgents.mode;
-    const showChoices = !settings || (state.defaultAgents.editing && settingsMode === "launch");
+    const showChoices = !braining && (!settings || (state.defaultAgents.editing && settingsMode === "launch"));
     const settingsEditor = settings && state.defaultAgents.editing ? `
       <section class="default-agent-editor" aria-label="Edit ${escapeHtml(state.defaultAgents.editing)} default">
         <p>${settingsMode === "launch" ? `Choose the harness, model, and effort for ${state.defaultAgents.editing === "brain" ? "Brain" : "Work"}.` : settingsMode === "work" ? "Brain will follow the Work default of this Area." : `The ${state.defaultAgents.editing === "brain" ? "Brain" : "Work"} default will inherit from the nearest parent Area.`}</p>
@@ -459,10 +464,10 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
           <div class="launch-col"><p class="launch-col-title">Model</p>${modelButtons}</div>
           ${efforts.length ? `<div class="launch-col"><p class="launch-col-title">Effort</p>${effortButtons}</div>` : ""}
         </div>` : showChoices ? `<p class="launch-none">No harness registry. Add one at <code>~/.tangent/trees/harnesses.md</code>.</p>` : ""}
-        ${showChoices ? commandZone : ""}
+        ${braining || showChoices ? commandZone : ""}
         ${stepZone}
         ${settingsActions || `<div class="action-row start-actions">
-          <button class="primary-button" type="button" data-launch-start>${escapeHtml(startLabel)}</button>
+          <button class="primary-button" type="button" data-launch-start ${braining && !preset.harness ? "disabled" : ""}>${escapeHtml(startLabel)}</button>
           ${brainResumes ? `<button class="quiet-button" type="button" data-brain-start-over>Start over</button>` : ""}
           <button class="quiet-button" type="button" data-launch-close>${state.launchTarget ? "Close" : "Back"}</button>
         </div>`}

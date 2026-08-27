@@ -23,7 +23,7 @@ test("the context-first shell is default and keeps the user's understanding with
   await mkdir(areaDirectory, { recursive: true });
   await mkdir(workspace, { recursive: true });
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
-  await writeFile(path.join(areaDirectory, "test.md"), `---\ntype: area\n---\n\n# Test\n\n## Goals\n\n1. [[goal-prove-it]]\n2. [[outcome-connect-chosen-ramp-faces]]\n\n## Resources\n\n- Repository: ${workspace}\n\n## Development environment\n\n\`\`\`tangent.environment.v1\n{"defaults":{"launch":{"harness":"other"}}}\n\`\`\`\n`, "utf8");
+  await writeFile(path.join(areaDirectory, "test.md"), `---\ntype: area\n---\n\n# Test\n\n## Goals\n\n1. [[goal-prove-it]]\n2. [[outcome-connect-chosen-ramp-faces]]\n\n## Resources\n\n- Repository: ${workspace}\n\n## Development environment\n\n\`\`\`tangent.environment.v1\n{"defaults":{"launch":{"harness":"other"},"brain":{"harness":"fake","model":"one"}}}\n\`\`\`\n`, "utf8");
   await writeFile(path.join(areaDirectory, ".processes.json"), '{"scripts":{"dev":"npm run dev"}}\n', "utf8");
   await writeFile(path.join(areaDirectory, "design-test.md"), "---\ntype: document\n---\n\n# Test design\n\nA useful result is visible.\n", "utf8");
   await writeFile(
@@ -466,7 +466,7 @@ test("the context-first shell is default and keeps the user's understanding with
   const brainStart = await fetch(`${base}/api/brains/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ area: "otto/test", instruction: "Get the test Area done.", choice: { harness: "fake", model: "one" } }),
+    body: JSON.stringify({ area: "otto/test", instruction: "Get the test Area done." }),
   }).then((response) => response.json());
   assert.equal(brainStart.session, "test-brain");
   openedSessions.push("test-brain");
@@ -760,7 +760,7 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(brainDefault.status, 200);
   assert.equal(brainStart.session, "test-brain");
   assert.equal(brainStart.generation, 1);
-  assert.equal(brainStart.brain.command, "fake-agent --model one");
+  assert.equal(brainStart.brain.resolvedLaunch.command, "fake-agent --model one");
   assert.equal(brainStart.brain.planFile, "otto/test/plan-test.md");
   assert.ok(existsSync(path.join(root, "brains", "otto", "test", "brain.json")));
   snapshot = await fetch(`${base}/api/sessions`).then((response) => response.json());
@@ -862,8 +862,8 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(brainHandover.session, "test-brain-g2");
   assert.equal(brainHandover.generation, 2);
   const handedOverBrain = await fetch(`${base}/api/brains/show?session=test-brain-g2`).then((response) => response.json());
-  assert.deepEqual(handedOverBrain.brain.launch, { harness: "fake", model: "one", effort: null });
-  assert.equal(handedOverBrain.brain.command, "fake-agent --model one", "handover preserves the durable Brain launch instead of taking a later Area default");
+  assert.deepEqual(handedOverBrain.brain.resolvedLaunch.ref, { harness: "fake", model: "one", effort: "high" });
+  assert.equal(handedOverBrain.brain.resolvedLaunch.command, "fake-agent --model one --effort high", "handover resolves the current Area Brain configuration for the new attempt");
   openedSessions.push("test-brain-g2");
   await new Promise((resolve) => setTimeout(resolve, 1800));
   snapshot = await fetch(`${base}/api/sessions`).then((response) => response.json());
@@ -901,8 +901,8 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(brainResume.generation, 3);
   openedSessions.push("test-brain-g3");
   assert.equal(brainResume.brain.foundingInstruction.text, "Get the test Area done.");
-  assert.deepEqual(brainResume.brain.launch, { harness: "fake", model: "one", effort: null });
-  assert.equal(brainResume.brain.command, "fake-agent --model one");
+  assert.deepEqual(brainResume.brain.resolvedLaunch.ref, { harness: "fake", model: "one", effort: "high" });
+  assert.equal(brainResume.brain.resolvedLaunch.command, "fake-agent --model one --effort high");
 
   const resumedRequest = await fetch(`${base}/api/brains/requests`, {
     method: "POST",

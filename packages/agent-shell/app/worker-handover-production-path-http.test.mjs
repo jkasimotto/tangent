@@ -35,8 +35,8 @@ async function buildVault(root) {
   const workspace = path.join(root, "workspace");
   await mkdir(path.join(trees, area), { recursive: true });
   await mkdir(workspace, { recursive: true });
-  await writeFile(path.join(trees, "harnesses.md"), "# Harnesses\n", "utf8");
-  await writeFile(path.join(trees, "neara", "neara.md"), "---\ntype: area\n---\n\n# Neara\n", "utf8");
+  await writeFile(path.join(trees, "harnesses.md"), "# Harnesses\n\n```tangent.harnesses.v1\n{\"version\":1,\"harnesses\":[{\"id\":\"test\",\"label\":\"Test\",\"command\":\"true\"}]}\n```\n", "utf8");
+  await writeFile(path.join(trees, "neara", "neara.md"), "---\ntype: area\n---\n\n# Neara\n\n```tangent.environment.v1\n{\"defaults\":{\"brain\":{\"harness\":\"test\"}}}\n```\n", "utf8");
   await writeFile(path.join(trees, area, "portland.md"), "---\ntype: area\n---\n\n# Portland\n", "utf8");
   return { trees, workspace };
 }
@@ -98,8 +98,8 @@ test("neara/portland worker handovers survive delay, rollover, restart, and exac
   });
   if (!base) return;
 
-  const parent = await post(base, "/api/brains/start", { area: "neara", instruction: "Own Neara.", command: "true" });
-  const child = await post(base, "/api/brains/start", { area, instruction: "Own Portland.", command: "true" });
+  const parent = await post(base, "/api/brains/start", { area: "neara", instruction: "Own Neara." });
+  const child = await post(base, "/api/brains/start", { area, instruction: "Own Portland." });
   assert.equal(parent.status, 200, JSON.stringify(parent.body));
   assert.equal(child.status, 200, JSON.stringify(child.body));
   openedSessions.push(parent.body.session, child.body.session);
@@ -269,7 +269,7 @@ test("malformed, truncated, shell-quoted, and rejected reports cannot look succe
   const openedSessions = [];
   const base = await startShellServer(context, { here, root, trees, workspace, openedSessions });
   if (!base) return;
-  const brain = await post(base, "/api/brains/start", { area, instruction: "Own Portland.", command: "true" });
+  const brain = await post(base, "/api/brains/start", { area, instruction: "Own Portland." });
   assert.equal(brain.status, 200, JSON.stringify(brain.body));
   openedSessions.push(brain.body.session);
   const worker = await startWorker(base, brain.body.session, openedSessions, "Portland rejection");

@@ -224,7 +224,7 @@ test("the live shell restores context, defines work with an agent, and organizes
           ...(liveEditBrainStarted ? [{ name: "live-edit-brain", area: liveEditGoal.area, kind: "brain", state: "waiting", command: "claude" }] : []),
         ],
         brains: liveEditBrainStarted
-          ? [{ area: liveEditGoal.area, session: brainLive ? "live-edit-brain" : null, status: brainLive ? "active" : "inactive", health: { status: brainLive ? "healthy" : "inactive" }, live: brainLive, generation: 1, state: brainLive ? "waiting" : null, stateDetail: brainLive ? "decision" : null, stateQuestion: "Do you want the audit to start now?", forJulian: brainRowsForJulian, requests: brainRequests }]
+          ? [{ area: liveEditGoal.area, session: brainLive ? "live-edit-brain" : null, currentAttemptId: brainLive ? "live-edit-brain" : null, status: brainLive ? "active" : "inactive", health: { status: brainLive ? "healthy" : "inactive" }, live: brainLive, generation: 1, state: brainLive ? "waiting" : null, stateDetail: brainLive ? "decision" : null, stateQuestion: "Do you want the audit to start now?", forJulian: brainRowsForJulian, requests: brainRequests }]
           : [],
       });
     }
@@ -305,7 +305,6 @@ test("the live shell restores context, defines work with an agent, and organizes
   changesInput.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true }));
   await settle(window);
   assert.deepEqual(posts.at(-1), { path: "/api/brains/requests/answer", body: { area: liveEditGoal.area, id: "request-1", answer: "reply", note: "Use one copy-paste command." } });
-
   const brainGoalCard = window.document.querySelector(`[data-goal-anchor="${liveEditGoal.file}"]`);
   assert.ok(brainGoalCard, "the brain's Area still shows its Goal");
   assert.equal(brainGoalCard.classList.contains("waiting"), false, "a brain-run Goal keeps no amber");

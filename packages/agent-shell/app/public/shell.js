@@ -425,7 +425,7 @@ const workDeskView = createWorkDeskView({
 const {
   allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile,
   currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions,
-  brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain,
+  brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, confirmStopBrain,
   humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel,
   goalNeedsYou, goalWorkFinished, workCard, goalTreeCard,
   forgetVerdictLines, openRequest, openQuestionsReview, openAreaCapture, openWorkCommands, sendVerdict, replyAboutRow, areaQuestions, areaBlockers,
@@ -746,7 +746,7 @@ function updateHeader() {
   }
 
   secondaryAction.hidden = !session || ["work", "create", "describe", "areas", "prompts", "area-edit", "program-detail", "program-create", "program-session", "document"].includes(state.view);
-  secondaryAction.textContent = session?.state === "shell" ? "Close session" : "Stop agent";
+  secondaryAction.textContent = session?.state === "shell" ? "Close session" : session?.kind === "brain" ? "Stop brain" : "Stop agent";
 
   if (state.view === "agent" && session?.state === "waiting") {
     findButton.hidden = false;
@@ -1410,7 +1410,7 @@ bindShellEvents({
   },
   work: {
     selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain, brainForAreaCard,
-    openBrainSession, openOrStartBrain, toggleBrainPopover, saveDescribeDraft, saveDescribeSession, describeWorkSession,
+    openBrainSession, openOrStartBrain, toggleBrainPopover, confirmStopBrain, saveDescribeDraft, saveDescribeSession, describeWorkSession,
     openDescribeSession, addDescribeSource, switchDescribeToManualCreate, selectionForArea, startSelectedGoals,
     openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, openRequest, openQuestionsReview, openAreaCapture, openWorkCommands, sendVerdict,
     replyAboutRow, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery,

@@ -87,9 +87,11 @@ async function killSession(name) {
 async function makeTrees(root, leaf) {
   const trees = path.join(root, "trees");
   const area = path.join(trees, "otto", leaf);
+  const harness = await makeHarness(root);
   await mkdir(area, { recursive: true });
+  await writeFile(path.join(trees, "harnesses.md"), `# Harnesses\n\n\`\`\`tangent.harnesses.v1\n{"version":1,"harnesses":[{"id":"probe","label":"Probe","command":${JSON.stringify(harness)}}]}\n\`\`\`\n`, "utf8");
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
-  await writeFile(path.join(area, `${leaf}.md`), `---\ntype: area\n---\n\n# ${leaf}\n`, "utf8");
+  await writeFile(path.join(area, `${leaf}.md`), `---\ntype: area\n---\n\n# ${leaf}\n\n\`\`\`tangent.environment.v1\n{"defaults":{"brain":{"harness":"probe"}}}\n\`\`\`\n`, "utf8");
   return trees;
 }
 
@@ -168,8 +170,7 @@ test("a queued notice waits for a booting brain's activation prompt", async (con
   await waitForServer(base);
 
   const area = `otto/${leaf}`;
-  const harness = await makeHarness(root);
-  const brain = await post(base, "/api/brains/start", { area, instruction: "Control the boot probe.", command: harness });
+  const brain = await post(base, "/api/brains/start", { area, instruction: "Control the boot probe." });
   assert.ok(brain.session, `brain started: ${JSON.stringify(brain)}`);
   sessions.push(brain.session);
 

@@ -58,6 +58,10 @@ test("session termination requires the live tmux owner and records stale ownersh
   assert.equal(await two.ownsRecorded("worker-one"), false);
   assert.deepEqual(await two.terminate("worker-one"), { state: "foreign", instanceId: "shell-one" });
   assert.equal(live.has("worker-one"), true);
+  assert.deepEqual(await one.terminate("worker-one", "$older-worker-one"), {
+    state: "replaced", instanceId: "shell-one", target: "$worker-one", expectedTarget: "$older-worker-one",
+  });
+  assert.equal(live.has("worker-one"), true, "an immutable target mismatch keeps the replacement alive");
   assert.deepEqual(await one.terminate("worker-one"), { state: "terminated", instanceId: "shell-one" });
   assert.equal(live.has("worker-one"), false);
   assert.deepEqual(calls.findLast((args) => args[0] === "kill-session"), ["kill-session", "-t", "$worker-one"]);

@@ -31,9 +31,6 @@ function sampleBrain(overrides = {}) {
   return newBrain({
     area: "otto/tangent",
     instruction: "Ship the Area map.",
-    launch: claude,
-    command: "claude --model claude-fable-5",
-    label: "Claude · Fable 5",
     planFile: "otto/tangent/plan-tangent.md",
     ...overrides
   });
@@ -48,7 +45,7 @@ test("newBrain builds an active logical record with founding instruction", () =>
   assert.equal(record.generation, 0);
   assert.equal(record.session, null);
   assert.deepEqual(record.generations, []);
-  assert.deepEqual(record.launch, claude);
+  assert.equal("resolvedLaunch" in record, false, "policy never appears at the record top level");
   assert.equal(record.planFile, "otto/tangent/plan-tangent.md");
 });
 
@@ -60,10 +57,19 @@ test("validateInstruction rejects empty and overlong text", () => {
 });
 
 test("legacy records normalize into active or inactive logical lifecycle", () => {
-  const legacy = normalizeBrainRecord({ schema: "area-brain.v1", area: "otto/tangent", instruction: "Found it.", status: "running", session: "brain", generations: [] });
+  const legacy = normalizeBrainRecord({
+    schema: "area-brain.v1", area: "otto/tangent", instruction: "Found it.", status: "running", session: "brain",
+    launch: { harness: "codex", model: "luna", effort: "low" }, command: "codex --model luna --effort low", label: "Codex · Luna · Low",
+    generations: [{ generation: 1, session: "brain", startedAt: "2026-08-01T00:00:00.000Z" }],
+  });
   assert.equal(legacy.schema, BRAIN_SCHEMA);
   assert.equal(legacy.status, "active");
   assert.equal(legacy.foundingInstruction.text, "Found it.");
+  assert.equal("launch" in legacy, false);
+  assert.equal("command" in legacy, false);
+  assert.equal("resolvedLaunch" in legacy, false);
+  assert.deepEqual(legacy.generations[0].resolvedLaunch.ref, { harness: "codex", model: "luna", effort: "low" });
+  assert.equal(legacy.generations[0].resolvedLaunch.mode, "legacy");
   assert.equal(normalizeBrainRecord({ ...legacy, schema: "area-brain.v1", status: "stopped" }).status, "inactive");
 });
 
@@ -84,24 +90,28 @@ test("write and read round trip; readAllBrains walks the root", async () => {
   assert.deepEqual(await readAllBrains(path.join(root, "missing")), []);
 });
 
+const resolved = { ref: claude, label: "Claude · Fable 5", command: "claude --model claude-fable-5", sourceArea: "otto", mode: "brain" };
+
 test("beginGeneration numbers generations and points the record at the session", () => {
   const record = sampleBrain();
-  const first = beginGeneration(record, "tangent--brain", "2026-08-17T10:00:00.000Z");
+  const first = beginGeneration(record, "tangent--brain", resolved, "2026-08-17T10:00:00.000Z");
   assert.equal(first.generation, 1);
   assert.equal(record.generation, 1);
   assert.equal(record.session, "tangent--brain");
   assert.equal(currentGeneration(record), first);
-  const second = beginGeneration(record, "tangent--brain--g2");
+  const second = beginGeneration(record, "tangent--brain--g2", resolved);
   assert.equal(second.generation, 2);
   assert.equal(record.session, "tangent--brain--g2");
   assert.equal(record.generations.length, 2);
   assert.equal(record.status, "active");
+  assert.equal("resolvedLaunch" in record, false);
+  assert.deepEqual(currentGeneration(record).resolvedLaunch, resolved);
 });
 
 test("recordHandover keeps earlier text and stamps endedAt", () => {
   const record = sampleBrain();
   assert.throws(() => recordHandover(record, "x"), /no generation/);
-  beginGeneration(record, "tangent--brain");
+  beginGeneration(record, "tangent--brain", resolved);
   recordHandover(record, "Wave 1 started.", "2026-08-17T11:00:00.000Z");
   recordHandover(record, "Wave 1 done.");
   const entry = currentGeneration(record);
@@ -113,16 +123,16 @@ test("recordHandover keeps earlier text and stamps endedAt", () => {
 
 test("latestHandover skips generations without a handover", () => {
   const record = sampleBrain();
-  beginGeneration(record, "a");
+  beginGeneration(record, "a", resolved);
   recordHandover(record, "first facts");
-  beginGeneration(record, "b");
+  beginGeneration(record, "b", resolved);
   assert.equal(latestHandover(record), "first facts");
   assert.equal(latestHandover(sampleBrain()), null);
 });
 
 test("endBrain makes the logical brain inactive and closes the attempt", () => {
   const record = sampleBrain();
-  beginGeneration(record, "a");
+  beginGeneration(record, "a", resolved);
   endBrain(record, "stopped");
   assert.equal(record.status, "inactive");
   assert.ok(currentGeneration(record).endedAt);

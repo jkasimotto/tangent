@@ -48,7 +48,7 @@ test("bounded brain prompt omits the legacy command manual", async (context) => 
   for (let index = 0; index < 12; index += 1) {
     await writeFile(path.join(ottoArea, `goal-oversized-${index}.md`), `---\ntype: goal\nstatus: pending\n---\n\n# ${"Goal ".repeat(50)}${index}\n`, "utf8");
   }
-  await writeFile(path.join(emptyArea, "probeempty.md"), "---\ntype: area\n---\n\n# Probe empty\n", "utf8");
+  await writeFile(path.join(emptyArea, "probeempty.md"), "---\ntype: area\n---\n\n# Probe empty\n\n```tangent.environment.v1\n{\"defaults\":{\"brain\":{\"harness\":\"brain\"}}}\n```\n", "utf8");
 
   let port;
   try {
@@ -111,7 +111,7 @@ test("bounded brain prompt omits the legacy command manual", async (context) => 
   const emptyBrain = await fetch(`${base}/api/brains/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ area: "otto/probeempty", instruction: "Get the empty Area done.", command: "brain-agent" }),
+    body: JSON.stringify({ area: "otto/probeempty", instruction: "Get the empty Area done." }),
   }).then((response) => response.json());
   openedSessions.push(emptyBrain.session);
   const emptyShow = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(emptyBrain.session)}`).then((response) => response.json());
@@ -124,8 +124,9 @@ test("bounded brain prompt delegates routine review closure", async (context) =>
   const trees = path.join(root, "trees");
   const area = path.join(trees, "otto", "probesweep");
   await mkdir(area, { recursive: true });
+  await writeFile(path.join(trees, "harnesses.md"), "```tangent.harnesses.v1\n{\"version\":1,\"harnesses\":[{\"id\":\"brain\",\"command\":\"brain-agent\"}]}\n```\n", "utf8");
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
-  await writeFile(path.join(area, "probesweep.md"), "---\ntype: area\n---\n\n# Probe sweep\n", "utf8");
+  await writeFile(path.join(area, "probesweep.md"), "---\ntype: area\n---\n\n# Probe sweep\n\n```tangent.environment.v1\n{\"defaults\":{\"brain\":{\"harness\":\"brain\"}}}\n```\n", "utf8");
 
   let port;
   try {
@@ -171,7 +172,7 @@ test("bounded brain prompt delegates routine review closure", async (context) =>
   const brain = await fetch(`${base}/api/brains/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ area: "otto/probesweep", instruction: "Get the probe Area done.", command: "brain-agent" }),
+    body: JSON.stringify({ area: "otto/probesweep", instruction: "Get the probe Area done." }),
   }).then((response) => response.json());
   openedSessions.push(brain.session);
   const show = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(brain.session)}`).then((response) => response.json());
@@ -203,8 +204,9 @@ test("bounded brain prompt uses conversational Requests", async (context) => {
   const leaf = `probeforjulian${process.pid}`;
   const area = path.join(trees, "otto", leaf);
   await mkdir(area, { recursive: true });
+  await writeFile(path.join(trees, "harnesses.md"), "```tangent.harnesses.v1\n{\"version\":1,\"harnesses\":[{\"id\":\"brain\",\"command\":\"brain-agent\"}]}\n```\n", "utf8");
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
-  await writeFile(path.join(area, `${leaf}.md`), `---\ntype: area\n---\n\n# ${leaf}\n`, "utf8");
+  await writeFile(path.join(area, `${leaf}.md`), `---\ntype: area\n---\n\n# ${leaf}\n\n\`\`\`tangent.environment.v1\n{\"defaults\":{\"brain\":{\"harness\":\"brain\"}}}\n\`\`\`\n`, "utf8");
 
   let port;
   try {
@@ -250,7 +252,7 @@ test("bounded brain prompt uses conversational Requests", async (context) => {
   const brain = await fetch(`${base}/api/brains/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ area: `otto/${leaf}`, instruction: "Get the probe Area done.", command: "brain-agent" }),
+    body: JSON.stringify({ area: `otto/${leaf}`, instruction: "Get the probe Area done." }),
   }).then((response) => response.json());
   openedSessions.push(brain.session);
   const show = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(brain.session)}`).then((response) => response.json());
@@ -332,7 +334,7 @@ test("bounded brain prompt selects structural sources instead of recent Document
   const brain = await fetch(`${base}/api/brains/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ area: "otto/probeage", instruction: "Propose the document structure first.", command: "brain-agent" }),
+    body: JSON.stringify({ area: "otto/probeage", instruction: "Propose the document structure first." }),
   }).then((response) => response.json());
   assert.ok(brain.session, JSON.stringify(brain));
   openedSessions.push(brain.session);

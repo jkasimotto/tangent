@@ -255,9 +255,16 @@ test("an ended brain does not wake without a message, and a live record still re
   assert.equal(first.status, 200, JSON.stringify(first.body));
   openedSessions.push(first.body.session);
 
-  // Stop agent ends the logical brain, so the record becomes inactive.
-  const killed = await fetch(`${base}/api/kill/${encodeURIComponent(first.body.session)}`, { method: "POST" }).then((response) => response.json());
-  assert.equal(killed.brainEnded, true);
+  // Every normal surface uses the Area-scoped stop transition.
+  const stopped = await post(base, "/api/brains/stop", {
+    area: "otto/test", expectedAttemptId: first.body.session, operationId: "silent-wake-stop",
+  });
+  assert.equal(stopped.status, 200, JSON.stringify(stopped.body));
+  assert.equal(stopped.body.state, "stopped");
+  const repeated = await post(base, "/api/brains/stop", {
+    area: "otto/test", expectedAttemptId: first.body.session, operationId: "silent-wake-stop",
+  });
+  assert.equal(repeated.status, 200, "a retry is idempotent");
 
   const silent = await post(base, "/api/brains/start", { area: "otto/test", resume: true });
   assert.equal(silent.status, 400, JSON.stringify(silent.body));

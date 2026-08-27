@@ -2646,7 +2646,7 @@ async function areaHarnessId(area) {
  * declares for hand-started work.
  */
 function brainWorkerLaunch(brain) {
-  const launch = brain?.launch;
+  const launch = currentGeneration(brain)?.resolvedLaunch?.ref;
   if (!launch?.harness) return null;
   return { harness: String(launch.harness), model: launch.model ?? null, effort: launch.effort ?? null };
 }
@@ -3669,7 +3669,7 @@ async function describeWorkToBrain(owner, area, description, sources, launchOver
     : false;
   if (live) {
     if (launchOverride) {
-      return { status: 409, error: `the ${owner.area} brain is already live on ${owner.label || owner.command}; refresh to send this draft to that brain` };
+      return { status: 400, error: "Brain launch overrides are retired. Change the Area Brain configuration, then refresh." };
     }
     const message = describedWorkNotice(area, description, sources);
     const notice = await recordBrainNotice(area, message);
@@ -3680,18 +3680,19 @@ async function describeWorkToBrain(owner, area, description, sources, launchOver
       generation: owner.generation ?? null, queuedAt: new Date().toISOString(),
     });
     await messages.log({ event: "sent", to: owner.session, from: "tangent", text: message, disposition: "queued", reason: "described work" });
-    return { status: 200, session: owner.session, generation: owner.generation, brainArea: owner.area, route: "brain-opened", launchLabel: owner.label || owner.command };
+    return { status: 200, session: owner.session, generation: owner.generation, brainArea: owner.area, route: "brain-opened", launchLabel: currentGeneration(owner)?.resolvedLaunch?.label || "" };
   }
   const message = describedWorkNotice(area, description, sources);
   await recordBrainNotice(area, message);
   const route = owner.status === "active" ? "brain-started" : "brain-resumed";
   // The description is already an unread notice, so this wake carries
   // Julian's words even though the start call has no instruction text.
-  const started = await startBrain(owner.area, { resume: true, messageRecorded: true, ...(launchOverride ?? {}) });
+  if (launchOverride) return { status: 400, error: "Brain launch overrides are retired. Change the Area Brain configuration, then refresh." };
+  const started = await startBrain(owner.area, { resume: true, messageRecorded: true });
   if (started.status !== 200) {
     return { status: started.status, error: `Your description was saved for the ${owner.area} brain, but the brain did not start: ${started.error}` };
   }
-  return { ...started, brainArea: owner.area, route, launchLabel: started.brain?.label || started.brain?.command };
+  return { ...started, brainArea: owner.area, route, launchLabel: started.brain?.resolvedLaunch?.label || "" };
 }
 
 /**
@@ -3940,7 +3941,7 @@ async function brainPrompt(record) {
 }
 
 /** Creates and primes the next generation's session for one brain record. */
-async function spawnBrainSession(record) {
+async function spawnBrainSession(record, resolvedLaunch) {
   const sessions = await listAllSessions();
   const names = new Set(sessions.map((item) => item.name));
   const generation = (record.generations?.length ?? 0) + 1;
@@ -3968,10 +3969,10 @@ async function spawnBrainSession(record) {
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_phase", "orchestrate"]);
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_brain", record.area]);
   await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_generation", String(generation)]);
-  if (record.label) await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_launch", record.label]);
-  if (launchRef(record.launch)) await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_launch_ref", launchRef(record.launch)]);
+  if (resolvedLaunch.label) await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_launch", resolvedLaunch.label]);
+  if (launchRef(resolvedLaunch.ref)) await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_launch_ref", launchRef(resolvedLaunch.ref)]);
   record.instanceId = INSTANCE_ID;
-  const entry = beginGeneration(record, name);
+  const entry = beginGeneration(record, name, resolvedLaunch);
   entry.instanceId = INSTANCE_ID;
   entry.deliveryStatus = "pending";
   record.health = { status: "starting", problem: null, updatedAt: new Date().toISOString() };
@@ -4002,12 +4003,12 @@ async function spawnBrainSession(record) {
   };
   if (process.env.AGENT_SHELL_TEST_NO_LAUNCH === "1") {
     await firstMessageTyped(true);
-    return { status: 200, session: name, generation, brain: record };
+    return { status: 200, session: name, generation, brain: { ...record, resolvedLaunch } };
   }
   await sleep(700);
   let primed = false;
   try {
-    primed = await primeDescribeWorkSession(name, record.area, prompt, { launch: true, command: record.command, onTyped: firstMessageTyped });
+    primed = await primeDescribeWorkSession(name, record.area, prompt, { launch: true, command: resolvedLaunch.command, onTyped: firstMessageTyped });
   } catch (error) {
     console.error("brain session:", error.message ?? error);
   }
@@ -4015,25 +4016,21 @@ async function spawnBrainSession(record) {
     releaseBrainNotices(unread);
     if (entry.deliveryStatus === "pending") await firstMessageTyped(false);
   }
-  return { status: 200, session: name, generation, brain: record };
+  return { status: 200, session: name, generation, brain: { ...record, resolvedLaunch } };
 }
 
-/** Refreshes an inactive or recovering brain's runtime launch setting. */
-async function refreshBrainLaunch(record) {
-  const launch = record.launch?.harness
-    ? await launchCatalog.requested({ choice: record.launch })
-    : record.command
-      ? await launchCatalog.requested({ command: record.command })
-      : await launchCatalog.forBrain(record.area);
-  if (launch.error) return launch;
-  record.launch = launch.harness ? {
-    harness: launch.harness,
-    model: launch.model ?? null,
-    effort: launch.effort ?? null,
-  } : null;
-  record.command = launch.command;
-  record.label = launch.label || launch.command;
-  return launch;
+/** Resolves one immutable attempt snapshot from the authoritative Area configuration. */
+async function resolveBrainAttemptLaunch(area) {
+  const launch = await launchCatalog.forBrain(area);
+  if (launch?.error) return launch;
+  if (!launch?.harness || !launch.command) return { error: `${area}: no brain launch is declared` };
+  return {
+    ref: { harness: launch.harness, model: launch.model ?? null, effort: launch.effort ?? null },
+    label: launch.label || launch.command,
+    command: launch.command,
+    sourceArea: launch.source ?? null,
+    mode: launch.via ?? "brain",
+  };
 }
 
 /**
@@ -4062,7 +4059,7 @@ async function startBrain(area, options = {}) {
 }
 
 /** Performs one exact-Area start, resume, or reattachment. */
-async function startBrainUnlocked(area, { instruction = "", choice = null, command = "", resume = false, automaticRecovery = false, messageRecorded = false } = {}) {
+async function startBrainUnlocked(area, { instruction = "", expectedLaunch = "", resume = false, automaticRecovery = false, messageRecorded = false } = {}) {
   if (!area || !existsSync(path.join(TREES_ROOT, area))) return { status: 404, error: `no Area ${area || "(none)"}` };
   const existing = await readBrain(BRAINS_ROOT, area);
   if (existing?.session) {
@@ -4086,10 +4083,19 @@ async function startBrainUnlocked(area, { instruction = "", choice = null, comma
       const ownership = live.instanceId ? { state: "foreign", instanceId: live.instanceId } : { state: "legacy" };
       return { status: 409, error: terminationError(existing.session, ownership) };
     }
-    if (live.state === "live" && (choice || command)) {
-      return { status: 409, error: `the ${existing.area} brain is already live on ${existing.label || existing.command}; refresh to send this draft to that brain` };
-    }
-    if (live.state === "live") return { status: 200, session: existing.session, generation: existing.generation, brain: existing, reattached: true };
+    if (live.state === "live") return {
+      status: 200,
+      session: existing.session,
+      generation: existing.generation,
+      brain: { ...existing, resolvedLaunch: currentGeneration(existing)?.resolvedLaunch ?? null },
+      reattached: true,
+    };
+  }
+  const resolvedLaunch = await resolveBrainAttemptLaunch(area);
+  if (resolvedLaunch.error) return { status: 409, error: resolvedLaunch.error };
+  const resolvedRef = launchRef(resolvedLaunch.ref);
+  if (expectedLaunch && expectedLaunch !== resolvedRef) {
+    return { status: 409, code: "launch-changed", error: `the Brain launch changed to ${resolvedRef}; review it before starting`, launch: resolvedLaunch };
   }
   if (resume) {
     if (!existing) return { status: 404, error: "no brain to resume on this Area" };
@@ -4106,47 +4112,25 @@ async function startBrainUnlocked(area, { instruction = "", choice = null, comma
     // the woken attempt reads it in its first message and knows why it is
     // awake. Automatic recovery carries no message and stays silent.
     if (instruction.trim()) await recordBrainNotice(area, `Julian woke this brain: ${instruction.trim()}`);
-    if (choice || command) {
-      const launch = await launchCatalog.requested({ choice, command });
-      if (launch.error) return { status: 409, error: launch.error };
-      existing.launch = command ? null : choice;
-      existing.command = launch.command;
-      existing.label = command ? launch.command : launch.label || launch.command;
-    } else {
-      const launch = await refreshBrainLaunch(existing);
-      if (launch.error) return { status: 409, error: launch.error };
-    }
     await writeBrain(BRAINS_ROOT, existing);
-    return spawnBrainSession(existing);
+    return spawnBrainSession(existing, resolvedLaunch);
   }
   if (existing) return { status: 409, error: `the ${area} brain already exists; resume it so its founding instruction stays immutable` };
   const invalid = validateInstruction(instruction);
   if (invalid) return { status: 400, error: invalid };
-  // An explicit choice wins. Otherwise the nearest Brain declaration wins,
-  // followed only by a declared Work launch for the target Area.
-  let launch = await launchCatalog.requested({ choice, command });
-  let ref = command ? null : choice;
-  if (!launch.error && !launch.command) {
-    launch = await launchCatalog.forBrain(area);
-    ref = launch.harness ? { harness: launch.harness, model: launch.model ?? null, effort: launch.effort ?? null } : null;
-  }
-  if (launch.error) return { status: 409, error: launch.error };
   const leaf = area.split("/").pop();
   let record;
   try {
     record = newBrain({
       area,
       instruction,
-      launch: ref,
-      command: launch.command,
-      label: command ? launch.command : launch.label ?? "",
       planFile: `${area}/plan-${leaf}.md`,
     });
   } catch (error) {
     return { status: 400, error: String(error.message ?? error) };
   }
   const replacedGeneration = existing?.generation ?? null;
-  const started = await spawnBrainSession(record);
+  const started = await spawnBrainSession(record, resolvedLaunch);
   if (started.status === 200 && replacedGeneration !== null) {
     await transitionBrainRequests(area, replacedGeneration, "brain-replaced");
   }
@@ -4217,10 +4201,10 @@ async function handoverBrain(sessionName, text) {
   const previousGeneration = record.generation;
   countWaitingHandover(record, pace.acted);
   recordHandover(record, text);
-  const launch = await refreshBrainLaunch(record);
+  const launch = await resolveBrainAttemptLaunch(record.area);
   if (launch.error) return { status: 409, error: launch.error };
   await writeBrain(BRAINS_ROOT, record);
-  const started = await spawnBrainSession(record);
+  const started = await spawnBrainSession(record, launch);
   if (started.status !== 200) {
     messages.queue(previous, { from: "tangent", area: null, text: `Handover recorded, but the next generation could not start: ${started.error}. You are still the brain.`, queuedAt: new Date().toISOString() });
     return started;
@@ -4238,17 +4222,47 @@ async function handoverBrain(sessionName, text) {
   return { status: 200, state: "started", session: started.session, generation: started.generation, previous, brain: record };
 }
 
-/** Ends the brain whose current session Julian killed, if any. */
-async function endBrainForSession(sessionName) {
-  const records = await readAllBrains(BRAINS_ROOT);
-  const record = records.find((item) => item.status === "active" && item.session === sessionName);
-  if (!record) return null;
+/** Makes one logical brain inactive, then terminates only its exact owned attempt. */
+async function stopBrain(area, { expectedAttemptId = "", operationId = "" } = {}) {
+  if (!area) return { status: 400, code: "area-required", error: "an Area is required" };
+  if (!expectedAttemptId) return { status: 400, code: "attempt-required", error: "an expected brain attempt is required" };
+  if (!operationId) return { status: 400, code: "operation-required", error: "an operation ID is required" };
+  const record = await readBrain(BRAINS_ROOT, area);
+  if (!record) return { status: 404, code: "brain-not-found", error: `no brain on ${area}` };
+  if (record.stopOperation?.id === operationId && record.stopOperation.status === "complete") {
+    return { status: 200, state: "stopped", brain: record };
+  }
+  if (record.status === "inactive") return { status: 200, state: "already-inactive", brain: record };
+  const attemptId = record.currentAttemptId ?? record.session ?? "";
+  if (expectedAttemptId && expectedAttemptId !== attemptId) {
+    return { status: 409, code: "attempt-changed", error: `the active brain attempt changed to ${attemptId}` };
+  }
+  const ownership = await sessionOwnership.inspect(attemptId);
+  if (ownership.state !== "live" || ownership.instanceId !== INSTANCE_ID) {
+    const result = ownership.state === "live"
+      ? ownership.instanceId ? { state: "foreign", instanceId: ownership.instanceId } : { state: "legacy" }
+      : ownership;
+    const code = result.state === "foreign" ? "foreign-process" : result.state === "legacy" ? "legacy-process" : "stop-incomplete";
+    const status = ["foreign-process", "legacy-process"].includes(code) ? 409 : 503;
+    return { status, code, error: terminationError(attemptId, result) };
+  }
   endBrain(record, "inactive");
+  record.stopOperation = { id: operationId, attemptId, target: ownership.target, instanceId: INSTANCE_ID, status: "pending", requestedAt: new Date().toISOString() };
+  record.health = { status: "stopping", problem: null, updatedAt: new Date().toISOString() };
+  await writeBrain(BRAINS_ROOT, record);
+  brainPacing.forget(attemptId);
+  await transitionBrainRequests(record.area, record.generation, "brain-ended");
+  const stopped = await sessionOwnership.terminate(attemptId, ownership.target);
+  if (stopped.state !== "terminated" && stopped.state !== "absent") {
+    record.stopOperation = { ...record.stopOperation, status: "incomplete", error: terminationError(attemptId, stopped), updatedAt: new Date().toISOString() };
+    record.health = { status: "failed", problem: record.stopOperation.error, updatedAt: new Date().toISOString() };
+    await writeBrain(BRAINS_ROOT, record);
+    return { status: 503, code: "stop-incomplete", error: record.stopOperation.error };
+  }
+  record.stopOperation = { ...record.stopOperation, status: "complete", completedAt: new Date().toISOString() };
   record.health = { status: "inactive", problem: null, updatedAt: new Date().toISOString() };
   await writeBrain(BRAINS_ROOT, record);
-  brainPacing.forget(sessionName);
-  await transitionBrainRequests(record.area, record.generation, "brain-ended");
-  return record;
+  return { status: 200, state: "stopped", brain: record };
 }
 
 /** The wake-up one brain gets when its paced wait is over. */
@@ -4311,6 +4325,15 @@ async function reconcileBrains(sessions) {
   for (const record of await readAllBrains(BRAINS_ROOT)) {
     const entry = currentGeneration(record);
     const observed = record.session ? allByName.get(record.session) : null;
+    if (record.status === "inactive" && record.stopOperation?.status === "incomplete") {
+      const stopped = await sessionOwnership.terminate(record.stopOperation.attemptId, record.stopOperation.target);
+      if (stopped.state === "terminated" || stopped.state === "absent") {
+        record.stopOperation = { ...record.stopOperation, status: "complete", completedAt: new Date().toISOString() };
+        record.health = { status: "inactive", problem: null, updatedAt: new Date().toISOString() };
+        await writeBrain(BRAINS_ROOT, record);
+      }
+      continue;
+    }
     if (observed && !observed.owned) continue;
     const durableOwner = record.instanceId === INSTANCE_ID
       || entry?.instanceId === INSTANCE_ID
@@ -4553,6 +4576,7 @@ async function brainsView(sessions, { includeForJulian = true } = {}) {
     const live = record.session ? byName.get(record.session) : null;
     return {
       ...record,
+      resolvedLaunch: currentGeneration(record)?.resolvedLaunch ?? null,
       live: Boolean(live),
       state: live?.state ?? null,
       stateDetail: live?.stateDetail ?? null,
@@ -5021,6 +5045,7 @@ async function executeAuthorizedRequestEffect(effect, brain) {
 
 const brainRoutes = createBrainRoutes({
   start: startBrain,
+  stop: stopBrain,
   handover: handoverBrain,
   normalizeMessage,
   verdict: clearRowWithVerdict,
@@ -5340,14 +5365,20 @@ const shellControlRoutes = createShellControlRoutes({
   async kill(name) {
     if (!name || name === CHAT_SESSION) return { status: 400, error: "refusing to kill this session" };
     try {
+      const brain = (await readAllBrains(BRAINS_ROOT)).find((item) => item.status === "active" && item.session === name);
+      if (brain) {
+        const result = await stopBrain(brain.area, { expectedAttemptId: name, operationId: randomUUID() });
+        return result.status === 200
+          ? { status: 200, value: { ok: true, pipelineEnded: false, brainEnded: true } }
+          : { status: result.status, error: result.error };
+      }
       const stopped = await terminateOwnedSession(name);
       if (stopped.state !== "terminated") {
         const status = stopped.state === "absent" ? 404 : stopped.state === "error" ? 503 : 409;
         return { status, error: terminationError(name, stopped) };
       }
       const ended = await endPipelineForSession(name).catch((error) => { console.error("end pipeline on kill:", error.message ?? error); return null; });
-      const brainEnded = await endBrainForSession(name).catch((error) => { console.error("end brain on kill:", error.message ?? error); return null; });
-      return { status: 200, value: { ok: true, pipelineEnded: Boolean(ended), brainEnded: Boolean(brainEnded) } };
+      return { status: 200, value: { ok: true, pipelineEnded: Boolean(ended), brainEnded: false } };
     } catch (error) {
       return { status: 500, error: String(error.stderr ?? error.message ?? error) };
     }

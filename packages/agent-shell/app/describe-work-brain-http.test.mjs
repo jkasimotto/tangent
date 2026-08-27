@@ -70,7 +70,7 @@ save();
   for (const area of ["otto/tangent/child", "otto/plain"]) await mkdir(path.join(trees, area), { recursive: true });
   await mkdir(workspace, { recursive: true });
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
-  await writeFile(path.join(trees, "otto", "tangent", "tangent.md"), `---\ntype: area\n---\n\n# Tangent\n\n## Resources\n\n- Repository: ${workspace}\n`, "utf8");
+  await writeFile(path.join(trees, "otto", "tangent", "tangent.md"), `---\ntype: area\n---\n\n# Tangent\n\n## Resources\n\n- Repository: ${workspace}\n\n\`\`\`tangent.environment.v1\n{"defaults":{"brain":{"harness":"codex","model":"sol"}}}\n\`\`\`\n`, "utf8");
   await writeFile(path.join(trees, "otto", "tangent", "child", "child.md"), "---\ntype: area\n---\n\n# Child\n", "utf8");
   await writeFile(path.join(trees, "otto", "plain", "plain.md"), `---\ntype: area\n---\n\n# Plain\n\n## Resources\n\n- Repository: ${workspace}\n`, "utf8");
   await writeFile(path.join(trees, "harnesses.md"), [
@@ -97,7 +97,6 @@ save();
     area: "otto/tangent",
     description: "Route this exact description to the controlling brain.",
     sources: ["otto/tangent/design-context.md"],
-    choice: { harness: "codex", model: "sol" },
   });
   assert.equal(resumed.status, 200);
   assert.equal(resumed.body.route, "brain-resumed");
@@ -107,8 +106,8 @@ save();
   assert.equal(tmuxAfterResume.sessions[resumed.body.session].options["@tangent_launch"], "Codex · Sol");
   assert.equal(resumed.body.launchLabel, "Codex · Sol");
   const resumedRecord = await readBrain(brains, "otto/tangent");
-  assert.deepEqual(resumedRecord.launch, { harness: "codex", model: "sol" });
-  assert.equal(resumedRecord.command, "codex --model sol");
+  assert.deepEqual(resumedRecord.generations.at(-1).resolvedLaunch.ref, { harness: "codex", model: "sol", effort: null });
+  assert.equal(resumedRecord.generations.at(-1).resolvedLaunch.command, "codex --model sol");
   assert.equal(Object.values(tmuxAfterResume.sessions).some((session) => session.options["@tangent_kind"] === "work-definition"), false);
   const inbox = JSON.parse(await readFile(path.join(brains, "otto", "tangent", "inbox.json"), "utf8"));
   assert.match(inbox.notices[0].text, /Route this exact description to the controlling brain\./);
@@ -130,12 +129,11 @@ save();
   const conflict = await describe(base, {
     area: "otto/tangent",
     description: "Keep this draft when the brain became live.",
-    choice: { harness: "claude", model: "fable" },
   });
-  assert.equal(conflict.status, 409);
-  assert.match(conflict.body.error, /already live on Codex · Sol/);
+  assert.equal(conflict.status, 200);
+  assert.equal(conflict.body.route, "brain-opened");
   const inboxAfterConflict = JSON.parse(await readFile(path.join(brains, "otto", "tangent", "inbox.json"), "utf8"));
-  assert.equal(inboxAfterConflict.notices.length, inboxBeforeConflict.notices.length);
+  assert.equal(inboxAfterConflict.notices.length, inboxBeforeConflict.notices.length + 1);
 
   const staleTmux = JSON.parse(await readFile(fakeTmuxState, "utf8"));
   delete staleTmux.sessions[live.body.session];
@@ -143,21 +141,20 @@ save();
   const started = await describe(base, {
     area: "otto/tangent",
     description: "Restart the stale recorded brain.",
-    choice: { harness: "claude", model: "fable" },
   });
   assert.equal(started.status, 200);
   assert.equal(started.body.route, "brain-started");
   assert.notEqual(started.body.session, live.body.session);
   const tmuxAfterStart = JSON.parse(await readFile(fakeTmuxState, "utf8"));
   assert.equal(tmuxAfterStart.sessions[started.body.session].options["@tangent_kind"], "brain");
-  assert.equal(tmuxAfterStart.sessions[started.body.session].options["@tangent_launch"], "Claude · Fable");
-  assert.equal((await readBrain(brains, "otto/tangent")).command, "claude --model fable");
+  assert.equal(tmuxAfterStart.sessions[started.body.session].options["@tangent_launch"], "Codex · Sol");
+  assert.equal((await readBrain(brains, "otto/tangent")).generations.at(-1).resolvedLaunch.command, "codex --model sol");
 
   /** Starts the exact child brain through the public lifecycle route. */
   const startChild = () => fetch(`${base}/api/brains/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ area: "otto/tangent/child", instruction: "Own child work.", choice: { harness: "codex", model: "sol" } }),
+    body: JSON.stringify({ area: "otto/tangent/child", instruction: "Own child work." }),
   }).then((response) => response.json());
   const childStarts = await Promise.all([startChild(), startChild()]);
   assert.equal(childStarts[0].session, "child-brain");

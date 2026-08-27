@@ -334,7 +334,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       : brain.live
         ? `Open the brain (${brainStateLabel(brain).toLowerCase()})`
         : `${brainStateLabel(brain)}: send it a message to resume, or start over`;
-    return `<button class="area-brain ${kind}${open ? " open" : ""}" type="button" data-launch-for="${BRAIN_LAUNCH_TARGET}" data-brain-area="${escapeHtml(areaPath)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}" aria-expanded="${open}"><span aria-hidden="true">🧠</span></button>`;
+    return `<span class="area-brain-controls"><button class="area-brain ${kind}${open ? " open" : ""}" type="button" data-launch-for="${BRAIN_LAUNCH_TARGET}" data-brain-area="${escapeHtml(areaPath)}" title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}" aria-expanded="${open}"><span aria-hidden="true">🧠</span></button>${brain?.live ? `<button class="quiet-button" type="button" data-stop-brain-area="${escapeHtml(areaPath)}" data-stop-brain-attempt="${escapeHtml(brain.currentAttemptId ?? brain.session ?? "")}">Stop brain</button>` : ""}</span>`;
   }
 
   /** Opens the brain's terminal in the shared session layer. */
@@ -432,7 +432,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     state.launch.continueFrom = null;
     // A prior brain retains its runtime. A new brain is seeded asynchronously
     // from the nearest explicit Area brain default (then the server fallback).
-    state.launch.choice = brain?.launch ?? null;
+    state.launch.choice = null;
     // The box always starts empty. Prefilling it with the inactive brain's
     // instruction let an instruction Julian typed for an earlier brain become
     // the new one's, and the next attempt then read an old order as today's.
@@ -457,7 +457,9 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     if (!area) return;
     if (!instruction) return showToast(resume ? "Write the message that wakes this brain." : "Tell the brain what this Area should get done.");
     try {
-      const result = await post("/api/brains/start", { area, instruction, ...(resume ? {} : launchRequestFields()), resume });
+      const selection = launchSelection();
+      const expectedLaunch = [selection?.harness?.id, selection?.model?.id, selection?.effort?.id].filter(Boolean).join("/");
+      const result = await post("/api/brains/start", { area, instruction, expectedLaunch, resume });
       // The resume message is the wake reason. The server records it as an
       // unread notice, so the woken attempt reads it in its first message.
       state.launchTarget = "";
@@ -469,6 +471,30 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     } catch (error) {
       showToast(error.message);
     }
+  }
+
+  /** Confirms one Area-scoped brain stop and preserves its Goals and workers. */
+  function confirmStopBrain(area, expectedAttemptId = "") {
+    const brain = brainForAreaCard(area);
+    if (!brain?.live) return showToast("The brain is not live.");
+    openModal({
+      kicker: "Area brain",
+      title: `Stop the ${humanName(area.split("/").pop())} brain?`,
+      copy: "This makes the brain inactive. Its Goals, queues, and worker agents continue. A later message can wake it.",
+      confirmLabel: "Stop brain",
+      danger: true,
+      /** Stops the exact attempt that the Area control displayed. */
+      async onConfirm() {
+        try {
+          await post("/api/brains/stop", { area, expectedAttemptId: expectedAttemptId || brain.currentAttemptId || brain.session, operationId: crypto.randomUUID() });
+          await refresh();
+          showToast("The brain stopped. Its work continues.");
+        } catch (error) {
+          await refresh();
+          showToast(error.message);
+        }
+      },
+    });
   }
 
   const NAME_MAP = new Map([
@@ -1550,7 +1576,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
           ? `<button class="desk-state ${status.kind}" type="button" data-review-questions="${escapeHtml(area.path)}" title="Review the open questions">${escapeHtml(status.label)}</button>`
           : `<span class="desk-state ${status.kind}">${escapeHtml(status.label)}</span>`}
         ${deskSelectionBar(area.path, allTrees)}
-        <button class="work-group-brain" type="button" ${route} data-focus-key="brain:${escapeHtml(area.path)}" aria-label="${escapeHtml(label)} for ${escapeHtml(areaLabel(area.path))}"><span class="work-group-brain-long">${escapeHtml(label)}</span><span class="work-group-brain-short">Brain</span></button>
+        <span class="work-group-brain-controls"><button class="work-group-brain" type="button" ${route} data-focus-key="brain:${escapeHtml(area.path)}" aria-label="${escapeHtml(label)} for ${escapeHtml(areaLabel(area.path))}"><span class="work-group-brain-long">${escapeHtml(label)}</span><span class="work-group-brain-short">Brain</span></button>${brain?.live ? `<button class="quiet-button" type="button" data-stop-brain-area="${escapeHtml(area.path)}" data-stop-brain-attempt="${escapeHtml(brain.currentAttemptId ?? brain.session ?? "")}">Stop brain</button>` : ""}</span>
       </th>
     </tr>`;
   }
@@ -1924,5 +1950,5 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     `;
   }
 
-  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, forgetVerdictLines, openRequest, openQuestionsReview, openAreaCapture, openWorkCommands, sendVerdict, replyAboutRow, areaQuestions, areaBlockers, goalGroupRoot, toggleSubgoals, toggleWorkArea, otherDeskAreas, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, renderWork };
+  return { allGoals, goalGroups, goalTrees, goalTreeState, goalTreeIsActive, filteredGoalTrees, saveExpandedAreas, revealArea, goalByFile, currentGoal, sessionForGoal, sessionsForGoal, describeWorkSessions, describeWorkSession, brainSessions, brainForAreaCard, brainStateLabel, brainKind, deskBrainButton, openBrainSession, openOrStartBrain, toggleBrainPopover, startBrain, confirmStopBrain, humanName, areaParts, areaLabel, areaPath, agentName, agentReference, ageText, stateLabel, describeWorkStateLabel, goalNeedsYou, goalWorkFinished, workCard, goalTreeCard, forgetVerdictLines, openRequest, openQuestionsReview, openAreaCapture, openWorkCommands, sendVerdict, replyAboutRow, areaQuestions, areaBlockers, goalGroupRoot, toggleSubgoals, toggleWorkArea, otherDeskAreas, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, renderWork };
 }

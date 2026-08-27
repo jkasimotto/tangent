@@ -109,7 +109,7 @@ export function normalizeQueueRecord(value) {
     controllerArea,
     goalRevision: String(value.goalRevision ?? ""),
     revision,
-    status: migrationProblem ? "paused" : reopenSupersededPause ? "open" : ["open", "complete", "paused", "canceled"].includes(value.status) ? value.status : "open",
+    status: migrationProblem ? "paused" : reopenSupersededPause ? "open" : ["open", "complete", "paused", "canceled", "parked"].includes(value.status) ? value.status : "open",
     migrationProblem,
     completionPolicy: value.completionPolicy ?? "review-pass",
     currentAssignmentId: storedCurrent?.id ?? activeAssignment?.id ?? null,
@@ -184,7 +184,7 @@ export function appendSteps(record, steps) {
   const added = normalizeNewAssignments(steps, existing);
   record.steps = [...existing, ...added];
   record.assignments = record.steps;
-  if (record.status !== "paused") record.status = "open";
+  if (!["paused", "parked"].includes(record.status)) record.status = "open";
   record.revision = Math.max(1, Number(record.revision) || 1) + 1;
   return added;
 }

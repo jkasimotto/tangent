@@ -221,6 +221,16 @@ test("legacy queues gain open status and invalid authority pauses", async () => 
   assert.match(invalid.migrationProblem, /does not match exact Area/);
 });
 
+test("parked is a durable queue status and append does not reopen it", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "pipelines-"));
+  const record = newPipeline({ goal: "g", area: "otto/tangent", slug: "parked", steps: sampleSteps() });
+  record.status = "parked";
+  appendSteps(record, [{ instruction: "Later work.", launch: claude }]);
+  assert.equal(record.status, "parked");
+  await writePipeline(root, record);
+  assert.equal((await readPipeline(root, record.area, record.slug)).status, "parked");
+});
+
 test("a later started assignment supersedes a historical legacy wait", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "pipelines-"));
   const legacy = newPipeline({ goal: "otto/tangent/goal-x.md", area: "otto/tangent", slug: "x", steps: [

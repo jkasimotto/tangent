@@ -5,7 +5,7 @@ import path from "node:path";
 import { renderCommandHelp } from "@tangent/core";
 import { booleanArg, parseArgs, requiredString, stringArg, stringsArg, type Args } from "@tangent/core/cli";
 
-import { currentTmuxSession, goalQueueRevision, listGoalScope, postJson, requireArea, requireGoal, resolveServerUrl } from "../client.js";
+import { currentTmuxSession, goalQueueRevision, listGoalScope, postJson, requireArea, requireGoal, resolveServerUrl, vaultFetch } from "../client.js";
 import { goalCommandSpec } from "../spec.js";
 import { parseWorkerReportOption, workerHandoverResultLine } from "../worker-report.js";
 
@@ -29,6 +29,9 @@ export async function runGoalCli(argv = process.argv.slice(2)): Promise<void> {
   if (subcommand === "handover") return args.help ? help() : handoverCommand(args);
   if (subcommand === "done") return doneCommand(args);
   if (subcommand === "wont-do") return wontDoCommand(args);
+  if (subcommand === "park") return args.help ? help() : parkCommand(args);
+  if (subcommand === "reopen") return args.help ? help() : reopenCommand(args);
+  if (subcommand === "replace-agent") return args.help ? help() : replaceAgentCommand(args);
   throw new Error(`Unknown goal command: ${subcommand}. Try "tangent goal --help".`);
 }
 
@@ -196,6 +199,20 @@ type PipelineStepInput = {
   continueFrom: number | null;
 };
 
+type QueueAssignmentView = {
+  id?: string;
+  status?: string;
+  session?: string | null;
+  attempts?: Array<{ id?: string; session?: string }>;
+};
+
+/** Reads the canonical or compatibility assignment array from one Goal detail queue. */
+function queueAssignments(queue: Record<string, any>): QueueAssignmentView[] {
+  if (Array.isArray(queue.assignments)) return queue.assignments as QueueAssignmentView[];
+  if (Array.isArray(queue.steps)) return queue.steps as QueueAssignmentView[];
+  return [];
+}
+
 /**
  * Pairs each --step with the --launch, --path, and --continue-from at the same position. When appending,
  * a step may continue any step of the existing pipeline, so only the server (which knows the final
@@ -315,14 +332,28 @@ async function showCommand(args: Args): Promise<void> {
   const server = resolveServerUrl(stringArg(args.server));
   const slug = requiredString(args._[1], "tangent goal show requires <slug>.");
   const goal = await requireGoal(server, slug);
+  const detail = await vaultFetch(server, `/api/goals/detail?goal=${encodeURIComponent(goal.file)}`);
   if (booleanArg(args.json)) {
-    console.log(JSON.stringify(goal, null, 2));
+    console.log(JSON.stringify(detail, null, 2));
     return;
   }
   console.log(`${goal.title}  [${goal.status}]`);
   console.log(`area: ${goal.area}`);
   console.log(`file: ${goal.file}`);
   if (goal.doneWhen) console.log(`done when: ${goal.doneWhen}`);
+  const state = String(detail.goal?.stateText ?? detail.goal?.state ?? "").trim();
+  if (state) console.log(`state: ${state}`);
+  const notes = String(detail.goal?.storyText ?? detail.goal?.currentBrief ?? "").trim();
+  if (notes) console.log(`notes: ${notes}`);
+  const dependencies = (Array.isArray(detail.dependencies) ? detail.dependencies : []) as Array<{ title?: string; slug?: string; file?: string }>;
+  if (dependencies.length) console.log(`depends on: ${dependencies.map((item) => item.title ?? item.slug ?? item.file).join(", ")}`);
+  const queue = detail.queue;
+  if (queue) {
+    const assignments = queueAssignments(queue);
+    console.log(`queue: ${queue.status ?? "open"}, revision ${queue.revision ?? "?"}, ${assignments.length} assignment${assignments.length === 1 ? "" : "s"}`);
+    const current = assignments.find((item) => item.id === queue.currentAssignmentId) ?? assignments.find((item) => ["running", "waiting", "stopped"].includes(String(item.status ?? "")));
+    if (current) console.log(`current agent: ${current.session ?? "none"} (${current.status ?? "unknown"})`);
+  }
 }
 
 /** Handles `tangent goal done <slug>`. Status is written on Julian's explicit word, or a brain closing a Goal under its own plan on a passing review; see helpDoneWontDo(). */
@@ -354,6 +385,68 @@ async function wontDoCommand(args: Args): Promise<void> {
   console.log(`${slug} marked won't do: ${reason}`);
 }
 
+/** Handles `tangent goal park <slug> [--reason <text>]`. */
+async function parkCommand(args: Args): Promise<void> {
+  const server = resolveServerUrl(stringArg(args.server));
+  const slug = requiredString(args._[1], "tangent goal park requires <slug>.");
+  const goal = await requireGoal(server, slug);
+  if (["parked", "deferred"].includes(goal.status)) {
+    console.log(`${slug} is already parked.`);
+    return;
+  }
+  const reason = stringArg(args.reason)?.trim() || "";
+  await postJson(server, "/api/goals/edit", { file: goal.file, status: "parked", ...(reason ? { reason } : {}), session: await currentTmuxSession() });
+  console.log(`${slug} parked${reason ? `: ${reason}` : "."}`);
+}
+
+/** Handles `tangent goal reopen <slug>`. */
+async function reopenCommand(args: Args): Promise<void> {
+  const server = resolveServerUrl(stringArg(args.server));
+  const slug = requiredString(args._[1], "tangent goal reopen requires <slug>.");
+  const goal = await requireGoal(server, slug);
+  if (goal.status === "open") {
+    console.log(`${slug} is already open.`);
+    return;
+  }
+  await postJson(server, "/api/goals/edit", { file: goal.file, status: "open", session: await currentTmuxSession() });
+  console.log(`${slug} reopened. It was not started.`);
+}
+
+/** Handles an exact current-attempt replacement with one registered launch choice. */
+async function replaceAgentCommand(args: Args): Promise<void> {
+  const server = resolveServerUrl(stringArg(args.server));
+  const slug = requiredString(args._[1], "tangent goal replace-agent requires <slug>.");
+  const launch = parseLaunch(requiredString(stringsArg(args.launch)[0], "tangent goal replace-agent requires --launch <harness[/model[/effort]]>."));
+  if (stringsArg(args.launch).length !== 1 || !launch) throw new Error("tangent goal replace-agent takes exactly one --launch.");
+  const goal = await requireGoal(server, slug);
+  const detail = await vaultFetch(server, `/api/goals/detail?goal=${encodeURIComponent(goal.file)}`);
+  const queue = detail.queue;
+  if (!queue || !Number.isInteger(queue.revision)) throw new Error("This Goal has no authoritative queue to replace.");
+  const assignments = queueAssignments(queue);
+  const assignment = assignments.find((item) => item.id === queue.currentAssignmentId)
+    ?? assignments.find((item) => ["running", "waiting", "stopped"].includes(String(item.status ?? "")));
+  if (!assignment) throw new Error("This Goal has no current assignment to replace.");
+  const attempt = Array.isArray(assignment.attempts) ? assignment.attempts.at(-1) : null;
+  const expectedAttemptId = assignment.session ?? attempt?.id ?? attempt?.session;
+  if (!expectedAttemptId) throw new Error("This Goal has no current attempt identity to replace safely.");
+  const result = await postJson(server, "/api/goals/attempts/replace", {
+    goal: goal.file,
+    assignmentId: assignment.id,
+    expectedRevision: queue.revision,
+    expectedAttemptId,
+    launch,
+    operationId: randomUUID(),
+    caller: stringArg(args.session) || (await currentTmuxSession()) || "",
+  });
+  if (booleanArg(args.json)) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+  const replacement = result.session ?? result.operation?.replacementSession ?? "(replacement pending)";
+  console.log(`replacement for ${slug}: ${replacement} [${result.status ?? result.operation?.status ?? "requested"}]`);
+  if (result.requiresConfirmation) console.log("The source agent is still alive. Inspect the replacement before you finish the swap.");
+}
+
 /** Prints `tangent goal` help with real examples. */
 function help(): void {
   console.log(renderCommandHelp(goalCommandSpec));
@@ -370,6 +463,9 @@ Examples:
   tangent goal start pipelines-demo --step "/design this" --launch claude-otto/fable-5 --step "implement the design" --launch claude-otto/opus-5 --continue-from - --continue-from 1
   tangent goal start pipelines-demo --step "design the change" --launch claude-otto/fable-5 --path= --step "implement it in the plugin" --launch claude-otto/opus-5 --path ~/Projects/plugin
   tangent goal append pipelines-demo --step "review the implementation" --kind review --launch codex/sol/high
+  tangent goal replace-agent pipelines-demo --launch codex/sol/high
+  tangent goal park pipelines-demo --reason "Revisit after the current release."
+  tangent goal reopen pipelines-demo
   tangent goal handover "Design written: ~/.tangent/trees/otto/tangent/design-x.md. Unresolved: none."
 `);
 }

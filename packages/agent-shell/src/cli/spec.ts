@@ -173,7 +173,7 @@ export const goalCommandSpec: CliCommandSpec = {
         jsonOption
       ]
     },
-    { name: "show", description: "Show one Goal's status, done condition, and state", args: "<slug>", options: [serverOption, jsonOption] },
+    { name: "show", description: "Show one Goal's notes, status, done condition, dependencies, queue, and current agent", args: "<slug>", options: [serverOption, jsonOption] },
     {
       name: "depend",
       description: "Record advisory Goal prerequisites without blocking or reordering work",
@@ -265,6 +265,29 @@ export const goalCommandSpec: CliCommandSpec = {
       description: "Mark a Goal won't do with a reason. Run only on Julian's explicit word. Status is written on the user's say-so.",
       args: "<slug>",
       options: [{ name: "reason", takesValue: true, description: "Why this Goal won't be done (required)" }, serverOption]
+    },
+    {
+      name: "park",
+      description: "Park a Goal without deleting its notes or execution history",
+      args: "<slug>",
+      options: [{ name: "reason", takesValue: true, description: "Optional reason for parking the Goal" }, serverOption]
+    },
+    {
+      name: "reopen",
+      description: "Return a done, parked, or won't-do Goal to open without starting an agent",
+      args: "<slug>",
+      options: [serverOption]
+    },
+    {
+      name: "replace-agent",
+      description: "Replace the current Goal attempt with another harness, model, or effort while preserving the Goal and queue",
+      args: "<slug>",
+      options: [
+        { name: "launch", takesValue: true, description: "Replacement as <harness[/model[/effort]]> (required)" },
+        { name: "session", takesValue: true, description: "Caller session for audit; defaults to the current tmux session" },
+        serverOption,
+        jsonOption
+      ]
     }
   ]
 };

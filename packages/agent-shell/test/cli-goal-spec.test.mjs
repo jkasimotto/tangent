@@ -46,8 +46,63 @@ test("tangent goal handover takes facts, session identity, and a typed report", 
 test("goal help still lists the vault commands beside start and handover", () => {
   assert.deepEqual(
     goalCommandSpec.subcommands.map((entry) => entry.name),
-    ["create", "list", "show", "depend", "undepend", "own", "release", "start", "append", "handover", "done", "wont-do"]
+    ["create", "list", "show", "depend", "undepend", "own", "release", "start", "append", "handover", "done", "wont-do", "park", "reopen", "replace-agent"]
   );
+});
+
+test("Goal lifecycle and agent replacement have complete CLI contracts", () => {
+  assert.deepEqual(optionNames(subcommand("park")), ["reason", "server"]);
+  assert.deepEqual(optionNames(subcommand("reopen")), ["server"]);
+  assert.deepEqual(optionNames(subcommand("replace-agent")), ["launch", "session", "server", "json"]);
+  assert.match(subcommand("replace-agent").description, /preserving the Goal and queue/);
+});
+
+test("park, reopen, and replace-agent send exact Goal mutations", async (context) => {
+  const { runGoalCli } = await import("../dist/cli/index.js");
+  const previousTmux = process.env.TMUX;
+  delete process.env.TMUX;
+  const requests = [];
+  const previousFetch = globalThis.fetch;
+  const previousLog = console.log;
+  let showCount = 0;
+  console.log = () => {};
+  globalThis.fetch = async (input, init = {}) => {
+    const url = new URL(String(input));
+    const body = init.body ? JSON.parse(String(init.body)) : null;
+    requests.push({ path: url.pathname, body });
+    if (url.pathname === "/api/goals/show") {
+      const status = showCount++ === 1 ? "parked" : "open";
+      return Response.json({ goal: { slug: "proof", file: "otto/test/goal-proof.md", area: "otto/test", status } });
+    }
+    if (url.pathname === "/api/goals/detail") return Response.json({
+      goal: { slug: "proof", file: "otto/test/goal-proof.md", area: "otto/test", status: "open" },
+      queue: { revision: 8, currentAssignmentId: "assignment-2", assignments: [{ id: "assignment-2", status: "running", session: "proof-worker", attempts: [{ id: "proof-worker", session: "proof-worker" }] }] },
+    });
+    if (url.pathname === "/api/goals/edit" || url.pathname === "/api/goals/attempts/replace") return Response.json({ status: "complete", session: "proof-worker-2" });
+    return Response.json({ error: `unexpected ${url.pathname}` }, { status: 404 });
+  };
+  context.after(() => {
+    globalThis.fetch = previousFetch;
+    console.log = previousLog;
+    if (previousTmux === undefined) delete process.env.TMUX;
+    else process.env.TMUX = previousTmux;
+  });
+
+  await runGoalCli(["park", "proof", "--reason", "Later"]);
+  await runGoalCli(["reopen", "proof"]);
+  await runGoalCli(["replace-agent", "proof", "--launch", "codex/sol/high", "--session", "parent-brain"]);
+
+  const edits = requests.filter((request) => request.path === "/api/goals/edit");
+  assert.deepEqual(edits[0].body, { file: "otto/test/goal-proof.md", status: "parked", reason: "Later" });
+  assert.deepEqual(edits[1].body, { file: "otto/test/goal-proof.md", status: "open" });
+  const replacement = requests.find((request) => request.path === "/api/goals/attempts/replace").body;
+  assert.equal(replacement.goal, "otto/test/goal-proof.md");
+  assert.equal(replacement.assignmentId, "assignment-2");
+  assert.equal(replacement.expectedRevision, 8);
+  assert.equal(replacement.expectedAttemptId, "proof-worker");
+  assert.deepEqual(replacement.launch, { harness: "codex", model: "sol", effort: "high" });
+  assert.equal(replacement.caller, "parent-brain");
+  assert.match(replacement.operationId, /^[0-9a-f-]{36}$/);
 });
 
 test("tangent goal depend and undepend take repeatable prerequisites", () => {

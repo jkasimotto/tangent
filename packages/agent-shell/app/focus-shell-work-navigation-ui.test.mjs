@@ -293,7 +293,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   await settle(window);
   const questionCount = window.document.querySelector(`[data-review-questions="${liveEditGoal.area}"]`);
   assert.ok(questionCount, "the Area whose brain asked shows its question count");
-  assert.match(questionCount.textContent, /^1 question$/);
+  assert.match(questionCount.firstChild.textContent, /^1 question$/, "the count's words come first, then its key");
 
   click(window, `[data-review-questions="${liveEditGoal.area}"]`);
   await settle(window);

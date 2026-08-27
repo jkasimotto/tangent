@@ -22,7 +22,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     openDescribeSession, addDescribeSource,
     openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, openRequest, openQuestionsReview, openAreaCapture, sendVerdict,
     replyAboutRow, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery,
-    applyAreaFocus, clearAreaFocus, renderWork, describeLaunchArea, describeWorkSessions,
+    applyAreaFocus, clearAreaFocus, renderWork, paintWorkCaption, describeLaunchArea, describeWorkSessions,
     goalGroupRoot, setSubgoalsExpanded, toggleSubgoals, setWorkAreaFolded,
   } = work;
   const {
@@ -91,6 +91,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     state.workCursor = row.dataset.workCursor;
     localStorage.setItem("agent-shell.work-cursor", state.workCursor);
     for (const item of visibleCursorRows()) item.classList.toggle("cursor", item === row);
+    paintWorkCaption(screen);
     return true;
   }
 
@@ -100,6 +101,18 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     paint(true);
     if (focus) window.setTimeout(() => [...document.querySelectorAll("[data-work-cursor]")].find((item) => item.dataset.workCursor === state.workCursor)?.querySelector("[data-work-row-title], [data-work-cursor-control]")?.focus(), 0);
     return true;
+  }
+
+  /**
+   * True when Enter means the row, not the focused control. A focused button
+   * other than the row's title keeps its native press, so `⋯` and `Open brain`
+   * still act on Enter.
+   */
+  function enterOwnsWorkRow(target, row) {
+    if (!row) return false;
+    const control = target?.closest?.("button, a, input, textarea, select");
+    if (!control) return true;
+    return control.matches("[data-work-row-title], [data-work-cursor-control]") && row.contains(control);
   }
 
   /** Returns the visible rows that participate in Work cursor movement. */
@@ -715,7 +728,20 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
     if (id === "filter") return document.querySelector("#work-search")?.focus();
     if (id === "keys") return openWorkKeySheet();
+    if (id === "open") return openWorkRow(row);
     return undefined;
+  }
+
+  /**
+   * Enter on a row is a registered command (work-view-affordances D5), so the
+   * `↵` a button prints is real. The row's title or Area name carries the
+   * route, and pressing it is what the native focus path did before.
+   */
+  function openWorkRow(row) {
+    const control = row?.querySelector("[data-work-row-title], [data-work-cursor-control]");
+    if (!control) return showToast("Choose a Work row first.");
+    control.click();
+    return true;
   }
 
   /**
@@ -2630,6 +2656,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       if (workCommandMatches(event, "goalStatus")) { event.preventDefault(); return executeWorkCommand("goalStatus", current); }
       if (workCommandMatches(event, "filter")) { event.preventDefault(); return executeWorkCommand("filter", current); }
       if (workCommandMatches(event, "commands")) { event.preventDefault(); return openObjectActions(current); }
+      if (workCommandMatches(event, "open") && !event.shiftKey && enterOwnsWorkRow(event.target, current)) {
+        event.preventDefault();
+        return executeWorkCommand("open", current);
+      }
       if (workCommandMatches(event, "keys")) {
         event.preventDefault();
         return openWorkKeySheet();

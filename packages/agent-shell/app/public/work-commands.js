@@ -10,6 +10,7 @@ const records = [
   { id: "firstLast", keyDisplay: "gg / G", ariaKeyshortcuts: null, scope: "work", kind: "navigation", label: "First or last row", help: "Move to the first or last Work row." },
   { id: "previousArea", keyDisplay: "{", ariaKeyshortcuts: "Shift+[", scope: "area", kind: "navigation", palette: true, label: "Previous Area", help: "Jump to the previous real Area header.", shortcuts: [{ key: "{", shiftKey: "any" }] },
   { id: "nextArea", keyDisplay: "}", ariaKeyshortcuts: "Shift+]", scope: "area", kind: "navigation", palette: true, label: "Next Area", help: "Jump to the next real Area header.", shortcuts: [{ key: "}", shiftKey: "any" }] },
+  { id: "open", keyDisplay: "↵", ariaKeyshortcuts: "Enter", scope: "work", kind: "action", label: "Open", help: "Open the live session, the launch chooser, or the Goal reader for this row.", shortcuts: [{ key: "Enter" }] },
   { id: "openBrain", keyDisplay: "b", ariaKeyshortcuts: "b", scope: "area", kind: "action", palette: true, label: "Open brain", help: "Open this Area brain. A message starts an inactive brain.", shortcuts: [{ key: "b" }] },
   { id: "stopBrain", keyDisplay: "s", ariaKeyshortcuts: "s", scope: "area", kind: "action", palette: true, label: "Stop brain", help: "Stop this Area brain without stopping its worker agents.", shortcuts: [{ key: "s" }] },
   { id: "defaults", keyDisplay: "d", ariaKeyshortcuts: "d", scope: "area", kind: "action", palette: true, label: "Defaults", help: "Change this Area's default Work and brain agents.", shortcuts: [{ key: "d" }] },
@@ -45,6 +46,58 @@ export function workCommand(id) {
 /** Returns commands for one consumer without exposing mutable registry state. */
 export function workCommandsFor({ scope = "", palette = false } = {}) {
   return WORK_COMMANDS.filter((command) => (!scope || command.scope === scope) && (!palette || command.palette));
+}
+
+/**
+ * The keys each Work row prints in the caption line, by row kind. Every entry
+ * names registered command ids, so the caption and the `?` sheet read one
+ * table and cannot drift. A glyph-only control, like the fold triangle, has
+ * no verb to print its key beside, so this line is where its key is taught.
+ */
+const captionKeysByRow = Object.freeze({
+  area: [
+    { ids: ["openBrain"], word: "brain" },
+    { ids: ["messageBrain"], word: "message" },
+    { ids: ["collapse", "expand"], word: "fold" },
+    { ids: ["questions"], word: "questions" },
+    { ids: ["commands"], word: "more" },
+    { ids: ["keys"], word: "all" },
+  ],
+  goal: [
+    { ids: ["open"], word: "open" },
+    { ids: ["readGoal"], word: "read" },
+    { ids: ["goalStatus"], word: "status" },
+    { ids: ["changeAgent"], word: "agent" },
+    { ids: ["resumeAttempt"], word: "resume" },
+    { ids: ["collapse", "expand"], word: "fold" },
+    { ids: ["commands"], word: "more" },
+    { ids: ["keys"], word: "all" },
+  ],
+  definition: [
+    { ids: ["open"], word: "open" },
+    { ids: ["moveRows"], word: "rows" },
+    { ids: ["keys"], word: "all" },
+  ],
+  none: [
+    { ids: ["moveRows"], word: "rows" },
+    { ids: ["session"], word: "session" },
+    { ids: ["keys"], word: "all" },
+  ],
+});
+
+/** Returns the row kind (`area`, `goal`, `definition`) named by one cursor id, or `none`. */
+export function workRowKind(cursor = "") {
+  const kind = String(cursor ?? "").split(":")[0];
+  return Object.hasOwn(captionKeysByRow, kind) ? kind : "none";
+}
+
+/**
+ * Caption entries for one row kind: `{ ids, keyDisplay, word }`. `keyDisplay`
+ * joins the registered keys with `/`, so fold prints `h/l`.
+ */
+export function workCaptionKeys(kind = "none") {
+  const entries = captionKeysByRow[workRowKind(`${kind}:`)] ?? captionKeysByRow.none;
+  return entries.map(({ ids, word }) => ({ ids: [...ids], keyDisplay: ids.map((id) => workCommand(id).keyDisplay).join("/"), word }));
 }
 
 /** Rows for the `?` sheet. Each row stays separate; consumers never parse prose. */

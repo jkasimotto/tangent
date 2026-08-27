@@ -14,6 +14,11 @@ import { workCommand, workCommandHelpRows } from "./public/work-commands.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
+/** A button's words without the key it prints, so a proof reads the verb alone. */
+function verb(element) {
+  return [...element.childNodes].filter((node) => node.nodeName !== "KBD").map((node) => node.textContent).join("").trim();
+}
+
 /** Returns the visible Goal-title buttons of the work table, in row order. */
 function titles(document) {
   return [...document.querySelectorAll(".work-table [data-work-row-title]")].filter((button) => !button.closest("tr[hidden]"));
@@ -238,7 +243,7 @@ test("Work carries no attention queue and infers no ask", async () => {
   // opens the deliberate review rather than answering in place.
   const counts = [...document.querySelectorAll(".desk-state[data-review-questions]")];
   assert.ok(counts.length, "an Area whose brain asked shows a quiet question count");
-  assert.match(counts[0].textContent, /^\d+ questions?$/);
+  assert.match(verb(counts[0]), /^\d+ questions?$/);
 });
 
 test("a filter keeps focus in its input and says how many Goals are left", async () => {
@@ -454,7 +459,9 @@ test("Work keeps lifecycle compact and leaves dependency detail to the Goal read
   assert.equal(planned.document.querySelector(".work-readiness, .work-blocker-preview"), null, "readiness and folded dependency previews left Work");
 
   /** The visible primary action of one Goal row. */
-  const startAction = (slug) => planned.document.querySelector(`tr[data-goal-anchor$='goal-${slug}.md'] .work-cell-action .desk-action`).textContent.trim();
+  const startButton = (slug) => planned.document.querySelector(`tr[data-goal-anchor$='goal-${slug}.md'] .work-cell-action .desk-action`);
+  /** The action button's verb for one Goal slug. */
+  const startAction = (slug) => verb(startButton(slug));
   assert.equal(startAction("startable"), "Start agent");
   for (const slug of ["blocked", "broken", "errored"]) {
     assert.equal(startAction(slug), "Open", `${slug} opens its Goal instead of starting an agent`);
@@ -712,7 +719,7 @@ test("working agents and open Questions still outrank the brain word", async () 
   assert.match(groupHeader(document, "otto/standards").querySelector(".desk-state").textContent, /^2 working$/,
     "an Area whose agents work reports the agents, not its brain");
   const asked = groupHeader(document, "otto/tangent").querySelector(".desk-state");
-  assert.match(asked.textContent, /^\d+ questions?$/, "an Area whose brain asked reports the Questions first");
+  assert.match(verb(asked), /^\d+ questions?$/, "an Area whose brain asked reports the Questions first");
   assert.equal(asked.dataset.reviewQuestions, "otto/tangent", "the count opens the deliberate review");
 });
 

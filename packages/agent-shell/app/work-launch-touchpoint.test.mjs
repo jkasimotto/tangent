@@ -31,11 +31,16 @@ function openControl(document, slug) {
   return document.querySelector(`tr[data-goal-anchor$='goal-${slug}.md'] .work-cell-action [data-open-goal-run]`);
 }
 
+/** The control's words without the `↵` it prints after them. */
+function words(control) {
+  return [...control.childNodes].filter((node) => node.nodeName !== "KBD").map((node) => node.textContent).join("").trim();
+}
+
 test("a running step's open control is its harness, model, and effort", async () => {
   const { document } = await bootWorkTable(withLaunches(workTableFixture()));
   const control = openControl(document, "compact-table");
 
-  assert.equal(control.textContent.trim(), "pi-code/glm-5-2", "an empty effort is dropped, not printed");
+  assert.equal(words(control), "pi-code/glm-5-2", "an empty effort is dropped, not printed");
   assert.equal(control.className, "desk-launch-ref", "the launch text never takes the state colour of .desk-action");
   assert.match(control.getAttribute("aria-label"), /^Open step 1 on pi-code\/glm-5-2:/, "the verb moves into the accessible name");
   assert.equal(control.getAttribute("title"), "Open step 1 on pi-code/glm-5-2");
@@ -46,7 +51,7 @@ test("a plain session's open control is its recorded launch ids", async () => {
   const { document } = await bootWorkTable(withLaunches(workTableFixture()));
   const control = openControl(document, "framework-docs");
 
-  assert.equal(control.textContent.trim(), "claude-otto/opus-5/medium");
+  assert.equal(words(control), "claude-otto/opus-5/medium");
   assert.match(control.getAttribute("aria-label"), /^Open Claude on claude-otto\/opus-5\/medium:/);
 });
 
@@ -54,7 +59,7 @@ test("a row with no recorded launch keeps its verb", async () => {
   const { document } = await bootWorkTable(withLaunches(workTableFixture()));
   const control = openControl(document, "nesc-241");
 
-  assert.equal(control.textContent.trim(), "Open Claude", "a session started before the ids were recorded is never guessed at");
+  assert.equal(words(control), "Open Claude", "a session started before the ids were recorded is never guessed at");
   assert.equal(control.className, "desk-action");
 });
 

@@ -72,7 +72,7 @@ test("a parent Area owns descendant work without a separate sub-Area section", a
 
   assert.equal(window.document.querySelectorAll(".work-table tbody").length, 1, "embedded-js and storm-response fold into one row group");
   const group = window.document.querySelector(".work-table tbody");
-  assert.match(group.querySelector(".work-group-name button").textContent, /Neara/);
+  assert.match(group.querySelector(".work-group-name [data-work-cursor-control]").textContent, /Neara/);
   assert.match(group.querySelector(".work-group-brain .work-group-brain-long").textContent, /Open brain/);
   assert.equal(group.querySelectorAll(".work-group-row").length, 1, "a descendant does not become a second group");
   assert.equal(group.getAttribute("aria-labelledby"), group.querySelector(".work-group-head").id, "the row group is named by its header");

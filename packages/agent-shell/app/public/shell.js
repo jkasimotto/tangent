@@ -437,7 +437,7 @@ const {
   goalNeedsYou, goalWorkFinished, workCard, goalTreeCard,
   forgetVerdictLines, openRequest, openQuestionsReview, openAreaCapture, sendVerdict, replyAboutRow, areaQuestions, areaBlockers,
   goalGroupRoot, setSubgoalsExpanded, toggleSubgoals, setWorkAreaFolded, toggleWorkArea,
-  openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, renderWork,
+  openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery, applyAreaFocus, clearAreaFocus, renderWork, paintWorkCaption,
 } = workDeskView;
 
 const programView = createProgramView({
@@ -668,6 +668,7 @@ function reconcileWorkCursor() {
     localStorage.setItem("agent-shell.work-cursor", state.workCursor);
   }
   for (const item of rows) item.classList.toggle("cursor", item === row);
+  paintWorkCaption(screen);
   if (!state.sessionPeek && document.activeElement === document.body) row.querySelector("[data-work-row-title], [data-work-cursor-control]")?.focus({ preventScroll: true });
 }
 
@@ -1482,7 +1483,7 @@ bindShellEvents({
     openDescribeSession, addDescribeSource,
     openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, openRequest, openQuestionsReview, openAreaCapture, sendVerdict,
     replyAboutRow, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery,
-    applyAreaFocus, clearAreaFocus, renderWork, describeLaunchArea, describeWorkSessions,
+    applyAreaFocus, clearAreaFocus, renderWork, paintWorkCaption, describeLaunchArea, describeWorkSessions,
     goalGroupRoot, setSubgoalsExpanded, toggleSubgoals, setWorkAreaFolded, toggleWorkArea,
   },
   areas: {

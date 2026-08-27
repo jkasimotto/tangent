@@ -350,7 +350,6 @@ summary:focus-visible {
 .work-tools { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; gap: 12px; margin: 0 0 32px; }
 .work-tool-actions { display: flex; align-items: stretch; gap: 6px; }
 .work-tool-actions .quiet-button { min-height: 46px; white-space: nowrap; }
-.work-tool-actions kbd { margin-left: 6px; color: #9ebbe0; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 .search-field {
   display: flex;
@@ -464,7 +463,8 @@ summary:focus-visible {
    not `.desk-action`: the state colour rules below turn every `.desk-action`
    amber on a waiting row, and 25 characters of amber monospace shouts. The
    State pill and the time bar already carry that signal. */
-.desk-launch-ref { max-width: 144px; overflow: hidden; padding: 4px 0; border: 0; background: transparent; color: #79828d; cursor: pointer; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 760; text-overflow: ellipsis; white-space: nowrap; }
+.desk-launch-ref { display: inline-flex; max-width: 144px; align-items: center; padding: 4px 0; border: 0; background: transparent; color: #79828d; cursor: pointer; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 760; white-space: nowrap; }
+.desk-launch-ref-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .desk-launch-ref:hover, .desk-launch-ref:focus-visible { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
 .desk-icon-action.complete:hover { color: var(--green); }
 
@@ -509,7 +509,6 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 .work-row.cursor > *, .work-group-row.cursor > * { background: rgba(94, 144, 255, .09); }
 .work-row.cursor > :first-child, .work-group-row.cursor > :first-child { box-shadow: inset 3px 0 0 var(--blue); }
-.work-row.cursor .work-cell-title::before, .work-group-row.cursor .work-group-name::before { content: "▸"; margin-right: 6px; color: #8fb5ff; }
 
 .session-layer { position: fixed; inset: 0; z-index: 80; display: grid; padding: 38px; background: rgba(5, 7, 10, .68); place-items: stretch; }
 .session-layer[hidden] { display: none; }
@@ -526,7 +525,8 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
    out of the table box, and the browser then sizes it to one column. */
 .work-caption { padding: 0 4px 8px; color: #9fa7b0; font-size: 11px; font-weight: 760; letter-spacing: .1em; text-align: left; text-transform: uppercase; }
 .work-caption-count { margin-left: 12px; color: #7c8590; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0; text-transform: none; }
-.work-keyboard-hint { float: right; color: #7c8590; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em; text-transform: none; }
+.work-keyboard-hint { float: right; color: #7c8590; font-size: 11px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.work-keyboard-hint kbd { margin-left: 0; }
 .work-table thead th { box-sizing: border-box; height: 26px; padding: 0 10px; border-bottom: 1px solid #46505c; color: #8b949f; font-size: 10px; font-weight: 700; letter-spacing: .09em; text-align: left; text-transform: uppercase; }
 .work-col-work { width: auto; min-width: 280px; }
 .work-col-state { width: 156px; }
@@ -541,11 +541,14 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-group-identity { overflow: hidden; }
 .work-group-controls { justify-content: flex-end; gap: 6px; }
 .work-group-name { display: inline-flex; min-width: 0; align-items: center; gap: 7px; }
-.work-group-name > button:not(.work-tree-toggle) { padding: 0; border: 0; line-height: 1.1; background: transparent; color: #dfe3e8; cursor: pointer; font: inherit; font-size: 13px; font-weight: 720; letter-spacing: -.01em; }
-.work-group-name > button:not(.work-tree-toggle):hover { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
-.work-tree-toggle { display: inline-flex; min-width: 28px; align-items: center; justify-content: center; gap: 4px; padding: 2px 4px; border: 1px solid #3c434c; border-radius: 3px; background: #111419; color: #9ba6b2; cursor: pointer; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.work-tree-toggle:hover { border-color: #68727e; color: #fff; }
-.work-tree-toggle kbd, .work-subgoal-toggle kbd { color: #7f8b98; font: 8px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.work-group-name > button:not(.work-fold) { padding: 0; border: 0; line-height: 1.1; background: transparent; color: #dfe3e8; cursor: pointer; font: inherit; font-size: 13px; font-weight: 720; letter-spacing: -.01em; }
+.work-group-name > button:not(.work-fold):hover { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
+/* The one fold glyph: a triangle at the far left that rotates. It prints no
+   key; the caption line teaches `h` and `l`. */
+.work-fold, .work-fold-space { display: inline-grid; flex: none; width: 16px; height: 18px; place-items: center; }
+.work-fold { padding: 0; border: 0; border-radius: 2px; background: transparent; color: #8b949f; cursor: pointer; font-size: 14px; line-height: 1; }
+.work-group-head .desk-state kbd { color: inherit; opacity: .7; }
+.work-fold:hover, .work-fold:focus-visible { color: #fff; background: #242a31; }
 /* The one group of Areas outside Area Focus: present, quiet, never a link. */
 .work-group-name .work-group-other { color: #9aa3ad; font-size: 13px; font-weight: 720; letter-spacing: -.01em; }
 .work-group.other-areas .work-group-head { opacity: .82; }
@@ -553,7 +556,6 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-group-head .desk-state { margin-left: 12px; }
 .work-group-brain { display: inline-flex; min-height: 24px; align-items: center; gap: 6px; padding: 0 4px; border: 0; background: transparent; color: #9ebbe0; cursor: pointer; font-size: 11px; font-weight: 690; line-height: 1; white-space: nowrap; }
 .work-group-brain:hover { color: #fff; }
-.work-group-brain kbd, .work-group-action-menu kbd { margin-left: auto; color: #8290a0; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .work-group-brain-short { display: none; }
 .work-group-brain-long { display: inline; }
 .work-group-action-menu > div { min-width: 186px; }
@@ -576,8 +578,7 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .work-row-title:hover { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
 .work-row.subgoal .work-cell-work { padding-left: 30px; }
 .work-row.subgoal .work-row-title { color: #c3c9d0; font-size: 12.5px; font-weight: 560; }
-.work-subgoal-toggle { display: inline-flex; flex: none; min-width: 22px; align-items: center; gap: 4px; padding: 1px 3px; border: 1px solid #3c434c; border-radius: 2px; background: transparent; color: #8b949f; cursor: pointer; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; }
-.work-subgoal-toggle:hover { border-color: #68727e; color: #fff; }
+.work-subgoal-count { flex: none; color: #7c8590; font-size: 10px; font-weight: 600; }
 /* Provenance rides on the title line: the row keeps one line at wide width,
    and the title, not the path, is what an over-long cell truncates. */
 .work-row-path { flex: none; margin-left: 2px; color: #7c8590; font-size: 10px; font-weight: 690; letter-spacing: .05em; text-transform: uppercase; }
@@ -685,7 +686,8 @@ button.ask-question:hover { text-decoration: underline; text-underline-offset: 3
 .desk-action-menu > div button { padding: 7px 9px; border: 0; border-radius: 2px; background: transparent; color: #c8ced5; cursor: pointer; font-size: 11px; text-align: left; white-space: nowrap; }
 .desk-action-menu > div button:hover { background: #242a31; color: #fff; }
 .desk-action-menu > div button.complete { color: var(--green); }
-.desk-action-menu-trigger { display: inline-grid; width: 24px; height: 24px; padding: 0; place-items: center; border: 1px solid #3c434c; border-radius: 2px; background: #1a1e23; color: #9aa5b1; cursor: pointer; font-size: 14px; line-height: 1; }
+.desk-action-menu-trigger { display: inline-flex; height: 24px; align-items: center; padding: 0 6px; border: 1px solid #3c434c; border-radius: 2px; background: #1a1e23; color: #9aa5b1; cursor: pointer; font-size: 14px; line-height: 1; }
+.desk-action-menu-trigger kbd { margin-left: 5px; }
 .desk-action-menu-trigger:hover, .desk-action-menu-trigger:focus-visible { border-color: #68727e; color: #fff; }
 
 .brain-launch-summary { display: grid; gap: 5px; padding: 12px; border: 1px solid #343b44; border-radius: 4px; background: #111419; }
@@ -1110,7 +1112,10 @@ details.more-work .area-work-list { margin-top: 18px; }
 .danger-button { border: 1px solid rgba(240, 154, 154, .34); background: transparent; color: var(--red); }
 .danger-button:hover { background: var(--red-soft); }
 .button-note { color: var(--quiet); font-size: 13px; }
-.primary-button kbd { margin-left: 10px; color: #52687f; font-family: inherit; font-size: 11px; font-weight: 650; }
+/* One printed-key style for every verb button, menu, caption, and the `?`
+   sheet (work-view-affordances D4): label font, 11px, muted, right of the verb. */
+.primary-button kbd, .work-table kbd, .work-tool-actions kbd, .modal-action-list button kbd, .key-sheet dt kbd { margin-left: 8px; color: var(--quiet); font-family: inherit; font-size: 11px; font-weight: 650; }
+.primary-button kbd { color: #52687f; }
 
 .next-action-copy { max-width: 650px; margin: 0; color: var(--muted); font-size: 15px; line-height: 1.6; }
 .start-actions { margin-top: 20px; }
@@ -1442,7 +1447,7 @@ details.more-work .area-work-list { margin-top: 18px; }
 .key-sheet > div { display: grid; min-height: 34px; grid-template-columns: 90px minmax(150px, .8fr) minmax(0, 1.4fr); align-items: center; gap: 12px; padding: 5px 10px; }
 .key-sheet > div + div { border-top: 1px solid var(--line); }
 .key-sheet dt { min-width: 0; color: var(--text); }
-.key-sheet dt kbd { color: #9ebbe0; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.key-sheet dt kbd, .modal-action-list button kbd { margin-left: 0; }
 .key-sheet dd { min-width: 0; margin: 0; }
 .key-sheet-label { color: var(--text); font-size: 12px; }
 .key-sheet-help { overflow: hidden; color: var(--quiet); font-size: 11px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
@@ -1459,7 +1464,6 @@ details.more-work .area-work-list { margin-top: 18px; }
 .modal-action-list button:hover, .modal-action-list button:focus-visible { background: #1d232a; }
 .modal-action-list button[aria-disabled="true"] { cursor: not-allowed; opacity: .52; }
 .modal-action-list button > span { display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: baseline; gap: 8px; }
-.modal-action-list button kbd { color: #9ebbe0; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
 .modal-action-list button strong { font-size: 12px; font-weight: 660; }
 .modal-action-list button small { margin-left: 48px; color: #7f8994; font-size: 10px; line-height: 1.35; }
 .modal-field label { display: grid; gap: 8px; color: var(--muted); font-size: 13px; }

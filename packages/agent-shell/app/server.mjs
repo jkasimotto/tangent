@@ -3644,6 +3644,27 @@ async function bindReplacementGoalSet(record, operation) {
   return files;
 }
 
+/** Proves that the persisted replacement target is still the same live worker. */
+async function inspectReplacementTarget(operation) {
+  const target = operation.replacementTarget;
+  if (!target) return { ok: false, error: "the replacement operation has no immutable target" };
+  const inspected = await sessionOwnership.inspect(target.session);
+  if (inspected.state !== "live") return { ok: false, error: `replacement session ${target.session} is ${inspected.state}` };
+  if (inspected.instanceId !== target.instanceId || inspected.target !== target.target) {
+    return { ok: false, error: `replacement session ${target.session} no longer matches operation ${operation.id}` };
+  }
+  const live = (await listAllSessions({ fresh: true })).find((session) => session.name === target.session);
+  if (!live
+    || live.kind !== "goal"
+    || live.area !== target.area
+    || live.goal !== target.goal
+    || live.assignment !== target.assignmentId
+    || live.attempt !== target.attemptId) {
+    return { ok: false, error: `replacement session ${target.session} failed its Goal, assignment, or attempt fence` };
+  }
+  return { ok: true };
+}
+
 /**
  * Retires only the immutable source target. A worker that still owns another
  * Goal is detached and retagged instead, so shared work is never killed.
@@ -3697,6 +3718,30 @@ async function settleReadyGoalReplacementUnlocked(goal, operation, readiness = n
       }
       transitionAttemptReplacement(operation, "replacement-ready", { readiness });
       await writeAttemptReplacement(ATTEMPT_REPLACEMENTS_ROOT, operation);
+    }
+    if (["replacement-ready", "source-retiring", "retirement-incomplete"].includes(operation.status)) {
+      const replacement = await inspectReplacementTarget(operation);
+      if (!replacement.ok) {
+        const promoted = record.steps.some((assignment) => assignment.attempts?.some((attempt) => attempt.id === operation.replacementAttemptId));
+        if (operation.status === "replacement-ready" && !promoted) {
+          transitionAttemptReplacement(operation, "rollback", { error: `${replacement.error}; the source stayed current` });
+          transitionAttemptReplacement(operation, "failed", { error: `${replacement.error}; the source stayed current` });
+        } else if (operation.status === "replacement-ready") {
+          transitionAttemptReplacement(operation, "source-retiring");
+          transitionAttemptReplacement(operation, "retirement-incomplete", { error: `${replacement.error}; the source was preserved` });
+        } else if (operation.status === "source-retiring") {
+          transitionAttemptReplacement(operation, "retirement-incomplete", { error: `${replacement.error}; the source was preserved` });
+        }
+        await writeAttemptReplacement(ATTEMPT_REPLACEMENTS_ROOT, operation);
+        return {
+          status: 409,
+          state: operation.status,
+          code: operation.status === "failed" ? "replacement-not-live" : "retirement-incomplete",
+          error: operation.error ?? replacement.error,
+          operation,
+          pipeline: record,
+        };
+      }
     }
     if (operation.status === "replacement-ready") {
       const promoted = promoteReadyReplacement(record, operation);
@@ -6793,6 +6838,8 @@ async function settleParkedGoalSession(goal, sourceTarget, operationId) {
     return { kind: "retired", detail: "the exact sole Goal attempt was retired after the status commit" };
   }
   await execFileAsync("tmux", ["set-option", "-t", inspected.target, "@tangent_goal", nextGoal]);
+  await execFileAsync("tmux", ["set-option", "-t", inspected.target, "@tangent_pipeline", ""]);
+  await execFileAsync("tmux", ["set-option", "-t", inspected.target, "@tangent_step", ""]);
   await execFileAsync("tmux", ["set-option", "-t", inspected.target, "@tangent_assignment", ""]);
   await execFileAsync("tmux", ["set-option", "-t", inspected.target, "@tangent_attempt", ""]);
   messages.queue(sourceSession, {

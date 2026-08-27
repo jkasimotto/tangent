@@ -3,9 +3,22 @@ import type { CliCommandSpec } from "@tangent/core";
 const serverOption = { name: "server", takesValue: true, description: "Agent Shell server URL (default http://127.0.0.1:4321, or TANGENT_SHELL_URL)" };
 const jsonOption = { name: "json", description: "Print machine-readable JSON" };
 
+export const sendCommandSpec: CliCommandSpec = {
+  name: "send",
+  description: "Send a note to the brain that controls this worker's Goal, or to a live session or an Area brain",
+  args: "<brain|session|area> <note...>",
+  options: [
+    { name: "done", description: "The work is finished; the assignment is complete" },
+    { name: "blocked", description: "You cannot continue; the assignment waits for the brain" },
+    { name: "question", description: "You need a decision; the assignment waits for the brain" },
+    { name: "session", takesValue: true, description: "Sender session name; defaults to the tmux session this command runs in" },
+    serverOption
+  ]
+};
+
 export const handoverCommandSpec: CliCommandSpec = {
   name: "handover",
-  description: "Report this worker's facts to its controlling Area brain; the brain chooses the next action",
+  description: "Alias of tangent send brain; report this worker's facts to its controlling Area brain",
   args: "<facts...>",
   options: [
     { name: "session", takesValue: true, description: "Worker session name; defaults to the tmux session this command runs in" },

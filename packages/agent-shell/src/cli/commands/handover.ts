@@ -3,15 +3,16 @@ import { parseArgs, stringArg } from "@tangent/core/cli";
 
 import { currentTmuxSession, postJson, resolveServerUrl } from "../client.js";
 import { handoverCommandSpec } from "../spec.js";
-import { parseWorkerReportOption, workerHandoverResultLine } from "../worker-report.js";
+import { SEND_ALIAS_HINT, parseWorkerReportOption, workerHandoverResultLine } from "../worker-report.js";
 
-/** Reports one worker's facts to its controlling Area brain. */
+/** Alias of `tangent send brain` for one release: reports one worker's facts to its controlling Area brain. */
 export async function runHandoverCli(argv = process.argv.slice(2)): Promise<void> {
   const args = parseArgs(argv);
   if (args.help) {
     console.log(renderCommandHelp(handoverCommandSpec));
     return;
   }
+  console.log(SEND_ALIAS_HINT);
   const server = resolveServerUrl(stringArg(args.server));
   const session = stringArg(args.session) || (await currentTmuxSession());
   if (!session) throw new Error("tangent handover needs a session: run it inside the worker's tmux session or pass --session <name>.");

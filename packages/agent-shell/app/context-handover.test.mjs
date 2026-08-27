@@ -47,12 +47,12 @@ test("reminderDue: a compaction dip below the threshold never re-arms a level th
 test("contextReminderText and contextRepeatText keep queue recovery permissive without self-replacement", () => {
   const reminder = contextReminderText({ usedTokens: 310_000, windowTokens: 1_000_000, subject: "step" });
   assert.match(reminder, /Your context is at 310k of 1000k \(31%\)/);
-  assert.match(reminder, /submit a typed context-risk report/);
-  assert.match(reminder, /any local caller can start a fresh attempt through that queue/);
+  assert.match(reminder, /tangent send brain "<facts>"/);
+  assert.match(reminder, /The brain starts a fresh attempt when it needs one/);
 
   const repeat = contextRepeatText({ usedTokens: 331_000, thresholdTokens: THRESHOLD, subject: "Goal" });
   assert.match(repeat, /well past 300k tokens \(331k\)/);
-  assert.match(repeat, /Submit a typed context-risk report now/);
+  assert.match(repeat, /for this Goal now: tangent send brain "<facts>"/);
   assert.match(repeat, /do not replace yourself/i);
 });
 

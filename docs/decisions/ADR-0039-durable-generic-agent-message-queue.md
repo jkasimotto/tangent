@@ -2,7 +2,7 @@
 
 Date: 2026-08-27
 
-Status: accepted
+Status: accepted. The verb clause is amended by ADR-0040: the generic message command is `tangent send`, and `tangent agent send` is an alias for one release.
 
 ## Context
 

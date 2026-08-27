@@ -35,6 +35,19 @@ test("workers have no self-replacement implementation", async () => {
   assert.doesNotMatch(source, /continueWorkerSession|continueWorker:/);
 });
 
+test("the server refuses every Tangent mutation from a worker session through one gate", async () => {
+  const source = await readFile(path.join(here, "server.mjs"), "utf8");
+  assert.match(source, /const refusal = await refuseWorkerMutation\(req, url\)/);
+  assert.equal(source.match(/workers only send\. Use: tangent send brain "<note>"/g)?.length, 1, "one literal, one gate");
+  const gated = source.match(/const WORKER_REFUSED_ROUTES = new Set\(\[[\s\S]*?\]\)/)?.[0] ?? "";
+  for (const route of ["/api/goals/edit", "/api/goals/create", "/api/goals/own", "/api/goals/release", "/api/goals/start", "/api/pipelines/append", "/api/areas/new", "/api/areas/status", "/api/idea/new", "/api/document/resolve", "/api/brains/start", "/api/brains/handover", "/api/brains/requests"]) {
+    assert.ok(gated.includes(`"${route}"`), `${route} is gated`);
+  }
+  for (const route of ["/api/goals/handover", "/api/agents/send", "/api/goals/show"]) {
+    assert.ok(!gated.includes(`"${route}"`), `${route} stays open`);
+  }
+});
+
 test("the package starts the single-owner gateway and keeps terminal transport out of the controller", async () => {
   const [manifestText, gateway, controller] = await Promise.all([
     readFile(path.join(here, "..", "package.json"), "utf8"),

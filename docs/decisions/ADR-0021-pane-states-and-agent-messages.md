@@ -2,7 +2,7 @@
 
 Date: 2026-08-15
 
-Status: accepted
+Status: accepted. The `tangent agent send` verb is amended by ADR-0040: agents use `tangent send`, and `tangent agent send` is an alias for one release.
 
 ## Context
 

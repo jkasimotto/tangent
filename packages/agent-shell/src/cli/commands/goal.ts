@@ -7,7 +7,7 @@ import { booleanArg, parseArgs, requiredString, stringArg, stringsArg, type Args
 
 import { currentTmuxSession, goalQueueRevision, listGoalScope, postJson, requireArea, requireGoal, resolveServerUrl, vaultFetch } from "../client.js";
 import { goalCommandSpec } from "../spec.js";
-import { parseWorkerReportOption, workerHandoverResultLine } from "../worker-report.js";
+import { SEND_ALIAS_HINT, parseWorkerReportOption, workerHandoverResultLine } from "../worker-report.js";
 
 /** Dispatches `tangent goal` subcommands. */
 export async function runGoalCli(argv = process.argv.slice(2)): Promise<void> {
@@ -281,10 +281,12 @@ function parseContinueFrom(value: string | undefined, stepIndex: number): number
 }
 
 /**
- * Handles `tangent goal handover <facts...>`. A worker submits evidence or a
- * typed report; the authoritative queue records it and notifies the Area.
+ * Handles `tangent goal handover <facts...>`, an alias of `tangent send brain`
+ * for one release. A worker submits a note or a typed report; the queue
+ * records it and notifies the Area.
  */
 async function handoverCommand(args: Args): Promise<void> {
+  console.log(SEND_ALIAS_HINT);
   const server = resolveServerUrl(stringArg(args.server));
   const session = await requireSession(args, "tangent goal handover");
   const text = args._.slice(1).map(String).join(" ").trim();
@@ -483,7 +485,7 @@ Examples:
   tangent goal replace-agent pipelines-demo --launch codex/sol/high
   tangent goal park pipelines-demo --reason "Revisit after the current release."
   tangent goal reopen pipelines-demo
-  tangent goal handover "Design written: ~/.tangent/trees/otto/tangent/design-x.md. Unresolved: none."
+  tangent send brain "Design written: ~/.tangent/trees/otto/tangent/design-x.md. Unresolved: none."
 `);
 }
 

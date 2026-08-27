@@ -3,8 +3,8 @@
 Purpose: the CLI surface of the Agent Shell, under the root `tangent` command:
 
 - Vault CLI: `tangent area`, `tangent goal`, `tangent idea`, `tangent document`, `tangent vault commit`.
-- Agent CLI: `tangent agent list`, `tangent agent send`, and read-only `tangent agent context` recovery from durable brain and Goal records.
-- Worker CLI: `tangent handover` and `tangent goal handover` report facts through the same exact-Area route. `tangent area recent` queries subtree milestones. `tangent area audit` exports legacy records.
+- Agent CLI: `tangent agent list`, `tangent send`, and read-only `tangent agent context` recovery from durable brain and Goal records.
+- Worker CLI: `tangent send brain "<note>" [--done | --blocked | --question]` is the one worker command (ADR-0040). `tangent handover`, `tangent goal handover`, and `tangent agent send` are aliases for one release. `tangent area recent` queries subtree milestones. `tangent area audit` exports legacy records.
 - Brain CLI: `tangent brain request` creates durable user requests, and `tangent brain advance` starts the next approved assignment.
 - Brain and server CLI: `tangent brain handover|status|stop` manages a brain through guarded Agent Shell routes. `tangent shell rebuild` rebuilds and restarts the server.
 - Study partner CLI: `tangent study` (spawns an interactive `claude-otto` session carrying the partner contract) and `tangent study contract` (prints that contract).
@@ -17,7 +17,7 @@ Agent Shell centers each Area on one logical brain with an active or inactive li
 
 Work shows all open Goals in one projection. An explicit keyboard context owns each key. Terminal sessions keep native tmux input, except the visible leave shortcut. Work and Document actions expose matching keyboard and pointer paths. See ADR-0038.
 
-Generic `tangent agent send` messages persist before pane wake or presentation. The controller restores them after a restart and keeps their exact target order. See ADR-0039.
+Generic `tangent send` messages persist before pane wake or presentation. The controller restores them after a restart and keeps their exact target order. See ADR-0039.
 
 The brain receives its founding instruction, current checkpoint, bounded Area memory, selected current Document references, Questions, and material Operation events. Structural Area and repository paths define inherited context.
 

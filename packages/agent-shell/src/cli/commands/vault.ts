@@ -3,9 +3,9 @@ import path from "node:path";
 
 import { renderCommandHelp } from "@tangent/core";
 import { parseArgs, stringArg } from "@tangent/core/cli";
-import { runProcess } from "@tangent/agent-runtime/process";
 import { git } from "@tangent/repo/git";
 
+import { WORKER_MUTATION_REFUSAL, currentSessionIsWorker, currentTmuxSession } from "../client.js";
 import { vaultCommandSpec } from "../spec.js";
 
 const COMMIT_VERBS = ["add", "note", "update", "remove"];
@@ -25,6 +25,7 @@ export async function runVaultCli(argv = process.argv.slice(2)): Promise<void> {
 /** Handles `tangent vault commit <paths...> -m "<verb>: <area> <summary>"`. */
 async function commitCommand(rest: string[]): Promise<void> {
   if (rest.includes("--help")) return help();
+  if (await currentSessionIsWorker()) throw new Error(WORKER_MUTATION_REFUSAL);
   const remaining = [...rest];
   const messageIndex = remaining.indexOf("-m");
   if (messageIndex === -1 || !remaining[messageIndex + 1]) throw new Error(commitUsage());
@@ -70,17 +71,6 @@ function validateVaultPath(relativePath: string): void {
 function areaFromPath(relativePath: string): string {
   const dir = path.posix.dirname(relativePath.replaceAll(path.sep, "/"));
   return dir === "." ? "" : dir;
-}
-
-/** Reads the current tmux session name, or undefined outside tmux or if tmux is unavailable. */
-async function currentTmuxSession(): Promise<string | undefined> {
-  if (!process.env.TMUX) return undefined;
-  try {
-    const result = await runProcess({ command: "tmux", args: ["display-message", "-p", "#S"] });
-    return result.stdout.trim() || undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 /** The local Tangent vault root; TANGENT_TREES_DIR overrides for tests and verify harnesses. */

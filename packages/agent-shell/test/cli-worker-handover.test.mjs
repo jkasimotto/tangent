@@ -19,7 +19,9 @@ function runCommand(kind, extra) {
     : runGoalCli(["handover", "Finished the assignment.", "--session", "worker-portland", ...extra]);
 }
 
-test("both worker handover commands submit the same typed report and print its durable destination", async (context) => {
+const hint = 'tangent handover is now tangent send brain "<note>" [--done|--blocked|--question]';
+
+test("both worker handover commands submit the same typed report, print the send hint, then the durable destination", async (context) => {
   const previousFetch = globalThis.fetch;
   const previousLog = console.log;
   const requests = [];
@@ -55,7 +57,9 @@ test("both worker handover commands submit the same typed report and print its d
     });
   }
   assert.deepEqual(lines, [
+    hint,
     "reported to neara/portland brain; queue revision 7; notice notice-7",
+    hint,
     "reported to neara/portland brain; queue revision 7; notice notice-7",
   ]);
 });

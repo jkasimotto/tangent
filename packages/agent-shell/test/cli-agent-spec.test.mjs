@@ -38,7 +38,8 @@ test("tangent agent send reports an Area inbox without promising immediate deliv
   await runAgentCli(["send", "neara/essential/autodesign", "Start the queued Goal.", "--from", "essential-brain"]);
 
   assert.deepEqual(body, { to: "neara/essential/autodesign", text: "Start the queued Goal.", from: "essential-brain" });
-  assert.equal(printed[0], "queued for neara/essential/autodesign (stored in the Area inbox; it will arrive when the brain starts)");
+  assert.equal(printed[0], 'tangent handover is now tangent send brain "<note>" [--done|--blocked|--question]', "the alias prints one hint line first");
+  assert.equal(printed[1], "queued for neara/essential/autodesign (stored in the Area inbox; it will arrive when the brain starts)");
 });
 
 test("tangent agent context requests an encoded session and prints the complete JSON projection", async (context) => {

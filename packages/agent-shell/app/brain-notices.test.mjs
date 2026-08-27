@@ -196,7 +196,7 @@ async function completeOnePipeline(base, area, title, handover, caller = "") {
   assert.ok(started.session, `pipeline for ${title} started: ${JSON.stringify(started)}`);
   assert.ok(started.pipeline?.steps?.some((step) => step.session === started.session), `pipeline did not bind ${started.session}: ${JSON.stringify(started)}`);
   const finished = await post(base, "/api/goals/handover", { session: started.session, text: handover });
-  assert.equal(finished.status, caller ? "reported" : "complete", `pipeline for ${title} reported: ${JSON.stringify(finished)}`);
+  assert.equal(finished.status, "noted", `pipeline for ${title} noted: ${JSON.stringify(finished)}`);
   return started.session;
 }
 
@@ -381,7 +381,7 @@ test("a brain notice survives a server restart and reaches the next generation a
   const unreadBeforeRestart = unreadNotices(afterHandover);
   const reportNotice = unreadBeforeRestart.find((notice) => notice.text.includes("Implemented the probe"));
   assert.ok(reportNotice, JSON.stringify(unreadBeforeRestart));
-  assert.match(reportNotice.text, /untyped evidence/);
+  assert.match(reportNotice.text, /^note: Implemented the probe/);
 
   // Restart: the memory queue is gone, the notice is not. The new process
   // queues it again for the generation that is still live.
@@ -395,7 +395,8 @@ test("a brain notice survives a server restart and reaches the next generation a
     const live = agents.find((agent) => agent.name === brain.session);
     return live && live.queued > 0;
   });
-  assert.equal(unreadNotices(await readInbox(brains, `otto/${leaf}`)).length, unreadBeforeRestart.length, "notices the brain never read stay unread");
+  const unreadAfterRestart = unreadNotices(await readInbox(brains, `otto/${leaf}`)).map((notice) => notice.id);
+  for (const notice of unreadBeforeRestart) assert.ok(unreadAfterRestart.includes(notice.id), "notices the brain never read stay unread");
 
   // Generation handover: generation 1 never read the notice, so generation
   // 2's first message lists it.
@@ -405,9 +406,8 @@ test("a brain notice survives a server restart and reaches the next generation a
   sessions.push(handover.session);
   const show = await fetch(`${restarted}/api/brains/show?session=${encodeURIComponent(handover.session)}`).then((response) => response.json());
   assert.match(show.prompt, /## Unread messages/);
-  assert.match(show.prompt, /untyped evidence/);
-  assert.match(show.prompt, /Implemented the probe/);
-  assert.match(show.prompt, /## Unread messages[\s\S]*untyped evidence/, "the prompt includes the durable unread notice");
+  assert.match(show.prompt, /note: Implemented the probe/);
+  assert.match(show.prompt, /## Unread messages[\s\S]*note: Implemented the probe/, "the prompt includes the durable unread notice");
 
   const read = await readInbox(brains, `otto/${leaf}`);
   assert.equal(unreadNotices(read).length, 0, "generation 2 read it, so it is not repeated");

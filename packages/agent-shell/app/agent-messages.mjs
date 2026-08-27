@@ -93,7 +93,7 @@ const NOTICE_MAX_CHARS = 4000;
  * One brain notice as a single line. A notice carries text Tangent does not
  * control: Julian's own words in a Request answer, or a worker's handover.
  * `normalizeMessage` refuses text over the limit, which is right for
- * `tangent agent send`, where the sender sees the error and can shorten it.
+ * `tangent send`, where the sender sees the error and can shorten it.
  * It is wrong for a notice: the only reader of the error is a log, so an
  * over-long answer used to disappear before it was ever written to the
  * inbox, and no brain generation ever learned it existed. A notice is

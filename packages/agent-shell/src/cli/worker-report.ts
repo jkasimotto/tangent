@@ -1,5 +1,8 @@
 import { stringArg } from "@tangent/core/cli";
 
+/** The one hint line every retired worker verb prints before it runs. */
+export const SEND_ALIAS_HINT = 'tangent handover is now tangent send brain "<note>" [--done|--blocked|--question]';
+
 /** Parses an optional worker report and refuses shell-damaged values. */
 export function parseWorkerReportOption(args: Record<string, unknown>): object | undefined {
   if (!Object.hasOwn(args, "report")) return undefined;
@@ -27,7 +30,7 @@ function reportSyntaxError(problem: string): Error {
 /** Prints the durable destination evidence returned by the Goal queue. */
 export function workerHandoverResultLine(result: Record<string, any>): string {
   const receipt = result.receipt && typeof result.receipt === "object" ? result.receipt : null;
-  if (!receipt) return result.status === "reported"
+  if (!receipt) return result.status === "reported" || result.status === "noted"
     ? "reported to the brain; the brain chooses what happens next"
     : "handover recorded";
   const area = String(receipt.destinationArea ?? "the exact Area");

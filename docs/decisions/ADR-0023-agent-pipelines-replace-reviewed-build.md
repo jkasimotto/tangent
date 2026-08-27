@@ -2,7 +2,7 @@
 
 Date: 2026-08-15
 
-Status: accepted. Supersedes ADR-0018.
+Status: accepted. Supersedes ADR-0018. The `tangent goal handover` clauses are amended by ADR-0040: a worker runs `tangent send brain`, and the brain, not the server, starts the next step.
 
 ## Context
 

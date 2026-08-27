@@ -20,6 +20,25 @@ export async function currentTmuxSession(): Promise<string | undefined> {
   }
 }
 
+/** The refusal every Tangent mutation gives a worker session (D6). */
+export const WORKER_MUTATION_REFUSAL = 'workers only send. Use: tangent send brain "<note>"';
+
+/**
+ * Whether the current tmux session is a worker (`@tangent_kind goal`). The
+ * server gates its own routes; this is for the commands that never reach it,
+ * such as `tangent vault commit`.
+ */
+export async function currentSessionIsWorker(): Promise<boolean> {
+  const session = await currentTmuxSession();
+  if (!session) return false;
+  try {
+    const result = await runProcess({ command: "tmux", args: ["show-option", "-t", session, "-qv", "@tangent_kind"] });
+    return result.stdout.trim() === "goal";
+  } catch {
+    return false;
+  }
+}
+
 export type GoalSummary = {
   slug: string;
   file: string;
@@ -67,6 +86,8 @@ async function vaultRequest(server: URL, path: string, init?: RequestInit): Prom
   else callerSignal?.addEventListener("abort", callerAborted, { once: true });
   const headers = new Headers(init?.headers);
   headers.set("x-tangent-operation-id", operationId);
+  const session = await currentTmuxSession();
+  if (session) headers.set("x-tangent-session", session);
   try {
     response = await fetch(new URL(path, server), { ...init, headers, signal: controller.signal });
   } catch (error) {

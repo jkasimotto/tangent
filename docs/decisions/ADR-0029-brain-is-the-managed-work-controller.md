@@ -1,6 +1,6 @@
 # ADR-0029: the Area brain controls managed work
 
-Status: accepted, 2026-08-23. Amended 2026-08-24 and 2026-08-25. The territory rule below is superseded on 2026-08-27 by ADR-0033: each exact Area has one logical brain, and a brain controls its own Area only. There is no ancestor fallback and no subtree ownership.
+Status: accepted, 2026-08-23. Amended 2026-08-24 and 2026-08-25. The territory rule below is superseded on 2026-08-27 by ADR-0033: each exact Area has one logical brain, and a brain controls its own Area only. There is no ancestor fallback and no subtree ownership. The worker verb clause is amended by ADR-0040: workers use `tangent send brain`, and `tangent handover` is an alias for one release.
 
 ## Context
 

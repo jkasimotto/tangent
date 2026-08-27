@@ -1,0 +1,153 @@
+// The worker contract (D5, D6): a worker has one command, `tangent send
+// brain`, and the server refuses every other Tangent mutation from it.
+
+import assert from "node:assert/strict";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+import { readInbox } from "./brain-inbox.mjs";
+import { startShellServer } from "./focus-shell-http-fixture.mjs";
+import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
+
+isolateTmuxTests();
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const area = "otto/sendprobe";
+
+/** Posts JSON as one named tmux session and returns the status and body. */
+async function post(base, route, body, session = "") {
+  const response = await fetch(`${base}${route}`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...(session ? { "x-tangent-session": session } : {}) },
+    body: JSON.stringify(body),
+  });
+  return { status: response.status, body: await response.json() };
+}
+
+/** Writes one Area with a repository so workers can start. */
+async function buildVault(root) {
+  const trees = path.join(root, "trees");
+  const workspace = path.join(root, "workspace");
+  await mkdir(path.join(trees, area), { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  await writeFile(path.join(trees, "harnesses.md"), "# Harnesses\n\n```tangent.harnesses.v1\n{\"version\":1,\"harnesses\":[{\"id\":\"test\",\"label\":\"Test\",\"command\":\"true\"}]}\n```\n", "utf8");
+  await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n\n```tangent.environment.v1\n{\"defaults\":{\"brain\":{\"harness\":\"test\"}}}\n```\n", "utf8");
+  await writeFile(path.join(trees, area, "sendprobe.md"), `---\ntype: area\n---\n\n# Send probe\n\n## Resources\n\n- Repository: ${workspace}\n`, "utf8");
+  return { trees, workspace };
+}
+
+/** Creates one Goal and starts its sole assignment as a worker. */
+async function startWorker(base, brain, openedSessions, title, kind = "implementation") {
+  const created = await post(base, "/api/goals/create", { area, caller: brain, goal: { title, doneWhen: `${title} is proved.` } });
+  assert.equal(created.status, 200, JSON.stringify(created.body));
+  const started = await post(base, "/api/goals/start", {
+    file: created.body.file,
+    caller: brain,
+    steps: [{ instruction: `Complete ${title}.`, command: "sleep 300", kind }],
+  });
+  assert.equal(started.status, 200, JSON.stringify(started.body));
+  openedSessions.push(started.body.session);
+  return { goal: created.body.file, slug: started.body.pipeline.slug, ...started.body };
+}
+
+/** Reads the authoritative queue written by the server. */
+async function readQueue(root, worker) {
+  return JSON.parse(await readFile(path.join(root, "pipelines", area, `${worker.slug}.json`), "utf8"));
+}
+
+test("a worker sends notes, questions, and done to its brain, and nothing else", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "worker-send-"));
+  const { trees, workspace } = await buildVault(root);
+  const openedSessions = [];
+  const base = await startShellServer(context, { here, root, trees, workspace, openedSessions });
+  if (!base) return;
+
+  const brain = await post(base, "/api/brains/start", { area, instruction: "Own the send probe." });
+  assert.equal(brain.status, 200, JSON.stringify(brain.body));
+  openedSessions.push(brain.body.session);
+
+  // A plain note: kept on the assignment, told to the brain, no status change.
+  const worker = await startWorker(base, brain.body.session, openedSessions, "Send probe");
+  const before = await readQueue(root, worker);
+  const note = await post(base, "/api/agents/send", { to: "brain", from: worker.session, text: "Parser wired. Next: the route." });
+  assert.equal(note.status, 200, JSON.stringify(note.body));
+  assert.equal(note.body.status, "sent");
+  assert.equal(note.body.kind, "note");
+  assert.equal(note.body.to, brain.body.session, "the note names the brain that controls the worker's Goal");
+  const afterNote = await readQueue(root, worker);
+  assert.equal(afterNote.steps[0].status, "running", "a note changes no assignment status");
+  assert.equal(afterNote.revision, before.revision, "a note changes no queue revision");
+  assert.match(afterNote.steps[0].handover, /Parser wired/);
+  assert.equal(afterNote.steps[0].handoverReceipts[0].reportType, "note");
+  const inboxAfterNote = await readInbox(path.join(root, "brains"), area);
+  const noteNotice = inboxAfterNote.notices.find((entry) => entry.id === note.body.receipt.notice.id);
+  assert.match(noteNotice.text, /^note: Parser wired/);
+
+  // The same note again is an exact retry: one receipt, one notice.
+  const again = await post(base, "/api/agents/send", { to: "brain", from: worker.session, text: "Parser wired. Next: the route." });
+  assert.equal(again.status, 200, JSON.stringify(again.body));
+  assert.equal(again.body.state, "repeated");
+  assert.equal((await readQueue(root, worker)).steps[0].handoverReceipts.length, 1);
+
+  // A question: the assignment waits for the brain.
+  const question = await post(base, "/api/agents/send", { to: "brain", from: worker.session, text: "Keep the old field name?", kind: "question" });
+  assert.equal(question.status, 200, JSON.stringify(question.body));
+  assert.equal(question.body.kind, "question");
+  const afterQuestion = await readQueue(root, worker);
+  assert.equal(afterQuestion.steps[0].status, "waiting");
+  assert.equal(afterQuestion.steps[0].reports.at(-1).type, "question-needed");
+  const inboxAfterQuestion = await readInbox(path.join(root, "brains"), area);
+  assert.match(inboxAfterQuestion.notices.find((entry) => entry.id === question.body.receipt.notice.id).text, /^question: Keep the old field name\?/);
+
+  // Done: the assignment is complete, stored as the typed result readers know.
+  const second = await startWorker(base, brain.body.session, openedSessions, "Second probe");
+  const done = await post(base, "/api/agents/send", { to: "brain", from: second.session, text: "Route wired; npm test green.", kind: "done" });
+  assert.equal(done.status, 200, JSON.stringify(done.body));
+  const afterDone = await readQueue(root, second);
+  assert.equal(afterDone.steps[0].status, "complete");
+  assert.deepEqual({ type: afterDone.steps[0].reports[0].type, status: afterDone.steps[0].reports[0].status, summary: afterDone.steps[0].reports[0].summary },
+    { type: "implementation-result", status: "done", summary: "Route wired; npm test green." });
+  assert.match((await readInbox(path.join(root, "brains"), area)).notices.find((entry) => entry.id === done.body.receipt.notice.id).text, /^done: Route wired/);
+
+  // Blocked: the assignment waits, stored as a failed report.
+  const third = await startWorker(base, brain.body.session, openedSessions, "Third probe");
+  const blocked = await post(base, "/api/agents/send", { to: "brain", from: third.session, text: "Port 4321 is taken.", kind: "blocked" });
+  assert.equal(blocked.status, 200, JSON.stringify(blocked.body));
+  const afterBlocked = await readQueue(root, third);
+  assert.equal(afterBlocked.steps[0].status, "waiting");
+  assert.equal(afterBlocked.steps[0].reports[0].type, "failed");
+
+  // Done on a review step is a passed review.
+  const review = await startWorker(base, brain.body.session, openedSessions, "Review probe", "review");
+  const reviewed = await post(base, "/api/agents/send", { to: "brain", from: review.session, text: "Reviewed the diff; all criteria hold.", kind: "done" });
+  assert.equal(reviewed.status, 200, JSON.stringify(reviewed.body));
+  const afterReview = await readQueue(root, review);
+  assert.equal(afterReview.steps[0].reports[0].type, "review-result");
+  assert.equal(afterReview.steps[0].reports[0].verdict, "passed");
+
+  // Two flags or an unknown flag is refused; a non-worker has no brain to resolve.
+  const unknown = await post(base, "/api/agents/send", { to: "brain", from: worker.session, text: "x", kind: "later" });
+  assert.equal(unknown.status, 400);
+  const fromBrain = await post(base, "/api/agents/send", { to: "brain", from: brain.body.session, text: "Hello." });
+  assert.equal(fromBrain.status, 400);
+  assert.equal(fromBrain.body.error, "tangent send brain works inside a worker session. Name a session or an Area path.");
+
+  // D6: a worker session gets 403 on every other mutation and 200 on reads.
+  const refused = await post(base, "/api/goals/edit", { file: worker.goal, status: "done", session: worker.session }, worker.session);
+  assert.equal(refused.status, 403);
+  assert.equal(refused.body.error, 'workers only send. Use: tangent send brain "<note>"');
+  const created = await post(base, "/api/goals/create", { area, caller: worker.session, goal: { title: "Sneaky", doneWhen: "Never." } }, worker.session);
+  assert.equal(created.status, 403);
+  const show = await fetch(`${base}/api/goals/show?slug=${encodeURIComponent(worker.slug)}`, { headers: { "x-tangent-session": worker.session } });
+  assert.equal(show.status, 200, "a worker still reads its Goal");
+  const list = await fetch(`${base}/api/goals?area=${encodeURIComponent(area)}`, { headers: { "x-tangent-session": worker.session } });
+  assert.equal(list.status, 200);
+  const legacy = await post(base, "/api/goals/handover", { session: worker.session, text: "Legacy alias still lands." }, worker.session);
+  assert.equal(legacy.status, 200, "the alias route is the send path and stays open");
+  assert.equal(legacy.body.status, "noted");
+  const fromBrainEdit = await post(base, "/api/goals/edit", { file: worker.goal, status: "done", session: brain.body.session }, brain.body.session);
+  assert.notEqual(fromBrainEdit.status, 403, "the gate is for workers only");
+});

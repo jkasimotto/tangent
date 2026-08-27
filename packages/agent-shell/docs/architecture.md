@@ -28,7 +28,7 @@ Gateway and controller share one stable Agent Shell instance identity. The gatew
 - `launch-catalog.mjs`: harness registry and Area launch resolution and writes;
 - `brain-launch.mjs`: per-attempt Brain default or registry-choice resolution, stale-choice checks, and immutable launch snapshots;
 - `message-delivery.mjs`: cross-agent queue order, delivery, audit, retargeting, and brain-notice settlement;
-- `message-queue-store.mjs`: atomic persistence for generic `tangent agent send` messages until pane-presentation settlement;
+- `message-queue-store.mjs`: atomic persistence for generic `tangent send` messages until pane-presentation settlement;
 - `agent-context.mjs`: the read-only recovery projection from durable brain, Goal, and queue records, independent of harness screen recognition and session ownership;
 - `agent-recovery.mjs`: stable recovery events derived from passive pane state, persisted by the controller through the brain inbox;
 - `pane-observer.mjs`: tmux pane samples and derived agent state;

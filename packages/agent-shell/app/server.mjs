@@ -17,7 +17,6 @@ import { createLaunchCatalog } from "./launch-catalog.mjs";
 import { cleanAreaPath, createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
 import { commandSession, programsSnapshot, saveLocalProgram, setTriggerPaused } from "./programs.mjs";
 import { documentHash, markdownTitle, safeMarkdownPath, wikiLinks } from "./vault-documents.mjs";
-import { rationaleDossierContract } from "./rationale-dossier.mjs";
 import documentComments from "./public/document-comments.js";
 import areaMapCore from "./public/area-map-core.js";
 import whatHappenedCore from "./public/what-happened-core.js";
@@ -234,9 +233,25 @@ const RECONCILE_INTERVAL_MS = Math.max(10, Number(process.env.TANGENT_RECONCILE_
 const CONTEXT_HANDOVER_TOKENS = Number(process.env.TANGENT_CONTEXT_HANDOVER_TOKENS ?? 300_000);
 
 /** The one-sentence teaching line in every worker prompt. */
-function contextTeachingSentence(subject) {
-  const threshold = Math.round(CONTEXT_HANDOVER_TOKENS / 1000);
-  return `If your carried context passes ${threshold}k tokens before you finish, submit a typed context-risk report with the durable facts. Do not replace yourself. Tangent keeps the report in the Goal queue, and any local caller can start the fresh attempt through that queue.`;
+function contextTeachingSentence() {
+  return "If your context is nearly full, send the brain a note with what is done and what is next.";
+}
+
+/**
+ * The closing section of every worker prompt: the one Tangent command a
+ * worker has (D5). The same four lines close a review step; --done on a
+ * review step means the review passed.
+ */
+function workerSendSection() {
+  return (
+    `## When you finish\n\n` +
+    `You have one Tangent command. Run it inside this session.\n\n` +
+    `    tangent send brain "<note>"            a note to the brain, no status change\n` +
+    `    tangent send brain --done "<note>"     the work is finished; say what changed and how you proved it\n` +
+    `    tangent send brain --blocked "<note>"  you cannot continue; say why\n` +
+    `    tangent send brain --question "<note>" you need a decision; ask it\n\n` +
+    `Do not run other tangent commands. Do not change the Goal file's frontmatter. The brain marks the Goal done.`
+  );
 }
 // One JSON record per session with a prompt armed to type once its harness
 // leaves the shell (armSession below), so the arm survives a server restart
@@ -1687,7 +1702,7 @@ function workingDirectorySection(folder) {
  * harness. Markdown keeps the contract readable in both the shell and the
  * agent composer.
  */
-async function goalPrompt(area, o, extras = [], continuationEntries = [], trace = null, folder = null) {
+async function goalPrompt(area, o, extras = [], continuationEntries = [], trace = null, folder = null, { closing = true } = {}) {
   const context = await goalContext(area, o, trace);
   trace?.mark("goal context ready", { documents: context.documents.length });
   const areaGoals = await readAreaGoals(area);
@@ -1705,12 +1720,6 @@ async function goalPrompt(area, o, extras = [], continuationEntries = [], trace 
     ...context.documents.map((document, index) => `- Document: ${document}${context.commentCounts[index] ? ` (${context.commentCounts[index]} open comment${context.commentCounts[index] === 1 ? "" : "s"} from Julian)` : ""}`),
   ];
   const openComments = context.commentCounts.some(Boolean);
-  const brain = await liveBrainForArea(area);
-  trace?.mark("controlling brain resolved");
-  const brainSection = brain
-    ? `## Brain\n\n` +
-      `The brain for Area ${brain.area} organizes this assignment. Stay on the assigned Goal and report through the handover command below. Tangent commands can target any Area; Area paths do not grant permission. Do not take over another live owner. Change Done, Won't do, or Area lifecycle only when Julian's words or the designated review contract authorizes it.\n\n`
-    : "";
   const alsoOwned = extras.length
     ? `## Also in this session\n\n` +
       `Julian assigned these Goals to this session too. Work them after the assignment above, in order; each file holds its own context.\n\n` +
@@ -1727,7 +1736,6 @@ async function goalPrompt(area, o, extras = [], continuationEntries = [], trace 
       ? `## Dependencies\n\nThese facts are advisory. They do not block or reorder this work.\n\n${dependencyLines.join("\n")}\n\n`
       : "") +
     alsoOwned +
-    brainSection +
     `## How to work\n\n` +
     `This Goal was already scoped with Julian. Its file holds what he explained, so he does not need to repeat it. Pick up the work directly, scope the details yourself, and bring him real decisions when they come up. There is no need to re-confirm the assignment before starting.\n\n` +
     `Read the goal first, then the area notes from nearest to farthest.` +
@@ -1737,12 +1745,12 @@ async function goalPrompt(area, o, extras = [], continuationEntries = [], trace 
     (o.subgoals.length ? ` The Subgoals are ordered; work through them in order.` : "") +
     `\n\n` +
     (openComments
-      ? `Julian left comments in the Documents marked above. They look like \`{>>Julian: ...<<}\`, sometimes after \`{==the words they refer to==}\`. Read them before you change a Document, and do what they ask or discuss them with Julian. \`tangent document comments <vault-relative file>\` lists them. Close each one only with \`tangent document resolve <file> "<first words of the comment>" -m "<what changed>"\`, after the work is done or after Julian says to close it. Never remove or rewrite a comment by hand, and carry comments along when you rewrite the text around them.\n\n`
+      ? `Julian left comments in the Documents marked above. They look like \`{>>Julian: ...<<}\`, sometimes after \`{==the words they refer to==}\`. Read them before you change a Document. Never remove or rewrite a comment by hand, and carry comments along when you rewrite the text around them. The brain closes them.\n\n`
       : "") +
-    `Useful habits here: check \`tangent process list\` before starting a server or watcher. When the done condition is met, report the proof through the typed handover. Tangent keeps assignment state in the Goal queue.\n\n` +
     `Design documents for this work belong in the Area folder ${path.join(TREES_ROOT, area)} as design-<slug>.md (a solution beside it as impl-<slug>.md), in Simple English (${path.join(os.homedir(), ".agents", "skills", "simple-english", "SKILL.md")}, pragmatic mode), with a [[${o.file.split("/").pop().replace(/\.md$/, "")}]] link so the Goal shows them. Read files wherever they are; write new design documents there.\n\n` +
-    contextTeachingSentence("Goal") +
-    (continuationEntries.length ? `\n\n${continuationSection({ index: 1, total: 1, entries: continuationEntries, subject: "Goal" })}` : "")
+    contextTeachingSentence() +
+    (continuationEntries.length ? `\n\n${continuationSection({ index: 1, total: 1, entries: continuationEntries, subject: "Goal" })}` : "") +
+    (closing ? `\n\n${workerSendSection()}` : "")
   );
 }
 
@@ -1752,38 +1760,28 @@ async function goalPrompt(area, o, extras = [], continuationEntries = [], trace 
  * and how to hand over when done. Guidance, not a schema.
  */
 async function pipelineStepPrompt(area, o, record, index, extras = [], sessionName = "", trace = null, folder = null) {
-  const assignment = await goalPrompt(area, o, extras, [], trace, folder);
+  const assignment = await goalPrompt(area, o, extras, [], trace, folder, { closing: false });
   trace?.mark("assignment rendered", { characters: assignment.length });
   const step = record.steps[index - 1];
   const total = record.steps.length;
   const earlier = record.steps
     .filter((item) => item.index < index && item.handover)
     .map((item) => `### Handover from step ${item.index} (${item.label || "agent"}, ${item.status})\n\n${item.handover}`);
-  const brain = await liveBrainForArea(area);
   trace?.mark("step controller resolved");
-  const decisionLine = brain
-    ? `If you need a decision, test, correction, fresh context, or another agent, include that fact in the same handover. The brain decides the next action.`
-    : `If a real decision needs Julian, ask him here; this legacy pipeline waits.`;
-  const dossierContract = rationaleDossierContract({ goalFile: o.file, title: o.title, area, treesRoot: TREES_ROOT, session: sessionName });
   const continuationEntries = step.continuations ?? [];
-  const typedReport = step.designatedReview
-    ? `This is the designated review assignment. Finish with \`tangent handover --report '<json>' "<facts>"\`. The JSON type is \`review-result\`. Use verdict \`passed\`, \`changes-required\`, or \`blocked\`. Include \`goalRevision\` as \`${record.goalRevision}\`, a summary, and one or more criteria with id, passed, and evidenceRefs. Only a complete passed report at this revision can close the Goal.`
-    : `Finish with \`tangent handover --report '<json>' "<facts>"\`. The JSON type is \`implementation-result\`, with status, summary, evidenceRefs, problems, and nextNeed. Free text alone records evidence but cannot advance or close the Goal.`;
   return (
     `${assignment}\n\n` +
     `## Your step\n\n` +
-    `Step ${index} of ${total}${total > 1 ? " in a pipeline" : ""}: ${step.instruction}\n\n` +
+    `Step ${index} of ${total}${total > 1 ? " in a pipeline" : ""}: ${step.instruction}${step.designatedReview ? " This is the review step. --done means the review passed." : ""}\n\n` +
     (earlier.length ? `## Handovers so far\n\n${earlier.join("\n\n")}\n\n` : "") +
     (continuationEntries.length ? `${continuationSection({ index, total, entries: continuationEntries, subject: "step" })}\n\n` : "") +
-    `## When you finish\n\n` +
-    `${dossierContract}\n\n` +
-    `${typedReport}\n\nState files and commits, checks and results, what is complete, what is unresolved, and any decision or test that is needed. This operation reports to the brain; it does not choose the next agent. ${decisionLine} ${brain ? "If your context is nearly full, hand over that fact through the same command." : contextTeachingSentence("step")}`
+    workerSendSection()
   );
 }
 
 /** The contract for one native-agent collaboration around a complete Goal. */
 async function collaborationPrompt(area, o, documentFile = "", extras = []) {
-  const assignment = await goalPrompt(area, o, extras);
+  const assignment = await goalPrompt(area, o, extras, [], null, null, { closing: false });
   const focus = documentFile ? await readVaultDocument(documentFile) : null;
   const documentFocus = focus
     ? `## Current reading location\n\nJulian is reading ${focus.file}. Use this location to interpret references such as “this section.” It does not limit the feedback to one Document.\n\n`
@@ -2109,7 +2107,7 @@ async function rearmPersistedPrompts() {
 // One queue per target session. The server is the only writer into panes, so
 // every message flows through here: stamped with the sender's identity,
 // delivered only into a positively identified empty composer, and audited to
-// ~/.tangent/agent-shell-messages.jsonl. Generic `tangent agent send` entries
+// ~/.tangent/agent-shell-messages.jsonl. Generic `tangent send` entries
 // also live in one atomic queue under Agent Shell state until presentation
 // settles. Rules live in agent-messages.mjs.
 
@@ -3040,8 +3038,26 @@ async function endPipelineForSession(sessionName) {
 }
 
 /** Stable server identity for an exact retry when the CLI supplies no key. */
-function workerHandoverOperationId(sessionName, text, report, idempotencyKey) {
-  return idempotencyKey || `report:${sessionName}:${createHash("sha256").update(JSON.stringify(report ?? { text })).digest("hex")}`;
+function workerHandoverOperationId(sessionName, text, report, idempotencyKey, kind = null) {
+  return idempotencyKey || `report:${sessionName}:${createHash("sha256").update(JSON.stringify(report ?? (kind ? { kind, text } : { text }))).digest("hex")}`;
+}
+
+/** The send flags a worker has (D5), each with the queue effect it stands for. */
+const WORKER_SEND_KINDS = new Set(["note", "done", "blocked", "question"]);
+
+/**
+ * Builds the stored report for one `tangent send brain` flag. Existing readers
+ * keep working because the shapes are the typed reports they already know.
+ * A review step's --done is a passed review at the current Goal revision.
+ */
+function reportFromSendKind(record, step, kind, text) {
+  if (kind === "blocked") return { type: "failed", summary: text };
+  if (kind === "question") return { type: "question-needed", summary: text, question: text };
+  if (kind !== "done") return null;
+  if (step.designatedReview) {
+    return { type: "review-result", verdict: "passed", goalRevision: record.goalRevision, summary: text, criteria: [{ id: "done", passed: true, evidenceRefs: [text] }] };
+  }
+  return { type: "implementation-result", status: "done", summary: text };
 }
 
 /** One actionable refusal for a typed report that the queue did not accept. */
@@ -3050,14 +3066,16 @@ function workerReportRejection(error) {
   return `The typed report was rejected (${reason}). Correct --report and retry the same handover. Tangent recorded no report or brain notice.`;
 }
 
-/** The durable notice text saved with a queue receipt before delivery. */
-function workerHandoverNotice(record, step, workerSession, report, text) {
-  const type = report?.type ?? "untyped-evidence";
-  const result = report
-    ? `${type}${report.verdict ? ` (${report.verdict})` : report.status ? ` (${report.status})` : ""}`
-    : "untyped evidence that cannot advance the Goal";
-  const summary = report?.summary || text;
-  return `Goal ${record.slug}: assignment ${step.index} from worker ${workerSession} submitted ${result}. Queue revision ${record.revision} recorded assignment status ${step.status}. ${brainMessageExcerpt(summary)}`;
+/**
+ * The durable notice text saved with a queue receipt before delivery. A send
+ * starts with its flag word; a legacy typed report keeps its type line.
+ */
+function workerHandoverNotice(record, step, workerSession, report, text, kind = null) {
+  if (kind) {
+    return `${kind}: ${brainMessageExcerpt(text)} (Goal ${record.slug}, assignment ${step.index}, worker ${workerSession}, queue revision ${record.revision}, assignment status ${step.status})`;
+  }
+  const result = `${report.type}${report.verdict ? ` (${report.verdict})` : report.status ? ` (${report.status})` : ""}`;
+  return `Goal ${record.slug}: assignment ${step.index} from worker ${workerSession} submitted ${result}. Queue revision ${record.revision} recorded assignment status ${step.status}. ${brainMessageExcerpt(report.summary || text)}`;
 }
 
 /** Makes the receipt's exact-Area notice durable before a worker sees success. */
@@ -3094,11 +3112,15 @@ async function settleWorkerHandoverNotice(record, receipt) {
   return { status: 200, receipt };
 }
 
-/** Records one worker handover under the queue's per-Goal mutation lock. */
-async function handoverPipelineStep(sessionName, text, report = null, idempotencyKey = "") {
+/**
+ * Records one worker send under the queue's per-Goal mutation lock. `kind`
+ * is a send flag (note, done, blocked, question); a legacy typed `report`
+ * arrives with no kind, and plain text with neither is a note.
+ */
+async function handoverPipelineStep(sessionName, text, report = null, idempotencyKey = "", kind = null) {
   const records = await readAllPipelines(PIPELINES_ROOT);
   const matched = records.find((record) => record.steps.some((step) => step.session === sessionName || step.attempts?.some((attempt) => attempt.session === sessionName)));
-  if (matched) return withGoalQueueMutation(matched.goal, () => handoverPipelineStepUnlocked(sessionName, text, report, idempotencyKey));
+  if (matched) return withGoalQueueMutation(matched.goal, () => handoverPipelineStepUnlocked(sessionName, text, report, idempotencyKey, kind));
 
   // A plain handover from a session whose step already swapped to a fresh one
   // must not complete the step out from under the live replacement.
@@ -3108,26 +3130,27 @@ async function handoverPipelineStep(sessionName, text, report = null, idempotenc
   if (!live) return { status: 404, error: "This session is not a running Goal worker. Run the handover inside the assigned worker session. Nothing was recorded." };
   const goal = (await goalsByFile()).get(live.goal);
   if (!goal) return { status: 404, error: "This worker has no Goal assignment. Read tangent goal show, then report from the assigned session. Nothing was recorded." };
-  return withGoalQueueMutation(goal.file, () => handoverPipelineStepUnlocked(sessionName, text, report, idempotencyKey));
+  return withGoalQueueMutation(goal.file, () => handoverPipelineStepUnlocked(sessionName, text, report, idempotencyKey, kind));
 }
 
 /** Performs one serialized worker submission or exact retry. */
-async function handoverPipelineStepUnlocked(sessionName, text, report = null, idempotencyKey = "") {
-  const operationId = workerHandoverOperationId(sessionName, text, report, idempotencyKey);
+async function handoverPipelineStepUnlocked(sessionName, text, report = null, idempotencyKey = "", kind = null) {
+  const operationId = workerHandoverOperationId(sessionName, text, report, idempotencyKey, kind);
   const records = await readAllPipelines(PIPELINES_ROOT);
   for (const record of records) {
     const step = record.steps.find((item) => (item.session === sessionName || item.attempts?.some((attempt) => attempt.session === sessionName))
-      && item.reports?.some((stored) => stored.idempotencyKey === operationId));
+      && (item.reports?.some((stored) => stored.idempotencyKey === operationId) || workerHandoverReceipt(record, item, sessionName, operationId)));
     if (!step) continue;
     let receipt = workerHandoverReceipt(record, step, sessionName, operationId);
     if (!receipt) {
+      const stored = (step.reports ?? []).find((item) => item.idempotencyKey === operationId);
       receipt = appendWorkerHandoverReceipt(record, step, {
         workerSession: sessionName,
         idempotencyKey: operationId,
-        reportType: report?.type ?? step.reports.find((stored) => stored.idempotencyKey === operationId)?.type ?? "untyped-evidence",
+        reportType: report?.type ?? stored?.type ?? "note",
         queueRevisionBefore: record.revision,
         queueResult: "accepted-before-receipt-cutover",
-        noticeText: workerHandoverNotice(record, step, sessionName, report, text),
+        noticeText: workerHandoverNotice(record, step, sessionName, report ?? stored, text, report || stored ? null : "note"),
       }).receipt;
       await writePipeline(PIPELINES_ROOT, record);
     }
@@ -3151,7 +3174,7 @@ async function handoverPipelineStepUnlocked(sessionName, text, report = null, id
     try {
       const evidence = report
         ? { ...structuredClone(report), text }
-        : { type: "untyped-evidence", text };
+        : { type: kind ?? "note", text };
       const attached = attachLateSourceEvidence(record, {
         assignmentId: step.id,
         attemptId: attempt.id,
@@ -3187,7 +3210,9 @@ async function handoverPipelineStepUnlocked(sessionName, text, report = null, id
   if (found.record.migrationProblem || found.record.status === "paused" || found.record.controllerArea !== found.record.area) {
     return { status: 409, error: `The authoritative Goal queue is paused: ${found.record.migrationProblem ?? "it needs repair"}. Keep this worker session open and repair the queue for ${found.record.area}. Nothing was recorded.` };
   }
-  return completePipelineStep(found.record, found.step, text, "agent", report, operationId, sessionName);
+  const effectiveReport = report ?? reportFromSendKind(found.record, found.step, kind, text);
+  const effectiveKind = report ? null : kind ?? "note";
+  return completePipelineStep(found.record, found.step, text, "agent", effectiveReport, operationId, sessionName, effectiveKind);
 }
 
 /**
@@ -3214,12 +3239,28 @@ async function swappedAwayNaming(sessionName) {
  * first handover and gains the second below it: nothing already handed over
  * is lost.
  */
-async function completePipelineStep(record, step, text, source, report = null, idempotencyKey = "", workerSession = "") {
+async function completePipelineStep(record, step, text, source, report = null, idempotencyKey = "", workerSession = "", kind = null) {
   const queueRevisionBefore = record.revision;
   step.handover = step.handover ? `${step.handover}\n\n${text}` : text;
   step.handoverSource = source;
   const endedAt = new Date().toISOString();
   let typed = null;
+  if (source === "agent" && !report) {
+    // A plain note from a worker: kept on the step and told to the brain.
+    // The assignment keeps its status, the queue keeps its revision.
+    record.assignments = record.steps;
+    const receipt = appendWorkerHandoverReceipt(record, step, {
+      workerSession,
+      idempotencyKey,
+      reportType: "note",
+      queueRevisionBefore,
+      queueResult: "note",
+      noticeText: workerHandoverNotice(record, step, workerSession, null, text, "note"),
+    }).receipt;
+    await writePipeline(PIPELINES_ROOT, record);
+    const settled = await settleWorkerHandoverNotice(record, receipt);
+    return settled.status === 200 ? { status: 200, state: "noted", next: null, pipeline: record, receipt: settled.receipt } : settled;
+  }
   if (report) {
     try {
       typed = recordTypedReport(record, step, report, idempotencyKey, endedAt);
@@ -3227,15 +3268,6 @@ async function completePipelineStep(record, step, text, source, report = null, i
       return { status: 409, error: source === "agent" ? workerReportRejection(error) : String(error.message ?? error) };
     }
     if (source === "agent" && step.status === "waiting") record.currentAssignmentId = step.id;
-  } else if (source === "agent" && record.schema === "area-goal-queue.v2") {
-    const untyped = { type: "untyped-evidence", text, idempotencyKey, reportedAt: endedAt };
-    step.reports = [...(step.reports ?? []), untyped];
-    const attempt = step.attempts?.at(-1);
-    if (attempt) attempt.report = untyped;
-    step.status = "waiting";
-    step.endedAt = endedAt;
-    record.currentAssignmentId = step.id;
-    record.revision = Math.max(1, Number(record.revision) || 1) + 1;
   } else {
     step.status = source === "skip" ? "skipped" : "complete";
     step.endedAt = endedAt;
@@ -3254,11 +3286,11 @@ async function completePipelineStep(record, step, text, source, report = null, i
     receipt = appendWorkerHandoverReceipt(record, step, {
       workerSession,
       idempotencyKey,
-      reportType: report?.type ?? "untyped-evidence",
+      reportType: report.type,
       queueRevisionBefore,
-      queueResult: report ? "accepted" : "evidence-only",
+      queueResult: "accepted",
       closeGoal: typed?.closeGoal === true,
-      noticeText: workerHandoverNotice(record, step, workerSession, report, text),
+      noticeText: workerHandoverNotice(record, step, workerSession, report, text, kind),
     }).receipt;
   }
   await writePipeline(PIPELINES_ROOT, record);
@@ -4320,6 +4352,34 @@ async function routeBrainNotice(area, text, { idempotencyKey = null, sender = nu
   });
   await messages.log({ event: "sent", to: record.session, from: senderName || "tangent", area: senderArea, text: body, disposition: "queued", reason: "brain event" });
   return { addressed: true, notice, session: record.session, generation: record.generation ?? null };
+}
+
+/**
+ * The routes a worker session cannot call (D6). A worker has one command,
+ * `tangent send brain`; every other Tangent mutation belongs to the brain.
+ */
+const WORKER_REFUSED_ROUTES = new Set([
+  "/api/goals/create", "/api/goals/new", "/api/goals/own", "/api/goals/release", "/api/goals/edit", "/api/goals/start",
+  "/api/goals/depend", "/api/goals/undepend", "/api/goals/accept", "/api/goals/understanding", "/api/goals/cleanup",
+  "/api/pipelines/append", "/api/pipelines/control", "/api/pipelines/edit", "/api/pipelines/mutate", "/api/goals/attempts/replace",
+  "/api/areas/new", "/api/areas/status", "/api/areas/move", "/api/idea/new", "/api/document/resolve", "/api/document",
+  "/api/brains/start", "/api/brains/stop", "/api/brains/handover", "/api/brains/requests", "/api/brains/requests/withdraw",
+  "/api/operations/new", "/api/operations/control", "/api/programs/new", "/api/programs/control",
+]);
+
+const WORKER_MUTATION_REFUSAL = 'workers only send. Use: tangent send brain "<note>"';
+
+/**
+ * The 403 text for a mutating route called from a worker session, or null
+ * when the caller is not a worker or the route is a read or a send. The CLI
+ * names its tmux session in the x-tangent-session header.
+ */
+async function refuseWorkerMutation(req, url) {
+  if (req.method !== "POST" || !WORKER_REFUSED_ROUTES.has(url.pathname)) return null;
+  const session = String(req.headers["x-tangent-session"] ?? "").trim();
+  if (!session) return null;
+  const actor = await commandProvenance(session);
+  return actor.role === "worker" ? WORKER_MUTATION_REFUSAL : null;
 }
 
 /** Resolves one command's audit identity without using it as permission. */
@@ -5579,8 +5639,8 @@ async function reconcileContextHandovers(sessions) {
     const now = new Date().toISOString();
     await execution.saveReminder(session.name, { firstAt: reminders?.firstAt ?? (level === "first" ? now : null), repeatAt: level === "repeat" ? now : reminders?.repeatAt ?? null });
     const handoverText = level === "first"
-      ? `Your context is nearly full. At the next natural pause, report your files, checks, unresolved facts, and first next action with: tangent handover "<facts>". Do not replace yourself. Tangent keeps the report in the Goal queue, and any local caller can start a fresh attempt through that queue.`
-      : `Your context is well past the handover threshold. Report now with: tangent handover "<facts>". Do not replace yourself. Tangent keeps the report in the Goal queue, and any local caller can start a fresh attempt through that queue.`;
+      ? `Your context is nearly full. At the next natural pause, send the brain what is done and what is next with: tangent send brain "<facts>". Do not replace yourself. The brain starts a fresh attempt when it needs one.`
+      : `Your context is well past the threshold. Send now with: tangent send brain "<facts>". Do not replace yourself. The brain starts a fresh attempt when it needs one.`;
     messages.queue(session.name, {
       from: "tangent",
       area,
@@ -6289,6 +6349,8 @@ const brainRoutes = createBrainRoutes({
 const pipelineRoutes = createPipelineRoutes({
   normalizeMessage,
   handoverStep: handoverPipelineStep,
+  /** Whether a send flag word is one a worker has. */
+  isWorkerSendKind: (kind) => WORKER_SEND_KINDS.has(kind),
   control: controlPipeline,
   append: appendPipelineSteps,
   edit: editPipelineStep,
@@ -6372,6 +6434,25 @@ const agentRoutes = createAgentRoutes({
         : { ...projected, prompt: null, promptError: "the durable Goal queue is unavailable" };
     }
     return { ...projected, ...await rebuiltAgentPrompt(() => goalPrompt(goal.area, goal, recoveredExtraGoals(projected, goalIndex))) };
+  },
+  /**
+   * A worker's `tangent send brain`: the note lands on the worker's own
+   * assignment and in the inbox of the brain that controls it. Only a worker
+   * has a brain to resolve; anyone else names a session or an Area.
+   */
+  async sendToBrain(body) {
+    const text = normalizeMessage(body.text);
+    const session = String(body.from ?? "").trim();
+    const kind = body.kind == null ? null : String(body.kind);
+    if (kind !== null && !WORKER_SEND_KINDS.has(kind)) return { status: 400, error: `Unknown send kind "${kind}". Use --done, --blocked, --question, or no flag.` };
+    const actor = await commandProvenance(session);
+    const queued = session && (await readAllPipelines(PIPELINES_ROOT)).some((record) => record.steps.some((step) => step.session === session || step.attempts?.some((attempt) => attempt.session === session)));
+    if (actor.role !== "worker" && !queued) return { status: 400, error: "tangent send brain works inside a worker session. Name a session or an Area path." };
+    const result = await handoverPipelineStep(session, text, null, String(body.idempotencyKey ?? ""), kind ?? "note");
+    if (result.status !== 200) return { status: result.status, error: result.error };
+    const area = result.receipt?.destinationArea ?? result.pipeline?.area ?? actor.area;
+    const brain = area ? await liveBrainForArea(area) : null;
+    return { status: 200, value: { status: "sent", to: brain?.session ?? area, kind: kind ?? "note", state: result.state, receipt: result.receipt ?? null, pipeline: result.pipeline } };
   },
   /** Delivers or queues one normalized cross-agent message. */
   async send(body) {
@@ -7245,6 +7326,11 @@ const server = http.createServer(async (req, res) => {
           stateEvents.changed(url.pathname);
         }
       });
+    }
+    const refusal = await refuseWorkerMutation(req, url);
+    if (refusal) {
+      sendJson(res, 403, { error: refusal });
+      return;
     }
     if (await shellStateRoutes.handle(req, res, url)) return;
     if (await brainRoutes.handle(req, res, url)) return;

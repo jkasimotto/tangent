@@ -176,7 +176,8 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(listed.comments.length, 1);
   const briefWithComment = await fetch(`${base}/api/goals/brief?file=otto%2Ftest%2Fgoal-prove-it.md`).then((response) => response.json());
   assert.match(briefWithComment.markdown, /use-cases\.md \(1 open comment from Julian\)/);
-  assert.match(briefWithComment.markdown, /tangent document resolve/);
+  assert.match(briefWithComment.markdown, /\{>>Julian: \.\.\.<<\}/, "the worker learns the comment shape, not a command");
+  assert.doesNotMatch(briefWithComment.markdown, /tangent document resolve/, "the brain closes comments, not the worker");
   const missing = await fetch(`${base}/api/document/resolve`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -452,10 +453,9 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.deepEqual(options.harnesses[0].efforts, [{ id: "high", label: "High", args: "--effort high", command: "fake-agent --effort high" }]);
   assert.match(serverSource, /## Your step/);
   assert.match(serverSource, /## When you finish/);
-  assert.match(serverSource, /tangent handover/);
-  assert.doesNotMatch(serverSource, /tangent goal handover/, "worker prompts use the one typed handover command");
+  assert.match(serverSource, /tangent send brain "<note>"/);
+  assert.doesNotMatch(serverSource, /tangent goal handover/, "worker prompts use the one send command");
   assert.match(serverSource, /design-<slug>\.md/);
-  assert.match(serverSource, /rationaleDossierContract\(/);
   assert.match(serverSource, /name: "material Operation events"/, "material Operation delivery runs without a browser poll");
   assert.doesNotMatch(serverSource, /\b(?:newContinuationRecord|writeContinuation|soloExecution)\b/, "production has no retired solo writer");
 
@@ -784,7 +784,8 @@ test("the context-first shell is default and keeps the user's understanding with
   }).then((response) => response.json());
   assert.equal(brainRequest.request.ownerRef.generation, null, "the Request belongs to the logical Area brain");
   const briefUnderBrain = await fetch(`${base}/api/goals/brief?file=${encodeURIComponent(pipelineGoal.file)}`).then((response) => response.json());
-  assert.match(briefUnderBrain.markdown, /## Brain\n\nThe brain for Area otto\/test organizes this assignment/);
+  assert.doesNotMatch(briefUnderBrain.markdown, /## Brain/, "the worker prompt has no permissions paragraph");
+  assert.match(briefUnderBrain.markdown, /## When you finish\n\nYou have one Tangent command/);
   // A queue event on the Area is queued to the brain as a message from tangent.
   const eventGoal = await fetch(`${base}/api/goals/create`, {
     method: "POST",
@@ -803,10 +804,10 @@ test("the context-first shell is default and keeps the user's understanding with
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ session: eventPipeline.session, text: "One more done." }),
   }).then((response) => response.json());
-  assert.equal(eventHandover.status, "reported");
+  assert.equal(eventHandover.status, "noted", "plain text from a worker is a note");
   const messageLog = (await readFile(path.join(root, "messages.jsonl"), "utf8")).trim().split("\n").map((line) => JSON.parse(line));
-  const brainEvent = messageLog.find((entry) => entry.to === "test-brain" && entry.from === "tangent" && /untyped evidence/.test(entry.text) && /One more done\./.test(entry.text));
-  assert.ok(brainEvent, "the brain hears that the worker submitted untyped evidence");
+  const brainEvent = messageLog.find((entry) => entry.to === "test-brain" && entry.from === "tangent" && /^note: One more done\./.test(entry.text));
+  assert.ok(brainEvent, "the brain hears the worker's note");
   assert.match(brainEvent.text, /One more done\./);
   const correctedEventHandover = await fetch(`${base}/api/goals/handover`, {
     method: "POST",
@@ -817,7 +818,7 @@ test("the context-first shell is default and keeps the user's understanding with
       report: { type: "implementation-result", status: "complete", summary: "One more done.", evidenceRefs: ["event"] },
     }),
   }).then((response) => response.json());
-  assert.equal(correctedEventHandover.status, "reported", "the same worker can correct its untyped evidence");
+  assert.equal(correctedEventHandover.status, "reported", "the same worker can follow a note with a typed result");
   assert.equal(correctedEventHandover.pipeline.status, "complete");
   const appendedReview = await fetch(`${base}/api/pipelines/append`, {
     method: "POST",

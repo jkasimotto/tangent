@@ -251,18 +251,18 @@ test("brain show keeps durable prompt access when live tmux observation fails", 
   assert.match(show.prompt, /Delegate sustained investigation, design, implementation, test campaigns, reviews/);
 });
 
-test("a pipeline step under a brain has one handover route and never chooses the next agent", async () => {
+test("a worker prompt ends with the one send command and no typed report contract", async () => {
   const serverSource = await readFile(path.join(here, "server.mjs"), "utf8");
-  assert.match(
-    serverSource,
-    /Finish with .*tangent handover --report.*This operation reports to the brain; it does not choose the next agent\./s,
-    "under a brain, a worker reports through one route and does not schedule work"
-  );
-  assert.match(
-    serverSource,
-    /If a real decision needs Julian, ask him here; this legacy pipeline waits\./,
-    "a pipeline step with no brain on the Area keeps asking Julian directly"
-  );
+  const closing = serverSource.match(/function workerSendSection\(\) \{[\s\S]*?\n\}/)?.[0] ?? "";
+  assert.match(closing, /tangent send brain "<note>"/);
+  assert.match(closing, /tangent send brain --done "<note>"/);
+  assert.match(closing, /tangent send brain --blocked "<note>"/);
+  assert.match(closing, /tangent send brain --question "<note>"/);
+  assert.match(closing, /Do not run other tangent commands\. Do not change the Goal file's frontmatter\. The brain marks the Goal done\./);
+  const prompts = serverSource.slice(serverSource.indexOf("async function goalPrompt("), serverSource.indexOf("/** The contract for one native-agent collaboration"));
+  assert.doesNotMatch(prompts, /--report|implementation-result|review-result|## Brain/, "the worker prompt has no typed report contract");
+  assert.doesNotMatch(serverSource, /tangent handover|tangent goal handover|tangent agent send/, "old worker verbs are gone from the server");
+  assert.doesNotMatch(serverSource, /rationaleDossierContract|tangent process list|tangent document resolve/, "the worker prompt teaches no other command");
 });
 
 test("bounded brain prompt uses conversational Requests", async (context) => {

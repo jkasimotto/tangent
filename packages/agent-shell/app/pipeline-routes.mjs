@@ -37,7 +37,12 @@ export function createPipelineRoutes(operations) {
       sendJson(response, 400, { error: "The report was rejected because it is not one JSON object. Correct --report and retry the same handover. Nothing was submitted." });
       return;
     }
-    const result = await operations.handoverStep(String(body.session ?? ""), text, hasReport ? body.report : null, String(body.idempotencyKey ?? ""));
+    const kind = body.kind == null ? null : String(body.kind);
+    if (kind !== null && !operations.isWorkerSendKind(kind)) {
+      sendJson(response, 400, { error: `Unknown send kind "${kind}". Use --done, --blocked, --question, or no flag.` });
+      return;
+    }
+    const result = await operations.handoverStep(String(body.session ?? ""), text, hasReport ? body.report : null, String(body.idempotencyKey ?? ""), kind);
     const value = result.status !== 200 ? { error: result.error }
       : { status: result.state, next: result.next, pipeline: result.pipeline, receipt: result.receipt ?? null };
     sendJson(response, result.status, value);

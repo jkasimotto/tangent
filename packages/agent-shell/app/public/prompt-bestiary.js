@@ -1,11 +1,11 @@
 /** Reusable message contracts that appear inside lifecycle transitions. */
 export const PROMPT_SPECIES = [
   { id: "brain", name: "Brain activation", recipient: "Area brain", trigger: "Activate or recover an Area brain", delivery: "Built, typed, and confirmed", shape: "Founding instruction, current checkpoint, bounded memory, current Documents, Questions, events, command provenance, and mutation fences." },
-  { id: "goal", name: "Worker assignment", recipient: "Worker", trigger: "A local caller starts an approved assignment", delivery: "Built, typed, and confirmed", shape: "Done condition, sources, approved context, queue contract, and one handover route." },
+  { id: "goal", name: "Worker assignment", recipient: "Worker", trigger: "A local caller starts an approved assignment", delivery: "Built, typed, and confirmed", shape: "Done condition, sources, approved context, working directory, and the one send command." },
   { id: "pipeline", name: "Pipeline assignment", recipient: "Worker", trigger: "The brain advances an approved pipeline", delivery: "Built, typed, and confirmed", shape: "Worker assignment, current step, earlier handovers, continuation facts, and exit contract." },
   { id: "brain-notice", name: "Brain notice", recipient: "Controlling Area brain", trigger: "A worker reports, a request is answered, or a Document changes", delivery: "Recorded, queued, typed, and confirmed", shape: "A durable event with its Area, source identity, facts, and time." },
   { id: "brain-request", name: "Brain request", recipient: "Julian", trigger: "The brain needs plan approval, a decision, a test, or explicit approval", delivery: "Durable request record", shape: "Kind, subject, detail, question, named answers, status, and answer." },
-  { id: "handover", name: "Worker handover", recipient: "Controlling Area brain", trigger: "The worker runs tangent handover", delivery: "Recorded before delivery", shape: "Files, commits, checks, completion facts, unresolved facts, and any decision or test need." },
+  { id: "handover", name: "Worker send", recipient: "Controlling Area brain", trigger: "The worker runs tangent send brain", delivery: "Recorded before delivery", shape: "A note, or --done, --blocked, --question with what changed, how it was proved, and what is unresolved." },
   { id: "context", name: "Context continuation", recipient: "Fresh worker", trigger: "The brain chooses fresh context for the same assignment", delivery: "New prompt confirmed before old session ends", shape: "Original assignment plus every durable continuation handover." },
   { id: "comment", name: "Document comment notice", recipient: "Logical Area inbox", trigger: "Julian presses the Document notification button", delivery: "Durable brain notice", shape: "Document path, open comment count, and the command that reads them." },
 ];
@@ -64,13 +64,13 @@ const TRANSITIONS = {
     trigger: "The plan is approved and the brain starts an approved assignment.",
     payload: "The Goal, done condition, sources, step, earlier facts, and worker communication contract.",
     knows: "The brain retains the complete plan. The worker receives only the context for this assignment.",
-    next: "The worker performs the assignment and reports through tangent handover.",
+    next: "The worker performs the assignment and reports through tangent send brain.",
     state: "The Goal and pipeline record identify the running session and step.",
     delivery: "Agent Shell waits for a ready composer, types the prompt, checks its tail, and submits it.",
     source: "server.mjs: goalPrompt and pipelineStepPrompt",
-    layers: ["Worker identity and queue contract", "Done condition", "Goal and Area sources", "Current step and prior facts", "One handover contract"],
+    layers: ["Worker identity and queue contract", "Done condition", "Goal and Area sources", "Current step and prior facts", "One send command"],
   }),
-  handover: transition("Worker handover", "Worker A", "Area brain", "handover", {
+  handover: transition("Worker send", "Worker A", "Area brain", "handover", {
     trigger: "The worker finishes a useful turn or needs the brain to choose what happens next.",
     payload: "A tagged report plus files, commits, checks, results, unresolved facts, and any decision or context need.",
     knows: "Agent Shell adds the worker session, Goal, Area, pipeline step, and event time.",
@@ -154,7 +154,7 @@ const TRANSITIONS = {
     trigger: "The brain decides that the same assignment needs a fresh worker.",
     payload: "The original assignment plus every durable continuation fact in order.",
     knows: "Worker B does not receive the old transcript.",
-    next: "Worker B continues the same assignment and uses the normal handover.",
+    next: "Worker B continues the same assignment and sends to the brain the same way.",
     state: "The record points to Worker B. Worker A ends after prompt confirmation.",
     delivery: "Facts are written before spawn. Failure restores Worker A when possible.",
     source: "context-handover.mjs; Area Goal queue controller",

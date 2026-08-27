@@ -10,7 +10,7 @@ export function createMessageDelivery({ file, sessions, deliverText, notices, wa
   let ticking = null;
   let durableMutations = Promise.resolve();
 
-  // Only generic `tangent agent send` entries opt into this store. Brain
+  // Only generic `tangent send` entries opt into this store. Brain
   // notices already have their own durable outbox, and context reminders can
   // carry a live render function that must not be guessed back from JSON.
   for (const stored of store?.entries?.() ?? []) {

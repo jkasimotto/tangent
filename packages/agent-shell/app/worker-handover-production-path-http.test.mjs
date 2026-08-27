@@ -169,8 +169,9 @@ test("neara/portland worker handovers survive delay, rollover, restart, and exac
   assert.equal(deliveredImplementation.deliveredGeneration, 2);
   assert.equal(deliveredImplementation.deliveredTo, rolled.body.session);
 
-  // Free text is durable evidence, but the assignment remains waiting. Kill
-  // generation 2 first to reproduce delivery during a brain restart gap.
+  // Free text is a note: durable on the assignment, and the assignment keeps
+  // running. Kill generation 2 first to reproduce delivery during a brain
+  // restart gap.
   const evidence = await startWorker(base, rolled.body.session, openedSessions, "Portland free text");
   await stopSession(rolled.body.session);
   const evidenceResult = await post(base, "/api/goals/handover", {
@@ -178,13 +179,13 @@ test("neara/portland worker handovers survive delay, rollover, restart, and exac
     text: "Observed the Portland failure and saved the logs.",
   });
   assert.equal(evidenceResult.status, 200, JSON.stringify(evidenceResult.body));
-  assert.equal(evidenceResult.body.status, "reported");
-  assert.equal(evidenceResult.body.receipt.reportType, "untyped-evidence");
-  assert.equal(evidenceResult.body.receipt.queue.result, "evidence-only");
+  assert.equal(evidenceResult.body.status, "noted");
+  assert.equal(evidenceResult.body.receipt.reportType, "note");
+  assert.equal(evidenceResult.body.receipt.queue.result, "note");
   const evidenceQueue = await readQueue(root, evidence);
-  assert.equal(evidenceQueue.steps[0].status, "waiting");
-  assert.equal(evidenceQueue.currentAssignmentId, evidenceQueue.steps[0].id);
-  assert.equal(evidenceQueue.steps[0].reports[0].type, "untyped-evidence");
+  assert.equal(evidenceQueue.steps[0].status, "running", "a note changes no assignment status");
+  assert.equal(evidenceQueue.steps[0].reports?.length ?? 0, 0, "a note is not a typed report");
+  assert.match(evidenceQueue.steps[0].handover, /Observed the Portland failure/);
   assert.equal(evidenceResult.body.next, null);
 
   const resumed = await post(base, "/api/brains/start", { area, resume: true, instruction: "Resume Portland." });
@@ -192,7 +193,7 @@ test("neara/portland worker handovers survive delay, rollover, restart, and exac
   assert.ok(resumed.body.generation >= 3);
   openedSessions.push(resumed.body.session);
   const resumedPrompt = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(resumed.body.session)}`).then((response) => response.json());
-  assert.match(resumedPrompt.prompt, /untyped evidence that cannot advance the Goal/);
+  assert.match(resumedPrompt.prompt, /note: Observed the Portland failure/);
   const deliveredEvidence = workerNotices(await readInbox(path.join(root, "brains"), area))
     .find((notice) => notice.id === evidenceResult.body.receipt.notice.id);
   assert.equal(deliveredEvidence.deliveredGeneration, resumed.body.generation);

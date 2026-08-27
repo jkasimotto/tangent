@@ -6,7 +6,7 @@ Public import paths:
 - `@tangent/agent-shell/cli`
 - `@tangent/agent-shell/area-resources`
 
-The first two paths export the CLI runners and help specifications for `area`, `brain`, `goal`, `idea`, `document`, `agent`, `shell`, `study`, and `vault`. They also export the study contract. The third path exports the one parser for an Area note's `## Resources` section (`parseAreaResources`, `resolveWorkFolder`, `describeAreaResources`, `unboundAreaMessage`). The root `tangent trigger` runtime reads Area folders through it. Agent Shell exports no other server module.
+The first two paths export the CLI runners and help specifications for `send`, `area`, `brain`, `goal`, `idea`, `document`, `agent`, `handover`, `shell`, `study`, and `vault`. They also export the study contract. The third path exports the one parser for an Area note's `## Resources` section (`parseAreaResources`, `resolveWorkFolder`, `describeAreaResources`, `unboundAreaMessage`). The root `tangent trigger` runtime reads Area folders through it. Agent Shell exports no other server module.
 
 The root `tangent` command loads this package only when one of these nouns is used. The root package owns `tangent process` and `tangent trigger`.
 
@@ -14,7 +14,7 @@ The root `tangent` command loads this package only when one of these nouns is us
 
 Every command except `vault commit` and `study` is a thin HTTP client to the Agent Shell gateway. The default URL is `http://127.0.0.1:4321`. `--server` or `TANGENT_SHELL_URL` can select another loopback URL.
 
-Requests have a response deadline and an operation ID. A failed mutation response warns that the operation can already be durable. A worker handover transport failure tells the caller to retry the same command. The server deduplicates that retry and repairs a missing brain notice.
+Requests have a response deadline and an operation ID. A failed mutation response warns that the operation can already be durable. A worker send transport failure tells the caller to retry the same command. The server deduplicates that retry and repairs a missing brain notice.
 
 `tangent vault commit` writes the vault history directly. `tangent study` starts one local interactive agent directly. No other package command writes vault files or starts a process itself.
 
@@ -32,7 +32,9 @@ Requests have a response deadline and an operation ID. A failed mutation respons
 - `tangent goal done|wont-do` changes Goal state only on Julian's explicit instruction.
 - `tangent idea add|list` writes or reads Area ideas.
 - `tangent document comments|resolve` reads or resolves Julian's inline Document comments.
-- `tangent vault commit <paths...> -m "<verb>: <area> <summary>"` commits only the named vault paths with provenance trailers.
+- `tangent vault commit <paths...> -m "<verb>: <area> <summary>"` commits only the named vault paths with provenance trailers. A worker session (`@tangent_kind goal`) is refused.
+
+Every request carries the caller's tmux session in the `x-tangent-session` header. The server refuses a Goal, Area, idea, Document, brain, or pipeline mutation from a worker session with 403 `workers only send. Use: tangent send brain "<note>"`. Reads stay open (ADR-0040).
 
 Area paths do not grant command permission. Brains, workers, browser actions, stale sessions, and local shells use the same target validation. Caller identity is audit provenance. Live ownership, revisions, queue state, and exact attempts remain enforced.
 
@@ -44,7 +46,8 @@ The live tmux ownership key is `@tangent_agent_shell_instance`. A foreign sessio
 
 - `tangent agent list` reads live agent sessions and queued message counts.
 - `tangent agent context [session] [--session <name>] [--json]` rebuilds the durable brain or Goal assignment for a tmux session. Without a name it uses the current tmux session.
-- `tangent agent send <session-or-area> <text...>` sends through a live-session queue or a logical Area inbox.
+- `tangent send <brain|session|area> <note...> [--done | --blocked | --question]` is the one worker command. `brain` resolves to the brain that controls the caller's Goal. A plain note changes no assignment status. `--done` completes the assignment, `--blocked` and `--question` set it waiting. A session or Area target sends through a live-session queue or a logical Area inbox.
+- `tangent agent send <session-or-area> <text...>` is an alias of `tangent send` for one release and prints a hint line.
 
 Agent Shell first resolves the target as a live session. It stores the normalized generic message before it wakes or writes to that pane. An exact Area path uses the durable Area brain inbox. A known stale brain session resolves to that same logical inbox. An unknown target returns not found. A missing or inactive brain does not block Area delivery. Queued messages survive controller restarts in first-in, first-out order. A presentation receipt is not proof that the model read the text.
 
@@ -69,7 +72,7 @@ Every active Goal execution uses one `area-goal-queue.v2` record under `~/.tange
 - `tangent goal start <slug> --step <instruction> [--kind <implementation|review>] [--launch ...] [--path ...] ...` declares ordered assignments.
 - `tangent goal append <slug> --step <instruction> [--kind <implementation|review>] ...` adds pending assignments without rewriting history. The type defaults to `implementation`. A designated review requires `--kind review`; instruction text never infers the type.
 - `tangent brain advance <goal> <step>` starts one pending assignment through the Goal queue. Any local caller can use the command.
-- `tangent handover <facts...> --report '<json>'` and `tangent goal handover <facts...> --report '<json>'` submit through the same route.
+- `tangent handover <facts...> [--report '<json>']` and `tangent goal handover <facts...> [--report '<json>']` are aliases of `tangent send brain` for one release. They print a hint line and submit through the same route. Plain text is a note. A typed `--report` keeps its old shape.
 
 A normal start acts directly through the Goal queue and does not require a live Area brain. A current brain caller can lend its launch default across Areas; other callers name a launch. A guarded `--recovery` start records `julian-emergency` in the same queue. It requires a pending assignment, no current attempt, and exhausted brain recovery.
 
@@ -119,7 +122,8 @@ Routine healthy polling, starts, stops, and repeated success stay quiet. Event i
 ## Main HTTP shapes
 
 - `POST /api/goals/start`: `{ file, steps?, caller?, recovery?, extraFiles? }`.
-- `POST /api/goals/handover`: `{ session, text, report?, idempotencyKey? }`. A successful response includes the queue `pipeline` and its worker handover `receipt`.
+- `POST /api/goals/handover`: `{ session, text, report?, kind?, idempotencyKey? }`. `kind` is `note`, `done`, `blocked`, or `question`. A successful response includes the queue `pipeline` and its worker handover `receipt`.
+- `POST /api/agents/send` with `to: "brain"`: `{ to, from, text, kind? }`. The server resolves the worker's Goal queue and its brain. A caller that is not a worker gets 400.
 - `POST /api/pipelines/control`: `{ goal, action, step, caller, expectedRevision, idempotencyKey }`.
 - `POST /api/pipelines/append`: `{ goal, steps, caller, expectedRevision, idempotencyKey }`.
 - `POST /api/pipelines/edit`: `{ goal, step, caller, expectedRevision, idempotencyKey, ...patch }`.

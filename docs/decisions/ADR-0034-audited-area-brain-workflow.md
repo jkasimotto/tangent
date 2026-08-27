@@ -2,7 +2,7 @@
 
 Date: 2026-08-26
 
-Status: accepted
+Status: accepted. The worker verb clause is amended by ADR-0040: `tangent send brain` is the worker command, plain text is a note with no status change, and the typed `--report` stays only on the aliases.
 
 ## Context
 

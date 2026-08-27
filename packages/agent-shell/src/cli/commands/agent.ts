@@ -3,6 +3,7 @@ import { booleanArg, parseArgs, requiredString, stringArg, type Args } from "@ta
 
 import { currentTmuxSession, postJson, resolveServerUrl, vaultFetch } from "../client.js";
 import { agentCommandSpec } from "../spec.js";
+import { SEND_ALIAS_HINT } from "../worker-report.js";
 
 type AgentSummary = {
   name: string;
@@ -65,8 +66,9 @@ async function contextCommand(args: Args): Promise<void> {
   printContext(context);
 }
 
-/** Handles `tangent agent send <session-or-area> <text...>`. */
+/** Handles `tangent agent send <session-or-area> <text...>`, an alias of `tangent send` for one release. */
 async function sendCommand(args: Args): Promise<void> {
+  console.log(SEND_ALIAS_HINT);
   const server = resolveServerUrl(stringArg(args.server));
   const to = requiredString(args._[1], "tangent agent send requires a live session or Area path.");
   const text = args._.slice(2).join(" ").trim();
@@ -165,7 +167,7 @@ Examples:
   tangent agent list
   tangent agent context
   tangent agent context tangent-copy-text-from-agent-terminals --json
-  tangent agent send tangent-copy-text-from-agent-terminals "The endpoint you need is /api/goals/brief."
-  tangent agent send neara/essential/autodesign "Start the queued design Goal when you return."
+  tangent send tangent-copy-text-from-agent-terminals "The endpoint you need is /api/goals/brief."
+  tangent send neara/essential/autodesign "Start the queued design Goal when you return."
 `);
 }

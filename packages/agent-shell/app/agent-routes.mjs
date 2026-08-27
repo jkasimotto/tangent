@@ -34,11 +34,11 @@ export function createAgentRoutes(operations) {
       : { error: `no durable brain or Goal assignment for session ${session}` });
   }
 
-  /** Sends or queues one message for a live agent. */
+  /** Sends or queues one message for a live agent, or a worker's send to its brain. */
   async function send(request, response) {
     const body = await readJson(request);
     try {
-      const result = await operations.send(body);
+      const result = String(body.to ?? "").trim() === "brain" ? await operations.sendToBrain(body) : await operations.send(body);
       sendJson(response, result.status, result.status === 200 ? result.value : { error: result.error });
     } catch (error) {
       sendJson(response, 400, { error: String(error.message ?? error) });

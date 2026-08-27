@@ -28,7 +28,7 @@ export function appendWorkerHandoverReceipt(record, step, input) {
     goal: record.goal,
     assignmentId: step.id,
     assignmentIndex: step.index,
-    reportType: String(input.reportType ?? "untyped-evidence"),
+    reportType: String(input.reportType ?? "note"),
     queue: {
       revisionBefore: Number(input.queueRevisionBefore),
       revisionAfter: Number(record.revision),

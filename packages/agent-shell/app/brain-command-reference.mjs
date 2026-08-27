@@ -14,7 +14,7 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const here = path.dirname(fileURLToPath(import.meta.url));
 
-/** The nouns a brain issues. `tangent handover` is the worker's route, not the brain's. */
+/** The nouns a brain issues. `tangent send brain` is the worker's route, not the brain's. */
 export const BRAIN_COMMAND_NOUNS = ["area", "brain", "goal", "document", "agent", "idea", "vault", "shell", "harness"];
 
 /**

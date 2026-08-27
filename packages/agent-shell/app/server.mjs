@@ -3525,6 +3525,21 @@ async function mutatePipelineAssignmentsUnlocked(goalFile, operations, options =
   if (!record) return { status: 404, error: "no pipeline on this goal" };
   const operationId = String(options.idempotencyKey ?? "").trim();
   if (!operationId) return { status: 400, code: "operation-required", error: "an operation ID is required", pipeline: record };
+  if (record.idempotencyKeys?.includes(operationId)) {
+    await recordCommittedCommand({
+      operation: "goal-assignments-mutate",
+      actorSession: options.caller,
+      targetArea: goal.area,
+      goal: goal.slug,
+      assignment: "pending-suffix",
+      operationId,
+      result: "repeated without another write",
+    });
+    return { status: 200, state: "repeated", repeated: true, pipeline: record, warnings: [] };
+  }
+  if (Number(options.expectedRevision) !== Number(record.revision)) {
+    return { status: 409, code: "stale-revision", error: `stale-revision:${record.revision}`, pipeline: record };
+  }
   const prepared = await validatePendingAssignmentOperations(goal.area, operations);
   if (prepared.error) return { status: prepared.status, error: prepared.error, pipeline: record };
   try {

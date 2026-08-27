@@ -227,7 +227,7 @@ function connectionError(server: URL, path: string, method: string, operationId:
   const mutation = method !== "GET" && method !== "HEAD";
   const uncertain = !mutation ? ""
     : path === "/api/goals/handover"
-      ? ` The handover can already be durable. Retry the same command unchanged; Tangent deduplicates it and repairs its brain notice. Operation ID: ${operationId}.`
+      ? ` The note can already be durable. Retry the same command unchanged; Tangent deduplicates it and repairs its brain notice. Operation ID: ${operationId}.`
       : ` The operation may have completed; inspect its status before retrying. Operation ID: ${operationId}.`;
   if (timeoutMs !== null) {
     return new Error(`Agent Shell ${method} ${path} exceeded its ${timeoutMs}ms response deadline.${uncertain}`);

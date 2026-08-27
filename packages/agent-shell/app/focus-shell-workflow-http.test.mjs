@@ -208,8 +208,8 @@ test("the context-first shell is default and keeps the user's understanding with
 
   const updated = await fetch(`${base}/api/goals/brief?file=otto%2Ftest%2Fgoal-prove-it.md`).then((response) => response.json());
   assert.equal(updated.goal.myUnderstanding, "I asked for a visible result. I will inspect it before I close the goal.");
-  assert.match(updated.markdown, /## Julian's understanding/);
-  assert.match(updated.markdown, /no need to re-confirm the assignment/);
+  assert.doesNotMatch(updated.markdown, /## Julian's understanding|## How to work|## Dependencies/, "the worker prompt is the Goal, its sources, the folder, and the one command");
+  assert.match(updated.markdown, /## Working directory/);
 
   // A session this server owns that is not yet a worker: the shape an agent
   // that defines work has before it takes a Goal with --own. Everything

@@ -323,9 +323,9 @@ function parseContinueFrom(value: string | undefined, stepIndex: number): number
 async function handoverCommand(args: Args): Promise<void> {
   console.log(SEND_ALIAS_HINT);
   const server = resolveServerUrl(stringArg(args.server));
-  const session = await requireSession(args, "tangent goal handover");
+  const session = await requireSession(args, "tangent send brain");
   const text = args._.slice(1).map(String).join(" ").trim();
-  if (!text) throw new Error("tangent goal handover needs the facts as text.");
+  if (!text) throw new Error('tangent send brain needs the note as text: tangent send brain "<note>".');
   if (booleanArg(args.continue)) throw new Error("--continue is retired. Submit a typed context-risk report; do not replace this worker from inside its own attempt.");
   const body: Record<string, unknown> = { session, text };
   const report = parseWorkerReportOption(args);

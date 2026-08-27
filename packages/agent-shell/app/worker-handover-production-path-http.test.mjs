@@ -244,7 +244,7 @@ test("neara/portland worker handovers survive delay, rollover, restart, and exac
     await chmod(childBrainDirectory, 0o700);
   }
   assert.equal(interrupted.status, 503, JSON.stringify(interrupted.body));
-  assert.match(interrupted.body.error, /queue recorded submission.*notice is not durable yet.*Retry the same handover unchanged/i);
+  assert.match(interrupted.body.error, /queue recorded submission.*notice is not durable yet.*Run the same tangent send brain command again, unchanged/i);
   const pendingRepair = await readQueue(root, repair);
   assert.equal(pendingRepair.steps[0].reports.length, 1, "queue acceptance survives the notice interruption");
   assert.equal(pendingRepair.steps[0].handoverReceipts[0].notice.id, null);
@@ -294,7 +294,7 @@ test("malformed, truncated, shell-quoted, and rejected reports cannot look succe
     report: `'${JSON.stringify({ type: "implementation-result", status: "complete", summary: "Done." })}'`,
   });
   assert.equal(quoted.status, 400);
-  assert.match(quoted.body.error, /not one JSON object.*retry.*Nothing was submitted/i);
+  assert.match(quoted.body.error, /not one JSON object.*run the same tangent send brain command again.*Nothing was submitted/i);
 
   const rejected = await post(base, "/api/goals/handover", {
     session: worker.session,

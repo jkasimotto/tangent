@@ -75,14 +75,14 @@ Eval also owns the mark loop's internal modules (`packages/eval/src/marks/`): th
 
 Search owns structural indexing and search over TypeScript and Dart source: a SQLite index per repo, symbol/callers/callees/tests/skeleton/open-plan lookups, and a standalone CLI plus SDK. It is a standalone vertical: it does not depend on Usage, Rollup, or Eval, and none of those may depend on it. It is the subject of the mark loop's flagship eval (phase 2c), which mines information-heavy Usage sessions and compares a `baseline` variant against a `with-search` variant to prove or refute the tool's value.
 
-`@tangent/agent-shell` owns the vault CLI, agent messages, worker handovers, Area brains, and `tangent study`.
+`@tangent/agent-shell` owns the vault CLI, agent messages, worker notes, Area brains, and `tangent study`.
 Each Area brain has one logical identity.
 Its lifecycle is active or inactive. Process attempts and recovery are diagnostic health.
 The server owns its activation envelope, bounded prompt, subtree milestones, Journal, Requests, exact-Area Goal queue, and Operation event outbox.
 Each generation stores its complete resolved launch. A user-selected registry choice applies to one start or resume attempt without changing the Area default; reattachment keeps the live launch, and automatic recovery or handover resolves the current default.
-Each accepted worker handover adds a receipt to that Goal queue before it writes one exact-Area inbox notice. A pending receipt is a durable notice outbox, and a stable source ID makes retry and recovery idempotent.
+Each accepted worker note (`tangent send brain`) adds a receipt to that Goal queue before it writes one exact-Area inbox notice. A pending receipt is a durable notice outbox, and a stable source ID makes retry and recovery idempotent.
 Any harness can pull a rebuilt brain or worker prompt from the session's durable record. Current brain context also carries unread exact-Area notices. A bound worker observed back at its shell creates one durable recovery notice without ending its queue assignment or tmux session.
-Generic `tangent agent send` messages use an atomic file queue. Agent Shell stores them before pane wake or presentation and restores them after controller restarts. See ADR-0039.
+Generic `tangent send` messages use an atomic file queue. Agent Shell stores them before pane wake or presentation and restores them after controller restarts. See ADR-0039.
 Area paths organize records and inboxes; they do not grant command permission. Any local caller can mutate work in any Area through the same server routes. The server records actor provenance and sends a durable event to the target Area after commit. Queue revisions, live ownership, exact attempts, and immutable tmux targets remain fences.
 Journal capture writes before delivery.
 Exact Request effects use hashed revisions and an allowlist.

@@ -24,7 +24,7 @@ export function createPipelineRoutes(operations) {
   async function handover(request, response) {
     const body = await readJson(request, {
       rejectMalformed: true,
-      malformedMessage: "The handover body is malformed or truncated JSON. Retry the same command unchanged. Nothing was submitted.",
+      malformedMessage: "The tangent send brain body is malformed or truncated JSON. Retry the same command unchanged. Nothing was submitted.",
     });
     if (body["continue"] === true) {
       sendJson(response, 400, { error: "Workers cannot replace themselves. Submit a typed context-risk report for the Area brain." });
@@ -35,7 +35,7 @@ export function createPipelineRoutes(operations) {
     catch (error) { sendJson(response, 400, { error: String(error.message ?? error) }); return; }
     const hasReport = Object.hasOwn(body, "report");
     if (hasReport && (!body.report || typeof body.report !== "object" || Array.isArray(body.report))) {
-      sendJson(response, 400, { error: "The report was rejected because it is not one JSON object. Correct --report and retry the same handover. Nothing was submitted." });
+      sendJson(response, 400, { error: "The report was rejected because it is not one JSON object. Correct --report and run the same tangent send brain command again. Nothing was submitted." });
       return;
     }
     const kind = body.kind == null ? null : String(body.kind);

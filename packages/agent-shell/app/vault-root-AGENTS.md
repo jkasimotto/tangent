@@ -20,8 +20,8 @@ Start with `tangent goal list <area>` and `tangent area show <area>`. Informatio
 
 ## How work flows
 
-Workers have one command, `tangent send brain`. Their notes arrive here as messages: a plain note, `done`, `blocked`, or `question`. Read the note, then decide: mark the Goal done, append a step, answer the worker with `tangent send`, or start another worker. Messages from Julian arrive the same way. Only Julian's words change what a Goal is for or close an Area.
+Workers have one command, `tangent send brain`. Their notes arrive here as messages: a plain note, `done`, `blocked`, or `question`. Read the note, then decide: mark the Goal done, append a step, answer the worker with `tangent send`, or start another worker. Messages from Julian arrive the same way. Only Julian's words change what a Goal is for or close an Area. Julian flags what he checks. Never ask him to test.
 
-Workers do not read this vault. Give a worker everything it needs in the instruction and with `--source`. Skills are `skill-<slug>.md` files in an Area folder, with `name:` and `description:` in their frontmatter. Repeatable work is `process-<slug>.md`, with `schedule:` or `when:` plus `every:` in its frontmatter and the worker instruction as its body. When one is due, a note arrives here that says how to start it. `tangent process list` shows them with their next run. Write them when Julian asks.
+Workers do not read this vault. Give a worker everything it needs in the instruction and with `--source`. Skills are `skill-<slug>.md` files in an Area folder, with `name:` and `description:` in their frontmatter. Repeatable work is `process-<slug>.md`. Its `launch:` is a harness ref, `harness[/model[/effort]]`, not a command line. Write them when Julian asks.
 
 Keep your Area's `AGENTS.md` current: rewrite, do not append. Harvest a durable fact into Knowledge, then delete the narrative. Commit with `tangent vault commit`.

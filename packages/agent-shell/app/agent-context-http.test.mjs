@@ -88,10 +88,9 @@ test("agent context rebuilds a pipeline prompt with every extra Goal in durable 
   assert.deepEqual(recovered.queue.extraFiles, [extraBFile, extraAFile]);
   assert.deepEqual(recovered.extraGoals.map((goal) => goal.file), [extraBFile, extraAFile, extraCFile]);
   assert.equal(recovered.promptError, null);
-  assert.match(recovered.prompt, /## Also in this session/);
+  assert.doesNotMatch(recovered.prompt, /## Also in this session/, "extra Goals are sources, not a section");
+  assert.match(recovered.prompt, /## Working directory/);
   assert.match(recovered.prompt, /## Your step\n\nStep 1 of 1: Implement exact context recovery\./);
-  assert.ok(recovered.prompt.indexOf("- Extra B: done when Extra B is complete.")
-    < recovered.prompt.indexOf("- Extra A: done when Extra A is complete."));
-  assert.ok(recovered.prompt.indexOf("- Extra A: done when Extra A is complete.")
-    < recovered.prompt.indexOf("- Extra C: done when Extra C is complete."));
+  assert.ok(recovered.prompt.indexOf(extraBFile) < recovered.prompt.indexOf(extraAFile));
+  assert.ok(recovered.prompt.indexOf(extraAFile) < recovered.prompt.indexOf(extraCFile));
 });

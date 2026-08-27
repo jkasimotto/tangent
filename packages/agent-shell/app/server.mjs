@@ -233,11 +233,6 @@ const RECONCILE_INTERVAL_MS = Math.max(10, Number(process.env.TANGENT_RECONCILE_
 // under this just uses its full window, today's behavior.
 const CONTEXT_HANDOVER_TOKENS = Number(process.env.TANGENT_CONTEXT_HANDOVER_TOKENS ?? 300_000);
 
-/** The one-sentence teaching line in every worker prompt. */
-function contextTeachingSentence() {
-  return "If your context is nearly full, send the brain a note with what is done and what is next.";
-}
-
 /**
  * The closing section of every worker prompt: the one Tangent command a
  * worker has (D5). The same four lines close a review step; --done on a
@@ -1706,57 +1701,43 @@ function workingDirectorySection(folder) {
 }
 
 /**
+ * The folder a prompt names when no session or attempt recorded one: the
+ * Area's bound folder. The preview route, the armed-prompt typing pass, and
+ * context recovery all read it here, so they print the same
+ * `## Working directory` as the start that opened the session.
+ */
+async function promptWorkFolder(area, recorded = null) {
+  if (recorded?.cwd) return { cwd: recorded.cwd, source: recorded.cwdSource ?? recorded.source ?? "session", branch: recorded.branch ?? null };
+  return areaWorkFolder(area);
+}
+
+/**
  * The exact assignment shown before execution and typed into the selected
- * harness. Markdown keeps the contract readable in both the shell and the
- * agent composer.
+ * harness (D7): the Goal, its sources, the working directory, and the one
+ * command. Everything else the worker needs is in the files it names.
+ * Markdown keeps the contract readable in both the shell and the agent
+ * composer.
  */
 async function goalPrompt(area, o, extras = [], continuationEntries = [], trace = null, folder = null, { closing = true } = {}) {
   const context = await goalContext(area, o, trace);
   trace?.mark("goal context ready", { documents: context.documents.length });
-  const areaGoals = await readAreaGoals(area);
-  trace?.mark("area goals ready", { goals: areaGoals.length });
-  projectGoalDependencies(areaGoals);
-  const projectedGoal = areaGoals.find((goal) => goal.file === o.file) ?? o;
-  const dependencyLines = [
-    ...(projectedGoal.dependsOn ?? []).map((goal) => `- Depends on ${goal.title} (${goal.file}).`),
-    ...(projectedGoal.requiredBy ?? []).map((goal) => `- Required by ${goal.title} (${goal.file}).`),
-    ...(projectedGoal.unresolvedDependencies ?? []).map((slug) => `- Depends on Goal ${slug} outside this Area.`),
-  ];
   const sources = [
     `- Goal: ${context.goalFile}`,
+    ...extras.map((extra) => `- Goal also assigned to this session, work it after the one above: ${path.join(TREES_ROOT, extra.file)}`),
     ...context.notes.map((note, index) => `- Area note ${index + 1}: ${note}`),
     ...context.documents.map((document, index) => `- Document: ${document}${context.commentCounts[index] ? ` (${context.commentCounts[index]} open comment${context.commentCounts[index] === 1 ? "" : "s"} from Julian)` : ""}`),
   ];
   const openComments = context.commentCounts.some(Boolean);
-  const alsoOwned = extras.length
-    ? `## Also in this session\n\n` +
-      `Julian assigned these Goals to this session too. Work them after the assignment above, in order; each file holds its own context.\n\n` +
-      extras.map((extra) => `- ${extra.title}: done when ${extra.doneWhen || "see the Goal file"} (${path.join(TREES_ROOT, extra.file)})`).join("\n") +
-      `\n\n`
-    : "";
+  const goalLink = o.file.split("/").pop().replace(/\.md$/, "");
   return (
     `# Assignment: ${o.title}\n\n` +
     `## Done when\n\n${o.doneWhen || "Read the Goal file for the done condition."}\n\n` +
-    (o.myUnderstanding ? `## Julian's understanding\n\n${o.myUnderstanding}\n\n` : "") +
     `## Sources\n\n${sources.join("\n")}\n\n` +
     workingDirectorySection(folder) +
-    (dependencyLines.length
-      ? `## Dependencies\n\nThese facts are advisory. They do not block or reorder this work.\n\n${dependencyLines.join("\n")}\n\n`
-      : "") +
-    alsoOwned +
-    `## How to work\n\n` +
-    `This Goal was already scoped with Julian. Its file holds what he explained, so he does not need to repeat it. Pick up the work directly, scope the details yourself, and bring him real decisions when they come up. There is no need to re-confirm the assignment before starting.\n\n` +
-    `Read the goal first, then the area notes from nearest to farthest.` +
-    (context.documents.length
-      ? ` Read each linked Document; before writing design prose, read ${path.join(os.homedir(), ".agents", "skills", "simple-english", "SKILL.md")} (pragmatic mode, with its self-check).`
-      : "") +
-    (o.subgoals.length ? ` The Subgoals are ordered; work through them in order.` : "") +
-    `\n\n` +
     (openComments
-      ? `Julian left comments in the Documents marked above. They look like \`{>>Julian: ...<<}\`, sometimes after \`{==the words they refer to==}\`. Read them before you change a Document. Never remove or rewrite a comment by hand, and carry comments along when you rewrite the text around them. The brain closes them.\n\n`
+      ? `Julian's comments in a Document look like \`{>>Julian: ...<<}\`, sometimes after \`{==the words they refer to==}\`. Carry them along unchanged when you edit the Document.\n\n`
       : "") +
-    `Design documents for this work belong in the Area folder ${path.join(TREES_ROOT, area)} as design-<slug>.md (a solution beside it as impl-<slug>.md), in Simple English (${path.join(os.homedir(), ".agents", "skills", "simple-english", "SKILL.md")}, pragmatic mode), with a [[${o.file.split("/").pop().replace(/\.md$/, "")}]] link so the Goal shows them. Read files wherever they are; write new design documents there.\n\n` +
-    contextTeachingSentence() +
+    `Design documents go in the Area folder ${path.join(TREES_ROOT, area)} as design-<slug>.md, in Simple English (${path.join(os.homedir(), ".agents", "skills", "simple-english", "SKILL.md")}, pragmatic mode), with a [[${goalLink}]] link.` +
     (continuationEntries.length ? `\n\n${continuationSection({ index: 1, total: 1, entries: continuationEntries, subject: "Goal" })}` : "") +
     (closing ? `\n\n${workerSendSection()}` : "")
   );
@@ -1987,7 +1968,9 @@ async function typeGoalPromptWhenReady(session, area, file, phase = "execute", s
   const o = goals.find((t) => t.file === file);
   if (!o) return false;
   const extras = (extraFiles ?? []).map((extra) => goals.find((t) => t.file === extra)).filter(Boolean);
-  const prompt = phase === "collaborate" ? await collaborationPrompt(area, o, documentFile, extras) : await goalPrompt(area, o, extras);
+  const prompt = phase === "collaborate"
+    ? await collaborationPrompt(area, o, documentFile, extras)
+    : await goalPrompt(area, o, extras, [], null, await promptWorkFolder(area));
   return typePromptWhenReady(session, prompt, submit, "goal prompt");
 }
 
@@ -3033,7 +3016,7 @@ function reportFromSendKind(record, step, kind, text) {
 /** One actionable refusal for a typed report that the queue did not accept. */
 function workerReportRejection(error) {
   const reason = String(error?.message ?? error);
-  return `The typed report was rejected (${reason}). Correct --report and retry the same handover. Tangent recorded no report or brain notice.`;
+  return `The typed report was rejected (${reason}). Correct --report and run the same tangent send brain command again. Tangent recorded no report or brain notice.`;
 }
 
 /**
@@ -3075,7 +3058,7 @@ async function settleWorkerHandoverNotice(record, receipt) {
       console.error("worker handover notice:", error?.message ?? error);
       return {
         status: 503,
-        error: `The Goal queue recorded submission ${receipt.id}, but its exact-Area brain notice is not durable yet. Retry the same handover unchanged. Tangent will repair and deduplicate the notice.`,
+        error: `The Goal queue recorded submission ${receipt.id}, but its exact-Area brain notice is not durable yet. Run the same tangent send brain command again, unchanged. Tangent will repair and deduplicate the notice.`,
       };
     }
   }
@@ -3097,7 +3080,7 @@ async function handoverPipelineStep(sessionName, text, report = null, idempotenc
   const movedTo = await swappedAwayNaming(sessionName);
   if (movedTo) return { status: 409, error: `This assignment moved to ${movedTo}. Submit from that live worker session instead. Nothing was recorded.` };
   const live = (await listSessions()).find((session) => session.name === sessionName && session.kind === "goal" && session.goal);
-  if (!live) return { status: 404, error: "This session is not a running Goal worker. Run the handover inside the assigned worker session. Nothing was recorded." };
+  if (!live) return { status: 404, error: "This session is not a running Goal worker. Run tangent send brain inside the assigned worker session. Nothing was recorded." };
   const goal = (await goalsByFile()).get(live.goal);
   if (!goal) return { status: 404, error: "This worker has no Goal assignment. Read tangent goal show, then report from the assigned session. Nothing was recorded." };
   return withGoalQueueMutation(goal.file, () => handoverPipelineStepUnlocked(sessionName, text, report, idempotencyKey, kind));
@@ -3169,7 +3152,7 @@ async function handoverPipelineStepUnlocked(sessionName, text, report = null, id
   let found = await pipelineStepForSession(sessionName);
   if (!found) {
     const live = (await listSessions()).find((session) => session.name === sessionName && session.kind === "goal" && session.goal);
-    if (!live) return { status: 404, error: "This session is not a running Goal worker. Run the handover inside the assigned worker session. Nothing was recorded." };
+    if (!live) return { status: 404, error: "This session is not a running Goal worker. Run tangent send brain inside the assigned worker session. Nothing was recorded." };
     const goal = (await goalsByFile()).get(live.goal);
     if (!goal) return { status: 404, error: "This worker has no Goal assignment. Read tangent goal show, then report from the assigned session. Nothing was recorded." };
     const migrated = await migrateLiveSoloExecution(goal, await listSessions());
@@ -5931,10 +5914,10 @@ const agentRoutes = createAgentRoutes({
     if (projected.source === "goal-queue" && projected.assignment) {
       const record = pipelines.find((item) => item.goal === projected.goal.file);
       return record
-        ? { ...projected, ...await rebuiltAgentPrompt(() => pipelineStepPrompt(record.area, goal, record, projected.assignment.index, recoveredExtraGoals(projected, goalIndex), session)) }
+        ? { ...projected, ...await rebuiltAgentPrompt(async () => pipelineStepPrompt(record.area, goal, record, projected.assignment.index, recoveredExtraGoals(projected, goalIndex), session, null, await promptWorkFolder(record.area, projected.attempt))) }
         : { ...projected, prompt: null, promptError: "the durable Goal queue is unavailable" };
     }
-    return { ...projected, ...await rebuiltAgentPrompt(() => goalPrompt(goal.area, goal, recoveredExtraGoals(projected, goalIndex))) };
+    return { ...projected, ...await rebuiltAgentPrompt(async () => goalPrompt(goal.area, goal, recoveredExtraGoals(projected, goalIndex), [], null, await promptWorkFolder(goal.area, projected.attempt))) };
   },
   /**
    * A worker's `tangent send brain`: the note lands on the worker's own
@@ -6432,8 +6415,9 @@ const goalQueryRoutes = createGoalQueryRoutes({
       const record = await readPipeline(PIPELINES_ROOT, goal.area, goal.slug);
       if (!record) return { status: 404, error: "this Goal has no pipeline" };
       const selected = record.steps.find((item) => item.index === step) ?? currentStep(record) ?? record.steps[0];
-      markdown = await pipelineStepPrompt(goal.area, goal, record, selected.index, [], selected.session ?? "");
-    } else markdown = await goalPrompt(goal.area, goal);
+      const attempt = selected.attempts?.at(-1) ?? null;
+      markdown = await pipelineStepPrompt(goal.area, goal, record, selected.index, [], selected.session ?? "", null, await promptWorkFolder(goal.area, attempt));
+    } else markdown = await goalPrompt(goal.area, goal, [], [], null, await promptWorkFolder(goal.area));
     return {
       status: 200,
       value: {

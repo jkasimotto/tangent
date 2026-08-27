@@ -26,7 +26,7 @@ tmux set-option -t <name> @tangent_kind 'goal'
 
 A Program uses `@tangent_area`, `@tangent_kind`, and `@tangent_process`.
 
-If a harness starts inside an existing Tangent tmux session, run `tangent agent context --json` before work. Use its current Goal, assignment, reports, handovers, and rebuilt prompt. A brain must also read every unread durable notice in that result.
+If a harness starts inside an existing Tangent tmux session, run `tangent agent context --json` before work. Use its current Goal, assignment, reports, prior notes, and rebuilt prompt. A brain must also read every unread durable notice in that result.
 Stop if the result is historical or unassigned. Do not kill or replace the tmux session to manufacture a new assignment.
 
 ## Maintain the vault

@@ -40,8 +40,7 @@ test("Goal dependencies persist, project in both directions, and remain advisory
   assert.deepEqual(api.goal.requiredBy.map((goal) => goal.title), ["Ship UI"]);
 
   const brief = await fetch(`${base}/api/goals/brief?file=${encodeURIComponent("otto/model/goal-ship.md")}`).then((response) => response.json());
-  assert.match(brief.markdown, /## Dependencies/);
-  assert.match(brief.markdown, /These facts are advisory/);
+  assert.doesNotMatch(brief.markdown, /## Dependencies/, "dependencies live in the Goal file, which the prompt names as a source");
 
   const completed = await fetch(`${base}/api/goals/edit`, {
     method: "POST",

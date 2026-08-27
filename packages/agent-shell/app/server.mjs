@@ -1785,7 +1785,7 @@ const READY_MAX_MS = 30_000; // stop waiting for a quiet screen and type anyway
 const ECHO_MS = 1200; // time for a TUI to draw what was typed into it
 const RETRY_MS = 2500; // extra boot time before typing the prompt again
 const TYPE_ATTEMPTS = 3;
-const armedSessions = new Map(); // session -> { phase, submit, document, prompt }
+const armedSessions = new Map(); // session -> { submit, prompt, extraFiles, onTyped }
 // Every prompt this server types goes through one queue per pane, so the
 // arming poll and the message queue cannot type into the same brain at the
 // same moment (pane-writes.mjs).
@@ -2036,10 +2036,10 @@ function reportArmedPromptFailure(err) {
  * a restart before the harness leaves its shell still has the prompt to
  * re-arm at boot (rearmPersistedPrompts).
  */
-async function armSession(name, phase = "execute", submit = false, document = "", prompt = "", extraFiles = [], onTyped = null) {
-  armedSessions.set(name, { phase, submit, document, prompt, extraFiles, onTyped });
+async function armSession(name, { submit = false, prompt = "", extraFiles = [], onTyped = null } = {}) {
+  armedSessions.set(name, { submit, prompt, extraFiles, onTyped });
   try {
-    await writeArmedPrompt(ARMED_ROOT, name, { phase, submit, document, prompt, extraFiles });
+    await writeArmedPrompt(ARMED_ROOT, name, { submit, prompt, extraFiles });
   } catch (err) {
     console.error("armed prompt persist:", err.message ?? err);
   }
@@ -2070,7 +2070,7 @@ async function rearmPersistedPrompts() {
       await clearArmedPrompt(ARMED_ROOT, record.session).catch(() => {});
       continue;
     }
-    await armSession(record.session, record.phase, record.submit, record.document, record.prompt, record.extraFiles);
+    await armSession(record.session, { submit: record.submit, prompt: record.prompt, extraFiles: record.extraFiles });
   }
 }
 
@@ -2161,7 +2161,7 @@ async function sessionLaunch(session) {
  * harness the user starts. A pane that is already running something is left
  * alone — priming must never type over an agent mid-conversation.
  */
-async function primeGoalSession(session, phase = "execute", { launch = false, document = "", command = "", extraFiles = [], prompt = "", onTyped = null } = {}) {
+async function primeGoalSession(session, { launch = false, command = "", extraFiles = [], prompt = "", onTyped = null } = {}) {
   // The caller names the harness or nothing is typed. spawnGoalSession
   // refuses a start with no command, and a pane that reached its shell
   // between that check and this one must not get an Area default nobody
@@ -2169,7 +2169,7 @@ async function primeGoalSession(session, phase = "execute", { launch = false, do
   if (!command) return false;
   const { stdout } = await execFileAsync("tmux", ["display-message", "-p", "-t", "=" + session + ":", "#{pane_current_command}"]);
   if (!SHELL_CMDS.has(stdout.trim())) return false;
-  await armSession(session, phase, launch, document, prompt, extraFiles, onTyped);
+  await armSession(session, { submit: launch, prompt, extraFiles, onTyped });
   await typeInto(session, withDefaultModel(command), false);
   if (launch) {
     await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "Enter"]);
@@ -2188,7 +2188,7 @@ async function primeGoalSession(session, phase = "execute", { launch = false, do
  * The path option gives the new pane one exact directory instead of the
  * Area repository; a pipeline step passes its own.
  */
-async function spawnGoalSession(area, slug, { phase = "execute", approved = false, launch = false, document = "", command = "", label = "", ref = "", path: workingDirectory = "", workFolder = null, extraSlugs = [], pipeline = null, continuation = null, attemptId = "", deferBinding = false, onPrimed = null, trace = null } = {}) {
+async function spawnGoalSession(area, slug, { approved = false, launch = false, command = "", label = "", ref = "", path: workingDirectory = "", workFolder = null, extraSlugs = [], pipeline = null, continuation = null, attemptId = "", deferBinding = false, onPrimed = null, trace = null } = {}) {
   const areaGoals = await readAreaGoals(area);
   trace?.mark("spawn area goals ready", { goals: areaGoals.length });
   const o = areaGoals.find((t) => t.slug === slug);
@@ -2246,17 +2246,16 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
   }
   trace?.mark("launch resolved", { reattachedRunningAgent: Boolean(existing && !existingAtShell) });
   if (existing) {
-    await execFileAsync("tmux", ["set-option", "-t", existing, "@tangent_phase", phase]);
-    if (document) await execFileAsync("tmux", ["set-option", "-t", existing, "@tangent_document", document]);
+    await execFileAsync("tmux", ["set-option", "-t", existing, "@tangent_phase", "execute"]);
     if (existingAtShell && label) await execFileAsync("tmux", ["set-option", "-t", existing, "@tangent_launch", label]);
     if (existingAtShell && ref) await execFileAsync("tmux", ["set-option", "-t", existing, "@tangent_launch_ref", ref]);
     if (existingAtShell && command) await execFileAsync("tmux", ["set-option", "-t", existing, "@tangent_launch_command", command]);
     let primed = false;
-    if (approved && phase === "execute" && live && !SHELL_CMDS.has(live.command)) {
+    if (approved && live && !SHELL_CMDS.has(live.command)) {
       if (live.state === "working") return { status: 409, error: "the agent is still working; wait before you approve another assignment" };
       await typeInto(existing, await goalPrompt(area, o, ownExtras, [], null, folder), true);
     } else {
-      primed = await primeGoalSession(existing, phase, { launch, document, command, extraFiles }).catch(() => false);
+      primed = await primeGoalSession(existing, { launch, command, extraFiles }).catch(() => false);
     }
     const rebind = [o, ...ownExtras].filter((goal) => goal.status !== "active" || goal.session !== existing);
     if (rebind.length) {
@@ -2273,9 +2272,8 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
   await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_cwd", folder.cwd]);
   await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_goal", o.file]);
   await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_kind", "goal"]);
-  await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_phase", phase]);
+  await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_phase", "execute"]);
   await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_launch_command", command]);
-  if (document) await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_document", document]);
   if (label) await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_launch", label]);
   if (ref) await execFileAsync("tmux", ["set-option", "-t", phaseName, "@tangent_launch_ref", ref]);
   if (pipeline) {
@@ -2307,7 +2305,7 @@ async function spawnGoalSession(area, slug, { phase = "execute", approved = fals
     // be wiped by the redraw.
     await sleep(700);
     try {
-      const primed = await primeGoalSession(phaseName, phase, { launch, document, command, extraFiles, prompt: stepPrompt, onTyped: onPrimed });
+      const primed = await primeGoalSession(phaseName, { launch, command, extraFiles, prompt: stepPrompt, onTyped: onPrimed });
       if (!primed && onPrimed) onPrimed(false);
     } catch (err) {
       console.error("prime session:", err.message ?? err);
@@ -2773,7 +2771,6 @@ async function startPipelineStep(record, index, trace = null) {
     }
     const sessionName = pipelineStepSessionName(record, index, liveNames);
     const result = await spawnGoalSession(record.area, record.slug, {
-      phase: "execute",
       approved: true,
       launch: true,
       command: launchWithConversation(stepHarness, step.command, conversation),
@@ -3740,7 +3737,6 @@ async function replaceGoalAttemptUnlocked(goalFile, options = {}) {
     const goalIndex = await goalsByFile();
     const extraSlugs = (record.extraFiles ?? []).map((file) => goalIndex.get(file)?.slug).filter(Boolean);
     started = await spawnGoalSession(goal.area, goal.slug, {
-      phase: "execute",
       approved: true,
       launch: true,
       command: chosen.command,
@@ -4466,7 +4462,7 @@ async function spawnBrainSession(record, resolvedLaunch, { firstMessage = "", no
     // Persist the arm before making this generation current, and make it
     // current before launching the harness, so a restart before the harness
     // is ready still types the message.
-    await armSession(name, "define", true, "", message, [], firstMessageTyped);
+    await armSession(name, { submit: true, prompt: message, onTyped: firstMessageTyped });
     armed = true;
     await writeBrain(BRAINS_ROOT, record);
     await typeInto(name, withDefaultModel(resolvedLaunch.command), false);

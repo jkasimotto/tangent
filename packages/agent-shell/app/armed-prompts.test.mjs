@@ -18,9 +18,7 @@ async function tempRoot(context) {
 test("an armed prompt is written to disk and reads back", async (context) => {
   const root = await tempRoot(context);
   const written = await writeArmedPrompt(root, "otto--tangent--goal--s2", {
-    phase: "execute",
     submit: true,
-    document: "",
     prompt: "Step 1 of 2: implement the Goal.",
     extraFiles: [],
   });
@@ -38,8 +36,8 @@ test("an armed prompt is written to disk and reads back", async (context) => {
 
 test("clearing an armed prompt removes it; clearing a missing one is not an error", async (context) => {
   const root = await tempRoot(context);
-  await writeArmedPrompt(root, "step-a", { phase: "execute", submit: false, document: "", prompt: "go", extraFiles: [] });
-  await writeArmedPrompt(root, "step-b", { phase: "execute", submit: false, document: "", prompt: "go too", extraFiles: [] });
+  await writeArmedPrompt(root, "step-a", { submit: false, prompt: "go", extraFiles: [] });
+  await writeArmedPrompt(root, "step-b", { submit: false, prompt: "go too", extraFiles: [] });
 
   await clearArmedPrompt(root, "step-a");
   const remaining = await readAllArmedPrompts(root);
@@ -55,7 +53,7 @@ test("a missing root reads as no armed prompts", async (context) => {
 
 test("a half-written or foreign file is skipped, not thrown", async (context) => {
   const root = await tempRoot(context);
-  await writeArmedPrompt(root, "good", { phase: "execute", submit: false, document: "", prompt: "go", extraFiles: [] });
+  await writeArmedPrompt(root, "good", { submit: false, prompt: "go", extraFiles: [] });
   await writeFile(path.join(root, "broken.json"), "{ not json", "utf8");
   await writeFile(path.join(root, "foreign.json"), JSON.stringify({ schema: "something-else", session: "x" }), "utf8");
 
@@ -65,8 +63,8 @@ test("a half-written or foreign file is skipped, not thrown", async (context) =>
 
 test("a re-armed prompt overwrites the earlier record for the same session", async (context) => {
   const root = await tempRoot(context);
-  await writeArmedPrompt(root, "step-a", { phase: "execute", submit: false, document: "", prompt: "first", extraFiles: [] });
-  await writeArmedPrompt(root, "step-a", { phase: "execute", submit: true, document: "", prompt: "second", extraFiles: [] });
+  await writeArmedPrompt(root, "step-a", { submit: false, prompt: "first", extraFiles: [] });
+  await writeArmedPrompt(root, "step-a", { submit: true, prompt: "second", extraFiles: [] });
 
   const records = await readAllArmedPrompts(root);
   assert.equal(records.length, 1);

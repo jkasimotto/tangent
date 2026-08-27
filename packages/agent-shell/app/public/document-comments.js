@@ -303,9 +303,9 @@
   }
 
   /** The stored markup for one comment body, with an optional quoted anchor. */
-  function commentMarkup(body, quote) {
+  function commentMarkup(body, quote, author = AUTHOR) {
     const clean = String(body ?? "").replace(/\s+/g, " ").trim().replace(/<<\}/g, "<< }");
-    const mark = `${NOTE_OPEN}${AUTHOR}: ${clean}${NOTE_CLOSE}`;
+    const mark = `${NOTE_OPEN}${author}: ${clean}${NOTE_CLOSE}`;
     return quote ? `${MARK_OPEN}${quote}${MARK_CLOSE}${mark}` : mark;
   }
 
@@ -525,10 +525,11 @@
     return lines.join("\n");
   }
 
-  /** Replaces the words of one parsed comment, keeping its place and its marks. */
+  /** Replaces Julian's words while keeping the original author, place, and marks. */
   function replaceCommentText(text, comment, body) {
     const source = String(text ?? "");
-    return source.slice(0, comment.start) + commentMarkup(body) + source.slice(comment.end);
+    if (!comment || comment.author !== AUTHOR) return { error: "Only Julian's comments can be edited." };
+    return { text: source.slice(0, comment.start) + commentMarkup(body, null, comment.author) + source.slice(comment.end) };
   }
 
   /** Comparable form of comment text for matching a typed prefix. */

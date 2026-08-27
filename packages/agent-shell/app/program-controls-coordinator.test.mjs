@@ -17,7 +17,11 @@ function trigger(paused = false) {
 
 /** Stands in for one text node of the confirmation modal. */
 function textNode() {
-  return { textContent: "", innerHTML: "", hidden: true, querySelector: findNothing, insertAdjacentHTML: insertNothing };
+  return {
+    textContent: "", innerHTML: "", hidden: true,
+    querySelector: findNothing, insertAdjacentHTML: insertNothing,
+    setAttribute: insertNothing, removeAttribute: insertNothing,
+  };
 }
 
 /**
@@ -47,7 +51,12 @@ function coordinator({ programs = [trigger()], refreshWith = null } = {}) {
       /** Records one toast. */
       showToast: (message) => toasts.push(message),
     },
-    chrome: { modalLayer: modal.layer, modalKicker: modal.kicker, modalTitle: modal.title, modalCopy: modal.copy, modalField: modal.field, modalActions: modal.actions },
+    chrome: {
+      modalLayer: modal.layer, modalKicker: modal.kicker, modalTitle: modal.title, modalCopy: modal.copy,
+      modalField: modal.field, modalActions: modal.actions,
+        /** Test helper for syncLayerInertness. */
+        syncLayerInertness: () => {},
+    },
     work: {},
     areasFeature: {},
     programs: { programById },
@@ -93,7 +102,7 @@ test("Check now asks in its own words and never says Stop", () => {
   assert.equal(modal.layer.hidden, false);
   assert.equal(modal.title.textContent, "Check Rebase now?");
   assert.match(modal.copy.textContent, /runs the probe now/);
-  assert.match(modal.actions.innerHTML, /data-modal-confirm>Check now</);
+  assert.match(modal.actions.innerHTML, /data-modal-confirm>Check now\s*<kbd>↵<\/kbd>/);
   assert.doesNotMatch(modal.actions.innerHTML, /Stop/);
 });
 
@@ -103,7 +112,7 @@ test("Stop still asks with the words the Trigger design settled", () => {
   assert.equal(modal.title.textContent, "Stop Rebase?");
   assert.equal(modal.kicker.textContent, "Trigger agent");
   assert.equal(modal.copy.textContent, "This ends the live agent. The Trigger keeps its schedule and checks again at its next interval.");
-  assert.match(modal.actions.innerHTML, /data-modal-confirm>Stop agent</);
+  assert.match(modal.actions.innerHTML, /data-modal-confirm>Stop agent\s*<kbd>↵<\/kbd>/);
 });
 
 test("Acknowledge clears the attention message without a confirmation", () => {

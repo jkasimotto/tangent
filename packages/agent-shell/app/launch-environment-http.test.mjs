@@ -47,7 +47,8 @@ const REGISTRY = `# Harnesses
   },
   "harnesses": [
     { "id": "claude-otto", "label": "Claude · Otto", "command": "CLAUDE_CONFIG_DIR=~/.claude-otto claude", "modelSet": "claude" },
-    { "id": "pi-code", "label": "Pi Code", "command": "pi-code" }
+    { "id": "pi-code", "label": "Pi Code", "command": "pi-code" },
+    { "id": "test-sleeper", "label": "Test sleeper", "command": "sleep 300" }
   ]
 }
 \`\`\`
@@ -145,7 +146,7 @@ test("launch options resolve the registry, and saving writes an Area default", a
 
   // The declared default resolves through the registry with display labels.
   const options = await fetch(`${base}/api/launch/options?area=otto/test`).then((response) => response.json());
-  assert.deepEqual(options.harnesses.map((harness) => harness.label), ["Claude · Otto", "Pi Code"]);
+  assert.deepEqual(options.harnesses.map((harness) => harness.label), ["Claude · Otto", "Pi Code", "Test sleeper"]);
   assert.equal(options.harnesses[0].models[0].label, "Opus 4.6");
   assert.deepEqual(options.harnesses[1].models, []);
   assert.equal(options.default.command, "CLAUDE_CONFIG_DIR=~/.claude-otto claude --model claude-opus-4-6");
@@ -166,17 +167,18 @@ test("launch options resolve the registry, and saving writes an Area default", a
   const brain = await fetch(`${base}/api/brains/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ area: "otto/test", instruction: "Control launch tests.", command: "sleep 300" }),
+    body: JSON.stringify({ area: "otto/test", instruction: "Control launch tests.", choice: { harness: "test-sleeper" } }),
   }).then((response) => response.json());
   assert.ok(brain.session, JSON.stringify(brain));
   openedSessions.push(brain.session);
 
-  // A step that names no harness is refused before anything is written, and
-  // the error carries what the caller was missing.
+  // A user-started step that names no harness is refused before anything is
+  // written, and the error carries what the caller was missing. An exact live
+  // Brain caller would instead lend its registered launch to these steps.
   const noLaunch = await fetch(`${base}/api/goals/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ file: "otto/test/goal-default-pipeline.md", caller: brain.session, steps: [{ instruction: "First step" }, { instruction: "Second step", launch: { harness: "pi-code" } }, { instruction: "Third step" }] }),
+    body: JSON.stringify({ file: "otto/test/goal-default-pipeline.md", steps: [{ instruction: "First step" }, { instruction: "Second step", launch: { harness: "pi-code" } }, { instruction: "Third step" }] }),
   });
   assert.equal(noLaunch.status, 400);
   const noLaunchError = (await noLaunch.json()).error;
@@ -305,7 +307,7 @@ test("launch options resolve the registry, and saving writes an Area default", a
   // The harness editor round trip: read the registry, save a change, and
   // see the new option in the next launch options without a restart.
   const editable = await fetch(`${base}/api/harnesses`).then((response) => response.json());
-  assert.equal(editable.registry.harnesses.length, 2);
+  assert.equal(editable.registry.harnesses.length, 3);
   editable.registry.modelSets.claude.push({ id: "haiku-4-5", label: "Haiku 4.5", args: "--model claude-haiku-4-5" });
   editable.registry.harnesses.push({ id: "agy", label: "Agy", command: "agy" });
   const savedRegistry = await fetch(`${base}/api/harnesses`, {
@@ -317,7 +319,7 @@ test("launch options resolve the registry, and saving writes an Area default", a
   const registryNote = await readFile(path.join(trees, "harnesses.md"), "utf8");
   assert.match(registryNote, /"haiku-4-5"/);
   const refreshed = await fetch(`${base}/api/launch/options?area=otto/test`).then((response) => response.json());
-  assert.deepEqual(refreshed.harnesses.map((harness) => harness.id), ["claude-otto", "pi-code", "agy"]);
+  assert.deepEqual(refreshed.harnesses.map((harness) => harness.id), ["claude-otto", "pi-code", "test-sleeper", "agy"]);
   assert.equal(refreshed.harnesses[0].models.length, 2);
   const invalid = await fetch(`${base}/api/harnesses`, {
     method: "POST",
@@ -369,7 +371,7 @@ test("launch options resolve the registry, and saving writes an Area default", a
   const reopened = await fetch(`${base}/api/goals/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ file: "otto/test/goal-prove-launch.md", caller: brain.session, choice: { harness: "claude-otto", model: "opus-4-6" } }),
+    body: JSON.stringify({ file: "otto/test/goal-prove-launch.md", choice: { harness: "claude-otto", model: "opus-4-6" } }),
   });
   assert.equal(reopened.status, 409);
   assert.match((await reopened.json()).error, /already has an authoritative queue/);
@@ -385,13 +387,9 @@ test("launch options resolve the registry, and saving writes an Area default", a
   })).status, 200);
   const removedDefault = await fetch(`${base}/api/launch/options?area=otto/test`).then((response) => response.json());
   assert.match(removedDefault.default.error, /otto: unknown harness "pi-code"/);
-  const reattachedAfterRemoval = await fetch(`${base}/api/goals/start`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ file: "otto/test/goal-prove-launch.md", caller: brain.session }),
-  });
-  assert.equal(reattachedAfterRemoval.status, 409);
-  assert.match((await reattachedAfterRemoval.json()).error, /already has an authoritative queue/);
+  // Removing a default does not rewrite the launch that the existing queue
+  // recorded. The earlier second-start check already proves that no request
+  // can replace this Goal's authoritative queue.
   const recordedCommand = await new Promise((resolve) => {
     execFile("tmux", ["show-options", "-t", session, "-v", "@tangent_launch_command"], (_error, stdout) => resolve((stdout ?? "").trim()));
   });

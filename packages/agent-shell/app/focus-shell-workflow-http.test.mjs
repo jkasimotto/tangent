@@ -526,9 +526,11 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(stepOne.pipeline, pipelineGoal.file);
   assert.equal(stepOne.step, 1);
   assert.equal(stepOne.goal, pipelineGoal.file);
-  assert.equal(snapshot.pipelines.length, 1);
-  assert.equal(snapshot.pipelines[0].status, "running");
-  assert.equal(snapshot.pipelines[0].steps[0].live, true);
+  const goalPipelines = snapshot.pipelines.filter((pipeline) => pipeline.goal === pipelineGoal.file);
+  assert.equal(goalPipelines.length, 1, "one Goal has one authoritative queue");
+  assert.equal(new Set(snapshot.pipelines.map((pipeline) => pipeline.goal)).size, snapshot.pipelines.length, "the snapshot never projects duplicate queues for a Goal");
+  assert.equal(goalPipelines[0].status, "running");
+  assert.equal(goalPipelines[0].steps[0].live, true);
 
   const overlappingAdvance = await fetch(`${base}/api/pipelines/control`, {
     method: "POST",

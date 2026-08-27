@@ -1,7 +1,7 @@
 import test from "node:test";
 import { assert, readFile, path, JSDOM, documentComments, areaMapView, shellBundle, here, goToCore, goalCardCore, askCore, settle, click, submit, openDocumentViaGoTo, jsonResponse } from "./focus-shell-ui-fixture.mjs";
 
-test("a parent Area owns descendant current work without a separate sub-Area section", async () => {
+test("a parent Area owns descendant work without a separate sub-Area section", async () => {
   const [html, script, mapCore, mapView] = await Promise.all([
     readFile(path.join(here, "public", "shell.html"), "utf8"),
     readFile(path.join(here, "public", "shell.js"), "utf8"),
@@ -86,6 +86,6 @@ test("a parent Area owns descendant current work without a separate sub-Area sec
   assert.equal(window.document.querySelectorAll(".work-group-brain").length, 1, "one brain route serves the whole group");
 
   const titles = stormRows.map((row) => row.querySelector(".work-row-title").textContent);
-  assert.deepEqual(titles, ["Working goal"], "a saved exact brain record keeps its fallback ask out of the Goal rows");
+  assert.deepEqual(titles, ["Working goal", "Needs you goal", "Old ready goal"], "one projection keeps live, waiting, and unstarted descendant Goals together");
   void brainStarts;
 });

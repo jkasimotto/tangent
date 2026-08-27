@@ -63,9 +63,10 @@ test("a close commit records its session and appears in recent closes", async (c
   await mkdir(area, { recursive: true });
   await mkdir(workspace, { recursive: true });
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n");
-  await writeFile(path.join(area, "test.md"), "---\ntype: area\n---\n\n# Test\n\n## Goals\n\n1. [[goal-prove-it]]\n2. [[goal-drop-it]]\n");
+  await writeFile(path.join(area, "test.md"), "---\ntype: area\n---\n\n# Test\n\n## Goals\n\n1. [[goal-prove-it]]\n2. [[goal-drop-it]]\n3. [[goal-other]]\n");
   await writeFile(path.join(area, "goal-prove-it.md"), "---\ntype: goal\nstatus: open\ndone_when: The result is visible\nsession:\n---\n\n# Prove it\n\n## State\n\nNot started.\n");
   await writeFile(path.join(area, "goal-drop-it.md"), "---\ntype: goal\nstatus: open\ndone_when: The obsolete result is visible\nsession:\n---\n\n# Drop it\n\n## State\n\nNot started.\n");
+  await writeFile(path.join(area, "goal-other.md"), "---\ntype: goal\nstatus: open\ndone_when: The unrelated result remains open\nsession:\n---\n\n# Other\n\n## State\n\nNot started.\n");
   const brains = path.join(root, "brains");
   const brainArea = path.join(brains, "otto", "test");
   await mkdir(brainArea, { recursive: true });

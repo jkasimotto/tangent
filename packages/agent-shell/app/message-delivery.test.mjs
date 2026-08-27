@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createMessageDelivery } from "./message-delivery.mjs";
+import { openMessageQueueStore } from "./message-queue-store.mjs";
 
 test("message delivery owns ordering, retargeting, and dead-target drops", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "tangent-message-delivery-"));
@@ -223,4 +224,250 @@ test("a brain composing text keeps its queued report until the text is gone", as
   await delivery.tick();
   assert.equal(delivered.length, 1);
   assert.equal(delivery.queuedCount(brain.name), 0);
+});
+
+test("generic messages persist before wake and survive a controller restart in order", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "tangent-message-restart-"));
+  const queueFile = path.join(root, "state", "message-queue.json");
+  const logFile = path.join(root, "messages.jsonl");
+  const blocked = { name: "worker", state: "working", stateDetail: null, composer: "draft" };
+  const firstStore = await openMessageQueueStore({ file: queueFile });
+  const wakeDepths = [];
+  const firstController = createMessageDelivery({
+    file: logFile,
+    store: firstStore,
+    /** Test helper for sessions. */
+    sessions: async () => [blocked],
+    /** Test helper for deliverText. */
+    deliverText: async () => true,
+    notices: {
+      /** Test helper for delivered. */
+      delivered: async () => {},
+      /** Test helper for released. */
+      released() {} },
+    /** Records the durable depth visible at each delivery wake. */
+    wake: () => wakeDepths.push(firstStore.entries().length),
+  });
+  for (const text of ["first", "second"]) {
+    const result = await firstController.dispatch(blocked, { from: "sender", area: "otto", text, durable: true, queuedAt: "then" });
+    assert.equal(result.state, "queued");
+  }
+  assert.deepEqual(wakeDepths, [1, 2], "each wake happens after its atomic append");
+
+  const delivered = [];
+  const ready = { ...blocked, state: "waiting", stateDetail: "idle", composer: "idle" };
+  const restartedStore = await openMessageQueueStore({ file: queueFile });
+  const restarted = createMessageDelivery({
+    file: logFile,
+    store: restartedStore,
+    /** Test helper for sessions. */
+    sessions: async () => [ready],
+    /** Test helper for deliverText. */
+    deliverText: async (_target, text) => { delivered.push(text); return true; },
+    notices: {
+      /** Test helper for delivered. */
+      delivered: async () => {},
+      /** Test helper for released. */
+      released() {} },
+    /** Test helper for wake. */
+    wake() {},
+  });
+  assert.equal(restarted.queuedCount("worker"), 2);
+  await restarted.tick();
+  await restarted.tick();
+  assert.deepEqual(delivered.map((text) => text.endsWith(" first") ? "first" : text.endsWith(" second") ? "second" : text), ["first", "second"]);
+  assert.equal(restarted.totalQueued(), 0);
+  assert.deepEqual((await openMessageQueueStore({ file: queueFile })).entries(), []);
+});
+
+test("an immediately presentable generic message stays durable until delivery settles", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "tangent-message-settlement-"));
+  const store = await openMessageQueueStore({ file: path.join(root, "message-queue.json") });
+  const target = { name: "worker", state: "waiting", stateDetail: "idle" };
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let settled;
+  const settledWake = new Promise((resolve) => { settled = resolve; });
+  const delivery = createMessageDelivery({
+    file: path.join(root, "messages.jsonl"),
+    store,
+    /** Test helper for sessions. */
+    sessions: async () => [target],
+    /** Holds the presentation boundary open. */
+    deliverText: async () => { await gate; return true; },
+    notices: {
+      /** Test helper for delivered. */
+      delivered: async () => {},
+      /** Test helper for released. */
+      released() {} },
+    wake: settled,
+  });
+  const result = await delivery.dispatch(target, { from: "sender", area: null, text: "facts", durable: true, queuedAt: "then" });
+  assert.equal(result.state, "queued", "acceptance does not claim presentation before the transport settles");
+  assert.equal(result.reason, "presentation is in progress");
+  assert.equal(store.entries().length, 1, "the accepted message is durable while presentation is in flight");
+  release();
+  await settledWake;
+  assert.equal(store.entries().length, 0, "settlement removes the durable entry");
+});
+
+test("a failed immediate presentation remains durable across restart and retries", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "tangent-message-false-immediate-"));
+  const queueFile = path.join(root, "message-queue.json");
+  const target = { name: "worker", state: "waiting", stateDetail: "idle" };
+  const firstStore = await openMessageQueueStore({ file: queueFile });
+  let attempted;
+  const attemptedPresentation = new Promise((resolve) => { attempted = resolve; });
+  const first = createMessageDelivery({
+    file: path.join(root, "messages.jsonl"),
+    store: firstStore,
+    /** Test helper for sessions. */
+    sessions: async () => [target],
+    /** Simulates the pane refusing or failing to echo the complete prompt. */
+    deliverText: async () => false,
+    notices: {
+      /** Test helper for delivered. */
+      delivered: async () => {},
+      /** Test helper for released. */
+      released() {} },
+    wake: attempted,
+  });
+
+  const accepted = await first.dispatch(target, { from: "sender", area: null, text: "facts", durable: true, queuedAt: "then" });
+  assert.equal(accepted.state, "queued");
+  assert.equal(accepted.reason, "presentation is in progress");
+  await attemptedPresentation;
+  assert.equal(first.queuedCount(target.name), 1, "a false receipt leaves the live queue head pending");
+  assert.equal(firstStore.entries().length, 1, "a false receipt never removes the disk record");
+
+  const delivered = [];
+  const restartedStore = await openMessageQueueStore({ file: queueFile });
+  const restarted = createMessageDelivery({
+    file: path.join(root, "messages.jsonl"),
+    store: restartedStore,
+    /** Test helper for sessions. */
+    sessions: async () => [target],
+    /** Test helper for deliverText. */
+    deliverText: async (_target, text) => { delivered.push(text); return true; },
+    notices: {
+      /** Test helper for delivered. */
+      delivered: async () => {},
+      /** Test helper for released. */
+      released() {} },
+    /** Test helper for wake. */
+    wake() {},
+  });
+  assert.equal(restarted.queuedCount(target.name), 1, "restart hydrates the presentation that did not arrive");
+  await restarted.tick();
+  assert.equal(delivered.length, 1);
+  assert.equal(restarted.queuedCount(target.name), 0);
+  assert.equal(restartedStore.entries().length, 0, "only the true retry receipt settles the record");
+});
+
+test("a queued durable presentation retries after deliverText returns false", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "tangent-message-false-tick-"));
+  const store = await openMessageQueueStore({ file: path.join(root, "message-queue.json") });
+  const target = { name: "worker", state: "working", composer: "draft" };
+  let attempts = 0;
+  const delivery = createMessageDelivery({
+    file: path.join(root, "messages.jsonl"),
+    store,
+    /** Test helper for sessions. */
+    sessions: async () => [{ ...target, state: "waiting", stateDetail: "idle", composer: "idle" }],
+    /** Test helper for deliverText. */
+    deliverText: async () => { attempts += 1; return attempts > 1; },
+    notices: {
+      /** Test helper for delivered. */
+      delivered: async () => {},
+      /** Test helper for released. */
+      released() {} },
+    /** Test helper for wake. */
+    wake() {},
+  });
+  assert.equal((await delivery.dispatch(target, { from: "sender", area: null, text: "facts", durable: true, queuedAt: "then" })).state, "queued");
+
+  await delivery.tick();
+  assert.equal(attempts, 1);
+  assert.equal(delivery.queuedCount(target.name), 1);
+  assert.equal(store.entries().length, 1, "the false tick receipt keeps durable state");
+
+  await delivery.tick();
+  assert.equal(attempts, 2);
+  assert.equal(delivery.queuedCount(target.name), 0);
+  assert.equal(store.entries().length, 0, "the first true receipt settles the head");
+});
+
+test("a failed durable append neither wakes nor presents the message", async () => {
+  const target = { name: "worker", state: "waiting", stateDetail: "idle" };
+  let woke = 0;
+  let presented = 0;
+  const delivery = createMessageDelivery({
+    file: path.join(await mkdtemp(path.join(os.tmpdir(), "tangent-message-write-fail-")), "messages.jsonl"),
+    store: {
+      /** Test helper for entries. */
+      entries: () => [],
+      /** Simulates the atomic store refusing the acceptance write. */
+      async append() { throw new Error("disk unavailable"); },
+    },
+    /** Test helper for sessions. */
+    sessions: async () => [target],
+    /** Test helper for deliverText. */
+    deliverText: async () => { presented += 1; return true; },
+    notices: {
+      /** Test helper for delivered. */
+      delivered: async () => {},
+      /** Test helper for released. */
+      released() {} },
+    /** Test helper for wake. */
+    wake: () => { woke += 1; },
+  });
+  await assert.rejects(
+    delivery.dispatch(target, { from: "sender", area: null, text: "facts", durable: true, queuedAt: "then" }),
+    /disk unavailable/,
+  );
+  assert.equal(woke, 0);
+  assert.equal(presented, 0);
+  assert.equal(delivery.totalQueued(), 0);
+});
+
+test("a durable retarget restarts on the exact replacement session", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "tangent-message-retarget-restart-"));
+  const queueFile = path.join(root, "message-queue.json");
+  const store = await openMessageQueueStore({ file: queueFile });
+  const oldTarget = { name: "worker-old", state: "working", composer: "draft" };
+  const delivery = createMessageDelivery({
+    file: path.join(root, "messages.jsonl"),
+    store,
+    /** Test helper for sessions. */
+    sessions: async () => [oldTarget],
+    /** Test helper for deliverText. */
+    deliverText: async () => true,
+    notices: {
+      /** Test helper for delivered. */
+      delivered: async () => {},
+      /** Test helper for released. */
+      released() {} },
+    /** Test helper for wake. */
+    wake() {},
+  });
+  await delivery.dispatch(oldTarget, { from: "sender", area: null, text: "facts", durable: true, queuedAt: "then" });
+  await delivery.retarget("worker-old", "worker-new");
+
+  const restarted = createMessageDelivery({
+    file: path.join(root, "messages.jsonl"),
+    store: await openMessageQueueStore({ file: queueFile }),
+    /** Test helper for sessions. */
+    sessions: async () => [],
+    /** Test helper for deliverText. */
+    deliverText: async () => true,
+    notices: {
+      /** Test helper for delivered. */
+      delivered: async () => {},
+      /** Test helper for released. */
+      released() {} },
+    /** Test helper for wake. */
+    wake() {},
+  });
+  assert.equal(restarted.queuedCount("worker-old"), 0);
+  assert.equal(restarted.queuedCount("worker-new"), 1);
 });

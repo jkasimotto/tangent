@@ -18,6 +18,7 @@
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { readJsonObject, walkJsonFiles, writeJsonObject } from "./json-store.mjs";
+import { boundedSessionName } from "./session-names.mjs";
 
 export const BRAIN_SCHEMA = "area-brain.v3";
 const LEGACY_BRAIN_SCHEMAS = new Set(["area-brain.v1", "area-brain.v2"]);
@@ -141,7 +142,14 @@ export function newBrain({ area, instruction, planFile, now = new Date().toISOSt
 /** The current (last) generation entry, or null before the first spawn. */
 export function currentGeneration(record) {
   const list = record?.generations ?? [];
-  return list.length ? list[list.length - 1] : null;
+  if (!list.length) return null;
+  // A failed handover keeps its replacement attempt as diagnostics while the
+  // logical brain points back at the prior generation. Honour that durable
+  // pointer before falling back to the append-only tail used by old records.
+  return list.findLast?.((entry) => (
+    entry?.generation === record?.generation
+    && entry?.session === (record?.currentAttemptId ?? record?.session)
+  )) ?? list[list.length - 1];
 }
 
 /**
@@ -151,7 +159,8 @@ export function currentGeneration(record) {
 export function beginGeneration(record, session, resolvedLaunch, now = new Date().toISOString()) {
   const generation = (record.generations?.length ?? 0) + 1;
   if (!resolvedLaunch?.ref?.harness || !resolvedLaunch.command) throw new Error("resolved brain launch is required");
-  const entry = { generation, session, resolvedLaunch, startedAt: now, endedAt: null, handover: null, remindedAt: null };
+  const launchSnapshot = { ...resolvedLaunch, ref: { ...resolvedLaunch.ref } };
+  const entry = { generation, session, resolvedLaunch: launchSnapshot, startedAt: now, endedAt: null, handover: null, remindedAt: null };
   record.generations = [...(record.generations ?? []), entry];
   record.generation = generation;
   record.session = session;
@@ -188,8 +197,9 @@ export function endBrain(record, status = "inactive", now = new Date().toISOStri
 /** The tmux session name for one generation of an Area's brain. */
 export function brainSessionName(area, generation) {
   const leaf = String(area).split("/").filter(Boolean).pop() ?? "area";
-  const base = generation > 1 ? `${leaf}--brain--g${generation}` : `${leaf}--brain`;
-  return normName(base).slice(0, SESSION_NAME_MAX);
+  const base = normName(leaf) || "area";
+  const suffix = generation > 1 ? `-brain-g${generation}` : "-brain";
+  return boundedSessionName(base, suffix, SESSION_NAME_MAX);
 }
 
 /**

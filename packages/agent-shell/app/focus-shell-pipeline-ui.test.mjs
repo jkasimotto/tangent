@@ -93,7 +93,6 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   };
   window.eval(shellBundle);
   await settle(window);
-  click(window, "[data-work-filter='inactive']");
   click(window, `[data-launch-for='${goal.file}']`);
   await settle(window);
   await settle(window);
@@ -139,14 +138,13 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
 
   // The desk compresses pipeline mechanics into Open plus one action menu.
   click(window, "#work-tab");
-  click(window, "[data-work-filter='active']");
   await settle(window);
   const row = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
   assert.match(row.querySelector(".desk-state").textContent, /^Working$/);
   // The open control is the step's launch, and the verb is its accessible name
   // (design-see-the-harness-model-effort-and-open-that-agent Decision 1).
-  assert.equal(row.querySelector("[data-open-goal-run]").textContent, "codex/sol/high");
-  assert.match(row.querySelector("[data-open-goal-run]").getAttribute("aria-label"), /^Open step 1 on codex\/sol\/high:/);
+  assert.equal(row.querySelector(".work-cell-action [data-open-goal-run]").textContent, "codex/sol/high");
+  assert.match(row.querySelector(".work-cell-action [data-open-goal-run]").getAttribute("aria-label"), /^Open step 1 on codex\/sol\/high:/);
   assert.equal(row.querySelector(".desk-step"), null, "the step chips left the card");
   assert.equal(row.querySelector(".desk-goal-facts"), null, "agent count is not repeated on the Goal");
   assert.equal(row.querySelector("[data-check-goal]"), null);
@@ -182,7 +180,7 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   assert.equal(popover(), null, "the popover closed after the append");
   assert.equal(posts.filter((entry) => entry.path === "/api/goals/start").length, 1, "an append never restarts the pipeline");
   const grownRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
-  assert.equal(grownRow.querySelector("[data-open-goal-run]").textContent, "codex/sol/high");
+  assert.equal(grownRow.querySelector(".work-cell-action [data-open-goal-run]").textContent, "codex/sol/high");
 
   // The step session dies: normal restart stays with the brain; Julian can Skip or end.
   // and the latest handover shows under the chips.
@@ -193,7 +191,7 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   await settle(window);
   const stoppedRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
   assert.match(stoppedRow.querySelector(".desk-state").textContent, /^Stopped$/);
-  assert.equal(stoppedRow.querySelector("[data-open-goal-run]"), null, "a dead session is not offered as Open");
+  assert.equal(stoppedRow.querySelector(".work-cell-action [data-open-goal-run]"), null, "a dead session is not offered as Open");
   assert.equal(stoppedRow.querySelector("[data-stop-goal]"), null);
   assert.equal(stoppedRow.querySelector("[data-pipeline-control='restart']"), null);
   assert.ok(stoppedRow.querySelector("[data-pipeline-control='skip']"));
@@ -209,7 +207,7 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   // Step 2 died too. Stop work ends the run: the row settles back to a plain
   // open Goal and no Restart lingers.
   assert.match(afterRow.querySelector(".desk-state").textContent, /^Stopped$/);
-  assert.equal(afterRow.querySelector("[data-open-goal-run]"), null, "the stopped next step is controlled from the menu");
+  assert.equal(afterRow.querySelector(".work-cell-action [data-open-goal-run]"), null, "the stopped next step is controlled from the menu");
   const stopWork = afterRow.querySelector("[data-pipeline-control='end']");
   assert.ok(stopWork, "a stopped step offers Stop work");
   assert.equal(stopWork.textContent, "End work");
@@ -219,7 +217,6 @@ test("the launch popover composes a pipeline of steps and the desk shows its pro
   const endPost = posts.filter((entry) => entry.path === "/api/pipelines/control").at(-1);
   assert.deepEqual({ goal: endPost.body.goal, action: endPost.body.action, step: endPost.body.step }, { goal: goal.file, action: "end", step: 2 });
   assert.match(endPost.body.idempotencyKey, /^[0-9a-f-]{36}$/);
-  click(window, "[data-work-filter='inactive']");
   const endedRow = window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
   // End work removes the run record, so Tangent knows of no agent that ran:
   // the row is a plain planned Goal again, never "Ready for validation".

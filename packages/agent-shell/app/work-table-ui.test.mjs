@@ -10,6 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { bootWorkTable, press, settle } from "./work-table-harness.mjs";
 import { workTableFixture, withDirectAsks, plannedWorkFixture, withBrainOnlyArea } from "./work-table-fixture.mjs";
+import { workCommand, workCommandHelpRows } from "./public/work-commands.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -23,7 +24,8 @@ test("the work table states its rows and columns in the accessibility tree", asy
   const table = document.querySelector("table.work-table");
   assert.ok(table, "Work is one semantic table");
   assert.equal(document.querySelectorAll("table.work-table").length, 1, "one table holds every Goal");
-  assert.match(table.querySelector("caption").textContent, /Current work/);
+  assert.match(table.querySelector("caption").textContent, /^Work/);
+  assert.equal(document.querySelector("[data-work-filter]"), null, "Work is one projection, not Current and Planned modes");
 
   const columns = [...table.querySelectorAll("thead th")];
   assert.deepEqual(columns.map((column) => column.textContent.trim()), ["Select", "Work", "State", "Time", "Action"]);
@@ -67,6 +69,164 @@ test("every status carries a word, and every icon-only control carries a name", 
   assert.equal(document.querySelectorAll(".work-table th:empty").length, 0, "no header cell is empty");
 });
 
+test("Area pointers, toolbar help, and the command palette share one command registry", async () => {
+  const { window, document } = await bootWorkTable(workTableFixture());
+  const ids = ["previousArea", "nextArea", "openBrain", "stopBrain", "defaults", "newGoal", "focus", "fold", "questions", "note"];
+  const menu = document.querySelector(".work-group-action-menu [role='menu']");
+  for (const id of ids) {
+    const command = workCommand(id);
+    const pointer = menu.querySelector(`[data-work-command='${id}']`);
+    assert.ok(pointer, `${id} has a pointer on its Area`);
+    assert.equal(pointer.getAttribute("aria-keyshortcuts"), command.ariaKeyshortcuts);
+    assert.equal(pointer.querySelector("kbd").textContent, command.keyDisplay);
+    assert.match(pointer.title, new RegExp(command.keyDisplay.replace(/[?]/g, "\\?")));
+  }
+  for (const id of ["commands", "keys"]) {
+    const command = workCommand(id);
+    const pointer = document.querySelector(`[data-work-command='${id}']`);
+    assert.equal(pointer.textContent.trim(), `${command.label} ${command.keyDisplay}`);
+    assert.equal(pointer.getAttribute("aria-keyshortcuts"), command.ariaKeyshortcuts);
+  }
+  const complete = document.querySelector("[data-work-command='complete']");
+  assert.match(complete.textContent, /Complete Goal\s*x/);
+
+  document.querySelector("[data-work-commands]").click();
+  await settle(window);
+  const values = [...document.querySelectorAll("[data-modal-select] option")].map((option) => option.value);
+  assert.ok(values.includes("stopBrain"));
+  assert.ok(values.includes("defaults"));
+  const select = document.querySelector("[data-modal-select]");
+  select.value = "stopBrain";
+  document.querySelector("[data-modal-confirm]").click();
+  await settle(window);
+  assert.match(document.querySelector("#modal-title").textContent, /Stop the Onboarding brain/, "palette stop runs the same Area confirmation as its pointer");
+  document.querySelector("[data-modal-cancel]").click();
+
+  document.querySelector("[data-work-commands]").click();
+  await settle(window);
+  document.querySelector("[data-modal-select]").value = "defaults";
+  document.querySelector("[data-modal-confirm]").click();
+  await settle(window);
+  assert.equal(document.querySelector("[data-launch-popover]")?.getAttribute("aria-label"), "Default agents", "palette defaults runs the same Area settings pointer");
+});
+
+test("Area stop and defaults keys run the same guarded paths as their pointers", async () => {
+  const { window, document, posts } = await bootWorkTable(workTableFixture());
+  press(window, "s");
+  assert.match(document.querySelector("#modal-title").textContent, /Stop the Onboarding brain/);
+  assert.match(document.querySelector("[data-modal-confirm]").textContent, /Stop brain\s*↵/);
+  press(window, "Enter");
+  await settle(window);
+  const stop = posts.find((entry) => entry.path === "/api/brains/stop");
+  assert.equal(stop.body.area, "otto/onboarding", "plain Enter confirms the exact keyboard-selected brain");
+  assert.ok(stop.body.operationId);
+
+  press(window, "d");
+  await settle(window);
+  assert.equal(document.querySelector("[data-launch-popover]")?.getAttribute("aria-label"), "Default agents");
+});
+
+test("Area keys resolve the visible group from Goal and descendant rows", async () => {
+  const fixture = workTableFixture();
+  const parent = fixture.goals.find((goal) => goal.area === "otto/onboarding");
+  const child = {
+    ...parent,
+    area: "otto/onboarding/lessons",
+    slug: "lesson-copy",
+    file: "otto/onboarding/lessons/goal-lesson-copy.md",
+    title: "Write the lesson copy",
+    session: null,
+    firstStartAt: null,
+  };
+  fixture.goals.push(child);
+  fixture.vault.areas.push({ path: child.area, name: "lessons", goals: [child], documents: [] });
+  fixture.vault.map.push({ path: child.area, name: "lessons", goals: [child] });
+
+  const { window, document } = await bootWorkTable(fixture);
+  const childRow = document.querySelector(`[data-goal-anchor='${child.file}']`);
+  assert.equal(childRow.closest("[data-work-group]").dataset.workGroup, "otto/onboarding", "the parent brain header owns the descendant Goal");
+  childRow.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+
+  press(window, "d");
+  await settle(window);
+  assert.match(document.querySelector("[data-launch-popover] header").textContent, /Otto \/ Onboarding/, "d opens the owning header's defaults");
+  document.querySelector("[data-launch-close]").click();
+  press(window, "a");
+  await settle(window);
+  assert.equal(document.querySelector("#new-goal-area").value, "otto/onboarding", "a creates through the same owning Area header");
+});
+
+test("Shift-brackets and their pointer actions jump between real Area headers", async () => {
+  const { window, document } = await bootWorkTable(workTableFixture());
+  const onboarding = "area:otto/onboarding";
+  const standards = "area:otto/standards";
+  const tangent = "area:otto/tangent";
+
+  press(window, "}", { shiftKey: true });
+  await settle(window);
+  assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, standards, "Shift-] moves from an Area row to the next Area");
+  assert.equal(document.activeElement.closest("[data-work-cursor]")?.dataset.workCursor, standards, "the destination Area is focused and visible");
+
+  const tangentGoal = document.querySelector("[data-goal-anchor='otto/tangent/goal-compact-table.md']");
+  tangentGoal.querySelector(".work-row-agent").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+  press(window, "{", { shiftKey: true });
+  await settle(window);
+  assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, standards, "Shift-[ resolves an agent through its descendant Goal row");
+
+  document.querySelector("[data-goal-anchor='otto/tangent/goal-compact-table.md'] .work-row-step").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+  press(window, "{", { shiftKey: true });
+  await settle(window);
+  assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, standards, "Shift-[ resolves step metadata through its descendant Goal row");
+
+  document.querySelector(`[data-work-group='otto/standards'] [data-move-work-area='-1']`).click();
+  await settle(window);
+  assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, onboarding, "the visible previous action runs the same jump");
+
+  document.querySelector("[data-work-commands]").click();
+  await settle(window);
+  document.querySelector("[data-modal-select]").value = "nextArea";
+  document.querySelector("[data-modal-confirm]").click();
+  await settle(window);
+  assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, standards, "the command palette runs the same next-Area action");
+
+  document.querySelector(`[data-work-group='otto/tangent'] [data-move-work-area='1']`).click();
+  await settle(window);
+  assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, tangent, "the final Area holds at the boundary");
+});
+
+test("Area jumps skip the synthetic Other Areas group", async () => {
+  const { window, document } = await bootWorkTable(workTableFixture(), { areaFocus: ["otto/onboarding"] });
+  document.querySelector("[data-fold-work-area='__other-areas']").click();
+  await settle(window);
+  const outsideGoal = document.querySelector("[data-goal-anchor='otto/standards/goal-framework-docs.md']");
+  outsideGoal.querySelector(".work-row-agent").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+
+  press(window, "{", { shiftKey: true });
+  await settle(window);
+  assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, "area:otto/onboarding", "previous finds the nearest real Area instead of the synthetic group");
+  press(window, "}", { shiftKey: true });
+  await settle(window);
+  assert.equal(document.querySelector("[data-work-cursor].cursor")?.dataset.workCursor, "area:otto/onboarding", "next never enters Other Areas");
+});
+
+test("Area keys refuse a Goal in Other Areas because it has no matching pointer header", async () => {
+  const fixture = workTableFixture();
+  const { window, document } = await bootWorkTable(fixture, { areaFocus: ["otto/onboarding"] });
+  document.querySelector("[data-fold-work-area='__other-areas']").click();
+  await settle(window);
+  const row = document.querySelector("[data-goal-anchor='otto/standards/goal-framework-docs.md']");
+  assert.equal(row.closest("[data-work-group]").dataset.workGroup, "__other-areas");
+  row.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle(window);
+  press(window, "d");
+  assert.equal(document.querySelector("[data-launch-popover]"), null);
+  assert.match(document.querySelector("#toast").textContent, /no Area command header/);
+});
+
 test("Work carries no attention queue and infers no ask", async () => {
   const { document } = await bootWorkTable(withDirectAsks(workTableFixture()));
   // The For you strip and its Dock badge are gone. A brain's Question is a
@@ -84,7 +244,7 @@ test("Work carries no attention queue and infers no ask", async () => {
 
   // The one count Work shows comes from an explicit brain Request, and it
   // opens the deliberate review rather than answering in place.
-  const counts = [...document.querySelectorAll("[data-review-questions]")];
+  const counts = [...document.querySelectorAll(".desk-state[data-review-questions]")];
   assert.ok(counts.length, "an Area whose brain asked shows a quiet question count");
   assert.match(counts[0].textContent, /^\d+ questions?$/);
 });
@@ -110,7 +270,7 @@ test("a filter keeps focus in its input and says how many Goals are left", async
   refreshed.dispatchEvent(new window.Event("input", { bubbles: true }));
   await settle(window);
   assert.equal(titles(document).length, 0);
-  assert.match(document.querySelector("#filter-count").textContent, /No current work matches/, "an empty result says so");
+  assert.match(document.querySelector("#filter-count").textContent, /No work matches/, "an empty result says so");
 });
 
 test("arrows, Home, End, and Enter move and open without leaving the table", async () => {
@@ -134,6 +294,20 @@ test("arrows, Home, End, and Enter move and open without leaving the table", asy
   rows[0].click();
   await settle(window);
   assert.ok(document.querySelector(".document-reader, .work-page"), "Enter or a click on the title opens the Goal, never an agent");
+});
+
+test("the Goal title is the primary session, launch, or context route", async () => {
+  const live = await bootWorkTable(workTableFixture());
+  const running = live.document.querySelector("tr[data-goal-anchor$='goal-framework-docs.md']");
+  assert.ok(running.querySelector("[data-work-row-title][data-open-goal-run]"), "a live Goal title opens its agent session");
+  assert.match(running.querySelector(".work-row-agent").textContent, /Claude/, "the agent sits below the Goal title");
+
+  const stopped = live.document.querySelector("tr[data-goal-anchor$='goal-walkthrough.md']");
+  assert.ok(stopped.querySelector("[data-work-row-title][data-open-close]"), "a Goal without an openable run opens its durable context");
+  assert.match(stopped.querySelector(".work-row-step").textContent, /Step 3 of 3 · codex/, "small step metadata sits below the agent line");
+
+  const planned = await bootWorkTable(plannedWorkFixture());
+  assert.ok(planned.document.querySelector("tr[data-goal-anchor$='goal-startable.md'] [data-work-row-title][data-launch-for]"), "a startable Goal title opens the common launch composer");
 });
 
 test("vim keys move the persistent Work cursor through brains and Goals and stay inert in the filter", async () => {
@@ -166,6 +340,8 @@ test("Command-J opens and closes the one session layer without destroying Work",
   assert.equal(document.querySelector("#session-layer").hidden, false);
   assert.ok(document.querySelector("table.work-table"), "Work remains mounted below the session");
   assert.equal(document.querySelector("#session-layer-terminal").dataset.session, "standards--docs");
+  assert.equal(document.querySelector("#session-layer-title strong").textContent, "Land standards framework docs", "the Goal names the session");
+  assert.match(document.querySelector("#session-layer-title span").textContent, /Claude/, "the agent sits below its Goal in the session header");
   press(window, "j", { metaKey: true });
   await settle(window);
   assert.equal(document.querySelector("#session-layer").hidden, true);
@@ -181,6 +357,8 @@ test("an Area brain row takes the cursor and Command-J enters its brain", async 
   press(window, "j", { metaKey: true });
   await settle(window);
   assert.equal(document.querySelector("#session-layer-terminal").dataset.session, "otto-tangent--brain");
+  assert.equal(document.querySelector("#session-layer-title strong").textContent, "Otto / Tangent");
+  assert.match(document.querySelector("#session-layer-title span").textContent, /Claude · Area brain/);
 });
 
 test("Work keys expose their help and stay inert in text and terminal input", async () => {
@@ -193,6 +371,22 @@ test("Work keys expose their help and stay inert in text and terminal input", as
   document.activeElement.blur();
   press(window, "?");
   assert.equal(document.querySelector("#modal-title").textContent, "Move around Work");
+  const helpRows = [...document.querySelectorAll("#modal-copy .key-sheet > div")];
+  assert.equal(helpRows.length, workCommandHelpRows().length, "each registered command gets its own readable row");
+  assert.equal(helpRows.find((row) => row.querySelector("kbd")?.textContent === "s")?.querySelector("strong")?.textContent, "Stop brain");
+  assert.equal(helpRows.find((row) => row.querySelector("kbd")?.textContent === "d")?.querySelector("strong")?.textContent, "Defaults");
+  const scroller = document.querySelector("#modal-copy");
+  Object.defineProperty(scroller, "clientHeight", { configurable: true, value: 200 });
+  Object.defineProperty(scroller, "scrollHeight", { configurable: true, value: 900 });
+  press(window, "j");
+  assert.equal(scroller.scrollTop, 34, "j scrolls the complete key sheet by one compact row");
+  press(window, "d", { ctrlKey: true });
+  assert.equal(scroller.scrollTop, 134, "Ctrl-D scrolls the key sheet by half a page");
+  press(window, "G");
+  assert.equal(scroller.scrollTop, 700, "G reaches the last command");
+  press(window, "g");
+  press(window, "g");
+  assert.equal(scroller.scrollTop, 0, "gg returns to the first command");
   document.querySelector("[data-modal-confirm]").click();
 
   const live = document.querySelector("[data-work-cursor='goal:otto/standards/goal-framework-docs.md']");
@@ -267,7 +461,7 @@ test("lifecycle state and dependency readiness stay separate facts", async () =>
   const stateOf = (document, slug) => document.querySelector(`tr[data-goal-anchor$='goal-${slug}.md'] .desk-state`).textContent.trim();
   assert.equal(stateOf(current.document, "stays-online"), "Ready for validation", "a finished result Julian must accept");
   assert.equal(stateOf(current.document, "walkthrough"), "Stopped");
-  assert.equal(current.document.querySelector("tr[data-goal-anchor$='goal-walkthrough.md'] .work-step").textContent, "3/3");
+  assert.match(current.document.querySelector("tr[data-goal-anchor$='goal-walkthrough.md'] .work-row-step").textContent, /Step 3 of 3 · codex/);
   assert.equal(current.document.querySelectorAll(".work-table .work-readiness").length, 0, "Current work shows no readiness line");
 
   const planned = await bootWorkTable(plannedWorkFixture(), { workFilter: "inactive" });
@@ -346,7 +540,7 @@ test("one agent per group: checking across groups moves the selection and says s
 // (otto/tangent/impl-implement-the-compact-work-table). This test pins the two
 // heights those numbers come from, so a later style change cannot lose the
 // density quietly.
-test("the row and group heights meet the measured density targets", async () => {
+test("the row height makes room for Goal, agent, and step hierarchy", async () => {
   const css = await readFile(path.join(here, "public", "shell.css"), "utf8");
   /** Reads one declared pixel height out of the stylesheet. */
   const heightOf = (selector) => {
@@ -358,11 +552,10 @@ test("the row and group heights meet the measured density targets", async () => 
   };
   const row = heightOf(".work-row > *");
   const group = heightOf(".work-group-row > .work-group-head");
-  assert.equal(row, 36, "a Goal row is 36 px");
+  assert.equal(row, 48, "a Goal row has three compact metadata lines");
   assert.equal(group, 32, "a group header is 32 px");
-  assert.ok(7 * row + 3 * group <= 360, `seven Goals in three groups fit in 360 px, not ${7 * row + 3 * group}`);
-  assert.ok(Math.floor((714 - 3 * group) / row) >= 17, "17 Goal rows fit across three groups in the 714 px work region");
-  assert.ok(Math.floor((714 - group) / row) >= 18, "18 Goal rows fit in one group in the 714 px work region");
+  assert.ok(Math.floor((714 - 3 * group) / row) >= 12, "12 three-line Goal rows fit across three groups in the 714 px work region");
+  assert.ok(Math.floor((714 - group) / row) >= 14, "14 three-line Goal rows fit in one group in the 714 px work region");
 });
 
 test("the session overlay gives xterm definite full-track dimensions", async () => {
@@ -440,14 +633,14 @@ test("the brain-only group header states the brain's state and opens that brain"
   assert.equal(pill.className, "desk-state waiting", "a waiting brain takes the waiting colour");
 });
 
-test("a stopped brain earns no group, and Planned work shows no brain-only group", async () => {
+test("a stopped brain earns no empty group, while one live brain always remains visible", async () => {
   const stopped = await bootWorkTable(withBrainOnlyArea(workTableFixture(), { live: false }));
   assert.equal(stopped.document.querySelector("tbody.work-group[data-work-group='otto/quiet']"), null,
     "only a running, live brain puts its Area on Work");
 
-  const planned = await bootWorkTable(withBrainOnlyArea(plannedWorkFixture(), {}), { workFilter: "inactive" });
-  assert.equal(planned.document.querySelector("tbody.work-group[data-work-group='otto/quiet']"), null,
-    "Planned work is about unstarted Goals, so a live brain does not force a group there");
+  const withLive = await bootWorkTable(withBrainOnlyArea(plannedWorkFixture(), {}));
+  assert.ok(withLive.document.querySelector("tbody.work-group[data-work-group='otto/quiet']"),
+    "the one Work projection never hides a live brain");
 });
 
 test("working agents and open Questions still outrank the brain word", async () => {
@@ -466,43 +659,23 @@ test("an Area Focus that excludes the brain's Area hides its group", async () =>
   assert.ok(document.querySelector("tbody.work-group[data-work-group='otto/standards']"), "the focused Area stays");
 });
 
-test("an Area whose Goals are all unstarted still shows its live brain on Current", async () => {
+test("an Area shows its unstarted Goals and live brain together", async () => {
   const { document } = await bootWorkTable(withBrainOnlyArea(workTableFixture(), { planned: true }));
   const group = document.querySelector("tbody.work-group[data-work-group='otto/quiet']");
-  assert.ok(group, "a planned Goal gives no current row, so the live brain is what keeps the group");
-  assert.equal(group.querySelectorAll("tr.work-row").length, 0, "an unstarted Goal stays off the Current table");
+  assert.ok(group, "the Area is visible");
+  assert.equal(group.querySelectorAll("tr.work-row").length, 1, "the one projection includes the unstarted Goal");
   const header = groupHeader(document, "otto/quiet");
   assert.match(header.querySelector(".desk-state").textContent, /^Brain working$/);
-  assert.match(header.querySelector(".work-group-count").textContent, /^0 open$/,
-    "the summary follows the filtered rows, as it does for every group");
+  assert.match(header.querySelector(".work-group-count").textContent, /^1 open$/,
+    "the summary and rows use the same projection");
 
   const stopped = await bootWorkTable(withBrainOnlyArea(workTableFixture(), { planned: true, live: false }));
-  assert.equal(stopped.document.querySelector("tbody.work-group[data-work-group='otto/quiet']"), null,
-    "the same Area with a stopped brain leaves Current, so the live brain is what earns the group");
-
-  const planned = await bootWorkTable(withBrainOnlyArea(workTableFixture(), { planned: true }), { workFilter: "inactive" });
-  const plannedGroup = planned.document.querySelector("tbody.work-group[data-work-group='otto/quiet']");
-  assert.equal(plannedGroup.querySelectorAll("tr.work-row").length, 1, "the same Goal is a row on Planned work");
+  assert.equal(stopped.document.querySelector("tbody.work-group[data-work-group='otto/quiet']").querySelectorAll("tr.work-row").length, 1,
+    "stopping the brain never hides the Area's Goal");
 });
 
-test("a live brain keeps its group when opening a Goal widens the filter to all work", async () => {
-  // Opening a Goal that the current filter hides makes the coordinator switch
-  // the Work filter to "all" (shell-coordinator, selectGoal). That view shows
-  // more than Current, so it must not be the one place a live brain vanishes.
-  // The Work table carries no reveal route of its own, so the proof clicks the
-  // same `data-reveal-goal` attribute the For-you rows, the Areas view, and a
-  // Document's Goal link all use.
-  const { window, document } = await bootWorkTable(withBrainOnlyArea(workTableFixture(), { planned: true }));
-  assert.ok(document.querySelector("tbody.work-group[data-work-group='otto/quiet']"), "the live brain holds the group on Current");
-
-  const reveal = document.createElement("button");
-  reveal.dataset.revealGoal = "otto/quiet/goal-quiet-plan.md";
-  document.body.append(reveal);
-  reveal.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-  await settle(window);
-
-  assert.equal(document.querySelector("[data-work-filter='active']").getAttribute("aria-pressed"), "false",
-    "neither chip is pressed, so the table is showing all work");
-  assert.ok(document.querySelector("tbody.work-group[data-work-group='otto/quiet']"),
-    "the live brain still states itself when the table widens to all work");
+test("a retired stored filter cannot hide an unstarted Goal", async () => {
+  const { document } = await bootWorkTable(withBrainOnlyArea(workTableFixture(), { planned: true }), { workFilter: "active" });
+  assert.equal(document.querySelector("[data-work-filter]"), null);
+  assert.ok(document.querySelector("[data-goal-anchor='otto/quiet/goal-quiet-plan.md']"));
 });

@@ -75,8 +75,10 @@ test("a brain lends its own harness to every worker it starts", async (context) 
   const workspace = path.join(root, "workspace");
   const proof = path.join(trees, "otto", "proof");
   const plain = path.join(trees, "otto", "plainbrain");
+  const override = path.join(trees, "otto", "overridebrain");
   await mkdir(proof, { recursive: true });
   await mkdir(plain, { recursive: true });
+  await mkdir(override, { recursive: true });
   await mkdir(workspace, { recursive: true });
   await writeFile(path.join(trees, "harnesses.md"), REGISTRY, "utf8");
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
@@ -88,6 +90,11 @@ test("a brain lends its own harness to every worker it starts", async (context) 
   await writeFile(
     path.join(plain, "plainbrain.md"),
     `---\ntype: area\n---\n\n# Plain brain\n\n## Resources\n\n- Repository: ${workspace}\n`,
+    "utf8"
+  );
+  await writeFile(
+    path.join(override, "overridebrain.md"),
+    `---\ntype: area\n---\n\n# Override brain\n\n## Development environment\n\n\`\`\`tangent.environment.v1\n{"defaults": {"launch": {"harness": "claude", "model": "opus-5"}, "brain": {"harness": "claude-otto", "model": "fable-5"}}}\n\`\`\`\n\n## Resources\n\n- Repository: ${workspace}\n`,
     "utf8"
   );
   await writeGoal(proof, "default-worker", "Default worker", "The worker runs the brain's harness");
@@ -119,6 +126,9 @@ test("a brain lends its own harness to every worker it starts", async (context) 
       TANGENT_ARMED_ROOT: path.join(root, "armed"),
       AGENT_MESSAGE_LOG: path.join(root, "messages.jsonl"),
       AGENT_SHELL_NO_OPEN: "1",
+      // This suite proves an explicit resume choice. Keep background recovery
+      // from winning the intentional kill-to-resume window under load.
+      TANGENT_RECONCILE_INTERVAL_MS: "600000",
       GROQ_API_KEY: "",
       CHAT_SESSION: `worker-launch-test-${process.pid}`,
     },
@@ -225,6 +235,60 @@ test("a brain lends its own harness to every worker it starts", async (context) 
   const lent = explicit.body.pipeline.steps.filter((step) => step.launchSource === "brain-default");
   assert.equal(lent.length, 3);
   for (const step of lent) assert.equal(step.launch.harness, "claude-otto");
+
+  // A registry choice applies to one brain attempt and never rewrites the
+  // Area default. A second start reattaches to the existing attempt instead
+  // of changing its launch, even when that request carries another choice.
+  const overriddenBrain = await post("/api/brains/start", {
+    area: "otto/overridebrain",
+    instruction: "Prove one-attempt Brain launch choices.",
+    choice: { harness: "claude", model: "opus-5" },
+    expectedLaunch: "claude/opus-5",
+  });
+  assert.equal(overriddenBrain.status, 200, JSON.stringify(overriddenBrain.body));
+  openedSessions.push(overriddenBrain.body.session);
+  assert.deepEqual(overriddenBrain.body.brain.resolvedLaunch, {
+    ref: { harness: "claude", model: "opus-5", effort: null },
+    label: "Claude · Opus 5",
+    command: "fake-claude --model claude-opus-5",
+    sourceArea: null,
+    mode: "override",
+  });
+  const reattachedBrain = await post("/api/brains/start", {
+    area: "otto/overridebrain",
+    instruction: "This must not replace the live attempt.",
+    choice: { harness: "claude-otto", model: "fable-5" },
+    expectedLaunch: "claude-otto/fable-5",
+  });
+  assert.equal(reattachedBrain.status, 200, JSON.stringify(reattachedBrain.body));
+  assert.equal(reattachedBrain.body.reattached, true);
+  assert.equal(reattachedBrain.body.session, overriddenBrain.body.session);
+  assert.deepEqual(reattachedBrain.body.brain.resolvedLaunch.ref, { harness: "claude", model: "opus-5", effort: null });
+
+  // An explicit resume can make its own one-attempt choice. Earlier
+  // generations retain their complete launch snapshots.
+  await new Promise((resolve) => execFile("tmux", ["kill-session", "-t", `=${overriddenBrain.body.session}`], () => resolve()));
+  const resumedBrain = await post("/api/brains/start", {
+    area: "otto/overridebrain",
+    resume: true,
+    choice: { harness: "claude", model: "fable-5" },
+    expectedLaunch: "claude/fable-5",
+  });
+  assert.equal(resumedBrain.status, 200, JSON.stringify(resumedBrain.body));
+  openedSessions.push(resumedBrain.body.session);
+  assert.equal(resumedBrain.body.generation, 2);
+  assert.deepEqual(resumedBrain.body.brain.resolvedLaunch.ref, { harness: "claude", model: "fable-5", effort: null });
+  const storedBrain = JSON.parse(await readFile(path.join(root, "brains", "otto", "overridebrain", "brain.json"), "utf8"));
+  assert.deepEqual(storedBrain.generations.map((entry) => [entry.resolvedLaunch.mode, entry.resolvedLaunch.ref]), [
+    ["override", { harness: "claude", model: "opus-5", effort: null }],
+    ["override", { harness: "claude", model: "fable-5", effort: null }],
+  ]);
+  const unchangedDefaults = await fetch(`${base}/api/launch/options?area=otto/overridebrain&kind=all`).then((response) => response.json());
+  assert.deepEqual(
+    { harness: unchangedDefaults.brainDefault.harness, model: unchangedDefaults.brainDefault.model },
+    { harness: "claude-otto", model: "fable-5" },
+    "attempt choices do not mutate the Area Brain default",
+  );
 
   // A caller who is not the exact live brain still names its own harness.
   const julian = await post("/api/goals/start", {

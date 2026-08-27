@@ -244,7 +244,7 @@ test("the quick layer reads a Document above a live session and reveals that exa
   assert.equal(layer.hidden, true, "Escape closed the quick layer");
   assert.equal(window.document.querySelector("#session-layer").hidden, false);
   assert.equal(terminals.at(-1), terminal, "the same terminal is still mounted");
-  assert.equal(window.document.querySelector("#screen").hasAttribute("inert"), false);
+  assert.equal(window.document.querySelector("#screen").hasAttribute("inert"), true, "the revealed session still owns input above Work");
 });
 
 test("the finder above a session keeps that session, and the quick layer returns Work exactly", async () => {

@@ -62,8 +62,8 @@ test("a Goal whose first step stopped still opens the step that runs", async () 
   /** Reads the Goal's row, which the shell redraws on every paint. */
   const row = () => window.document.querySelector(`[data-goal-anchor='${goal.file}']`);
   assert.equal(row().querySelector(".desk-state").textContent, "Working", "the pill follows the live step, not the stopped one");
-  assert.equal(row().querySelector(".work-step").textContent, "2/2", "the step count names the step that runs");
-  assert.match(row().querySelector("[data-open-goal-run]").textContent, /Open step 2/);
+  assert.match(row().querySelector(".work-row-step").textContent, /Step 2 of 2/, "the step count names the step that runs");
+  assert.match(row().querySelector(".work-cell-action [data-open-goal-run]").textContent, /Open step 2/);
   assert.equal(row().querySelector("[data-pipeline-control='restart']"), null, "a live step is not offered a restart of the dead one");
 
   // The For you row must not ask about step 1 either: the work moved past it.
@@ -81,7 +81,7 @@ test("a Goal whose first step stopped still opens the step that runs", async () 
   await settle(window);
   await settle(window);
   assert.equal(row().querySelector(".desk-state").textContent, "Working");
-  assert.match(row().querySelector("[data-open-goal-run]").textContent, /Open/);
+  assert.match(row().querySelector(".work-cell-action [data-open-goal-run]").textContent, /Open/);
 
   // No session at all: the card says why, and its menu still holds the exits.
   sessions = [];
@@ -90,8 +90,8 @@ test("a Goal whose first step stopped still opens the step that runs", async () 
   await settle(window);
   await settle(window);
   assert.equal(row().querySelector(".desk-state").textContent, "Stopped");
-  assert.equal(row().querySelector(".work-step").textContent, "2/2", "the newest attempt is the one to restart");
-  assert.equal(row().querySelector("[data-open-goal-run]"), null);
+  assert.match(row().querySelector(".work-row-step").textContent, /Step 2 of 2/, "the newest attempt is the one to restart");
+  assert.equal(row().querySelector(".work-cell-action [data-open-goal-run]"), null);
   assert.equal(row().querySelector("[data-pipeline-control='restart']"), null);
   assert.equal(row().querySelector("[data-goal-recovery]"), null, "guarded recovery does not reinterpret a stopped assignment as pending");
 
@@ -102,10 +102,10 @@ test("a Goal whose first step stopped still opens the step that runs", async () 
   click(window, "#menu-refresh");
   await settle(window);
   await settle(window);
-  assert.equal(row().querySelector(".work-step"), null, "a finished run names no current step");
+  assert.equal(row().querySelector(".work-row-step"), null, "a finished run names no current step");
   assert.notEqual(row().querySelector(".desk-state").textContent, "Stopped");
   assert.equal(row().querySelector("[data-goal-recovery]"), null, "no recovery start for a step the run moved past");
-  assert.match(row().querySelector("[data-open-goal-run]").textContent, /Start agent/, "the Goal is plain open work again");
+  assert.match(row().querySelector(".work-cell-action [data-launch-for]").textContent, /Start agent/, "the Goal is plain open work again");
 
   // Guarded recovery appears only for an existing pending assignment with no current attempt.
   pipeline.steps[0].status = "complete";
@@ -114,6 +114,5 @@ test("a Goal whose first step stopped still opens the step that runs", async () 
   click(window, "#menu-refresh");
   await settle(window);
   await settle(window);
-  click(window, "[data-work-filter='inactive']");
   assert.equal(row().querySelector("[data-goal-recovery]").textContent, "Recovery start step 2");
 });

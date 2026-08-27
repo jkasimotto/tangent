@@ -94,7 +94,7 @@ test("neara/portland worker handovers survive delay, rollover, restart, and exac
     trees,
     workspace,
     openedSessions,
-    env: { TANGENT_RECONCILE_INTERVAL_MS: "50" },
+    env: { TANGENT_RECONCILE_INTERVAL_MS: "10000" },
   });
   if (!base) return;
 

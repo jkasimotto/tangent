@@ -40,6 +40,13 @@ Each Agent Shell has one stable runtime identity.
   Internal snapshots retain foreign names for collision and absence checks.
 - Reconciliation treats a foreign live process as present but never mutates it.
   Missing-process recovery needs a current-instance record or sidecar.
+- A brain stop first persists one exact-attempt operation as `pending`. The
+  request path and reconciliation both settle `pending` and `incomplete`
+  operations, so a controller crash cannot strand an inactive record beside a
+  live tmux process. Resume refuses while that stop is unsettled.
+- An already-absent brain attempt can complete its logical stop only when its
+  sidecar belongs to the current instance. The expected attempt name alone is
+  not ownership evidence.
 - A markerless process is legacy. Agent Shell does not stop it or use its
   absence as recovery evidence. One compatibility exception exists for an
   explicit brain resume. The session, Area, generation, and live brain tags

@@ -62,7 +62,22 @@ test("resolve can select comments whose text differs only by case", () => {
 test("editing keeps the place and the quoted words", () => {
   const text = comments.insertComment(DOCUMENT, { kind: "selection", quote: "some words" }, "Old").text;
   const [comment] = comments.parseComments(text);
-  assert.match(comments.replaceCommentText(text, comment, "New words"), /\{==some words==\}\{>>Julian: New words<<\} here/);
+  const edited = comments.replaceCommentText(text, comment, "New words");
+  assert.match(edited.text, /\{==some words==\}\{>>Julian: New words<<\} here/);
+  const [saved] = comments.parseComments(edited.text);
+  assert.deepEqual(
+    { author: saved.author, quote: saved.quote, line: saved.line, pieces: saved.pieces },
+    { author: comment.author, quote: comment.quote, line: comment.line, pieces: comment.pieces },
+  );
+});
+
+test("editing refuses comments that are not Julian's", () => {
+  const text = "# Title\n\n{>>Agent: Keep this evidence.<<}\n";
+  const [comment] = comments.parseComments(text);
+  assert.deepEqual(comments.replaceCommentText(text, comment, "Rewrite it"), {
+    error: "Only Julian's comments can be edited.",
+  });
+  assert.match(text, /Agent: Keep this evidence/);
 });
 
 /** Every comment of one line as author-free pairs, for a short assertion. */

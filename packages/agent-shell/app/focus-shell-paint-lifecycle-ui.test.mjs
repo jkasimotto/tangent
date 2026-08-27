@@ -56,7 +56,6 @@ test("background polls never rebuild the screen under an editing surface or a re
   };
   window.eval(shellBundle);
   await settle(window);
-  click(window, "[data-work-filter='inactive']");
   assert.ok(poll, "the shell polls the server");
 
   // Defining a pipeline: the typed instruction and the popover survive a poll, focused or not.

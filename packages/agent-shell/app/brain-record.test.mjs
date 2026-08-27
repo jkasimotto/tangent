@@ -99,13 +99,19 @@ test("beginGeneration numbers generations and points the record at the session",
   assert.equal(record.generation, 1);
   assert.equal(record.session, "tangent--brain");
   assert.equal(currentGeneration(record), first);
-  const second = beginGeneration(record, "tangent--brain--g2", resolved);
+  const override = { ref: { harness: "codex", model: "sol", effort: "high" }, label: "Codex · Sol · High", command: "codex --model sol --effort high", sourceArea: null, mode: "override" };
+  const second = beginGeneration(record, "tangent--brain--g2", override);
   assert.equal(second.generation, 2);
   assert.equal(record.session, "tangent--brain--g2");
   assert.equal(record.generations.length, 2);
   assert.equal(record.status, "active");
   assert.equal("resolvedLaunch" in record, false);
-  assert.deepEqual(currentGeneration(record).resolvedLaunch, resolved);
+  assert.deepEqual(first.resolvedLaunch, resolved, "an earlier attempt keeps its original launch snapshot");
+  assert.deepEqual(currentGeneration(record).resolvedLaunch, override);
+  override.command = "changed after the generation began";
+  override.ref.model = "changed";
+  assert.equal(currentGeneration(record).resolvedLaunch.command, "codex --model sol --effort high");
+  assert.equal(currentGeneration(record).resolvedLaunch.ref.model, "sol");
 });
 
 test("recordHandover keeps earlier text and stamps endedAt", () => {
@@ -145,6 +151,33 @@ test("brainSessionName follows the leaf and generation rule", () => {
   assert.equal(brainSessionName("otto/tangent", 1), "tangent-brain");
   assert.equal(brainSessionName("otto/tangent", 3), "tangent-brain-g3");
   assert.equal(brainSessionName("neara/Hackathon Storm", 2), "hackathon-storm-brain-g2");
+});
+
+test("currentGeneration follows a rolled-back logical pointer before the diagnostic tail", () => {
+  const record = newBrain({ area: "otto/tangent", instruction: "Own it.", planFile: "otto/tangent/plan.md" });
+  const launch = { ref: { harness: "claude", model: null, effort: null }, label: "Claude", command: "claude", sourceArea: null, mode: "brain" };
+  beginGeneration(record, "tangent-brain", launch);
+  beginGeneration(record, "tangent-brain-g2", launch);
+  record.generation = 1;
+  record.session = "tangent-brain";
+  record.currentAttemptId = "tangent-brain";
+  assert.equal(currentGeneration(record)?.session, "tangent-brain");
+});
+
+test("brainSessionName preserves brain generation suffixes for long Area leaves", () => {
+  const area = `otto/${"standards-architecture-names-shapes-and-ownership-".repeat(2)}`;
+  const first = brainSessionName(area, 1);
+  const second = brainSessionName(area, 2);
+  const tenth = brainSessionName(area, 10);
+
+  assert.equal(first.length, 60);
+  assert.equal(second.length, 60);
+  assert.equal(tenth.length, 60);
+  assert.match(first, /-brain$/);
+  assert.match(second, /-brain-g2$/);
+  assert.match(tenth, /-brain-g10$/);
+  assert.notEqual(first, second);
+  assert.notEqual(second, tenth);
 });
 
 test("brainForArea grants authority only to the exact active brain", () => {

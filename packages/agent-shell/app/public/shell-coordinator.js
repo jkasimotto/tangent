@@ -6,7 +6,7 @@ import { rewriteAreaFocus, writeAreaFocus } from "./area-focus-core.js";
 export function createShellCoordinator({ shell, chrome, work, areasFeature, programs, launch, documents }) {
   const { state, api, post, actionTelemetry, paint, refresh, showToast } = shell;
   const {
-    screen, backButton, shellMenu, goToLayer, goToInput, goToList, modalLayer, modalKicker, modalTitle, modalCopy,
+    screen, backButton, shellMenu, goToButton, goToLayer, goToInput, goToList, modalLayer, modalKicker, modalTitle, modalCopy,
     modalField, modalActions, buildGoToRows, goToCore, rememberScreenScroll, restoreReturnPoint, captureReturnPoint,
     restoreReturnScroll, disposeTerminal, mountTerminal, updateStatusPill, openSessionLayer, closeSessionLayer,
     documentPeekLayer, syncLayerInertness,
@@ -15,7 +15,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     areaLabel, humanName, agentName, goalByFile, currentGoal, sessionForGoal, describeWorkSession,
     goalTrees, filteredGoalTrees,
     describeWorkSessions, stopSession, brainForAreaCard, brainStateLabel, agentReference, saveDescribeDraft,
-    saveDescribeSession, describeLaunchArea, openBrainSession,
+    saveDescribeSession, describeLaunchArea, openBrainSession, openOrStartBrain,
   } = work;
   const { allAreas, areaParent, preferredArea, areas, revealArea, selectedArea } = areasFeature;
   const { currentProgram, programById, programIsLive, programAreaDirectory } = programs;
@@ -26,6 +26,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   } = launch;
   const { openDocument, refreshDocument, rememberDocumentPosition, documentGoal, openDocumentPeek, closeDocumentPeek } = documents;
   let modalConfirm = null;
+  let modalReturnPoint = null;
 
   /** Opens, closes, or toggles the shell menu. */
   function toggleShellMenu(open = shellMenu.hidden) {
@@ -149,7 +150,9 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
    * Goes to one chosen row. Enter never starts an agent. A Document opens in
    * the quick layer above the current surface, so the screen or session below
    * it is never replaced (design-quick-returnable-document-search D1). A brain
-   * is a session, not a Document, so it leaves the quick path.
+   * is a session, not a Document, so it leaves the quick path. A quiet or
+   * missing brain opens its message composer; Julian's send remains the only
+   * action that starts it.
    */
   function chooseGoToRow(row) {
     if (!row) return;
@@ -159,9 +162,9 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     closeGoTo();
     if (row.kind === "brain") {
       if (state.documentPeek) closeDocumentPeek();
-      if (row.live) return openBrainSession(row.session);
+      if (row.live && row.session) return openBrainSession(row.session);
       if (state.sessionPeek) closeSessionLayer();
-      return showWorkAt(row.area);
+      return openOrStartBrain(row.area, goToButton);
     }
     return openDocumentPeek(row.file, { origin });
   }
@@ -704,13 +707,33 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   }
 
   /** Opens one confirmation modal with an explicit effect. */
-  function openModal({ kicker = "", title, copy, commits = [], field = null, confirmLabel, danger = false, wide = false, onConfirm }) {
-    modalLayer.querySelector(".modal")?.classList.toggle("request-surface", wide);
+  function openModal({ kicker = "", title, copy, commits = [], rows = [], field = null, confirmLabel, danger = false, wide = false, onConfirm }) {
+    if (modalLayer.hidden) {
+      const element = modalLayer.ownerDocument?.activeElement;
+      modalReturnPoint = {
+        element,
+        id: element?.id ?? "",
+        focusKey: element?.dataset?.focusKey ?? "",
+      };
+    }
+    const modal = modalLayer.querySelector(".modal");
+    modal?.classList.toggle("request-surface", wide);
+    modal?.classList.toggle("key-sheet-surface", Boolean(rows.length));
     modalKicker.textContent = kicker;
     modalTitle.textContent = title;
     // Setting the text first drops any list a previous modal appended.
     modalCopy.textContent = copy;
     if (commits.length) modalCopy.insertAdjacentHTML("beforeend", `<ul class="update-commits">${rebuildCommitRows(commits)}</ul>`);
+    if (rows.length) {
+      modalCopy.tabIndex = 0;
+      modalCopy.setAttribute("role", "region");
+      modalCopy.setAttribute("aria-label", `${title} commands`);
+      modalCopy.insertAdjacentHTML("beforeend", `<p class="key-sheet-hint"><kbd>j</kbd><kbd>k</kbd> move · <kbd>Ctrl-D</kbd><kbd>Ctrl-U</kbd> half page · <kbd>gg</kbd><kbd>G</kbd> ends</p><dl class="key-sheet">${rows.map((row) => `<div title="${escapeHtml(row.help)}"><dt><kbd>${escapeHtml(row.key)}</kbd></dt><dd class="key-sheet-label"><strong>${escapeHtml(row.label)}</strong></dd><dd class="key-sheet-help">${escapeHtml(row.help)}</dd></div>`).join("")}</dl>`);
+    } else {
+      modalCopy.removeAttribute("tabindex");
+      modalCopy.removeAttribute("role");
+      modalCopy.removeAttribute("aria-label");
+    }
     modalField.hidden = !field;
     modalField.innerHTML = field?.kind === "select"
       ? `<label><span>${escapeHtml(field.label)}</span><select data-modal-select>${field.options.map((option) => `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`).join("")}</select></label>`
@@ -721,20 +744,41 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
           : "";
     modalActions.innerHTML = `
       <button class="quiet-button" type="button" data-modal-cancel>Cancel</button>
-      <button class="${danger ? "danger-button" : "primary-button"}" type="button" data-modal-confirm>${escapeHtml(confirmLabel)}${field ? " <kbd>⌘↵</kbd>" : ""}</button>
+      <button class="${danger ? "danger-button" : "primary-button"}" type="button" data-modal-confirm>${escapeHtml(confirmLabel)} <kbd>${field ? "⌘↵" : "↵"}</kbd></button>
     `;
     modalConfirm = onConfirm;
     modalLayer.hidden = false;
-    window.setTimeout(() => (modalField.querySelector("[data-modal-select]") || modalField.querySelector("[data-modal-input]") || modalActions.querySelector("[data-modal-confirm]"))?.focus(), 0);
+    syncLayerInertness();
+    window.setTimeout(() => (modalField.querySelector("[data-modal-select]") || modalField.querySelector("[data-modal-input]") || (rows.length ? modalCopy : null) || modalActions.querySelector("[data-modal-confirm]"))?.focus(), 0);
   }
 
   /** Closes the confirmation modal without acting. */
-  function closeModal() {
+  function closeModal({ restoreFocus = true } = {}) {
+    const returnPoint = modalReturnPoint;
+    modalReturnPoint = null;
     modalLayer.hidden = true;
-    modalLayer.querySelector(".modal")?.classList.remove("request-surface");
+    modalLayer.querySelector(".modal")?.classList.remove("request-surface", "key-sheet-surface");
+    modalCopy.removeAttribute("tabindex");
+    modalCopy.removeAttribute("role");
+    modalCopy.removeAttribute("aria-label");
     modalField.hidden = true;
     modalField.innerHTML = "";
     modalConfirm = null;
+    syncLayerInertness();
+    if (!restoreFocus) return;
+    const keyed = returnPoint?.focusKey
+      ? [...screen.querySelectorAll("[data-focus-key]")].find((item) => item.dataset.focusKey === returnPoint.focusKey)
+      : null;
+    const ownerDocument = modalLayer.ownerDocument;
+    const identified = returnPoint?.id ? ownerDocument?.getElementById(returnPoint.id) : null;
+    const fallback = state.view === "work"
+      ? screen.querySelector("[data-work-cursor].cursor [data-work-row-title], [data-work-cursor].cursor [data-work-cursor-control]")
+      : backButton;
+    const origin = returnPoint?.element;
+    const target = origin?.isConnected && origin !== ownerDocument?.body && origin !== ownerDocument?.documentElement
+      ? origin
+      : keyed ?? identified ?? fallback;
+    try { target?.focus?.({ preventScroll: true }); } catch {}
   }
 
   /** Returns the current modal confirmation callback. */
@@ -828,9 +872,9 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
   }
 
   /** Confirms semantic completion separately from ending a run. */
-  function confirmComplete() {
-    actionTelemetry.record("goal-close", `complete-handler:${state.currentFile || "none"}`);
-    const goal = currentGoal();
+  function confirmComplete(file = state.currentFile) {
+    actionTelemetry.record("goal-close", `complete-handler:${file || "none"}`);
+    const goal = goalByFile(file);
     if (!goal) {
       actionTelemetry.record("goal-close", "complete-goal-not-found");
       showToast("Agent Shell could not find the displayed Goal. The failure was logged.");

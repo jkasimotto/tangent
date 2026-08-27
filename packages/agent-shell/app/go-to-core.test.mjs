@@ -156,6 +156,39 @@ test("the finder filters Documents by an Area subtree and kind", () => {
   assert.deepEqual(rows.map((item) => item.name), ["Map"]);
 });
 
+test("every Area has exactly one brain destination before, during, and after a live attempt", () => {
+  const vault = { areas: [
+    { path: "otto/missing" },
+    { path: "otto/inactive" },
+    { path: "otto/live" },
+  ], documents: [] };
+  const brains = [
+    { area: "otto/inactive", status: "inactive", live: false, session: "inactive-g1", updatedAt: "2026-08-26T10:00:00.000Z" },
+    { area: "otto/live", status: "inactive", live: false, session: "live-g1", updatedAt: "2026-08-27T11:00:00.000Z" },
+    { area: "otto/live", status: "active", state: "working", live: true, session: "live-g2", updatedAt: "2026-08-27T10:00:00.000Z" },
+  ];
+  const rows = buildGoToRows({
+    vault,
+    brains,
+    query: "brain",
+    /** Uses the Area path as its fixture label. */
+    areaLabel: (value) => value,
+    /** Names the two recorded fixture states like the Work desk does. */
+    brainStateLabel: (brain) => brain.status === "inactive" ? "Brain inactive" : "Brain working",
+  });
+  const byArea = new Map(rows.map((item) => [item.area, item]));
+
+  assert.equal(rows.length, 3);
+  assert.deepEqual([...byArea.keys()].sort(), ["otto/inactive", "otto/live", "otto/missing"]);
+  assert.equal(byArea.get("otto/missing").detail, "start brain");
+  assert.equal(byArea.get("otto/missing").live, false);
+  assert.equal(byArea.get("otto/inactive").detail, "inactive");
+  assert.equal(byArea.get("otto/inactive").session, "inactive-g1");
+  assert.equal(byArea.get("otto/live").detail, "working");
+  assert.equal(byArea.get("otto/live").live, true);
+  assert.equal(byArea.get("otto/live").session, "live-g2");
+});
+
 test("visible rows with the same kind, title, and Area show their file names", () => {
   const vault = { documents: [
     { file: "otto/tangent/design-search-a.md", kind: "document", docKind: "design", title: "Search", area: "otto/tangent", changedAt: 2 },

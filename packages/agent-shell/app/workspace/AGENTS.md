@@ -26,16 +26,17 @@ tmux set-option -t <name> @tangent_kind 'goal'
 
 A Program uses `@tangent_area`, `@tangent_kind`, and `@tangent_process`.
 
+If a harness starts inside an existing Tangent tmux session, run `tangent agent context --json` before work. Use its current Goal, assignment, reports, handovers, and rebuilt prompt. A brain must also read every unread durable notice in that result.
+Stop if the result is historical or unassigned. Do not kill or replace the tmux session to manufacture a new assignment.
+
 ## Maintain the vault
 
 Each Area is one directory. Its canonical note uses `type: area`.
 Create an Area only after user confirmation. Do not infer an Area from each subject in a Goal.
 A Goal file uses `goal-<slug>.md` and `type: goal`. Its frontmatter contains `status`, `done_when`, and `session`.
-When the opening prompt provides `goal-command.mjs`, use that command for every confirmed new Goal and Subgoal. Do not hand-write Goal frontmatter or Area links. The command validates and writes the current schema through Agent Shell.
+When the opening prompt provides `goal-command.mjs`, use it for confirmed Goals and Subgoals. Do not hand-write Goal frontmatter or Area links during normal work. If Julian requests a direct Markdown repair, preserve the schema and commit the named files with `tangent vault commit`. Julian can also request ordinary Document edits directly.
 Legacy `outcome-*.md` files remain readable during migration. Do not create new legacy Outcome files.
-
 Link ordered Subgoals in `## Subgoals`. Keep small actions in the agent plan or `## Steps`.
-
 Link each Document to the Goals that explain why it exists. Store the Document in a suitable Area.
 
 Before you write design prose, use the Simple English skill in pragmatic mode. Complete its mandatory self-check.
@@ -55,5 +56,4 @@ Propose marking a completed Goal done. Never mark it done without confirmation.
 - Use `@tangent_area` as the authoritative save target.
 
 ## Read next
-
 No package docs exist because this directory is only a session workspace. Read `~/.tangent/trees/README.md` for commit and provenance rules. If its storage examples still describe Outcomes, the opening prompt's deterministic Goal command is authoritative for new work.

@@ -14,7 +14,7 @@ import { doneCascade } from "./goal-cascade.mjs";
 import { noteResource } from "./area-agent-command.mjs";
 import { launchRef, resolveLaunch } from "./launch-environment.mjs";
 import { createLaunchCatalog } from "./launch-catalog.mjs";
-import { createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
+import { cleanAreaPath, createArea, moveArea, areaHasGitChanges, previewAreaMove } from "./area-operations.mjs";
 import { commandSession, programsSnapshot, saveLocalProgram, setTriggerPaused } from "./programs.mjs";
 import { documentHash, markdownTitle, safeMarkdownPath, wikiLinks } from "./vault-documents.mjs";
 import { rationaleDossierContract } from "./rationale-dossier.mjs";
@@ -31,8 +31,10 @@ import { readAllContinuations, readContinuation } from "./continuation-record.mj
 import { contextReminderText, contextRepeatText, continuationSection, reminderDue } from "./context-handover.mjs";
 import { noticeMessage, normalizeMessage } from "./agent-messages.mjs";
 import { beginGeneration, brainForArea, brainOwnsArea, brainRecordForArea, brainSessionName, countWaitingHandover, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, recordHandover, validateInstruction, writeBrain } from "./brain-record.mjs";
+import { resolveBrainAttemptLaunch } from "./brain-launch.mjs";
+import { refreshBrainObservation } from "./brain-lifecycle.mjs";
 import { createBrainPacing } from "./brain-pacing.mjs";
-import { appendNotice, inboxesForBrain, markDelivered, mergeNotices, noticeBlock, noticeDigest, readAllInboxes, readInbox, writeInbox } from "./brain-inbox.mjs";
+import { appendNotice, inboxesForBrain, markDelivered, mergeNotices, noticeBlock, noticeDigest, readAllInboxes, readInbox, unreadNotices, writeInbox } from "./brain-inbox.mjs";
 import { forJulianSectionText, parseForJulian, removeForJulianLine, restoreForJulianLine, unparsedForJulianLines } from "./for-julian.mjs";
 import { createCommitChangeMonitor } from "./commit-change-monitor.mjs";
 import { promptArrived, readyForText, splitPrompt, squash, typeChunks } from "./prompt-delivery.mjs";
@@ -46,6 +48,8 @@ import { createBrainRoutes } from "./brain-routes.mjs";
 import { answerBrainRequest, beginRequestEffect, brainRequestAnswerNotice, closeBrainRequests, closeGoalRequests, createBrainRequest, dismissBrainRequest, finishRequestEffect, handoverBrainRequests, openBrainRequests, readBrainRequests, withdrawBrainRequest, writeBrainRequests } from "./brain-requests.mjs";
 import { createPipelineRoutes } from "./pipeline-routes.mjs";
 import { createAgentRoutes } from "./agent-routes.mjs";
+import { resolveAgentContext, unassignedAgentContext } from "./agent-context.mjs";
+import { workerShellExitNotice } from "./agent-recovery.mjs";
 import { createVaultRepository } from "./vault-repository.mjs";
 import { pipelineExecution } from "./execution-record.mjs";
 import { createAreaRoutes } from "./area-routes.mjs";
@@ -62,6 +66,7 @@ import { createLaunchRoutes } from "./launch-routes.mjs";
 import { createWorkMutationRoutes } from "./work-mutation-routes.mjs";
 import { recordActionTelemetry } from "./action-telemetry.mjs";
 import { createMessageDelivery } from "./message-delivery.mjs";
+import { openMessageQueueStore } from "./message-queue-store.mjs";
 import { createRebuildOperations, readRebuildOperation, rebuildIsActive } from "./rebuild-operation.mjs";
 import { HttpError, readJson, sendJson } from "./http-json.mjs";
 import { createVaultProjectionController } from "./vault-projection-controller.mjs";
@@ -392,6 +397,7 @@ async function createOwnedTmuxSession(name, args) {
     throw new Error(`Agent Shell could not record ownership for ${name}: ${error.message ?? error}`);
   }
   sessionObservation.invalidate();
+  return target;
 }
 
 /** Terminates one session only when its live marker belongs to this instance. */
@@ -2001,14 +2007,19 @@ async function tickArmedSessions() {
     // has to stay true across that read, or a notice can win the pane in the
     // gap and be typed into the activation prompt.
     armed.firing = true;
-    /** Forgets the arm and its record, then runs the caller's callback, once delivery settles. */
-    const settle = (arrived) => {
+    /** Commits the caller's receipt before forgetting the durable arm. */
+    const settle = async (arrived) => {
+      await (armed.onTyped ?? noop)(arrived);
       if (armedSessions.get(name) === armed) armedSessions.delete(name); // never drop a newer arm
-      clearArmedPrompt(ARMED_ROOT, name).catch(() => {});
-      (armed.onTyped ?? noop)(arrived);
+      await clearArmedPrompt(ARMED_ROOT, name).catch(() => {});
     };
-    if (armed.prompt) typePromptWhenReady(name, armed.prompt, armed.submit, "armed prompt").then(settle).catch(reportArmedPromptFailure);
-    else if (area && file) typeGoalPromptWhenReady(name, area, file, armed.phase, armed.submit, armed.document, armed.extraFiles).then(settle).catch(reportArmedPromptFailure);
+    /** Leaves a failed receipt armed so the next pass or restart can retry it. */
+    const failed = (error) => {
+      armed.firing = false;
+      reportArmedPromptFailure(error);
+    };
+    if (armed.prompt) typePromptWhenReady(name, armed.prompt, armed.submit, "armed prompt").then(settle).catch(failed);
+    else if (area && file) typeGoalPromptWhenReady(name, area, file, armed.phase, armed.submit, armed.document, armed.extraFiles).then(settle).catch(failed);
     else {
       // No goal bound yet: nothing left to type, and nobody was promised a
       // callback for a prompt that never existed.
@@ -2018,9 +2029,14 @@ async function tickArmedSessions() {
   }
   for (const [name, armed] of [...armedSessions.entries()]) {
     if (live.has(name)) continue;
-    armedSessions.delete(name);
-    clearArmedPrompt(ARMED_ROOT, name).catch(() => {});
-    if (armed.onTyped) armed.onTyped(false);
+    try {
+      if (armed.onTyped) await armed.onTyped(false);
+      armedSessions.delete(name);
+      await clearArmedPrompt(ARMED_ROOT, name).catch(() => {});
+    } catch (error) {
+      armed.firing = false;
+      reportArmedPromptFailure(error);
+    }
   }
 }
 
@@ -2081,12 +2097,18 @@ async function rearmPersistedPrompts() {
 // One queue per target session. The server is the only writer into panes, so
 // every message flows through here: stamped with the sender's identity,
 // delivered only into a positively identified empty composer, and audited to
-// ~/.tangent/agent-shell-messages.jsonl. Rules live in agent-messages.mjs.
+// ~/.tangent/agent-shell-messages.jsonl. Generic `tangent agent send` entries
+// also live in one atomic queue under Agent Shell state until presentation
+// settles. Rules live in agent-messages.mjs.
 
 const MESSAGE_POLL_MS = 2000;
 const MESSAGE_LOG = process.env.AGENT_MESSAGE_LOG ?? path.join(os.homedir(), ".tangent", "agent-shell-messages.jsonl");
+const MESSAGE_QUEUE_FILE = process.env.TANGENT_MESSAGE_QUEUE_FILE
+  ?? path.join(path.dirname(MESSAGE_LOG), "agent-shell", "message-queue.json");
+const messageQueueStore = await openMessageQueueStore({ file: MESSAGE_QUEUE_FILE });
 const messages = createMessageDelivery({
   file: MESSAGE_LOG,
+  store: messageQueueStore,
   sessions: listDeliverySessions,
   /** Delivers a complete message through the prompt transport. */
   deliverText: (target, text, label, options) => typePromptWhenReady(target, text, true, label, options),
@@ -2387,7 +2409,17 @@ async function reconcileGoals(sessions, snapshotAt = Date.now()) {
   // An empty snapshot is a wrong-world signal, never proof that a session
   // ended (snapshotCanJudgeAbsence): judging against one marked live workers
   // stopped when a test-spawned server reconciled the real records.
-  if (!snapshotCanJudgeAbsence(sessions)) return;
+  if (!snapshotCanJudgeAbsence(sessions)) {
+    // A pending brain stop carries its own immutable ownership evidence and
+    // does not rely on a world snapshot. Let that state machine settle even
+    // when an empty tmux list is not trustworthy for Goal recovery.
+    reconciling = true;
+    lastReconcile = Date.now();
+    try { await reconcileBrains(sessions); }
+    catch (error) { console.error("brain reconcile:", error.message ?? error); }
+    finally { reconciling = false; }
+    return;
+  }
   reconciling = true;
   lastReconcile = Date.now();
   try {
@@ -3418,12 +3450,17 @@ async function reconcilePipelines(sessions, snapshotAt = Date.now()) {
       if (!["running", "waiting"].includes(step.status) || !step.session) {
         idleNoticed.delete(key);
         waitNoticed.delete(key);
+        shellExitNoticed.delete(key);
         continue;
       }
       const observed = allByName.get(step.session);
-      if (observed && !observed.owned) continue;
+      if (observed && !observed.owned) {
+        shellExitNoticed.delete(key);
+        continue;
+      }
       const live = byName.get(step.session);
       if (!live) {
+        shellExitNoticed.delete(key);
         const attempt = step.attempts?.findLast?.((item) => item.session === step.session);
         const ownedAttempt = attempt?.instanceId === INSTANCE_ID || await sessionOwnership.ownsRecorded(step.session);
         if (!ownedAttempt) continue;
@@ -3444,6 +3481,15 @@ async function reconcilePipelines(sessions, snapshotAt = Date.now()) {
         stopped.push(step.index);
         continue;
       }
+      const shellExit = workerShellExitNotice(record, step, live);
+      if (shellExit && shellExitNoticed.get(key) !== shellExit.sourceId) {
+        try {
+          await routeBrainNotice(record.area, shellExit.text, { idempotencyKey: shellExit.sourceId });
+          shellExitNoticed.set(key, shellExit.sourceId);
+        } catch (error) {
+          console.error("worker shell recovery notice:", JSON.stringify({ goal: record.goal, step: step.index, error: String(error?.message ?? error) }));
+        }
+      } else if (!shellExit) shellExitNoticed.delete(key);
       // One idle notice per step session: the brain decides whether to send
       // the step on, message the worker, or ask Julian.
       const idle = live.state === "waiting" && (live.stateDetail === "idle" || live.stateDetail == null) && live.idleSince && now - live.idleSince >= BRAIN_IDLE_NOTICE_MS;
@@ -3479,6 +3525,7 @@ async function reconcilePipelines(sessions, snapshotAt = Date.now()) {
 }
 const idleNoticed = new Set();
 const waitNoticed = new Map();
+const shellExitNoticed = new Map();
 
 // ---- Area brains ----
 // One long-lived orchestrating agent per Area (design-area-brain-solution in
@@ -3940,129 +3987,354 @@ async function brainPrompt(record) {
   }).text;
 }
 
+/** The stable identity of one durable brain notice. */
+function brainNoticeIdentity(notice) {
+  return `${notice.area}\u0000${notice.id}`;
+}
+
+const ACTIVE_BRAIN_HANDOVER_STATES = new Set([
+  "preparing", "activating", "retiring", "incomplete", "rolling-back", "rollback-incomplete",
+]);
+
+/** True while one durable handover still owns two attempt lifecycles. */
+function unsettledBrainHandover(record) {
+  return ACTIVE_BRAIN_HANDOVER_STATES.has(record?.handoverOperation?.status);
+}
+
+/** True only for the exact generation currently representing the logical brain. */
+function isCurrentBrainGeneration(record, session, generation) {
+  const current = currentGeneration(record);
+  return record.status === "active"
+    && record.currentAttemptId === session
+    && current?.session === session
+    && current?.generation === generation;
+}
+
+/** Records a handover operation problem while leaving both targets fenced. */
+async function failBrainHandover(record, status, problem) {
+  record.handoverOperation = {
+    ...record.handoverOperation,
+    status,
+    problem,
+    updatedAt: new Date().toISOString(),
+  };
+  record.health = { status: "failed", problem, updatedAt: new Date().toISOString() };
+  await writeBrain(BRAINS_ROOT, record);
+  return { status: 503, code: "handover-incomplete", error: problem, brain: record };
+}
+
+/** Retires the immutable source only after the replacement activation receipt. */
+async function retireBrainHandoverSource(record) {
+  const operation = record.handoverOperation;
+  if (!operation || !["retiring", "incomplete"].includes(operation.status)) return { status: 200, state: operation?.status ?? "none", brain: record };
+  if (!operation.fromAttemptId || !operation.fromTarget) {
+    return failBrainHandover(record, "incomplete", "The handover has no immutable source attempt target; Tangent refused to guess which session to stop.");
+  }
+  if (!operation.requestsTransitionedAt) {
+    try {
+      await transitionBrainRequests(record.area, operation.fromGeneration, "handover", operation.toGeneration);
+      operation.requestsTransitionedAt = new Date().toISOString();
+      await writeBrain(BRAINS_ROOT, record);
+    } catch (error) {
+      return failBrainHandover(record, "incomplete", `The replacement is ready, but its Requests could not transfer: ${error.message ?? error}`);
+    }
+  }
+  const retired = await sessionOwnership.terminate(operation.fromAttemptId, operation.fromTarget);
+  if (!["terminated", "absent"].includes(retired.state)) {
+    return failBrainHandover(record, "incomplete", terminationError(operation.fromAttemptId, retired));
+  }
+  if (retired.state === "terminated") sessionObservation.invalidate();
+  brainPacing.forget(operation.fromAttemptId);
+  record.handoverOperation = {
+    ...operation,
+    status: "complete",
+    problem: null,
+    completedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  if (isCurrentBrainGeneration(record, operation.toAttemptId, operation.toGeneration)) {
+    record.health = { status: "healthy", problem: null, updatedAt: new Date().toISOString() };
+  }
+  await writeBrain(BRAINS_ROOT, record);
+  return { status: 200, state: "complete", brain: record };
+}
+
+/**
+ * Abandons an unready replacement and restores the exact source generation.
+ * Every termination uses the immutable target recorded at creation. If that
+ * proof is missing or changed, the operation stays incomplete and no process
+ * is guessed at by name.
+ */
+async function rollbackBrainHandover(record, operationId, problem) {
+  const operation = record.handoverOperation;
+  if (!operation || operation.id !== operationId) return { status: 409, code: "handover-changed", error: "the brain handover changed before rollback", brain: record };
+  operation.status = "rolling-back";
+  operation.problem = problem;
+  operation.updatedAt = new Date().toISOString();
+  await writeBrain(BRAINS_ROOT, record);
+
+  if (operation.toAttemptId) {
+    const target = operation.toTarget || await sessionOwnership.recordedTarget(operation.toAttemptId);
+    if (!target) {
+      const observed = await sessionOwnership.inspect(operation.toAttemptId);
+      if (observed.state === "live") {
+        return failBrainHandover(record, "rollback-incomplete", `The unready replacement ${operation.toAttemptId} has no immutable target; Tangent kept it alive rather than risk stopping a replacement.`);
+      }
+    } else {
+      const stopped = await sessionOwnership.terminate(operation.toAttemptId, target);
+      if (!["terminated", "absent"].includes(stopped.state)) {
+        return failBrainHandover(record, "rollback-incomplete", terminationError(operation.toAttemptId, stopped));
+      }
+      if (stopped.state === "terminated") sessionObservation.invalidate();
+    }
+    armedSessions.delete(operation.toAttemptId);
+    await clearArmedPrompt(ARMED_ROOT, operation.toAttemptId).catch(() => {});
+  }
+
+  const source = await sessionOwnership.inspect(operation.fromAttemptId);
+  const sourceIsExact = source.state === "live"
+    && source.instanceId === INSTANCE_ID
+    && source.target === operation.fromTarget;
+  if (!sourceIsExact) {
+    record.handoverOperation = {
+      ...operation,
+      status: "failed",
+      problem: `${problem} The prior attempt could not be restored: ${terminationError(operation.fromAttemptId, source)}.`,
+      failedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    record.health = { status: "recovering", problem: record.handoverOperation.problem, updatedAt: new Date().toISOString() };
+    await writeBrain(BRAINS_ROOT, record);
+    return { status: 503, code: "handover-rollback-failed", error: record.handoverOperation.problem, brain: record };
+  }
+
+  const sourceEntry = (record.generations ?? []).find((entry) => (
+    entry.generation === operation.fromGeneration && entry.session === operation.fromAttemptId
+  ));
+  const replacementEntry = (record.generations ?? []).find((entry) => (
+    entry.generation === operation.toGeneration && entry.session === operation.toAttemptId
+  ));
+  if (sourceEntry) sourceEntry.endedAt = null;
+  if (replacementEntry && !replacementEntry.endedAt) replacementEntry.endedAt = new Date().toISOString();
+  record.generation = operation.fromGeneration;
+  record.session = operation.fromAttemptId;
+  record.currentAttemptId = operation.fromAttemptId;
+  record.status = "active";
+  record.handoverOperation = {
+    ...operation,
+    status: "failed",
+    problem,
+    rolledBackAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  record.health = { status: "healthy", problem: null, updatedAt: new Date().toISOString() };
+  await writeBrain(BRAINS_ROOT, record);
+  messages.queue(operation.fromAttemptId, {
+    from: "tangent",
+    area: null,
+    text: `The replacement brain did not become ready. Tangent kept this generation alive. ${problem}`,
+    queuedAt: new Date().toISOString(),
+  });
+  return { status: 200, state: "rolled-back", brain: record };
+}
+
+/**
+ * Settles one generation's activation prompt against the current record.
+ * A dead earlier attempt can report failure after a replacement has started,
+ * so it updates only its own entry and never overwrites current health.
+ */
+async function settleBrainActivation(record, session, generation, unread, arrived) {
+  const entry = (record.generations ?? []).find((item) => item.session === session && item.generation === generation);
+  if (!entry) {
+    releaseBrainNotices(unread);
+    return;
+  }
+  entry.deliveryStatus = arrived ? "ready" : "failed";
+  if (isCurrentBrainGeneration(record, session, generation)) {
+    record.health = arrived
+      ? { status: record.handoverOperation?.toGeneration === generation ? "starting" : "healthy", problem: null, updatedAt: new Date().toISOString() }
+      : { status: "recovering", problem: "The activation prompt did not arrive.", updatedAt: new Date().toISOString() };
+  }
+  await writeBrain(BRAINS_ROOT, record);
+  if (arrived) {
+    if (unread.length) await markBrainNoticesDelivered(unread, session, generation);
+  } else {
+    // A replacement can already be carrying the same unread notice. Keep
+    // that hold intact when a superseded generation reports its own failure.
+    const current = currentGeneration(record);
+    const isSameGeneration = current?.session === session && current?.generation === generation;
+    const replacementNotices = !isSameGeneration
+      ? new Set((current?.notices ?? []).map(brainNoticeIdentity))
+      : new Set();
+    releaseBrainNotices(unread.filter((notice) => !replacementNotices.has(brainNoticeIdentity(notice))));
+  }
+
+  const operation = record.handoverOperation;
+  if (operation?.status !== "activating"
+    || operation.toAttemptId !== session
+    || operation.toGeneration !== generation) return;
+  if (!arrived) {
+    await rollbackBrainHandover(record, operation.id, "The replacement's activation prompt did not arrive.");
+    return;
+  }
+  operation.status = "retiring";
+  operation.activatedAt = new Date().toISOString();
+  operation.updatedAt = new Date().toISOString();
+  await writeBrain(BRAINS_ROOT, record);
+  await retireBrainHandoverSource(record);
+}
+
 /** Creates and primes the next generation's session for one brain record. */
-async function spawnBrainSession(record, resolvedLaunch) {
+async function spawnBrainSession(record, resolvedLaunch, { handoverOperationId = "" } = {}) {
   const sessions = await listAllSessions();
   const names = new Set(sessions.map((item) => item.name));
   const generation = (record.generations?.length ?? 0) + 1;
   const name = uniqueSessionName(brainSessionName(record.area, generation), "", names, 60);
   const directory = (await areaDirectory(record.area)) ?? path.join(TREES_ROOT, record.area);
+  const operation = handoverOperationId && record.handoverOperation?.id === handoverOperationId
+    ? record.handoverOperation
+    : null;
+  if (operation) {
+    operation.toAttemptId = name;
+    operation.toGeneration = generation;
+    operation.controllerBootId = BOOT_ID;
+    operation.status = "preparing";
+    operation.updatedAt = new Date().toISOString();
+    // This write precedes creation, so a crash after tmux claims the name can
+    // still identify and roll back the exact replacement attempt.
+    await writeBrain(BRAINS_ROOT, record);
+  }
   // Build the prompt before anything is created. A brain that starts with no
   // prompt looks live on Work and knows nothing, which is the worst of the
   // two failures; the error names itself here and leaves no session behind.
   let prompt = "";
   try {
-    prompt = await brainPrompt(record);
+    const preview = structuredClone(record);
+    beginGeneration(preview, name, resolvedLaunch);
+    prompt = await brainPrompt(preview);
   } catch (error) {
     const problem = `The brain prompt could not be built: ${error.message ?? error}`;
-    record.health = { status: "failed", problem, updatedAt: new Date().toISOString() };
-    await writeBrain(BRAINS_ROOT, record);
+    if (operation) await rollbackBrainHandover(record, operation.id, problem);
+    else {
+      record.health = { status: "failed", problem, updatedAt: new Date().toISOString() };
+      await writeBrain(BRAINS_ROOT, record);
+    }
     return { status: 500, error: problem };
   }
+  let target = "";
+  let unread = [];
+  let armed = false;
   try {
-    await createOwnedTmuxSession(name, ["-d", "-s", name, "-c", directory]);
-  } catch (error) {
-    return { status: 500, error: `could not create the brain session: ${error.stderr ?? error.message ?? error}` };
-  }
-  await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_area", record.area]);
-  await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_kind", "brain"]);
-  await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_phase", "orchestrate"]);
-  await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_brain", record.area]);
-  await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_generation", String(generation)]);
-  if (resolvedLaunch.label) await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_launch", resolvedLaunch.label]);
-  if (launchRef(resolvedLaunch.ref)) await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_launch_ref", launchRef(resolvedLaunch.ref)]);
-  record.instanceId = INSTANCE_ID;
-  const entry = beginGeneration(record, name, resolvedLaunch);
-  entry.instanceId = INSTANCE_ID;
-  entry.deliveryStatus = "pending";
-  record.health = { status: "starting", problem: null, updatedAt: new Date().toISOString() };
-  // The notices no generation read belong in this generation's first
-  // message. They are kept on the record so the desk can show the message
-  // the brain actually got, and marked read only after that message showed
-  // in the new session's composer. Until then they are on their way, so the
-  // sweep does not queue them a second time; if the message never arrives
-  // they are let go, stay unread, and the sweep queues them for whichever
-  // generation is live.
-  const otherOwners = (await liveBrainRecords()).filter((item) => item.area !== record.area);
-  const unread = await unreadBrainNotices(record.area, [...otherOwners, record]);
-  entry.notices = unread.map((notice) => ({ area: notice.area, id: notice.id, text: notice.text, createdAt: notice.createdAt }));
-  await writeBrain(BRAINS_ROOT, record);
-  holdBrainNotices(unread);
-  /** Settles the notices once the first message arrived, or failed to. */
-  const firstMessageTyped = async (arrived) => {
-    entry.deliveryStatus = arrived ? "ready" : "failed";
-    record.health = arrived
-      ? { status: "healthy", problem: null, updatedAt: new Date().toISOString() }
-      : { status: "recovering", problem: "The activation prompt did not arrive.", updatedAt: new Date().toISOString() };
-    await writeBrain(BRAINS_ROOT, record);
-    if (arrived) {
-      if (unread.length) await markBrainNoticesDelivered(unread, name, generation);
-    } else {
-      releaseBrainNotices(unread);
+    target = await createOwnedTmuxSession(name, ["-d", "-s", name, "-c", directory]);
+    if (operation) {
+      operation.toTarget = target;
+      operation.updatedAt = new Date().toISOString();
     }
-  };
-  if (process.env.AGENT_SHELL_TEST_NO_LAUNCH === "1") {
-    await firstMessageTyped(true);
+    await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_area", record.area]);
+    await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_kind", "brain"]);
+    await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_phase", "orchestrate"]);
+    await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_brain", record.area]);
+    await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_generation", String(generation)]);
+    if (resolvedLaunch.label) await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_launch", resolvedLaunch.label]);
+    if (launchRef(resolvedLaunch.ref)) await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_launch_ref", launchRef(resolvedLaunch.ref)]);
+    record.instanceId = INSTANCE_ID;
+    const entry = beginGeneration(record, name, resolvedLaunch);
+    entry.instanceId = INSTANCE_ID;
+    entry.target = target;
+    entry.deliveryStatus = "pending";
+    if (operation) {
+      operation.status = "activating";
+      operation.updatedAt = new Date().toISOString();
+    }
+    record.health = { status: "starting", problem: null, updatedAt: new Date().toISOString() };
+    const otherOwners = (await liveBrainRecords()).filter((item) => item.area !== record.area);
+    unread = await unreadBrainNotices(record.area, [...otherOwners, record]);
+    entry.notices = unread.map((notice) => ({ area: notice.area, id: notice.id, text: notice.text, createdAt: notice.createdAt }));
+    holdBrainNotices(unread);
+    /** Settles an asynchronous arm callback under the same Area lifecycle lock. */
+    const firstMessageTyped = (arrived) => withBrainMutation(record.area, async () => {
+      const current = await readBrain(BRAINS_ROOT, record.area);
+      if (!current) {
+        releaseBrainNotices(unread);
+        return;
+      }
+      await settleBrainActivation(current, name, generation, unread, arrived);
+    });
+    if (process.env.AGENT_SHELL_TEST_NO_LAUNCH === "1") {
+      await writeBrain(BRAINS_ROOT, record);
+      await settleBrainActivation(record, name, generation, unread, true);
+      return { status: 200, session: name, generation, brain: { ...record, resolvedLaunch } };
+    }
+    await sleep(700);
+    const pane = await execFileAsync("tmux", ["display-message", "-p", "-t", "=" + name + ":", "#{pane_current_command}"]);
+    if (!SHELL_CMDS.has(pane.stdout.trim())) throw new Error("the new brain session did not reach its shell");
+    // Persist the arm before making this generation current, and make it
+    // current before launching the harness. No crash can leave a running
+    // replacement without either a durable prompt or a rollback operation.
+    await armSession(name, "define", true, "", prompt, [], firstMessageTyped);
+    armed = true;
+    await writeBrain(BRAINS_ROOT, record);
+    await typeInto(name, withDefaultModel(resolvedLaunch.command), false);
+    await execFileAsync("tmux", ["send-keys", "-t", "=" + name + ":", "Enter"]);
+    await sleep(250);
     return { status: 200, session: name, generation, brain: { ...record, resolvedLaunch } };
-  }
-  await sleep(700);
-  let primed = false;
-  try {
-    primed = await primeDescribeWorkSession(name, record.area, prompt, { launch: true, command: resolvedLaunch.command, onTyped: firstMessageTyped });
   } catch (error) {
-    console.error("brain session:", error.message ?? error);
-  }
-  if (!primed) {
+    const problem = `could not activate the brain session: ${error.stderr ?? error.message ?? error}`;
     releaseBrainNotices(unread);
-    if (entry.deliveryStatus === "pending") await firstMessageTyped(false);
+    if (armed) {
+      armedSessions.delete(name);
+      await clearArmedPrompt(ARMED_ROOT, name).catch(() => {});
+    }
+    if (target) await sessionOwnership.terminate(name, target).catch(() => {});
+    if (operation) await rollbackBrainHandover(record, operation.id, problem);
+    else {
+      record.health = { status: "failed", problem, updatedAt: new Date().toISOString() };
+      await writeBrain(BRAINS_ROOT, record);
+    }
+    return { status: 500, error: problem };
   }
-  return { status: 200, session: name, generation, brain: { ...record, resolvedLaunch } };
-}
-
-/** Resolves one immutable attempt snapshot from the authoritative Area configuration. */
-async function resolveBrainAttemptLaunch(area) {
-  const launch = await launchCatalog.forBrain(area);
-  if (launch?.error) return launch;
-  if (!launch?.harness || !launch.command) return { error: `${area}: no brain launch is declared` };
-  return {
-    ref: { harness: launch.harness, model: launch.model ?? null, effort: launch.effort ?? null },
-    label: launch.label || launch.command,
-    command: launch.command,
-    sourceArea: launch.source ?? null,
-    mode: launch.via ?? "brain",
-  };
 }
 
 /**
  * Starts a brain from its founding instruction, recovers its checkpoint, or
  * reattaches to its current attempt. One logical brain exists per exact Area.
  */
-const brainStarts = new Map();
+const brainMutations = new Map();
 
-/** Serializes exact-Area starts so concurrent requests share one lifecycle. */
-async function startBrain(area, options = {}) {
-  const earlier = brainStarts.get(area);
-  const run = earlier
-    ? earlier.then(
-      (result) => result.status === 200
-        ? startBrainUnlocked(area, options.automaticRecovery ? { resume: true, automaticRecovery: true } : { resume: Boolean(options.resume), messageRecorded: Boolean(options.messageRecorded) })
-        : startBrainUnlocked(area, options),
-      () => startBrainUnlocked(area, options),
-    )
-    : startBrainUnlocked(area, options);
-  brainStarts.set(area, run);
+/**
+ * Serializes every lifecycle mutation for one exact Area. Start, recovery,
+ * handover, and stop must all observe the record written by the operation
+ * before them; otherwise a stale handover can resurrect a brain after stop.
+ */
+function withBrainMutation(area, mutation) {
+  const exactArea = cleanAreaPath(area);
+  const earlier = brainMutations.get(exactArea) ?? Promise.resolve();
+  const run = earlier.catch(() => undefined).then(mutation);
+  brainMutations.set(exactArea, run);
+  return run.finally(() => {
+    if (brainMutations.get(exactArea) === run) brainMutations.delete(exactArea);
+  });
+}
+
+/** Serializes an exact-Area start with every other lifecycle transition. */
+function startBrain(area, options = {}) {
+  let exactArea;
   try {
-    return await run;
-  } finally {
-    if (brainStarts.get(area) === run) brainStarts.delete(area);
+    exactArea = cleanAreaPath(area);
+  } catch (error) {
+    return { status: 400, code: "invalid-area", error: String(error.message ?? error) };
   }
+  return withBrainMutation(exactArea, () => startBrainUnlocked(exactArea, options));
 }
 
 /** Performs one exact-Area start, resume, or reattachment. */
-async function startBrainUnlocked(area, { instruction = "", expectedLaunch = "", resume = false, automaticRecovery = false, messageRecorded = false } = {}) {
+async function startBrainUnlocked(area, { instruction = "", expectedLaunch = "", choice = null, resume = false, automaticRecovery = false, messageRecorded = false } = {}) {
   if (!area || !existsSync(path.join(TREES_ROOT, area))) return { status: 404, error: `no Area ${area || "(none)"}` };
   const existing = await readBrain(BRAINS_ROOT, area);
-  if (existing?.session) {
+  if (existing?.status === "inactive" && unsettledBrainStop(existing)) {
+    return { status: 409, code: "stop-unsettled", error: `the ${area} brain is still settling stop ${existing.stopOperation.id}; retry stop before you resume it` };
+  }
+  if (existing?.session && existing.status === "active") {
     let live = await sessionOwnership.inspect(existing.session);
     if (live.state === "error") return { status: 503, error: terminationError(existing.session, live) };
     if (live.state === "live" && !live.instanceId && resume && !automaticRecovery) {
@@ -4091,12 +4363,11 @@ async function startBrainUnlocked(area, { instruction = "", expectedLaunch = "",
       reattached: true,
     };
   }
-  const resolvedLaunch = await resolveBrainAttemptLaunch(area);
-  if (resolvedLaunch.error) return { status: 409, error: resolvedLaunch.error };
-  const resolvedRef = launchRef(resolvedLaunch.ref);
-  if (expectedLaunch && expectedLaunch !== resolvedRef) {
-    return { status: 409, code: "launch-changed", error: `the Brain launch changed to ${resolvedRef}; review it before starting`, launch: resolvedLaunch };
-  }
+  // Recovery is controller-owned and always follows the Area's current
+  // policy. Only an explicit user start or resume can carry a one-attempt
+  // registry choice.
+  const resolvedLaunch = await resolveBrainAttemptLaunch({ area, choice: automaticRecovery ? null : choice, expectedLaunch, launchCatalog });
+  if (resolvedLaunch.error) return { status: resolvedLaunch.status ?? 409, error: resolvedLaunch.error, ...(resolvedLaunch.code ? { code: resolvedLaunch.code } : {}), ...(resolvedLaunch.launch ? { launch: resolvedLaunch.launch } : {}) };
   if (resume) {
     if (!existing) return { status: 404, error: "no brain to resume on this Area" };
     // An inactive brain wakes for Julian's message, not for the act of
@@ -4139,8 +4410,12 @@ async function startBrainUnlocked(area, { instruction = "", expectedLaunch = "",
 
 /** Returns the calling brain and repairs a false stopped state after a session restart race. */
 async function liveBrainForSession(sessionName) {
-  const record = (await readAllBrains(BRAINS_ROOT)).find((item) => item.session === sessionName);
-  if (!record || record.status !== "active") return null;
+  const record = (await readAllBrains(BRAINS_ROOT)).find((item) => (
+    item.status === "active"
+    && item.session === sessionName
+    && item.currentAttemptId === sessionName
+  ));
+  if (!record) return null;
   const live = await sessionOwnership.inspect(sessionName);
   if (live.state !== "live" || live.instanceId !== INSTANCE_ID) return null;
   return record;
@@ -4190,8 +4465,22 @@ function pacedHandoverText(pace) {
  * no work cannot burn a fresh generation every minute (brain-pacing.mjs).
  */
 async function handoverBrain(sessionName, text) {
+  const stored = (await readAllBrains(BRAINS_ROOT)).find((record) => (
+    record.status === "active"
+    && record.session === sessionName
+    && record.currentAttemptId === sessionName
+  ));
+  if (!stored) return { status: 404, error: "this session is not the live attempt of an active brain" };
+  return withBrainMutation(stored.area, () => handoverBrainUnlocked(sessionName, text));
+}
+
+/** Performs one handover after the exact Area lifecycle lock is held. */
+async function handoverBrainUnlocked(sessionName, text) {
   const record = await liveBrainForSession(sessionName);
   if (!record) return { status: 404, error: "this session is not the live attempt of an active brain" };
+  if (unsettledBrainHandover(record)) {
+    return { status: 409, error: `the ${record.area} brain already has handover ${record.handoverOperation.id} in ${record.handoverOperation.status}` };
+  }
   const pace = brainPacing.judge(record, currentGeneration(record));
   if (pace.waitMs > 0) {
     brainPacing.hold(sessionName, pace.until);
@@ -4199,27 +4488,125 @@ async function handoverBrain(sessionName, text) {
   }
   const previous = sessionName;
   const previousGeneration = record.generation;
+  const previousOwnership = await sessionOwnership.inspect(previous);
+  if (previousOwnership.state !== "live" || previousOwnership.instanceId !== INSTANCE_ID || !previousOwnership.target) {
+    return { status: 409, error: terminationError(previous, previousOwnership) };
+  }
   countWaitingHandover(record, pace.acted);
   recordHandover(record, text);
-  const launch = await resolveBrainAttemptLaunch(record.area);
-  if (launch.error) return { status: 409, error: launch.error };
+  const launch = await resolveBrainAttemptLaunch({ area: record.area, launchCatalog });
+  if (launch.error) return { status: launch.status ?? 409, error: launch.error };
+  const operationId = randomUUID();
+  record.handoverOperation = {
+    id: operationId,
+    controllerBootId: BOOT_ID,
+    status: "preparing",
+    fromAttemptId: previous,
+    fromGeneration: previousGeneration,
+    fromTarget: previousOwnership.target,
+    toAttemptId: null,
+    toGeneration: null,
+    toTarget: null,
+    requestedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
   await writeBrain(BRAINS_ROOT, record);
-  const started = await spawnBrainSession(record, launch);
+  const started = await spawnBrainSession(record, launch, { handoverOperationId: operationId });
   if (started.status !== 200) {
-    messages.queue(previous, { from: "tangent", area: null, text: `Handover recorded, but the next generation could not start: ${started.error}. You are still the brain.`, queuedAt: new Date().toISOString() });
     return started;
   }
-  await transitionBrainRequests(record.area, previousGeneration, "handover", started.generation);
-  // spawnBrainSession does not return until the replacement has been created
-  // and its initial prompt attempt has settled. Complete the swap before the
-  // mutation response so a caller can never observe a successful handover
-  // while the old generation is still live. Expire any observation that may
-  // have been populated while the replacement was starting.
-  const retired = await terminateOwnedSession(previous);
-  if (retired.state !== "terminated") throw new Error(terminationError(previous, retired));
-  brainPacing.forget(previous);
-  sessionObservation.invalidate();
+  // In production this returns while activation is pending. The old attempt
+  // remains alive until settleBrainActivation records prompt receipt and
+  // retires its immutable target. The no-launch test path settles inline.
   return { status: 200, state: "started", session: started.session, generation: started.generation, previous, brain: record };
+}
+
+/** True while a logical stop still needs to settle its exact tmux attempt. */
+function unsettledBrainStop(record) {
+  return ["pending", "incomplete"].includes(record.stopOperation?.status);
+}
+
+/** Persists one retriable stop failure without pretending the process ended. */
+async function failBrainStop(record, { status = 503, code = "stop-incomplete", error }) {
+  record.stopOperation = { ...record.stopOperation, status: "incomplete", error, updatedAt: new Date().toISOString() };
+  record.health = { status: "failed", problem: error, updatedAt: new Date().toISOString() };
+  await writeBrain(BRAINS_ROOT, record);
+  return { status, code, error, brain: record };
+}
+
+/** Maps a fenced tmux refusal to the stable brain-stop response. */
+function brainStopRefusal(attemptId, result) {
+  if (result.state === "foreign") return { status: 409, code: "foreign-process", error: terminationError(attemptId, result) };
+  if (result.state === "legacy") return { status: 409, code: "legacy-process", error: terminationError(attemptId, result) };
+  if (result.state === "replaced") return { status: 409, code: "attempt-replaced", error: terminationError(attemptId, result) };
+  if (result.state === "unowned") return { status: 409, code: "unowned-absent-attempt", error: `the absent brain attempt ${attemptId} has no durable ownership record for this Agent Shell` };
+  return { status: 503, code: "stop-incomplete", error: terminationError(attemptId, result) };
+}
+
+/**
+ * Completes or retries one persisted stop. This is shared by the request path
+ * and reconciliation so a crash after the pending write cannot strand a live
+ * tmux process behind an inactive logical brain.
+ */
+async function settleBrainStop(record) {
+  const operation = record.stopOperation;
+  const attemptId = operation?.attemptId ?? "";
+  if (!operation || !unsettledBrainStop(record)) return { status: 200, state: "already-inactive", brain: record };
+  if (operation.instanceId !== INSTANCE_ID) {
+    return { status: 409, code: "foreign-stop-operation", error: `brain stop ${operation.id} belongs to Agent Shell instance ${operation.instanceId ?? "unknown"}`, brain: record };
+  }
+  brainPacing.forget(attemptId);
+  try {
+    await transitionBrainRequests(record.area, record.generation, "brain-ended");
+  } catch (error) {
+    return failBrainStop(record, { error: `could not close the brain's Requests: ${error.message ?? error}` });
+  }
+
+  const ownership = await sessionOwnership.inspect(attemptId);
+  if (ownership.state === "error") return failBrainStop(record, brainStopRefusal(attemptId, ownership));
+  if (ownership.state === "absent") {
+    if (!(await sessionOwnership.ownsRecorded(attemptId))) {
+      return failBrainStop(record, brainStopRefusal(attemptId, { state: "unowned" }));
+    }
+  } else if (ownership.instanceId !== INSTANCE_ID) {
+    const refusal = ownership.instanceId
+      ? { state: "foreign", instanceId: ownership.instanceId }
+      : { state: "legacy" };
+    return failBrainStop(record, brainStopRefusal(attemptId, refusal));
+  } else if (!operation.target) {
+    // This stop began while the attempt was absent and its legacy sidecar had
+    // no immutable ID. A later same-name live session is necessarily new; it
+    // must never be killed merely because the human-readable name matches.
+    return failBrainStop(record, brainStopRefusal(attemptId, {
+      state: "replaced", instanceId: ownership.instanceId, target: ownership.target, expectedTarget: null,
+    }));
+  } else if (ownership.target !== operation.target) {
+    return failBrainStop(record, brainStopRefusal(attemptId, {
+      state: "replaced", instanceId: ownership.instanceId, target: ownership.target, expectedTarget: operation.target,
+    }));
+  }
+
+  const stopped = ownership.state === "absent"
+    ? ownership
+    : await sessionOwnership.terminate(attemptId, operation.target);
+  if (stopped.state !== "terminated" && stopped.state !== "absent") {
+    return failBrainStop(record, brainStopRefusal(attemptId, stopped));
+  }
+  if (stopped.state === "terminated") sessionObservation.invalidate();
+  record.stopOperation = { ...operation, status: "complete", completedAt: new Date().toISOString(), error: null };
+  record.health = { status: "inactive", problem: null, updatedAt: new Date().toISOString() };
+  await writeBrain(BRAINS_ROOT, record);
+  return { status: 200, state: "stopped", brain: record };
+}
+
+/** Resolves an in-flight two-attempt handover before beginning a logical stop. */
+async function settleBrainHandoverBeforeStop(record) {
+  const operation = record.handoverOperation;
+  if (!operation || !unsettledBrainHandover(record)) return { status: 200, brain: record };
+  if (["retiring", "incomplete"].includes(operation.status)) {
+    return retireBrainHandoverSource(record);
+  }
+  return rollbackBrainHandover(record, operation.id, "Julian stopped the brain before its replacement became ready.");
 }
 
 /** Makes one logical brain inactive, then terminates only its exact owned attempt. */
@@ -4227,42 +4614,63 @@ async function stopBrain(area, { expectedAttemptId = "", operationId = "" } = {}
   if (!area) return { status: 400, code: "area-required", error: "an Area is required" };
   if (!expectedAttemptId) return { status: 400, code: "attempt-required", error: "an expected brain attempt is required" };
   if (!operationId) return { status: 400, code: "operation-required", error: "an operation ID is required" };
-  const record = await readBrain(BRAINS_ROOT, area);
+  let exactArea;
+  try {
+    exactArea = cleanAreaPath(area);
+  } catch (error) {
+    return { status: 400, code: "invalid-area", error: String(error.message ?? error) };
+  }
+  return withBrainMutation(exactArea, () => stopBrainUnlocked(exactArea, { expectedAttemptId, operationId }));
+}
+
+/** Performs one fenced stop after the exact Area lifecycle lock is held. */
+async function stopBrainUnlocked(area, { expectedAttemptId, operationId }) {
+  let record = await readBrain(BRAINS_ROOT, area);
   if (!record) return { status: 404, code: "brain-not-found", error: `no brain on ${area}` };
   if (record.stopOperation?.id === operationId && record.stopOperation.status === "complete") {
     return { status: 200, state: "stopped", brain: record };
   }
-  if (record.status === "inactive") return { status: 200, state: "already-inactive", brain: record };
-  const attemptId = record.currentAttemptId ?? record.session ?? "";
-  if (expectedAttemptId && expectedAttemptId !== attemptId) {
+  const acceptedAttempts = new Set([
+    record.currentAttemptId,
+    record.handoverOperation?.fromAttemptId,
+    record.handoverOperation?.toAttemptId,
+  ].filter(Boolean));
+  if (unsettledBrainHandover(record)) {
+    const settled = await settleBrainHandoverBeforeStop(record);
+    if (settled.status !== 200) return settled;
+    record = await readBrain(BRAINS_ROOT, area) ?? settled.brain;
+    acceptedAttempts.add(record.currentAttemptId);
+  }
+  const attemptId = unsettledBrainStop(record)
+    ? record.stopOperation.attemptId
+    : record.currentAttemptId ?? record.session ?? "";
+  if (expectedAttemptId && expectedAttemptId !== attemptId && !acceptedAttempts.has(expectedAttemptId)) {
     return { status: 409, code: "attempt-changed", error: `the active brain attempt changed to ${attemptId}` };
   }
+  if (record.status === "inactive" && unsettledBrainStop(record)) return settleBrainStop(record);
+  if (record.status === "inactive") return { status: 200, state: "already-inactive", brain: record };
   const ownership = await sessionOwnership.inspect(attemptId);
-  if (ownership.state !== "live" || ownership.instanceId !== INSTANCE_ID) {
-    const result = ownership.state === "live"
-      ? ownership.instanceId ? { state: "foreign", instanceId: ownership.instanceId } : { state: "legacy" }
-      : ownership;
+  if (ownership.state === "error") {
+    return { status: 503, code: "stop-incomplete", error: terminationError(attemptId, ownership) };
+  }
+  if (ownership.state === "live" && ownership.instanceId !== INSTANCE_ID) {
+    const result = ownership.instanceId ? { state: "foreign", instanceId: ownership.instanceId } : { state: "legacy" };
     const code = result.state === "foreign" ? "foreign-process" : result.state === "legacy" ? "legacy-process" : "stop-incomplete";
     const status = ["foreign-process", "legacy-process"].includes(code) ? 409 : 503;
     return { status, code, error: terminationError(attemptId, result) };
   }
+  let durableTarget = ownership.target ?? null;
+  if (ownership.state === "absent") {
+    if (!(await sessionOwnership.ownsRecorded(attemptId))) {
+      return brainStopRefusal(attemptId, { state: "unowned" });
+    }
+    durableTarget = await sessionOwnership.recordedTarget(attemptId);
+  }
   endBrain(record, "inactive");
-  record.stopOperation = { id: operationId, attemptId, target: ownership.target, instanceId: INSTANCE_ID, status: "pending", requestedAt: new Date().toISOString() };
+  record.stopOperation = { id: operationId, attemptId, target: durableTarget, instanceId: INSTANCE_ID, status: "pending", requestedAt: new Date().toISOString() };
   record.health = { status: "stopping", problem: null, updatedAt: new Date().toISOString() };
   await writeBrain(BRAINS_ROOT, record);
-  brainPacing.forget(attemptId);
-  await transitionBrainRequests(record.area, record.generation, "brain-ended");
-  const stopped = await sessionOwnership.terminate(attemptId, ownership.target);
-  if (stopped.state !== "terminated" && stopped.state !== "absent") {
-    record.stopOperation = { ...record.stopOperation, status: "incomplete", error: terminationError(attemptId, stopped), updatedAt: new Date().toISOString() };
-    record.health = { status: "failed", problem: record.stopOperation.error, updatedAt: new Date().toISOString() };
-    await writeBrain(BRAINS_ROOT, record);
-    return { status: 503, code: "stop-incomplete", error: record.stopOperation.error };
-  }
-  record.stopOperation = { ...record.stopOperation, status: "complete", completedAt: new Date().toISOString() };
-  record.health = { status: "inactive", problem: null, updatedAt: new Date().toISOString() };
-  await writeBrain(BRAINS_ROOT, record);
-  return { status: 200, state: "stopped", brain: record };
+  return settleBrainStop(record);
 }
 
 /** The wake-up one brain gets when its paced wait is over. */
@@ -4311,6 +4719,119 @@ async function reportUnshownForJulian(record, index) {
   if (lines.length) await notifyBrain(record.area, unshownNotice(lines));
 }
 
+/** Reconciles one brain while its exact-Area lifecycle lock is held. */
+async function reconcileBrain(area, { allByName, live, now, index }) {
+  let record = await readBrain(BRAINS_ROOT, area);
+  if (!record) return;
+  let entry = currentGeneration(record);
+  let observed = record.session ? allByName.get(record.session) : null;
+  if (record.status === "inactive" && unsettledBrainStop(record)) {
+    const settled = await settleBrainStop(record);
+    if (settled.status !== 200) console.error("brain stop reconciliation:", settled.error);
+    return;
+  }
+  if (record.status === "active" && unsettledBrainHandover(record)) {
+    const operation = record.handoverOperation;
+    let settled;
+    if (["retiring", "incomplete"].includes(operation.status)) {
+      settled = await retireBrainHandoverSource(record);
+    } else if (operation.controllerBootId !== BOOT_ID || operation.status !== "activating") {
+      settled = await rollbackBrainHandover(record, operation.id, "The Agent Shell restarted before the replacement activation was acknowledged.");
+    } else {
+      const replacement = await sessionOwnership.inspect(operation.toAttemptId);
+      if (replacement.state === "live"
+        && replacement.instanceId === INSTANCE_ID
+        && replacement.target === operation.toTarget) return;
+      settled = await rollbackBrainHandover(record, operation.id, "The replacement ended before its activation prompt was acknowledged.");
+    }
+    if (settled.status !== 200) {
+      console.error("brain handover reconciliation:", settled.error);
+      return;
+    }
+    record = await readBrain(BRAINS_ROOT, area) ?? settled.brain;
+    entry = currentGeneration(record);
+    observed = record.session ? allByName.get(record.session) : null;
+  }
+  // The sessions snapshot predates this Area lock. A start or handover can
+  // finish while reconciliation waits, so prove any new current attempt live
+  // before treating its absence from that old snapshot as a crash.
+  const refreshed = await refreshBrainObservation({
+    session: record.session,
+    observed,
+    instanceId: INSTANCE_ID,
+    /** Reuses the current live observation before reconciliation acquires the lifecycle lock. */
+    inspect: (session) => sessionOwnership.inspect(session),
+  });
+  if (!refreshed.canJudgeAbsence) return;
+  observed = refreshed.observed;
+  if (refreshed.live && record.session) live.add(record.session);
+  if (observed && !observed.owned) return;
+  const durableOwner = record.instanceId === INSTANCE_ID
+    || entry?.instanceId === INSTANCE_ID
+    || Boolean(record.session && await sessionOwnership.ownsRecorded(record.session));
+  if (!observed && !durableOwner) return;
+  if (record.status === "active") {
+    await reportUnshownForJulian(record, index).catch(reportUnshownFailure);
+  }
+  if (record.status !== "active") return;
+  const deliveryFailed = entry?.deliveryStatus === "failed";
+  if (record.session && live.has(record.session) && deliveryFailed) {
+    const stopped = await terminateOwnedSession(record.session);
+    if (stopped.state !== "terminated") {
+      console.error("brain recovery ownership:", terminationError(record.session, stopped));
+      return;
+    }
+    live.delete(record.session);
+  }
+  if (!record.session || !live.has(record.session)) {
+    const attempts = Math.max(0, Number(record.recovery?.attempts) || 0);
+    const exhausted = record.recovery?.exhausted === true || attempts >= BRAIN_RECOVERY_LIMIT;
+    record.recovery = { attempts, exhausted, lastAttemptAt: record.recovery?.lastAttemptAt ?? null };
+    record.health = exhausted
+      ? { status: "failed", problem: `Automatic brain recovery failed ${attempts} times.`, updatedAt: new Date().toISOString() }
+      : { status: "recovering", problem: "The active brain has no usable process.", detectedAt: record.health?.detectedAt ?? new Date().toISOString(), updatedAt: new Date().toISOString() };
+    await writeBrain(BRAINS_ROOT, record);
+    if (record.session) brainPacing.forget(record.session);
+    if (exhausted) {
+      await recordBrainNotice(record.area, `Automatic brain recovery is exhausted after ${attempts} attempts. Julian can use the guarded Goal recovery action for an existing pending queue.`, `brain-recovery-exhausted:${record.area}:${attempts}`);
+      return;
+    }
+    const nextAttempts = attempts + 1;
+    record.recovery = { attempts: nextAttempts, exhausted: false, lastAttemptAt: new Date().toISOString() };
+    await writeBrain(BRAINS_ROOT, record);
+    // This pass already owns the Area lifecycle lock. Calling startBrain here
+    // would wait on itself, so recovery uses the unlocked implementation.
+    const recovered = await startBrainUnlocked(record.area, { resume: true, automaticRecovery: true });
+    if (recovered.status !== 200) {
+      console.error("brain recovery start:", JSON.stringify({ area: record.area, instanceId: INSTANCE_ID, status: recovered.status, error: recovered.error }));
+      const current = await readBrain(BRAINS_ROOT, record.area);
+      if (current) {
+        current.recovery = { attempts: nextAttempts, exhausted: nextAttempts >= BRAIN_RECOVERY_LIMIT, lastAttemptAt: record.recovery.lastAttemptAt };
+        current.health = current.recovery.exhausted
+          ? { status: "failed", problem: `Automatic brain recovery failed ${nextAttempts} times: ${recovered.error}`, updatedAt: new Date().toISOString() }
+          : { status: "recovering", problem: `Automatic brain recovery attempt ${nextAttempts} failed: ${recovered.error}`, updatedAt: new Date().toISOString() };
+        await writeBrain(BRAINS_ROOT, current);
+      }
+    }
+    return;
+  }
+  if (record.health?.status !== "healthy") {
+    record.health = { status: "healthy", problem: null, updatedAt: new Date().toISOString() };
+    await writeBrain(BRAINS_ROOT, record);
+  }
+  // A paced generation is asleep, not late: it hears nothing until its
+  // pause ends, and then it hears that the pause ended.
+  if (brainPacing.due(record.session, now)) {
+    messages.queue(record.session, { from: "tangent", area: record.area, text: wakeFromPaceText(record), queuedAt: new Date().toISOString() });
+    return;
+  }
+  if (!entry || entry.remindedAt || now - Date.parse(entry.startedAt) < BRAIN_REFRESH_MS) return;
+  entry.remindedAt = new Date().toISOString();
+  await writeBrain(BRAINS_ROOT, record);
+  const minutes = Math.round((now - Date.parse(entry.startedAt)) / 60_000);
+  messages.queue(record.session, { from: "tangent", area: null, text: `You have run ${minutes} minutes in this generation. At the next natural pause, write the plan status and run tangent brain handover "<facts>".`, queuedAt: new Date().toISOString() });
+}
+
 /**
  * Queues unread notices, records runtime recovery health, and reminds a
  * long-running attempt to hand over.
@@ -4323,80 +4844,7 @@ async function reconcileBrains(sessions) {
   await flushBrainNotices(ownedSessions, "unread notices found by a sweep").catch(reportNoticeSweepFailure);
   const index = await vaultIndex();
   for (const record of await readAllBrains(BRAINS_ROOT)) {
-    const entry = currentGeneration(record);
-    const observed = record.session ? allByName.get(record.session) : null;
-    if (record.status === "inactive" && record.stopOperation?.status === "incomplete") {
-      const stopped = await sessionOwnership.terminate(record.stopOperation.attemptId, record.stopOperation.target);
-      if (stopped.state === "terminated" || stopped.state === "absent") {
-        record.stopOperation = { ...record.stopOperation, status: "complete", completedAt: new Date().toISOString() };
-        record.health = { status: "inactive", problem: null, updatedAt: new Date().toISOString() };
-        await writeBrain(BRAINS_ROOT, record);
-      }
-      continue;
-    }
-    if (observed && !observed.owned) continue;
-    const durableOwner = record.instanceId === INSTANCE_ID
-      || entry?.instanceId === INSTANCE_ID
-      || Boolean(record.session && await sessionOwnership.ownsRecorded(record.session));
-    if (!observed && !durableOwner) continue;
-    if (record.status === "active") {
-      await reportUnshownForJulian(record, index).catch(reportUnshownFailure);
-    }
-    if (record.status !== "active") continue;
-    const deliveryFailed = entry?.deliveryStatus === "failed";
-    if (record.session && live.has(record.session) && deliveryFailed) {
-      const stopped = await terminateOwnedSession(record.session);
-      if (stopped.state !== "terminated") {
-        console.error("brain recovery ownership:", terminationError(record.session, stopped));
-        continue;
-      }
-      live.delete(record.session);
-    }
-    if (!record.session || !live.has(record.session)) {
-      const attempts = Math.max(0, Number(record.recovery?.attempts) || 0);
-      const exhausted = record.recovery?.exhausted === true || attempts >= BRAIN_RECOVERY_LIMIT;
-      record.recovery = { attempts, exhausted, lastAttemptAt: record.recovery?.lastAttemptAt ?? null };
-      record.health = exhausted
-        ? { status: "failed", problem: `Automatic brain recovery failed ${attempts} times.`, updatedAt: new Date().toISOString() }
-        : { status: "recovering", problem: "The active brain has no usable process.", detectedAt: record.health?.detectedAt ?? new Date().toISOString(), updatedAt: new Date().toISOString() };
-      await writeBrain(BRAINS_ROOT, record);
-      if (record.session) brainPacing.forget(record.session);
-      if (exhausted) {
-        await recordBrainNotice(record.area, `Automatic brain recovery is exhausted after ${attempts} attempts. Julian can use the guarded Goal recovery action for an existing pending queue.`, `brain-recovery-exhausted:${record.area}:${attempts}`);
-        continue;
-      }
-      const nextAttempts = attempts + 1;
-      record.recovery = { attempts: nextAttempts, exhausted: false, lastAttemptAt: new Date().toISOString() };
-      await writeBrain(BRAINS_ROOT, record);
-      const recovered = await startBrain(record.area, { resume: true, automaticRecovery: true });
-      if (recovered.status !== 200) {
-        console.error("brain recovery start:", JSON.stringify({ area: record.area, instanceId: INSTANCE_ID, status: recovered.status, error: recovered.error }));
-        const current = await readBrain(BRAINS_ROOT, record.area);
-        if (current) {
-          current.recovery = { attempts: nextAttempts, exhausted: nextAttempts >= BRAIN_RECOVERY_LIMIT, lastAttemptAt: record.recovery.lastAttemptAt };
-          current.health = current.recovery.exhausted
-            ? { status: "failed", problem: `Automatic brain recovery failed ${nextAttempts} times: ${recovered.error}`, updatedAt: new Date().toISOString() }
-            : { status: "recovering", problem: `Automatic brain recovery attempt ${nextAttempts} failed: ${recovered.error}`, updatedAt: new Date().toISOString() };
-          await writeBrain(BRAINS_ROOT, current);
-        }
-      }
-      continue;
-    }
-    if (record.health?.status !== "healthy") {
-      record.health = { status: "healthy", problem: null, updatedAt: new Date().toISOString() };
-      await writeBrain(BRAINS_ROOT, record);
-    }
-    // A paced generation is asleep, not late: it hears nothing until its
-    // pause ends, and then it hears that the pause ended.
-    if (brainPacing.due(record.session, now)) {
-      messages.queue(record.session, { from: "tangent", area: record.area, text: wakeFromPaceText(record), queuedAt: new Date().toISOString() });
-      continue;
-    }
-    if (!entry || entry.remindedAt || now - Date.parse(entry.startedAt) < BRAIN_REFRESH_MS) continue;
-    entry.remindedAt = new Date().toISOString();
-    await writeBrain(BRAINS_ROOT, record);
-    const minutes = Math.round((now - Date.parse(entry.startedAt)) / 60_000);
-    messages.queue(record.session, { from: "tangent", area: null, text: `You have run ${minutes} minutes in this generation. At the next natural pause, write the plan status and run tangent brain handover "<facts>".`, queuedAt: new Date().toISOString() });
+    await withBrainMutation(record.area, () => reconcileBrain(record.area, { allByName, live, now, index }));
   }
 }
 
@@ -5153,6 +5601,41 @@ const pipelineRoutes = createPipelineRoutes({
   append: appendPipelineSteps,
   edit: editPipelineStep,
 });
+
+/** Rebuilds an opening prompt without hiding otherwise usable durable context. */
+async function rebuiltAgentPrompt(build) {
+  try {
+    return { prompt: await build(), promptError: null };
+  } catch (error) {
+    return { prompt: null, promptError: String(error?.message ?? error) };
+  }
+}
+
+/**
+ * Resolves the exact extra Goal records carried by one recovered context.
+ * Queue order wins because it is the durable launch contract; any additional
+ * same-session Goal bindings follow in the order projected by the vault.
+ */
+function recoveredExtraGoals(projected, goalIndex) {
+  const files = [
+    ...(projected.queue?.extraFiles ?? []),
+    ...(projected.extraGoals ?? []).map((goal) => goal.file),
+  ];
+  const seen = new Set([projected.goal?.file]);
+  const goals = [];
+  const missing = [];
+  for (const value of files) {
+    const file = String(value ?? "").trim();
+    if (!file || seen.has(file)) continue;
+    seen.add(file);
+    const goal = goalIndex.get(file);
+    if (goal) goals.push(goal);
+    else missing.push(file);
+  }
+  if (missing.length) throw new Error(`the durable extra Goal source is unavailable: ${missing.join(", ")}`);
+  return goals;
+}
+
 const agentRoutes = createAgentRoutes({
   /** Returns every live non-process session with its delivery state. */
   async list() {
@@ -5169,6 +5652,33 @@ const agentRoutes = createAgentRoutes({
         queued: messages.queuedCount(session.name),
       }));
   },
+  /** Resolves durable recovery facts, then distinguishes an unknown session with one read-only live check. */
+  async context(session) {
+    const brains = await readAllBrains(BRAINS_ROOT);
+    let projected = resolveAgentContext({ session, brains });
+    if (projected?.role === "brain") {
+      if (!projected.current) return { ...projected, prompt: null };
+      const inbox = await readInbox(BRAINS_ROOT, projected.area);
+      projected = resolveAgentContext({ session, brains, notices: unreadNotices(inbox).map((notice) => ({ ...notice, area: inbox.area })) });
+      const brain = brains.find((record) => record.area === projected.area);
+      return brain ? { ...projected, ...await rebuiltAgentPrompt(() => brainPrompt(brain)) } : { ...projected, prompt: null, promptError: "the durable brain record is unavailable" };
+    }
+    const [pipelines, goalIndex] = await Promise.all([readAllPipelines(PIPELINES_ROOT), goalsByFile()]);
+    projected = resolveAgentContext({ session, brains, pipelines, goals: [...goalIndex.values()] });
+    if (!projected) {
+      const live = await sessionOwnership.inspect(session);
+      return live.state === "live" ? unassignedAgentContext(session) : null;
+    }
+    const goal = projected.goal?.file ? goalIndex.get(projected.goal.file) : null;
+    if (!goal) return { ...projected, prompt: null, promptError: "the durable Goal source is unavailable" };
+    if (projected.source === "goal-queue" && projected.assignment) {
+      const record = pipelines.find((item) => item.goal === projected.goal.file);
+      return record
+        ? { ...projected, ...await rebuiltAgentPrompt(() => pipelineStepPrompt(record.area, goal, record, projected.assignment.index, recoveredExtraGoals(projected, goalIndex), session)) }
+        : { ...projected, prompt: null, promptError: "the durable Goal queue is unavailable" };
+    }
+    return { ...projected, ...await rebuiltAgentPrompt(() => goalPrompt(goal.area, goal, recoveredExtraGoals(projected, goalIndex))) };
+  },
   /** Delivers or queues one normalized cross-agent message. */
   async send(body) {
     const text = normalizeMessage(body.text);
@@ -5176,7 +5686,7 @@ const agentRoutes = createAgentRoutes({
     const target = resolveSession(String(body.to ?? ""), sessions);
     const live = sessions.find((session) => session.name === target);
     const sender = sessions.find((session) => session.name === String(body.from ?? ""));
-    const entry = { from: sender?.name ?? "unknown sender", area: sender?.area ?? null, text, queuedAt: new Date().toISOString() };
+    const entry = { from: sender?.name ?? "unknown sender", area: sender?.area ?? null, text, durable: true, queuedAt: new Date().toISOString() };
     const result = await messages.dispatch(live ?? null, entry);
     if (result.status !== 200) return { status: result.status, error: result.error };
     return { status: 200, value: { status: result.state, to: result.to, ...(result.reason ? { reason: result.reason, position: result.position } : {}) } };
@@ -5931,7 +6441,8 @@ server.listen(PORT, HOST, () => {
   }
   runtimeScheduler.wake();
   if (!IS_CONTROLLER && !process.env.AGENT_SHELL_NO_OPEN) openStandaloneWindow();
-  // The message queue died with the last process; the notices did not.
+  // The transient notice queue died with the last process; its inbox did not.
+  // Generic agent messages were hydrated from their own durable queue above.
   /** Reports a failed flush without stopping the server. */
   const flushFailed = (err) => console.error("brain notices:", err.message ?? err);
   flushBrainNotices().catch(flushFailed);

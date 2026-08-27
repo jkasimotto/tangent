@@ -38,7 +38,10 @@ export function createSessionOwnership({ instanceId, root, runTmux, now = () => 
   /** Records ownership on the immutable tmux target returned by session creation. */
   async function claim(session, target = session) {
     await runTmux(["set-option", "-t", target, SESSION_OWNER_OPTION, instanceId]);
-    const record = { schema: SESSION_OWNER_SCHEMA, session, instanceId, claimedAt: now() };
+    // Keep the immutable tmux ID beside the human-readable name. A later
+    // controller can then finish an interrupted lifecycle operation without
+    // ever treating a same-name replacement as the process it meant to stop.
+    const record = { schema: SESSION_OWNER_SCHEMA, session, instanceId, target, claimedAt: now() };
     await writeJsonObject(sessionOwnerPath(root, session), record);
     return record;
   }
@@ -63,6 +66,12 @@ export function createSessionOwnership({ instanceId, root, runTmux, now = () => 
   /** True when a vanished session's durable marker belongs to this instance. */
   async function ownsRecorded(session) {
     return (await readSessionOwner(root, session))?.instanceId === instanceId;
+  }
+
+  /** Returns this instance's durable immutable target, or null for a legacy sidecar. */
+  async function recordedTarget(session) {
+    const record = await readSessionOwner(root, session);
+    return record?.instanceId === instanceId && record.target ? String(record.target) : null;
   }
 
   /** Claims one exact pre-marker session after all expected live tags match. */
@@ -99,7 +108,7 @@ export function createSessionOwnership({ instanceId, root, runTmux, now = () => 
       if (after.state === "live" && after.instanceId) return { state: "foreign", instanceId: after.instanceId, target: after.target };
       return { state: "error", instanceId: after.instanceId ?? null, error: new Error(`tmux did not retain ownership for ${session}`) };
     }
-    const record = { schema: SESSION_OWNER_SCHEMA, session, instanceId, claimedAt: now() };
+    const record = { schema: SESSION_OWNER_SCHEMA, session, instanceId, target: after.target, claimedAt: now() };
     await writeJsonObject(sessionOwnerPath(root, session), record);
     return { state: "claimed", instanceId, target: after.target };
   }
@@ -126,5 +135,5 @@ export function createSessionOwnership({ instanceId, root, runTmux, now = () => 
     }
   }
 
-  return { instanceId, claim, claimLegacyBrain, claimLegacySession, inspect, ownsRecorded, terminate };
+  return { instanceId, claim, claimLegacyBrain, claimLegacySession, inspect, ownsRecorded, recordedTarget, terminate };
 }

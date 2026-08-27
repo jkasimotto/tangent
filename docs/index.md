@@ -34,6 +34,9 @@ Decisions:
 - decisions/ADR-0031-agent-shell-capability-ownership.md
 - decisions/ADR-0032-agent-shell-resilient-runtime.md
 - decisions/ADR-0036-agent-shell-process-ownership.md
+- decisions/ADR-0037-brain-attempt-launch-override.md
+- decisions/ADR-0038-agent-shell-keyboard-ownership.md
+- decisions/ADR-0039-durable-generic-agent-message-queue.md
 - decisions/ADR-0030-area-triggers.md
 - ui/adr/0001-ui-package-split.md
 - ui/adr/0002-react-vite-ui-stack.md

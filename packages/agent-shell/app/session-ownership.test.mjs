@@ -54,8 +54,11 @@ test("session termination requires the live tmux owner and records stale ownersh
   await one.claim("worker-one", "$worker-one");
   assert.equal(live.get("worker-one"), "shell-one");
   assert.equal((await readSessionOwner(root, "worker-one")).instanceId, "shell-one");
+  assert.equal((await readSessionOwner(root, "worker-one")).target, "$worker-one");
   assert.equal(await one.ownsRecorded("worker-one"), true);
+  assert.equal(await one.recordedTarget("worker-one"), "$worker-one");
   assert.equal(await two.ownsRecorded("worker-one"), false);
+  assert.equal(await two.recordedTarget("worker-one"), null);
   assert.deepEqual(await two.terminate("worker-one"), { state: "foreign", instanceId: "shell-one" });
   assert.equal(live.has("worker-one"), true);
   assert.deepEqual(await one.terminate("worker-one", "$older-worker-one"), {
@@ -82,6 +85,7 @@ test("session termination requires the live tmux owner and records stale ownersh
   );
   assert.equal(live.get("legacy"), "shell-one");
   assert.equal((await readSessionOwner(root, "legacy")).instanceId, "shell-one");
+  assert.equal((await readSessionOwner(root, "legacy")).target, "$legacy");
   assert.deepEqual(
     await two.claimLegacyBrain({ session: "legacy", area: "otto/tangent", generation: 12 }),
     { state: "foreign", instanceId: "shell-one", target: "$legacy" },

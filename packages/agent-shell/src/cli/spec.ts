@@ -103,6 +103,15 @@ export const brainCommandSpec: CliCommandSpec = {
         serverOption,
         jsonOption
       ]
+    },
+    {
+      name: "stop",
+      description: "Stop the exact live brain attempt through Agent Shell ownership fencing. Its Goals remain unchanged.",
+      args: "[area]",
+      options: [
+        { name: "session", takesValue: true, description: "Brain session name; defaults to the tmux session this command runs in" },
+        serverOption
+      ]
     }
   ]
 };
@@ -289,9 +298,19 @@ export const documentCommandSpec: CliCommandSpec = {
 
 export const agentCommandSpec: CliCommandSpec = {
   name: "agent",
-  description: "List live agents and send messages between them",
+  description: "List live agents, recover durable assignment context, and send messages",
   subcommands: [
     { name: "list", description: "List live agent sessions with their states and queued messages", options: [serverOption, jsonOption] },
+    {
+      name: "context",
+      description: "Read the durable brain or Goal assignment for this tmux session",
+      args: "[session]",
+      options: [
+        { name: "session", takesValue: true, description: "Session name; defaults to the positional name or current tmux session" },
+        serverOption,
+        jsonOption,
+      ],
+    },
     {
       name: "send",
       description: "Send a message to another agent; it delivers when that agent's composer is empty",

@@ -15,7 +15,26 @@ export async function runBrainCli(argv = process.argv.slice(2)): Promise<void> {
   if (subcommand === "request") return requestCommand(args);
   if (subcommand === "withdraw") return withdrawCommand(args);
   if (subcommand === "status") return statusCommand(args);
-  throw new Error(`Unknown brain command: ${subcommand}. Try "tangent brain handover <facts>" or "tangent brain status [area]".`);
+  if (subcommand === "stop") return stopCommand(args);
+  throw new Error(`Unknown brain command: ${subcommand}. Try "tangent brain handover <facts>", "tangent brain status [area]", or "tangent brain stop [area]".`);
+}
+
+/** Stops one exact live brain attempt through Agent Shell ownership fencing. */
+async function stopCommand(args: Args): Promise<void> {
+  const server = resolveServerUrl(stringArg(args.server));
+  const requestedArea = stringArg(args._[1]);
+  const session = requestedArea ? "" : (stringArg(args.session) || (await currentTmuxSession()) || "");
+  if (!requestedArea && !session) throw new Error("tangent brain stop needs an Area, or run it inside the brain's tmux session.");
+  const query = requestedArea ? `area=${encodeURIComponent(requestedArea)}` : `session=${encodeURIComponent(session)}`;
+  const { brain } = (await vaultFetch(server, `/api/brains/show?${query}`)) as { brain: BrainSummary };
+  if (brain.status !== "active") {
+    console.log(`${brain.area} brain is already inactive.`);
+    return;
+  }
+  const expectedAttemptId = brain.currentAttemptId || brain.session || "";
+  if (!expectedAttemptId) throw new Error(`${brain.area} has no active brain attempt to stop.`);
+  await postJson(server, "/api/brains/stop", { area: brain.area, expectedAttemptId, operationId: randomUUID() });
+  console.log(`${brain.area} brain stopped. Its Goals remain unchanged.`);
 }
 
 /** Withdraws one obsolete Request owned by this live brain. */
@@ -108,6 +127,7 @@ type BrainSummary = {
   live: boolean;
   generation: number;
   session: string | null;
+  currentAttemptId?: string | null;
   planFile: string;
   foundingInstruction: { text: string; createdAt: string };
   checkpoint: { text: string; createdAt: string; sourceAttemptId: string | null } | null;
@@ -139,6 +159,7 @@ Area folder and the handover facts are the memory that crosses generations.
 Examples:
   tangent brain handover "Wave 1 dispatched: area-map runs step 2 (tangent-area-map-s2). Waiting: nothing. Next: review area-map when it completes."
   tangent brain status otto/tangent
+  tangent brain stop otto/tangent
 
 Create plan, decision, test, and approval requests with \`tangent brain request\`.
 Their answers return to this brain as durable notices. Existing For Julian

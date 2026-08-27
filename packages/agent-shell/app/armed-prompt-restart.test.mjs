@@ -34,6 +34,7 @@ const INSTANCE_ID = `arm-restart-${process.pid}`;
 // with echo on, so the pty shows whatever gets typed into it once it is the
 // pane's foreground command.
 const HARNESS_CMD = 'sh -c "stty raw echo; exec cat"';
+const HARNESS_ID = "restart-probe";
 
 /** Reserves and releases one local port for the HTTP test. */
 async function freePort() {
@@ -84,8 +85,25 @@ async function makeTrees(root, leaf) {
   const trees = path.join(root, "trees");
   const area = path.join(trees, "otto", leaf);
   await mkdir(area, { recursive: true });
+  await writeFile(
+    path.join(trees, "harnesses.md"),
+    `# Harnesses\n\n\`\`\`tangent.harnesses.v1\n${JSON.stringify({
+      version: 1,
+      harnesses: [{ id: HARNESS_ID, label: "Restart probe", command: HARNESS_CMD }],
+    })}\n\`\`\`\n`,
+    "utf8",
+  );
   await writeFile(path.join(trees, "otto", "otto.md"), "---\ntype: area\n---\n\n# Otto\n", "utf8");
-  await writeFile(path.join(area, `${leaf}.md`), `---\ntype: area\n---\n\n# ${leaf}\n`, "utf8");
+  await writeFile(
+    path.join(area, `${leaf}.md`),
+    `---\ntype: area\n---\n\n# ${leaf}\n\n\`\`\`tangent.environment.v1\n${JSON.stringify({
+      defaults: {
+        launch: { harness: HARNESS_ID },
+        brain: { harness: HARNESS_ID },
+      },
+    })}\n\`\`\`\n`,
+    "utf8",
+  );
   return trees;
 }
 
@@ -203,7 +221,7 @@ test("an armed step prompt survives a server restart", async (context) => {
   const brain = await post(base, "/api/brains/start", {
     area: `otto/${leaf}`,
     instruction: "Control the restart probe.",
-    command: HARNESS_CMD,
+    choice: { harness: HARNESS_ID },
   });
   assert.ok(brain.session, `brain started: ${JSON.stringify(brain)}`);
   sessions.push(brain.session);
@@ -211,7 +229,7 @@ test("an armed step prompt survives a server restart", async (context) => {
   const started = await post(base, "/api/goals/start", {
     file: goal.file,
     caller: brain.session,
-    steps: [{ instruction: "Prove the arm-restart probe delivers.", command: HARNESS_CMD }],
+    steps: [{ instruction: "Prove the arm-restart probe delivers.", launch: { harness: HARNESS_ID } }],
   });
   assert.ok(started.session, `pipeline started: ${JSON.stringify(started)}`);
   sessions.push(started.session);

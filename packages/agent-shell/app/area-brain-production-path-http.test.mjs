@@ -15,6 +15,7 @@ import test from "node:test";
 import { execFile } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { startShellServer } from "./focus-shell-http-fixture.mjs";
+import { sessionOwnerPath, SESSION_OWNER_SCHEMA } from "./session-ownership.mjs";
 import { isolateTmuxTests } from "./tmux-test-isolation.mjs";
 
 isolateTmuxTests();
@@ -228,7 +229,12 @@ test("an inactive brain wakes with Julian's message, and the woken attempt reads
   const first = await post(base, "/api/brains/start", { area: "otto/test", instruction: "Own this Area." });
   assert.equal(first.status, 200, JSON.stringify(first.body));
   openedSessions.push(first.body.session);
-  await new Promise((resolve) => execFile("tmux", ["kill-session", "-t", `=${first.body.session}`], () => resolve()));
+  const stopped = await post(base, "/api/brains/stop", {
+    area: "otto/test",
+    expectedAttemptId: first.body.brain.currentAttemptId ?? first.body.session,
+    operationId: `wake-test-stop-${process.pid}`,
+  });
+  assert.equal(stopped.status, 200, JSON.stringify(stopped.body));
 
   const woken = await post(base, "/api/brains/start", { area: "otto/test", resume: true, instruction: "Pick the branch up again." });
   assert.equal(woken.status, 200, JSON.stringify(woken.body));
@@ -283,6 +289,187 @@ test("an ended brain does not wake without a message, and a live record still re
   const reattached = await post(base, "/api/brains/start", { area: "otto/test", resume: true });
   assert.equal(reattached.status, 200, JSON.stringify(reattached.body));
   openedSessions.push(reattached.body.session);
+});
+
+test("an exact stop settles a brain whose owned tmux attempt already vanished", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-absent-stop-"));
+  const { trees, workspace } = await buildVault(root);
+  const openedSessions = [];
+  const base = await startShellServer(context, {
+    here, root, trees, workspace, openedSessions,
+    env: { TANGENT_RECONCILE_INTERVAL_MS: "600000" },
+  });
+  if (!base) return;
+
+  const started = await post(base, "/api/brains/start", { area: "otto/test", instruction: "Own this Area." });
+  assert.equal(started.status, 200, JSON.stringify(started.body));
+  openedSessions.push(started.body.session);
+  await new Promise((resolve) => execFile("tmux", ["kill-session", "-t", `=${started.body.session}`], () => resolve()));
+
+  const stopped = await post(base, "/api/brains/stop", {
+    area: "otto/test",
+    expectedAttemptId: started.body.brain.currentAttemptId ?? started.body.session,
+    operationId: "absent-attempt-stop",
+  });
+  assert.equal(stopped.status, 200, JSON.stringify(stopped.body));
+  assert.equal(stopped.body.state, "stopped");
+  assert.equal(stopped.body.brain.status, "inactive");
+  assert.equal(stopped.body.brain.stopOperation.status, "complete");
+
+  const shown = await fetch(`${base}/api/brains/show?area=${encodeURIComponent("otto/test")}`).then((response) => response.json());
+  assert.equal(shown.brain.status, "inactive", "a vanished process does not force logical recovery after Julian stopped it");
+});
+
+test("an absent attempt without this instance's durable ownership cannot stop the logical brain", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-unowned-absent-stop-"));
+  const { trees, workspace } = await buildVault(root);
+  const openedSessions = [];
+  const base = await startShellServer(context, {
+    here, root, trees, workspace, openedSessions,
+    env: { TANGENT_RECONCILE_INTERVAL_MS: "600000" },
+  });
+  if (!base) return;
+
+  const started = await post(base, "/api/brains/start", { area: "otto/test", instruction: "Own this Area." });
+  assert.equal(started.status, 200, JSON.stringify(started.body));
+  openedSessions.push(started.body.session);
+  await new Promise((resolve) => execFile("tmux", ["kill-session", "-t", `=${started.body.session}`], () => resolve()));
+  await writeFile(sessionOwnerPath(path.join(root, "session-owners"), started.body.session), JSON.stringify({
+    schema: SESSION_OWNER_SCHEMA,
+    session: started.body.session,
+    instanceId: "another-agent-shell",
+    claimedAt: new Date().toISOString(),
+  }), "utf8");
+
+  const stopped = await post(base, "/api/brains/stop", {
+    area: "otto/test",
+    expectedAttemptId: started.body.session,
+    operationId: "unowned-absent-stop",
+  });
+  assert.equal(stopped.status, 409, JSON.stringify(stopped.body));
+  assert.equal(stopped.body.code, "unowned-absent-attempt");
+  const shown = await fetch(`${base}/api/brains/show?area=${encodeURIComponent("otto/test")}`).then((response) => response.json());
+  assert.equal(shown.brain.status, "active", "an unproved absent process cannot grant another instance logical stop authority");
+});
+
+test("a persisted pending stop refuses resume and completes on retry", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-pending-stop-"));
+  const { trees, workspace } = await buildVault(root);
+  const openedSessions = [];
+  const base = await startShellServer(context, {
+    here, root, trees, workspace, openedSessions,
+    env: { TANGENT_RECONCILE_INTERVAL_MS: "600000" },
+  });
+  if (!base) return;
+
+  const started = await post(base, "/api/brains/start", { area: "otto/test", instruction: "Own this Area." });
+  assert.equal(started.status, 200, JSON.stringify(started.body));
+  openedSessions.push(started.body.session);
+  const target = await new Promise((resolve) => execFile(
+    "tmux", ["display-message", "-p", "-t", `=${started.body.session}:`, "#{session_id}"],
+    (error, stdout) => resolve(error ? "" : stdout.trim()),
+  ));
+  assert.ok(target, "the fixture has one immutable tmux target");
+  const brainFile = path.join(root, "brains", "otto", "test", "brain.json");
+  const record = JSON.parse(await readFile(brainFile, "utf8"));
+  record.status = "inactive";
+  record.generations.at(-1).endedAt = new Date().toISOString();
+  record.stopOperation = {
+    id: "interrupted-stop", attemptId: started.body.session, target,
+    instanceId: record.instanceId, status: "pending", requestedAt: new Date().toISOString(),
+  };
+  record.health = { status: "stopping", problem: null, updatedAt: new Date().toISOString() };
+  await writeFile(brainFile, JSON.stringify(record), "utf8");
+
+  const resumed = await post(base, "/api/brains/start", {
+    area: "otto/test", resume: true, instruction: "Do not outrun the stop.",
+  });
+  assert.equal(resumed.status, 409, JSON.stringify(resumed.body));
+  assert.equal(resumed.body.code, "stop-unsettled");
+
+  const retried = await post(base, "/api/brains/stop", {
+    area: "otto/test", expectedAttemptId: started.body.session, operationId: "interrupted-stop",
+  });
+  assert.equal(retried.status, 200, JSON.stringify(retried.body));
+  assert.equal(retried.body.brain.stopOperation.status, "complete");
+  const stillLive = await new Promise((resolve) => execFile("tmux", ["has-session", "-t", `=${started.body.session}`], (error) => resolve(!error)));
+  assert.equal(stillLive, false, "the retry settles the exact process instead of only reporting already inactive");
+});
+
+test("canonical and trailing-slash starts share one exact-Area lifecycle", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-area-alias-"));
+  const { trees, workspace } = await buildVault(root);
+  const openedSessions = [];
+  const base = await startShellServer(context, { here, root, trees, workspace, openedSessions });
+  if (!base) return;
+
+  const [canonical, alias] = await Promise.all([
+    post(base, "/api/brains/start", { area: "otto/test", instruction: "Canonical start." }),
+    post(base, "/api/brains/start", { area: "otto/test/", instruction: "Alias start." }),
+  ]);
+  assert.equal(canonical.status, 200, JSON.stringify(canonical.body));
+  assert.equal(alias.status, 200, JSON.stringify(alias.body));
+  assert.equal(canonical.body.session, alias.body.session);
+  assert.equal(Number(canonical.body.reattached) + Number(alias.body.reattached), 1, "one request starts and one reattaches");
+  openedSessions.push(canonical.body.session);
+});
+
+test("a late activation failure cannot overwrite completed stop health", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-late-activation-"));
+  const { trees, workspace } = await buildVault(root);
+  const openedSessions = [];
+  const base = await startShellServer(context, {
+    here, root, trees, workspace, openedSessions,
+    env: { AGENT_SHELL_TEST_NO_LAUNCH: "", TANGENT_RECONCILE_INTERVAL_MS: "600000" },
+  });
+  if (!base) return;
+
+  const started = await post(base, "/api/brains/start", { area: "otto/test", instruction: "Own this Area." });
+  assert.equal(started.status, 200, JSON.stringify(started.body));
+  openedSessions.push(started.body.session);
+  const stopped = await post(base, "/api/brains/stop", {
+    area: "otto/test", expectedAttemptId: started.body.session, operationId: "late-activation-stop",
+  });
+  assert.equal(stopped.status, 200, JSON.stringify(stopped.body));
+  await new Promise((resolve) => setTimeout(resolve, 1400));
+  const shown = await fetch(`${base}/api/brains/show?area=${encodeURIComponent("otto/test")}`).then((response) => response.json());
+  assert.equal(shown.brain.status, "inactive");
+  assert.equal(shown.brain.health.status, "inactive", "the dead arm updates its generation only, not the stopped brain's health");
+  assert.equal(shown.brain.stopOperation.status, "complete");
+});
+
+test("handover and stop serialize one exact Area without resurrecting a stale attempt", async (context) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-brain-race-"));
+  const { trees, workspace } = await buildVault(root);
+  const openedSessions = [];
+  const base = await startShellServer(context, {
+    here, root, trees, workspace, openedSessions,
+    env: { TANGENT_RECONCILE_INTERVAL_MS: "600000" },
+  });
+  if (!base) return;
+
+  const started = await post(base, "/api/brains/start", { area: "otto/test", instruction: "Own this Area." });
+  assert.equal(started.status, 200, JSON.stringify(started.body));
+  openedSessions.push(started.body.session);
+  const expectedAttemptId = started.body.brain.currentAttemptId ?? started.body.session;
+
+  const [handover, stopped] = await Promise.all([
+    post(base, "/api/brains/handover", { session: started.body.session, text: "The Area remains active." }),
+    post(base, "/api/brains/stop", { area: "otto/test", expectedAttemptId, operationId: "handover-stop-race" }),
+  ]);
+  const shown = await fetch(`${base}/api/brains/show?area=${encodeURIComponent("otto/test")}`).then((response) => response.json());
+  if (handover.status === 200) {
+    assert.equal(stopped.status, 409, JSON.stringify(stopped.body));
+    assert.equal(stopped.body.code, "attempt-changed");
+    assert.equal(shown.brain.status, "active");
+    assert.equal(shown.brain.currentAttemptId, handover.body.session);
+    openedSessions.push(handover.body.session);
+  } else {
+    assert.equal(handover.status, 404, JSON.stringify(handover.body));
+    assert.equal(stopped.status, 200, JSON.stringify(stopped.body));
+    assert.equal(shown.brain.status, "inactive");
+    assert.equal(shown.brain.stopOperation.status, "complete");
+  }
 });
 
 test("a capture wakes the inactive destination brain and never loses the words", async (context) => {

@@ -61,7 +61,6 @@ test("checked Goals start one shared agent that owns them in checked order", asy
   };
   window.eval(shellBundle);
   await settle(window);
-  click(window, "[data-work-filter='inactive']");
   assert.ok(window.document.querySelector(".work-page"), "the desk shows the Work page");
 
   // Both startable rows carry a checkbox; nothing is checked, so no action bar.

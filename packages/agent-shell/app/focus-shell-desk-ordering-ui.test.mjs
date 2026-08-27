@@ -1,7 +1,7 @@
 import test from "node:test";
 import { assert, readFile, path, JSDOM, documentComments, areaMapView, shellBundle, here, goToCore, goalCardCore, askCore, settle, click, submit, openDocumentViaGoTo, jsonResponse } from "./focus-shell-ui-fixture.mjs";
 
-test("current and planned work keep stable Area order", async () => {
+test("one Work projection keeps a stable Area order", async () => {
   const [html, script, mapCore, mapView] = await Promise.all([
     readFile(path.join(here, "public", "shell.html"), "utf8"),
     readFile(path.join(here, "public", "shell.js"), "utf8"),
@@ -14,7 +14,7 @@ test("current and planned work keep stable Area order", async () => {
   window.HTMLCanvasElement.prototype.getContext = () => null;
   const DAY = 86_400_000;
   const now = Date.now();
-  // Current work stays separate from unstarted work. Planned Areas keep stable path order.
+  // Moving work leads, then the remaining Areas keep stable path order.
   const megabranchGoal = {
     mtime: 1, area: "otto/megabranch", slug: "old-goal", file: "otto/megabranch/goal-old.md",
     title: "Old megabranch goal", status: "open", doneWhen: "Done.", changedAt: now - 60 * DAY, waitingOn: "", depth: 0,
@@ -58,9 +58,7 @@ test("current and planned work keep stable Area order", async () => {
   window.eval(shellBundle);
   await settle(window);
 
-  let headers = [...window.document.querySelectorAll(".work-table .work-group-name [data-open-area]")].map((node) => node.textContent);
-  assert.deepEqual(headers, ["D&D"], "Current shows only the Area with live work");
-  click(window, "[data-work-filter='inactive']");
-  headers = [...window.document.querySelectorAll(".work-table .work-group-name [data-open-area]")].map((node) => node.textContent);
-  assert.deepEqual(headers, ["Megabranch", "Standards", "Tangent"], "Planned work keeps stable path order instead of recent order");
+  const headers = [...window.document.querySelectorAll(".work-table .work-group-name [data-open-area]")].map((node) => node.textContent);
+  assert.deepEqual(headers, ["D&D", "Megabranch", "Standards", "Tangent"], "moving work leads and unstarted work remains visible in stable path order");
+  assert.equal(window.document.querySelector("[data-work-filter]"), null);
 });

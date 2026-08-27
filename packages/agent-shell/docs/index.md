@@ -3,15 +3,21 @@
 Purpose: the CLI surface of the Agent Shell, under the root `tangent` command:
 
 - Vault CLI: `tangent area`, `tangent goal`, `tangent idea`, `tangent document`, `tangent vault commit`.
-- Agent messaging CLI: `tangent agent list`, `tangent agent send`.
+- Agent CLI: `tangent agent list`, `tangent agent send`, and read-only `tangent agent context` recovery from durable brain and Goal records.
 - Worker CLI: `tangent handover` and `tangent goal handover` report facts through the same exact-Area route. `tangent area recent` queries subtree milestones. `tangent area audit` exports legacy records.
 - Brain CLI: `tangent brain request` creates durable user requests, and `tangent brain advance` starts the next approved assignment.
-- Brain and server CLI: `tangent brain handover|status` shows lifecycle, health, checkpoint, and Questions. `tangent shell rebuild` rebuilds and restarts the server.
+- Brain and server CLI: `tangent brain handover|status|stop` manages a brain through guarded Agent Shell routes. `tangent shell rebuild` rebuilds and restarts the server.
 - Study partner CLI: `tangent study` (spawns an interactive `claude-otto` session carrying the partner contract) and `tangent study contract` (prints that contract).
 
 The Agent Shell gateway in `packages/agent-shell/app/gateway.mjs` owns port 4321 and durable terminal transport. It supervises the controller in `server.mjs`. Both processes share one runtime identity. They can use only tmux sessions marked with that identity. The controller owns logical Area brains, Goal queues, worker handover notice receipts, Questions, Operation events, and session projection. See ADR-0032, ADR-0034, and ADR-0036.
 
+Any replacement harness can recover the current assignment from the tmux session name. The context projection does not claim or mutate the session. A live unbound session reports `unassigned`. A worker that exits to its still-live shell leaves its queue status and tmux session intact and creates one durable exact-Area brain notice.
+
 Agent Shell centers each Area on one logical brain with an active or inactive lifecycle. Exact Area identity controls mutations. The Area Journal saves unstructured text before brain delivery.
+
+Work shows all open Goals in one projection. An explicit keyboard context owns each key. Terminal sessions keep native tmux input, except the visible leave shortcut. Work and Document actions expose matching keyboard and pointer paths. See ADR-0038.
+
+Generic `tangent agent send` messages persist before pane wake or presentation. The controller restores them after a restart and keeps their exact target order. See ADR-0039.
 
 The brain receives its founding instruction, current checkpoint, bounded Area memory, selected current Document references, Questions, and material Operation events. Structural Area and repository paths define inherited context.
 

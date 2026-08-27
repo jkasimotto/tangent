@@ -63,10 +63,11 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
             <textarea id="new-goal-state" name="state" class="short-textarea" placeholder="What is true now?"></textarea>
           </label>
           <div class="create-actions">
-            <button class="primary-button" type="submit">Create goal <kbd>⌘↵</kbd></button>
+            <button class="primary-button" type="submit">Create and choose agent <kbd>⌘↵</kbd></button>
+            <button class="quiet-button" type="submit" data-create-only>Create only</button>
             <button class="quiet-button" type="button" data-cancel-create>Cancel</button>
           </div>
-          <p class="form-note">Creating the goal does not start an agent.</p>
+          <p class="form-note">You review the Area default, harness, model, and effort before anything starts.</p>
         </form>
       </article>
     `;
@@ -396,28 +397,29 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     const preset = presetCandidate && !presetCandidate.error ? presetCandidate : {};
     const currentHarness = selection?.harness ?? null;
     const harnessButtons = (options.harnesses ?? []).map((harness) => `
-      <button type="button" class="launch-option${currentHarness?.id === harness.id ? " selected" : ""}" data-launch-harness="${escapeHtml(harness.id)}">
+      <button type="button" role="radio" aria-checked="${currentHarness?.id === harness.id}" class="launch-option${currentHarness?.id === harness.id ? " selected" : ""}" data-launch-harness="${escapeHtml(harness.id)}" data-focus-key="launch:harness:${escapeHtml(harness.id)}">
         <span>${escapeHtml(harness.label)}</span>${preset.harness === harness.id ? `<span class="launch-default-tag">default</span>` : ""}
       </button>`).join("");
     const models = currentHarness?.models ?? [];
     const modelButtons = models.length
       ? models.map((model) => `
-        <button type="button" class="launch-option${selection?.model?.id === model.id ? " selected" : ""}" data-launch-model="${escapeHtml(model.id)}">
+        <button type="button" role="radio" aria-checked="${selection?.model?.id === model.id}" class="launch-option${selection?.model?.id === model.id ? " selected" : ""}" data-launch-model="${escapeHtml(model.id)}" data-focus-key="launch:model:${escapeHtml(currentHarness?.id ?? "")}:${escapeHtml(model.id)}">
           <span>${escapeHtml(model.label)}</span>${preset.harness === currentHarness?.id && preset.model === model.id ? `<span class="launch-default-tag">default</span>` : ""}
         </button>`).join("")
       : `<p class="launch-none">${currentHarness ? "No model choice. The command is complete." : "Pick a harness first."}</p>`;
     const efforts = selection?.model?.efforts ?? currentHarness?.efforts ?? [];
     const effortButtons = efforts.map((effort) => `
-        <button type="button" class="launch-option${selection?.effort?.id === effort.id ? " selected" : ""}" data-launch-effort="${escapeHtml(effort.id)}">
+        <button type="button" role="radio" aria-checked="${selection?.effort?.id === effort.id}" class="launch-option${selection?.effort?.id === effort.id ? " selected" : ""}" data-launch-effort="${escapeHtml(effort.id)}" data-focus-key="launch:effort:${escapeHtml(currentHarness?.id ?? "")}:${escapeHtml(selection?.model?.id ?? "")}:${escapeHtml(effort.id)}">
           <span>${escapeHtml(effort.label)}</span>${preset.harness === currentHarness?.id && preset.effort === effort.id ? `<span class="launch-default-tag">default</span>` : ""}
         </button>`).join("");
     const command = selection?.command ?? "";
     const describing = state.launchTarget === DESCRIBE_LAUNCH_TARGET;
     const braining = state.launchTarget === BRAIN_LAUNCH_TARGET;
-    const brainRef = braining ? [preset.harness, preset.model, preset.effort].filter(Boolean).join("/") : "";
+    const brainRef = braining ? [selection?.harness?.id, selection?.model?.id, selection?.effort?.id].filter(Boolean).join("/") : "";
     const brainSource = braining && preset.source ? (preset.source === state.brainDraft?.area ? "Set on this Area" : `Inherited from ${areaLabel(preset.source)}`) : "";
+    const brainOverride = braining && Boolean(state.launch.choice?.harness);
     const commandZone = braining
-      ? `<section class="brain-launch-summary" aria-label="Resolved brain launch"><p class="kicker">Brain launch</p><strong>${escapeHtml(brainRef || "Not configured")}</strong><span>${escapeHtml(preset.label || presetError)}</span><code>${escapeHtml(preset.command || "")}</code>${brainSource ? `<small>${escapeHtml(brainSource)}</small>` : ""}<button class="quiet-button" type="button" data-default-agents-area="${escapeHtml(state.brainDraft?.area ?? "")}">Change default</button></section>`
+      ? `<section class="brain-launch-summary${brainOverride ? " override" : ""}" aria-label="Resolved brain launch"><p class="kicker">Brain launch</p><strong>${escapeHtml(brainRef || "Not configured")}</strong><span>${escapeHtml(selection?.label || presetError)}</span><code>${escapeHtml(selection?.command || "")}</code>${brainOverride ? `<small class="launch-override-note">One launch only · Area default unchanged</small>` : brainSource ? `<small>${escapeHtml(brainSource)}</small>` : ""}<button class="quiet-button" type="button" data-default-agents-area="${escapeHtml(state.brainDraft?.area ?? "")}" data-default-agents-origin="brain" data-focus-key="launch:brain:default">Change default</button></section>`
       : settings
       ? `<div class="launch-command"><code>${escapeHtml(command)}</code></div>`
       : state.launch.editing
@@ -442,15 +444,15 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
         ${state.launch.active > 0 ? `<label class="launch-continue"><span>Session</span><select data-launch-continue><option value="">Fresh session</option>${Array.from({ length: state.launch.active }, (_, k) => `<option value="${k + 1}"${state.launch.continueFrom === k + 1 ? " selected" : ""}>Continue step ${k + 1}</option>`).join("")}</select></label>` : ""}`;
     const settingsRows = settings ? defaultAgentRows(options) : "";
     const settingsMode = state.defaultAgents.mode;
-    const showChoices = !braining && (!settings || (state.defaultAgents.editing && settingsMode === "launch"));
+    const showChoices = braining || (!settings || (state.defaultAgents.editing && settingsMode === "launch"));
     const settingsEditor = settings && state.defaultAgents.editing ? `
       <section class="default-agent-editor" aria-label="Edit ${escapeHtml(state.defaultAgents.editing)} default">
         <p>${settingsMode === "launch" ? `Choose the harness, model, and effort for ${state.defaultAgents.editing === "brain" ? "Brain" : "Work"}.` : settingsMode === "work" ? "Brain will follow the Work default of this Area." : `The ${state.defaultAgents.editing === "brain" ? "Brain" : "Work"} default will inherit from the nearest parent Area.`}</p>
       </section>` : "";
     const settingsActions = settings ? `
       <div class="action-row start-actions">
-        ${state.defaultAgents.editing ? `<button class="primary-button" type="button" data-launch-save ${settingsMode === "launch" && !selection?.harness ? "disabled" : ""}>Save</button><button class="quiet-button" type="button" data-default-agents-cancel>Cancel</button>` : ""}
-        <button class="quiet-button" type="button" data-launch-close>Close</button>
+        ${state.defaultAgents.editing ? `<button class="primary-button" type="button" data-launch-save data-focus-key="launch:default:save" ${settingsMode === "launch" && !selection?.harness ? "disabled" : ""}>Save</button><button class="quiet-button" type="button" data-default-agents-cancel data-focus-key="launch:default:cancel">Cancel</button>` : ""}
+        <button class="quiet-button" type="button" data-launch-close data-focus-key="launch:close">${state.defaultAgents.origin === "brain" ? "Back" : "Close"}</button>
       </div>` : "";
     return `
       <div class="launch-picker">
@@ -459,19 +461,19 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
         ${brainZone}
         ${settingsEditor}
         ${showChoices && (options.harnesses ?? []).length ? `
-        <div class="launch-columns">
-          <div class="launch-col"><p class="launch-col-title">Harness</p>${harnessButtons}</div>
-          <div class="launch-col"><p class="launch-col-title">Model</p>${modelButtons}</div>
-          ${efforts.length ? `<div class="launch-col"><p class="launch-col-title">Effort</p>${effortButtons}</div>` : ""}
+        <div class="launch-columns" aria-label="Agent choices">
+          <div class="launch-col" data-launch-column="harness" role="radiogroup" aria-label="Harness"><p class="launch-col-title">Harness</p>${harnessButtons}</div>
+          <div class="launch-col" data-launch-column="model" role="radiogroup" aria-label="Model"><p class="launch-col-title">Model</p>${modelButtons}</div>
+          ${efforts.length ? `<div class="launch-col" data-launch-column="effort" role="radiogroup" aria-label="Effort"><p class="launch-col-title">Effort</p>${effortButtons}</div>` : ""}
         </div>` : showChoices ? `<p class="launch-none">No harness registry. Add one at <code>~/.tangent/trees/harnesses.md</code>.</p>` : ""}
         ${braining || showChoices ? commandZone : ""}
         ${stepZone}
         ${settingsActions || `<div class="action-row start-actions">
-          <button class="primary-button" type="button" data-launch-start ${braining && !preset.harness ? "disabled" : ""}>${escapeHtml(startLabel)}</button>
+          <button class="primary-button" type="button" data-launch-start data-focus-key="launch:start" ${braining && !selection?.harness ? "disabled" : ""}>${escapeHtml(startLabel)}</button>
           ${brainResumes ? `<button class="quiet-button" type="button" data-brain-start-over>Start over</button>` : ""}
-          <button class="quiet-button" type="button" data-launch-close>${state.launchTarget ? "Close" : "Back"}</button>
+          <button class="quiet-button" type="button" data-launch-close data-focus-key="launch:close">${state.launchTarget ? "Close" : "Back"}</button>
         </div>`}
-        <button class="quiet-button launch-registry-link" type="button" data-open-harnesses>Edit harnesses and models…</button>
+        <button class="quiet-button launch-registry-link" type="button" data-open-harnesses data-focus-key="launch:registry">Edit harnesses and models…</button>
       </div>
     `;
   }
@@ -493,9 +495,9 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
       return `<div class="default-agent-row" data-default-agent-row="${kind}">
         <div class="default-agent-value"><strong>${title}</strong><span>${escapeHtml(value)}</span><small>${escapeHtml(source)}</small></div>
         <div class="default-agent-actions">
-          <button class="quiet-button" type="button" data-default-agent-edit="${kind}">Change</button>
-          ${kind === "brain" ? `<button class="quiet-button" type="button" data-default-agent-mode="work" data-default-agent-kind="brain">Follow work</button>` : ""}
-          ${local ? `<button class="quiet-button" type="button" data-default-agent-mode="inherit" data-default-agent-kind="${kind}">Use inherited</button>` : ""}
+          <button class="quiet-button" type="button" data-default-agent-edit="${kind}" data-focus-key="launch:default:${kind}:change">Change</button>
+          ${kind === "brain" ? `<button class="quiet-button" type="button" data-default-agent-mode="work" data-default-agent-kind="brain" data-focus-key="launch:default:brain:work">Follow work</button>` : ""}
+          ${local ? `<button class="quiet-button" type="button" data-default-agent-mode="inherit" data-default-agent-kind="${kind}" data-focus-key="launch:default:${kind}:inherit">Use inherited</button>` : ""}
         </div>
       </div>`;
     };
@@ -511,10 +513,13 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
       return paint(true);
     }
     state.launchTarget = DEFAULT_AGENTS_TARGET;
-    state.defaultAgents = { area, editing: "", mode: "" };
+    state.defaultAgents = { area, editing: "", mode: "", ...(button.dataset.defaultAgentsOrigin ? { origin: button.dataset.defaultAgentsOrigin } : {}) };
     launchOptionsFor(area);
-    const rect = button.getBoundingClientRect();
-    state.launchAnchor = { top: Math.round(rect.bottom + 8), right: Math.round(rect.right) };
+    // The menu item is hidden when `d` opens this editor. Its always-visible
+    // summary is the shared pointer and keyboard anchor.
+    const anchor = button.closest?.(".work-group-action-menu")?.querySelector("summary") ?? button;
+    const rect = anchor.getBoundingClientRect();
+    state.launchAnchor = { top: Math.round(rect.bottom + 8), above: Math.round(rect.top - 8), right: Math.round(rect.right) };
     return paint(true);
   }
 
@@ -553,7 +558,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
           mode,
           ...(mode === "launch" ? { launch: { harness: selection.harness.id, ...(selection.model ? { model: selection.model.id } : {}), ...(selection.effort ? { effort: selection.effort.id } : {}) } } : {}),
         });
-        state.defaultAgents = { area, editing: "", mode: "" };
+        state.defaultAgents = { area, editing: "", mode: "", ...(state.defaultAgents.origin ? { origin: state.defaultAgents.origin } : {}) };
         state.launch.options = null;
         launchOptionsFor(area);
         showToast(`${kind === "brain" ? "Brain" : "Work"} now uses ${saved.label || saved.command}.`);
@@ -591,11 +596,20 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     state.launchTarget = "";
     state.launchAnchor = null;
     state.launch.open = false;
-    state.harnessDraft = null;
     state.view = "harnesses";
+    // Back and Escape keep an unsaved registry draft in memory. Only Save or
+    // the explicit Discard action destroys it.
+    if (state.harnessDraft) return paint(true);
     api("/api/harnesses")
       .then((data) => { state.harnessDraft = data.registry; paint(true); })
       .catch((error) => showToast(error.message));
+    paint(true);
+  }
+
+  /** Leaves the registry editor; only an explicit discard destroys its draft. */
+  function leaveHarnessEditor({ discard = false } = {}) {
+    state.view = state.harnessReturnView || "work";
+    if (discard) state.harnessDraft = null;
     paint(true);
   }
 
@@ -728,8 +742,9 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
           </div>
         </section>
         <div class="action-row">
-          <button class="primary-button" type="button" data-save-harnesses>Save</button>
-          <button class="quiet-button" type="button" data-cancel-harnesses>Cancel</button>
+          <button class="primary-button" type="button" data-save-harnesses title="Save harnesses and models (Command-Enter)">Save <kbd>⌘↵</kbd></button>
+          <button class="quiet-button" type="button" data-leave-harnesses aria-keyshortcuts="Escape" title="Return without discarding this draft (Escape)">Back <kbd>Esc</kbd></button>
+          <button class="quiet-button" type="button" data-cancel-harnesses title="Discard this unsaved draft">Discard changes</button>
         </div>
         <p class="form-note">Saved to <code>~/.tangent/trees/harnesses.md</code> and applied to the next launch. Area defaults keep pointing at unchanged ids.</p>
       </article>
@@ -738,5 +753,5 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
 
   /** Renders the complete native agent terminal without a second chat. */
 
-  return { selectableAreas, preferredArea, areaOptions, renderCreate, renderDescribeCapture, describeSourcesBlock, launchOptionsFor, launchSelection, launchRequestFields, launchFieldsForArea, launchStepDraft, syncLaunchDraft, commitActiveStep, activateLaunchStep, loadLaunchStep, addLaunchStep, removeLaunchStep, launchStepLabel, launchStepRequest, launchIsPipeline, pipelineForGoal, pipelineRecordForGoal, launchDraftRows, launchStepList, launchPickerBlock, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, harnessSlug, saveHarnesses, renderHarnessEditor };
+  return { selectableAreas, preferredArea, areaOptions, renderCreate, renderDescribeCapture, describeSourcesBlock, launchOptionsFor, launchSelection, launchRequestFields, launchFieldsForArea, launchStepDraft, syncLaunchDraft, commitActiveStep, activateLaunchStep, loadLaunchStep, addLaunchStep, removeLaunchStep, launchStepLabel, launchStepRequest, launchIsPipeline, pipelineForGoal, pipelineRecordForGoal, launchDraftRows, launchStepList, launchPickerBlock, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, harnessSlug, saveHarnesses, renderHarnessEditor };
 }

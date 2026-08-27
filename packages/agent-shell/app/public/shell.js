@@ -297,9 +297,9 @@ function markdownToHtml(text, options = {}) {
 }
 
 /**
- * One comment as a red-ruled block: author, words, and an always-visible
- * remove control. Read-only mode shows the same words without the edit and
- * remove controls, because the quick Document layer never writes a file.
+ * One comment as a red-ruled block with readable words and explicit actions.
+ * Read-only mode shows the same words without actions, because the quick
+ * Document layer never writes a file.
  */
 function commentAsideHtml(comment, readOnly = false) {
   const author = comment.author || "Comment";
@@ -311,8 +311,12 @@ function commentAsideHtml(comment, readOnly = false) {
   </aside>`;
   }
   return `<aside class="document-comment" id="document-comment-${comment.index}" role="note" aria-label="Comment from ${escapeHtml(author)}" data-comment-index="${comment.index}" tabindex="-1">
-    <button class="document-comment-body" type="button" data-edit-comment="${comment.index}" title="Edit comment">${body}</button>
-    <button class="document-comment-remove" type="button" data-remove-comment="${comment.index}" aria-label="Remove comment" title="Remove comment">×</button>
+    <span class="document-comment-body">${body}</span>
+    <span class="document-comment-actions" role="group" aria-label="Comment actions">
+      <button type="button" data-edit-comment="${comment.index}" aria-keyshortcuts="e" title="Edit this comment (e)">Edit <kbd>e</kbd></button>
+      <button type="button" data-reply-comment="${comment.index}" aria-keyshortcuts="r" title="Reply at this comment's anchor (r)">Reply <kbd>r</kbd></button>
+      <button type="button" data-resolve-comment="${comment.index}" aria-keyshortcuts="x" title="Resolve this comment with a note (x)">Resolve <kbd>x</kbd></button>
+    </span>
   </aside>`;
 }
 
@@ -321,19 +325,22 @@ function commentComposerHtml(composer) {
   const anchor = composer.anchor;
   const where = composer.editing
     ? `<span>Editing your comment</span>`
+    : composer.replying
+      ? `<span>Replying at this comment's anchor</span>`
     : anchor.kind === "selection"
       ? `<span>On “${escapeHtml(clip(anchor.quote, 70))}”</span>`
       : `<span class="document-comment-scope" role="group" aria-label="Where this comment goes">
           <button type="button" data-comment-scope="section" aria-pressed="${anchor.kind === "section"}" ${composer.section ? "" : "disabled"}>${composer.section ? `Section “${escapeHtml(clip(composer.section.title, 40))}”` : "This section"}</button>
           <button type="button" data-comment-scope="document" aria-pressed="${anchor.kind === "document"}">Whole Document</button>
         </span>`;
-  return `<form class="document-comment-composer" data-comment-composer data-command-enter-submit aria-label="${composer.editing ? "Edit comment" : "New comment"}">
-    <textarea id="comment-text" rows="2" placeholder="Your comment" aria-label="Comment">${escapeHtml(composer.text)}</textarea>
+  const label = composer.editing ? "Edit comment" : composer.replying ? "Reply to comment" : "New comment";
+  return `<form class="document-comment-composer" data-comment-composer data-command-enter-submit aria-label="${label}">
+    <textarea id="comment-text" rows="2" placeholder="${composer.replying ? "Your reply" : "Your comment"}" aria-label="${label}">${escapeHtml(composer.text)}</textarea>
     <div class="document-comment-composer-row">
       <div class="document-comment-composer-where">${where}</div>
       <div class="document-comment-composer-actions">
         <button class="quiet-button" type="button" data-cancel-comment>Cancel <kbd>esc</kbd></button>
-        <button class="primary-button" type="submit">Save comment <kbd>⌘↵</kbd></button>
+        <button class="primary-button" type="submit">${composer.replying ? "Add reply" : "Save comment"} <kbd>⌘↵</kbd></button>
       </div>
     </div>
     ${composer.notice ? `<p class="document-comment-composer-notice" role="alert">${escapeHtml(composer.notice)}</p>` : ""}
@@ -472,7 +479,7 @@ const {
   launchOptionsFor, launchSelection, launchRequestFields, launchFieldsForArea, launchStepDraft, syncLaunchDraft, commitActiveStep,
   activateLaunchStep, loadLaunchStep, addLaunchStep, removeLaunchStep, launchStepLabel, launchStepRequest,
   launchIsPipeline, pipelineForGoal, pipelineRecordForGoal, launchDraftRows, launchStepList, launchPickerBlock,
-  toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, harnessSlug, saveHarnesses, renderHarnessEditor,
+  toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, harnessSlug, saveHarnesses, renderHarnessEditor,
 } = goalLaunchView;
 
 const agentDecisionView = createAgentDecisionView({ state, agentName, areaLabel, currentBriefFields, storyEntries });
@@ -502,15 +509,16 @@ const {
   leaveQuickPath,
   openVaultLink, openDocumentHeading, bindDocumentReader, refreshDocument, commentComposerKey, readerBlockOf,
   readerSelection, updateSelectionCommentButton, hideSelectionCommentButton, readerSectionInView, documentTitleLine,
-  openCommentComposer, setCommentScope, editComment, syncCommentDraft, cancelCommentComposer, noteInComposer,
-  composerResult, saveDocumentText, adoptSavedDocument, restoreDocumentText, submitCommentComposer, removeComment,
-  stepComment, saveVisibleIdea, notifyDocumentComments,
+  openCommentComposer, setCommentScope, syncCommentDraft, cancelCommentComposer, noteInComposer,
+  composerResult, saveDocumentText, adoptSavedDocument, restoreDocumentText, submitCommentComposer,
+  commentIdentity, syncCommentCursor, activeCommentIdentity, focusCommentIdentity, editActiveComment, replyToActiveComment,
+  resolveActiveComment, stepComment, saveVisibleIdea, notifyDocumentComments,
 } = documentReaderController;
 
 const shellCoordinator = createShellCoordinator({
   shell: { state, api, post, actionTelemetry, paint, refresh, showToast },
   chrome: {
-    screen, backButton, shellMenu, goToLayer, goToInput, goToList, modalLayer, modalKicker, modalTitle, modalCopy,
+    screen, backButton, shellMenu, goToButton, goToLayer, goToInput, goToList, modalLayer, modalKicker, modalTitle, modalCopy,
     modalField, modalActions, buildGoToRows, goToCore, rememberScreenScroll, restoreReturnPoint, captureReturnPoint,
     restoreReturnScroll, disposeTerminal, mountTerminal, updateStatusPill, openSessionLayer: forward(() => openSessionLayer),
     closeSessionLayer: forward(() => closeSessionLayer), documentPeekLayer, syncLayerInertness,
@@ -519,7 +527,7 @@ const shellCoordinator = createShellCoordinator({
     areaLabel, humanName, agentName, goalByFile, currentGoal, sessionForGoal, describeWorkSession,
     goalTrees, filteredGoalTrees,
     describeWorkSessions, stopSession, brainForAreaCard, brainStateLabel, agentReference, saveDescribeDraft,
-    saveDescribeSession, describeLaunchArea, openBrainSession,
+    saveDescribeSession, describeLaunchArea, openBrainSession, openOrStartBrain,
   },
   areasFeature: { allAreas, areaParent, preferredArea, areas, revealArea, selectedArea },
   programs: { currentProgram, programById, programIsLive, programAreaDirectory },
@@ -552,6 +560,24 @@ function whatHappenedRenderKey() {
   return whatHappenedView.renderKey();
 }
 
+/** Keeps an anchored chooser usable when its trigger sits near a viewport edge. */
+function launchPopoverVerticalStyle(anchor) {
+  const gap = 16;
+  const viewport = Math.max(0, Number(window.innerHeight) || 0);
+  const usable = Math.max(0, viewport - gap * 2);
+  const wanted = Math.min(360, usable);
+  const preferredTop = Number.isFinite(Number(anchor?.top)) ? Number(anchor.top) : 120;
+  const aboveEdge = Number(anchor?.above);
+  const belowSpace = Math.max(0, viewport - preferredTop - gap);
+  const aboveSpace = Number.isFinite(aboveEdge) ? Math.max(0, aboveEdge - gap) : 0;
+  if (Number.isFinite(aboveEdge) && belowSpace < wanted && aboveSpace > belowSpace) {
+    return `bottom:${Math.max(gap, viewport - aboveEdge)}px;max-height:${aboveSpace}px`;
+  }
+  const latestTop = Math.max(gap, viewport - wanted - gap);
+  const top = Math.max(gap, Math.min(preferredTop, latestTop));
+  return `top:${top}px;max-height:${Math.max(0, viewport - top - gap)}px`;
+}
+
 /**
  * The agent chooser, anchored at the Start-agent split control that opened
  * it. The choice lives at the point of starting: no page change, and the
@@ -572,8 +598,8 @@ function launchPopover() {
   const width = Math.min(640, window.innerWidth - 32);
   const left = Math.max(16, anchor.right - width);
   return `
-    <div class="launch-popover" data-launch-popover role="dialog" aria-label="${settings ? "Default agents" : "Choose agent and model"}" style="top:${anchor.top}px;left:${left}px;width:${width}px;max-height:calc(100vh - ${anchor.top + 16}px)">
-      <header class="launch-popover-header"><small>${escapeHtml(areaLabel(area))}</small><strong>${describing ? "Describe work" : braining ? "Brain" : settings ? "Default agents" : escapeHtml(goal.title)}</strong></header>
+    <div class="launch-popover" data-launch-popover data-focus-key="launch:surface" tabindex="-1" role="dialog" aria-modal="false" aria-label="${settings ? "Default agents" : "Choose agent and model"}" style="${launchPopoverVerticalStyle(anchor)};left:${left}px;width:${width}px">
+      <header class="launch-popover-header"><small>${escapeHtml(areaLabel(area))}</small><strong>${describing ? "Describe work" : braining ? "Brain" : settings ? "Default agents" : escapeHtml(goal.title)}</strong><span class="launch-key-hint"><kbd>j/k</kbd> choices · <kbd>h/l</kbd> columns · <kbd>Enter</kbd> select · <kbd>Esc</kbd> back</span></header>
       ${launchPickerBlock()}
     </div>
   `;
@@ -682,6 +708,7 @@ function updateHeader() {
   const isProgramDetail = state.view === "program-detail";
   const isProgramCreate = state.view === "program-create";
   const isProgramSession = state.view === "program-session";
+  const isHarnesses = state.view === "harnesses";
   const program = currentProgram();
   const isTopLevel = isWork || isAreas || isPrompts;
   backButton.classList.toggle("has-back", !isTopLevel);
@@ -697,6 +724,8 @@ function updateHeader() {
       ? "Areas"
     : isProgramSession
       ? "Program"
+    : isHarnesses
+      ? state.harnessReturnView === "areas" ? "Areas" : "Work"
     : state.view === "agent"
         ? state.agentReturnView === "document" && state.document ? "Document" : "Work"
         : state.view === "document"
@@ -706,8 +735,8 @@ function updateHeader() {
   backButton.innerHTML = isTopLevel && deployedRevision
     ? `<span>Agent Shell</span><small>[${escapeHtml(deployedRevision)}]</small>`
     : escapeHtml(backLabel);
-  // The reader is the one view Esc leaves, so its Back button prints the key.
-  if (state.view === "document") backButton.innerHTML = `${escapeHtml(backButton.textContent)} <kbd>esc</kbd>`;
+  // Browser-managed child screens share one visible Escape/Back operation.
+  if (state.view === "document" || isHarnesses) backButton.innerHTML = `${escapeHtml(backButton.textContent)} <kbd>esc</kbd>`;
   barContext.textContent = isCreate
     ? "Define new work"
     : isDescribe
@@ -724,6 +753,8 @@ function updateHeader() {
           ? `${areaLabel(program.area)} · ${program.label} · ${programState(program)}`
         : isProgramCreate
           ? "Add a program to one area"
+        : isHarnesses
+          ? "Edit harnesses, models, and efforts"
           : state.view === "document" && state.document
             ? ""
             : goal
@@ -872,6 +903,7 @@ function closeSessionLayer() {
   disposeTerminal();
   sessionLayerTerminal.replaceChildren();
   sessionLayer.hidden = true;
+  syncLayerInertness();
   if (point) restoreReturnPoint(point);
   else paint(true);
 }
@@ -880,8 +912,45 @@ function closeSessionLayer() {
 function renderSessionLayer() {
   const peek = state.sessionPeek;
   sessionLayer.hidden = !peek;
+  syncLayerInertness();
   if (!peek) return;
-  sessionLayerTitle.textContent = peek.kind === "brain" ? "Area brain" : peek.kind === "program" ? "Program session" : "Agent session";
+  const session = state.sessions.find((item) => item.name === peek.session) ?? null;
+  const goal = session?.goal
+    ? goalByFile(session.goal)
+    : allGoals().find((item) => sessionForGoal(item)?.name === peek.session) ?? null;
+  const queue = goal ? state.pipelines.find((item) => item.goal === goal.file) ?? null : null;
+  const assignment = queue?.steps?.find((item) => item.session === peek.session) ?? null;
+  const brain = peek.kind === "brain"
+    ? state.brains.find((item) => item.session === peek.session || item.area === session?.area) ?? null
+    : null;
+  const program = peek.kind === "program"
+    ? state.programs.operations.find((item) => item.session === peek.session) ?? null
+    : null;
+  const primary = goal?.title
+    ?? (brain ? areaLabel(brain.area || session?.area) : null)
+    ?? program?.label
+    ?? (session?.area ? areaLabel(session.area) : null)
+    ?? "Agent session";
+  const launch = assignment?.launchDisclosure?.launch
+    ?? (typeof assignment?.launch === "string" ? assignment.launch : "")
+    ?? brain?.resolvedLaunch?.label
+    ?? "";
+  const secondary = goal
+    ? [agentName(session), launch].filter(Boolean).join(" · ")
+    : brain
+      ? [agentName(session), "Area brain", brain.resolvedLaunch?.label].filter(Boolean).join(" · ")
+      : program
+        ? "Program session"
+        : [agentName(session), peek.kind === "definition" ? "Defining work" : "Agent"].filter(Boolean).join(" · ");
+  const detail = assignment
+    ? `Step ${assignment.index} of ${queue.steps.length}${assignment.kind ? ` · ${assignment.kind}` : ""}`
+    : brain?.generation
+      ? `Generation ${brain.generation}`
+      : session?.state
+        ? session.state
+        : "";
+  sessionLayerTitle.innerHTML = `<strong>${escapeHtml(primary)}</strong><span>${escapeHtml(secondary)}</span>${detail ? `<small>${escapeHtml(detail)}</small>` : ""}`;
+  sessionLayer.querySelector(".session-surface")?.setAttribute("aria-label", `${primary} session`);
   sessionLayerTerminal.dataset.session = peek.session;
   mountTerminal(sessionLayerTerminal, peek.session);
 }
@@ -893,10 +962,15 @@ function renderSessionLayer() {
  * (design-quick-returnable-document-search 5.1).
  */
 function syncLayerInertness() {
-  const covered = Boolean(state.documentPeek) || Boolean(state.goTo);
-  screen.toggleAttribute("inert", covered);
-  sessionLayer.toggleAttribute("inert", covered);
-  documentPeekLayer.toggleAttribute("inert", Boolean(state.goTo));
+  const goToOpen = Boolean(state.goTo);
+  const modalOpen = !modalLayer.hidden;
+  const documentPeekOpen = Boolean(state.documentPeek);
+  const sessionOpen = Boolean(state.sessionPeek);
+  screen.toggleAttribute("inert", goToOpen || modalOpen || documentPeekOpen || sessionOpen);
+  sessionLayer.toggleAttribute("inert", goToOpen || modalOpen || documentPeekOpen);
+  documentPeekLayer.toggleAttribute("inert", goToOpen || modalOpen);
+  goToLayer.toggleAttribute("inert", modalOpen);
+  modalLayer.removeAttribute("inert");
 }
 
 /**
@@ -1427,13 +1501,14 @@ bindShellEvents({
   },
   launch: {
     syncDescribeDraft, launchSelection, launchRequestFields, syncLaunchDraft, activateLaunchStep, removeLaunchStep,
-    addLaunchStep, launchIsPipeline, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, saveHarnesses, startPipeline,
+    addLaunchStep, launchIsPipeline, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, saveHarnesses, startPipeline,
     savePipelineStep, appendPipelineSteps, launchOptionsFor, pipelineRecordForGoal, loadLaunchStep,
-    DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
+    DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET, DEFAULT_AGENTS_TARGET,
   },
   documents: {
     openDocument, navigateDocumentHistory, openVaultLink, openDocumentHeading, openCommentComposer, setCommentScope,
-    editComment, cancelCommentComposer, submitCommentComposer, removeComment, stepComment, saveVisibleIdea,
+    cancelCommentComposer, submitCommentComposer, commentIdentity, syncCommentCursor,
+    activeCommentIdentity, focusCommentIdentity, editActiveComment, replyToActiveComment, resolveActiveComment, stepComment, saveVisibleIdea,
     notifyDocumentComments, refreshDocument, leaveReader, updateSelectionCommentButton, openReaderAgent,
     closeDocumentPeek, promoteDocumentPeek, retryDocumentPeek, navigateDocumentPeekHistory, openPeekLink, openPeekHeading,
     leaveQuickPath,
@@ -1464,4 +1539,4 @@ startRebuildRefresh(() => state.rebuilding, refresh);
 
 // DOM-level exports keep tests on the module boundary instead of rebuilding
 // the old order-dependent browser globals.
-export { areaMapView, areaQuestions, markdownHeadings, markdownToHtml, refresh };
+export { areaMapView, areaQuestions, markdownHeadings, markdownToHtml, refresh, showDescribe };

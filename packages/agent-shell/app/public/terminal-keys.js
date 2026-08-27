@@ -14,6 +14,7 @@
    * wrong, or an empty string to leave the key to xterm.
    */
   function terminalKeySequence(event) {
+    if (event.isComposing || ["Dead", "Process", "Unidentified"].includes(event.key)) return "";
     if (event.type !== "keydown" || event.key !== "Enter") return "";
     if (!event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return "";
     return SHIFT_ENTER;

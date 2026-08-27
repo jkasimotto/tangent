@@ -27,31 +27,39 @@ export async function settle(window, turns = 3) {
  * Renders the Work screen for one fixture and returns its window. `posts`
  * collects every mutation the page sends, so an action proof needs no server.
  */
-export async function bootWorkTable(fixture, { workFilter = "active", width = 1440, areaFocus = [] } = {}) {
+export async function bootWorkTable(fixture, { workFilter = "active", width = 1440, areaFocus = [], launchOptions = null, harnessRegistry = null } = {}) {
   const html = await readFile(path.join(here, "public", "shell.html"), "utf8");
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://agent-shell.test/" });
   const { window } = dom;
   window.setInterval = () => 0;
+  window.structuredClone = globalThis.structuredClone;
   window.HTMLCanvasElement.prototype.getContext = () => null;
   window.localStorage.setItem("agent-shell.work-filter", workFilter);
   if (areaFocus.length) window.localStorage.setItem(AREA_FOCUS_KEY, JSON.stringify({ schema: AREA_FOCUS_SCHEMA, areas: areaFocus }));
   Object.defineProperty(window, "innerWidth", { value: width, configurable: true });
   const posts = [];
+  const gets = [];
   window.fetch = async (url, options = {}) => {
-    const pathname = new URL(url, window.location.href).pathname;
+    const requestUrl = new URL(url, window.location.href);
+    const pathname = requestUrl.pathname;
     if (options.method === "POST") {
       posts.push({ path: pathname, body: JSON.parse(options.body ?? "{}") });
       return jsonResponse({ ok: true });
     }
+    gets.push(requestUrl.href);
     if (pathname === "/api/sessions") {
       return jsonResponse({ boot: "boot-1", caffeinate: false, pipelines: fixture.pipelines, sessions: fixture.sessions, brains: fixture.brains });
     }
     if (pathname === "/api/programs") return jsonResponse({ programs: [], errors: [], areas: [], liveCount: 0 });
+    if (pathname === "/api/launch/options" && launchOptions) {
+      return jsonResponse(typeof launchOptions === "function" ? launchOptions(requestUrl) : launchOptions);
+    }
+    if (pathname === "/api/harnesses" && harnessRegistry) return jsonResponse({ registry: harnessRegistry });
     return jsonResponse(fixture.vault);
   };
   window.eval(bundle);
   await settle(window);
-  return { window, document: window.document, posts };
+  return { window, document: window.document, posts, gets };
 }
 
 /** Presses one key on the focused element, as a browser does. */

@@ -10,14 +10,18 @@ export function createTerminalController({ state, showToast }) {
   let terminalSession = "";
   let terminalSelection = null;
   let terminalReconnectTimer = null;
+  let terminalMeasureFrame = null;
   let terminalGeneration = 0;
   let fitTerminal = null;
+  let reportedSize = "";
 
   /** Disposes the mounted terminal and its transport. */
   function disposeTerminal() {
     terminalGeneration += 1;
     window.clearTimeout(terminalReconnectTimer);
     terminalReconnectTimer = null;
+    if (terminalMeasureFrame !== null) window.cancelAnimationFrame?.(terminalMeasureFrame);
+    terminalMeasureFrame = null;
     terminalSelection?.dispose();
     terminalSelection = null;
     terminalResizeObserver?.disconnect();
@@ -31,6 +35,7 @@ export function createTerminalController({ state, showToast }) {
     terminal = null;
     terminalFit = null;
     fitTerminal = null;
+    reportedSize = "";
     terminalSession = "";
   }
 
@@ -61,7 +66,6 @@ export function createTerminalController({ state, showToast }) {
     terminalSession = sessionName;
     const generation = ++terminalGeneration;
     terminal = new Terminal({
-      convertEol: true,
       cursorBlink: false,
       fontFamily: '"SFMono-Regular", Menlo, Consolas, monospace',
       fontSize: 14,
@@ -84,12 +88,23 @@ export function createTerminalController({ state, showToast }) {
       host,
       clipboard: navigator.clipboard,
     });
-    /** Fits xterm and reports its current dimensions to tmux. */
+    /** Fits a measured xterm and reports each new size to tmux once. */
     const fit = () => {
       try {
+        const proposed = terminalFit.proposeDimensions();
+        if (!Number.isInteger(proposed?.cols) || proposed.cols < 1 || !Number.isInteger(proposed?.rows) || proposed.rows < 1) return null;
         terminalFit.fit();
-        if (terminalSocket?.readyState === WebSocket.OPEN) terminalSocket.send(`\x00resize:${terminal.cols}x${terminal.rows}`);
-      } catch {}
+        if (terminal.cols !== proposed.cols || terminal.rows !== proposed.rows) return null;
+        const measured = { cols: terminal.cols, rows: terminal.rows };
+        const size = `${measured.cols}x${measured.rows}`;
+        if (terminalSocket?.readyState === WebSocket.OPEN && size !== reportedSize) {
+          terminalSocket.send(`\x00resize:${size}`);
+          reportedSize = size;
+        }
+        return measured;
+      } catch {
+        return null;
+      }
     };
     fitTerminal = fit;
     terminalResizeObserver = new ResizeObserver(fit);
@@ -97,42 +112,54 @@ export function createTerminalController({ state, showToast }) {
     let reconnectAttempt = 0;
     let connectionWasLost = false;
     /** Connects this stable xterm instance to a replaceable transport. */
-    const connect = () => {
+    const connect = (measured) => {
       if (generation !== terminalGeneration || terminalSession !== sessionName) return;
       const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-      const socket = new WebSocket(`${protocol}//${location.host}/term?session=${encodeURIComponent(sessionName)}&cols=${terminal.cols}&rows=${terminal.rows}`);
+      const attachedSize = `${measured.cols}x${measured.rows}`;
+      const socket = new WebSocket(`${protocol}//${location.host}/term?session=${encodeURIComponent(sessionName)}&cols=${measured.cols}&rows=${measured.rows}`);
       terminalSocket = socket;
       socket.binaryType = "arraybuffer";
       socket.onmessage = (event) => terminal?.write(typeof event.data === "string" ? event.data : new Uint8Array(event.data));
       socket.onopen = () => {
         if (terminalSocket !== socket) return;
         reconnectAttempt = 0;
+        reportedSize = attachedSize;
         fit();
-        if (connectionWasLost) terminal?.write("\r\n\x1b[90m[terminal reconnected]\x1b[0m\r\n");
+        if (connectionWasLost) showToast("Terminal reconnected.");
         connectionWasLost = false;
       };
       socket.onclose = (event) => {
         if (generation !== terminalGeneration || terminalSocket !== socket) return;
         terminalSocket = null;
         if (event.code === 4404) {
-          terminal?.write("\r\n\x1b[90m[session ended]\x1b[0m\r\n");
+          showToast("The tmux session ended.");
           return;
         }
-        if (!connectionWasLost) terminal?.write("\r\n\x1b[90m[terminal connection lost; reconnecting]\x1b[0m\r\n");
+        if (!connectionWasLost) showToast("Terminal connection lost. Reconnecting…");
         connectionWasLost = true;
         const delay = Math.min(5_000, 250 * (2 ** Math.min(reconnectAttempt, 5)));
         reconnectAttempt += 1;
-        terminalReconnectTimer = window.setTimeout(connect, delay);
+        terminalReconnectTimer = window.setTimeout(connectWhenMeasured, delay);
       };
     };
-    // The overlay becomes visible in the same paint that mounts xterm. Wait
-    // for layout before the first connection, so tmux never receives xterm's
-    // 80x24 construction default as the browser client size.
-    window.setTimeout(() => {
-      if (generation !== terminalGeneration || terminalSession !== sessionName) return;
-      fit();
-      connect();
-    }, 0);
+    /** Opens the transport only after FitAddon can measure real cell dimensions. */
+    function connectWhenMeasured() {
+      terminalReconnectTimer = null;
+      if (generation !== terminalGeneration || terminalSession !== sessionName || terminalSocket || terminalMeasureFrame !== null) return;
+      /** Measures terminal cells until FitAddon can propose valid dimensions. */
+      const measure = () => {
+        terminalMeasureFrame = null;
+        if (generation !== terminalGeneration || terminalSession !== sessionName || terminalSocket) return;
+        const measured = fit();
+        if (measured) {
+          connect(measured);
+          return;
+        }
+        terminalMeasureFrame = window.requestAnimationFrame?.(measure) ?? null;
+      };
+      terminalMeasureFrame = window.requestAnimationFrame?.(measure) ?? null;
+    }
+    connectWhenMeasured();
     terminal.onData((data) => {
       terminalSelection?.noteInput();
       if (terminalSocket?.readyState === WebSocket.OPEN) terminalSocket.send(data);

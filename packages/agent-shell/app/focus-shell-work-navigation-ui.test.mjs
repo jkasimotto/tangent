@@ -272,6 +272,8 @@ test("the live shell restores context, defines work with an agent, and organizes
   await settle(window);
 
   assert.ok(window.document.querySelector(".work-page"), "the desk shows the Work page");
+  assert.equal(window.document.querySelector("[data-show-areas]"), null, "Work no longer carries the Browse Areas toolbar route");
+  assert.equal(window.document.querySelector("[data-describe-work]"), null, "Work no longer carries the Describe work toolbar route");
   assert.equal(window.document.querySelectorAll(".work-table tbody").length, 2);
   // The For you strip, the Dock badge, and every inferred ask are gone.
   // A Question is a quiet count on its Area header, and nothing else on Work
@@ -321,19 +323,12 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.match(window.document.querySelectorAll(".work-table tbody")[1].textContent, /Tangent/);
   assert.equal(window.document.querySelector(".area-desk-section.documents"), null, "the Documents section left the work tab");
   assert.equal(window.document.querySelectorAll(".desk-goal.subgoal").length, 1);
-  assert.equal(window.document.querySelector("[data-work-filter='active']").getAttribute("aria-pressed"), "true");
-  click(window, "[data-work-filter='active']");
-  assert.equal(window.localStorage.getItem("agent-shell.work-filter"), "active");
-  assert.equal(window.document.querySelectorAll(".work-table tbody").length, 2, "Current includes live work and reviewed work awaiting acceptance");
+  assert.equal(window.document.querySelector("[data-work-filter]"), null, "Work has no Current/Planned mode switch");
+  assert.equal(window.document.querySelectorAll(".work-table tbody").length, 2, "Work includes live and reviewed work together");
   assert.match(window.document.querySelector("#screen").textContent, /UX Product Vision/);
   assert.match(window.document.querySelector("#screen").textContent, /Waiting/, "the pill is one word now; the duration is on the facts line");
   assert.equal(window.document.querySelectorAll(".desk-goal.subgoal").length, 1);
-  assert.match(window.document.querySelector("#screen").textContent, /Define Live Edit collaboration/, "Current keeps reviewed work that awaits acceptance");
-  click(window, "[data-work-filter='inactive']");
-  assert.equal(window.document.querySelectorAll(".work-table tbody").length, 0);
-  assert.match(window.document.querySelector("#screen").textContent, /No unstarted Goals/);
-  assert.doesNotMatch(window.document.querySelector(".work-table")?.textContent ?? "", /UX Product Vision/, "the planned Goal leaves the Goal table while its open Question remains actionable above it");
-  click(window, "[data-work-filter='active']");
+  assert.match(window.document.querySelector("#screen").textContent, /Define Live Edit collaboration/, "reviewed work remains visible until accepted");
   assert.equal(window.document.querySelector(".desk-program"), null, "Operations stay on Area surfaces, not the Goal table");
   assert.equal(window.document.querySelector("#work-tab").getAttribute("aria-current"), "page");
   assert.equal(window.document.querySelector("#areas-tab").hidden, true);
@@ -383,7 +378,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.equal(window.document.querySelectorAll(".work-table tbody").length, 1, "typing filters the existing work table");
   assert.match(window.document.querySelector(".work-table tbody").textContent, /Tangent/);
   assert.equal(window.document.querySelector(".document-result"), null, "work filtering never switches to Document results");
-  assert.ok(window.document.querySelector(".work-filter"), "Current and Planned remain visible while filtering");
+  assert.ok(window.document.querySelector("[data-work-commands]"), "Commands remain visible while filtering");
   const joinedAreaSearch = window.document.querySelector("#work-search");
   joinedAreaSearch.value = "liveedit";
   joinedAreaSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
@@ -395,7 +390,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   clearedSearch.value = "";
   clearedSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
 
-  click(window, "[data-describe-work]");
+  window.showDescribe();
   const describeArea = window.document.querySelector("#describe-area");
   describeArea.value = "otto/dnd";
   describeArea.dispatchEvent(new window.Event("input", { bubbles: true }));
@@ -425,7 +420,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.equal(window.localStorage.getItem("agent-shell.describe-session"), "dnd--describe-scene-flow");
 
   click(window, "[data-close-session-layer]");
-  assert.equal(window.document.querySelector("[data-describe-work]").textContent.trim(), "Describe work");
+  assert.equal(window.document.querySelector("[data-describe-work]"), null);
   const workDefinition = window.document.querySelector(".desk-definition");
   assert.ok(workDefinition, window.document.querySelector("#screen").textContent);
   assert.match(workDefinition.closest("tbody").textContent, /D&D/);
@@ -435,7 +430,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   click(window, "[data-select-work-definition='dnd--describe-scene-flow']");
   assert.equal(window.document.querySelector("#session-layer-terminal").dataset.session, "dnd--describe-scene-flow");
   click(window, "[data-close-session-layer]");
-  click(window, "[data-describe-work]");
+  window.showDescribe();
   assert.ok(window.document.querySelector("[data-describe-work-form]"));
   assert.equal(window.document.querySelector("#describe-work").value, "");
   const secondDescription = window.document.querySelector("#describe-work");
@@ -449,7 +444,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.match(window.document.querySelector("#screen").textContent, /Make the scene flow reliable/);
   assert.match(window.document.querySelector("#screen").textContent, /Define ladder authoring/);
   assert.match(window.document.querySelector("#screen").textContent, /Agent working/);
-  click(window, "[data-describe-work]");
+  window.showDescribe();
   const manualArea = window.document.querySelector("#describe-area");
   manualArea.value = "neara/hackathon/live-edit";
   manualArea.dispatchEvent(new window.Event("input", { bubbles: true }));
@@ -590,6 +585,7 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.ok(posts.some((entry) => entry.path === "/api/goals/edit" && entry.body.file === goal.file && entry.body.status === "dropped" && entry.body.reason === "A smaller goal replaced this work."));
 
   click(window, `[data-complete-goal='${subgoal.file}']`);
+  click(window, "[data-modal-confirm]");
   await settle(window);
   assert.ok(posts.some((entry) => entry.path === "/api/goals/edit" && entry.body.file === subgoal.file && entry.body.status === "done"));
   assert.ok(window.document.querySelector(".work-page"), "the desk shows the Work page");

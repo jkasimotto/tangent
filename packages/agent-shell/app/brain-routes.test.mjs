@@ -33,7 +33,7 @@ test("brain routes dispatch by method and path", async () => {
   assert.equal(await routes.handle(request("GET"), response(), new URL("http://shell/api/unknown")), false);
 });
 
-test("brain start rejects retired overrides and carries the displayed launch token", async () => {
+test("brain start rejects raw commands and carries a validated one-attempt choice with the displayed launch token", async () => {
   let received;
   const routes = createBrainRoutes({
     /** Records one start request and returns a stale-launch response. */
@@ -44,10 +44,35 @@ test("brain start rejects retired overrides and carries the displayed launch tok
   assert.equal(retired.status, 400);
   assert.equal(retired.body.code, "override-retired");
   const stale = response();
-  await routes.handle(request("POST", { area: "otto/tangent", instruction: "Work.", expectedLaunch: "codex/luna/low" }), stale, new URL("http://shell/api/brains/start"));
+  await routes.handle(request("POST", {
+    area: "otto/tangent",
+    instruction: "Work.",
+    choice: { harness: "codex", model: "luna", effort: "low" },
+    expectedLaunch: "codex/luna/low",
+  }), stale, new URL("http://shell/api/brains/start"));
   assert.equal(stale.status, 409);
   assert.equal(stale.body.code, "launch-changed");
-  assert.deepEqual(received.options, { instruction: "Work.", expectedLaunch: "codex/luna/low", resume: false });
+  assert.deepEqual(received.options, {
+    instruction: "Work.",
+    expectedLaunch: "codex/luna/low",
+    resume: false,
+    choice: { harness: "codex", model: "luna", effort: "low" },
+  });
+});
+
+test("brain start rejects malformed or command-bearing choices before dispatch", async () => {
+  let calls = 0;
+  const routes = createBrainRoutes({
+    /** Must not receive an invalid launch identity. */
+    async start() { calls += 1; return { status: 200, session: "unexpected" }; },
+  });
+  for (const choice of ["codex", {}, { harness: "codex", command: "codex --danger" }, { harness: "codex", model: "" }]) {
+    const output = response();
+    await routes.handle(request("POST", { area: "otto/tangent", choice }), output, new URL("http://shell/api/brains/start"));
+    assert.equal(output.status, 400);
+    assert.equal(output.body.code, "invalid-choice");
+  }
+  assert.equal(calls, 0);
 });
 
 test("brain stop carries the Area, attempt, and idempotency key", async () => {

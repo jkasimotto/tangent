@@ -1,5 +1,21 @@
 import { readJson, sendJson } from "./http-json.mjs";
 
+/** Accepts only the named registry identity used for a one-attempt launch. */
+function normalizedBrainChoice(value) {
+  if (value === null || value === undefined) return { choice: null };
+  if (typeof value !== "object" || Array.isArray(value)) return { error: "Brain launch choice must be an object" };
+  const unsupported = Object.keys(value).find((key) => !["harness", "model", "effort"].includes(key));
+  if (unsupported) return { error: `Brain launch choice contains unsupported field "${unsupported}"` };
+  if (typeof value.harness !== "string" || !value.harness.trim()) return { error: "Brain launch choice requires a harness" };
+  const choice = { harness: value.harness.trim() };
+  for (const key of ["model", "effort"]) {
+    if (value[key] === null || value[key] === undefined) continue;
+    if (typeof value[key] !== "string" || !value[key].trim()) return { error: `Brain launch choice ${key} must be a non-empty string` };
+    choice[key] = value[key].trim();
+  }
+  return { choice };
+}
+
 /** Creates the HTTP route table for Area-brain operations. */
 export function createBrainRoutes(operations) {
   const routes = new Map([
@@ -27,8 +43,13 @@ export function createBrainRoutes(operations) {
   /** Starts, resumes, or reattaches an Area brain. */
   async function start(request, response) {
     const body = await readJson(request);
-    if (body.choice || String(body.command ?? "").trim()) {
-      sendJson(response, 400, { code: "override-retired", error: "Brain launch overrides are retired. Change the Area Brain configuration, then refresh." });
+    if (String(body.command ?? "").trim()) {
+      sendJson(response, 400, { code: "override-retired", error: "Raw Brain launch commands are retired. Choose a registered harness, model, and effort." });
+      return;
+    }
+    const selected = normalizedBrainChoice(body.choice);
+    if (selected.error) {
+      sendJson(response, 400, { code: "invalid-choice", error: selected.error });
       return;
     }
     const area = String(body.area ?? "");
@@ -38,6 +59,7 @@ export function createBrainRoutes(operations) {
       instruction: String(body.instruction ?? ""),
       expectedLaunch: String(body.expectedLaunch ?? ""),
       resume,
+      ...(selected.choice ? { choice: selected.choice } : {}),
     });
     console.info(`[brain start] result area=${JSON.stringify(area)} status=${result.status} session=${JSON.stringify(result.session ?? "")} error=${JSON.stringify(result.error ?? "")}`);
     sendJson(response, result.status, result.status === 200

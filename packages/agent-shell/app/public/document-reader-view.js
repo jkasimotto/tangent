@@ -50,12 +50,25 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
     const count = state.document?.comments?.length ?? 0;
     const nav = count
       ? `<div class="document-comment-nav" role="group" aria-label="Comments">
-          <button type="button" data-comment-step="-1" aria-label="Previous comment" title="Previous comment (⌘⌥P)">‹</button>
+          <button type="button" data-comment-step="-1" aria-label="Previous comment" aria-keyshortcuts="Shift+N" title="Previous comment (N)">‹</button>
           <span aria-live="polite">${count} comment${count === 1 ? "" : "s"}</span>
-          <button type="button" data-comment-step="1" aria-label="Next comment" title="Next comment (⌘⌥N)">›</button>
+          <button type="button" data-comment-step="1" aria-label="Next comment" aria-keyshortcuts="n" title="Next comment (n)">›</button>
         </div>`
       : "";
-    return `${nav}<button class="reader-comment-action" type="button" data-comment-new title="Comment on the selected words or this section (⌘⌥M)">Comment <kbd>⌘⌥M</kbd></button>`;
+    return `${nav}<button class="reader-comment-action" type="button" data-comment-new aria-keyshortcuts="c" title="Comment on the selected words or this section (c)">Comment <kbd>c</kbd></button>`;
+  }
+
+  /** Read-only comment movement and the visibly unavailable write action in the quick reader. */
+  function peekCommentControls(source) {
+    const count = source?.comments?.length ?? 0;
+    const nav = count
+      ? `<div class="document-comment-nav document-peek-comment-nav" role="group" aria-label="Comments">
+          <button type="button" data-document-peek-comment-step="-1" aria-label="Previous comment" aria-keyshortcuts="Shift+N" title="Previous comment (N)">‹</button>
+          <span>${count}</span>
+          <button type="button" data-document-peek-comment-step="1" aria-label="Next comment" aria-keyshortcuts="n" title="Next comment (n)">›</button>
+        </div>`
+      : "";
+    return `${nav}<button class="quiet-button document-peek-comment-disabled" type="button" disabled aria-keyshortcuts="c" title="Comment is available in the full reader (c)">Comment <kbd>c</kbd></button>`;
   }
 
   /** Renders the quiet wide-screen page outline. */
@@ -112,8 +125,8 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
       <header class="document-reader-toolbar">
         <div class="document-reader-route">
           <div class="document-history-controls" aria-label="Reading history">
-            <button type="button" data-document-history="back" aria-label="Previous Document" title="Previous Document" ${canGoBack ? "" : "disabled"}>←</button>
-            <button type="button" data-document-history="forward" aria-label="Next Document" title="Next Document" ${canGoForward ? "" : "disabled"}>→</button>
+            <button type="button" data-document-history="back" aria-label="Previous Document" aria-keyshortcuts="Shift+H" title="Previous Document (H)" ${canGoBack ? "" : "disabled"}>←</button>
+            <button type="button" data-document-history="forward" aria-label="Next Document" aria-keyshortcuts="Shift+L" title="Next Document (L)" ${canGoForward ? "" : "disabled"}>→</button>
           </div>
           ${areaPath(state.document?.area)}
           <span class="document-route-separator" aria-hidden="true">/</span>
@@ -122,6 +135,7 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
         <div class="document-reader-actions">
           ${documentOutlineMenu()}
           ${documentCommentControls()}
+          <button class="document-keys-action" type="button" data-document-keys aria-keyshortcuts="Shift+/" title="Document reading keys (?)">Keys <kbd>?</kbd></button>
           ${brain ? `<details class="reader-brain-actions">
             <summary title="${escapeHtml(notifyLabel)}"><span>${escapeHtml(notifyLabel)}</span><i aria-hidden="true">⌄</i></summary>
             <div class="reader-brain-actions-popover" role="group" aria-label="Brain actions">
@@ -130,6 +144,7 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
             </div>
           </details>` : `<button class="reader-notify-brain" type="button" title="${escapeHtml(notifyTitle)}" disabled>${escapeHtml(notifyLabel)}</button>`}
           ${goal ? `<button class="reader-agent-action" type="button" data-open-reader-agent>Open agent</button>` : ""}
+          <button class="reader-close-action" type="button" data-leave-document aria-keyshortcuts="Escape" title="Leave the Document reader (Esc)">Close <kbd>esc</kbd></button>
         </div>
       </header>`;
   }
@@ -150,7 +165,7 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
         <div class="document-content">${markdownToHtml(source.text, { comments: source.comments ?? [], composer: readOnly ? null : state.commentComposer, readOnly, baseFile: source.file })}</div>
         <p class="document-source">Source: ${escapeHtml(source.file)}</p>
       </article>
-      ${readOnly ? "" : `<button class="selection-comment-button" type="button" data-comment-new hidden>Comment <kbd>⌘⌥M</kbd></button>`}`;
+      ${readOnly ? "" : `<button class="selection-comment-button" type="button" data-comment-new hidden aria-keyshortcuts="c" title="Comment on the selected words (c)">Comment <kbd>c</kbd></button>`}`;
   }
 
   /**
@@ -170,27 +185,29 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
           <p>${escapeHtml(peek.error)}</p>
           <div class="document-peek-error-actions">
             <button class="primary-button" type="button" data-retry-document-peek data-peek-key="retry">Retry</button>
-            <button class="quiet-button" type="button" data-close-document-peek data-peek-key="close-error">Close <kbd>esc</kbd></button>
+            <button class="quiet-button" type="button" data-close-document-peek data-peek-key="close-error" aria-keyshortcuts="Escape" title="Close quick reader (Esc)">Close <kbd>esc</kbd></button>
           </div>
         </div>`
       : loaded
-        ? `<div class="document-peek-scroll">${renderDocumentArticle(loaded, { readOnly: true })}</div>`
+        ? `<div class="document-peek-scroll" tabindex="-1" aria-label="Quick Document reading surface">${renderDocumentArticle(loaded, { readOnly: true })}</div>`
         : `<div class="loading" role="status">Opening ${escapeHtml(title)}…</div>`;
     return `
       <section class="document-peek-surface" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}" tabindex="-1">
         <header class="document-peek-header">
           <div class="document-peek-route">
             <div class="document-history-controls" aria-label="Reading history">
-              <button type="button" data-document-peek-history="back" data-peek-key="back" aria-label="Previous Document" title="Previous Document" ${canGoBack ? "" : "disabled"}>←</button>
-              <button type="button" data-document-peek-history="forward" data-peek-key="forward" aria-label="Next Document" title="Next Document" ${canGoForward ? "" : "disabled"}>→</button>
+              <button type="button" data-document-peek-history="back" data-peek-key="back" aria-label="Previous Document" aria-keyshortcuts="Shift+H" title="Previous Document (H)" ${canGoBack ? "" : "disabled"}>←</button>
+              <button type="button" data-document-peek-history="forward" data-peek-key="forward" aria-label="Next Document" aria-keyshortcuts="Shift+L" title="Next Document (L)" ${canGoForward ? "" : "disabled"}>→</button>
             </div>
             ${areaPath(area)}
             <span class="document-route-separator" aria-hidden="true">/</span>
             <strong class="document-peek-title">${escapeHtml(title)}</strong>
           </div>
           <div class="document-peek-actions">
+            ${peekCommentControls(loaded)}
+            <button class="quiet-button document-keys-action" type="button" data-document-keys aria-keyshortcuts="Shift+/" title="Document reading keys (?)">Keys <kbd>?</kbd></button>
             <button class="quiet-button" type="button" data-promote-document-peek data-peek-key="promote">Open full reader</button>
-            <button class="quiet-button" type="button" data-close-document-peek data-peek-key="close">Close <kbd>esc</kbd></button>
+            <button class="quiet-button" type="button" data-close-document-peek data-peek-key="close" aria-keyshortcuts="Escape" title="Close quick reader (Esc)">Close <kbd>esc</kbd></button>
           </div>
         </header>
         ${body}
@@ -204,7 +221,7 @@ export function createDocumentReaderView({ state, markdownToHtml, currentGoal, g
     return `
       <section class="document-reader">
         ${documentToolbar(goal)}
-        <div class="document-reader-scroll">
+        <div class="document-reader-scroll" tabindex="-1" aria-label="Document reading surface">
           <div class="document-reader-grid">
             ${renderDocumentArticle()}
             ${documentOutline()}

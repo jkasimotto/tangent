@@ -1,7 +1,7 @@
 import test from "node:test";
 import { assert, readFile, path, JSDOM, documentComments, areaMapView, shellBundle, here, goToCore, goalCardCore, askCore, settle, click, submit, openDocumentViaGoTo, jsonResponse } from "./focus-shell-ui-fixture.mjs";
 
-test("comments render as red blocks, save through the base-hash path with re-anchoring, and remove with undo", async () => {
+test("comments render as red blocks, save through the base-hash path with re-anchoring, and resolve canonically", async () => {
   const [html, script, commentsScript, mapCore] = await Promise.all([
     readFile(path.join(here, "public", "shell.html"), "utf8"),
     readFile(path.join(here, "public", "shell.js"), "utf8"),
@@ -30,6 +30,18 @@ test("comments render as red blocks, save through the base-hash path with re-anc
   });
   window.fetch = async (url, options = {}) => {
     const pathname = new URL(url, window.location.href).pathname;
+    if (pathname === "/api/document/resolve" && options.method === "POST") {
+      const body = JSON.parse(options.body);
+      const resolved = helper.resolveComment(text, body.prefix);
+      assert.equal(body.note, "Implemented the requested explanation.");
+      assert.equal("index" in body, false);
+      if (resolved.error) return { ok: false, status: resolved.matches?.length ? 409 : 404,
+        /** Test helper for json. */
+        async json() { return resolved; } };
+      text = resolved.text;
+      hash += 1;
+      return jsonResponse({ file: doc.file, comment: resolved.comment, remaining: helper.parseComments(text).length });
+    }
     if (pathname === "/api/document" && options.method === "POST") {
       const body = JSON.parse(options.body);
       if (conflictOnce) {
@@ -69,7 +81,10 @@ test("comments render as red blocks, save through the base-hash path with re-anc
   assert.equal(window.document.querySelector(".document-comment-mark").textContent, "clear words");
   assert.doesNotMatch(window.document.querySelector(".document-content").textContent, /\{>>|<<\}|\{==/);
   assert.match(window.document.querySelector(".document-comment-nav").textContent, /1 comment/);
-  assert.ok(window.document.querySelector(".document-comment-remove"), "the remove control is always drawn");
+  assert.equal(window.document.querySelector(".document-comment-body").tagName, "SPAN", "the comment body is readable text");
+  assert.ok(window.document.querySelector("[data-edit-comment][aria-keyshortcuts='e']"));
+  assert.ok(window.document.querySelector("[data-reply-comment][aria-keyshortcuts='r']"));
+  assert.ok(window.document.querySelector("[data-resolve-comment][aria-keyshortcuts='x']"));
   assert.ok(window.document.querySelector("[data-comment-new]"), "the Comment action is visible");
 
   // Next comment scrolls to and focuses the comment block.
@@ -114,19 +129,15 @@ test("comments render as red blocks, save through the base-hash path with re-anc
   assert.equal(window.document.querySelector("[data-comment-composer]"), null);
   assert.equal(saves.length, 1);
 
-  // Remove goes through the same save with Undo, and Undo puts the words back.
-  click(window, "[data-remove-comment='1']");
+  // Resolve uses the canonical route and requires a change note.
+  click(window, "[data-resolve-comment='1']");
+  await settle(window);
+  window.document.querySelector("[data-modal-input]").value = "Implemented the requested explanation.";
+  click(window, "[data-modal-confirm]");
   await settle(window);
   await settle(window);
-  assert.equal(saves.length, 2);
-  assert.equal(saves[1].summary, "removed a comment");
-  assert.doesNotMatch(saves[1].text, /Say why/);
-  assert.match(saves[1].text, /A long design with clear words here\./);
+  assert.equal(saves.length, 1, "resolve does not bypass the canonical route through a whole-Document save");
+  assert.doesNotMatch(text, /Say why/);
+  assert.match(text, /A long design with clear words here\./);
   assert.equal(window.document.querySelectorAll(".document-comment").length, 1);
-  click(window, "#toast .toast-action");
-  await settle(window);
-  await settle(window);
-  assert.equal(saves.length, 3);
-  assert.match(saves[2].text, /\{==clear words==\}\{>>Julian: Say why\.<<\}/);
-  assert.equal(window.document.querySelectorAll(".document-comment").length, 2);
 });

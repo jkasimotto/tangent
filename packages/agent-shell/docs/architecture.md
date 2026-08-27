@@ -26,7 +26,11 @@ Gateway and controller share one stable Agent Shell instance identity. The gatew
 `app/server.mjs` is the workflow-controller composition root. HTTP route modules parse transport input and map operation results. Stateful mechanisms live behind capability factories:
 
 - `launch-catalog.mjs`: harness registry and Area launch resolution and writes;
+- `brain-launch.mjs`: per-attempt Brain default or registry-choice resolution, stale-choice checks, and immutable launch snapshots;
 - `message-delivery.mjs`: cross-agent queue order, delivery, audit, retargeting, and brain-notice settlement;
+- `message-queue-store.mjs`: atomic persistence for generic `tangent agent send` messages until pane-presentation settlement;
+- `agent-context.mjs`: the read-only recovery projection from durable brain, Goal, and queue records, independent of harness screen recognition and session ownership;
+- `agent-recovery.mjs`: stable recovery events derived from passive pane state, persisted by the controller through the brain inbox;
 - `pane-observer.mjs`: tmux pane samples and derived agent state;
 - `observation-cache.mjs`: coalesced session refresh and last-known-good fallback;
 - `session-ownership.mjs`: runtime identity, live tmux ownership, stale ownership evidence, and guarded termination;
@@ -39,7 +43,9 @@ The browser entry `app/public/shell.js` composes feature ports. `shell-coordinat
 
 Private module and controller-loopback contracts can change with all in-repository callers. The public loopback URL, Vault Markdown, Git provenance, tmux bindings, and persisted workflow schemas remain compatible. The runtime ownership key remains `@tangent_agent_shell_instance`. See ADR-0031, ADR-0032, and ADR-0036.
 
-The browser stacks its surfaces in one fixed order: `#screen`, the session layer, the quick Document layer, the modal layer, and the `Go to` finder. The key order matches that visual order, so a command for a lower layer never reaches past a visible destination. `Go to` opens a Document in the read-only quick layer above the current screen or session, which is not repainted or unmounted while the layer is open; `Open full reader` is the one control that leaves the quick path (design record: design-quick-returnable-document-search).
+The browser gives each key to one visible context. A blocking modal wins, then Go To, quick Document, terminal session, transient UI, staged Focus, text entry, and the current view. The terminal keeps every key except its visible `Command-J` leave action. Work and Document shortcuts cannot run behind it. See ADR-0038.
+
+`Go to` opens a Document in the read-only quick layer above the current screen or session. The lower surface stays mounted. `Open full reader` is the one control that leaves the quick path.
 
 The browser has one Area-based Work destination. Each exact Area has one logical brain identity. Its product lifecycle is active or inactive. Runtime attempts, health, waiting, and recovery do not change its visible author.
 
@@ -57,8 +63,16 @@ Area Focus orders attention; it removes nothing. Work renders the primary focuse
 
 A brain that is not live never wakes without Julian's words. The Work key opens the message box, and the send action starts a new brain from that message or wakes an inactive one with it. The message reaches the woken attempt as an unread notice. Only automatic recovery resumes with no message.
 
-A separate Planned view keeps unstarted Goals available. Work carries no human-assignee concept. A planned review closes routine work when the done condition holds.
+Each new brain attempt stores one complete `resolvedLaunch` snapshot on its generation. A user start or resume can select one registered harness, model, and effort for that attempt. The selection does not change the Area default. Reattachment keeps the live generation's launch, while automatic recovery and brain handover resolve the current Area default.
+
+One canonical exact-Area lifecycle queue serializes brain start, automatic recovery, handover, stop, and reconciliation. Each operation rereads the brain record after it enters that queue. Reconciliation freshly inspects a current attempt created after its tmux snapshot before it can consume a recovery attempt. A stop fences the expected attempt, persists `pending` before termination, and retries `pending` or `incomplete` after interruption. Resume refuses an unsettled stop. An already-absent attempt needs the current instance's durable sidecar before logical stop can complete. A stale handover or recovery cannot resurrect the brain, and a live foreign or unmarked tmux session remains protected.
+
+Work shows every open Goal in one projection. Runtime and readiness remain row facts. Work carries no human-assignee concept. A planned review closes routine work when the done condition holds.
 One `area-goal-queue.v2` record controls both one-assignment and multi-assignment work. Each accepted worker handover adds one `worker-handover-receipt.v1` record to its assignment. The receipt links the worker, Goal, assignment, queue result, exact destination Area, and inbox notice. A receipt without a notice ID is a durable outbox item. Reconcile and exact retries use its stable source ID to produce one notice. A brain appends a designated review with `--kind review`. Without that flag, the queue stores an implementation assignment even when its instruction says review. Only a designated typed review can close routine work, and only when its Goal revision and evidence match the current record. A done condition that needs Julian, a physical test, or an external authority uses a revision-bound Request effect.
+
+Recovery is pull-based when terminal delivery fails. `GET /api/agents/context` rebuilds the current brain or worker prompt from durable records and returns current unread exact-Area brain notices. Worker recovery includes every Goal bound to the session. A Goal queue's ordered `extraFiles` remains authoritative when bindings later move. The rebuilt prompt repeats those co-assigned Goals in that order. The route does not require the session ownership marker and does not mutate workflow state. A read-only live-session check distinguishes an unassigned tmux shell from an unknown session. Reconcile records one source-ID-deduplicated brain notice when a bound running worker returns to its shell; it leaves the tmux session and queue assignment running for in-place harness recovery.
+
+Generic cross-agent messages use `agent-message-queue.v1`. The controller stores an exact resolved session and normalized message before it wakes or writes to the pane. It restores pending records in first-in, first-out order after a restart. Pane presentation settles the record. This boundary does not claim that the model read the message. See ADR-0039.
 
 Questions remain part of the native Area brain conversation. Every Question accepts free text. An optional allowlisted effect records durable intent before execution, runs once per revision, and stays actionable after failure.
 

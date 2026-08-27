@@ -1,4 +1,7 @@
 import { journalCaptureNeedsRetry, journalCaptureToast } from "./journal-capture-core.js";
+import { keyboardEventIsComposing, resolveKeyboardContext } from "./keyboard-context.js";
+import { documentReadingCommands, documentReadingScrollTarget, matchDocumentReadingCommand } from "./document-reading-commands.js";
+import { workCommandHelpRows, workCommandMatches } from "./work-commands.js";
 
 /** Binds browser events through capability-owned feature ports. */
 export function bindShellEvents({ shell, chrome, prompts, work, areas, programs, launch, documents }) {
@@ -32,18 +35,26 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   } = programs;
   const {
     syncDescribeDraft, launchSelection, launchRequestFields, syncLaunchDraft, activateLaunchStep, removeLaunchStep,
-    addLaunchStep, launchIsPipeline, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, saveHarnesses, startPipeline,
+    addLaunchStep, launchIsPipeline, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, saveHarnesses, startPipeline,
     savePipelineStep, appendPipelineSteps, launchOptionsFor, pipelineRecordForGoal, loadLaunchStep,
-    DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET,
+    DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET, DEFAULT_AGENTS_TARGET,
   } = launch;
   const {
     openDocument, navigateDocumentHistory, openVaultLink, openDocumentHeading, openCommentComposer, setCommentScope,
-    editComment, cancelCommentComposer, submitCommentComposer, removeComment, stepComment, saveVisibleIdea,
+    cancelCommentComposer, submitCommentComposer, commentIdentity, syncCommentCursor, activeCommentIdentity, focusCommentIdentity,
+    editActiveComment, replyToActiveComment, resolveActiveComment, stepComment, saveVisibleIdea,
     notifyDocumentComments, refreshDocument, leaveReader, updateSelectionCommentButton, openReaderAgent,
     closeDocumentPeek, promoteDocumentPeek, retryDocumentPeek, navigateDocumentPeekHistory, openPeekLink, openPeekHeading,
     leaveQuickPath,
   } = documents;
   const awakeButton = document.querySelector("#awake-button");
+  let documentPendingGTimer = null;
+  let keySheetPendingG = false;
+  let keySheetPendingGTimer = null;
+  let launchFocusObserver = null;
+  let launchReturnPoint = null;
+  let launchParentSurface = null;
+  let harnessReturnPoint = null;
 
   /** Returns from one worker agent to its exact Work or Document context. */
   function leaveGoalAgent() {
@@ -94,6 +105,231 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     return visibleCursorRows().find((row) => row.dataset.workCursor === state.workCursor) ?? visibleCursorRows()[0] ?? null;
   }
 
+  /** Returns the exact Area whose visible header owns commands for this row. */
+  function commandAreaForRow(row) {
+    const group = row?.closest?.("tbody[data-work-group]");
+    if (!group?.querySelector("[data-work-command='openBrain']")) return "";
+    return group.dataset.workGroup ?? "";
+  }
+
+  /** Finds one pointer action in the exact Area header that owns this row. */
+  function areaCommandPointer(row, selector) {
+    const group = row?.closest?.("tbody[data-work-group]");
+    if (!commandAreaForRow(row)) return null;
+    return group?.querySelector(selector) ?? null;
+  }
+
+  /** Moves the Work cursor between real Area headers, never synthetic groups. */
+  function moveAreaCursor(direction, row = cursorRow()) {
+    const allGroups = [...screen.querySelectorAll("tbody[data-work-group]")].filter((group) => !group.hidden);
+    const groups = allGroups.filter((group) => group.querySelector("[data-work-command='openBrain']"));
+    if (!groups.length) return false;
+    const currentGroup = row?.closest?.("tbody[data-work-group]");
+    const current = groups.indexOf(currentGroup);
+    let target;
+    if (current >= 0) target = groups[Math.max(0, Math.min(groups.length - 1, current + Math.sign(direction)))];
+    else {
+      const documentIndex = allGroups.indexOf(currentGroup);
+      const candidates = direction < 0
+        ? groups.filter((group) => allGroups.indexOf(group) < documentIndex)
+        : groups.filter((group) => allGroups.indexOf(group) > documentIndex);
+      target = direction < 0 ? candidates.at(-1) : candidates[0];
+      target ??= direction < 0 ? groups[0] : groups.at(-1);
+    }
+    return setWorkCursor(target?.querySelector(".work-group-row[data-work-cursor^='area:']"));
+  }
+
+  /** Captures the semantic browser position that a child surface must restore. */
+  function captureNavigationPoint(element = document.activeElement) {
+    const focus = element?.closest?.("[data-focus-key]") ?? document.activeElement?.closest?.("[data-focus-key]");
+    return {
+      view: state.view,
+      workCursor: state.workCursor,
+      focusKey: focus?.dataset.focusKey ?? "",
+      scrollTop: screen.scrollTop,
+    };
+  }
+
+  /** Restores an exact opener, with the Work cursor as the durable fallback. */
+  function restoreNavigationPoint(point) {
+    if (!point) return;
+    window.setTimeout(() => {
+      if (point.view === state.view && Number.isFinite(point.scrollTop)) screen.scrollTop = point.scrollTop;
+      const exact = point.focusKey
+        ? [...screen.querySelectorAll("[data-focus-key]")].find((item) => item.dataset.focusKey === point.focusKey)
+        : null;
+      const row = state.view === "work"
+        ? [...screen.querySelectorAll("[data-work-cursor]")].find((item) => item.dataset.workCursor === (point.workCursor || state.workCursor))
+        : null;
+      (exact ?? row?.querySelector("[data-work-row-title], [data-work-cursor-control]") ?? workTab)?.focus?.({ preventScroll: true });
+    }, 0);
+  }
+
+  /** Remembers one launch opener until that complete chooser closes. */
+  function rememberLaunchReturn(trigger) {
+    launchReturnPoint ??= captureNavigationPoint(trigger);
+  }
+
+  /** Stops a pending request to focus controls created by an async launch load. */
+  function stopLaunchFocusRequest() {
+    launchFocusObserver?.disconnect?.();
+    launchFocusObserver = null;
+  }
+
+  /** Focuses the useful first control after the chooser and its options exist. */
+  function requestLaunchFocus(preference = "auto") {
+    stopLaunchFocusRequest();
+    /** Tries to focus the requested launch control after one paint. */
+    const attempt = () => {
+      const popover = screen.querySelector("[data-launch-popover]");
+      if (!popover) return false;
+      if (state.launch.loading) {
+        popover.focus?.({ preventScroll: true });
+        return false;
+      }
+      const active = document.activeElement;
+      if (preference === "auto" && popover.contains(active) && active !== popover) return true;
+      const choice = popover.querySelector("[data-launch-column='harness'] .launch-option.selected")
+        ?? popover.querySelector("[data-launch-column='harness'] .launch-option");
+      const summaryKind = String(preference).startsWith("default:") ? preference.slice("default:".length) : "";
+      const summary = summaryKind
+        ? popover.querySelector(`[data-default-agent-edit='${summaryKind}']`)
+        : popover.querySelector("[data-default-agent-edit]");
+      const exact = String(preference).startsWith("key:")
+        ? [...popover.querySelectorAll("[data-focus-key]")].find((item) => item.dataset.focusKey === preference.slice("key:".length))
+        : null;
+      let candidate;
+      if (preference === "summary" || summaryKind) candidate = summary;
+      else if (exact) candidate = exact;
+      else if (preference === "choices") candidate = choice;
+      else if (state.launchTarget === DEFAULT_AGENTS_TARGET && !state.defaultAgents.editing) candidate = summary;
+      else candidate = choice ?? popover.querySelector("textarea, input, select, button:not([disabled])");
+      (candidate ?? popover).focus?.({ preventScroll: true });
+      return Boolean(candidate);
+    };
+    if (attempt()) return;
+    launchFocusObserver = new window.MutationObserver(() => {
+      if (!attempt()) return;
+      stopLaunchFocusRequest();
+    });
+    launchFocusObserver.observe(screen, { childList: true, subtree: true });
+    window.setTimeout(stopLaunchFocusRequest, 2500);
+  }
+
+  /** Owns keyboard movement inside the shared brain, Goal, and defaults chooser. */
+  function handleLaunchPopoverKey(event) {
+    const popover = screen.querySelector("[data-launch-popover]");
+    if (!popover) return false;
+    const active = event.target;
+    const stops = [...popover.querySelectorAll("button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex='0']")];
+    if (event.key === "Tab") {
+      if (!stops.length) {
+        event.preventDefault();
+        event.stopPropagation();
+        popover.focus?.({ preventScroll: true });
+        return true;
+      }
+      const index = stops.indexOf(document.activeElement);
+      const next = index < 0
+        ? event.shiftKey ? stops.length - 1 : 0
+        : (index + (event.shiftKey ? -1 : 1) + stops.length) % stops.length;
+      event.preventDefault();
+      stops[next].focus({ preventScroll: true });
+      return true;
+    }
+    if (event.key === "Escape") return false;
+    if (active.closest?.("input, textarea, select, [contenteditable='true']")) return false;
+    const button = active.closest?.("button");
+    if (["Enter", " "].includes(event.key) && button && popover.contains(button)) {
+      event.preventDefault();
+      event.stopPropagation();
+      button.click();
+      return true;
+    }
+    const vertical = !event.ctrlKey && !event.metaKey && !event.altKey && ["j", "k", "ArrowDown", "ArrowUp"].includes(event.key);
+    const horizontal = !event.ctrlKey && !event.metaKey && !event.altKey && ["h", "l", "ArrowLeft", "ArrowRight"].includes(event.key);
+    if (!vertical && !horizontal) return false;
+    const columns = [...popover.querySelectorAll("[data-launch-column]")].filter((column) => column.querySelector(".launch-option"));
+    if (!columns.length) return false;
+    event.preventDefault();
+    event.stopPropagation();
+    const column = active.closest?.("[data-launch-column]");
+    let columnIndex = columns.indexOf(column);
+    if (horizontal) {
+      const delta = ["l", "ArrowRight"].includes(event.key) ? 1 : -1;
+      columnIndex = columnIndex < 0 ? (delta > 0 ? 0 : columns.length - 1) : Math.max(0, Math.min(columns.length - 1, columnIndex + delta));
+      const target = columns[columnIndex].querySelector(".launch-option.selected") ?? columns[columnIndex].querySelector(".launch-option");
+      target?.focus({ preventScroll: true });
+      return true;
+    }
+    const currentColumn = columnIndex >= 0 ? columns[columnIndex] : columns[0];
+    const choices = [...currentColumn.querySelectorAll(".launch-option")];
+    const current = choices.indexOf(button);
+    const delta = ["j", "ArrowDown"].includes(event.key) ? 1 : -1;
+    const index = current < 0 ? (delta > 0 ? 0 : choices.length - 1) : Math.max(0, Math.min(choices.length - 1, current + delta));
+    choices[index]?.focus({ preventScroll: true });
+    return true;
+  }
+
+  /** Restores the brain chooser under a nested defaults editor. */
+  function restoreLaunchParentSurface() {
+    const parent = launchParentSurface;
+    if (!parent) return false;
+    launchParentSurface = null;
+    stopLaunchFocusRequest();
+    state.launchTarget = parent.target;
+    state.launchAnchor = parent.anchor;
+    state.brainDraft = parent.brainDraft;
+    state.defaultAgents = { area: "", editing: "", mode: "" };
+    launchOptionsFor(parent.brainDraft.area);
+    state.launch.choice = parent.choice;
+    state.launch.command = parent.command;
+    state.launch.editing = parent.editing;
+    paint(true);
+    requestLaunchFocus("key:launch:brain:default");
+    return true;
+  }
+
+  /** Closes the complete launch/default chooser and restores its opener. */
+  function dismissLaunchSurface({ restore = true } = {}) {
+    if (!state.launchTarget) return false;
+    if (restoreLaunchParentSurface()) return true;
+    stopLaunchFocusRequest();
+    const point = launchReturnPoint;
+    launchReturnPoint = null;
+    launchParentSurface = null;
+    state.launch.open = false;
+    state.launch.editing = false;
+    state.launchTarget = "";
+    state.launchAnchor = null;
+    state.defaultAgents = { area: "", editing: "", mode: "" };
+    paint(true);
+    if (restore) restoreNavigationPoint(point);
+    return true;
+  }
+
+  /** Cancels only the innermost launch edit before the chooser itself closes. */
+  function cancelLaunchEditStage() {
+    if (state.launchTarget === DEFAULT_AGENTS_TARGET && state.defaultAgents.editing) {
+      const kind = state.defaultAgents.editing;
+      state.defaultAgents = { ...state.defaultAgents, editing: "", mode: "" };
+      state.launch.choice = null;
+      state.launch.command = "";
+      state.launch.editing = false;
+      paint(true);
+      requestLaunchFocus(`default:${kind}`);
+      return true;
+    }
+    if (state.launch.editing) {
+      state.launch.command = "";
+      state.launch.editing = false;
+      paint(true);
+      window.setTimeout(() => screen.querySelector("[data-launch-edit]")?.focus({ preventScroll: true }), 0);
+      return true;
+    }
+    return false;
+  }
+
   /** Opens the live session owned by the cursor row without starting work. */
   function enterCursorSession() {
     const row = cursorRow();
@@ -115,6 +351,312 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
 
   /** Lets the shared modal close its informational key sheet. */
   function closeKeySheet() { return true; }
+
+  /** Opens the Work key sheet from either its key or its visible button. */
+  function openWorkKeySheet() {
+    const rows = workCommandHelpRows().map((command) => ({
+      key: command.keyDisplay,
+      label: command.label,
+      help: command.help,
+    }));
+    return openModal({ kicker: "Work keys", title: "Move around Work", copy: "", rows, confirmLabel: "Close", onConfirm: closeKeySheet });
+  }
+
+  /** Opens the shared key sheet for either Document reading surface. */
+  function openDocumentKeySheet({ quick = Boolean(state.documentPeek) } = {}) {
+    const rows = [
+      { key: "j / k", label: "Move by line", help: "Move down or up one reading line." },
+      { key: "Ctrl-D / Ctrl-U", label: "Move by half page", help: "Move down or up half a page." },
+      { key: "gg / G", label: "Top or bottom", help: "Move to the start or end of this Document." },
+      { key: "{ / }", label: "Move by heading", help: "Move to the previous or next heading." },
+      { key: "H / L", label: "Document history", help: "Open the previous or next Document in your reading history." },
+      { key: "n / N", label: "Move by comment", help: "Move to the next or previous comment." },
+      { key: "c", label: "Write a comment", help: quick ? "Open the full reader to write a comment." : "Write a comment at the current text or Document." },
+      ...(!quick ? [
+        { key: "e", label: "Edit active comment", help: "Edit the active Julian comment." },
+        { key: "r", label: "Reply to active comment", help: "Add a Julian note at the same anchor." },
+        { key: "x", label: "Resolve active comment", help: "Resolve it with a required short change note." },
+      ] : []),
+      { key: "Esc", label: "Step back", help: "Clear selected text, clear the active comment, then close the reader." },
+    ];
+    return openModal({ kicker: quick ? "Quick Document keys" : "Document keys", title: "Read without the mouse", copy: "", rows, confirmLabel: "Close", onConfirm: closeKeySheet });
+  }
+
+  /** Gives an open key sheet its own compact Vim scrolling mode. */
+  function handleKeySheetScroll(event) {
+    const scroller = modalLayer.querySelector(".key-sheet-surface .modal-copy");
+    if (!scroller || event.metaKey || event.altKey || event.isComposing) return false;
+    let target = null;
+    const maximum = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    if (!event.ctrlKey && !event.shiftKey && ["j", "ArrowDown"].includes(event.key)) target = scroller.scrollTop + 34;
+    else if (!event.ctrlKey && !event.shiftKey && ["k", "ArrowUp"].includes(event.key)) target = scroller.scrollTop - 34;
+    else if (event.ctrlKey && !event.shiftKey && String(event.key).toLowerCase() === "d") target = scroller.scrollTop + scroller.clientHeight / 2;
+    else if (event.ctrlKey && !event.shiftKey && String(event.key).toLowerCase() === "u") target = scroller.scrollTop - scroller.clientHeight / 2;
+    else if (!event.ctrlKey && event.key === "G") target = maximum;
+    else if (!event.ctrlKey && !event.shiftKey && event.key === "g" && keySheetPendingG) target = 0;
+    else if (!event.ctrlKey && !event.shiftKey && event.key === "g") {
+      event.preventDefault();
+      event.stopPropagation();
+      keySheetPendingG = true;
+      window.clearTimeout(keySheetPendingGTimer);
+      keySheetPendingGTimer = window.setTimeout(() => { keySheetPendingG = false; }, 650);
+      return true;
+    } else {
+      keySheetPendingG = false;
+      return false;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    keySheetPendingG = false;
+    window.clearTimeout(keySheetPendingGTimer);
+    scroller.scrollTop = Math.min(maximum, Math.max(0, target));
+    return true;
+  }
+
+  /** The scroll owner for the full or quick Document surface. */
+  function documentReadingSurface(quick) {
+    return quick ? documentPeekLayer.querySelector(".document-peek-scroll") : screen.querySelector(".document-reader-scroll");
+  }
+
+  /** True when the native Selection belongs to this reading surface. */
+  function readingSurfaceHasSelection(surface) {
+    const selection = window.getSelection?.();
+    if (!surface || !selection || selection.isCollapsed || !selection.rangeCount) return false;
+    const anchor = selection.anchorNode?.nodeType === 1 ? selection.anchorNode : selection.anchorNode?.parentElement;
+    const focus = selection.focusNode?.nodeType === 1 ? selection.focusNode : selection.focusNode?.parentElement;
+    return Boolean((anchor && surface.contains(anchor)) || (focus && surface.contains(focus)));
+  }
+
+  /** Clears a staged `g` without letting an older timeout clear a newer one. */
+  function clearDocumentPendingG(surface = "") {
+    if (surface && state.documentPendingG !== surface) return;
+    state.documentPendingG = "";
+    if (documentPendingGTimer !== null) window.clearTimeout(documentPendingGTimer);
+    documentPendingGTimer = null;
+  }
+
+  /** Waits briefly for the second `g` on one exact reading surface. */
+  function stageDocumentTop(surface) {
+    clearDocumentPendingG();
+    state.documentPendingG = surface;
+    documentPendingGTimer = window.setTimeout(() => {
+      if (state.documentPendingG === surface) state.documentPendingG = "";
+      documentPendingGTimer = null;
+    }, 650);
+  }
+
+  /** Absolute heading positions inside one Document scroll owner. */
+  function documentHeadingOffsets(surface) {
+    if (!surface) return [];
+    const top = surface.getBoundingClientRect().top;
+    return [...surface.querySelectorAll(".document-content h2, .document-content h3")]
+      .map((heading) => surface.scrollTop + heading.getBoundingClientRect().top - top);
+  }
+
+  /** Applies one pure movement target to the visible Document scroll owner. */
+  function moveDocumentReadingSurface(surface, command) {
+    if (!surface) return false;
+    const target = documentReadingScrollTarget(command, {
+      scrollTop: surface.scrollTop,
+      clientHeight: surface.clientHeight,
+      scrollHeight: surface.scrollHeight,
+      headingOffsets: documentHeadingOffsets(surface),
+    });
+    if (target === null) return false;
+    surface.scrollTop = target;
+    return true;
+  }
+
+  /** The quick reader's semantic comment cursor, resolved in its current file. */
+  function peekCommentIndex() {
+    const peek = state.documentPeek;
+    const cursor = peek?.commentCursorIdentity;
+    if (!cursor || cursor.file !== peek.file) return -1;
+    return (peek.document?.comments ?? []).findIndex((comment) => JSON.stringify(commentIdentity(comment)) === JSON.stringify(cursor.comment));
+  }
+
+  /** Stores and optionally focuses one read-only quick-reader comment. */
+  function syncPeekCommentCursor(comment, { focus = true } = {}) {
+    const peek = state.documentPeek;
+    if (!peek || !comment) return false;
+    peek.commentCursorIdentity = { file: peek.file, comment: commentIdentity(comment) };
+    if (!focus) return true;
+    const element = documentPeekLayer.querySelector(`.document-comment[data-comment-index="${Number(comment.index)}"]`);
+    if (!element) return true;
+    element.setAttribute("tabindex", "-1");
+    element.scrollIntoView?.({ block: "center", behavior: "smooth" });
+    element.focus({ preventScroll: true });
+    return true;
+  }
+
+  /** Moves through the comments in the read-only quick Document, wrapping at both ends. */
+  function stepPeekComment(direction) {
+    const comments = state.documentPeek?.document?.comments ?? [];
+    if (!comments.length) return;
+    const current = peekCommentIndex();
+    const next = current < 0 ? (direction < 0 ? comments.length - 1 : 0) : ((current + direction) % comments.length + comments.length) % comments.length;
+    syncPeekCommentCursor(comments[next]);
+  }
+
+  /** Keeps pointer and keyboard comment movement on the same semantic comment. */
+  function syncPointerComment(target, quick) {
+    const element = target.closest?.(".document-comment");
+    if (!element) return false;
+    const comments = quick ? state.documentPeek?.document?.comments ?? [] : state.document?.comments ?? [];
+    const comment = comments.find((item) => item.index === Number(element.dataset.commentIndex));
+    if (!comment) return false;
+    if (quick) return syncPeekCommentCursor(comment);
+    return syncCommentCursor(commentIdentity(comment));
+  }
+
+  /** Clears the semantic comment cursor, then returns focus to the reading surface. */
+  function clearActiveDocumentComment(quick) {
+    if (quick) {
+      if (state.documentPeek) state.documentPeek.commentCursorIdentity = null;
+    } else {
+      state.commentCursor = -1;
+      state.commentCursorIdentity = null;
+    }
+    documentReadingSurface(quick)?.focus?.({ preventScroll: true });
+  }
+
+  /** Shows a resolve failure beside the retained note field. */
+  function showResolveCommentError(message) {
+    const input = modalLayer.querySelector("[data-modal-input]");
+    if (!input) return;
+    let error = modalLayer.querySelector(".comment-resolution-error");
+    if (!error) {
+      error = document.createElement("p");
+      error.className = "comment-resolution-error";
+      error.id = "comment-resolution-error";
+      error.setAttribute("role", "alert");
+      input.closest("label")?.insertAdjacentElement("afterend", error);
+    }
+    error.textContent = message;
+    input.setAttribute("aria-invalid", "true");
+    input.setAttribute("aria-describedby", error.id);
+    input.focus();
+  }
+
+  /** Opens the canonical resolve flow for the current semantic comment. */
+  function openResolveActiveComment() {
+    const identity = activeCommentIdentity();
+    if (!identity) return showToast("That comment changed or disappeared.");
+    const summary = identity.text.length > 72 ? `${identity.text.slice(0, 69)}…` : identity.text;
+    return openModal({
+      kicker: "Resolve comment",
+      title: `Resolve “${summary}”`,
+      copy: "The comment is removed only after Tangent records what changed.",
+      field: { label: "What changed?", placeholder: "Short change note" },
+      confirmLabel: "Resolve",
+      /** Runs the confirmed action and restores the transient surface owner. */
+      onConfirm: async () => {
+        const note = modalLayer.querySelector("[data-modal-input]")?.value ?? "";
+        const result = await resolveActiveComment(identity, note);
+        if (!result?.ok) {
+          showResolveCommentError(result?.error || "The comment was not resolved.");
+          return false;
+        }
+        window.setTimeout(() => {
+          if (!result.focusIdentity || !focusCommentIdentity(result.focusIdentity, { scroll: true })) {
+            documentReadingSurface(false)?.focus?.({ preventScroll: true });
+          }
+        }, 0);
+        return true;
+      },
+    });
+  }
+
+  /** Dispatches one pure reading command for the exact visible Document surface. */
+  function handleDocumentReadingKey(event, { quick = false } = {}) {
+    const surface = documentReadingSurface(quick);
+    if (!surface) return false;
+    const surfaceKey = quick ? "quick" : "full";
+    if (!quick && !state.commentCursorIdentity && document.activeElement?.closest?.(".document-reader .document-comment")) {
+      syncPointerComment(document.activeElement, false);
+    }
+    const activeComment = quick
+      ? peekCommentIndex() >= 0 || Boolean(document.activeElement?.closest?.("#document-peek-layer .document-comment"))
+      : Boolean(state.commentCursorIdentity) || Boolean(document.activeElement?.closest?.(".document-reader .document-comment"));
+    const command = matchDocumentReadingCommand(event, {
+      pendingG: state.documentPendingG === surfaceKey,
+      commentNavigation: true,
+      commentCreation: !quick,
+      commentLifecycle: !quick,
+      hasSelection: readingSurfaceHasSelection(surface),
+      activeComment,
+    });
+    if (!command) {
+      if (state.documentPendingG === surfaceKey && event.code !== "KeyG") clearDocumentPendingG(surfaceKey);
+      return false;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (command === documentReadingCommands.stageTop) {
+      stageDocumentTop(surfaceKey);
+      return true;
+    }
+    clearDocumentPendingG(surfaceKey);
+    if ([
+      documentReadingCommands.lineDown, documentReadingCommands.lineUp,
+      documentReadingCommands.halfPageDown, documentReadingCommands.halfPageUp,
+      documentReadingCommands.top, documentReadingCommands.bottom,
+      documentReadingCommands.previousHeading, documentReadingCommands.nextHeading,
+    ].includes(command)) {
+      moveDocumentReadingSurface(surface, command);
+      return true;
+    }
+    if (command === documentReadingCommands.historyBack) {
+      (quick ? navigateDocumentPeekHistory : navigateDocumentHistory)("back");
+      return true;
+    }
+    if (command === documentReadingCommands.historyForward) {
+      (quick ? navigateDocumentPeekHistory : navigateDocumentHistory)("forward");
+      return true;
+    }
+    if (command === documentReadingCommands.previousComment) {
+      (quick ? stepPeekComment : stepComment)(-1);
+      return true;
+    }
+    if (command === documentReadingCommands.nextComment) {
+      (quick ? stepPeekComment : stepComment)(1);
+      return true;
+    }
+    if (command === documentReadingCommands.createComment) {
+      openCommentComposer();
+      return true;
+    }
+    if (command === documentReadingCommands.editComment) {
+      editActiveComment();
+      return true;
+    }
+    if (command === documentReadingCommands.replyComment) {
+      replyToActiveComment();
+      return true;
+    }
+    if (command === documentReadingCommands.resolveComment) {
+      openResolveActiveComment();
+      return true;
+    }
+    if (command === documentReadingCommands.help) {
+      openDocumentKeySheet({ quick });
+      return true;
+    }
+    if (command === documentReadingCommands.clearSelection) {
+      window.getSelection?.()?.removeAllRanges();
+      if (!quick) updateSelectionCommentButton();
+      return true;
+    }
+    if (command === documentReadingCommands.clearComment) {
+      clearActiveDocumentComment(quick);
+      return true;
+    }
+    if (command === documentReadingCommands.closeReader) {
+      (quick ? closeDocumentPeek : leaveReader)();
+      return true;
+    }
+    return false;
+  }
 
   /**
    * Arrow, Home, and End move between the Goal titles of the table the focused
@@ -170,8 +712,11 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const target = event.target;
     if (target === documentPeekLayer) return closeDocumentPeek();
     if (target.closest?.("[data-close-document-peek]")) return closeDocumentPeek();
+    if (target.closest?.("[data-document-keys]")) return openDocumentKeySheet({ quick: true });
     if (target.closest?.("[data-promote-document-peek]")) return promoteDocumentPeek();
     if (target.closest?.("[data-retry-document-peek]")) return retryDocumentPeek();
+    const commentStep = target.closest?.("[data-document-peek-comment-step]");
+    if (commentStep) return stepPeekComment(Number(commentStep.dataset.documentPeekCommentStep));
     const history = target.closest?.("[data-document-peek-history]");
     if (history) return navigateDocumentPeekHistory(history.dataset.documentPeekHistory);
     const openArea = target.closest?.("[data-open-area]");
@@ -187,20 +732,46 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       event.preventDefault();
       return openPeekHeading(heading.dataset.documentHeading);
     }
+    if (syncPointerComment(target, true)) return;
   }
 
   document.addEventListener("click", async (event) => {
     const target = event.target;
     if (state.documentPeek && documentPeekLayer.contains(target)) return handleDocumentPeekClick(event);
+    if (state.view === "document") syncPointerComment(target, false);
     const cursor = target.closest?.("[data-work-cursor]");
+    const areaJump = target.closest?.("[data-move-work-area]");
+    if (areaJump && state.view === "work") return moveAreaCursor(Number(areaJump.dataset.moveWorkArea), cursor ?? cursorRow());
     if (cursor && state.view === "work") setWorkCursor(cursor, false);
+    const workKeys = target.closest?.("[data-work-keys]");
+    if (workKeys) return openWorkKeySheet();
+    if (target.closest?.("[data-document-keys]")) return openDocumentKeySheet({ quick: false });
+    const workCommands = target.closest?.("[data-work-commands]");
+    if (workCommands) return openWorkCommands(workCommands.dataset.workCommands || commandAreaForRow(cursor ?? cursorRow()));
+    const captureArea = target.closest?.("[data-capture-area]");
+    if (captureArea) return openAreaCapture(captureArea.dataset.captureArea || commandAreaForRow(cursor ?? cursorRow()));
     if (target.closest?.("[data-open-area-focus], [data-change-area-focus]")) return openAreaFocusPicker();
     if (target.closest?.("[data-cancel-area-focus]")) return cancelAreaFocusPicker();
     if (target.closest?.("[data-clear-area-focus]")) return clearAreaFocus();
     const stopBrain = target.closest("[data-stop-brain-area]");
     if (stopBrain) return confirmStopBrain(stopBrain.dataset.stopBrainArea, stopBrain.dataset.stopBrainAttempt);
+    const newGoal = target.closest("[data-new-goal-area]");
+    if (newGoal) return showCreate(newGoal.dataset.newGoalArea, "work");
     const areaBrain = target.closest("[data-open-area-brain]");
-    if (areaBrain) return openOrStartBrain(areaBrain.dataset.openAreaBrain, areaBrain);
+    if (areaBrain) {
+      const point = captureNavigationPoint(areaBrain);
+      if (state.launchTarget && state.launchTarget !== BRAIN_LAUNCH_TARGET) {
+        launchReturnPoint = point;
+        launchParentSurface = null;
+      }
+      const opened = openOrStartBrain(areaBrain.dataset.openAreaBrain, areaBrain);
+      Promise.resolve(opened).then(() => {
+        if (state.launchTarget !== BRAIN_LAUNCH_TARGET) return;
+        launchReturnPoint ??= point;
+        requestLaunchFocus();
+      }, () => {});
+      return opened;
+    }
     if (target.closest("[data-rebuild-dismiss]")) {
       if (state.rebuild?.id) localStorage.setItem("agent-shell.dismissed-rebuild", state.rebuild.id);
       state.rebuild = null;
@@ -223,8 +794,12 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (!shellMenu.hidden && !target.closest?.("#shell-menu") && !backButton.contains(target)) toggleShellMenu(false);
     // A click outside the agent chooser closes it; the clicked control still runs.
     if (state.launchTarget && !target.closest?.("[data-launch-popover]") && !target.closest?.("[data-launch-for]") && !target.closest?.("[data-default-agents-area]")) {
+      stopLaunchFocusRequest();
+      launchReturnPoint = null;
+      launchParentSurface = null;
       state.launchTarget = "";
       state.launchAnchor = null;
+      state.defaultAgents = { area: "", editing: "", mode: "" };
       paint(true);
     }
     // A click outside the What happened look closes it; the clicked control still runs.
@@ -266,19 +841,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       return confirmStop();
     }
     const completeGoal = target.closest("[data-complete-goal]");
-    if (completeGoal) {
-      const file = completeGoal.dataset.completeGoal;
-      rememberGoal(file);
-      try {
-        await post("/api/goals/edit", { file, status: "done" });
-        await refresh();
-        paint(true);
-        showToast("The work is complete.");
-      } catch (error) {
-        showToast(`Could not complete the Goal: ${error.message}`);
-      }
-      return;
-    }
+    if (completeGoal) return confirmComplete(completeGoal.dataset.completeGoal);
     const retryCleanup = target.closest("[data-retry-goal-cleanup]");
     if (retryCleanup) {
       try {
@@ -481,6 +1044,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
     const documentHistory = target.closest("[data-document-history]");
     if (documentHistory) return navigateDocumentHistory(documentHistory.dataset.documentHistory);
+    if (target.closest("[data-leave-document]")) return leaveCurrentSurface();
     if (target.closest("[data-open-reader-agent]")) return openReaderAgent();
     if (target.closest("[data-comment-new]")) return openCommentComposer();
     const commentStep = target.closest("[data-comment-step]");
@@ -489,9 +1053,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (commentScope) return setCommentScope(commentScope.dataset.commentScope);
     if (target.closest("[data-cancel-comment]")) return cancelCommentComposer();
     const editCommentButton = target.closest("[data-edit-comment]");
-    if (editCommentButton) return editComment(Number(editCommentButton.dataset.editComment));
-    const removeCommentButton = target.closest("[data-remove-comment]");
-    if (removeCommentButton) return removeComment(Number(removeCommentButton.dataset.removeComment));
+    if (editCommentButton) return editActiveComment();
+    const replyCommentButton = target.closest("[data-reply-comment]");
+    if (replyCommentButton) return replyToActiveComment();
+    if (target.closest("[data-resolve-comment]")) return openResolveActiveComment();
     if (target.closest("[data-open-goal-agent]")) return openGoalAgent({ returnView: "work" });
     if (target.closest("[data-launch-change]")) {
       state.launch.open = true;
@@ -563,15 +1128,34 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const launchFor = target.closest("[data-launch-for]");
     if (launchFor) {
       const file = launchFor.dataset.launchFor;
-      if (file === BRAIN_LAUNCH_TARGET) return toggleBrainPopover(launchFor);
+      if (file === BRAIN_LAUNCH_TARGET) {
+        if (state.launchTarget && state.launchTarget !== BRAIN_LAUNCH_TARGET) {
+          launchReturnPoint = captureNavigationPoint(launchFor);
+          launchParentSurface = null;
+        } else rememberLaunchReturn(launchFor);
+        const result = toggleBrainPopover(launchFor);
+        if (state.launchTarget === BRAIN_LAUNCH_TARGET) requestLaunchFocus();
+        else {
+          const point = launchReturnPoint;
+          launchReturnPoint = null;
+          stopLaunchFocusRequest();
+          restoreNavigationPoint(point);
+        }
+        return result;
+      }
       const describing = file === DESCRIBE_LAUNCH_TARGET;
       const goal = describing ? null : goalByFile(file);
       if (!describing && !goal) return;
       if (state.launchTarget === file) {
-        state.launchTarget = "";
-        state.launchAnchor = null;
-        return paint(true);
+        return dismissLaunchSurface();
       }
+      const previousTarget = state.launchTarget;
+      launchReturnPoint = captureNavigationPoint(launchFor);
+      launchParentSurface = null;
+      stopLaunchFocusRequest();
+      const rect = launchFor.getBoundingClientRect();
+      state.launchTarget = file;
+      state.launchAnchor = { top: Math.round(rect.bottom + 8), above: Math.round(rect.top - 8), right: Math.round(rect.right) };
       launchOptionsFor(describing ? describeLaunchArea() : goal.area);
       const record = describing ? null : pipelineRecordForGoal(goal);
       if (record) {
@@ -583,7 +1167,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         if (firstPending < 0) steps.push({ choice: null, command: "", instruction: "", continueFrom: null });
         state.launch.steps = steps;
         loadLaunchStep(steps, firstPending >= 0 ? firstPending : steps.length - 1);
-      } else if (state.launch.record || (state.launchTarget && state.launchTarget !== file)) {
+      } else if (state.launch.record || (previousTarget && previousTarget !== file)) {
         state.launch.record = null;
         state.launch.steps = [];
         state.launch.active = 0;
@@ -592,30 +1176,48 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         state.launch.instruction = "";
         state.launch.continueFrom = null;
       }
-      const rect = launchFor.getBoundingClientRect();
-      state.launchTarget = file;
-      state.launchAnchor = { top: Math.round(rect.bottom + 8), right: Math.round(rect.right) };
       state.launch.open = false;
-      return paint(true);
+      paint(true);
+      requestLaunchFocus();
+      return;
     }
     const defaultAgents = target.closest("[data-default-agents-area]");
-    if (defaultAgents) return toggleDefaultAgents(defaultAgents);
-    if (target.closest("[data-launch-close]")) {
-      state.launch.open = false;
-      state.launch.editing = false;
-      state.launchTarget = "";
-      state.launchAnchor = null;
-      state.defaultAgents = { area: "", editing: "", mode: "" };
-      return paint(true);
+    if (defaultAgents) {
+      const nestedBrain = state.launchTarget === BRAIN_LAUNCH_TARGET && Boolean(defaultAgents.closest("[data-launch-popover]"));
+      if (nestedBrain) {
+        launchParentSurface = {
+          target: BRAIN_LAUNCH_TARGET,
+          anchor: state.launchAnchor,
+          brainDraft: { ...state.brainDraft },
+          choice: state.launch.choice ? { ...state.launch.choice } : null,
+          command: state.launch.command,
+          editing: state.launch.editing,
+        };
+      } else {
+        launchParentSurface = null;
+        launchReturnPoint = captureNavigationPoint(defaultAgents);
+      }
+      const result = toggleDefaultAgents(defaultAgents);
+      if (state.launchTarget === DEFAULT_AGENTS_TARGET) requestLaunchFocus(nestedBrain ? "default:brain" : "summary");
+      else {
+        const point = launchReturnPoint;
+        launchReturnPoint = null;
+        stopLaunchFocusRequest();
+        restoreNavigationPoint(point);
+      }
+      return result;
     }
+    if (target.closest("[data-launch-close]")) return dismissLaunchSurface();
     const defaultAgentEdit = target.closest("[data-default-agent-edit]");
-    if (defaultAgentEdit) return editDefaultAgent(defaultAgentEdit.dataset.defaultAgentEdit);
+    if (defaultAgentEdit) {
+      editDefaultAgent(defaultAgentEdit.dataset.defaultAgentEdit);
+      requestLaunchFocus("choices");
+      return;
+    }
     const defaultAgentMode = target.closest("[data-default-agent-mode]");
     if (defaultAgentMode) return setDefaultAgentMode(defaultAgentMode.dataset.defaultAgentKind, defaultAgentMode.dataset.defaultAgentMode);
     if (target.closest("[data-default-agents-cancel]")) {
-      state.defaultAgents = { ...state.defaultAgents, editing: "", mode: "" };
-      state.launch.choice = null;
-      return paint(true);
+      return cancelLaunchEditStage();
     }
     const launchHarness = target.closest("[data-launch-harness]");
     if (launchHarness) {
@@ -683,14 +1285,28 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       state.launch.open = false;
       state.launchTarget = "";
       state.launchAnchor = null;
+      stopLaunchFocusRequest();
+      launchReturnPoint = null;
+      launchParentSurface = null;
       if (targetFile === DESCRIBE_LAUNCH_TARGET) return document.querySelector("[data-describe-work-form]")?.requestSubmit();
       const targetGoal = targetFile ? goalByFile(targetFile) : null;
       if (targetGoal && selectionForArea(targetGoal.area)[0] === targetFile) return startSelectedGoals(targetGoal.area);
       if (targetFile) rememberGoal(targetFile);
       return openGoalAgent({ returnView: "work" });
     }
-    if (target.closest("[data-launch-save]")) return saveLaunchDefault();
-    if (target.closest("[data-open-harnesses]")) return showHarnessEditor();
+    if (target.closest("[data-launch-save]")) {
+      const kind = state.defaultAgents.editing;
+      await saveLaunchDefault();
+      requestLaunchFocus(kind ? `default:${kind}` : "summary");
+      return;
+    }
+    if (target.closest("[data-open-harnesses]")) {
+      harnessReturnPoint = launchReturnPoint ?? captureNavigationPoint(target);
+      launchReturnPoint = null;
+      launchParentSurface = null;
+      stopLaunchFocusRequest();
+      return showHarnessEditor();
+    }
     if (target.closest("[data-add-harness]") && state.harnessDraft) {
       state.harnessDraft.harnesses = [...(state.harnessDraft.harnesses ?? []), { id: "", label: "", command: "" }];
       return paint(true);
@@ -734,11 +1350,26 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       state.harnessDraft.effortSets = { ...(state.harnessDraft.effortSets ?? {}), [name]: [] };
       return paint(true);
     }
-    if (target.closest("[data-save-harnesses]")) return saveHarnesses();
+    if (target.closest("[data-save-harnesses]")) {
+      const point = harnessReturnPoint;
+      await saveHarnesses();
+      if (state.view !== "harnesses") {
+        harnessReturnPoint = null;
+        restoreNavigationPoint(point);
+      }
+      return;
+    }
+    if (target.closest("[data-leave-harnesses]")) {
+      const point = harnessReturnPoint;
+      harnessReturnPoint = null;
+      leaveHarnessEditor();
+      return restoreNavigationPoint(point);
+    }
     if (target.closest("[data-cancel-harnesses]")) {
-      state.harnessDraft = null;
-      state.view = state.harnessReturnView;
-      return paint(true);
+      const point = harnessReturnPoint;
+      harnessReturnPoint = null;
+      leaveHarnessEditor({ discard: true });
+      return restoreNavigationPoint(point);
     }
     if (target.closest("[data-launch-open-session]")) return launchOpenSession();
     if (target.closest("[data-open-agent]")) {
@@ -785,8 +1416,14 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       const action = modalConfirm();
       if (!action) return;
       try {
+        const previousSession = state.sessionPeek?.session ?? "";
+        const previousLaunch = state.launchTarget;
         const result = await action();
-        if (result !== false) closeModal();
+        if (result !== false) {
+          const handedOff = Boolean(state.sessionPeek?.session && state.sessionPeek.session !== previousSession)
+            || Boolean(state.launchTarget && state.launchTarget !== previousLaunch);
+          closeModal({ restoreFocus: !handedOff });
+        }
       } catch (error) {
         showToast(error.message);
       }
@@ -876,6 +1513,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     }
     if (event.target.matches("[data-create-form]")) {
       event.preventDefault();
+      const launchAfterCreate = !event.submitter?.matches?.("[data-create-only]");
       const fields = new FormData(event.target);
       const area = fields.get("area")?.toString() || "";
       const title = fields.get("title")?.toString().trim() || "";
@@ -890,7 +1528,14 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         localStorage.setItem("agent-shell.last-area", area);
         await refresh();
         selectGoal(created.file);
-        showToast("The goal is ready. No agent started.");
+        if (launchAfterCreate) {
+          window.setTimeout(() => {
+            const chooser = [...document.querySelectorAll("[data-launch-for]")]
+              .find((button) => button.dataset.launchFor === created.file);
+            chooser?.click();
+          }, 0);
+          showToast("The Goal is ready. Review its agent before starting.");
+        } else showToast("The Goal is ready. No agent started.");
       } catch (error) {
         showToast(error.message);
       }
@@ -1054,25 +1699,9 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   });
 
   backButton.addEventListener("click", async () => {
+    if (closeNearestOpenDetails()) return;
     if (["work", "areas", "prompts"].includes(state.view)) return toggleShellMenu();
-    if (state.view === "area-edit") return showAreas();
-    if (state.view === "program-detail") return showAreasAt(currentProgram()?.area);
-    if (state.view === "program-create") return showAreasAt(state.programDraft.area);
-    if (state.view === "program-session") {
-      state.view = "program-detail";
-      return paint(true);
-    }
-    if (state.view === "create") return cancelCreate();
-    if (state.view === "describe" || state.view === "describe-agent") return cancelDescribe();
-    if (state.view === "agent") {
-      return leaveGoalAgent();
-    }
-    if (state.view === "document") return leaveReader();
-    if (state.view === "decision") {
-      state.view = state.decisionReturnView;
-      state.renderedKey = "";
-      paint(true);
-    }
+    return leaveCurrentSurface();
   });
 
   goToButton.innerHTML = `Go to ${shortcutKbd("goTo")}`;
@@ -1087,6 +1716,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
 
   goToLayer.addEventListener("keydown", (event) => {
     if (!state.goTo) return;
+    if (keyboardEventIsComposing(event)) return;
     const rows = state.goTo.rows;
     const focusedRow = event.target.closest?.("[data-go-to-row]");
     const resultsOwnKeys = event.target === goToInput || Boolean(focusedRow);
@@ -1216,60 +1846,327 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   // the Document or the screen behind it.
   trapTabInside(goToLayer, 'input, select, button:not([disabled]), [data-go-to-row][tabindex="0"]', () => Boolean(state.goTo));
 
-  document.addEventListener("keydown", (event) => {
-    // The layer order owns the key order. ⌘K opens the finder from any layer,
-    // and while the finder is open only its own keys run: a command for a
-    // lower layer must never reach past a visible destination
-    // (design-quick-returnable-document-search D7).
+  // A confirmation is a real modal: focus cycles only through its controls
+  // until it closes and restores the opener.
+  trapTabInside(modalLayer, 'input, textarea, select, button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])', () => !modalLayer.hidden);
+
+  /** Returns the one visible surface that may interpret this event. */
+  function keyboardContext(event) {
+    const target = event.target;
+    return resolveKeyboardContext({
+      modal: !modalLayer.hidden,
+      goTo: Boolean(state.goTo),
+      documentPeek: Boolean(state.documentPeek),
+      session: Boolean(state.sessionPeek) || Boolean(target.closest?.(".terminal-host")),
+      focusPicker: Boolean(state.areaFocusPicker),
+      transient: !shellMenu.hidden || Boolean(state.launchTarget) || Boolean(state.whatHappened) || Boolean(state.commentComposer),
+      textEntry: Boolean(target.closest?.("input, textarea, select, [contenteditable='true']")),
+      view: state.view,
+    });
+  }
+
+  /** Runs one shell-wide shortcut, after the owning context permits it. */
+  function handleGlobalShortcut(event) {
     if (shortcutMatches(event, KEYMAP.goTo)) {
       event.preventDefault();
-      return openGoTo();
-    }
-    if (state.goTo) return;
-    // The quick Document layer is the top destination below a modal. It owns
-    // Escape and blocks ⌘J, ⌘/, and every screen key below it.
-    if (state.documentPeek && modalLayer.hidden) {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        return closeDocumentPeek();
-      }
-      if (shortcutMatches(event, KEYMAP.session) || shortcutMatches(event, KEYMAP.findWork)) event.preventDefault();
-      return;
+      openGoTo();
+      return true;
     }
     if (shortcutMatches(event, KEYMAP.session)) {
       event.preventDefault();
-      return state.sessionPeek ? closeSessionLayer() : state.view === "work" ? enterCursorSession() : showToast("Return to Work to choose a session.");
+      if (state.sessionPeek) closeSessionLayer();
+      else if (state.view === "work") enterCursorSession();
+      else showToast("Return to Work to choose a session.");
+      return true;
     }
-    if (event.key === "Escape" && state.areaFocusPicker) {
+    if (shortcutMatches(event, KEYMAP.findWork)) {
       event.preventDefault();
-      return cancelAreaFocusPicker();
+      showWork({ focus: true });
+      return true;
     }
-    if (event.target.id === "area-search") {
-      const rows = [...screen.querySelectorAll("[data-select-area]")];
-      const selected = rows.findIndex((row) => row.dataset.selectArea === state.areaSelection);
-      if (event.key === "Escape" && state.areaQuery) {
+    return false;
+  }
+
+  /** Submits a form that advertises Command-Enter without stealing plain Enter. */
+  function handleCommandEnter(event) {
+    if (event.key !== "Enter" || !event.metaKey || event.ctrlKey || event.altKey) return false;
+    const form = event.target.closest?.("[data-command-enter-submit]");
+    if (!form && state.view === "harnesses") {
+      event.preventDefault();
+      screen.querySelector("[data-save-harnesses]")?.click();
+      return true;
+    }
+    if (!form) return false;
+    event.preventDefault();
+    form.requestSubmit();
+    return true;
+  }
+
+  const transientDetails = [
+    "details.desk-action-menu[open]",
+    "details.document-outline-menu[open]",
+    "details.document-picker[open]",
+    "details.reader-brain-actions[open]",
+    "details.area-more[open]",
+  ].join(", ");
+
+  /** Closes the nearest native disclosure before Back leaves its parent screen. */
+  function closeNearestOpenDetails(target = document.activeElement) {
+    const local = target?.closest?.("details[open]");
+    const root = state.documentPeek ? documentPeekLayer : screen;
+    const fallback = [...root.querySelectorAll(transientDetails)].at(-1);
+    const details = local && root.contains(local) ? local : fallback;
+    if (!details) return false;
+    details.open = false;
+    details.querySelector(":scope > summary")?.focus?.({ preventScroll: true });
+    return true;
+  }
+
+  /** Closes the one visible transient surface and leaves lower Work state intact. */
+  function closeTransientSurface() {
+    if (!shellMenu.hidden) {
+      toggleShellMenu(false);
+      return true;
+    }
+    if (state.commentComposer) {
+      cancelCommentComposer();
+      return true;
+    }
+    if (state.launchTarget) {
+      if (state.view === "describe") syncDescribeDraft();
+      if (cancelLaunchEditStage()) return true;
+      return dismissLaunchSurface();
+    }
+    if (state.whatHappened) {
+      state.whatHappened = null;
+      paint(true);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Unwinds Work one visible stage at a time. The order is deliberate: a
+   * temporary surface, staged Focus, selection, query, applied Focus, and
+   * finally the Work tab.
+   */
+  function unwindWork() {
+    state.workPendingG = false;
+    if (closeTransientSurface()) return;
+    if (state.areaFocusPicker) return cancelAreaFocusPicker();
+    if (state.goalSelection.length) {
+      state.goalSelection = [];
+      return paint(true);
+    }
+    if (state.query) {
+      state.query = "";
+      paint(true);
+      return window.setTimeout(() => document.querySelector("#work-search")?.focus(), 0);
+    }
+    if (state.areaFocus.length) return clearAreaFocus();
+    workTab.focus();
+  }
+
+  /**
+   * Leaves one browser-managed screen. Pointer Back and keyboard Escape call
+   * this same router, so adding a view cannot create two different parents.
+   * The terminal never calls it: Escape remains a native tmux key there.
+   */
+  function leaveCurrentSurface() {
+    if (closeNearestOpenDetails()) return true;
+    if (state.view === "work") {
+      unwindWork();
+      return true;
+    }
+    if (state.view === "harnesses") {
+      const point = harnessReturnPoint;
+      harnessReturnPoint = null;
+      leaveHarnessEditor();
+      restoreNavigationPoint(point);
+      return true;
+    }
+    if (state.view === "area-edit") {
+      showAreas();
+      return true;
+    }
+    if (state.view === "program-detail") {
+      showAreasAt(currentProgram()?.area);
+      return true;
+    }
+    if (state.view === "program-create") {
+      showAreasAt(state.programDraft.area);
+      return true;
+    }
+    if (state.view === "program-session") {
+      state.view = "program-detail";
+      paint(true);
+      return true;
+    }
+    if (state.view === "create") {
+      cancelCreate();
+      return true;
+    }
+    if (state.view === "describe" || state.view === "describe-agent") {
+      cancelDescribe();
+      return true;
+    }
+    if (state.view === "agent") {
+      leaveGoalAgent();
+      return true;
+    }
+    if (state.view === "document") {
+      leaveReader();
+      return true;
+    }
+    if (state.view === "decision") {
+      state.view = state.decisionReturnView;
+      state.renderedKey = "";
+      paint(true);
+      return true;
+    }
+    return false;
+  }
+
+  /** Owns native navigation and staged Escape for the Area search fields. */
+  function handleAreaSearchKey(event) {
+    const queryById = {
+      "area-search": "areaQuery",
+      "area-work-search": "areaWorkQuery",
+      "area-document-search": "areaDocumentQuery",
+    };
+    const queryKey = queryById[event.target.id];
+    if (!queryKey) return false;
+    if (event.key === "Escape" && state[queryKey]) {
+      event.preventDefault();
+      state[queryKey] = "";
+      paint(true);
+      window.setTimeout(() => document.querySelector(`#${event.target.id}`)?.focus(), 0);
+      return true;
+    }
+    if (event.target.id !== "area-search") return false;
+    const rows = [...screen.querySelectorAll("[data-select-area]")];
+    const selected = rows.findIndex((row) => row.dataset.selectArea === state.areaSelection);
+    if (["ArrowDown", "ArrowUp"].includes(event.key) && rows.length) {
+      event.preventDefault();
+      const next = event.key === "ArrowDown" ? Math.min(rows.length - 1, selected + 1) : Math.max(0, selected < 0 ? 0 : selected - 1);
+      rows[next].focus();
+      return true;
+    }
+    if (event.key === "Enter" && rows.length) {
+      event.preventDefault();
+      rows[Math.max(0, selected)]?.click();
+      return true;
+    }
+    return false;
+  }
+
+  document.addEventListener("keydown", (event) => {
+    // A composition belongs to the focused editor or terminal. No Agent Shell
+    // shortcut may reinterpret its provisional key value.
+    if (keyboardEventIsComposing(event)) return;
+    const context = keyboardContext(event);
+
+    if (context === "modal") {
+      const focusedAction = event.target.closest?.("button:not([disabled]), a[href]");
+      if (event.key === "Escape") {
         event.preventDefault();
-        state.areaQuery = "";
-        paint(true);
-        return window.setTimeout(() => document.querySelector("#area-search")?.focus(), 0);
+        event.stopPropagation();
+        closeModal();
+      } else if (handleKeySheetScroll(event)) {
+        return;
+      } else if (event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && !modalLayer.querySelector("[data-modal-input], [data-modal-select]")) {
+        event.preventDefault();
+        event.stopPropagation();
+        (focusedAction && modalLayer.contains(focusedAction)
+          ? focusedAction
+          : modalLayer.querySelector("[data-modal-confirm]"))?.click();
+      } else if (event.key === "Enter" && event.metaKey && event.target.closest?.("[data-modal-input], [data-modal-select]")) {
+        event.preventDefault();
+        event.stopPropagation();
+        modalLayer.querySelector("[data-modal-confirm]")?.click();
+      } else if ([KEYMAP.goTo, KEYMAP.session, KEYMAP.findWork].some((binding) => shortcutMatches(event, binding))) {
+        event.preventDefault();
+        event.stopPropagation();
       }
-      if (["ArrowDown", "ArrowUp"].includes(event.key) && rows.length) {
+      return;
+    }
+    // The finder owns its own Arrow, Enter, Escape, and Command-K handler.
+    if (context === "go-to") return;
+    if (context === "document-peek") {
+      if (shortcutMatches(event, KEYMAP.goTo)) return void handleGlobalShortcut(event);
+      if (handleDocumentReadingKey(event, { quick: true })) return;
+      if (event.key === "Escape") {
         event.preventDefault();
-        const next = event.key === "ArrowDown" ? Math.min(rows.length - 1, selected + 1) : Math.max(0, selected < 0 ? 0 : selected - 1);
-        rows[next].focus();
+        closeDocumentPeek();
+      } else if (shortcutMatches(event, KEYMAP.session) || shortcutMatches(event, KEYMAP.findWork)) {
+        event.preventDefault();
+      }
+      return;
+    }
+    // The terminal/tmux session receives every key except the visible
+    // Command-J leave action. This handler runs in capture so xterm never sees
+    // that one shell command first.
+    if (context === "session") {
+      if (shortcutMatches(event, KEYMAP.session) && state.sessionPeek) {
+        event.preventDefault();
+        event.stopPropagation();
+        closeSessionLayer();
+      }
+      return;
+    }
+    if (context === "focus-picker") {
+      if (shortcutMatches(event, KEYMAP.goTo)) return void handleGlobalShortcut(event);
+      if (shortcutMatches(event, KEYMAP.session) || shortcutMatches(event, KEYMAP.findWork)) {
+        event.preventDefault();
+        event.stopPropagation();
         return;
       }
-      if (event.key === "Enter" && rows.length) {
+      if (event.key === "Escape") {
         event.preventDefault();
-        rows[Math.max(0, selected)]?.click();
+        unwindWork();
+      }
+      return;
+    }
+    if (context === "transient") {
+      if (shortcutMatches(event, KEYMAP.goTo)) return void handleGlobalShortcut(event);
+      if (shortcutMatches(event, KEYMAP.session) || shortcutMatches(event, KEYMAP.findWork)) {
+        event.preventDefault();
+        event.stopPropagation();
         return;
       }
+      if (handleLaunchPopoverKey(event)) return;
+      if (handleCommandEnter(event)) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeTransientSurface();
+      }
+      return;
     }
-    const textEntry = event.target.closest?.("input, textarea, select, [contenteditable='true'], .terminal-host");
-    if (state.view === "work" && !textEntry && !event.metaKey && !event.ctrlKey && !event.altKey) {
+    if (context === "text-entry") {
+      if (handleAreaSearchKey(event)) return;
+      if (handleGlobalShortcut(event)) return;
+      if (handleCommandEnter(event)) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        leaveCurrentSurface();
+      }
+      return;
+    }
+    if (handleGlobalShortcut(event)) return;
+    if (handleCommandEnter(event)) return;
+    if (context === "work" && event.key === "Escape") {
+      event.preventDefault();
+      return leaveCurrentSurface();
+    }
+    if (context === "work" && !event.metaKey && !event.ctrlKey && !event.altKey) {
       const rows = visibleCursorRows();
       const current = cursorRow();
-      if (event.key === "j" || event.key === "k") {
+      const commandArea = commandAreaForRow(current);
+      if (workCommandMatches(event, "previousArea") || workCommandMatches(event, "nextArea")) {
+        event.preventDefault();
+        return moveAreaCursor(workCommandMatches(event, "previousArea") ? -1 : 1, current);
+      }
+      if (workCommandMatches(event, "moveRows")) {
         event.preventDefault();
         const found = rows.indexOf(current);
         const index = found < 0 ? (event.key === "j" ? -1 : 1) : found;
@@ -1281,70 +2178,67 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       }
       if (event.key === "g") { event.preventDefault(); state.workPendingG = true; window.setTimeout(() => { state.workPendingG = false; }, 650); return; }
       state.workPendingG = false;
-      if (event.key === "b") {
+      if (workCommandMatches(event, "openBrain")) {
         event.preventDefault();
-        const area = current?.dataset.workArea ?? "";
-        const brain = (state.brains ?? []).find((item) => item.live && item.status === "active" && item.area === area);
+        if (!commandArea) return showToast("This row has no Area command header.");
+        const brain = (state.brains ?? []).find((item) => item.live && item.status === "active" && item.area === commandArea);
         const session = state.sessions.find((item) => item.name === brain?.session);
-        return session ? openSessionLayer(session, "brain") : openOrStartBrain(area);
+        if (session) return openSessionLayer(session, "brain");
+        const point = captureNavigationPoint(current?.querySelector("[data-work-row-title], [data-work-cursor-control]"));
+        const opened = openOrStartBrain(commandArea);
+        Promise.resolve(opened).then(() => {
+          if (state.launchTarget !== BRAIN_LAUNCH_TARGET) return;
+          launchReturnPoint ??= point;
+          requestLaunchFocus();
+        }, () => {});
+        return opened;
       }
-      if (event.key === "z") {
+      if (workCommandMatches(event, "stopBrain")) {
         event.preventDefault();
-        return toggleWorkArea(current?.dataset.workArea ?? "");
+        if (!commandArea) return showToast("This row has no Area command header.");
+        const brain = brainForAreaCard(commandArea);
+        return confirmStopBrain(commandArea, brain?.currentAttemptId ?? brain?.session ?? "");
       }
-      if (event.key === "r") { event.preventDefault(); return openQuestionsReview(current?.dataset.workArea ?? ""); }
-      if (event.key === "n") { event.preventDefault(); return openAreaCapture(current?.dataset.workArea ?? ""); }
-      if (event.key === "f") { event.preventDefault(); return openAreaFocusPicker(); }
-      if (event.key === "x") {
+      if (workCommandMatches(event, "defaults")) {
+        event.preventDefault();
+        const button = areaCommandPointer(current, "[data-default-agents-area]");
+        if (!button) return showToast("This row has no Area command header.");
+        rememberLaunchReturn(current?.querySelector("[data-work-row-title], [data-work-cursor-control]"));
+        const result = toggleDefaultAgents(button);
+        requestLaunchFocus("summary");
+        return result;
+      }
+      if (workCommandMatches(event, "newGoal")) {
+        event.preventDefault();
+        return commandArea ? showCreate(commandArea, "work") : showToast("This row has no Area command header.");
+      }
+      if (workCommandMatches(event, "fold")) {
+        event.preventDefault();
+        return commandArea ? toggleWorkArea(commandArea) : showToast("This row has no Area command header.");
+      }
+      if (workCommandMatches(event, "questions")) { event.preventDefault(); return commandArea ? openQuestionsReview(commandArea) : showToast("This row has no Area command header."); }
+      if (workCommandMatches(event, "note")) { event.preventDefault(); return commandArea ? openAreaCapture(commandArea) : showToast("This row has no Area command header."); }
+      if (workCommandMatches(event, "focus")) { event.preventDefault(); return openAreaFocusPicker(); }
+      if (workCommandMatches(event, "complete")) {
         event.preventDefault();
         const goal = goalByFile(current?.dataset.goalAnchor ?? current?.closest?.("[data-goal-anchor]")?.dataset.goalAnchor);
         return goal ? confirmComplete(goal.file) : showToast("Choose a Goal row first.");
       }
-      if (event.key === "/") { event.preventDefault(); return document.querySelector("#work-search")?.focus(); }
-      if (event.key === ":") { event.preventDefault(); return openWorkCommands(current?.dataset.workArea ?? ""); }
-      if (event.key === "?") {
+      if (workCommandMatches(event, "filter")) { event.preventDefault(); return document.querySelector("#work-search")?.focus(); }
+      if (workCommandMatches(event, "commands")) { event.preventDefault(); return openWorkCommands(commandArea); }
+      if (workCommandMatches(event, "keys")) {
         event.preventDefault();
-        // Every key path the design names, in the order Julian uses them.
-        const copy = [
-          "j / k · move · gg / G first, last",
-          "b · open the Area brain (a message starts an inactive one)",
-          "⌘J · enter the live session · z · fold the Area",
-          "f · Area Focus · r · review questions · n · capture a note",
-          "x · complete the Goal · : · commands · / · filter",
-        ].join("\n");
-        return openModal({ kicker: "Work keys", title: "Move around Work", copy, confirmLabel: "Close", onConfirm: closeKeySheet });
+        return openWorkKeySheet();
       }
     }
     if (moveBetweenWorkRows(event)) return;
-    if (event.key === "Enter" && event.metaKey && !modalLayer.hidden && event.target.closest?.("[data-modal-input]")) {
+    if (context === "document" && event.key === "Escape" && closeNearestOpenDetails(event.target)) {
       event.preventDefault();
-      modalLayer.querySelector("[data-modal-confirm]")?.click();
+      event.stopPropagation();
       return;
     }
-    if (event.key === "Enter" && event.metaKey) {
-      const form = event.target.closest?.("[data-command-enter-submit]");
-      if (form) {
-        event.preventDefault();
-        form.requestSubmit();
-        return;
-      }
-    }
-    if (event.key === "Escape" && !modalLayer.hidden) {
-      event.preventDefault();
-      closeModal();
-      return;
-    }
-    if (event.key === "Escape" && !shellMenu.hidden) {
-      event.preventDefault();
-      toggleShellMenu(false);
-      return;
-    }
-    if (event.key === "Escape" && state.commentComposer) {
-      event.preventDefault();
-      cancelCommentComposer();
-      return;
-    }
-    if (state.view === "document" && event.metaKey && event.altKey && !event.shiftKey && !event.ctrlKey) {
+    if (context === "document" && handleDocumentReadingKey(event)) return;
+    if (context === "document" && event.metaKey && event.altKey && !event.shiftKey && !event.ctrlKey) {
       if (event.code === "KeyM") {
         event.preventDefault();
         return openCommentComposer();
@@ -1354,47 +2248,18 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         return stepComment(event.code === "KeyN" ? 1 : -1);
       }
     }
-    if (event.key === "Escape" && state.launchTarget) {
-      event.preventDefault();
-      if (state.view === "describe") syncDescribeDraft();
-      state.launchTarget = "";
-      state.launchAnchor = null;
-      state.defaultAgents = { area: "", editing: "", mode: "" };
-      paint(true);
-      return;
-    }
-    if (event.key === "Escape" && state.whatHappened) {
-      event.preventDefault();
-      state.whatHappened = null;
-      paint(true);
-      return;
-    }
-    if (event.key === "Escape" && state.view === "describe-agent") {
-      event.preventDefault();
-      return cancelDescribe();
-    }
-    if (event.key === "Escape" && state.view === "agent") {
-      event.preventDefault();
-      return leaveGoalAgent();
-    }
-    if (event.key === "Escape" && state.goalSelection.length) {
-      event.preventDefault();
-      state.goalSelection = [];
-      paint(true);
-      return;
-    }
-    if (event.key === "Escape" && state.view === "document") {
+    if (event.key === "Escape" && context === "document") {
       event.preventDefault();
       return leaveReader();
     }
-    if (shortcutMatches(event, KEYMAP.findWork)) {
+    if (event.key === "Escape") {
       event.preventDefault();
-      showWork({ focus: true });
+      return leaveCurrentSurface();
     }
-  });
+  }, { capture: true });
 
   window.addEventListener("resize", () => {
-    try { terminalFit()?.fit(); } catch {}
+    try { terminalFit(); } catch {}
   });
 
   document.addEventListener("selectionchange", () => {

@@ -83,7 +83,7 @@ test("a transport restart reconnects the terminal and only a missing tmux sessio
     readFile(path.join(here, "terminal-transport.mjs"), "utf8"),
   ]);
   assert.match(browser, /event\.code === 4404/);
-  assert.match(browser, /window\.setTimeout\(connect, delay\)/);
+  assert.match(browser, /window\.setTimeout\(connectWhenMeasured, delay\)/);
   assert.doesNotMatch(browser, /onclose = \(\) => terminal\?\.write\([^\n]*session ended/);
   assert.match(transport, /socket\.close\(4404, "tmux session ended"\)/);
   assert.match(transport, /socket\.bufferedAmount > MAX_TERMINAL_BUFFER_BYTES/);

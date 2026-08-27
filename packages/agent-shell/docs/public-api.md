@@ -41,7 +41,21 @@ The live tmux ownership key is `@tangent_agent_shell_instance`. A foreign sessio
 ## Agent messages
 
 - `tangent agent list` reads live agent sessions and queued message counts.
+- `tangent agent context [session] [--session <name>] [--json]` rebuilds the durable brain or Goal assignment for a tmux session. Without a name it uses the current tmux session.
 - `tangent agent send <name> <text...>` sends through the server queue.
+
+Agent Shell resolves the target to one exact live session. It stores the normalized generic message before it wakes or writes to that pane. Queued messages survive controller restarts in first-in, first-out order. The record remains durable during pane presentation and settles after that presentation completes. This is a presentation receipt, not proof that the model read the text.
+
+Context recovery reads brain records, exact-Area inbox notices, Goal records, and Goal queues without claiming or mutating the session. Current brain context contains every currently unread durable notice with its Area. Managed worker context contains the primary Goal, every co-assigned Goal, queue revision, exact assignment instruction, attempts, reports, prior handovers, and a rebuilt opening prompt. Queue context exposes the durable `extraFiles` order and repeats those Goals in the rebuilt prompt. A prompt-source failure leaves the durable context available with `promptError`. Historical brain context contains that generation's checkpoint but never the current generation's inbox. A live tmux session with no durable binding returns `role: "unassigned"`; a session that is neither durable nor live returns 404.
+
+When passive observation sees a bound running worker back at its shell, reconciliation writes one idempotent exact-Area brain notice. The queue remains running and the tmux session remains alive so another harness can recover in place.
+
+## Brain lifecycle
+
+- `tangent brain status [area]` reads one logical brain and its active attempt.
+- `tangent brain stop [area]` stops the exact owned attempt. Without an Area, it uses the current brain session.
+
+Brain stop reads the current attempt ID before it posts the guarded stop operation. A changed, foreign, or legacy attempt is not terminated. The command does not change Goals.
 
 The server stamps the sender and delivers only into an empty composer. An agent that is still working has one whenever nobody is typing into it, so a message reaches a busy agent and it reads the message at its next turn boundary. A pane the server is already writing to is the exception: an agent session that is booting holds every message until its own opening prompt has arrived. Otherwise, the message stays queued.
 
@@ -107,10 +121,11 @@ Routine healthy polling, starts, stops, and repeated success stay quiet. Event i
 - `POST /api/pipelines/control`: `{ goal, action, step, caller, expectedRevision, idempotencyKey }`.
 - `POST /api/pipelines/append`: `{ goal, steps, caller, expectedRevision, idempotencyKey }`.
 - `POST /api/pipelines/edit`: `{ goal, step, caller, expectedRevision, idempotencyKey, ...patch }`.
-- `POST /api/brains/start`: `{ area, instruction, choice?, command?, resume? }`.
+- `POST /api/brains/start`: `{ area, instruction, choice?: { harness, model?, effort? }, expectedLaunch?, resume? }`.
 - `POST /api/brains/handover`: `{ session, text }`.
 - `POST /api/brains/requests/answer`: `{ area, id, answer, note?, effectRevision? }`.
 - `GET /api/brains/show?area=<path>|session=<name>` reads one enriched brain.
+- `GET /api/agents/context?session=<name>` reads `tangent-agent-context.v1` recovery context. It is read-only and does not require an Agent Shell ownership marker.
 - `GET /api/sessions` reads the complete Work projection.
 - `POST /api/kill/<session>` stops only a session owned by the responding Agent Shell instance. It returns 409 for foreign or legacy sessions.
 - `GET /api/goals?area=<path>[&subtree=1]` lists Goals. An exact-Area result also carries `scope`, `childAreas`, `descendantGoals`, and the `subtreeCommand` that reads the rest.
@@ -120,6 +135,8 @@ Routine healthy polling, starts, stops, and repeated success stay quiet. Event i
 - `GET /api/operations` lists Area Operations with one `mode`, one `state`, and any `problem`.
 
 Mutation routes validate exact Area authority, current revisions, and idempotency where the record supports retries. Read APIs can carry compatibility aliases. Mutation APIs do not have two meanings.
+
+Brain start resolves `choice` through the harness registry. The choice applies only to the new attempt; it does not update the Area Brain default. Without `choice`, every new attempt resolves the current inherited Brain default. `expectedLaunch` must equal the selected `harness/model/effort` reference. A live brain is reattached without changing its attempt launch. Raw launch commands are rejected.
 
 ## Shell and study
 

@@ -23,7 +23,7 @@ test("shell state restores URL navigation and durable browser choices", () => {
   assert.equal(result.state.areaSelection, "otto");
   assert.equal(result.state.currentFile, "otto/goal-one.md");
   assert.deepEqual([...result.state.expandedAreas], ["otto"]);
-  assert.equal(result.state.workFilter, "active");
+  assert.equal(result.state.workFilter, "all", "the retired Current choice cannot hide planned Goals");
   assert.deepEqual(result.state.areaFocus, ["otto/tangent"]);
   assert.deepEqual([...result.state.dismissedAskIds], ["stopped-step:one"]);
 });

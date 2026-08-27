@@ -5,6 +5,7 @@ import goToCore from "./go-to-core.js";
 import { cleanText, clip, escapeHtml, progressPoints } from "./text-format.js";
 import { isInAreaFocus, normalizeAreaFocus, reconcileAreaFocus, writeAreaFocus } from "./area-focus-core.js";
 import { journalCaptureNeedsRetry, journalCaptureToast } from "./journal-capture-core.js";
+import { workCommand, workCommandsFor } from "./work-commands.js";
 
 /** Creates the work desk from shell, launch, Area, and Program capabilities. */
 export function createWorkDeskView({ shell, launch, areaModel, programs, chrome }) {
@@ -17,6 +18,20 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   const { programRowControls, programIsLive, programState, localMoment } = programs;
   const { shortcutKbd, whatHappenedOverlay } = chrome;
   const openingBrains = new Set();
+
+  /** Shared command attributes teach the same shortcut on every pointer. */
+  function workCommandAttributes(id, title = "") {
+    const command = workCommand(id);
+    if (!command) return "";
+    const tooltip = title || `${command.help} (${command.keyDisplay})`;
+    return `data-work-command="${escapeHtml(id)}"${command.ariaKeyshortcuts ? ` aria-keyshortcuts="${escapeHtml(command.ariaKeyshortcuts)}"` : ""} title="${escapeHtml(tooltip)}"`;
+  }
+
+  /** Visible command label plus its taught key. */
+  function workCommandContent(id, label = "") {
+    const command = workCommand(id);
+    return command ? `${escapeHtml(label || command.label)} <kbd>${escapeHtml(command.keyDisplay)}</kbd>` : "";
+  }
   /** Returns every Goal represented in the current desk projection. */
   function allGoals() {
     const byFile = new Map();
@@ -193,7 +208,11 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     state.areaFocusPicker = null;
     persistAreaFocus();
     paint(true);
-    window.setTimeout(() => document.querySelector(state.areaFocus.length ? "[data-change-area-focus]" : "[data-open-area-focus]")?.focus(), 0);
+    window.setTimeout(() => {
+      const summary = state.areaFocus.length ? document.querySelector("[data-change-area-focus]") : null;
+      const row = document.querySelector("[data-work-cursor].cursor [data-work-row-title], [data-work-cursor].cursor [data-work-cursor-control]");
+      (summary ?? row ?? document.querySelector("#work-tab"))?.focus();
+    }, 0);
   }
 
   /** Clears the local scope and restores the complete Work projection. */
@@ -202,7 +221,10 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     state.areaFocusPicker = null;
     persistAreaFocus();
     paint(true);
-    window.setTimeout(() => document.querySelector("[data-open-area-focus]")?.focus(), 0);
+    window.setTimeout(() => {
+      const row = document.querySelector("[data-work-cursor].cursor [data-work-row-title], [data-work-cursor].cursor [data-work-cursor-control]");
+      (row ?? document.querySelector("#work-tab"))?.focus();
+    }, 0);
   }
 
   /** Renders the staged searchable multi-Area picker. */
@@ -232,8 +254,8 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const short = labels.length > 2 ? `${labels.slice(0, 2).join(" + ")} +${labels.length - 2}` : labels.join(" + ");
     const accessible = roots.map((path, index) => `${labels[index]}, ${path}`).join("; ");
     const control = roots.length
-      ? `<div class="area-focus-summary" aria-label="Area Focus: ${escapeHtml(accessible)}"><span><b>Focus:</b> ${escapeHtml(short)}</span><button type="button" data-change-area-focus>Change</button><button type="button" data-clear-area-focus>Clear</button></div>`
-      : `<button class="area-focus-open" type="button" data-open-area-focus>Focus Areas</button>`;
+      ? `<div class="area-focus-summary" aria-label="Area Focus: ${escapeHtml(accessible)}"><span><b>Focus:</b> ${escapeHtml(short)}</span><button type="button" data-change-area-focus ${workCommandAttributes("focus")}>${workCommandContent("focus", "Change")}</button><button type="button" data-clear-area-focus>Clear</button></div>`
+      : `<button class="area-focus-open" type="button" data-open-area-focus ${workCommandAttributes("focus")}>${workCommandContent("focus")}</button>`;
     const storageNote = state.areaFocusStorageError ? `<p class="area-focus-storage-note">Area Focus persistence is unavailable in this browser.</p>` : "";
     return `<div class="area-focus-control">${control}${storageNote}${areaFocusPickerMarkup()}</div>`;
   }
@@ -438,7 +460,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     // the new one's, and the next attempt then read an old order as today's.
     state.brainDraft = { area, instruction: "" };
     const rect = anchor.getBoundingClientRect();
-    state.launchAnchor = { top: Math.round(rect.bottom + 8), right: Math.round(rect.right) };
+    state.launchAnchor = { top: Math.round(rect.bottom + 8), above: Math.round(rect.top - 8), right: Math.round(rect.right) };
     state.launch.open = false;
     return paint(true);
   }
@@ -459,7 +481,17 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     try {
       const selection = launchSelection();
       const expectedLaunch = [selection?.harness?.id, selection?.model?.id, selection?.effort?.id].filter(Boolean).join("/");
-      const result = await post("/api/brains/start", { area, instruction, expectedLaunch, resume });
+      // A clicked picker value is an override for this attempt. An untouched
+      // picker sends only the launch it displayed as an optimistic check; the
+      // server still resolves the Area's durable default at start time.
+      const choice = state.launch.choice?.harness
+        ? {
+          harness: state.launch.choice.harness,
+          ...(state.launch.choice.model ? { model: state.launch.choice.model } : {}),
+          ...(state.launch.choice.effort ? { effort: state.launch.choice.effort } : {}),
+        }
+        : null;
+      const result = await post("/api/brains/start", { area, instruction, expectedLaunch, ...(choice ? { choice } : {}), resume });
       // The resume message is the wake reason. The server records it as an
       // unread notice, so the woken attempt reads it in its first message.
       state.launchTarget = "";
@@ -1044,34 +1076,38 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
    * instead of becoming a second way to do the same thing.
    */
   function openWorkCommands(area) {
-    const commands = [
-      { value: "brain", label: `b · Open the ${area ? areaLabel(area) : "Area"} brain, or write the message that starts it` },
-      { value: "questions", label: "r · Review the open questions" },
-      { value: "capture", label: "n · Capture a Journal note" },
-      { value: "fold", label: "z · Fold or expand this Area" },
-      { value: "focus", label: "f · Change Area Focus" },
-      { value: "complete", label: "x · Complete the selected Goal" },
-    ];
+    const cursorGoalFile = document.querySelector("[data-work-cursor].cursor[data-goal-anchor]")?.dataset.goalAnchor ?? "";
+    const goal = goalByFile(cursorGoalFile);
+    const brain = area ? brainForAreaCard(area) : null;
+    const commands = workCommandsFor({ palette: true }).filter((command) => {
+      if (command.scope === "area" && !area) return false;
+      if (command.scope === "goal" && !goal) return false;
+      if (command.id === "stopBrain" && !brain?.live) return false;
+      return true;
+    });
     /** Runs the chosen command against the Area the cursor is on. */
-    const runCommand = async () => {
+    const runCommand = () => {
       const choice = document.querySelector("[data-modal-select]")?.value || "";
-      if (choice === "brain") return openOrStartBrain(area);
-      if (choice === "questions") return openQuestionsReview(area);
-      if (choice === "capture") return openAreaCapture(area);
+      if (choice === "previousArea") return document.querySelector(`[data-work-group="${cssAttribute(area)}"] [data-move-work-area="-1"]`)?.click();
+      if (choice === "nextArea") return document.querySelector(`[data-work-group="${cssAttribute(area)}"] [data-move-work-area="1"]`)?.click();
+      if (choice === "openBrain") return openOrStartBrain(area);
+      if (choice === "stopBrain") return window.setTimeout(() => confirmStopBrain(area, brain?.currentAttemptId ?? brain?.session ?? ""), 0);
+      if (choice === "defaults") return document.querySelector(`[data-work-group="${cssAttribute(area)}"] [data-default-agents-area="${cssAttribute(area)}"]`)?.click();
+      if (choice === "newGoal") return document.querySelector(`[data-work-group="${cssAttribute(area)}"] [data-new-goal-area="${cssAttribute(area)}"]`)?.click();
+      if (choice === "questions") return window.setTimeout(() => openQuestionsReview(area), 0);
+      if (choice === "note") return window.setTimeout(() => openAreaCapture(area), 0);
       if (choice === "fold") return toggleWorkArea(area);
       if (choice === "focus") return openAreaFocusPicker();
-      if (choice === "complete") {
-        const goal = currentGoal();
-        if (!goal) throw new Error("Choose a Goal row first.");
-        return showToast("Press x on the Goal row to complete it.");
-      }
+      if (choice === "complete") return window.setTimeout(() => document.querySelector(`[data-complete-goal="${cssAttribute(goal?.file ?? "")}"]`)?.click(), 0);
+      if (choice === "filter") return window.setTimeout(() => document.querySelector("#work-search")?.focus(), 0);
+      if (choice === "keys") return window.setTimeout(() => document.querySelector("[data-work-keys]")?.click(), 0);
       return undefined;
     };
     openModal({
       kicker: "Commands",
       title: area ? areaLabel(area) : "Work",
-      copy: "Every command here has a key. The key works without this list.",
-      field: { kind: "select", label: "Command", options: commands },
+      copy: "Each command has the same key and pointer action everywhere it appears.",
+      field: { kind: "select", label: "Command", options: commands.map((command) => ({ value: command.id, label: `${command.keyDisplay} · ${command.label} — ${command.help}` })) },
       confirmLabel: "Run",
       onConfirm: runCommand,
     });
@@ -1306,6 +1342,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     return {
       stepLine: `Step ${step.index} of ${total}`,
       stepShort: `${step.index}/${total}`,
+      stepLabel: step.label || "agent",
       stepTitle: `${step.label || "agent"}: ${step.instruction ?? ""}`,
       fill: deskFillLabel(step.context),
     };
@@ -1432,7 +1469,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     return [
       liveSession ? `<button type="button" data-stop-goal="${escapeHtml(goal.file)}">End work</button>` : "",
       open ? `<button type="button" data-wont-do-goal="${escapeHtml(goal.file)}">Won't do</button>` : "",
-      open ? `<button class="complete" type="button" data-complete-goal="${escapeHtml(goal.file)}">Done</button>` : "",
+      open ? `<button class="complete" type="button" data-complete-goal="${escapeHtml(goal.file)}" ${workCommandAttributes("complete")}>${workCommandContent("complete")}</button>` : "",
     ].filter(Boolean).join("");
   }
 
@@ -1568,26 +1605,46 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const name = humanName(area.name);
     const cursor = `area:${area.path}`;
     const folded = areaIsFoldedOnWork(area.path);
+    const brainCommand = workCommand("openBrain");
+    const brainButton = `<button class="work-group-brain" type="button" ${route} ${workCommandAttributes("openBrain", `${label} for ${areaLabel(area.path)} (${brainCommand.keyDisplay})`)} data-focus-key="brain:${escapeHtml(area.path)}" aria-label="${escapeHtml(label)} for ${escapeHtml(areaLabel(area.path))}"><span class="work-group-brain-long">${escapeHtml(label)}</span><span class="work-group-brain-short">Brain</span><kbd>${escapeHtml(brainCommand.keyDisplay)}</kbd></button>`;
+    const brainMenuButton = `<button type="button" ${route} ${workCommandAttributes("openBrain")}>${workCommandContent("openBrain")}</button>`;
     return `<tr class="work-group-row${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-work-area="${escapeHtml(area.path)}">
       <th class="work-group-head" colspan="${WORK_COLUMNS.length}" scope="rowgroup" id="${workGroupId(area.path)}">
-        <span class="work-group-name"><button type="button" data-work-cursor-control data-focus-key="area:${escapeHtml(area.path)}" data-open-area="${escapeHtml(area.path)}" title="Open the ${escapeHtml(name)} Area map">${escapeHtml(name)}</button><button type="button" data-fold-work-area="${escapeHtml(area.path)}" aria-expanded="${!folded}" title="${folded ? "Expand" : "Fold"} ${escapeHtml(name)}">${folded ? "+" : "−"}</button></span>
-        <span class="work-group-count">${escapeHtml(summary.text)}</span>
-        ${summary.questions
-          ? `<button class="desk-state ${status.kind}" type="button" data-review-questions="${escapeHtml(area.path)}" title="Review the open questions">${escapeHtml(status.label)}</button>`
-          : `<span class="desk-state ${status.kind}">${escapeHtml(status.label)}</span>`}
-        ${deskSelectionBar(area.path, allTrees)}
-        <span class="work-group-brain-controls"><button class="work-group-brain" type="button" ${route} data-focus-key="brain:${escapeHtml(area.path)}" aria-label="${escapeHtml(label)} for ${escapeHtml(areaLabel(area.path))}"><span class="work-group-brain-long">${escapeHtml(label)}</span><span class="work-group-brain-short">Brain</span></button>${brain?.live ? `<button class="quiet-button" type="button" data-stop-brain-area="${escapeHtml(area.path)}" data-stop-brain-attempt="${escapeHtml(brain.currentAttemptId ?? brain.session ?? "")}">Stop brain</button>` : ""}</span>
+        <div class="work-group-layout">
+          <div class="work-group-identity">
+            <span class="work-group-name"><button type="button" data-work-cursor-control data-focus-key="area:${escapeHtml(area.path)}" data-open-area="${escapeHtml(area.path)}" title="Open the ${escapeHtml(name)} Area map">${escapeHtml(name)}</button></span>
+            <span class="work-group-count">${escapeHtml(summary.text)}</span>
+            ${summary.questions
+              ? `<button class="desk-state ${status.kind}" type="button" data-review-questions="${escapeHtml(area.path)}" ${workCommandAttributes("questions")}>${escapeHtml(status.label)}</button>`
+              : `<span class="desk-state ${status.kind}">${escapeHtml(status.label)}</span>`}
+            ${deskSelectionBar(area.path, allTrees)}
+          </div>
+          <div class="work-group-controls">
+            ${brainButton}
+            <details class="desk-action-menu work-group-action-menu"><summary aria-label="Actions for ${escapeHtml(name)}">⋯</summary><div role="menu">
+            ${brainMenuButton}
+              <button type="button" data-move-work-area="-1" ${workCommandAttributes("previousArea")}>${workCommandContent("previousArea")}</button>
+              <button type="button" data-move-work-area="1" ${workCommandAttributes("nextArea")}>${workCommandContent("nextArea")}</button>
+              ${brain?.live ? `<button type="button" data-stop-brain-area="${escapeHtml(area.path)}" data-stop-brain-attempt="${escapeHtml(brain.currentAttemptId ?? brain.session ?? "")}" ${workCommandAttributes("stopBrain")}>${workCommandContent("stopBrain")}</button>` : ""}
+              <button type="button" data-default-agents-area="${escapeHtml(area.path)}" ${workCommandAttributes("defaults")}>${workCommandContent("defaults")}</button>
+              <button type="button" data-new-goal-area="${escapeHtml(area.path)}" ${workCommandAttributes("newGoal")}>${workCommandContent("newGoal")}</button>
+              <button type="button" data-open-area-focus ${workCommandAttributes("focus")}>${workCommandContent("focus")}</button>
+              <button type="button" data-fold-work-area="${escapeHtml(area.path)}" aria-expanded="${!folded}" ${workCommandAttributes("fold")}>${workCommandContent("fold")}</button>
+              <button type="button" data-review-questions="${escapeHtml(area.path)}" ${workCommandAttributes("questions")}>${workCommandContent("questions")}</button>
+              <button type="button" data-capture-area="${escapeHtml(area.path)}" ${workCommandAttributes("note")}>${workCommandContent("note")}</button>
+            </div></details>
+          </div>
+        </div>
       </th>
     </tr>`;
   }
 
-  /** The State cell: one lifecycle word, its step, and one planned readiness line. */
+  /** The State cell: one lifecycle word and the readiness of an idle Goal. */
   function workStateCell(goal, action, fact) {
-    const step = action.stepShort ? `<small class="work-step" title="${escapeHtml(action.stepTitle)}">${escapeHtml(action.stepShort)}</small>` : "";
-    const planned = state.workFilter === "inactive" && !["done", "dropped", "deferred"].includes(goal.status)
+    const planned = !sessionForGoal(goal) && action.state === "Open" && !["done", "dropped", "deferred"].includes(goal.status)
       ? `<small class="work-readiness ${fact?.kind ?? "ready"}">${escapeHtml(readinessLabel(fact))}</small>`
       : "";
-    return `<td class="work-cell-state"><span class="desk-state ${action.kind}">${escapeHtml(action.state)}</span>${step}${planned}</td>`;
+    return `<td class="work-cell-state"><span class="desk-state ${action.kind}">${escapeHtml(action.state)}</span>${planned}</td>`;
   }
 
   /** The Time cell: the exact elapsed label, then the worked-against-waiting bar. */
@@ -1619,7 +1676,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     // (design-see-the-harness-model-effort-and-open-that-agent Decision 1).
     const openLabel = action.launch ? `${action.action} on ${action.launch}` : action.action;
     const primary = action.action === "Start agent"
-      ? `<span class="desk-split"><button class="desk-action" type="button" ${route} data-focus-key="start:${escapeHtml(goal.file)}" aria-label="Start an agent on ${escapeHtml(goal.title)}">Start agent</button><button class="desk-action desk-launch-toggle${state.launchTarget === goal.file ? " open" : ""}" type="button" data-launch-for="${escapeHtml(goal.file)}" title="${launchTitle}" aria-label="${launchTitle} for ${escapeHtml(goal.title)}" aria-expanded="${state.launchTarget === goal.file}">▾</button></span>`
+      ? `<button class="desk-action${state.launchTarget === goal.file ? " open" : ""}" type="button" data-launch-for="${escapeHtml(goal.file)}" data-focus-key="start:${escapeHtml(goal.file)}" aria-label="Choose an agent for ${escapeHtml(goal.title)}" aria-expanded="${state.launchTarget === goal.file}">Start agent</button>`
       : action.action && action.launch
         ? `<button class="desk-launch-ref" type="button" ${route} data-focus-key="open:${escapeHtml(goal.file)}" title="${escapeHtml(openLabel)}" aria-label="${escapeHtml(openLabel)}: ${escapeHtml(goal.title)}">${escapeHtml(action.launch)}</button>`
         : action.action
@@ -1653,8 +1710,16 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const selected = selectable && state.goalSelection.includes(goal.file);
     const { facts, now } = deskGoalFactsData(goal);
     const path = labels?.get(goal.area) ?? descendantPath(goal.area, groupPath);
-    const readiness = state.workFilter === "inactive" ? readinessLabel(fact) : "";
+    const readiness = !sessionForGoal(goal) && action.state === "Open" ? readinessLabel(fact) : "";
     const compact = [action.state, action.stepShort, readiness, deskGoalElapsedText(facts, now)].filter(Boolean).join(" · ");
+    const liveSession = sessionForGoal(goal);
+    const agentMeta = [liveSession ? agentName(liveSession) : "", action.launch].filter(Boolean).join(" · ");
+    const stepMeta = action.stepLine ? [action.stepLine, action.stepLabel].filter(Boolean).join(" · ") : "";
+    const titleRoute = action.action === "Start agent"
+      ? `data-launch-for="${escapeHtml(goal.file)}"`
+      : action.route === "run"
+        ? `data-open-goal-run="${escapeHtml(goal.file)}"`
+        : `data-open-close="${escapeHtml(goal.file)}"`;
     const disclosure = subgoalCount
       ? `<button class="work-subgoal-toggle" type="button" data-toggle-subgoals="${escapeHtml(goal.file)}" aria-expanded="${expanded}" aria-label="${expanded ? "Hide" : "Show"} ${subgoalCount} ${subgoalCount === 1 ? "Subgoal" : "Subgoals"} of ${escapeHtml(goal.title)}"><span aria-hidden="true">${expanded ? "−" : "+"}</span>${subgoalCount}</button>`
       : "";
@@ -1662,7 +1727,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     return `<tr class="desk-goal work-row ${subgoal ? "subgoal" : "root-goal"} ${action.kind}${selected ? " selected" : ""}${state.workCursor === cursor ? " cursor" : ""}" data-work-cursor="${escapeHtml(cursor)}" data-goal-anchor="${escapeHtml(goal.file)}" data-work-area="${escapeHtml(goal.area)}"${subgoal ? ` data-subgoal-of="${escapeHtml(parent)}"` : ""}${hidden ? " hidden" : ""}>
       <td class="work-cell-select desk-select">${selectable ? `<input type="checkbox" data-check-goal="${escapeHtml(goal.file)}" data-focus-key="check:${escapeHtml(goal.file)}" ${selected ? "checked" : ""} aria-label="Select ${escapeHtml(goal.title)} for one shared agent">` : ""}</td>
       <th class="work-cell-work" scope="row">
-        <span class="work-cell-title">${disclosure}<button class="work-row-title" type="button" data-work-row-title data-open-close="${escapeHtml(goal.file)}" data-focus-key="title:${escapeHtml(goal.file)}" title="${escapeHtml(goal.title)}">${escapeHtml(goal.title)}</button>${path ? `<small class="work-row-path">${escapeHtml(path)}</small>` : ""}</span>
+        <span class="work-cell-title">${disclosure}<span class="work-goal-copy"><span class="work-goal-primary"><button class="work-row-title" type="button" data-work-row-title ${titleRoute} data-focus-key="title:${escapeHtml(goal.file)}" title="${escapeHtml(goal.title)}">${escapeHtml(goal.title)}</button>${path ? `<small class="work-row-path">${escapeHtml(path)}</small>` : ""}</span>${agentMeta ? `<small class="work-row-agent">${escapeHtml(agentMeta)}</small>` : ""}${stepMeta ? `<small class="work-row-step" title="${escapeHtml(action.stepTitle)}">${escapeHtml(stepMeta)}</small>` : ""}</span></span>
         <small class="work-cell-facts">${escapeHtml(compact)}</small>
       </th>
       ${workStateCell(goal, action, fact)}
@@ -1722,7 +1787,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     // A focused Area stays on the screen with nothing in it, and says why, so
     // Julian can see that his Focus is what emptied the table.
     const empty = record.focusRoot && !record.focusHasWork
-      ? `<tr class="work-empty-row"><td class="area-focus-empty" colspan="${WORK_COLUMNS.length}">No ${state.workFilter === "active" ? "current" : "planned"} work matches in this Focus.</td></tr>`
+      ? `<tr class="work-empty-row"><td class="area-focus-empty" colspan="${WORK_COLUMNS.length}">No work matches in this Focus.</td></tr>`
       : "";
     const folded = areaIsFoldedOnWork(area.path);
     // A folded Area keeps the one fact that can change what Julian does next:
@@ -1897,12 +1962,11 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
       + otherAreasGroupBody(outside, facts, maxElapsedMs);
     const rowCount = shown.reduce((count, record) => count + [record, ...record.sections]
       .reduce((inner, part) => inner + part.trees.reduce((goals, tree) => goals + tree.goals.filter((goal) => !["done", "dropped", "deferred"].includes(goal.status)).length, 0), 0), 0);
-    const word = state.workFilter === "inactive" ? "Planned work" : "Current work";
     // The column group carries the widths. A narrow layout hides three cells,
     // and a fixed table keeps reserving width for a column whose cells are all
     // `display: none` unless a `<col>` states that width is zero.
     return `<table class="work-table">
-      <caption class="work-caption"><span>${escapeHtml(word)}</span><span class="work-caption-count">${rowCount} ${rowCount === 1 ? "Goal" : "Goals"}</span><span class="work-keyboard-hint" aria-hidden="true">j k rows · ⌘J session · ? keys</span></caption>
+      <caption class="work-caption"><span>Work</span><span class="work-caption-count">${rowCount} ${rowCount === 1 ? "Goal" : "Goals"}</span><span class="work-keyboard-hint" aria-hidden="true">${escapeHtml(workCommand("moveRows").keyDisplay)} rows · ${escapeHtml(workCommand("session").keyDisplay)} session · ${escapeHtml(workCommand("keys").keyDisplay)} keys</span></caption>
       <colgroup>${WORK_COLUMNS.map((column) => `<col class="work-col-${column.key}">`).join("")}</colgroup>
       <thead><tr>${WORK_COLUMNS.map((column) => `<th scope="col" class="work-head-${column.key}">${column.hidden ? `<span class="visually-hidden">${escapeHtml(column.label)}</span>` : escapeHtml(column.label)}</th>`).join("")}</tr></thead>
       ${bodies}
@@ -1922,26 +1986,24 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
     const roots = areaFocusRoots();
     const focusNames = areaFocusLabels(roots).join(" + ");
     const emptyCopy = query
-      ? `${roots.length ? `Area Focus (${escapeHtml(focusNames)}): ` : ""}No ${state.workFilter === "active" ? "current" : "planned"} work matches “${escapeHtml(query)}”.`
-      : `${roots.length ? `Area Focus (${escapeHtml(focusNames)}): ` : ""}No ${state.workFilter === "active" ? "work is active" : "unstarted Goals"}.`;
+      ? `${roots.length ? `Area Focus (${escapeHtml(focusNames)}): ` : ""}No work matches “${escapeHtml(query)}”.`
+      : `${roots.length ? `Area Focus (${escapeHtml(focusNames)}): ` : ""}No open work.`;
     const content = `${records.length || others.length
       ? workTable(records, maxElapsedMs, others)
       : `<div class="empty-state">${emptyCopy}</div>`}`;
 
     return `
       <section class="work-page">
-        ${roots.length ? areaFocusControl() : ""}
-        <div class="work-tools${roots.length ? " focused" : ""}">
-          <button class="work-area-browser" type="button" data-show-areas>Browse Areas</button>
-          <button class="work-area-browser" type="button" data-describe-work>Describe work</button>
-          ${roots.length ? "" : areaFocusControl()}
+        ${roots.length || state.areaFocusPicker ? areaFocusControl() : ""}
+        <div class="work-tools">
           <label class="search-field">
             <span class="search-icon" aria-hidden="true">⌕</span>
             <input id="work-search" type="search" value="${escapeHtml(state.query)}" placeholder="Filter work and Areas" autocomplete="off" />
             ${shortcutKbd("findWork")}
           </label>
-          <div class="work-filter" role="group" aria-label="Choose current or planned work">
-            ${[["active", "Current"], ["inactive", "Planned"]].map(([filter, label]) => `<button type="button" data-work-filter="${filter}" aria-pressed="${state.workFilter === filter}">${label}</button>`).join("")}
+          <div class="work-tool-actions">
+            <button class="quiet-button" type="button" data-work-commands ${workCommandAttributes("commands")}>${workCommandContent("commands")}</button>
+            <button class="quiet-button" type="button" data-work-keys ${workCommandAttributes("keys")}>${workCommandContent("keys")}</button>
           </div>
         </div>
         ${content}

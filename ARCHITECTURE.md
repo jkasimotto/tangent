@@ -79,10 +79,15 @@ Search owns structural indexing and search over TypeScript and Dart source: a SQ
 Each Area brain has one logical identity.
 Its lifecycle is active or inactive. Process attempts and recovery are diagnostic health.
 The server owns its activation envelope, bounded prompt, subtree milestones, Journal, Requests, exact-Area Goal queue, and Operation event outbox.
+Each generation stores its complete resolved launch. A user-selected registry choice applies to one start or resume attempt without changing the Area default; reattachment keeps the live launch, and automatic recovery or handover resolves the current default.
 Each accepted worker handover adds a receipt to that Goal queue before it writes one exact-Area inbox notice. A pending receipt is a durable notice outbox, and a stable source ID makes retry and recovery idempotent.
+Any harness can pull a rebuilt brain or worker prompt from the session's durable record. Current brain context also carries unread exact-Area notices. A bound worker observed back at its shell creates one durable recovery notice without ending its queue assignment or tmux session.
+Generic `tangent agent send` messages use an atomic file queue. Agent Shell stores them before pane wake or presentation and restores them after controller restarts. See ADR-0039.
 Mutation authority is exact by Area. Parent brains can read descendant summaries and route information, but cannot mutate child work.
 Journal capture writes before delivery.
 Exact Request effects use hashed revisions and an allowlist.
+
+Agent Shell assigns each keyboard event to one visible context. A terminal owns all input except its visible leave action. Work uses one open-Goal projection and a shared command registry. Documents provide a Vim-style reading mode without taking keys from text editors. See ADR-0038.
 A designated typed final review can close routine Goals at the current Goal revision.
 Material Operation Problems, resolutions, and declared results persist before brain delivery.
 Detached audit exports preserve old generation and pipeline records.

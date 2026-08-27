@@ -76,7 +76,12 @@ test("the Area browser focuses search and leads with ready work and filterable D
   click(window, "[data-default-agent-edit='work']");
   click(window, "[data-launch-harness='claude']");
   window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  await settle(window);
   assert.equal(posts.filter((item) => item.path === "/api/launch/default").length, 0, "Escape keeps both declarations unchanged");
+  assert.ok(window.document.querySelector("[data-launch-popover]"), "the first Escape returns from the draft to the defaults summary");
+  assert.equal(window.document.activeElement, window.document.querySelector("[data-default-agent-edit='work']"), "the summary receives focus after cancelling its draft");
+  window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  await settle(window);
   assert.equal(window.document.querySelector("[data-launch-popover]"), null);
   click(window, "[data-default-agents-area='otto/tangent']");
   await settle(window);

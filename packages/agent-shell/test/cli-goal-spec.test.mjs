@@ -184,6 +184,9 @@ test("tangent brain has handover and status; tangent area gains create", async (
   assert.deepEqual(optionNames(handover), ["session", "server"]);
   const status = brainCommandSpec.subcommands.find((entry) => entry.name === "status");
   assert.equal(status.args, "[area]");
+  const stop = brainCommandSpec.subcommands.find((entry) => entry.name === "stop");
+  assert.equal(stop.args, "[area]");
+  assert.deepEqual(optionNames(stop), ["session", "server"]);
   const create = areaCommandSpec.subcommands.find((entry) => entry.name === "create");
   assert.ok(create, "area spec has a create subcommand");
   assert.equal(create.args, "<parent> <name>");

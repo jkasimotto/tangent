@@ -576,8 +576,8 @@ test("the context-first shell is default and keeps the user's understanding with
   }).then((response) => response.json());
   assert.equal(editPending.pipeline.steps[2].instruction, "Implement the design and prove it.");
 
-  // A typed worker report completes only its assignment. The exact Area brain
-  // starts each later assignment through the authoritative queue.
+  // A typed worker report completes only its assignment. A local caller starts
+  // each later assignment through the authoritative queue.
   const handoverOne = await fetch(`${base}/api/goals/handover`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -594,22 +594,10 @@ test("the context-first shell is default and keeps the user's understanding with
   const directAdvance = await fetch(`${base}/api/pipelines/control`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ goal: pipelineGoal.file, action: "advance", step: 2, expectedRevision: handoverOne.pipeline.revision, idempotencyKey: "direct-advance" }),
+    body: JSON.stringify({ goal: pipelineGoal.file, action: "advance", step: 2, expectedRevision: handoverOne.pipeline.revision, idempotencyKey: "workflow-advance-2" }),
   });
-  assert.equal(directAdvance.status, 403, "Julian cannot bypass the guarded recovery path for a normal start");
-
-  const advanceTwo = await fetch(`${base}/api/pipelines/control`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      goal: pipelineGoal.file,
-      action: "advance",
-      step: 2,
-      caller: brainStart.session,
-      expectedRevision: handoverOne.pipeline.revision,
-      idempotencyKey: "workflow-advance-2",
-    }),
-  }).then((response) => response.json());
+  assert.equal(directAdvance.status, 200, "Julian can directly advance normal work without impersonating its Area brain");
+  const advanceTwo = await directAdvance.json();
   assert.equal(advanceTwo.status, "started");
   assert.equal(advanceTwo.next.index, 2);
   assert.equal(advanceTwo.next.session, "test-pipeline-demo");
@@ -620,7 +608,6 @@ test("the context-first shell is default and keeps the user's understanding with
       goal: pipelineGoal.file,
       action: "advance",
       step: 2,
-      caller: brainStart.session,
       expectedRevision: handoverOne.pipeline.revision,
       idempotencyKey: "workflow-advance-2",
     }),
@@ -797,7 +784,7 @@ test("the context-first shell is default and keeps the user's understanding with
   }).then((response) => response.json());
   assert.equal(brainRequest.request.ownerRef.generation, null, "the Request belongs to the logical Area brain");
   const briefUnderBrain = await fetch(`${base}/api/goals/brief?file=${encodeURIComponent(pipelineGoal.file)}`).then((response) => response.json());
-  assert.match(briefUnderBrain.markdown, /## Brain\n\nThe brain for Area otto\/test controls this work/);
+  assert.match(briefUnderBrain.markdown, /## Brain\n\nThe brain for Area otto\/test organizes this assignment/);
   // A queue event on the Area is queued to the brain as a message from tangent.
   const eventGoal = await fetch(`${base}/api/goals/create`, {
     method: "POST",

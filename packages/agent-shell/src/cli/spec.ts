@@ -336,8 +336,8 @@ export const agentCommandSpec: CliCommandSpec = {
     },
     {
       name: "send",
-      description: "Send a message to another agent; it delivers when that agent's composer is empty",
-      args: "<name> <text...>",
+      description: "Send to a live agent or store a durable message for an Area brain",
+      args: "<session-or-area> <text...>",
       options: [
         { name: "from", takesValue: true, description: "Sender session name; defaults to the tmux session this command runs in" },
         serverOption

@@ -10,6 +10,35 @@ test("tangent agent publishes the durable context command", () => {
   assert.deepEqual(agentCommandSpec.subcommands.map((entry) => entry.name), ["list", "context", "send"]);
   assert.equal(subcommand("context").args, "[session]");
   assert.deepEqual(subcommand("context").options.map((option) => option.name), ["session", "server", "json"]);
+  assert.equal(subcommand("send").args, "<session-or-area> <text...>");
+});
+
+test("tangent agent send reports an Area inbox without promising immediate delivery", async (context) => {
+  const previousFetch = globalThis.fetch;
+  const previousLog = console.log;
+  const printed = [];
+  let body = null;
+  console.log = (...parts) => printed.push(parts.join(" "));
+  globalThis.fetch = async (_input, init = {}) => {
+    body = JSON.parse(String(init.body));
+    return Response.json({
+      status: "queued",
+      to: "neara/essential/autodesign",
+      target: "area",
+      via: "area",
+      reason: "stored in the Area inbox; it will arrive when the brain starts",
+      receipt: "notice-1",
+    });
+  };
+  context.after(() => {
+    globalThis.fetch = previousFetch;
+    console.log = previousLog;
+  });
+
+  await runAgentCli(["send", "neara/essential/autodesign", "Start the queued Goal.", "--from", "essential-brain"]);
+
+  assert.deepEqual(body, { to: "neara/essential/autodesign", text: "Start the queued Goal.", from: "essential-brain" });
+  assert.equal(printed[0], "queued for neara/essential/autodesign (stored in the Area inbox; it will arrive when the brain starts)");
 });
 
 test("tangent agent context requests an encoded session and prints the complete JSON projection", async (context) => {

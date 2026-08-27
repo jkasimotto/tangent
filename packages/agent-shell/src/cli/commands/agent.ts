@@ -23,7 +23,7 @@ export async function runAgentCli(argv = process.argv.slice(2)): Promise<void> {
   if (subcommand === "list") return listCommand(args);
   if (subcommand === "context") return contextCommand(args);
   if (subcommand === "send") return sendCommand(args);
-  throw new Error(`Unknown agent command: ${subcommand}. Try "tangent agent list", "tangent agent context", or "tangent agent send <name> <text>".`);
+  throw new Error(`Unknown agent command: ${subcommand}. Try "tangent agent list", "tangent agent context", or "tangent agent send <session-or-area> <text>".`);
 }
 
 /** Handles `tangent agent list`. */
@@ -65,16 +65,20 @@ async function contextCommand(args: Args): Promise<void> {
   printContext(context);
 }
 
-/** Handles `tangent agent send <name> <text...>`. */
+/** Handles `tangent agent send <session-or-area> <text...>`. */
 async function sendCommand(args: Args): Promise<void> {
   const server = resolveServerUrl(stringArg(args.server));
-  const to = requiredString(args._[1], "tangent agent send requires <name>; run \"tangent agent list\" first.");
+  const to = requiredString(args._[1], "tangent agent send requires a live session or Area path.");
   const text = args._.slice(2).join(" ").trim();
-  if (!text) throw new Error("tangent agent send requires the message text after the session name.");
+  if (!text) throw new Error("tangent agent send requires the message text after the session or Area path.");
   const from = stringArg(args.from) || (await currentTmuxSession());
   const result = await postJson(server, "/api/agents/send", { to, text, from });
   if (result.status === "delivered") {
     console.log(`delivered to ${result.to}`);
+    return;
+  }
+  if (result.target === "area") {
+    console.log(`queued for ${result.to} (${result.reason})`);
     return;
   }
   console.log(`queued for ${result.to} (${result.reason}); it will arrive when the composer is empty`);
@@ -154,12 +158,14 @@ function help(): void {
   console.log(renderCommandHelp(agentCommandSpec));
   console.log(`
 Delivery is state-aware: a message types into the target only when its
-composer is empty. Otherwise it queues and arrives when the agent is ready.
+composer is empty. An Area path stores the message in that brain's durable
+inbox even when the brain is not running.
 
 Examples:
   tangent agent list
   tangent agent context
   tangent agent context tangent-copy-text-from-agent-terminals --json
   tangent agent send tangent-copy-text-from-agent-terminals "The endpoint you need is /api/goals/brief."
+  tangent agent send neara/essential/autodesign "Start the queued design Goal when you return."
 `);
 }

@@ -149,13 +149,13 @@ Julian's answers are marked (Julian).
 
 **D10. No brain handover, no rotation (Julian).** `tangent brain handover`, pacing, the 429 refusal, the 90-minute reminder, and `wakeFromPaceText` go. A brain runs until Julian restarts it with the Restart he has (ADR-0037 picker). The brain row always shows the context fill.
 
-**D11. The brain prompt is built from Markdown.** Sections: identity, the Area note (Purpose, Current, Knowledge), resources (D1), skills (D20), processes (D16), open Goals with their queue state, unread notes, the plan Document, and the commands it may use. The default harness block stays in the Area note and is edited in the UI (Julian). `brain-command-reference.mjs` or a short fixed list supplies the command lines.
+**D11. The brain prompt is built from Markdown.** Sections: identity, the Area note (Purpose, Current, Knowledge), resources (D1), skills (D20), processes (D16). Then open Goals with their queue state, unread notes, the plan Document, and the commands it can use. The default harness block stays in the Area note and is edited in the UI (Julian). `brain-command-reference.mjs` or a short fixed list supplies the command lines.
 
 ### 5.4 Checking work and brain questions
 
 **D12. Julian flags what he checks (Julian).** Goal frontmatter gains `verify: yes`. He sets it with `x` on the row or by saying so in his message to the brain, which passes `--verify`. Tangent never sets it.
 
-**D13. `goal done` on a flagged Goal becomes `Check it`.** When a brain runs `tangent goal done` on a Goal with `verify: yes`, the status becomes `verify` (shown `Check it`), `session` is cleared, and the brain's done note is written into the Goal's State section. `goalStatusChange` refuses `done` on a flagged Goal from a brain or worker session. Julian's own `x` Done marks it `done`. `WRITABLE_GOAL_STATUSES` excludes `verify`. Both reconcilers skip it. The README allowlist and status list gain it. The word `ready` is not used.
+**D13. `goal done` on a flagged Goal becomes `Check it`.** When a brain runs `tangent goal done` on a Goal with `verify: yes`, the status becomes `verify` (shown `Check it`) and `session` is cleared. The brain's done note is written into the Goal's State section. `goalStatusChange` refuses `done` on a flagged Goal from a brain or worker session. Julian's own `x` Done marks it `done`. `WRITABLE_GOAL_STATUSES` excludes `verify`. Both reconcilers skip it. The README allowlist and status list gain it. The word `ready` is not used.
 
 **D14. One notification.** `julian-notify.mjs` sends one macOS notification when a Goal enters `verify`: `terminal-notifier -group goal:<file> -title "<Area>" -message "<Goal title>. Check it?" -open "http://127.0.0.1:4321/?goal=<file>"`. Never `-ignoreDnD`. Removed when the Goal leaves `verify`. `verifyNotifiedAt` on the queue record makes it once per entry. `?goal=` is a new query entry point beside `?document=`.
 
@@ -179,7 +179,7 @@ Julian's answers are marked (Julian).
 
 **D21. `harnesses.md` says how to resume.** `tangent.harnesses.v2` adds per harness `resume` (for example `{command} --resume {id}`), `sessionIdArg` (for example `--session-id {id}`), and `transcripts`. A harness without `resume` has no Resume verb. `saveRegistry` and `validateHarnessRegistry` keep the fields. The Document's "never rewrites" sentence names the two flags Tangent appends.
 
-**D22. The attempt records the conversation.** For claude and pi, Tangent appends `sessionIdArg` with a fresh uuid at prime time, from the attempt, and stores `providerSession: { provider, id }` before the session exists. For codex, the rollout is looked up by folder and start time when asked; if two match, both are shown. The attempt also records the last context fill seen while live.
+**D22. The attempt records the conversation.** For claude and pi, Tangent appends `sessionIdArg` with a fresh uuid at prime time, from the attempt, and stores `providerSession: { provider, id }` before the session exists. For codex, the rollout is looked up by folder and start time when asked. If two match, both are shown. The attempt also records the last context fill seen while live.
 
 **D23. Resume is a verb on the attempt row.** Live: attach. Dead: `r` opens a new owned tmux session of kind `resume` in the attempt's `cwd` and types the rendered command without submitting. Works on finished Goals because the session is not bound to the Goal. `tangent goal show` prints the command per attempt. The fill shows on every row whenever readable.
 
@@ -189,11 +189,11 @@ Julian's answers are marked (Julian).
 
 ## 6. Evidence that shaped the decisions
 
-- 224 of 716 steps started in the vault folder silently; `otto/dnd/testing` did so under a bound parent. One parser, inherited, refusing (D1, D2).
+- 224 of 716 steps started in the vault folder silently. `otto/dnd/testing` did so under a bound parent. One parser, inherited, refusing (D1, D2).
 - 13 of 16 brains already start in a vault Area folder. The brain cwd becomes constant (D4).
 - Workers are taught nine Tangent commands across AGENTS.md and prompts. One command, refused otherwise (D5, D6).
 - 99 agent-to-brain plain messages in 11 days were coordination. Plain text changes no status (D5).
-- otto/tangent reached generation 324; the 2026-08-25 incident produced 170 generations in four hours. No swap lever (D10).
+- otto/tangent reached generation 324. The 2026-08-25 incident produced 170 generations in four hours. No swap lever (D10).
 - Describe work already routes a sentence to the brain and resumes an inactive one. `a` reuses it (D8).
 - 53 Tests in three days, none with an effect. Julian decides what he checks (D12).
 - Four Areas hold open Goals and no brain record. The check state lives on the Goal file, not a Request store (D13).
@@ -222,7 +222,7 @@ Julian's answers are marked (Julian).
 
 Each slice ships alone and is tested without a live harness (`AGENT_SHELL_TEST_NO_LAUNCH=1`).
 
-1. **Area resources and folders.** D1 to D4. Vault README revision: the resources rule, `verify` in the allowlist and status list, `process-` and `skill-` files, the `recur-` rule removed, "no CLI, no schemas" corrected.
+1. **Area resources and folders.** D1 to D4. Vault README revision: the resources rule, `verify` in the allowlist and status list, `process-` and `skill-` files. The `recur-` rule is removed and "no CLI, no schemas" is corrected.
 2. **Worker contract.** D5 to D7. The small opening prompt. `tangent send` with three flags. Aliases. The 403 for other commands. AGENTS.md worker section.
 3. **Brain contract.** D8 to D15. `a` sends to the brain. Handover and pacing removed. `goal done` on a flagged Goal, `verify` status, notification, `?goal=`. Brain prompt rebuilt from Markdown. AGENTS.md brain section. One short ADR pointing here.
 4. **Resume.** D21 to D23.

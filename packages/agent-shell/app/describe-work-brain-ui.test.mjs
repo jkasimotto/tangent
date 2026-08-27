@@ -75,23 +75,19 @@ function renderDescribe(brain = null, command = "") {
   return { document, view };
 }
 
-test("Describe work shows the truthful chooser and recipient for every brain state", () => {
+test("the composer is one message to the brain, with no chooser, for every brain state", () => {
   const live = renderDescribe({ area: "otto/tangent/child", live: true, resolvedLaunch: { label: "Claude Otto · Fable 5", command: "claude-otto --model fable" } });
   assert.equal(live.document.querySelector(`[data-launch-for="${DESCRIBE}"]`), null);
-  assert.match(live.document.querySelector("button[type=submit]").textContent, /Send to Claude Otto · Fable 5 brain/);
-  assert.deepEqual(live.view.launchRequestFields(true), {});
+  assert.match(live.document.querySelector("button[type=submit]").textContent, /^Send/);
+  assert.match(live.document.querySelector(".form-note").textContent, /live and reads this next/);
 
   const stopped = renderDescribe({ area: "otto/tangent/child", live: false, resolvedLaunch: { label: "Claude Otto · Fable 5", command: "claude-otto --model fable" } });
-  assert.ok(stopped.document.querySelector(`[data-launch-for="${DESCRIBE}"]`));
-  assert.match(stopped.document.querySelector("button[type=submit]").textContent, /Resume Codex · Sol brain/);
-  assert.deepEqual(stopped.view.launchRequestFields(true), {});
+  assert.equal(stopped.document.querySelector(`[data-launch-for="${DESCRIBE}"]`), null, "no launch chooser: the Area brain default applies");
+  assert.match(stopped.document.querySelector("button[type=submit]").textContent, /Send and wake the brain/);
 
   const absent = renderDescribe();
-  assert.ok(absent.document.querySelector(`[data-launch-for="${DESCRIBE}"]`));
-  assert.match(absent.document.querySelector("button[type=submit]").textContent, /Start Codex · Sol/);
-  assert.deepEqual(absent.view.launchRequestFields(true), { choice: { harness: "codex", model: "sol" } });
-
-  const edited = renderDescribe(null, "codex --model gpt-custom --effort high");
-  assert.match(edited.document.querySelector("button[type=submit]").textContent, /codex --model gpt-custom --effort high/);
-  assert.deepEqual(edited.view.launchRequestFields(true), { command: "codex --model gpt-custom --effort high" });
+  assert.equal(absent.document.querySelector(`[data-launch-for="${DESCRIBE}"]`), null);
+  assert.match(absent.document.querySelector("button[type=submit]").textContent, /Send and start the brain/);
+  assert.equal(absent.document.querySelector("[data-create-manually]"), null, "the New Goal form is gone");
+  assert.match(absent.document.querySelector(".form-note").textContent, /Area note as its instructions/);
 });

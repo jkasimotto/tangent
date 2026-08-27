@@ -111,7 +111,6 @@ export function normalizeQueueRecord(value) {
     revision,
     status: migrationProblem ? "paused" : reopenSupersededPause ? "open" : ["open", "complete", "paused", "canceled", "parked"].includes(value.status) ? value.status : "open",
     migrationProblem,
-    completionPolicy: value.completionPolicy ?? "review-pass",
     currentAssignmentId: storedCurrent?.id ?? activeAssignment?.id ?? null,
     idempotencyKeys: Array.isArray(value.idempotencyKeys) ? value.idempotencyKeys : [],
     assignments,
@@ -125,7 +124,6 @@ export function normalizeQueueRecord(value) {
     || value.status !== normalized.status
     || (value.migrationProblem ?? null) !== normalized.migrationProblem
     || (value.currentAssignmentId ?? null) !== normalized.currentAssignmentId
-    || (value.completionPolicy ?? null) !== normalized.completionPolicy
     || !Array.isArray(value.idempotencyKeys)
     || !Array.isArray(value.assignments)
     || !Array.isArray(value.steps)
@@ -143,7 +141,7 @@ export async function deletePipeline(root, area, slug) {
  * Builds a fresh record with every step pending. Throws with the
  * validateSteps message when the steps are invalid.
  */
-export function newPipeline({ goal, goalRevision = "", area, slug, extraFiles = [], steps, completionPolicy = "review-pass", now = new Date().toISOString() }) {
+export function newPipeline({ goal, goalRevision = "", area, slug, extraFiles = [], steps, now = new Date().toISOString() }) {
   const error = validateSteps(steps);
   if (error) throw new Error(error);
   const assignments = normalizeNewAssignments(steps);
@@ -157,7 +155,6 @@ export function newPipeline({ goal, goalRevision = "", area, slug, extraFiles = 
     revision: 1,
     status: "open",
     migrationProblem: null,
-    completionPolicy,
     currentAssignmentId: null,
     idempotencyKeys: [],
     createdAt: now,
@@ -511,7 +508,6 @@ function normalizeStep(step, index, continueFromAssignmentId = null) {
     continueFromAssignmentId,
     continueFrom: null,
     kind: step.kind === "review" ? "review" : "implementation",
-    designatedReview: step.kind === "review" || step.designatedReview === true,
     status: "pending",
     session: null,
     startedAt: null,
@@ -531,7 +527,6 @@ function normalizeStoredAssignment(step, index, id) {
     id,
     index,
     kind: step.kind === "review" ? "review" : "implementation",
-    designatedReview: step.designatedReview === true || step.kind === "review",
     attempts: Array.isArray(step.attempts) ? step.attempts : [],
     reports: Array.isArray(step.reports) ? step.reports : [],
     handoverReceipts: normalizeWorkerHandoverReceipts(step.handoverReceipts),
@@ -714,7 +709,6 @@ function applyPendingPatch(target, patch) {
   if (Object.hasOwn(patch, "path")) target.path = typeof patch.path === "string" && patch.path.trim() ? patch.path.trim() : null;
   if (Object.hasOwn(patch, "kind")) {
     target.kind = patch.kind === "review" ? "review" : "implementation";
-    target.designatedReview = target.kind === "review";
   }
   if (Object.hasOwn(patch, "launch") && Object.hasOwn(patch, "command")) {
     throw new PipelineMutationError("ambiguous-launch", "an assignment cannot set a launch and command together");

@@ -43,7 +43,8 @@ test("the context-first shell is default and keeps the user's understanding with
   );
 
   const openedSessions = [];
-  const base = await startShellServer(context, { here, root, trees, workspace, openedSessions });
+  const instanceId = `workflow-test-${process.pid}`;
+  const base = await startShellServer(context, { here, root, trees, workspace, openedSessions, env: { TANGENT_SHELL_INSTANCE_ID: instanceId } });
   if (!base) return;
 
   const browserModules = [
@@ -56,7 +57,7 @@ test("the context-first shell is default and keeps the user's understanding with
   const serverSource = await readFile(path.join(here, "server.mjs"), "utf8");
   assert.match(shellScript, /data-command-enter-submit/);
   assert.match(shellScript, /event\.key === "Enter" && event\.metaKey/);
-  assert.match(shellScript, /data-create-form/);
+  assert.match(shellScript, /data-describe-work-form/);
   assert.match(shellScript, /What happens next\?/);
   assert.match(shellScript, /data-mark-wont-do/);
   assert.match(shellScript, /data-toggle-awake/);
@@ -83,10 +84,10 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.match(shellScript, /api\/goals\/detail/);
   assert.match(shellScript, /Goal details/, "the Document reader projects the stable Goal read model");
   assert.doesNotMatch(serverSource, /createReloadController|api\/reload|source changed; restarting|watch\(here/);
-  // Command teaching moved to the ambient ~/.agents/AGENTS.md: the describe
-  // prompt names the trivial-path command and the two good outcomes instead.
-  assert.match(serverSource, /tangent goal create/);
-  assert.match(serverSource, /--own/);
+  // Everything starts through the brain (ADR-0041): no describe-work agent
+  // and no command teaching in a generated prompt. The brain reads
+  // `tangent help` and the vault root AGENTS.md instead.
+  assert.doesNotMatch(serverSource, /describeWorkPrompt|spawnDescribeWorkSession|primeDescribeWorkSession/);
   assert.doesNotMatch(serverSource, /goal-command\.mjs/);
 
   const reloadEndpoint = await fetch(`${base}/api/reload`, { method: "POST" });
@@ -210,23 +211,26 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.match(updated.markdown, /## Julian's understanding/);
   assert.match(updated.markdown, /no need to re-confirm the assignment/);
 
-  const described = await fetch(`${base}/api/work/describe`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      area: "otto/test",
-      description: "Make the complete flow reliable. Keep the final proof easy to inspect.",
-      sources: ["otto/test/use-cases.md"],
-      launch: false,
-    }),
-  }).then((response) => response.json());
+  // A session this server owns that is not yet a worker: the shape an agent
+  // that defines work has before it takes a Goal with --own. Everything
+  // starts through the brain now (ADR-0041), so the test opens it itself.
+  const described = { session: `test-describe-make-the-complete-flow-reliable-${process.pid}` };
+  await execFileAsync("tmux", ["new-session", "-d", "-s", described.session, "-c", workspace]);
+  for (const [key, value] of [["@tangent_kind", "work-definition"], ["@tangent_area", "otto/test"], ["@tangent_agent_shell_instance", instanceId], ["@tangent_work_title", "Make the complete flow reliable"]]) {
+    await execFileAsync("tmux", ["set-option", "-t", described.session, key, value]);
+  }
   openedSessions.push(described.session);
-  assert.match(described.session, /^test-describe-make-the-complete-flow-reliable/);
-  const workSession = (await fetch(`${base}/api/sessions`).then((response) => response.json())).sessions
-    .find((session) => session.name === described.session);
+  const workSession = await (async () => {
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const found = (await fetch(`${base}/api/sessions`).then((response) => response.json())).sessions.find((session) => session.name === described.session);
+      if (found) return found;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    return null;
+  })();
+  assert.ok(workSession, "the owned session is listed");
   assert.equal(workSession.kind, "work-definition");
   assert.equal(workSession.area, "otto/test");
-  assert.equal(workSession.cwd, workspace);
 
   // A defining agent that creates a Goal with --own stops being "Defining
   // work": the Goal binds to its session and the session adopts the Goal's
@@ -275,7 +279,7 @@ test("the context-first shell is default and keeps the user's understanding with
   const newGoal = vault.map.flatMap((group) => group.goals).find((goal) => goal.file === created.file);
   assert.equal(newGoal.title, "A second visible result");
   assert.equal(newGoal.status, "open");
-  assert.match(await readFile(path.join(areaDirectory, "test.md"), "utf8"), /\[\[goal-a-second-visible-result\]\]/);
+  assert.doesNotMatch(await readFile(path.join(areaDirectory, "test.md"), "utf8"), /\[\[goal-a-second-visible-result\]\]/, "Tangent never writes into the Area note (ADR-0041)");
 
   const hierarchy = await fetch(`${base}/api/goals/create`, {
     method: "POST",
@@ -314,7 +318,8 @@ test("the context-first shell is default and keeps the user's understanding with
     body: JSON.stringify({ area: "otto/test", description: "Maybe add a calmer return screen later." }),
   }).then((response) => response.json());
   assert.equal(idea.ok, true);
-  assert.match(await readFile(path.join(areaDirectory, "test.md"), "utf8"), /Idea: Maybe add a calmer return screen later\./);
+  assert.match(await readFile(path.join(areaDirectory, "ideas.md"), "utf8"), /^- Maybe add a calmer return screen later\.$/m, "ideas live in ideas.md");
+  assert.doesNotMatch(await readFile(path.join(areaDirectory, "test.md"), "utf8"), /calmer return screen/, "Tangent never writes into the Area note");
 
   // Read-only endpoints behind `tangent area`, `tangent goal`, and `tangent idea`.
   const areaShow = await fetch(`${base}/api/areas/show?area=otto%2Ftest`).then((response) => response.json());
@@ -653,7 +658,7 @@ test("the context-first shell is default and keeps the user's understanding with
   }).then((response) => response.json());
   assert.equal(appended.status, "queued");
   assert.deepEqual(appended.added, [4]);
-  assert.equal(appended.pipeline.steps[3].designatedReview, true);
+  assert.equal(appended.pipeline.steps[3].kind, "review");
 
   const handoverThree = await fetch(`${base}/api/goals/handover`, {
     method: "POST",
@@ -714,7 +719,7 @@ test("the context-first shell is default and keeps the user's understanding with
       },
     }),
   }).then((response) => response.json());
-  assert.equal(handoverFour.status, "goal-done");
+  assert.equal(handoverFour.status, "reported", "no report closes a Goal: the brain marks it done (ADR-0041)");
   const repeatedReview = await fetch(`${base}/api/goals/handover`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -730,18 +735,24 @@ test("the context-first shell is default and keeps the user's understanding with
       },
     }),
   }).then((response) => response.json());
-  assert.equal(repeatedReview.status, "repeated", "a lost closure response cannot close the Goal twice");
+  assert.equal(repeatedReview.status, "repeated", "an exact retry is the same submission");
+  goalText = await readFile(path.join(trees, pipelineGoal.file), "utf8");
+  assert.doesNotMatch(goalText, /^status: done$/m, "a passing review leaves the Goal for the brain to close");
+  const closedByWord = await fetch(`${base}/api/goals/edit`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ file: pipelineGoal.file, status: "done" }),
+  }).then((response) => response.json());
+  assert.equal(closedByWord.ok, true);
   goalText = await readFile(path.join(trees, pipelineGoal.file), "utf8");
   assert.match(goalText, /^status: done$/m);
   // ---- Area brain ----
   // Julian starts one brain on the Area; it is a session of kind brain with a
   // record under the brains root, and every Goal prompt on the Area names it.
-  assert.match(serverSource, /async function brainPrompt\(record\)/);
-  // One budget covers the activation part and the structural sections.
-  assert.match(serverSource, /composeBrainPrompt\(\{/);
-  assert.match(serverSource, /One Goal queue controls every assignment/);
-  assert.match(serverSource, /A designated review closes routine work only at the current Goal revision/);
-  assert.match(serverSource, /Free text never closes a Goal/);
+  // Tangent generates no brain prompt (ADR-0041): the first message is
+  // Julian's own words, and the Area note chain is the instruction.
+  assert.doesNotMatch(serverSource, /async function brainPrompt\(|composeBrainPrompt\(|designatedReview|completionPolicy/);
+  assert.match(serverSource, /function brainFirstMessage\(/);
   assert.doesNotMatch(serverSource, /Sonnet is the workhorse/);
   const brainDefault = await fetch(`${base}/api/launch/default`, {
     method: "POST",
@@ -771,11 +782,10 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(brainAgain.session, "test-brain");
   const brainShow = await fetch(`${base}/api/brains/show?session=test-brain`).then((response) => response.json());
   assert.equal(brainShow.brain.area, "otto/test");
-  // A brain gets both declared defaults in plain words, and the rule that
-  // every worker start names its own harness.
-  assert.match(brainShow.prompt, /Repository:/);
-  assert.doesNotMatch(brainShow.prompt, /declares the work harness/, "the bounded prompt omits launch catalog narration");
-  assert.doesNotMatch(brainShow.prompt, /Every --launch in this Area is/);
+  // The brain's first message is Julian's founding message, verbatim, with
+  // the notices that waited for it below.
+  assert.match(brainShow.prompt, /^Get the test Area done\./);
+  assert.doesNotMatch(brainShow.prompt, /## Identity|## Resources|declares the work harness/, "no generated prompt section");
   assert.equal((await fetch(`${base}/api/brains/show?area=otto%2Fnowhere`)).status, 404);
   const brainRequest = await fetch(`${base}/api/brains/requests`, {
     method: "POST",
@@ -835,38 +845,42 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.equal(appendedReview.pipeline.steps[0].status, "complete", "append does not revive the finished worker");
   assert.equal(appendedReview.pipeline.steps[1].status, "pending");
   assert.equal(appendedReview.pipeline.steps[1].kind, "review");
-  assert.equal(appendedReview.pipeline.steps[1].designatedReview, true);
+  assert.equal(appendedReview.pipeline.steps[1].kind, "review");
   assert.equal(appendedReview.pipeline.currentAssignmentId, null);
-  // Handover from a session that is not a brain is refused; from the brain it
-  // starts generation 2 on a new session and the record follows it.
-  const notBrain = await fetch(`${base}/api/brains/handover`, {
+  // There is no brain handover (ADR-0041): the route is gone, and Julian's
+  // Restart is a stop followed by a start with his message.
+  const noHandover = await fetch(`${base}/api/brains/handover`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session: "test-pipeline-demo", text: "facts" }),
+    body: JSON.stringify({ session: "test-brain", text: "facts" }),
   });
-  assert.equal(notBrain.status, 404);
-  const brainHandover = await fetch(`${base}/api/brains/handover`, {
+  assert.equal(noHandover.status, 404);
+  const brainStopped = await fetch(`${base}/api/brains/stop`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ session: "test-brain", text: "Wave 1 dispatched: pipeline-demo runs step 9. Next: wait for it." }),
+    body: JSON.stringify({ area: "otto/test", expectedAttemptId: "test-brain", operationId: "workflow-restart" }),
   }).then((response) => response.json());
-  assert.equal(brainHandover.status, "started");
-  assert.equal(brainHandover.session, "test-brain-g2");
-  assert.equal(brainHandover.generation, 2);
-  const handedOverBrain = await fetch(`${base}/api/brains/show?session=test-brain-g2`).then((response) => response.json());
-  assert.deepEqual(handedOverBrain.brain.resolvedLaunch.ref, { harness: "fake", model: "one", effort: "high" });
-  assert.equal(handedOverBrain.brain.resolvedLaunch.command, "fake-agent --model one --effort high", "handover resolves the current Area Brain configuration for the new attempt");
+  assert.equal(brainStopped.state, "stopped", JSON.stringify(brainStopped));
+  const brainRestart = await fetch(`${base}/api/brains/start`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ area: "otto/test", resume: true, instruction: "Wave 1 dispatched: pipeline-demo runs step 9. Next: wait for it." }),
+  }).then((response) => response.json());
+  assert.equal(brainRestart.session, "test-brain-g2");
+  assert.equal(brainRestart.generation, 2);
+  const restartedBrain = await fetch(`${base}/api/brains/show?session=test-brain-g2`).then((response) => response.json());
+  assert.deepEqual(restartedBrain.brain.resolvedLaunch.ref, { harness: "fake", model: "one", effort: "high" });
+  assert.equal(restartedBrain.brain.resolvedLaunch.command, "fake-agent --model one --effort high", "a restart resolves the current Area Brain configuration for the new attempt");
+  assert.match(restartedBrain.prompt, /^Wave 1 dispatched: pipeline-demo runs step 9\. Next: wait for it\./, "Julian's message is the first message");
   openedSessions.push("test-brain-g2");
-  await new Promise((resolve) => setTimeout(resolve, 1800));
   snapshot = await fetch(`${base}/api/sessions`).then((response) => response.json());
-  assert.equal(snapshot.sessions.some((session) => session.name === "test-brain"), false, "the old generation ends after the new one starts");
+  assert.equal(snapshot.sessions.some((session) => session.name === "test-brain"), false, "the stopped attempt is gone");
   assert.equal(snapshot.brains[0].session, "test-brain-g2");
   assert.equal(snapshot.brains[0].generation, 2);
   assert.equal(snapshot.brains[0].status, "active");
-  assert.equal(snapshot.brains[0].latestHandover, "Wave 1 dispatched: pipeline-demo runs step 9. Next: wait for it.");
-  assert.equal(snapshot.brains[0].generations[0].handover, "Wave 1 dispatched: pipeline-demo runs step 9. Next: wait for it.");
+  assert.equal(snapshot.brains[0].latestHandover, null, "nothing writes a handover any more");
   let durableRequests = JSON.parse(await readFile(path.join(root, "brains", "otto", "test", "requests.json"), "utf8")).requests;
-  assert.deepEqual(durableRequests[0].ownerRef, { type: "brain", area: "otto/test", generation: null }, "handover keeps the Request with the logical Area brain");
+  assert.deepEqual(durableRequests[0].ownerRef, { type: "brain", area: "otto/test", generation: null }, "the Request belongs to the logical Area brain");
   assert.deepEqual(durableRequests[0].subjectRef, { type: "brain", area: "otto/test", generation: null });
   // Stop agent on the brain ends it; Resume starts generation 3 from the record.
   const brainKilled = await fetch(`${base}/api/kill/${encodeURIComponent("test-brain-g2")}`, { method: "POST" }).then((response) => response.json());
@@ -878,12 +892,6 @@ test("the context-first shell is default and keeps the user's understanding with
   assert.deepEqual([durableRequests[0].status, durableRequests[0].closedReason], ["closed", "brain-ended"], "explicit brain end closes its open Requests");
   const briefWithoutBrain = await fetch(`${base}/api/goals/brief?file=${encodeURIComponent(pipelineGoal.file)}`).then((response) => response.json());
   assert.doesNotMatch(briefWithoutBrain.markdown, /## Brain/);
-  const silentResume = await fetch(`${base}/api/brains/start`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ area: "otto/test", resume: true }),
-  });
-  assert.equal(silentResume.status, 400, "an ended brain does not wake without a message");
   const brainResume = await fetch(`${base}/api/brains/start`, {
     method: "POST",
     headers: { "content-type": "application/json" },

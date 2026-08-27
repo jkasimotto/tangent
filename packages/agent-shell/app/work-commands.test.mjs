@@ -12,7 +12,7 @@ test("Work command records are unique, complete, and own the settled shortcuts",
     assert.match(command.help, /\S/);
     assert.ok(Object.isFrozen(command));
   }
-  const settled = ["previousArea", "nextArea", "openBrain", "stopBrain", "defaults", "newGoal", "focus", "collapse", "expand", "questions", "note", "readGoal", "goalStatus", "commands", "keys"];
+  const settled = ["previousArea", "nextArea", "openBrain", "stopBrain", "defaults", "messageBrain", "focus", "collapse", "expand", "questions", "note", "readGoal", "goalStatus", "commands", "keys"];
   assert.deepEqual(settled.map((id) => workCommand(id).keyDisplay), ["{", "}", "b", "s", "d", "a", "f", "h", "l", "r", "n", "o", "x", ":", "?"]);
   assert.equal(workCommand("fold"), null, "z and the toggle command have left Work");
 });
@@ -23,7 +23,7 @@ test("matching reads the registry and rejects unintended modifiers", () => {
   assert.equal(workCommandMatches(event("s"), "stopBrain"), true);
   assert.equal(workCommandMatches(event("s", { metaKey: true }), "stopBrain"), false);
   assert.equal(workCommandMatches(event("d"), "defaults"), true);
-  assert.equal(workCommandMatches(event("a"), "newGoal"), true);
+  assert.equal(workCommandMatches(event("a"), "messageBrain"), true);
   assert.equal(workCommandMatches(event("h"), "collapse"), true);
   assert.equal(workCommandMatches(event("l"), "expand"), true);
   assert.equal(workCommandMatches(event("z"), "collapse"), false);

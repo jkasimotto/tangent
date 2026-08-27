@@ -10,7 +10,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction, shellMenu, goToButton, goToLayer,
     goToInput, modalLayer, documentPeekLayer, terminalFit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu, confirmRebuild,
     reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, showDecision,
-    showCreate, showDescribe, toggleAwake, openModal, closeModal, modalConfirm, restoreReturnPoint, openSessionLayer, closeSessionLayer,
+    showDescribe, toggleAwake, openModal, closeModal, modalConfirm, restoreReturnPoint, openSessionLayer, closeSessionLayer,
   } = chrome;
   const {
     loadGoalPrompt, loadBrainPrompt, closePromptPreview, selectBestiaryLifecycle, selectBestiaryTransition,
@@ -19,14 +19,14 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   const {
     selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain, brainForAreaCard,
     openBrainSession, openOrStartBrain, toggleBrainPopover, confirmStopBrain, saveDescribeDraft, saveDescribeSession, describeWorkSession,
-    openDescribeSession, addDescribeSource, switchDescribeToManualCreate,
+    openDescribeSession, addDescribeSource,
     openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, openRequest, openQuestionsReview, openAreaCapture, sendVerdict,
     replyAboutRow, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery,
     applyAreaFocus, clearAreaFocus, renderWork, describeLaunchArea, describeWorkSessions,
     goalGroupRoot, setSubgoalsExpanded, toggleSubgoals, setWorkAreaFolded,
   } = work;
   const {
-    showAreasAt, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelCreate, cancelDescribe, areaIsFolded,
+    showAreasAt, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelDescribe, areaIsFolded,
     saveExpandedAreas, revealArea, setAreaStatus, preferredArea, areaLabel, loadAreaJournal,
   } = areas;
   const {
@@ -598,8 +598,10 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   function openGoalStatus(goal) {
     if (!goal) return showToast("Choose a Goal row first.");
     const open = !["done", "dropped", "parked", "deferred"].includes(goal.status);
+    const flagged = goal.verify === true;
     const options = [
-      { value: "done", key: "d", label: "Done", help: "Close the Goal because its done condition is met.", enabled: open, reason: "This Goal is already closed." },
+      { value: "done", key: "d", label: "Done", help: goal.status === "verify" ? "You checked it. Close the Goal." : "Close the Goal because its done condition is met.", enabled: open, reason: "This Goal is already closed." },
+      { value: "verify", key: "c", label: flagged ? "Check it myself: on" : "Check it myself", help: flagged ? "Turn it off: the brain's done closes the Goal." : "When the brain marks this done, it waits for you as Check it.", enabled: open, reason: "This Goal is already closed." },
       { value: "dropped", key: "w", label: "Won't do", help: "Close the Goal with a required reason.", enabled: open, reason: "This Goal is already closed." },
       { value: "parked", key: "p", label: "Park", help: "Hide the Goal from default Work without deleting its history.", enabled: open, reason: "This Goal is already closed." },
       { value: "open", key: "r", label: "Reopen", help: "Return this Goal to open without starting an agent.", enabled: !open, reason: "This Goal is already open." },
@@ -610,6 +612,18 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       if (status === "done") {
         confirmComplete(goal.file);
         return false;
+      }
+      if (status === "verify") {
+        try {
+          await post("/api/goals/edit", { file: goal.file, verify: !flagged });
+          await refresh();
+          paint(true);
+          showToast(flagged ? "The brain's done closes this Goal." : "When the brain marks this done, it waits for you as Check it.");
+          return true;
+        } catch (error) {
+          showToast(error.message);
+          return false;
+        }
       }
       if (status === "dropped") {
         confirmWontDo();
@@ -710,7 +724,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       requestLaunchFocus("summary");
       return result;
     }
-    if (id === "newGoal") return area ? showCreate(area, "work") : showToast("This row has no Area command header.");
+    if (id === "messageBrain") return area ? showDescribe({ area }) : showToast("This row has no Area command header.");
     if (id === "questions") return area ? openQuestionsReview(area) : showToast("This row has no Area command header.");
     if (id === "note") return area ? openAreaCapture(area) : showToast("This row has no Area command header.");
     if (id === "focus") return openAreaFocusPicker();
@@ -772,7 +786,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const brain = area ? brainForAreaCard(area) : null;
     const isArea = row.classList.contains("work-group-row") && area;
     const options = workCommandsFor({ palette: true }).filter((command) => {
-      if (["commands", "openBrain", "stopBrain", "defaults", "newGoal", "focus", "questions", "note", "previousArea", "nextArea"].includes(command.id)) return Boolean(isArea);
+      if (["commands", "openBrain", "stopBrain", "defaults", "messageBrain", "focus", "questions", "note", "previousArea", "nextArea"].includes(command.id)) return Boolean(isArea);
       if (["readGoal", "changeAgent", "goalStatus"].includes(command.id)) return Boolean(goal);
       return ["collapse", "expand", "filter", "keys"].includes(command.id);
     }).map((command) => {
@@ -837,7 +851,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       value: command.id,
       key: keyFor[command.id] ?? "",
       label: command.label || command.id,
-      help: command.enabled === false ? command.reason : command.id === "status" ? "Choose Done, Won't do, Park, or Reopen." : "Run this Goal command.",
+      help: command.enabled === false ? command.reason : command.id === "status" ? "Choose Done, Check it myself, Won't do, Park, or Reopen." : "Run this Goal command.",
       enabled: command.enabled !== false,
       reason: command.reason,
     }));
@@ -1277,8 +1291,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     if (target.closest?.("[data-clear-area-focus]")) return clearAreaFocus();
     const stopBrain = target.closest("[data-stop-brain-area]");
     if (stopBrain) return confirmStopBrain(stopBrain.dataset.stopBrainArea, stopBrain.dataset.stopBrainAttempt);
-    const newGoal = target.closest("[data-new-goal-area]");
-    if (newGoal) return showCreate(newGoal.dataset.newGoalArea, "work");
     const areaBrain = target.closest("[data-open-area-brain]");
     if (areaBrain) {
       const point = captureNavigationPoint(areaBrain);
@@ -1512,8 +1524,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const describeArea = target.closest("[data-describe-area]");
     if (describeArea) return showDescribe({ area: describeArea.dataset.describeArea });
     if (target.closest("[data-describe-work]")) return showDescribe();
-    if (target.closest("[data-create-manually]")) return switchDescribeToManualCreate();
-    if (target.closest("[data-cancel-create]")) return cancelCreate();
     if (target.closest("[data-cancel-describe]")) return cancelDescribe();
     const removeSource = target.closest("[data-remove-describe-source]");
     if (removeSource && state.describeDraft) {
@@ -2001,36 +2011,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       }
       return;
     }
-    if (event.target.matches("[data-create-form]")) {
-      event.preventDefault();
-      const launchAfterCreate = !event.submitter?.matches?.("[data-create-only]");
-      const fields = new FormData(event.target);
-      const area = fields.get("area")?.toString() || "";
-      const title = fields.get("title")?.toString().trim() || "";
-      const doneWhen = fields.get("doneWhen")?.toString().trim() || "";
-      const startingPoint = fields.get("state")?.toString().trim() || "";
-      if (!area || !title || !doneWhen) {
-        showToast("Choose an Area, add a name, and state what done looks like.");
-        return;
-      }
-      try {
-        const created = await post("/api/goals/new", { area, title, doneWhen, state: startingPoint });
-        localStorage.setItem("agent-shell.last-area", area);
-        await refresh();
-        selectGoal(created.file);
-        if (launchAfterCreate) {
-          window.setTimeout(() => {
-            const chooser = [...document.querySelectorAll("[data-launch-for]")]
-              .find((button) => button.dataset.launchFor === created.file);
-            chooser?.click();
-          }, 0);
-          showToast("The Goal is ready. Review its agent before starting.");
-        } else showToast("The Goal is ready. No agent started.");
-      } catch (error) {
-        showToast(error.message);
-      }
-      return;
-    }
     if (event.target.matches("[data-describe-work-form]")) {
       event.preventDefault();
       const fields = new FormData(event.target);
@@ -2045,13 +2025,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       submitButton.textContent = "Opening the agent…";
       try {
         const sources = state.describeDraft?.sources ?? [];
-        const opened = await post("/api/work/describe", {
-          area,
-          description,
-          sources,
-          launch: true,
-          ...launchRequestFields(true),
-        });
+        const opened = await post("/api/work/describe", { area, description, sources });
         state.describeSessionName = opened.session;
         state.describeDraft = null;
         localStorage.setItem("agent-shell.last-area", area);
@@ -2063,12 +2037,11 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         showWork();
         openSessionLayer(session, opened.route?.startsWith("brain-") ? "brain" : "definition");
         const messages = {
-          "brain-opened": "Your description reached the Area brain.",
-          "brain-resumed": "Your description reached the resumed Area brain.",
-          "brain-started": "Your description reached the restarted Area brain.",
-          "work-definition-opened": "The agent opened with the Area, your description, and the selected Documents.",
+          "brain-opened": "Your message reached the Area brain.",
+          "brain-resumed": "Your message woke the Area brain.",
+          "brain-started": "Your message started the Area brain.",
         };
-        showToast(messages[opened.route] ?? messages["work-definition-opened"]);
+        showToast(messages[opened.route] ?? messages["brain-opened"]);
       } catch (error) {
         submitButton.disabled = false;
         paint(true);
@@ -2169,10 +2142,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
   document.addEventListener("change", async (event) => {
     if (event.target.matches("[data-area-focus-path]")) {
       return toggleAreaFocusDraft(event.target.dataset.areaFocusPath, event.target.checked);
-    }
-    if (event.target.matches("#new-goal-area")) {
-      state.createArea = event.target.value || "";
-      return paint(true);
     }
     if (event.target.id === "area-work-scope") { state.areaWorkScope = event.target.value; return paint(true); }
     if (event.target.id === "area-work-state") { state.areaWorkState = event.target.value; return paint(true); }
@@ -2496,10 +2465,6 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       paint(true);
       return true;
     }
-    if (state.view === "create") {
-      cancelCreate();
-      return true;
-    }
     if (state.view === "describe" || state.view === "describe-agent") {
       cancelDescribe();
       return true;
@@ -2706,9 +2671,9 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
         event.preventDefault();
         return executeWorkCommand("defaults", current);
       }
-      if (workCommandMatches(event, "newGoal")) {
+      if (workCommandMatches(event, "messageBrain")) {
         event.preventDefault();
-        return executeWorkCommand("newGoal", current);
+        return executeWorkCommand("messageBrain", current);
       }
       if (workCommandMatches(event, "collapse") || workCommandMatches(event, "expand")) {
         event.preventDefault();

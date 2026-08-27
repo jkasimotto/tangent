@@ -239,10 +239,8 @@ test("brain replacement, stale recovery, rebuild, and shutdown retain the other 
   const first = await startWork(one, "explicit");
   const second = await startWork(two, "explicit");
 
-  const handed = await post(one.base, "/api/brains/handover", { session: first.brain.session, text: "Replace only this brain." });
-  assert.equal(handed.status, 200, JSON.stringify(handed.body));
-  assert.equal(await sessionLive(first.brain.session), false, "brain handover retires its own old generation");
-  assert.equal(await sessionLive(second.brain.session), true, "brain handover keeps the other instance's brain");
+  assert.equal(await sessionLive(first.brain.session), true);
+  assert.equal(await sessionLive(second.brain.session), true);
 
   // A failed activation delivery is the stale-process recovery kill path.
   const brainFile = path.join(one.root, "brains", "otto", one.leaf, "brain.json");
@@ -253,12 +251,12 @@ test("brain replacement, stale recovery, rebuild, and shutdown retain the other 
   const recovered = await waitFor("owned stale brain recovery", async () => {
     const current = JSON.parse(await readFile(brainFile, "utf8"));
     lastRecoveryRecord = current;
-    return current.session !== handed.body.session && await sessionLive(current.session) ? current : null;
+    return current.session !== first.brain.session && await sessionLive(current.session) ? current : null;
   }, 400).catch(async (error) => {
     const tmux = await execFileAsync("tmux", ["list-sessions", "-F", "#{session_name} #{@tangent_agent_shell_instance}"]).then((result) => result.stdout, () => "no tmux");
     throw new Error(`${error.message}\nrecord=${JSON.stringify(lastRecoveryRecord)}\ntmux=${tmux}\n${one.errors.join("")}`);
   });
-  assert.equal(await sessionLive(handed.body.session), false);
+  assert.equal(await sessionLive(first.brain.session), false);
   assert.equal(await liveOwner(recovered.session), one.instanceId);
   assert.equal(await sessionLive(second.brain.session), true, "stale recovery keeps the foreign brain");
   assert.equal(await sessionLive(second.worker.session), true, "stale recovery keeps the foreign worker");

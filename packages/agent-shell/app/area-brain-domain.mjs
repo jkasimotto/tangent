@@ -3,14 +3,9 @@ import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import zlib from "node:zlib";
-import { goalIsHiddenByDefault } from "./goal-lifecycle.mjs";
 import { queryTerms, recencyBound } from "./goal-query-filters.mjs";
 import { promisify } from "node:util";
 
-export const BRAIN_PROMPT_LIMIT = 8_000;
-export const BRAIN_STRUCTURAL_LIMIT = 6_900;
-export const BRAIN_CHECKPOINT_LIMIT = 6_000;
-export const BRAIN_CHECKPOINT_FLOOR = 400;
 export const MILESTONE_SUMMARY_LIMIT = 240;
 export const JOURNAL_LIMIT_BYTES = 256 * 1024;
 export const GOAL_QUEUE_SCHEMA = "area-goal-queue.v2";
@@ -24,210 +19,15 @@ const digest = (text) => createHash("sha256").update(text).digest("hex");
 const cleanArea = (area) => String(area ?? "").split("/").filter(Boolean).join("/");
 
 /**
- * Clips one stored line to a hard length and says where the rest is. Every
- * value that reaches a bounded prompt as one list item passes through here:
- * a Journal note, a Goal title, and a Question subject are all written by a
- * human or a model and carry no length of their own. Without this clip one
- * long note fills the whole prompt budget and the prompt build fails.
+ * Clips one stored line to a hard length and says where the rest is. A
+ * milestone summary is written by a human or a model and carries no length
+ * of its own, so the index keeps one bounded line per milestone.
  */
 export function clipSummary(text, limit = MILESTONE_SUMMARY_LIMIT) {
   const value = String(text ?? "").replace(/\s+/g, " ").trim();
   if (value.length <= limit) return value;
   return `${value.slice(0, Math.max(1, limit - 1)).trimEnd()}…`;
 }
-const DEFAULT_MEMORY_BUDGETS = Object.freeze({
-  exact: Object.freeze({ Purpose: 1_000, Current: 1_000, Knowledge: 1_600 }),
-  ancestor: Object.freeze({ Purpose: 400, Knowledge: 600 }),
-});
-
-/** Returns Area paths from the root Area to the exact Area. */
-export function areaLineage(area) {
-  const parts = cleanArea(area).split("/").filter(Boolean);
-  return parts.map((_, index) => parts.slice(0, index + 1).join("/"));
-}
-
-/** Finds repository instructions that apply from the root to the working folder. */
-export async function inheritedInstructionFiles(repository, workingDirectory = repository) {
-  if (!repository || !workingDirectory) return [];
-  const root = path.resolve(repository);
-  const leaf = path.resolve(workingDirectory);
-  const relative = path.relative(root, leaf);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("The working folder is outside the repository.");
-  const folders = [root];
-  let cursor = root;
-  for (const part of relative.split(path.sep).filter(Boolean)) {
-    cursor = path.join(cursor, part);
-    folders.push(cursor);
-  }
-  const files = [];
-  for (const folder of folders) {
-    for (const name of ["AGENTS.md", "CLAUDE.md"]) {
-      const file = path.join(folder, name);
-      if (!existsSync(file)) continue;
-      const text = await readFile(file, "utf8");
-      files.push({ file, hash: digest(text), bytes: Buffer.byteLength(text) });
-    }
-  }
-  return files;
-}
-
-/** Builds structural sections in priority order and keeps required sections exact. */
-export function boundedBrainPrompt(sections, limit = BRAIN_PROMPT_LIMIT, { required = [], omissionName = "Omissions" } = {}) {
-  const entries = Object.entries(sections).filter(([, value]) => String(value ?? "").trim());
-  /** Renders the selected sections with their stable Markdown envelope. */
-  const render = (items) => items.map(([name, value]) => `## ${name}\n\n${String(value).trim()}`).join("\n\n");
-  const full = render(entries);
-  if (full.length <= limit) return full;
-  if (!required.length) throw new Error(`The generated brain prompt is ${full.length} characters; the limit is ${limit}.`);
-
-  const requiredNames = new Set(required);
-  const kept = entries.filter(([name]) => requiredNames.has(name));
-  const optional = entries.filter(([name]) => !requiredNames.has(name) && name !== omissionName);
-  const omitted = [];
-  for (const [index, entry] of optional.entries()) {
-    const markerNames = [...omitted, ...optional.slice(index + 1).map(([name]) => name)];
-    const marker = [omissionName, `Structural sections omitted to fit the ${limit}-character budget: ${markerNames.join(", ")}.`];
-    if (render([...kept, entry, marker]).length <= limit) kept.push(entry);
-    else omitted.push(entry[0]);
-  }
-  const marker = [omissionName, `Structural sections omitted to fit the ${limit}-character budget: ${omitted.join(", ")}.`];
-  const text = render([...kept, marker]);
-  if (text.length > limit) throw new Error(`The required brain prompt sections are ${text.length} characters; the limit is ${limit}.`);
-  return text;
-}
-
-/**
- * Builds the activation part: Julian's founding instruction and the
- * checkpoint that the last attempt wrote. `checkpointLimit` is what the
- * structural sections left of the one prompt budget, because the checkpoint
- * is text Tangent generated and the budget covers all of it.
- */
-export function brainActivationEnvelope(record, generation = Number(record?.generation) || 1, checkpointLimit = BRAIN_CHECKPOINT_LIMIT) {
-  const instruction = String(record?.foundingInstruction?.text ?? record?.instruction ?? "").trim();
-  const checkpoint = String(record?.checkpoint?.text ?? "").trim();
-  const boundedCheckpoint = checkpoint.slice(0, Math.max(0, checkpointLimit));
-  const role = generation <= 1 ? "Current assignment" : "Standing authority";
-  const omissions = checkpoint.length > boundedCheckpoint.length
-    ? [`Checkpoint clipped by ${checkpoint.length - boundedCheckpoint.length} characters; run tangent brain status to read the whole checkpoint.`]
-    : [];
-  return {
-    text: `# Activation material\n\n## ${role}\n\n${instruction}\n\n## Current checkpoint\n\n${boundedCheckpoint || "No checkpoint exists."}`,
-    instruction: {
-      source: "brain.json#foundingInstruction",
-      characters: instruction.length,
-      hash: digest(instruction),
-    },
-    checkpoint: {
-      source: "brain.json#checkpoint",
-      characters: boundedCheckpoint.length,
-      hash: digest(boundedCheckpoint),
-      omittedCharacters: checkpoint.length - boundedCheckpoint.length,
-    },
-    omissions,
-  };
-}
-
-/**
- * Joins the activation part, the structural sections, and the provenance into
- * one prompt under one budget.
- *
- * The budget covers every character that Tangent generated. Julian's founding
- * instruction is his own current message and stays outside it, which is the
- * only exemption the design gives. The checkpoint is text a previous attempt
- * wrote, so it is inside: it takes the space the structural sections left,
- * down to a floor that keeps a replacement attempt oriented.
- *
- * Returns the prompt and the measured budget so a caller can record what it
- * sent. Throws when the structural sections alone cannot fit, because a brain
- * that starts without its identity, authority, and frontier is worse than a
- * brain that does not start.
- */
-export function composeBrainPrompt({ record, generation, structural, limit = BRAIN_PROMPT_LIMIT }) {
-  const provenanceOverhead = 400;
-  const envelopeOverhead = 120;
-  const structuralLength = String(structural ?? "").length;
-  const spare = limit - structuralLength - provenanceOverhead - envelopeOverhead;
-  if (spare < 0) {
-    throw new Error(`The structural brain sections are ${structuralLength} characters and leave no room inside the ${limit}-character budget.`);
-  }
-  const checkpointLimit = Math.min(BRAIN_CHECKPOINT_LIMIT, Math.max(BRAIN_CHECKPOINT_FLOOR, spare));
-  const activation = brainActivationEnvelope(record, generation, checkpointLimit);
-  const provenance = `## Activation provenance\n\nInstruction: ${activation.instruction.source} sha256:${activation.instruction.hash}, ${activation.instruction.characters} characters.\nCheckpoint: ${activation.checkpoint.source} sha256:${activation.checkpoint.hash}, ${activation.checkpoint.characters} characters.${activation.omissions.length ? `\n${activation.omissions.join("\n")}` : ""}`;
-  const text = `${activation.text}\n\n${structural}\n\n${provenance}`;
-  return {
-    text,
-    activation,
-    generatedCharacters: text.length - activation.instruction.characters,
-    limit,
-  };
-}
-
-/** Reads one named Markdown section without including the next heading. */
-function markdownSection(text, name) {
-  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const source = String(text ?? "");
-  const heading = new RegExp(`^## ${escaped}\\s*$`, "m").exec(source);
-  if (!heading) return "";
-  const start = heading.index + heading[0].length;
-  const remainder = source.slice(start).replace(/^\r?\n/, "");
-  const next = /^## /m.exec(remainder);
-  return (next ? remainder.slice(0, next.index) : remainder).trim();
-}
-
-/** Projects approved Area sections with deterministic per-section budgets. */
-export function projectAreaMemory(sources, budgets = DEFAULT_MEMORY_BUDGETS) {
-  const cleanSources = Array.isArray(sources) ? sources.filter((source) => source?.area && source?.file) : [];
-  const exactArea = cleanSources.at(-1)?.area ?? "";
-  const entries = [];
-  const omissions = [];
-  const exactSource = cleanSources.at(-1);
-  const orderedSources = exactSource ? [exactSource, ...cleanSources.slice(0, -1).reverse()] : [];
-  for (const source of orderedSources) {
-    const exact = source.area === exactArea;
-    const sectionBudgets = exact ? budgets.exact : budgets.ancestor;
-    for (const [section, limit] of Object.entries(sectionBudgets)) {
-      const original = markdownSection(source.text, section);
-      if (!original) {
-        omissions.push({ area: source.area, file: source.file, section, reason: "missing", omittedCharacters: 0 });
-        continue;
-      }
-      const text = original.slice(0, limit);
-      entries.push({ area: source.area, file: source.file, section, text, hash: digest(original), characters: text.length });
-      if (text.length < original.length) omissions.push({ area: source.area, file: source.file, section, reason: "clipped", omittedCharacters: original.length - text.length });
-    }
-  }
-  return {
-    text: entries.map((entry) => `### ${entry.area} · ${entry.section}\n\n${entry.text}\n\nSource: ${entry.file} sha256:${entry.hash}`).join("\n\n"),
-    entries,
-    omissions,
-  };
-}
-
-/** Selects explicit current Document references and never uses recency. */
-export function selectCurrentDocuments({ goals = [], requests = [], sourceInstruction = [], resolve }) {
-  const reasons = new Map();
-  /** Adds one resolved Document with its strongest structural reason. */
-  const add = (reference, reason, priority) => {
-    const document = typeof resolve === "function" ? resolve(reference) : reference;
-    if (!document?.file) return;
-    const current = reasons.get(document.file) ?? { ...document, reasons: [], priority };
-    if (!current.reasons.includes(reason)) current.reasons.push(reason);
-    current.priority = Math.min(current.priority, priority);
-    reasons.set(document.file, current);
-  };
-  for (const reference of sourceInstruction) add(reference, "current source instruction", 0);
-  for (const goal of goals.filter((item) => !goalIsHiddenByDefault(item.status))) {
-    for (const reference of goal.documents ?? []) add(reference, `current assignment ${goal.file ?? goal.slug}`, 1);
-  }
-  for (const request of requests.filter((item) => item.status === "open")) {
-    for (const reference of request.documents ?? []) add(reference, `open Question ${request.id}`, 2);
-  }
-  return [...reasons.values()]
-    .sort((left, right) => left.priority - right.priority || left.file.localeCompare(right.file))
-    .slice(0, 8)
-    .map(({ priority, ...document }) => document);
-}
-
 /** Resolves the active Journal path for an Area. */
 export function journalPath(treesRoot, area) {
   return path.join(treesRoot, cleanArea(area), "journal.md");
@@ -325,7 +125,6 @@ export function newGoalQueue(goal, assignments, now = new Date().toISOString(), 
     controllerArea: cleanArea(identity.area ?? options.controllerArea),
     revision: 1,
     status: "open",
-    completionPolicy: options.completionPolicy ?? "review-pass",
     currentAssignmentId: null,
     idempotencyKeys: [],
     createdAt: now,
@@ -335,7 +134,6 @@ export function newGoalQueue(goal, assignments, now = new Date().toISOString(), 
       order: index + 1,
       instruction: String(item.instruction ?? "").trim(),
       kind: item.kind || "implementation",
-      designatedReview: item.designatedReview === true || item.kind === "review",
       status: "pending",
       attempts: [],
       reports: [],
@@ -371,16 +169,20 @@ export function emergencyStartProblem(queue, brain) {
   return null;
 }
 
-/** Validates and stores one typed worker report without advancing the queue. */
+/**
+ * Validates and stores one typed worker report without advancing the queue.
+ * No report closes a Goal: the brain reads the note and runs
+ * `tangent goal done` itself (ADR-0041).
+ */
 export function submitWorkerReport(queue, assignmentId, report, { expectedRevision, idempotencyKey, now = new Date().toISOString() } = {}) {
   if (!idempotencyKey) throw new Error("An idempotency key is required.");
   const assignment = queue.assignments.find((item) => item.id === assignmentId);
   if (!assignment) throw new Error("assignment-not-found");
   const duplicate = assignment.reports?.find((item) => item.idempotencyKey === idempotencyKey);
-  if (duplicate) return { report: duplicate, duplicate: true, closeGoal: false };
+  if (duplicate) return { report: duplicate, duplicate: true };
   if (queue.revision !== expectedRevision) throw new Error(`stale-revision:${queue.revision}`);
   const type = String(report?.type ?? "");
-  const allowed = assignment.designatedReview ? new Set(["review-result", "question-needed", "context-risk", "failed"]) : new Set(["implementation-result", "question-needed", "context-risk", "failed"]);
+  const allowed = new Set(["implementation-result", "review-result", "question-needed", "context-risk", "failed"]);
   if (!allowed.has(type)) throw new Error("report-type-not-allowed");
   if (type === "review-result" && !["passed", "changes-required", "blocked"].includes(report.verdict)) throw new Error("invalid-review-verdict");
   if (!String(report?.summary ?? "").trim()) throw new Error("report-summary-required");
@@ -411,14 +213,7 @@ export function submitWorkerReport(queue, assignmentId, report, { expectedRevisi
   queue.revision += 1;
   queue.updatedAt = now;
   if (assignment.status === "complete" && !queue.assignments.some((item) => ["pending", "running"].includes(item.status))) queue.status = "complete";
-  const closeGoal = type === "review-result"
-    && assignment.designatedReview
-    && queue.completionPolicy === "review-pass"
-    && report.verdict === "passed"
-    && report.goalRevision === queue.goalRevision
-    && criteria.length > 0
-    && criteria.every((criterion) => criterion?.id && criterion.passed === true && Array.isArray(criterion.evidenceRefs) && criterion.evidenceRefs.length > 0);
-  return { report: stored, duplicate: false, closeGoal };
+  return { report: stored, duplicate: false };
 }
 
 /** Projects legacy Program kinds into one Operation mode. */

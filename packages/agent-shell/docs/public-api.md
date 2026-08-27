@@ -70,7 +70,9 @@ Every active Goal execution uses one `area-goal-queue.v2` record under `~/.tange
 
 - `tangent goal start <slug> --launch <harness[/model[/effort]]>` declares one implementation assignment.
 - `tangent goal start <slug> --step <instruction> [--kind <implementation|review>] [--launch ...] [--path ...] ...` declares ordered assignments.
-- `tangent goal append <slug> --step <instruction> [--kind <implementation|review>] ...` adds pending assignments without rewriting history. The type defaults to `implementation`. A designated review requires `--kind review`; instruction text never infers the type.
+- `tangent goal append <slug> --step <instruction> [--kind <implementation|review>] ...` adds pending assignments without rewriting history. The type defaults to `implementation` and only labels the step.
+- `tangent goal create --area <a> --title "<t>" [--done-when "<d>"] --start --path <dir> [--launch <ref>] [--verify] [--instruction "<i>" | --instruction-file <file>]` is the brain's one command to create a Goal and start its worker. Only a live brain may pass `--start`; the server refuses others with 403 before it writes anything. The done condition defaults to the title.
+- `tangent goal done <slug> [--note "<text>"]` from a brain on a Goal flagged `verify: yes` sets `verify` (Check it) instead of `done` and keeps the note in `## State`. Julian's own Done closes it.
 - `tangent brain advance <goal> <step>` starts one pending assignment through the Goal queue. Any local caller can use the command.
 - `tangent handover <facts...> [--report '<json>']` and `tangent goal handover <facts...> [--report '<json>']` are aliases of `tangent send brain` for one release. They print a hint line and submit through the same route. Plain text is a note. A typed `--report` keeps its old shape.
 
@@ -80,7 +82,7 @@ Worker report types are `implementation-result`, `review-result`, `question-need
 
 An accepted handover adds one `worker-handover-receipt.v1` record to the assignment. It links the worker session, Goal, assignment, report type, queue revisions, queue result, exact destination Area, and inbox notice. The server writes the queue and pending receipt first. It then writes one notice with a stable source ID. If notice storage fails, the command fails and tells the worker to retry unchanged. Reconcile and the retry repair the same notice. A response is successful only after the receipt holds the notice ID.
 
-Only a designated `review-result` can close routine work. Closure requires the `review-pass` policy, the current Goal revision, passed criteria, and evidence references. Free text becomes `untyped-evidence`. It reaches the exact brain, but the assignment stays `waiting`. Free text never closes or advances a Goal.
+No worker report closes a Goal (ADR-0041). A passing `review-result` completes the queue; the brain reads the note and runs `tangent goal done`. Free text is a note and never closes or advances a Goal.
 
 Compatibility readers normalize `agent-pipeline.v1` and solo records. New mutations write only `area-goal-queue.v2`.
 
@@ -90,11 +92,10 @@ One logical brain belongs to one exact Area. Its record is `~/.tangent/agent-she
 
 The product lifecycle is `active` or `inactive`. Process, waiting, attempt, and recovery values are health or diagnostic detail.
 
-- `tangent brain handover <facts...>` stores the facts as the current checkpoint before replacement starts.
-- `tangent brain status [<area>]` shows lifecycle, health, founding instruction, checkpoint, open Question count, and current session.
+- `tangent brain status [<area>]` shows lifecycle, health, founding message, open Question count, and current session. `tangent brain request` refuses `--kind test`: Julian flags what he checks.
 - `tangent brain request ...` creates one durable Question.
 
-Every attempt receives the immutable founding instruction. A replacement also receives the latest checkpoint. One 8,000-character budget covers the whole generated prompt: structural context, checkpoint, and provenance. Only the founding instruction sits outside it. The checkpoint takes what the structural sections left, with explicit omission data when it is clipped.
+Every attempt opens in its Area folder, where the harness reads the AGENTS.md chain, and gets Julian's message as its first message with the waiting inbox notices below it. Agent Shell generates no prompt. Old records keep `checkpoint` and generation `handover` text; nothing writes them (ADR-0041).
 
 Area memory includes exact `Purpose`, `Current`, and `Knowledge`. It includes smaller ancestor `Purpose` and `Knowledge` sections. Selected Documents come only from current source instructions, open Goal relationships, and open Request relationships. Completed Goals and their Documents remain excluded.
 
@@ -128,7 +129,6 @@ Routine healthy polling, starts, stops, and repeated success stay quiet. Event i
 - `POST /api/pipelines/append`: `{ goal, steps, caller, expectedRevision, idempotencyKey }`.
 - `POST /api/pipelines/edit`: `{ goal, step, caller, expectedRevision, idempotencyKey, ...patch }`.
 - `POST /api/brains/start`: `{ area, instruction, choice?: { harness, model?, effort? }, expectedLaunch?, resume? }`.
-- `POST /api/brains/handover`: `{ session, text }`.
 - `POST /api/brains/requests/answer`: `{ area, id, answer, note?, effectRevision? }`.
 - `GET /api/brains/show?area=<path>|session=<name>` reads one enriched brain.
 - `GET /api/agents/context?session=<name>` reads `tangent-agent-context.v1` recovery context. It is read-only and does not require an Agent Shell ownership marker.

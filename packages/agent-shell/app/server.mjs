@@ -29,10 +29,9 @@ import { PipelineMutationError, appendSteps, continuationSource, currentStep, en
 import { readAllContinuations, readContinuation } from "./continuation-record.mjs";
 import { contextReminderText, contextRepeatText, continuationSection, reminderDue } from "./context-handover.mjs";
 import { messageBanner, noticeMessage, normalizeMessage } from "./agent-messages.mjs";
-import { beginGeneration, brainOwnsArea, brainRecordForArea, brainSessionName, countWaitingHandover, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, recordHandover, validateInstruction, writeBrain } from "./brain-record.mjs";
+import { beginGeneration, brainOwnsArea, brainRecordForArea, brainSessionName, currentGeneration, endBrain, latestHandover, newBrain, readAllBrains, readBrain, validateInstruction, writeBrain } from "./brain-record.mjs";
 import { resolveBrainAttemptLaunch } from "./brain-launch.mjs";
 import { refreshBrainObservation } from "./brain-lifecycle.mjs";
-import { createBrainPacing } from "./brain-pacing.mjs";
 import { appendNotice, inboxesForBrain, markDelivered, mergeNotices, noticeBlock, noticeDigest, readAllInboxes, readInbox, unreadNotices, writeInbox } from "./brain-inbox.mjs";
 import { forJulianSectionText, parseForJulian, removeForJulianLine, restoreForJulianLine, unparsedForJulianLines } from "./for-julian.mjs";
 import { createCommitChangeMonitor } from "./commit-change-monitor.mjs";
@@ -44,7 +43,7 @@ import { attachTerminalTransport } from "./terminal-transport.mjs";
 import { serveStaticAsset } from "./static-assets.mjs";
 import { createStateEvents } from "./state-events.mjs";
 import { createBrainRoutes } from "./brain-routes.mjs";
-import { answerBrainRequest, beginRequestEffect, brainRequestAnswerNotice, closeBrainRequests, closeGoalRequests, createBrainRequest, dismissBrainRequest, finishRequestEffect, handoverBrainRequests, openBrainRequests, readBrainRequests, withdrawBrainRequest, writeBrainRequests } from "./brain-requests.mjs";
+import { answerBrainRequest, beginRequestEffect, brainRequestAnswerNotice, closeBrainRequests, closeGoalRequests, createBrainRequest, dismissBrainRequest, finishRequestEffect, openBrainRequests, readBrainRequests, withdrawBrainRequest, writeBrainRequests } from "./brain-requests.mjs";
 import { createPipelineRoutes } from "./pipeline-routes.mjs";
 import { createAgentRoutes } from "./agent-routes.mjs";
 import { resolveAgentContext, unassignedAgentContext } from "./agent-context.mjs";
@@ -74,12 +73,14 @@ import { startEventLoopWatchdog } from "./event-loop-watchdog.mjs";
 import { uniqueSessionName } from "./session-names.mjs";
 import { withDefaultModel } from "./agent-command.mjs";
 import { clearGoalCleanup, readAllGoalCleanups, readGoalCleanup, writeGoalCleanup } from "./goal-cleanup-record.mjs";
-import { appendJournalEntry, appendMilestone, boundedBrainPrompt, BRAIN_STRUCTURAL_LIMIT, clipSummary, composeBrainPrompt, emergencyStartProblem, exportLegacyAudit, inheritedInstructionFiles, journalFiles, projectAreaMemory, querySubtreeMilestones, readMilestones, selectCurrentDocuments } from "./area-brain-domain.mjs";
+import { appendJournalEntry, appendMilestone, emergencyStartProblem, exportLegacyAudit, journalFiles, querySubtreeMilestones, readMilestones } from "./area-brain-domain.mjs";
 import { materialOperationEvents, markOperationEventDelivered, readOperationEvents, writeOperationEvents } from "./operation-events.mjs";
 import { agentShellInstanceId, createSessionOwnership, SESSION_OWNER_OPTION } from "./session-ownership.mjs";
 import { appendWorkerHandoverReceipt, pendingWorkerHandoverReceipts, recordWorkerHandoverNotice, workerHandoverReceipt } from "./worker-handover-receipt.mjs";
 import { projectGoalDetail } from "./goal-detail.mjs";
-import { goalStatusChange, normalizeGoalRecord, normalizeGoalStatus } from "./goal-lifecycle.mjs";
+import { SETTLED_GOAL_STATUSES, goalIsFlaggedForVerify, goalStatusChange, normalizeGoalRecord, normalizeGoalStatus } from "./goal-lifecycle.mjs";
+import { notifyGoalWaitsForCheck, removeGoalCheckNotification } from "./julian-notify.mjs";
+import { appendIdea, areaNoteTemplate, areaTitle, currentSectionKey, ensureAreaNoteLinks, ensureVaultRootLinks, ideasFilePath, ideasFromFile, noteSignal, orderGoals, vaultRootAgentsText } from "./area-note-links.mjs";
 import { newAttemptReplacement, readAllAttemptReplacements, readAttemptReplacement, sameAttemptReplacementRequest, transitionAttemptReplacement, unsettledAttemptReplacements, writeAttemptReplacement } from "./goal-attempt-replacement.mjs";
 import { GoalExecutionTransitionError, attachLateSourceEvidence, parkCurrentGoalAttempt, promoteReadyReplacement, reopenParkedGoalQueue } from "./goal-execution-transition.mjs";
 
@@ -210,14 +211,7 @@ for (const brain of await readAllBrains(BRAINS_ROOT)) {
   }
   if (requests.requests.length) await writeBrainRequests(BRAINS_ROOT, requests);
 }
-// After this long in one generation the brain is reminded to hand over.
-const BRAIN_REFRESH_MS = Number(process.env.TANGENT_BRAIN_REFRESH_MINUTES ?? 90) * 60_000;
 const BRAIN_RECOVERY_LIMIT = 3;
-// The rungs a waiting brain climbs before it may replace itself, in ms.
-// Empty keeps the module's own ladder; a test names its own short one.
-const BRAIN_WAITING_BACKOFF_MS = String(process.env.TANGENT_BRAIN_WAITING_BACKOFF_MS ?? "")
-  .split(",").map((rung) => Number(rung.trim())).filter((rung) => Number.isFinite(rung) && rung >= 0);
-const brainPacing = createBrainPacing(BRAIN_WAITING_BACKOFF_MS.length ? { ladder: BRAIN_WAITING_BACKOFF_MS } : {});
 // A running step idle this long without a handover is reported to the brain once.
 const BRAIN_IDLE_NOTICE_MS = Number(process.env.TANGENT_BRAIN_IDLE_MINUTES ?? 10) * 60_000;
 // A running step's pane sitting this long at a decision menu or an unsent
@@ -656,6 +650,51 @@ async function areaNote(area) {
   }
 }
 
+// The two instruction links of an Area folder point at its note; they are
+// not Documents of their own.
+const INSTRUCTION_LINK_NAMES = new Set(["AGENTS.md", "CLAUDE.md"]);
+
+/**
+ * When the Current section of one Area note was last rewritten: the newest
+ * commit whose diff added the section's exact text (`git log -S`). Cached by
+ * the section's text, so an unchanged note costs one lookup ever.
+ */
+const currentSectionChanges = new Map();
+/** The epoch ms when one note's Current section was last rewritten, or null when git does not know. */
+async function currentSectionChangedAt(file, text) {
+  const key = `${file}\u0000${currentSectionKey(text)}`;
+  if (currentSectionChanges.has(key)) return currentSectionChanges.get(key);
+  const current = noteSection(text, "Current");
+  let when = null;
+  if (current) {
+    const stamp = await captureVaultGit(["log", "-1", "--format=%ct", "-S", current, "--", file]).catch(() => "");
+    const seconds = Number(String(stamp).trim());
+    when = Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : null;
+  }
+  currentSectionChanges.set(key, when);
+  if (currentSectionChanges.size > 2_000) currentSectionChanges.delete(currentSectionChanges.keys().next().value);
+  return when;
+}
+
+/**
+ * Gives every Area its note, `AGENTS.md`, and `CLAUDE.md` links, and the vault
+ * root its AGENTS.md (ADR-0041). Idempotent; runs at each server start and
+ * commits only what it wrote, one commit per Area.
+ */
+async function sweepAreaNoteLinks() {
+  const rootChanged = await ensureVaultRootLinks({ treesRoot: TREES_ROOT, agentsText: await vaultRootAgentsText() });
+  if (rootChanged.length) {
+    await runVaultGit(["add", "--", ...rootChanged]);
+    await vaultCommit(rootChanged, "add: vault root AGENTS.md tells brains how to work", "", null);
+  }
+  for (const area of flattenAreaPaths(await readTree(TREES_ROOT))) {
+    const changed = await ensureAreaNoteLinks({ treesRoot: TREES_ROOT, area });
+    if (!changed.length) continue;
+    await runVaultGit(["add", "--", ...changed]);
+    await vaultCommit(changed, `add: ${area} AGENTS.md links`, area, null);
+  }
+}
+
 /** Reads the Documents that belong directly to one Area. */
 async function readAreaDocuments(area) {
   const dir = path.join(TREES_ROOT, area);
@@ -663,7 +702,7 @@ async function readAreaDocuments(area) {
   let files;
   try { files = await readdir(dir); } catch { return []; }
   const documents = [];
-  for (const name of files.filter((f) => f.endsWith(".md") && f !== noteName && !/^(?:goal|outcome)-/.test(f))) {
+  for (const name of files.filter((f) => f.endsWith(".md") && f !== noteName && !INSTRUCTION_LINK_NAMES.has(f) && !/^(?:goal|outcome)-/.test(f))) {
     const file = `${area}/${name}`;
     const absolute = path.join(dir, name);
     try {
@@ -751,14 +790,6 @@ function goalLinkOrder(text) {
   return [...String(text ?? "").matchAll(/\[\[(?:goal|outcome)-([a-z0-9-]+)(?:[^\]]*)\]\]/g)].map((match) => match[1]);
 }
 
-/** Reads top-level Goal slugs in their authored order. */
-function areaGoalOrder(noteText) {
-  return [...new Set([
-    ...goalLinkOrder(noteSection(noteText, "Goals")),
-    ...goalLinkOrder(noteSection(noteText, "Road to done")),
-  ])];
-}
-
 /** Reads Subgoal slugs in their authored order. */
 function subgoalsOrder(text) {
   return [...new Set([
@@ -788,16 +819,20 @@ async function readAreaGoals(area) {
     const fm = parseFrontmatter(text);
     if (!["goal", "outcome"].includes(fm.type)) continue;
     const slug = f.replace(/^(?:goal|outcome)-/, "").slice(0, -".md".length);
-    const mtime = await stat(path.join(TREES_ROOT, area, f)).then((s) => s.mtimeMs, () => 0);
+    const info = await stat(path.join(TREES_ROOT, area, f)).catch(() => null);
+    const mtime = info?.mtimeMs ?? 0;
     const status = normalizeGoalStatus(fm.status || "open");
     goals.push({
       mtime,
+      birthtime: info?.birthtimeMs ?? 0,
+      created: fm.created || null,
       area,
       slug,
       file: `${area}/${f}`,
       title: text.match(/^# (.+)$/m)?.[1]?.trim() ?? slug,
       status,
       doneWhen: fm.done_when || fm.outcome || "",
+      verify: goalIsFlaggedForVerify(fm.verify),
       stateText: noteSection(text, "State"),
       myUnderstanding: noteSection(text, "My understanding"),
       currentBrief: noteSection(text, "Current brief"),
@@ -841,7 +876,8 @@ async function buildVaultIndex() {
     const note = await areaNote(n.path);
     const own = await readAreaGoals(n.path);
     const documents = await readAreaDocuments(n.path);
-    entries.push({ n, note, own, documents });
+    const signal = noteSignal(note, note ? await currentSectionChangedAt(areaNoteFile(n.path), note) : null);
+    entries.push({ n, note, own, documents, signal });
     for (const o of own) if (!bySlug.has(o.slug)) bySlug.set(o.slug, o);
   }
   projectGoalDependencies(entries.flatMap(({ own }) => own));
@@ -948,9 +984,11 @@ async function buildVaultIndex() {
     document.goalHistory = history;
   }
 
-  for (const { n, note, own, documents } of entries) {
-    const roots = areaGoalOrder(note).filter((s) => bySlug.has(s));
-    const unlinked = own.map((o) => o.slug).filter((s) => !roots.includes(s) && !linked.has(s)).sort();
+  for (const { n, note, own, documents, signal } of entries) {
+    // Goal order comes from the Goal files alone (ADR-0041): status, then
+    // creation time. A Subgoal keeps its place inside its parent.
+    const roots = orderGoals(own.filter((o) => !linked.has(o.slug))).map((o) => o.slug);
+    const unlinked = [];
     const seen = new Set();
     const goals = [];
     /** Flattens one goal and its subgoals descendants, depth-first. */
@@ -975,6 +1013,7 @@ async function buildVaultIndex() {
       people: [fm.owners, fm.waiting_on, ...own.map((o) => o.waitingOn)].filter(Boolean).join(" "),
       body: note.slice(0, 4000).toLowerCase(),
       note: records.find((r) => r.kind === "note" && r.area === n.path),
+      noteSignal: signal,
       documents: documents.map((d) => ({ ...d, backlinks: backlinks.get(d.file) ?? [] })),
       goals,
     });
@@ -985,8 +1024,7 @@ async function buildVaultIndex() {
   const groupByArea = new Map();
   const placed = new Set();
   for (const { n, note, own } of entries) {
-    const road = areaGoalOrder(note).filter((s) => bySlug.has(s));
-    const ordered = [...road, ...own.map((o) => o.slug).filter((s) => !road.includes(s)).sort()];
+    const ordered = orderGoals(own).map((o) => o.slug);
     for (const s of ordered) {
       if (linked.has(s) || placed.has(s)) continue;
       let g = groupByArea.get(n.path);
@@ -1178,12 +1216,13 @@ function replaceNoteSection(text, name, value) {
 }
 
 /** Applies the allowed direct-edit fields to one goal Markdown file. */
-async function editGoalFile(file, { status, session, title, doneWhen, state, understanding, currentBrief, story, wontDoReason }) {
+async function editGoalFile(file, { status, session, title, doneWhen, state, understanding, currentBrief, story, wontDoReason, verify }) {
   const abs = path.join(TREES_ROOT, file);
   let text = await readFile(abs, "utf8");
+  if (verify !== undefined) text = verify ? withFrontmatterLine(text, "verify", "yes") : text.replace(/^verify:.*\n/m, "");
   if (status !== undefined) {
     text = withFrontmatterLine(text, "status", status);
-    if (["done", "dropped", "parked"].includes(status)) {
+    if (SETTLED_GOAL_STATUSES.has(status)) {
       text = withFrontmatterLine(text, "session", null);
       text = withFrontmatterLine(text, "waiting_on", null);
     }
@@ -1228,7 +1267,7 @@ function allocateGoalSlug(area, title, taken) {
 }
 
 /** Renders a new goal with compact return context from its first save. */
-function renderNewGoal({ title, doneWhen, state, context, subgoals = [], sources = [] }) {
+function renderNewGoal({ title, doneWhen, state, context, subgoals = [], sources = [], verify = false }) {
   const result = oneLine(doneWhen);
   const subgoalsSection = subgoals.length
     ? `\n\n## Subgoals\n\n${subgoals.map((slug, index) => `${index + 1}. [[goal-${slug}]]`).join("\n")}`
@@ -1238,7 +1277,7 @@ function renderNewGoal({ title, doneWhen, state, context, subgoals = [], sources
     ? `\n\n## Sources\n\n${sources.map((source) => `- [[${source.file.replace(/\.md$/i, "")}|${oneLine(source.title).replace(/[|\]]/g, "")}]]`).join("\n")}`
     : "";
   return (
-    `---\ntype: goal\nstatus: open\ndone_when: ${result}\nsession:\n---\n\n` +
+    `---\ntype: goal\nstatus: open\ndone_when: ${result}\n${verify ? "verify: yes\n" : ""}session:\n---\n\n` +
     `# ${oneLine(title)}${contextParagraph}${subgoalsSection}${sourcesSection}\n\n` +
     `## State\n\n${String(state ?? "").trim() || "Not started."}\n\n` +
     `## Current brief\n\n` +
@@ -1272,12 +1311,7 @@ function areaNoteFile(area) {
 
 /** Creates the minimal note text for an Area. */
 function emptyAreaNote(area) {
-  const title = area.split("/").pop().replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
-  return (
-    `---\ntype: area\nstatus: active\n---\n\n# ${title}\n\n` +
-    `## Purpose\n\n\n\n## Current\n\n\n\n## Goals\n\n\n\n` +
-    `## Knowledge\n\n\n\n## Ideas and open questions\n\n\n\n## Resources\n`
-  );
+  return areaNoteTemplate(areaTitle(area));
 }
 
 /**
@@ -1315,25 +1349,10 @@ async function readAreaGoalsDeep(area) {
   return goals;
 }
 
-/** Adds one top-level goal to the area's ordered Goals. */
-async function addGoalToArea(area, slug) {
-  const file = areaNoteFile(area);
-  const absolute = path.join(TREES_ROOT, file);
-  let text = await readFile(absolute, "utf8").catch(() => emptyAreaNote(area));
-  const current = noteSection(text, "Goals");
-  if (!current.includes(`[[goal-${slug}]]`)) {
-    const count = goalLinkOrder(current).length;
-    const next = [current, `${count + 1}. [[goal-${slug}]]`].filter(Boolean).join("\n");
-    text = replaceNoteSection(text, "Goals", next);
-    await vaultRepository.writeMarkdown(file, text);
-  }
-  return file;
-}
-
 /**
  * Creates one Goal and its optional Subgoals in one confirmed save.
  */
-async function createGoalSet(area, { goal, subgoals = [], description = "", sources = [] }) {
+async function createGoalSet(area, { goal, subgoals = [], description = "", sources = [], verify = false }) {
   const taken = new Set([...(await goalsByFile()).values()].map((item) => item.slug));
   const goalSlug = allocateGoalSlug(area, goal.title, taken);
   const subgoalRecords = subgoals.map((subgoal) => ({
@@ -1341,15 +1360,15 @@ async function createGoalSet(area, { goal, subgoals = [], description = "", sour
     slug: allocateGoalSlug(area, subgoal.title, taken),
   }));
   const records = [
-    { ...goal, slug: goalSlug, subgoals: subgoalRecords.map((subgoal) => subgoal.slug), context: description, sources },
+    { ...goal, slug: goalSlug, subgoals: subgoalRecords.map((subgoal) => subgoal.slug), context: description, sources, verify },
     ...subgoalRecords.map((subgoal) => ({ ...subgoal, subgoals: [], context: `This Goal supports [[goal-${goalSlug}]].` })),
   ].map((record) => ({ ...record, file: `${area}/goal-${record.slug}.md` }));
 
   for (const record of records) {
     await vaultRepository.writeMarkdown(record.file, renderNewGoal(record));
   }
-  const noteFile = await addGoalToArea(area, goalSlug);
-  const changed = [...records.map((record) => record.file), noteFile];
+  // Tangent never writes into the Area note (ADR-0041): a Goal is only its file.
+  const changed = records.map((record) => record.file);
   await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", ...changed]).catch((err) => {
     console.error(`goal stage failed: ${changed.join(", ")}: ${String(err.stderr ?? err.message ?? err).slice(0, 200)}`);
   });
@@ -1357,13 +1376,18 @@ async function createGoalSet(area, { goal, subgoals = [], description = "", sour
   return { file: records[0].file, files: records.map((record) => record.file) };
 }
 
-/** Parses idea lines out of an Area note's Ideas and open questions section, in order. */
-function ideasFromNote(text) {
-  return noteSection(text, "Ideas and open questions")
+/**
+ * The ideas of one Area: its `ideas.md` lines, then any `- Idea:` line an
+ * older note still carries under Ideas and open questions.
+ */
+async function areaIdeas(area) {
+  const file = await readFile(path.join(TREES_ROOT, ideasFilePath(area)), "utf8").catch(() => "");
+  const legacy = noteSection(await areaNote(area), "Ideas and open questions")
     .split("\n")
     .map((line) => line.match(/^-\s*Idea:\s*(.+)$/))
     .filter(Boolean)
     .map((match) => match[1].trim());
+  return [...ideasFromFile(file), ...legacy];
 }
 
 /** Reduces one readAreaGoals() entry to the compact shape the tangent goal CLI lists. */
@@ -1375,6 +1399,7 @@ function goalSummary(goal) {
     title: goal.title,
     status: goal.status,
     doneWhen: goal.doneWhen,
+    verify: goal.verify === true,
     dependsOn: goal.dependsOn ?? [],
     requiredBy: goal.requiredBy ?? [],
     unresolvedDependencies: goal.unresolvedDependencies ?? [],
@@ -1393,17 +1418,11 @@ function goalFilterFlags(filters) {
   ].join("");
 }
 
-/** Saves a natural work description as an idea without creating goals. */
+/** Saves one idea line to the Area's ideas.md; the note itself is never written. */
 async function saveWorkIdea(area, description) {
-  const file = areaNoteFile(area);
-  const absolute = path.join(TREES_ROOT, file);
-  let text = await readFile(absolute, "utf8").catch(() => emptyAreaNote(area));
-  const current = noteSection(text, "Ideas and open questions");
-  const next = [current, `- Idea: ${oneLine(description)}`].filter(Boolean).join("\n");
-  text = replaceNoteSection(text, "Ideas and open questions", next);
-  await vaultRepository.writeMarkdown(file, text);
+  const file = await appendIdea({ treesRoot: TREES_ROOT, area, text: description });
   await execFileAsync("git", ["-C", TREES_ROOT, "add", "--", file]).catch(() => {});
-  await vaultCommit([file], `note: ${area} captures an idea from Agent Shell`, area, null);
+  await vaultCommit([file], `note: ${area} captures an idea`, area, null);
   return file;
 }
 
@@ -1514,7 +1533,7 @@ async function finishGoalExecutions({ goalFiles, reason, sessions = null }) {
   const removedNames = new Set([...previouslyRemoved, ...removed, ...alreadyAbsent]);
   const releasedGoals = [];
   for (const goal of byFile.values()) {
-    if (targets.has(goal.file) || !goal.session || !removedNames.has(goal.session) || ["done", "dropped", "parked"].includes(goal.status)) continue;
+    if (targets.has(goal.file) || !goal.session || !removedNames.has(goal.session) || SETTLED_GOAL_STATUSES.has(goal.status)) continue;
     await writeGoalBinding(goal.file, { status: "open", session: null });
     releasedGoals.push(goal.file);
   }
@@ -1591,12 +1610,10 @@ async function closeRequestsForGoals(goalFiles, reason) {
   return closed;
 }
 
-/** Closes or transfers the open Requests whose subject is one brain generation. */
-async function transitionBrainRequests(area, generation, transition, nextGeneration = null) {
+/** Closes the open Requests whose subject is one brain generation. */
+async function transitionBrainRequests(area, generation, transition) {
   const record = await readBrainRequests(BRAINS_ROOT, area);
-  const changed = transition === "handover"
-    ? handoverBrainRequests(record, area, generation, nextGeneration)
-    : closeBrainRequests(record, area, generation, transition);
+  const changed = closeBrainRequests(record, area, generation, transition);
   if (changed.length) await writeBrainRequests(BRAINS_ROOT, record);
   return changed;
 }
@@ -1661,29 +1678,6 @@ async function goalContextDocuments(area, goal, trace = null) {
     });
   }
   return linked;
-}
-
-/** Builds the first message for a conversation that defines new work. */
-function describeWorkPrompt(area, description, sources = []) {
-  const notes = areaNoteFiles(area);
-  const sourceLines = [
-    `- Area folder: ${path.join(TREES_ROOT, area)}`,
-    ...notes.map((note, index) => `- Area note ${index + 1}: ${note}`),
-    ...sources.map((source) => `- Document: ${path.join(TREES_ROOT, source.file)}`),
-  ];
-  return (
-    `# Describe work with Julian\n\n` +
-    `Julian described work for this Area. Help him turn it into work that starts well.\n\n` +
-    `## Area\n\n${area}\n\n` +
-    `## Julian's description\n\n${description}\n\n` +
-    `## Sources\n\n${sourceLines.join("\n") || "- No source notes or Documents were found."}\n\n` +
-    `## How to work\n\n` +
-    `Read the Area notes from nearest to farthest and each listed Document. When code answers a question better than a guess, look at the Area's repository. Related Goals and Documents already in the Area folder show what exists; prefer updating existing work over duplicating it.\n\n` +
-    `Two good outcomes:\n\n` +
-    `- The work is small and clear: create the Goal yourself (\`tangent goal create --area ${area} ... --own\`), say in a line what you are doing, and do it now.\n` +
-    `- The work is bigger or splits into parts: gather context, talk with Julian where his intent is genuinely unclear, and create Goals that give a fresh agent a great launchpad: the intent, what Julian already decided, and pointers to the Documents and code that matter (link each with \`--source\`). The fresh agent scopes the details itself and can ask its own questions. What wastes Julian's time is explaining the same thing twice, so put what he told you into each Goal's description.\n\n` +
-    `The judgment between the two is yours. Lean toward doing trivial things immediately and leaving real work well-framed for later. An Area holds a durable subject, a Goal a desired change with a clear finish, and a Subgoal only a separately focusable step that answers “To do that” for its parent; independently startable results are separate top-level Goals.`
-  );
 }
 
 /**
@@ -1772,7 +1766,7 @@ async function pipelineStepPrompt(area, o, record, index, extras = [], sessionNa
   return (
     `${assignment}\n\n` +
     `## Your step\n\n` +
-    `Step ${index} of ${total}${total > 1 ? " in a pipeline" : ""}: ${step.instruction}${step.designatedReview ? " This is the review step. --done means the review passed." : ""}\n\n` +
+    `Step ${index} of ${total}${total > 1 ? " in a pipeline" : ""}: ${step.instruction}${step.kind === "review" ? " This is the review step. --done means the review passed." : ""}\n\n` +
     (earlier.length ? `## Handovers so far\n\n${earlier.join("\n\n")}\n\n` : "") +
     (continuationEntries.length ? `${continuationSection({ index, total, entries: continuationEntries, subject: "step" })}\n\n` : "") +
     workerSendSection()
@@ -2198,73 +2192,6 @@ async function primeGoalSession(session, phase = "execute", { launch = false, do
   return true;
 }
 
-/** Primes one native agent with a conversation about new work. */
-async function primeDescribeWorkSession(session, area, prompt, { launch = true, command = "", onTyped = null } = {}) {
-  const { stdout } = await execFileAsync("tmux", ["display-message", "-p", "-t", "=" + session + ":", "#{pane_current_command}"]);
-  if (!SHELL_CMDS.has(stdout.trim())) return false;
-  await armSession(session, "define", launch, "", prompt, [], onTyped);
-  await typeInto(session, withDefaultModel(command || (await launchCatalog.commandForArea(area))), false);
-  if (launch) {
-    await execFileAsync("tmux", ["send-keys", "-t", "=" + session + ":", "Enter"]);
-    await sleep(250);
-  }
-  return true;
-}
-
-/** Returns a short readable label for one work-definition conversation. */
-function describeWorkTitle(description) {
-  const first = oneLine(String(description).split(/(?<=[.!?])\s+|\n+/)[0] || description);
-  return first.length > 88 ? `${first.slice(0, 85).replace(/\s+\S*$/, "")}…` : first;
-}
-
-/** Opens a native agent in the selected Area to define durable work. */
-async function spawnDescribeWorkSession(area, description, sources, { session: requested = "", launch = true, command = "", label = "", ref = "" } = {}) {
-  const sessions = await listSessions();
-  const existing = requested
-    ? sessions.find((item) => item.name === requested && item.kind === "work-definition" && item.area === area)
-    : null;
-  if (existing) {
-    const prompt = describeWorkPrompt(area, description, sources);
-    const primed = existing.state === "shell"
-      ? await primeDescribeWorkSession(existing.name, area, prompt, { launch, command }).catch(() => false)
-      : false;
-    return { status: 200, session: existing.name, reattached: true, primed };
-  }
-
-  const title = describeWorkTitle(description) || "Describe work";
-  const base = normName(`${area.split("/").pop()}--describe-${title}`).slice(0, 55) || "describe-work";
-  const names = new Set(sessions.map((item) => item.name));
-  let name = base;
-  for (let index = 2; names.has(name); index += 1) name = `${base.slice(0, 55 - String(index).length)}-${index}`;
-  // The conversation opens where the Area's work lives. An Area that binds
-  // nothing is refused here, before the session exists, for the same reason
-  // a worker is: a session that silently opens in the vault looks right and
-  // does the wrong thing.
-  const folder = await areaWorkFolder(area);
-  if (!folder) return { status: 409, error: unboundAreaMessage(TREES_ROOT, area, { pathHint: false }) };
-  await createOwnedTmuxSession(name, ["-d", "-s", name, "-c", folder.cwd]);
-  await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_area", area]);
-  await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_cwd", folder.cwd]);
-  await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_kind", "work-definition"]);
-  await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_phase", "define"]);
-  await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_work_title", title]);
-  if (label) await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_launch", label]);
-  if (ref) await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_launch_ref", ref]);
-
-  /** Sends the captured description after the native agent is ready. */
-  const prime = async () => {
-    await sleep(700);
-    try {
-      await primeDescribeWorkSession(name, area, describeWorkPrompt(area, description, sources), { launch, command });
-    } catch (error) {
-      console.error("describe work session:", error.message ?? error);
-    }
-  };
-  if (launch) await prime();
-  else prime();
-  return { status: 200, session: name, title };
-}
-
 /**
  * Spawns (or reattaches) the work session for one goal: a plain shell in
  * the area's repo with the suggested agent command pre-typed, bound via
@@ -2466,7 +2393,7 @@ async function reconcileGoals(sessions, snapshotAt = Date.now()) {
     }) : null;
     if (closedCleanup?.releasedGoals.length) await vaultCommit(closedCleanup.releasedGoals, "update: release Goals from finished worker", closed[0].area, null);
     for (const t of byFile.values()) {
-      if (["done", "dropped", "parked"].includes(t.status)) continue;
+      if (SETTLED_GOAL_STATUSES.has(t.status)) continue;
       if (t.session && !live.has(t.session) && !(await sessionOwnership.ownsRecorded(t.session))) continue;
       // The Goal file's own mtime is when its binding was last written: a
       // binding fresher than the sessions snapshot above is not stopped.
@@ -3054,7 +2981,7 @@ function reportFromSendKind(record, step, kind, text) {
   if (kind === "blocked") return { type: "failed", summary: text };
   if (kind === "question") return { type: "question-needed", summary: text, question: text };
   if (kind !== "done") return null;
-  if (step.designatedReview) {
+  if (step.kind === "review") {
     return { type: "review-result", verdict: "passed", goalRevision: record.goalRevision, summary: text, criteria: [{ id: "done", passed: true, evidenceRefs: [text] }] };
   }
   return { type: "implementation-result", status: "done", summary: text };
@@ -3289,7 +3216,6 @@ async function completePipelineStep(record, step, text, source, report = null, i
       reportType: report.type,
       queueRevisionBefore,
       queueResult: "accepted",
-      closeGoal: typed?.closeGoal === true,
       noticeText: workerHandoverNotice(record, step, workerSession, report, text, kind),
     }).receipt;
   }
@@ -3313,27 +3239,6 @@ async function completePipelineStep(record, step, text, source, report = null, i
   const next = nextPendingStep(record, step.index);
   const stepWord = source === "skip" ? "skipped" : "complete";
   if (!next) {
-    if (typed?.closeGoal) {
-      const byFile = await goalsByFile();
-      if (byFile.has(record.goal)) {
-        const goal = byFile.get(record.goal);
-        const currentRevision = await goalContentRevision(goal.file);
-        if (currentRevision !== report.goalRevision || currentRevision !== record.goalRevision) {
-          record.status = "complete";
-          await writePipeline(PIPELINES_ROOT, record);
-          if (source === "agent") return workerResponse("reported");
-          await notifyBrain(record.area, `Goal ${record.slug}: a typed review passed an old Goal revision. Start a current review assignment.`);
-          return { status: 200, state: "reported", next: null, pipeline: record };
-        }
-        record.status = "complete";
-        await writePipeline(PIPELINES_ROOT, record);
-        const changed = await cascadeGoalDone(record.goal, byFile, { note: "It passed its planned review." });
-        await vaultCommit(changed, `update: ${goal.area} goal ${goal.slug} done after planned review`, goal.area, null);
-        if (source === "agent") return workerResponse("goal-done");
-        await notifyBrain(record.area, `Goal ${record.slug}: its designated typed review passed the current revision and Tangent marked the Goal done.`);
-        return { status: 200, state: "goal-done", next: null, pipeline: record };
-      }
-    }
     if (typed) {
       if (source === "agent") return workerResponse("reported");
       await notifyBrain(record.area, `Goal ${record.slug}: assignment ${step.index} submitted ${report.type}${report.verdict ? ` (${report.verdict})` : ""}. ${brainMessageExcerpt(report.summary || text)}`);
@@ -4461,13 +4366,13 @@ async function describeWorkToBrain(owner, area, description, sources, launchOver
     return { status: 200, session: owner.session, generation: owner.generation, brainArea: owner.area, route: "brain-opened", launchLabel: currentGeneration(owner)?.resolvedLaunch?.label || "" };
   }
   const message = describedWorkNotice(area, description, sources);
-  await recordBrainNotice(area, message);
   const route = owner.status === "active" ? "brain-started" : "brain-resumed";
-  // The description is already an unread notice, so this wake carries
-  // Julian's words even though the start call has no instruction text.
   if (launchOverride) return { status: 400, error: "Brain launch overrides are retired. Change the Area Brain configuration, then refresh." };
-  const started = await startBrain(owner.area, { resume: true, messageRecorded: true });
+  // Julian's message is typed verbatim as the woken attempt's first message.
+  // A start that fails leaves it in the inbox, so it waits for the next one.
+  const started = await startBrain(owner.area, { resume: true, instruction: message });
   if (started.status !== 200) {
+    await recordBrainNotice(area, message);
     return { status: started.status, error: `Your description was saved for the ${owner.area} brain, but the brain did not start: ${started.error}` };
   }
   return { ...started, brainArea: owner.area, route, launchLabel: started.brain?.resolvedLaunch?.label || "" };
@@ -4590,170 +4495,6 @@ async function flushBrainNotices(sessions = null, reason = "unread notices after
   }
 }
 
-/**
- * How much of Julian's own answer one prompt line carries. The answer tells
- * the brain to act; it is not the work item. The subject and the verdict say
- * what happened, and the Request on the desk holds every word. One pasted
- * answer of about 4,000 characters was taking a quarter of a whole generation
- * prompt, which is what this Goal set out to stop.
- */
-const BRAIN_PROMPT_ANSWER_CHARS = 240;
-
-/**
- * The Request answers Julian gave while the generation this one replaces was
- * reading. The notice inbox is the fast path and reaches a live generation in
- * seconds; this section is the guaranteed one, because it is derived from the
- * durable Request record every time a generation starts. When the notice path
- * fails, the very next generation still learns the answer. A repeated answer
- * costs the brain one line; a missed one costs it the work.
- */
-async function answeredRequestLines(record) {
-  const generations = record.generations ?? [];
-  const previous = generations[generations.length - 2];
-  if (!previous?.startedAt) return [];
-  const requests = await readBrainRequests(BRAINS_ROOT, record.area);
-  return requests.requests
-    .filter((request) => request.status === "answered" && request.response && String(request.answeredAt ?? "") >= previous.startedAt)
-    .sort((left, right) => String(left.answeredAt).localeCompare(String(right.answeredAt)))
-    .map((request) => `- ${noticeMessage(brainRequestAnswerNotice(request, { answerChars: BRAIN_PROMPT_ANSWER_CHARS }))}${request.goal ? ` (Goal ${request.goal})` : ""}`);
-}
-
-/**
- * The brain prompt's Resources lines: Repository, Worktree, and Branch as
- * the Area sees them, each with the Area that declared it, so the brain can
- * hand exact folders to workers and knows when a parent bound the folder.
- * An Area that binds no folder reads `Repository: none bound`, the line the
- * brain fixes before it starts a worker.
- */
-function resourceLines(area, resources, workFolder) {
-  const lines = [
-    resources.repository ? `Repository: ${resources.repository.value} (from ${resources.repository.area})` : "Repository: none bound",
-    resources.worktree ? `Worktree: ${resources.worktree.value} (from ${resources.worktree.area})` : "",
-    resources.branch ? `Branch: ${resources.branch.value} (from ${resources.branch.area})` : "",
-    workFolder ? `Workers start in ${workFolder.cwd} (from ${workFolder.source}).` : `Workers cannot start: ${unboundAreaMessage(TREES_ROOT, area)}`,
-  ];
-  return lines.filter(Boolean).join("\n");
-}
-
-/** Builds the bounded prompt for one logical Area brain. Runtime attempts do not change its identity. */
-async function brainPrompt(record) {
-  const area = record.area;
-  const entry = currentGeneration(record);
-  const notices = entry?.notices ?? [];
-  const answered = await answeredRequestLines(record);
-  const noteFiles = areaNoteFiles(area);
-  // The brain sits in its vault Area folder; the repository it organizes
-  // work for is named in the prompt, with the worktree and branch the Area
-  // declares, so the brain can hand exact folders to its workers.
-  const workFolder = await areaWorkFolder(area);
-  const repository = workFolder?.cwd ?? null;
-  const resources = await describeAreaResources(TREES_ROOT, area);
-  const instructions = repository ? await inheritedInstructionFiles(repository, repository).catch(() => []) : [];
-  const goals = (await readAreaGoals(area)).filter((goal) => !["done", "dropped", "parked"].includes(goal.status));
-  const areaPaths = flattenAreaPaths(await readTree(TREES_ROOT));
-  const recent = await querySubtreeMilestones({ root: BRAINS_ROOT, area, areas: areaPaths, limit: 12 });
-  const requests = openBrainRequests(await readBrainRequests(BRAINS_ROOT, area));
-  const memorySources = [];
-  for (const file of [...noteFiles].reverse()) {
-    memorySources.push({
-      area: path.relative(TREES_ROOT, path.dirname(file)).split(path.sep).join("/"),
-      file,
-      text: await readFile(file, "utf8").catch(() => ""),
-    });
-  }
-  const memory = projectAreaMemory(memorySources);
-  const documentsByFile = new Map((await readAreaDocuments(area)).map((document) => [document.file, document]));
-  const goalsWithDocuments = [];
-  for (const goal of goals) goalsWithDocuments.push({ ...goal, documents: await goalContextDocuments(area, goal) });
-  const sourceInstruction = wikiLinks(record.foundingInstruction?.text ?? "")
-    .map((target) => target.includes("/") ? `${target.replace(/\.md$/i, "")}.md` : `${area}/${target.replace(/\.md$/i, "")}.md`);
-  const referencedFiles = new Set([
-    ...goalsWithDocuments.flatMap((goal) => (goal.documents ?? []).map((document) => document.file)),
-    ...requests.flatMap((request) => request.documents ?? []),
-    ...sourceInstruction,
-  ]);
-  for (const file of referencedFiles) {
-    if (documentsByFile.has(file)) continue;
-    const safe = safeMarkdownPath(TREES_ROOT, file);
-    if (!safe || /\/(?:goal|outcome)-[^/]+\.md$/.test(safe.relative)) continue;
-    const text = await readFile(safe.absolute, "utf8").catch(() => null);
-    if (text == null) continue;
-    documentsByFile.set(safe.relative, { file: safe.relative, title: markdownTitle(text, path.basename(safe.relative, ".md")), hash: documentHash(text) });
-  }
-  const selectedDocuments = selectCurrentDocuments({
-    goals: goalsWithDocuments,
-    requests,
-    sourceInstruction,
-    /** Resolves one explicit reference against the current vault projection. */
-    resolve: (reference) => {
-      const file = typeof reference === "string" ? reference : reference?.file;
-      const document = documentsByFile.get(file);
-      return document ? { file: document.file, title: document.title, hash: document.hash } : null;
-    },
-  });
-  const sourceLines = [
-    ...noteFiles.map((file) => `Area source: ${file}`),
-    ...instructions.map((item) => `Instruction source: ${item.file} sha256:${item.hash}`),
-  ];
-  const noticeLimit = 12;
-  const shownNotices = notices.slice(0, noticeLimit);
-  const shownAnswers = answered.slice(0, noticeLimit - shownNotices.length);
-  const omission = [
-    notices.length > shownNotices.length ? `${notices.length - shownNotices.length} notices omitted; run tangent brain status ${area}.` : "",
-    recent.omitted ? `${recent.omitted} milestones omitted; run tangent area recent ${area} --limit 100.` : "",
-    answered.length > shownAnswers.length ? `${answered.length - shownAnswers.length} answers omitted; run tangent brain status ${area}.` : "",
-    goals.length > 12 ? `${goals.length - 12} Goals omitted; run tangent goal list ${area}.` : "",
-    ...memory.omissions.map((item) => `${item.area} ${item.section}: ${item.reason}${item.omittedCharacters ? ` ${item.omittedCharacters} characters` : ""}.`),
-  ].filter(Boolean);
-  const structural = boundedBrainPrompt({
-    Identity: `You are ${area.split("/").pop()} brain, the logical PA and team interface for exact Area ${area}. State: ${record.status}. Runtime attempts and generations are diagnostics, not your identity.`,
-    Boundary: `You can read files, search history, inspect status, reason, explain, and answer bounded questions. Delegate sustained investigation, design, implementation, test campaigns, reviews, and every product repository write. You can coordinate Tangent work in any Area. Area paths organize work; they do not grant permission. Do not take over a live owner. Use revision and exact-attempt controls for conflicting work. Follow Julian's status instructions and record the target Area on every mutation.`,
-    "Execution contract": `One Goal queue controls every assignment. Workers submit typed reports and never advance themselves. To append a designated review, run tangent goal append <slug> --step "<instruction>" --kind review --launch <harness[/model[/effort]]>. Without --kind review, Tangent stores an implementation assignment even when its instruction says review. A designated review closes routine work only at the current Goal revision. Free text never closes a Goal.`,
-    Wake: `Wake reason: ${shownNotices.length || shownAnswers.length ? "material Area event" : "activation or context rotation"}. Julian's current message, when present, is delivered separately and stays exact.`,
-    // Every line below carries text a human or a model wrote. Each one is
-    // clipped, so no single long title, question, or note can spend the
-    // whole prompt budget and fail the build for everything else.
-    "Work frontier": goals.slice(0, 12).map((goal) => `- ${clipSummary(goal.title || goal.file)}: ${goal.status || "open"}`).join("\n") || "No direct open Goals.",
-    Questions: requests.slice(0, 8).map((request) => `- ${clipSummary(request.subject)}: ${clipSummary(request.question)}`).join("\n") || "No open Questions.",
-    "Unread messages": [...shownNotices.map((notice) => `- ${clipSummary(notice.text, 400)}`), ...shownAnswers.map((line) => `- ${clipSummary(line, 400)}`)].join("\n") || "No unread messages.",
-    // The two effects the server allowlists. Without naming them here a brain
-    // cannot know they exist: the prompt carries no command manual, and no
-    // Requests in production had ever carried an effect.
-    "Asking Julian": `A Question always takes a free-text reply. Add an exact effect only for these two, with --effect '{"type":"..."}': `
-      + `goal-done needs "goal", and closes that Goal in this Area when Julian authorizes the exact revision. `
-      + `route-journal needs "area" and "text", and saves your exact words to another Area's Journal. `
-      + `Anything else is a reply, not a button. Run tangent brain request --help for the exact flags.`,
-    Resources: resourceLines(area, resources, workFolder),
-    "Retrieval order": `Search ${area} and child Areas first. Then read parent Area sources and inherited repository instructions. Search wider Goals or linked systems only after those sources.`,
-    "Area and repository context": sourceLines.join("\n"),
-    "Area memory": memory.text || "The approved Area sections are empty.",
-    "Selected Documents": selectedDocuments.map((document) => `- ${clipSummary(document.title, 120)}: ${path.join(TREES_ROOT, document.file)} sha256:${document.hash}. Reason: ${clipSummary(document.reasons.join("; "), 160)}.`).join("\n") || "No current relationship selects a Document.",
-    "Recent milestones": recent.milestones.map((item) => `- ${item.createdAt} ${item.area}: ${clipSummary(item.summary)}`).join("\n") || "No recent material milestones.",
-    Omissions: omission.join("\n") || "No bounded collection was omitted.",
-  }, BRAIN_STRUCTURAL_LIMIT, {
-    required: ["Identity", "Boundary", "Execution contract", "Wake", "Work frontier", "Questions", "Unread messages", "Asking Julian", "Resources", "Retrieval order"],
-  });
-  return composeBrainPrompt({
-    record,
-    generation: entry?.generation ?? record.generation ?? 1,
-    structural,
-  }).text;
-}
-
-/** The stable identity of one durable brain notice. */
-function brainNoticeIdentity(notice) {
-  return `${notice.area}\u0000${notice.id}`;
-}
-
-const ACTIVE_BRAIN_HANDOVER_STATES = new Set([
-  "preparing", "activating", "retiring", "incomplete", "rolling-back", "rollback-incomplete",
-]);
-
-/** True while one durable handover still owns two attempt lifecycles. */
-function unsettledBrainHandover(record) {
-  return ACTIVE_BRAIN_HANDOVER_STATES.has(record?.handoverOperation?.status);
-}
-
 /** True only for the exact generation currently representing the logical brain. */
 function isCurrentBrainGeneration(record, session, generation) {
   const current = currentGeneration(record);
@@ -4763,230 +4504,76 @@ function isCurrentBrainGeneration(record, session, generation) {
     && current?.generation === generation;
 }
 
-/** Records a handover operation problem while leaving both targets fenced. */
-async function failBrainHandover(record, status, problem) {
-  record.handoverOperation = {
-    ...record.handoverOperation,
-    status,
-    problem,
-    updatedAt: new Date().toISOString(),
-  };
-  record.health = { status: "failed", problem, updatedAt: new Date().toISOString() };
-  await writeBrain(BRAINS_ROOT, record);
-  return { status: 503, code: "handover-incomplete", error: problem, brain: record };
-}
-
-/** Retires the immutable source only after the replacement activation receipt. */
-async function retireBrainHandoverSource(record) {
-  const operation = record.handoverOperation;
-  if (!operation || !["retiring", "incomplete"].includes(operation.status)) return { status: 200, state: operation?.status ?? "none", brain: record };
-  if (!operation.fromAttemptId || !operation.fromTarget) {
-    return failBrainHandover(record, "incomplete", "The handover has no immutable source attempt target; Tangent refused to guess which session to stop.");
-  }
-  if (!operation.requestsTransitionedAt) {
-    try {
-      await transitionBrainRequests(record.area, operation.fromGeneration, "handover", operation.toGeneration);
-      operation.requestsTransitionedAt = new Date().toISOString();
-      await writeBrain(BRAINS_ROOT, record);
-    } catch (error) {
-      return failBrainHandover(record, "incomplete", `The replacement is ready, but its Requests could not transfer: ${error.message ?? error}`);
-    }
-  }
-  const retired = await sessionOwnership.terminate(operation.fromAttemptId, operation.fromTarget);
-  if (!["terminated", "absent"].includes(retired.state)) {
-    return failBrainHandover(record, "incomplete", terminationError(operation.fromAttemptId, retired));
-  }
-  if (retired.state === "terminated") sessionObservation.invalidate();
-  brainPacing.forget(operation.fromAttemptId);
-  record.handoverOperation = {
-    ...operation,
-    status: "complete",
-    problem: null,
-    completedAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-  if (isCurrentBrainGeneration(record, operation.toAttemptId, operation.toGeneration)) {
-    record.health = { status: "healthy", problem: null, updatedAt: new Date().toISOString() };
-  }
-  await writeBrain(BRAINS_ROOT, record);
-  return { status: 200, state: "complete", brain: record };
-}
-
 /**
- * Abandons an unready replacement and restores the exact source generation.
- * Every termination uses the immutable target recorded at creation. If that
- * proof is missing or changed, the operation stays incomplete and no process
- * is guessed at by name.
+ * Settles one generation's first message against the current record. A dead
+ * earlier attempt can report failure after a replacement has started, so it
+ * updates only its own entry and never overwrites current health.
  */
-async function rollbackBrainHandover(record, operationId, problem) {
-  const operation = record.handoverOperation;
-  if (!operation || operation.id !== operationId) return { status: 409, code: "handover-changed", error: "the brain handover changed before rollback", brain: record };
-  operation.status = "rolling-back";
-  operation.problem = problem;
-  operation.updatedAt = new Date().toISOString();
-  await writeBrain(BRAINS_ROOT, record);
-
-  if (operation.toAttemptId) {
-    const target = operation.toTarget || await sessionOwnership.recordedTarget(operation.toAttemptId);
-    if (!target) {
-      const observed = await sessionOwnership.inspect(operation.toAttemptId);
-      if (observed.state === "live") {
-        return failBrainHandover(record, "rollback-incomplete", `The unready replacement ${operation.toAttemptId} has no immutable target; Tangent kept it alive rather than risk stopping a replacement.`);
-      }
-    } else {
-      const stopped = await sessionOwnership.terminate(operation.toAttemptId, target);
-      if (!["terminated", "absent"].includes(stopped.state)) {
-        return failBrainHandover(record, "rollback-incomplete", terminationError(operation.toAttemptId, stopped));
-      }
-      if (stopped.state === "terminated") sessionObservation.invalidate();
-    }
-    armedSessions.delete(operation.toAttemptId);
-    await clearArmedPrompt(ARMED_ROOT, operation.toAttemptId).catch(() => {});
-  }
-
-  const source = await sessionOwnership.inspect(operation.fromAttemptId);
-  const sourceIsExact = source.state === "live"
-    && source.instanceId === INSTANCE_ID
-    && source.target === operation.fromTarget;
-  if (!sourceIsExact) {
-    record.handoverOperation = {
-      ...operation,
-      status: "failed",
-      problem: `${problem} The prior attempt could not be restored: ${terminationError(operation.fromAttemptId, source)}.`,
-      failedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    record.health = { status: "recovering", problem: record.handoverOperation.problem, updatedAt: new Date().toISOString() };
-    await writeBrain(BRAINS_ROOT, record);
-    return { status: 503, code: "handover-rollback-failed", error: record.handoverOperation.problem, brain: record };
-  }
-
-  const sourceEntry = (record.generations ?? []).find((entry) => (
-    entry.generation === operation.fromGeneration && entry.session === operation.fromAttemptId
-  ));
-  const replacementEntry = (record.generations ?? []).find((entry) => (
-    entry.generation === operation.toGeneration && entry.session === operation.toAttemptId
-  ));
-  if (sourceEntry) sourceEntry.endedAt = null;
-  if (replacementEntry && !replacementEntry.endedAt) replacementEntry.endedAt = new Date().toISOString();
-  record.generation = operation.fromGeneration;
-  record.session = operation.fromAttemptId;
-  record.currentAttemptId = operation.fromAttemptId;
-  record.status = "active";
-  record.handoverOperation = {
-    ...operation,
-    status: "failed",
-    problem,
-    rolledBackAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-  record.health = { status: "healthy", problem: null, updatedAt: new Date().toISOString() };
-  await writeBrain(BRAINS_ROOT, record);
-  messages.queue(operation.fromAttemptId, {
-    from: "tangent",
-    area: null,
-    text: `The replacement brain did not become ready. Tangent kept this generation alive. ${problem}`,
-    queuedAt: new Date().toISOString(),
-  });
-  return { status: 200, state: "rolled-back", brain: record };
-}
-
-/**
- * Settles one generation's activation prompt against the current record.
- * A dead earlier attempt can report failure after a replacement has started,
- * so it updates only its own entry and never overwrites current health.
- */
-async function settleBrainActivation(record, session, generation, unread, arrived) {
+async function settleBrainActivation(record, session, generation, arrived, notices = []) {
   const entry = (record.generations ?? []).find((item) => item.session === session && item.generation === generation);
   if (!entry) {
-    releaseBrainNotices(unread);
+    releaseBrainNotices(notices);
     return;
   }
   entry.deliveryStatus = arrived ? "ready" : "failed";
   if (isCurrentBrainGeneration(record, session, generation)) {
     record.health = arrived
-      ? { status: record.handoverOperation?.toGeneration === generation ? "starting" : "healthy", problem: null, updatedAt: new Date().toISOString() }
-      : { status: "recovering", problem: "The activation prompt did not arrive.", updatedAt: new Date().toISOString() };
+      ? { status: "healthy", problem: null, updatedAt: new Date().toISOString() }
+      : { status: "recovering", problem: "The first message did not arrive.", updatedAt: new Date().toISOString() };
   }
   await writeBrain(BRAINS_ROOT, record);
-  if (arrived) {
-    if (unread.length) await markBrainNoticesDelivered(unread, session, generation);
-  } else {
-    // A replacement can already be carrying the same unread notice. Keep
-    // that hold intact when a superseded generation reports its own failure.
-    const current = currentGeneration(record);
-    const isSameGeneration = current?.session === session && current?.generation === generation;
-    const replacementNotices = !isSameGeneration
-      ? new Set((current?.notices ?? []).map(brainNoticeIdentity))
-      : new Set();
-    releaseBrainNotices(unread.filter((notice) => !replacementNotices.has(brainNoticeIdentity(notice))));
-  }
-
-  const operation = record.handoverOperation;
-  if (operation?.status !== "activating"
-    || operation.toAttemptId !== session
-    || operation.toGeneration !== generation) return;
-  if (!arrived) {
-    await rollbackBrainHandover(record, operation.id, "The replacement's activation prompt did not arrive.");
-    return;
-  }
-  operation.status = "retiring";
-  operation.activatedAt = new Date().toISOString();
-  operation.updatedAt = new Date().toISOString();
-  await writeBrain(BRAINS_ROOT, record);
-  await retireBrainHandoverSource(record);
+  // The notices typed inside the first message are read once it arrived.
+  if (arrived && notices.length) await markBrainNoticesDelivered(notices, session, generation);
+  else releaseBrainNotices(notices);
 }
 
-/** Creates and primes the next generation's session for one brain record. */
-async function spawnBrainSession(record, resolvedLaunch, { handoverOperationId = "" } = {}) {
+/**
+ * The first message of a brain woken without words of Julian's own: the
+ * unread notices that wait for it, as one text, so the woken attempt reads
+ * why it is awake instead of guessing. Empty when nothing waits.
+ */
+async function unreadNoticesAsFirstMessage(area, record) {
+  const others = (await liveBrainRecords()).filter((item) => item.area !== area);
+  // The record may still be inactive at this point; its inbox is the one
+  // the new attempt reads either way. A notice queued for the attempt that
+  // died is not on its way anywhere, so it is typed too.
+  const unread = await unreadBrainNotices(area, [...others, { ...record, status: "active" }]);
+  if (!unread.length) return { text: "", notices: [] };
+  return { text: unread.length === 1 ? unread[0].text : noticeDigest(unread), notices: unread };
+}
+
+/**
+ * The first message a new brain attempt gets: Julian's own words, verbatim.
+ * When there are none, `Start.` The harness reads the Area note chain from
+ * the brain's folder as its instructions (ADR-0041), so Tangent generates
+ * no prompt of its own.
+ */
+function brainFirstMessage(text) {
+  return String(text ?? "").trim() || "Start.";
+}
+
+/**
+ * Creates and primes one brain attempt: a tmux session in the Area's vault
+ * folder, the harness command, and Julian's message typed as the first
+ * message once the harness is ready. Unread inbox notices reach the live
+ * session through the message queue on the next sweep.
+ */
+async function spawnBrainSession(record, resolvedLaunch, { firstMessage = "", notices = [] } = {}) {
   const sessions = await listAllSessions();
   const names = new Set(sessions.map((item) => item.name));
   const generation = (record.generations?.length ?? 0) + 1;
   const name = uniqueSessionName(brainSessionName(record.area, generation), "", names, 60);
   // A brain always sits in its Area folder in the vault, whatever the Area
-  // binds: its work is the Area's notes, Goals, and Documents, and the bound
-  // repository reaches it by name in the prompt. Workers open in the
-  // repository; brains delegate every repository write.
+  // binds: its work is the Area's notes, Goals, and Documents, and the
+  // folder's AGENTS.md chain is its standing instruction.
   const directory = path.join(TREES_ROOT, record.area);
-  const operation = handoverOperationId && record.handoverOperation?.id === handoverOperationId
-    ? record.handoverOperation
-    : null;
-  if (operation) {
-    operation.toAttemptId = name;
-    operation.toGeneration = generation;
-    operation.controllerBootId = BOOT_ID;
-    operation.status = "preparing";
-    operation.updatedAt = new Date().toISOString();
-    // This write precedes creation, so a crash after tmux claims the name can
-    // still identify and roll back the exact replacement attempt.
-    await writeBrain(BRAINS_ROOT, record);
-  }
-  // Build the prompt before anything is created. A brain that starts with no
-  // prompt looks live on Work and knows nothing, which is the worst of the
-  // two failures; the error names itself here and leaves no session behind.
-  let prompt = "";
-  try {
-    const preview = structuredClone(record);
-    beginGeneration(preview, name, resolvedLaunch);
-    prompt = await brainPrompt(preview);
-  } catch (error) {
-    const problem = `The brain prompt could not be built: ${error.message ?? error}`;
-    if (operation) await rollbackBrainHandover(record, operation.id, problem);
-    else {
-      record.health = { status: "failed", problem, updatedAt: new Date().toISOString() };
-      await writeBrain(BRAINS_ROOT, record);
-    }
-    return { status: 500, error: problem };
-  }
+  const message = brainFirstMessage(firstMessage);
+  const held = notices.map((notice) => ({ area: notice.area, id: notice.id }));
+  holdBrainNotices(held);
   let target = "";
-  let unread = [];
   let armed = false;
   try {
     target = await createOwnedTmuxSession(name, ["-d", "-s", name, "-c", directory]);
-    if (operation) {
-      operation.toTarget = target;
-      operation.updatedAt = new Date().toISOString();
-    }
     await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_area", record.area]);
     await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_kind", "brain"]);
     await execFileAsync("tmux", ["set-option", "-t", name, "@tangent_phase", "orchestrate"]);
@@ -5000,69 +4587,60 @@ async function spawnBrainSession(record, resolvedLaunch, { handoverOperationId =
     entry.instanceId = INSTANCE_ID;
     entry.target = target;
     entry.deliveryStatus = "pending";
-    if (operation) {
-      operation.status = "activating";
-      operation.updatedAt = new Date().toISOString();
-    }
+    entry.firstMessage = message;
+    entry.cwd = directory;
+    entry.notices = notices.map((notice) => ({ area: notice.area, id: notice.id, text: notice.text, createdAt: notice.createdAt }));
     record.health = { status: "starting", problem: null, updatedAt: new Date().toISOString() };
-    const otherOwners = (await liveBrainRecords()).filter((item) => item.area !== record.area);
-    unread = await unreadBrainNotices(record.area, [...otherOwners, record]);
-    entry.notices = unread.map((notice) => ({ area: notice.area, id: notice.id, text: notice.text, createdAt: notice.createdAt }));
-    holdBrainNotices(unread);
     /** Settles an asynchronous arm callback under the same Area lifecycle lock. */
     const firstMessageTyped = (arrived) => withBrainMutation(record.area, async () => {
       const current = await readBrain(BRAINS_ROOT, record.area);
       if (!current) {
-        releaseBrainNotices(unread);
+        releaseBrainNotices(held);
         return;
       }
-      await settleBrainActivation(current, name, generation, unread, arrived);
+      await settleBrainActivation(current, name, generation, arrived, held);
     });
     if (process.env.AGENT_SHELL_TEST_NO_LAUNCH === "1") {
       await writeBrain(BRAINS_ROOT, record);
-      await settleBrainActivation(record, name, generation, unread, true);
-      return { status: 200, session: name, generation, brain: { ...record, resolvedLaunch } };
+      await settleBrainActivation(record, name, generation, true, held);
+      return { status: 200, session: name, generation, brain: { ...record, resolvedLaunch }, firstMessage: message, cwd: directory };
     }
     await sleep(700);
     const pane = await execFileAsync("tmux", ["display-message", "-p", "-t", "=" + name + ":", "#{pane_current_command}"]);
     if (!SHELL_CMDS.has(pane.stdout.trim())) throw new Error("the new brain session did not reach its shell");
     // Persist the arm before making this generation current, and make it
-    // current before launching the harness. No crash can leave a running
-    // replacement without either a durable prompt or a rollback operation.
-    await armSession(name, "define", true, "", prompt, [], firstMessageTyped);
+    // current before launching the harness, so a restart before the harness
+    // is ready still types the message.
+    await armSession(name, "define", true, "", message, [], firstMessageTyped);
     armed = true;
     await writeBrain(BRAINS_ROOT, record);
     await typeInto(name, withDefaultModel(resolvedLaunch.command), false);
     await execFileAsync("tmux", ["send-keys", "-t", "=" + name + ":", "Enter"]);
     await sleep(250);
-    return { status: 200, session: name, generation, brain: { ...record, resolvedLaunch } };
+    return { status: 200, session: name, generation, brain: { ...record, resolvedLaunch }, firstMessage: message, cwd: directory };
   } catch (error) {
     const problem = `could not activate the brain session: ${error.stderr ?? error.message ?? error}`;
-    releaseBrainNotices(unread);
+    releaseBrainNotices(held);
     if (armed) {
       armedSessions.delete(name);
       await clearArmedPrompt(ARMED_ROOT, name).catch(() => {});
     }
     if (target) await sessionOwnership.terminate(name, target).catch(() => {});
-    if (operation) await rollbackBrainHandover(record, operation.id, problem);
-    else {
-      record.health = { status: "failed", problem, updatedAt: new Date().toISOString() };
-      await writeBrain(BRAINS_ROOT, record);
-    }
+    record.health = { status: "failed", problem, updatedAt: new Date().toISOString() };
+    await writeBrain(BRAINS_ROOT, record);
     return { status: 500, error: problem };
   }
 }
 
 /**
- * Starts a brain from its founding instruction, recovers its checkpoint, or
- * reattaches to its current attempt. One logical brain exists per exact Area.
+ * Starts a brain from its founding instruction, or reattaches to its current
+ * attempt. One logical brain exists per exact Area.
  */
 const brainMutations = new Map();
 
 /**
  * Serializes every lifecycle mutation for one exact Area. Start, recovery,
- * handover, and stop must all observe the record written by the operation
- * before them; otherwise a stale handover can resurrect a brain after stop.
+ * and stop must all observe the record written by the operation before them.
  */
 function withBrainMutation(area, mutation) {
   const exactArea = cleanAreaPath(area);
@@ -5133,16 +4711,17 @@ async function startBrainUnlocked(area, { instruction = "", expectedLaunch = "",
     // only the browser's half of it. Two resumes carry no message and stay
     // allowed: automatic recovery, and the reattachment of a brain whose
     // record is still active but whose process died.
-    if (!automaticRecovery && !messageRecorded && existing.status !== "active" && !instruction.trim()) {
+    if (!automaticRecovery && !messageRecorded && existing.status !== "active" && !instruction.trim() && !(await unreadNoticesAsFirstMessage(area, existing)).text) {
       return { status: 400, error: `the ${existing.area} brain is not live; send it a message to wake it` };
     }
     if (!automaticRecovery) existing.recovery = { attempts: 0, exhausted: false, lastAttemptAt: null };
-    // The wake message becomes an unread notice before the session exists, so
-    // the woken attempt reads it in its first message and knows why it is
-    // awake. Automatic recovery carries no message and stays silent.
-    if (instruction.trim()) await recordBrainNotice(area, `Julian woke this brain: ${instruction.trim()}`);
+    // The wake message is typed verbatim as the woken attempt's first
+    // message, with the notices that waited for it below. A wake with no
+    // words of Julian's own (a saved capture, or automatic recovery) types
+    // the unread notices alone, or `Start.`.
     await writeBrain(BRAINS_ROOT, existing);
-    return spawnBrainSession(existing, resolvedLaunch);
+    const waiting = await unreadNoticesAsFirstMessage(area, existing);
+    return spawnBrainSession(existing, resolvedLaunch, { firstMessage: [instruction.trim(), waiting.text].filter(Boolean).join("\n\n"), notices: waiting.notices });
   }
   if (existing) return { status: 409, error: `the ${area} brain already exists; resume it so its founding instruction stays immutable` };
   const invalid = validateInstruction(instruction);
@@ -5159,7 +4738,10 @@ async function startBrainUnlocked(area, { instruction = "", expectedLaunch = "",
     return { status: 400, error: String(error.message ?? error) };
   }
   const replacedGeneration = existing?.generation ?? null;
-  const started = await spawnBrainSession(record, resolvedLaunch);
+  // Notes that arrived before the brain existed wait in its inbox; the
+  // founding message carries them below Julian's own words.
+  const waiting = await unreadNoticesAsFirstMessage(area, record);
+  const started = await spawnBrainSession(record, resolvedLaunch, { firstMessage: [instruction.trim(), waiting.text].filter(Boolean).join("\n\n"), notices: waiting.notices });
   if (started.status === 200 && replacedGeneration !== null) {
     await transitionBrainRequests(area, replacedGeneration, "brain-replaced");
   }
@@ -5192,80 +4774,6 @@ function actingSession(body) {
 async function liveCallingBrain(session) {
   const name = String(session ?? "").trim();
   return name ? liveBrainForSession(name) : null;
-}
-
-/** What Tangent tells a brain whose waiting handover is too early. */
-function pacedHandoverText(pace) {
-  const minutes = Math.max(1, Math.round(pace.waitMs / 60_000));
-  const clock = new Date(pace.until).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-  return `Tangent paces a waiting brain. This generation has taken no action, and it would be waiting handover number ${pace.streak + 1} in a row, so the next one is due in about ${minutes} ${minutes === 1 ? "minute" : "minutes"} (${clock}). `
-    + `These facts were not recorded; run the same handover again when you wake. Do not retry it now, and do not invent work to fill the time. End your turn now. Tangent types into this session when the pause ends, and sooner if Julian answers a Request, a worker reports, or an agent messages you. That message is your wake-up; hand over then if there is still nothing to do.`;
-}
-
-/**
- * The brain hands over to itself: record the facts, start the next
- * generation, and end this session once the new one is primed. On a failed
- * spawn the old session stays alive and hears the error.
- *
- * A generation that did nothing is paced first: it must live out the backoff
- * rung its lineage has reached before it may replace itself, so an Area with
- * no work cannot burn a fresh generation every minute (brain-pacing.mjs).
- */
-async function handoverBrain(sessionName, text) {
-  const stored = (await readAllBrains(BRAINS_ROOT)).find((record) => (
-    record.status === "active"
-    && record.session === sessionName
-    && record.currentAttemptId === sessionName
-  ));
-  if (!stored) return { status: 404, error: "this session is not the live attempt of an active brain" };
-  return withBrainMutation(stored.area, () => handoverBrainUnlocked(sessionName, text));
-}
-
-/** Performs one handover after the exact Area lifecycle lock is held. */
-async function handoverBrainUnlocked(sessionName, text) {
-  const record = await liveBrainForSession(sessionName);
-  if (!record) return { status: 404, error: "this session is not the live attempt of an active brain" };
-  if (unsettledBrainHandover(record)) {
-    return { status: 409, error: `the ${record.area} brain already has handover ${record.handoverOperation.id} in ${record.handoverOperation.status}` };
-  }
-  const pace = brainPacing.judge(record, currentGeneration(record));
-  if (pace.waitMs > 0) {
-    brainPacing.hold(sessionName, pace.until);
-    return { status: 429, error: pacedHandoverText(pace) };
-  }
-  const previous = sessionName;
-  const previousGeneration = record.generation;
-  const previousOwnership = await sessionOwnership.inspect(previous);
-  if (previousOwnership.state !== "live" || previousOwnership.instanceId !== INSTANCE_ID || !previousOwnership.target) {
-    return { status: 409, error: terminationError(previous, previousOwnership) };
-  }
-  countWaitingHandover(record, pace.acted);
-  recordHandover(record, text);
-  const launch = await resolveBrainAttemptLaunch({ area: record.area, launchCatalog });
-  if (launch.error) return { status: launch.status ?? 409, error: launch.error };
-  const operationId = randomUUID();
-  record.handoverOperation = {
-    id: operationId,
-    controllerBootId: BOOT_ID,
-    status: "preparing",
-    fromAttemptId: previous,
-    fromGeneration: previousGeneration,
-    fromTarget: previousOwnership.target,
-    toAttemptId: null,
-    toGeneration: null,
-    toTarget: null,
-    requestedAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-  await writeBrain(BRAINS_ROOT, record);
-  const started = await spawnBrainSession(record, launch, { handoverOperationId: operationId });
-  if (started.status !== 200) {
-    return started;
-  }
-  // In production this returns while activation is pending. The old attempt
-  // remains alive until settleBrainActivation records prompt receipt and
-  // retires its immutable target. The no-launch test path settles inline.
-  return { status: 200, state: "started", session: started.session, generation: started.generation, previous, brain: record };
 }
 
 /** True while a logical stop still needs to settle its exact tmux attempt. */
@@ -5302,7 +4810,6 @@ async function settleBrainStop(record) {
   if (operation.instanceId !== INSTANCE_ID) {
     return { status: 409, code: "foreign-stop-operation", error: `brain stop ${operation.id} belongs to Agent Shell instance ${operation.instanceId ?? "unknown"}`, brain: record };
   }
-  brainPacing.forget(attemptId);
   try {
     await transitionBrainRequests(record.area, record.generation, "brain-ended");
   } catch (error) {
@@ -5346,16 +4853,6 @@ async function settleBrainStop(record) {
   return { status: 200, state: "stopped", brain: record };
 }
 
-/** Resolves an in-flight two-attempt handover before beginning a logical stop. */
-async function settleBrainHandoverBeforeStop(record) {
-  const operation = record.handoverOperation;
-  if (!operation || !unsettledBrainHandover(record)) return { status: 200, brain: record };
-  if (["retiring", "incomplete"].includes(operation.status)) {
-    return retireBrainHandoverSource(record);
-  }
-  return rollbackBrainHandover(record, operation.id, "Julian stopped the brain before its replacement became ready.");
-}
-
 /** Makes one logical brain inactive, then terminates only its exact owned attempt. */
 async function stopBrain(area, { expectedAttemptId = "", operationId = "" } = {}) {
   if (!area) return { status: 400, code: "area-required", error: "an Area is required" };
@@ -5372,22 +4869,12 @@ async function stopBrain(area, { expectedAttemptId = "", operationId = "" } = {}
 
 /** Performs one fenced stop after the exact Area lifecycle lock is held. */
 async function stopBrainUnlocked(area, { expectedAttemptId, operationId }) {
-  let record = await readBrain(BRAINS_ROOT, area);
+  const record = await readBrain(BRAINS_ROOT, area);
   if (!record) return { status: 404, code: "brain-not-found", error: `no brain on ${area}` };
   if (record.stopOperation?.id === operationId && record.stopOperation.status === "complete") {
     return { status: 200, state: "stopped", brain: record };
   }
-  const acceptedAttempts = new Set([
-    record.currentAttemptId,
-    record.handoverOperation?.fromAttemptId,
-    record.handoverOperation?.toAttemptId,
-  ].filter(Boolean));
-  if (unsettledBrainHandover(record)) {
-    const settled = await settleBrainHandoverBeforeStop(record);
-    if (settled.status !== 200) return settled;
-    record = await readBrain(BRAINS_ROOT, area) ?? settled.brain;
-    acceptedAttempts.add(record.currentAttemptId);
-  }
+  const acceptedAttempts = new Set([record.currentAttemptId].filter(Boolean));
   const attemptId = unsettledBrainStop(record)
     ? record.stopOperation.attemptId
     : record.currentAttemptId ?? record.session ?? "";
@@ -5418,11 +4905,6 @@ async function stopBrainUnlocked(area, { expectedAttemptId, operationId }) {
   record.health = { status: "stopping", problem: null, updatedAt: new Date().toISOString() };
   await writeBrain(BRAINS_ROOT, record);
   return settleBrainStop(record);
-}
-
-/** The wake-up one brain gets when its paced wait is over. */
-function wakeFromPaceText(record) {
-  return `Your paced wait is over. Sweep tangent goal list ${record.area} and tangent agent list, read anything new, and act on it. If nothing changed, run tangent brain handover "<facts>" now; Tangent accepts it and paces the next generation longer.`;
 }
 
 /** Reports a failed notice sweep without stopping the reconcile pass. */
@@ -5467,41 +4949,19 @@ async function reportUnshownForJulian(record, index) {
 }
 
 /** Reconciles one brain while its exact-Area lifecycle lock is held. */
-async function reconcileBrain(area, { allByName, live, now, index }) {
-  let record = await readBrain(BRAINS_ROOT, area);
+async function reconcileBrain(area, { allByName, live, index }) {
+  const record = await readBrain(BRAINS_ROOT, area);
   if (!record) return;
-  let entry = currentGeneration(record);
+  const entry = currentGeneration(record);
   let observed = record.session ? allByName.get(record.session) : null;
   if (record.status === "inactive" && unsettledBrainStop(record)) {
     const settled = await settleBrainStop(record);
     if (settled.status !== 200) console.error("brain stop reconciliation:", settled.error);
     return;
   }
-  if (record.status === "active" && unsettledBrainHandover(record)) {
-    const operation = record.handoverOperation;
-    let settled;
-    if (["retiring", "incomplete"].includes(operation.status)) {
-      settled = await retireBrainHandoverSource(record);
-    } else if (operation.controllerBootId !== BOOT_ID || operation.status !== "activating") {
-      settled = await rollbackBrainHandover(record, operation.id, "The Agent Shell restarted before the replacement activation was acknowledged.");
-    } else {
-      const replacement = await sessionOwnership.inspect(operation.toAttemptId);
-      if (replacement.state === "live"
-        && replacement.instanceId === INSTANCE_ID
-        && replacement.target === operation.toTarget) return;
-      settled = await rollbackBrainHandover(record, operation.id, "The replacement ended before its activation prompt was acknowledged.");
-    }
-    if (settled.status !== 200) {
-      console.error("brain handover reconciliation:", settled.error);
-      return;
-    }
-    record = await readBrain(BRAINS_ROOT, area) ?? settled.brain;
-    entry = currentGeneration(record);
-    observed = record.session ? allByName.get(record.session) : null;
-  }
-  // The sessions snapshot predates this Area lock. A start or handover can
-  // finish while reconciliation waits, so prove any new current attempt live
-  // before treating its absence from that old snapshot as a crash.
+  // The sessions snapshot predates this Area lock. A start can finish while
+  // reconciliation waits, so prove any new current attempt live before
+  // treating its absence from that old snapshot as a crash.
   const refreshed = await refreshBrainObservation({
     session: record.session,
     observed,
@@ -5538,7 +4998,6 @@ async function reconcileBrain(area, { allByName, live, now, index }) {
       ? { status: "failed", problem: `Automatic brain recovery failed ${attempts} times.`, updatedAt: new Date().toISOString() }
       : { status: "recovering", problem: "The active brain has no usable process.", detectedAt: record.health?.detectedAt ?? new Date().toISOString(), updatedAt: new Date().toISOString() };
     await writeBrain(BRAINS_ROOT, record);
-    if (record.session) brainPacing.forget(record.session);
     if (exhausted) {
       await recordBrainNotice(record.area, `Automatic brain recovery is exhausted after ${attempts} attempts. Julian can use the guarded Goal recovery action for an existing pending queue.`, `brain-recovery-exhausted:${record.area}:${attempts}`);
       return;
@@ -5566,32 +5025,17 @@ async function reconcileBrain(area, { allByName, live, now, index }) {
     record.health = { status: "healthy", problem: null, updatedAt: new Date().toISOString() };
     await writeBrain(BRAINS_ROOT, record);
   }
-  // A paced generation is asleep, not late: it hears nothing until its
-  // pause ends, and then it hears that the pause ended.
-  if (brainPacing.due(record.session, now)) {
-    messages.queue(record.session, { from: "tangent", area: record.area, text: wakeFromPaceText(record), queuedAt: new Date().toISOString() });
-    return;
-  }
-  if (!entry || entry.remindedAt || now - Date.parse(entry.startedAt) < BRAIN_REFRESH_MS) return;
-  entry.remindedAt = new Date().toISOString();
-  await writeBrain(BRAINS_ROOT, record);
-  const minutes = Math.round((now - Date.parse(entry.startedAt)) / 60_000);
-  messages.queue(record.session, { from: "tangent", area: null, text: `You have run ${minutes} minutes in this generation. At the next natural pause, write the plan status and run tangent brain handover "<facts>".`, queuedAt: new Date().toISOString() });
 }
 
-/**
- * Queues unread notices, records runtime recovery health, and reminds a
- * long-running attempt to hand over.
- */
+/** Queues unread notices and records runtime recovery health. */
 async function reconcileBrains(sessions) {
   const allByName = new Map(sessions.map((item) => [item.name, item]));
   const ownedSessions = sessions.filter((item) => item.owned);
   const live = new Set(ownedSessions.map((item) => item.name));
-  const now = Date.now();
   await flushBrainNotices(ownedSessions, "unread notices found by a sweep").catch(reportNoticeSweepFailure);
   const index = await vaultIndex();
   for (const record of await readAllBrains(BRAINS_ROOT)) {
-    await withBrainMutation(record.area, () => reconcileBrain(record.area, { allByName, live, now, index }));
+    await withBrainMutation(record.area, () => reconcileBrain(record.area, { allByName, live, index }));
   }
 }
 
@@ -6237,7 +5681,6 @@ async function executeAuthorizedRequestEffect(effect, brain) {
 const brainRoutes = createBrainRoutes({
   start: startBrain,
   stop: stopBrain,
-  handover: handoverBrain,
   normalizeMessage,
   verdict: clearRowWithVerdict,
   undoVerdict: restoreVerdictLine,
@@ -6246,6 +5689,8 @@ const brainRoutes = createBrainRoutes({
   async createRequest(session, input) {
     const brain = await liveBrainForSession(session);
     if (!brain) return { status: 403, error: "only a live brain can create a request" };
+    // Julian flags what he checks (D12, D15): a brain never asks him to test.
+    if (String(input?.kind ?? "").trim() === "test") return { status: 400, error: "Julian flags what he checks. Mark the Goal done with tangent goal done; a Goal he flagged waits for him as Check it." };
     const record = await readBrainRequests(BRAINS_ROOT, brain.area);
     try {
       const precedingContext = await paneLastMessage(session);
@@ -6344,7 +5789,8 @@ const brainRoutes = createBrainRoutes({
   async unparsed(brain) {
     return unparsedForJulianLines(await brainPlanText(brain)).map((item) => item.line);
   },
-  prompt: brainPrompt,
+  /** The first message the current attempt was typed: there is no generated prompt (ADR-0041). */
+  prompt: (brain) => currentGeneration(brain)?.firstMessage ?? brainFirstMessage(brain.foundingInstruction?.text),
 });
 const pipelineRoutes = createPipelineRoutes({
   normalizeMessage,
@@ -6417,7 +5863,11 @@ const agentRoutes = createAgentRoutes({
       const inbox = await readInbox(BRAINS_ROOT, projected.area);
       projected = resolveAgentContext({ session, brains, notices: unreadNotices(inbox).map((notice) => ({ ...notice, area: inbox.area })) });
       const brain = brains.find((record) => record.area === projected.area);
-      return brain ? { ...projected, ...await rebuiltAgentPrompt(() => brainPrompt(brain)) } : { ...projected, prompt: null, promptError: "the durable brain record is unavailable" };
+      // A brain has no generated prompt: its instructions are the Area note
+      // chain in its folder, and its first message was Julian's own words.
+      return brain
+        ? { ...projected, prompt: currentGeneration(brain)?.firstMessage ?? brainFirstMessage(brain.foundingInstruction?.text), promptError: null }
+        : { ...projected, prompt: null, promptError: "the durable brain record is unavailable" };
     }
     const [pipelines, goalIndex] = await Promise.all([readAllPipelines(PIPELINES_ROOT), goalsByFile()]);
     projected = resolveAgentContext({ session, brains, pipelines, goals: [...goalIndex.values()] });
@@ -6497,7 +5947,7 @@ const areaRoutesOperations = {
       resolved: await describeAreaResources(TREES_ROOT, area),
       workFolder,
       goals: (await readAreaGoals(area)).map(goalSummary),
-      ideas: ideasFromNote(text),
+      ideas: await areaIdeas(area),
     };
   },
   /** Returns archived and active Journal text in chronological file order. */
@@ -6548,6 +5998,7 @@ const areaRoutesOperations = {
   /** Creates and commits one Area. */
   async create(body) {
     const created = await createArea({ treesRoot: TREES_ROOT, parent: body.parent, name: body.name });
+    created.changedPaths.push(...await ensureAreaNoteLinks({ treesRoot: TREES_ROOT, area: created.area }));
     await runVaultGit(["add", "--", ...created.changedPaths]);
     await vaultCommit(created.changedPaths, `add: ${created.area} Area`, created.area, null);
     await recordCommittedCommand({ operation: "area-create", actorSession: body.caller, targetArea: created.area });
@@ -6886,10 +6337,11 @@ const launchRoutes = createLaunchRoutes({
         const result = await describeWorkToBrain(owner, area, description, sources, launchOverride);
         return { status: result.status, ...(result.status === 200 ? { value: result } : { error: result.error }) };
       }
-      const chosen = await launchCatalog.requested(body);
-      if (chosen.error) return { status: 400, error: chosen.error };
-      const result = await spawnDescribeWorkSession(area, description, sources, { session: String(body.session ?? ""), launch: body.launch !== false, command: chosen.command, label: chosen.label, ref: launchRef(chosen) });
-      return { status: result.status, ...(result.status === 200 ? { value: { ...result, route: "work-definition-opened" } } : { error: result.error }) };
+      // No brain record yet: everything starts through the brain (D8), so
+      // Julian's message founds one. It is typed as the first message.
+      const started = await startBrain(area, { instruction: describedWorkNotice(area, description, sources) });
+      if (started.status !== 200) return { status: started.status, error: `The ${area} brain did not start: ${started.error}` };
+      return { status: 200, value: { ...started, brainArea: area, route: "brain-started", launchLabel: started.brain?.resolvedLaunch?.label || "" } };
     } catch (error) { return { status: 500, error: String(error.stderr ?? error.message ?? error) }; }
   },
   /** Returns the raw harness registry. */
@@ -7153,8 +6605,15 @@ const workMutationRoutes = createWorkMutationRoutes({
     const area = String(body.area ?? "");
     const goal = body.goal && typeof body.goal === "object" ? body.goal : {};
     if (!await areaExists(area)) return { status: 404, error: `no area "${area}"` };
-    if (!String(goal.title ?? "").trim() || !String(goal.doneWhen ?? "").trim()) return { status: 400, error: "the Goal needs a name and a done condition" };
+    if (!String(goal.title ?? "").trim()) return { status: 400, error: "the Goal needs a name" };
+    // The done condition defaults to the title (D8).
+    goal.doneWhen = String(goal.doneWhen ?? "").trim() || String(goal.title).trim();
     const caller = String(body.caller ?? "").trim();
+    // Everything starts through the brain (D8): only a live brain starts a
+    // worker from create. Nothing is written before this refusal.
+    const start = body.start === true;
+    const callingBrain = start ? await liveCallingBrain(caller) : null;
+    if (start && !callingBrain) return { status: 403, error: "Only an Area brain starts a worker. Send the brain a message instead (a on the Area in Work). The Goal was not created." };
     const subgoals = (Array.isArray(body.subgoals) ? body.subgoals.slice(0, 8) : []).map((item) => ({ title: String(item?.title ?? "").trim(), doneWhen: String(item?.doneWhen ?? "").trim(), state: "Not started." })).filter((item) => item.title || item.doneWhen);
     if (subgoals.some((item) => !item.title || !item.doneWhen)) return { status: 400, error: "each Subgoal needs a name and a done condition" };
     const own = String(body.own ?? "").trim();
@@ -7163,7 +6622,16 @@ const workMutationRoutes = createWorkMutationRoutes({
     if (own && !sessions.some((session) => session.name === own)) return { status: 404, error: `no tmux session "${own}"; run create --own inside the agent's session or pass --session` };
     try {
       const sources = await sourceDocuments(body.sources);
-      const created = await createGoalSet(area, { goal: { title: String(goal.title).trim(), doneWhen: String(goal.doneWhen).trim(), state: String(goal.state ?? "Not started.").trim() }, subgoals, description: String(body.description ?? "").trim(), sources: sources.map((source) => ({ file: source.file, title: source.title })) });
+      const created = await createGoalSet(area, { goal: { title: String(goal.title).trim(), doneWhen: String(goal.doneWhen).trim(), state: String(goal.state ?? "Not started.").trim() }, subgoals, description: String(body.description ?? "").trim(), sources: sources.map((source) => ({ file: source.file, title: source.title })), verify: body.verify === true });
+      if (start && created.file) {
+        await recordCommittedCommand({ operation: "goal-create", actorSession: caller, targetArea: area, goal: path.basename(created.file, ".md").replace(/^goal-/, "") });
+        const instruction = String(body.instruction ?? "").trim() || `${String(goal.title).trim()}. Done when: ${goal.doneWhen}`;
+        const step = { instruction, kind: "implementation", ...(typeof body.path === "string" && body.path.trim() ? { path: body.path.trim() } : {}), ...(body.launch && typeof body.launch === "object" ? { launch: body.launch } : {}) };
+        const started = await startPipeline(created.file, { steps: [step], attemptKind: "managed", brain: callingBrain });
+        if (started.status !== 200) return { status: 200, value: { ...created, started: false, startError: started.error } };
+        await recordCommittedCommand({ operation: "goal-start", actorSession: caller, targetArea: area, goal: path.basename(created.file, ".md").replace(/^goal-/, ""), result: `started assignment 1 in ${started.session}` });
+        return { status: 200, value: { ...created, started: true, session: started.session, launches: started.launches ?? [], warnings: started.warnings ?? [] } };
+      }
       if (own && created.file) {
         await writeGoalBinding(created.file, { status: "active", session: own });
         await vaultCommit([created.file], `update: ${area} goal owned by ${own}`, area, own);
@@ -7194,7 +6662,7 @@ const workMutationRoutes = createWorkMutationRoutes({
     const allAreas = flattenAreaPaths(await readTree(TREES_ROOT));
     if (area && !allAreas.includes(area)) return { status: 404, error: `no area "${area}"` };
     const ideas = [];
-    for (const one of area ? [area] : allAreas) ideas.push(...ideasFromNote(await areaNote(one)).map((text) => ({ area: one, text })));
+    for (const one of area ? [area] : allAreas) ideas.push(...(await areaIdeas(one)).map((text) => ({ area: one, text })));
     return { status: 200, value: { ideas } };
   },
   /** Marks an Area done or active without changing its Goals. */
@@ -7215,13 +6683,23 @@ const workMutationRoutes = createWorkMutationRoutes({
     if (!goal) return { status: 404, error: `no goal file ${file}` };
     const fields = {};
     let lifecycle = null;
+    const actorSession = body.session ? String(body.session).trim() : "";
+    const actor = await statusActor(actorSession);
+    if (String(body.status ?? "") === "done" && goal.verify && actor === "brain") {
+      return markGoalWaitsForCheck(goal, { note: body.note, session: actorSession, operationId: String(body.operationId ?? body.idempotencyKey ?? randomUUID()) });
+    }
     if (body.status !== undefined) {
-      try { lifecycle = goalStatusChange(goal.status, body.status, body.reason); }
+      try { lifecycle = goalStatusChange(goal.status, body.status, body.reason, { actor, verify: goal.verify === true }); }
       catch (error) { return { status: 400, error: String(error.message ?? error), code: error.code ?? "invalid-status" }; }
       fields.status = lifecycle.status;
       if (lifecycle.status === "dropped") fields.wontDoReason = lifecycle.reason;
     }
     for (const key of ["title", "doneWhen", "state"]) if (typeof body[key] === "string") fields[key] = body[key];
+    // Julian flags what he checks (D12): only he sets or clears `verify: yes`.
+    if (typeof body.verify === "boolean") {
+      if (actor !== "julian") return { status: 403, error: "Julian flags what he checks. Only he sets verify on a Goal." };
+      fields.verify = body.verify;
+    }
     if (!Object.keys(fields).length) return { status: 400, error: "nothing to edit" };
     try {
       let changed;
@@ -7254,8 +6732,9 @@ const workMutationRoutes = createWorkMutationRoutes({
         changed = [file];
       }
       if (!changed.includes(file)) changed.unshift(file);
-      const what = fields.status === "done" ? "done" : fields.status === "dropped" ? "marked won't do" : fields.status === "parked" ? "parked" : fields.status === "open" ? "reopened" : "edited";
+      const what = fields.status === "done" ? "done" : fields.status === "dropped" ? "marked won't do" : fields.status === "parked" ? "parked" : fields.status === "open" ? "reopened" : fields.verify === true ? "flagged for Julian to check" : fields.verify === false ? "unflagged" : "edited";
       await vaultCommit(changed, `update: ${goal.area} goal ${goal.slug} ${what} in tree`, goal.area, body.session ? String(body.session) : null);
+      if (lifecycle?.leftVerify) await forgetCheckNotification(goal);
       if (fields.status === "parked" && execution?.sourceTarget) {
         execution.detached = await settleParkedGoalSession(goal, execution.sourceTarget, operationId)
           .catch((error) => ({ kind: "preserved", detail: `Goal parked; exact worker retirement needs retry: ${String(error.message ?? error)}` }));
@@ -7278,6 +6757,60 @@ const workMutationRoutes = createWorkMutationRoutes({
     return cleanup.ok ? { status: 200, value: { cleanup } } : { status: 503, value: { error: "Worker cleanup failed. Retry the cleanup.", cleanup } };
   },
 });
+
+/**
+ * Who asks for a Goal status: `brain` for a live Area brain session, `worker`
+ * for a Goal session, else `julian` (the browser, or his own shell).
+ */
+async function statusActor(session) {
+  if (!session) return "julian";
+  if (await liveCallingBrain(session)) return "brain";
+  const live = (await listSessions()).find((item) => item.name === session);
+  return live?.kind === "goal" ? "worker" : "julian";
+}
+
+/**
+ * A brain's done on a Goal Julian flagged `verify: yes` (D13): the Goal
+ * waits for him as Check it. Its worker is retired the way done retires
+ * one, the session is cleared, the brain's note goes into State, and Julian
+ * gets his one notification.
+ */
+async function markGoalWaitsForCheck(goal, { note = "", session = "", operationId = "" } = {}) {
+  const cleanup = await finishGoalExecutions({ goalFiles: [goal.file], reason: "goal-done" });
+  if (!cleanup.ok) return { status: 503, value: { error: "Worker cleanup failed. Retry the Goal finish.", cleanup } };
+  const words = oneLine(note);
+  const state = words ? `The brain marked this done: ${words} It waits for Julian to check it.` : "The brain marked this done. It waits for Julian to check it.";
+  await editGoalFile(goal.file, { status: "verify", state });
+  await vaultCommit([goal.file, ...cleanup.releasedGoals], `update: ${goal.area} goal ${goal.slug} waits for Julian to check it`, goal.area, session || null);
+  await notifyJulianOnce(goal);
+  await recordCommittedCommand({ operation: "goal-verify", actorSession: session, targetArea: goal.area, goal: goal.slug, operationId });
+  return { status: 200, value: { ok: true, status: "verify" } };
+}
+
+/**
+ * Sends the Check it notification once per entry into verify. The Goal's
+ * queue record remembers it as `verifyNotifiedAt`, so a repeated transition
+ * cannot notify twice. A test server sends nothing.
+ */
+async function notifyJulianOnce(goal) {
+  const record = await readPipeline(PIPELINES_ROOT, goal.area, goal.slug);
+  if (record?.verifyNotifiedAt) return;
+  if (process.env.AGENT_SHELL_TEST_NO_LAUNCH !== "1") await notifyGoalWaitsForCheck({ file: goal.file, area: goal.area, title: goal.title });
+  if (record) {
+    record.verifyNotifiedAt = new Date().toISOString();
+    await writePipeline(PIPELINES_ROOT, record);
+  }
+}
+
+/** Removes the Check it notification when a Goal leaves verify, so its next entry notifies again. */
+async function forgetCheckNotification(goal) {
+  if (process.env.AGENT_SHELL_TEST_NO_LAUNCH !== "1") await removeGoalCheckNotification(goal.file);
+  const record = await readPipeline(PIPELINES_ROOT, goal.area, goal.slug);
+  if (record?.verifyNotifiedAt) {
+    record.verifyNotifiedAt = null;
+    await writePipeline(PIPELINES_ROOT, record);
+  }
+}
 
 /** Reports whether one Area exists in the current vault tree. */
 async function areaExists(area) {
@@ -7313,13 +6846,6 @@ const server = http.createServer(async (req, res) => {
       res.once("finish", () => {
         if (res.statusCode < 400) {
           sessionObservation.invalidate();
-          // Every brain write reaches the server as a mutation naming the
-          // brain's own session: a Goal created or started, a Request filed,
-          // a message sent, an Area added, a comment resolved. One such call
-          // is the difference between a generation that worked and one that
-          // only waited, and only the second is paced. The handover itself is
-          // not an action, and neither is any GET.
-          if (url.pathname !== "/api/brains/handover") brainPacing.noteAction(actingSession(req.parsedBody));
           if (["/api/areas", "/api/goals", "/api/idea", "/api/document", "/api/pipelines", "/api/brains", "/api/launch", "/api/work"].some((prefix) => url.pathname.startsWith(prefix))) {
             vaultProjection.invalidate();
           }
@@ -7377,6 +6903,10 @@ if (!IS_CONTROLLER) {
     prepareSession: prepareTerminalSession,
   });
 }
+
+// Every Area has its note and its AGENTS.md links before the first request,
+// so a brain that starts at once opens on a complete chain.
+await sweepAreaNoteLinks().catch((err) => console.error("area note links:", err.message ?? err));
 
 server.listen(PORT, HOST, () => {
   const address = server.address();

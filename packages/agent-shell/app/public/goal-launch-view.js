@@ -34,64 +34,21 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
       .join("");
   }
 
-  /** Renders the fast path for one known goal. */
-  function renderCreate() {
-    const selectedArea = state.createArea || preferredArea();
-    return `
-      <article class="create-page">
-        <p class="kicker">New goal</p>
-        <h1>What result do you want?</h1>
-        <p class="create-lede">Choose where this work belongs. Then state what will be true when the work is complete.</p>
-
-        <form class="create-form" data-create-form data-command-enter-submit>
-          <label>
-            <span>Area</span>
-            <select id="new-goal-area" name="area" required>
-              ${areaOptions(selectedArea)}
-            </select>
-          </label>
-          <label>
-            <span>Name</span>
-            <input id="new-goal-title" name="title" type="text" required autocomplete="off" placeholder="A short name for this result" />
-          </label>
-          <label>
-            <span>Done looks like</span>
-            <textarea id="new-goal-result" name="doneWhen" required placeholder="One clear sentence that describes the finished result"></textarea>
-          </label>
-          <label>
-            <span>Starting point <small>Optional</small></span>
-            <textarea id="new-goal-state" name="state" class="short-textarea" placeholder="What is true now?"></textarea>
-          </label>
-          <div class="create-actions">
-            <button class="primary-button" type="submit">Create and choose agent <kbd>⌘↵</kbd></button>
-            <button class="quiet-button" type="submit" data-create-only>Create only</button>
-            <button class="quiet-button" type="button" data-cancel-create>Cancel</button>
-          </div>
-          <p class="form-note">You review the Area default, harness, model, and effort before anything starts.</p>
-        </form>
-      </article>
-    `;
-  }
-
-  /** Renders natural-language capture before a work-definition conversation. */
+  /**
+   * The plain composer behind `a` on an Area (D8): one message to that
+   * Area's brain. A live brain gets it now; an inactive one starts with it
+   * as its first message. Nothing else starts work.
+   */
   function renderDescribeCapture() {
     const draft = state.describeDraft;
     const area = draft?.area || preferredArea();
     const brain = controllingBrainForArea(area);
-    launchOptionsFor(area);
-    const selection = launchSelection();
-    const recipient = brain?.resolvedLaunch?.label || "brain";
-    const startLabel = brain?.live
-      ? `Send to ${recipient} brain`
-      : selection?.label
-        ? `${brain ? "Resume" : "Start"} ${selection.label}${brain ? " brain" : ""}`
-        : brain ? "Resume brain" : "Start agent";
-    const chooserOpen = !brain?.live && state.launchTarget === DESCRIBE_LAUNCH_TARGET;
+    const startLabel = brain?.live ? "Send" : brain ? "Send and wake the brain" : "Send and start the brain";
     return `
       <article class="create-page describe-page">
-        <p class="kicker">Describe work</p>
-        <h1>What do you want to work out?</h1>
-        <p class="create-lede">Type or dictate the whole thought. You will continue in a native agent conversation with the Area's context.</p>
+        <p class="kicker">Message the brain</p>
+        <h1>What do you want?</h1>
+        <p class="create-lede">Say it in your words. The Area brain reads its notes, makes the Goals, and starts the workers.</p>
 
         ${describeSourcesBlock(draft)}
 
@@ -101,22 +58,17 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
             <select id="describe-area" name="area" required>${areaOptions(draft?.area)}</select>
           </label>
           <label>
-            <span>Your description</span>
-            <textarea id="describe-work" name="description" class="describe-work-input" required placeholder="Describe the result, the context, and any parts that already matter to you.">${escapeHtml(draft?.description || "")}</textarea>
+            <span>Your message</span>
+            <textarea id="describe-work" name="description" class="describe-work-input" required placeholder="What you want, and what you already know. Say “check it myself” when you want to see the result before it closes.">${escapeHtml(draft?.description || "")}</textarea>
           </label>
           <div class="create-actions">
-            <span class="desk-split describe-launch-split">
-              <button class="primary-button" type="submit">${escapeHtml(startLabel)} <kbd>⌘↵</kbd></button>
-              ${brain?.live ? "" : `<button class="primary-button describe-launch-toggle${chooserOpen ? " open" : ""}" type="button" data-launch-for="${DESCRIBE_LAUNCH_TARGET}" title="Choose agent or model" aria-label="Choose the agent for this conversation" aria-expanded="${chooserOpen}">▾</button>`}
-            </span>
-            <button class="quiet-button" type="button" data-create-manually>Create Goal manually</button>
+            <button class="primary-button" type="submit">${escapeHtml(startLabel)} <kbd>⌘↵</kbd></button>
             <button class="quiet-button" type="button" data-save-idea>Save as an idea</button>
             <button class="quiet-button" type="button" data-cancel-describe>Cancel</button>
           </div>
-          <p class="form-note">The agent reads the Area notes and can inspect its vault and repository. It discusses the structure before it creates Goals.</p>
+          <p class="form-note">${brain?.live ? "The brain is live and reads this next." : "The brain opens in the Area folder with the Area note as its instructions."}</p>
         </form>
       </article>
-      ${launchPopover()}
     `;
   }
 
@@ -942,5 +894,5 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
 
   /** Renders the complete native agent terminal without a second chat. */
 
-  return { selectableAreas, preferredArea, areaOptions, renderCreate, renderDescribeCapture, describeSourcesBlock, launchOptionsFor, launchSelection, launchRequestFields, launchFieldsForArea, blankLaunchStep, launchStepsForRecord, launchStepIsMutable, launchStepDraft, syncLaunchDraft, commitActiveStep, activateLaunchStep, loadLaunchStep, addLaunchStep, removeLaunchStep, moveLaunchStep, launchStepLabel, launchStepRequest, launchIsPipeline, pipelineForGoal, pipelineRecordForGoal, launchDraftRows, pipelineMutationOperations, rebasePipelineDraft, launchStepList, launchPickerBlock, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, harnessSlug, saveHarnesses, renderHarnessEditor };
+  return { selectableAreas, preferredArea, areaOptions, renderDescribeCapture, describeSourcesBlock, launchOptionsFor, launchSelection, launchRequestFields, launchFieldsForArea, blankLaunchStep, launchStepsForRecord, launchStepIsMutable, launchStepDraft, syncLaunchDraft, commitActiveStep, activateLaunchStep, loadLaunchStep, addLaunchStep, removeLaunchStep, moveLaunchStep, launchStepLabel, launchStepRequest, launchIsPipeline, pipelineForGoal, pipelineRecordForGoal, launchDraftRows, pipelineMutationOperations, rebasePipelineDraft, launchStepList, launchPickerBlock, toggleDefaultAgents, editDefaultAgent, setDefaultAgentMode, saveLaunchDefault, showHarnessEditor, leaveHarnessEditor, harnessSlug, saveHarnesses, renderHarnessEditor };
 }

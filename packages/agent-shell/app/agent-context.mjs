@@ -153,7 +153,6 @@ function assignmentContext(session, { record, assignment, attempt, current }, go
       index: assignment.index,
       total: steps.length,
       kind: assignment.kind ?? "implementation",
-      designatedReview: assignment.designatedReview === true,
       status: assignment.status,
       instruction: String(assignment.instruction ?? ""),
       session: assignment.session ?? null,

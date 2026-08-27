@@ -613,6 +613,8 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   /** True when one stored handoff names the user, and no live brain already covers this Goal's Area. */
   function goalNeedsYou(goal) {
     if (!goal || ["done", "dropped", "parked", "deferred"].includes(goal.status)) return false;
+    // Check it: the brain marked a Goal Julian flagged done, and it waits for him (D13).
+    if (goal.status === "verify") return true;
     if (goalCoveredByBrain(goal)) return false;
     return /\b(julian|you)\b/i.test(String(goal.waitingOn ?? ""));
   }
@@ -628,6 +630,7 @@ export function createWorkDeskView({ shell, launch, areaModel, programs, chrome 
   /** Describes one Goal and Run state in user terms. */
   function stateLabel(goal, session) {
     if (goal.status === "done") return "Complete";
+    if (goal.status === "verify") return "Check it";
     if (!session) return goalNeedsYou(goal) ? "Waiting for you" : "Ready";
     if (session.state === "waiting") return waitingLabel(session);
     if (session.state === "working") return "Agent working";

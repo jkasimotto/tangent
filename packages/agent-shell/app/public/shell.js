@@ -34,7 +34,7 @@ const actionTelemetry = createActionTelemetry();
 actionTelemetry.observe();
 const { api, post } = createApiClient(undefined, actionTelemetry);
 const { api: healthApi } = createApiClient(undefined, actionTelemetry, 3_000);
-const { requestedArea, requestedDocument, state } = createShellState();
+const { requestedArea, requestedDocument, requestedGoal, state } = createShellState();
 
 const {
   screen, "back-button": backButton, "work-tab": workTab, "areas-tab": areasTab, "prompts-tab": promptsTab, "bar-context": barContext,
@@ -475,7 +475,7 @@ const goalLaunchView = createGoalLaunchView({
   overlays: { launchPopover: forward(() => launchPopover), DESCRIBE_LAUNCH_TARGET, BRAIN_LAUNCH_TARGET, DEFAULT_AGENTS_TARGET },
 });
 const {
-  selectableAreas, preferredArea, areaOptions, renderCreate, renderDescribeCapture, describeSourcesBlock,
+  selectableAreas, preferredArea, areaOptions, renderDescribeCapture, describeSourcesBlock,
   launchOptionsFor, launchSelection, launchRequestFields, launchFieldsForArea, launchStepDraft, syncLaunchDraft, commitActiveStep,
   blankLaunchStep, launchStepsForRecord, launchStepIsMutable, activateLaunchStep, loadLaunchStep, addLaunchStep, removeLaunchStep, moveLaunchStep, launchStepLabel, launchStepRequest,
   launchIsPipeline, pipelineForGoal, pipelineRecordForGoal, launchDraftRows, pipelineMutationOperations, rebasePipelineDraft, launchStepList, launchPickerBlock,
@@ -542,7 +542,7 @@ const {
   toggleShellMenu, goToRows, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWorkAt, confirmRebuild, reloadChanges,
   selectGoal, rememberGoal, openGoalRun, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt,
   selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath,
-  confirmAreaMove, showCreate, switchDescribeToManualCreate, cancelCreate, addDescribeSource, showDescribe,
+  confirmAreaMove, addDescribeSource, showDescribe,
   openDescribeSession, cancelDescribe, showDecision, startPipeline, savePipelineChanges, replaceGoalAttempt,
   openGoalAgent, openReaderAgent, launchOpenSession, openModal, closeModal, getModalConfirm,
   confirmStop, confirmComplete, confirmWontDo,
@@ -699,7 +699,6 @@ function updateHeader() {
   const describeSession = describeWorkSession();
   const session = stopSession();
   const isWork = state.view === "work";
-  const isCreate = state.view === "create";
   const isDescribe = state.view === "describe";
   const isDescribeAgent = state.view === "describe-agent";
   const isAreas = state.view === "areas";
@@ -714,8 +713,6 @@ function updateHeader() {
   backButton.classList.toggle("has-back", !isTopLevel);
   const backLabel = isTopLevel
     ? "Agent Shell"
-    : isCreate
-      ? state.createReturnView === "areas" ? "Areas" : "Work"
     : isDescribe || isDescribeAgent
       ? returnPointLabel(state.describeReturn)
     : isAreaEdit
@@ -737,10 +734,8 @@ function updateHeader() {
     : escapeHtml(backLabel);
   // Browser-managed child screens share one visible Escape/Back operation.
   if (state.view === "document" || isHarnesses) backButton.innerHTML = `${escapeHtml(backButton.textContent)} <kbd>esc</kbd>`;
-  barContext.textContent = isCreate
-    ? "Define new work"
-    : isDescribe
-      ? "Describe work"
+  barContext.textContent = isDescribe
+      ? "Message the brain"
       : isDescribeAgent && describeSession
         ? `${areaLabel(describeSession.area)} · Defining work · ${describeWorkStateLabel(describeSession)}`
         : isAreas
@@ -761,7 +756,7 @@ function updateHeader() {
               ? `${areaLabel(goal.area)} · ${goal.title}${goalSession ? ` · ${stateLabel(goal, goalSession)}` : ""}`
               : "";
 
-  const topLevel = isWork || isAreas || isAreaEdit || isProgramDetail || isProgramCreate || isProgramSession || (isCreate && state.createReturnView === "areas")
+  const topLevel = isWork || isAreas || isAreaEdit || isProgramDetail || isProgramCreate || isProgramSession
     ? "work"
     : isPrompts
       ? "prompts"
@@ -858,7 +853,6 @@ function renderScreen() {
   const scrollPositions = rememberScreenScroll();
   const focusKey = rememberScreenFocus();
   if (state.view === "work") screen.innerHTML = renderWork();
-  else if (state.view === "create") screen.innerHTML = renderCreate();
   else if (state.view === "describe") screen.innerHTML = renderDescribeCapture();
   else if (state.view === "areas") screen.innerHTML = renderAreas() + launchPopover();
   else if (state.view === "prompts") screen.innerHTML = renderPromptBestiary({ goals: allGoals(), brains: state.brains, sessions: state.sessions, pipelines: state.pipelines, programs: state.programs.operations, asks: areaQuestions("").map((item) => ({ area: item.area, subject: item.request.subject, question: item.request.question })), inspector: state.promptInspector, selection: state.bestiarySelection });
@@ -1475,7 +1469,7 @@ bindShellEvents({
     screen, backButton, workTab, areasTab, promptsTab, findButton, secondaryAction, shellMenu, goToButton, goToLayer,
     goToInput, modalLayer, documentPeekLayer, terminalFit: terminalController.fit, KEYMAP, shortcutMatches, shortcutKbd, toggleShellMenu,
     confirmRebuild, reloadChanges, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWork, showAreas, showPrompts, restoreReturnPoint,
-    showDecision, showCreate, showDescribe, toggleAwake, openModal, closeModal, modalConfirm: getModalConfirm, openSessionLayer, closeSessionLayer,
+    showDecision, showDescribe, toggleAwake, openModal, closeModal, modalConfirm: getModalConfirm, openSessionLayer, closeSessionLayer,
   },
   prompts: {
     loadGoalPrompt, loadBrainPrompt, closePromptPreview, selectBestiaryLifecycle, selectBestiaryTransition,
@@ -1484,14 +1478,14 @@ bindShellEvents({
   work: {
     selectGoal, rememberGoal, openGoalRun, goalByFile, currentGoal, sessionForGoal, startBrain, brainForAreaCard,
     openBrainSession, openOrStartBrain, toggleBrainPopover, confirmStopBrain, saveDescribeDraft, saveDescribeSession, describeWorkSession,
-    openDescribeSession, addDescribeSource, switchDescribeToManualCreate,
+    openDescribeSession, addDescribeSource,
     openGoalAgent, launchOpenSession, confirmStop, confirmComplete, confirmWontDo, openRequest, openQuestionsReview, openAreaCapture, sendVerdict,
     replyAboutRow, openAreaFocusPicker, cancelAreaFocusPicker, toggleAreaFocusDraft, updateAreaFocusQuery,
     applyAreaFocus, clearAreaFocus, renderWork, describeLaunchArea, describeWorkSessions,
     goalGroupRoot, setSubgoalsExpanded, toggleSubgoals, setWorkAreaFolded, toggleWorkArea,
   },
   areas: {
-    showAreasAt, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelCreate, cancelDescribe, areaIsFolded,
+    showAreasAt, beginAreaCreate, beginAreaMove, confirmAreaMove, cancelDescribe, areaIsFolded,
     saveExpandedAreas, revealArea, setAreaStatus, preferredArea, areaLabel, loadAreaJournal,
   },
   programs: {
@@ -1525,6 +1519,7 @@ window.addEventListener("storage", (event) => {
 void (async () => {
   await refresh({ initial: true });
   if (requestedDocument) await openDocument(requestedDocument);
+  else if (requestedGoal) selectGoal(requestedGoal);
   else if (state.view === "areas") window.setTimeout(() => {
     const input = document.querySelector("#area-search");
     input?.focus();

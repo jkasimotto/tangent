@@ -155,15 +155,16 @@ test("neara/portland worker handovers survive delay, rollover, restart, and exac
   assert.equal(afterRetryQueue.steps[0].handoverReceipts.length, 1);
   assert.equal(workerNotices(await readInbox(path.join(root, "brains"), area)).filter((notice) => notice.id === receipt.notice.id).length, 1);
 
-  // Brain rollover includes the unread notice in generation 2 exactly once.
-  const rolled = await post(base, "/api/brains/handover", {
-    session: child.body.session,
-    text: "Carry the Portland queue into the next generation.",
-  });
+  // Julian restarts the brain: the woken attempt's first message carries the
+  // unread notice exactly once, below his words.
+  const stoppedChild = await post(base, "/api/brains/stop", { area, expectedAttemptId: child.body.session, operationId: "portland-restart" });
+  assert.equal(stoppedChild.status, 200, JSON.stringify(stoppedChild.body));
+  const rolled = await post(base, "/api/brains/start", { area, resume: true, instruction: "Carry the Portland queue on." });
   assert.equal(rolled.status, 200, JSON.stringify(rolled.body));
   assert.equal(rolled.body.generation, 2);
   openedSessions.push(rolled.body.session);
   const rolledPrompt = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(rolled.body.session)}`).then((response) => response.json());
+  assert.match(rolledPrompt.prompt, /^Carry the Portland queue on\.\n\n/);
   assert.match(rolledPrompt.prompt, /Portland implementation is complete/);
   const deliveredImplementation = workerNotices(await readInbox(path.join(root, "brains"), area)).find((notice) => notice.id === receipt.notice.id);
   assert.equal(deliveredImplementation.deliveredGeneration, 2);

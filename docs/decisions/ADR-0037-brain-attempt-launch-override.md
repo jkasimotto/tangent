@@ -2,7 +2,7 @@
 
 Date: 2026-08-27
 
-Status: accepted
+Status: accepted. The handover clauses are superseded by ADR-0041: a brain never hands over, and the picker is Julian's Restart.
 
 ## Context
 

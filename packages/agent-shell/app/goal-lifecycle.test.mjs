@@ -1,14 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
-  goalIsHiddenByDefault,
-  goalIsTerminal,
-  goalIsUnresolved,
-  goalStatusChange,
-  normalizeGoalRecord,
-  normalizeGoalStatus,
-  parkingNeedsConfirmation,
-} from "./goal-lifecycle.mjs";
+import { goalIsHiddenByDefault, goalIsTerminal, goalIsUnresolved, goalStatusChange, normalizeGoalRecord, normalizeGoalStatus, parkingNeedsConfirmation, goalIsFlaggedForVerify, goalWaitsForCheck, SETTLED_GOAL_STATUSES } from "./goal-lifecycle.mjs";
 
 test("legacy Deferred reads as Parked but writers reject the retired value", () => {
   assert.equal(normalizeGoalStatus("deferred"), "parked");
@@ -37,6 +29,7 @@ test("Park is reversible, hidden by default, and remains an unresolved prerequis
     reason: "Waiting for the next quarter. Keep the evidence.",
     changed: true,
     reopened: false,
+    leftVerify: false,
   });
   assert.equal(goalIsTerminal("parked"), false);
   assert.equal(goalIsHiddenByDefault("parked"), true);
@@ -55,4 +48,19 @@ test("live Goal facts control Park confirmation without changing lifecycle autho
   assert.equal(parkingNeedsConfirmation({ status: "active", session: "worker" }), true);
   assert.equal(parkingNeedsConfirmation({ status: "open", session: "worker" }), true);
   assert.equal(parkingNeedsConfirmation({ status: "open", session: null }), false);
+});
+
+test("only Julian marks a Goal flagged verify done; verify is never a direct write", () => {
+  assert.throws(() => goalStatusChange("active", "done", "", { actor: "brain", verify: true }), (error) => error.code === "verify-required");
+  assert.throws(() => goalStatusChange("active", "done", "", { actor: "worker", verify: true }), (error) => error.code === "verify-required");
+  assert.equal(goalStatusChange("verify", "done", "", { actor: "julian", verify: true }).status, "done");
+  assert.equal(goalStatusChange("active", "done", "", { actor: "brain", verify: false }).status, "done");
+  assert.throws(() => goalStatusChange("active", "verify"), (error) => error.code === "invalid-status");
+  assert.equal(goalStatusChange("verify", "open").leftVerify, true);
+  assert.equal(goalStatusChange("verify", "done").leftVerify, true);
+  assert.equal(goalIsFlaggedForVerify({ verify: true }), true);
+  assert.equal(goalIsFlaggedForVerify("yes"), true);
+  assert.equal(goalIsFlaggedForVerify(""), false);
+  assert.equal(goalWaitsForCheck("verify"), true);
+  assert.equal(SETTLED_GOAL_STATUSES.has("verify"), true);
 });

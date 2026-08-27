@@ -13,7 +13,9 @@ export function createShellState(storage = globalThis.localStorage, href = globa
   const requestedView = requestedLocation.get("view");
   const requestedArea = requestedLocation.get("area") || "";
   const requestedDocument = requestedLocation.get("document") || "";
-  const initialView = requestedDocument ? "document" : requestedView === "prompts" ? "prompts" : ["areas", "programs"].includes(requestedView) ? "areas" : "work";
+  // `?goal=<file>` opens Work on one Goal row: the Check it notification's link (D14).
+  const requestedGoal = requestedLocation.get("goal") || "";
+  const initialView = requestedDocument ? "document" : requestedGoal ? "work" : requestedView === "prompts" ? "prompts" : ["areas", "programs"].includes(requestedView) ? "areas" : "work";
   const storedDescribeDraft = storedJson("agent-shell.describe-draft");
   const savedDescribeSession = storage.getItem("agent-shell.describe-session") || storedDescribeDraft?.session || "";
   const storedAreaFocus = readAreaFocus(storage);
@@ -21,12 +23,12 @@ export function createShellState(storage = globalThis.localStorage, href = globa
     vault: null,
     programs: { operations: [], problems: [], areas: [], liveCount: 0 },
     sessions: [], contextHandoverTokens: 0,
-    currentFile: storage.getItem("agent-shell.current-goal") || "", view: initialView,
+    currentFile: requestedGoal || storage.getItem("agent-shell.current-goal") || "", view: initialView,
     document: null, goalDetail: null, documentReturn: null, documentTrail: [], documentTrailIndex: -1, documentPositions: new Map(), documentPendingG: "",
     documentPeek: null,
     commentComposer: null, commentCursor: -1,
     describeReturn: null, describeDraft: storedDescribeDraft?.session ? null : storedDescribeDraft, describeSessionName: savedDescribeSession,
-    areaSelection: requestedArea || storage.getItem("agent-shell.last-area") || "", createArea: "", createReturnView: "work",
+    areaSelection: requestedArea || (requestedGoal ? requestedGoal.split("/").slice(0, -1).join("/") : "") || storage.getItem("agent-shell.last-area") || "",
     expandedAreas: new Set(storedJson("agent-shell.expanded-areas") || []),
     foldedWorkAreas: new Set(storedJson("agent-shell.folded-work-areas") || []),
     collapsedDeskSections: new Set(storedJson("agent-shell.collapsed-desk-sections") || []),
@@ -43,7 +45,7 @@ export function createShellState(storage = globalThis.localStorage, href = globa
     // Work is one durable projection. Ignore the retired Current/Planned
     // browser choice so an old local-storage value cannot hide Goals.
     harnessDraft: null, harnessReturnView: "work", query: "", workFilter: "all",
-    workCursor: storage.getItem("agent-shell.work-cursor") || "",
+    workCursor: requestedGoal ? `goal:${requestedGoal}` : storage.getItem("agent-shell.work-cursor") || "",
     caffeinate: false, decisionReturnView: "agent", agentReturnView: "work", agentReturn: null, rebuilding: false, rebuild: null, goalCleanups: [],
     connection: {
       phase: "online", gatewayBoot: "", controllerBoot: "", lastSuccessAt: 0, lastFailureAt: null,
@@ -53,5 +55,5 @@ export function createShellState(storage = globalThis.localStorage, href = globa
     promptInspector: { loading: false, title: "", text: "", error: "", file: "", area: "" },
     bestiarySelection: { mode: "model", concept: "area", lifecycle: "plan", transition: "work" },
   };
-  return { requestedArea, requestedDocument, state };
+  return { requestedArea, requestedDocument, requestedGoal, state };
 }

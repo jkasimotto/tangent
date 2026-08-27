@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { areaNoteTemplate } from "./area-note-links.mjs";
 
 const RESERVED = new Set(["shared", ".git", ".obsidian", "node_modules"]);
 
@@ -63,11 +64,7 @@ export async function createArea({ treesRoot, parent, name }) {
   await writeFile(path.join(absolute, ".gitkeep"), "", "utf8");
   const title = String(name ?? "").trim();
   const note = `${area}/${slug}.md`;
-  await writeFile(
-    path.join(treesRoot, note),
-    `---\ntype: area\nstatus: active\n---\n\n# ${title}\n\n## Purpose\n\n\n\n## Current\n\n\n\n## Goals\n\n\n\n## Knowledge\n\n\n\n## Ideas and open questions\n\n\n\n## Resources\n`,
-    "utf8"
-  );
+  await writeFile(path.join(treesRoot, note), areaNoteTemplate(title), "utf8");
   return { area, note, changedPaths: [`${area}/.gitkeep`, note] };
 }
 

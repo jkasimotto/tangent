@@ -246,14 +246,12 @@ test("an inactive brain wakes with Julian's message, and the woken attempt reads
   assert.equal(woken.status, 200, JSON.stringify(woken.body));
   openedSessions.push(woken.body.session);
 
-  // The wake reason is a durable notice, so the woken attempt reads why it is
-  // awake instead of guessing from its founding instruction alone.
+  // The wake message is typed verbatim as the woken attempt's first message
+  // (ADR-0041), so it reads why it is awake instead of guessing.
   const prompt = await fetch(`${base}/api/brains/show?area=${encodeURIComponent("otto/test")}`).then((response) => response.json());
-  assert.match(JSON.stringify(prompt.brain), /Pick the branch up again\./, "the wake message reaches the brain record");
-
-  // Automatic recovery carries no message and adds no notice.
-  const before = JSON.stringify(prompt.brain).match(/Julian woke this brain/g)?.length ?? 0;
-  assert.equal(before, 1, "one wake, one notice");
+  assert.equal(prompt.brain.generations.at(-1).firstMessage, "Pick the branch up again.", "the wake message is the first message");
+  assert.equal(prompt.prompt, "Pick the branch up again.");
+  assert.equal(JSON.stringify(prompt.brain).includes("Julian woke this brain"), false, "no notice is written for a typed wake");
 });
 
 test("an ended brain does not wake without a message, and a live record still reattaches", async (context) => {
@@ -442,40 +440,6 @@ test("a late activation failure cannot overwrite completed stop health", async (
   assert.equal(shown.brain.status, "inactive");
   assert.equal(shown.brain.health.status, "inactive", "the dead arm updates its generation only, not the stopped brain's health");
   assert.equal(shown.brain.stopOperation.status, "complete");
-});
-
-test("handover and stop serialize one exact Area without resurrecting a stale attempt", async (context) => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-brain-race-"));
-  const { trees, workspace } = await buildVault(root);
-  const openedSessions = [];
-  const base = await startShellServer(context, {
-    here, root, trees, workspace, openedSessions,
-    env: { TANGENT_RECONCILE_INTERVAL_MS: "600000" },
-  });
-  if (!base) return;
-
-  const started = await post(base, "/api/brains/start", { area: "otto/test", instruction: "Own this Area." });
-  assert.equal(started.status, 200, JSON.stringify(started.body));
-  openedSessions.push(started.body.session);
-  const expectedAttemptId = started.body.brain.currentAttemptId ?? started.body.session;
-
-  const [handover, stopped] = await Promise.all([
-    post(base, "/api/brains/handover", { session: started.body.session, text: "The Area remains active." }),
-    post(base, "/api/brains/stop", { area: "otto/test", expectedAttemptId, operationId: "handover-stop-race" }),
-  ]);
-  const shown = await fetch(`${base}/api/brains/show?area=${encodeURIComponent("otto/test")}`).then((response) => response.json());
-  if (handover.status === 200) {
-    assert.equal(stopped.status, 409, JSON.stringify(stopped.body));
-    assert.equal(stopped.body.code, "attempt-changed");
-    assert.equal(shown.brain.status, "active");
-    assert.equal(shown.brain.currentAttemptId, handover.body.session);
-    openedSessions.push(handover.body.session);
-  } else {
-    assert.equal(handover.status, 404, JSON.stringify(handover.body));
-    assert.equal(stopped.status, 200, JSON.stringify(stopped.body));
-    assert.equal(shown.brain.status, "inactive");
-    assert.equal(shown.brain.stopOperation.status, "complete");
-  }
 });
 
 test("a capture wakes the inactive destination brain and never loses the words", async (context) => {

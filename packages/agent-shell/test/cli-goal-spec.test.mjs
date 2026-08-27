@@ -30,17 +30,26 @@ test("tangent goal append takes a slug and the same repeatable step options as s
   assert.equal(append.args, "<slug>");
   assert.deepEqual(optionNames(append), ["step", "launch", "path", "continue-from", "kind", "server", "json"]);
   assert.match(append.description, /without restarting/);
-  assert.match(append.description, /--kind review/, "append help names the required review type");
+  assert.match(append.description, /the brain reads its note and marks the Goal done/, "append help says a review closes nothing itself");
   assert.match(append.options.find((entry) => entry.name === "kind").description, /defaults to implementation/i, "kind help names the safe default");
 });
 
-test("tangent goal handover takes facts, session identity, and a typed report", () => {
+test("tangent goal handover is a hidden alias that names its replacement", () => {
   const handover = subcommand("handover");
-  assert.ok(handover, "goal spec has a handover subcommand");
+  assert.ok(handover, "goal spec keeps the alias for one release");
+  assert.equal(handover.hidden, true, "the alias is gone from help");
   assert.equal(handover.args, "<facts...>");
   assert.deepEqual(optionNames(handover), ["session", "report", "server"]);
-  assert.equal(handover.options.find((entry) => entry.name === "report").takesValue, true);
-  assert.match(handover.description, /facts/);
+  assert.match(handover.description, /Replaced by tangent send brain/);
+});
+
+test("tangent goal create starts the worker for a brain in the same call", () => {
+  const create = subcommand("create");
+  for (const name of ["start", "path", "launch", "verify", "instruction", "instruction-file"]) assert.ok(create.options.some((entry) => entry.name === name), `create has --${name}`);
+  assert.notEqual(create.options.find((entry) => entry.name === "start").takesValue, true, "start is a switch");
+  assert.notEqual(create.options.find((entry) => entry.name === "verify").takesValue, true, "verify is a switch");
+  assert.match(create.options.find((entry) => entry.name === "done-when").description, /defaults to the title/);
+  assert.match(create.options.find((entry) => entry.name === "launch").description, /brain's own harness is lent/);
 });
 
 test("goal help still lists the vault commands beside start and handover", () => {
@@ -237,12 +246,10 @@ test("each --step carries its own working directory, and a step without one keep
   );
 });
 
-test("tangent brain has handover and status; tangent area gains create", async () => {
+test("tangent brain has status and stop and no handover; tangent area gains create", async () => {
   const { brainCommandSpec, areaCommandSpec } = await import("../dist/cli/index.js");
-  const handover = brainCommandSpec.subcommands.find((entry) => entry.name === "handover");
-  assert.ok(handover, "brain spec has a handover subcommand");
-  assert.equal(handover.args, "<facts...>");
-  assert.deepEqual(optionNames(handover), ["session", "server"]);
+  assert.equal(brainCommandSpec.subcommands.find((entry) => entry.name === "handover"), undefined, "a brain runs until Julian restarts it");
+  assert.match(brainCommandSpec.subcommands.find((entry) => entry.name === "request").options.find((entry) => entry.name === "kind").description, /^plan, decision, or approval$/, "no test request");
   const status = brainCommandSpec.subcommands.find((entry) => entry.name === "status");
   assert.equal(status.args, "[area]");
   const stop = brainCommandSpec.subcommands.find((entry) => entry.name === "stop");

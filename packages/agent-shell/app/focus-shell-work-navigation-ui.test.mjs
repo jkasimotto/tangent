@@ -400,22 +400,11 @@ test("the live shell restores context, defines work with an agent, and organizes
   const description = window.document.querySelector("#describe-work");
   description.value = "Make the scene flow reliable. Terrain generation fits the view. Sprite cutouts keep the asset.";
   description.dispatchEvent(new window.Event("input", { bubbles: true }));
-  click(window, "[data-launch-for='__describe__']");
-  await settle(window);
-  await settle(window);
-  const describeAgentPicker = window.document.querySelector("[data-launch-popover]");
-  assert.ok(describeAgentPicker, "the Describe work agent picker opens");
-  assert.match(describeAgentPicker.textContent, /Claude/);
-  assert.match(describeAgentPicker.textContent, /Codex/);
-  assert.match(describeAgentPicker.textContent, /Pi Code/);
-  assert.equal(window.document.querySelector("#describe-work").value, description.value);
-  click(window, "[data-launch-for='__describe__']");
   submit(window, "[data-describe-work-form]");
   await settle(window);
   const described = posts.find((entry) => entry.path === "/api/work/describe");
   assert.equal(described.body.area, "otto/dnd");
   assert.equal(described.body.description, description.value);
-  assert.equal(described.body.launch, true);
   assert.equal(described.body.session, undefined);
   assert.equal(window.document.querySelector("#session-layer").hidden, false);
   assert.equal(window.document.querySelector("#session-layer-terminal").dataset.session, "dnd--describe-scene-flow");
@@ -447,32 +436,6 @@ test("the live shell restores context, defines work with an agent, and organizes
   assert.match(window.document.querySelector("#screen").textContent, /Make the scene flow reliable/);
   assert.match(window.document.querySelector("#screen").textContent, /Define ladder authoring/);
   assert.match(window.document.querySelector("#screen").textContent, /Agent working/);
-  window.showDescribe();
-  const manualArea = window.document.querySelector("#describe-area");
-  manualArea.value = "neara/hackathon/live-edit";
-  manualArea.dispatchEvent(new window.Event("input", { bubbles: true }));
-  assert.equal(window.document.querySelector("[data-create-manually]").textContent.trim(), "Create Goal manually");
-  click(window, "[data-create-manually]");
-  await settle(window);
-  assert.equal(window.document.querySelector("#new-goal-area").value, "neara/hackathon/live-edit");
-  assert.equal(window.document.querySelector("#new-goal-title"), window.document.activeElement);
-  click(window, "[data-cancel-create]");
-  assert.ok(window.document.querySelector("[data-describe-work-form]"));
-  assert.equal(window.document.querySelector("#describe-area").value, "neara/hackathon/live-edit");
-  click(window, "[data-create-manually]");
-  window.document.querySelector("#new-goal-title").value = "Share a scene safely";
-  window.document.querySelector("#new-goal-result").value = "A collaborator can join without losing scene edits.";
-  submit(window, "[data-create-form]");
-  await settle(window);
-  const manualGoal = posts.find((entry) => entry.path === "/api/goals/new");
-  assert.deepEqual(manualGoal.body, {
-    area: "neara/hackathon/live-edit",
-    title: "Share a scene safely",
-    doneWhen: "A collaborator can join without losing scene edits.",
-    state: "",
-  });
-  assert.equal(posts.some((entry) => entry.path === "/api/goals/agent" && entry.body.file === goalFile), false);
-  click(window, "#back-button");
   click(window, "#areas-tab");
   click(window, "[data-toggle-area='neara']");
   click(window, "[data-toggle-area='neara/hackathon']");

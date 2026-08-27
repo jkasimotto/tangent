@@ -445,38 +445,6 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     }
   }
 
-  /** Opens the fast new-goal form. */
-  function showCreate(area = "", returnView = state.view) {
-    state.createReturnView = ["areas", "describe"].includes(returnView) ? returnView : "work";
-    state.createArea = area || (state.createReturnView === "areas" ? selectedArea()?.path : "") || preferredArea();
-    state.view = "create";
-    state.document = null;
-    state.goalDetail = null;
-    state.documentTrail = [];
-    state.documentTrailIndex = -1;
-    paint(true);
-    window.setTimeout(() => document.querySelector("#new-goal-title")?.focus(), 0);
-  }
-
-  /**
-   * Moves from the describe form to manual Goal creation without losing the
-   * typed description: the switch re-renders the page, so the textarea value
-   * must land in the stored draft first. Cancel from manual create returns to
-   * the describe form with the text intact.
-   */
-  function switchDescribeToManualCreate() {
-    syncDescribeDraft();
-    showCreate(describeLaunchArea(), "describe");
-  }
-
-  /** Returns from manual Goal creation to the surface that opened it. */
-  function cancelCreate() {
-    state.createArea = "";
-    if (state.createReturnView === "areas") return showAreas();
-    if (state.createReturnView === "describe") return showDescribe();
-    return showWork();
-  }
-
   /** Adds one Document to a work description without duplicating its source link. */
   function addDescribeSource(source) {
     const sources = state.describeDraft?.sources ?? [];
@@ -486,9 +454,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
 
   /** Opens a fresh or unfinished description without taking over another defining agent. */
   function showDescribe({ source = null, area = "" } = {}) {
-    // Cancelling the new-work form returns into this form; it is not a fresh
-    // entry, so the return point it already holds stays.
-    if (state.view !== "create") state.describeReturn = captureReturnPoint();
+    state.describeReturn = captureReturnPoint();
     if (source) {
       state.describeDraft = { area: source.area, description: "", sources: [] };
       addDescribeSource(source);
@@ -980,5 +946,5 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
 
   /** Toggles the server-owned macOS sleep assertion. */
 
-  return { toggleShellMenu, goToRows, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWorkAt, confirmRebuild, reloadChanges, selectGoal, rememberGoal, openGoalRun, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt, selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath, confirmAreaMove, showCreate, switchDescribeToManualCreate, cancelCreate, addDescribeSource, showDescribe, openDescribeSession, cancelDescribe, showDecision, startPipeline, savePipelineChanges, replaceGoalAttempt, openGoalAgent, openReaderAgent, launchOpenSession, openModal, closeModal, getModalConfirm, confirmStop, confirmComplete, confirmWontDo };
+  return { toggleShellMenu, goToRows, openGoTo, closeGoTo, renderGoToList, chooseGoToRow, showWorkAt, confirmRebuild, reloadChanges, selectGoal, rememberGoal, openGoalRun, showWork, showAreas, beginAreaCreate, beginAreaMove, showAreasAt, selectProgram, showProgramCreate, openProgramSession, performProgramAction, controlProgram, movedPath, confirmAreaMove, addDescribeSource, showDescribe, openDescribeSession, cancelDescribe, showDecision, startPipeline, savePipelineChanges, replaceGoalAttempt, openGoalAgent, openReaderAgent, launchOpenSession, openModal, closeModal, getModalConfirm, confirmStop, confirmComplete, confirmWontDo };
 }

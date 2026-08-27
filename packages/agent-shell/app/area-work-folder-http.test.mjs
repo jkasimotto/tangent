@@ -132,7 +132,7 @@ test("a worker starts in the Area's bound folder or is refused before any record
     assert.match(kid.body.error, /^goal kid-work: otto\/docs\/kid and its parent Areas bind no repository\./);
   });
 
-  await context.test("area show and the brain prompt name each resource with the Area it comes from", async () => {
+  await context.test("area show names each resource with the Area it comes from, and the brain sits in its vault folder", async () => {
     const shown = await fetch(`${base}/api/areas/show?area=${encodeURIComponent("otto/bound/child")}`).then((response) => response.json());
     assert.deepEqual(shown.resolved.repository, { value: workspace, area: "otto/bound" });
     assert.deepEqual(shown.resolved.branch, { value: "main", area: "otto/bound" });
@@ -141,14 +141,10 @@ test("a worker starts in the Area's bound folder or is refused before any record
     assert.equal(brain.status, 200, JSON.stringify(brain.body));
     openedSessions.push(brain.body.session);
     const show = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(brain.body.session)}`).then((response) => response.json());
-    assert.match(show.prompt, /## Resources/);
-    assert.ok(show.prompt.includes(`Repository: ${workspace} (from otto/bound)`), show.prompt);
-    assert.ok(show.prompt.includes("Branch: main (from otto/bound)"));
+    assert.match(show.prompt, /^Organize the child\./, "no generated prompt: Julian's words come first, and the brain reads its Area note chain itself");
     assert.equal(await tmuxOption(brain.body.session, "@tangent_cwd"), path.join(trees, "otto", "bound", "child"), "the brain sits in its vault Area folder");
     const unboundBrain = await post(base, "/api/brains/start", { area: "otto/unbound", instruction: "Organize nothing." });
     assert.equal(unboundBrain.status, 200, JSON.stringify(unboundBrain.body));
     openedSessions.push(unboundBrain.body.session);
-    const unboundShow = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(unboundBrain.body.session)}`).then((response) => response.json());
-    assert.match(unboundShow.prompt, /Repository: none bound/);
   });
 });

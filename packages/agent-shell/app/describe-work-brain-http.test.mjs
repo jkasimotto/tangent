@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -109,16 +110,19 @@ save();
   assert.deepEqual(resumedRecord.generations.at(-1).resolvedLaunch.ref, { harness: "codex", model: "sol", effort: null });
   assert.equal(resumedRecord.generations.at(-1).resolvedLaunch.command, "codex --model sol");
   assert.equal(Object.values(tmuxAfterResume.sessions).some((session) => session.options["@tangent_kind"] === "work-definition"), false);
-  const inbox = JSON.parse(await readFile(path.join(brains, "otto", "tangent", "inbox.json"), "utf8"));
-  assert.match(inbox.notices[0].text, /Route this exact description to the controlling brain\./);
-  assert.match(inbox.notices[0].text, /otto\/tangent\/design-context\.md/);
+  // Julian's description is the woken attempt's first message, verbatim (ADR-0041).
+  assert.match(resumedRecord.generations.at(-1).firstMessage, /Route this exact description to the controlling brain\./);
+  assert.match(resumedRecord.generations.at(-1).firstMessage, /otto\/tangent\/design-context\.md/);
+  assert.equal(existsSync(path.join(brains, "otto", "tangent", "inbox.json")), false, "a typed message is not also an inbox notice");
 
   const child = await describe(base, {
     area: "otto/tangent/child",
     description: "Define child work without borrowing parent authority.",
   });
-  assert.equal(child.status, 200);
-  assert.equal(child.body.route, "work-definition-opened", "a parent brain never controls a child Area");
+  assert.equal(child.status, 200, JSON.stringify(child.body));
+  assert.equal(child.body.route, "brain-started", "a parent brain never controls a child Area: the message founds the child's own brain");
+  assert.equal(child.body.brainArea, "otto/tangent/child");
+  assert.match((await readBrain(brains, "otto/tangent/child")).generations.at(-1).firstMessage, /Define child work/);
 
   const live = await describe(base, { area: "otto/tangent", description: "Deliver this while the brain is live." });
   assert.equal(live.status, 200);
@@ -159,7 +163,7 @@ save();
   const childStarts = await Promise.all([startChild(), startChild()]);
   assert.equal(childStarts[0].session, "child-brain");
   assert.equal(childStarts[1].session, "child-brain");
-  assert.equal(childStarts.filter((result) => result.reattached).length, 1, "concurrent exact starts share one child brain");
+  assert.equal(childStarts.filter((result) => result.reattached).length, 2, "concurrent exact starts share the one child brain the message founded");
 
   const childOwned = await describe(base, { area: "otto/tangent/child", description: "The nearest child brain owns this." });
   assert.equal(childOwned.status, 200);
@@ -171,14 +175,11 @@ save();
   assert.equal(childRecovered.status, 200, JSON.stringify(childRecovered.body));
   assert.equal(childRecovered.body.brainArea, "otto/tangent/child", "parent authority never replaces exact child authority");
 
-  const plain = await describe(base, {
-    area: "otto/plain",
-    description: "Keep the existing behavior here.",
-    choice: { harness: "codex", model: "sol" },
-  });
-  assert.equal(plain.status, 200);
-  assert.equal(plain.body.route, "work-definition-opened");
+  // An Area that declares no brain launch cannot found a brain from a
+  // message, and nothing else starts work (D8): the refusal names the gap.
+  const plain = await describe(base, { area: "otto/plain", description: "Keep the existing behavior here." });
+  assert.equal(plain.status, 409, JSON.stringify(plain.body));
+  assert.match(plain.body.error, /otto\/plain: no brain or work launch is declared/);
   const tmuxAfterPlain = JSON.parse(await readFile(fakeTmuxState, "utf8"));
-  assert.equal(tmuxAfterPlain.sessions[plain.body.session].options["@tangent_kind"], "work-definition");
-  assert.equal(tmuxAfterPlain.sessions[plain.body.session].options["@tangent_launch"], "Codex · Sol");
+  assert.equal(Object.values(tmuxAfterPlain.sessions).some((session) => session.options["@tangent_kind"] === "work-definition"), false, "no work-definition agent starts beside the brain");
 });

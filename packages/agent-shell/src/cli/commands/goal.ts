@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -12,26 +13,28 @@ import { SEND_ALIAS_HINT, parseWorkerReportOption, workerHandoverResultLine } fr
 /** Dispatches `tangent goal` subcommands. */
 export async function runGoalCli(argv = process.argv.slice(2)): Promise<void> {
   // Boolean flags never consume the token after them.
-  const args = parseArgs(argv, { repeatable: ["source", "subgoal-title", "subgoal-done-when", "step", "launch", "path", "continue-from", "kind", "on", "status"], boolean: ["continue", "own", "confirm"] });
+  const args = parseArgs(argv, { repeatable: ["source", "subgoal-title", "subgoal-done-when", "step", "launch", "path", "continue-from", "kind", "on", "status"], boolean: ["continue", "own", "confirm", "start", "verify"] });
   const subcommand = args._[0];
   if (!subcommand) return help();
-  // "done" and "wont-do" handle --help themselves, to restate that status is written on
-  // Julian's word only; the other subcommands fall back to the noun-level help.
-  if (subcommand === "create") return args.help ? help() : createCommand(args);
-  if (subcommand === "list") return args.help ? help() : listCommand(args);
-  if (subcommand === "show") return args.help ? help() : showCommand(args);
-  if (subcommand === "own") return args.help ? help() : ownershipCommand(args, "own");
-  if (subcommand === "release") return args.help ? help() : ownershipCommand(args, "release");
-  if (subcommand === "depend") return args.help ? help() : dependencyCommand(args, false);
-  if (subcommand === "undepend") return args.help ? help() : dependencyCommand(args, true);
-  if (subcommand === "start") return args.help ? help() : startCommand(args);
-  if (subcommand === "append") return args.help ? help() : appendCommand(args);
-  if (subcommand === "handover") return args.help ? help() : handoverCommand(args);
+  // `tangent goal <subcommand> --help` prints that subcommand's own flags:
+  // the brain's reference for syntax (ADR-0041). "done" and "wont-do" handle
+  // --help themselves, to restate whose word writes status.
+  if (args.help && !["done", "wont-do"].includes(subcommand)) return subcommandHelp(subcommand);
+  if (subcommand === "create") return createCommand(args);
+  if (subcommand === "list") return listCommand(args);
+  if (subcommand === "show") return showCommand(args);
+  if (subcommand === "own") return ownershipCommand(args, "own");
+  if (subcommand === "release") return ownershipCommand(args, "release");
+  if (subcommand === "depend") return dependencyCommand(args, false);
+  if (subcommand === "undepend") return dependencyCommand(args, true);
+  if (subcommand === "start") return startCommand(args);
+  if (subcommand === "append") return appendCommand(args);
+  if (subcommand === "handover") return handoverCommand(args);
   if (subcommand === "done") return doneCommand(args);
   if (subcommand === "wont-do") return wontDoCommand(args);
-  if (subcommand === "park") return args.help ? help() : parkCommand(args);
-  if (subcommand === "reopen") return args.help ? help() : reopenCommand(args);
-  if (subcommand === "replace-agent") return args.help ? help() : replaceAgentCommand(args);
+  if (subcommand === "park") return parkCommand(args);
+  if (subcommand === "reopen") return reopenCommand(args);
+  if (subcommand === "replace-agent") return replaceAgentCommand(args);
   throw new Error(`Unknown goal command: ${subcommand}. Try "tangent goal --help".`);
 }
 
@@ -53,12 +56,28 @@ async function dependencyCommand(args: Args, removing: boolean): Promise<void> {
   console.log(`${slug} depends on: ${dependencies || "nothing"}${result.changed === false ? " (unchanged)" : ""}`);
 }
 
-/** Handles `tangent goal create`. */
+/**
+ * Handles `tangent goal create`. With `--start` (brains only) the server
+ * creates the Goal and starts its worker in one call: `--path` names the
+ * worker's folder, `--launch` its harness (else the brain's own is lent),
+ * `--verify` flags the Goal for Julian's own check, and `--instruction` or
+ * `--instruction-file` is the worker's first message in the brain's words.
+ */
 async function createCommand(args: Args): Promise<void> {
   const server = resolveServerUrl(stringArg(args.server));
   const area = await requireArea(server, requiredString(args.area, "tangent goal create requires --area <path>."));
   const title = requiredString(args.title, "tangent goal create requires --title <text>.");
-  const doneWhen = requiredString(args["done-when"], "tangent goal create requires --done-when <condition>.");
+  const doneWhen = stringArg(args["done-when"])?.trim() || title;
+  const start = booleanArg(args.start);
+  const verify = booleanArg(args.verify);
+  const instructionFile = stringArg(args["instruction-file"]);
+  if (instructionFile && stringArg(args.instruction)) throw new Error("Pass --instruction or --instruction-file, not both.");
+  const instruction = instructionFile ? (await readFile(parseStepPath(instructionFile)!, "utf8")).trim() : stringArg(args.instruction)?.trim() || "";
+  const launches = stringsArg(args.launch);
+  if (launches.length > 1) throw new Error("tangent goal create takes at most one --launch.");
+  const launch = parseLaunch(launches[0]);
+  const workerPath = parseStepPath(stringsArg(args.path)[0]);
+  if (!start && (launch || workerPath || instruction)) throw new Error("--launch, --path, and --instruction belong to --start. Add --start, or create the Goal without them.");
   const subgoalTitles = stringsArg(args["subgoal-title"]);
   const subgoalDoneConditions = stringsArg(args["subgoal-done-when"]);
   if (subgoalTitles.length !== subgoalDoneConditions.length) {
@@ -77,7 +96,12 @@ async function createCommand(args: Args): Promise<void> {
     })),
     sources: stringsArg(args.source).map((source) => source.trim()).filter(Boolean),
     ...(caller ? { caller } : {}),
-    ...(own ? { own } : {})
+    ...(own ? { own } : {}),
+    ...(verify ? { verify: true } : {}),
+    ...(start ? { start: true } : {}),
+    ...(start && instruction ? { instruction } : {}),
+    ...(start && workerPath ? { path: workerPath } : {}),
+    ...(start && launch ? { launch } : {}),
   });
   if (booleanArg(args.json)) {
     console.log(JSON.stringify(result, null, 2));
@@ -87,7 +111,14 @@ async function createCommand(args: Args): Promise<void> {
   for (const file of (result.files || []) as string[]) {
     if (file !== result.file) console.log(`  subgoal: ${file}`);
   }
+  if (verify) console.log("Julian checks this Goal himself: done becomes Check it.");
   if (own) console.log(`owned by ${own}`);
+  if (start) {
+    printLaunches(result);
+    printLaunchWarnings(result);
+    if (result.started) console.log(`started in ${String(result.session)}`);
+    else console.error(`The Goal exists, but its worker did not start: ${String(result.startError ?? "unknown error")}`);
+  }
 }
 
 /** Handles `tangent goal own <slug...>` and `tangent goal release <slug...>`. */
@@ -363,7 +394,12 @@ async function showCommand(args: Args): Promise<void> {
   }
 }
 
-/** Handles `tangent goal done <slug>`. Status is written on Julian's explicit word, or a brain closing a Goal under its own plan on a passing review; see helpDoneWontDo(). */
+/**
+ * Handles `tangent goal done <slug> [--note "<text>"]`. Julian's word, or
+ * the brain after it read a worker's done note. On a Goal Julian flagged
+ * `verify: yes` the server turns a brain's done into Check it and keeps the
+ * note in the Goal's State; see helpDoneWontDo().
+ */
 async function doneCommand(args: Args): Promise<void> {
   if (args.help) return helpDoneWontDo("done");
   const server = resolveServerUrl(stringArg(args.server));
@@ -373,11 +409,13 @@ async function doneCommand(args: Args): Promise<void> {
     console.log(`${slug} is already done.`);
     return;
   }
-  await postJson(server, "/api/goals/edit", { file: goal.file, status: "done", session: await currentTmuxSession() });
-  console.log(`${slug} marked done.`);
+  const note = stringArg(args.note)?.trim() || "";
+  const result = await postJson(server, "/api/goals/edit", { file: goal.file, status: "done", session: await currentTmuxSession(), ...(note ? { note } : {}) });
+  if (result.status === "verify") console.log(`${slug} waits for Julian to check it (Check it). He marks it done.`);
+  else console.log(`${slug} marked done.`);
 }
 
-/** Handles `tangent goal wont-do <slug> --reason <text>`. Status is written on Julian's explicit word, or a brain closing a Goal under its own plan on a passing review; see helpDoneWontDo(). */
+/** Handles `tangent goal wont-do <slug> --reason <text>`; see helpDoneWontDo(). */
 async function wontDoCommand(args: Args): Promise<void> {
   if (args.help) return helpDoneWontDo("wont-do");
   const server = resolveServerUrl(stringArg(args.server));
@@ -466,12 +504,21 @@ function launchRefForCli(launch: NonNullable<PipelineStepInput["launch"]>): stri
   return [launch.harness, launch.model, launch.effort].filter(Boolean).join("/");
 }
 
+/** Prints one subcommand's own syntax and flags, or the noun help for an unknown name. */
+function subcommandHelp(name: string): void {
+  const spec = goalCommandSpec.subcommands?.find((entry) => entry.name === name);
+  if (!spec) return help();
+  console.log(renderCommandHelp(spec, `tangent goal ${name}${spec.args ? ` ${spec.args}` : ""}`));
+}
+
 /** Prints `tangent goal` help with real examples. */
 function help(): void {
   console.log(renderCommandHelp(goalCommandSpec));
   console.log(`
 Examples:
   tangent goal create --area otto/dnd --title "Connect chosen ramp faces" --done-when "The chosen faces connect at the dragged width."
+  tangent goal create --area otto/dnd --title "Connect chosen ramp faces" --start --path ~/Projects/dnd --instruction "Connect the chosen faces at the dragged width. Prove it with the ramp test."
+  tangent goal create --area otto/dnd --title "Fix the flicker" --start --path ~/Projects/dnd --launch codex/sol/high --verify
   tangent goal create --area otto/dnd --title "Fix the flicker" --done-when "The strip repaints without flicker." --own
   tangent goal list otto/dnd
   tangent goal show connect-chosen-ramp-faces
@@ -481,7 +528,8 @@ Examples:
   tangent goal start pipelines-demo --step "/design this" --launch claude-otto/fable-5 --step "review the design and update it" --launch codex/sol/high --step "implement" --launch claude-otto/opus-5
   tangent goal start pipelines-demo --step "/design this" --launch claude-otto/fable-5 --step "implement the design" --launch claude-otto/opus-5 --continue-from - --continue-from 1
   tangent goal start pipelines-demo --step "design the change" --launch claude-otto/fable-5 --path= --step "implement it in the plugin" --launch claude-otto/opus-5 --path ~/Projects/plugin
-  tangent goal append pipelines-demo --step "review the implementation" --kind review --launch codex/sol/high
+  tangent goal append pipelines-demo --step "review the implementation" --launch codex/sol/high
+  tangent goal done pipelines-demo --note "The review passed; the strip repaints without flicker."
   tangent goal replace-agent pipelines-demo --launch codex/sol/high
   tangent goal park pipelines-demo --reason "Revisit after the current release."
   tangent goal reopen pipelines-demo
@@ -491,9 +539,10 @@ Examples:
 
 /** Prints the done/won't-do subcommand's help, restating that status is written on Julian's word only. */
 function helpDoneWontDo(subcommand: "done" | "wont-do"): void {
-  console.log(`tangent goal ${subcommand} <slug>${subcommand === "wont-do" ? ' --reason "<text>"' : ""}`);
+  console.log(`tangent goal ${subcommand} <slug>${subcommand === "wont-do" ? ' --reason "<text>"' : ' [--note "<text>"]'}`);
   console.log("");
-  console.log("Run only on Julian's explicit word, except a brain started by Julian: it closes Goals under its own plan on a passing review. Status is written on the user's say-so.");
+  if (subcommand === "done") console.log("Julian's word, or the brain after it read a worker's done note. A Goal Julian flagged verify becomes Check it instead and waits for him; --note goes into the Goal's State.");
+  else console.log("Julian's word, or the brain's plan. The reason goes into the Goal's State.");
   console.log("");
   console.log("Examples:");
   if (subcommand === "done") console.log("  tangent goal done connect-chosen-ramp-faces");

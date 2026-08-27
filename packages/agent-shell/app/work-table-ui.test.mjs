@@ -71,7 +71,7 @@ test("every status carries a word, and every icon-only control carries a name", 
 
 test("Area pointers, toolbar help, and the state-owned action surface share one command registry", async () => {
   const { window, document } = await bootWorkTable(workTableFixture());
-  const ids = ["previousArea", "nextArea", "openBrain", "stopBrain", "defaults", "newGoal", "focus", "collapse", "expand", "questions", "note"];
+  const ids = ["previousArea", "nextArea", "openBrain", "stopBrain", "defaults", "messageBrain", "focus", "collapse", "expand", "questions", "note"];
   document.querySelector("[data-work-group='otto/onboarding'] [data-work-object-actions]").click();
   await settle(window);
   for (const id of ids) {
@@ -143,7 +143,7 @@ test("Area keys resolve the visible group from Goal and descendant rows", async 
   document.querySelector("[data-launch-close]").click();
   press(window, "a");
   await settle(window);
-  assert.equal(document.querySelector("#new-goal-area").value, "otto/onboarding", "a creates through the same owning Area header");
+  assert.equal(document.querySelector("#describe-area").value, "otto/onboarding", "a messages the brain of the same owning Area header");
 });
 
 test("Shift-brackets and their pointer actions jump between real Area headers", async () => {

@@ -66,18 +66,18 @@ const tangentCommandSpec: CliCommandSpec = {
     productCommandSpec("rollup", "Generate private rollup notes"),
     productCommandSpec("search", "Index and search repository structure"),
     productCommandSpec("eval", "Run and inspect coding-agent evals"),
-    { name: "agent", description: "List agents, recover assignment context, and send messages; install @tangent/agent-shell if unavailable", args: "<list|context|send>" },
-    { name: "area", description: "List, inspect, and create Tangent tree Areas; install @tangent/agent-shell if unavailable", args: "<list|show|create>" },
-    { name: "brain", description: "Hand over, inspect, or safely stop an Area brain; install @tangent/agent-shell if unavailable", args: "<handover|status|stop>" },
-    { name: "shell", description: "Rebuild and restart the Agent Shell server; install @tangent/agent-shell if unavailable", args: "<rebuild>" },
-    { name: "goal", description: "Create, list, start, hand over, and close Goals; install @tangent/agent-shell if unavailable", args: "<create|list|show|start|handover|done|wont-do>" },
-    { name: "harness", description: "List harnesses and resolved Area launch defaults; install @tangent/agent-shell if unavailable", args: "<list>" },
-    { name: "send", description: "Send a note to your brain (--done, --blocked, --question), a live session, or an Area brain; install @tangent/agent-shell if unavailable", args: "<brain|session|area> <note...>" },
-    { name: "handover", description: "Alias of tangent send brain", args: "<facts...>" },
-    { name: "idea", description: "Capture and list ideas on an Area note; install @tangent/agent-shell if unavailable", args: "<add|list>" },
-    { name: "document", description: "List and resolve comments inside a vault Document; install @tangent/agent-shell if unavailable", args: "<comments|resolve>" },
-    { name: "study", description: "Start the study partner: an interactive agent session beside nvim; install @tangent/agent-shell if unavailable", args: "<contract>" },
-    { name: "vault", description: "Commit vault edits directly; install @tangent/agent-shell if unavailable", args: "<commit>" },
+    { name: "agent", description: "List live agents and their queued messages", args: "<list|context|send>" },
+    { name: "area", description: "List, inspect, and create Areas", args: "<list|show|create|done|reopen>" },
+    { name: "brain", description: "Inspect or stop an Area brain, or ask Julian a question", args: "<status|stop|request|withdraw|advance>" },
+    { name: "shell", description: "Rebuild and restart the Agent Shell server", args: "<rebuild>" },
+    { name: "goal", description: "Create, list, start, append to, and close Goals", args: "<create|list|show|start|append|done|wont-do|park|reopen>" },
+    { name: "harness", description: "List harnesses and resolved Area launch defaults", args: "<list>" },
+    { name: "send", description: "Send a note to your brain (--done, --blocked, --question), a live session, or an Area brain", args: "<brain|session|area> <note...>" },
+    { name: "handover", description: "Replaced by tangent send brain; kept as an alias", args: "<facts...>", hidden: true },
+    { name: "idea", description: "Capture and list ideas on an Area (ideas.md)", args: "<add|list>" },
+    { name: "document", description: "List and resolve Julian's comments inside a vault Document", args: "<comments|resolve>" },
+    { name: "study", description: "Start the study partner: an interactive agent session beside nvim", args: "<contract>" },
+    { name: "vault", description: "Commit vault edits with provenance", args: "<commit>" },
     doctorCommandSpec,
     { name: "governance", description: "Run architecture governance lints", hidden: true },
     devCommandSpec,
@@ -191,33 +191,45 @@ function productCommandSpec(name: string, description: string): CliCommandSpec {
   };
 }
 
-/** Documents the help helper. */
+/**
+ * The help groups: who runs which commands. A brain reads this to find its
+ * commands; a worker has one; the rest are Julian's own tools.
+ */
+const HELP_GROUPS: Array<{ title: string; commands: string[] }> = [
+  { title: "Brains", commands: ["goal", "area", "send", "agent", "idea", "document", "vault", "brain", "harness", "process"] },
+  { title: "Workers", commands: ["send"] },
+  { title: "Julian", commands: ["setup", "status", "open", "shell", "study", "usage", "rollup", "search", "eval", "trigger", "doctor", "dev", "data", "completion"] },
+];
+
+/** One `  name args  description` row per command, padded to the group's width. */
+function helpRows(names: string[]): string[] {
+  const commands = names.map((name) => tangentCommandSpec.subcommands?.find((command) => command.name === name)).filter((command): command is CliCommandSpec => Boolean(command));
+  const width = Math.max(...commands.map((command) => `${command.name} ${command.args ?? ""}`.trim().length));
+  return commands.map((command) => `  ${`${command.name} ${command.args ?? ""}`.trim().padEnd(width)}  ${command.description ?? ""}`.trimEnd());
+}
+
+/** Prints `tangent help`: the commands by who runs them, then examples. */
 function help(): void {
-  console.log(renderCommandHelp(tangentCommandSpec));
+  const lines = ["tangent", "", tangentCommandSpec.description ?? "", ""];
+  for (const group of HELP_GROUPS) {
+    lines.push(`${group.title}:`);
+    if (group.title === "Workers") lines.push('  A worker has one command. Send the brain a note, or finish with --done, --blocked, or --question.');
+    lines.push(...helpRows(group.commands), "");
+  }
+  lines.push("Run tangent <command> --help for the exact flags.");
+  console.log(lines.join("\n"));
   console.log(`
 Examples:
-  tangent setup
-  tangent status
-  tangent usage ui
-  tangent eval ui
-  tangent open setup
-  tangent open agent
-  tangent open agent ~/Projects/my-project
-  tangent open project ~/Projects/my-project
-  tangent process list
-  tangent process start dev
-  tangent usage today
-  tangent usage transcript codex:019ea3ad
-  tangent rollup today
-  tangent rollup 20260601-20260610
-  tangent search index
-  tangent search "horizontal tension"
-  tangent eval run eval.json
-  tangent area list
-  tangent agent list
-  tangent goal create --area otto/dnd --title "Connect chosen ramp faces" --done-when "The chosen faces connect at the dragged width."
+  tangent goal list otto/dnd
+  tangent goal create --area otto/dnd --title "Connect chosen ramp faces" --start --path ~/Projects/dnd --instruction "Connect the chosen faces at the dragged width."
+  tangent goal done connect-chosen-ramp-faces --note "The ramp test passes."
+  tangent send brain "Done: the faces connect. Proved by the ramp test." --done
+  tangent area show otto/dnd
   tangent idea add otto/dnd Maybe add a calmer return screen later.
-  tangent vault commit otto/dnd/dnd.md -m "note: otto/dnd captures an idea"
+  tangent vault commit otto/dnd/dnd.md -m "update: otto/dnd rewrite Current"
+  tangent process list
+  tangent usage today
+  tangent search "horizontal tension"
   tangent completion zsh
 `);
 }

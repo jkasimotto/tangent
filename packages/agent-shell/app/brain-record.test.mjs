@@ -19,7 +19,6 @@ import {
   normalizeBrainRecord,
   readAllBrains,
   readBrain,
-  recordHandover,
   validateInstruction,
   writeBrain
 } from "./brain-record.mjs";
@@ -114,23 +113,10 @@ test("beginGeneration numbers generations and points the record at the session",
   assert.equal(currentGeneration(record).resolvedLaunch.ref.model, "sol");
 });
 
-test("recordHandover keeps earlier text and stamps endedAt", () => {
-  const record = sampleBrain();
-  assert.throws(() => recordHandover(record, "x"), /no generation/);
-  beginGeneration(record, "tangent--brain", resolved);
-  recordHandover(record, "Wave 1 started.", "2026-08-17T11:00:00.000Z");
-  recordHandover(record, "Wave 1 done.");
-  const entry = currentGeneration(record);
-  assert.equal(entry.handover, "Wave 1 started.\n\nWave 1 done.");
-  assert.ok(entry.endedAt);
-  assert.equal(latestHandover(record), "Wave 1 started.\n\nWave 1 done.");
-  assert.equal(record.checkpoint.text, "Wave 1 started.\n\nWave 1 done.");
-});
-
 test("latestHandover skips generations without a handover", () => {
   const record = sampleBrain();
   beginGeneration(record, "a", resolved);
-  recordHandover(record, "first facts");
+  currentGeneration(record).handover = "first facts";
   beginGeneration(record, "b", resolved);
   assert.equal(latestHandover(record), "first facts");
   assert.equal(latestHandover(sampleBrain()), null);

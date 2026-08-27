@@ -124,19 +124,6 @@ export async function goalQueueRevision(server: URL, goalFile: string): Promise<
   return queue.revision;
 }
 
-/**
- * POSTs a JSON payload and returns the status with the body. For the caller
- * that treats one refusal as an answer rather than a failure: `tangent brain
- * handover` reads a paced 429 as Tangent's instruction to wait.
- */
-export function postJsonResult(server: URL, path: string, payload: unknown): Promise<{ status: number; body: Record<string, any> }> {
-  return vaultRequest(server, path, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-}
-
 /** Every Area path in the vault, flattened from /api/tree's nested tree. */
 export async function listAreaPaths(server: URL): Promise<string[]> {
   const tree = await vaultFetch(server, "/api/tree");

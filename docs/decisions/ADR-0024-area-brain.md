@@ -2,7 +2,7 @@
 
 Date: 2026-08-17
 
-Status: accepted.
+Status: accepted. The brain handover, pacing, Test request, and completion clauses below are superseded by ADR-0041: a brain runs until Julian restarts it, Tangent generates no prompt, and the brain marks Goals done.
 
 Amended 2026-08-24: a passing agent review makes a Goal ready for Julian. The brain writes a Test request and keeps the Goal open. Accepting that Test marks the Goal done. A brain cannot mark the Goal done directly.
 

@@ -4,7 +4,7 @@ import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { answerBrainRequest, beginRequestEffect, brainRequestAnswerNotice, closeBrainRequests, closeGoalRequests, createBrainRequest, dismissBrainRequest, finishRequestEffect, handoverBrainRequests, openBrainRequests, readBrainRequests, requestIsApproved, withdrawBrainRequest, writeBrainRequests } from "./brain-requests.mjs";
+import { answerBrainRequest, beginRequestEffect, brainRequestAnswerNotice, closeBrainRequests, closeGoalRequests, createBrainRequest, dismissBrainRequest, finishRequestEffect, openBrainRequests, readBrainRequests, requestIsApproved, withdrawBrainRequest, writeBrainRequests } from "./brain-requests.mjs";
 
 test("each durable approval stays attached to its own proposal", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "brain-requests-"));
@@ -47,15 +47,14 @@ test("Goal closure closes only open Requests about that Goal", async () => {
   assert.equal(other.status, "open");
 });
 
-test("brain Requests hand over deliberately or close when their brain ends", async () => {
+test("brain Requests close when their brain ends", async () => {
   const record = await readBrainRequests("/missing", "otto/tangent");
   const request = createBrainRequest(record, { kind: "decision", subject: "Choice", question: "Approve it?", proposal: "Use it.", brainGeneration: 3 });
-  const goalRequest = createBrainRequest(record, { kind: "test", subject: "Goal", question: "Accept it?", proposal: "Close it.", goal: "otto/tangent/goal-x.md", brainGeneration: 3 });
-  assert.deepEqual(handoverBrainRequests(record, record.area, 3, 4), [request, goalRequest]);
+  const goalRequest = createBrainRequest(record, { kind: "approval", subject: "Goal", question: "Accept it?", proposal: "Close it.", goal: "otto/tangent/goal-x.md", brainGeneration: 3 });
   assert.deepEqual(request.subjectRef, { type: "brain", area: record.area, generation: null });
   assert.deepEqual(request.ownerRef, { type: "brain", area: record.area, generation: null });
-  assert.deepEqual(goalRequest.subjectRef, { type: "goal", goal: "otto/tangent/goal-x.md" }, "handover preserves the Goal subject");
-  assert.deepEqual(closeBrainRequests(record, record.area, 4, "brain-ended", "2026-08-25T00:00:00.000Z"), [request, goalRequest]);
+  assert.deepEqual(goalRequest.subjectRef, { type: "goal", goal: "otto/tangent/goal-x.md" }, "the Goal subject is kept");
+  assert.deepEqual(closeBrainRequests(record, record.area, 3, "brain-ended", "2026-08-25T00:00:00.000Z"), [request, goalRequest]);
   assert.equal(openBrainRequests(record).length, 0);
 });
 

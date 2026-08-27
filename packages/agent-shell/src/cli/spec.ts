@@ -18,7 +18,7 @@ export const sendCommandSpec: CliCommandSpec = {
 
 export const handoverCommandSpec: CliCommandSpec = {
   name: "handover",
-  description: "Alias of tangent send brain; report this worker's facts to its controlling Area brain",
+  description: "Replaced by tangent send brain \"<note>\" [--done|--blocked|--question]; kept as an alias",
   args: "<facts...>",
   options: [
     { name: "session", takesValue: true, description: "Worker session name; defaults to the tmux session this command runs in" },
@@ -64,36 +64,27 @@ export const areaCommandSpec: CliCommandSpec = {
 
 export const brainCommandSpec: CliCommandSpec = {
   name: "brain",
-  description: "The Area brain: the long-lived agent that plans and dispatches an Area's work",
+  description: "The Area brain: the one long-lived agent that organises an Area's work. It runs until Julian restarts it; the Area note is its memory",
   subcommands: [
     {
       name: "advance",
-      description: "Start one pending assignment after you have read the prior worker handover.",
+      description: "Start one pending assignment after you have read the worker note before it.",
       args: "<goal> <step>",
       options: [serverOption]
     },
     {
       name: "request",
-      description: "Create one plan, decision, test, or approval request for Julian.",
+      description: "Create one plan, decision, or approval request for Julian. Julian flags what he checks, so there is no test request.",
       options: [
-        { name: "kind", takesValue: true, description: "plan, decision, test, or approval" },
+        { name: "kind", takesValue: true, description: "plan, decision, or approval" },
         { name: "subject", takesValue: true, description: "Short request subject" },
         { name: "question", takesValue: true, description: "The question, ending in ?" },
         { name: "proposal", takesValue: true, description: "The exact transition that Approve applies" },
         { name: "detail", takesValue: true, description: "At most two short sentences that Julian needs to answer" },
         { name: "option", takesValue: true, description: "Decision choice; repeat for each choice" },
-        { name: "goal", takesValue: true, description: "Goal slug this request is about; approval of a test request closes this Goal" },
+        { name: "goal", takesValue: true, description: "Goal slug this request is about" },
         { name: "effect", takesValue: true, description: "Exact authorized effect as one JSON object" },
         { name: "session", takesValue: true, description: "Brain session; defaults to the current tmux session" },
-        serverOption
-      ]
-    },
-    {
-      name: "handover",
-      description: "Hand this brain's facts to a fresh copy of itself: the next generation starts from the plan and these facts, and this session ends.",
-      args: "<facts...>",
-      options: [
-        { name: "session", takesValue: true, description: "Brain session name; defaults to the tmux session this command runs in" },
         serverOption
       ]
     },
@@ -109,7 +100,7 @@ export const brainCommandSpec: CliCommandSpec = {
     },
     {
       name: "status",
-      description: "Show the brain of an Area, or of the session this command runs in: status, generation, instruction, latest handover",
+      description: "Show the brain of an Area, or of the session this command runs in: status, session, founding message, open requests",
       args: "[area]",
       options: [
         { name: "session", takesValue: true, description: "Brain session name; defaults to the tmux session this command runs in" },
@@ -154,15 +145,21 @@ export const studyCommandSpec: CliCommandSpec = {
 
 export const goalCommandSpec: CliCommandSpec = {
   name: "goal",
-  description: "Create, list, start, append to, hand over, and close Goals in the Tangent tree",
+  description: "Create, list, start, append to, and close Goals in the Tangent tree",
   subcommands: [
     {
       name: "create",
-      description: "Create a Goal, optionally with Subgoals",
+      description: "Create a Goal. A brain adds --start to start its worker in the same call",
       options: [
         { name: "area", takesValue: true, description: "Owning Area path (required)" },
         { name: "title", takesValue: true, description: "Goal title (required)" },
-        { name: "done-when", takesValue: true, description: "Done condition (required)" },
+        { name: "done-when", takesValue: true, description: "Done condition; defaults to the title" },
+        { name: "start", description: "Start a worker on the new Goal at once (brains only)" },
+        { name: "path", takesValue: true, description: "Directory the worker runs in; without it the Area's Repository line applies" },
+        { name: "launch", takesValue: true, description: "Worker harness as <harness[/model[/effort]]>; without it the brain's own harness is lent" },
+        { name: "verify", description: "Julian checks this Goal himself: done becomes Check it. Pass it only when he said so" },
+        { name: "instruction", takesValue: true, description: "The worker's instruction, in your words; defaults to the title and done condition" },
+        { name: "instruction-file", takesValue: true, description: "Read the worker's instruction from this file" },
         { name: "description", takesValue: true, description: "Why this Goal exists" },
         { name: "source", takesValue: true, description: "Vault-relative source Document; repeatable" },
         { name: "subgoal-title", takesValue: true, description: "Subgoal title; pair with --subgoal-done-when, repeatable" },
@@ -229,11 +226,11 @@ export const goalCommandSpec: CliCommandSpec = {
     },
     {
       name: "start",
-      description: "Start an agent on a Goal, or a pipeline of steps. Each --step pairs with the --launch, --path, and --continue-from in the same position. Tangent never picks a harness, so every agent you start names its own --launch.",
+      description: "Start an agent on an existing Goal, or a pipeline of steps. Each --step pairs with the --launch, --path, and --continue-from in the same position. A brain that names no --launch lends its own harness.",
       args: "<slug>",
       options: [
         { name: "step", takesValue: true, description: "One step's instruction, in your words; repeatable, steps run in order" },
-        { name: "launch", takesValue: true, description: "Required harness as <harness[/model[/effort]]>; repeatable, one per --step at the same position, or exactly one for a Goal started without --step" },
+        { name: "launch", takesValue: true, description: "Harness as <harness[/model[/effort]]>; repeatable, one per --step at the same position, or one for a Goal started without --step" },
         { name: "path", takesValue: true, description: "Any working directory for the step at the same position; repeatable; missing, or an empty --path=, means the Area repository" },
         { name: "continue-from", takesValue: true, description: "Step number whose session the step at the same position continues, or - for a fresh session; repeatable" },
         { name: "kind", takesValue: true, description: "implementation or review; repeatable, one per step" },
@@ -245,21 +242,22 @@ export const goalCommandSpec: CliCommandSpec = {
     },
     {
       name: "append",
-      description: "Add steps to the end of a Goal's pipeline, mid-run or finished, without restarting what already ran. Use --kind review for a designated review. Instruction text never sets the type.",
+      description: "Add steps to the end of a Goal's pipeline, mid-run or finished, without restarting what already ran. A review is a step like any other; the brain reads its note and marks the Goal done.",
       args: "<slug>",
       options: [
         { name: "step", takesValue: true, description: "One new step's instruction, in your words; repeatable, steps run in order after the existing ones" },
-        { name: "launch", takesValue: true, description: "Required harness for the step at the same position as <harness[/model[/effort]]>; repeatable, one per --step" },
+        { name: "launch", takesValue: true, description: "Harness for the step at the same position as <harness[/model[/effort]]>; repeatable, one per --step; a brain that names none lends its own" },
         { name: "path", takesValue: true, description: "Any working directory for the step at the same position; repeatable; missing, or an empty --path=, means the Area repository" },
         { name: "continue-from", takesValue: true, description: "Step number whose session the step at the same position continues, or - for a fresh session; repeatable" },
-        { name: "kind", takesValue: true, description: "implementation or review; repeatable, one per step. Defaults to implementation. A designated review requires --kind review" },
+        { name: "kind", takesValue: true, description: "implementation or review; repeatable, one per step. Defaults to implementation" },
         serverOption,
         jsonOption
       ]
     },
     {
       name: "handover",
-      description: "Submit this assignment's facts or tagged result to its authoritative queue and notify the target Area.",
+      hidden: true,
+      description: "Replaced by tangent send brain; kept as an alias",
       args: "<facts...>",
       options: [
         { name: "session", takesValue: true, description: "The step's session name; defaults to the tmux session this command runs in" },
@@ -269,13 +267,13 @@ export const goalCommandSpec: CliCommandSpec = {
     },
     {
       name: "done",
-      description: "Mark a Goal done. Run only on Julian's explicit word. Status is written on the user's say-so.",
+      description: "Mark a Goal done: Julian's word, or the brain after it read a worker's done note. A Goal flagged verify becomes Check it and waits for Julian.",
       args: "<slug>",
       options: [serverOption]
     },
     {
       name: "wont-do",
-      description: "Mark a Goal won't do with a reason. Run only on Julian's explicit word. Status is written on the user's say-so.",
+      description: "Mark a Goal won't do with a reason, on Julian's word or the brain's plan.",
       args: "<slug>",
       options: [{ name: "reason", takesValue: true, description: "Why this Goal won't be done (required)" }, serverOption]
     },
@@ -309,9 +307,9 @@ export const goalCommandSpec: CliCommandSpec = {
 
 export const ideaCommandSpec: CliCommandSpec = {
   name: "idea",
-  description: "Capture and list ideas on an Area note",
+  description: "Capture and list ideas on an Area. Ideas live in the Area's ideas.md, never in its note",
   subcommands: [
-    { name: "add", description: "Save an idea to an Area's Ideas and open questions", args: "<area> <text...>", options: [serverOption] },
+    { name: "add", description: "Save one idea line to the Area's ideas.md", args: "<area> <text...>", options: [serverOption] },
     { name: "list", description: "List ideas, optionally scoped to one Area", args: "[area]", options: [serverOption, jsonOption] }
   ]
 };

@@ -122,15 +122,6 @@ export function closeBrainRequests(record, area, generation, reason = "brain-end
     .map((request) => closeRequest(request, reason, "subject", now));
 }
 
-/** Hands open brain-subject Requests from one generation to its deliberate replacement. */
-export function handoverBrainRequests(record, area, fromGeneration, toGeneration) {
-  const moved = record.requests.filter((request) => request.status === "open" && request.ownerRef?.area === area
-    && (request.ownerRef.generation === null || request.ownerRef.generation === fromGeneration));
-  // The logical Area brain owns the Request. Runtime replacement does not change its author or subject.
-  for (const request of moved) request.brainGeneration = toGeneration;
-  return moved;
-}
-
 /** Lets the creating brain take back an obsolete open Request. */
 export function withdrawBrainRequest(record, id, note = "", now = new Date().toISOString()) {
   const request = record.requests.find((item) => item.id === id);

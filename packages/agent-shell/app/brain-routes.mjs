@@ -21,7 +21,6 @@ export function createBrainRoutes(operations) {
   const routes = new Map([
     ["POST /api/brains/start", start],
     ["POST /api/brains/stop", stop],
-    ["POST /api/brains/handover", handover],
     ["GET /api/brains/show", show],
     ["POST /api/brains/verdict", verdict],
     ["POST /api/brains/verdict/undo", undoVerdict],
@@ -77,18 +76,6 @@ export function createBrainRoutes(operations) {
     sendJson(response, result.status, result.status === 200
       ? { state: result.state, brain: result.brain }
       : { error: result.error, ...(result.code ? { code: result.code } : {}) });
-  }
-
-  /** Hands a brain generation's facts to its replacement. */
-  async function handover(request, response) {
-    const body = await readJson(request);
-    let text;
-    try { text = operations.normalizeMessage(body.text); }
-    catch (error) { sendJson(response, 400, { error: String(error.message ?? error) }); return; }
-    const result = await operations.handover(String(body.session ?? ""), text);
-    sendJson(response, result.status, result.status === 200
-      ? { status: result.state, session: result.session, generation: result.generation, previous: result.previous }
-      : { error: result.error });
   }
 
   /** Returns one brain by Area or session. */

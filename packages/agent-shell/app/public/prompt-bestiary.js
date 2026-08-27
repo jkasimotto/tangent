@@ -37,7 +37,7 @@ const TRANSITIONS = {
     next: "Agent Shell starts or recovers one runtime attempt.",
     state: "The brain record separates logical lifecycle, health, founding instruction, checkpoint, and attempt diagnostics.",
     delivery: "The prompt is built, typed into the harness composer, and checked before submission.",
-    source: "server.mjs: brainPrompt and spawnBrainSession",
+    source: "server.mjs: spawnBrainSession types Julian's message; the Area note chain is the instruction",
     layers: ["Identity and command provenance", "Founding instruction", "Current checkpoint", "Bounded Area memory", "Selected Documents and events"],
   }),
   plan: transition("Plan request", "Area brain", "Julian", "brain-request", {

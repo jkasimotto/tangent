@@ -116,7 +116,8 @@ test("the vault index carries kinds, git times, degrees, and Area children and s
   assert.equal(hackathonArea.current, "Live Edit is the focus.");
   const liveEditArea = vault.areas.find((area) => area.path === "neara/hackathon/live-edit");
   assert.equal(liveEditArea.goals.find((goal) => goal.slug === "new").changedAt, second, "Goals carry the same times");
-  assert.equal(vault.documents.find((record) => record.file === "neara/neara.md").missing, true, "an Area without a note is marked");
+  assert.equal(vault.documents.find((record) => record.file === "neara/neara.md").missing, false, "an Area without a note gets the template at server start");
+  assert.match(await readFile(path.join(trees, "neara", "neara.md"), "utf8"), /^---\ntype: area\nstatus: active\n---\n# Neara\n## Purpose\n/, "the template note");
 
   // Area done on Julian's word: frontmatter, provenance commit, Goals untouched.
   const done = await fetch(`${base}/api/areas/status`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ area: "neara/hackathon", status: "done" }) }).then((response) => response.json());

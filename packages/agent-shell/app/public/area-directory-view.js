@@ -225,6 +225,7 @@ export function createAreaDirectoryView({ shell, documents, work, programs }) {
             <h2>${escapeHtml(humanName(area.name))}${area.status ? `<span class="area-status ${escapeHtml(area.status)}">${escapeHtml(area.status)}</span>` : ""}</h2>
             ${area.purpose ? `<p class="area-purpose">${escapeHtml(area.purpose)}</p>` : ""}
             ${current ? `<p class="area-current">${escapeHtml(current)}</p>` : ""}
+            ${area.noteSignal ? `<p class="area-note-signal${area.noteSignal.warning ? " warning" : ""}" title="The brain reads this note every turn. Keep it under 100 lines and rewrite Current every two weeks.">${escapeHtml(area.noteSignal.text)}</p>` : ""}
           </div>
           <div class="area-contents-actions">
             <span class="area-brain-state ${escapeHtml(brainKind(brain))}">${escapeHtml(brainStateLabel(brain))}</span>

@@ -151,7 +151,6 @@ test("newPipeline normalizes steps into the pending shape", () => {
   assert.equal(record.controllerArea, "otto/tangent");
   assert.equal(record.revision, 1);
   assert.equal(record.status, "open");
-  assert.equal(record.completionPolicy, "review-pass");
   assert.equal(record.goal, "otto/tangent/goal-x.md");
   assert.equal(record.createdAt, "2026-08-15T10:00:00.000Z");
   assert.equal(record.updatedAt, "2026-08-15T10:00:00.000Z");
@@ -160,7 +159,6 @@ test("newPipeline normalizes steps into the pending shape", () => {
     id: record.steps[0].id,
     index: 1,
     kind: "implementation",
-    designatedReview: false,
     instruction: "/design this Goal.",
     launch: { harness: "claude", model: "fable-5", effort: null },
     command: "",
@@ -382,7 +380,7 @@ test("one pending-assignment batch can update, reorder, add, and remove by stabl
   assert.equal(record.steps[1].instruction, "Ship carefully.");
   assert.equal(record.steps[1].continueFromAssignmentId, "history");
   assert.equal(record.steps[2].continueFromAssignmentId, "draft-b");
-  assert.equal(record.steps[2].designatedReview, true);
+  assert.equal(record.steps[2].kind, "review");
   assert.deepEqual(result, {
     state: "updated", repeated: false, pipeline: record,
     added: ["review"], removed: ["draft-a"], moved: ["draft-b"],

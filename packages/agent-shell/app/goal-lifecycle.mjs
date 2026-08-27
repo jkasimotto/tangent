@@ -1,6 +1,22 @@
+// `verify` is never a direct write: a brain's done on a flagged Goal becomes
+// it on the server (ADR-0041), and Julian's own Done leaves it.
 const WRITABLE_GOAL_STATUSES = new Set(["open", "done", "dropped", "parked"]);
 const TERMINAL_GOAL_STATUSES = new Set(["done", "dropped"]);
 const DEFAULT_HIDDEN_GOAL_STATUSES = new Set(["done", "dropped", "parked"]);
+// Statuses the reconcilers and the worker sweeps leave alone: the Goal is
+// finished or set aside, so no session binding is repaired for it.
+export const SETTLED_GOAL_STATUSES = new Set(["done", "dropped", "parked", "verify"]);
+
+/** True when a Goal's file says Julian checks it himself (`verify: yes`). */
+export function goalIsFlaggedForVerify(goal) {
+  const value = goal && typeof goal === "object" ? goal.verify : goal;
+  return value === true || ["yes", "true"].includes(String(value ?? "").trim().toLowerCase());
+}
+
+/** True when the Goal waits for Julian to check it (shown as Check it). */
+export function goalWaitsForCheck(status) {
+  return normalizeGoalStatus(status) === "verify";
+}
 
 /** Exposes the legacy Deferred value as Parked everywhere outside storage migration. */
 export function normalizeGoalStatus(status) {
@@ -38,15 +54,21 @@ export function goalIsUnresolved(status) {
 
 /**
  * Validates one direct lifecycle request and returns its canonical write.
- * New writes never produce the retired Deferred value.
+ * New writes never produce the retired Deferred value. `actor` is who asks:
+ * `julian` (the browser or his own shell), `brain`, or `worker`. Only Julian
+ * marks a Goal flagged `verify: yes` done; the server turns a brain's done
+ * into `verify` before it gets here.
  */
-export function goalStatusChange(currentStatus, requestedStatus, reason = "") {
+export function goalStatusChange(currentStatus, requestedStatus, reason = "", { actor = "julian", verify = false } = {}) {
   const from = normalizeGoalStatus(currentStatus);
   const raw = String(requestedStatus ?? "").trim();
   if (raw === "deferred") throw lifecycleError("status-retired", "write parked instead of deferred");
   const to = normalizeGoalStatus(raw);
   if (!WRITABLE_GOAL_STATUSES.has(to)) {
     throw lifecycleError("invalid-status", `status must be open, done, dropped, or parked, got "${raw}"`);
+  }
+  if (to === "done" && verify && actor !== "julian") {
+    throw lifecycleError("verify-required", "Julian checks this Goal himself; only his own Done closes it");
   }
   const note = oneLine(reason);
   if (to === "dropped" && !note) {
@@ -58,6 +80,7 @@ export function goalStatusChange(currentStatus, requestedStatus, reason = "") {
     reason: to === "dropped" || to === "parked" ? note || null : null,
     changed: from !== to,
     reopened: to === "open" && from !== "open" && from !== "active",
+    leftVerify: from === "verify" && to !== "verify",
   };
 }
 

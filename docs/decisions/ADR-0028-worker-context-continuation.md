@@ -2,7 +2,7 @@
 
 Date: 2026-08-23
 
-Status: accepted.
+Status: accepted. The brain handover it builds on is gone (ADR-0041); the worker continuation below stays.
 
 ## Context
 

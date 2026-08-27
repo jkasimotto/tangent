@@ -294,9 +294,9 @@ test("local callers mutate work across Areas while ownership and queue fences re
   assert.ok(sameAreaStart.session, JSON.stringify(sameAreaStart));
   sessions.push(sameAreaStart.session);
 
-  const next = await post(base, "/api/brains/handover", { session: sourceBrain.session, text: "Cross-Area probe complete." });
-  assert.equal(next.generation, 2, JSON.stringify(next));
-  sessions.push(next.session);
+  // A brain runs until Julian restarts it (ADR-0041): the same attempt keeps
+  // acting as a local caller across Areas.
+  const next = sourceBrain;
   const staleCreate = await post(base, "/api/goals/create", {
     area: "neara/enums",
     goal: { title: "Stale caller create", doneWhen: "A historical caller can still invoke a local command." },
@@ -328,20 +328,13 @@ test("local callers mutate work across Areas while ownership and queue fences re
   assert.ok(targetBrain.session, JSON.stringify(targetBrain));
   sessions.push(targetBrain.session);
   const targetShow = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(targetBrain.session)}`).then((response) => response.json());
-  assert.match(targetShow.prompt, /Review the cross-Area work that already started/, "the later brain reads its logical Area inbox");
-  const targetNext = await post(base, "/api/brains/handover", { session: targetBrain.session, text: "Inbox received." });
-  assert.equal(targetNext.generation, 2, JSON.stringify(targetNext));
-  sessions.push(targetNext.session);
-  const staleMessage = await post(base, "/api/agents/send", {
-    to: targetBrain.session,
-    from: next.session,
-    text: "This uses the stale session as a logical Area address.",
-  });
-  assert.equal(staleMessage.to, "neara/enums");
-  assert.equal(staleMessage.via, "brain-session");
+  assert.match(targetShow.prompt, /^Orchestrate enums\./, "Julian's founding message comes first");
+  assert.match(targetShow.prompt, /Review the cross-Area work that already started/, "the later brain reads its logical Area inbox below it");
+  const readInboxAfterStart = JSON.parse(await readFile(inboxFile, "utf8"));
+  assert.ok(readInboxAfterStart.notices.every((notice) => notice.deliveredTo === targetBrain.session), "the founding message marked every waiting notice read");
 });
 
-test("a brain notice survives a server restart and reaches the next generation after a handover", async (context) => {
+test("a brain notice survives a server restart and reaches the next attempt after a restart", async (context) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "agent-shell-notice-restart-"));
   const leaf = `probenotice${process.pid}`;
   const trees = await makeTrees(root, leaf);
@@ -398,16 +391,16 @@ test("a brain notice survives a server restart and reaches the next generation a
   const unreadAfterRestart = unreadNotices(await readInbox(brains, `otto/${leaf}`)).map((notice) => notice.id);
   for (const notice of unreadBeforeRestart) assert.ok(unreadAfterRestart.includes(notice.id), "notices the brain never read stay unread");
 
-  // Generation handover: generation 1 never read the notice, so generation
-  // 2's first message lists it.
-  const handover = await post(restarted, "/api/brains/handover", { session: brain.session, text: "Nothing decided yet." });
-  assert.equal(handover.status, "started", JSON.stringify(handover));
-  assert.equal(handover.generation, 2);
+  // Julian restarts the brain: generation 1 never read the notice, so
+  // generation 2's first message carries it below his words.
+  const stopped = await post(restarted, "/api/brains/stop", { area: `otto/${leaf}`, expectedAttemptId: brain.session, operationId: "notice-restart-stop" });
+  assert.equal(stopped.state, "stopped", JSON.stringify(stopped));
+  const handover = await post(restarted, "/api/brains/start", { area: `otto/${leaf}`, resume: true, instruction: "Nothing decided yet." });
+  assert.equal(handover.generation, 2, JSON.stringify(handover));
   sessions.push(handover.session);
   const show = await fetch(`${restarted}/api/brains/show?session=${encodeURIComponent(handover.session)}`).then((response) => response.json());
-  assert.match(show.prompt, /## Unread messages/);
-  assert.match(show.prompt, /note: Implemented the probe/);
-  assert.match(show.prompt, /## Unread messages[\s\S]*note: Implemented the probe/, "the prompt includes the durable unread notice");
+  assert.match(show.prompt, /^Nothing decided yet\.\n\n/);
+  assert.match(show.prompt, /note: Implemented the probe/, "the first message includes the durable unread notice");
 
   const read = await readInbox(brains, `otto/${leaf}`);
   assert.equal(unreadNotices(read).length, 0, "generation 2 read it, so it is not repeated");
@@ -477,16 +470,17 @@ test("a notice with no live brain waits on disk and the next generation reads it
   assert.equal(resumed.generation, 2, JSON.stringify(resumed));
   sessions.push(resumed.session);
   const show = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(resumed.session)}`).then((response) => response.json());
-  assert.match(show.prompt, /## Unread messages/);
-  assert.match(show.prompt, /Implemented the gap probe/);
+  assert.match(show.prompt, /Implemented the gap probe/, "a wake with no words of Julian's own types the waiting notice");
   assert.equal(unreadNotices(await readInbox(brains, `otto/${leaf}`)).length, 0);
 
-  // A later generation is not told again about a notice a generation read.
-  const third = await post(base, "/api/brains/handover", { session: resumed.session, text: "Read the notice." });
+  // A later attempt is not told again about a notice an attempt read.
+  const stoppedAgain = await post(base, "/api/brains/stop", { area: `otto/${leaf}`, expectedAttemptId: resumed.session, operationId: "notice-gap-stop" });
+  assert.equal(stoppedAgain.state, "stopped", JSON.stringify(stoppedAgain));
+  const third = await post(base, "/api/brains/start", { area: `otto/${leaf}`, resume: true, instruction: "Read the notice." });
   assert.equal(third.generation, 3, JSON.stringify(third));
   sessions.push(third.session);
   const thirdShow = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(third.session)}`).then((response) => response.json());
-  assert.doesNotMatch(thirdShow.prompt, /## Unread messages\n\n- Goal/);
+  assert.doesNotMatch(thirdShow.prompt, /Implemented the gap probe/);
 });
 
 test("a sweep queues an unread notice for the live brain once, and never twice", async (context) => {
@@ -591,13 +585,13 @@ test("an over-long Request answer still reaches the inbox and the next generatio
   assert.match(notice.text, /clipped from \d+ characters/);
   assert.ok(notice.text.length <= 4000, `notice is ${notice.text.length} characters`);
 
-  // The next generation is told from the durable Request record, so the
-  // answer arrives even when the notice path drops it.
-  const next = await post(base, "/api/brains/handover", { session: brain.session, text: "Waiting on the harness answer." });
+  // The next attempt reads the durable notice in its first message.
+  const stopped = await post(base, "/api/brains/stop", { area, expectedAttemptId: brain.session, operationId: "answer-restart" });
+  assert.equal(stopped.state, "stopped", JSON.stringify(stopped));
+  const next = await post(base, "/api/brains/start", { area, resume: true, instruction: "Waiting on the harness answer." });
   assert.equal(next.generation, 2, JSON.stringify(next));
   sessions.push(next.session);
   const show = await fetch(`${base}/api/brains/show?session=${encodeURIComponent(next.session)}`).then((response) => response.json());
-  assert.match(show.prompt, /## Unread messages/);
   assert.match(show.prompt, /Julian wants these changes: Its still so long/);
 });
 

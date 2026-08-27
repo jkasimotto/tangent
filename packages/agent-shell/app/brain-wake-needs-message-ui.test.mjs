@@ -186,14 +186,15 @@ test("a live brain has a direct Area stop control", async () => {
     state: "working", generation: 7, foundingInstruction: { text: "Run this Area." }, requests: [],
   };
   const { dom, window, posts } = await bootShell(live);
-  const stop = window.document.querySelector("[data-stop-brain-area='otto/tangent']");
-  assert.ok(stop.closest(".work-group-action-menu"), "stop lives in the related Area action menu");
-  assert.equal(window.document.querySelector(".work-group-controls > [data-stop-brain-area]"), null, "no duplicate standalone stop remains");
-  assert.match(stop.textContent, /Stop brain\s*s/);
+  click(window, "[data-work-group='otto/tangent'] [data-work-object-actions]");
+  await settle(window);
+  const stop = window.document.querySelector("[data-modal-action='stopBrain']");
+  assert.ok(stop, "stop lives in the related Area action surface");
+  assert.equal(stop.dataset.modalKey, "s", "the pointer teaches the stop shortcut");
   const menuText = stop.closest("[role='menu']").textContent;
-  for (const taught of ["Open brain", "Defaults", "Focus Area", "Fold / expand Area", "Review questions", "Capture note"]) assert.match(menuText, new RegExp(taught));
-  assert.equal(stop.closest("[role='menu']").querySelector("[data-describe-area]"), null, "the removed Describe-work route is not renamed as New task");
-  click(window, "[data-stop-brain-area='otto/tangent']");
+  for (const taught of ["Open brain", "Defaults", "New Goal", "Focus Area", "Review questions", "Capture note"]) assert.match(menuText, new RegExp(taught));
+  assert.equal(window.document.querySelector("[data-modal-action='describeArea']"), null, "the removed Describe-work route is not renamed as New task");
+  stop.click();
   assert.match(window.document.querySelector("#modal-title").textContent, /Stop the Tangent brain/);
   assert.match(window.document.querySelector("#modal-copy").textContent, /Goals, queues, and worker agents continue/);
   click(window, "[data-modal-confirm]");

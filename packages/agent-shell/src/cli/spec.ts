@@ -284,6 +284,8 @@ export const goalCommandSpec: CliCommandSpec = {
       args: "<slug>",
       options: [
         { name: "launch", takesValue: true, description: "Replacement as <harness[/model[/effort]]> (required)" },
+        { name: "operation-id", takesValue: true, description: "Reuse the original replacement operation for inspection or confirmation" },
+        { name: "confirm", description: "Confirm that the persisted replacement is ready and finish the no-loss swap" },
         { name: "session", takesValue: true, description: "Caller session for audit; defaults to the current tmux session" },
         serverOption,
         jsonOption

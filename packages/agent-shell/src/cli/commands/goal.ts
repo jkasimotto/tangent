@@ -12,7 +12,7 @@ import { parseWorkerReportOption, workerHandoverResultLine } from "../worker-rep
 /** Dispatches `tangent goal` subcommands. */
 export async function runGoalCli(argv = process.argv.slice(2)): Promise<void> {
   // Boolean flags never consume the token after them.
-  const args = parseArgs(argv, { repeatable: ["source", "subgoal-title", "subgoal-done-when", "step", "launch", "path", "continue-from", "kind", "on", "status"], boolean: ["continue", "own"] });
+  const args = parseArgs(argv, { repeatable: ["source", "subgoal-title", "subgoal-done-when", "step", "launch", "path", "continue-from", "kind", "on", "status"], boolean: ["continue", "own", "confirm"] });
   const subcommand = args._[0];
   if (!subcommand) return help();
   // "done" and "wont-do" handle --help themselves, to restate that status is written on
@@ -433,14 +433,17 @@ async function replaceAgentCommand(args: Args): Promise<void> {
   const attempt = Array.isArray(assignment.attempts) ? assignment.attempts.slice().reverse().find((item) => !item.endedAt) ?? assignment.attempts.at(-1) : null;
   const expectedAttemptId = detail.current?.attemptId ?? attempt?.id;
   if (!expectedAttemptId) throw new Error("This Goal has no current attempt identity to replace safely.");
+  const operationId = stringArg(args["operation-id"])?.trim() || randomUUID();
+  const confirmed = booleanArg(args.confirm);
   const result = await postJson(server, "/api/goals/attempts/replace", {
     goal: goal.file,
     assignmentId: assignment.id,
     expectedRevision: queue.revision,
     expectedAttemptId,
     launch,
-    operationId: randomUUID(),
+    operationId,
     caller: stringArg(args.session) || (await currentTmuxSession()) || "",
+    ...(confirmed ? { confirmed: true } : {}),
   });
   if (booleanArg(args.json)) {
     console.log(JSON.stringify(result, null, 2));
@@ -448,7 +451,15 @@ async function replaceAgentCommand(args: Args): Promise<void> {
   }
   const replacement = result.session ?? result.operation?.replacementSession ?? "(replacement pending)";
   console.log(`replacement for ${slug}: ${replacement} [${result.status ?? result.operation?.status ?? "requested"}]`);
-  if (result.requiresConfirmation) console.log("The source agent is still alive. Inspect the replacement before you finish the swap.");
+  if (result.requiresConfirmation) {
+    console.log("The source agent is still alive. Inspect the replacement before you finish the swap.");
+    console.log(`Then run: tangent goal replace-agent ${slug} --launch ${launchRefForCli(launch)} --operation-id ${operationId} --confirm`);
+  }
+}
+
+/** Renders one parsed launch reference back to the CLI's positional format. */
+function launchRefForCli(launch: NonNullable<PipelineStepInput["launch"]>): string {
+  return [launch.harness, launch.model, launch.effort].filter(Boolean).join("/");
 }
 
 /** Prints `tangent goal` help with real examples. */

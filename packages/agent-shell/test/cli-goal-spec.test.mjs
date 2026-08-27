@@ -53,7 +53,7 @@ test("goal help still lists the vault commands beside start and handover", () =>
 test("Goal lifecycle and agent replacement have complete CLI contracts", () => {
   assert.deepEqual(optionNames(subcommand("park")), ["reason", "server"]);
   assert.deepEqual(optionNames(subcommand("reopen")), ["server"]);
-  assert.deepEqual(optionNames(subcommand("replace-agent")), ["launch", "session", "server", "json"]);
+  assert.deepEqual(optionNames(subcommand("replace-agent")), ["launch", "operation-id", "confirm", "session", "server", "json"]);
   assert.match(subcommand("replace-agent").description, /preserving the Goal and queue/);
 });
 
@@ -91,19 +91,24 @@ test("park, reopen, and replace-agent send exact Goal mutations", async (context
 
   await runGoalCli(["park", "proof", "--reason", "Later"]);
   await runGoalCli(["reopen", "proof"]);
-  await runGoalCli(["replace-agent", "proof", "--launch", "codex/sol/high", "--session", "parent-brain"]);
+  await runGoalCli(["replace-agent", "proof", "--launch", "codex/sol/high", "--operation-id", "replace-proof", "--session", "parent-brain"]);
+  await runGoalCli(["replace-agent", "proof", "--launch", "codex/sol/high", "--operation-id", "replace-proof", "--confirm", "--session", "parent-brain"]);
 
   const edits = requests.filter((request) => request.path === "/api/goals/edit");
   assert.deepEqual(edits[0].body, { file: "otto/test/goal-proof.md", status: "parked", reason: "Later" });
   assert.deepEqual(edits[1].body, { file: "otto/test/goal-proof.md", status: "open" });
-  const replacement = requests.find((request) => request.path === "/api/goals/attempts/replace").body;
+  const replacements = requests.filter((request) => request.path === "/api/goals/attempts/replace").map((request) => request.body);
+  const replacement = replacements[0];
   assert.equal(replacement.goal, "otto/test/goal-proof.md");
   assert.equal(replacement.assignmentId, "assignment-2");
   assert.equal(replacement.expectedRevision, 8);
   assert.equal(replacement.expectedAttemptId, "attempt-proof");
   assert.deepEqual(replacement.launch, { harness: "codex", model: "sol", effort: "high" });
   assert.equal(replacement.caller, "parent-brain");
-  assert.match(replacement.operationId, /^[0-9a-f-]{36}$/);
+  assert.equal(replacement.operationId, "replace-proof");
+  assert.equal(replacement.confirmed, undefined);
+  assert.equal(replacements[1].operationId, "replace-proof");
+  assert.equal(replacements[1].confirmed, true);
 });
 
 test("tangent goal depend and undepend take repeatable prerequisites", () => {

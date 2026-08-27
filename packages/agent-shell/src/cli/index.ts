@@ -14,4 +14,5 @@ export { runShellCli } from "./commands/shell.js";
 export { runStudyCli, studyLaunchCommand } from "./commands/study.js";
 export { STUDY_CONTRACT, STUDY_CONTRACT_VERSION } from "./commands/study-contract.js";
 export { runVaultCli } from "./commands/vault.js";
+export { WORKER_MUTATION_REFUSAL } from "./client.js";
 export { agentCommandSpec, areaCommandSpec, brainCommandSpec, documentCommandSpec, goalCommandSpec, handoverCommandSpec, harnessCommandSpec, ideaCommandSpec, sendCommandSpec, shellCommandSpec, studyCommandSpec, vaultCommandSpec } from "./spec.js";

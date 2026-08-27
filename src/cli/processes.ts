@@ -150,6 +150,28 @@ export async function resolveProcessArea(explicit: string | undefined, runner: P
   return area;
 }
 
+/**
+ * Whether the current tmux session is a worker (`@tangent_kind goal`). Workers
+ * only send notes to their brain (D6). `tangent process` never reaches the
+ * server, so the server's 403 gate cannot see it; this local check stands in.
+ */
+async function currentSessionIsWorker(runner: ProcessRunner): Promise<boolean> {
+  if (!process.env.TMUX) return false;
+  try {
+    const result = await runner.run("tmux", ["show-option", "-qv", "@tangent_kind"]);
+    return result.stdout.trim() === "goal";
+  } catch {
+    return false;
+  }
+}
+
+/** Refuses process mutations from a worker session with the shared D6 message. */
+async function refuseWorkerMutation(runner: ProcessRunner): Promise<void> {
+  if (!(await currentSessionIsWorker(runner))) return;
+  const { WORKER_MUTATION_REFUSAL } = await import("@tangent/agent-shell/cli");
+  throw new Error(WORKER_MUTATION_REFUSAL);
+}
+
 /** Lists live tmux session names and their foreground commands. */
 async function tmuxSessions(runner: ProcessRunner): Promise<Map<string, string>> {
   try {
@@ -203,6 +225,7 @@ export async function runProcessCommand(argv: string[], runner: ProcessRunner = 
   if (!action || !["list", "start", "stop", "restart", "close"].includes(action)) {
     throw new Error("usage: tangent process <list|start|stop|restart|close> [name] [--area <path>]");
   }
+  if (action !== "list") await refuseWorkerMutation(runner);
   const area = await resolveProcessArea(stringArg(args.area), runner);
   const definitions = await resolveProcessDefinitions(area, treesRoot);
   if (action === "list") {

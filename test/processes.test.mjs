@@ -9,7 +9,8 @@ import {
   parseProcessManifest,
   processSessionName,
   resolveProcessDefinitions,
-  resolveProcessArea
+  resolveProcessArea,
+  runProcessCommand
 } from "../dist/cli/processes.js";
 
 test("process manifests validate their deliberately small schema", () => {
@@ -123,6 +124,21 @@ test("the bound tmux area is authoritative unless --area is explicit", async () 
     assert.equal(await resolveProcessArea(undefined, runner), "otto/tangent");
     assert.equal(await resolveProcessArea("neara/pgande", runner), "neara/pgande");
     assert.equal(runner.calls.length, 1);
+  } finally {
+    if (previous === undefined) delete process.env.TMUX;
+    else process.env.TMUX = previous;
+  }
+});
+
+test("a worker session cannot start, stop, restart, or close processes", async () => {
+  const previous = process.env.TMUX;
+  process.env.TMUX = "/tmp/tmux";
+  try {
+    for (const action of ["start", "stop", "restart", "close"]) {
+      const runner = recordingRunner(["goal\n"]);
+      await assert.rejects(runProcessCommand([action, "dev", "--area", "otto/tangent"], runner, "/nowhere"), /workers only send\. Use: tangent send brain/);
+      assert.deepEqual(runner.calls, [["tmux", ["show-option", "-qv", "@tangent_kind"]]]);
+    }
   } finally {
     if (previous === undefined) delete process.env.TMUX;
     else process.env.TMUX = previous;

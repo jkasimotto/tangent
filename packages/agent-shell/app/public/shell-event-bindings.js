@@ -316,6 +316,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       loadLaunchStep(steps, 0);
     }
     state.launch.stale = null;
+    state.launch.queueMutation = null;
     state.launch.replacement = null;
     state.launch.open = false;
     paint(true);
@@ -374,6 +375,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
     const active = Math.max(0, steps.findIndex((row) => row.id === target.assignmentId));
     state.launch.steps = steps;
     loadLaunchStep(steps, active);
+    state.launch.queueMutation = null;
     if (canResume) {
       state.launch.replacement = existing;
       state.launch.choice = existing.launch ? { ...existing.launch } : replacementLaunchChoice(target.assignment, target.attempt);
@@ -548,6 +550,16 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       return true;
     }
     return false;
+  }
+
+  /** Discards the active assignment fields and restores its exact list row. */
+  function cancelAssignmentEdit() {
+    const row = state.launch.steps[state.launch.active];
+    if (!row || !screen.querySelector("[data-launch-assignment-editor]")) return false;
+    loadLaunchStep(state.launch.steps, state.launch.active);
+    paint(true);
+    requestLaunchFocus(`key:launch:assignment:${row.id}`);
+    return true;
   }
 
   /** Opens the live session owned by the cursor row without starting work. */
@@ -1690,6 +1702,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       activateLaunchStep(Number(launchStepSelect.dataset.launchStepSelect));
       return paint(true);
     }
+    if (target.closest("[data-launch-assignment-cancel]")) return cancelAssignmentEdit();
     const launchStepEdit = target.closest("[data-launch-step-edit]");
     if (launchStepEdit) {
       activateLaunchStep(Number(launchStepEdit.dataset.launchStepEdit));
@@ -1740,6 +1753,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       const active = Math.max(0, rows.findIndex((row) => row.id === activeId));
       loadLaunchStep(rows, active);
       state.launch.stale = null;
+      state.launch.queueMutation = null;
       paint(true);
       requestLaunchFocus(`key:launch:assignment:${rows[active]?.id}`);
       return showToast("The current queue is loaded and your local draft was reapplied.");
@@ -2623,10 +2637,7 @@ export function bindShellEvents({ shell, chrome, prompts, work, areas, programs,
       if (event.key === "Escape" && event.target.closest?.("[data-launch-assignment-editor]")) {
         event.preventDefault();
         event.stopPropagation();
-        const row = state.launch.steps[state.launch.active];
-        loadLaunchStep(state.launch.steps, state.launch.active);
-        paint(true);
-        requestLaunchFocus(`key:launch:assignment:${row?.id}`);
+        cancelAssignmentEdit();
         return;
       }
       if (event.key === "Escape") {

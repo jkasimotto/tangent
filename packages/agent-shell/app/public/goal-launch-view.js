@@ -148,7 +148,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
   function launchOptionsFor(area) {
     const kind = state.launchTarget === BRAIN_LAUNCH_TARGET ? "brain" : state.launchTarget === DEFAULT_AGENTS_TARGET ? "all" : "launch";
     if (state.launch.area !== area || (state.launch.kind && state.launch.kind !== kind)) {
-      state.launch = { area, kind, options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", assignmentKind: "implementation", assignmentPath: "", continueFrom: null, steps: [], active: 0, record: null, stale: null, replacement: null };
+      state.launch = { area, kind, options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", assignmentKind: "implementation", assignmentPath: "", continueFrom: null, steps: [], active: 0, record: null, stale: null, queueMutation: null, replacement: null };
     } else state.launch.kind = kind;
     if (!state.launch.options && !state.launch.loading) {
       state.launch.loading = true;
@@ -479,6 +479,10 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     });
     for (const operation of operations) {
       if (operation.type === "add") {
+        // The previous request may have committed even when its response was
+        // lost. Reapplying that draft to the newer projection must recognize
+        // its stable assignment ID instead of displaying a duplicate add.
+        if (rebased.some((row) => row.id === operation.assignment.id)) continue;
         const after = operation.afterAssignmentId == null ? -1 : rebased.findIndex((row) => row.id === operation.afterAssignmentId);
         rebased.splice(after + 1, 0, draftRow(operation.assignment));
       } else if (operation.type === "update") {
@@ -610,6 +614,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
       : `<section class="launch-assignment-editor" data-launch-assignment-editor aria-label="Assignment fields">
           <label class="launch-instruction"><span>Assignment ${state.launch.active + 1} does</span><textarea id="launch-instruction" rows="2" placeholder="${stepCount > 1 || record ? "What this agent does" : "What this agent does (optional for one assignment)"}">${escapeHtml(state.launch.instruction ?? "")}</textarea></label>
           <div class="launch-assignment-metadata"><label><span>Type</span><select data-launch-kind><option value="implementation"${state.launch.assignmentKind !== "review" ? " selected" : ""}>Implementation</option><option value="review"${state.launch.assignmentKind === "review" ? " selected" : ""}>Review</option></select></label><label><span>Path <small>optional</small></span><input data-launch-path value="${escapeHtml(state.launch.assignmentPath ?? "")}" placeholder="Repository path"></label><label class="launch-continue"><span>Session</span><select data-launch-continue><option value="">Fresh session</option>${continuationRows.map((row, index) => `<option value="${escapeHtml(row.id)}"${state.launch.continueFrom === row.id ? " selected" : ""}>Continue assignment ${index + 1}</option>`).join("")}</select></label></div>
+          <div class="action-row"><button class="quiet-button" type="button" data-launch-assignment-cancel aria-keyshortcuts="Escape" title="Cancel assignment edit (Esc)">Cancel assignment edit <kbd>Esc</kbd></button></div>
         </section>`;
     const settingsRows = settings ? defaultAgentRows(options) : "";
     const settingsMode = state.defaultAgents.mode;
@@ -833,7 +838,7 @@ export function createGoalLaunchView({ shell, areaModel, work, overlays }) {
     }
     try {
       await post("/api/harnesses", draft);
-      state.launch = { area: "", kind: "", options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", assignmentKind: "implementation", assignmentPath: "", continueFrom: null, steps: [], active: 0, record: null, stale: null };
+      state.launch = { area: "", kind: "", options: null, loading: false, choice: null, command: "", editing: false, open: false, instruction: "", assignmentKind: "implementation", assignmentPath: "", continueFrom: null, steps: [], active: 0, record: null, stale: null, queueMutation: null, replacement: null };
       state.view = state.harnessReturnView;
       state.harnessDraft = null;
       paint(true);

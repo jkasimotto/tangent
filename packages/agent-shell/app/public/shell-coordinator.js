@@ -548,6 +548,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
       state.launch.assignmentKind = "implementation";
       state.launch.assignmentPath = "";
       state.launch.continueFrom = null;
+      state.launch.queueMutation = null;
       await refresh();
       rememberGoal(targetFile);
       const opened = sessionForGoal(currentGoal());
@@ -567,9 +568,14 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
     syncLaunchDraft();
     const operations = pipelineMutationOperations(record);
     if (!operations.length) return showToast("The pending assignments have no changes.");
-    const operationId = crypto.randomUUID();
+    const batch = { goal: targetFile, expectedRevision: record.revision, operations };
+    const fingerprint = JSON.stringify(batch);
+    if (state.launch.queueMutation?.fingerprint !== fingerprint) {
+      state.launch.queueMutation = { fingerprint, operationId: crypto.randomUUID() };
+    }
+    const operationId = state.launch.queueMutation.operationId;
     try {
-      const result = await post("/api/pipelines/mutate", { goal: targetFile, expectedRevision: record.revision, operationId, operations });
+      const result = await post("/api/pipelines/mutate", { ...batch, operationId });
       state.launch.open = false;
       state.launchTarget = "";
       state.launchAnchor = null;
@@ -581,6 +587,7 @@ export function createShellCoordinator({ shell, chrome, work, areasFeature, prog
       state.launch.assignmentPath = "";
       state.launch.continueFrom = null;
       state.launch.stale = null;
+      state.launch.queueMutation = null;
       await refresh();
       paint(true);
       showToast(result.state === "repeated" ? "The assignment changes were already saved." : "The pending assignments were saved together.");

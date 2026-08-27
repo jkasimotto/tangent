@@ -18,6 +18,10 @@ test("parses the three resource lines, with backticks, trailing notes, and a til
   });
 });
 
+test("an empty label line does not swallow the next resource line", () => {
+  assert.deepEqual(parseAreaResources("## Resources\n- Repository:\n- Worktree: /a\n"), { repository: null, worktree: "/a", branch: null });
+});
+
 test("a note with no Resources section binds nothing", () => {
   assert.deepEqual(parseAreaResources("# Area\n\n## Purpose\n\nText\n"), { repository: null, worktree: null, branch: null });
 });

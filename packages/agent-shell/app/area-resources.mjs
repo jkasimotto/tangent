@@ -26,7 +26,7 @@ function resourcesSection(noteText) {
  * `- Worktree: /x/y (tracks origin/main)` still binds `/x/y`.
  */
 function resourceValue(section, label) {
-  const line = new RegExp(`^\\s*(?:-\\s*)?${label}\\s*:\\s*\`?([^\`\\n]*?)\`?\\s*(?:\\s\\(.*)?$`, "im");
+  const line = new RegExp(`^\\s*(?:-\\s*)?${label}[ \\t]*:[ \\t]*\`?([^\`\\n]*?)\`?\\s*(?:\\s\\(.*)?$`, "im");
   const match = section.match(line);
   const value = match?.[1].trim() ?? "";
   return value || null;

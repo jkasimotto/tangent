@@ -58,6 +58,8 @@ Julian asked for a design up front, a presented vision in pragmatic Simple Engli
 
 > Resources (links, branches, repos, commands etc.) go in knowledge. We basically treat each area note as an AGENTS.md. In fact maybe we just do that. That's so simple. We have one AGENTS.md and one CLAUDE.md symlinked to that per area. Then brains that get launched don't need a message sent, they have the system prompt from that. And the root .tangent one tells how to be a good brain. It's not one repo per area. That's why it's just freeform text for the brain to read.
 
+> [On the `## Goals` list Tangent appends to Area notes] It better not be in the AGENTS.md one. There's no need for it there. Goals should just be goal-slug files in the area repo.
+
 ## What the memos ask for, in one list
 
 1. Start a Goal fast, without the brain: pick the Area, pick the harness, go. When it finishes, it can tell the brain.

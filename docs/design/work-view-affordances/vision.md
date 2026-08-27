@@ -40,3 +40,5 @@ The triangle at the far left is the only fold glyph. It rotates. The cursor row 
 1. Fold on click of the triangle only (Finder, Xcode), or of the whole header row (VS Code, Linear)? The name opens the brain today. I recommend the triangle only.
 2. Keep `3 open · 1 moving` on the header in both fold states, or only when folded? I recommend both.
 3. Keys always visible on buttons, or on hover only? I recommend always.
+
+Accepted by Julian on 2026-08-27, all three recommendations: fold on the triangle only, counts in both fold states, keys always visible.

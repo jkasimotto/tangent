@@ -6,8 +6,10 @@ import path from "node:path";
 
 import {
   PIPELINE_SCHEMA,
+  PipelineMutationError,
   RECONCILE_GRACE_MS,
   appendSteps,
+  continuationSource,
   currentStep,
   deletePipeline,
   endPipeline,
@@ -19,6 +21,7 @@ import {
   pipelineFinished,
   pipelinePath,
   pipelineStatus,
+  mutatePendingAssignments,
   queueNormalizationChanged,
   readAllPipelines,
   readPipeline,
@@ -65,7 +68,9 @@ test("read and write round trip through the area path", async () => {
 
   const file = pipelinePath(root, "otto/tangent", "agent-pipelines");
   assert.equal(file, path.join(root, "otto/tangent/agent-pipelines.json"));
-  assert.deepEqual(JSON.parse(await readFile(file, "utf8")), record);
+  const stored = JSON.parse(await readFile(file, "utf8"));
+  assert.equal(Object.hasOwn(stored.steps[0], "continueFrom"), false, "numeric continuation positions are not written");
+  assert.equal(stored.steps[1].continueFromAssignmentId, record.steps[0].id);
   assert.deepEqual(await readPipeline(root, "otto/tangent", "agent-pipelines"), record);
 
   const leftovers = (await readdir(path.dirname(file))).filter((name) => name.endsWith(".tmp"));
@@ -162,6 +167,7 @@ test("newPipeline normalizes steps into the pending shape", () => {
     label: "",
     launchSource: "explicit",
     path: "/tmp/other-repo",
+    continueFromAssignmentId: null,
     continueFrom: null,
     status: "pending",
     session: null,
@@ -178,6 +184,7 @@ test("newPipeline normalizes steps into the pending shape", () => {
   assert.equal(record.steps[1].command, "codex --model sol");
   assert.equal(record.steps[1].path, null);
   assert.equal(record.steps[1].continueFrom, 1);
+  assert.equal(record.steps[1].continueFromAssignmentId, record.steps[0].id);
   assert.equal(record.steps[1].launchSource, "explicit");
 });
 
@@ -316,6 +323,104 @@ test("appendSteps validates the new steps in their final numbering", () => {
   const full = newPipeline({ goal: "g", area: "a", slug: "s", steps: Array.from({ length: 20 }, () => ({ instruction: "x", launch: claude })) });
   assert.throws(() => appendSteps(full, [{ instruction: "one more", launch: claude }]), /1 to 20 steps/);
   assert.equal(record.steps.length, 2, "a rejected append leaves the record as it was");
+});
+
+test("legacy numeric continuation reads as a stable assignment identity and writes only the stable form", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "pipelines-"));
+  const record = newPipeline({ goal: "g", area: "otto/tangent", slug: "stable", steps: sampleSteps() });
+  const raw = structuredClone(record);
+  delete raw.steps[1].continueFromAssignmentId;
+  delete raw.assignments[1].continueFromAssignmentId;
+  await mkdir(path.dirname(pipelinePath(root, record.area, record.slug)), { recursive: true });
+  await writeFile(pipelinePath(root, record.area, record.slug), `${JSON.stringify(raw)}\n`);
+
+  const migrated = await readPipeline(root, record.area, record.slug);
+  assert.equal(migrated.steps[1].continueFromAssignmentId, migrated.steps[0].id);
+  assert.equal(migrated.steps[1].continueFrom, 1, "the old server projection stays readable during compatibility");
+  assert.equal(continuationSource(migrated, migrated.steps[1]), migrated.steps[0]);
+  assert.equal(queueNormalizationChanged(migrated), true);
+
+  await writePipeline(root, migrated);
+  const persisted = JSON.parse(await readFile(pipelinePath(root, record.area, record.slug), "utf8"));
+  assert.equal(persisted.steps[1].continueFromAssignmentId, persisted.steps[0].id);
+  assert.equal(Object.hasOwn(persisted.steps[1], "continueFrom"), false);
+  assert.equal(queueNormalizationChanged(await readPipeline(root, record.area, record.slug)), false);
+});
+
+test("one pending-assignment batch can update, reorder, add, and remove by stable identity", () => {
+  const record = newPipeline({ goal: "g", area: "otto/tangent", slug: "mutate", steps: [
+    { id: "history", instruction: "Implement.", launch: claude },
+    { id: "draft-a", instruction: "Review.", launch: claude, continueFromAssignmentId: "history" },
+    { id: "draft-b", instruction: "Ship.", command: "codex", continueFromAssignmentId: "draft-a" },
+  ] });
+  record.steps[0].status = "complete";
+  const beforeRevision = record.revision;
+  const result = mutatePendingAssignments(record, {
+    expectedRevision: beforeRevision,
+    operationId: "edit-1",
+    now: "2026-08-27T08:00:00.000Z",
+    operations: [
+      { type: "update", assignmentId: "draft-b", patch: { continueFromAssignmentId: "history", instruction: "Ship carefully." } },
+      { type: "move", assignmentId: "draft-b", afterAssignmentId: "history" },
+      { type: "remove", assignmentId: "draft-a" },
+      { type: "add", afterAssignmentId: "draft-b", assignment: { id: "review", instruction: "Review the shipment.", kind: "review", launch: claude, continueFromAssignmentId: "draft-b" } },
+    ],
+  });
+  assert.equal(result.state, "updated");
+  assert.deepEqual(record.steps.map((step) => step.id), ["history", "draft-b", "review"]);
+  assert.deepEqual(record.steps.map((step) => step.index), [1, 2, 3]);
+  assert.equal(record.steps[1].instruction, "Ship carefully.");
+  assert.equal(record.steps[1].continueFromAssignmentId, "history");
+  assert.equal(record.steps[2].continueFromAssignmentId, "draft-b");
+  assert.equal(record.steps[2].designatedReview, true);
+  assert.deepEqual(result, {
+    state: "updated", repeated: false, pipeline: record,
+    added: ["review"], removed: ["draft-a"], moved: ["draft-b"],
+  });
+  assert.equal(record.revision, beforeRevision + 1, "the entire batch is one queue revision");
+});
+
+test("a failed or stale pending-assignment batch is atomic and an exact retry is harmless", () => {
+  const record = newPipeline({ goal: "g", area: "otto/tangent", slug: "atomic", steps: [
+    { id: "source", instruction: "Implement.", launch: claude },
+    { id: "target", instruction: "Review.", launch: claude, continueFromAssignmentId: "source" },
+  ] });
+  const original = structuredClone(record);
+  assert.throws(() => mutatePendingAssignments(record, {
+    expectedRevision: record.revision,
+    operationId: "bad-remove",
+    operations: [{ type: "remove", assignmentId: "source" }],
+  }), (error) => error instanceof PipelineMutationError && error.code === "invalid-assignments");
+  assert.deepEqual(record, original, "a broken continuation rolls the whole draft back");
+  assert.throws(() => mutatePendingAssignments(record, {
+    expectedRevision: 0,
+    operationId: "stale",
+    operations: [{ type: "update", assignmentId: "target", patch: { instruction: "No." } }],
+  }), (error) => error.code === "stale-revision" && error.currentRevision === record.revision && error.pipeline === record);
+
+  const first = mutatePendingAssignments(record, {
+    expectedRevision: record.revision,
+    operationId: "exact-retry",
+    operations: [{ type: "update", assignmentId: "target", patch: { instruction: "Review carefully." } }],
+  });
+  const repeated = mutatePendingAssignments(record, {
+    expectedRevision: original.revision,
+    operationId: "exact-retry",
+    operations: [{ type: "update", assignmentId: "target", patch: { instruction: "Different text must not apply." } }],
+  });
+  assert.equal(first.state, "updated");
+  assert.equal(repeated.state, "repeated");
+  assert.equal(record.steps[1].instruction, "Review carefully.");
+});
+
+test("pending mutation never rewrites an assignment that started", () => {
+  const record = newPipeline({ goal: "g", area: "otto/tangent", slug: "history", steps: sampleSteps() });
+  record.steps[0].status = "complete";
+  assert.throws(() => mutatePendingAssignments(record, {
+    expectedRevision: record.revision,
+    operationId: "rewrite-history",
+    operations: [{ type: "update", assignmentId: record.steps[0].id, patch: { instruction: "Rewrite history." } }],
+  }), (error) => error.code === "assignment-history-immutable");
 });
 
 test("pipelineFinished is true only when every step is complete, skipped, or ended", () => {

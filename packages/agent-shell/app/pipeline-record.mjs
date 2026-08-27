@@ -5,6 +5,7 @@
 // what comes next, what the whole pipeline's status is), so the rules are
 // unit-testable without a live shell.
 
+import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { readJsonObject, walkJsonFiles, writeJsonObject } from "./json-store.mjs";
@@ -17,6 +18,16 @@ const LEGACY_PIPELINE_SCHEMA = "agent-pipeline.v1";
 const MAX_STEPS = 20;
 const MAX_INSTRUCTION_CHARS = 2000;
 const QUEUE_NORMALIZATION_CHANGED = Symbol("queueNormalizationChanged");
+
+/** One structured refusal from an atomic pending-assignment mutation. */
+export class PipelineMutationError extends Error {
+  constructor(code, message, fields = {}) {
+    super(message);
+    this.name = "PipelineMutationError";
+    this.code = code;
+    Object.assign(this, fields);
+  }
+}
 
 /** True when a read repaired a legacy record and the scheduler must persist it once. */
 export function queueNormalizationChanged(record) {
@@ -50,17 +61,17 @@ export async function readAllPipelines(root) {
  */
 export async function writePipeline(root, record) {
   const target = pipelinePath(root, record.area, record.slug);
-  record.schema = PIPELINE_SCHEMA;
-  record.assignments = record.steps;
+  canonicalizeQueueInPlace(record);
   record.updatedAt = new Date().toISOString();
-  return writeJsonObject(target, record);
+  await writeJsonObject(target, queueForStorage(record));
+  return record;
 }
 
 /** Normalizes the legacy pipeline into the one production Goal queue shape. */
 export function normalizeQueueRecord(value) {
   if (!value || typeof value !== "object" || ![PIPELINE_SCHEMA, LEGACY_PIPELINE_SCHEMA].includes(value.schema)) return null;
   const source = Array.isArray(value.assignments) ? value.assignments : Array.isArray(value.steps) ? value.steps : [];
-  const assignments = source.map((step, position) => normalizeStoredAssignment(step, position + 1));
+  const { assignments, problem: assignmentProblem } = normalizeStoredAssignments(source);
   const revision = Math.max(1, Number(value.revision) || 1);
   const controllerArea = value.controllerArea ?? value.area;
   let supersededLegacyWait = false;
@@ -88,7 +99,7 @@ export function normalizeQueueRecord(value) {
     ? `Queue controller ${controllerArea} does not match exact Area ${value.area}.`
     : running.length > 1
       ? `Queue has ${running.length} current attempts.`
-      : inheritedMigrationProblem;
+      : assignmentProblem ?? inheritedMigrationProblem;
   const activeAssignment = assignments.find((item) => ["running", "waiting"].includes(item.status));
   const storedCurrent = assignments.find((item) => item.id === value.currentAssignmentId && ["running", "waiting"].includes(item.status));
   const reopenSupersededPause = supersededLegacyWait && generatedMultipleAttemptProblem && value.status === "paused";
@@ -118,7 +129,7 @@ export function normalizeQueueRecord(value) {
     || !Array.isArray(value.idempotencyKeys)
     || !Array.isArray(value.assignments)
     || !Array.isArray(value.steps)
-    || JSON.stringify(storedAssignments) !== JSON.stringify(assignments);
+    || JSON.stringify(storedAssignments) !== JSON.stringify(assignments.map(assignmentForStorage));
   Object.defineProperty(normalized, QUEUE_NORMALIZATION_CHANGED, { value: normalizationChanged });
   return normalized;
 }
@@ -135,7 +146,7 @@ export async function deletePipeline(root, area, slug) {
 export function newPipeline({ goal, goalRevision = "", area, slug, extraFiles = [], steps, completionPolicy = "review-pass", now = new Date().toISOString() }) {
   const error = validateSteps(steps);
   if (error) throw new Error(error);
-  const assignments = steps.map((step, position) => normalizeStep(step, position + 1));
+  const assignments = normalizeNewAssignments(steps);
   return {
     schema: PIPELINE_SCHEMA,
     goal,
@@ -170,7 +181,7 @@ export function appendSteps(record, steps) {
   const existing = record?.steps ?? [];
   const error = validateSteps([...existing, ...steps]);
   if (error) throw new Error(error);
-  const added = steps.map((step, position) => normalizeStep(step, existing.length + position + 1));
+  const added = normalizeNewAssignments(steps, existing);
   record.steps = [...existing, ...added];
   record.assignments = record.steps;
   if (record.status !== "paused") record.status = "open";
@@ -250,8 +261,102 @@ export function validateSteps(steps) {
         return `step ${index}: continueFrom must name an earlier step`;
       }
     }
+    if (step.continueFromAssignmentId !== null && step.continueFromAssignmentId !== undefined) {
+      const fromId = cleanAssignmentId(step.continueFromAssignmentId);
+      const earlier = steps.slice(0, position).find((candidate, earlierPosition) => assignmentIdAt(candidate, earlierPosition) === fromId);
+      if (!fromId || !earlier) return `step ${index}: continueFromAssignmentId must name an earlier assignment`;
+      if (Number.isInteger(step.continueFrom) && assignmentIdAt(steps[step.continueFrom - 1], step.continueFrom - 1) !== fromId) {
+        return `step ${index}: continuation references disagree`;
+      }
+    }
   }
   return null;
+}
+
+/**
+ * Applies one revision-guarded batch to the mutable pending suffix.
+ *
+ * The function edits a clone first. A stale revision, invalid operation, or
+ * broken continuation leaves the caller's record byte-for-byte unchanged.
+ * The server still owns the per-Goal lock and the one durable write.
+ */
+export function mutatePendingAssignments(record, {
+  expectedRevision,
+  operationId,
+  idempotencyKey,
+  operations,
+  now = new Date().toISOString(),
+} = {}) {
+  const key = String(operationId ?? idempotencyKey ?? "").trim();
+  if (!key) throw mutationError("operation-required", "an operation ID is required", record);
+  if (record?.idempotencyKeys?.includes(key)) {
+    return { state: "repeated", repeated: true, pipeline: record, added: [], removed: [], moved: [] };
+  }
+  if (Number(expectedRevision) !== Number(record?.revision)) {
+    throw mutationError("stale-revision", `stale-revision:${record?.revision}`, record, { currentRevision: record?.revision });
+  }
+  if (!Array.isArray(operations) || operations.length < 1) {
+    throw mutationError("operations-required", "one or more assignment operations are required", record);
+  }
+  if (record?.migrationProblem || record?.status === "paused") {
+    throw mutationError("queue-paused", record.migrationProblem ?? "the Goal queue is paused", record);
+  }
+
+  const draft = normalizeQueueRecord(structuredClone({ ...record, assignments: record.steps, steps: record.steps }));
+  if (!draft) throw mutationError("invalid-queue", "the Goal queue is invalid", record);
+  const immutableCount = lastImmutablePosition(draft.steps) + 1;
+  const added = [];
+  const removed = [];
+  const moved = [];
+
+  for (const operation of operations) {
+    const type = String(operation?.type ?? "");
+    if (type === "add") {
+      const requested = operation.assignment && typeof operation.assignment === "object" ? operation.assignment : {};
+      const id = requestedAssignmentId(requested.id, draft.steps);
+      const insertion = insertionPosition(draft.steps, immutableCount, operation.afterAssignmentId);
+      const assignment = normalizeNewAssignments([{ ...requested, id }], draft.steps.slice(0, insertion))[0];
+      draft.steps.splice(insertion, 0, assignment);
+      added.push(id);
+    } else if (type === "update") {
+      const target = mutableAssignment(draft.steps, immutableCount, operation.assignmentId);
+      applyPendingPatch(target, operation.patch);
+    } else if (type === "remove") {
+      const target = mutableAssignment(draft.steps, immutableCount, operation.assignmentId);
+      draft.steps.splice(draft.steps.indexOf(target), 1);
+      removed.push(target.id);
+    } else if (type === "move") {
+      const target = mutableAssignment(draft.steps, immutableCount, operation.assignmentId);
+      const from = draft.steps.indexOf(target);
+      draft.steps.splice(from, 1);
+      const insertion = insertionPosition(draft.steps, immutableCount, operation.afterAssignmentId);
+      draft.steps.splice(insertion, 0, target);
+      moved.push(target.id);
+    } else {
+      throw mutationError("unknown-operation", `unknown assignment operation ${type || "(empty)"}`, record);
+    }
+  }
+
+  reindexAssignments(draft.steps);
+  if (!draft.steps.length) throw mutationError("empty-queue", "a pipeline needs 1 to 20 steps", record);
+  const validation = validateSteps(draft.steps);
+  if (validation) throw mutationError("invalid-assignments", validation, record);
+  if (!pendingSuffixIsMutable(draft.steps, immutableCount)) {
+    throw mutationError("assignment-history-immutable", "started assignment history cannot move or change", record);
+  }
+
+  draft.revision = Math.max(1, Number(draft.revision) || 1) + 1;
+  draft.idempotencyKeys = [...(draft.idempotencyKeys ?? []), key];
+  draft.updatedAt = now;
+  draft.assignments = draft.steps;
+  replaceQueueContents(record, draft);
+  return { state: "updated", repeated: false, pipeline: record, added, removed, moved };
+}
+
+/** Resolves one assignment's stable continuation source. */
+export function continuationSource(record, assignment) {
+  const id = cleanAssignmentId(assignment?.continueFromAssignmentId);
+  return id ? (record?.steps ?? []).find((candidate) => candidate.id === id) ?? null : null;
 }
 
 /** The step the pipeline is on: first running or stopped, else first pending, else null. */
@@ -382,8 +487,8 @@ function hasCommand(step) {
   return typeof step.command === "string" && step.command.trim().length > 0;
 }
 
-/** Normalizes one validated step into its stored pending shape. */
-function normalizeStep(step, index) {
+/** Normalizes one validated assignment into its stored pending shape. */
+function normalizeStep(step, index, continueFromAssignmentId = null) {
   const launch = hasLaunch(step)
     ? {
       harness: step.launch.harness.trim(),
@@ -403,7 +508,8 @@ function normalizeStep(step, index) {
     // from a record that may have changed since.
     launchSource: step.launchSource === "brain-default" ? "brain-default" : "explicit",
     path: typeof step.path === "string" && step.path.trim() ? step.path.trim() : null,
-    continueFrom: Number.isInteger(step.continueFrom) ? step.continueFrom : null,
+    continueFromAssignmentId,
+    continueFrom: null,
     kind: step.kind === "review" ? "review" : "implementation",
     designatedReview: step.kind === "review" || step.designatedReview === true,
     status: "pending",
@@ -419,10 +525,10 @@ function normalizeStep(step, index) {
 }
 
 /** Adds queue fields to one stored assignment without changing its history. */
-function normalizeStoredAssignment(step, index) {
+function normalizeStoredAssignment(step, index, id) {
   return {
     ...step,
-    id: step.id || `assignment-${index}`,
+    id,
     index,
     kind: step.kind === "review" ? "review" : "implementation",
     designatedReview: step.designatedReview === true || step.kind === "review",
@@ -430,4 +536,211 @@ function normalizeStoredAssignment(step, index) {
     reports: Array.isArray(step.reports) ? step.reports : [],
     handoverReceipts: normalizeWorkerHandoverReceipts(step.handoverReceipts),
   };
+}
+
+/** Gives new assignments unique stable identities and resolves legacy numeric continuations. */
+function normalizeNewAssignments(steps, existing = []) {
+  const used = new Set(existing.map((assignment) => assignment.id));
+  const assignments = steps.map((step, position) => {
+    const index = existing.length + position + 1;
+    const requested = cleanAssignmentId(step?.id);
+    const id = requested && !used.has(requested) ? requested : nextAssignmentId([...existing, ...steps], used, index);
+    used.add(id);
+    return normalizeStep({ ...step, id }, index, null);
+  });
+  const all = [...existing, ...assignments];
+  for (const [position, assignment] of assignments.entries()) {
+    const input = steps[position] ?? {};
+    const numeric = Number.isInteger(input.continueFrom) ? all[input.continueFrom - 1]?.id ?? null : null;
+    assignment.continueFromAssignmentId = cleanAssignmentId(input.continueFromAssignmentId) || numeric;
+  }
+  reindexAssignments(all);
+  return assignments;
+}
+
+/** Normalizes stored identities and continuation references in two passes. */
+function normalizeStoredAssignments(source) {
+  const used = new Set();
+  let problem = null;
+  const assignments = source.map((step, position) => {
+    const requested = cleanAssignmentId(step?.id);
+    let id = requested;
+    if (!id || used.has(id)) {
+      if (id && !problem) problem = `Queue has duplicate assignment id ${id}.`;
+      id = nextAssignmentId(source, used, position + 1);
+    }
+    used.add(id);
+    return normalizeStoredAssignment(step ?? {}, position + 1, id);
+  });
+  for (let position = 0; position < assignments.length; position += 1) {
+    const input = source[position] ?? {};
+    const stable = cleanAssignmentId(input.continueFromAssignmentId);
+    const numericSpecified = Object.hasOwn(input, "continueFrom");
+    const numeric = Number.isInteger(input.continueFrom) ? assignments[input.continueFrom - 1]?.id ?? null : null;
+    // A dual-field in-memory compatibility projection can be changed by an
+    // older caller. When the fields disagree, the changed numeric value wins.
+    const continuationId = numericSpecified && numeric !== stable ? numeric : stable || numeric;
+    assignments[position].continueFromAssignmentId = continuationId || null;
+    const earlier = continuationId ? assignments.slice(0, position).findIndex((item) => item.id === continuationId) : -1;
+    assignments[position].continueFrom = earlier >= 0 ? earlier + 1 : null;
+    if (!problem && (stable || (numericSpecified && input.continueFrom !== null && input.continueFrom !== undefined)) && earlier < 0) {
+      problem = `Assignment ${assignments[position].id} continuation must name an earlier assignment.`;
+    }
+  }
+  return { assignments, problem };
+}
+
+/** Rebuilds display indices and numeric compatibility projections after an edit. */
+function reindexAssignments(assignments) {
+  const byId = new Map(assignments.map((assignment, position) => [assignment.id, position]));
+  for (const [position, assignment] of assignments.entries()) {
+    assignment.index = position + 1;
+    const source = byId.get(cleanAssignmentId(assignment.continueFromAssignmentId));
+    assignment.continueFrom = Number.isInteger(source) && source < position ? source + 1 : null;
+  }
+  return assignments;
+}
+
+/** Returns one deterministic unused identity for migrated or newly added assignments. */
+function nextAssignmentId(_source, used, seed = 1) {
+  for (let number = Math.max(1, Number(seed) || 1); ; number += 1) {
+    const id = `assignment-${number}`;
+    if (!used.has(id)) return id;
+  }
+}
+
+/** Returns a cleaned stable assignment identity. */
+function cleanAssignmentId(value) {
+  return typeof value === "string" ? value.trim().slice(0, 128) : "";
+}
+
+/** Returns the identity validateSteps projects for one input row. */
+function assignmentIdAt(step, position) {
+  return cleanAssignmentId(step?.id) || `assignment-${position + 1}`;
+}
+
+/** Converts an in-memory compatibility queue into its stable persisted shape. */
+function queueForStorage(record) {
+  const stored = structuredClone(record);
+  const assignments = (stored.steps ?? []).map(assignmentForStorage);
+  stored.schema = PIPELINE_SCHEMA;
+  stored.assignments = assignments;
+  stored.steps = assignments;
+  return stored;
+}
+
+/** Removes the numeric continuation projection from one persisted assignment. */
+function assignmentForStorage(assignment) {
+  const canonical = { ...assignment, continueFromAssignmentId: cleanAssignmentId(assignment.continueFromAssignmentId) || null };
+  delete canonical.continueFrom;
+  return canonical;
+}
+
+/** Applies compatibility input changes and restores one canonical in-memory queue. */
+function canonicalizeQueueInPlace(record) {
+  const normalized = normalizeQueueRecord({ ...record, schema: PIPELINE_SCHEMA, assignments: record.steps, steps: record.steps });
+  if (!normalized) throw new Error("the Goal queue is invalid");
+  const currentAssignments = Array.isArray(record.steps) ? record.steps : [];
+  if (currentAssignments.length === normalized.steps.length) {
+    for (const [position, assignment] of currentAssignments.entries()) {
+      for (const key of Object.keys(assignment)) delete assignment[key];
+      Object.assign(assignment, normalized.steps[position]);
+    }
+    normalized.steps = currentAssignments;
+    normalized.assignments = currentAssignments;
+  }
+  replaceQueueContents(record, normalized);
+  return record;
+}
+
+/** Replaces one queue object's own fields while preserving its caller-held identity. */
+function replaceQueueContents(target, source) {
+  for (const key of Object.keys(target)) delete target[key];
+  Object.assign(target, source);
+  target.assignments = target.steps;
+  return target;
+}
+
+/** Creates one structured mutation refusal with the current queue attached. */
+function mutationError(code, message, pipeline, fields = {}) {
+  return new PipelineMutationError(code, message, { pipeline, ...fields });
+}
+
+/** The zero-based position of the last assignment that is immutable history. */
+function lastImmutablePosition(assignments) {
+  for (let position = assignments.length - 1; position >= 0; position -= 1) {
+    if (assignments[position].status !== "pending") return position;
+  }
+  return -1;
+}
+
+/** Returns one pending suffix assignment or rejects a history edit. */
+function mutableAssignment(assignments, immutableCount, assignmentId) {
+  const id = cleanAssignmentId(assignmentId);
+  const position = assignments.findIndex((assignment) => assignment.id === id);
+  if (position < 0) throw new PipelineMutationError("assignment-not-found", `no assignment ${id || "(empty)"}`);
+  if (position < immutableCount || assignments[position].status !== "pending") {
+    throw new PipelineMutationError("assignment-history-immutable", `assignment ${id} has started and cannot change`);
+  }
+  return assignments[position];
+}
+
+/** Resolves an insertion anchor without allowing a write inside history. */
+function insertionPosition(assignments, immutableCount, afterAssignmentId) {
+  const after = cleanAssignmentId(afterAssignmentId);
+  if (!after) return immutableCount;
+  const position = assignments.findIndex((assignment) => assignment.id === after);
+  if (position < 0) throw new PipelineMutationError("assignment-not-found", `no assignment ${after}`);
+  if (position + 1 < immutableCount) {
+    throw new PipelineMutationError("assignment-history-immutable", `cannot insert after historical assignment ${after}`);
+  }
+  return position + 1;
+}
+
+/** Chooses or creates a unique identity for one added assignment. */
+function requestedAssignmentId(value, assignments) {
+  const used = new Set(assignments.map((assignment) => assignment.id));
+  const requested = cleanAssignmentId(value);
+  if (requested && used.has(requested)) throw new PipelineMutationError("duplicate-assignment", `assignment ${requested} already exists`);
+  return requested || `assignment-${randomUUID()}`;
+}
+
+/** Applies the fields that remain mutable before an assignment starts. */
+function applyPendingPatch(target, patch) {
+  if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+    throw new PipelineMutationError("invalid-patch", "an assignment update needs one patch object");
+  }
+  if (typeof patch.instruction === "string") target.instruction = patch.instruction.trim();
+  if (Object.hasOwn(patch, "path")) target.path = typeof patch.path === "string" && patch.path.trim() ? patch.path.trim() : null;
+  if (Object.hasOwn(patch, "kind")) {
+    target.kind = patch.kind === "review" ? "review" : "implementation";
+    target.designatedReview = target.kind === "review";
+  }
+  if (Object.hasOwn(patch, "launch") && Object.hasOwn(patch, "command")) {
+    throw new PipelineMutationError("ambiguous-launch", "an assignment cannot set a launch and command together");
+  }
+  if (Object.hasOwn(patch, "launch")) {
+    if (!hasLaunch(patch)) throw new PipelineMutationError("invalid-launch", "an assignment launch needs a harness");
+    target.launch = {
+      harness: patch.launch.harness.trim(),
+      model: typeof patch.launch.model === "string" && patch.launch.model ? patch.launch.model : null,
+      effort: typeof patch.launch.effort === "string" && patch.launch.effort ? patch.launch.effort : null,
+    };
+    target.command = "";
+    target.launchSource = "explicit";
+  }
+  if (Object.hasOwn(patch, "command")) {
+    target.command = typeof patch.command === "string" ? patch.command.trim() : "";
+    target.launch = null;
+    target.launchSource = "explicit";
+  }
+  if (Object.hasOwn(patch, "continueFromAssignmentId")) {
+    target.continueFromAssignmentId = cleanAssignmentId(patch.continueFromAssignmentId) || null;
+  }
+}
+
+/** True when operations left the immutable prefix and mutable suffix intact. */
+function pendingSuffixIsMutable(assignments, immutableCount) {
+  return assignments.slice(0, immutableCount).every((assignment) => assignment.status !== "pending")
+    && assignments.slice(immutableCount).every((assignment) => assignment.status === "pending");
 }

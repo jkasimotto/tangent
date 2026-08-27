@@ -149,7 +149,7 @@ Julian's answers are marked (Julian).
 
 **D10. No brain handover, no rotation (Julian).** `tangent brain handover`, pacing, the 429 refusal, the 90-minute reminder, and `wakeFromPaceText` go. A brain runs until Julian restarts it with the Restart he has (ADR-0037 picker). The brain row always shows the context fill.
 
-**D11. The brain prompt is a short system prompt (Julian).** It says what Tangent is, what the brain's role is, which commands it can and must run, where information lives (the vault and Tangent commands), and that it must read the Area note first. Tangent fills in the Area, its folder, the Area route from the root with each main note's path (the brain reads every note on it, root first), the skills on that route as name and description, and Julian's founding message. Nothing else is generated. Each Area needs a main note. The default harness block stays in the Area note and is edited in the UI (Julian). The draft text is in the slice 3 spec.
+**D11. The Area note is the brain's system prompt (Julian).** Each Area folder has `AGENTS.md` and `CLAUDE.md` as symlinks to its main note. The vault root has an `AGENTS.md` that says how to be a brain: what Tangent is, the role, the commands, where information lives. Harnesses read this chain from the Area folder up to the root on their own. Tangent generates no prompt. Brain start opens the harness in the Area folder and types Julian's message. Resources, links, branches, and commands are free-form text under Knowledge, because an Area is not one repository. The brain passes `--path` when it starts a worker. The `- Repository:` lines of D1 stay as an optional shortcut.
 
 ### 5.4 Checking work and brain questions
 
@@ -173,7 +173,7 @@ Julian's answers are marked (Julian).
 
 ### 5.6 Skills
 
-**D20. A skill is `<area>/skill-<slug>.md` (Julian).** An ordinary Document. Its frontmatter has `name:` and `description:` like a harness skill. The brain prompt's `## Skills` section is generated from every skill on the Area route, root to leaf, as `- <name>: <description> (<abs path>)`. The section also names the bound repository's own project skills. The brain hands a skill to a worker with `--source <vault-file>` or by naming the path in the instruction.
+**D20. A skill is `<area>/skill-<slug>.md` (Julian).** An ordinary Document. Its frontmatter has `name:` and `description:` like a harness skill. `tangent area show` lists every skill on the Area route, root to leaf, as `- <name>: <description> (<abs path>)`. The root `AGENTS.md` tells brains to run it. The section also names the bound repository's own project skills. The brain hands a skill to a worker with `--source <vault-file>` or by naming the path in the instruction.
 
 ### 5.7 Resume
 

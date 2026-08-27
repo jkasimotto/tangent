@@ -56,6 +56,8 @@ Julian asked for a design up front, a presented vision in pragmatic Simple Engli
 
 > You can also show their area route to the root, e.g. neara/pgande/autodesign. They need to read the note from each of those for upwards context. Each area needs a main note. And we probably need some more design about how to keep the area note clean and where information should actually go. I want the area note to be like a system prompt: repositories, branches, commands, things it should know every time, what skills are available. The skills should be in that prompt, generated from the skill- slugs, just the names and descriptions (same as regular agent stuff).
 
+> Resources (links, branches, repos, commands etc.) go in knowledge. We basically treat each area note as an AGENTS.md. In fact maybe we just do that. That's so simple. We have one AGENTS.md and one CLAUDE.md symlinked to that per area. Then brains that get launched don't need a message sent, they have the system prompt from that. And the root .tangent one tells how to be a good brain. It's not one repo per area. That's why it's just freeform text for the brain to read.
+
 ## What the memos ask for, in one list
 
 1. Start a Goal fast, without the brain: pick the Area, pick the harness, go. When it finishes, it can tell the brain.
